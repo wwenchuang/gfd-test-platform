@@ -1009,6 +1009,87 @@ def _ai_gateway_post(path, payload, timeout=30):
         return None
 
 
+def _probe_agent_ai_health(run=None):
+    """Return AI availability without exposing secrets."""
+    health = {
+        "gatewayUrl": AI_GATEWAY_URL,
+        "gatewayReachable": False,
+        "dashscopeConfigured": bool(dashscope_api_key(required=False)),
+        "dashscopeBaseUrl": dashscope_base_url(),
+        "textModel": dashscope_text_model(),
+        "selectedProviderId": "",
+        "selectedModel": "",
+        "checkedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "errors": [],
+    }
+    if isinstance(run, dict):
+        health["selectedProviderId"] = str(run.get("modelProviderId") or run.get("aiProviderId") or "")
+        health["selectedModel"] = str(run.get("aiModel") or run.get("model") or "")
+    try:
+        url = AI_GATEWAY_URL.rstrip("/") + "/health"
+        resp = http_client.get(url, timeout=3)
+        health["gatewayReachable"] = resp.status == 200
+        if not health["gatewayReachable"]:
+            health["errors"].append(f"AI Gateway HTTP {resp.status}")
+    except Exception as exc:
+        health["errors"].append(f"AI Gateway 不可用：{str(exc)[:160]}")
+    health["ready"] = bool(health["gatewayReachable"] or health["dashscopeConfigured"])
+    if isinstance(run, dict):
+        run.setdefault("artifacts", {})["agentAiHealth"] = health
+    return health
+
+
+def _record_agent_ai_decision(run, stage, source, ok, summary="", **extra):
+    """Persist a compact AI decision trail for Agent observability."""
+    if not isinstance(run, dict):
+        return {}
+    decision = {
+        "stage": str(stage or ""),
+        "source": str(source or "unknown"),
+        "ok": bool(ok),
+        "summary": str(summary or "")[:500],
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    decision.update({k: v for k, v in extra.items() if v not in (None, "", [])})
+    trail = run.setdefault("artifacts", {}).setdefault("agentAiDecisions", [])
+    trail.append(decision)
+    del trail[:-50]
+    return decision
+
+
+def _normalize_agent_goal_analysis(value, rule_result, source):
+    """Validate and normalize model output for goal analysis."""
+    if not isinstance(value, dict):
+        return None, "AI 返回不是 JSON 对象"
+    result = dict(value)
+    module = str(result.get("module") or "").strip()
+    raw_keywords = result.get("keywords") or []
+    if not isinstance(raw_keywords, list):
+        raw_keywords = [raw_keywords]
+    keywords = _dedupe_business_terms(raw_keywords, limit=10)
+    scope = str(result.get("scope") or rule_result.get("scope") or "auto").strip()
+    risk_level = str(result.get("riskLevel") or rule_result.get("riskLevel") or "low").strip().lower()
+    if risk_level not in ("low", "medium", "high"):
+        risk_level = rule_result.get("riskLevel", "low")
+    normalized = {
+        **rule_result,
+        **result,
+        "module": module,
+        "keywords": keywords,
+        "matchAll": bool(result.get("matchAll", rule_result.get("matchAll", False))),
+        "scope": scope,
+        "riskLevel": risk_level,
+        "riskHits": rule_result.get("riskHits", []),
+        "target": rule_result.get("target", ""),
+        "summary": str(result.get("summary") or rule_result.get("summary") or "").strip(),
+        "aiSource": source,
+        "validated": True,
+    }
+    if not normalized["summary"]:
+        normalized["summary"] = f"执行目标：{normalized['target']}"
+    return normalized, ""
+
+
 # ---------------------------------------------------------------------------
 # APP 目录映射 (migrated from midscene-upload.py)
 # ---------------------------------------------------------------------------
@@ -1216,6 +1297,9 @@ def tool_analyze_goal(run, inp):
     scope = run.get("scope", "smoke")
     app_name = run.get("appName", "智小白3D APP")
     risk_hits = [kw for kw in AGENT_RISK_KEYWORDS if kw in target]
+    artifacts = run.setdefault("artifacts", {})
+    ai_health = _probe_agent_ai_health(run)
+    business_constraint = _ensure_business_flow_constraint(run)
 
     # Rule-based fallback result
     rule_result = {
@@ -1239,6 +1323,7 @@ def tool_analyze_goal(run, inp):
             "生成总结",
         ],
     }
+    rule_result["businessFlow"] = business_constraint.get("businessFlow") or []
 
     # 根据 app_name 获取对应模块列表
     app_info = get_available_apps()
@@ -1271,6 +1356,7 @@ def tool_analyze_goal(run, inp):
 用户输入：{target}
 应用名称：{app_name}
 执行范围：{scope}
+业务主链（必须遵守）：{business_constraint.get("businessFlowText", "")}
 
 可用模块目录：
 {modules_list_text}
@@ -1293,12 +1379,17 @@ def tool_analyze_goal(run, inp):
 
     messages = [{"role": "user", "content": prompt}]
 
+    artifacts["agentAiHealth"] = ai_health
     # === Strategy 1: AI Gateway /ai/chat ===
     try:
-        gw_result = _ai_gateway_post("/ai/chat", {
-            "messages": messages,
-            "temperature": 0.1,
-        }, timeout=15)
+        if ai_health.get("gatewayReachable"):
+            gw_result = _ai_gateway_post("/ai/chat", {
+                "messages": messages,
+                "temperature": 0.1,
+                "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+            }, timeout=15)
+        else:
+            gw_result = None
         if gw_result and isinstance(gw_result, dict):
             content = gw_result.get("content", "")
             if content:
@@ -1306,18 +1397,16 @@ def tool_analyze_goal(run, inp):
                 content = re.sub(r'^\s*```(?:json)?\s*', '', content)
                 content = re.sub(r'\s*```\s*$', '', content)
                 ai_result = json.loads(content)
-                if isinstance(ai_result, dict) and "module" in ai_result:
-                    ai_result.setdefault("matchAll", False)
-                    ai_result.setdefault("keywords", [])
-                    ai_result.setdefault("summary", target)
-                    ai_result["riskLevel"] = "high" if risk_hits else ai_result.get("riskLevel", "low")
-                    ai_result["riskHits"] = risk_hits
-                    ai_result["target"] = target
-                    ai_result.setdefault("suggestedSteps", rule_result["suggestedSteps"])
-                    run.setdefault("artifacts", {})["goalAnalysis"] = ai_result
-                    return ai_result
-    except (json.JSONDecodeError, KeyError, TypeError, Exception):
-        pass
+                normalized, issue = _normalize_agent_goal_analysis(ai_result, rule_result, "ai_gateway")
+                if normalized:
+                    artifacts["goalAnalysis"] = normalized
+                    _record_agent_ai_decision(run, "analyze_goal", "ai_gateway", True, normalized.get("summary", ""), keywords=normalized.get("keywords"), businessFlow=business_constraint.get("businessFlow"))
+                    return normalized
+                _record_agent_ai_decision(run, "analyze_goal", "ai_gateway", False, issue)
+        elif ai_health.get("gatewayReachable"):
+            _record_agent_ai_decision(run, "analyze_goal", "ai_gateway", False, "AI Gateway 返回空结果")
+    except (json.JSONDecodeError, KeyError, TypeError, Exception) as exc:
+        _record_agent_ai_decision(run, "analyze_goal", "ai_gateway", False, str(exc)[:200])
 
     # === Strategy 2: Direct DashScope OpenAI-compatible API ===
     try:
@@ -1345,21 +1434,22 @@ def tool_analyze_goal(run, inp):
                 data = resp.json(default={})
                 content = data["choices"][0]["message"]["content"]
                 ai_result = json.loads(content)
-                if isinstance(ai_result, dict) and "module" in ai_result:
-                    ai_result.setdefault("matchAll", False)
-                    ai_result.setdefault("keywords", [])
-                    ai_result.setdefault("summary", target)
-                    ai_result["riskLevel"] = "high" if risk_hits else ai_result.get("riskLevel", "low")
-                    ai_result["riskHits"] = risk_hits
-                    ai_result["target"] = target
-                    ai_result.setdefault("suggestedSteps", rule_result["suggestedSteps"])
-                    run.setdefault("artifacts", {})["goalAnalysis"] = ai_result
-                    return ai_result
-    except (json.JSONDecodeError, KeyError, TypeError, Exception):
-        pass
+                normalized, issue = _normalize_agent_goal_analysis(ai_result, rule_result, f"dashscope/{model}")
+                if normalized:
+                    artifacts["goalAnalysis"] = normalized
+                    _record_agent_ai_decision(run, "analyze_goal", f"dashscope/{model}", True, normalized.get("summary", ""), keywords=normalized.get("keywords"), businessFlow=business_constraint.get("businessFlow"))
+                    return normalized
+                _record_agent_ai_decision(run, "analyze_goal", f"dashscope/{model}", False, issue)
+            else:
+                _record_agent_ai_decision(run, "analyze_goal", f"dashscope/{model}", False, f"HTTP {resp.status}")
+        else:
+            _record_agent_ai_decision(run, "analyze_goal", "dashscope", False, "未配置 DASHSCOPE_API_KEY")
+    except (json.JSONDecodeError, KeyError, TypeError, Exception) as exc:
+        _record_agent_ai_decision(run, "analyze_goal", "dashscope", False, str(exc)[:200])
 
     # === Strategy 3: Rule-based fallback ===
-    run.setdefault("artifacts", {})["goalAnalysis"] = rule_result
+    _record_agent_ai_decision(run, "analyze_goal", "rule_fallback", True, "AI 不可用或返回无效，使用规则兜底", businessFlow=business_constraint.get("businessFlow"))
+    artifacts["goalAnalysis"] = rule_result
     return rule_result
 
 
@@ -1768,11 +1858,13 @@ def _tool_agent_plan(run):
         "input": {"target": run.get("target", ""), "scope": run.get("scope", "smoke")},
     }
     try:
+        ai_health = _probe_agent_ai_health(run)
+        business_constraint = _ensure_business_flow_constraint(run)
         try:
             prompt_ctx = get_prompt_center().enrich(run if isinstance(run, dict) else {})
         except Exception:
             prompt_ctx = {}
-        if _ai_gateway_available():
+        if ai_health.get("gatewayReachable"):
             try:
                 resp = _ai_gateway_post("/ai/generate-case", {
                     "target": run.get("target", ""),
@@ -1780,6 +1872,8 @@ def _tool_agent_plan(run):
                     "mode": run.get("mode", "AUTO_SAFE"),
                     "appName": run.get("appName", ""),
                     "platform": run.get("platform", "android"),
+                    "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+                    "businessFlowConstraint": business_constraint,
                     "businessContext": prompt_ctx.get("businessContext"),
                     "promptCenter": prompt_ctx.get("promptCenter"),
                 })
@@ -1800,13 +1894,17 @@ def _tool_agent_plan(run):
                     "mode": run.get("mode", "AUTO_SAFE"),
                     "target": run.get("target", ""),
                     "riskLevel": run.get("riskLevel", "low"),
+                    "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
                     "businessContext": prompt_ctx.get("businessContext"),
+                    "aiHealth": ai_health,
                 }
                 call["status"] = "SUCCESS"
                 call["outputSummary"] = "AI Gateway 生成计划完成"
+                _record_agent_ai_decision(run, "plan", "ai_gateway", True, call["outputSummary"], stepCount=len(plan_steps))
             except Exception as e:
                 call["status"] = "SKIPPED"
                 call["outputSummary"] = f"AI Gateway 调用失败：{str(e)[:200]}"
+                _record_agent_ai_decision(run, "plan", "ai_gateway", False, call["outputSummary"])
                 plan = {
                     "steps": [
                         "1. 分析测试目标",
@@ -1821,10 +1919,13 @@ def _tool_agent_plan(run):
                     "mode": run.get("mode", "AUTO_SAFE"),
                     "target": run.get("target", ""),
                     "riskLevel": run.get("riskLevel", "low"),
+                    "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
+                    "aiHealth": ai_health,
                 }
         else:
             call["status"] = "SKIPPED"
             call["outputSummary"] = "AI Gateway 不可用，使用本地默认计划"
+            _record_agent_ai_decision(run, "plan", "local_default", True, call["outputSummary"], aiHealth=ai_health)
             plan = {
                 "steps": [
                     "1. 分析测试目标",
@@ -1839,6 +1940,8 @@ def _tool_agent_plan(run):
                 "mode": run.get("mode", "AUTO_SAFE"),
                 "target": run.get("target", ""),
                 "riskLevel": run.get("riskLevel", "low"),
+                "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
+                "aiHealth": ai_health,
             }
         plan.setdefault("dispatchPolicy", {
             "decisionOwner": "AI",
@@ -2144,7 +2247,7 @@ def _parse_ai_case_retrieval_response(content: str, candidates: list) -> Optiona
     }
 
 
-def _ai_rerank_case_candidates(target: str, source_text: str, scope: str, app_name: str, candidates: list, model: str = "", provider_id: str = "") -> dict:
+def _ai_rerank_case_candidates(target: str, source_text: str, scope: str, app_name: str, candidates: list, model: str = "", provider_id: str = "", business_constraint: Optional[Dict[str, Any]] = None) -> dict:
     """Let the model judge semantic case reuse. Rules only provide candidate recall."""
     if not candidates:
         return {}
@@ -2161,11 +2264,14 @@ def _ai_rerank_case_candidates(target: str, source_text: str, scope: str, app_na
             "ruleMatchedKeywords": item.get("matched_keywords") or [],
             "yamlExcerpt": str(item.get("yaml_text") or "")[:1200],
         })
-    prompt = f"""你是自动化测试平台的 Case Retrieval 语义判定器。规则召回已经给出候选 YAML，但规则分可能不准；请你根据测试目标、输入资料和 YAML 内容判断是否应该复用已有用例。
+    business_constraint = business_constraint if isinstance(business_constraint, dict) else {}
+    prompt = f"""你是自动化测试平台的 Case Retrieval 语义判定器。规则召回已经给出候选 YAML，但规则分可能不准；请你根据测试目标、业务主链、输入资料和 YAML 内容判断是否应该复用已有用例。
 
 测试目标：{target}
 应用：{app_name}
 执行范围：{scope or "auto"}
+业务主链（必须优先覆盖，不能跳出主链）：
+{business_constraint.get("businessFlowText") or "未提供"}
 输入资料摘要：
 {source_text[:2500] or "无"}
 
@@ -2178,6 +2284,7 @@ def _ai_rerank_case_candidates(target: str, source_text: str, scope: str, app_na
 3. 如果已有 YAML 能覆盖用户目标，decision=复用；如果相似但可能误跑，decision=待确认；如果没有合适用例，decision=生成草稿。
 4. confidence 是你对“复用已有用例是否正确”的把握，0 到 1；不是规则分。
 5. 若用户明确只说一个业务点，不要扩大成整套回归。
+6. 如果候选 YAML 没有覆盖业务主链中的核心节点，应返回 generate_draft 或 wait_confirm，不要强行复用。
 
 请只输出严格 JSON：
 {{
@@ -3012,6 +3119,11 @@ def _tool_case_retrieval(run):
     }
     try:
         artifacts = run.setdefault("artifacts", {})
+        ai_health = _probe_agent_ai_health(run)
+        business_constraint = _ensure_business_flow_constraint(run)
+        flow_keywords = _business_flow_keywords(business_constraint)
+        call["businessFlowConstraint"] = _compact_business_flow_constraint(business_constraint)
+        call["agentAiHealth"] = ai_health
         all_yamls = _collect_candidate_yamls(run)
         source_context = artifacts.get("sourceContext") or {}
         matched_yaml = source_context.get("matchedYaml") if isinstance(source_context.get("matchedYaml"), dict) else {}
@@ -3044,8 +3156,16 @@ def _tool_case_retrieval(run):
                 call["durationMs"] = _compute_duration(call)
                 _log_tool_call(call, run.get("runId", ""))
                 return call
-        query_text = "\n".join([run.get("target", ""), _build_source_text(source_context)])
-        keywords = (artifacts.get("impactAnalysis") or {}).get("keywords") or _source_keywords(source_context)
+        query_text = "\n".join([
+            run.get("target", ""),
+            business_constraint.get("businessFlowText", ""),
+            _build_source_text(source_context),
+        ])
+        base_keywords = (artifacts.get("impactAnalysis") or {}).get("keywords") or _source_keywords(source_context)
+        if not isinstance(base_keywords, list):
+            base_keywords = [base_keywords]
+        keywords = _dedupe_business_terms(base_keywords + flow_keywords, limit=16)
+        artifacts["businessFlowKeywords"] = flow_keywords
         scope = str(run.get("scope") or "").strip().lower()
         if not scope or scope == "auto":
             target_text = str(run.get("target") or "")
@@ -3101,6 +3221,7 @@ def _tool_case_retrieval(run):
                 candidates=scored[:12],
                 model=run.get("model", ""),
                 provider_id=run.get("modelProviderId") or run.get("aiProviderId") or "",
+                business_constraint=business_constraint,
             ) or {}
             ai_errors = ai_review.get("_ai_errors") or []
             if ai_review.get("decision") and not ai_errors:
@@ -3130,8 +3251,27 @@ def _tool_case_retrieval(run):
                 if not matched and decision == "reuse":
                     decision = "generate_draft"
                     ai_reason = (ai_reason + "；但 AI 未返回可用候选路径，已降级为生成草稿").strip("；")
+                _record_agent_ai_decision(
+                    run,
+                    "case_retrieval",
+                    ai_source,
+                    True,
+                    ai_reason or f"AI 语义复核：{decision}",
+                    confidence=confidence,
+                    decision=decision,
+                    matchedKeywords=matched_keywords,
+                    businessFlow=business_constraint.get("businessFlow"),
+                )
             else:
                 ai_reason = "AI 语义复核不可用，已使用规则召回兜底"
+                _record_agent_ai_decision(
+                    run,
+                    "case_retrieval",
+                    "ai_semantic",
+                    False,
+                    "；".join(ai_errors[:3]) or ai_reason,
+                    businessFlow=business_constraint.get("businessFlow"),
+                )
 
         if not ai_used:
             if confidence >= 0.75:
@@ -3203,6 +3343,9 @@ def _tool_case_retrieval(run):
             "aiSource": ai_source,
             "aiReason": ai_reason,
             "aiErrors": ai_errors,
+            "aiHealth": ai_health,
+            "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
+            "businessFlowKeywords": flow_keywords,
             "scope": scope,
             "keywords": keywords or [],
             "matchedKeywords": matched_keywords,
