@@ -82,6 +82,7 @@ def main():
     require("Agent 状态" in html and "运行轨迹" in html, "Right panel must become Agent status panel with timeline")
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html, "Agent artifacts must support copy and YAML download")
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
+    require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")
     require("YAML 校验失败时，不能显示" not in html, "Implementation details should not be visible as instructional UI text")
     # Assets entry exists in sidebar as asset center
     require("用例资产" in html and 'data-workflow="assets"' in html, "Assets must be accessible from sidebar")
@@ -157,7 +158,7 @@ def main():
     require("本次 Agent 输入资料" in html and "agent-source-figma-url" in html and "agent-source-requirement-text" in html, "Agent workbench must expose Figma and requirement inputs")
     require("agent-source-file-input" in html and "handleAgentSourceFiles" in html and "handleAgentSourcePaste" in html, "Agent workbench must support requirement/screenshot upload and paste")
     require("sourceInputs: sourceMaterials" in html and "files: sourceMaterials.files" in html and "images: sourceMaterials.images" in html, "Agent payload must include uploaded source materials")
-    require("renderSourceContextDetail" in html and "输入摘要：" in html and "上传资料：" in html and "Figma 提取：" in html, "Agent timeline must show prepared source details and Figma extraction result")
+    require("renderSourceContextDetail" in html and "输入摘要" in html and "上传资料" in html and "Figma" in html and "agent-readable-panel" in html, "Agent timeline must show prepared source details and Figma extraction result")
     for source in ("manual", "requirement", "figma", "failed_job"):
         require(source in html, f"Agent source type missing: {source}")
     require("sourceType: source.sourceType" in html and "sourceRefs: source.sourceRefs" in html, "Agent payload must include sourceType/sourceRefs")

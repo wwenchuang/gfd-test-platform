@@ -1023,6 +1023,30 @@ function renderRunTaskDetail(step, artifacts) {
   return html;
 }
 
+function agentInfoGrid(items = []) {
+  const visible = items.filter(item => item && item.label);
+  if (!visible.length) return '';
+  return `<div class="agent-info-grid">${visible.map(item => `
+    <div>
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(item.value ?? '-')}</strong>
+    </div>
+  `).join('')}</div>`;
+}
+
+function agentReadableList(title, items = [], renderItem) {
+  const visible = items.filter(Boolean);
+  if (!visible.length) return '';
+  return `
+    <section class="agent-readable-panel">
+      <strong>${escapeHtml(title)}</strong>
+      <div class="agent-readable-list">
+        ${visible.map((item, index) => `<div>${renderItem ? renderItem(item, index) : escapeHtml(String(item))}</div>`).join('')}
+      </div>
+    </section>
+  `;
+}
+
 // ===== COLLECT_REPORT 报告详情 =====
 function renderReportDetail(step, artifacts) {
   const report = (artifacts || {}).report || {};
@@ -1085,31 +1109,86 @@ function renderAgentSummaryArtifact(run) {
   if (!summary || typeof summary !== 'object') {
     return `<pre class="agent-artifact-pre">${escapeHtml(typeof agentArtifactText === 'function' ? agentArtifactText('summary', run) : '暂无总结报告')}</pre>`;
   }
+  const report = artifacts.report || {};
+  const failure = artifacts.failureAnalysis || {};
+  const reports = report.executionReports || report.reports || [];
+  const failedJobs = report.failedJobs || [];
+  const timeoutJobs = report.timeoutJobs || [];
+  const yamlRefs = report.yamlExecutionRefs || [];
+  const jobStatuses = report.jobStatuses || [];
+  const steps = Array.isArray(run?.steps) ? run.steps : [];
+  const visibleSteps = steps.filter(step => ['FAILED', 'PARTIAL_FAILED', 'SUCCESS', 'WAIT_CONFIRM'].includes(String(step.status || '').toUpperCase())).slice(-6);
   const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
   const conclusionClass = summary.conclusion === '通过' ? 'success' : (summary.conclusion === '执行中' ? 'warn' : 'danger');
+  const target = summary.target || run?.target || '-';
+  const generatedAt = String(summary.generatedAt || run?.updatedAt || '').replace('T', ' ').slice(0, 19);
   return `
     <div class="agent-final-report">
-      <div class="final-report-head">
+      <div class="final-report-hero ${conclusionClass}">
         <div>
-          <span>最终总结</span>
+          <span class="final-report-kicker">Agent Final Report</span>
           <h3>${escapeHtml(summary.title || 'Agent 执行总结')}</h3>
+          <p>${escapeHtml(target)}</p>
         </div>
         <strong class="final-report-conclusion ${conclusionClass}">${escapeHtml(summary.conclusion || '-')}</strong>
       </div>
-      <div class="report-summary-grid">
+      <div class="final-report-meta">
+        <span>${escapeHtml(summary.mode || run?.mode || '-')}</span>
+        <span>风险 ${escapeHtml(summary.riskLevel || run?.riskLevel || '-')}</span>
+        <span>${escapeHtml(generatedAt || '-')}</span>
+      </div>
+      <div class="report-summary-grid final-report-metrics">
         <div><span>步骤成功</span><strong>${escapeHtml(summary.completed || 0)}/${escapeHtml(summary.totalSteps || 0)}</strong></div>
         <div><span>匹配用例</span><strong>${escapeHtml(summary.matchedCount || 0)}</strong></div>
-        <div><span>执行报告</span><strong>${escapeHtml(summary.reportCount || 0)}</strong></div>
-        <div><span>失败任务</span><strong>${escapeHtml(summary.failedJobCount || 0)}</strong></div>
+        <div><span>HTML 报告</span><strong>${escapeHtml(reports.length || summary.reportCount || 0)}</strong></div>
+        <div><span>失败/超时</span><strong>${escapeHtml((failedJobs.length || summary.failedJobCount || 0) + (timeoutJobs.length || summary.timeoutJobCount || 0))}</strong></div>
       </div>
-      <div class="final-report-section">
-        <strong>执行说明</strong>
-        <p>${escapeHtml(summary.message || '暂无说明')}</p>
+      <div class="final-report-layout">
+        <section class="final-report-panel">
+          <strong>执行概览</strong>
+          <dl>
+            <div><dt>报告状态</dt><dd>${escapeHtml(summary.reportStatus || report.status || '-')}</dd></div>
+            <div><dt>执行 YAML</dt><dd>${escapeHtml(yamlRefs.length || 0)} 个</dd></div>
+            <div><dt>任务状态</dt><dd>${escapeHtml(jobStatuses.length || 0)} 个</dd></div>
+            <div><dt>失败类型</dt><dd>${escapeHtml(summary.failureType || failure.failureType || 'NONE')}</dd></div>
+          </dl>
+        </section>
+        <section class="final-report-panel">
+          <strong>执行说明</strong>
+          <p>${escapeHtml(summary.aiSummary || failure.conclusion || summary.message || '暂无说明')}</p>
+        </section>
       </div>
-      <div class="final-report-section">
-        <strong>下一步</strong>
-        ${nextActions.length ? `<ul>${nextActions.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>暂无建议。</p>'}
+      <div class="final-report-layout">
+        <section class="final-report-panel">
+          <strong>报告链接</strong>
+          ${reports.length ? `<div class="final-report-links">${reports.slice(0, 6).map(item => {
+            const label = `${item.module || ''}/${item.file || ''}`;
+            return item.reportUrl
+              ? `<a href="${escapeHtml(item.reportUrl)}" target="_blank">${escapeHtml(label)}</a>`
+              : `<span>${escapeHtml(label || item.localPath || '-')}</span>`;
+          }).join('')}</div>` : '<p>暂无 HTML 报告链接。</p>'}
+        </section>
+        <section class="final-report-panel">
+          <strong>下一步建议</strong>
+          ${nextActions.length ? `<ul>${nextActions.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>暂无建议。</p>'}
+        </section>
       </div>
+      ${failedJobs.length ? `
+        <section class="final-report-panel final-report-wide">
+          <strong>失败摘要</strong>
+          <div class="final-report-failures">
+            ${failedJobs.slice(0, 5).map(job => `<div><b>${escapeHtml(job.module || '')}/${escapeHtml(job.file || '')}</b><span>${escapeHtml(job.error || job.status || '未知失败')}</span></div>`).join('')}
+          </div>
+        </section>
+      ` : ''}
+      ${visibleSteps.length ? `
+        <section class="final-report-panel final-report-wide">
+          <strong>关键步骤</strong>
+          <div class="final-report-steps">
+            ${visibleSteps.map(step => `<div><span>${escapeHtml(step.step || '')}</span><b>${escapeHtml(step.status || '')}</b><em>${escapeHtml(step.summary || '')}</em></div>`).join('')}
+          </div>
+        </section>
+      ` : ''}
     </div>
   `;
 }
@@ -1124,22 +1203,23 @@ function renderAgentArtifactContent(tab, run) {
 // ===== ANALYZE_FAILURE 分析详情 =====
 function renderAnalysisDetail(step, artifacts) {
   const analysis = (artifacts || {}).failureAnalysis || {};
-  let html = '<div class="analysis-detail">';
+  let html = '<div class="analysis-detail agent-readable-detail">';
   const typeLabel = {
-    'NONE': '✅ 无失败',
-    'ENV_ISSUE': '🔧 环境问题',
-    'CONFIG_ISSUE': '⚙️ 配置问题',
-    'SCRIPT_ISSUE': '📝 脚本问题',
+    'NONE': '无失败',
+    'ENV_ISSUE': '环境问题',
+    'CONFIG_ISSUE': '配置问题',
+    'SCRIPT_ISSUE': '脚本问题',
   }[analysis.failureType] || analysis.failureType || '未分析';
-  html += `<div class="analysis-type">${escapeHtml(typeLabel)}</div>`;
+  html += agentInfoGrid([
+    { label: '失败类型', value: typeLabel },
+    { label: '结论', value: analysis.conclusion || '暂无' },
+    { label: '建议', value: analysis.recommendation || '暂无' },
+  ]);
   if (analysis.conclusion) {
-    html += `<div class="analysis-conclusion">${escapeHtml(analysis.conclusion)}</div>`;
-  }
-  if (analysis.recommendation) {
-    html += `<div class="analysis-recommendation"><strong>建议：</strong>${escapeHtml(analysis.recommendation)}</div>`;
+    html += `<section class="agent-readable-panel"><strong>分析结论</strong><p>${escapeHtml(analysis.conclusion)}</p></section>`;
   }
   if (analysis.summary && analysis.failureType !== 'NONE') {
-    html += `<div class="analysis-summary"><pre>${escapeHtml(typeof analysis.summary === 'string' ? analysis.summary : JSON.stringify(analysis.summary, null, 2))}</pre></div>`;
+    html += `<section class="agent-readable-panel"><strong>失败上下文</strong><pre class="agent-artifact-pre">${escapeHtml(typeof analysis.summary === 'string' ? analysis.summary : JSON.stringify(analysis.summary, null, 2))}</pre></section>`;
   }
   html += '</div>';
   return html;
@@ -1156,27 +1236,27 @@ function renderMatchDetail(step, artifacts) {
   const candidateDetails = retrieval.candidateDetails || [];
   const detailByPath = new Map(candidateDetails.map(item => [item.rel_path || '', item]));
   const keywords = retrieval.matchedKeywords || retrieval.keywords || impact.keywords || [];
-  let html = '<div class="match-detail">';
-  html += `<div class="match-reason">匹配策略：${escapeHtml(reason)}</div>`;
-  if (retrieval.decision) {
-    html += `<div class="match-reason">推荐动作：${escapeHtml(retrieval.decision)} · 置信度 ${escapeHtml(String(retrieval.confidence ?? '-'))}</div>`;
-  }
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '匹配数量', value: `${count} 个` },
+    { label: '推荐动作', value: retrieval.decision || '-' },
+    { label: '置信度', value: retrieval.confidence ?? '-' },
+    { label: '来源', value: retrieval.confidenceSource || retrieval.aiSource || '规则/AI' },
+  ]);
+  if (reason) html += `<section class="agent-readable-panel"><strong>匹配策略</strong><p>${escapeHtml(reason)}</p></section>`;
   if (keywords.length > 0) {
     html += `<div class="match-keywords"><strong>匹配关键词：</strong>${keywords.slice(0, 10).map(kw => `<span class="tag">${escapeHtml(kw)}</span>`).join(' ')}</div>`;
   }
-  html += `<div class="match-count">匹配到 ${count} 个用例</div>`;
   if (candidates.length > 0) {
-    html += '<div class="sync-failures"><div class="failure-title">候选用例：</div><ul class="failure-list">';
-    for (const c of candidates.slice(0, 5)) {
+    html += agentReadableList('候选用例', candidates.slice(0, 5), c => {
       const detail = detailByPath.get(c.rel_path || '') || c;
       const reasons = detail.reasons || [];
       const reasonText = reasons.length ? `｜${reasons.slice(0, 3).join('；')}` : '';
-      html += `<li>${escapeHtml(c.dir_name || '')}/${escapeHtml(c.file_name || '')} · ${escapeHtml(String(c.confidence ?? ''))}${escapeHtml(reasonText)}</li>`;
-    }
-    html += '</ul></div>';
+      return `<b>${escapeHtml(c.dir_name || '')}/${escapeHtml(c.file_name || '')}</b><span>${escapeHtml(String(c.confidence ?? '-'))}${escapeHtml(reasonText)}</span>`;
+    });
   }
   if (skipped.length > 0) {
-    html += `<div class="match-skipped">跳过 ${skipped.length} 个：${escapeHtml(skipped.slice(0, 3).join(', '))}</div>`;
+    html += `<section class="agent-readable-panel"><strong>跳过项</strong><p>跳过 ${escapeHtml(skipped.length)} 个：${escapeHtml(skipped.slice(0, 3).join(', '))}</p></section>`;
   }
   html += '</div>';
   return html;
@@ -1188,28 +1268,23 @@ function renderExecutionPrecheckDetail(step, artifacts) {
   const checks = precheck.checks || firstCall.checks || [];
   const blockers = precheck.blockers || firstCall.blockers || [];
   const warnings = precheck.warnings || firstCall.warnings || [];
-  let html = '<div class="match-detail">';
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '体检项', value: checks.length },
+    { label: '阻断', value: blockers.length },
+    { label: '提醒', value: warnings.length },
+  ]);
   if (blockers.length) {
-    html += '<div class="sync-failures"><div class="failure-title">阻断项：</div><ul class="failure-list">';
-    for (const c of blockers) {
-      html += `<li>✕ ${escapeHtml(c.name || '')}：${escapeHtml(c.detail || '')}</li>`;
-    }
-    html += '</ul></div>';
+    html += agentReadableList('阻断项', blockers, c => `<b>${escapeHtml(c.name || '')}</b><span>${escapeHtml(c.detail || '')}</span>`);
   }
   if (warnings.length) {
-    html += '<div class="precheck-warnings"><div class="failure-title">提醒项：</div><ul class="failure-list">';
-    for (const c of warnings) {
-      html += `<li>! ${escapeHtml(c.name || '')}：${escapeHtml(c.detail || '')}</li>`;
-    }
-    html += '</ul></div>';
+    html += agentReadableList('提醒项', warnings, c => `<b>${escapeHtml(c.name || '')}</b><span>${escapeHtml(c.detail || '')}</span>`);
   }
   if (checks.length) {
-    html += '<div class="sync-failures"><div class="failure-title">体检项：</div><ul class="failure-list">';
-    for (const c of checks) {
+    html += agentReadableList('体检项', checks, c => {
       const mark = c.ok ? '✓' : (c.severity === 'warning' ? '!' : '✕');
-      html += `<li>${mark} ${escapeHtml(c.name || '')}：${escapeHtml(c.detail || '')}</li>`;
-    }
-    html += '</ul></div>';
+      return `<b>${escapeHtml(mark)} ${escapeHtml(c.name || '')}</b><span>${escapeHtml(c.detail || '')}</span>`;
+    });
   }
   html += renderDiagnosisDetail(precheck.diagnosis || step.diagnosis || firstCall.diagnosis);
   html += '</div>';
@@ -1222,47 +1297,46 @@ function renderSourceContextDetail(step, artifacts) {
   const files = source.uploadedFiles || [];
   const images = source.uploadedImages || [];
   const keywords = source.keywords || impact.keywords || [];
-  let html = '<div class="match-detail">';
-  html += `<div class="match-reason">输入摘要：${escapeHtml(source.sourceSummary || impact.sourceSummary || '未上传额外资料')}</div>`;
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '关键词', value: keywords.length },
+    { label: '上传资料', value: files.length },
+    { label: '截图', value: images.length },
+    { label: 'Figma', value: source.figmaUrl ? '已提供' : '无' },
+  ]);
+  html += `<section class="agent-readable-panel"><strong>输入摘要</strong><p>${escapeHtml(source.sourceSummary || impact.sourceSummary || '未上传额外资料')}</p></section>`;
   if (source.figmaUrl) {
-    html += `<div class="match-reason">Figma：${escapeHtml(source.figmaUrl)}</div>`;
     const usedPages = source.figmaUsedPages || source.uiDesigns || [];
     const ignoredPages = source.figmaIgnoredPages || [];
     const extractState = source.figmaExtracted ? '已按需求提取页面' : (source.figmaExtractError ? '提取失败/降级为链接参考' : '待提取');
-    html += `<div class="match-reason">Figma 提取：${escapeHtml(extractState)} · 使用 ${usedPages.length} 页 · 忽略 ${ignoredPages.length} 页 · 图片 ${Number(source.figmaImageCount || 0)} 张</div>`;
+    html += `<section class="agent-readable-panel"><strong>Figma</strong><p>${escapeHtml(source.figmaUrl)}</p><p>${escapeHtml(extractState)} · 使用 ${usedPages.length} 页 · 忽略 ${ignoredPages.length} 页 · 图片 ${Number(source.figmaImageCount || 0)} 张</p></section>`;
     if (source.figmaExtractError) {
-      html += `<div class="precheck-warnings"><div class="failure-title">Figma 提醒：</div><ul class="failure-list"><li>${escapeHtml(source.figmaExtractError)}</li></ul></div>`;
+      html += agentReadableList('Figma 提醒', [source.figmaExtractError]);
     }
     if (usedPages.length) {
-      html += '<div class="sync-failures"><div class="failure-title">使用的 Figma 页面：</div><ul class="failure-list">';
-      for (const page of usedPages.slice(0, 8)) {
+      html += agentReadableList('使用的 Figma 页面', usedPages.slice(0, 8), page => {
         const figma = page.figma || {};
-        html += `<li>${escapeHtml(page.page_name || page.pageName || figma.page_name || 'Figma 页面')} · 分数 ${escapeHtml(String(page.relevance_score ?? figma.relevance_score ?? ''))} · ${escapeHtml(page.relevance_reason || figma.relevance_reason || '')}</li>`;
-      }
-      html += '</ul></div>';
+        return `<b>${escapeHtml(page.page_name || page.pageName || figma.page_name || 'Figma 页面')}</b><span>分数 ${escapeHtml(String(page.relevance_score ?? figma.relevance_score ?? ''))} · ${escapeHtml(page.relevance_reason || figma.relevance_reason || '')}</span>`;
+      });
     }
     if (ignoredPages.length) {
-      html += '<div class="precheck-warnings"><div class="failure-title">忽略的 Figma 页面：</div><ul class="failure-list">';
-      for (const page of ignoredPages.slice(0, 6)) {
+      html += agentReadableList('忽略的 Figma 页面', ignoredPages.slice(0, 6), page => {
         const figma = page.figma || {};
-        html += `<li>${escapeHtml(page.page_name || page.pageName || figma.page_name || 'Figma 页面')} · 分数 ${escapeHtml(String(figma.relevance_score ?? page.relevance_score ?? ''))} · ${escapeHtml(figma.relevance_reason || page.relevance_reason || '低匹配，未进入本次参考')}</li>`;
-      }
-      html += '</ul></div>';
+        return `<b>${escapeHtml(page.page_name || page.pageName || figma.page_name || 'Figma 页面')}</b><span>分数 ${escapeHtml(String(figma.relevance_score ?? page.relevance_score ?? ''))} · ${escapeHtml(figma.relevance_reason || page.relevance_reason || '低匹配，未进入本次参考')}</span>`;
+      });
     }
   }
   if (keywords.length) {
     html += `<div class="match-keywords"><strong>提取关键词：</strong>${keywords.slice(0, 12).map(kw => `<span class="tag">${escapeHtml(kw)}</span>`).join(' ')}</div>`;
   }
   if (files.length) {
-    html += '<div class="sync-failures"><div class="failure-title">上传资料：</div><ul class="failure-list">';
-    for (const file of files.slice(0, 8)) {
+    html += agentReadableList('上传资料', files.slice(0, 8), file => {
       const kind = file.kind === 'screenshot' ? '截图' : (file.kind === 'requirement_text' ? '文本' : '文件');
-      html += `<li>${escapeHtml(file.name || '未命名资料')} · ${escapeHtml(kind)}${file.hasText ? ' · 已提取文本' : ''}${file.skippedContent ? ' · 仅保留元信息' : ''}</li>`;
-    }
-    html += '</ul></div>';
+      return `<b>${escapeHtml(file.name || '未命名资料')}</b><span>${escapeHtml(kind)}${file.hasText ? ' · 已提取文本' : ''}${file.skippedContent ? ' · 仅保留元信息' : ''}</span>`;
+    });
   }
   if (images.length && !files.some(item => item.kind === 'screenshot')) {
-    html += `<div class="match-reason">截图：${images.length} 张已进入输入资料</div>`;
+    html += `<section class="agent-readable-panel"><strong>截图</strong><p>${escapeHtml(images.length)} 张已进入输入资料</p></section>`;
   }
   html += '</div>';
   return html;
