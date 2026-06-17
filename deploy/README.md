@@ -63,10 +63,10 @@ Python file. Skills are loaded from `AI_SKILLS_DIR`, which should point to
 
 If your current web root is `/www/html`, keep using it for the visible page.
 The install script copies `task-manager.html` there when the directory exists.
-Because the page calls `API_BASE = '/api'`, the same host and port that serves
-`task-manager.html` must also serve `/api/`. If Python serves the page directly
-on `8088`, no Nginx proxy is needed. If Nginx serves `/www/html` on `8088`,
-Nginx must proxy `/api/` to the Python service.
+Because the page calls `API_BASE = '/api'`, the same public host and port that
+serves `task-manager.html` must also serve `/api/`. In the standard layout,
+Nginx or the Sonic reports container owns public `8088`, while the Python Task
+service listens on local `8091`; `/api/` must proxy to `127.0.0.1:8091`.
 
 ## Install
 

@@ -7,7 +7,7 @@ ENV_FILE="${ENV_FILE:-/opt/midscene.env}"
 SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/midscene-task.service}"
 USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
-PORT="${PORT:-8088}"
+PORT="${PORT:-8091}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -282,6 +282,7 @@ upgrade_env_default_if_old() {
 }
 
 ensure_env_default "AI_SKILLS_DIR" "${APP_DIR}/ai_skills"
+upgrade_env_default_if_old "PORT" "8091" "8088"
 ensure_env_default "FIGMA_PARSE_LIMIT" "80"
 ensure_env_default "FIGMA_REFERENCE_LIMIT" "36"
 ensure_env_default "FIGMA_MAX_REFERENCE_LIMIT" "72"

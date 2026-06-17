@@ -19,7 +19,7 @@ Environment:
   REMOTE_KEEP_PACKAGES Remote package retention count. Default: 3
   APP_DIR              Remote app directory passed to install-server.sh. Default: /opt/midscene-task-platform
   WEB_DIR              Remote web directory passed to install-server.sh. Default: /www/html
-  PORT                 Remote Task service port passed to install-server.sh. Default: 8088
+  PORT                 Remote Task service port passed to install-server.sh. Default: 8091
   HEALTH_URLS          Space-separated remote health URLs. Default: http://127.0.0.1:${PORT}/api/health
 USAGE
 }
@@ -41,7 +41,7 @@ SSH_PORT="${SSH_PORT:-22}"
 REMOTE_TMP_DIR="${REMOTE_TMP_DIR:-/tmp}"
 RUN_TESTS="${RUN_TESTS:-1}"
 REMOTE_KEEP_PACKAGES="${REMOTE_KEEP_PACKAGES:-3}"
-PORT="${PORT:-8088}"
+PORT="${PORT:-8091}"
 HEALTH_URLS="${HEALTH_URLS:-http://127.0.0.1:${PORT}/api/health}"
 
 ssh_cmd=(ssh -p "${SSH_PORT}" -o ServerAliveInterval=20 -o ServerAliveCountMax=3 "${TARGET}")
