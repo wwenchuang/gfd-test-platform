@@ -9,8 +9,9 @@
 ## Prompt Center 上下文
 
 如果输入 payload 中存在 `businessContext` 或 `promptCenter.businessContext`，
-必须优先使用其中的 `business_flow` 作为场景主线。不要把单一业务点扩大成整套
-回归；Figma/UI 内容只用于校准当前业务链相关页面。
+必须优先使用其中的 `business_flow` 作为场景主线。`business_flow` 是强约束：
+不要把单一业务点扩大成整套回归、控件遍历或相邻功能；Figma/UI 内容只用于校准
+当前业务链相关页面。
 
 ## 测试设计方法
 

@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 
 HIGH_RISK_TERMS = ("支付", "删除", "覆盖基线", "确认打印", "开始打印", "提交订单")
+DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
 
 
 class BusinessContextBuilder:
@@ -33,13 +34,15 @@ class BusinessContextBuilder:
             source_context.get("target"),
             target,
         )
-        business_flow = self._extract_flow(merged, source_context, requirement_text)
+        business_flow, business_flow_source = self._extract_flow(merged, source_context, requirement_text)
         risk_hits = self._risk_hits(" ".join([target, requirement_text, " ".join(business_flow)]))
         intent = self._detect_intent(merged, source_context, target, requirement_text)
         ui_context = self._ui_context(merged, source_context)
         return {
             "business_flow": business_flow,
             "business_flow_text": "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(business_flow)) or "待模型从需求中提取",
+            "business_flow_source": business_flow_source,
+            "business_flow_required": True,
             "intent": intent,
             "risk_level": "high" if risk_hits else self._first_text(merged.get("riskLevel"), "low"),
             "risk_hits": risk_hits,
@@ -76,26 +79,46 @@ class BusinessContextBuilder:
                 return text
         return ""
 
-    def _extract_flow(self, ctx: Dict[str, Any], source_context: Dict[str, Any], requirement_text: str) -> List[str]:
+    def _extract_flow(self, ctx: Dict[str, Any], source_context: Dict[str, Any], requirement_text: str) -> tuple[List[str], str]:
         candidates: List[str] = []
+        source = "fallback"
         for value in (
             ctx.get("businessPath"),
             ctx.get("business_path"),
             ctx.get("path"),
+            ctx.get("businessFlow"),
+            ctx.get("business_flow"),
             source_context.get("path"),
+            source_context.get("businessFlow"),
+            source_context.get("business_flow"),
         ):
-            candidates.extend(self._split_flow(value))
+            parts = self._split_flow(value)
+            if parts and source == "fallback":
+                source = "explicit"
+            candidates.extend(parts)
         for case in ctx.get("cases") or []:
             if isinstance(case, dict):
-                candidates.extend(self._split_flow(case.get("business_path") or case.get("path") or case.get("title")))
+                parts = self._split_flow(
+                    case.get("business_path")
+                    or case.get("businessPath")
+                    or case.get("path")
+                    or case.get("title")
+                )
+                if parts and source == "fallback":
+                    source = "case"
+                candidates.extend(parts)
         if not candidates:
             candidates.extend(self._extract_flow_from_text(requirement_text))
+            if candidates:
+                source = "requirement_text"
         cleaned = []
         for item in candidates:
             item = re.sub(r"\s+", " ", str(item or "").strip(" -:：>→"))
             if item and item not in cleaned:
                 cleaned.append(item)
-        return cleaned[:12] or ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
+        if cleaned:
+            return cleaned[:12], source
+        return list(DEFAULT_BUSINESS_FLOW), "default"
 
     def _split_flow(self, value: Any) -> List[str]:
         if isinstance(value, list):

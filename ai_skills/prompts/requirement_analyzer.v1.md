@@ -10,7 +10,8 @@
 
 如果输入 payload 中存在 `businessContext` 或 `promptCenter.businessContext`，
 必须优先参考其中的 `target`、`business_flow`、`risk_hits`、`ui_context` 和
-`source_summary`。这些字段用于统一业务主链，不改变本 skill 的输出 schema。
+`source_summary`。`business_flow` 是强约束：分析出的需求点、风险和问题必须围绕
+当前业务主链展开；资料不足时写入 `questions` / `missing_inputs`，不得补成相邻功能。
 
 ## 输入来源
 
