@@ -92,6 +92,22 @@ sudo vim /opt/midscene.env
 sudo systemctl restart midscene-task
 ```
 
+For one-command release from a local development machine:
+
+```bash
+bash deploy/release-server.sh root@<server>
+```
+
+The release script runs local static and visual checks, builds a fresh package,
+uploads it to `/tmp`, installs it on the server, restarts `midscene-task`, and
+checks `/api/health`. Useful options:
+
+```bash
+SSH_PORT=2222 bash deploy/release-server.sh root@<server>
+RUN_TESTS=0 bash deploy/release-server.sh root@<server>
+HEALTH_URLS="http://127.0.0.1:8088/api/health http://127.0.0.1:8091/api/health" bash deploy/release-server.sh root@<server>
+```
+
 At minimum, configure:
 
 - `MIDSCENE_RUNNER_TOKEN`
