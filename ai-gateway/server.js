@@ -461,7 +461,13 @@ app.post('/ai/generate-yaml', asyncRoute(async (req, res) => {
   const body = {
     appName: req.body?.appName || '',
     platform: req.body?.platform || 'android',
-    testCase: req.body?.testCase || '',
+    target: req.body?.target || req.body?.goal || '',
+    testCase: req.body?.testCase || req.body?.target || '',
+    requirement: req.body?.requirement || '',
+    sourceType: req.body?.sourceType || '',
+    sourceContext: req.body?.sourceContext || {},
+    businessContext: req.body?.businessContext || {},
+    promptCenter: req.body?.promptCenter || {},
   };
   const {output} = await callAi('generate_yaml', body, {stripFence: true});
   const validation = validateMidsceneYaml(output);

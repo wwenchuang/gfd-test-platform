@@ -14,6 +14,7 @@ import urllib.parse
 import uuid
 import base64
 import io
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from task_server.core.http_client import http_client
@@ -2668,17 +2669,33 @@ def _agent_pdf_text_from_base64(item, limit=6000):
         return ""
 
 
+def _clean_agent_source_text(text, limit=0):
+    value = unicodedata.normalize("NFKC", str(text or ""))
+    value = value.replace("\u2efa", "页").replace("\u2fb3", "首")
+    value = value.translate(str.maketrans({
+        "⼀": "一", "⼊": "入", "⼉": "儿", "⼝": "口", "⼤": "大", "⼩": "小",
+        "⼦": "子", "⽂": "文", "⽚": "片", "⽣": "生", "⽤": "用", "⽬": "目",
+        "⽰": "示", "⾃": "自", "⾏": "行", "⾼": "高", "⾳": "音", "⾸": "首",
+        "⻓": "长", "⻚": "页", "⻰": "龙",
+    }))
+    value = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", value)
+    value = re.sub(r"[ \t\r\f\v]+", " ", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    value = value.strip()
+    return value[:limit] if limit and limit > 0 else value
+
+
 def _agent_file_text(item, limit=1800):
     content = item.get("content")
     if isinstance(content, str) and content.strip():
-        return content.strip()[:limit]
+        return _clean_agent_source_text(content, limit=limit)
     text = item.get("text")
     if isinstance(text, str) and text.strip():
-        return text.strip()[:limit]
+        return _clean_agent_source_text(text, limit=limit)
     name = str(item.get("name") or "")
     content_type = str(item.get("type") or "")
     if re.search(r"\.pdf$", name, re.I) or "pdf" in content_type.lower():
-        return _agent_pdf_text_from_base64(item, limit=limit)
+        return _clean_agent_source_text(_agent_pdf_text_from_base64(item, limit=limit), limit=limit)
     return ""
 
 
@@ -2743,6 +2760,22 @@ def _infer_agent_source_type(source_type, material, refs=None):
     if has_figma:
         return "figma"
     return source_type
+
+
+def _agent_explicit_reuse_requested(run, source_type=""):
+    text = " ".join([
+        str(run.get("target") or ""),
+        str(run.get("scope") or ""),
+        str(source_type or run.get("sourceType") or ""),
+    ])
+    return bool(re.search(r"(回归|基线|复用|已有用例|旧用例|失败任务|failed[_ -]?job|regression|reuse|baseline)", text, re.I))
+
+
+def _agent_is_new_requirement_run(run, source_context=None):
+    source_context = source_context if isinstance(source_context, dict) else (run.get("artifacts") or {}).get("sourceContext") or {}
+    source_type = str(source_context.get("sourceType") or run.get("sourceType") or "manual").lower()
+    has_requirement = bool(source_context.get("requirementText") or source_context.get("figmaUrl") or source_context.get("uiDesigns"))
+    return source_type in ("requirement", "figma") and has_requirement and not _agent_explicit_reuse_requested(run, source_type)
 
 
 def _find_generate_job(generate_job_id="", case_set_id=""):
@@ -2903,6 +2936,8 @@ CASE_MATCH_GENERIC_KEYWORDS = {
     "相关", "匹配", "确认", "选择", "按钮", "文本", "页面知识", "设计稿", "figma",
     "输入来源", "上传资料", "其中截图", "说明文件", "需求说明文件", "进入稳定起点",
     "执行核心业务动作", "校验业务结果", "稳定起点", "核心业务动作", "业务动作", "业务结果",
+    "pdf", "时间", "创建", "背景", "需求介绍", "需求文档", "建模页需求文档", "ai建模需求",
+    "生成并", "ai", "p0", "状态", "版本号", "负责人", "产品经理", "赵子寒",
 }
 
 CASE_MATCH_META_KEYWORD_PARTS = {
@@ -2931,6 +2966,8 @@ def _is_business_keyword(term):
         return False
     low = text.lower()
     core = _business_keyword_core(text)
+    if re.fullmatch(r"\d{4,}", core) or re.fullmatch(r"p\d+", core, re.I):
+        return False
     if low in CASE_MATCH_GENERIC_KEYWORDS or text in CASE_MATCH_GENERIC_KEYWORDS or core in CASE_MATCH_GENERIC_KEYWORDS:
         return False
     if any(part in low or part in text or part in core for part in CASE_MATCH_META_KEYWORD_PARTS):
@@ -2962,7 +2999,9 @@ def _keyword_source_text(source_context):
 
 
 def _business_keyword_candidates(text):
-    text = str(text or "")
+    text = _clean_agent_source_text(text)
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"(迭代负责人|产品经理|优先级|状态|版本号|变更人|主要变更内容|创建|需求基本信息|文档变更日志|前言)", " ", text)
     cleaned = re.sub(r"(回归一下|回归|基线测试|测试基线|基线|测试用例|用例|帮我|请|一下|看看|验证|检查|执行|跑一下|跑下)", " ", text)
     candidates = []
     for raw in re.findall(r"[\u4e00-\u9fa5A-Za-z0-9_]{2,}", cleaned):
@@ -2975,12 +3014,20 @@ def _business_keyword_candidates(text):
 
 def _source_keywords(source_context, limit=12):
     text = _keyword_source_text(source_context)
-    raw_terms = _business_keyword_candidates(text)
+    compact_text = re.sub(r"\s+", "", text)
+    priority_terms = []
+    for term in (
+        "AI建模", "开始创作", "图片建模", "语音创作", "大家都在做", "我的作品",
+        "模型生成通知", "导航栏", "首页入口", "模型库", "搜索引擎", "直接生成模型",
+    ):
+        if term.lower() in text.lower() or term in text or term in compact_text:
+            priority_terms.append(term)
+    raw_terms = priority_terms + _business_keyword_candidates(text)
     terms = []
     for term in raw_terms:
         if not _is_business_keyword(term):
             continue
-        display_term = _business_keyword_core(term) or str(term).strip()
+        display_term = str(term).strip() if term in priority_terms else (_business_keyword_core(term) or str(term).strip())
         if display_term in terms:
             continue
         terms.append(display_term)
@@ -3357,6 +3404,27 @@ def _tool_case_retrieval(run):
                 call["durationMs"] = _compute_duration(call)
                 _log_tool_call(call, run.get("runId", ""))
                 return call
+        if _agent_is_new_requirement_run(run, source_context):
+            artifacts["matchedCases"] = []
+            artifacts["matchedCount"] = 0
+            artifacts["matchReason"] = "检测到需求/Figma 新需求输入，跳过旧基线复用匹配，直接生成新 YAML 草稿"
+            artifacts["caseRetrieval"] = {
+                "decision": "generate_draft",
+                "confidence": 1.0,
+                "strategy": "new_requirement_source",
+                "keywords": _source_keywords(source_context, limit=16),
+                "matchedKeywords": [],
+                "candidates": [],
+                "reason": artifacts["matchReason"],
+            }
+            artifacts["allowDraftGeneration"] = True
+            call["status"] = "SUCCESS"
+            call["outputSummary"] = artifacts["matchReason"]
+            call["keywords"] = artifacts["caseRetrieval"]["keywords"]
+            call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            call["durationMs"] = _compute_duration(call)
+            _log_tool_call(call, run.get("runId", ""))
+            return call
         query_text = "\n".join([
             run.get("target", ""),
             business_constraint.get("businessFlowText", ""),
@@ -4058,30 +4126,37 @@ def _tool_match_cases(run):
     return call
 
 
-def _agent_requirement_bullets(text, limit=6):
-    text = re.sub(r"\s+", " ", str(text or "")).strip()
+def _agent_requirement_bullets(text, limit=12):
+    text = _clean_agent_source_text(text)
     if not text:
         return []
     candidates = []
-    for pattern in (
-        r"(AI建模页[^。；\n]{0,80})",
-        r"(开始创作[^。；\n]{0,80})",
-        r"(图片建模[^。；\n]{0,80})",
-        r"(语音创作[^。；\n]{0,80})",
-        r"(大家都在做[^。；\n]{0,80})",
-        r"(模型生成通知[^。；\n]{0,80})",
-        r"(导航栏[^。；\n]{0,80})",
-        r"(首页[^。；\n]{0,80})",
-    ):
-        for item in re.findall(pattern, text):
-            item = str(item or "").strip(" ：:。；")
-            if item and item not in candidates:
+    patterns = [
+        r"(导航栏[^。\n；]{0,80}AI建模[^。\n；]{0,80})",
+        r"(首页[^。\n；]{0,120}AI建模[^。\n；]{0,80})",
+        r"(开始创作[^。\n；]{0,100})",
+        r"(图片建模[^。\n；]{0,100})",
+        r"(语音创作[^。\n；]{0,140})",
+        r"(大家都在做[^。\n；]{0,160})",
+        r"(我的作品[^。\n；]{0,120})",
+        r"(模型生成通知[^。\n；]{0,120})",
+        r"(匹配模型库[^。\n；]{0,120})",
+        r"(模型切换[^。\n；]{0,120})",
+    ]
+    for pattern in patterns:
+        for item in re.findall(pattern, text, flags=re.I):
+            item = _clean_agent_source_text(item).strip(" ：:。；")
+            if 6 <= len(item) <= 160 and item not in candidates:
                 candidates.append(item)
             if len(candidates) >= limit:
-                return candidates
+                return candidates[:limit]
     for item in re.split(r"[。；\n]", text):
-        item = str(item or "").strip()
-        if 6 <= len(item) <= 90 and item not in candidates:
+        item = _clean_agent_source_text(item).strip(" ：:。；")
+        if (
+            8 <= len(item) <= 120
+            and not re.search(r"(负责人|产品经理|版本号|变更|优先级|状态|链接|设计稿|需求文档)", item)
+            and item not in candidates
+        ):
             candidates.append(item)
         if len(candidates) >= limit:
             break
@@ -4102,6 +4177,111 @@ def _agent_safe_assert_text(value):
     return text
 
 
+def _agent_yaml_step(action, value, indent="      ", timeout=None):
+    line = f'{indent}- {action}: "{_agent_safe_assert_text(value)}"'
+    if timeout:
+        line += f"\n{indent}  timeout: {int(timeout)}"
+    return line
+
+
+def _agent_yaml_task(name, steps):
+    lines = [
+        f'  - name: "{_yaml_double_quote(name[:60])}"',
+        "    # agent.generated: fallback_requirement_draft",
+        "    # agent.note: AI Gateway 生成失败或输出不可执行时，按需求/Figma 资料生成的多任务可确认草稿。",
+        "    flow:",
+        '      - runAdbShell: "am force-stop com.kfb.model"',
+        "      - sleep: 1500",
+        "      - launch: com.kfb.model",
+        _agent_yaml_step("aiWaitFor", "App 首页已加载完成，底部导航或首页核心内容可见", timeout=60000),
+    ]
+    lines.extend(steps)
+    lines.extend([
+        _agent_yaml_step("aiAssert", "当前任务未出现加载失败、网络错误、空白页或异常弹窗"),
+        '      - runAdbShell: "am force-stop com.kfb.model"',
+        "      - sleep: 800",
+    ])
+    return "\n".join(lines)
+
+
+def _agent_requirement_task_specs(source_text, source_context):
+    text = _clean_agent_source_text(source_text)
+    specs = []
+
+    def add(key, name, steps):
+        if key not in [item["key"] for item in specs]:
+            specs.append({"key": key, "name": name, "steps": steps})
+
+    add("home_entry", "AI建模首页入口与导航入口验收", [
+        _agent_yaml_step("aiAssert", "首页底部导航中间入口已展示为 AI建模 或 3D/AI建模入口"),
+        _agent_yaml_step("aiAssert", "首页存在 AI建模能力入口，且入口排序位于主要学习入口之后的核心区域"),
+        _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+        _agent_yaml_step("aiWaitFor", "进入 AI建模页，页面标题或核心模块可见", timeout=60000),
+    ])
+    if re.search(r"开始创作|描述你想要做", text):
+        add("start_create", "AI建模开始创作入口验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页已打开，开始创作模块可见", timeout=60000),
+            _agent_yaml_step("aiAssert", "开始创作模块展示描述输入提示、图片建模入口和语音创作入口"),
+            _agent_yaml_step("aiTap", "AI建模页的开始创作按钮"),
+            _agent_yaml_step("aiWaitFor", "进入 AI建模内页，能看到描述输入区域或生成模型相关操作区", timeout=60000),
+        ])
+    if re.search(r"图片建模|图⽚建模|上传", text):
+        add("image_modeling", "AI建模图片建模入口验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页已打开，图片建模入口可见", timeout=60000),
+            _agent_yaml_step("aiTap", "图片建模入口"),
+            _agent_yaml_step("aiWaitFor", "进入图片建模上传页或图片建模弹窗，上传图片相关操作可见", timeout=60000),
+            _agent_yaml_step("aiAssert", "图片建模页面包含上传图片、直接生成模型或返回关闭等核心控件"),
+        ])
+    if re.search(r"语音创作|语⾳创作|正在听你说|听清楚啦|发送", text):
+        add("voice_create", "AI建模语音创作弹窗验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页已打开，语音创作入口可见", timeout=60000),
+            _agent_yaml_step("aiTap", "语音创作入口"),
+            _agent_yaml_step("aiWaitFor", "语音创作弹窗打开，能看到语音输入提示或发送按钮", timeout=60000),
+            _agent_yaml_step("aiAssert", "语音创作弹窗包含正在听取、完成听取、发送或关闭等可见状态"),
+        ])
+    if re.search(r"大家都在做|模型标题|儿童友好|emoji", text, re.I):
+        add("popular_models", "AI建模大家都在做内容验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页已打开，大家都在做模块可见", timeout=60000),
+            _agent_yaml_step("aiAssert", "大家都在做模块展示模型标题或推荐内容，标题简短且适合儿童理解"),
+            _agent_yaml_step("aiAssert", "推荐内容区域没有空白占位、加载失败或明显不适合儿童的内容"),
+        ])
+    if re.search(r"我的作品|倒序|所有.*ai建模", text, re.I):
+        add("my_works", "AI建模我的作品模块验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页已打开，我的作品模块或查看全部入口可见", timeout=60000),
+            _agent_yaml_step("aiAssert", "我的作品模块按时间维度展示 AI建模作品列表或无作品空态"),
+            _agent_yaml_step("aiTap", "我的作品模块的查看全部入口"),
+            _agent_yaml_step("aiWaitFor", "进入我的作品列表页，列表或空态说明可见", timeout=60000),
+        ])
+    if re.search(r"模型生成通知|应用内弹窗|消息栏", text):
+        add("model_notice", "AI建模生成通知入口验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页或 AI建模内页已打开", timeout=60000),
+            _agent_yaml_step("aiAssert", "模型生成相关状态能通过应用内提示、通知入口或任务状态区域反馈给用户"),
+        ])
+    figma_hint = (source_context or {}).get("figmaUrl") or ""
+    if figma_hint:
+        add("figma_visual", "AI建模Figma关键视觉还原验收", [
+            _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+            _agent_yaml_step("aiWaitFor", "AI建模页已打开，核心模块可见", timeout=60000),
+            _agent_yaml_step("aiAssert", f"页面核心结构与 Figma 关键区域一致，参考 {figma_hint}"),
+        ])
+    if len(specs) < 5:
+        for item in _agent_requirement_bullets(text, limit=8):
+            add(f"req_{len(specs)}", f"AI建模需求点验收-{len(specs) + 1}", [
+                _agent_yaml_step("aiTap", "首页 AI建模入口或底部中间 AI建模入口"),
+                _agent_yaml_step("aiWaitFor", "AI建模页已打开，核心业务区域可见", timeout=60000),
+                _agent_yaml_step("aiAssert", f"需求点验收：{item}"),
+            ])
+            if len(specs) >= 6:
+                break
+    return specs[:10]
+
+
 def _finish_agent_tool_call(call, run):
     call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     call["durationMs"] = _compute_duration(call)
@@ -4111,32 +4291,90 @@ def _finish_agent_tool_call(call, run):
 
 def _agent_fallback_yaml_draft(run, source_context, source_text):
     target = str(run.get("target") or "AI 建模需求验收").strip()
-    bullets = _agent_requirement_bullets(source_text, limit=5)
-    if not bullets:
-        bullets = ["AI建模入口展示正确", "开始创作可进入 AI 建模流程", "页面无加载失败或异常弹窗"]
-    checks = "\n".join(f"      - aiAssert: \"需求点验收：{_agent_safe_assert_text(item)}；当前页面内容符合预期且无异常弹窗\"" for item in bullets)
-    figma_hint = source_context.get("figmaUrl") or ""
-    figma_step = f"\n      - aiAssert: \"页面视觉与 Figma 关键区域一致：{_yaml_double_quote(figma_hint)}\"" if figma_hint else ""
+    specs = _agent_requirement_task_specs(source_text or target, source_context or {})
+    if not specs:
+        specs = _agent_requirement_task_specs("AI建模页 开始创作 图片建模 语音创作 大家都在做 我的作品", source_context or {})
+    tasks_yaml = "\n".join(_agent_yaml_task(spec["name"], spec["steps"]) for spec in specs)
     return f"""android:
   tasks:
-  - name: "{_yaml_double_quote(target[:48])}"
-    # agent.generated: fallback_draft
-    # agent.note: AI 返回空 YAML 时生成的可确认草稿；执行前必须人工检查页面入口和断言。
-    flow:
-      - runAdbShell: "am force-stop com.kfb.model"
-      - sleep: 1500
-      - launch: com.kfb.model
-      - aiWaitFor: "App 首页已加载完成，底部导航或 AI 建模入口可见"
-        timeout: 60000
-      - aiAssert: "首页存在 AI 建模相关入口，或能通过底部中间 3D/AI 建模入口进入建模能力区"
-      - aiTap: "AI建模入口、底部中间 3D/AI建模按钮，或首页 AI建模卡片"
-      - aiWaitFor: "AI建模页或建模功能面板已打开，能看到开始创作、图片建模、语音创作或大家都在做等核心内容"
-        timeout: 60000
-{checks}{figma_step}
-      - aiAssert: "AI建模流程未出现加载失败、网络错误、空白页或异常弹窗"
-      - runAdbShell: "am force-stop com.kfb.model"
-      - sleep: 1000
+{tasks_yaml}
 """
+
+
+def _agent_source_files_for_generation(run):
+    files = []
+    for item in _agent_source_files(run):
+        if not isinstance(item, dict):
+            continue
+        raw = dict(item)
+        if raw.get("kind") == "screenshot":
+            continue
+        if not (raw.get("content") or raw.get("text") or raw.get("contentBase64")):
+            continue
+        files.append(raw)
+    return files
+
+
+def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text):
+    """Reuse the mature requirement/Figma -> cases/mindmap pipeline for Agent drafts."""
+    from task_server.services.yaml_service import (
+        cases_to_midscene_yaml,
+        generate_mindmap_from_request,
+        validate_midscene_yaml,
+    )
+
+    case_set_id = f"agent-{run.get('runId') or unique_millis_id('agent')}"
+    title = str(run.get("target") or source_context.get("target") or "AI Agent 新需求").strip()
+    module = clean_agent_module_name(run)
+    files = _agent_source_files_for_generation(run)
+    if source_text and not files:
+        files = [{
+            "name": "agent-requirement.md",
+            "type": "text/markdown",
+            "kind": "requirement_text",
+            "content": source_text,
+            "source": "agent-source-context",
+        }]
+    request_data = {
+        "case_set_id": case_set_id,
+        "title": title,
+        "module": module,
+        "files": files,
+        "figma_url": source_context.get("figmaUrl") or "",
+        "figmaUrl": source_context.get("figmaUrl") or "",
+        "app_package": _agent_app_package(run),
+        "use_knowledge_context": False,
+        "source": "agent",
+    }
+    result = generate_mindmap_from_request(request_data, job_id=None)
+    cases_payload = result.get("cases") if isinstance(result, dict) else {}
+    if not isinstance(cases_payload, dict):
+        cases_payload = {}
+    _title, yaml_text = cases_to_midscene_yaml(cases_payload, app_package=_agent_app_package(run))
+    yaml_check = validate_midscene_yaml(yaml_text)
+    yaml_executability = validate_agent_yaml_content(yaml_text)
+    artifacts = run.setdefault("artifacts", {})
+    artifacts["generatedCases"] = cases_payload
+    artifacts["generationPipeline"] = {
+        "source": "mindmap_pipeline",
+        "caseSetId": result.get("case_set_id"),
+        "caseCount": result.get("caseCount"),
+        "manualCaseCount": result.get("manualCaseCount"),
+        "scenarioCount": result.get("scenarioCount"),
+        "summaryFiles": result.get("summaryFiles"),
+        "yamlCheck": yaml_check,
+        "yamlExecutability": yaml_executability,
+    }
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    if summary:
+        artifacts["generationSummary"] = summary
+        if summary.get("ui_design_assets"):
+            source_context["uiDesignAssets"] = summary.get("ui_design_assets") or []
+        if summary.get("ignored_figma_pages"):
+            source_context["figmaIgnoredPages"] = summary.get("ignored_figma_pages") or source_context.get("figmaIgnoredPages") or []
+        if summary.get("knowledge_pages") or summary.get("used_reference_pages"):
+            source_context["generationReferencePages"] = summary.get("knowledge_pages") or summary.get("used_reference_pages") or []
+    return yaml_text, result
 
 
 def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
@@ -4206,6 +4444,54 @@ def _tool_generate_yaml(run):
             artifacts["promptCenter"] = prompt_ctx.get("promptCenter")
         except Exception:
             prompt_ctx = {}
+        if _agent_is_new_requirement_run(run, source_context):
+            try:
+                yaml_text, pipeline_result = _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
+                check = validate_agent_yaml_content(yaml_text)
+                if check.get("ok"):
+                    _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="mindmap_pipeline")
+                    artifacts["yamlValidation"] = {
+                        "ok": True,
+                        "issues": [],
+                        "results": [{"type": "mindmap_pipeline", **check}],
+                    }
+                    call["status"] = "WAIT_CONFIRM"
+                    call["outputSummary"] = (
+                        "已调用需求解析/脑图生成/Figma解析主链生成 YAML 草稿，"
+                        f"用例 {pipeline_result.get('caseCount') or check.get('taskCount')} 条，"
+                        f"场景 {pipeline_result.get('scenarioCount') or 0} 个，等待人工确认"
+                    )
+                    call["artifactRefs"] = [
+                        str((pipeline_result.get("summaryFiles") or {}).get("mindmap") or ""),
+                        str((pipeline_result.get("summaryFiles") or {}).get("markdown") or ""),
+                    ]
+                    return _finish_agent_tool_call(call, run)
+                artifacts["yamlValidation"] = {"ok": False, "issues": check.get("issues") or [], "results": [{"type": "mindmap_pipeline", **check}]}
+                artifacts.setdefault("generationPipeline", {})["yamlInvalid"] = check
+            except Exception as e:
+                artifacts.setdefault("generationPipeline", {})["error"] = str(e)[:500]
+                attach_diagnosis(call, make_diagnosis(
+                    "需求解析/脑图生成主链失败",
+                    "已准备回退到 Agent 多任务兜底草稿。",
+                    ["检查 AI Skills / Figma Token", "查看 generationPipeline.error", "确认草稿后再同步 Sonic"],
+                    error=str(e)[:300],
+                ))
+            fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
+            fallback_check = validate_agent_yaml_content(fallback_yaml)
+            if fallback_check.get("ok"):
+                _save_agent_yaml_draft(run, artifacts, fallback_yaml, draft_reason="fallback_after_mindmap_pipeline")
+                artifacts["yamlValidation"] = {
+                    "ok": False,
+                    "issues": ["需求解析/脑图生成主链未产出可执行 YAML"],
+                    "fallbackOk": True,
+                    "results": [{"type": "fallback", **fallback_check}],
+                }
+                call["status"] = "WAIT_CONFIRM"
+                call["outputSummary"] = f"需求解析/脑图主链未产出可执行 YAML，已生成多任务兜底草稿（{fallback_check.get('taskCount')} 条）"
+                return _finish_agent_tool_call(call, run)
+            call["status"] = "FAILED"
+            call["error"] = "需求解析主链和兜底草稿均未产出可执行 YAML：" + "；".join(fallback_check.get("issues") or [])
+            return _finish_agent_tool_call(call, run)
         if _ai_gateway_available():
             try:
                 resp = _ai_gateway_post("/ai/generate-yaml", {

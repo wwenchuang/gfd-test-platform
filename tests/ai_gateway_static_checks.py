@@ -84,6 +84,7 @@ def main():
 
     server = (GATEWAY / "server.js").read_text(encoding="utf-8")
     require("/ai/generate-yaml" in server and "/ai/validate-yaml" in server, "server must expose P0 endpoints")
+    require("req.body?.requirement" in server and "req.body?.sourceContext" in server and "req.body?.businessContext" in server, "generate-yaml endpoint must pass requirement/source/Figma context to the model")
     require("/ai/providers" in server and "/ai/providers/test" in server and "/ai/model-router" in server, "server must expose provider and model-router endpoints")
     require("/ai/optimize-yaml" in server and "/ai/chat" in server, "server must expose AI Gateway integration endpoints")
     require("PROVIDERS_FILE" in server and "apiKeyEnv" in server and "providerId" in server, "server must route by providers.json and apiKeyEnv")
