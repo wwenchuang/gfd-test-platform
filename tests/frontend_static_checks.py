@@ -163,6 +163,7 @@ def main():
     for source in ("manual", "requirement", "figma", "failed_job"):
         require(source in html, f"Agent source type missing: {source}")
     require("sourceType: source.sourceType" in html and "sourceRefs: source.sourceRefs" in html, "Agent payload must include sourceType/sourceRefs")
+    require("if (sourceType === 'manual')" in html and "hasFiles" in html and "sourceType = 'requirement'" in html and "sourceType = 'figma'" in html, "Agent frontend must promote manual source type when files or Figma are attached")
     require("executionMode: 'RUNNER_JOB'" in html, "Agent payload must default to Runner job execution instead of Sonic suite execution")
     require("输入来源：" in html and "整理输入来源" in html, "Agent preview/timeline copy must explain source preparation")
     require("${AGENT_TIMELINE_STEPS.length} 步 Agent 链路" in html and "['PREPARE_SOURCE', '整理输入来源']" in html, "Agent timeline must use dynamic count and include PREPARE_SOURCE")

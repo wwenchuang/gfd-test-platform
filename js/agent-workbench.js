@@ -1746,7 +1746,7 @@ function renderAgentSourcePanel() {
 }
 
 function collectAgentSourceRefs() {
-  const sourceType = document.getElementById('agent-source-type')?.value || 'manual';
+  let sourceType = document.getElementById('agent-source-type')?.value || 'manual';
   const refs = {};
   const put = (key, id) => {
     const value = document.getElementById(id)?.value?.trim();
@@ -1759,6 +1759,11 @@ function collectAgentSourceRefs() {
   if (sourceType === 'failed_job' && !refs.failedJobId) {
     const selected = document.getElementById('agent-failed-job')?.value?.trim();
     if (selected) refs.failedJobId = selected;
+  }
+  if (sourceType === 'manual') {
+    const hasFiles = agentSourceFiles.some(item => item.kind !== 'screenshot');
+    if (hasFiles) sourceType = 'requirement';
+    else if (refs.figmaUrl) sourceType = 'figma';
   }
   return { sourceType, sourceRefs: refs };
 }

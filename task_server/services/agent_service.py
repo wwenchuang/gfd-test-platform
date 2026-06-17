@@ -12,6 +12,8 @@ import threading
 import time
 import urllib.parse
 import uuid
+import base64
+import io
 from typing import Any, Dict, List, Optional
 
 from task_server.core.http_client import http_client
@@ -2577,19 +2579,28 @@ def _agent_normalized_input(run):
     return data if isinstance(data, dict) else {}
 
 
+def _agent_source_inputs(run):
+    data = run.get("sourceInputs") if isinstance(run, dict) else {}
+    return data if isinstance(data, dict) else {}
+
+
 def _agent_source_files(run):
     normalized = _agent_normalized_input(run)
-    files = normalized.get("files") or []
-    if not isinstance(files, list):
-        return []
-    return [item for item in files if isinstance(item, dict)]
+    source_inputs = _agent_source_inputs(run)
+    items = []
+    for files in (normalized.get("files"), source_inputs.get("files"), run.get("files") if isinstance(run, dict) else None):
+        if isinstance(files, list):
+            items.extend(item for item in files if isinstance(item, dict))
+    return items
 
 
 def _agent_source_images(run):
     normalized = _agent_normalized_input(run)
-    images = normalized.get("images") or []
-    if not isinstance(images, list):
-        images = []
+    source_inputs = _agent_source_inputs(run)
+    images = []
+    for raw_images in (normalized.get("images"), source_inputs.get("images"), run.get("images") if isinstance(run, dict) else None):
+        if isinstance(raw_images, list):
+            images.extend(item for item in raw_images if isinstance(item, dict))
     image_items = []
     seen = set()
 
@@ -2634,6 +2645,29 @@ def _agent_file_kind(item):
     return "requirement_file"
 
 
+def _agent_pdf_text_from_base64(item, limit=6000):
+    raw = str(item.get("contentBase64") or "").strip()
+    if not raw:
+        return ""
+    try:
+        data = base64.b64decode(raw, validate=False)
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(data))
+        parts = []
+        total = 0
+        for page in reader.pages[:12]:
+            text = page.extract_text() or ""
+            if not text.strip():
+                continue
+            parts.append(text)
+            total += len(text)
+            if total >= limit:
+                break
+        return "\n".join(parts).strip()[:limit]
+    except Exception:
+        return ""
+
+
 def _agent_file_text(item, limit=1800):
     content = item.get("content")
     if isinstance(content, str) and content.strip():
@@ -2641,6 +2675,10 @@ def _agent_file_text(item, limit=1800):
     text = item.get("text")
     if isinstance(text, str) and text.strip():
         return text.strip()[:limit]
+    name = str(item.get("name") or "")
+    content_type = str(item.get("type") or "")
+    if re.search(r"\.pdf$", name, re.I) or "pdf" in content_type.lower():
+        return _agent_pdf_text_from_base64(item, limit=limit)
     return ""
 
 
@@ -2661,18 +2699,25 @@ def _agent_file_meta(item):
 
 def _agent_source_material_context(run):
     normalized = _agent_normalized_input(run)
+    source_inputs = _agent_source_inputs(run)
     files = _agent_source_files(run)
     images = _agent_source_images(run)
     text_parts = []
-    if normalized.get("requirementText"):
-        text_parts.append(str(normalized.get("requirementText") or "").strip())
+    for raw_text in (normalized.get("requirementText"), source_inputs.get("requirementText"), run.get("requirementText") if isinstance(run, dict) else None):
+        if raw_text:
+            text_parts.append(str(raw_text or "").strip())
     for item in files:
-        text = _agent_file_text(item)
+        text = _agent_file_text(item, limit=6000)
         if text:
             text_parts.append(f"【{item.get('name') or '资料'}】\n{text}")
     metas = [_agent_file_meta(item) for item in files]
+    figma_url = (
+        normalized.get("figmaUrl")
+        or source_inputs.get("figmaUrl")
+        or (run.get("figmaUrl") if isinstance(run, dict) else "")
+    )
     return {
-        "figmaUrl": str(normalized.get("figmaUrl") or "").strip(),
+        "figmaUrl": str(figma_url or "").strip(),
         "requirementText": "\n\n".join(part for part in text_parts if part).strip(),
         "uploadedFiles": metas,
         "uploadedImages": [_agent_file_meta(item) for item in images],
@@ -2680,6 +2725,24 @@ def _agent_source_material_context(run):
         "imageCount": len(images),
         "requirementFileCount": len([m for m in metas if m.get("kind") != "screenshot"]),
     }
+
+
+def _infer_agent_source_type(source_type, material, refs=None):
+    source_type = str(source_type or "manual").lower()
+    refs = refs if isinstance(refs, dict) else {}
+    if source_type != "manual":
+        return source_type
+    has_requirement = bool(
+        material.get("requirementText")
+        or material.get("requirementFileCount")
+        or _source_ref_value(refs, "generateJobId", "jobId", "caseSetId", "case_set_id")
+    )
+    has_figma = bool(material.get("figmaUrl") or _source_ref_value(refs, "figmaUrl", "figma_url"))
+    if has_requirement:
+        return "requirement"
+    if has_figma:
+        return "figma"
+    return source_type
 
 
 def _find_generate_job(generate_job_id="", case_set_id=""):
@@ -3586,6 +3649,11 @@ def _tool_prepare_source(run):
     """Normalize Agent input sources before case matching."""
     refs = run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {}
     source_type = str(run.get("sourceType") or refs.get("sourceType") or "manual").lower()
+    material = _agent_source_material_context(run)
+    inferred_source_type = _infer_agent_source_type(source_type, material, refs)
+    if inferred_source_type != source_type:
+        source_type = inferred_source_type
+        run["sourceType"] = source_type
     call = {
         "callId": str(uuid.uuid4())[:8],
         "toolName": "prepare_source",
@@ -3616,7 +3684,6 @@ def _tool_prepare_source(run):
         "warnings": [],
     }
     try:
-        material = _agent_source_material_context(run)
         if source_type == "failed_job":
             job_id = run.get("failedJobId") or _source_ref_value(refs, "failedJobId", "jobId")
             job = _find_job_for_agent(job_id)
@@ -3991,6 +4058,121 @@ def _tool_match_cases(run):
     return call
 
 
+def _agent_requirement_bullets(text, limit=6):
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not text:
+        return []
+    candidates = []
+    for pattern in (
+        r"(AI建模页[^。；\n]{0,80})",
+        r"(开始创作[^。；\n]{0,80})",
+        r"(图片建模[^。；\n]{0,80})",
+        r"(语音创作[^。；\n]{0,80})",
+        r"(大家都在做[^。；\n]{0,80})",
+        r"(模型生成通知[^。；\n]{0,80})",
+        r"(导航栏[^。；\n]{0,80})",
+        r"(首页[^。；\n]{0,80})",
+    ):
+        for item in re.findall(pattern, text):
+            item = str(item or "").strip(" ：:。；")
+            if item and item not in candidates:
+                candidates.append(item)
+            if len(candidates) >= limit:
+                return candidates
+    for item in re.split(r"[。；\n]", text):
+        item = str(item or "").strip()
+        if 6 <= len(item) <= 90 and item not in candidates:
+            candidates.append(item)
+        if len(candidates) >= limit:
+            break
+    return candidates[:limit]
+
+
+def _yaml_double_quote(value):
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _agent_safe_assert_text(value):
+    text = _yaml_double_quote(value)
+    for keyword in HIGH_RISK_KEYWORDS:
+        if keyword:
+            text = text.replace(keyword, "相关高风险词")
+    return text
+
+
+def _finish_agent_tool_call(call, run):
+    call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    call["durationMs"] = _compute_duration(call)
+    _log_tool_call(call, run.get("runId", ""))
+    return call
+
+
+def _agent_fallback_yaml_draft(run, source_context, source_text):
+    target = str(run.get("target") or "AI 建模需求验收").strip()
+    bullets = _agent_requirement_bullets(source_text, limit=5)
+    if not bullets:
+        bullets = ["AI建模入口展示正确", "开始创作可进入 AI 建模流程", "页面无加载失败或异常弹窗"]
+    checks = "\n".join(f"      - aiAssert: \"需求点验收：{_agent_safe_assert_text(item)}；当前页面内容符合预期且无异常弹窗\"" for item in bullets)
+    figma_hint = source_context.get("figmaUrl") or ""
+    figma_step = f"\n      - aiAssert: \"页面视觉与 Figma 关键区域一致：{_yaml_double_quote(figma_hint)}\"" if figma_hint else ""
+    return f"""android:
+  tasks:
+  - name: "{_yaml_double_quote(target[:48])}"
+    # agent.generated: fallback_draft
+    # agent.note: AI 返回空 YAML 时生成的可确认草稿；执行前必须人工检查页面入口和断言。
+    flow:
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1500
+      - launch: com.kfb.model
+      - aiWaitFor: "App 首页已加载完成，底部导航或 AI 建模入口可见"
+        timeout: 60000
+      - aiAssert: "首页存在 AI 建模相关入口，或能通过底部中间 3D/AI 建模入口进入建模能力区"
+      - aiTap: "AI建模入口、底部中间 3D/AI建模按钮，或首页 AI建模卡片"
+      - aiWaitFor: "AI建模页或建模功能面板已打开，能看到开始创作、图片建模、语音创作或大家都在做等核心内容"
+        timeout: 60000
+{checks}{figma_step}
+      - aiAssert: "AI建模流程未出现加载失败、网络错误、空白页或异常弹窗"
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1000
+"""
+
+
+def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
+    os.makedirs(AGENT_DRAFT_DIR, exist_ok=True)
+    draft_path = os.path.join(AGENT_DRAFT_DIR, f"{run.get('runId')}.yaml")
+    write_text_file(draft_path, yaml_text)
+    artifacts["generatedYaml"] = yaml_text
+    artifacts["draftPath"] = draft_path
+    artifacts["draftConfirmed"] = False
+    artifacts["generatedYamlPath"] = ""
+    artifacts["yamlRefs"] = [{
+        "type": "draft",
+        "module": "",
+        "file": os.path.basename(draft_path),
+        "path": draft_path,
+        "content": "",
+        "confirmed": False,
+        "reason": draft_reason,
+    }]
+    artifacts["requiresConfirm"] = True
+    run["status"] = "WAIT_CONFIRM"
+    run["currentStep"] = "WAIT_CONFIRM"
+    if not any(item.get("type") == "generated_yaml_draft" for item in run.get("pendingConfirmations") or []):
+        run.setdefault("pendingConfirmations", []).append({
+            "id": f"confirm-{int(time.time())}",
+            "type": "generated_yaml_draft",
+            "title": "确认 YAML 草稿",
+            "action": "confirm_yaml_draft",
+            "message": "Agent 已生成 YAML 草稿。请确认、编辑或保存为正式 YAML 后，才能同步 Sonic 和执行。",
+            "draftPath": draft_path,
+            "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "decision": None,
+        })
+    return draft_path
+
+
 def _tool_generate_yaml(run):
     """调用 AI Gateway 生成 YAML；已有 YAML 则跳过。"""
     call = {
@@ -4041,56 +4223,57 @@ def _tool_generate_yaml(run):
                 if yaml_text:
                     check = validate_agent_yaml_content(yaml_text)
                     if not check.get("ok"):
+                        fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
+                        fallback_check = validate_agent_yaml_content(fallback_yaml)
+                        if fallback_check.get("ok"):
+                            _save_agent_yaml_draft(run, artifacts, fallback_yaml, draft_reason="fallback_after_invalid_ai_yaml")
+                            artifacts["yamlValidation"] = {
+                                "ok": False,
+                                "issues": check.get("issues") or [],
+                                "fallbackOk": True,
+                                "results": [{"type": "ai", **check}, {"type": "fallback", **fallback_check}],
+                            }
+                            call["status"] = "WAIT_CONFIRM"
+                            call["outputSummary"] = "AI YAML 未通过强校验，已生成可确认兜底草稿"
+                            attach_diagnosis(call, make_diagnosis(
+                                "AI 生成 YAML 为空 tasks 或结构不可执行",
+                                "已基于需求/Figma 生成兜底草稿，但执行前仍需人工确认。",
+                                ["检查兜底草稿步骤", "结合 Figma 调整入口和断言", "确认后再同步 Sonic"],
+                                failedYaml=check.get("issues") or [],
+                            ))
+                            return _finish_agent_tool_call(call, run)
                         artifacts["yamlValidation"] = {"ok": False, "issues": check.get("issues") or [], "results": [{"type": "text", **check}]}
                         call["status"] = "FAILED"
                         call["error"] = "AI 生成 YAML 未通过强校验：" + "；".join(check.get("issues") or [])
-                        diagnosis = make_diagnosis(
+                        attach_diagnosis(call, make_diagnosis(
                             "AI 生成 YAML 为空 tasks 或结构不可执行",
-                            "无法保存为可确认草稿，也不能同步 Sonic。",
+                            "兜底草稿也未通过强校验，不能同步 Sonic。",
                             ["重新生成 YAML", "补充需求或 Figma 页面", "人工编辑 YAML 草稿后再确认"],
                             failedYaml=check.get("issues") or [],
-                        )
-                        artifacts["diagnosis"] = diagnosis
-                        attach_diagnosis(call, diagnosis)
-                        call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                        call["durationMs"] = _compute_duration(call)
-                        _log_tool_call(call, run.get("runId", ""))
-                        return call
-                    os.makedirs(AGENT_DRAFT_DIR, exist_ok=True)
-                    draft_path = os.path.join(AGENT_DRAFT_DIR, f"{run.get('runId')}.yaml")
-                    write_text_file(draft_path, yaml_text)
-                    artifacts["draftPath"] = draft_path
-                    artifacts["draftConfirmed"] = False
-                    artifacts["generatedYamlPath"] = ""
-                    artifacts["yamlRefs"] = [{
-                        "type": "draft",
-                        "module": "",
-                        "file": os.path.basename(draft_path),
-                        "path": draft_path,
-                        "content": "",
-                        "confirmed": False,
-                    }]
-                    artifacts["requiresConfirm"] = True
-                    run["status"] = "WAIT_CONFIRM"
-                    run["currentStep"] = "WAIT_CONFIRM"
-                    run.setdefault("pendingConfirmations", []).append({
-                        "id": f"confirm-{int(time.time())}",
-                        "type": "generated_yaml_draft",
-                        "title": "确认 YAML 草稿",
-                        "action": "confirm_yaml_draft",
-                        "message": "Agent 已生成 YAML 草稿。请确认、编辑或保存为正式 YAML 后，才能同步 Sonic 和执行。",
-                        "draftPath": draft_path,
-                        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                        "decision": None,
-                    })
+                        ))
+                        return _finish_agent_tool_call(call, run)
+                    _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="ai_gateway")
                 call["status"] = "WAIT_CONFIRM" if yaml_text else "FAILED"
                 call["outputSummary"] = "YAML 草稿生成完成，等待人工确认" if yaml_text else "YAML 生成返回空"
                 if not yaml_text:
-                    attach_diagnosis(call, make_diagnosis(
-                        "AI 生成 YAML 为空",
-                        "没有可审核的 YAML 草稿，不能继续执行。",
-                        ["重新生成 YAML", "补充需求资料", "检查 AI Gateway 返回"],
-                    ))
+                    fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
+                    fallback_check = validate_agent_yaml_content(fallback_yaml)
+                    if fallback_check.get("ok") and source_text:
+                        _save_agent_yaml_draft(run, artifacts, fallback_yaml, draft_reason="fallback_after_empty_ai_yaml")
+                        artifacts["yamlValidation"] = {"ok": False, "issues": ["AI Gateway 返回空 YAML"], "fallbackOk": True, "results": [{"type": "fallback", **fallback_check}]}
+                        call["status"] = "WAIT_CONFIRM"
+                        call["outputSummary"] = "AI 返回空 YAML，已基于需求/Figma 生成可确认兜底草稿"
+                        attach_diagnosis(call, make_diagnosis(
+                            "AI 生成 YAML 为空",
+                            "已生成可人工确认的兜底草稿，避免链路直接中断。",
+                            ["检查兜底草稿步骤", "必要时人工补充关键路径", "确认后再同步 Sonic"],
+                        ))
+                    else:
+                        attach_diagnosis(call, make_diagnosis(
+                            "AI 生成 YAML 为空",
+                            "没有可审核的 YAML 草稿，不能继续执行。",
+                            ["重新生成 YAML", "补充需求资料", "检查 AI Gateway 返回"],
+                        ))
             except Exception as e:
                 call["status"] = "SKIPPED"
                 call["outputSummary"] = f"AI Gateway YAML 生成失败：{str(e)[:200]}"

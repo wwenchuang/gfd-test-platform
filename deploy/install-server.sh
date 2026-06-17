@@ -40,6 +40,26 @@ then
   fi
 fi
 
+if ! python3 - <<'PY' >/dev/null 2>&1
+import pypdf
+PY
+then
+  echo "未检测到 pypdf，正在安装（用于 Agent 解析 PDF 需求文档）..."
+  pypdf_installed=0
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y python3-pypdf && pypdf_installed=1
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3-pypdf && pypdf_installed=1
+  fi
+  if [ "${pypdf_installed}" -eq 0 ] && python3 -m pip --version >/dev/null 2>&1; then
+    python3 -m pip install pypdf && pypdf_installed=1
+  fi
+  if [ "${pypdf_installed}" -eq 0 ]; then
+    echo "警告：无法自动安装 pypdf；Agent 仍可运行，但 PDF 需求文档只能使用文件名/备注。建议手动安装 pypdf。"
+  fi
+fi
+
 if ! getent group "${GROUP_NAME}" >/dev/null 2>&1; then
   groupadd --system "${GROUP_NAME}"
 fi
