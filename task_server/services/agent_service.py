@@ -5058,7 +5058,8 @@ def _tool_collect_report(run):
             _log_tool_call(call, run.get("runId", ""))
             return call
 
-        reports = []
+        execution_reports = []
+        yaml_execution_refs = []
         job_statuses = []
         failed_jobs = []
         success_jobs = []
@@ -5091,6 +5092,12 @@ def _tool_collect_report(run):
                     # 收集报告URL和路径
                     report_url = job.get("report_url") or job.get("reportUrl", "")
                     local_path = job.get("local_report_path") or job.get("localReportPath", "")
+                    yaml_execution_refs.append({
+                        "jobId": jid,
+                        "module": job.get("module", ""),
+                        "file": job.get("file", ""),
+                        "status": "success",
+                    })
                     report_entry = {
                         "jobId": jid,
                         "module": job.get("module", ""),
@@ -5099,7 +5106,8 @@ def _tool_collect_report(run):
                         "localPath": local_path,
                         "status": "success",
                     }
-                    reports.append(report_entry)
+                    if report_url or str(local_path).lower().endswith((".html", ".htm")):
+                        execution_reports.append(report_entry)
                     success_jobs.append(job_entry)
                 elif status in ("failed", "error", "timeout", "cancelled"):
                     # 收集失败信息
@@ -5207,8 +5215,10 @@ def _tool_collect_report(run):
 
         # 4. 生成摘要
         summary_parts = []
-        if reports:
-            summary_parts.append(f"{len(reports)} 个报告")
+        if execution_reports:
+            summary_parts.append(f"{len(execution_reports)} 个执行报告")
+        elif success_jobs:
+            summary_parts.append("0 个执行报告链接")
         if failed_jobs:
             summary_parts.append(f"{len(failed_jobs)} 个失败")
         if success_jobs:
@@ -5225,14 +5235,16 @@ def _tool_collect_report(run):
             report_status = "failed"
         elif running_jobs:
             report_status = "waiting"
-        elif job_ids and not reports and not sonic_results:
+        elif job_ids and not job_statuses and not sonic_results:
             report_status = "missing"
 
         # 5. 统一写入 artifacts.report
         artifacts["report"] = {
             "executionMode": str(run.get("executionMode") or run.get("execution_mode") or "RUNNER_JOB").strip().upper(),
             "status": report_status,
-            "reports": reports,
+            "reports": execution_reports,
+            "executionReports": execution_reports,
+            "yamlExecutionRefs": yaml_execution_refs,
             "jobStatuses": job_statuses,
             "failedJobs": failed_jobs,
             "successJobs": success_jobs,
@@ -5272,7 +5284,7 @@ def _tool_collect_report(run):
                 ))
         else:
             call["status"] = "SUCCESS"
-        call["outputSummary"] = f"收集到 {len(reports)} 个报告，{len(job_statuses)} 个任务状态"
+        call["outputSummary"] = f"收集到 {len(execution_reports)} 个执行报告，{len(job_statuses)} 个任务状态"
         if failed_jobs:
             call["outputSummary"] += f"（{len(failed_jobs)} 个失败）"
         if running_jobs:
@@ -5557,15 +5569,51 @@ def _tool_generate_summary(run):
         "input": {},
     }
     try:
+        artifacts = run.setdefault("artifacts", {})
         steps = run.get("steps", [])
         completed = sum(1 for s in steps if s.get("status") == "SUCCESS")
         failed = sum(1 for s in steps if str(s.get("status")).upper() in ("FAILED", "PARTIAL_FAILED"))
         skipped = sum(1 for s in steps if s.get("status") == "SKIPPED")
+        report = artifacts.get("report") or {}
+        failure = artifacts.get("failureAnalysis") or {}
+        matched_count = _safe_int_local(artifacts.get("matchedCount"), len(artifacts.get("matchedCases") or []))
+        report_count = len(report.get("executionReports") or report.get("reports") or [])
+        failed_jobs = report.get("failedJobs") or []
+        timeout_jobs = report.get("timeoutJobs") or []
+        running_jobs = report.get("runningJobs") or []
+        conclusion = "通过"
+        if failed or failed_jobs or timeout_jobs:
+            conclusion = "未通过"
+        elif running_jobs:
+            conclusion = "执行中"
+        elif report.get("status") == "missing":
+            conclusion = "报告缺失"
+        next_actions = []
+        if failed_jobs or timeout_jobs:
+            next_actions.extend(["打开失败任务报告或 Runner 日志", "确认是脚本问题后生成修复草稿", "修复后重跑失败用例"])
+        elif running_jobs:
+            next_actions.extend(["等待 Runner 回传执行结果", "刷新 Agent 运行状态"])
+        elif report.get("status") == "missing":
+            next_actions.extend(["检查 Runner 报告上传", "查看执行中心 job 详情", "必要时重跑任务"])
+        else:
+            next_actions.extend(["保留本次结果作为回归记录", "如需复盘可查看执行报告链接"])
         summary = {
+            "title": f"{run.get('target', 'Agent 任务')} - 执行总结",
+            "target": run.get("target", ""),
+            "conclusion": conclusion,
             "totalSteps": len(steps),
             "completed": completed,
             "failed": failed,
             "skipped": skipped,
+            "matchedCount": matched_count,
+            "reportCount": report_count,
+            "failedJobCount": len(failed_jobs),
+            "timeoutJobCount": len(timeout_jobs),
+            "runningJobCount": len(running_jobs),
+            "failureType": failure.get("failureType") or "NONE",
+            "nextActions": next_actions[:5],
+            "reportStatus": report.get("status") or "",
+            "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "mode": run.get("mode", ""),
             "riskLevel": run.get("riskLevel", ""),
             "message": f"Agent 执行完成：{completed}/{len(steps)} 步骤成功，{failed} 失败，{skipped} 跳过",
@@ -5587,7 +5635,7 @@ def _tool_generate_summary(run):
         else:
             call["status"] = "SKIPPED"
             call["outputSummary"] = "AI Gateway 不可用，使用本地总结"
-        run.setdefault("artifacts", {})["summary"] = summary
+        artifacts["summary"] = summary
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)

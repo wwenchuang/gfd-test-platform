@@ -81,6 +81,7 @@ def main():
     require("/agent-runs" in html and "/agent-runs/" in html, "AI Agent endpoint calls are missing")
     require("Agent 状态" in html and "运行轨迹" in html, "Right panel must become Agent status panel with timeline")
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html, "Agent artifacts must support copy and YAML download")
+    require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
     require("YAML 校验失败时，不能显示" not in html, "Implementation details should not be visible as instructional UI text")
     # Assets entry exists in sidebar as asset center
     require("用例资产" in html and 'data-workflow="assets"' in html, "Assets must be accessible from sidebar")

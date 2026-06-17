@@ -615,7 +615,7 @@ async function showAgentWorkbench() {
             <button class="agent-tab ${agentActiveTab === key ? 'active' : ''}" onclick="setAgentTab(${jsArg(key)})">${escapeHtml(label)}</button>
           `).join('')}
         </div>
-        <pre class="agent-artifact-box" id="agent-artifact-box">${escapeHtml(agentArtifactText(agentActiveTab, run))}</pre>
+        <div class="agent-artifact-box ${['report', 'summary'].includes(agentActiveTab) ? 'rich' : ''}" id="agent-artifact-box">${renderAgentArtifactContent(agentActiveTab, run)}</div>
       </div>
       ` : ''}
     </div>
@@ -735,7 +735,8 @@ function updateAgentWorkbenchDynamic() {
     return;
   }
   if (artifactBox && run) {
-    artifactBox.textContent = agentArtifactText(agentActiveTab, run);
+    artifactBox.classList.toggle('rich', ['report', 'summary'].includes(agentActiveTab));
+    artifactBox.innerHTML = renderAgentArtifactContent(agentActiveTab, run);
   }
   if (riskLevelEl) {
     const goal = document.getElementById('agent-goal')?.value || '';
@@ -1025,20 +1026,39 @@ function renderRunTaskDetail(step, artifacts) {
 // ===== COLLECT_REPORT 报告详情 =====
 function renderReportDetail(step, artifacts) {
   const report = (artifacts || {}).report || {};
-  const reports = report.reports || [];
+  const reports = report.executionReports || report.reports || [];
+  const yamlRefs = report.yamlExecutionRefs || [];
+  const jobStatuses = report.jobStatuses || [];
   const failedJobs = report.failedJobs || [];
-  let html = '<div class="report-detail">';
+  const status = report.status || 'unknown';
+  let html = '<div class="report-detail rich-report">';
+  html += `
+    <div class="report-summary-grid">
+      <div><span>状态</span><strong>${escapeHtml(status)}</strong></div>
+      <div><span>执行报告</span><strong>${reports.length}</strong></div>
+      <div><span>任务状态</span><strong>${jobStatuses.length}</strong></div>
+      <div><span>失败</span><strong>${failedJobs.length}</strong></div>
+    </div>
+  `;
   if (reports.length > 0) {
     html += '<div class="report-links">';
-    html += '<div class="section-title">报告：</div>';
+    html += '<div class="section-title">执行报告</div>';
     for (const r of reports.slice(0, 10)) {
       const label = `${r.module || ''}/${r.file || ''}`;
       if (r.reportUrl) {
-        html += `<a href="${escapeHtml(r.reportUrl)}" target="_blank" class="report-link">📄 ${escapeHtml(label)}</a>`;
+        html += `<a href="${escapeHtml(r.reportUrl)}" target="_blank" class="report-link">${escapeHtml(label)}</a>`;
       } else {
-        html += `<span class="report-local">📄 ${escapeHtml(label)} (本地)</span>`;
+        html += `<span class="report-local">${escapeHtml(label)}${r.localPath ? ` · ${escapeHtml(r.localPath)}` : ''}</span>`;
       }
     }
+    html += '</div>';
+  } else {
+    html += '<div class="report-empty">当前没有 Runner 回传的 HTML 报告链接；下方仅展示已执行的 YAML/任务状态。</div>';
+  }
+  if (yamlRefs.length > 0) {
+    html += '<div class="report-links">';
+    html += '<div class="section-title">执行 YAML</div>';
+    html += yamlRefs.slice(0, 10).map(item => `<span class="report-local">${escapeHtml(item.module || '')}/${escapeHtml(item.file || '')}</span>`).join('');
     html += '</div>';
   }
   if (failedJobs.length > 0) {
@@ -1052,6 +1072,53 @@ function renderReportDetail(step, artifacts) {
   }
   html += '</div>';
   return html;
+}
+
+function renderAgentReportArtifact(run) {
+  const artifacts = (run && run.artifacts) || {};
+  return renderReportDetail(null, artifacts);
+}
+
+function renderAgentSummaryArtifact(run) {
+  const artifacts = (run && run.artifacts) || {};
+  const summary = artifacts.summary || {};
+  if (!summary || typeof summary !== 'object') {
+    return `<pre class="agent-artifact-pre">${escapeHtml(typeof agentArtifactText === 'function' ? agentArtifactText('summary', run) : '暂无总结报告')}</pre>`;
+  }
+  const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
+  const conclusionClass = summary.conclusion === '通过' ? 'success' : (summary.conclusion === '执行中' ? 'warn' : 'danger');
+  return `
+    <div class="agent-final-report">
+      <div class="final-report-head">
+        <div>
+          <span>最终总结</span>
+          <h3>${escapeHtml(summary.title || 'Agent 执行总结')}</h3>
+        </div>
+        <strong class="final-report-conclusion ${conclusionClass}">${escapeHtml(summary.conclusion || '-')}</strong>
+      </div>
+      <div class="report-summary-grid">
+        <div><span>步骤成功</span><strong>${escapeHtml(summary.completed || 0)}/${escapeHtml(summary.totalSteps || 0)}</strong></div>
+        <div><span>匹配用例</span><strong>${escapeHtml(summary.matchedCount || 0)}</strong></div>
+        <div><span>执行报告</span><strong>${escapeHtml(summary.reportCount || 0)}</strong></div>
+        <div><span>失败任务</span><strong>${escapeHtml(summary.failedJobCount || 0)}</strong></div>
+      </div>
+      <div class="final-report-section">
+        <strong>执行说明</strong>
+        <p>${escapeHtml(summary.message || '暂无说明')}</p>
+      </div>
+      <div class="final-report-section">
+        <strong>下一步</strong>
+        ${nextActions.length ? `<ul>${nextActions.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>暂无建议。</p>'}
+      </div>
+    </div>
+  `;
+}
+
+function renderAgentArtifactContent(tab, run) {
+  if (tab === 'report') return renderAgentReportArtifact(run);
+  if (tab === 'summary') return renderAgentSummaryArtifact(run);
+  const text = typeof agentArtifactText === 'function' ? agentArtifactText(tab, run) : '';
+  return `<pre class="agent-artifact-pre">${escapeHtml(text)}</pre>`;
 }
 
 // ===== ANALYZE_FAILURE 分析详情 =====

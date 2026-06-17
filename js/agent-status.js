@@ -169,8 +169,35 @@ function agentArtifactText(tab, run = currentAgentRun()) {
   if (tab === 'failure') return stringifyArtifact(artifacts.diagnosis || artifacts.failureAnalysis || run.failureAnalysis || run.error || '暂无失败分析');
   if (tab === 'repair') return stringifyArtifact(artifacts.repairDraft || artifacts.repairSuggestion || artifacts.repairedYaml || '暂无修复草稿');
   if (tab === 'bug') return stringifyArtifact(artifacts.bugDraft || artifacts.bug || '暂无缺陷草稿');
-  if (tab === 'summary') return stringifyArtifact(artifacts.summary || '暂无总结报告');
-  if (tab === 'report') return stringifyArtifact(artifacts.report || artifacts.sonicJob || '暂无最终报告');
+  if (tab === 'summary') {
+    const s = artifacts.summary || {};
+    if (s && typeof s === 'object') {
+      return [
+        `结论：${s.conclusion || '-'}`,
+        `目标：${s.target || run.target || '-'}`,
+        `步骤：${s.completed || 0}/${s.totalSteps || 0} 成功，失败 ${s.failed || 0}，跳过 ${s.skipped || 0}`,
+        `用例：${s.matchedCount || 0}，执行报告：${s.reportCount || 0}，失败任务：${s.failedJobCount || 0}`,
+        `下一步：${(s.nextActions || []).join('；') || '暂无'}`,
+      ].join('\n');
+    }
+    return stringifyArtifact(s || '暂无总结报告');
+  }
+  if (tab === 'report') {
+    const r = artifacts.report || {};
+    if (r && typeof r === 'object') {
+      const reportCount = (r.executionReports || r.reports || []).length;
+      const statusCount = (r.jobStatuses || []).length;
+      const yamlCount = (r.yamlExecutionRefs || []).length;
+      return [
+        `状态：${r.status || '-'}`,
+        `执行报告：${reportCount} 个`,
+        `任务状态：${statusCount} 个`,
+        `执行 YAML：${yamlCount} 个`,
+        `摘要：${r.summary || '-'}`,
+      ].join('\n');
+    }
+    return stringifyArtifact(r || artifacts.sonicJob || '暂无最终报告');
+  }
   return '';
 }
 
