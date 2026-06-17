@@ -2838,6 +2838,13 @@ CASE_MATCH_GENERIC_KEYWORDS = {
     "页面", "截图", "图片", "文件", "链接", "需求", "文档", "资料", "上传", "生成", "自动化",
     "测试", "用例", "基线", "回归", "执行", "查看", "记录", "打印", "任务", "平台", "当前",
     "相关", "匹配", "确认", "选择", "按钮", "文本", "页面知识", "设计稿", "figma",
+    "输入来源", "上传资料", "其中截图", "说明文件", "需求说明文件", "进入稳定起点",
+    "执行核心业务动作", "校验业务结果", "稳定起点", "核心业务动作", "业务动作", "业务结果",
+}
+
+CASE_MATCH_META_KEYWORD_PARTS = {
+    "figma", "链接", "页面", "忽略", "截图", "上传", "资料", "说明文件", "需求说明",
+    "页面知识", "输入来源", "来源", "整理", "文件个", "截图张",
 }
 
 
@@ -2863,6 +2870,8 @@ def _is_business_keyword(term):
     core = _business_keyword_core(text)
     if low in CASE_MATCH_GENERIC_KEYWORDS or text in CASE_MATCH_GENERIC_KEYWORDS or core in CASE_MATCH_GENERIC_KEYWORDS:
         return False
+    if any(part in low or part in text or part in core for part in CASE_MATCH_META_KEYWORD_PARTS):
+        return False
     if len(core) < 2:
         return False
     if len(core) <= 2 and core in {"页面", "截图", "文件", "链接", "查看", "记录", "打印", "测试"}:
@@ -2870,9 +2879,40 @@ def _is_business_keyword(term):
     return True
 
 
+def _keyword_source_text(source_context):
+    """Return only user/business text for keyword extraction, excluding platform summaries."""
+    if not isinstance(source_context, dict):
+        return ""
+    parts = [
+        source_context.get("target", ""),
+        source_context.get("requirementText", ""),
+        source_context.get("failedJobText", ""),
+    ]
+    for item in source_context.get("uploadedFiles") or []:
+        if isinstance(item, dict):
+            parts.append(item.get("note", ""))
+    for page in source_context.get("knowledgePages") or []:
+        if isinstance(page, dict):
+            parts.append(page.get("pageName", ""))
+            parts.append(page.get("text", ""))
+    return "\n".join(str(p) for p in parts if str(p or "").strip())
+
+
+def _business_keyword_candidates(text):
+    text = str(text or "")
+    cleaned = re.sub(r"(回归一下|回归|基线测试|测试基线|基线|测试用例|用例|帮我|请|一下|看看|验证|检查|执行|跑一下|跑下)", " ", text)
+    candidates = []
+    for raw in re.findall(r"[\u4e00-\u9fa5A-Za-z0-9_]{2,}", cleaned):
+        for part in re.split(r"(?:和|及|与|、|/|，|,|；|;|\s+)", raw):
+            part = str(part or "").strip()
+            if part:
+                candidates.append(part)
+    return candidates
+
+
 def _source_keywords(source_context, limit=12):
-    text = _build_source_text(source_context)
-    raw_terms = re.findall(r"[\u4e00-\u9fa5A-Za-z0-9_]{2,}", text)
+    text = _keyword_source_text(source_context)
+    raw_terms = _business_keyword_candidates(text)
     terms = []
     for term in raw_terms:
         if not _is_business_keyword(term):
@@ -2979,6 +3019,8 @@ def _ensure_business_flow_constraint(run):
 
 def _business_flow_keywords(constraint, limit=10):
     constraint = constraint if isinstance(constraint, dict) else {}
+    if str(constraint.get("source") or "") == "default":
+        return []
     flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
     return _dedupe_business_terms(flow, limit=limit)
 
