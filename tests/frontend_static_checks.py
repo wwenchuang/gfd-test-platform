@@ -83,6 +83,7 @@ def main():
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html, "Agent artifacts must support copy and YAML download")
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
     require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")
+    require("normalizeAgentReportArtifacts" in html and "isAgentYamlRef" in html and "normalizedAgentReportCounts" in html and "agentReportLooksYaml" in html, "Agent report rendering must not count YAML files as HTML execution reports")
     require("YAML 校验失败时，不能显示" not in html, "Implementation details should not be visible as instructional UI text")
     # Assets entry exists in sidebar as asset center
     require("用例资产" in html and 'data-workflow="assets"' in html, "Assets must be accessible from sidebar")

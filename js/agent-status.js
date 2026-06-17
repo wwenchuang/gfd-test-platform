@@ -185,14 +185,13 @@ function agentArtifactText(tab, run = currentAgentRun()) {
   if (tab === 'report') {
     const r = artifacts.report || {};
     if (r && typeof r === 'object') {
-      const reportCount = (r.executionReports || r.reports || []).length;
+      const counts = normalizedAgentReportCounts(r);
       const statusCount = (r.jobStatuses || []).length;
-      const yamlCount = (r.yamlExecutionRefs || []).length;
       return [
         `状态：${r.status || '-'}`,
-        `执行报告：${reportCount} 个`,
+        `执行报告：${counts.reportCount} 个`,
         `任务状态：${statusCount} 个`,
-        `执行 YAML：${yamlCount} 个`,
+        `执行 YAML：${counts.yamlCount} 个`,
         `摘要：${r.summary || '-'}`,
       ].join('\n');
     }
@@ -221,6 +220,31 @@ function stringifyArtifact(value) {
   } catch {
     return String(value ?? '');
   }
+}
+
+function agentReportIsHtml(item = {}) {
+  const reportUrl = String(item.reportUrl || item.report_url || '').trim();
+  const localPath = String(item.localPath || item.local_report_path || item.localReportPath || '').trim().toLowerCase();
+  return Boolean(reportUrl) || localPath.endsWith('.html') || localPath.endsWith('.htm');
+}
+
+function agentReportLooksYaml(item = {}) {
+  const file = String(item.file || item.name || item.path || '').trim().toLowerCase();
+  const reportUrl = String(item.reportUrl || item.report_url || '').trim();
+  return !reportUrl && (file.endsWith('.yaml') || file.endsWith('.yml'));
+}
+
+function normalizedAgentReportCounts(report = {}) {
+  const rawReports = Array.isArray(report.executionReports)
+    ? report.executionReports
+    : (Array.isArray(report.reports) ? report.reports : []);
+  const executionReports = rawReports.filter(item => agentReportIsHtml(item));
+  const yamlFromReports = rawReports.filter(item => !agentReportIsHtml(item) && agentReportLooksYaml(item));
+  const yamlRefs = Array.isArray(report.yamlExecutionRefs) ? report.yamlExecutionRefs : [];
+  return {
+    reportCount: executionReports.length,
+    yamlCount: yamlRefs.length + yamlFromReports.length,
+  };
 }
 
 function agentRiskHits(text) {

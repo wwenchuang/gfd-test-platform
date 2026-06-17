@@ -1047,11 +1047,44 @@ function agentReadableList(title, items = [], renderItem) {
   `;
 }
 
+function isAgentHtmlReport(item = {}) {
+  const reportUrl = String(item.reportUrl || item.report_url || '').trim();
+  const localPath = String(item.localPath || item.local_report_path || item.localReportPath || '').trim().toLowerCase();
+  return Boolean(reportUrl) || localPath.endsWith('.html') || localPath.endsWith('.htm');
+}
+
+function isAgentYamlRef(item = {}) {
+  const file = String(item.file || item.name || item.path || '').trim().toLowerCase();
+  const url = String(item.reportUrl || item.report_url || '').trim();
+  return !url && (file.endsWith('.yaml') || file.endsWith('.yml'));
+}
+
+function normalizeAgentReportArtifacts(report = {}) {
+  const rawReports = Array.isArray(report.executionReports)
+    ? report.executionReports
+    : (Array.isArray(report.reports) ? report.reports : []);
+  const executionReports = rawReports.filter(item => isAgentHtmlReport(item));
+  const yamlFromReports = rawReports
+    .filter(item => !isAgentHtmlReport(item) && isAgentYamlRef(item))
+    .map(item => ({
+      jobId: item.jobId || item.job_id || '',
+      module: item.module || '',
+      file: item.file || item.name || item.path || '',
+      status: item.status || '',
+    }));
+  const yamlExecutionRefs = [
+    ...(Array.isArray(report.yamlExecutionRefs) ? report.yamlExecutionRefs : []),
+    ...yamlFromReports,
+  ];
+  return { executionReports, yamlExecutionRefs };
+}
+
 // ===== COLLECT_REPORT 报告详情 =====
 function renderReportDetail(step, artifacts) {
   const report = (artifacts || {}).report || {};
-  const reports = report.executionReports || report.reports || [];
-  const yamlRefs = report.yamlExecutionRefs || [];
+  const normalizedReport = normalizeAgentReportArtifacts(report);
+  const reports = normalizedReport.executionReports;
+  const yamlRefs = normalizedReport.yamlExecutionRefs;
   const jobStatuses = report.jobStatuses || [];
   const failedJobs = report.failedJobs || [];
   const status = report.status || 'unknown';
@@ -1111,10 +1144,11 @@ function renderAgentSummaryArtifact(run) {
   }
   const report = artifacts.report || {};
   const failure = artifacts.failureAnalysis || {};
-  const reports = report.executionReports || report.reports || [];
+  const normalizedReport = normalizeAgentReportArtifacts(report);
+  const reports = normalizedReport.executionReports;
   const failedJobs = report.failedJobs || [];
   const timeoutJobs = report.timeoutJobs || [];
-  const yamlRefs = report.yamlExecutionRefs || [];
+  const yamlRefs = normalizedReport.yamlExecutionRefs;
   const jobStatuses = report.jobStatuses || [];
   const steps = Array.isArray(run?.steps) ? run.steps : [];
   const visibleSteps = steps.filter(step => ['FAILED', 'PARTIAL_FAILED', 'SUCCESS', 'WAIT_CONFIRM'].includes(String(step.status || '').toUpperCase())).slice(-6);
