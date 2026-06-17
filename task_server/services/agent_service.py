@@ -63,6 +63,8 @@ AGENT_RISK_KEYWORDS = HIGH_RISK_KEYWORDS
 
 AUTO_AGENT_RISK_KEYWORDS = AGENT_RISK_KEYWORDS
 
+AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
+
 AGENT_TOOLS = {
     # READ_TOOLS
     "list_cases": {"name": "list_cases", "title": "读取用例列表", "category": "READ", "riskLevel": "low", "write": False, "requiresConfirm": False},
@@ -347,6 +349,7 @@ def create_agent_run(payload):
         "riskHits": risk_hits,
         "error": None,
     }
+    _ensure_business_flow_constraint(run)
     # 如果指定了 failedJobId，附加到 run 上
     failed_job_id = payload.get("failedJobId") or payload.get("failed_job_id") or source_refs.get("failedJobId") or source_refs.get("jobId")
     if failed_job_id:
@@ -850,6 +853,9 @@ def can_execute_tool(tool_def, run):
     cat = tool_def.get("category", "UNKNOWN")
     if cat not in perm.get("allowed_categories", set()):
         return False
+    eligibility = _record_tool_eligibility(run, tool_def)
+    if not eligibility.get("allowed", True):
+        return False
     return True
 
 
@@ -871,6 +877,9 @@ def execute_tool(run, tool_name, input_data):
             f"权限不足：{run.get('permissionLevel', run.get('mode'))} 不允许调用 {tool_name}"
         )
     call = create_tool_call(run.get("runId", ""), tool_name, input_data)
+    constraint = _ensure_business_flow_constraint(run)
+    call["businessFlowConstraint"] = _compact_business_flow_constraint(constraint)
+    call["toolEligibility"] = (run.get("artifacts") or {}).get("toolEligibility", {}).get(tool_name)
     handler = AGENT_TOOL_HANDLERS.get(tool_name)
     try:
         if handler:
@@ -2674,6 +2683,127 @@ def _source_keywords(source_context, limit=12):
     return terms
 
 
+def _dedupe_business_terms(items, limit=12):
+    terms = []
+    for item in items or []:
+        term = _business_keyword_core(item)
+        if not _is_business_keyword(term):
+            continue
+        if term in terms:
+            continue
+        terms.append(term)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _compact_business_flow_constraint(constraint):
+    constraint = constraint if isinstance(constraint, dict) else {}
+    flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
+    return {
+        "required": bool(constraint.get("required", True)),
+        "strict": bool(constraint.get("strict", True)),
+        "source": str(constraint.get("source") or "default"),
+        "businessFlow": [str(item) for item in flow[:8] if str(item or "").strip()],
+    }
+
+
+def _ensure_business_flow_constraint(run):
+    """Build and persist the business-flow backbone used by Agent decisions."""
+    if not isinstance(run, dict):
+        return {
+            "required": True,
+            "strict": True,
+            "source": "default",
+            "businessFlow": list(AGENT_DEFAULT_BUSINESS_FLOW),
+            "businessFlowText": "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(AGENT_DEFAULT_BUSINESS_FLOW)),
+        }
+    artifacts = run.setdefault("artifacts", {})
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    normalized_input = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
+    current = artifacts.get("businessFlowConstraint") if isinstance(artifacts.get("businessFlowConstraint"), dict) else {}
+    prompt_ctx = {}
+    business_ctx = run.get("businessContext") if isinstance(run.get("businessContext"), dict) else {}
+    try:
+        prompt_ctx = get_prompt_center().enrich({
+            **run,
+            "sourceContext": source_context,
+            "requirementText": (
+                source_context.get("requirementText")
+                or normalized_input.get("requirementText")
+                or normalized_input.get("text")
+                or run.get("target", "")
+            ),
+        })
+        business_ctx = prompt_ctx.get("businessContext") if isinstance(prompt_ctx.get("businessContext"), dict) else business_ctx
+    except Exception:
+        business_ctx = business_ctx if isinstance(business_ctx, dict) else {}
+
+    business_flow = business_ctx.get("business_flow") if isinstance(business_ctx.get("business_flow"), list) else []
+    if not business_flow:
+        business_flow = current.get("businessFlow") if isinstance(current.get("businessFlow"), list) else []
+    expanded_flow = []
+    for item in business_flow:
+        for part in re.split(r"\s*(?:->|→|>|，|,|；|;|\n)\s*", str(item or "")):
+            part = part.strip(" -:：")
+            if part and part not in expanded_flow:
+                expanded_flow.append(part)
+    business_flow = expanded_flow
+    if not business_flow:
+        business_flow = list(AGENT_DEFAULT_BUSINESS_FLOW)
+    business_flow_text = business_ctx.get("business_flow_text") or "\n".join(
+        f"{idx + 1}. {item}" for idx, item in enumerate(business_flow)
+    )
+    constraint = {
+        "required": True,
+        "strict": True,
+        "source": str(business_ctx.get("business_flow_source") or current.get("source") or "default"),
+        "businessFlow": business_flow[:12],
+        "businessFlowText": business_flow_text,
+        "guardrails": [
+            "工具选择必须服务于业务主链",
+            "用例生成不得跳出业务主链节点",
+            "异常和修复只能挂载到主链相关节点",
+        ],
+    }
+    artifacts["businessFlowConstraint"] = constraint
+    if prompt_ctx.get("promptCenter"):
+        artifacts["promptCenter"] = prompt_ctx.get("promptCenter")
+    if business_ctx:
+        run["businessContext"] = business_ctx
+    return constraint
+
+
+def _business_flow_keywords(constraint, limit=10):
+    constraint = constraint if isinstance(constraint, dict) else {}
+    flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
+    return _dedupe_business_terms(flow, limit=limit)
+
+
+def _record_tool_eligibility(run, tool_def):
+    """Record the business-flow filter decision for tool selection observability."""
+    constraint = _ensure_business_flow_constraint(run)
+    tool_def = tool_def if isinstance(tool_def, dict) else {}
+    category = tool_def.get("category", "UNKNOWN")
+    tool_name = tool_def.get("name", "")
+    flow_keywords = _business_flow_keywords(constraint)
+    allowed = bool(constraint.get("businessFlow"))
+    reason = "业务主链已建立，允许工具围绕主链执行" if allowed else "缺少业务主链，暂停工具选择"
+    if category in ("READ", "KNOWLEDGE"):
+        reason = "读取/知识工具允许用于补齐业务主链上下文"
+        allowed = True
+    eligibility = {
+        "toolName": tool_name,
+        "category": category,
+        "allowed": allowed,
+        "reason": reason,
+        "businessFlowSource": constraint.get("source", "default"),
+        "businessFlowKeywords": flow_keywords,
+    }
+    run.setdefault("artifacts", {}).setdefault("toolEligibility", {})[tool_name] = eligibility
+    return eligibility
+
+
 CASE_MATCH_NOISE_WORDS = [
     "回归一下", "回归", "测试基线", "基线测试", "基线", "测试用例", "用例",
     "自动化", "测试", "执行一下", "跑一下", "跑下", "执行", "帮我", "请",
@@ -3317,6 +3447,12 @@ def _tool_match_cases(run):
         source_type = str(source_context.get("sourceType") or run.get("sourceType") or "manual").lower()
         source_text = _build_source_text(source_context) or target
         source_keywords = source_context.get("keywords") or _source_keywords(source_context)
+        business_constraint = _ensure_business_flow_constraint(run)
+        flow_keywords = _business_flow_keywords(business_constraint)
+        source_keywords = _dedupe_business_terms(list(source_keywords or []) + flow_keywords, limit=16)
+        artifacts["businessFlowKeywords"] = flow_keywords
+        call["businessFlowConstraint"] = _compact_business_flow_constraint(business_constraint)
+        call["businessFlowKeywords"] = flow_keywords
         # scope="auto" 或为空时，从用户目标文本中推断 scope
         if not scope or scope == "auto":
             target_lower = target.lower()
@@ -3425,7 +3561,11 @@ def _tool_match_cases(run):
 
         run_model = run.get("model", "")
         run_provider_id = run.get("modelProviderId") or run.get("aiProviderId") or ""
-        match_target = f"{target}\n\n输入来源上下文：\n{source_text[:6000]}"
+        match_target = (
+            f"{target}\n\n"
+            f"业务主链（必须优先匹配）：\n{business_constraint.get('businessFlowText', '')}\n\n"
+            f"输入来源上下文：\n{source_text[:6000]}"
+        )
         ai_match_result = _ai_select_cases(match_target, scope, app_name, yaml_list_text, all_yamls, model=run_model, provider_id=run_provider_id)
         if ai_match_result and ai_match_result.get("matched_paths"):
             matched = ai_match_result.get("matched_paths", [])
@@ -5324,6 +5464,14 @@ def _execute_agent_step(run, step_name):
         "message": f"开始执行 {step_name}",
         "status": "RUNNING",
     }]
+    business_constraint = _ensure_business_flow_constraint(run)
+    flow_brief = " → ".join((business_constraint.get("businessFlow") or [])[:4])
+    if flow_brief:
+        step["liveTrace"].append({
+            "time": now,
+            "message": f"业务主链约束：{flow_brief}",
+            "status": "RUNNING",
+        })
     run["currentStep"] = step_name
     run["updatedAt"] = now
     _refresh_agent_run_progress(run)
@@ -5354,6 +5502,13 @@ def _execute_agent_step(run, step_name):
             return result, None
         # Collect tool call into step
         if result and isinstance(result, dict):
+            result.setdefault("businessFlowConstraint", _compact_business_flow_constraint(business_constraint))
+            result.setdefault("toolEligibility", {
+                "allowed": True,
+                "reason": "状态机步骤已绑定业务主链约束",
+                "businessFlowSource": business_constraint.get("source", "default"),
+                "businessFlowKeywords": _business_flow_keywords(business_constraint),
+            })
             step["toolCalls"].append(result)
             _append_step_trace(
                 run,
