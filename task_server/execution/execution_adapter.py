@@ -136,7 +136,7 @@ class ExecutionAdapter:
                 target_task_name=task_name,
                 device_id=str(case.get("deviceId") or case.get("device_id") or ""),
                 runner_id=str(case.get("runnerId") or case.get("runner_id") or ""),
-                device_strategy=str(case.get("deviceStrategy") or case.get("device_strategy") or ""),
+                device_strategy=str(case.get("deviceStrategy") or case.get("device_strategy") or "auto"),
                 run_mode=str(case.get("runMode") or case.get("run_mode") or "test"),
             )
             return {

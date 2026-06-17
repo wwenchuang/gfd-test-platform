@@ -134,6 +134,8 @@ def main():
     require('should_require_sonic = execution_mode == "SONIC_SUITE"' in agent_service_source and 'Runner 调试模式不阻断' in agent_service_source, "Execution precheck must not block Runner jobs on Sonic publish-only checks")
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     require("Runner 调试模式：创建" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain single/multi Runner mode instead of suite execution")
+    require('"device_strategy": "auto"' in agent_service_source, "Agent Runner jobs must opt into automatic online-device assignment")
+    require('case.get("device_strategy") or "auto"' in execution_adapter_source, "ExecutionAdapter local Runner jobs must default to automatic online-device assignment")
     require("def _append_step_trace" in agent_service_source and "_persist_agent_run_snapshot" in agent_service_source, "Agent timeline steps must persist live trace for running tools")
     require("bridge_groovy_endpoint" in agent_service_source and "http_client.get" in agent_service_source and "PORT," in agent_service_source, "Execution precheck must probe local bridge-groovy endpoint with runner token through the unified HTTP client")
     require('call["blockers"] = blockers' in agent_service_source and 'call["warnings"] = warnings' in agent_service_source, "Execution precheck must expose blockers and warnings to the frontend")

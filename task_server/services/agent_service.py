@@ -4506,6 +4506,7 @@ def _tool_run_sonic(run):
                         "module": mod,
                         "file": fn,
                         "target_task_name": fn.replace(".yaml", "").replace(".yml", ""),
+                        "device_strategy": "auto",
                     })
                     if job and job.get("job_id"):
                         job_ids.append(job["job_id"])
