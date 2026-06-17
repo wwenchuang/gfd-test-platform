@@ -1,0 +1,8 @@
+android:
+  tasks:
+    - name: "搜索关节龙并确认打印"
+      flow:
+        - sleep: 1000
+        - aiTap: "首页关键入口"
+        - aiAction: "按需求完成主要业务操作"
+        - aiAssert: "业务结果符合预期"

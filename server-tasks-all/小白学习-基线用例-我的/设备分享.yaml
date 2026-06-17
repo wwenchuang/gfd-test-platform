@@ -1,0 +1,65 @@
+android:
+tasks:
+  - name: 小白学习-设备分享
+    # baseline.case_id: COM_XBXXHZ_BOX_ec8e247cc641
+    # baseline.goal: 验证小白学习-设备分享
+    # baseline.start_page: App 首页
+    # baseline.path: 我的设备 -> 分享设备 -> 分享给同事或朋友 -> 微信分享 -> 文件传输助手 -> 发送 按钮 -> 返回小白学习打印 按钮
+    # baseline.expected: 小白学习-设备分享相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "打开之后如果有弹窗，请找到×并点击关闭；没有就跳过"
+      - sleep: 3000
+      - ai: "点击我的 按钮"
+      - sleep: 3000
+      - ai: "打开之后如果有弹窗，请找到×并点击关闭；没有就跳过"
+      - sleep: 3000
+      - aiTap: "我的设备"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：分享设备"
+        timeout: 60000
+      - aiTap: "分享设备"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：分享给同事或朋友"
+        timeout: 60000
+      - aiTap: "分享给同事或朋友"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：微信分享"
+        timeout: 60000
+      - aiTap: "微信分享"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 60000
+      - aiScroll: "当前文件或会话列表区域，不要滚动顶部栏"
+        scrollType: "singleAction"
+        direction: "down"
+        distance: 500
+        deepLocate: true
+      - aiWaitFor: "列表中出现「文件传输助手」"
+        timeout: 30000
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：文件传输助手"
+        timeout: 60000
+      - aiTap: "文件传输助手"
+      - sleep: 1000
+      - aiTap: "发送 按钮"
+      - sleep: 3000
+      - aiTap: "返回小白学习打印 按钮"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 30000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

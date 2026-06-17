@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "required": ["business_goals", "roles", "entry_points", "state_assumptions", "data_assumptions", "visible_outcomes", "risks", "requirement_points", "questions", "confidence"],
+  "properties": {
+    "business_goals": {"type": "array"},
+    "roles": {"type": "array"},
+    "entry_points": {"type": "array"},
+    "state_assumptions": {"type": "array"},
+    "data_assumptions": {"type": "array"},
+    "visible_outcomes": {"type": "array"},
+    "risks": {"type": "array"},
+    "requirement_points": {"type": "array"},
+    "questions": {"type": "array"},
+    "confidence": {"type": "string"},
+    "missing_inputs": {"type": "array"},
+    "blockers": {"type": "array"},
+    "assumptions": {"type": "array"},
+    "readiness_score": {"type": "number"},
+    "readiness_level": {"type": "string"},
+    "source_quality": {"type": "object"}
+  }
+}

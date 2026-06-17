@@ -1,0 +1,20 @@
+{
+  "generate_case": {
+    "providerId": "qwen_plus"
+  },
+  "generate_yaml": {
+    "providerId": "qwen_plus"
+  },
+  "analyze_failure": {
+    "providerId": "qwen_plus"
+  },
+  "optimize_yaml": {
+    "providerId": "qwen_plus"
+  },
+  "agent_plan": {
+    "providerId": "qwen_plus"
+  },
+  "generate_bug": {
+    "providerId": "qwen_plus"
+  }
+}

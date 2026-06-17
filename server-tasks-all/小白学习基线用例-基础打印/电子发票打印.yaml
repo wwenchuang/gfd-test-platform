@@ -1,0 +1,65 @@
+android:
+
+tasks:
+  - name: 电子发票打印
+    # baseline.goal: 验证电子发票打印
+    # baseline.start_page: App 首页
+    # baseline.path: 文档打印 icon -> 电子发票 icon -> 普通发票打印 -> 微信卡包 icon -> 立即跳转 -> 上传文档 -> 确认 -> 确认导入
+    # baseline.expected: 电子发票打印相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "文档打印 icon"
+      - sleep: 1000
+      - aiTap: "电子发票 icon"
+      - sleep: 1000
+      - aiTap: "普通发票打印"
+      - sleep: 1000
+      - aiTap: "微信卡包 icon"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：立即跳转"
+        timeout: 60000
+      - aiTap: "立即跳转"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 240000
+      - ai: "如果页面有广告弹窗或浮层，点击跳过或关闭按钮；如果没有则跳过"
+      - aiWaitFor: "上传文档按钮可见"
+        timeout: 240000
+      - aiTap: "上传文档"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 240000
+      - ai: "勾选一张即可，不要点击确认按钮"
+      - sleep: 1000
+      - aiTap: "确认"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：确认导入"
+        timeout: 240000
+      - aiTap: "确认导入"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：立即打印"
+        timeout: 240000
+      - aiTap: "立即打印"
+      - sleep: 1000
+      - aiTap: "确认打印"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

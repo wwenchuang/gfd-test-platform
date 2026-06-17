@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>功夫豆测试平台</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css?v=20260616-ui-check">
+<link rel="stylesheet" href="css/round5.css?v=20260616-ui-check">
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="brand-mark"><img class="brand-mark-img" src="assets/brand/kongfudou-icon.png" alt=""></div>
+      <h1>功夫豆测试平台</h1>
+      <p>// qwen · midscene · sonic</p>
+    </div>
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="username" placeholder="admin" autocomplete="off">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="password" placeholder="••••••••">
+    </div>
+    <button class="btn-primary" onclick="doLogin()">登 录</button>
+    <div class="login-error" id="login-error">用户名或密码错误</div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <div class="header">
+    <div class="header-left">
+      <div class="header-logo brand-mark small"><img class="brand-mark-img" src="assets/brand/kongfudou-icon.png" alt=""></div>
+      <div class="brand-copy">
+        <div class="header-title">功夫豆测试平台</div>
+        <div class="header-subtitle">Qwen · Midscene · Sonic</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="badge" id="server-badge">● 101.34.197.12:8088</div>
+      <button class="btn-logout" onclick="doLogout()">退出登录</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header" id="sidebar-header-assets" style="display:none;">
+        <span class="sidebar-title">操作入口</span>
+        <div style="display:flex;gap:6px;">
+          <div class="btn-icon" title="新建模块" onclick="showAddModule()">＋</div>
+          <div class="btn-icon" title="刷新" onclick="loadModules()">↻</div>
+        </div>
+      </div>
+      <div class="workflow-nav" id="workflow-nav">
+        <!-- Agent -->
+        <details class="nav-group" data-nav-group="agent" open>
+          <summary class="nav-group-title">Agent</summary>
+          <button class="workflow-step active" data-workflow="dashboard" onclick="activateWorkflow('dashboard')">
+            <span class="workflow-index">🚀</span>
+            <span class="workflow-main"><span class="workflow-name">Agent 工作台</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="agent_history" onclick="activateWorkflow('agent_history')">
+            <span class="workflow-index">🕐</span>
+            <span class="workflow-main"><span class="workflow-name">运行记录</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="agent_confirm" onclick="activateWorkflow('agent_confirm')">
+            <span class="workflow-index">✋</span>
+            <span class="workflow-main"><span class="workflow-name">待我确认</span></span>
+          </button>
+        </details>
+        <!-- 用例 -->
+        <details class="nav-group" data-nav-group="cases" open>
+          <summary class="nav-group-title">用例</summary>
+          <button class="workflow-step" data-workflow="assets" onclick="activateWorkflow('assets')">
+            <span class="workflow-index">🗂️</span>
+            <span class="workflow-main"><span class="workflow-name">用例资产</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="generate" onclick="activateWorkflow('generate')">
+            <span class="workflow-index">🤖</span>
+            <span class="workflow-main"><span class="workflow-name">AI 生成用例</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="yaml_edit" onclick="activateWorkflow('yaml_edit')">
+            <span class="workflow-index">✏️</span>
+            <span class="workflow-main"><span class="workflow-name">脚本编辑</span></span>
+          </button>
+        </details>
+        <!-- 执行 -->
+        <details class="nav-group" data-nav-group="run" open>
+          <summary class="nav-group-title">执行</summary>
+          <button class="workflow-step" data-workflow="execute" onclick="activateWorkflow('execute')">
+            <span class="workflow-index">⚡</span>
+            <span class="workflow-main"><span class="workflow-name">调试执行</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="baseline" onclick="activateWorkflow('baseline')">
+            <span class="workflow-index">🔄</span>
+            <span class="workflow-main"><span class="workflow-name">设备同步</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="repair" onclick="activateWorkflow('repair')">
+            <span class="workflow-index">🔃</span>
+            <span class="workflow-main"><span class="workflow-name">失败重跑</span></span>
+          </button>
+        </details>
+        <!-- 报告 -->
+        <details class="nav-group" data-nav-group="report" open>
+          <summary class="nav-group-title">报告</summary>
+          <button class="workflow-step" data-workflow="reports" onclick="activateWorkflow('reports')">
+            <span class="workflow-index">📈</span>
+            <span class="workflow-main"><span class="workflow-name">执行报告</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="failure_analysis" onclick="activateWorkflow('failure_analysis')">
+            <span class="workflow-index">🔬</span>
+            <span class="workflow-main"><span class="workflow-name">失败分析</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="bug_drafts" onclick="activateWorkflow('bug_drafts')">
+            <span class="workflow-index">🐛</span>
+            <span class="workflow-main"><span class="workflow-name">缺陷草稿</span></span>
+          </button>
+        </details>
+        <!-- 配置 -->
+        <details class="nav-group" data-nav-group="settings" open>
+          <summary class="nav-group-title">配置</summary>
+          <button class="workflow-step" data-workflow="config" onclick="activateWorkflow('config')">
+            <span class="workflow-index">⚙</span>
+            <span class="workflow-main"><span class="workflow-name">模型配置</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="app_config" onclick="activateWorkflow('app_config')">
+            <span class="workflow-index">📱</span>
+            <span class="workflow-main"><span class="workflow-name">应用配置</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="sonic_config" onclick="activateWorkflow('sonic_config')">
+            <span class="workflow-index">🔗</span>
+            <span class="workflow-main"><span class="workflow-name">设备连接</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="feishu_config" onclick="activateWorkflow('feishu_config')">
+            <span class="workflow-index">💬</span>
+            <span class="workflow-main"><span class="workflow-name">群通知</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="system_config" onclick="activateWorkflow('system_config')">
+            <span class="workflow-index">🛠️</span>
+            <span class="workflow-main"><span class="workflow-name">系统设置</span></span>
+          </button>
+        </details>
+      </div>
+      <div class="library-head">
+        <span class="library-title">用例资产</span>
+        <span class="library-tip">按应用/模块</span>
+      </div>
+      <div class="sidebar-search">
+        <div class="sidebar-filter-row">
+          <select id="app-filter" onchange="renderModules()">
+            <option value="">全部应用</option>
+          </select>
+          <div class="btn-icon" title="应用分组" onclick="showTaskApps()">设置</div>
+        </div>
+        <input type="text" id="task-search" placeholder="搜索用例文件..." oninput="renderModules()">
+        <div class="library-view-row">
+          <button class="library-view-btn active" data-library-view="module" onclick="setLibraryView('module')">模块</button>
+          <button class="library-view-btn" data-library-view="recent" onclick="setLibraryView('recent')">最近</button>
+          <button class="library-view-btn" data-library-view="failed" onclick="setLibraryView('failed')">失败</button>
+          <button class="library-view-btn" data-library-view="baseline" onclick="setLibraryView('baseline')">基线</button>
+        </div>
+      </div>
+      <div class="module-list" id="module-list">
+        <!-- 动态生成 -->
+      </div>
+    </div>
+    <div class="layout-resizer sidebar-resizer" data-resize="sidebar" role="separator" aria-label="调整左侧目录宽度"></div>
+
+    <!-- Main -->
+    <div class="main">
+      <div class="toolbar">
+        <div class="toolbar-context">
+          <div class="toolbar-path" id="toolbar-path">
+            <span id="toolbar-context-icon">⌂</span>
+            <span id="toolbar-context-title">Agent 控制</span>
+          </div>
+          <div class="toolbar-help" id="toolbar-help">输入测试目标，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复草稿和报告沉淀。</div>
+          <div class="toolbar-state" id="toolbar-state">
+            <span class="toolbar-state-chip">就绪</span>
+          </div>
+        </div>
+        <div class="toolbar-actions">
+          <!-- 上下文工具栏：根据当前模块动态展示 -->
+          <div class="action-group context-action-group" id="context-action-group">
+            <span class="action-label" id="context-action-label">Agent 控制</span>
+            <button class="btn-sm" id="context-action-refresh" onclick="refreshActiveWorkflow()" title="刷新当前模块状态">刷新状态</button>
+            <button class="btn-sm primary" id="context-action-add-yaml" onclick="showAddTask()" style="display:none;" title="新增 YAML 文件">新增 YAML</button>
+            <button class="btn-sm" id="context-action-extra" style="display:none;"></button>
+          </div>
+          <div class="action-group workflow-action" id="assets-action-group" data-workflows="generate">
+            <span class="action-label">资料</span>
+            <button class="btn-sm primary" onclick="showKnowledgeManager()" title="维护生成和修复可复用的页面截图、入口文案和断言">页面知识库</button>
+            <button class="btn-sm" onclick="openKnowledgeFigmaImport()" title="从 Figma 链接导入相关页面 Frame 到当前 APP 页面知识库">导入 Figma</button>
+          </div>
+          <div class="action-group workflow-action" id="generate-action-group" data-workflows="generate">
+            <span class="action-label">生成</span>
+            <button class="btn-sm primary" onclick="showGenerateYaml()" title="上传需求、设计稿、脑图或用例 JSON，生成可执行 Midscene YAML">新建自动化测试</button>
+            <button class="btn-sm success" onclick="showGenerateJobsCenter()" title="查看需求解析、Figma 解析和 YAML 生成进度">生成记录</button>
+            <button class="btn-sm" onclick="showMindmapCenter()" title="管理 FreeMind .mm 测试脑图">测试脑图</button>
+          </div>
+          <div class="action-group workflow-action" id="file-action-group" data-workflows="assets generate yaml_edit">
+            <span class="action-label">文件</span>
+            <button class="btn-sm" onclick="showAddTask()" title="手动创建一个新的 YAML 文件">新建</button>
+            <button class="btn-sm" onclick="showUpload()" title="上传已有 YAML 到当前模块">上传</button>
+          </div>
+          <div class="action-group file-only workflow-action" id="current-file-action-group" data-workflows="generate execute repair baseline">
+            <span class="action-label">当前文件</span>
+            <button class="btn-sm btn-save" id="btn-save" onclick="saveFile()" style="display:none" title="保存当前编辑器中的 YAML">保存</button>
+            <button class="btn-sm" id="btn-generation-review" onclick="showCurrentGenerationReview()" style="display:none" title="查看当前自动化脚本对应的需求分析、覆盖矩阵和用例卡片">生成分析</button>
+            <button class="btn-sm" id="toggle-refs-panel" onclick="toggleRefsPanel()" style="display:none" title="显示或隐藏左侧基线参考截图和 Sonic 同步信息">隐藏截图</button>
+            <button class="btn-sm" id="toggle-case-panel" onclick="toggleCaseNavPanel()" style="display:none" title="显示或隐藏当前 YAML 用例列表">隐藏用例</button>
+          </div>
+          <div class="action-group file-only workflow-action" id="run-action-group" data-workflows="execute repair">
+            <span class="action-label">执行</span>
+            <button class="btn-sm success" id="btn-run-file" onclick="showRunCurrentFile()" style="display:none" title="执行当前 YAML 文件里的全部用例">整文件</button>
+            <button class="btn-sm success" id="btn-run-task" onclick="showRunSelectedTask()" style="display:none" title="只执行当前 YAML 中选定的一条或几条 tasks[].name">单条/多条</button>
+          </div>
+          <div class="action-group file-only workflow-action" id="repair-action-group" data-workflows="execute repair">
+            <span class="action-label">修复</span>
+            <button class="btn-sm ai" id="btn-repair-task" onclick="repairSelectedTask()" style="display:none" title="基于失败日志或静态体检，修复当前选中的一条用例">修复选中</button>
+            <button class="btn-sm ai" id="btn-repair-file-inline" onclick="repairCurrentFile()" title="基于失败日志或静态体检，先生成修复草稿，确认后再应用">AI 分析并生成修复草稿</button>
+          </div>
+          <div class="action-group file-only workflow-action" id="sonic-action-group" data-workflows="baseline">
+            <span class="action-label">Sonic</span>
+            <button class="btn-sm" id="btn-sonic-status" onclick="showCurrentFileSonicStatus()" style="display:none" title="检查当前 YAML 是否同步到 Sonic，以及是否残留旧或重复执行步骤">同步检查</button>
+            <button class="btn-sm success" id="btn-publish-sonic" onclick="publishCurrentFileToSonic()" style="display:none" title="把当前 YAML 或当前选中用例同步到 Sonic 平台">同步到 Sonic</button>
+          </div>
+          <div class="action-group file-only workflow-action" id="more-action-group" data-workflows="generate execute repair baseline">
+            <span class="action-label">更多</span>
+            <div class="toolbar-menu">
+            <button class="btn-sm" onclick="toggleMoreMenu(event)" title="状态标记、复制移动、历史版本、批量操作">更多 ▾</button>
+            <div class="toolbar-menu-panel" id="more-actions">
+              <select class="toolbar-select" id="file-status-select" onchange="updateCurrentFileStatus()" style="display:none" title="用例状态">
+                <option value="" disabled>状态标记</option>
+                <option value="draft">草稿</option>
+                <option value="review">待评审</option>
+                <option value="active">已入库</option>
+                <option value="baseline">基线</option>
+                <option value="maintenance">需维护</option>
+                <option value="blocked">阻塞</option>
+                <option value="deprecated">废弃</option>
+              </select>
+              <button class="btn-sm" id="btn-copy-file" onclick="showFileOp('copy')" style="display:none">复制当前文件</button>
+              <button class="btn-sm" id="btn-move-file" onclick="showFileOp('move')" style="display:none">移动当前文件</button>
+              <button class="btn-sm" id="btn-rename-file" onclick="showFileOp('rename')" style="display:none">重命名当前文件</button>
+              <button class="btn-sm" id="btn-history-file" onclick="showFileHistory()" style="display:none">查看历史版本</button>
+              <button class="btn-sm" id="btn-baseline-refs" onclick="showBaselineRefs()" style="display:none">基线辅助截图</button>
+              <button class="btn-sm" id="btn-repair-file" onclick="repairCurrentFile()" style="display:none">AI 分析并生成修复草稿</button>
+              <div class="toolbar-menu-group">
+                <button class="btn-sm" onclick="selectCurrentModuleFiles()">全选当前模块</button>
+                <button class="btn-sm" onclick="clearSelectedFiles()">清空选择</button>
+                <button class="btn-sm" onclick="showBatchMove()">批量移动</button>
+                <button class="btn-sm danger" onclick="deleteSelectedFiles()">批量删除</button>
+                <button class="btn-sm danger" onclick="deleteCurrentModule()">删除当前模块</button>
+              </div>
+            </div>
+          </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="workbench">
+        <div class="editor-area" id="editor-area">
+          <!-- 动态生成工作流引导或编辑器 -->
+        </div>
+
+        <div class="layout-resizer jobs-resizer" data-resize="jobs" role="separator" aria-label="调整执行中心宽度"></div>
+        <aside class="jobs-panel">
+          <div class="jobs-head">
+            <div>
+              <div class="jobs-title" id="jobs-title">Agent 状态</div>
+              <div class="jobs-count" id="jobs-count">就绪</div>
+            </div>
+            <button class="btn-sm" style="margin-left:auto;" onclick="loadJobs(true)">刷新</button>
+          </div>
+          <div class="jobs-list" id="jobs-list">
+            <div class="job-empty">输入测试目标并启动 Agent 后，这里展示当前运行 / 待我确认 / 本次产物 / 最近运行。</div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="statusbar">
+        <div class="status-item"><span class="dot-green"></span> 已连接</div>
+        <div class="status-item" id="file-info">就绪</div>
+        <div class="status-item" id="cursor-pos" style="margin-left:auto;">YAML</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 高风险二次确认 -->
+<div class="modal-overlay risk-modal-overlay" id="modal-risk-confirm">
+  <div class="modal risk-modal">
+    <div class="modal-head">
+      <h3>⚠ 高风险动作确认</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-risk-confirm')" title="关闭">×</button>
+    </div>
+    <div class="risk-modal-body">
+      <div class="risk-modal-action" id="risk-modal-action">即将执行的高风险动作</div>
+      <div class="risk-modal-message" id="risk-modal-message"></div>
+      <div class="risk-modal-keywords" id="risk-modal-keywords"></div>
+      <label class="risk-modal-input-label" for="risk-modal-input">请输入"<strong>确认</strong>"以继续：</label>
+      <input id="risk-modal-input" type="text" class="risk-modal-input" placeholder="确认" autocomplete="off">
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeRiskConfirmModal(false)">取消</button>
+      <button class="btn-confirm danger" id="risk-modal-confirm" onclick="closeRiskConfirmModal(true)">确认执行</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 批量移动 -->
+<div class="modal-overlay" id="modal-batch-move">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>批量移动 YAML</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-batch-move')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint" id="batch-move-count" style="margin-bottom:10px;"></div>
+    <label class="modal-label" for="batch-move-module">目标模块</label>
+    <select id="batch-move-module"></select>
+    <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-family:var(--mono);margin-bottom:12px;">
+      <input type="checkbox" id="batch-move-overwrite" style="width:auto;margin:0;">
+      如果目标已存在则覆盖
+    </label>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-batch-move')">取消</button>
+      <button class="btn-confirm" onclick="submitBatchMove()">确认移动</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 历史版本 -->
+<div class="modal-overlay" id="modal-history">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3>YAML 历史版本</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-history')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint" id="history-source" style="margin-bottom:10px;"></div>
+    <div id="history-list"></div>
+  </div>
+</div>
+
+<!-- Modal: AI 修复结果 -->
+<div class="modal-overlay" id="modal-repair-result">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3 id="repair-result-title">AI 修复结果</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-repair-result')" title="关闭">×</button>
+    </div>
+    <div class="repair-result-summary" id="repair-result-summary"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-repair-result')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 文件操作 -->
+<div class="modal-overlay" id="modal-file-op">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="file-op-title">文件操作</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-file-op')" title="关闭">×</button>
+    </div>
+    <input type="hidden" id="file-op-type">
+    <div class="generate-hint" id="file-op-source" style="margin-bottom:10px;"></div>
+    <label class="modal-label" for="file-op-module">目标模块</label>
+    <select id="file-op-module"></select>
+    <label class="modal-label" for="file-op-name">目标文件名</label>
+    <input type="text" id="file-op-name" placeholder="例如：task-首页.yaml">
+    <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-family:var(--mono);margin-bottom:12px;">
+      <input type="checkbox" id="file-op-overwrite" style="width:auto;margin:0;">
+      如果目标已存在则覆盖
+    </label>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-file-op')">取消</button>
+      <button class="btn-confirm" onclick="submitFileOp()">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 应用分组 -->
+<div class="modal-overlay" id="modal-task-apps">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3>应用分组</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-task-apps')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint">应用分组是唯一接入入口：绑定一次应用、Sonic 项目和测试套，生成、修复、同步、执行汇总都会自动继承。填写项目名和测试套名称即可，保存时自动识别 ID。</div>
+
+    <!-- 步骤指示器 -->
+    <div class="form-steps-nav">
+      <div class="step-indicator active" onclick="FormSteps.goTo(0)"><span class="step-num">1</span><span class="step-label">基本信息</span></div>
+      <div class="step-indicator" onclick="FormSteps.goTo(1)"><span class="step-num">2</span><span class="step-label">设备连接</span></div>
+      <div class="step-indicator" onclick="FormSteps.goTo(2)"><span class="step-num">3</span><span class="step-label">群通知</span></div>
+      <div class="step-indicator" onclick="FormSteps.goTo(3)"><span class="step-num">4</span><span class="step-label">关联模块</span></div>
+    </div>
+
+    <!-- Step 1：基本信息 -->
+    <div class="form-step-content">
+      <label class="modal-label" for="task-app-name">应用中文名</label>
+      <input type="text" id="task-app-name" placeholder="如：小白学习 / 3D打印">
+      <label class="modal-label" for="task-app-package">包名</label>
+      <input type="text" id="task-app-package" placeholder="如：com.kfb.model">
+    </div>
+
+    <!-- Step 2：设备连接 -->
+    <div class="form-step-content" style="display:none">
+      <div class="figma-row">
+        <div>
+          <label class="modal-label" for="task-app-sonic-project-name">Sonic 项目名</label>
+          <input type="text" id="task-app-sonic-project-name" placeholder="如：小白学习打印">
+        </div>
+        <div>
+          <label class="modal-label" for="task-app-sonic-project-id">Sonic 项目 ID</label>
+          <input type="text" id="task-app-sonic-project-id" placeholder="可留空，保存时自动回填">
+        </div>
+      </div>
+      <div class="figma-row">
+        <div>
+          <label class="modal-label" for="task-app-sonic-suite-name">Sonic 测试套名称</label>
+          <input type="text" id="task-app-sonic-suite-name" placeholder="如：小白学习打印每日基线">
+        </div>
+        <div>
+          <label class="modal-label" for="task-app-sonic-suite-id">Sonic 测试套 ID</label>
+          <input type="text" id="task-app-sonic-suite-id" placeholder="可留空，保存时自动回填">
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3：群通知 -->
+    <div class="form-step-content" style="display:none">
+      <label class="modal-label" for="task-app-feishu-webhook">飞书通知群 Webhook</label>
+      <input type="text" id="task-app-feishu-webhook" placeholder="Task 平台按此群汇总通知；也可由服务器环境变量配置">
+      <div class="generate-hint">通知由 Task 平台按测试套汇总发送。若从 Sonic 手动或定时执行测试套，请在 Sonic 配置一个“自定义机器人”，Webhook 指向 Task 的 <code>/api/sonic/suite-complete</code>；它只回传结束信号，不会逐条发送飞书消息。</div>
+    </div>
+
+    <!-- Step 4：关联模块 -->
+    <div class="form-step-content" style="display:none">
+      <label class="modal-label">关联模块</label>
+      <div class="module-check-list" id="task-app-modules"></div>
+    </div>
+
+    <!-- 分步导航按钮 -->
+    <div class="form-steps-footer">
+      <button type="button" class="btn-cancel step-prev-btn" onclick="FormSteps.prev()" style="display:none">上一步</button>
+      <button type="button" class="btn-confirm step-next-btn" onclick="FormSteps.next()">下一步</button>
+      <button type="button" class="btn-confirm step-submit-btn" onclick="saveTaskApp()" style="display:none">保存分组</button>
+    </div>
+
+    <div class="modal-btns" style="position:static;margin:8px 0 14px;padding:0;border:0;">
+      <button class="btn-cancel" onclick="clearTaskAppForm()">清空</button>
+      <button class="btn-cancel" onclick="diagnoseSonic()">诊断 Sonic 连接</button>
+      <button class="btn-confirm" onclick="scanLegacySonicCases('all')">扫描旧/重复步骤</button>
+      <button class="btn-confirm" onclick="refreshSonicBridgeScripts('all')">刷新桥接脚本</button>
+    </div>
+    <div class="generate-hint" id="sonic-diagnose-result" style="display:none;margin-bottom:14px;"></div>
+    <label class="modal-label">已配置应用</label>
+    <div id="task-app-list"></div>
+  </div>
+</div>
+
+<!-- Modal: Sonic 同步状态 -->
+<div class="modal-overlay" id="modal-sonic-status">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3 id="sonic-status-title">Sonic 同步状态</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-sonic-status')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint" id="sonic-status-summary" style="margin-bottom:10px;"></div>
+    <div class="modal-btns" style="position:static;margin:0 0 12px;padding:0;border:0;">
+      <button class="btn-cancel" onclick="rescanLegacySonicCases()">重新扫描</button>
+      <button class="btn-confirm" onclick="migrateLegacySonicCases()">一键清理并同步</button>
+      <button class="btn-confirm" onclick="refreshSonicBridgeScripts()">刷新桥接脚本</button>
+    </div>
+    <div id="sonic-status-list" class="sonic-status-grid"></div>
+  </div>
+</div>
+
+<!-- Modal: 新建自动化测试 -->
+<div class="modal-overlay" id="modal-generate">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3>新建自动化测试</h3>
+      <button class="modal-close" id="btn-close-generate" type="button" onclick="closeGenerateModal()" title="关闭">×</button>
+    </div>
+    <div class="generate-wizard" id="generate-wizard">
+      <div class="generate-wizard-step active" data-wizard-step="0">
+        <strong>1. 应用与资料</strong>
+        选模块、包名、需求和设计稿
+      </div>
+      <div class="generate-wizard-step" data-wizard-step="1">
+        <strong>2. 场景设计</strong>
+        先拆测试点再生成用例
+      </div>
+      <div class="generate-wizard-step" data-wizard-step="2">
+        <strong>3. 自动化脚本</strong>
+        校验风险并写入 Task
+      </div>
+      <div class="generate-wizard-step" data-wizard-step="3">
+        <strong>4. 调试入库</strong>
+        先单条调试，再进基线
+      </div>
+    </div>
+    <label class="modal-label" for="generate-module">目标模块</label>
+    <select id="generate-module" onchange="handleGenerateModuleChange()">
+      <option value="">选择目标模块</option>
+    </select>
+    <label class="modal-label" for="generate-app-package">应用 / APP 包名</label>
+    <div class="app-picker">
+      <select id="generate-app-select" onchange="selectAppPackage('generate', this.value)">
+        <option value="">选择已维护 APP</option>
+      </select>
+      <input type="text" id="generate-app-package" placeholder="也可手动输入包名，如：com.kfb.model" value="com.kfb.model" oninput="handleGenerateAppInput(this.value)">
+    </div>
+    <div class="generate-hint" id="generate-app-hint">页面知识库按 APP 包名隔离；测试生成可参考测试库和基线库，基线修复只参考基线库。</div>
+    <label class="modal-label" for="generate-figma-url">Figma 设计稿链接</label>
+    <input type="text" id="generate-figma-url" placeholder="可选：优先粘贴具体 Frame 链接；文件链接会按需求筛选相关页面">
+    <div class="generate-hint">Figma 只作为本次生成 YAML 的临时 UI 参考；系统会根据需求标题和文档筛选相关页面，忽略无关 Frame。用例条数由需求复杂度、风险、边界和异常覆盖自动分析。</div>
+    <details class="figma-advanced">
+      <summary>高级：Figma 扫描范围 <span>正常不用改，漏页时再调整</span></summary>
+      <div class="figma-row" style="margin-top:10px;margin-bottom:8px;">
+        <select id="generate-figma-mode" aria-label="Figma 扫描模式">
+          <option value="smart">推荐：自动筛选页面和弹窗</option>
+          <option value="loose">放宽：漏页时包含更多弹窗/二级页</option>
+          <option value="all">兜底：扫描全部 Frame 后再按需求过滤</option>
+        </select>
+        <label class="figma-limit-field" for="generate-figma-limit">
+          <span>最多扫描 UI 页面</span>
+          <input type="number" id="generate-figma-limit" min="1" max="120" value="80" title="最多扫描 UI 页面数，不是生成用例数量">
+        </label>
+      </div>
+      <div class="generate-hint">这个数字只控制从大型 Figma 文件里读取多少个候选 UI 页面，不限制生成用例数量；生成数量由 AI 根据需求范围自动判断。</div>
+    </details>
+    <label class="modal-label" for="generate-knowledge-tier">页面知识范围</label>
+    <select id="generate-knowledge-tier" onchange="loadGenerateKnowledgePages()" style="margin-bottom:8px;">
+      <option value="all">测试库 + 基线库</option>
+      <option value="baseline">仅基线库</option>
+      <option value="test">仅测试库</option>
+    </select>
+    <div class="generate-knowledge-box" id="generate-knowledge-box">
+      <div class="generate-knowledge-head">
+        <div>
+          <div class="generate-knowledge-title">参考页面知识</div>
+          <div class="generate-knowledge-count" id="generate-knowledge-count">自动匹配</div>
+        </div>
+        <div class="generate-knowledge-actions">
+          <button class="btn-sm" onclick="loadGenerateKnowledgePages()">刷新</button>
+          <button class="btn-sm" onclick="toggleGenerateKnowledge(true)">全选</button>
+          <button class="btn-sm" onclick="toggleGenerateKnowledge(false)">清空</button>
+        </div>
+      </div>
+      <div class="generate-knowledge-list" id="generate-knowledge-list"></div>
+      <div class="generate-hint">不勾选时自动匹配；勾选后优先参考选中的页面。</div>
+    </div>
+    <label class="modal-label" for="generate-title">用例集标题</label>
+    <input type="text" id="generate-title" placeholder="如：首页功能测试">
+    <label class="modal-label" for="generate-file">自动化脚本文件名</label>
+    <input type="text" id="generate-file" placeholder="如：task-3D.yaml，高级用户可修改">
+    <label class="modal-label" for="generate-asset-files">需求/设计稿文件</label>
+    <div class="upload-zone" id="generate-upload-zone" onclick="document.getElementById('generate-asset-files').click()" tabindex="0">
+      点击添加文件，或直接 Ctrl/Command + V 粘贴截图/文本
+      <input type="file" id="generate-asset-files" accept=".txt,.md,.json,.pdf,.doc,.docx,.mm,.png,.jpg,.jpeg" multiple style="display:none" onchange="handleGenerateAssetFiles(this)">
+    </div>
+    <div class="generate-hint">可把需求文档、原型图、脑图、已生成的用例 JSON 一起上传；同名文件会自动替换。</div>
+    <div class="asset-list" id="generate-asset-list"></div>
+    <div class="generate-status" id="generate-status"></div>
+    <div class="generate-progress" id="generate-progress">
+      <div class="progress-head">
+        <span id="generate-progress-label">准备生成</span>
+        <span id="generate-progress-percent">0%</span>
+      </div>
+      <div class="progress-track"><div class="progress-bar" id="generate-progress-bar"></div></div>
+      <div class="progress-steps" id="generate-progress-steps">
+        <div class="progress-step" data-step="0"><span class="progress-dot"></span><span>读取</span></div>
+        <div class="progress-step" data-step="1"><span class="progress-dot"></span><span>上传</span></div>
+        <div class="progress-step" data-step="2"><span class="progress-dot"></span><span>生成</span></div>
+        <div class="progress-step" data-step="3"><span class="progress-dot"></span><span>保存</span></div>
+        <div class="progress-step" data-step="4"><span class="progress-dot"></span><span>完成</span></div>
+      </div>
+    </div>
+    <label class="modal-label" for="generate-content">业务补充说明</label>
+    <textarea id="generate-content" placeholder="只写本次业务上下文即可，例如：当前测试账号已登录；本次只覆盖首页入口和我的页面；不要覆盖支付、清缓存、切换账号、后台造数场景。平台会自动把设计稿、页面知识和需求文档组合成生成约束。"></textarea>
+    <label style="display:flex;align-items:center;gap:8px;color:var(--text2);font-size:12px;font-family:var(--mono);margin-bottom:12px;">
+      <input type="checkbox" id="generate-create-job" style="width:auto;margin:0;">
+      生成后立即创建 Midscene 单条/文件调试任务
+    </label>
+    <label class="modal-label" for="generate-device">执行设备</label>
+    <select id="generate-device" style="margin-bottom:12px;">
+      <option value="">请选择执行设备（不自动分配）</option>
+    </select>
+    <label class="modal-label" for="generate-run-mode">执行策略</label>
+    <select id="generate-run-mode" style="margin-bottom:12px;" onchange="syncRunModeControls()">
+      <option value="test">测试模式：失败只复检归因，不自动修脚本</option>
+      <option value="baseline">基线回归：失败留证据，不自动修改脚本</option>
+    </select>
+    <input type="checkbox" id="generate-auto-optimize" style="display:none;" disabled>
+    <div class="generate-hint" style="margin-bottom:12px;">基线失败会保留日志、报告和归因；确认是脚本问题后，再从执行中心手动发起 AI 修复。</div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeGenerateModal()">取消</button>
+      <button class="btn-confirm" id="btn-generate-yaml" onclick="generateYaml()">生成并进入调试</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 新建脑图 -->
+<div class="modal-overlay" id="modal-mindmap-create">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3>新建脑图</h3>
+      <button class="modal-close" type="button" onclick="closeMindmapCreateModal()" title="关闭">×</button>
+    </div>
+    <div class="generate-hint">只生成脑图文件（FreeMind .mm）和生成分析，不写入 YAML 文件，不创建 Midscene 执行任务，不同步 Sonic。</div>
+    <label class="modal-label" for="mindmap-title">脑图标题</label>
+    <input type="text" id="mindmap-title" placeholder="如：语音识别模块测试用例脑图">
+    <label class="modal-label" for="mindmap-module">归属模块</label>
+    <select id="mindmap-module"></select>
+    <label class="modal-label" for="mindmap-app-package">应用 / APP 包名</label>
+    <div class="app-picker">
+      <select id="mindmap-app-select" onchange="selectAppPackage('mindmap', this.value)">
+        <option value="">选择已维护 APP</option>
+      </select>
+      <input type="text" id="mindmap-app-package" placeholder="如：com.kfb.model" value="com.kfb.model" oninput="handleMindmapAppInput(this.value)">
+    </div>
+    <label class="modal-label" for="mindmap-figma-url">Figma 设计稿链接</label>
+    <input type="text" id="mindmap-figma-url" placeholder="可选：优先粘贴具体 Frame 链接；系统会按标题/需求筛选相关页面">
+    <div class="generate-hint" style="margin-top:8px;margin-bottom:8px;">Figma 会自动按脑图标题、需求文档和补充说明筛选相关页面；无需手动选择生成规则或用例数量。</div>
+    <div class="figma-row mindmap-auto-options" aria-hidden="true">
+      <select id="mindmap-figma-mode">
+        <option value="smart">页面优先：过滤标题/组件小块</option>
+        <option value="loose">宽松：包含弹窗和二级页面</option>
+        <option value="all">全部 Frame：先按需求相关性筛选</option>
+      </select>
+      <input type="number" id="mindmap-figma-limit" min="1" max="120" value="80" title="最多解析页面数">
+    </div>
+    <label class="modal-label" for="mindmap-asset-files">需求/截图/已有用例文件</label>
+    <div class="upload-zone" id="mindmap-upload-zone" onclick="document.getElementById('mindmap-asset-files').click()" tabindex="0">
+      点击添加文件，或直接 Ctrl/Command + V 粘贴截图/文本
+      <input type="file" id="mindmap-asset-files" accept=".txt,.md,.json,.pdf,.doc,.docx,.mm,.png,.jpg,.jpeg" multiple style="display:none" onchange="handleMindmapAssetFiles(this)">
+    </div>
+    <div class="asset-list" id="mindmap-asset-list"></div>
+    <label class="modal-label" for="mindmap-content">补充说明</label>
+    <textarea id="mindmap-content" placeholder="例如：本次只做测试用例脑图评审，不生成自动化脚本；重点覆盖正常/异常/边界、P0/P1、人工待准备项。"></textarea>
+    <div class="generate-status" id="mindmap-status"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeMindmapCreateModal()">取消</button>
+      <button class="btn-confirm" id="btn-create-mindmap" onclick="createMindmapOnly()">只生成脑图</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 整文件执行 -->
+<div class="modal-overlay" id="modal-run-file">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>执行整文件</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-run-file')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint" id="run-file-name" style="margin-bottom:12px;"></div>
+    <label class="modal-label" for="run-file-device">执行设备</label>
+    <select id="run-file-device" style="margin-bottom:12px;">
+      <option value="">请选择执行设备（不自动分配）</option>
+    </select>
+    <label class="modal-label" for="run-file-mode">执行策略</label>
+    <select id="run-file-mode" style="margin-bottom:12px;" onchange="syncRunFileModeControls()">
+      <option value="test">测试模式：失败只复检归因，不自动修脚本</option>
+      <option value="baseline">基线回归：失败留证据，不自动修改脚本</option>
+    </select>
+    <input type="checkbox" id="run-file-auto-optimize" style="display:none;" disabled>
+    <div class="generate-hint" style="margin-bottom:12px;">基线失败只记录证据，不会自动改变已验证 YAML；需要时可在执行中心手动修复。</div>
+    <div class="generate-hint">整文件执行会按 YAML 内 tasks 顺序全部运行。需要调试某一条时，用“单条执行”。</div>
+    <div class="generate-status" id="run-file-status"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-run-file')">取消</button>
+      <button class="btn-confirm" id="btn-run-file-confirm" onclick="runCurrentFile()">创建执行任务</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 单条执行 -->
+<div class="modal-overlay" id="modal-run-task">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>单条/多条调试</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-run-task')" title="关闭">×</button>
+    </div>
+    <label class="modal-label" for="run-task-name">选择用例（可多选）</label>
+    <select id="run-task-name" multiple size="8" style="margin-bottom:12px;"></select>
+    <label class="modal-label" for="run-task-device">执行设备</label>
+    <select id="run-task-device" style="margin-bottom:12px;">
+      <option value="">请选择执行设备（不自动分配）</option>
+    </select>
+    <label class="modal-label" for="run-task-mode">执行策略</label>
+    <select id="run-task-mode" style="margin-bottom:12px;" onchange="syncRunTaskModeControls()">
+      <option value="test">测试模式：失败只复检归因，不自动修脚本</option>
+      <option value="baseline">基线回归：失败留证据，不自动修改脚本</option>
+    </select>
+    <input type="checkbox" id="run-task-auto-optimize" style="display:none;" disabled>
+    <div class="generate-hint" style="margin-bottom:12px;">失败会保留每条用例自己的执行证据；手动确认后才会触发修复和重跑。</div>
+    <div class="generate-hint">单条/多条调试由 Task Runner 执行，每个任务只下发选中的一个 task；不会触发 Sonic 测试套整套回归，原 YAML 文件也不会被拆分。</div>
+    <div class="generate-status" id="run-task-status"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-run-task')">取消</button>
+      <button class="btn-confirm" id="btn-run-task-confirm" onclick="runSelectedTask()">创建调试任务</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 页面知识库 -->
+<div class="modal-overlay" id="modal-knowledge">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3>APP 页面知识库</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-knowledge')" title="关闭">×</button>
+    </div>
+    <div class="knowledge-layout">
+      <div class="knowledge-side">
+        <div class="knowledge-toolbar">
+        <label class="modal-label">应用分类</label>
+        <div class="knowledge-apps" id="knowledge-app-list"></div>
+        <label class="modal-label" for="knowledge-app-package" style="margin-top:12px;">应用 / APP 包名</label>
+        <select id="knowledge-app-select" onchange="selectAppPackage('knowledge', this.value)" style="margin-bottom:8px;">
+          <option value="">选择应用</option>
+        </select>
+        <input type="text" id="knowledge-app-package" placeholder="也可手动输入，如：com.kfb.model" value="com.kfb.model" onchange="rememberAppPackage(this.value); syncAppSelect('knowledge'); loadKnowledgePages()">
+        <label class="modal-label" for="knowledge-tier-filter" style="margin-top:12px;">知识库筛选</label>
+        <select id="knowledge-tier-filter" onchange="loadKnowledgePages()" style="margin-bottom:8px;">
+          <option value="all">全部</option>
+          <option value="test">测试库</option>
+          <option value="baseline">基线库</option>
+        </select>
+        <div class="knowledge-search-row">
+          <input type="text" id="knowledge-page-search" placeholder="搜索页面 / 路径 / 元素" oninput="renderKnowledgePages()">
+          <button class="btn-sm" type="button" onclick="clearKnowledgeSearch()">清空</button>
+        </div>
+        <div class="generate-hint">每个应用独立维护页面知识；测试库用于探索生成，基线库用于稳定回归和修复。</div>
+        </div>
+        <div class="figma-import-box">
+          <label class="modal-label" for="figma-url">Figma 设计稿</label>
+          <div class="figma-row">
+            <input type="text" id="figma-url" placeholder="粘贴 Figma design/file 链接，建议复制具体 Frame 链接">
+            <button class="btn-sm success" id="btn-figma-parse" type="button" onclick="parseFigmaDesign()">解析</button>
+          </div>
+          <div class="figma-row" style="margin-top:8px;">
+            <select id="figma-parse-mode">
+              <option value="smart">页面优先：过滤标题/组件小块</option>
+              <option value="loose">宽松：包含较小弹窗和二级页面</option>
+              <option value="all">全部 Frame：用于手动筛选</option>
+            </select>
+            <input type="number" id="figma-parse-limit" min="1" max="120" value="80" title="最多解析页面数">
+          </div>
+          <div class="generate-hint">优先复制具体页面 Frame 链接；解析后勾选要导入的页面，会保存到当前 APP 页面知识库。</div>
+          <div class="figma-list" id="figma-draft-list"></div>
+          <div class="generate-knowledge-actions" id="figma-actions" style="display:none;margin-top:10px;">
+            <button class="btn-sm" type="button" onclick="toggleFigmaDrafts(true)">全选</button>
+            <button class="btn-sm" type="button" onclick="toggleFigmaDrafts(false)">清空</button>
+            <button class="btn-sm success" id="btn-figma-import" type="button" onclick="importFigmaDrafts()">导入选中页面</button>
+          </div>
+        </div>
+        <button class="btn-sm" onclick="clearKnowledgeForm()" style="width:100%;margin-bottom:8px;">新建页面</button>
+        <div class="knowledge-list" id="knowledge-list"></div>
+      </div>
+      <div class="knowledge-editor">
+        <label class="modal-label" for="knowledge-page-name">页面名称</label>
+        <input type="hidden" id="knowledge-page-id">
+        <input type="text" id="knowledge-page-name" placeholder="如：首页 / 我的页 / 打印记录">
+        <label class="modal-label" for="knowledge-tier">知识库类型</label>
+        <select id="knowledge-tier">
+          <option value="test">测试库：草稿、探索、临时 Figma/截图</option>
+          <option value="baseline">基线库：人工确认、稳定回归可用</option>
+        </select>
+        <label class="modal-label" for="knowledge-route">到达路径</label>
+        <input type="text" id="knowledge-route" placeholder="如：点击底部 Tab「我的」">
+        <label class="modal-label" for="knowledge-screenshot">页面截图</label>
+        <div class="upload-zone knowledge-paste-target" id="knowledge-upload-zone" onclick="document.getElementById('knowledge-screenshot').click()" tabindex="0">
+          点这里后 Ctrl/Command + V 粘贴截图，或点击选择图片
+          <input type="file" id="knowledge-screenshot" accept=".png,.jpg,.jpeg" style="display:none" onchange="handleKnowledgeScreenshot(this)">
+        </div>
+        <div class="knowledge-preview" id="knowledge-preview"><img id="knowledge-preview-img" alt="页面截图预览"></div>
+        <div class="generate-hint" id="knowledge-screenshot-name">截图可选；上传后生成用例时会作为视觉参考。</div>
+        <button class="btn-sm success" id="btn-analyze-knowledge" onclick="analyzeKnowledgeScreenshot()" style="margin-bottom:12px;">AI 识别页面</button>
+        <label class="modal-label" for="knowledge-description">页面说明</label>
+        <textarea id="knowledge-description" placeholder="AI 识别后会自动填充，你可以微调。"></textarea>
+        <label class="modal-label" for="knowledge-elements">关键元素</label>
+        <textarea id="knowledge-elements" placeholder="每行一个元素，例如：&#10;底部 Tab「我的」&#10;入口「我的收藏」&#10;入口「打印记录」"></textarea>
+        <label class="modal-label" for="knowledge-assertions">常用断言</label>
+        <textarea id="knowledge-assertions" placeholder="每行一个断言，例如：&#10;页面标题为「我的」&#10;展示「我的收藏」入口"></textarea>
+      </div>
+    </div>
+    <div class="generate-status" id="knowledge-status"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-knowledge')">关闭</button>
+      <button class="btn-confirm" onclick="saveKnowledgePage()">保存页面知识</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 基线辅助截图 -->
+<div class="modal-overlay" id="modal-baseline-refs">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3>基线辅助截图</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-baseline-refs')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint" id="baseline-ref-source" style="margin-bottom:10px;"></div>
+    <label class="modal-label" for="baseline-ref-task">绑定范围</label>
+    <select id="baseline-ref-task" onchange="loadBaselineRefs()" style="margin-bottom:12px;">
+      <option value="">整个 YAML 文件</option>
+    </select>
+    <div class="generate-hint">文件级页面会作为所有用例的通用参考；选择某一条用例后，可以额外绑定只属于这条用例的页面。AI 修复基线时会优先参考这些页面截图。</div>
+    <label class="modal-label" style="margin-top:12px;">参考页面</label>
+    <div class="generate-knowledge-list" id="baseline-ref-pages"></div>
+    <div class="generate-status" id="baseline-ref-status"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-baseline-refs')">关闭</button>
+      <button class="btn-confirm" onclick="saveBaselineRefs()">保存绑定</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 新建模块 -->
+<div class="modal-overlay" id="modal-module">
+  <div class="modal">
+    <h3>➕ 新建模块</h3>
+    <input type="text" id="new-module-name" placeholder="模块名称，如：文档打印">
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-module')">取消</button>
+      <button class="btn-confirm" onclick="addModule()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 新建Task -->
+<div class="modal-overlay" id="modal-task">
+  <div class="modal">
+    <h3>➕ 新建 Task</h3>
+    <select id="new-task-module">
+      <option value="">选择所属模块</option>
+    </select>
+    <input type="text" id="new-task-name" placeholder="文件名，如：文字速印（无需.yaml后缀）">
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-task')">取消</button>
+      <button class="btn-confirm" onclick="addTask()">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: 上传文件 -->
+<div class="modal-overlay" id="modal-upload">
+  <div class="modal">
+    <h3>↑ 上传 Task 文件</h3>
+    <select id="upload-module">
+      <option value="">选择目标模块</option>
+    </select>
+    <div class="upload-zone" onclick="document.getElementById('file-input').click()">
+      📄 点击选择 .yaml 文件
+      <input type="file" id="file-input" accept=".yaml,.yml" style="display:none" onchange="handleFileSelect(this)">
+    </div>
+    <div id="upload-filename" style="font-size:12px;color:var(--text2);font-family:var(--mono);margin-bottom:8px;"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-upload')">取消</button>
+      <button class="btn-confirm" onclick="uploadFile()">上传</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="modal-overlay" id="modal-ai-gateway-result">
+  <div class="modal" style="max-width:980px;">
+    <div class="modal-head">
+      <h3 id="ai-gateway-result-title">AI 分析结果</h3>
+      <button class="modal-close" type="button" onclick="closeModal('modal-ai-gateway-result')" title="关闭">×</button>
+    </div>
+    <div class="generate-hint" id="ai-gateway-result-summary" style="margin-bottom:12px;"></div>
+    <div id="ai-gateway-risk-hint" class="agent-risk" style="margin-bottom:12px;"></div>
+    <div class="agent-tabs" id="ai-gateway-result-tabs">
+      <button class="agent-tab active" type="button" onclick="showAiGatewayResultTab('analysis')">AI分析结果</button>
+      <button class="agent-tab" type="button" onclick="showAiGatewayResultTab('original')">原始 YAML</button>
+      <button class="agent-tab" type="button" onclick="showAiGatewayResultTab('fixed')">修复 YAML</button>
+    </div>
+    <pre class="agent-artifact-box" id="ai-gateway-result-box" style="min-height:320px;"></pre>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal('modal-ai-gateway-result')">关闭</button>
+      <button class="btn-confirm" onclick="copyAiGatewayResult()">复制当前内容</button>
+      <button class="btn-confirm" onclick="generateRepairYamlFromAnalysis()">生成修复 YAML</button>
+      <button class="btn-confirm" onclick="downloadAiGatewayYamlDraft()">下载修复 YAML</button>
+    </div>
+    <div class="generate-hint" style="margin-top:10px;">修复后的 YAML 只作为草稿展示，不会自动覆盖当前文件或基线；替换前必须人工确认。</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+
+<script src="js/utils.js?v=20260616-ui-check"></script>
+<script src="js/error-handler.js?v=20260616-ui-check"></script>
+<script src="js/empty-states.js?v=20260616-ui-check"></script>
+<script src="js/loading-manager.js?v=20260616-ui-check"></script>
+<script src="js/form-steps.js?v=20260616-ui-check"></script>
+<script src="js/state.js?v=20260616-ui-check"></script>
+<script src="js/api.js?v=20260616-ui-check"></script>
+<script src="js/auth.js?v=20260616-ui-check"></script>
+<script src="js/navigation.js?v=20260616-ui-check"></script>
+<script src="js/agent-workbench.js?v=20260616-ui-check"></script>
+<script src="js/agent-status.js?v=20260616-ui-check"></script>
+<script src="js/cases.js?v=20260616-ui-check"></script>
+<script src="js/execution.js?v=20260616-ui-check"></script>
+<script src="js/reports.js?v=20260616-ui-check"></script>
+<script src="js/ai-repair.js?v=20260616-ui-check"></script>
+<script src="js/model-config.js?v=20260616-ui-check"></script>
+<script src="js/yaml-editor.js?v=20260616-ui-check"></script>
+<script src="js/app.js?v=20260616-ui-check"></script>
+<!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->
+</body>
+</html>

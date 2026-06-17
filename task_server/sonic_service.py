@@ -1,0 +1,63 @@
+"""向后兼容的 Sonic 服务出口。
+
+实际实现已迁移至 :mod:`task_server.services.sonic_service`；本文件仅做
+重导出，避免破坏旧导入路径与外部文档引用。
+"""
+
+from .services.sonic_service import (  # noqa: F401
+    SONIC_LOGIN_STATE,
+    handle_suite_complete,
+    handle_suite_report,
+    load_sonic_suite_results,
+    load_sonic_sync_state,
+    publish_batch,
+    publish_case,
+    register_legacy_handlers,
+    save_sonic_suite_results,
+    save_sonic_sync_state,
+    sonic_api_prefix,
+    sonic_auth_preview,
+    sonic_base_url,
+    sonic_get_token,
+    sonic_handle_callback,
+    sonic_handle_suite_completion,
+    sonic_health,
+    sonic_list_projects,
+    sonic_list_suites,
+    sonic_login,
+    sonic_publish_batch,
+    sonic_publish_case,
+    sonic_read_result,
+    sonic_request,
+    sonic_result_url,
+    sonic_url,
+)
+
+__all__ = [
+    "SONIC_LOGIN_STATE",
+    "handle_suite_complete",
+    "handle_suite_report",
+    "load_sonic_suite_results",
+    "load_sonic_sync_state",
+    "publish_batch",
+    "publish_case",
+    "register_legacy_handlers",
+    "save_sonic_suite_results",
+    "save_sonic_sync_state",
+    "sonic_api_prefix",
+    "sonic_auth_preview",
+    "sonic_base_url",
+    "sonic_get_token",
+    "sonic_handle_callback",
+    "sonic_handle_suite_completion",
+    "sonic_health",
+    "sonic_list_projects",
+    "sonic_list_suites",
+    "sonic_login",
+    "sonic_publish_batch",
+    "sonic_publish_case",
+    "sonic_read_result",
+    "sonic_request",
+    "sonic_result_url",
+    "sonic_url",
+]

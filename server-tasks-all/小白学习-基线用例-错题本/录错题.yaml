@@ -1,0 +1,66 @@
+android:
+
+tasks:
+  - name: 录错题
+    # baseline.goal: 验证录错题
+    # baseline.start_page: App 首页
+    # baseline.path: 错题本 icon -> 拍照录错题 icon -> 相册导入 -> 修改 -> 确定 -> 框错题 -> 确定
+    # baseline.expected: 录错题相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "错题本 icon"
+      - sleep: 2000
+      - ai: "打开之后如果弹出弹窗点击关闭按钮，没有弹窗就跳过"
+      - sleep: 2000
+      - aiTap: "拍照录错题 icon"
+      - sleep: 1000
+      - ai: "如果仍有弹窗点击“收集错题”按钮，没有弹窗就跳过"
+      - sleep: 1000
+      - aiTap: "相册导入"
+      - sleep: 1000
+      - ai: "打开之后如果弹出存储权限弹窗点击\"确定\"按钮后再点击“允许”按钮，没有弹窗就跳过"
+      - sleep: 1000
+      - ai: "勾选一张照片即可，不要点击完成按钮"
+      - sleep: 1000
+      - ai: "点击完成按钮"
+      - sleep: 3000
+      - ai: "打开之后如果弹出加入错题本弹窗点击“确定”按钮，没有弹窗就跳过"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 30000
+      - ai: "打开之后如果弹出满意度评价弹窗点击关闭按钮，没有弹窗就跳过"
+      - sleep: 2000
+      - aiTap: "修改"
+      - sleep: 1000
+      - aiTap: "确定"
+      - sleep: 2000
+      - aiTap: "框错题"
+      - sleep: 2000
+      - aiTap: "确定"
+      - sleep: 2000
+      - ai: "点击保存错题按钮"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

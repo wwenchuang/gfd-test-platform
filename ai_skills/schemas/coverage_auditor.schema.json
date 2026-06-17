@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "required": ["coverage_matrix", "coverage_check", "missing_requirement_points", "missing_case_points", "missing_scenario_points", "generic_assertion_cases", "duplicate_cases", "questions", "ok"],
+  "properties": {
+    "coverage_matrix": {"type": "array"},
+    "coverage_check": {"type": "string"},
+    "missing_requirement_points": {"type": "array"},
+    "missing_case_points": {"type": "array"},
+    "missing_scenario_points": {"type": "array"},
+    "generic_assertion_cases": {"type": "array"},
+    "duplicate_cases": {"type": "array"},
+    "questions": {"type": "array"},
+    "ok": {"type": "boolean"}
+  }
+}

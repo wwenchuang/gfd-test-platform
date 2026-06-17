@@ -1,0 +1,19 @@
+[Unit]
+Description=Midscene Task Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=midscene
+Group=midscene
+WorkingDirectory=/opt/midscene-task-platform
+Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
+ExecStart=/usr/bin/env python3 -m task_server
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

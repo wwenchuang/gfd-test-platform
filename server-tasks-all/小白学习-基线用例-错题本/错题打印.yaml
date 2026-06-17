@@ -1,0 +1,56 @@
+android:
+
+tasks:
+  - name: 错题打印
+    # baseline.goal: 验证错题打印
+    # baseline.start_page: App 首页
+    # baseline.path: 错题本 icon -> 我的错题本 -> 数学 -> 选题打印 -> 全选 -> 确定 -> 立即打印
+    # baseline.expected: 错题打印相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "错题本 icon"
+      - sleep: 2000
+      - ai: "打开之后如果弹出弹窗点击关闭按钮，没有弹窗就跳过"
+      - sleep: 1000
+      - aiTap: "我的错题本"
+      - sleep: 1000
+      - aiTap: "数学"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：选题打印"
+        timeout: 60000
+      - aiTap: "选题打印"
+      - sleep: 2000
+      - aiTap: "全选"
+      - sleep: 2000
+      - aiTap: "确定"
+      - ai: "打开之后如果弹出新手引导弹窗则按照新手引导步骤逐步点击关闭按钮，没有弹窗就跳过"
+      - sleep: 2000
+      - aiTap: "立即打印"
+      - aiWaitFor: "模型处理进度已加载到 100%，并且页面出现可点击的「确认打印」按钮"
+        timeout: 240000
+      - ai: "点击“确认打印”按钮，如果找不到此按钮则点击“立即打印”按钮后等待8秒再点击“确认打印”按钮"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

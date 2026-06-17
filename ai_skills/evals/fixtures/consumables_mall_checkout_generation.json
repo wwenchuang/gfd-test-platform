@@ -1,0 +1,85 @@
+{
+  "name": "consumables_mall_checkout_generation",
+  "description": "耗材商城需求中包含列表、搜索、购物车和支付风险，验证 skills 能把真实支付和强数据依赖转人工，同时保留可自动化的入口、列表、空态和购物车展示。",
+  "input": {
+    "title": "小白客商城耗材自动化用例生成",
+    "module": "商城",
+    "text_assets": "需求：用户可以从首页进入小白客商城，查看耗材列表，搜索 PLA 耗材，进入商品详情，加入购物车并提交订单。UI稿包含商城首页、商品详情和购物车页面，没有支付成功页。当前测试账号不保证有优惠券和收货地址。希望生成稳定自动化用例，并覆盖异常和边界。"
+  },
+  "expected_contract": {
+    "requirement_analyzer": {
+      "must_include_prompt_terms": [
+        "需求体检",
+        "missing_inputs",
+        "blockers",
+        "readiness_score",
+        "source_quality"
+      ],
+      "output_fields": [
+        "business_goals",
+        "entry_points",
+        "data_assumptions",
+        "visible_outcomes",
+        "requirement_points",
+        "questions",
+        "missing_inputs",
+        "blockers",
+        "assumptions",
+        "readiness_score"
+      ]
+    },
+    "scenario_designer": {
+      "must_include_prompt_terms": [
+        "等价类",
+        "边界值",
+        "决策表",
+        "错误推测",
+        "业务规则校验"
+      ]
+    },
+    "automation_filter": {
+      "must_include_prompt_terms": [
+        "本平台现有 YAML 风格参考",
+        "P0/P1/P2/P3",
+        "真实支付",
+        "优惠券/地址强依赖",
+        "后台造数",
+        "结果可以通过 UI 视觉信号验证",
+        "manual_cases"
+      ]
+    },
+    "visual_grounder": {
+      "must_include_prompt_terms": [
+        "现有 YAML 风格",
+        "data_requirements",
+        "manual_cases"
+      ]
+    },
+    "coverage_auditor": {
+      "must_include_prompt_terms": [
+        "coverage_matrix",
+        "missing_case_points",
+        "manual_cases"
+      ]
+    }
+  },
+  "expected_live": {
+    "min_requirement_points": 4,
+    "min_scenarios": 6,
+    "min_cases": 4,
+    "min_manual_cases": 1,
+    "min_coverage_rows": 4,
+    "require_readiness": true,
+    "must_include_terms": [
+      "耗材",
+      "搜索",
+      "购物车",
+      "支付"
+    ],
+    "must_not_include_terms": [
+      "真实支付完成",
+      "XPath",
+      "CSS selector"
+    ]
+  }
+}

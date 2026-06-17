@@ -1,0 +1,56 @@
+android:
+
+tasks:
+  - name: "格式转换"
+    # baseline.goal: 验证格式转换
+    # baseline.start_page: App 首页
+    # baseline.path: 扫描复印 icon -> 格式转换 icon -> 相册导入 -> 完成 -> 确认 -> 导出 -> 保存到相册
+    # baseline.expected: 格式转换相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "扫描复印 icon"
+      - sleep: 1000
+      - aiTap: "格式转换 icon"
+      - sleep: 1000
+      - aiTap: "相册导入"
+      - sleep: 1000
+      - ai: "勾选一张照片即可，不要点击完成按钮"
+      - sleep: 1000
+      - aiTap: "完成"
+      - aiWaitFor: "正在处理图片提示消失，且页面出现格式选择选项"
+        timeout: 60000
+      - aiTap: "PNG"
+      - aiTap: "确认"
+      - aiWaitFor: "页面出现导出按钮"
+        timeout: 30000
+      - aiTap: "导出"
+      - sleep: 1000
+      - aiTap: "保存到相册"
+      - sleep: 1500
+      - aiWaitFor: "页面加载或保存状态结束，且没有出现保存失败、导出失败、权限失败或网络错误提示；若成功提示已消失，则确认页面已恢复稳定可操作状态"
+        timeout: 30000
+      - aiAssert: "当前没有保存失败、导出失败、下载失败、生成失败、转换失败、权限失败、网络错误或异常弹窗"
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

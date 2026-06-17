@@ -1,0 +1,44 @@
+android:
+
+tasks:
+  - name: 小白学习-Deepseek专区
+    # baseline.case_id: COM_XBXXHZ_BOX_1e83c16d17ec
+    # baseline.goal: 验证小白学习-Deepseek专区
+    # baseline.start_page: App 首页
+    # baseline.path: 全部 icon -> AI老师 icon -> 名著助手 icon -> 《水浒传》中天罡共多少人？
+    # baseline.expected: 小白学习-AI拍照搜题相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "全部 icon"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：AI老师 icon"
+        timeout: 60000
+      - aiTap: "AI老师 icon"
+      - sleep: 1000
+      - aiTap: "名著助手 icon"
+      - sleep: 1000
+      - aiTap: "《水浒传》中天罡共多少人？"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 30000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

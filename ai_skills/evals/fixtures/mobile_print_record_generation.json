@@ -1,0 +1,96 @@
+{
+  "name": "mobile_print_record_generation",
+  "description": "不完整移动端需求下，验证 AI skills 能保留需求缺口、拆分场景，并把强数据依赖场景进入人工清单。",
+  "input": {
+    "title": "打印记录自动化用例生成",
+    "module": "我的页",
+    "text_assets": "需求：用户进入我的页后，可以查看打印记录。UI稿只有我的页截图，能看到打印记录入口，但没有打印记录列表页。希望自动生成可执行用例。"
+  },
+  "expected_contract": {
+    "requirement_analyzer": {
+      "must_include_prompt_terms": [
+        "需求分析 Skill",
+        "requirement_points",
+        "questions",
+        "不要生成测试步骤"
+      ],
+      "output_fields": [
+        "business_goals",
+        "entry_points",
+        "visible_outcomes",
+        "requirement_points",
+        "questions",
+        "confidence",
+        "missing_inputs",
+        "readiness_score",
+        "readiness_level",
+        "source_quality"
+      ]
+    },
+    "scenario_designer": {
+      "must_include_prompt_terms": [
+        "等价类",
+        "边界值",
+        "决策表",
+        "状态迁移",
+        "不适合自动化的场景也必须保留"
+      ]
+    },
+    "automation_filter": {
+      "must_include_prompt_terms": [
+        "Midscene 友好步骤约束",
+        "本平台现有 YAML 风格参考",
+        "P0/P1/P2/P3",
+        "列表区域或空态提示",
+        "manual_cases",
+        "真实支付",
+        "后台造数",
+        "UI 可见信号"
+      ]
+    },
+    "visual_grounder": {
+      "must_include_prompt_terms": [
+        "Figma",
+        "截图",
+        "页面知识",
+        "UI 可见断言",
+        "现有 YAML 风格",
+        "列表区域或空态提示"
+      ]
+    },
+    "coverage_auditor": {
+      "must_include_prompt_terms": [
+        "可追溯",
+        "泛化断言",
+        "missing_requirement_points",
+        "generic_assertion_cases"
+      ]
+    },
+    "repair_patch_planner": {
+      "must_include_prompt_terms": [
+        "失败修复补丁规划 Skill",
+        "patches",
+        "insert_after",
+        "can_repair_yaml=false",
+        "Sonic 基线"
+      ]
+    }
+  },
+  "expected_live": {
+    "min_requirement_points": 2,
+    "min_scenarios": 3,
+    "min_cases": 2,
+    "min_manual_cases": 1,
+    "min_coverage_rows": 2,
+    "require_readiness": true,
+    "must_include_terms": [
+      "打印记录",
+      "入口",
+      "列表"
+    ],
+    "must_not_include_terms": [
+      "XPath",
+      "CSS selector"
+    ]
+  }
+}

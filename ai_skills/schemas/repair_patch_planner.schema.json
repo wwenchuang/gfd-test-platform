@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["analysis", "changes", "patches"],
+  "properties": {
+    "analysis": {"type": "string"},
+    "changes": {"type": "array"},
+    "patches": {"type": "array"}
+  }
+}

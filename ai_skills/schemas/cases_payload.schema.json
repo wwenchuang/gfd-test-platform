@@ -1,0 +1,20 @@
+{
+  "type": "object",
+  "required": ["title", "module", "analysis", "scenarios", "cases", "manual_cases", "review"],
+  "properties": {
+    "title": {"type": "string"},
+    "module": {"type": "string"},
+    "analysis": {
+      "type": "object",
+      "required": ["requirement_points"],
+      "properties": {
+        "requirement_points": {"type": "array"},
+        "coverage_matrix": {"type": "array"}
+      }
+    },
+    "scenarios": {"type": "array"},
+    "cases": {"type": "array"},
+    "manual_cases": {"type": "array"},
+    "review": {"type": "object"}
+  }
+}

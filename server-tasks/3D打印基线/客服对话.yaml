@@ -1,0 +1,64 @@
+android:
+
+tasks:
+  - name: 客服对话
+    # baseline.case_id: COM_KFB_MODEL_bf612450b118
+    # baseline.goal: 验证客服对话
+    # baseline.start_page: App 首页
+    # baseline.path: 联系客服 -> 右下角发送按钮（文本“发送”或发送图标）
+    # baseline.expected: 客服对话相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1500
+      - launch: com.kfb.model
+      - sleep: 3000
+      - aiAction: "首页遗留切片任务清理：如果当前首页顶部出现「模型处理完成」横幅，或横幅右侧出现「去打印」入口，则点击「去打印」进入「模型打印预览」；在预览页点击底部「取消打印」，弹出「确认要取消任务吗？」时点击「确定」，然后返回 App 首页。若首页没有该横幅/入口，则不要点击任何内容，直接继续。"
+      - sleep: 1000
+      - ai: "点击右下角“我的”按钮"
+      - sleep: 1000
+
+      - aiTap: "联系客服"
+      - sleep: 2000
+
+
+      - aiAssert: "页面未出现“当前客服不在线/客服不在线/不支持留言”等提示，并且底部有可用的输入框"
+        errorMessage: "客服不在线"
+      - sleep: 1000
+
+      - aiInput: "底部输入消息框"
+        value: "自动化测试回复1即可"
+      - sleep: 800
+
+      - aiTap: "右下角发送按钮（文本“发送”或发送图标）"
+      - sleep: 1500
+
+      - aiAssert: "对话中出现我刚发送的“自动化测试回复1即可”消息"
+        errorMessage: "消息未发送成功"
+      - sleep: 1000
+
+      - aiWaitFor: "对话中出现客服回复“1”（或仅包含数字1的客服消息）"
+        timeout: 120000
+      - sleep: 1000
+
+      - ai: "优先点击左上角返回按钮；如果有“确定/确认/结束对话”弹窗则点击“确定”；重复直到回到“我的”页面"
+      - sleep: 1000
+
+      - aiAssert: "当前页面是“我的”页面（能看到“联系客服”入口或“我的”页关键元素）"
+        errorMessage: "未返回到我的页面"
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1000

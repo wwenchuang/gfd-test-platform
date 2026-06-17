@@ -1,0 +1,63 @@
+android:                       
+tasks:                                                                                                                                                     
+  - name: 文档打印-图片转文档微信
+    # baseline.goal: 验证文档打印-图片转文档微信
+    # baseline.start_page: App 首页
+    # baseline.path: 文档打印icon -> 图片转文档 icon -> 微信导入 按钮 -> 立即跳转 按钮 -> 点击上传图片icon -> 文件传输助手绿色icon -> 确定 -> 预览并打印
+    # baseline.expected: 文档打印-图片转文档微信相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:                                                                                                                                                  
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "文档打印icon"
+      - sleep: 1000
+      - ai: "如果有弹窗就点击弹窗底部关闭按钮，没有就跳过"
+      - sleep: 1000
+      - aiTap: "图片转文档 icon"
+      - sleep: 1000
+      - aiTap: "微信导入 按钮"
+      - sleep: 1000
+      - aiTap: "立即跳转 按钮"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：点击上传图片icon"
+        timeout: 240000
+      - aiTap: "点击上传图片icon"
+      - sleep: 1000
+      - aiTap: "文件传输助手绿色icon"
+      - sleep: 1000
+      - ai: "选择一张图片即可不用点确定"
+      - sleep: 1000
+      - aiTap: "确定"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 240000
+      - ai: "点击确认导入 按钮即可 不用点击预览并打印按钮"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：预览并打印"
+        timeout: 60000
+      - aiTap: "预览并打印"
+      - sleep: 1000
+      - aiTap: "立即打印"
+      - sleep: 1000
+      - aiTap: "确认打印"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

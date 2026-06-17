@@ -1,0 +1,34 @@
+async function apiRequest(path, options = {}) {
+  const { skipAuthRedirect, ...rest } = options || {};
+  const headers = authHeaders(rest.headers || {});
+  // FormData 上传不要主动设置 Content-Type，浏览器会自动处理 boundary
+  if (rest.body && !(rest.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  // body 支持对象，自动 JSON 序列化（FormData/string/Blob 等保持原样）
+  if (rest.body && typeof rest.body === 'object'
+      && !(rest.body instanceof FormData)
+      && !(rest.body instanceof Blob)
+      && !(rest.body instanceof ArrayBuffer)
+      && !(rest.body instanceof URLSearchParams)) {
+    rest.body = JSON.stringify(rest.body);
+  }
+  const res = await nativeFetch(`${API_BASE}${path}`, {
+    ...rest,
+    headers
+  });
+  if (res.status === 401) {
+    if (skipAuthRedirect) {
+      // 登录页等场景下，由调用方处理 401（避免循环跳转登录页）
+    } else {
+      forceLogoutWithMessage('登录已失效，请重新登录');
+    }
+  } else if (res.status === 403) {
+    showToast('无权限执行此操作', 'error');
+  } else if (res.status === 413) {
+    showToast('请求体过大，请减少上传内容后重试', 'error');
+  } else if (res.status === 502 || res.status === 504) {
+    showToast('服务暂时不可用，请稍后重试', 'error');
+  }
+  return readJsonResponse(res);
+}

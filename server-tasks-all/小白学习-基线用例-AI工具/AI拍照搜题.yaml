@@ -1,0 +1,54 @@
+android:
+
+tasks:
+  - name: 小白学习-AI拍照搜题
+    # baseline.case_id: COM_XBXXHZ_BOX_0e94f301f986
+    # baseline.goal: 验证小白学习-AI拍照搜题
+    # baseline.start_page: App 首页
+    # baseline.path: 全部 icon -> AI老师 icon -> AI拍照搜题 icon -> 勾号 按钮 -> 再搜一题 icon
+    # baseline.expected: 小白学习-AI拍照搜题相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "全部 icon"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：AI老师 icon"
+        timeout: 60000
+      - aiTap: "AI老师 icon"
+      - sleep: 1000
+      - aiTap: "AI拍照搜题 icon"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到确定按钮并点击，没有就跳过"
+      - sleep: 3000
+      - ai: "选择一张照片即可，其他的不要点击"
+      - sleep: 3000
+      - aiTap: "勾号 按钮"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：再搜一题 icon"
+        timeout: 60000
+      - aiTap: "再搜一题 icon"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到确定按钮并点击，没有就跳过"
+      - sleep: 3000
+      - ai: "选择一张照片即可，其他的不要点击"
+      - sleep: 3000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

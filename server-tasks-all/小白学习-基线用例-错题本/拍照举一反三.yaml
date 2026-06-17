@@ -1,0 +1,72 @@
+android:
+
+tasks:
+  - name: 拍照举一反三
+    # baseline.goal: 验证拍照举一反三
+    # baseline.start_page: App 首页
+    # baseline.path: 错题本 icon -> 举一反三 -> 相册导入 -> 举一反三 -> 全选 -> 加入错题本 -> 确定 -> 确定
+    # baseline.expected: 拍照举一反三相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "错题本 icon"
+      - sleep: 2000
+      - ai: "打开之后如果弹出弹窗点击关闭按钮，没有弹窗就跳过"
+      - sleep: 1000
+      - ai: 点击页面上的举一反三按钮
+      - sleep: 1000
+      - ai: "如果仍有弹窗点击“拍摄试卷”按钮，没有弹窗就跳过"
+      - sleep: 2000
+      - aiTap: "相册导入"
+      - sleep: 1000
+      - ai: "打开之后如果弹出存储权限弹窗点击\"确定\"按钮后再点击“允许”按钮，没有弹窗就跳过"
+      - sleep: 2000
+      - ai: "勾选一张照片即可，不要点击完成按钮"
+      - sleep: 1000
+      - ai: "点击完成按钮"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 60000
+      - ai: "点击任一灰色加号按钮"
+      - sleep: 2000
+      - aiTap: "举一反三"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：全选"
+        timeout: 60000
+      - aiTap: "全选"
+      - sleep: 2000
+      - aiTap: "加入错题本"
+      - sleep: 2000
+      - ai: "点击确认错题属性下拉框"
+      - sleep: 2000
+      - aiTap: "确认"
+      - sleep: 2000
+      - aiWaitFor: "页面弹出确认对话框或出现确定按钮"
+        timeout: 60000
+      - aiTap: "确定"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：去错题本查看"
+        timeout: 60000
+      - aiTap: "去错题本查看"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

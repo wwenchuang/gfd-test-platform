@@ -1,0 +1,56 @@
+android:
+
+tasks:
+  - name: 打印完成页
+    # baseline.goal: 打印完成页
+    # baseline.start_page: App 首页
+    # baseline.path: 全部 icon -> AI老师 icon -> 作文小纸条 -> 立即打印 按钮 -> 确认打印 按钮
+    # baseline.expected: 小白学习-AI拍照搜题相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "全部 icon"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：AI老师 icon"
+        timeout: 60000
+      - aiTap: "AI老师 icon"
+      - sleep: 1000
+      - aiTap: "作文小纸条"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到暂不按钮，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "立即打印 按钮"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：确认打印 按钮"
+        timeout: 60000
+      - aiTap: "确认打印 按钮"
+      - sleep: 1000
+      - aiAssert: "页面出现 任务传输中提示 或者有继续打印 按钮"
+      - sleep: 1000
+      - aiScroll: "瀑布流列表区域，不要滚动顶部栏或底部导航"
+        scrollType: "singleAction"
+        direction: "down"
+        distance: 500
+        deepLocate: true
+      - aiWaitFor: "瀑布流列表已加载出新的内容卡片"
+        timeout: 30000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

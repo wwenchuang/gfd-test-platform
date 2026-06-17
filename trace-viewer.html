@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trace Viewer - 功夫豆测试平台</title>
+  <style>
+    :root {
+      --bg: #06111f;
+      --panel: #0a1a2f;
+      --line: #1e4262;
+      --text: #e8f0ff;
+      --muted: #91a3bf;
+      --cyan: #00d9ff;
+      --green: #00d39b;
+      --red: #ff4f7b;
+      --yellow: #f5b301;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(circle at 20% 0%, #082946 0, var(--bg) 34%); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    header { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 18px 28px; border-bottom: 1px solid var(--line); background: rgba(5, 12, 24, .9); backdrop-filter: blur(12px); }
+    h1 { margin: 0; font-size: 20px; }
+    main { display: grid; grid-template-columns: 320px 1fr; gap: 18px; padding: 20px 28px 32px; }
+    button { border: 1px solid var(--line); color: var(--text); background: #102641; border-radius: 8px; padding: 9px 12px; cursor: pointer; font-weight: 700; }
+    button.primary { background: linear-gradient(135deg, #00d9ff, #00d39b); color: #001018; border-color: transparent; }
+    .sidebar, .detail { background: rgba(10, 26, 47, .88); border: 1px solid var(--line); border-radius: 12px; min-height: 70vh; }
+    .sidebar { overflow: hidden; }
+    .toolbar { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+    .trace-list { max-height: calc(100vh - 120px); overflow: auto; }
+    .trace-item { padding: 12px; border-bottom: 1px solid rgba(30, 66, 98, .6); cursor: pointer; }
+    .trace-item:hover, .trace-item.active { background: rgba(0, 217, 255, .1); }
+    .trace-item strong { display: block; font-size: 14px; margin-bottom: 6px; }
+    .meta { color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .detail { padding: 18px; overflow: auto; }
+    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+    .stat { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: rgba(2, 10, 22, .5); }
+    .stat strong { display: block; color: var(--cyan); font-size: 24px; }
+    .node { border: 1px solid var(--line); border-left: 5px solid var(--yellow); border-radius: 10px; padding: 12px; margin: 12px 0; background: rgba(3, 10, 21, .72); }
+    .node.success { border-left-color: var(--green); }
+    .node.failed { border-left-color: var(--red); }
+    .node.running { border-left-color: var(--cyan); }
+    .node-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .node-title { min-width: 0; }
+    .node-title strong { display: block; color: var(--text); }
+    .pill { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--cyan); font-size: 12px; }
+    pre { white-space: pre-wrap; overflow: auto; max-height: 220px; background: #020817; border: 1px solid rgba(30, 66, 98, .6); border-radius: 8px; padding: 10px; color: #b9c8dd; }
+    .empty { color: var(--muted); padding: 24px; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } .summary { grid-template-columns: repeat(2, 1fr); } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Execution Trace Viewer</h1>
+      <div class="meta">真实 Agent / Runner / DAG 执行链路回放</div>
+    </div>
+    <div>
+      <button onclick="location.href='/task-manager.html'">回平台</button>
+      <button class="primary" onclick="loadTraces()">刷新</button>
+    </div>
+  </header>
+  <main>
+    <aside class="sidebar">
+      <div class="toolbar">
+        <button class="primary" onclick="loadTraces()">加载 Trace</button>
+      </div>
+      <div id="trace-list" class="trace-list"><div class="empty">正在加载...</div></div>
+    </aside>
+    <section id="trace-detail" class="detail"><div class="empty">请选择一条 Trace。</div></section>
+  </main>
+  <script>
+    const API_BASE = '/api';
+    let traces = [];
+    let activeTraceId = new URLSearchParams(location.search).get('id') || '';
+
+    function token() {
+      return sessionStorage.getItem('sessionToken') || '';
+    }
+
+    async function api(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      const t = token();
+      if (t) headers.set('Authorization', `Bearer ${t}`);
+      if (options.body && typeof options.body === 'object' && !(options.body instanceof FormData)) {
+        headers.set('Content-Type', 'application/json');
+        options.body = JSON.stringify(options.body);
+      }
+      const res = await fetch(`${API_BASE}${path}`, {...options, headers});
+      const text = await res.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch (e) { data = {ok: false, error: text || `HTTP ${res.status}`}; }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    function esc(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function loadTraces() {
+      const list = document.getElementById('trace-list');
+      list.innerHTML = '<div class="empty">正在加载...</div>';
+      try {
+        const data = activeTraceId
+          ? await api(`/debug/traces?id=${encodeURIComponent(activeTraceId)}`)
+          : await api('/debug/traces?limit=60');
+        traces = data.trace ? [data.trace] : (data.traces || []);
+        renderList();
+        if (traces.length) renderTrace(traces[0].traceId || traces[0].id);
+      } catch (e) {
+        list.innerHTML = `<div class="empty">加载失败：${esc(e.message)}</div>`;
+      }
+    }
+
+    function renderList() {
+      const list = document.getElementById('trace-list');
+      if (!traces.length) {
+        list.innerHTML = '<div class="empty">暂无 Trace 数据。</div>';
+        return;
+      }
+      list.innerHTML = traces.map(t => {
+        const id = t.traceId || t.id || '';
+        return `<div class="trace-item ${id === activeTraceId ? 'active' : ''}" onclick="renderTrace('${esc(id)}')">
+          <strong>${esc(t.title || id)}</strong>
+          <div class="meta">${esc(t.sourceType || '-')} · ${esc(t.status || '-')} · ${esc(t.updatedAt || '')}</div>
+          <div class="meta">${esc(id)}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderTrace(id) {
+      activeTraceId = id;
+      renderList();
+      const trace = traces.find(t => (t.traceId || t.id) === id);
+      const detail = document.getElementById('trace-detail');
+      if (!trace) {
+        detail.innerHTML = '<div class="empty">Trace 不存在。</div>';
+        return;
+      }
+      const summary = trace.summary || {};
+      const nodes = trace.nodes || [];
+      detail.innerHTML = `
+        <h2>${esc(trace.title || id)}</h2>
+        <div class="meta">${esc(id)} · ${esc(trace.sourceType || '')}</div>
+        <div class="summary">
+          <div class="stat"><strong>${nodes.length}</strong><span>节点</span></div>
+          <div class="stat"><strong>${summary.failed || 0}</strong><span>失败</span></div>
+          <div class="stat"><strong>${summary.running || 0}</strong><span>执行中</span></div>
+          <div class="stat"><strong>${Math.round((summary.durationMs || 0) / 1000)}</strong><span>秒</span></div>
+        </div>
+        ${nodes.map(n => `<section class="node ${esc(n.status || '')}">
+          <div class="node-head">
+            <div class="node-title"><strong>${esc(n.node || '-')}</strong><span class="meta">${esc(n.title || n.error || '')}</span></div>
+            <span class="pill">${esc(n.status || 'unknown')} · ${esc(n.durationMs || 0)}ms</span>
+          </div>
+          ${n.error ? `<pre>${esc(n.error)}</pre>` : ''}
+          <pre>${esc(JSON.stringify(n.result || n.diagnosis || {}, null, 2)).slice(0, 5000)}</pre>
+        </section>`).join('') || '<div class="empty">暂无节点。</div>'}
+      `;
+    }
+
+    loadTraces();
+  </script>
+</body>
+</html>

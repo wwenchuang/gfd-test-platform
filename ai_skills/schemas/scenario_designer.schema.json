@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["scenarios"],
+  "properties": {
+    "scenarios": {"type": "array"}
+  }
+}
+

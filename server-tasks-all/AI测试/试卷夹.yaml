@@ -1,0 +1,50 @@
+android:
+
+tasks:
+  - name: 试卷夹
+    # baseline.goal: 验证试卷夹
+    # baseline.start_page: App 首页
+    # baseline.path: 我的 tab -> 试卷夹 icon -> 保存到试卷夹 -> 立即打印 -> 确认打印
+    # baseline.expected: 试卷夹相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1500
+      - launch: com.kfb.model
+      - sleep: 3000
+
+
+      - aiTap: 底部「我的」Tab
+      - aiWaitFor: "我的页面已加载完成，并且能看到「我的学习」区域"
+        timeout: 60000
+      - aiScroll: "我的学习下方的横向功能 icon 列表区域，只在这个横向列表内滑动，不要滚动整个页面"
+        scrollType: "singleAction"
+        direction: "right"
+        distance: 180
+        deepLocate: true
+      - sleep: 300
+      - aiScroll: "我的学习下方的横向功能 icon 列表区域，只在这个横向列表内滑动，不要滚动整个页面"
+        scrollType: "singleAction"
+        direction: "right"
+        distance: 180
+        deepLocate: true
+      - sleep: 800
+      - aiWaitFor: "我的页面中出现「试卷夹」入口图标"
+        timeout: 30000
+      - aiTap: "我的学习下方的「试卷夹」icon"
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1000

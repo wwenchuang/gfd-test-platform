@@ -1,0 +1,59 @@
+android:
+
+tasks:
+  - name: 冰箱贴
+    # baseline.goal: 验证冰箱贴
+    # baseline.start_page: App 首页
+    # baseline.path: 照片打印 icon -> 水晶卡冰箱贴 -> 立即制作 -> 手机相册 -> 完成 -> 立即打印 -> 确认打印
+    # baseline.expected: 冰箱贴相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - aiTap: "照片打印 icon"
+      - sleep: 1000
+      - aiScroll: "当前页面主要内容区域，不要滚动顶部栏或底部导航"
+        scrollType: "singleAction"
+        direction: "down"
+        distance: 500
+        deepLocate: true
+      - aiWaitFor: "页面中出现「水晶卡冰箱贴」入口或卡片"
+        timeout: 30000
+      - sleep: 3000
+      - aiTap: "水晶卡冰箱贴"
+      - sleep: 1000
+      - aiTap: "立即制作"
+      - sleep: 1000
+      - aiTap: "手机相册"
+      - sleep: 1000
+      - ai: "勾选一张图片即可，不要点击完成"
+      - sleep: 3000
+      - aiTap: "完成"
+      - sleep: 1000
+      - aiTap: "立即打印"
+      - sleep: 1000
+      - aiTap: "确认打印"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

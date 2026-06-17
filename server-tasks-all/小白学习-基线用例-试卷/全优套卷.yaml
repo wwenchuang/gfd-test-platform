@@ -1,0 +1,55 @@
+android:
+tasks:
+  - name: 小白学习-全优试卷
+    # baseline.case_id: COM_XBXXHZ_BOX_f18917a7eba1
+    # baseline.goal: 验证小白学习-全优试卷
+    # baseline.start_page: App 首页
+    # baseline.path: 全有套卷 按钮 -> 语文 按钮 -> 立即打印 按钮 -> 确认打印 按钮
+    # baseline.expected: 小白学习-全优试卷相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "打开之后如果有弹窗，请找到×并点击关闭；没有就跳过"
+      - sleep: 3000
+      - ai: "点击屏幕中间区域 名校试卷icon"
+      - sleep: 3000
+      - aiTap: "全有套卷 按钮"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：语文 按钮"
+        timeout: 60000
+      - aiTap: "语文 按钮"
+      - sleep: 3000
+      - ai: "点击一份套卷进入列表页"
+      - sleep: 3000
+      - ai: "点击一条记录下拉试卷列表"
+      - sleep: 3000
+      - ai: "点击一份试卷查看"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：立即打印 按钮"
+        timeout: 60000
+      - aiTap: "立即打印 按钮"
+      - sleep: 1000
+      - aiTap: "确认打印 按钮"
+      - aiWaitFor: 打印任务已提交或出现成功提示/页面跳转
+        timeout: 45000
+      - sleep: 1000
+      - aiAssert: 打印任务已提交或页面显示成功状态
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

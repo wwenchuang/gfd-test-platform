@@ -1,0 +1,27 @@
+android:
+
+tasks:
+  - name: 小白客商城-耗材
+    # baseline.case_id: COM_KFB_MODEL_9b7d287f912f
+    # baseline.goal: 验证小白客商城-耗材
+    # baseline.start_page: App 首页
+    # baseline.path: 我的 -> 商城 -> 立即跳转
+    # baseline.expected: 小白客商城-耗材相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1500
+      - launch: com.kfb.model
+      - aiWaitFor: "App 首页已加载完成，底部导航或「我的」入口可见"
+        timeout: 60000
+      - aiAction: "首页遗留切片任务清理：如果当前首页顶部出现「模型处理完成」横幅，或横幅右侧出现「去打印」入口，则点击「去打印」进入「模型打印预览」；在预览页点击底部「取消打印」，弹出「确认要取消任务吗？」时点击「确定」，然后返回 App 首页。若首页没有该横幅/入口，则不要点击任何内容，直接继续。"
+      - sleep: 1000
+      - aiTap: "我的"
+      - aiTap: "商城icon"
+      - sleep: 1000
+      - aiTap: "立即跳转"
+      - aiWaitFor: "商城商品列表页面已打开，能看到小白智慧打印相关商品或耗材商品卡片"
+        timeout: 60000
+      - aiAssert: "当前页面为小白客商城或耗材商城商品列表页，且没有加载失败、网络错误或空白页提示"
+      - runAdbShell: "am force-stop com.kfb.model"
+      - sleep: 1000

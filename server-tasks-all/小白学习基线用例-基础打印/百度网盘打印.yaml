@@ -1,0 +1,58 @@
+android:
+
+tasks:
+  - name: 文档打印-百度网盘打印
+    # baseline.goal: 验证文档打印-百度网盘打印
+    # baseline.start_page: App 首页
+    # baseline.path: 文档打印 icon -> 百度网盘 -> 去打印 -> 立即打印 -> 确认打印
+    # baseline.expected: 文档打印-百度网盘打印相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+    # ===== 等待 APP 主界面稳定 =====
+      - ai: "等待 文档打印 icon 出现, 超时10秒"
+      - ai: "如果出现 您还未登录，请先登录提示, 等待一下, 没有就跳过"
+      - ai: "如果有弹窗就找到 x 按钮点击关闭, 没有就跳过"
+      - sleep: 1000
+
+    # ===== 打开文档打印 =====
+      - aiTap: "文档打印 icon"
+      - ai: "如果有弹窗就点击底部关闭按钮, 没有就跳过"
+
+    # ===== 百度网盘操作 =====
+      - aiTap: "百度网盘"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：百度文档列表"
+        timeout: 60000
+      - ai: "勾选第一个文档, 其他的不要点击"
+      - sleep: 2000
+
+    # ===== 去打印 =====
+      - aiTap: "去打印"
+
+    # ===== 立即打印 =====
+      - ai: "等待 立即打印 按钮可点击, 超时10秒"
+      - aiTap: "立即打印"
+
+    # ===== 确认打印 =====
+      - ai: "等待 确认打印 按钮可点击, 超时5秒"
+      - aiTap: "确认打印"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

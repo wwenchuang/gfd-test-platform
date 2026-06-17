@@ -1,0 +1,79 @@
+{
+  "name": "nameplate_print_boundary_generation",
+  "description": "姓名牌打印包含输入长度、空输入、特殊字符、预览和打印状态，验证边界值、异常提示和状态流转不会被漏掉。",
+  "input": {
+    "title": "姓名牌打印自动化用例生成",
+    "module": "3D打印基线",
+    "text_assets": "需求：用户在 3D 打印应用中进入姓名牌功能，输入姓名生成姓名牌模型，预览后进入打印流程。姓名最多 8 个中文字符，不允许为空。UI稿包含姓名输入页、模型预览页和下一步按钮，缺少打印完成页。需要覆盖正常输入、空输入、超长输入、特殊字符和返回中断。"
+  },
+  "expected_contract": {
+    "requirement_analyzer": {
+      "must_include_prompt_terms": [
+        "业务目标",
+        "状态前置",
+        "数据前置",
+        "可见结果",
+        "不可自动化依赖"
+      ],
+      "output_fields": [
+        "business_goals",
+        "state_assumptions",
+        "data_assumptions",
+        "visible_outcomes",
+        "requirement_points",
+        "questions",
+        "confidence"
+      ]
+    },
+    "scenario_designer": {
+      "must_include_prompt_terms": [
+        "边界值",
+        "状态迁移",
+        "错误推测",
+        "每个 `requirement_point`"
+      ]
+    },
+    "automation_filter": {
+      "must_include_prompt_terms": [
+        "不依赖上一条用例留下的状态",
+        "P0/P1/P2/P3",
+        "至少一个断言",
+        "自然语言意图",
+        "3D 打印链路",
+        "安全取消"
+      ]
+    },
+    "visual_grounder": {
+      "must_include_prompt_terms": [
+        "3D 打印链路",
+        "安全取消",
+        "不依赖真实打印完成"
+      ]
+    },
+    "coverage_auditor": {
+      "must_include_prompt_terms": [
+        "需求点都被场景和用例覆盖",
+        "补充至少 1 条可执行 cases"
+      ]
+    }
+  },
+  "expected_live": {
+    "min_requirement_points": 5,
+    "min_scenarios": 6,
+    "min_cases": 4,
+    "min_manual_cases": 1,
+    "min_coverage_rows": 5,
+    "require_readiness": true,
+    "must_include_terms": [
+      "姓名牌",
+      "空",
+      "超长",
+      "预览",
+      "返回"
+    ],
+    "must_not_include_terms": [
+      "XPath",
+      "CSS selector"
+    ]
+  }
+}

@@ -1,0 +1,1712 @@
+"""AI Skill framework service.
+
+从 midscene-upload.py 全量迁移的 AI 技能框架，提供：
+
+* AI skill prompt / schema 的加载、渲染
+* JSON Schema 最小校验
+* DashScope 通用对话调用
+* 各 AI skill 调用函数（requirement_analyzer, scenario_designer,
+  automation_filter, visual_grounder, coverage_auditor）
+* 用例生成相关辅助函数（normalize, coverage, audit 等）
+* DashScope 用例生成 / 精修函数（legacy + skill pipeline）
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import socket
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from task_server.config import (
+    AI_CHAT_RETRY_COUNT,
+    AI_CHAT_TIMEOUT_SECONDS,
+    AI_COVERAGE_MODEL_WHEN_LOCAL_OK,
+    AI_SKILLS_DIR,
+    AI_VISION_IMAGE_LIMIT,
+    DEFAULT_APP_PACKAGE,
+    TASK_DIR,
+    dashscope_api_key,
+    dashscope_base_url,
+    dashscope_model_for_images,
+    dashscope_text_model,
+    dashscope_vl_model,
+    safe_bool,
+    safe_int,
+)
+from task_server.storage import (
+    clean_asset_filename,
+    clean_id,
+    read_json_file,
+    read_text_file,
+    safe_join,
+)
+from task_server.services.yaml_service import (
+    normalize_cases_payload,
+    normalize_model_json,
+    normalize_text_list,
+    first_non_empty,
+    case_value,
+    case_priority,
+    case_tags,
+    is_smoke_case,
+    audit_case_coverage,
+    strip_yaml_quotes,
+    evidence_needs_adb_input_fallback,
+    validate_midscene_yaml,
+    yaml_task_names,
+    find_yaml_task_block,
+    normalize_full_yaml_structure,
+    normalize_yaml_from_model,
+    normalize_yaml_task_block_from_model,
+    diff_yaml,
+)
+from task_server.services.knowledge_service import (
+    repair_knowledge_context,
+    task_business_context,
+    load_knowledge_context,
+)
+from task_server.services.report_service import (
+    report_image_context,
+    report_text_context,
+)
+
+
+# ---------------------------------------------------------------------------
+# AI skill path & prompt / schema loading
+# ---------------------------------------------------------------------------
+
+def ai_skill_path(*parts):
+    """构建 AI skill 目录下的安全路径。"""
+    return safe_join(AI_SKILLS_DIR, *parts)
+
+
+def load_ai_skill_prompt(skill_name, version="v1"):
+    """加载 AI skill prompt 文件。"""
+    name = clean_id(skill_name, "skill")
+    ver = clean_id(version, "v1")
+    path = ai_skill_path("prompts", f"{name}.{ver}.md")
+    return read_text_file(path, "")
+
+
+def load_ai_skill_schema(skill_name):
+    """加载 AI skill JSON Schema。"""
+    name = clean_id(skill_name, "skill")
+    path = ai_skill_path("schemas", f"{name}.schema.json")
+    schema = read_json_file(path, default=None)
+    if not schema:
+        raise ValueError(f"AI skill schema 不存在：{name}")
+    return schema
+
+
+# ---------------------------------------------------------------------------
+# JSON Schema minimal validation
+# ---------------------------------------------------------------------------
+
+def validate_json_schema_minimal(value, schema, path="$"):
+    """最小化 JSON Schema 校验。"""
+    expected = schema.get("type")
+    if expected == "object":
+        if not isinstance(value, dict):
+            raise ValueError(f"{path} 必须是 object")
+        for key in schema.get("required") or []:
+            if key not in value:
+                raise ValueError(f"{path}.{key} 为必填字段")
+        properties = schema.get("properties") or {}
+        for key, child_schema in properties.items():
+            if key in value:
+                validate_json_schema_minimal(value[key], child_schema, f"{path}.{key}")
+    elif expected == "array":
+        if not isinstance(value, list):
+            raise ValueError(f"{path} 必须是 array")
+    elif expected == "string":
+        if not isinstance(value, str):
+            raise ValueError(f"{path} 必须是 string")
+    elif expected == "boolean":
+        if not isinstance(value, bool):
+            raise ValueError(f"{path} 必须是 boolean")
+    elif expected in ("number", "integer"):
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"{path} 必须是 number")
+    return True
+
+
+def validate_ai_skill_output(skill_name, value):
+    """校验 AI skill 输出是否符合对应 JSON Schema。"""
+    schema = load_ai_skill_schema(skill_name)
+    validate_json_schema_minimal(value, schema)
+    return value
+
+
+# ---------------------------------------------------------------------------
+# AI skill prompt rendering & execution
+# ---------------------------------------------------------------------------
+
+def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prompt=""):
+    """渲染 AI skill prompt 模板。"""
+    template = load_ai_skill_prompt(skill_name, version)
+    if not template:
+        return fallback_prompt
+    payload_text = json.dumps(payload or {}, ensure_ascii=False, indent=2)
+    return template.replace("{{payload}}", payload_text)
+
+
+def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temperature=0.1, timeout=180, fallback_prompt=""):
+    """执行 AI skill：渲染 prompt → 调用 DashScope → 校验输出。"""
+    prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
+    if not prompt:
+        raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
+    raw = dashscope_chat_content(prompt, image_assets=image_assets, temperature=temperature, timeout=timeout, json_response=True)
+    result = normalize_model_json(raw)
+    return validate_ai_skill_output(skill_name, result)
+
+
+# ---------------------------------------------------------------------------
+# DashScope chat API
+# ---------------------------------------------------------------------------
+
+def build_dashscope_chat_body(prompt, image_assets=None, temperature=0.1, json_response=True, image_limit=None):
+    """构建 DashScope Chat API 请求体。"""
+    image_assets = image_assets or []
+    image_limit = max(1, int(image_limit or AI_VISION_IMAGE_LIMIT))
+    model = dashscope_model_for_images(image_assets)
+    if image_assets:
+        user_content = [{"type": "text", "text": prompt}]
+        for asset in image_assets[:image_limit]:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{asset['mime']};base64,{asset['base64']}"
+                }
+            })
+    else:
+        user_content = prompt
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "你只输出合法 JSON。"},
+            {"role": "user", "content": user_content}
+        ],
+        "temperature": temperature
+    }
+    if json_response:
+        body["response_format"] = {"type": "json_object"}
+    return body
+
+
+def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=180, json_response=True, image_limit=None):
+    """调用 DashScope Chat API 并返回 content 字符串。"""
+    api_key = dashscope_api_key()
+    base_url = dashscope_base_url()
+    model = dashscope_model_for_images(image_assets)
+    timeout = max(safe_int(timeout, 180), AI_CHAT_TIMEOUT_SECONDS)
+    body = json.dumps(build_dashscope_chat_body(
+        prompt,
+        image_assets=image_assets,
+        temperature=temperature,
+        json_response=json_response,
+        image_limit=image_limit
+    ), ensure_ascii=False).encode("utf-8")
+    last_error = None
+    for attempt in range(AI_CHAT_RETRY_COUNT + 1):
+        req = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+            return resp_data["choices"][0]["message"]["content"]
+        except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
+            last_error = e
+            if attempt < AI_CHAT_RETRY_COUNT:
+                time.sleep(2 * (attempt + 1))
+                continue
+            raise TimeoutError(
+                f"千问模型响应超时：{model} 在 {timeout}s 内未返回，已重试 {AI_CHAT_RETRY_COUNT} 次；"
+                "建议减少本次上传的大图/长文档，补充关键截图即可，或稍后重新生成"
+            ) from e
+        except Exception:
+            raise
+    raise last_error
+
+
+# ---------------------------------------------------------------------------
+# Utility helpers (migrated from midscene-upload.py)
+# ---------------------------------------------------------------------------
+
+def normalize_lines(value):
+    """规范化行列表。"""
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [line.strip(" -\t") for line in value.splitlines() if line.strip(" -\t")]
+    return []
+
+
+def is_image_file(filename):
+    """判断文件名是否为图片格式。"""
+    return filename.lower().endswith((".png", ".jpg", ".jpeg"))
+
+
+def guess_mime(filename):
+    """根据文件名猜测 MIME 类型。"""
+    lower = filename.lower()
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+        return "image/jpeg"
+    if lower.endswith(".json"):
+        return "application/json"
+    if lower.endswith(".pdf"):
+        return "application/pdf"
+    if lower.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if lower.endswith(".doc"):
+        return "application/msword"
+    if lower.endswith(".mm"):
+        return "application/x-freemind"
+    return "text/plain"
+
+
+def normalize_case_json_from_model(text):
+    """从模型输出中解析用例 JSON。"""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text, flags=re.I).strip()
+        text = re.sub(r"```$", "", text).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+    payload = json.loads(text)
+    return normalize_cases_payload(payload)
+
+
+def compact_text_assets(text_assets, max_chars=24000):
+    """将文本资产合并为单段文本并截断。"""
+    text = "\n\n".join(str(item or "").strip() for item in (text_assets or []) if str(item or "").strip())
+    return text[:max_chars]
+
+
+# ---------------------------------------------------------------------------
+# Failure analysis helpers (migrated from midscene-upload.py)
+# ---------------------------------------------------------------------------
+
+def runtime_toast_error_from_text(text=""):
+    """从文本中检测运行时 toast/错误浮层信号。"""
+    raw = str(text or "")
+    lower = raw.lower()
+    patterns = (
+        ("mapper function returned a null value", "The mapper function returned a null value."),
+        ("returned a null value", "returned a null value"),
+        ("null value", "null value"),
+        ("nullpointerexception", "NullPointerException"),
+        ("空指针", "空指针"),
+        ("系统异常", "系统异常"),
+        ("服务异常", "服务异常"),
+        ("发生错误", "发生错误"),
+        ("操作失败", "操作失败"),
+    )
+    for needle, label in patterns:
+        if needle in lower or needle in raw:
+            return label
+    return ""
+
+
+def evidence_is_toast_assertion_issue(text=""):
+    """判断日志是否为 toast 断言问题。"""
+    text = str(text or "")
+    toast_words = ("toast", "提示", "成功", "已保存", "完成", "没看到", "没有看到", "未找到", "未出现", "无法找到")
+    action_words = ("保存", "下载", "导出", "转换", "生成", "写入", "相册", "完成", "成功")
+    return any(word.lower() in text.lower() for word in toast_words) and any(word in text for word in action_words)
+
+
+def review_ui_terms(text):
+    """提取复检文本中引用的 UI 术语。"""
+    raw = str(text or "")
+    terms = []
+    _open = "\u300c\u201c\"\u0027"
+    _close = "\u300d\u201d\"\u0027"
+    _pattern = "[" + _open + "]([^" + _close + "]{1,40})[" + _close + "]"
+    for item in re.findall(_pattern, raw):
+        item = item.strip()
+        if item and item not in terms:
+            terms.append(item)
+    ui_words = (
+        "\u786e\u8ba4\u6253\u5370", "\u7ee7\u7eed\u6253\u5370", "\u53bb\u7f16\u8f91", "\u53bb\u6253\u5370", "\u4e0b\u4e00\u6b65", "\u8fd4\u56de", "\u53d6\u6d88\u6253\u5370",
+        "\u7acb\u5373\u6253\u5370", "\u67e5\u770b\u5168\u90e8", "\u641c\u7d22", "\u4fdd\u5b58\u6210\u529f", "\u4fdd\u5b58\u5230\u76f8\u518c", "\u5bfc\u51fa", "\u5b8c\u6210",
+        "\u8ff7\u4f60\u4fdd\u9f84\u7403\u5957\u88c5", "\u4fdd\u9f84\u7403", "\u8bd5\u5377\u5939"
+    )
+    for word in ui_words:
+        if word in raw and word not in terms:
+            terms.append(word)
+    return terms[:12]
+
+
+def detect_wait_strategy_issue(yaml_text, log_text):
+    """检测等待策略过短的失败问题。"""
+    log_lower = str(log_text or "").lower()
+    hard_non_script_signals = (
+        "http error", "request entity too large", "502", "503", "504", "model configuration",
+        "adb: device", "device offline", "no devices", "应用崩溃", "闪退", "exception",
+        "服务器异常", "网络异常", "接口异常", "系统错误", "产品缺陷"
+    )
+    if any(signal.lower() in log_lower for signal in hard_non_script_signals):
+        return None
+    loading_failure_signals = (
+        "timeout", "timed out", "超时", "卡在", "加载中", "按钮持续不可点击",
+        "不可点击", "未出现", "没有出现", "failed to locate", "task failed"
+    )
+    slow_business_signals = (
+        "进度", "35%", "100%", "100.0%", "确认打印", "取消打印", "下一步",
+        "模型处理", "切片", "上传", "导入", "生成"
+    )
+    if not any(signal.lower() in log_lower for signal in loading_failure_signals):
+        return None
+    if not any(signal.lower() in log_lower for signal in slow_business_signals):
+        return None
+    short_waits = []
+    lines = (yaml_text or "").splitlines()
+    for idx, line in enumerate(lines):
+        m = re.match(r"^\s*-\s+aiWaitFor\s*:\s*(.+?)\s*$", line)
+        if not m:
+            continue
+        condition = strip_yaml_quotes(m.group(1))
+        timeout = 0
+        j = idx + 1
+        while j < len(lines):
+            child = lines[j]
+            if re.match(r"^\s*-\s+[A-Za-z][\w]*\s*:", child):
+                break
+            tm = re.match(r"^\s*timeout\s*:\s*(\d+)\s*$", child)
+            if tm:
+                timeout = safe_int(tm.group(1), 0)
+                break
+            j += 1
+        next_key, next_text = "", ""
+        for look_line in lines[j:j + 4]:
+            nm = re.match(r"^\s*-\s+([A-Za-z][\w]*)\s*:\s*(.+?)\s*$", look_line)
+            if nm:
+                next_key, next_text = nm.group(1), strip_yaml_quotes(nm.group(2))
+                break
+        context = "\n".join(lines[max(0, idx - 1):min(len(lines), idx + 5)])
+        timeout_context = context
+        if next_key in ("aiTap", "ai", "aiAction", "aiAct") and next_text:
+            timeout_context = "\n".join([condition, next_text])
+        from task_server.services.yaml_service import loading_wait_timeout_for_context
+        desired = loading_wait_timeout_for_context(timeout_context)
+        if desired >= 60000 and (not timeout or timeout < desired):
+            short_waits.append(f"{condition} timeout={timeout or '未设置'}，建议 {desired}ms")
+    if short_waits:
+        source_text = "\n".join([str(yaml_text or ""), str(log_text or "")])
+        wait_targets = []
+        for word in ("进度条", "目标按钮", "下一步", "去打印", "确认打印", "取消打印", "返回"):
+            if word == "目标按钮" or word in source_text:
+                wait_targets.append(word)
+        wait_target_text = " / ".join(wait_targets[:4]) or "目标 UI"
+        return {
+            "category": "script_issue",
+            "confidence": 0.82,
+            "reason": "失败更像业务加载等待策略过短，可先做一次脚本等待修复；若重跑仍在长等待后失败，应保留为产品/环境问题复核",
+            "evidence": short_waits[:5],
+            "suggested_action": f"将本次脚本真实涉及的慢加载节点（{wait_target_text}）改为 aiWaitFor + 合理 timeout，只重跑验证一次；仍失败则不要继续放宽脚本",
+            "can_auto_repair": True
+        }
+    return None
+
+
+def detect_horizontal_scroll_script_issue(yaml_text, log_text):
+    """检测横向滑动未生效的脚本问题。"""
+    text = str(yaml_text or "")
+    log = str(log_text or "")
+    combined = "\n".join([text, log])
+    has_horizontal_scroll = (
+        "aiScroll" in text
+        and any(word in text for word in ("横向", "icon", "图标", "我的学习", "功能", "列表"))
+    )
+    missing_target = any(word in log for word in ("未出现", "没有出现", "找不到", "未找到", "failed to locate", "not found", "看不到"))
+    target_is_icon = any(word in combined for word in ("试卷夹", "入口", "icon", "图标"))
+    if has_horizontal_scroll and missing_target and target_is_icon:
+        return {
+            "category": "script_issue",
+            "confidence": 0.94,
+            "reason": "失败点前存在横向 icon 列表 aiScroll，但目标入口仍未出现，结合当前截图更像横向滑动未真正执行或滑动距离/方式不正确，不应判为产品缺陷",
+            "evidence": [
+                "YAML 中存在横向 icon 列表 aiScroll",
+                "执行日志显示目标入口未出现或定位失败",
+                "当前页面仅显示横向列表前几个入口，符合未滑到目标入口的脚本问题"
+            ],
+            "suggested_action": "将横向列表滑动修复为两次 aiScroll singleAction direction:right distance:400，并追加 Android ADB 横滑兜底后重跑",
+            "can_auto_repair": True
+        }
+    return None
+
+
+def sanitize_failure_review_against_sources(review, yaml_text="", stdout="", stderr="", summary=None, ctx=None):
+    """校验失败复检结论是否引用了源文本中不存在的 UI 术语。"""
+    if not isinstance(review, dict):
+        return review
+    ctx = ctx or {}
+    source_text = "\n".join([
+        str(yaml_text or ""),
+        str(stdout or ""),
+        str(stderr or ""),
+        json.dumps(summary, ensure_ascii=False) if summary is not None else "",
+        str(ctx.get("report_text") or ""),
+    ])
+    review_text = "\n".join([
+        str(review.get("reason") or ""),
+        str(review.get("suggested_action") or ""),
+        "\n".join([str(item) for item in (review.get("evidence") or [])]),
+    ])
+    unseen_terms = []
+    for term in review_ui_terms(review_text):
+        if term and term not in source_text and term not in unseen_terms:
+            unseen_terms.append(term)
+    if not unseen_terms:
+        return review
+    sanitized = dict(review)
+    sanitized["category"] = "unknown"
+    sanitized["failure_type"] = "review_source_mismatch"
+    sanitized["confidence"] = min(float(sanitized.get("confidence") or 0), 0.45)
+    sanitized["reason"] = (
+        "失败复检引用了当前 YAML、执行日志或报告文本中不存在的控件/步骤："
+        + "、".join(unseen_terms[:5])
+        + "。已降级为不确定，避免把旧脚本、串用报告或模型臆测当成真实失败原因。"
+    )
+    sanitized["evidence"] = [
+        "当前 YAML/本次日志未出现：" + "、".join(unseen_terms[:5]),
+        "请优先确认 Sonic 是否执行了最新同步的 YAML，以及 Midscene 原始报告中的真实失败步骤。"
+    ]
+    sanitized["suggested_action"] = "不要自动修改业务链路；先核对 Sonic 用例模板和当前 YAML 是否一致，再按原始报告失败步骤处理。"
+    sanitized["can_auto_repair"] = False
+    return sanitized
+
+
+def extract_failure_brief(stdout="", stderr="", summary=None):
+    """从执行输出中提取失败摘要。"""
+    text = "\n".join([stdout or "", stderr or ""])
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    signal_patterns = (
+        "error:", "Task failed:", "Assertion failed", "failed to locate", "Failed to continue",
+        "unknown flowItem", "Model configuration", "No such file", "timeout", "Timed out",
+        "Replanned", "exceeding the limit", "I can see", "Reason:", "toast",
+        "mapper function returned", "returned a null value", "null value", "系统异常", "操作失败"
+    )
+    signals = []
+    for idx, line in enumerate(lines):
+        if any(pattern.lower() in line.lower() for pattern in signal_patterns):
+            start = max(0, idx - 1)
+            end = min(len(lines), idx + 3)
+            for item in lines[start:end]:
+                if item not in signals:
+                    signals.append(item)
+        if len(signals) >= 12:
+            break
+
+    failed_tasks = []
+    for line in lines:
+        m = re.search(r"[✘x]\s+(.+?)\s+\(task\s+\d+/\d+\)", line)
+        if m and m.group(1).strip() not in failed_tasks:
+            failed_tasks.append(m.group(1).strip())
+    if isinstance(summary, dict):
+        for key in ("failed", "failedTasks", "errors"):
+            value = summary.get(key)
+            if isinstance(value, list):
+                for item in value[:6]:
+                    if isinstance(item, dict):
+                        name = item.get("name") or item.get("task") or item.get("title")
+                        err = item.get("error") or item.get("message")
+                        if name and name not in failed_tasks:
+                            failed_tasks.append(str(name))
+                        if err and str(err) not in signals:
+                            signals.append(str(err)[:500])
+                    elif item and str(item) not in signals:
+                        signals.append(str(item)[:500])
+
+    lower = text.lower()
+    repair_plan = {
+        "priority": "manual_review",
+        "can_repair_yaml": False,
+        "focus": [],
+        "avoid": []
+    }
+    if any(word in lower for word in ("ai call error", "failed to call ai model service", "request was aborted", "model-provider.html")):
+        failure_type = "model_service"
+        repair_plan = {
+            "priority": "environment_first",
+            "can_repair_yaml": False,
+            "focus": [
+                "检查 Runner 侧模型环境变量是否包含 OPENAI_API_KEY、OPENAI_BASE_URL、MIDSCENE_MODEL_NAME、MIDSCENE_USE_QWEN_VL=1",
+                "检查 Windows Runner 到 DashScope compatible-mode 接口的网络连通性和超时",
+                "确认最新部署包已下发 runtime-env，必要时重启 Runner 清理旧环境缓存"
+            ],
+            "avoid": ["不要把模型服务中断误判成元素定位问题", "不要自动修 YAML", "不要删除或放宽业务断言"]
+        }
+    elif any(word in lower for word in ("unknown flowitem", "property", "yaml", "failed to load")):
+        failure_type = "yaml_syntax"
+        repair_plan = {
+            "priority": "rule_first",
+            "can_repair_yaml": True,
+            "focus": ["修复 flowItem 名称大小写、冒号空格、缩进、aiAssert/aiInput 子字段结构", "不改变业务路径和断言含义"],
+            "avoid": ["不要重写整条业务链路", "不要新增无关点击"]
+        }
+    elif any(word in lower for word in ("model configuration", "api_key", "base url", "midscene_model_name")):
+        failure_type = "model_config"
+        repair_plan = {
+            "priority": "environment_first",
+            "can_repair_yaml": False,
+            "focus": ["检查 Midscene 模型环境变量和 API 配置"],
+            "avoid": ["不要修改 YAML 业务步骤"]
+        }
+    elif any(word in lower for word in ("adb", "device offline", "no device", "device not found")):
+        failure_type = "device_env"
+        repair_plan = {
+            "priority": "environment_first",
+            "can_repair_yaml": False,
+            "focus": ["检查设备连接、adb devices、Sonic runner 设备占用"],
+            "avoid": ["不要修改 YAML 业务步骤"]
+        }
+    elif runtime_toast_error_from_text(text):
+        failure_type = "runtime_toast_error"
+        repair_plan = {
+            "priority": "product_or_data_first",
+            "can_repair_yaml": False,
+            "focus": ["报告或截图出现运行时 toast/错误浮层，优先按产品/数据/环境问题处理"],
+            "avoid": ["不要删除断言", "不要通过加等待或放宽断言掩盖运行时错误"]
+        }
+    elif evidence_needs_adb_input_fallback(text):
+        failure_type = "input_failed"
+        repair_plan = {
+            "priority": "targeted_yaml_repair",
+            "can_repair_yaml": True,
+            "focus": ["修复输入步骤：先 aiTap 输入框，再 aiInput + value", "只有确认 aiInput 没有实际输入时才允许 ADB input text 兜底", "避免重复输入"],
+            "avoid": ["不要同时默认保留 aiInput 和 adb input text", "不要把中文输入改成 adb input text"]
+        }
+    elif evidence_is_toast_assertion_issue(text):
+        failure_type = "toast_assertion"
+        repair_plan = {
+            "priority": "targeted_yaml_repair",
+            "can_repair_yaml": True,
+            "focus": [
+                "保存/导出/下载/生成/转换这类结果型操作后，立即等待多个同义成功提示",
+                "如果短暂提示消失，改用结果流程结束且无失败态作为兜底",
+                "只校验没有保存失败、导出失败、下载失败、生成失败、转换失败、权限失败、网络错误或异常弹窗；不要要求页面保持静止或某个按钮仍可见"
+            ],
+            "avoid": ["不要把断言放宽成页面正常", "不要删除结果校验", "不要要求页面保持静止", "不要要求导出/保存按钮仍可见", "不要无限加长等待 toast"]
+        }
+    elif any(word in lower for word in ("failed to locate", "找不到", "not found", "cannot find")):
+        failure_type = "element_not_found"
+        repair_plan = {
+            "priority": "targeted_yaml_repair",
+            "can_repair_yaml": True,
+            "focus": ["参考页面知识和失败截图修正入口文案/目标描述", "必要时补充从首页到目标页面的稳定导航", "点击动作使用明确 aiTap"],
+            "avoid": ["不要坐标点击", "不要点击随机相似元素", "不要删除业务关键步骤"]
+        }
+    elif any(word in lower for word in ("assertion failed", "task failed:", "验证", "assert")):
+        failure_type = "assertion_failed"
+        repair_plan = {
+            "priority": "review_then_repair",
+            "can_repair_yaml": True,
+            "focus": ["判断是否断言过严", "把断言改为真实可见、符合业务意图的 UI 状态", "如果页面确实不符合需求，保留为产品 Bug"],
+            "avoid": ["不要为了通过删除关键断言", "不要把真实失败改成泛化的页面正常"]
+        }
+    elif any(word in lower for word in ("timeout", "timed out", "超时")):
+        failure_type = "timeout"
+        repair_plan = {
+            "priority": "review_then_repair",
+            "can_repair_yaml": True,
+            "focus": ["区分环境超时和业务加载等待短", "短等待改成 aiWaitFor + 目标 UI 条件 + 合理 timeout", "只做一次等待策略修复"],
+            "avoid": ["不要无限加长 timeout", "不要用固定长 sleep 代替条件等待"]
+        }
+    elif any(word in lower for word in ("弹窗", "dialog", "popup", "permission", "overlay", "遮挡")):
+        failure_type = "popup_overlay"
+        repair_plan = {
+            "priority": "targeted_yaml_repair",
+            "can_repair_yaml": True,
+            "focus": ["只在关键路径前增加弹窗/权限/浮层处理", "处理后继续回到业务目标"],
+            "avoid": ["不要每一步都加弹窗处理", "不要坐标关闭"]
+        }
+    else:
+        failure_type = "unknown"
+
+    return {
+        "failure_type": failure_type,
+        "failed_tasks": failed_tasks[:8],
+        "signals": signals[:16],
+        "repair_plan": repair_plan
+    }
+
+
+def repair_strategy_guide():
+    """返回修复决策策略文本。"""
+    return """
+修复决策策略：
+1. 先判断是否真的应该修脚本。模型配置、设备离线、网络断连、服务端 5xx、ADB 异常不应改 YAML，只在 analysis 里说明环境问题。
+2. 修复优先级：YAML 语法/flowItem 名称/冒号空格/空 flow > App 启动和关闭 > 页面稳定起点 > 弹窗遮挡 > 加载等待 > 导航路径 > 断言表达。
+3. 如果是 YAML 语法问题，只修语法，不改业务路径。常见问题包括 terminate:com.xxx 缺空格、tap/click/action 这类非标准 key、sleep 写成字符串、flow 为空。
+4. 如果是启动/页面起点问题，优先补 HOME、force-stop、launch、首页稳定导航、底部首页 Tab、必要的 aiWaitFor。
+5. 如果脚本还没跑到业务步骤，不要改业务步骤和断言；只补运行时守卫后让下一轮重跑。
+6. 如果是找不到入口，优先参考页面知识和截图中的真实文案，增加从稳定页面到目标入口的导航路径；不要臆造按钮，不要坐标。
+7. 如果是弹窗/权限/升级/广告/引导遮挡，只在关键路径前补自然语言弹窗处理，不要每一步都加，避免拖慢。
+8. 如果是加载慢，使用 aiWaitFor + timeout 等目标 UI 条件，不要用固定长 sleep。Midscene 自身会重试/重规划，不要无限加长等待；任何新增或修改的 aiWaitFor timeout 都不得超过 300000ms。只有 3D/模型/建模/切片/STL/OBJ/模型导入这类链路才允许写"模型处理进度到 100%"和 180000~240000ms；2D/文档/错题/基础打印/相册/扫描/格式转换链路禁止套用"模型处理进度"，应等待"打印前准备完成、立即打印按钮、确认打印弹窗/按钮"等真实 UI 条件，通常 30000~60000ms。只能在"原等待明显偏短或条件过泛"时修一次，不要反复加长等待掩盖真实产品/环境问题。
+8.1 如果失败发生在中间流程，例如点击"完成/确认/下一步"后目标格式按钮、PNG/PDF/Word、导出或确认按钮尚未渲染，应该在这两个业务动作之间补 aiWaitFor 等待目标按钮/选项出现，不要把它误修成最终保存成功校验。
+8.2 横向 icon 列表/分页功能区不要用 ai 自然语言描述"向左滑/向右滑"。必须使用官方 aiScroll：目标写清楚具体横向区域，露出右侧隐藏入口时使用两次 `scrollType: "singleAction"` + `direction: "right"` + `distance: 400`。禁止生成 `distance: 200` 这类过短距离，也不要超过单次距离上限。注意 Midscene 的 direction 表示"哪个方向的内容进入屏幕"，不是手指滑动方向。Android 上横向 icon 区域默认在 aiScroll 后增加 `runAdbShell: "input swipe 950 1080 150 1080 500"` 作为兜底。
+9. 如果是断言失败，先判断是否断言过严。可把"完全一致"改为"页面标题、关键入口、列表或空态可见"等视觉可验证断言；不要把真实产品缺陷改没。
+9.1 如果失败是保存/导出/下载/生成/转换这类结果型操作的短暂提示没捕捉到，先结合原 YAML 的业务链路和失败截图判断。可以优化为更合理的成功提示或失败态校验，但只能改失败相关步骤，不要批量插入重复校验，不要改变中间业务流程。
+10. 修复业务链路时，必须先对齐 goal、start_page、business_path、expected_result：入口路径可以修，等待条件可以修，断言表达可以修，但不能绕开核心业务目标。
+11. 每个 aiTap 都必须有业务目的：进入目标页面、触发目标功能、选择目标条件、提交目标操作。不要为了"能点"而点击无关卡片、返回键、广告、推荐内容或随机入口。
+12. 每个断言都必须验证业务结果：页面标题、目标入口状态、列表/空态、弹窗文案、按钮状态、结果区域。不要用"页面正常展示""操作成功"这类无法对应业务目标的泛化断言替代真实预期。
+13. 不要为了让用例通过而删除关键步骤或关键断言；只能把过严/不稳定的表述改成更贴近真实 UI 的可见断言。
+14. 如果当前步骤和业务链路冲突，优先修正为页面知识/截图支持的真实链路；如果页面知识不足，不要大幅改写，只补稳定导航和更清晰断言。
+15. 如果页面知识/截图与原 YAML 冲突，优先页面知识/截图；如果仍不确定，做最小改动并保留 baseline 注释。
+16. 每次修复要最小化：只改失败相关 task 或相关步骤，不要重写大量用例，不要改变包名。
+17. 输出 changes 要具体说明"为什么改、改了哪里"，便于人工审查。
+18. 必须服从失败摘要里的 repair_plan：can_repair_yaml=false 时不要实质改业务 YAML；priority=rule_first 时只做确定性语法/结构修复；priority=targeted_yaml_repair 时只改对应失败点；priority=review_then_repair 时先判断是否可能是真产品问题，再做最小脚本修复。
+19. 修复前必须阅读业务链路上下文里的 goal、start_page、business_path、expected_result、current_actions、current_assertions。修复后必须保留原业务目标和核心路径锚点；可以改入口描述、等待条件、断言表达，但不能把"测试什么功能"改成另一个功能。
+""".strip()
+
+
+# ---------------------------------------------------------------------------
+# Failure context helpers
+# ---------------------------------------------------------------------------
+
+def execution_screenshot_context(job, limit=4):
+    """从 job 运行目录收集执行截图。"""
+    run_dir = job.get("run_dir") or ""
+    if not run_dir:
+        return []
+    screenshot_dir = Path(run_dir) / "screenshots"
+    if not screenshot_dir.exists():
+        return []
+    assets = []
+    for path in sorted(screenshot_dir.iterdir(), key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True):
+        if len(assets) >= limit:
+            break
+        if not path.is_file() or path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+            continue
+        try:
+            data = path.read_bytes()
+            if not data or len(data) > 2 * 1024 * 1024:
+                continue
+            assets.append({
+                "name": path.name,
+                "mime": guess_mime(path.name),
+                "base64": base64.b64encode(data).decode("ascii")
+            })
+        except Exception:
+            continue
+    return assets
+
+
+def flow_items_with_index(task_block):
+    """解析 task block 中的 flow items 及其索引。"""
+    items = []
+    lines = (task_block or "").splitlines()
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        m = re.match(r"^(\s*)-\s+([A-Za-z][\w]*)\s*:\s*(.*)$", line)
+        if not m:
+            idx += 1
+            continue
+        indent, key, raw_value = m.groups()
+        if key == "name":
+            idx += 1
+            continue
+        children = []
+        j = idx + 1
+        while j < len(lines):
+            child = lines[j]
+            if re.match(r"^\s*-\s+[A-Za-z][\w]*\s*:", child):
+                break
+            children.append(child)
+            j += 1
+        items.append({
+            "index": len(items),
+            "line": idx + 1,
+            "key": key,
+            "value": strip_yaml_quotes(raw_value),
+            "text": "\n".join([line] + children),
+            "children": children,
+            "indent": indent
+        })
+        idx = j
+    return items
+
+
+def failure_target_terms(text):
+    """从文本中提取失败目标术语。"""
+    terms = []
+    raw = str(text or "")
+    quoted = re.findall("[\u300c\u201c\"\u0027]([^\u300d\u201d\"\u0027]{1,30})[\u300d\u201d\"\u0027]", raw)
+    for item in quoted:
+        item = item.strip()
+        if item and item not in terms:
+            terms.append(item)
+    for word in ("试卷夹", "确认打印", "立即打印", "下一步", "完成", "搜索", "保存", "导出", "登录", "首页"):
+        if word in raw and word not in terms:
+            terms.append(word)
+    return terms[:8]
+
+
+def locate_failure_window(task_block, evidence_text="", radius=5):
+    """在 task block 中定位失败窗口。"""
+    items = flow_items_with_index(task_block)
+    if not items:
+        return {"failed_index": -1, "before": [], "after": [], "items": []}
+    evidence = str(evidence_text or "")
+    terms = failure_target_terms(evidence)
+    failed_index = -1
+    for idx, item in enumerate(items):
+        blob = "\n".join([item.get("value", ""), item.get("text", "")])
+        if terms and any(term and term in blob for term in terms):
+            failed_index = idx
+            break
+    if failed_index < 0:
+        for idx, item in enumerate(items):
+            if item.get("key") in ("aiAssert", "aiWaitFor") and any(word in item.get("value", "") for word in ("未出现", "找不到", "可见", "出现")):
+                failed_index = idx
+                break
+    if failed_index < 0:
+        failed_index = min(len(items) - 1, max(0, len(items) - 2))
+    start = max(0, failed_index - radius)
+    end = min(len(items), failed_index + radius + 1)
+    return {
+        "failed_index": failed_index,
+        "before": items[start:failed_index],
+        "failed": items[failed_index] if 0 <= failed_index < len(items) else None,
+        "after": items[failed_index + 1:end],
+        "items": items
+    }
+
+
+def build_failure_context(job, yaml_text, stdout="", stderr="", summary=None, task_name=""):
+    """构建失败上下文，供后续分类和修复使用。"""
+    module = job.get("module", "")
+    file = job.get("file", "")
+    report_text = report_text_context(job)
+    evidence_text = "\n".join([
+        stdout or "",
+        stderr or "",
+        json.dumps(summary, ensure_ascii=False)[:3000] if summary is not None else "",
+        report_text or "",
+    ])
+    from task_server.services.yaml_service import detect_yaml_platform, resolve_app_package
+    platform = detect_yaml_platform(yaml_text)
+    app_package = resolve_app_package(module, file, yaml_text)
+    target_task = task_name or job.get("target_task_name") or ""
+    task_block = ""
+    if target_task:
+        try:
+            task_block = find_yaml_task_block(yaml_text, target_task)["block"]
+        except Exception:
+            task_block = ""
+    if not task_block:
+        names = yaml_task_names(yaml_text)
+        for name in names:
+            if name and (name in evidence_text or not task_block):
+                try:
+                    task_block = find_yaml_task_block(yaml_text, name)["block"]
+                    target_task = name
+                    if name in evidence_text:
+                        break
+                except Exception:
+                    continue
+    business_context = task_business_context(task_block, "") if task_block else {}
+    failure_window = locate_failure_window(task_block, evidence_text)
+    return {
+        "module": module,
+        "file": file,
+        "task_name": target_task,
+        "platform": platform,
+        "app_package": app_package,
+        "run_mode": job.get("run_mode", "test"),
+        "evidence_text": evidence_text,
+        "report_text": report_text,
+        "failure_brief": extract_failure_brief(stdout, stderr, summary),
+        "business_context": business_context,
+        "failure_window": failure_window,
+        "task_block": task_block,
+        "yaml_text": yaml_text
+    }
+
+
+def classify_failure_by_context(ctx):
+    """基于上下文对失败进行分类（确定性规则优先）。"""
+    yaml_text = ctx.get("yaml_text", "")
+    task_block = ctx.get("task_block", "")
+    evidence = ctx.get("evidence_text", "")
+    lower = evidence.lower()
+    runtime_toast = runtime_toast_error_from_text(evidence)
+    if runtime_toast:
+        return {
+            "category": "product_bug",
+            "failure_type": "runtime_toast_error",
+            "confidence": 0.93,
+            "reason": f"报告或执行证据中出现运行时错误 toast/浮层：{runtime_toast}，这不是普通元素定位失败，不能通过放宽 YAML 掩盖",
+            "evidence": [runtime_toast],
+            "suggested_action": "保留失败并提交产品/运行时问题；若确认是测试数据或环境导致，再由人工调整数据后重跑",
+            "can_auto_repair": False
+        }
+    brief = ctx.get("failure_brief") or {}
+    if brief.get("failure_type") in ("model_config", "model_service", "device_env"):
+        return {
+            "category": "env_issue",
+            "failure_type": brief.get("failure_type"),
+            "confidence": 0.96,
+            "reason": "失败属于模型配置、模型服务或设备环境问题，不应修改 YAML",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "先修复环境/设备/模型服务后重跑",
+            "can_auto_repair": False
+        }
+    if any(word in lower for word in ("ai call error", "failed to call ai model service", "request was aborted", "model-provider.html")):
+        return {
+            "category": "env_issue",
+            "failure_type": "model_service",
+            "confidence": 0.96,
+            "reason": "Midscene 调用视觉模型服务时被中断或超时，不是 YAML 业务链路错误",
+            "evidence": [line for line in evidence.splitlines() if "AI call error" in line or "Request was aborted" in line or "model-provider" in line][:8],
+            "suggested_action": "先检查 Runner 模型环境、DashScope 网络连通性和重试执行；确认模型服务稳定后再判断是否需要修脚本",
+            "can_auto_repair": False
+        }
+    yaml_check = validate_midscene_yaml(yaml_text)
+    if not yaml_check.get("ok"):
+        return {
+            "category": "script_issue",
+            "failure_type": "yaml_syntax",
+            "confidence": 0.98,
+            "reason": "YAML 基础结构或 Midscene flowItem 校验未通过",
+            "evidence": yaml_check.get("warnings", [])[:8],
+            "suggested_action": "只执行规则级 YAML 结构/flowItem 修复，不改业务链路",
+            "can_auto_repair": True
+        }
+    if brief.get("failure_type") in ("model_config", "model_service", "device_env"):
+        return {
+            "category": "env_issue",
+            "failure_type": brief.get("failure_type"),
+            "confidence": 0.96,
+            "reason": "失败属于模型配置或设备环境问题，不应修改 YAML",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "先修复环境/设备/模型配置后重跑",
+            "can_auto_repair": False
+        }
+    if "http error" in lower or "request entity too large" in lower or re.search(r"\b50[234]\b", lower):
+        return {
+            "category": "env_issue",
+            "failure_type": "server_or_upload",
+            "confidence": 0.9,
+            "reason": "失败包含服务端或报告上传错误，不应修改业务 YAML",
+            "evidence": [line for line in evidence.splitlines() if "HTTP" in line or "Error" in line][:6],
+            "suggested_action": "先处理服务端上传/代理限制，再重跑",
+            "can_auto_repair": False
+        }
+    if any(word in lower for word in ("ai call error", "failed to call ai model service", "request was aborted", "model-provider.html")):
+        return {
+            "category": "env_issue",
+            "failure_type": "model_service",
+            "confidence": 0.96,
+            "reason": "Midscene 调用视觉模型服务时被中断或超时，不是 YAML 业务链路错误",
+            "evidence": [line for line in evidence.splitlines() if "AI call error" in line or "Request was aborted" in line or "model-provider" in line][:8],
+            "suggested_action": "先检查 Runner 模型环境、DashScope 网络连通性和重试执行；确认模型服务稳定后再判断是否需要修脚本",
+            "can_auto_repair": False
+        }
+    horizontal = detect_horizontal_scroll_script_issue(task_block or yaml_text, evidence)
+    if horizontal:
+        horizontal["failure_type"] = "scroll_not_effective"
+        return horizontal
+    wait_issue = detect_wait_strategy_issue(task_block or yaml_text, evidence)
+    if wait_issue:
+        wait_issue["failure_type"] = "wait_strategy"
+        return wait_issue
+    if evidence_needs_adb_input_fallback(evidence):
+        return {
+            "category": "script_issue",
+            "failure_type": "input_failed",
+            "confidence": 0.9,
+            "reason": "日志显示输入框未实际输入或输入失败，应修复输入动作",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "修复 aiInput + value，必要时仅对安全文本加 ADB input 兜底",
+            "can_auto_repair": True
+        }
+    if any(word in lower for word in ("unknown flowitem", "failed to load", "property \"tasks\" is required", "yaml格式", "yaml语法")):
+        return {
+            "category": "script_issue",
+            "failure_type": "yaml_syntax",
+            "confidence": 0.94,
+            "reason": "执行日志显示 YAML 语法或 flowItem 不兼容",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "优先规则修复 YAML 语法、flowItem 名称和缩进结构",
+            "can_auto_repair": True
+        }
+    if any(word in evidence for word in ("弹窗", "权限", "遮挡", "浮层", "引导")):
+        return {
+            "category": "script_issue",
+            "failure_type": "popup_overlay",
+            "confidence": 0.82,
+            "reason": "失败上下文出现弹窗/权限/浮层遮挡信号",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "只在关键路径前增加弹窗/权限处理，然后继续原业务目标",
+            "can_auto_repair": True
+        }
+    if any(word in lower for word in ("failed to locate", "not found", "cannot find")) or any(word in evidence for word in ("找不到", "未找到")):
+        return {
+            "category": "script_issue",
+            "failure_type": "element_not_found",
+            "confidence": 0.74,
+            "reason": "目标元素未定位到，优先按脚本定位/导航问题处理一次；若修复后仍失败再转人工判断产品问题",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "结合失败步骤前后上下文、页面知识和截图修正定位描述或导航",
+            "can_auto_repair": True
+        }
+    if "assert" in lower or "断言" in evidence or "验证" in evidence:
+        return {
+            "category": "script_issue",
+            "failure_type": "assertion_too_strict",
+            "confidence": 0.68,
+            "reason": "断言失败，先检查是否断言过严或不贴近业务可见状态",
+            "evidence": brief.get("signals", [])[:8],
+            "suggested_action": "把过严断言改成业务意图 + UI 可见信号，不删除关键断言",
+            "can_auto_repair": True
+        }
+    return None
+
+
+# ---------------------------------------------------------------------------
+# AI Skill: requirement_analyzer
+# ---------------------------------------------------------------------------
+
+def normalize_source_quality(value):
+    """规范化来源质量评估。"""
+    source = value if isinstance(value, dict) else {}
+    normalized = {}
+    for key in ("requirement", "ui", "knowledge"):
+        text = str(source.get(key) or "").strip().lower()
+        normalized[key] = text if text in ("sufficient", "partial", "missing") else "missing"
+    return normalized
+
+
+def normalize_readiness_level(score, blockers=None, missing_inputs=None, questions=None, explicit=""):
+    """规范化就绪等级。"""
+    explicit = str(explicit or "").strip().lower()
+    if explicit in ("ready", "review", "blocked"):
+        return explicit
+    if blockers:
+        return "blocked"
+    if score < 50:
+        return "blocked"
+    if score < 75 or missing_inputs or questions:
+        return "review"
+    return "ready"
+
+
+def normalize_requirement_analysis_result(result):
+    """规范化需求分析结果。"""
+    result = result if isinstance(result, dict) else {}
+    for key in (
+        "business_goals", "roles", "entry_points", "state_assumptions",
+        "data_assumptions", "visible_outcomes", "risks", "requirement_points",
+        "questions", "missing_inputs", "blockers", "assumptions"
+    ):
+        result[key] = normalize_text_list(result.get(key))
+    confidence = str(result.get("confidence") or "medium").strip().lower()
+    if confidence not in ("high", "medium", "low"):
+        confidence = "medium"
+    result["confidence"] = confidence
+    source_quality = normalize_source_quality(result.get("source_quality"))
+    if source_quality.get("requirement") == "missing" and (result["requirement_points"] or result["business_goals"]):
+        source_quality["requirement"] = "partial"
+    if source_quality.get("ui") == "missing" and (result["entry_points"] or result["visible_outcomes"]):
+        source_quality["ui"] = "partial"
+    result["source_quality"] = source_quality
+    score = safe_int(result.get("readiness_score") or result.get("readinessScore"), 0)
+    if score <= 0:
+        score = {"high": 86, "medium": 70, "low": 48}.get(confidence, 70)
+        score -= min(25, len(result["questions"]) * 5)
+        score -= min(25, len(result["missing_inputs"]) * 5)
+        score -= min(30, len(result["blockers"]) * 12)
+        if source_quality.get("requirement") == "missing":
+            score -= 12
+        if source_quality.get("ui") == "missing":
+            score -= 8
+        if not result["requirement_points"]:
+            score -= 20
+    score = max(0, min(100, score))
+    result["readiness_score"] = score
+    result["readiness_level"] = normalize_readiness_level(
+        score,
+        blockers=result["blockers"],
+        missing_inputs=result["missing_inputs"],
+        questions=result["questions"],
+        explicit=result.get("readiness_level") or result.get("readinessLevel")
+    )
+    return result
+
+
+def call_skill_requirement_analyzer(title, module, text_assets):
+    """调用 AI skill: requirement_analyzer。"""
+    payload = {
+        "title": title,
+        "module": module,
+        "text_assets": compact_text_assets(text_assets)
+    }
+    result = run_ai_skill("requirement_analyzer", payload, timeout=240)
+    return normalize_requirement_analysis_result(result)
+
+
+# ---------------------------------------------------------------------------
+# AI Skill: scenario_designer / automation_filter
+# ---------------------------------------------------------------------------
+
+def generation_volume_targets(analysis):
+    """根据分析结果计算生成数量目标。"""
+    from task_server.services.case_service import generation_volume_targets as _gvt
+    return _gvt(analysis)
+
+
+def scenario_requirement_point(scenario):
+    """提取场景的需求点。"""
+    if not isinstance(scenario, dict):
+        return ""
+    return first_non_empty(scenario.get("requirement_point"), scenario.get("requirementPoint"), scenario.get("coverage"), scenario.get("point"))
+
+
+def case_matches_requirement(case, requirement_point):
+    """判断用例是否匹配需求点。"""
+    text = " ".join(normalize_text_list([
+        (case or {}).get("coverage"),
+        (case or {}).get("requirement_point"),
+        (case or {}).get("requirementPoint"),
+        (case or {}).get("title"),
+        (case or {}).get("scenario"),
+    ]))
+    point = str(requirement_point or "").strip()
+    if not point:
+        return False
+    point_core = re.sub(r"^REQ[-_ ]?\d+\s*[:：.-]?\s*", "", point, flags=re.I).strip()
+    return point in text or (point_core and point_core in text)
+
+
+def build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases):
+    """构建技能覆盖矩阵。"""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    existing = analysis.get("coverage_matrix") or analysis.get("coverageMatrix") or []
+    if isinstance(existing, list) and existing:
+        return existing
+    points = normalize_text_list(analysis.get("requirement_points"))
+    rows = []
+    for point in points:
+        related_scenarios = [
+            item for item in (scenarios or [])
+            if isinstance(item, dict) and (
+                scenario_requirement_point(item) == point
+                or case_matches_requirement({"coverage": scenario_requirement_point(item), "title": item.get("scenario")}, point)
+            )
+        ]
+        auto = [
+            first_non_empty(case.get("case_id"), case.get("caseId"), case.get("title"))
+            for case in (cases or [])
+            if isinstance(case, dict) and case_matches_requirement(case, point)
+        ]
+        manual = [
+            first_non_empty(case.get("case_id"), case.get("caseId"), case.get("title"), case.get("reason"))
+            for case in (manual_cases or [])
+            if isinstance(case, dict) and case_matches_requirement(case, point)
+        ]
+        normal = [s.get("scenario") for s in related_scenarios if "正常" in str(s.get("type") or "")]
+        negative = [s.get("scenario") for s in related_scenarios if "异常" in str(s.get("type") or "")]
+        boundary = [s.get("scenario") for s in related_scenarios if "边界" in str(s.get("type") or "") or "状态" in str(s.get("type") or "")]
+        rows.append({
+            "feature": first_non_empty((related_scenarios[0] or {}).get("feature") if related_scenarios else "", "需求覆盖"),
+            "requirement_point": point,
+            "normal_scenarios": normalize_text_list(normal),
+            "negative_scenarios": normalize_text_list(negative),
+            "boundary_scenarios": normalize_text_list(boundary),
+            "auto_cases": normalize_text_list(auto),
+            "manual_cases": normalize_text_list(manual),
+            "uncovered_reason": "" if auto or manual else "已识别需求点，但尚未生成可追溯用例，需人工补充或重新生成"
+        })
+    return rows
+
+
+def call_skill_scenario_designer(title, module, analysis):
+    """调用 AI skill: scenario_designer。"""
+    targets = generation_volume_targets(analysis)
+    payload = {
+        "title": title,
+        "module": module,
+        "analysis": analysis,
+        "generation_targets": targets
+    }
+    result = run_ai_skill("scenario_designer", payload, timeout=240)
+    scenarios = result.get("scenarios") or []
+    if not isinstance(scenarios, list) or not scenarios:
+        raise ValueError("scenario_designer 未产出场景")
+    return scenarios
+
+
+def call_skill_automation_filter(title, module, analysis, scenarios):
+    """调用 AI skill: automation_filter。"""
+    targets = generation_volume_targets(analysis)
+    payload = {
+        "title": title,
+        "module": module,
+        "analysis": analysis,
+        "scenarios": scenarios,
+        "generation_targets": targets,
+        "automation_rules": {
+            "allowed_actions": ["点击", "输入", "等待", "断言", "返回", "滚动", "处理弹窗", "回到首页"],
+            "manual_by_default": ["真实支付", "删除", "切账号", "清数据", "后台造数", "真实外设", "破坏网络"],
+            "assertion_required": True
+        }
+    }
+    result = run_ai_skill("automation_filter", payload, timeout=300)
+    cases = result.get("cases") or []
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("automation_filter 未产出自动化用例")
+    review = result.get("review") or {}
+    review["generation_targets"] = targets
+    review["actual_case_count"] = len(cases)
+    return {
+        "cases": cases,
+        "manual_cases": result.get("manual_cases") or [],
+        "review": review
+    }
+
+
+def build_cases_payload_from_skills(title, module, text_assets):
+    """通过 AI skills pipeline 生成用例 payload。"""
+    analysis = call_skill_requirement_analyzer(title, module, text_assets)
+    scenarios = call_skill_scenario_designer(title, module, analysis)
+    filtered = call_skill_automation_filter(title, module, analysis, scenarios)
+    cases = filtered.get("cases") or []
+    manual_cases = filtered.get("manual_cases") or []
+    analysis["coverage_matrix"] = build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases)
+    payload = {
+        "title": title,
+        "module": module,
+        "analysis": analysis,
+        "scenarios": scenarios,
+        "cases": cases,
+        "manual_cases": manual_cases,
+        "review": filtered.get("review") or {}
+    }
+    review = payload.setdefault("review", {})
+    review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1"
+    review["requirement_readiness"] = {
+        "score": analysis.get("readiness_score"),
+        "level": analysis.get("readiness_level"),
+        "confidence": analysis.get("confidence"),
+        "missing_inputs": analysis.get("missing_inputs") or [],
+        "blockers": analysis.get("blockers") or [],
+        "questions": analysis.get("questions") or [],
+    }
+    normalized = normalize_cases_payload(payload)
+    validate_ai_skill_output("cases_payload", normalized)
+    return normalized
+
+
+# ---------------------------------------------------------------------------
+# AI Skill: visual_grounder
+# ---------------------------------------------------------------------------
+
+def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets):
+    """调用 AI skill: visual_grounder。"""
+    payload = {
+        "title": title,
+        "module": module,
+        "base_payload": base_payload,
+        "visual_text_assets": compact_text_assets(visual_text_assets),
+        "image_count": len(image_assets or []),
+        "rules": {
+            "do_not_delete_requirements": True,
+            "no_coordinates_or_selectors": True,
+            "assertions_must_be_ui_visible": True
+        }
+    }
+    grounded = run_ai_skill(
+        "visual_grounder",
+        payload,
+        image_assets=image_assets,
+        timeout=360,
+        temperature=0.1
+    )
+    grounded["title"] = grounded.get("title") or title
+    grounded["module"] = grounded.get("module") or module
+    base_points = ((base_payload.get("analysis") or {}).get("requirement_points") or [])
+    if base_points:
+        analysis = grounded.setdefault("analysis", {})
+        if not analysis.get("requirement_points"):
+            analysis["requirement_points"] = base_points
+    review = grounded.setdefault("review", {})
+    review["visual_grounder_skill"] = "visual_grounder.v1"
+    validate_ai_skill_output("cases_payload", grounded)
+    return grounded
+
+
+# ---------------------------------------------------------------------------
+# AI Skill: coverage_auditor
+# ---------------------------------------------------------------------------
+
+def call_coverage_auditor_skill(title, module, payload, local_audit=None):
+    """调用 AI skill: coverage_auditor。"""
+    normalized = normalize_cases_payload(payload)
+    targets = generation_volume_targets(normalized.get("analysis") or {})
+    request = {
+        "title": title,
+        "module": module,
+        "payload": normalized,
+        "local_audit": local_audit or {},
+        "generation_targets": targets,
+        "rules": {
+            "requirement_points_must_map_to_scenarios": True,
+            "requirement_points_must_map_to_cases_or_manual_cases": True,
+            "generic_assertions_are_not_allowed": True,
+            "min_automation_cases": targets.get("min_automation_cases"),
+            "target_automation_cases": targets.get("target_automation_cases")
+        }
+    }
+    result = run_ai_skill("coverage_auditor", request, timeout=240, temperature=0.1)
+    result.setdefault("missing_case_points", result.get("missing_requirement_points") or [])
+    result.setdefault("missing_scenario_points", [])
+    result.setdefault("generic_assertion_cases", [])
+    result.setdefault("duplicate_cases", [])
+    result.setdefault("questions", [])
+    result["coverage_auditor_skill"] = "coverage_auditor.v1"
+    result["ok"] = bool(result.get("ok")) or not (
+        result.get("missing_requirement_points")
+        or result.get("missing_case_points")
+        or result.get("missing_scenario_points")
+        or result.get("generic_assertion_cases")
+        or result.get("duplicate_cases")
+    )
+    return result
+
+
+def build_case_coverage_repair_prompt(title, module, payload, audit):
+    """构建覆盖度修复 prompt。"""
+    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    audit_json = json.dumps(audit, ensure_ascii=False, indent=2)
+    return f"""
+你是资深测试架构师，现在执行第三阶段：覆盖率审查与补全。
+
+目标：保证需求点都被场景和用例覆盖，并且自动化用例的断言贴合业务意图。
+
+硬性要求：
+1. 不要重新发散整个需求，只基于已有 JSON 和覆盖率审查结果进行补全/修正。
+2. 对 audit.missing_case_points 中的每个需求点，必须补充至少 1 条可执行 cases，或放入 manual_cases 并写清楚为什么不能自动化。
+3. 对 audit.missing_scenario_points 中的每个需求点，必须补充 scenarios。
+4. 对 audit.generic_assertion_cases 中的用例，必须把断言改成业务意图 + UI 可见信号，不要使用"展示正常/跳转成功/结果符合预期"。
+5. 不能删除已有有效 cases；可以去重和合并明显重复用例。
+6. 每条新增 case 必须包含 case_id、title、priority、smoke、scenario、goal、coverage、risk、preconditions、steps、assertions、tags、repair_hints。
+7. steps 要能在 Midscene 中用自然语言执行；assertions 要允许动态内容，例如"展示列表内容或空态提示"。
+8. 输出只允许合法 JSON，结构仍为 title、module、analysis、scenarios、cases、manual_cases、review。
+9. 必须补齐 analysis.coverage_matrix：每个 requirement_point 都要说明正常/异常/边界场景，以及进入 cases 还是 manual_cases；不能只补 cases 不补场景。
+10. 不得删除已有有效业务链路；如果合并重复用例，要在 review 中说明合并原因，并保留覆盖点。
+
+当前标题：{title}
+当前模块：{module}
+
+覆盖率审查结果：
+{audit_json}
+
+待修正 JSON：
+{payload_json}
+"""
+
+
+def improve_case_coverage(title, module, payload, max_rounds=1):
+    """改善用例覆盖度。"""
+    current = normalize_cases_payload(payload)
+    for _ in range(max_rounds):
+        current, local_audit = audit_case_coverage(current)
+        targets = generation_volume_targets(current.get("analysis") or {})
+        enough_cases = safe_int(local_audit.get("case_count"), 0) >= safe_int(targets.get("min_automation_cases"), 0)
+        if local_audit.get("ok") and enough_cases and not AI_COVERAGE_MODEL_WHEN_LOCAL_OK:
+            review = current.setdefault("review", {})
+            local_audit["coverage_auditor_skill"] = "skipped_local_audit_ok"
+            local_audit["generation_targets"] = targets
+            review["coverage_audit"] = local_audit
+            review["coverage_auditor_skipped"] = "本地覆盖审查已通过且用例数达到下限，跳过额外模型审查以降低超时风险"
+            return current, local_audit
+        try:
+            audit = call_coverage_auditor_skill(title, module, current, local_audit)
+            review = current.setdefault("review", {})
+            review["coverage_audit"] = audit
+        except Exception as exc:
+            audit = local_audit
+            review = current.setdefault("review", {})
+            review["coverage_auditor_skill"] = "fallback_local_audit"
+            review["coverage_auditor_error"] = str(exc)
+        if audit.get("ok"):
+            return current, audit
+        prompt = build_case_coverage_repair_prompt(title, module, current, audit)
+        content = dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=360)
+        current = normalize_case_json_from_model(content)
+        current["title"] = current.get("title") or title
+        current["module"] = current.get("module") or module
+        validate_ai_skill_output("cases_payload", current)
+    current, audit = audit_case_coverage(current)
+    return current, audit
+
+
+# ---------------------------------------------------------------------------
+# DashScope case generation (legacy + skill pipeline)
+# ---------------------------------------------------------------------------
+
+def build_case_generation_prompt(title, module, text_assets):
+    """构建用例生成 prompt（legacy 模式）。"""
+    text_block = "\n\n".join(text_assets).strip()
+    try:
+        from task_server.prompts import get_prompt_center
+        business_prompt = get_prompt_center().get("case", {
+            "title": title,
+            "target": title,
+            "module": module,
+            "requirementText": text_block,
+        })
+    except Exception:
+        business_prompt = ""
+    return f"""
+{business_prompt}
+
+你是资深移动 App UI 自动化测试工程师。
+请根据需求文档、原型图或设计稿截图，生成标准测试用例 JSON。需求文档是业务范围和测试意图的主来源，页面知识库和设计稿用于校准真实入口、页面结构和 UI 可见断言。
+
+要求：
+1. 只输出合法 JSON，不要 Markdown，不要解释。
+2. JSON 根节点必须包含 title、module、analysis、scenarios、cases。
+3. JSON 根节点还可以包含 manual_cases、review，用于放置当前环境不可稳定自动执行的场景和自评审结果。
+4. cases 是数组，每条用例包含 case_id、title、priority、smoke、preconditions、steps、assertions、tags；建议额外包含 goal、start_page、business_path、expected_result、repair_hints、risk、coverage、data_requirements、automation_reason，便于后续 AI 修复和人工评审理解业务链路。
+5. cases 里放"当前默认测试环境可直接执行或可弱数据依赖执行"的 UI 自动化用例。只要能通过页面标题、入口、列表/空态、按钮状态、弹窗等 UI 信号验证，就应优先进入 cases。
+6. 不要因为数据结果可能为空就放弃自动化：列表类、记录类、收藏类、资源类页面必须兼容"有数据或空态"两种可见结果。只有依赖切换登录态、清空账号数据、特殊后台造数、特定付费账号、系统权限预置、真实支付/删除等高风险场景才放入 manual_cases。
+7. 如果需求没有明确说明测试账号状态，默认认为当前账号已登录。
+8. steps 必须是用户可执行的 UI 操作，尽量使用页面真实文案、按钮名、Tab 名、入口名。
+9. assertions 必须表达"业务意图 + UI 可见信号"，避免抽象断言，也避免过严断言。除非需求明确要求完全一致，否则不要断言动态列表第几条、动态推荐内容、数量、时间、百分比、随机资源名。
+10. 覆盖主流程和当前状态下能自然到达的分支。不要只生成 1 条主流程；每个需求功能点通常至少生成 2-4 条自动化用例：入口可达、页面展示、关键交互、状态/空态/异常提示中可稳定执行的部分。
+11. 不要输出 YAML。
+
+输出格式：
+{{
+  "title": "{title}",
+  "module": "{module}",
+  "analysis": {{
+    "business_goals": [],
+    "roles": [],
+    "entry_points": [],
+    "state_assumptions": [],
+    "data_assumptions": [],
+    "risks": [],
+    "requirement_points": []
+  }},
+  "scenarios": [],
+  "cases": [],
+  "manual_cases": [],
+  "review": {{
+    "coverage_check": "",
+    "automation_check": "",
+    "assertion_check": "",
+    "dedupe_check": "",
+    "remaining_risks": []
+  }}
+}}
+
+文本资产：
+{text_block}
+"""
+
+
+def call_dashscope_cases_legacy(title, module, text_assets, image_assets):
+    """Legacy 模式：直接调用 DashScope 生成用例。"""
+    api_key = dashscope_api_key()
+    base_url = dashscope_base_url()
+    prompt = build_case_generation_prompt(title, module, text_assets)
+    body = json.dumps(build_dashscope_chat_body(
+        prompt,
+        image_assets=image_assets,
+        temperature=0.2,
+        json_response=True,
+        image_limit=8
+    ), ensure_ascii=False).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+
+    with urllib.request.urlopen(req, timeout=360) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    content = data["choices"][0]["message"]["content"]
+    payload = normalize_case_json_from_model(content)
+    payload["title"] = payload.get("title") or title
+    payload["module"] = payload.get("module") or module
+    validate_ai_skill_output("cases_payload", payload)
+    return payload
+
+
+def call_dashscope_cases(title, module, text_assets, image_assets):
+    """生成用例：优先 skill pipeline，有截图时走 legacy。"""
+    if image_assets:
+        return call_dashscope_cases_legacy(title, module, text_assets, image_assets)
+    try:
+        return build_cases_payload_from_skills(title, module, text_assets)
+    except Exception as exc:
+        payload = call_dashscope_cases_legacy(title, module, text_assets, image_assets)
+        review = payload.setdefault("review", {})
+        review["skill_pipeline"] = "fallback_legacy_prompt"
+        review["skill_pipeline_error"] = str(exc)
+        return payload
+
+
+def build_case_visual_refine_prompt(title, module, base_payload, visual_text_assets):
+    """构建用例视觉精修 prompt（legacy 模式）。"""
+    visual_block = "\n\n".join(visual_text_assets).strip() or "无额外页面知识或设计稿文本。"
+    base_json = json.dumps(base_payload, ensure_ascii=False, indent=2)
+    try:
+        from task_server.prompts import get_prompt_center
+        business_prompt = get_prompt_center().get("case", {
+            "title": title,
+            "target": title,
+            "module": module,
+            "requirementText": "\n\n".join([
+                "第一阶段需求用例 JSON:",
+                base_json,
+                "Figma / 截图 / 页面知识文本:",
+                visual_block,
+            ]),
+        })
+    except Exception:
+        business_prompt = ""
+    return f"""
+{business_prompt}
+
+你是资深移动 App UI 自动化测试工程师，现在执行第二阶段：把"需求理解生成的测试用例 JSON"结合 Figma、截图和页面知识，校准为更可执行的 UI 自动化用例 JSON。
+
+重要原则：
+1. 第一阶段 JSON 来自需求文档，是业务覆盖范围的主依据。不要因为截图里没看到某个功能，就删除对应需求用例。
+2. Figma、截图、页面知识只用于校准：真实页面名称、入口文案、按钮/Tab 名称、导航路径、可见断言、空态/列表/弹窗文案。
+3. 只允许参考与当前需求点相关的 Figma 页面；如果 Figma 文件里混有其他页面，不要把无关页面的入口、按钮、文案带入当前需求用例。
+4. 可以优化 steps、assertions、expected_result、repair_hints、start_page、business_path、data_requirements，但不要减少需求覆盖点。
+5. 如果视觉资料和需求冲突，在 repair_hints 或 manual_cases 里说明冲突；不要静默丢弃需求。
+6. 断言要贴近业务意图，不要过严。动态内容使用兼容表达，例如"展示列表内容或空态提示""页面展示标题或核心区域""按钮处于可点击状态"。
+7. 每条自动化 case 仍必须可独立执行，步骤短而稳定，不写坐标、XPath、控件层级和固定长等待。
+8. 如果第一阶段某条用例只有泛化断言，例如"页面正常展示/跳转成功/结果符合预期"，必须结合视觉资料或业务目标改成 UI 可见业务信号。
+9. 如果视觉资料能证明更多当前环境可稳定执行的分支，可以补充 cases，但不得生成和需求无关的控件清单。
+10. 输出必须仍是合法 JSON，保留 title、module、analysis、scenarios、cases、manual_cases、review。
+11. analysis.requirement_points 必须保留；review 中说明本次视觉校准做了哪些修正。
+12. 不允许因为视觉资料缺页就删掉需求场景；只能把入口不确定、数据不稳定、无法自动化的内容转入 manual_cases，并保留 scenarios 覆盖。
+13. 保留并补强 analysis.coverage_matrix；视觉校准后，每个 requirement_point 仍必须能追溯到 scenarios、cases 或 manual_cases。
+
+当前标题：{title}
+当前模块：{module}
+
+第一阶段需求用例 JSON：
+{base_json}
+
+Figma / 截图 / 页面知识文本：
+{visual_block}
+"""
+
+
+def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets):
+    """Legacy 模式：直接调用 DashScope 精修用例。"""
+    if not visual_text_assets and not image_assets:
+        return base_payload
+    prompt = build_case_visual_refine_prompt(title, module, base_payload, visual_text_assets)
+    content = dashscope_chat_content(prompt, image_assets=image_assets, temperature=0.1, timeout=360)
+    payload = normalize_case_json_from_model(content)
+    payload["title"] = payload.get("title") or title
+    payload["module"] = payload.get("module") or module
+    base_points = ((base_payload.get("analysis") or {}).get("requirement_points") or [])
+    if base_points:
+        analysis = payload.setdefault("analysis", {})
+        if not analysis.get("requirement_points"):
+            analysis["requirement_points"] = base_points
+    validate_ai_skill_output("cases_payload", payload)
+    return payload
+
+
+def call_dashscope_refine_cases(title, module, base_payload, visual_text_assets, image_assets):
+    """精修用例：优先 visual_grounder skill，失败回退 legacy。"""
+    if not visual_text_assets and not image_assets:
+        return base_payload
+    try:
+        return call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets)
+    except Exception as exc:
+        payload = call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets)
+        review = payload.setdefault("review", {})
+        review["visual_grounder_skill"] = "fallback_legacy_refine_prompt"
+        review["visual_grounder_error"] = str(exc)
+        return payload
+
+
+# ---------------------------------------------------------------------------
+# Knowledge screenshot analysis
+# ---------------------------------------------------------------------------
+
+def analyze_knowledge_screenshot(data):
+    """分析知识库截图，生成页面知识草稿。"""
+    api_key = dashscope_api_key()
+
+    screenshot = data.get("screenshot") or {}
+    if not screenshot.get("contentBase64"):
+        raise ValueError("请先上传页面截图")
+
+    name = clean_asset_filename(screenshot.get("name") or "page.png")
+    if not is_image_file(name):
+        raise ValueError("页面截图只支持 png / jpg / jpeg")
+
+    app_package = data.get("app_package") or data.get("appPackage") or os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE)
+    hint = data.get("hint") or ""
+    existing_page_name = data.get("page_name") or data.get("pageName") or ""
+    prompt = f"""
+你是移动 App UI 自动化测试知识库维护助手。
+请根据截图识别这个页面，生成可维护的页面知识草稿。
+
+要求：
+1. 只输出合法 JSON，不要 Markdown，不要解释。
+2. 不要编造截图里看不到的按钮、入口、Tab 或文案。
+3. key_elements 用真实可见文案或稳定入口描述，适合给 Midscene 的 aiTap/aiAction 使用。
+4. common_assertions 必须是页面上可以视觉验证的内容。
+5. route 如果截图无法判断，可给出空字符串或"待补充"。
+6. page_name 尽量用页面标题、Tab 名、核心业务名。
+
+APP 包名：{app_package}
+人工提示：{hint}
+已有页面名称：{existing_page_name}
+
+输出格式：
+{{
+  "page_name": "我的页",
+  "route": "点击底部 Tab「我的」",
+  "description": "用户个人中心页面，包含我的收藏、打印记录等入口。",
+  "key_elements": ["底部 Tab「我的」", "入口「我的收藏」", "入口「打印记录」"],
+  "common_assertions": ["页面展示「我的收藏」入口", "页面展示「打印记录」入口"],
+  "tags": ["我的", "个人中心"]
+}}
+"""
+
+    base_url = dashscope_base_url()
+    body = json.dumps({
+        "model": dashscope_vl_model(),
+        "messages": [
+            {"role": "system", "content": "你只输出合法 JSON。"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{guess_mime(name)};base64,{screenshot['contentBase64']}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "temperature": 0.1
+    }, ensure_ascii=False).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        resp_data = json.loads(resp.read().decode("utf-8"))
+
+    draft = normalize_model_json(resp_data["choices"][0]["message"]["content"])
+    return {
+        "page_name": draft.get("page_name") or draft.get("pageName") or existing_page_name or "未命名页面",
+        "route": draft.get("route") or "",
+        "description": draft.get("description") or "",
+        "key_elements": normalize_lines(draft.get("key_elements") or draft.get("keyElements")),
+        "common_assertions": normalize_lines(draft.get("common_assertions") or draft.get("commonAssertions")),
+        "tags": normalize_lines(draft.get("tags"))
+    }
+
+
+__all__ = [
+    # AI skill core
+    "ai_skill_path",
+    "load_ai_skill_prompt",
+    "load_ai_skill_schema",
+    "validate_json_schema_minimal",
+    "validate_ai_skill_output",
+    "render_ai_skill_prompt",
+    "run_ai_skill",
+    # DashScope chat
+    "build_dashscope_chat_body",
+    "dashscope_chat_content",
+    # Utility
+    "normalize_lines",
+    "is_image_file",
+    "guess_mime",
+    "normalize_case_json_from_model",
+    "compact_text_assets",
+    # Failure analysis
+    "runtime_toast_error_from_text",
+    "evidence_is_toast_assertion_issue",
+    "review_ui_terms",
+    "detect_wait_strategy_issue",
+    "detect_horizontal_scroll_script_issue",
+    "sanitize_failure_review_against_sources",
+    "extract_failure_brief",
+    "repair_strategy_guide",
+    "execution_screenshot_context",
+    "flow_items_with_index",
+    "failure_target_terms",
+    "locate_failure_window",
+    "build_failure_context",
+    "classify_failure_by_context",
+    # Requirement analysis
+    "normalize_source_quality",
+    "normalize_readiness_level",
+    "normalize_requirement_analysis_result",
+    "call_skill_requirement_analyzer",
+    # Scenario & automation
+    "generation_volume_targets",
+    "scenario_requirement_point",
+    "case_matches_requirement",
+    "build_skill_coverage_matrix",
+    "call_skill_scenario_designer",
+    "call_skill_automation_filter",
+    "build_cases_payload_from_skills",
+    # Visual grounder
+    "call_visual_grounder_skill",
+    # Coverage auditor
+    "call_coverage_auditor_skill",
+    "build_case_coverage_repair_prompt",
+    "improve_case_coverage",
+    # Case generation
+    "build_case_generation_prompt",
+    "call_dashscope_cases_legacy",
+    "call_dashscope_cases",
+    "build_case_visual_refine_prompt",
+    "call_dashscope_refine_cases_legacy",
+    "call_dashscope_refine_cases",
+    # Knowledge screenshot
+    "analyze_knowledge_screenshot",
+]

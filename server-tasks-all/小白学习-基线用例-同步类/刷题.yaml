@@ -1,0 +1,91 @@
+android:
+
+tasks:
+  - name: 同步学tab
+    # baseline.case_id: COM_XBXXHZ_BOX_a623f2dd89d7
+    # baseline.goal: 验证同步学tab
+    # baseline.start_page: App 首页
+    # baseline.path: 全部icon -> 课后刷题icon -> 生成练习卷 -> 立即打印 -> 确认打印 -> 全部icon -> 课后刷题icon
+    # baseline.expected: 同步学tab相关页面结果符合预期
+    # baseline.repair_hint: 优先参考当前 App 的页面知识库和基线辅助截图；如果入口文案变化，使用真实可见文案修复步骤和断言。
+    flow:
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "input keyevent 187"
+      - sleep: 1000
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input swipe 540 1900 540 350 300"
+      - sleep: 500
+      - runAdbShell: "input keyevent 3"
+      - sleep: 500
+      - runAdbShell: "am kill-all"
+      - sleep: 500
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1500
+      - launch: com.xbxxhz.box
+      - sleep: 3000
+      - sleep: 3000
+      - ai: "如果出现 您还未登录，请先登录提示，等待一下，没有就跳过"
+      - sleep: 1000
+      - ai: "打开之后如果有弹窗就找到x按钮点击关闭，没有弹窗就跳过"
+      - sleep: 3000
+      - ai: "点击顶部年级切换按钮"
+      - sleep: 3000
+      - ai: "点击一年级选项后点击一次确定按钮"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：全部icon"
+        timeout: 60000
+      - aiTap: "全部icon"
+      - sleep: 2000
+      - aiScroll: "当前页面主要内容区域，不要滚动顶部栏或底部导航"
+        scrollType: "singleAction"
+        direction: "down"
+        distance: 500
+        deepLocate: true
+      - aiWaitFor: "页面中出现「课后刷题」icon"
+        timeout: 30000
+      - aiTap: "课后刷题icon"
+      - ai: "如果当前页面有弹窗则点击确定按钮，没有则跳过"
+      - sleep: 3000
+      - aiTap: "点击未练习的章节“去练习”按钮"
+      - sleep: 3000
+      - ai: "点击修改按钮（不是去批改按钮）"
+      - sleep: 3000
+      - aiTap: "生成练习卷"
+      - aiWaitFor: "页面加载完成且没有明显加载中状态"
+        timeout: 60000
+      - ai: "打开之后如果出现弹窗则点击确定按钮，没有弹窗就跳过"
+      - aiWaitFor: "页面加载完成，并且可以继续执行下一步：立即打印"
+        timeout: 60000
+      - aiTap: "立即打印"
+      - sleep: 2000
+      - aiTap: "确认打印"
+      - sleep: 3000
+      - ai: "点击返回按钮返回APP首页，APP首页包含文档打印、照片打印icon"
+      - sleep: 3000
+      - aiTap: "全部icon"
+      - sleep: 2000
+      - aiScroll: "当前页面主要内容区域，不要滚动顶部栏或底部导航"
+        scrollType: "singleAction"
+        direction: "down"
+        distance: 500
+        deepLocate: true
+      - aiWaitFor: "页面中出现「课后刷题」icon"
+        timeout: 30000
+      - aiTap: "课后刷题icon"
+      - ai: "打开之后如果出现弹窗则点击确定按钮，没有弹窗就跳过"
+      - sleep: 1000
+      - ai: "点击第一个“去练习”按钮"
+      - sleep: 2000
+      - ai: "如果当前页面有“去批改”按钮则点击“去批改”按钮，没有则跳过"
+      - sleep: 2000
+      - ai: "如果当前页面有“录入错题”按钮则点击“录入错题”按钮，没有则跳过"
+      - sleep: 2000
+      - ai: "如果当前页面有“生成练习报告”按钮，点击“生成练习报告”按钮，没有则跳过"
+      - sleep: 2000
+      - ai: "如果当前页面有弹窗则点击“所有题目全对”按钮，没有则跳过"
+      - sleep: 1000
+      - runAdbShell: "am force-stop com.xbxxhz.box"
+      - sleep: 1000

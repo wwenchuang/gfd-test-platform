@@ -1,0 +1,41 @@
+{
+  "providers": {
+    "highway_gpt5_mini": {
+      "type": "openai_compatible",
+      "name": "Highway GPT-5 Mini",
+      "baseUrl": "https://api.highwayapi.ai/openai",
+      "apiKeyEnv": "HIGHWAY_API_KEY",
+      "model": "gpt-5-mini",
+      "defaultMaxTokens": 4096,
+      "temperatureLocked": true,
+      "fixedTemperature": 1
+    },
+    "highway_gpt4_1_mini": {
+      "type": "openai_compatible",
+      "name": "Highway GPT-4.1 Mini",
+      "baseUrl": "https://api.highwayapi.ai/openai",
+      "apiKeyEnv": "HIGHWAY_API_KEY",
+      "model": "gpt-4.1-mini",
+      "defaultMaxTokens": 4096,
+      "temperatureLocked": false
+    },
+    "highway_deepseek": {
+      "type": "openai_compatible",
+      "name": "Highway DeepSeek",
+      "baseUrl": "https://api.highwayapi.ai/openai",
+      "apiKeyEnv": "HIGHWAY_API_KEY",
+      "model": "deepseek-chat",
+      "defaultMaxTokens": 4096,
+      "temperatureLocked": false
+    },
+    "qwen_plus": {
+      "type": "openai_compatible",
+      "name": "千问 Qwen Plus",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiKeyEnv": "QWEN_API_KEY",
+      "model": "qwen-plus",
+      "defaultMaxTokens": 4096,
+      "temperatureLocked": false
+    }
+  }
+}
