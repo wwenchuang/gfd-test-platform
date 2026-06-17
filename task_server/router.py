@@ -411,6 +411,29 @@ def dispatch_head(handler):
     handler.end_headers()
 
 
+def _unauthorized(handler):
+    handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    return True
+
+
+def _require_user_auth(handler):
+    if not handler._authorized():
+        return _unauthorized(handler)
+    return False
+
+
+def _require_runner_auth(handler):
+    if not handler._authorized_runner():
+        return _unauthorized(handler)
+    return False
+
+
+def _require_sonic_or_user_auth(handler, qs):
+    if not handler._authorized_with_qs(qs):
+        return _unauthorized(handler)
+    return False
+
+
 # ── 辅助函数 ────────────────────────────────────────────────────────
 
 _MIME_MAP = {
@@ -544,7 +567,7 @@ def _get_models(handler, qs):
 def _get_auth_me(handler, qs):
     payload = verify_session_token(bearer_token(handler.headers))
     if not payload:
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+        _unauthorized(handler)
         return
     handler._json({"ok": True, "user": payload.get("user"), "expires_at": payload.get("exp")})
 
@@ -606,8 +629,7 @@ def _get_yaml_stats(handler, qs):
 
 @route_get("/api/task-meta")
 def _get_task_meta(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     handler._json({"ok": True, "meta": load_task_meta()})
 
@@ -616,8 +638,7 @@ def _get_task_meta(handler, qs):
 
 @route_get("/api/task-apps")
 def _get_task_apps(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     handler._json({"ok": True, "apps": sonic_notify_known_apps()})
 
@@ -626,8 +647,7 @@ def _get_task_apps(handler, qs):
 
 @route_get("/api/sonic/config")
 def _get_sonic_config(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     handler._json({
         "ok": True,
@@ -644,8 +664,7 @@ def _get_sonic_config(handler, qs):
 
 @route_get("/api/sonic/runtime-env")
 def _get_sonic_runtime_env(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     env = midscene_runtime_env()
     handler._json({
@@ -660,8 +679,7 @@ def _get_sonic_runtime_env(handler, qs):
 
 @route_get("/api/preflight/dashboard")
 def _get_preflight_dashboard(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     live = safe_bool(qs.get("live") or qs.get("sonic") or qs.get("includeSonic"))
     try:
@@ -674,8 +692,7 @@ def _get_preflight_dashboard(handler, qs):
 
 @route_get("/api/reports/cleanup")
 def _get_reports_cleanup(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     from task_server.services.report_service import cleanup_midscene_reports, report_cleanup_policy
     try:
@@ -691,8 +708,7 @@ def _get_reports_cleanup(handler, qs):
 
 @route_get("/api/repair-drafts")
 def _get_repair_drafts(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     from task_server.services.repair_service import load_repair_drafts
     drafts = load_repair_drafts()
@@ -1287,8 +1303,7 @@ def _get_baseline_page_refs(handler, qs):
 
 @route_get("/api/jobs")
 def _get_jobs(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     recover_timed_out_jobs()
     with JOB_LOCK:
@@ -1307,8 +1322,7 @@ def _get_jobs(handler, qs):
 
 @route_get("/api/runners")
 def _get_runners(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     devices = all_online_devices()
     with RUNNER_LOCK:
@@ -1321,8 +1335,7 @@ def _get_runners(handler, qs):
 @route_get("/api/runner/jobs/next")
 def _get_runner_jobs_next(handler, qs):
     recover_timed_out_jobs()
-    if not handler._authorized_runner():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_runner_auth(handler):
         return
     runner_id = qs.get("runner_id", "runner")
     runner_device_ids_qs = set(filter(None, (qs.get("devices") or "").split(",")))
@@ -1455,10 +1468,7 @@ def _get_reports(handler, qs):
 # ── Trace / DAG Debugger ─────────────────────────────────────────────
 
 def _debug_auth_required(handler):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
-        return True
-    return False
+    return _require_user_auth(handler)
 
 
 def _execution_facade():
@@ -1846,8 +1856,7 @@ def _post_report(handler, qs):
 
 @route_post("/api/report/chunk")
 def _post_report_chunk(handler, qs):
-    if not handler._authorized_runner():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_runner_auth(handler):
         return
     try:
         d = handler._body()
@@ -1872,8 +1881,7 @@ def _post_report_chunk(handler, qs):
 
 @route_post("/api/report/chunk-finish")
 def _post_report_chunk_finish(handler, qs):
-    if not handler._authorized_runner():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_runner_auth(handler):
         return
     try:
         d = handler._body()
@@ -1916,8 +1924,7 @@ def _post_report_chunk_finish(handler, qs):
 
 @route_post("/api/sonic/suite-complete")
 def _post_sonic_suite_complete(handler, qs):
-    if not handler._authorized_with_qs(qs):
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_sonic_or_user_auth(handler, qs):
         return
     try:
         event = parse_sonic_suite_completion_payload(
@@ -1962,9 +1969,8 @@ def _post_sonic_custom_robot(handler, qs):
 def _require_post_auth(handler, qs):
     """POST 请求通用认证检查，未通过返回 True。"""
     qs, path = handler._qs()
-    if path.startswith("/api/") and path not in SONIC_SUITE_COMPLETION_PATHS and not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
-        return True
+    if path.startswith("/api/") and path not in SONIC_SUITE_COMPLETION_PATHS:
+        return _require_user_auth(handler)
     return False
 
 
@@ -2512,8 +2518,7 @@ def _handle_generate_job_cancel(handler, m, job_id, d):
 
 @route_post("/api/runner/heartbeat")
 def _post_runner_heartbeat(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     d = handler._body()
     runner_id = d.get("runner_id") or d.get("runnerId") or "runner"
@@ -2626,8 +2631,7 @@ def _post_run_request(handler, qs):
 
 @route_post("/api/sonic/report-ready")
 def _post_sonic_report_ready(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     d = handler._body()
     try:
@@ -2647,8 +2651,7 @@ def _post_sonic_report_ready(handler, qs):
 
 @route_post("/api/sonic/result")
 def _post_sonic_result(handler, qs):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     d = handler._body()
     mod = d.get("module") or d.get("taskModule") or ""
@@ -2813,8 +2816,7 @@ def _post_runner_jobs_action(handler, qs, path):
 
 
 def _handle_runner_job_progress(handler, job_id):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     d = handler._body()
     now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2858,8 +2860,7 @@ def _handle_runner_job_progress(handler, job_id):
 
 
 def _handle_runner_job_report_ready(handler, job_id):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     d = handler._body()
     try:
@@ -2882,8 +2883,7 @@ def _handle_runner_job_report_ready(handler, job_id):
 
 
 def _handle_runner_job_result(handler, job_id):
-    if not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    if _require_user_auth(handler):
         return
     d = handler._body()
     status = normalize_job_status(d.get("status", "failed"))
@@ -3692,9 +3692,8 @@ def _post_agent_context(handler, qs):
 def _require_delete_auth(handler):
     """DELETE 请求通用认证检查，未通过返回 True。"""
     qs, path = handler._qs()
-    if path.startswith("/api/") and not handler._authorized():
-        handler._json({"ok": False, "error": "Unauthorized"}, 401)
-        return True
+    if path.startswith("/api/"):
+        return _require_user_auth(handler)
     return False
 
 

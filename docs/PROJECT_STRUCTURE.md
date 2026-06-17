@@ -17,7 +17,7 @@ cd /Users/wenchuang/Documents/Codex/midscene-task-platform
 ## 必改文件归属
 
 - 页面样式、交互、新手引导：`task-manager.html`
-- 后端接口、AI 编排、Sonic/Midscene/Figma/报告：`midscene-upload.py`
+- 后端接口、AI 编排、Sonic/Midscene/Figma/报告：`task_server/`
 - AI 生成质量和策略：`ai_skills/prompts/`、`ai_skills/references/`
 - AI 输出结构约束：`ai_skills/schemas/`
 - skills 回归检查：`ai_skills/evals/`
@@ -36,7 +36,6 @@ cd /Users/wenchuang/Documents/Codex/midscene-task-platform
 
 1. 先在 `docs/` 写清业务流程和风险。
 2. 如果是 AI 生成策略，先沉淀到 `ai_skills/references/` 或 `ai_skills/prompts/`。
-3. 如果需要接口，再改 `midscene-upload.py`。
+3. 如果需要接口，再改 `task_server/router.py` 或对应的 `task_server/services/` 模块。
 4. 如果需要页面入口，再改 `task-manager.html`。
 5. 最后跑检查并用 `deploy/package-server.sh` 打包。
-
