@@ -350,6 +350,7 @@ def create_agent_run(payload):
         "error": None,
     }
     _ensure_business_flow_constraint(run)
+    _checkpoint_agent_state(run, "created", "PLAN", "RUNNING")
     # 如果指定了 failedJobId，附加到 run 上
     failed_job_id = payload.get("failedJobId") or payload.get("failed_job_id") or source_refs.get("failedJobId") or source_refs.get("jobId")
     if failed_job_id:
@@ -1055,6 +1056,100 @@ def _record_agent_ai_decision(run, stage, source, ok, summary="", **extra):
     trail.append(decision)
     del trail[:-50]
     return decision
+
+
+def _checkpoint_agent_state(run, label, step_name="", status=""):
+    """Persist compact checkpoints for resumability and postmortem debugging."""
+    if not isinstance(run, dict):
+        return {}
+    artifacts = run.setdefault("artifacts", {})
+    checkpoint = {
+        "label": str(label or ""),
+        "step": str(step_name or run.get("currentStep") or ""),
+        "status": str(status or run.get("status") or ""),
+        "progress": _safe_int_local(run.get("progress"), 0),
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "matchedCount": _safe_int_local(artifacts.get("matchedCount"), 0),
+        "pendingConfirmations": len(run.get("pendingConfirmations") or []),
+        "aiDecisionCount": len(artifacts.get("agentAiDecisions") or []),
+        "businessFlowSource": (artifacts.get("businessFlowConstraint") or {}).get("source", "default"),
+    }
+    artifacts.setdefault("agentCheckpoints", []).append(checkpoint)
+    del artifacts["agentCheckpoints"][:-80]
+    return checkpoint
+
+
+def _record_agent_quality_gate(run, gate_name, passed, reason="", **extra):
+    """Record deterministic guardrail/evaluator results beside AI decisions."""
+    if not isinstance(run, dict):
+        return {}
+    gate = {
+        "gate": str(gate_name or ""),
+        "passed": bool(passed),
+        "reason": str(reason or "")[:500],
+        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    gate.update({k: v for k, v in extra.items() if v not in (None, "", [])})
+    gates = run.setdefault("artifacts", {}).setdefault("agentQualityGates", [])
+    gates.append(gate)
+    del gates[:-80]
+    return gate
+
+
+def _evaluate_agent_quality_gate(run, stage, payload):
+    """A deterministic evaluator layer inspired by production agent guardrails."""
+    payload = payload if isinstance(payload, dict) else {}
+    artifacts = run.setdefault("artifacts", {}) if isinstance(run, dict) else {}
+    constraint = _ensure_business_flow_constraint(run)
+    flow_keywords = _business_flow_keywords(constraint)
+    if stage == "plan":
+        steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
+        passed = bool(steps) and bool(constraint.get("businessFlow"))
+        reason = "计划包含步骤且已绑定业务主链" if passed else "计划缺少步骤或业务主链"
+        return _record_agent_quality_gate(
+            run,
+            "plan_grounding",
+            passed,
+            reason,
+            stepCount=len(steps),
+            businessFlowKeywords=flow_keywords,
+        )
+    if stage == "case_retrieval":
+        decision = str(payload.get("decision") or "").strip()
+        confidence = float(payload.get("confidence") or 0)
+        matched_count = len(payload.get("matched") or [])
+        matched_keywords = payload.get("matchedKeywords") if isinstance(payload.get("matchedKeywords"), list) else []
+        ai_used = bool(payload.get("aiUsed"))
+        passed = True
+        reasons = []
+        if decision == "reuse" and confidence < 0.72:
+            passed = False
+            reasons.append("复用置信度低于自动复用阈值")
+        if decision == "reuse" and not matched_count:
+            passed = False
+            reasons.append("复用决策没有匹配 YAML")
+        if decision == "reuse" and flow_keywords and not set(flow_keywords) & set(matched_keywords):
+            passed = False
+            reasons.append("复用依据未命中业务主链关键词")
+        if decision == "reuse" and not ai_used and confidence < 0.85:
+            passed = False
+            reasons.append("规则兜底复用需要更高置信度")
+        reason = "；".join(reasons) if reasons else "Case Retrieval 决策通过质量门禁"
+        gate = _record_agent_quality_gate(
+            run,
+            "case_retrieval_decision",
+            passed,
+            reason,
+            decision=decision,
+            confidence=confidence,
+            matchedCount=matched_count,
+            aiUsed=ai_used,
+            businessFlowKeywords=flow_keywords,
+            matchedKeywords=matched_keywords,
+        )
+        artifacts.setdefault("caseRetrievalQuality", gate)
+        return gate
+    return _record_agent_quality_gate(run, str(stage or "unknown"), True, "无专用质量门禁")
 
 
 def _normalize_agent_goal_analysis(value, rule_result, source):
@@ -1959,6 +2054,7 @@ def _tool_agent_plan(run):
             ],
             "note": "AI 负责调度决策，平台保留不可跳过的安全门禁。",
         })
+        plan["qualityGate"] = _evaluate_agent_quality_gate(run, "plan", plan)
         run.setdefault("artifacts", {})["plan"] = plan
         if prompt_ctx.get("promptCenter"):
             run.setdefault("artifacts", {})["promptCenter"] = prompt_ctx.get("promptCenter")
@@ -3273,6 +3369,28 @@ def _tool_case_retrieval(run):
                     businessFlow=business_constraint.get("businessFlow"),
                 )
 
+        pre_gate_decision = {
+            "decision": decision,
+            "confidence": confidence,
+            "matched": matched,
+            "matchedKeywords": matched_keywords,
+            "aiUsed": ai_used,
+        }
+        quality_gate = _evaluate_agent_quality_gate(run, "case_retrieval", pre_gate_decision)
+        if decision == "reuse" and not quality_gate.get("passed"):
+            decision = "wait_confirm"
+            ai_reason = (ai_reason + f"；质量门禁要求确认：{quality_gate.get('reason')}").strip("；")
+            _record_agent_ai_decision(
+                run,
+                "case_retrieval_quality_gate",
+                "deterministic_guardrail",
+                False,
+                quality_gate.get("reason", ""),
+                previousDecision="reuse",
+                nextDecision="wait_confirm",
+                confidence=confidence,
+            )
+
         if not ai_used:
             if confidence >= 0.75:
                 matched = [item["abs_path"] for item in scored if item["confidence"] >= max(0.75, confidence - 0.18)]
@@ -3283,6 +3401,18 @@ def _tool_case_retrieval(run):
             else:
                 matched = []
                 decision = "generate_draft"
+
+            post_rule_gate = _evaluate_agent_quality_gate(run, "case_retrieval", {
+                "decision": decision,
+                "confidence": confidence,
+                "matched": matched,
+                "matchedKeywords": matched_keywords,
+                "aiUsed": ai_used,
+            })
+            quality_gate = post_rule_gate
+            if decision == "reuse" and not post_rule_gate.get("passed"):
+                decision = "wait_confirm"
+                ai_reason = (ai_reason + f"；规则复用被质量门禁转为确认：{post_rule_gate.get('reason')}").strip("；")
 
         if decision == "reuse":
             if scope in ("smoke", "冒烟"):
@@ -3346,6 +3476,7 @@ def _tool_case_retrieval(run):
             "aiHealth": ai_health,
             "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
             "businessFlowKeywords": flow_keywords,
+            "qualityGate": quality_gate,
             "scope": scope,
             "keywords": keywords or [],
             "matchedKeywords": matched_keywords,
@@ -5618,6 +5749,7 @@ def _execute_agent_step(run, step_name):
     run["currentStep"] = step_name
     run["updatedAt"] = now
     _refresh_agent_run_progress(run)
+    _checkpoint_agent_state(run, "step_started", step_name, "RUNNING")
     with AGENT_RUN_LOCK:
         runs = load_agent_runs()
         for i, r in enumerate(runs):
@@ -5698,6 +5830,7 @@ def _execute_agent_step(run, step_name):
         _append_step_trace(run, step, step["summary"], status=step.get("status", "SUCCESS"))
     run["updatedAt"] = now
     _refresh_agent_run_progress(run)
+    _checkpoint_agent_state(run, "step_finished", step_name, step.get("status", ""))
     # 每步完成后立即持久化，避免异常时 in-memory 状态丢失
     with AGENT_RUN_LOCK:
         persisted_runs = load_agent_runs()
