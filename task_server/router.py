@@ -411,8 +411,15 @@ def dispatch_head(handler):
     handler.end_headers()
 
 
+def _json_error(handler, error, status=500, **extra):
+    payload = {"ok": False, "error": str(error)}
+    payload.update(extra)
+    handler._json(payload, status)
+    return True
+
+
 def _unauthorized(handler):
-    handler._json({"ok": False, "error": "Unauthorized"}, 401)
+    _json_error(handler, "Unauthorized", 401)
     return True
 
 
@@ -707,7 +714,7 @@ def _get_preflight_dashboard(handler, qs):
     try:
         handler._json({"ok": True, **platform_preflight_dashboard(include_sonic_scan=live)})
     except Exception as e:
-        handler._json({"ok": False, "error": str(e)}, 500)
+        _json_error(handler, e, 500)
 
 
 # ── 报告清理（GET）──────────────────────────────────────────────────
@@ -723,7 +730,7 @@ def _get_reports_cleanup(handler, qs):
         min_keep = safe_int(qs.get("min_keep") or qs.get("minKeep"), REPORT_RETENTION_MIN_KEEP)
         handler._json(cleanup_midscene_reports(days, min_keep, dry_run=dry_run))
     except Exception as e:
-        handler._json({"ok": False, "error": str(e), "policy": report_cleanup_policy()}, 500)
+        _json_error(handler, e, 500, policy=report_cleanup_policy())
 
 
 # ── 修复草稿列表 ────────────────────────────────────────────────────
@@ -768,7 +775,7 @@ def _get_sonic_status(handler, qs):
         }
         handler._json({"ok": True, "summary": summary, "cases": status_rows})
     except Exception as e:
-        handler._json({"ok": False, "error": str(e)}, 500)
+        _json_error(handler, e, 500)
 
 
 # ── Sonic 套件结果 ──────────────────────────────────────────────────
@@ -807,9 +814,9 @@ def _get_sonic_case(handler, qs):
             f"3. 确认服务使用 python -m task_server 启动\n"
             f"4. 如果文件存在,尝试重新从 Task 平台「同步到 Sonic」生成桥接脚本"
         )
-        handler._json({"ok": False, "error": error_msg + hint}, 404)
+        _json_error(handler, error_msg + hint, 404)
     except Exception as e:
-        handler._json({"ok": False, "error": str(e)}, 400)
+        _json_error(handler, e, 400)
 
 
 # ── Sonic 用例 YAML ─────────────────────────────────────────────────

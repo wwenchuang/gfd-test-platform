@@ -133,6 +133,45 @@ def test_sonic_service_migrated_helpers_do_not_reference_legacy_globals():
     assert "from .job_service import find_job, save_jobs, update_task_meta" in source
 
 
+def test_bridge_groovy_auth_failure_reason_accepts_token_or_session():
+    from task_server import router
+
+    class Handler:
+        def __init__(self, headers=None, authorized=False):
+            self.headers = headers or {}
+            self.client_address = ("127.0.0.1", 12345)
+            self.authorized = authorized
+
+        def _authorized(self):
+            return self.authorized
+
+    original_token = router.TOKEN
+    original_callback_token = router.SONIC_CALLBACK_TOKEN
+    original_append_log = router.append_sonic_notify_log
+    logged = []
+    try:
+        router.TOKEN = "runner-token"
+        router.SONIC_CALLBACK_TOKEN = "callback-token"
+        router.append_sonic_notify_log = lambda event, payload, **extra: logged.append((event, payload, extra))
+
+        assert router._bridge_groovy_auth_failure_reason(Handler({"x-token": "runner-token"}), {"case_id": "case-1"}) == ""
+        assert router._bridge_groovy_auth_failure_reason(Handler({"x-token": "callback-token"}), {"case_id": "case-1"}) == ""
+        assert router._bridge_groovy_auth_failure_reason(Handler(authorized=True), {"case_id": "case-1"}) == ""
+        assert logged == []
+
+        assert router._bridge_groovy_auth_failure_reason(Handler(), {"case_id": "case-1"}) == "missing x-token or session unauthorized"
+        assert router._bridge_groovy_auth_failure_reason(Handler({"x-token": "bad"}), {"case_id": "case-2"}) == "invalid x-token"
+        assert [row[0] for row in logged] == ["bridge_groovy_unauthorized", "bridge_groovy_unauthorized"]
+        assert logged[0][1]["case_id"] == "case-1"
+        assert logged[0][1]["has_x_token"] is False
+        assert logged[1][1]["case_id"] == "case-2"
+        assert logged[1][1]["has_x_token"] is True
+    finally:
+        router.TOKEN = original_token
+        router.SONIC_CALLBACK_TOKEN = original_callback_token
+        router.append_sonic_notify_log = original_append_log
+
+
 def test_dashscope_chat_body_requests_json_object_output():
     body = midscene.build_dashscope_chat_body(
         "只输出 JSON",
@@ -2425,6 +2464,7 @@ if __name__ == "__main__":
     test_runtime_env_file_rejects_smart_quotes_and_unclosed_values()
     test_task_server_runtime_env_service_has_required_imports()
     test_sonic_service_migrated_helpers_do_not_reference_legacy_globals()
+    test_bridge_groovy_auth_failure_reason_accepts_token_or_session()
     test_sonic_suite_case_count_from_dto_shapes()
     test_sonic_suite_expected_total_uses_definition_and_result_meta()
     test_sonic_result_matching_prefers_exact_suite_id()
