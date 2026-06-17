@@ -45,7 +45,7 @@ export FEISHU_MIDSCENE_FAILURE_WEBHOOK=''
 
 ## 后端实现建议
 
-第一阶段可以继续放在 `midscene-upload.py`：
+第一阶段收敛在当前模块化后端：
 
 - `emit_platform_event(event)`
 - `send_feishu_card(event)`
@@ -53,12 +53,12 @@ export FEISHU_MIDSCENE_FAILURE_WEBHOOK=''
 - `feishu_card_for_sonic_suite(event)`
 - `feishu_card_for_midscene_failure(event)`
 
-等稳定后再拆：
+建议落位：
 
 ```text
-integrations/
-  feishu.py
-  events.py
+task_server/services/
+  feishu_service.py
+  platform_event_service.py
 ```
 
 ## 页面入口
@@ -78,4 +78,3 @@ integrations/
 - 通知过载：失败单条可聚合，套件完成只发一条汇总。
 - 外网失败：保留本地通知日志，允许手动重发。
 - 权限边界：飞书只做通知和轻量确认，不直接执行高风险操作。
-

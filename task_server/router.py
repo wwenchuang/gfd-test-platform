@@ -434,6 +434,28 @@ def _require_sonic_or_user_auth(handler, qs):
     return False
 
 
+def _bridge_groovy_auth_failure_reason(handler, qs):
+    x_token = handler.headers.get("x-token", "")
+    token_ok = bool(x_token and x_token in (TOKEN, SONIC_CALLBACK_TOKEN))
+    session_ok = handler._authorized()
+    if token_ok or session_ok:
+        return ""
+
+    case_id = qs.get("case_id") or qs.get("caseId") or ""
+    has_token = bool(x_token)
+    reason = "missing x-token or session unauthorized" if not has_token else "invalid x-token"
+    try:
+        append_sonic_notify_log("bridge_groovy_unauthorized", {
+            "case_id": case_id,
+            "remote": getattr(handler, "client_address", [""])[0],
+            "has_x_token": has_token,
+            "reason": reason,
+        })
+    except Exception:
+        pass
+    return reason
+
+
 # ── 辅助函数 ────────────────────────────────────────────────────────
 
 _MIME_MAP = {
@@ -782,7 +804,7 @@ def _get_sonic_case(handler, qs):
             f"\n\n排查建议:\n"
             f"1. 检查服务器上 TASK_DIR({TASK_DIR}) 是否存在对应的 YAML 文件\n"
             f"2. 检查 YAML 文件是否包含 'baseline.case_id: {case_id}' 注释\n"
-            f"3. 确认 midscene-upload.py 已全量迁移,服务器使用 task_server 启动\n"
+            f"3. 确认服务使用 python -m task_server 启动\n"
             f"4. 如果文件存在,尝试重新从 Task 平台「同步到 Sonic」生成桥接脚本"
         )
         handler._json({"ok": False, "error": error_msg + hint}, 404)
@@ -807,22 +829,8 @@ def _get_sonic_case_yaml(handler, qs):
 
 @route_get("/api/sonic/bridge-groovy")
 def _get_sonic_bridge_groovy(handler, qs):
-    x_token = handler.headers.get("x-token", "")
-    if not (x_token and x_token in (TOKEN, SONIC_CALLBACK_TOKEN)) and not handler._authorized():
-        case_id = qs.get("case_id") or qs.get("caseId") or ""
-        has_token = bool(x_token)
-        reason = "missing x-token" if not has_token else "invalid x-token"
-        if not has_token and not handler._authorized():
-            reason = "missing x-token or session unauthorized"
-        try:
-            append_sonic_notify_log("bridge_groovy_unauthorized", {
-                "case_id": case_id,
-                "remote": getattr(handler, "client_address", [""])[0],
-                "has_x_token": has_token,
-                "reason": reason,
-            })
-        except Exception:
-            pass
+    reason = _bridge_groovy_auth_failure_reason(handler, qs)
+    if reason:
         handler._json({
             "ok": False,
             "error": reason,
