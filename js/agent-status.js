@@ -1921,12 +1921,15 @@ function showAssetsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
   const rows = assetRowsForCurrentFilters();
+  const selectedInRows = selectedAssetRowsForCurrentFilters(rows);
+  const selectedTotal = selectedSonicFiles().length;
   const allRowsSelected = rows.length > 0 && rows.every(row => selectedFiles.has(fileKey(row.mod, row.file)));
   const summary = {
     total: rows.length,
     failed: rows.filter(row => row.job.status === 'failed').length,
     baseline: rows.filter(row => ['baseline', 'active'].includes(row.meta.status || '')).length,
-    selected: selectedFiles.size
+    selected: selectedInRows.length,
+    selectedTotal
   };
   const moduleCount = currentModule ? 1 : Object.keys(modules).length;
   const appValue = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
@@ -1951,7 +1954,8 @@ function showAssetsCenter() {
         <div><strong>${moduleCount}</strong><span>${currentModule ? '当前模块' : '模块数'}</span></div>
         <div><strong>${summary.baseline}</strong><span>已入库/基线</span></div>
         <div><strong>${summary.failed}</strong><span>最近失败</span></div>
-        <div><strong>${summary.selected}</strong><span>已选择</span></div>
+        <div><strong>${summary.selected}</strong><span>当前已选</span></div>
+        ${summary.selectedTotal !== summary.selected ? `<div><strong>${summary.selectedTotal}</strong><span>全部已选</span></div>` : ''}
       </div>
       <div class="assets-browser">
         <div class="assets-filter-panel">
@@ -1991,10 +1995,10 @@ function showAssetsCenter() {
               <button class="btn-sm" onclick="selectCurrentAssetRows()">选择当前列表</button>
               ${currentModule ? `<button class="btn-sm" onclick="selectCurrentModuleFiles();showAssetsCenter()">全选当前模块</button>` : ''}
               <button class="btn-sm" onclick="clearAssetSelection()">清空选择</button>
-              <button class="btn-sm success" onclick="publishSelectedFilesToSonic()" ${selectedFiles.size ? '' : 'disabled'}>同步已选至 Sonic 平台</button>
+              <button class="btn-sm success" onclick="publishSelectedFilesToSonic()" ${summary.selected ? '' : 'disabled'}>同步当前已选至 Sonic 平台</button>
               ${currentModule ? `<button class="btn-sm success" onclick="publishCurrentModuleToSonic()">同步当前模块至 Sonic 平台</button>` : ''}
-              <button class="btn-sm" onclick="showBatchMove()" ${selectedFiles.size ? '' : 'disabled'}>批量移动</button>
-              <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${selectedFiles.size ? '' : 'disabled'}>批量删除</button>
+              <button class="btn-sm" onclick="showBatchMove()" ${summary.selected ? '' : 'disabled'}>批量移动</button>
+              <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${summary.selected ? '' : 'disabled'}>批量删除</button>
               ${currentModule ? `<button class="btn-sm danger" onclick="deleteCurrentModule()">删除当前模块</button>` : ''}
             </div>
           </div>
@@ -2865,6 +2869,14 @@ function selectedSonicFiles() {
   }).filter(item => item.module && item.file && modules[item.module]?.includes(item.file) && /\.ya?ml$/i.test(item.file));
 }
 
+function selectedAssetRowsForCurrentFilters(rows=assetRowsForCurrentFilters()) {
+  return (rows || []).filter(row => selectedFiles.has(fileKey(row.mod, row.file)));
+}
+
+function selectedSonicFilesForCurrentFilters() {
+  return selectedAssetRowsForCurrentFilters().map(row => ({ module: row.mod, file: row.file }));
+}
+
 function sonicBatchItemNeedsForce(item) {
   const status = fileMeta(item.module, item.file).status || 'draft';
   return !['active', 'baseline'].includes(status);
@@ -2908,9 +2920,10 @@ async function publishSonicBatchItems(items, options={}) {
 }
 
 async function publishSelectedFilesToSonic() {
-  const items = selectedSonicFiles();
+  const items = selectedSonicFilesForCurrentFilters();
+  const hiddenSelectedCount = Math.max(0, selectedSonicFiles().length - items.length);
   await publishSonicBatchItems(items, {
-    scopeText: `已选 ${items.length} 个 YAML`,
+    scopeText: `当前列表已选 ${items.length} 个 YAML${hiddenSelectedCount ? `（另有 ${hiddenSelectedCount} 个非当前列表选择不会同步）` : ''}`,
     title: '已选 YAML 同步结果',
   });
 }

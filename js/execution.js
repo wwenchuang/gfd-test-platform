@@ -918,6 +918,9 @@ async function submitFileOp() {
 }
 
 function selectedFileItems() {
+  if (activeWorkflow === 'assets' && typeof selectedAssetRowsForCurrentFilters === 'function') {
+    return selectedAssetRowsForCurrentFilters().map(row => ({ module: row.mod, file: row.file }));
+  }
   return Array.from(selectedFiles).map(key => {
     const index = key.indexOf('::');
     return { module: key.slice(0, index), file: key.slice(index + 2) };
@@ -1515,10 +1518,12 @@ async function deleteFile(mod, file) {
 }
 
 async function deleteSelectedFiles() {
-  const items = Array.from(selectedFiles).map(key => {
-    const index = key.indexOf('::');
-    return { mod: key.slice(0, index), file: key.slice(index + 2) };
-  });
+  const items = activeWorkflow === 'assets' && typeof selectedAssetRowsForCurrentFilters === 'function'
+    ? selectedAssetRowsForCurrentFilters().map(row => ({ mod: row.mod, file: row.file }))
+    : Array.from(selectedFiles).map(key => {
+        const index = key.indexOf('::');
+        return { mod: key.slice(0, index), file: key.slice(index + 2) };
+      });
   if (items.length === 0) {
     showToast('请先勾选要删除的文件', 'error');
     return;
