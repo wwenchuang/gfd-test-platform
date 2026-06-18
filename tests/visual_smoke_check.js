@@ -337,6 +337,8 @@ async function anyVisible(locator) {
     });
     const agentModelOptions = await page.locator('#agent-model').innerText();
     if (!/自动（按模型策略：千问 Qwen Plus）/.test(agentModelOptions)) throw new Error(`Agent model auto option did not use AI Gateway router: ${agentModelOptions}`);
+    if (!await page.locator('text=还没有选择运行记录').isVisible()) throw new Error('Agent workbench should open in new-run mode');
+    if (await page.locator('text=Agent 步骤时间线').isVisible()) throw new Error('Agent workbench should not show the previous run timeline by default');
     await page.fill('#agent-goal', '关节龙打印流程回归');
     await page.click('#agent-start-btn');
     await page.waitForSelector('text=Agent 步骤时间线');

@@ -80,6 +80,8 @@ def main():
     require("POST /agent/run" not in html, "UI should call Agent endpoints without exposing implementation text in visible copy")
     require("/agent-runs" in html and "/agent-runs/" in html, "AI Agent endpoint calls are missing")
     require("Agent 状态" in html and "运行轨迹" in html, "Right panel must become Agent status panel with timeline")
+    require("还没有选择运行记录" in html and "启动新任务后，本次步骤时间线会显示在这里" in html, "Agent workbench must default to new-run mode instead of showing the last run")
+    require("return normalizeAgentRun(agentCurrentRun || null)" in html and "agentCurrentRun = agentRuns[0]" not in html, "Loading Agent history must not auto-select the latest run")
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html, "Agent artifacts must support copy and YAML download")
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
     require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")

@@ -624,7 +624,17 @@ async function showAgentWorkbench() {
         </div>
         <div class="agent-artifact-box ${['report', 'summary'].includes(agentActiveTab) ? 'rich' : ''}" id="agent-artifact-box">${renderAgentArtifactContent(agentActiveTab, run)}</div>
       </div>
-      ` : ''}
+      ` : `
+      <div class="agent-card agent-empty-run-card">
+        <div class="agent-timeline-head">
+          <div>
+            <h3>还没有选择运行记录</h3>
+            <p>这里默认用于创建新的 Agent 任务。需要查看上次执行过程时，请进入“运行记录”选择对应 Run；启动新任务后，本次步骤时间线会显示在这里。</p>
+          </div>
+          <button class="btn-sm" onclick="activateWorkflow('agent_history')">查看运行记录</button>
+        </div>
+      </div>
+      `}
     </div>
   `;
   // Populate failed jobs dropdown if scope is failed_rerun

@@ -122,7 +122,7 @@ function agentRunProgressPct(run) {
 }
 
 function currentAgentRun() {
-  return normalizeAgentRun(agentCurrentRun || agentRuns[0] || null);
+  return normalizeAgentRun(agentCurrentRun || null);
 }
 
 function agentStepState(stepName, run = currentAgentRun()) {
@@ -274,7 +274,6 @@ async function loadAgentRuns(options = {}) {
     // 后端如忽略 limit 参数，前端再兜底截取
     if (limit && runs.length > limit) runs = runs.slice(0, limit);
     agentRuns = runs;
-    agentCurrentRun = agentRuns[0] || agentCurrentRun;
     AppState.loaded.agentRuns = true;
     AppState.agentRuns = agentRuns;
     renderAgentCenter();
@@ -354,7 +353,7 @@ function agentRunCardHtml(run, options = {}) {
       <p>${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</p>
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
       <div class="workflow-card-actions">
-        <button class="btn-sm" onclick="selectAgentRun(${jsArg(run.runId || '')})">查看轨迹</button>
+        <button class="btn-sm" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('agent')">查看轨迹</button>
         ${options.confirm ? `<button class="btn-sm success" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('dashboard')">处理确认</button>` : ''}
       </div>
     </div>
@@ -510,7 +509,6 @@ async function refreshAgentRuns(showMessage=false) {
   try {
     const data = await apiRequest('/agent-runs');
     agentRuns = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
-    agentCurrentRun = agentRuns[0] || agentCurrentRun;
     if (showMessage) showToast('✓ Agent历史已刷新', 'success');
     if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') {
       if (document.getElementById('agent-goal') && typeof updateAgentWorkbenchDynamic === 'function') updateAgentWorkbenchDynamic();
