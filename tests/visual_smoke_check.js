@@ -319,6 +319,12 @@ async function anyVisible(locator) {
     const assetsBox = await page.locator('.assets-browser').boundingBox();
     if (!assetsBox || assetsBox.width < 900) throw new Error(`assets workspace is too narrow: ${assetsBox && assetsBox.width}`);
 
+    await page.click('.workflow-step[data-workflow="execute"]');
+    await page.waitForSelector('text=调试执行');
+    await page.waitForSelector('text=Runner 进度');
+    if (!await page.locator('.jobs-panel').isVisible()) throw new Error('execution page should show Runner progress panel');
+    if (await page.locator('text=Agent 状态').isVisible()) throw new Error('execution page should not show Agent status title');
+
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');
     await page.waitForFunction(() => {

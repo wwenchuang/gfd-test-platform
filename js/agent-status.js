@@ -1158,10 +1158,7 @@ function updateWorkbenchPanelMode() {
     'agent_confirm',
     'execute',
     'baseline',
-    'repair',
-    'reports',
-    'failure_analysis',
-    'bug_drafts'
+    'repair'
   ]);
   workbench.classList.toggle('hide-jobs', !rightPanelWorkflows.has(activeWorkflow));
 }
@@ -1335,7 +1332,7 @@ function applyLazyLoadForSection(sectionKey) {
     'assets', 'generate', 'execute', 'baseline', 'repair', 'yaml_edit', 'app_config'
   ]);
   const NEEDS_JOBS_POLLING = new Set([
-    'execute', 'baseline', 'repair', 'reports', 'failure_analysis', 'bug_drafts'
+    'execute', 'baseline', 'repair'
   ]);
   const NEEDS_RUNNERS = new Set([
     'execute', 'generate', 'baseline', 'repair'

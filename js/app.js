@@ -1069,7 +1069,7 @@ function renderJobs() {
     return;
   }
   const jobsTitle = document.getElementById('jobs-title');
-  if (jobsTitle) jobsTitle.textContent = 'Agent 状态';
+  if (jobsTitle) jobsTitle.textContent = 'Runner 进度';
   updateToolbarState();
   renderEditorContextBar();
   const timeValue = job => Date.parse((job.updated_at || job.finished_at || job.started_at || job.created_at || '').replace(' ', 'T')) || 0;
@@ -1086,7 +1086,7 @@ function renderJobs() {
   const activeCount = activeJobs.length;
   count.textContent = activeCount ? `${activeCount} 个进行中 / 显示 ${jobs.length} 个` : `最近 ${jobs.length} 个`;
   if (!jobs.length) {
-    list.innerHTML = '<div class="job-empty">暂无执行任务</div>';
+    list.innerHTML = '<div class="job-empty">暂无 Runner 执行任务</div>';
     if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
     return;
   }
@@ -1097,7 +1097,7 @@ function renderJobs() {
       ${pendingActions.length ? pendingActions.map(pendingActionCardHtml).join('') : '<div class="job-meta">暂无需要人工处理的失败或确认项。</div>'}
     </div>
     <div class="agent-side-card">
-      <div class="agent-side-title">当前任务</div>
+      <div class="agent-side-title">Runner 当前任务</div>
       ${currentTaskCardHtml(activeJobs)}
     </div>
   `;

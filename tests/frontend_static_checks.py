@@ -88,7 +88,8 @@ def main():
     # Assets entry exists in sidebar as asset center
     require("用例资产" in html and 'data-workflow="assets"' in html, "Assets must be accessible from sidebar")
     require("function showAssetsCenter" in html and "assets-table" in html and "选择当前列表" in html, "Assets page must render a full-width asset table")
-    require("function updateWorkbenchPanelMode" in html and "hide-jobs" in html and "'config'" in html and "'generate'" in html, "Non-execution pages must hide the right status panel")
+    require("function updateWorkbenchPanelMode" in html and "hide-jobs" in html and "'execute'" in html and "'repair'" in html, "Only Agent and execution workflows should keep the right status panel")
+    require("'repair',\n    'reports'" not in html and "'repair', 'reports'" not in html, "Report and asset-style pages should not keep a stale Agent side panel")
     require("你想让 Agent 测什么" in html and "启动全自动 Agent" in html, "Dashboard hero must present the simplified Agent workbench")
     require("showModelConfigCenter" in html and "查看模型策略" in html, "Dashboard must link to model config")
     require("dashboard-accordion" in html, "Secondary dashboard cards must be collapsible")
@@ -128,7 +129,7 @@ def main():
     require("不修改 YAML、不改基线、不触发执行" in html, "Bridge refresh confirmation must clearly distinguish it from YAML sync/execution")
     require("renderSonicPublishResult" in html and "单条用例同步结果" in html and "模块同步结果" in html, "Sonic publish must show explicit single/batch sync results")
     require("AI分析失败" in html and "生成修复 YAML" in html, "Dashboard must expose primary Agent and repair actions")
-    require("Agent 状态" in html and "待我处理" in html and "当前任务" in html, "Right panel must be an action-oriented Agent status panel")
+    require("Runner 进度" in html and "待我处理" in html and "Runner 当前任务" in html, "Execution right panel must focus on Runner progress")
     require("normalizeFailureAnalysis" in html and "SCRIPT_ISSUE" in html and "PRODUCT_BUG" in html and "ENV_ISSUE" in html and "UNKNOWN" in html, "AI repair must normalize and gate failure types")
     require("AI修复工作台" in html and "失败任务列表" in html and "结构化分析" in html and "YAML 修复草稿" in html, "AI repair must be an independent three-column workspace")
     require("原始 YAML" in html and "修复 YAML" in html and "Diff / 校验" in html, "YAML repair draft must show original, fixed, diff, and validation")
