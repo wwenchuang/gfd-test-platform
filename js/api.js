@@ -182,18 +182,18 @@ const WORKFLOW_SECTIONS = {
   },
   sonic_config: {
     index: '5',
-    title: 'Sonic 配置',
-    subtitle: 'Sonic 连接、步骤清理和桥接管理',
-    help: '扫描 Sonic 中旧模板或新旧并存的 Midscene 步骤，也可以批量刷新已同步用例的桥接脚本和当前 runner token。',
+    title: 'Sonic 维护',
+    subtitle: '维护旧步骤、重复步骤和桥接脚本',
+    help: '日常同步请在「用例资产」里使用“同步至 Sonic 平台”。这里只处理 Sonic 历史旧模板、重复 Midscene 步骤，以及已托管用例的桥接脚本和 runner token。',
     cards: [
-      { title: 'Sonic 步骤清理', text: '扫描 Sonic 中旧模板或新旧并存的 Midscene 步骤。', actions: [
-        { label: '扫描旧/重复步骤', cls: 'primary', fn: 'scanLegacySonicCases("all")' }
+      { title: '清理旧/重复步骤', text: '扫描 Sonic 中旧模板或新旧并存的 Midscene 步骤；能匹配到 Task YAML 的会自动补桥接并删除旧步骤。', actions: [
+        { label: '扫描可清理项', cls: 'primary', fn: 'scanLegacySonicCases("all")' }
       ]},
-      { title: '刷新桥接脚本', text: 'Token 或桥接逻辑更新后，一键刷新 Sonic 中已托管用例的 Groovy 引导脚本，不修改 YAML。', actions: [
-        { label: '刷新全部桥接脚本', cls: 'primary', fn: 'refreshSonicBridgeScripts("all")' }
+      { title: '刷新桥接脚本 / Token', text: 'Token 或桥接逻辑更新后，刷新 Sonic 中已托管用例的 Groovy 引导脚本；不修改 YAML、不触发执行。', actions: [
+        { label: '刷新已托管桥接', cls: 'primary', fn: 'refreshSonicBridgeScripts("all")' }
       ]}
     ],
-    checklist: ['定期清理旧步骤', 'Token 变更后刷新桥接脚本', '桥接步骤保持唯一']
+    checklist: ['同步新 YAML 去用例资产操作', '这里只维护历史 Sonic 数据', '桥接步骤保持唯一']
   },
   feishu_config: {
     index: '5',

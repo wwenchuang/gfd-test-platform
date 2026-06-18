@@ -128,6 +128,7 @@ def main():
     require("单条/多条调试" in html and "multiple size=\"8\"" in html, "Execution modal must support selecting one or multiple tasks")
     require("不会触发 Sonic 测试套整套回归" in html and "每个任务只下发选中的一个 task" in html, "Single/multi-task execution must clearly state it does not run the full Sonic suite")
     require("Sonic 只负责已同步基线的测试套回归" in html, "Execution page must distinguish Runner debugging from Sonic suite regression")
+    require("Sonic 维护" in html and "日常同步请在「用例资产」" in html and "清理可匹配旧步骤" in html, "Sonic maintenance page must clearly distinguish maintenance from normal YAML sync")
     require("刷新桥接脚本" in html and "refreshSonicBridgeScripts" in html, "Sonic config must expose one-click bridge script refresh")
     require("apiRequest('/sonic/refresh-bridges'" in html, "Bridge script refresh must call backend through apiRequest")
     require("不修改 YAML、不改基线、不触发执行" in html, "Bridge refresh confirmation must clearly distinguish it from YAML sync/execution")

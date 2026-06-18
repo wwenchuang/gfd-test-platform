@@ -469,9 +469,9 @@
     </div>
     <div class="generate-hint" id="sonic-status-summary" style="margin-bottom:10px;"></div>
     <div class="modal-btns" style="position:static;margin:0 0 12px;padding:0;border:0;">
-      <button class="btn-cancel" onclick="rescanLegacySonicCases()">重新扫描</button>
-      <button class="btn-confirm" onclick="migrateLegacySonicCases()">一键清理并同步</button>
-      <button class="btn-confirm" onclick="refreshSonicBridgeScripts()">刷新桥接脚本</button>
+      <button class="btn-cancel" id="sonic-action-rescan" onclick="rescanLegacySonicCases()">重新扫描</button>
+      <button class="btn-confirm" id="sonic-action-migrate" onclick="migrateLegacySonicCases()">清理可匹配旧步骤</button>
+      <button class="btn-confirm" id="sonic-action-refresh" onclick="refreshSonicBridgeScripts()">刷新已托管桥接</button>
     </div>
     <div id="sonic-status-list" class="sonic-status-grid"></div>
   </div>

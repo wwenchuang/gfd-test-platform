@@ -1183,7 +1183,7 @@ const CONTEXT_TOOLBAR_MAP = {
   // 配置 模块
   config:           { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showModelConfigCenter()' },
   app_config:       { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showTaskApps()' },
-  sonic_config:     { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'scanLegacySonicCases("all")' },
+  sonic_config:     { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新维护项', refreshFn: 'scanLegacySonicCases("all")' },
   feishu_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showTaskApps()' },
   system_config:    { module: 'settings', icon: '⚙', title: '配置', refreshLabel: '刷新配置', refreshFn: 'showPreflightDashboard()' }
 };
@@ -2615,9 +2615,18 @@ function renderSonicStatusRows(rows, containerId) {
   const list = document.getElementById(containerId);
   if (!list) return;
   if (!rows || !rows.length) {
-    list.innerHTML = '<div class="job-empty">暂无同步至 Sonic 平台数据</div>';
+    list.innerHTML = '<div class="job-empty">暂无需要维护的 Sonic 数据。日常同步请到「用例资产」操作。</div>';
     return;
   }
+  const actionLabels = {
+    migrate: '可自动清理',
+    manual: '需人工处理',
+    skip: '无需处理',
+    bridge: '已托管',
+    legacy: '旧模板',
+    mixed: '重复步骤',
+    project_missing: '项目未绑定'
+  };
   list.innerHTML = rows.map(row => {
     const action = row.action || row.step_state || '';
     const matched = row.matched_case || {};
@@ -2635,18 +2644,35 @@ function renderSonicStatusRows(rows, containerId) {
         <button class="btn-sm success" onclick="openFileAndRunTask(${jsArg(mod)}, ${jsArg(file)}, ${jsArg(taskName)})">Runner 单条调试</button>
       </div>
     ` : '';
+    const matchText = matched.task_name
+      ? `匹配方式：${escapeHtml(row.match_type || '名称规则')}`
+      : '匹配方式：未找到对应 YAML';
+    const reasonText = row.reason || (row.case_id || matched.case_id ? `case_id：${row.case_id || matched.case_id}` : '');
     return `
       <div class="sonic-status-row ${escapeHtml(action)}">
-        <div class="sonic-status-title">${escapeHtml(title)}</div>
+        <div class="sonic-status-title">
+          <span>${escapeHtml(title)}</span>
+          <b>${escapeHtml(actionLabels[action] || state || '状态未知')}</b>
+        </div>
         <div class="sonic-status-meta">
           Sonic：${escapeHtml(row.project_name || row.sonic_project_name || row.project_id || '-')} / case ${escapeHtml(row.sonic_case_id || '-')} / ${escapeHtml(state)}<br>
           Task：${escapeHtml(caseInfo || '未匹配')}<br>
-          ${row.reason ? `处理：${escapeHtml(row.reason)}` : `case_id：${escapeHtml(row.case_id || matched.case_id || '-')}`}
+          ${matchText}<br>
+          ${reasonText ? `处理建议：${escapeHtml(reasonText)}` : ''}
         </div>
         ${runActions}
       </div>
     `;
   }).join('');
+}
+
+function setSonicStatusActionMode(mode='scan') {
+  const rescan = document.getElementById('sonic-action-rescan');
+  const migrate = document.getElementById('sonic-action-migrate');
+  const refresh = document.getElementById('sonic-action-refresh');
+  if (rescan) rescan.style.display = mode === 'scan' ? '' : 'none';
+  if (migrate) migrate.style.display = mode === 'scan' ? '' : 'none';
+  if (refresh) refresh.style.display = mode === 'refresh' ? 'none' : '';
 }
 
 async function openFileAndRunTask(mod, file, taskName='') {
@@ -2707,6 +2733,7 @@ function renderSonicPreview() {
 
 async function showCurrentFileSonicStatus() {
   if (!requireCurrentYaml('查看同步至 Sonic 平台检查')) return;
+  setSonicStatusActionMode('status');
   document.getElementById('sonic-status-title').textContent = '当前 YAML 的同步至 Sonic 平台状态';
   document.getElementById('sonic-status-summary').textContent = '正在读取当前文件同步状态...';
   document.getElementById('sonic-status-list').innerHTML = '<div class="job-empty">正在加载...</div>';
@@ -2729,8 +2756,9 @@ async function showCurrentFileSonicStatus() {
 async function scanLegacySonicCases(scope='auto') {
   const payload = scope === 'all' ? {} : (currentFile ? { module: currentModule, file: currentFile } : {});
   lastSonicScanPayload = payload;
-  document.getElementById('sonic-status-title').textContent = payload.file ? '当前 YAML Sonic 步骤清理检查' : 'Sonic 步骤清理检查';
-  document.getElementById('sonic-status-summary').textContent = '正在扫描 Sonic 用例中的旧模板与重复执行步骤...';
+  setSonicStatusActionMode('scan');
+  document.getElementById('sonic-status-title').textContent = payload.file ? '当前 YAML 的 Sonic 维护检查' : 'Sonic 旧步骤维护检查';
+  document.getElementById('sonic-status-summary').textContent = '正在扫描 Sonic 中的历史旧模板、重复 Midscene 步骤，并尝试匹配 Task YAML 用例...';
   document.getElementById('sonic-status-list').innerHTML = '<div class="job-empty">正在扫描...</div>';
   openModal('modal-sonic-status');
   try {
@@ -2739,8 +2767,8 @@ async function scanLegacySonicCases(scope='auto') {
       body: JSON.stringify(payload)
     });
     const risk = (data.legacy || 0) + (data.mixed || 0);
-    const warning = risk ? ' 这些脚本未清理前仍可能绕开汇总通知，单独发送旧报告或乱码消息。' : ' 当前未发现会绕开汇总通知的旧 Midscene 步骤。';
-    document.getElementById('sonic-status-summary').textContent = `扫描完成：旧模板 ${data.legacy || 0} 条，重复残留 ${data.mixed || 0} 条，可自动处理 ${data.migratable || 0} 条，需要人工确认 ${data.manual || 0} 条。${warning}`;
+    const warning = risk ? ' 未清理前可能绕开汇总通知，单独发送旧报告或乱码消息。' : ' 当前未发现旧 Midscene 步骤。';
+    document.getElementById('sonic-status-summary').textContent = `维护扫描完成：旧模板 ${data.legacy || 0} 条，重复残留 ${data.mixed || 0} 条，可自动清理 ${data.migratable || 0} 条，需要人工处理 ${data.manual || 0} 条。${warning} 新 YAML 同步请在「用例资产」里操作。`;
     renderSonicStatusRows(data.rows || [], 'sonic-status-list');
   } catch(e) {
     document.getElementById('sonic-status-summary').textContent = e.message || '扫描失败';
@@ -2755,16 +2783,18 @@ async function rescanLegacySonicCases() {
 
 async function migrateLegacySonicCases() {
   const payload = lastSonicScanPayload || (currentFile ? { module: currentModule, file: currentFile } : {});
-  if (!confirm('确认处理可匹配的旧/重复 Sonic Midscene 步骤？系统会保留唯一 case_id 桥接步骤并删除残留旧步骤，不会修改 Task 平台 YAML。')) return;
-  document.getElementById('sonic-status-summary').textContent = '正在迁移并清理旧/重复步骤...';
+  if (!confirm('确认清理可自动匹配的 Sonic 旧/重复 Midscene 步骤？\n\n系统会按 Task YAML 的 case_id 补齐桥接脚本，并删除残留旧步骤；不会修改 YAML、不触发执行。')) return;
+  document.getElementById('sonic-status-summary').textContent = '正在按 Task YAML 匹配结果清理旧/重复步骤...';
   try {
     const data = await apiRequest('/sonic/migrate-legacy', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
-    document.getElementById('sonic-status-summary').textContent = `处理完成：已清理并同步 ${data.migrated || 0}/${data.migratable || 0} 条，正在复检是否仍有旧步骤...`;
+    document.getElementById('sonic-status-summary').textContent = `处理完成：已清理 ${data.migrated || 0}/${data.migratable || 0} 条，需要人工处理 ${data.manual || 0} 条，正在复检是否仍有旧步骤...`;
     await refreshSonicPreview(true);
-    showToast(`✓ Sonic 旧/重复步骤处理完成：${data.migrated || 0} 条`, 'success');
+    const migrated = Number(data.migrated || 0);
+    const manual = Number(data.manual || 0);
+    showToast(migrated ? `✓ Sonic 旧/重复步骤已清理：${migrated} 条` : `没有可自动清理项，仍需人工处理 ${manual} 条`, migrated ? 'success' : 'warn');
     await rescanLegacySonicCases();
   } catch(e) {
     showToast(e.message || '迁移失败', 'error');
@@ -2777,6 +2807,7 @@ async function refreshSonicBridgeScripts(scope='auto') {
   const isAll = Object.keys(payload || {}).length === 0;
   const scopeText = isAll ? '全部已托管 Sonic 用例' : `当前范围 ${payload.module || ''}${payload.file ? `/${payload.file}` : ''}`;
   if (!confirm(`确认刷新 ${scopeText} 的桥接脚本？\n\n这个动作只更新 Sonic 中保存的 Groovy 引导脚本和当前 runner token，不修改 YAML、不改基线、不触发执行。`)) return;
+  setSonicStatusActionMode('refresh');
   document.getElementById('sonic-status-title').textContent = isAll ? '刷新全部 Sonic 桥接脚本' : '刷新当前范围桥接脚本';
   document.getElementById('sonic-status-summary').textContent = '正在刷新 Sonic 中已托管用例的桥接脚本...';
   document.getElementById('sonic-status-list').innerHTML = '<div class="job-empty">正在刷新...</div>';
@@ -2805,6 +2836,7 @@ async function refreshSonicBridgeScripts(scope='auto') {
 }
 
 function renderPublishCheckResult(data) {
+  setSonicStatusActionMode('status');
   const rows = [];
   (data.blockers || []).forEach(text => rows.push({ action: 'manual', sonic_case_name: '阻断项', reason: text, step_label: '不可同步' }));
   (data.warnings || []).forEach(text => rows.push({ action: 'migrate', sonic_case_name: '提醒', reason: text, step_label: '同步前提醒' }));

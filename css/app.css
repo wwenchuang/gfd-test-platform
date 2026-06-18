@@ -3724,6 +3724,22 @@
   .sonic-status-title {
     color: var(--text);
     font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .sonic-status-title span {
+    overflow-wrap: anywhere;
+  }
+  .sonic-status-title b {
+    border: 1px solid var(--border2);
+    border-radius: 999px;
+    padding: 2px 7px;
+    color: var(--accent);
+    background: rgba(15, 23, 42, .72);
+    font-size: 11px;
+    white-space: nowrap;
   }
   .sonic-status-meta {
     color: var(--text2);

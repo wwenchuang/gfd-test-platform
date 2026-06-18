@@ -4273,13 +4273,10 @@ def sonic_live_case_status(case_info: dict) -> dict:
 
 def sonic_scan_midscene_cases(app_package: str = "", module: str = "", file: str = "", include_current: bool = False) -> list:
     """扫描 Sonic 中需要迁移的 Midscene 脚本用例。"""
-    # 需要 list_task_case_assets，使用简化实现
-    by_id = {}
-    by_app_name = {}
-    app_packages = set()
     app_filter = app_package or ""
     if module and not app_filter:
         app_filter = _app_package_for_module(module)
+    _cases, by_id, by_app_name = sonic_case_indexes(module, file)
     rows = []
     for app in sonic_project_apps(app_filter):
         app_package_row = app.get("package") or ""
@@ -4315,7 +4312,7 @@ def sonic_scan_midscene_cases(app_package: str = "", module: str = "", file: str
                     reason = "同名 Task 用例不唯一，需要人工确认"
                 else:
                     action = "manual"
-                    reason = "未匹配到 Task 平台用例，请先对齐名称或重新同步"
+                    reason = "未匹配到 Task 平台 YAML 用例；请先在用例资产中同步/新建 YAML，或重命名后重新扫描"
             rows.append({
                 "app_package": app_package_row,
                 "app_name": app.get("name") or app_package_row,
@@ -4338,15 +4335,52 @@ def sonic_scan_midscene_cases(app_package: str = "", module: str = "", file: str
     return rows
 
 
+def _sonic_name_aliases(value: str) -> List[str]:
+    """Return tolerant name aliases for matching Sonic cases back to Task YAML tasks."""
+    text = str(value or "").strip()
+    if not text:
+        return []
+    without_ext = re.sub(r"\.(ya?ml)$", "", text, flags=re.I).strip()
+    candidates = [text, without_ext]
+    for part in re.split(r"[/\\|｜>＞:：_-]+", without_ext):
+        part = part.strip()
+        if part:
+            candidates.append(part)
+    normalized = []
+    for item in candidates:
+        key = re.sub(r"\.(ya?ml)$", "", str(item or ""), flags=re.I)
+        key = re.sub(r"[\s`'\"“”‘’（）()\[\]【】{}]+", "", key)
+        key = re.sub(r"[/\\|｜>＞:：_-]+", "", key)
+        key = key.strip().lower()
+        if key and key not in normalized:
+            normalized.append(key)
+    return normalized
+
+
+def _append_case_index(index: dict, key: Tuple[str, str], case: dict) -> None:
+    if not key[1]:
+        return
+    rows = index.setdefault(key, [])
+    case_id = case.get("case_id") or ""
+    if case_id and any(item.get("case_id") == case_id for item in rows):
+        return
+    rows.append(case)
+
+
 def _sonic_match_task_case(sonic_case: dict, app_package: str, by_id: dict, by_app_name: dict) -> Tuple[Optional[dict], str]:
     marker = sonic_case_marker_info(sonic_case)
     marker_case_id = marker.get("case_id") or marker.get("caseId")
     if marker_case_id and marker_case_id in by_id:
         return by_id[marker_case_id], "case_id"
     name = sonic_case.get("name") or ""
-    candidates = by_app_name.get((app_package or "", name), [])
+    candidates = []
+    for key in [name] + _sonic_name_aliases(name):
+        for item in by_app_name.get((app_package or "", key), []):
+            if item not in candidates:
+                candidates.append(item)
     if len(candidates) == 1:
-        return candidates[0], "name"
+        match_type = "name" if candidates and candidates[0].get("task_name") == name else "name_rule"
+        return candidates[0], match_type
     if len(candidates) > 1:
         return None, "ambiguous"
     return None, "none"
@@ -4365,9 +4399,25 @@ def sonic_case_indexes(module_filter: str = "", file_filter: str = "") -> Tuple[
     for case in cases:
         if case.get("error"):
             continue
-        by_id[case.get("case_id")] = case
-        key = (case.get("app_package") or "", case.get("task_name") or "")
-        by_app_name.setdefault(key, []).append(case)
+        case_id = case.get("case_id")
+        if case_id:
+            by_id[case_id] = case
+        app_package = case.get("app_package") or ""
+        task_name = case.get("task_name") or ""
+        file_stem = re.sub(r"\.(ya?ml)$", "", case.get("file") or "", flags=re.I)
+        module_name = case.get("module") or ""
+        names = [
+            task_name,
+            file_stem,
+            f"{module_name}-{task_name}" if module_name and task_name else "",
+            f"{file_stem}-{task_name}" if file_stem and task_name and file_stem != task_name else "",
+        ]
+        for name in names:
+            if not name:
+                continue
+            _append_case_index(by_app_name, (app_package, name), case)
+            for alias in _sonic_name_aliases(name):
+                _append_case_index(by_app_name, (app_package, alias), case)
     return cases, by_id, by_app_name
 
 

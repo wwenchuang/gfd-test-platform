@@ -227,6 +227,7 @@ def main():
     require('"/api/sonic/run-case"' in router_source and '"deprecated": True' in router_source and '"/api/run-request"' in router_source, "Sonic single-case route must return a clear deprecation diagnostic instead of creating temp suites")
     require("def sonic_run_single_case" in sonic_service_source and "RUNNER_JOB_ONLY" in sonic_service_source and "Sonic 单条临时测试套执行已下线" in sonic_service_source, "Sonic service must not create temporary suites for single-case debugging")
     require("sonic_force_run_suite(temp_suite_id)" not in sonic_service_source and "SONIC_TEMP_SUITE" not in sonic_service_source, "Code must not keep Sonic temporary-suite execution for single-case debugging")
+    require("_cases, by_id, by_app_name = sonic_case_indexes(module, file)" in sonic_service_source and "def _sonic_name_aliases" in sonic_service_source and "name_rule" in sonic_service_source, "Sonic legacy scan must load Task case indexes and support tolerant name matching")
     official_sonic_notes = (ROOT / "docs" / "sonic-official-api-notes.md").read_text(encoding="utf-8")
     require("TestSuitesController.java" in official_sonic_notes and "TestCasesController.java" in official_sonic_notes and "/testSuites/runSuite" in official_sonic_notes and "不再提供 “Sonic 临时套执行”" in official_sonic_notes, "Sonic official API notes must preserve source-backed Runner-only single-case policy")
     live_smoke_source = (ROOT / "tests" / "live_api_smoke.py").read_text(encoding="utf-8")
