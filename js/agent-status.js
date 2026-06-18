@@ -78,6 +78,16 @@ function agentRunPillClass(run) {
   return '';
 }
 
+function agentRunCardStatusClass(run) {
+  const status = agentRunStatus(run);
+  if (status === 'DONE' || status === 'FINISH') return 'success';
+  if (status === 'FAILED') return 'failed';
+  if (status === 'CANCELLED') return 'cancelled';
+  if (/WAIT_CONFIRM/.test(status)) return 'waiting';
+  if (status === 'RUNNING') return 'running';
+  return 'pending';
+}
+
 function normalizeAgentRun(run) {
   if (!run) return null;
   const steps = Array.isArray(run.steps) ? run.steps : [];
@@ -340,17 +350,22 @@ function agentRunCardHtml(run, options = {}) {
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
   const status = agentStatusText(run.status);
   const pill = agentRunPillClass(run);
+  const cardStatus = agentRunCardStatusClass(run);
   const progress = agentRunProgressPct(run);
   return `
-    <div class="workflow-card agent-run-history-card">
+    <div class="workflow-card agent-run-history-card ${escapeHtml(cardStatus)}">
       <div class="agent-run-card-head">
         <span class="status-pill ${escapeHtml(pill)}">${escapeHtml(status)}</span>
         <span class="muted mono">${escapeHtml((run.updatedAt || run.createdAt || '').replace('T', ' ').slice(0, 19))}</span>
       </div>
-      <h3>${escapeHtml(String(target).slice(0, 80))}</h3>
-      <p>运行编号：<span class="mono">${escapeHtml(run.runId || '-')}</span> · 模式：${escapeHtml(mode)} · 步骤：${escapeHtml(agentStepLabel(run.currentStep))}</p>
-      <div class="progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;"></div></div>
-      <p>${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</p>
+      <div class="agent-run-title">${escapeHtml(String(target).slice(0, 80))}</div>
+      <div class="agent-run-meta">
+        <span>运行编号：<b>${escapeHtml(run.runId || '-')}</b></span>
+        <span>模式：${escapeHtml(mode)}</span>
+        <span>当前步骤：${escapeHtml(agentStepLabel(run.currentStep))}</span>
+      </div>
+      <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
+      <div class="agent-run-summary">${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</div>
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
       <div class="workflow-card-actions">
         <button class="btn-sm" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('agent')">查看轨迹</button>
