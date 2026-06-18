@@ -1964,7 +1964,7 @@ function showAssetsCenter() {
               <strong>用例目录</strong>
               <span>按应用、模块和关键词筛选</span>
             </div>
-            <button class="btn-sm" onclick="loadModules()">刷新</button>
+            <button class="btn-sm" onclick="loadModules({force:true})">刷新</button>
           </div>
           <div class="assets-filter-controls">
             <select id="asset-app-filter" onchange="syncAssetFiltersToSidebar();showAssetsCenter();">
@@ -2912,7 +2912,7 @@ async function publishSonicBatchItems(items, options={}) {
     const summary = `文件 ${data.total_files || 0} 个，用例 ${data.total_cases || 0} 条`;
     showToast(failed ? `同步至 Sonic 平台完成：${summary}，失败 ${failed} 个文件` : `✓ 已同步至 Sonic 平台：${summary}`, failed ? 'error' : 'success');
     await refreshSonicPreview(true);
-    await loadModules();
+    await loadModules({force: true});
     renderSonicPublishResult(data, options.title || '批量同步结果');
   } catch(e) {
     showToast(e.message || '同步至 Sonic 平台失败', 'error');
@@ -3012,7 +3012,7 @@ async function publishCurrentFileToSonic() {
       showEditor(await apiTextRequest(`/file?module=${encodeURIComponent(currentModule)}&file=${encodeURIComponent(currentFile)}`));
     }
     await refreshSonicPreview(true);
-    await loadModules();
+    await loadModules({force: true});
   } catch(e) {
     showToast(e.message || '同步至 Sonic 平台失败', 'error');
   } finally {
