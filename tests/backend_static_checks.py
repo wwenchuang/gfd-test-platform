@@ -157,6 +157,7 @@ def main():
     require("_handle_runner_job_result(handler, job_id)" in router_source, "Runner result route must pass parsed job_id")
     require("_handle_runner_job_progress(handler, parts[3])" not in router_source, "Runner route must not use old path index parsing")
     require("append_job_event" in router_source and "进度回传" in router_source and "执行结果" in router_source, "Runner jobs must persist progress/result events")
+    require('r"^/api/jobs/([^/]+)/analyze-failure$"' in router_source and "_read_job_failure_material" in router_source and "stdout.log" in router_source and "stderr.log" in router_source and "summary.json" in router_source, "Job failure analysis must read full runner logs from the backend")
     require('"/api/sonic/refresh-bridges"' in router_source and "sonic_refresh_bridge_scripts" in router_source, "Backend must expose Sonic bridge script refresh route")
     require("def sonic_refresh_bridge_scripts" in sonic_service_source and "sonic_upsert_bridge_step" in sonic_service_source, "Sonic service must refresh stored bridge Groovy steps")
     require("不修改 YAML 或基线内容" in sonic_service_source and "runner token" in sonic_service_source, "Bridge refresh must be documented as script/token-only")

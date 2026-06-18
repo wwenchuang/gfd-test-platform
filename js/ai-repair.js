@@ -19,22 +19,59 @@ function jobLogForAi(job) {
   ].filter(Boolean).join('\n').slice(-6000);
 }
 
+function failureAnalysisSourceText(data) {
+  const source = data?.source || data?.analysis_source || {};
+  if (source.used_full_logs) {
+    const stdoutChars = Number(source.stdout_chars || 0);
+    const stderrChars = Number(source.stderr_chars || 0);
+    const parts = [`stdout ${stdoutChars} 字`, `stderr ${stderrChars} 字`];
+    if (source.summary_available) parts.push('summary 已读取');
+    if (source.report_url) parts.push('报告已关联');
+    return `已读取 Runner 完整日志（${parts.join('，')}）`;
+  }
+  if (source.fallback_reason) return `使用页面摘要日志兜底：${source.fallback_reason}`;
+  return '';
+}
+
 async function analyzeFailureFromJob(jobId, options={}) {
-  const job = latestJobs.find(item => item.job_id === jobId) || {};
+  const inputJob = jobId && typeof jobId === 'object' ? jobId : null;
+  const resolvedJobId = inputJob?.job_id || jobId || selectedRepairJobId || '';
+  const job = inputJob || latestJobs.find(item => item.job_id === resolvedJobId) || {};
   await LoadingManager.withLoading(async () => {
     try {
-      selectedRepairJobId = jobId || selectedRepairJobId;
-      const originalYaml = jobYamlForAi(job);
-      const data = await aiGatewayPost('/ai/analyze-failure', {
-        taskName: job.target_task_name || job.current_task_name || job.file || job.module || jobId || '',
-        yaml: originalYaml,
-        log: jobLogForAi(job),
-        screenshotDesc: job.screenshot_desc || job.report_url || ''
-      });
+      selectedRepairJobId = resolvedJobId || selectedRepairJobId;
+      let originalYaml = jobYamlForAi(job);
+      let data = null;
+      let backendError = null;
+      if (resolvedJobId) {
+        try {
+          data = await apiRequest(`/jobs/${encodeURIComponent(resolvedJobId)}/analyze-failure`, {
+            method: 'POST',
+            body: {}
+          });
+        } catch(e) {
+          backendError = e;
+        }
+      }
+      if (!data) {
+        data = await aiGatewayPost('/ai/analyze-failure', {
+          taskName: job.target_task_name || job.current_task_name || job.file || job.module || resolvedJobId || '',
+          yaml: originalYaml,
+          log: jobLogForAi(job),
+          screenshotDesc: job.screenshot_desc || job.report_url || ''
+        });
+        data.source = {
+          ...(data.source || {}),
+          used_full_logs: false,
+          fallback_reason: backendError?.message || '服务端完整日志分析接口暂不可用'
+        };
+      }
+      originalYaml = data.yaml || originalYaml;
+      const sourceText = failureAnalysisSourceText(data);
       aiFailureDraft = {
         title: 'AI分析失败原因',
-        summary: `任务：${job.target_task_name || job.file || jobId || ''}`,
-        analysis: stringifyArtifact(data.analysis || data),
+        summary: `任务：${job.target_task_name || job.file || resolvedJobId || ''}${sourceText ? `；${sourceText}` : ''}`,
+        analysis: stringifyArtifact(data.analysis || data.failure_review || data),
         originalYaml,
         fixedYaml: '',
         requirement: job.target_task_name || job.current_task_name || job.file || '',

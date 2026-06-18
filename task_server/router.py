@@ -3074,6 +3074,116 @@ def _handle_runner_job_result(handler, job_id):
 
 # ── Job 操作（正则匹配）─────────────────────────────────────────────
 
+def _job_safe_run_dir(job):
+    job_id = job.get("job_id", "")
+    runs_root = os.path.abspath(safe_join(LEARNING_DIR, "runs"))
+    candidates = [job.get("run_dir") or ""]
+    if job_id:
+        candidates.append(safe_join(runs_root, job_id))
+    for candidate in candidates:
+        if not candidate:
+            continue
+        abs_candidate = os.path.abspath(candidate)
+        try:
+            if os.path.commonpath([runs_root, abs_candidate]) != runs_root:
+                continue
+        except ValueError:
+            continue
+        if os.path.isdir(abs_candidate):
+            return abs_candidate
+    return ""
+
+
+def _read_job_failure_material(job):
+    run_dir = _job_safe_run_dir(job)
+    stdout_path = safe_join(run_dir, "stdout.log") if run_dir else ""
+    stderr_path = safe_join(run_dir, "stderr.log") if run_dir else ""
+    summary_path = safe_join(run_dir, "summary.json") if run_dir else ""
+    stdout_exists = bool(stdout_path and os.path.exists(stdout_path))
+    stderr_exists = bool(stderr_path and os.path.exists(stderr_path))
+    summary_exists = bool(summary_path and os.path.exists(summary_path))
+    stdout = read_text_file(stdout_path, "") if stdout_path else ""
+    stderr = read_text_file(stderr_path, "") if stderr_path else ""
+    summary = read_json_file(summary_path, None) if summary_path else None
+    if not stdout:
+        stdout = job.get("stdout_tail", "")
+    if not stderr:
+        stderr = job.get("stderr_tail", "")
+    if summary is None and isinstance(job.get("summary"), dict):
+        summary = job.get("summary")
+    yaml_text = ""
+    try:
+        yaml_text = read_text_file(safe_join(TASK_DIR, job.get("module", ""), job.get("file", "")), "")
+    except Exception:
+        yaml_text = ""
+    return {
+        "run_dir": run_dir,
+        "stdout": stdout,
+        "stderr": stderr,
+        "summary": summary,
+        "yaml": yaml_text,
+        "source": {
+            "used_full_logs": stdout_exists or stderr_exists or summary_exists,
+            "run_dir": run_dir,
+            "stdout_chars": len(stdout or ""),
+            "stderr_chars": len(stderr or ""),
+            "summary_available": summary is not None,
+            "log_files": {
+                "stdout": stdout_exists,
+                "stderr": stderr_exists,
+                "summary": summary_exists,
+            },
+            "yaml_chars": len(yaml_text or ""),
+            "report_url": job.get("report_url", ""),
+        },
+    }
+
+
+@route_post_regex(r"^/api/jobs/([^/]+)/analyze-failure$")
+def _post_job_analyze_failure(handler, qs, match):
+    job_id = match.group(1)
+    with JOB_LOCK:
+        target, _ = find_job(job_id)
+        target = dict(target) if target else None
+    if not target:
+        handler._json({"ok": False, "error": "任务不存在"}, 404)
+        return
+    material = _read_job_failure_material(target)
+    if not (material["stdout"] or material["stderr"] or material["summary"] or target.get("failure_review")):
+        handler._json({"ok": False, "error": "还没有收集到 Runner 执行日志，暂时无法做失败分析"}, 400)
+        return
+    try:
+        review = call_dashscope_failure_review(target, material["stdout"], material["stderr"], material["summary"])
+        review_error = ""
+    except Exception as e:
+        review_error = str(e)
+        review = {
+            "category": "unknown",
+            "confidence": 0,
+            "reason": f"AI 失败分析暂不可用：{review_error}",
+            "evidence": [],
+            "suggested_action": "请先查看执行报告、stdout/stderr 完整日志和设备状态",
+            "can_auto_repair": False,
+        }
+    source = dict(material["source"])
+    if review_error:
+        source["ai_error"] = review_error
+    with JOB_LOCK:
+        target, jobs = find_job(job_id)
+        if target:
+            target["failure_review"] = review
+            target["failure_review_source"] = source
+            target["failure_reviewed_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            save_jobs(jobs)
+    handler._json({
+        "ok": True,
+        "job_id": job_id,
+        "analysis": review,
+        "failure_review": review,
+        "source": source,
+        "yaml": material["yaml"],
+    })
+
 @route_post_regex(r"^/api/jobs/([^/]+)/repair$")
 def _post_job_repair(handler, qs, match):
     job_id = match.group(1)
