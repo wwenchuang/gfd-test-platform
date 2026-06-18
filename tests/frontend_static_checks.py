@@ -141,6 +141,7 @@ def main():
     require("同步至 Sonic 平台" in html and "Sonic 同步" not in html and "Sonic同步" not in html and "设备同步" not in html, "Sonic sync UI copy must use 同步至 Sonic 平台")
     require("publishSelectedFilesToSonic" in html and "publishSonicBatchItems" in html and "同步已选至 Sonic 平台" in html, "Sonic batch sync must support selected YAML files from the asset center")
     require("function jobRunModeText" in html and "function markJobHandled" in html and "manual_confirmed" in html, "Runner side panel must label run mode and let users clear handled failures")
+    require("function isRunnerExecutionJob" in html and "locallyHiddenRunnerJobIds" in html and "/^(gen|figma|mindmap|repair)_/i" in html, "Runner side panel must filter background/generated jobs and stale handled ids")
     require("取消任务" in html and "基线回归" in html and "调试执行" in html, "Runner side panel must expose cancel action and distinguish baseline from debug runs")
     require("取消运行" in html and "cancelAgentRunById" in html, "Agent confirmation cards must allow cancelling without entering the run detail")
     require("normalizeFailureAnalysis" in html and "SCRIPT_ISSUE" in html and "PRODUCT_BUG" in html and "ENV_ISSUE" in html and "UNKNOWN" in html, "AI repair must normalize and gate failure types")

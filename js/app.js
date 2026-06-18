@@ -647,6 +647,16 @@ function jobReviewConfirmed(job={}) {
   return Boolean(review.manual_confirmed || review.manualConfirmed || review.confirmed_at || review.confirmedAt);
 }
 
+const locallyHiddenRunnerJobIds = new Set();
+
+function isRunnerExecutionJob(job={}) {
+  const id = String(job.job_id || job.jobId || job.id || '');
+  if (!id || locallyHiddenRunnerJobIds.has(id)) return false;
+  if (job.kind === 'background' || isGenerateBackgroundJob(job)) return false;
+  if (/^(gen|figma|mindmap|repair)_/i.test(id)) return false;
+  return Boolean(job.module || job.file || job.target_task_name || job.current_task_name || job.source === 'sonic' || job.runner_id || job.runnerId);
+}
+
 function jobModeBadgeHtml(job={}) {
   const mode = String(job.run_mode || job.runMode || 'test').toLowerCase();
   const cls = mode === 'baseline' ? 'baseline' : (mode === 'real' ? 'real' : 'test');
@@ -1017,6 +1027,7 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
     });
   const draftJobIds = new Set(repairDrafts.map(draft => draft.jobId || draft.job_id).filter(Boolean));
   jobs
+    .filter(isRunnerExecutionJob)
     .filter(job => ['failed', 'timeout', 'error'].includes(String(job.status || '').toLowerCase()))
     .filter(job => !jobReviewConfirmed(job))
     .filter(job => !draftJobIds.has(job.job_id))
@@ -1070,7 +1081,7 @@ function pendingActionCardHtml(action) {
 }
 
 function currentTaskCardHtml(activeJobs=[]) {
-  const job = activeJobs[0] || normalizeJob(latestJobs[0] || {});
+  const job = activeJobs.find(isRunnerExecutionJob) || normalizeJob(latestJobs.find(isRunnerExecutionJob) || {});
   if (!job?.job_id) return '<div class="job-meta">当前没有执行中的任务。</div>';
   const draft = job.repairDraft && Object.keys(job.repairDraft).length ? job.repairDraft : repairDrafts.find(item => (item.jobId || item.job_id) === job.job_id);
   const review = job.failureReview || {};
@@ -1106,10 +1117,12 @@ function renderJobs() {
   const timeValue = job => Date.parse((job.updated_at || job.finished_at || job.started_at || job.created_at || '').replace(' ', 'T')) || 0;
   const normalizedJobs = latestJobs.map(job => normalizeJob({...job, kind: job.kind || 'runner'}));
   const activeJobs = normalizedJobs
+    .filter(isRunnerExecutionJob)
     .filter(job => ['pending', 'running'].includes(job.status))
     .sort((a, b) => timeValue(b) - timeValue(a));
   const activeIds = new Set(activeJobs.map(job => job.job_id));
   const recentDone = normalizedJobs
+    .filter(isRunnerExecutionJob)
     .filter(job => !activeIds.has(job.job_id))
     .sort((a, b) => timeValue(b) - timeValue(a))
     .slice(0, 18);
@@ -1215,6 +1228,11 @@ async function retryJob(jobId) {
     await postJobAction(jobId, 'retry', {});
     showToast('✓ 已创建重跑任务', 'success');
   } catch(e) {
+    if (/任务不存在/.test(e.message || '')) {
+      locallyHiddenRunnerJobIds.add(String(jobId || ''));
+      latestJobs = latestJobs.filter(job => (job.job_id || job.jobId || job.id) !== jobId);
+      renderJobs();
+    }
     showToast(e.message || '重跑失败', 'error');
   }
 }
@@ -1241,6 +1259,13 @@ async function markJobHandled(jobId) {
     });
     showToast('✓ 已从待处理列表移除', 'success');
   } catch(e) {
+    if (/任务不存在/.test(e.message || '')) {
+      locallyHiddenRunnerJobIds.add(String(jobId || ''));
+      latestJobs = latestJobs.filter(job => (job.job_id || job.jobId || job.id) !== jobId);
+      renderJobs();
+      showToast('这条历史任务已不存在，已从当前待处理列表移除', 'success');
+      return;
+    }
     showToast(e.message || '标记失败', 'error');
   }
 }

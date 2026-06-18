@@ -160,7 +160,16 @@ function serve() {
           error: '断言失败',
           failure_review: {category: 'unknown', reason: '待复核', manual_confirmed: false},
         }
-      ], background_jobs: []});
+      ], background_jobs: [
+        {
+          job_id: 'gen_1781253319281_00004',
+          status: 'failed',
+          type: 'repair',
+          title: 'AI修复',
+          error: 'UNKNOWN',
+          created_at: '2026-06-18 08:20:00',
+        }
+      ]});
       return;
     }
     if (url.pathname === '/api/runners') {
@@ -407,6 +416,7 @@ async function anyVisible(locator) {
     if (await page.locator('text=Agent 状态').isVisible()) throw new Error('execution page should not show Agent status title');
     if (!await page.locator('.jobs-panel', {hasText: '调试执行'}).isVisible()) throw new Error('execution panel must label debug-run jobs');
     if (!await page.locator('.jobs-panel', {hasText: '基线回归'}).isVisible()) throw new Error('execution panel must label baseline jobs');
+    if (await page.locator('.jobs-panel', {hasText: 'gen_1781253319281_00004'}).count()) throw new Error('execution runner panel must not show generated background jobs as pending runner tasks');
     if (!await anyVisible(page.locator('.jobs-panel button', {hasText: '取消任务'}))) throw new Error('current runner task must expose cancel action');
     if (!await anyVisible(page.locator('.jobs-panel button', {hasText: '重跑'}))) throw new Error('pending failure card must expose retry action');
     if (!await anyVisible(page.locator('.jobs-panel button', {hasText: '已处理'}))) throw new Error('pending failure card must expose handled action');
