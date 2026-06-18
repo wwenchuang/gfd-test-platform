@@ -50,13 +50,6 @@
   <div class="layout">
     <!-- Sidebar -->
     <div class="sidebar">
-      <div class="sidebar-header" id="sidebar-header-assets" style="display:none;">
-        <span class="sidebar-title">操作入口</span>
-        <div style="display:flex;gap:6px;">
-          <div class="btn-icon" title="新建模块" onclick="showAddModule()">＋</div>
-          <div class="btn-icon" title="刷新" onclick="loadModules()">↻</div>
-        </div>
-      </div>
       <div class="workflow-nav" id="workflow-nav">
         <!-- Agent -->
         <details class="nav-group" data-nav-group="agent" open>
@@ -147,11 +140,11 @@
           </button>
         </details>
       </div>
-      <div class="library-head">
+      <div class="library-head" style="display:none;">
         <span class="library-title">用例资产</span>
         <span class="library-tip">按应用/模块</span>
       </div>
-      <div class="sidebar-search">
+      <div class="sidebar-search" style="display:none;">
         <div class="sidebar-filter-row">
           <select id="app-filter" onchange="renderModules()">
             <option value="">全部应用</option>
@@ -166,7 +159,7 @@
           <button class="library-view-btn" data-library-view="baseline" onclick="setLibraryView('baseline')">基线</button>
         </div>
       </div>
-      <div class="module-list" id="module-list">
+      <div class="module-list" id="module-list" style="display:none;">
         <!-- 动态生成 -->
       </div>
     </div>
@@ -204,7 +197,7 @@
             <button class="btn-sm success" onclick="showGenerateJobsCenter()" title="查看需求解析、Figma 解析和 YAML 生成进度">生成记录</button>
             <button class="btn-sm" onclick="showMindmapCenter()" title="管理 FreeMind .mm 测试脑图">测试脑图</button>
           </div>
-          <div class="action-group workflow-action" id="file-action-group" data-workflows="assets generate yaml_edit">
+          <div class="action-group workflow-action" id="file-action-group" data-workflows="generate yaml_edit">
             <span class="action-label">文件</span>
             <button class="btn-sm" onclick="showAddTask()" title="手动创建一个新的 YAML 文件">新建</button>
             <button class="btn-sm" onclick="showUpload()" title="上传已有 YAML 到当前模块">上传</button>

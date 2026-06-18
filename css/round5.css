@@ -497,6 +497,103 @@
   background: rgba(15,23,42,.72);
   border-radius: 8px;
 }
+.assets-browser {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
+}
+.assets-filter-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  border: 1px solid rgba(51,80,109,.72);
+  background: rgba(15,23,42,.72);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.assets-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid rgba(51,80,109,.52);
+}
+.assets-filter-head strong {
+  display: block;
+  font-size: 14px;
+}
+.assets-filter-head span {
+  display: block;
+  color: var(--text2);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.assets-filter-controls {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(51,80,109,.42);
+}
+.assets-filter-controls input,
+.assets-filter-controls select {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.assets-view-row {
+  padding: 10px 12px;
+  margin: 0;
+  border-bottom: 1px solid rgba(51,80,109,.42);
+}
+.assets-module-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.asset-module-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  padding: 9px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.asset-module-item:hover,
+.asset-module-item.active {
+  border-color: rgba(34,211,238,.58);
+  background: rgba(34,211,238,.08);
+}
+.asset-module-item span {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.asset-module-item strong {
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+.asset-module-item em {
+  grid-column: 1 / -1;
+  color: var(--text2);
+  font-size: 11px;
+  font-style: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .assets-hero {
   display: flex;
   align-items: center;
@@ -627,6 +724,12 @@
   }
   .assets-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .assets-browser {
+    grid-template-columns: 1fr;
+  }
+  .assets-filter-panel {
+    max-height: 420px;
   }
 }
 @media (max-width: 1440px) {

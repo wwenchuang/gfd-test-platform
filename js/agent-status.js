@@ -1173,7 +1173,7 @@ const CONTEXT_TOOLBAR_MAP = {
   agent_history:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadAgentRunsHistory()' },
   agent_confirm:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'renderAgentCenter()' },
   // 用例 模块
-  assets:           { module: 'cases',    icon: '📁', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()', showAddYaml: true },
+  assets:           { module: 'cases',    icon: '📁', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()' },
   generate:         { module: 'cases',    icon: '✦', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()', showAddYaml: true },
   yaml_edit:        { module: 'cases',    icon: '✎', title: '用例操作', refreshLabel: '刷新用例', refreshFn: 'loadModules()', showAddYaml: true },
   // 执行 模块
@@ -1385,9 +1385,10 @@ function toggleLibrary(show) {
   const moduleList = document.getElementById('module-list');
   const libraryHead = document.querySelector('.library-head');
   const sidebarSearch = document.querySelector('.sidebar-search');
-  if (moduleList) moduleList.style.display = show ? '' : 'none';
-  if (libraryHead) libraryHead.style.display = show ? '' : 'none';
-  if (sidebarSearch) sidebarSearch.style.display = show ? '' : 'none';
+  // 用例目录已搬到各工作区中间区域，左侧只保留主导航。
+  if (moduleList) moduleList.style.display = 'none';
+  if (libraryHead) libraryHead.style.display = 'none';
+  if (sidebarSearch) sidebarSearch.style.display = 'none';
 }
 
 function showFigmaPlan() {
@@ -1846,8 +1847,8 @@ function moduleFileRows() {
 }
 
 function assetRowsForCurrentFilters() {
-  const keyword = (document.getElementById('task-search')?.value || '').trim().toLowerCase();
-  const appFilter = document.getElementById('app-filter')?.value || '';
+  const keyword = (document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '').trim().toLowerCase();
+  const appFilter = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
   const selectedApp = taskApps.find(app => app.package === appFilter);
   const allowedModules = selectedApp ? new Set(selectedApp.modules || []) : null;
   let rows = moduleFileRows();
@@ -1890,6 +1891,8 @@ function showAssetsCenter() {
     selected: selectedFiles.size
   };
   const moduleCount = currentModule ? 1 : Object.keys(modules).length;
+  const appValue = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
+  const searchValue = document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '';
   area.className = 'editor-area assets-center';
   area.innerHTML = `
     <div class="assets-page">
@@ -1912,50 +1915,79 @@ function showAssetsCenter() {
         <div><strong>${summary.failed}</strong><span>最近失败</span></div>
         <div><strong>${summary.selected}</strong><span>已选择</span></div>
       </div>
-      <div class="assets-table-panel">
-        <div class="assets-table-head">
-          <div>
-            <strong>${currentModule ? escapeHtml(currentModule) : '全部模块'}</strong>
-            <span>${escapeHtml(libraryView === 'module' ? '按模块' : ({recent: '最近', failed: '失败', baseline: '基线'}[libraryView] || libraryView))}</span>
+      <div class="assets-browser">
+        <div class="assets-filter-panel">
+          <div class="assets-filter-head">
+            <div>
+              <strong>用例目录</strong>
+              <span>按应用、模块和关键词筛选</span>
+            </div>
+            <button class="btn-sm" onclick="loadModules()">刷新</button>
           </div>
-          <div class="assets-actions">
-            <button class="btn-sm" onclick="selectCurrentAssetRows()">选择当前列表</button>
-            <button class="btn-sm" onclick="clearSelectedFiles()">清空选择</button>
-            <button class="btn-sm" onclick="showBatchMove()" ${selectedFiles.size ? '' : 'disabled'}>批量移动</button>
-            <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${selectedFiles.size ? '' : 'disabled'}>批量删除</button>
+          <div class="assets-filter-controls">
+            <select id="asset-app-filter" onchange="syncAssetFiltersToSidebar();showAssetsCenter();">
+              <option value="">全部应用</option>
+              ${taskApps.map(app => `<option value="${escapeHtml(app.package)}" ${app.package === appValue ? 'selected' : ''}>${escapeHtml(app.name || app.package)}</option>`).join('')}
+            </select>
+            <input id="asset-search" type="text" value="${escapeHtml(searchValue)}" placeholder="搜索 YAML、模块、状态..." oninput="syncAssetFiltersToSidebar();showAssetsCenter();">
+          </div>
+          <div class="library-view-row assets-view-row">
+            ${[
+              ['module', '模块'],
+              ['recent', '最近'],
+              ['failed', '失败'],
+              ['baseline', '基线']
+            ].map(([key, label]) => `<button class="library-view-btn ${libraryView === key ? 'active' : ''}" data-library-view="${key}" onclick="setLibraryView(${jsArg(key)})">${label}</button>`).join('')}
+          </div>
+          <div class="assets-module-list">
+            ${assetModuleListHtml()}
           </div>
         </div>
-        <div class="assets-table-wrap">
-          ${rows.length ? `
-            <table class="assets-table">
-              <thead><tr><th>选择</th><th>YAML 文件</th><th>模块</th><th>状态</th><th>最近执行</th><th>Sonic</th><th>用例</th><th>操作</th></tr></thead>
-              <tbody>
-                ${rows.map(row => {
-                  const key = fileKey(row.mod, row.file);
-                  const stats = yamlStatsForFile(row.mod, row.file);
-                  const sonic = sonicFileSummary(row.mod, row.file);
-                  return `
-                    <tr class="${currentFile === row.file && currentModule === row.mod ? 'active' : ''}">
-                      <td><input class="task-check" type="checkbox" ${selectedFiles.has(key) ? 'checked' : ''} onclick="toggleFileSelected(${jsArg(row.mod)},${jsArg(row.file)},this.checked);showAssetsCenter();"></td>
-                      <td>
-                        <button class="asset-file-link" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">${escapeHtml(yamlDisplayName(row.file))}</button>
-                        <div class="asset-file-path">${escapeHtml(row.file)}</div>
-                      </td>
-                      <td>${escapeHtml(row.mod)}</td>
-                      <td><span class="asset-pill">${escapeHtml(lifecycleText(row.meta.status))}</span></td>
-                      <td><span class="status-pill ${escapeHtml(row.job.status || '')}">${escapeHtml(jobStatusText(row.job.status || ''))}</span></td>
-                      <td><span class="task-ext sonic ${escapeHtml(sonic.cls)}" title="${escapeHtml(sonic.title)}">${escapeHtml(sonic.text)}</span></td>
-                      <td>${prioritySummaryHtml(stats, true)}</td>
-                      <td class="asset-row-actions">
-                        <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">打开</button>
-                        <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(()=>showRunCurrentFile())">执行</button>
-                      </td>
-                    </tr>
-                  `;
-                }).join('')}
-              </tbody>
-            </table>
-          ` : `<div class="job-empty">没有匹配的 YAML。可以调整左侧搜索/筛选，或新建一个 YAML。</div>`}
+        <div class="assets-table-panel">
+          <div class="assets-table-head">
+            <div>
+              <strong>${currentModule ? escapeHtml(currentModule) : '全部模块'}</strong>
+              <span>${escapeHtml(libraryView === 'module' ? '按模块' : ({recent: '最近', failed: '失败', baseline: '基线'}[libraryView] || libraryView))}</span>
+            </div>
+            <div class="assets-actions">
+              <button class="btn-sm" onclick="selectCurrentAssetRows()">选择当前列表</button>
+              <button class="btn-sm" onclick="clearSelectedFiles()">清空选择</button>
+              <button class="btn-sm" onclick="showBatchMove()" ${selectedFiles.size ? '' : 'disabled'}>批量移动</button>
+              <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${selectedFiles.size ? '' : 'disabled'}>批量删除</button>
+            </div>
+          </div>
+          <div class="assets-table-wrap">
+            ${rows.length ? `
+              <table class="assets-table">
+                <thead><tr><th>选择</th><th>YAML 文件</th><th>模块</th><th>状态</th><th>最近执行</th><th>Sonic</th><th>用例</th><th>操作</th></tr></thead>
+                <tbody>
+                  ${rows.map(row => {
+                    const key = fileKey(row.mod, row.file);
+                    const stats = yamlStatsForFile(row.mod, row.file);
+                    const sonic = sonicFileSummary(row.mod, row.file);
+                    return `
+                      <tr class="${currentFile === row.file && currentModule === row.mod ? 'active' : ''}">
+                        <td><input class="task-check" type="checkbox" ${selectedFiles.has(key) ? 'checked' : ''} onclick="toggleFileSelected(${jsArg(row.mod)},${jsArg(row.file)},this.checked);showAssetsCenter();"></td>
+                        <td>
+                          <button class="asset-file-link" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">${escapeHtml(yamlDisplayName(row.file))}</button>
+                          <div class="asset-file-path">${escapeHtml(row.file)}</div>
+                        </td>
+                        <td>${escapeHtml(row.mod)}</td>
+                        <td><span class="asset-pill">${escapeHtml(lifecycleText(row.meta.status))}</span></td>
+                        <td><span class="status-pill ${escapeHtml(row.job.status || '')}">${escapeHtml(jobStatusText(row.job.status || ''))}</span></td>
+                        <td><span class="task-ext sonic ${escapeHtml(sonic.cls)}" title="${escapeHtml(sonic.title)}">${escapeHtml(sonic.text)}</span></td>
+                        <td>${prioritySummaryHtml(stats, true)}</td>
+                        <td class="asset-row-actions">
+                          <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">打开</button>
+                          <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(()=>showRunCurrentFile())">执行</button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            ` : `<div class="job-empty">没有匹配的 YAML。可以调整搜索/筛选，或新建一个 YAML。</div>`}
+          </div>
         </div>
       </div>
     </div>
@@ -1964,6 +1996,53 @@ function showAssetsCenter() {
   document.getElementById('toolbar-help').textContent = '集中管理 YAML 文件、模块、状态和最近执行结果；右侧执行面板已隐藏，资产页使用完整宽度。';
   document.getElementById('file-info').textContent = currentModule ? `用例资产 / ${currentModule}` : '用例资产';
   updateToolbarState();
+}
+
+function syncAssetFiltersToSidebar() {
+  const assetApp = document.getElementById('asset-app-filter');
+  const sidebarApp = document.getElementById('app-filter');
+  if (assetApp && sidebarApp) sidebarApp.value = assetApp.value;
+  const assetSearch = document.getElementById('asset-search');
+  const sidebarSearch = document.getElementById('task-search');
+  if (assetSearch && sidebarSearch) sidebarSearch.value = assetSearch.value;
+}
+
+function selectAssetModule(mod='') {
+  currentModule = mod || null;
+  currentFile = null;
+  resetYamlToolbarForManager();
+  renderModules();
+  showAssetsCenter();
+}
+
+function assetModuleListHtml() {
+  const appFilter = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
+  const selectedApp = taskApps.find(app => app.package === appFilter);
+  const allowedModules = selectedApp ? new Set(selectedApp.modules || []) : null;
+  const keyword = (document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '').trim().toLowerCase();
+  const moduleRows = Object.entries(modules)
+    .filter(([mod]) => !allowedModules || allowedModules.has(mod))
+    .map(([mod, files]) => {
+      const visibleCount = keyword ? files.filter(file => `${mod}/${file}`.toLowerCase().includes(keyword)).length : files.length;
+      const failedCount = files.filter(file => latestJobForFile(mod, file)?.status === 'failed').length;
+      const stats = mergeYamlStats(files.map(file => yamlStatsForFile(mod, file)));
+      return { mod, files, visibleCount, failedCount, stats };
+    })
+    .filter(row => !keyword || row.visibleCount > 0)
+    .sort((a, b) => a.mod.localeCompare(b.mod, 'zh-CN'));
+  return `
+    <button class="asset-module-item ${!currentModule ? 'active' : ''}" onclick="selectAssetModule('')">
+      <span>全部模块</span>
+      <strong>${moduleRows.reduce((sum, row) => sum + row.files.length, 0)}</strong>
+    </button>
+    ${moduleRows.map(row => `
+      <button class="asset-module-item ${currentModule === row.mod ? 'active' : ''}" onclick="selectAssetModule(${jsArg(row.mod)})">
+        <span>${escapeHtml(row.mod)}</span>
+        <strong>${row.visibleCount}/${row.files.length}</strong>
+        <em>${escapeHtml(prioritySummaryText(row.stats, true))}${row.failedCount ? ` · 失败 ${row.failedCount}` : ''}</em>
+      </button>
+    `).join('') || '<div class="job-empty">没有匹配模块</div>'}
+  `;
 }
 
 function sonicFileSummary(mod, file) {
