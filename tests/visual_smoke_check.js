@@ -315,6 +315,10 @@ async function anyVisible(locator) {
     await page.waitForSelector('text=YAML 文件');
     await page.waitForSelector('.assets-table');
     if (await page.locator('.jobs-panel').isVisible()) throw new Error('assets page should hide the right Agent/status panel');
+    if (!await page.locator('.assets-table thead input[type="checkbox"]').isVisible()) throw new Error('assets table select-all checkbox is missing');
+    for (const label of ['重命名', '移动', '删除']) {
+      if (!await anyVisible(page.locator('.assets-table button', {hasText: label}))) throw new Error(`assets row action is missing: ${label}`);
+    }
     await page.screenshot({path: path.join(ARTIFACTS, 'assets.png'), fullPage: true});
     const assetsBox = await page.locator('.assets-browser').boundingBox();
     if (!assetsBox || assetsBox.width < 900) throw new Error(`assets workspace is too narrow: ${assetsBox && assetsBox.width}`);

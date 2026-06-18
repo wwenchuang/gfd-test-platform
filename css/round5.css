@@ -685,6 +685,16 @@
   color: var(--text2);
   font-size: 11px;
 }
+.assets-table .assets-select-cell {
+  width: 34px;
+}
+.asset-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 230px;
+}
 .assets-table tr.active,
 .assets-table tr:hover {
   background: rgba(34,211,238,.06);

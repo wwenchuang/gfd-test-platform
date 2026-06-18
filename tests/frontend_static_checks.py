@@ -88,6 +88,8 @@ def main():
     # Assets entry exists in sidebar as asset center
     require("用例资产" in html and 'data-workflow="assets"' in html, "Assets must be accessible from sidebar")
     require("function showAssetsCenter" in html and "assets-table" in html and "选择当前列表" in html, "Assets page must render a full-width asset table")
+    require("toggleCurrentAssetRows" in html and "assetFileOp" in html and "deleteAssetFile" in html, "Assets page must support select-all, rename, move, and delete without leaving the directory")
+    require("重命名</button>" in html and ">移动</button>" in html and ">删除</button>" in html, "Assets table rows must expose maintenance actions")
     require("function updateWorkbenchPanelMode" in html and "hide-jobs" in html and "'execute'" in html and "'repair'" in html, "Only Agent and execution workflows should keep the right status panel")
     require("'repair',\n    'reports'" not in html and "'repair', 'reports'" not in html, "Report and asset-style pages should not keep a stale Agent side panel")
     require("你想让 Agent 测什么" in html and "启动全自动 Agent" in html, "Dashboard hero must present the simplified Agent workbench")

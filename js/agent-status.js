@@ -1877,10 +1877,41 @@ function selectCurrentAssetRows() {
   showToast(`已选择当前列表 ${rows.length} 个 YAML`, 'success');
 }
 
+function toggleCurrentAssetRows(checked) {
+  const rows = assetRowsForCurrentFilters();
+  rows.forEach(row => {
+    const key = fileKey(row.mod, row.file);
+    if (checked) selectedFiles.add(key);
+    else selectedFiles.delete(key);
+  });
+  renderModules();
+  showAssetsCenter();
+  showToast(checked ? `已选择当前列表 ${rows.length} 个 YAML` : '已取消当前列表选择', 'success');
+}
+
+function clearAssetSelection() {
+  clearSelectedFiles();
+  showAssetsCenter();
+}
+
+function assetFileOp(mod, file, op) {
+  currentModule = mod;
+  currentFile = file;
+  renderModules();
+  updateToolbarState();
+  showFileOp(op);
+}
+
+async function deleteAssetFile(mod, file) {
+  await deleteFile(mod, file);
+  if (activeWorkflow === 'assets') showAssetsCenter();
+}
+
 function showAssetsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
   const rows = assetRowsForCurrentFilters();
+  const allRowsSelected = rows.length > 0 && rows.every(row => selectedFiles.has(fileKey(row.mod, row.file)));
   const summary = {
     total: rows.length,
     failed: rows.filter(row => row.job.status === 'failed').length,
@@ -1948,15 +1979,20 @@ function showAssetsCenter() {
             </div>
             <div class="assets-actions">
               <button class="btn-sm" onclick="selectCurrentAssetRows()">选择当前列表</button>
-              <button class="btn-sm" onclick="clearSelectedFiles()">清空选择</button>
+              ${currentModule ? `<button class="btn-sm" onclick="selectCurrentModuleFiles();showAssetsCenter()">全选当前模块</button>` : ''}
+              <button class="btn-sm" onclick="clearAssetSelection()">清空选择</button>
               <button class="btn-sm" onclick="showBatchMove()" ${selectedFiles.size ? '' : 'disabled'}>批量移动</button>
               <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${selectedFiles.size ? '' : 'disabled'}>批量删除</button>
+              ${currentModule ? `<button class="btn-sm danger" onclick="deleteCurrentModule()">删除当前模块</button>` : ''}
             </div>
           </div>
           <div class="assets-table-wrap">
             ${rows.length ? `
               <table class="assets-table">
-                <thead><tr><th>选择</th><th>YAML 文件</th><th>模块</th><th>状态</th><th>最近执行</th><th>Sonic</th><th>用例</th><th>操作</th></tr></thead>
+                <thead><tr>
+                  <th class="assets-select-cell"><input class="task-check" type="checkbox" title="全选当前列表" ${allRowsSelected ? 'checked' : ''} onchange="toggleCurrentAssetRows(this.checked)"></th>
+                  <th>YAML 文件</th><th>模块</th><th>状态</th><th>最近执行</th><th>Sonic</th><th>用例</th><th>操作</th>
+                </tr></thead>
                 <tbody>
                   ${rows.map(row => {
                     const key = fileKey(row.mod, row.file);
@@ -1977,6 +2013,9 @@ function showAssetsCenter() {
                         <td class="asset-row-actions">
                           <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)})">打开</button>
                           <button class="btn-sm" onclick="openFile(${jsArg(row.mod)},${jsArg(row.file)}).then(()=>showRunCurrentFile())">执行</button>
+                          <button class="btn-sm" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'rename')">重命名</button>
+                          <button class="btn-sm" onclick="assetFileOp(${jsArg(row.mod)},${jsArg(row.file)},'move')">移动</button>
+                          <button class="btn-sm danger" onclick="deleteAssetFile(${jsArg(row.mod)},${jsArg(row.file)})">删除</button>
                         </td>
                       </tr>
                     `;

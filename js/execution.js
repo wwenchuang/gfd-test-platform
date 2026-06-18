@@ -1493,6 +1493,7 @@ async function deleteSelectedFiles() {
     document.getElementById('toolbar-help').textContent = '从左侧模块选择 YAML，或先用需求/设计稿生成可执行用例。';
   }
   renderModules();
+  if (activeWorkflow === 'assets' && typeof showAssetsCenter === 'function') showAssetsCenter();
   document.getElementById('file-info').textContent = `已删除 ${deleted} 个文件`;
   showToast(`✓ 已删除 ${deleted} 个文件`, 'success');
 }
@@ -1538,6 +1539,7 @@ async function deleteCurrentModule() {
     document.getElementById('toolbar-help').textContent = '从左侧模块选择 YAML，或先用需求/设计稿生成可执行用例。';
   }
   renderModules();
+  if (activeWorkflow === 'assets' && typeof showAssetsCenter === 'function') showAssetsCenter();
   document.getElementById('file-info').textContent = '就绪';
   showToast(`✓ 模块「${deletingModule}」已删除`, 'success');
 }
