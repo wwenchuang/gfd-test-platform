@@ -2666,6 +2666,8 @@ def figma_drafts_to_generation_assets(
             "page_id": page["page_id"],
             "page_name": page["page_name"],
             "route": page["route"],
+            "screenshot": page.get("screenshot", ""),
+            "image_name": page.get("screenshot", ""),
             "figma": figma,
             "relevance_score": figma.get("relevance_score", 0),
             "relevance_reason": figma.get("relevance_reason", ""),

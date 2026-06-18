@@ -2989,6 +2989,14 @@ def _load_figma_context_for_agent(run, context):
         context["uiDesigns"] = used_pages[:20]
         context["figmaUsedPages"] = used_pages[:20]
         context["figmaIgnoredPages"] = ignored_pages[:20]
+        context["figmaImageAssets"] = [
+            {
+                "name": item.get("name") or f"figma-{idx + 1}.png",
+                "mime": item.get("mime") or "",
+            }
+            for idx, item in enumerate(image_assets or [])
+            if isinstance(item, dict)
+        ][:50]
         context["figmaImageCount"] = len(image_assets or [])
         context["figmaExtracted"] = True
         context["figmaExtractError"] = ""

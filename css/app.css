@@ -4345,6 +4345,58 @@
     color: var(--muted);
     line-height: 1.45;
   }
+  .agent-figma-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .agent-figma-card {
+    border: 1px solid rgba(34, 211, 238, .22);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, .58);
+    overflow: hidden;
+  }
+  .agent-figma-thumb {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 4 / 3;
+    background: rgba(2, 6, 23, .76);
+    border-bottom: 1px solid rgba(148, 163, 184, .16);
+    color: var(--muted);
+    text-decoration: none;
+    overflow: hidden;
+  }
+  .agent-figma-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .agent-figma-thumb.empty {
+    padding: 10px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .agent-figma-card-body {
+    display: grid;
+    gap: 4px;
+    padding: 8px;
+  }
+  .agent-figma-card-body b {
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+  .agent-figma-card-body span,
+  .agent-figma-card-body em {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.4;
+    font-style: normal;
+  }
   .final-report-head {
     display: flex;
     justify-content: space-between;

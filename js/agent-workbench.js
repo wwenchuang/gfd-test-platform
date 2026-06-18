@@ -452,6 +452,7 @@ async function showAgentWorkbench() {
   }
 
   const run = currentAgentRun();
+  const mindmapUrl = agentMindmapDownloadUrl(run);
 
   // Preserve form values before innerHTML replacement (prevents textarea/input reset during polling)
   const savedFormState = {};
@@ -615,6 +616,7 @@ async function showAgentWorkbench() {
           <div>
             <button class="btn-sm" onclick="copyAgentArtifact()">复制当前产物</button>
             <button class="btn-sm" onclick="downloadAgentYaml()">下载 YAML</button>
+            <button class="btn-sm" onclick="downloadAgentMindmap()" ${mindmapUrl ? '' : 'disabled'}>下载脑图</button>
           </div>
         </div>
         <div class="agent-tabs">
@@ -1104,6 +1106,121 @@ function normalizeAgentReportArtifacts(report = {}) {
   return { executionReports, yamlExecutionRefs };
 }
 
+function agentArtifactsOf(runOrArtifacts = {}) {
+  const value = runOrArtifacts || {};
+  return value.artifacts && typeof value.artifacts === 'object' ? value.artifacts : value;
+}
+
+function agentMindmapInfo(runOrArtifacts = {}) {
+  const artifacts = agentArtifactsOf(runOrArtifacts);
+  const pipeline = artifacts.generationPipeline || {};
+  const summary = artifacts.generationSummary || {};
+  const summaryFiles = pipeline.summaryFiles || summary.summaryFiles || {};
+  const caseSetId = String(
+    pipeline.caseSetId || pipeline.case_set_id ||
+    summary.caseSetId || summary.case_set_id ||
+    artifacts.caseSetId || artifacts.case_set_id || ''
+  ).trim();
+  const path = String(
+    summaryFiles.mindmap || summaryFiles.mm ||
+    artifacts.mindmapPath || artifacts.mindmap_path || ''
+  ).trim();
+  const base = typeof API_BASE !== 'undefined' ? API_BASE : '/api';
+  const url = caseSetId ? `${base}/cases/mindmap?case_set_id=${encodeURIComponent(caseSetId)}` : '';
+  return { caseSetId, path, url };
+}
+
+function agentMindmapDownloadUrl(runOrArtifacts = {}) {
+  return agentMindmapInfo(runOrArtifacts).url;
+}
+
+function downloadAgentMindmap() {
+  const info = agentMindmapInfo(currentAgentRun());
+  if (!info.url) {
+    showToast('当前 Agent 还没有可下载的脑图文件', 'warn');
+    return;
+  }
+  window.open(info.url, '_blank', 'noopener');
+}
+
+function agentUiDesignImageUrl(caseSetId, item = {}) {
+  const base = typeof API_BASE !== 'undefined' ? API_BASE : '/api';
+  const assetId = item.asset_id || item.assetId || '';
+  const filename = item.filename || item.screenshot || item.image_name || '';
+  if (!caseSetId || (!assetId && !filename)) return '';
+  return `${base}/cases/ui-design-image?case_set_id=${encodeURIComponent(caseSetId)}&asset_id=${encodeURIComponent(assetId)}&filename=${encodeURIComponent(filename)}`;
+}
+
+function agentFigmaPreviewItems(source = {}, artifacts = {}) {
+  const pipeline = artifacts.generationPipeline || {};
+  const summary = artifacts.generationSummary || {};
+  const caseSetId = String(
+    pipeline.caseSetId || pipeline.case_set_id ||
+    summary.caseSetId || summary.case_set_id ||
+    artifacts.caseSetId || artifacts.case_set_id || ''
+  ).trim();
+  const byKey = new Map();
+  const addItem = (raw, origin) => {
+    if (!raw || typeof raw !== 'object') return;
+    const figma = raw.figma || {};
+    const title = raw.page_name || raw.pageName || raw.title || raw.name || raw.filename || raw.screenshot || raw.image_name || 'Figma 图片';
+    const nodeId = figma.node_id || figma.nodeId || raw.node_id || raw.nodeId || raw.page_id || raw.pageId || '';
+    const filename = raw.filename || raw.screenshot || raw.image_name || raw.name || '';
+    const imageUrl = agentUiDesignImageUrl(caseSetId, raw) || raw.image_url || raw.imageUrl || raw.preview_url || raw.previewUrl || raw.thumbnail_url || raw.thumbnailUrl || '';
+    const score = raw.relevance_score ?? raw.score ?? figma.relevance_score ?? figma.rechecked_relevance_score ?? '';
+    const reason = raw.relevance_reason || raw.reason || figma.relevance_reason || raw.description || raw.route || '';
+    const key = String(raw.asset_id || raw.assetId || filename || nodeId || title);
+    const item = {
+      title,
+      nodeId,
+      filename,
+      imageUrl,
+      score,
+      reason,
+      origin,
+      route: raw.route || '',
+    };
+    const current = byKey.get(key);
+    if (!current || (!current.imageUrl && item.imageUrl)) {
+      byKey.set(key, {...current, ...item});
+    }
+  };
+  (source.uiDesignAssets || []).forEach(item => addItem(item, '已保存参考图'));
+  (source.figmaUsedPages || source.uiDesigns || []).forEach(item => addItem(item, '采用页面'));
+  (source.figmaImageAssets || []).forEach(item => addItem(item, '解析图片'));
+  return Array.from(byKey.values());
+}
+
+function renderFigmaPreviewGrid(items = []) {
+  const visible = items.filter(Boolean);
+  if (!visible.length) return '';
+  return `
+    <section class="agent-readable-panel">
+      <strong>Figma 解析图片</strong>
+      <p>下面是 Agent 本次解析、保存或采用的 Figma 页面/图片，先看这里判断是否命中了正确设计稿。</p>
+      <div class="agent-figma-grid">
+        ${visible.slice(0, 12).map(item => {
+          const meta = [item.origin, item.nodeId ? `节点 ${item.nodeId}` : '', item.score !== '' && item.score !== undefined ? `匹配 ${item.score}` : ''].filter(Boolean).join(' · ');
+          const media = item.imageUrl
+            ? `<a class="agent-figma-thumb" href="${escapeHtml(item.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.title)}" loading="lazy"></a>`
+            : `<div class="agent-figma-thumb empty"><span>${escapeHtml(item.filename || '暂无图片预览')}</span></div>`;
+          return `
+            <div class="agent-figma-card">
+              ${media}
+              <div class="agent-figma-card-body">
+                <b>${escapeHtml(item.title)}</b>
+                <span>${escapeHtml(meta || 'Figma 参考')}</span>
+                ${item.reason ? `<em>${escapeHtml(item.reason)}</em>` : ''}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      ${visible.length > 12 ? `<p>已展示前 12 个，剩余 ${escapeHtml(visible.length - 12)} 个可在生成批次的 UI 设计稿中继续查看。</p>` : ''}
+    </section>
+  `;
+}
+
 // ===== COLLECT_REPORT 报告详情 =====
 function renderReportDetail(step, artifacts) {
   const report = (artifacts || {}).report || {};
@@ -1112,6 +1229,7 @@ function renderReportDetail(step, artifacts) {
   const yamlRefs = normalizedReport.yamlExecutionRefs;
   const jobStatuses = report.jobStatuses || [];
   const failedJobs = report.failedJobs || [];
+  const mindmap = agentMindmapInfo(artifacts);
   const status = report.status || 'unknown';
   let html = '<div class="report-detail rich-report">';
   html += `
@@ -1141,6 +1259,17 @@ function renderReportDetail(step, artifacts) {
     html += '<div class="report-links">';
     html += '<div class="section-title">执行 YAML</div>';
     html += yamlRefs.slice(0, 10).map(item => `<span class="report-local">${escapeHtml(item.module || '')}/${escapeHtml(item.file || '')}</span>`).join('');
+    html += '</div>';
+  }
+  if (mindmap.url || mindmap.path) {
+    html += '<div class="report-links">';
+    html += '<div class="section-title">脑图文件</div>';
+    html += mindmap.url
+      ? `<a href="${escapeHtml(mindmap.url)}" target="_blank" class="report-link">下载同步生成的 .mm 脑图</a>`
+      : `<span class="report-local">${escapeHtml(mindmap.path)}</span>`;
+    if (mindmap.caseSetId) {
+      html += `<span class="report-local">生成批次：${escapeHtml(mindmap.caseSetId)}</span>`;
+    }
     html += '</div>';
   }
   if (failedJobs.length > 0) {
@@ -1178,6 +1307,7 @@ function renderAgentSummaryArtifact(run) {
   const steps = Array.isArray(run?.steps) ? run.steps : [];
   const visibleSteps = steps.filter(step => ['FAILED', 'PARTIAL_FAILED', 'SUCCESS', 'WAIT_CONFIRM'].includes(String(step.status || '').toUpperCase())).slice(-6);
   const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
+  const mindmap = agentMindmapInfo(artifacts);
   const conclusionClass = summary.conclusion === '通过' ? 'success' : (summary.conclusion === '执行中' ? 'warn' : 'danger');
   const target = summary.target || run?.target || '-';
   const generatedAt = String(summary.generatedAt || run?.updatedAt || '').replace('T', ' ').slice(0, 19);
@@ -1232,6 +1362,17 @@ function renderAgentSummaryArtifact(run) {
           ${nextActions.length ? `<ul>${nextActions.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p>暂无建议。</p>'}
         </section>
       </div>
+      ${(mindmap.url || mindmap.path) ? `
+        <section class="final-report-panel final-report-wide">
+          <strong>脑图文件</strong>
+          <div class="final-report-links">
+            ${mindmap.url
+              ? `<a href="${escapeHtml(mindmap.url)}" target="_blank">下载同步生成的 .mm 脑图</a>`
+              : `<span>${escapeHtml(mindmap.path)}</span>`}
+            ${mindmap.caseSetId ? `<span>生成批次：${escapeHtml(mindmap.caseSetId)}</span>` : ''}
+          </div>
+        </section>
+      ` : ''}
       ${failedJobs.length ? `
         <section class="final-report-panel final-report-wide">
           <strong>失败摘要</strong>
@@ -1367,15 +1508,18 @@ function renderSourceContextDetail(step, artifacts) {
   if (source.figmaUrl) {
     const usedPages = source.figmaUsedPages || source.uiDesigns || [];
     const ignoredPages = source.figmaIgnoredPages || [];
+    const previewItems = agentFigmaPreviewItems(source, artifacts || {});
     const extractState = source.figmaExtracted ? '已按需求提取页面' : (source.figmaExtractError ? '提取失败/降级为链接参考' : '待提取');
     html += `<section class="agent-readable-panel"><strong>Figma</strong><p>${escapeHtml(source.figmaUrl)}</p><p>${escapeHtml(extractState)} · 使用 ${usedPages.length} 页 · 忽略 ${ignoredPages.length} 页 · 图片 ${Number(source.figmaImageCount || 0)} 张</p></section>`;
     if (source.figmaExtractError) {
       html += agentReadableList('Figma 提醒', [source.figmaExtractError]);
     }
+    html += renderFigmaPreviewGrid(previewItems);
     if (usedPages.length) {
-      html += agentReadableList('使用的 Figma 页面', usedPages.slice(0, 8), page => {
+      html += agentReadableList('解析采用的 Figma 页面', usedPages.slice(0, 8), page => {
         const figma = page.figma || {};
-        return `<b>${escapeHtml(page.page_name || page.pageName || figma.page_name || 'Figma 页面')}</b><span>分数 ${escapeHtml(String(page.relevance_score ?? figma.relevance_score ?? ''))} · ${escapeHtml(page.relevance_reason || figma.relevance_reason || '')}</span>`;
+        const imageName = page.screenshot || page.image_name ? ` · 图片 ${page.screenshot || page.image_name}` : '';
+        return `<b>${escapeHtml(page.page_name || page.pageName || figma.page_name || 'Figma 页面')}</b><span>分数 ${escapeHtml(String(page.relevance_score ?? figma.relevance_score ?? ''))}${escapeHtml(imageName)} · ${escapeHtml(page.relevance_reason || figma.relevance_reason || '')}</span>`;
       });
     }
     if (ignoredPages.length) {

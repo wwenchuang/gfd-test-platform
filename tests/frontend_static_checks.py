@@ -82,7 +82,7 @@ def main():
     require("Agent 状态" in html and "运行轨迹" in html, "Right panel must become Agent status panel with timeline")
     require("还没有选择运行记录" in html and "启动新任务后，本次步骤时间线会显示在这里" in html, "Agent workbench must default to new-run mode instead of showing the last run")
     require("return normalizeAgentRun(agentCurrentRun || null)" in html and "agentCurrentRun = agentRuns[0]" not in html, "Loading Agent history must not auto-select the latest run")
-    require("copyAgentArtifact" in html and "downloadAgentYaml" in html, "Agent artifacts must support copy and YAML download")
+    require("copyAgentArtifact" in html and "downloadAgentYaml" in html and "downloadAgentMindmap" in html and "下载脑图" in html, "Agent artifacts must support copy plus YAML and mindmap download")
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
     require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")
     require("normalizeAgentReportArtifacts" in html and "isAgentYamlRef" in html and "normalizedAgentReportCounts" in html and "agentReportLooksYaml" in html, "Agent report rendering must not count YAML files as HTML execution reports")
@@ -182,6 +182,7 @@ def main():
     require("agent-source-file-input" in html and "handleAgentSourceFiles" in html and "handleAgentSourcePaste" in html, "Agent workbench must support requirement/screenshot upload and paste")
     require("sourceInputs: sourceMaterials" in html and "files: sourceMaterials.files" in html and "images: sourceMaterials.images" in html, "Agent payload must include uploaded source materials")
     require("renderSourceContextDetail" in html and "输入摘要" in html and "上传资料" in html and "Figma" in html and "agent-readable-panel" in html, "Agent timeline must show prepared source details and Figma extraction result")
+    require("agentFigmaPreviewItems" in html and "Figma 解析图片" in html and "agent-figma-grid" in html, "Agent Figma extraction must list parsed UI images for review")
     for source in ("manual", "requirement", "figma", "failed_job"):
         require(source in html, f"Agent source type missing: {source}")
     require("sourceType: source.sourceType" in html and "sourceRefs: source.sourceRefs" in html, "Agent payload must include sourceType/sourceRefs")
