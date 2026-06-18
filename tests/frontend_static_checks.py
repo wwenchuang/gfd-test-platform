@@ -148,6 +148,7 @@ def main():
     require("function jobRunModeText" in html and "function markJobHandled" in html and "manual_confirmed" in html, "Runner side panel must label run mode and let users clear handled failures")
     require("function isRunnerExecutionJob" in html and "locallyHiddenRunnerJobIds" in html and "/^(gen|figma|mindmap|repair)_/i" in html, "Runner side panel must filter background/generated jobs and stale handled ids")
     require("activeWorkflow === 'assets'" in html and "selectedAssetRowsForCurrentFilters().map" in html, "Asset batch move/delete must use the current filtered selection")
+    require("ASSET_PAGE_SIZE" in html and "MODULE_DIRECTORY_PAGE_SIZE" in html and "paginationHtml" in html and "setAssetListPage" in html, "Long YAML asset lists must render with pagination")
     require("取消任务" in html and "基线回归" in html and "调试执行" in html, "Runner side panel must expose cancel action and distinguish baseline from debug runs")
     require("取消运行" in html and "cancelAgentRunById" in html, "Agent confirmation cards must allow cancelling without entering the run detail")
     require("normalizeFailureAnalysis" in html and "SCRIPT_ISSUE" in html and "PRODUCT_BUG" in html and "ENV_ISSUE" in html and "UNKNOWN" in html, "AI repair must normalize and gate failure types")

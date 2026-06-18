@@ -642,7 +642,7 @@
 .assets-table-panel {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 .assets-table-head {
@@ -664,6 +664,32 @@
 .assets-table-wrap {
   min-height: 0;
   overflow: auto;
+}
+.list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(51,80,109,.52);
+  color: var(--text2);
+  font-size: 12px;
+}
+.list-pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.list-pagination strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.module-directory > .list-pagination {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
 }
 .assets-table {
   width: 100%;

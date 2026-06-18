@@ -80,6 +80,9 @@ let expandedJobs = new Set();
 let yamlStatsCache = {};
 let yamlStatsWarmupStarted = false;
 let modulePriorityFilter = 'all';
+let assetListPage = 1;
+let moduleDirectoryPage = 1;
+let lastAssetFilterKey = '';
 let agentCurrentRun = null;
 let agentRuns = [];
 let agentBusy = false;
@@ -94,6 +97,8 @@ let aiModelRouter = {};
 const layoutPrefs = JSON.parse(localStorage.getItem('midscene_layout_prefs') || '{}');
 
 const AGENT_RISK_KEYWORDS = ['确认打印', '开始打印', '支付', '删除', '覆盖基线', '格式化', '清空', '解绑', '重置'];
+const ASSET_PAGE_SIZE = 20;
+const MODULE_DIRECTORY_PAGE_SIZE = 24;
 const AUTO_AGENT_STEPS = [
   'IDLE','PLAN','PREPARE_SOURCE','IMPACT_ANALYSIS','CASE_RETRIEVAL','MATCH_CASES',
   'GENERATE_YAML','VALIDATE_YAML','RISK_REVIEW','EXECUTION_PRECHECK',

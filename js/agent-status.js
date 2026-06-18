@@ -1489,7 +1489,9 @@ function moduleDirectoryHtml(mod) {
   const visibleFiles = files
     .filter(file => yamlStatsMatchesFilter(yamlStatsForFile(mod, file), modulePriorityFilter))
     .sort((a, b) => yamlStatsRank(yamlStatsForFile(mod, b)) - yamlStatsRank(yamlStatsForFile(mod, a)) || a.localeCompare(b, 'zh-CN'));
-  const cards = visibleFiles.map(file => {
+  const pageInfo = pagedItems(visibleFiles, moduleDirectoryPage, MODULE_DIRECTORY_PAGE_SIZE);
+  moduleDirectoryPage = pageInfo.page;
+  const cards = pageInfo.items.map(file => {
     const meta = fileMeta(mod, file);
     const job = latestJobForFile(mod, file) || {};
     const status = job.status || '';
@@ -1516,7 +1518,7 @@ function moduleDirectoryHtml(mod) {
       <div class="module-directory-head">
         <div class="module-directory-title">
           <h2>${escapeHtml(mod)}</h2>
-          <p>${escapeHtml(appText)}<br>共 ${files.length} 个 YAML，当前显示 ${visibleFiles.length} 个。${escapeHtml(statsText)}。</p>
+          <p>${escapeHtml(appText)}<br>共 ${files.length} 个 YAML，筛选后 ${visibleFiles.length} 个，本页显示 ${pageInfo.total ? pageInfo.start + 1 : 0}-${pageInfo.end} 个。${escapeHtml(statsText)}。</p>
           <div class="module-priority-summary">${prioritySummaryHtml(moduleStats)}</div>
           <div class="module-priority-tools">
             ${['all','hot','p0','p1','smoke'].map(filter => `<button class="priority-filter-btn ${modulePriorityFilter === filter ? 'active' : ''}" onclick="setModulePriorityFilter(${jsArg(filter)})">${modulePriorityFilterLabel(filter)}</button>`).join('')}
@@ -1530,7 +1532,7 @@ function moduleDirectoryHtml(mod) {
           <button class="btn-sm danger" onclick="deleteCurrentModule()">删除模块</button>
         </div>
       </div>
-      ${files.length ? (visibleFiles.length ? `<div class="module-file-grid">${cards}</div>` : `<div class="workflow-guide"><div class="workflow-hero"><h2>没有匹配 ${escapeHtml(modulePriorityFilterLabel(modulePriorityFilter))} 的 YAML</h2><p>可以切回全部，或者先在 YAML 编辑页调整用例等级。</p></div></div>`) : '<div class="workflow-guide"><div class="workflow-hero"><h2>这个模块还没有 YAML</h2><p>可以新建、上传，或者从需求/设计稿生成一个可执行 YAML。</p></div></div>'}
+      ${files.length ? (visibleFiles.length ? `<div class="module-file-grid">${cards}</div>${paginationHtml(pageInfo, 'setModuleDirectoryPage')}` : `<div class="workflow-guide"><div class="workflow-hero"><h2>没有匹配 ${escapeHtml(modulePriorityFilterLabel(modulePriorityFilter))} 的 YAML</h2><p>可以切回全部，或者先在 YAML 编辑页调整用例等级。</p></div></div>`) : '<div class="workflow-guide"><div class="workflow-hero"><h2>这个模块还没有 YAML</h2><p>可以新建、上传，或者从需求/设计稿生成一个可执行 YAML。</p></div></div>'}
     </div>
   `;
 }
@@ -1539,6 +1541,7 @@ async function showModuleDirectory(mod) {
   if (!mod || !modules[mod]) return;
   if (!(await saveEditorBeforeNavigation())) return;
   activeWorkspaceMode = '';
+  if (currentModule !== mod) resetModuleDirectoryPage();
   currentModule = mod;
   resetYamlToolbarForDirectory();
   if (activeWorkflow === 'assets') {
@@ -1845,6 +1848,8 @@ function latestJobForFile(mod, file) {
 
 function setLibraryView(view) {
   libraryView = view || 'module';
+  resetAssetListPage();
+  resetModuleDirectoryPage();
   document.querySelectorAll('.library-view-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.libraryView === libraryView);
   });
@@ -1868,6 +1873,64 @@ function moduleFileRows() {
   return rows;
 }
 
+function clampListPage(page, total, pageSize) {
+  const totalPages = Math.max(1, Math.ceil(Number(total || 0) / Number(pageSize || 1)));
+  return Math.min(Math.max(1, Number(page || 1)), totalPages);
+}
+
+function pagedItems(items, page, pageSize) {
+  const all = Array.isArray(items) ? items : [];
+  const size = Math.max(1, Number(pageSize || 1));
+  const current = clampListPage(page, all.length, size);
+  const start = (current - 1) * size;
+  const end = Math.min(all.length, start + size);
+  return {
+    items: all.slice(start, end),
+    page: current,
+    pageSize: size,
+    total: all.length,
+    totalPages: Math.max(1, Math.ceil(all.length / size)),
+    start,
+    end,
+  };
+}
+
+function paginationHtml(info, setterName) {
+  if (!info || info.total <= info.pageSize) return '';
+  const from = info.total ? info.start + 1 : 0;
+  return `
+    <div class="list-pagination">
+      <span>显示 ${from}-${info.end} / ${info.total}</span>
+      <div>
+        <button class="btn-sm" onclick="${setterName}(${info.page - 1})" ${info.page <= 1 ? 'disabled' : ''}>上一页</button>
+        <strong>${info.page} / ${info.totalPages}</strong>
+        <button class="btn-sm" onclick="${setterName}(${info.page + 1})" ${info.page >= info.totalPages ? 'disabled' : ''}>下一页</button>
+      </div>
+    </div>
+  `;
+}
+
+function resetAssetListPage() {
+  assetListPage = 1;
+}
+
+function setAssetListPage(page) {
+  assetListPage = page;
+  showAssetsCenter();
+}
+
+function resetModuleDirectoryPage() {
+  moduleDirectoryPage = 1;
+}
+
+function setModuleDirectoryPage(page) {
+  moduleDirectoryPage = page;
+  if (currentModule && modules[currentModule] && !hasOpenEditor()) {
+    const area = document.getElementById('editor-area');
+    if (area) area.innerHTML = moduleDirectoryHtml(currentModule);
+  }
+}
+
 function assetRowsForCurrentFilters() {
   const keyword = (document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '').trim().toLowerCase();
   const appFilter = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
@@ -1889,6 +1952,7 @@ function assetRowsForCurrentFilters() {
 function showAllAssetModules() {
   currentModule = null;
   currentFile = null;
+  resetAssetListPage();
   resetYamlToolbarForManager();
   renderModules();
   showAssetsCenter();
@@ -1935,9 +1999,17 @@ async function deleteAssetFile(mod, file) {
 function showAssetsCenter() {
   const area = document.getElementById('editor-area');
   if (!area) return;
+  const appValue = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
+  const searchValue = document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '';
+  const filterKey = `${appValue}::${searchValue}::${currentModule || ''}::${libraryView}`;
+  if (lastAssetFilterKey && lastAssetFilterKey !== filterKey) resetAssetListPage();
+  lastAssetFilterKey = filterKey;
   const rows = assetRowsForCurrentFilters();
   const selectedInRows = selectedAssetRowsForCurrentFilters(rows);
   const selectedTotal = selectedSonicFiles().length;
+  const pageInfo = pagedItems(rows, assetListPage, ASSET_PAGE_SIZE);
+  assetListPage = pageInfo.page;
+  const pageRows = pageInfo.items;
   const allRowsSelected = rows.length > 0 && rows.every(row => selectedFiles.has(fileKey(row.mod, row.file)));
   const summary = {
     total: rows.length,
@@ -1947,8 +2019,6 @@ function showAssetsCenter() {
     selectedTotal
   };
   const moduleCount = currentModule ? 1 : Object.keys(modules).length;
-  const appValue = document.getElementById('asset-app-filter')?.value || document.getElementById('app-filter')?.value || '';
-  const searchValue = document.getElementById('asset-search')?.value || document.getElementById('task-search')?.value || '';
   area.className = 'editor-area assets-center';
   area.innerHTML = `
     <div class="assets-page">
@@ -1982,11 +2052,11 @@ function showAssetsCenter() {
             <button class="btn-sm" onclick="loadModules({force:true})">刷新</button>
           </div>
           <div class="assets-filter-controls">
-            <select id="asset-app-filter" onchange="syncAssetFiltersToSidebar();showAssetsCenter();">
+            <select id="asset-app-filter" onchange="syncAssetFiltersToSidebar();resetAssetListPage();showAssetsCenter();">
               <option value="">全部应用</option>
               ${taskApps.map(app => `<option value="${escapeHtml(app.package)}" ${app.package === appValue ? 'selected' : ''}>${escapeHtml(app.name || app.package)}</option>`).join('')}
             </select>
-            <input id="asset-search" type="text" value="${escapeHtml(searchValue)}" placeholder="搜索 YAML、模块、状态..." oninput="syncAssetFiltersToSidebar();showAssetsCenter();">
+            <input id="asset-search" type="text" value="${escapeHtml(searchValue)}" placeholder="搜索 YAML、模块、状态..." oninput="syncAssetFiltersToSidebar();resetAssetListPage();showAssetsCenter();">
           </div>
           <div class="library-view-row assets-view-row">
             ${[
@@ -2025,7 +2095,7 @@ function showAssetsCenter() {
                   <th>YAML 文件</th><th>模块</th><th>状态</th><th>最近执行</th><th>Sonic</th><th>用例</th><th>操作</th>
                 </tr></thead>
                 <tbody>
-                  ${rows.map(row => {
+                  ${pageRows.map(row => {
                     const key = fileKey(row.mod, row.file);
                     const stats = yamlStatsForFile(row.mod, row.file);
                     const sonic = sonicFileSummary(row.mod, row.file);
@@ -2055,6 +2125,7 @@ function showAssetsCenter() {
               </table>
             ` : `<div class="job-empty">没有匹配的 YAML。可以调整搜索/筛选，或新建一个 YAML。</div>`}
           </div>
+          ${paginationHtml(pageInfo, 'setAssetListPage')}
         </div>
       </div>
     </div>
@@ -2077,6 +2148,7 @@ function syncAssetFiltersToSidebar() {
 function selectAssetModule(mod='') {
   currentModule = mod || null;
   currentFile = null;
+  resetAssetListPage();
   resetYamlToolbarForManager();
   renderModules();
   showAssetsCenter();
@@ -2284,6 +2356,7 @@ function yamlStatsRank(stats) {
 
 function setModulePriorityFilter(filter) {
   modulePriorityFilter = filter || 'all';
+  resetModuleDirectoryPage();
   if (currentModule && modules[currentModule] && !hasOpenEditor()) {
     const area = document.getElementById('editor-area');
     if (area && area.querySelector('.module-directory')) area.innerHTML = moduleDirectoryHtml(currentModule);

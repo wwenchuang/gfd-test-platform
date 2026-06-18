@@ -1672,8 +1672,36 @@ def _get_cases_by_id(handler, qs, path):
 def _get_cases_list(handler, qs):
     from task_server.services.case_service import list_cases_by_module, list_all_cases
     module = str(qs.get('module') or '').strip()
+    keyword = str(qs.get('q') or qs.get('keyword') or '').strip().lower()
+    page = max(1, safe_int(qs.get('page'), 1))
+    page_size = max(1, min(200, safe_int(qs.get('pageSize') or qs.get('page_size'), 50)))
+    return_all = safe_bool(qs.get('all') or qs.get('includeAll'))
     cases = list_cases_by_module(module) if module else list_all_cases()
-    handler._json({'ok': True, 'cases': cases})
+    if keyword:
+        def match_case(case):
+            if not isinstance(case, dict):
+                return False
+            text = " ".join(str(case.get(key) or "") for key in (
+                "caseId", "appName", "module", "file", "taskName", "requirement", "yamlPath", "riskLevel"
+            )).lower()
+            return keyword in text
+        cases = [case for case in cases if match_case(case)]
+    total = len(cases)
+    if return_all:
+        page_cases = cases
+        page = 1
+        page_size = total or page_size
+    else:
+        start = (page - 1) * page_size
+        page_cases = cases[start:start + page_size]
+    handler._json({
+        'ok': True,
+        'cases': page_cases,
+        'total': total,
+        'page': page,
+        'pageSize': page_size,
+        'hasMore': (page * page_size) < total if not return_all else False,
+    })
 
 
 # ── 平台状态 ────────────────────────────────────────────────────────
