@@ -609,6 +609,32 @@ def _yaml_refs_from_paths(paths):
     return refs
 
 
+def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
+    check = validate_agent_yaml_content(content)
+    if not check.get("ok"):
+        return None, "YAML 草稿校验未通过：" + "；".join(check.get("issues") or [])
+    module = clean_agent_module_name(run)
+    file_name = clean_agent_yaml_name(run)
+    target_path = safe_join(TASK_DIR, module, file_name)
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    write_text_file(target_path, content)
+    artifacts["generatedYaml"] = content
+    artifacts["generatedYamlPath"] = target_path
+    if draft_path:
+        artifacts["draftPath"] = draft_path
+    artifacts["draftConfirmed"] = True
+    artifacts["yamlRefs"] = [{
+        "type": "file",
+        "module": module,
+        "file": file_name,
+        "path": target_path,
+        "content": "",
+        "confirmed": True,
+    }]
+    artifacts["yamlValidation"] = {"ok": True, "results": [{**artifacts["yamlRefs"][0], **check}], "issues": []}
+    return target_path, ""
+
+
 def confirm_agent_step(run_id, step_id, decision, payload=None):
     """确认 Agent 待确认步骤。
 
@@ -629,7 +655,17 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
             None,
         )
         if not confirmation:
-            return {"error": "确认项不存在", "run": run}
+            artifacts = run.setdefault("artifacts", {})
+            if run.get("status") == "WAIT_CONFIRM" and (artifacts.get("draftPath") or artifacts.get("generatedYaml")):
+                confirmation = {
+                    "id": step_id or f"confirm-{int(time.time())}",
+                    "type": "generated_yaml_draft",
+                    "action": "confirm_yaml_draft",
+                    "draftPath": artifacts.get("draftPath") or "",
+                    "createdAt": now,
+                }
+            else:
+                return {"error": "确认项不存在", "run": run}
         decision_key = str(decision or "").strip().lower()
         approve_keys = (
             "approve", "approved", "confirm", "confirmed", "yes", "true", "1",
@@ -682,28 +718,15 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
             artifacts = run.setdefault("artifacts", {})
             if ctype == "generated_yaml_draft":
                 draft_path = confirmation.get("draftPath") or artifacts.get("draftPath") or ""
-                if not draft_path or not os.path.exists(draft_path):
+                if draft_path and os.path.exists(draft_path):
+                    content = read_text_file(draft_path, "")
+                else:
+                    content = artifacts.get("generatedYaml") or ""
+                if not content.strip():
                     return {"error": "YAML 草稿不存在，无法确认", "run": run}
-                content = read_text_file(draft_path, "")
-                check = validate_agent_yaml_content(content)
-                if not check.get("ok"):
-                    return {"error": "YAML 草稿校验未通过：" + "；".join(check.get("issues") or []), "run": run}
-                module = clean_agent_module_name(run)
-                file_name = clean_agent_yaml_name(run)
-                target_path = safe_join(TASK_DIR, module, file_name)
-                os.makedirs(os.path.dirname(target_path), exist_ok=True)
-                write_text_file(target_path, content)
-                artifacts["generatedYamlPath"] = target_path
-                artifacts["draftPath"] = draft_path
-                artifacts["yamlRefs"] = [{
-                    "type": "file",
-                    "module": module,
-                    "file": file_name,
-                    "path": target_path,
-                    "content": "",
-                    "confirmed": True,
-                }]
-                artifacts["yamlValidation"] = {"ok": True, "results": [{**artifacts["yamlRefs"][0], **check}], "issues": []}
+                _target_path, err = _confirm_agent_yaml_content(run, artifacts, content, draft_path=draft_path)
+                if err:
+                    return {"error": err, "run": run}
             elif ctype in ("case_retrieval_confirm", "case_match_uncertain"):
                 selected_cases = payload.get("selectedCases")
                 if isinstance(selected_cases, list):
@@ -4449,19 +4472,23 @@ def _tool_generate_yaml(run):
                 yaml_text, pipeline_result = _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
                 check = validate_agent_yaml_content(yaml_text)
                 if check.get("ok"):
-                    _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="mindmap_pipeline")
+                    target_path, err = _confirm_agent_yaml_content(run, artifacts, yaml_text)
+                    if err:
+                        raise ValueError(err)
                     artifacts["yamlValidation"] = {
                         "ok": True,
                         "issues": [],
+                        "autoConfirmed": True,
                         "results": [{"type": "mindmap_pipeline", **check}],
                     }
-                    call["status"] = "WAIT_CONFIRM"
+                    call["status"] = "SUCCESS"
                     call["outputSummary"] = (
                         "已调用需求解析/脑图生成/Figma解析主链生成 YAML 草稿，"
                         f"用例 {pipeline_result.get('caseCount') or check.get('taskCount')} 条，"
-                        f"场景 {pipeline_result.get('scenarioCount') or 0} 个，等待人工确认"
+                        f"场景 {pipeline_result.get('scenarioCount') or 0} 个；可执行校验通过，已自动确认进入下一步"
                     )
                     call["artifactRefs"] = [
+                        str(target_path or ""),
                         str((pipeline_result.get("summaryFiles") or {}).get("mindmap") or ""),
                         str((pipeline_result.get("summaryFiles") or {}).get("markdown") or ""),
                     ]

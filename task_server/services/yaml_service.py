@@ -4256,6 +4256,32 @@ def build_generation_mindmap(summary):
         or analysis.get("open_questions")
         or summary.get("risks")
     ), limit=10)
+    requirement_summary = build_requirement_analysis_summary(analysis)
+    coverage_matrix = requirement_summary.get("coverage_matrix") or []
+    if coverage_matrix:
+        matrix_children = []
+        for item in coverage_matrix:
+            point = item.get("requirement_point") or item.get("feature") or "未命名需求点"
+            point_children = []
+            normal = limited_nodes(item.get("normal_scenarios"), limit=8, indent=3)
+            negative = limited_nodes(item.get("negative_scenarios"), limit=8, indent=3)
+            boundary = limited_nodes(item.get("boundary_scenarios"), limit=8, indent=3)
+            auto = limited_nodes(item.get("auto_cases"), limit=12, indent=3)
+            manual = limited_nodes(item.get("manual_cases"), limit=12, indent=3)
+            if normal:
+                point_children.append(mm_node("正常/主流程场景", normal, indent=2))
+            if negative:
+                point_children.append(mm_node("异常/错误提示场景", negative, indent=2))
+            if boundary:
+                point_children.append(mm_node("边界/状态组合场景", boundary, indent=2))
+            if auto:
+                point_children.append(mm_node("进入 YAML 的自动化用例", auto, indent=2))
+            if manual:
+                point_children.append(mm_node("人工验证 / 待准备", manual, indent=2))
+            if item.get("uncovered_reason"):
+                point_children.append(mm_node(f"未覆盖原因：{item.get('uncovered_reason')}", indent=2))
+            matrix_children.append(mm_node(point, point_children, indent=1))
+        root_children.append(mm_node("完整需求覆盖追踪矩阵", matrix_children, indent=1))
 
     scenario_feature_map = {}
     for scenario in scenarios:

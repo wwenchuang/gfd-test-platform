@@ -431,11 +431,11 @@ def generation_volume_targets(analysis):
         min_cases, target_cases, max_cases = 8, 12, 16
         min_scenarios, target_scenarios = 6, 10
     elif point_count <= 5:
-        min_cases, target_cases, max_cases = 12, 18, 28
-        min_scenarios, target_scenarios = 10, 18
+        min_cases, target_cases, max_cases = 16, 24, 36
+        min_scenarios, target_scenarios = 14, 24
     else:
-        min_cases, target_cases, max_cases = 18, 30, 45
-        min_scenarios, target_scenarios = 16, 30
+        min_cases, target_cases, max_cases = 24, 38, 60
+        min_scenarios, target_scenarios = 24, 45
     if blockers:
         min_cases = max(4, min_cases - 4)
         target_cases = max(min_cases, target_cases - 6)
