@@ -355,6 +355,7 @@ function agentRunCardHtml(run, options = {}) {
       <div class="workflow-card-actions">
         <button class="btn-sm" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('agent')">查看轨迹</button>
         ${options.confirm ? `<button class="btn-sm success" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('dashboard')">处理确认</button>` : ''}
+        ${options.confirm ? `<button class="btn-sm danger" onclick="cancelAgentRunById(${jsArg(run.runId || '')})">取消运行</button>` : ''}
       </div>
     </div>
   `;

@@ -132,7 +132,35 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/jobs') {
-      json(res, {jobs: [], background_jobs: []});
+      json(res, {jobs: [
+        {
+          job_id: 'job-debug-running',
+          module: 'AI测试',
+          file: 'AI建模.yaml',
+          status: 'running',
+          run_mode: 'test',
+          target_task_name: 'AI建模主流程验证',
+          progress: 35,
+          created_at: '2026-06-18 09:00:00',
+          started_at: '2026-06-18 09:00:10',
+          current_task_name: 'AI建模主流程验证',
+          target_runner_id: 'win-runner-01',
+          device_id: 'UQG0220513008845',
+        },
+        {
+          job_id: 'job-baseline-failed',
+          module: '3D打印基线',
+          file: '十二生肖印章打印.yaml',
+          status: 'failed',
+          run_mode: 'baseline',
+          target_task_name: '十二生肖印章打印主流程验证',
+          progress: 100,
+          created_at: '2026-06-18 08:10:00',
+          finished_at: '2026-06-18 08:12:00',
+          error: '断言失败',
+          failure_review: {category: 'unknown', reason: '待复核', manual_confirmed: false},
+        }
+      ], background_jobs: []});
       return;
     }
     if (url.pathname === '/api/runners') {
@@ -236,6 +264,19 @@ function serve() {
             },
           },
         });
+      });
+      return;
+    }
+    const jobActionMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/(cancel|retry|review)$/);
+    if (jobActionMatch && req.method === 'POST') {
+      const action = jobActionMatch[2];
+      json(res, {
+        ok: true,
+        job: {
+          job_id: jobActionMatch[1],
+          status: action === 'cancel' ? 'cancelled' : 'pending',
+          failure_review: action === 'review' ? {manual_confirmed: true, category: 'unknown'} : {},
+        }
       });
       return;
     }
@@ -364,6 +405,11 @@ async function anyVisible(locator) {
     await page.waitForSelector('text=Runner 进度');
     if (!await page.locator('.jobs-panel').isVisible()) throw new Error('execution page should show Runner progress panel');
     if (await page.locator('text=Agent 状态').isVisible()) throw new Error('execution page should not show Agent status title');
+    if (!await page.locator('.jobs-panel', {hasText: '调试执行'}).isVisible()) throw new Error('execution panel must label debug-run jobs');
+    if (!await page.locator('.jobs-panel', {hasText: '基线回归'}).isVisible()) throw new Error('execution panel must label baseline jobs');
+    if (!await anyVisible(page.locator('.jobs-panel button', {hasText: '取消任务'}))) throw new Error('current runner task must expose cancel action');
+    if (!await anyVisible(page.locator('.jobs-panel button', {hasText: '重跑'}))) throw new Error('pending failure card must expose retry action');
+    if (!await anyVisible(page.locator('.jobs-panel button', {hasText: '已处理'}))) throw new Error('pending failure card must expose handled action');
     await page.screenshot({path: path.join(ARTIFACTS, 'execution.png'), fullPage: true});
     await page.locator('.execution-yaml-table button', {hasText: '单条调试'}).first().click();
     await page.waitForSelector('#modal-run-task.show');

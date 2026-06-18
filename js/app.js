@@ -627,7 +627,30 @@ function jobKindText(job) {
     if (isGenerateBackgroundJob(job)) return 'AI生成';
     return typeMap[job.type] || '后台任务';
   }
-  return job.target_task_name ? '单条执行' : '整文件执行';
+  return job.target_task_name ? '单条调试' : '整文件执行';
+}
+
+function jobRunModeText(job={}) {
+  const mode = String(job.run_mode || job.runMode || 'test').toLowerCase();
+  if (mode === 'baseline') return '基线回归';
+  if (mode === 'real') return '正式执行';
+  return '调试执行';
+}
+
+function jobExecutionLabel(job={}) {
+  if (job.kind === 'background') return jobKindText(job);
+  return `${jobRunModeText(job)} · ${jobKindText(job)}`;
+}
+
+function jobReviewConfirmed(job={}) {
+  const review = job.failureReview || job.failure_review || {};
+  return Boolean(review.manual_confirmed || review.manualConfirmed || review.confirmed_at || review.confirmedAt);
+}
+
+function jobModeBadgeHtml(job={}) {
+  const mode = String(job.run_mode || job.runMode || 'test').toLowerCase();
+  const cls = mode === 'baseline' ? 'baseline' : (mode === 'real' ? 'real' : 'test');
+  return `<span class="job-mode-pill ${escapeHtml(cls)}">${escapeHtml(jobExecutionLabel(job))}</span>`;
 }
 
 function explainCallbackHttp000(value) {
@@ -854,7 +877,7 @@ function jobDetailHtml(job, error, reportHint) {
   return `
     <div class="job-detail">
       <div><strong>Job：</strong>${escapeHtml(job.job_id || '')}</div>
-      <div><strong>执行方式：</strong>${escapeHtml(job.target_task_name ? '单条调试：只执行选中的 task' : '整文件回归：执行当前 YAML 全部 tasks')}</div>
+      <div><strong>执行方式：</strong>${escapeHtml(jobExecutionLabel(job))}${job.target_task_name ? '：只执行选中的 task' : '：执行当前 YAML 全部 tasks'}</div>
       <div><strong>设备：</strong>${escapeHtml(jobDeviceLabel(job))} · ${escapeHtml(jobRunnerLabel(job))}</div>
       ${jobTimingText(job) ? `<div><strong>时间：</strong>${escapeHtml(jobTimingText(job))}</div>` : ''}
       ${timeline}
@@ -994,12 +1017,14 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
     });
   const draftJobIds = new Set(repairDrafts.map(draft => draft.jobId || draft.job_id).filter(Boolean));
   jobs
-    .filter(job => ['failed', 'timeout', 'cancelled'].includes(String(job.status || '').toLowerCase()))
+    .filter(job => ['failed', 'timeout', 'error'].includes(String(job.status || '').toLowerCase()))
+    .filter(job => !jobReviewConfirmed(job))
     .filter(job => !draftJobIds.has(job.job_id))
     .slice(0, 6)
     .forEach(job => {
       const normalized = normalizeFailureAnalysis(job.failureReview || job.failure_review || job.error || '');
       let actionsHtml = `<button class="btn-sm" onclick="focusJob(${jsArg(job.job_id || '')})">查看</button>`;
+      actionsHtml += `<button class="btn-sm" onclick="retryJob(${jsArg(job.job_id || '')})">重跑</button>`;
       if (normalized.failureType === 'SCRIPT_ISSUE' && (job.failureReview || job.failure_review)) {
         actionsHtml += `<button class="btn-sm ai" onclick="openAiRepairForJob(${jsArg(job.job_id || '')})">生成修复草稿</button>`;
       } else if (normalized.failureType === 'PRODUCT_BUG') {
@@ -1007,11 +1032,12 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
       } else {
         actionsHtml += `<button class="btn-sm ai" onclick="analyzeFailureFromJob(${jsArg(job.job_id || '')}, {renderPage:true})">AI分析</button>`;
       }
+      actionsHtml += `<button class="btn-sm" onclick="markJobHandled(${jsArg(job.job_id || '')})">已处理</button>`;
       actions.push({
         id: `job:${job.job_id}`,
         type: normalized.failureType || 'FAILED_JOB',
         title: job.taskName || job.file || job.job_id || '失败任务',
-        meta: `${jobStatusText(job.status)} · ${normalized.conclusion || jobErrorText(job) || '等待分析'}`,
+        meta: `${jobExecutionLabel(job)} · ${jobStatusText(job.status)} · ${normalized.conclusion || jobErrorText(job) || '等待分析'}`,
         actions: actionsHtml
       });
     });
@@ -1021,7 +1047,7 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
       id: `agent:${run.runId}`,
       type: run.status,
       title: run.options?.goal || run.taskName || 'Agent 等待确认',
-      meta: run.status === 'WAIT_CONFIRM_RUN' ? 'YAML 已通过校验，等待确认是否执行 Sonic' : '缺陷草稿已生成，等待确认是否提交',
+      meta: run.status === 'WAIT_CONFIRM_RUN' ? 'YAML 已通过校验，等待确认是否下发 Runner 执行' : '缺陷草稿已生成，等待确认是否提交',
       actions: run.status === 'WAIT_CONFIRM_RUN'
         ? `<button class="btn-sm success" onclick="confirmAgentRun('CONFIRM_RUN')">确认执行</button><button class="btn-sm" onclick="setAgentTab('yaml')">查看 YAML</button><button class="btn-sm danger" onclick="cancelAgentRun()">取消</button>`
         : `<button class="btn-sm success" onclick="confirmAgentRun('CONFIRM_BUG')">提交缺陷</button><button class="btn-sm" onclick="setAgentTab('bug')">查看草稿</button><button class="btn-sm" onclick="confirmAgentRun('SKIP_BUG')">暂不提交</button>`
@@ -1032,10 +1058,13 @@ function buildPendingActions(jobs=[], activeJobs=[]) {
 
 function pendingActionCardHtml(action) {
   return `
-    <div class="job-meta pending-action-card" style="margin:8px 0;">
-      <strong>${escapeHtml(action.title || '待处理')}</strong><br>
-      <span>${escapeHtml(action.meta || action.type || '')}</span>
-      <div class="job-actions" style="margin-top:6px;">${action.actions || ''}</div>
+    <div class="job-meta pending-action-card">
+      <div class="pending-action-head">
+        <strong>${escapeHtml(action.title || '待处理')}</strong>
+        <span>${escapeHtml(action.type || '')}</span>
+      </div>
+      <div class="pending-action-meta">${escapeHtml(action.meta || '')}</div>
+      <div class="job-actions">${action.actions || ''}</div>
     </div>
   `;
 }
@@ -1048,6 +1077,7 @@ function currentTaskCardHtml(activeJobs=[]) {
   return `
     <div class="job-meta">
       <strong>${escapeHtml(job.taskName || job.file || job.job_id)}</strong><br>
+      ${jobModeBadgeHtml(job)}<br>
       Job: ${escapeHtml(job.job_id || '-')}<br>
       Run: ${escapeHtml(job.runId || '-')} · Trace: ${escapeHtml(job.traceId || '-')}<br>
       状态: ${escapeHtml(jobStatusText(job.status))}${job.currentStep ? ` · 步骤: ${escapeHtml(job.currentStep)}` : ''}<br>
@@ -1055,6 +1085,7 @@ function currentTaskCardHtml(activeJobs=[]) {
       ${review.category ? `AI 复检: ${escapeHtml(review.category)} · ${escapeHtml(review.reason || '')}<br>` : ''}
       ${draft ? `修复草稿: ${escapeHtml(repairDraftStatusText(draft.status))} · ${escapeHtml(draft.failureType || '')}<br>` : ''}
       ${job.reportUrl ? `<a class="job-link" href="${escapeHtml(job.reportUrl)}" target="_blank">查看报告</a>` : ''}
+      ${['pending', 'running'].includes(job.status) ? `<div class="job-actions current-task-actions"><button class="job-action danger" onclick="cancelJob(${jsArg(job.job_id)})">取消任务</button><button class="job-action" onclick="focusJob(${jsArg(job.job_id)})">查看详情</button></div>` : ''}
     </div>
   `;
 }
@@ -1121,7 +1152,7 @@ function renderJobs() {
         </div>
         <div class="job-main">
           <div class="job-file">${title}</div>
-          <div class="job-task">${targetTask ? `单条：${escapeHtml(targetTask)}` : escapeHtml(job.message || job.step || jobKindText(job))}</div>
+          <div class="job-task">${jobModeBadgeHtml(job)} ${targetTask ? `单条：${escapeHtml(targetTask)}` : escapeHtml(job.message || job.step || jobKindText(job))}</div>
         </div>
         <div class="job-progress">
           <div class="job-progress-text">
@@ -1196,6 +1227,21 @@ async function reviewJob(jobId, category) {
     showToast(category === 'product_bug' ? '✓ 已标记为产品 Bug' : '✓ 已标记为脚本问题', 'success');
   } catch(e) {
     showToast(e.message || '归因失败', 'error');
+  }
+}
+
+async function markJobHandled(jobId) {
+  if (!jobId) return;
+  if (!confirm(`确认将任务 ${jobId} 标记为已处理？标记后不会再出现在“待我处理”里。`)) return;
+  try {
+    await postJobAction(jobId, 'review', {
+      category: 'unknown',
+      reason: '已人工确认，无需继续处理',
+      suggested_action: 'manual_done'
+    });
+    showToast('✓ 已从待处理列表移除', 'success');
+  } catch(e) {
+    showToast(e.message || '标记失败', 'error');
   }
 }
 
