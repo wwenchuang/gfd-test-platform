@@ -29,7 +29,7 @@ const WORKFLOW_SECTIONS = {
     subtitle: '全自动 Agent 测试工作台',
     help: '输入测试目标后，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复重跑和报告沉淀。',
     cards: [],
-    checklist: ['输入测试目标，选择范围和模式', '启动后右侧查看进度和确认节点', '高风险动作会停在 WAIT_CONFIRM']
+    checklist: ['输入测试目标，选择范围和模式', '启动后右侧查看进度和确认节点', '高风险动作会停在待确认']
   },
   assets: {
     index: '1',
@@ -81,10 +81,10 @@ const WORKFLOW_SECTIONS = {
     help: 'Agent 会按测试目标自动规划、生成用例和 YAML、校验、同步执行、分析失败并生成修复草稿；高风险动作会停在确认节点。',
     cards: [
       { title: '启动全自动 Agent', text: '输入测试目标后，Agent 自动规划用例、生成 YAML、执行、分析失败、生成修复草稿并按风险策略等待确认。', actions: [
-        { label: '打开 Agent 工作台', cls: 'primary', fn: 'showAgentWorkbench()' }
+        { label: '打开Agent 工作台', cls: 'primary', fn: 'showAgentWorkbench()' }
       ]},
       { title: '查看运行轨迹', text: '每一步都会记录状态、耗时、输入输出摘要、产物和等待确认节点，便于排查全自动链路。', actions: [
-        { label: '刷新 Agent 状态', fn: 'refreshAgentRuns(true)' }
+        { label: '刷新Agent 状态', fn: 'refreshAgentRuns(true)' }
       ]},
       { title: '人工确认节点', text: '高风险动作、基线覆盖、飞书缺陷提交等动作都会停下来等你确认。', actions: [
         { label: '查看右侧执行中心', fn: 'renderAgentCenter()' }
@@ -258,8 +258,8 @@ const WORKFLOW_SECTIONS = {
   agent_history: {
     index: '0',
     title: '运行记录',
-    subtitle: '查看所有 Agent 运行历史',
-    help: '查看 Agent 运行轨迹、状态和产物。',
+    subtitle: '查看所有Agent 运行历史',
+    help: '查看Agent 运行轨迹、状态和产物。',
     cards: [],
     checklist: []
   },

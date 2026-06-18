@@ -1445,7 +1445,7 @@ def tool_analyze_goal(run, inp):
         "target": target,
         "module": "",
         "keywords": [],
-        "matchAll": True,
+        "matchAll": _agent_wants_all_existing_cases(target),
         "scope": scope,
         "riskLevel": "high" if risk_hits else "low",
         "riskHits": risk_hits,
@@ -1455,8 +1455,7 @@ def tool_analyze_goal(run, inp):
             "生成 YAML",
             "校验 YAML",
             "风险检查" + ("（命中高风险）" if risk_hits else ""),
-            "同步 Sonic" if scope in ("smoke", "regression") else "跳过 Sonic",
-            "执行测试",
+            "通过 Windows/Mac Runner 执行测试",
             "收集报告",
             "分析失败（如有）",
             "生成总结",
@@ -1490,7 +1489,7 @@ def tool_analyze_goal(run, inp):
 
     prompt = f"""{business_prompt}
 
-你是测试任务意图解析器。用户输入了一个测试目标，请解析为结构化JSON。
+你是测试任务意图解析器。必须优先用语义理解识别用户真实测试目标，规则只能作为校验和兜底，不能机械按关键词扩大范围。
 
 用户输入：{target}
 应用名称：{app_name}
@@ -1511,8 +1510,9 @@ def tool_analyze_goal(run, inp):
 }}
 
 规则：
-- 如果用户说"回归基线"、"跑全部"、"执行所有"等，matchAll=true，keywords为空
-- 如果用户指定了具体用例如"关节龙"、"姓名牌"，matchAll=false，keywords只包含业务名词
+- 只有用户明确说"所有用例"、"全部用例"、"全量基线"、"整套用例"、"执行所有"等，matchAll=true，keywords为空
+- 如果用户指定了具体业务点或用例名，如"关节龙"、"姓名牌"、"我的收藏"，matchAll=false，keywords只包含业务名词
+- "回归"、"基线"、"执行一下"不是全量信号，不能单独触发 matchAll
 - 应用名（智小白3D、小白学习）不是业务关键词
 - module 应该严格对应上面列出的可用模块目录名"""
 
@@ -1590,6 +1590,35 @@ def tool_analyze_goal(run, inp):
     _record_agent_ai_decision(run, "analyze_goal", "rule_fallback", True, "AI 不可用或返回无效，使用规则兜底", businessFlow=business_constraint.get("businessFlow"))
     artifacts["goalAnalysis"] = rule_result
     return rule_result
+
+
+def _ensure_agent_goal_analysis(run):
+    """Ensure target understanding is AI-first and reusable by later steps."""
+    artifacts = run.setdefault("artifacts", {}) if isinstance(run, dict) else {}
+    existing = artifacts.get("goalAnalysis")
+    if isinstance(existing, dict) and existing.get("validated"):
+        return existing
+    analysis = tool_analyze_goal(run, {
+        "target": run.get("target", ""),
+        "scope": run.get("scope", "auto"),
+    })
+    if isinstance(analysis, dict):
+        artifacts["goalAnalysis"] = analysis
+        return analysis
+    fallback = {
+        "target": run.get("target", ""),
+        "module": "",
+        "keywords": [],
+        "matchAll": _agent_wants_all_existing_cases(run.get("target", "")),
+        "scope": run.get("scope", "auto"),
+        "riskLevel": run.get("riskLevel", "low"),
+        "summary": f"执行目标：{run.get('target', '')}",
+        "aiSource": "rule_fallback",
+        "validated": True,
+    }
+    artifacts["goalAnalysis"] = fallback
+    _record_agent_ai_decision(run, "analyze_goal", "rule_fallback", True, "AI 目标识别不可用，使用规则兜底", matchAll=fallback["matchAll"])
+    return fallback
 
 
 def tool_generate_cases(run, inp):
@@ -2022,7 +2051,7 @@ def _tool_agent_plan(run):
                         "1. 分析测试目标",
                         "2. 匹配已有用例或生成新用例",
                         "3. 生成并校验 Midscene YAML",
-                        "4. 同步 Sonic 并执行测试",
+                        "4. 通过 Windows/Mac Runner 执行已确认 YAML",
                         "5. 收集报告并分析失败",
                         "6. 生成修复草稿或缺陷草稿",
                         "7. 高风险动作进入 WAIT_CONFIRM",
@@ -2049,7 +2078,7 @@ def _tool_agent_plan(run):
                         "1. 分析测试目标",
                         "2. 匹配已有用例或生成新用例",
                         "3. 生成并校验 Midscene YAML",
-                        "4. 同步 Sonic 并执行测试",
+                        "4. 通过 Windows/Mac Runner 执行已确认 YAML",
                         "5. 收集报告并分析失败",
                         "6. 生成修复草稿或缺陷草稿",
                         "7. 高风险动作进入 WAIT_CONFIRM",
@@ -2070,7 +2099,7 @@ def _tool_agent_plan(run):
                     "1. 分析测试目标",
                     "2. 匹配已有用例或生成新用例",
                     "3. 生成并校验 Midscene YAML",
-                    "4. 同步 Sonic 并执行测试",
+                    "4. 通过 Windows/Mac Runner 执行已确认 YAML",
                     "5. 收集报告并分析失败",
                     "6. 生成修复草稿或缺陷草稿",
                     "7. 高风险动作进入 WAIT_CONFIRM",
@@ -2098,6 +2127,16 @@ def _tool_agent_plan(run):
             ],
             "note": "AI 负责调度决策，平台保留不可跳过的安全门禁。",
         })
+        try:
+            goal_analysis = _ensure_agent_goal_analysis(run)
+            plan["goalAnalysis"] = {
+                "keywords": goal_analysis.get("keywords") or [],
+                "matchAll": bool(goal_analysis.get("matchAll")),
+                "summary": goal_analysis.get("summary") or "",
+                "aiSource": goal_analysis.get("aiSource") or "",
+            }
+        except Exception as exc:
+            _record_agent_ai_decision(run, "analyze_goal", "plan_hook", False, str(exc)[:160])
         plan["qualityGate"] = _evaluate_agent_quality_gate(run, "plan", plan)
         run.setdefault("artifacts", {})["plan"] = plan
         if prompt_ctx.get("promptCenter"):
@@ -2974,12 +3013,28 @@ CASE_MATCH_GENERIC_KEYWORDS = {
     "android", "yaml", "yml", "midscene", "sonic", "agent", "app", "http", "https", "com", "model",
     "页面", "截图", "图片", "文件", "链接", "需求", "文档", "资料", "上传", "生成", "自动化",
     "测试", "用例", "基线", "回归", "执行", "查看", "记录", "打印", "任务", "平台", "当前",
+    "所有", "全部", "全量", "整套", "全套", "3d",
     "相关", "匹配", "确认", "选择", "按钮", "文本", "页面知识", "设计稿", "figma",
     "输入来源", "上传资料", "其中截图", "说明文件", "需求说明文件", "进入稳定起点",
     "执行核心业务动作", "校验业务结果", "稳定起点", "核心业务动作", "业务动作", "业务结果",
     "pdf", "时间", "创建", "背景", "需求介绍", "需求文档", "建模页需求文档", "ai建模需求",
     "生成并", "ai", "p0", "状态", "版本号", "负责人", "产品经理", "赵子寒",
 }
+
+
+def _agent_wants_all_existing_cases(text):
+    """Whether the user explicitly asks to run/reuse all existing cases."""
+    value = str(text or "").strip().lower()
+    compact = re.sub(r"\s+", "", value)
+    if not compact:
+        return False
+    all_word = r"(所有|全部|全量|整套|全套|all)"
+    case_word = r"(用例|基线|任务|case|cases|yaml)"
+    return bool(
+        re.search(all_word + r".{0,12}" + case_word, compact, re.I)
+        or re.search(case_word + r".{0,12}" + all_word, compact, re.I)
+        or re.search(r"(跑|执行|回归|验证).{0,8}(全部|所有|全量)", compact, re.I)
+    )
 
 CASE_MATCH_META_KEYWORD_PARTS = {
     "figma", "链接", "页面", "忽略", "截图", "上传", "资料", "说明文件", "需求说明",
@@ -3367,14 +3422,18 @@ def _tool_impact_analysis(run):
         artifacts = run.setdefault("artifacts", {})
         source_context = artifacts.get("sourceContext") or {}
         source_text = _build_source_text(source_context)
+        goal_analysis = _ensure_agent_goal_analysis(run)
+        ai_keywords = goal_analysis.get("keywords") if isinstance(goal_analysis.get("keywords"), list) else []
         fallback_keywords = [
             term for term in re.findall(r"[\u4e00-\u9fa5A-Za-z0-9_]{2,}", run.get("target", ""))
             if _is_business_keyword(term)
         ][:8]
-        keywords = _source_keywords(source_context) or fallback_keywords
+        keywords = _dedupe_business_terms(list(ai_keywords or []) + (_source_keywords(source_context) or []) + fallback_keywords, limit=16)
         analysis = {
             "sourceType": source_context.get("sourceType") or run.get("sourceType") or "manual",
             "keywords": keywords,
+            "aiKeywords": ai_keywords,
+            "matchAll": bool(goal_analysis.get("matchAll") or _agent_wants_all_existing_cases(run.get("target", ""))),
             "hasFigma": bool(source_context.get("figmaUrl") or source_context.get("figmaText")),
             "hasRequirement": bool(source_context.get("requirementText") or source_text),
             "uploadedFileCount": len(source_context.get("uploadedFiles") or []),
@@ -3387,7 +3446,8 @@ def _tool_impact_analysis(run):
         kw_text = "、".join(keywords[:8]) if keywords else "无"
         call["keywords"] = keywords
         input_text = analysis.get("sourceSummary") or "未上传额外资料"
-        call["outputSummary"] = f"影响分析完成，关键词：{kw_text}；{input_text}；优先复用现有用例"
+        intent_text = "；识别到全量执行意图" if analysis["matchAll"] else ""
+        call["outputSummary"] = f"影响分析完成，关键词：{kw_text}{intent_text}；{input_text}；优先复用现有用例"
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)
@@ -3466,6 +3526,82 @@ def _tool_case_retrieval(run):
             call["durationMs"] = _compute_duration(call)
             _log_tool_call(call, run.get("runId", ""))
             return call
+        goal_analysis = _ensure_agent_goal_analysis(run)
+        impact_analysis = artifacts.get("impactAnalysis") if isinstance(artifacts.get("impactAnalysis"), dict) else {}
+        wants_all_cases = bool(
+            goal_analysis.get("matchAll")
+            or impact_analysis.get("matchAll")
+            or _agent_wants_all_existing_cases(run.get("target", ""))
+        )
+        if wants_all_cases and all_yamls:
+            matched = [item["abs_path"] for item in all_yamls if item.get("abs_path")]
+            flow_keywords = _business_flow_keywords(business_constraint)
+            all_case_keywords = _dedupe_business_terms(list(flow_keywords or []) + ["全量用例"], limit=12) or ["全量用例"]
+            artifacts["matchedCases"] = matched
+            artifacts["matchedCount"] = len(matched)
+            artifacts["matchReason"] = "识别到全量已有用例执行意图，复用当前应用下全部 YAML"
+            artifacts["caseRetrieval"] = {
+                "decision": "reuse",
+                "confidence": 0.98,
+                "ruleConfidence": 0.98,
+                "confidenceSource": goal_analysis.get("aiSource") or "explicit_all_cases_intent",
+                "aiUsed": bool(goal_analysis.get("aiSource")),
+                "aiSource": goal_analysis.get("aiSource") or "",
+                "aiReason": goal_analysis.get("summary") or "用户明确要求执行所有用例",
+                "aiErrors": [],
+                "aiHealth": ai_health,
+                "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
+                "businessFlowKeywords": flow_keywords,
+                "qualityGate": _evaluate_agent_quality_gate(run, "case_retrieval", {
+                    "decision": "reuse",
+                    "confidence": 0.98,
+                    "matched": matched,
+                    "matchedKeywords": all_case_keywords,
+                    "aiUsed": bool(goal_analysis.get("aiSource")),
+                }),
+                "scope": "regression",
+                "keywords": all_case_keywords,
+                "matchedKeywords": all_case_keywords,
+                "candidates": [{k: item.get(k) for k in ("rel_path", "dir_name", "file_name")} for item in all_yamls[:50]],
+                "candidateDetails": [{
+                    "rel_path": item.get("rel_path"),
+                    "confidence": 0.98,
+                    "reasons": ["全量已有用例执行意图"],
+                    "matchedKeywords": all_case_keywords,
+                } for item in all_yamls[:50]],
+            }
+            artifacts["aiDispatchPolicy"] = {
+                "caseRetrieval": {
+                    "decision": "reuse",
+                    "confidence": 0.98,
+                    "source": artifacts["caseRetrieval"]["confidenceSource"],
+                    "reason": artifacts["caseRetrieval"]["aiReason"],
+                    "matchedCount": len(matched),
+                },
+                "safetyGates": ["VALIDATE_YAML", "RISK_REVIEW", "EXECUTION_PRECHECK"],
+                "note": "全量执行只复用已有 YAML，不生成新 YAML 草稿。",
+            }
+            normalize_yaml_refs(run)
+            call["status"] = "SUCCESS"
+            call["keywords"] = all_case_keywords
+            call["matchedKeywords"] = all_case_keywords
+            call["artifactRefs"] = [item.get("rel_path") for item in all_yamls[:5]]
+            call["outputSummary"] = f"识别到全量执行意图，复用已有 YAML {len(matched)} 个；不生成 YAML 草稿"
+            _record_agent_ai_decision(
+                run,
+                "case_retrieval",
+                artifacts["caseRetrieval"]["confidenceSource"],
+                True,
+                call["outputSummary"],
+                confidence=0.98,
+                decision="reuse",
+                matchedCount=len(matched),
+                matchedKeywords=all_case_keywords,
+            )
+            call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            call["durationMs"] = _compute_duration(call)
+            _log_tool_call(call, run.get("runId", ""))
+            return call
         query_text = "\n".join([
             run.get("target", ""),
             business_constraint.get("businessFlowText", ""),
@@ -3486,6 +3622,129 @@ def _tool_case_retrieval(run):
             else:
                 scope = "debug"
             run["scope"] = scope
+        yaml_list_text = "\n".join(f"- {item['dir_name']}/{item['file_name']}" for item in all_yamls[:200])
+        ai_direct = _ai_select_cases(
+            run.get("target", ""),
+            scope,
+            run.get("appName", "智小白3D APP"),
+            yaml_list_text,
+            all_yamls,
+            model=run.get("model", ""),
+            provider_id=run.get("modelProviderId") or run.get("aiProviderId") or "",
+        ) if all_yamls else {}
+        if isinstance(ai_direct, dict) and ai_direct.get("matched_paths"):
+            matched = [p for p in ai_direct.get("matched_paths") or [] if p]
+            matched_set = set(matched)
+            selected_items = [item for item in all_yamls if item.get("abs_path") in matched_set]
+            matched_keywords = _dedupe_business_terms(
+                list((goal_analysis.get("keywords") if isinstance(goal_analysis.get("keywords"), list) else []) or [])
+                + list((impact_analysis.get("keywords") if isinstance(impact_analysis.get("keywords"), list) else []) or []),
+                limit=12,
+            )
+            confidence = 0.88 if matched else 0.0
+            if len(matched) > 8 and scope not in ("smoke", "冒烟"):
+                decision = "wait_confirm"
+                run["status"] = "WAIT_CONFIRM"
+                run["currentStep"] = "WAIT_CONFIRM"
+            else:
+                decision = "reuse"
+            quality_gate = _evaluate_agent_quality_gate(run, "case_retrieval", {
+                "decision": decision,
+                "confidence": confidence,
+                "matched": matched,
+                "matchedKeywords": matched_keywords,
+                "aiUsed": True,
+            })
+            if decision == "reuse" and not quality_gate.get("passed"):
+                decision = "wait_confirm"
+                run["status"] = "WAIT_CONFIRM"
+                run["currentStep"] = "WAIT_CONFIRM"
+            if decision == "wait_confirm":
+                run.setdefault("pendingConfirmations", []).append({
+                    "id": f"confirm-{int(time.time())}",
+                    "type": "case_retrieval_confirm",
+                    "title": "确认 AI 直选用例范围",
+                    "action": "confirm_case_reuse",
+                    "message": f"AI 已选择 {len(matched)} 个已有 YAML，需确认后执行。理由：{ai_direct.get('reason') or 'AI 语义直选'}",
+                    "candidate": {
+                        "count": len(matched),
+                        "confidence": confidence,
+                        "confidenceSource": ai_direct.get("ai_source") or "ai_direct_case_selection",
+                        "scope": scope,
+                        "matchedKeywords": matched_keywords,
+                    },
+                    "candidates": [{k: item.get(k) for k in ("rel_path", "dir_name", "file_name")} for item in selected_items[:20]],
+                    "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "decision": None,
+                })
+            artifacts["matchedCases"] = matched
+            artifacts["matchedCount"] = len(matched)
+            artifacts["matchReason"] = f"AI 直选已有 YAML，匹配 {len(matched)} 个"
+            artifacts["caseRetrieval"] = {
+                "decision": decision,
+                "confidence": confidence,
+                "ruleConfidence": 0,
+                "confidenceSource": ai_direct.get("ai_source") or "ai_direct_case_selection",
+                "aiUsed": True,
+                "aiSource": ai_direct.get("ai_source") or "",
+                "aiReason": ai_direct.get("reason") or "AI 语义直选",
+                "aiErrors": ai_direct.get("_ai_errors") or [],
+                "aiHealth": ai_health,
+                "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
+                "businessFlowKeywords": flow_keywords,
+                "qualityGate": quality_gate,
+                "scope": ai_direct.get("scope") or scope,
+                "keywords": matched_keywords,
+                "matchedKeywords": matched_keywords,
+                "candidates": [{k: item.get(k) for k in ("rel_path", "dir_name", "file_name")} for item in selected_items[:50]],
+                "candidateDetails": [{
+                    "rel_path": item.get("rel_path"),
+                    "confidence": confidence,
+                    "reasons": [ai_direct.get("reason") or "AI 语义直选"],
+                    "matchedKeywords": matched_keywords,
+                } for item in selected_items[:50]],
+            }
+            artifacts["aiDispatchPolicy"] = {
+                "caseRetrieval": {
+                    "decision": decision,
+                    "confidence": confidence,
+                    "source": artifacts["caseRetrieval"]["confidenceSource"],
+                    "reason": artifacts["caseRetrieval"]["aiReason"],
+                    "matchedCount": len(matched),
+                },
+                "safetyGates": ["VALIDATE_YAML", "RISK_REVIEW", "EXECUTION_PRECHECK"],
+                "note": "AI 先直选已有 YAML，规则召回只作为兜底。",
+            }
+            normalize_yaml_refs(run)
+            call["status"] = "SUCCESS"
+            call["keywords"] = matched_keywords
+            call["matchedKeywords"] = matched_keywords
+            call["artifactRefs"] = [item.get("rel_path") for item in selected_items[:5]]
+            call["outputSummary"] = f"AI 直选已有 YAML {len(matched)} 个；来源：{artifacts['caseRetrieval']['confidenceSource']}；理由：{artifacts['caseRetrieval']['aiReason']}"
+            _record_agent_ai_decision(
+                run,
+                "case_retrieval",
+                artifacts["caseRetrieval"]["confidenceSource"],
+                True,
+                call["outputSummary"],
+                confidence=confidence,
+                decision=decision,
+                matchedCount=len(matched),
+                matchedKeywords=matched_keywords,
+            )
+            call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            call["durationMs"] = _compute_duration(call)
+            _log_tool_call(call, run.get("runId", ""))
+            return call
+        if isinstance(ai_direct, dict) and ai_direct.get("_ai_errors"):
+            _record_agent_ai_decision(
+                run,
+                "case_retrieval",
+                "ai_direct_case_selection",
+                False,
+                "；".join(ai_direct.get("_ai_errors")[:3]),
+                fallback="rule_recall",
+            )
         scored = []
         for item in all_yamls:
             score = _case_match_score(query_text, item, keywords)

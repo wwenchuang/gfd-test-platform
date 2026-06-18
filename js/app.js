@@ -1042,7 +1042,7 @@ function renderJobs() {
   const list = document.getElementById('jobs-list');
   const count = document.getElementById('jobs-count');
   if (!list || !count) return;
-  // Agent 状态：dashboard / agent_history / agent_confirm 默认走 Agent 状态视图
+  // Agent 状态：dashboard / agent_history / agent_confirm 默认走Agent 状态视图
   if (['dashboard', 'agent', 'agent_history', 'agent_confirm'].includes(activeWorkflow)) {
     renderAgentCenter();
     return;

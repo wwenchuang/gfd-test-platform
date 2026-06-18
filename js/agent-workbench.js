@@ -285,7 +285,7 @@ function workflowDashboardHtml() {
       <div class="dashboard-hero">
         <div class="dashboard-command">
           <div>
-            <div class="workflow-kicker">AUTO AGENT · 自动规划 / Sonic 执行 / 失败分析 / 安全重跑</div>
+            <div class="workflow-kicker">自动化 Agent · 自动规划 / 执行测试 / 失败分析 / 安全重跑</div>
             <h2>全自动 Agent 工作台</h2>
             <p>输入测试目标后，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复草稿、重跑和报告沉淀；高风险动作进入人工确认。</p>
             <div class="agent-form-grid" style="margin-top:14px;">
@@ -472,7 +472,7 @@ async function showAgentWorkbench() {
   area.innerHTML = `
     <div class="agent-shell">
       <div class="agent-hero">
-        <div class="workflow-kicker">AUTO AGENT · 自动规划 / 自动执行 / 安全确认 / 可追踪产物</div>
+        <div class="workflow-kicker">自动化 Agent · 自动规划 / 自动执行 / 安全确认 / 可追踪产物</div>
         <h2>全自动 Agent 工作台</h2>
         <p>输入测试目标，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复草稿和报告沉淀。</p>
       </div>
@@ -507,11 +507,11 @@ async function showAgentWorkbench() {
             </select>
           </div>
           <div class="agent-field">
-            <label for="agent-mode-select">Agent 模式</label>
+            <label for="agent-mode-select">Agent模式</label>
             <select id="agent-mode-select" onchange="syncAgentModeRadios()">
-              <option value="AUTO_SAFE" selected>AUTO_SAFE（默认）</option>
-              <option value="FULL_AUTO">AUTO_FULL</option>
-              <option value="ANALYZE_ONLY">ANALYZE_ONLY</option>
+              <option value="AUTO_SAFE" selected>安全自动（默认）</option>
+              <option value="FULL_AUTO">全自动</option>
+              <option value="ANALYZE_ONLY">只分析</option>
             </select>
           </div>
           <div class="agent-field">
@@ -537,8 +537,8 @@ async function showAgentWorkbench() {
           <div class="agent-source-materials" style="grid-column:1/-1;">
             <div class="agent-source-material-head">
               <div>
-                <h3>本次 Agent 输入资料</h3>
-                <p>Figma、需求说明、需求文档和截图会一起进入 Agent 的资料整理步骤。</p>
+                <h3>本次 Agent输入资料</h3>
+                <p>Figma、需求说明、需求文档和截图会一起进入Agent 的资料整理步骤。</p>
               </div>
               <span class="agent-source-counter" id="agent-source-counter">${escapeHtml(agentSourceFileSummary())}</span>
             </div>
@@ -586,7 +586,7 @@ async function showAgentWorkbench() {
           <button class="btn-sm primary" id="agent-start-btn" onclick="startAutoAgentRun()" ${agentBusy ? 'disabled' : ''} style="padding:12px 28px;font-size:15px;">启动 Agent</button>
           <button class="btn-sm" onclick="previewAgentPlan()" ${agentBusy ? 'disabled' : ''}>预览计划</button>
           <button class="btn-sm" onclick="activateWorkflow('agent_history')">查看历史</button>
-          <span class="generate-hint" id="agent-risk-level" style="margin-left:auto;">当前风险：${riskLevel}</span>
+          <span class="generate-hint" id="agent-risk-level" style="margin-left:auto;">当前风险：${agentRiskText(riskLevel)}</span>
         </div>
       </div>
 
@@ -595,7 +595,7 @@ async function showAgentWorkbench() {
         <div class="agent-timeline-head">
           <div>
             <h3>Agent 步骤时间线</h3>
-            <p>${AGENT_TIMELINE_STEPS.length} 步 Agent 链路：每步含状态、耗时、摘要、产物链接；输入来源、高风险与待确认会同步右侧。</p>
+            <p>${AGENT_TIMELINE_STEPS.length} 个处理步骤：展示每一步在做什么、是否成功、用了多久，以及生成了哪些产物；需要你确认的动作会同步到右侧。</p>
           </div>
           <div class="agent-timeline-legend">
             <span class="legend-dot pending"></span>等待
@@ -755,7 +755,7 @@ function updateAgentWorkbenchDynamic() {
   }
   if (riskLevelEl) {
     const goal = document.getElementById('agent-goal')?.value || '';
-    riskLevelEl.textContent = `当前风险：${classifyRiskLevel(goal)}`;
+    riskLevelEl.textContent = `当前风险：${agentRiskText(classifyRiskLevel(goal))}`;
   }
   // Update tab active states
   document.querySelectorAll('.agent-tab').forEach(tab => {
@@ -886,7 +886,7 @@ function timelineToolCallChips(step) {
   if (!Array.isArray(calls) || !calls.length) return '';
   return `<div class="timeline-tool-chips">${calls.slice(0, 5).map(call => {
     const name = typeof call === 'string' ? call : (call.toolName || call.tool || call.name || 'tool');
-    return `<span class="timeline-chip">${escapeHtml(name)}</span>`;
+    return `<span class="timeline-chip">${escapeHtml(agentToolNameText(name))}</span>`;
   }).join('')}</div>`;
 }
 
@@ -895,7 +895,7 @@ function timelineToolCallsDetail(step) {
   if (!Array.isArray(calls) || !calls.length) return '';
   const items = calls.map(call => {
     if (typeof call === 'string') {
-      return `<div class="tool-call-item"><span class="tool-call-name">${escapeHtml(call)}</span></div>`;
+      return `<div class="tool-call-item"><span class="tool-call-name">${escapeHtml(agentToolNameText(call))}</span></div>`;
     }
     const toolName = call.toolName || call.tool || call.name || 'tool';
     const callStatus = call.status || '';
@@ -907,8 +907,8 @@ function timelineToolCallsDetail(step) {
     const diagnosisHtml = renderDiagnosisDetail(call.diagnosis);
     return `
       <div class="tool-call-item tool-call-${escapeHtml(callStatus)}">
-        <span class="tool-call-name">${escapeHtml(toolName)}</span>
-        ${callStatus ? `<span class="tool-call-status">${escapeHtml(callStatus)}</span>` : ''}
+        <span class="tool-call-name">${escapeHtml(agentToolNameText(toolName))}</span>
+        ${callStatus ? `<span class="tool-call-status">${escapeHtml(agentToolStatusText(callStatus))}</span>` : ''}
         ${duration ? `<span class="tool-call-duration">${escapeHtml(duration)}</span>` : ''}
         ${outputSummary ? `<div class="tool-call-summary">${escapeHtml(String(outputSummary).slice(0, 300))}</div>` : ''}
         ${artifactRefs ? `<div class="tool-call-artifacts">产物: ${escapeHtml(artifactRefs)}</div>` : ''}
@@ -1012,7 +1012,7 @@ function renderRunTaskDetail(step, artifacts) {
         const jobLabel = `${job.module || ''}/${job.file || ''}`.replace(/^\/+/, '');
         const reportUrl = job.report_url || job.reportUrl || '';
         html += `<div class="job-progress-row status-${escapeHtml(status)}">
-          <span class="job-progress-status">${escapeHtml(status || 'unknown')}</span>
+          <span class="job-progress-status">${escapeHtml(agentJobStatusText(status))}</span>
           <span class="job-progress-title">${escapeHtml(taskName)}</span>
           <span class="job-progress-file">${escapeHtml(jobLabel)}</span>
           ${reportUrl ? `<a class="job-progress-link" href="${escapeHtml(reportUrl)}" target="_blank">报告</a>` : ''}
@@ -1106,7 +1106,7 @@ function renderReportDetail(step, artifacts) {
   let html = '<div class="report-detail rich-report">';
   html += `
     <div class="report-summary-grid">
-      <div><span>状态</span><strong>${escapeHtml(status)}</strong></div>
+      <div><span>状态</span><strong>${escapeHtml(agentJobStatusText(status))}</strong></div>
       <div><span>执行报告</span><strong>${reports.length}</strong></div>
       <div><span>任务状态</span><strong>${jobStatuses.length}</strong></div>
       <div><span>失败</span><strong>${failedJobs.length}</strong></div>
@@ -1175,15 +1175,15 @@ function renderAgentSummaryArtifact(run) {
     <div class="agent-final-report">
       <div class="final-report-hero ${conclusionClass}">
         <div>
-          <span class="final-report-kicker">Agent Final Report</span>
-          <h3>${escapeHtml(summary.title || 'Agent 执行总结')}</h3>
+          <span class="final-report-kicker">Agent 最终报告</span>
+          <h3>${escapeHtml(summary.title || 'Agent执行总结')}</h3>
           <p>${escapeHtml(target)}</p>
         </div>
         <strong class="final-report-conclusion ${conclusionClass}">${escapeHtml(summary.conclusion || '-')}</strong>
       </div>
       <div class="final-report-meta">
-        <span>${escapeHtml(summary.mode || run?.mode || '-')}</span>
-        <span>风险 ${escapeHtml(summary.riskLevel || run?.riskLevel || '-')}</span>
+        <span>${escapeHtml(agentModeText(summary.mode || run?.mode || '-'))}</span>
+        <span>风险 ${escapeHtml(agentRiskText(summary.riskLevel || run?.riskLevel || '-'))}</span>
         <span>${escapeHtml(generatedAt || '-')}</span>
       </div>
       <div class="report-summary-grid final-report-metrics">
@@ -1743,7 +1743,7 @@ function renderAgentSourcePanel() {
       <div class="agent-source-grid">
         ${input('agent-source-case-set-id', '关联用例批次 ID', '可选：读取本批次保存的 UI 设计稿')}
       </div>
-      <p class="form-hint">Figma 链接在下方“本次 Agent 输入资料”里填写；Agent 会结合设计稿、截图和需求文档做影响分析。</p>`;
+      <p class="form-hint">Figma 链接在下方“本次 Agent输入资料”里填写；Agent 会结合设计稿、截图和需求文档做影响分析。</p>`;
   } else if (sourceType === 'failed_job') {
     const failedJobValue = existing['agent-source-failed-job-id'] || document.getElementById('agent-failed-job')?.value || '';
     panel.innerHTML = `
@@ -1755,7 +1755,7 @@ function renderAgentSourcePanel() {
       </div>
       <p class="form-hint">失败任务来源会精确锁定对应 YAML，不会扩展到整个模块或测试套。</p>`;
   } else {
-    panel.innerHTML = `<p class="form-hint">直接输入目标适合临时调试。目标不明确时 Agent 会停在人工确认，不会自动扩大到全部用例。</p>`;
+    panel.innerHTML = `<p class="form-hint">直接输入目标适合临时调试。目标不明确时Agent 会停在人工确认，不会自动扩大到全部用例。</p>`;
   }
   renderAgentSourceFileList();
 }
@@ -1896,8 +1896,8 @@ async function previewAgentPlan() {
           ? `执行设备：自动选择在线设备（当前 ${runnerDevices.length} 台在线）`
           : '执行设备：暂无在线设备，执行前体检会阻断');
   const lines = [
-        '全自动 Agent 执行计划：',
-        `模式：${plan.mode || payload.mode}`,
+        '全自动 Agent执行计划：',
+        `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
         `范围：${plan.scope || payload.scope}`,
         runnerLine,
@@ -1913,7 +1913,7 @@ async function previewAgentPlan() {
           '5. 通过 Windows/Mac Runner 执行已确认 YAML',
           '6. 收集报告并分析失败',
           '7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿',
-          '8. 高风险或不确定动作进入 WAIT_CONFIRM',
+          '8. 高风险或不确定动作进入待确认',
           '9. 生成总结报告'
         ])
       ];

@@ -252,7 +252,7 @@ function renderExecutionTabTrace() {
       <div class="section-head">
         <div>
           <h3>Trace 回放与 Diff</h3>
-          <p>基于真实 Agent Run、Runner Job 和 DAG Span 生成链路视图。可保存快照、回放计划、对比两次执行差异。</p>
+          <p>基于真实Agent 运行、Runner 任务和 DAG Span 生成链路视图。可保存快照、回放计划、对比两次执行差异。</p>
         </div>
         <div class="review-actions">
           <button class="btn-sm primary" onclick="loadDebugTraces(true).then(()=>loadDebugSnapshots(true)).then(()=>showExecutionCenter())">刷新 Trace</button>
@@ -283,7 +283,7 @@ function renderExecutionTabTrace() {
             </td>
           </tr>
         `).join('')}</tbody>
-      </table>` : `${renderEmptyState('reports', '暂无 Trace 数据。先执行 Agent 或 Runner 任务后再回来刷新。')}`}
+      </table>` : `${renderEmptyState('reports', '暂无 Trace 数据。先执行Agent或 Runner 任务后再回来刷新。')}`}
       <h3 style="margin-top:16px;">执行快照</h3>
       ${snapshots.length ? `<table class="report-table" style="margin-top:12px;">
         <thead><tr><th>选择</th><th>快照</th><th>来源</th><th>创建时间</th><th>操作</th></tr></thead>

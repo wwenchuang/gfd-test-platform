@@ -149,7 +149,7 @@ function agentProgressHtml(run = currentAgentRun()) {
         const state = agentStepState(step, run);
         return `
           <div class="agent-step ${escapeHtml(state)}">
-            <strong>${escapeHtml(AGENT_STEP_LABELS[step] || step)}</strong>
+            <strong>${escapeHtml(agentStepLabel(step))}</strong>
             <span>${escapeHtml(agentStatusText(state))}</span>
           </div>
         `;
@@ -326,7 +326,7 @@ async function loadAgentRunsHistory() {
   await loadAgentRuns({ limit: 50, force: true });
   AppState.loaded.agentRuns = true;
   if (agentRuns.length) {
-    showToast(`已加载 ${agentRuns.length} 个 Agent Run`, 'success');
+    showToast(`已加载 ${agentRuns.length} 条Agent 运行记录`, 'success');
   } else {
     showToast('暂无 Agent 运行记录', 'info');
   }
@@ -337,7 +337,7 @@ function agentRunCardHtml(run, options = {}) {
   const steps = run.steps || [];
   const confirmations = run.pendingConfirmations || run.confirmations || [];
   const lastStep = steps.slice().reverse().find(step => step.status && step.status !== 'PENDING') || {};
-  const mode = run.mode || run.options?.mode || '-';
+  const mode = agentModeText(run.mode || run.options?.mode || '-');
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
   const status = agentStatusText(run.status);
   const pill = agentRunPillClass(run);
@@ -349,7 +349,7 @@ function agentRunCardHtml(run, options = {}) {
         <span class="muted mono">${escapeHtml((run.updatedAt || run.createdAt || '').replace('T', ' ').slice(0, 19))}</span>
       </div>
       <h3>${escapeHtml(String(target).slice(0, 80))}</h3>
-      <p>Run ID：<span class="mono">${escapeHtml(run.runId || '-')}</span> · 模式：${escapeHtml(mode)} · 步骤：${escapeHtml(AUTO_AGENT_STEP_LABELS[run.currentStep] || run.currentStep || '-')}</p>
+      <p>运行编号：<span class="mono">${escapeHtml(run.runId || '-')}</span> · 模式：${escapeHtml(mode)} · 步骤：${escapeHtml(agentStepLabel(run.currentStep))}</p>
       <div class="progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;"></div></div>
       <p>${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</p>
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
@@ -367,18 +367,18 @@ function renderAgentHistoryPage() {
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
-  document.getElementById('toolbar-help').textContent = '查看 Agent 历史运行、状态、进度和最后一步摘要。';
+  document.getElementById('toolbar-help').textContent = '查看Agent历史运行、状态、进度和最后一步摘要。';
   document.getElementById('file-info').textContent = `Agent 运行记录 ${agentRuns.length} 条`;
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide">
       <div class="workflow-hero">
-        <div class="workflow-kicker">AGENT HISTORY · 运行轨迹 / 产物 / 失败诊断</div>
+        <div class="workflow-kicker">Agent 运行记录 · 运行轨迹 / 产物 / 失败诊断</div>
         <h2>Agent 运行记录</h2>
-        <p>这里集中查看最近 Agent 任务。点“查看轨迹”会把该任务载入右侧 Agent 状态和工作台时间线。</p>
+        <p>这里集中查看最近Agent 任务。点“查看轨迹”会把该任务载入右侧Agent 状态和工作台时间线。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="loadAgentRunsHistory()">刷新历史</button>
-          <button class="btn-sm" onclick="activateWorkflow('dashboard')">回 Agent 工作台</button>
+          <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
         </div>
       </div>
       <div class="workflow-grid history-grid">
@@ -405,12 +405,12 @@ async function renderAgentConfirmPage() {
   area.innerHTML = `
     <div class="workflow-guide">
       <div class="workflow-hero">
-        <div class="workflow-kicker">HUMAN IN LOOP · 草稿确认 / 高风险动作 / 缺陷提交</div>
+        <div class="workflow-kicker">人工确认中心 · 草稿确认 / 高风险动作 / 缺陷提交</div>
         <h2>待我确认</h2>
-        <p>Agent 只有在这里获得明确确认后，才会继续同步 Sonic、执行高风险动作或提交缺陷草稿。</p>
+        <p>Agent只有在这里获得明确确认后，才会继续同步 Sonic、执行高风险动作或提交缺陷草稿。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="renderAgentConfirmPage()">刷新确认项</button>
-          <button class="btn-sm" onclick="activateWorkflow('dashboard')">回 Agent 工作台</button>
+          <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
         </div>
       </div>
       <div class="workflow-grid history-grid">
@@ -423,13 +423,13 @@ async function renderAgentConfirmPage() {
 function selectAgentRun(runId) {
   const run = agentRuns.find(item => item.runId === runId);
   if (!run) {
-    showToast('未找到 Agent Run', 'error');
+    showToast('未找到Agent 运行记录', 'error');
     return;
   }
   agentCurrentRun = normalizeAgentRun(run);
   AppState.currentAgentRun = agentCurrentRun;
   renderAgentCenter();
-  showToast('已载入 Agent 轨迹', 'success');
+  showToast('已载入Agent轨迹', 'success');
 }
 
 async function confirmAgentStep(runId, confirmationId, decision='confirmed') {
@@ -453,7 +453,7 @@ async function confirmAgentStep(runId, confirmationId, decision='confirmed') {
 
 async function cancelAgentRunById(runId) {
   if (!runId) return;
-  if (!confirm(`确认取消 Agent 任务 ${runId}？`)) return;
+  if (!confirm(`确认取消Agent 任务 ${runId}？`)) return;
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}/cancel`, {
       method: 'POST',
@@ -501,7 +501,7 @@ async function refreshAgentRun(runId) {
     }
     return run;
   } catch(e) {
-    if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') showToast(e.message || '刷新 Agent 状态失败', 'error');
+    if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') showToast(e.message || '刷新Agent 状态失败', 'error');
     return null;
   }
 }
@@ -511,13 +511,13 @@ async function refreshAgentRuns(showMessage=false) {
     const data = await apiRequest('/agent-runs');
     agentRuns = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
     agentCurrentRun = agentRuns[0] || agentCurrentRun;
-    if (showMessage) showToast('✓ Agent 历史已刷新', 'success');
+    if (showMessage) showToast('✓ Agent历史已刷新', 'success');
     if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') {
       if (document.getElementById('agent-goal') && typeof updateAgentWorkbenchDynamic === 'function') updateAgentWorkbenchDynamic();
       else showAgentWorkbench();
     } else renderJobs();
   } catch(e) {
-    if (showMessage) showToast(e.message || '读取 Agent 历史失败，请确认后端接口已部署', 'error');
+    if (showMessage) showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
   }
 }
 
@@ -541,7 +541,7 @@ async function confirmAgentRun(action='CONTINUE', confirmationId='', extra={}) {
 async function cancelAgentRun() {
   const run = currentAgentRun();
   if (!run?.runId) return;
-  if (!confirm(`确认取消 Agent 任务 ${run.runId}？`)) return;
+  if (!confirm(`确认取消Agent 任务 ${run.runId}？`)) return;
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(run.runId)}/cancel`, {
       method: 'POST',
@@ -735,7 +735,7 @@ function renderConfirmCard(run, pc) {
         ${isHighRisk ? '<span class="confirm-card-tag-risk">高风险</span>' : ''}
         ${createdAt ? `<span class="confirm-card-time">${escapeHtml(createdAt)}</span>` : ''}
       </div>
-      ${pendingAction ? `<div class="confirm-action">Agent想要：${escapeHtml(String(pendingAction).slice(0, 200))}</div>` : ''}
+      ${pendingAction ? `<div class="confirm-action">Agent 想要：${escapeHtml(String(pendingAction).slice(0, 200))}</div>` : ''}
       ${riskKeyword ? `<div class="confirm-risk">风险原因：命中关键词 "${escapeHtml(riskKeyword)}"</div>` : ''}
       ${impactDescription ? `<div class="confirm-impact">影响：${escapeHtml(String(impactDescription).slice(0, 200))}</div>` : ''}
       ${message ? `<div class="confirm-card-msg">${escapeHtml(message.slice(0, 240))}</div>` : ''}
@@ -849,7 +849,7 @@ function renderAgentCenter() {
   const elapsedText = agentRunElapsedText(run);
   const progressPct = agentRunProgressPct(run);
 
-  count.textContent = run ? `${run.mode || '-'} · ${agentStatusText(run.status)}${agentRunIsTerminal(run) ? ' · 最近记录' : ''}` : '暂无 Agent 任务';
+  count.textContent = run ? `${agentModeText(run.mode)} · ${agentStatusText(run.status)}${agentRunIsTerminal(run) ? ' · 最近记录' : ''}` : '暂无 Agent 任务';
 
   if (!run) {
     list.innerHTML = `
@@ -888,7 +888,7 @@ function renderAgentCenter() {
             ${agentRuns.slice(0, 10).map(r => `
               <div class="agent-timeline-item ${r.status === 'DONE' ? 'success' : (r.status === 'CANCELLED' || r.status === 'FAILED' ? 'failed' : (r.status === 'WAIT_CONFIRM' ? 'waiting' : 'running'))}">
                 <strong>${escapeHtml((r.runId || '').slice(0, 20))}</strong>
-                <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(r.mode || '-')}</div>
+                <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentModeText(r.mode))}</div>
                 <div style="font-size:11px;color:var(--text3);">${escapeHtml((r.updatedAt || '').replace('T', ' ').slice(0, 16))}</div>
               </div>
             `).join('') || `${renderEmptyState('agent_history')}`}
@@ -914,14 +914,14 @@ function renderAgentCenter() {
       <div class="agent-side-card">
         <div class="agent-side-title" style="font-size:14px;font-weight:600;">${escapeHtml(agentRunPanelTitle(run))}</div>
         <div class="agent-kv">
-          <strong>Run ID</strong><span style="font-family:var(--mono);font-size:12px;">${escapeHtml((run.runId || '').slice(0, 24))}</span>
-          <strong>模式</strong><span>${escapeHtml(run.mode || '-')}</span>
-          <strong>当前步骤</strong><span>${escapeHtml(stepLabels[run.currentStep] || run.currentStep || '-')}</span>
+          <strong>运行编号</strong><span style="font-family:var(--mono);font-size:12px;">${escapeHtml((run.runId || '').slice(0, 24))}</span>
+          <strong>模式</strong><span>${escapeHtml(agentModeText(run.mode))}</span>
+          <strong>当前步骤</strong><span>${escapeHtml(agentStepLabel(run.currentStep))}</span>
           <strong>目标</strong><span>${escapeHtml((run.target || run.options?.goal || '').slice(0, 60))}</span>
           <strong>进度</strong><span>${progressPct}%</span>
           <strong>已耗时</strong><span>${elapsedText}</span>
           <strong>状态</strong><span class="status-pill ${escapeHtml(agentRunPillClass(run))}">${escapeHtml(agentStatusText(run.status))}</span>
-          <strong>风险</strong><span>${escapeHtml(run.riskLevel || 'low')}${run.riskHits?.length ? ' · ' + run.riskHits.join('、') : ''}</span>
+          <strong>风险</strong><span>${escapeHtml(agentRiskText(run.riskLevel))}${run.riskHits?.length ? ' · ' + run.riskHits.join('、') : ''}</span>
         </div>
         <div style="margin-top:8px;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;">
           <div style="height:100%;width:${progressPct}%;background:${agentRunProgressColor(run)};border-radius:3px;transition:width 0.3s;"></div>
@@ -975,10 +975,10 @@ function renderAgentCenter() {
             return renderArtifactItem('匹配用例', mcText, mc || artifacts.matchedCount, 'cases');
           })()}
           ${renderArtifactItem('生成YAML', (artifacts.generatedYaml || artifacts.yamlDraft) ? '已生成' : '', '', artifacts.generatedYaml || artifacts.yamlDraft, 'yaml')}
-          ${renderArtifactItem('Sonic同步', artifacts.sonicSync ? (artifacts.sonicSync.status || '已完成') : '', artifacts.sonicSync, 'sonic')}
+          ${renderArtifactItem('Sonic同步', artifacts.sonicSync ? (agentToolStatusText(artifacts.sonicSync.status) || '已完成') : '', artifacts.sonicSync, 'sonic')}
           ${renderArtifactItem('执行任务', artifacts.jobId || artifacts.sonicJob || '', '', artifacts.jobId || artifacts.sonicJob, 'execution')}
           ${renderArtifactItem('报告', artifacts.reportId || (artifacts.report ? '已生成' : '') || '', '', artifacts.reportId || artifacts.report, 'report')}
-          ${renderArtifactItem('失败分析', artifacts.failureAnalysis ? (artifacts.failureAnalysis.failureType || '已分析') : '', artifacts.failureAnalysis, 'failure')}
+          ${renderArtifactItem('失败分析', artifacts.failureAnalysis ? failureTypeText(artifacts.failureAnalysis.failureType || '已分析') : '', artifacts.failureAnalysis, 'failure')}
           ${renderArtifactItem('修复草稿', artifacts.repairDraftId || (artifacts.repairDraft ? '已生成' : '') || '', '', artifacts.repairDraftId || artifacts.repairDraft, 'repair')}
           ${renderArtifactItem('缺陷草稿', artifacts.bugDraftId || (artifacts.bugDraft ? '已生成' : '') || '', '', artifacts.bugDraftId || artifacts.bugDraft, 'bug')}
           ${renderArtifactItem('总结', artifacts.summary ? '已生成' : '', artifacts.summary, 'summary')}
@@ -995,12 +995,12 @@ function renderAgentCenter() {
             const icon = cls === 'success' ? '✓' : (cls === 'failed' ? '✗' : (cls === 'waiting' ? '⏸' : '●'));
             return `
               <div class="agent-timeline-item ${cls}">
-                <strong>${icon} ${escapeHtml(stepLabels[step.step] || step.step || '-')}</strong>
+                <strong>${icon} ${escapeHtml(agentStepLabel(step.step))}</strong>
                 <div>${escapeHtml(step.summary || '')}</div>
                 <div style="font-size:11px;color:var(--text3);">${step.startedAt ? escapeHtml(step.startedAt.replace('T',' ').slice(11,19)) : ''}${step.endedAt && step.startedAt ? ' · ' + Math.round((Date.parse(step.endedAt)-Date.parse(step.startedAt))/1000) + 's' : ''}</div>
               </div>
             `;
-          }).join('') : '<div class="job-empty">等待 Agent 开始执行</div>'}
+          }).join('') : '<div class="job-empty">等待 Agent开始执行</div>'}
         </div>
       </div>
 
@@ -1011,7 +1011,7 @@ function renderAgentCenter() {
           ${agentRuns.slice(0, 10).map(r => `
             <div class="agent-timeline-item ${r.status === 'DONE' ? 'success' : (r.status === 'CANCELLED' || r.status === 'FAILED' ? 'failed' : (r.status === 'WAIT_CONFIRM' ? 'waiting' : 'running'))}">
               <strong>${escapeHtml((r.runId || '').slice(0, 20))}</strong>
-              <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(r.mode || '-')}</div>
+              <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentModeText(r.mode))}</div>
               <div style="font-size:11px;color:var(--text3);">${escapeHtml((r.updatedAt || '').replace('T', ' ').slice(0, 16))}</div>
             </div>
           `).join('') || `${renderEmptyState('agent_history')}`}
@@ -1149,7 +1149,7 @@ function setActiveWorkflow(sectionKey, options = {}) {
 
 // 上下文工具栏：根据当前模块动态展示标题/按钮
 const CONTEXT_TOOLBAR_MAP = {
-  // Agent 模块
+  // Agent模块
   dashboard:        { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadJobs(true)' },
   agent_history:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'loadAgentRunsHistory()' },
   agent_confirm:    { module: 'agent',    icon: '⌂', title: 'Agent 控制', refreshLabel: '刷新状态', refreshFn: 'renderAgentCenter()' },

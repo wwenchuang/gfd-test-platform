@@ -141,6 +141,100 @@ function classifyRiskLevel(goal) {
 // Legacy aliases
 const AGENT_STEPS = AUTO_AGENT_STEPS;
 const AGENT_STEP_LABELS = AUTO_AGENT_STEP_LABELS;
+const AGENT_MODE_LABELS = {
+  AUTO_SAFE: '安全自动',
+  FULL_AUTO: '全自动',
+  SEMI_AUTO: '半自动',
+  ANALYZE_ONLY: '只分析'
+};
+const AGENT_RISK_LABELS = {
+  low: '低',
+  medium: '中',
+  high: '高',
+  LOW: '低',
+  MEDIUM: '中',
+  HIGH: '高'
+};
+const AGENT_TOOL_LABELS = {
+  analyze_goal: '理解测试目标',
+  prepare_source: '整理输入资料',
+  impact_analysis: '影响分析',
+  case_retrieval: '检索已有用例',
+  list_cases: '匹配用例',
+  generate_yaml: '生成 YAML 草稿',
+  validate_yaml: '校验 YAML',
+  risk_review: '风险判断',
+  execution_precheck: '执行前体检',
+  sync_sonic: '同步 Sonic',
+  create_runner_job: '创建 Runner 执行任务',
+  read_report: '收集执行报告',
+  analyze_failure: '分析失败原因',
+  diagnose_failure: '失败诊断',
+  generate_repair_draft: '生成修复草稿',
+  generate_bug_draft: '生成缺陷草稿',
+  generate_summary: '生成总结报告',
+  query_page_knowledge: '查询页面知识',
+  query_failure_knowledge: '查询失败经验',
+  query_case_history: '查询用例历史'
+};
+
+function agentModeText(value) {
+  return AGENT_MODE_LABELS[String(value || '').toUpperCase()] || value || '-';
+}
+
+function agentRiskText(value) {
+  return AGENT_RISK_LABELS[String(value || '')] || value || '低';
+}
+
+function agentStepLabel(value) {
+  const key = String(value || '').toUpperCase();
+  return AUTO_AGENT_STEP_LABELS[key] || AGENT_STEP_LABELS_OLD?.[key] || value || '-';
+}
+
+function agentToolNameText(value) {
+  return AGENT_TOOL_LABELS[String(value || '')] || AGENT_TOOL_LABELS[String(value || '').toLowerCase()] || value || '工具调用';
+}
+
+function agentToolStatusText(value) {
+  const v = String(value || '').toUpperCase();
+  const map = {
+    SUCCESS: '成功',
+    FAILED: '失败',
+    PARTIAL_FAILED: '部分失败',
+    SKIPPED: '已跳过',
+    RUNNING: '执行中',
+    PENDING: '等待中',
+    WAIT_CONFIRM: '待确认',
+    DONE: '完成',
+    CANCELLED: '已取消'
+  };
+  return map[v] || value || '';
+}
+
+function agentJobStatusText(value) {
+  const v = String(value || '').toLowerCase();
+  const map = {
+    pending: '等待中',
+    running: '执行中',
+    success: '成功',
+    failed: '失败',
+    timeout: '超时',
+    cancelled: '已取消'
+  };
+  return map[v] || value || '未知';
+}
+
+function failureTypeText(value) {
+  const v = String(value || '').toUpperCase();
+  const map = {
+    SCRIPT_ISSUE: '脚本问题',
+    PRODUCT_BUG: '产品缺陷',
+    ENV_ISSUE: '环境问题',
+    UNKNOWN: '待确认',
+    NONE: '无失败'
+  };
+  return map[v] || value || '已分析';
+}
 const AGENT_STEPS_OLD = [
   'START',
   'ANALYZE_REQUIREMENT',

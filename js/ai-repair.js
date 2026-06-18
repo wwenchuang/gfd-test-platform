@@ -581,7 +581,7 @@ function repairYamlDraftHtml(normalized) {
         : aiFailureDraft?.activeTab === 'validation'
           ? `<pre class="agent-artifact-box">${escapeHtml(validationText && validationText !== '{}' ? validationText : '暂无校验结果，请先生成修复 YAML。')}</pre>`
           : `<pre class="agent-artifact-box ${aiFailureDraft?.activeTab === 'fixed' ? 'yaml-fixed' : (aiFailureDraft?.activeTab === 'original' ? 'yaml-original' : '')}">${escapeHtml(aiRepairTabText(diffText, validationText))}</pre>`}
-      <div class="generate-hint">修复草稿不会自动覆盖当前文件或基线。后续接 Agent Orchestrator 时，也会先进入“待我处理”。</div>
+      <div class="generate-hint">修复草稿不会自动覆盖当前文件或基线。后续接Agent 编排时，也会先进入“待我处理”。</div>
     </div>
   `;
 }

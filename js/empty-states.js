@@ -25,7 +25,7 @@ const EMPTY_STATES = {
   },
   agent_confirm: {
     icon: '✋', title: '暂无待确认项',
-    desc: '当 Agent 遇到高风险操作时，会在这里等待你的确认。',
+    desc: '当Agent 遇到高风险操作时，会在这里等待你的确认。',
     actions: [],
     tips: ['删除、修改基线、提交缺陷等操作需要确认', '可在「系统设置」调整风险策略']
   },
