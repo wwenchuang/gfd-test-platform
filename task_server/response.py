@@ -91,7 +91,8 @@ class ResponseMixin:
         """读取原始请求体"""
         length = int(self.headers.get("Content-Length", 0))
         qs, path = self._qs()
-        limit = MAX_UPLOAD_BODY_SIZE if path in ("/report", "/api/report/chunk", "/api/report/chunk-finish") else MAX_BODY_SIZE
+        upload_paths = ("/report", "/api/report/chunk", "/api/report/chunk-finish", "/api/app-install/request")
+        limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
         if length > limit:
             raise BodyTooLarge("请求体过大")
         return self.rfile.read(length) if length else b""
@@ -99,7 +100,8 @@ class ResponseMixin:
     def _body_size_allowed(self, path):
         """验证请求体大小是否允许"""
         length = int(self.headers.get("Content-Length", 0))
-        limit = MAX_UPLOAD_BODY_SIZE if path in ("/report", "/api/report/chunk", "/api/report/chunk-finish") else MAX_BODY_SIZE
+        upload_paths = ("/report", "/api/report/chunk", "/api/report/chunk-finish", "/api/app-install/request")
+        limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
         if length > limit:
             self._json({"ok": False, "error": "请求体过大"}, 413)
             return False

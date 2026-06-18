@@ -549,6 +549,7 @@ function renderRunnerDevices() {
   renderDeviceOptions('generate-device');
   renderDeviceOptions('run-file-device');
   renderDeviceOptions('run-task-device');
+  renderDeviceOptions('apk-install-device');
   renderAgentRunnerDeviceOptions();
 }
 

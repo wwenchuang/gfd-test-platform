@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import base64
 import json
+import http.cookiejar
 import os
 import platform
 import queue
@@ -446,6 +447,203 @@ def detect_devices():
     return devices
 
 
+def is_apk_install_job(job):
+    return str(job.get("job_type") or job.get("jobType") or job.get("type") or "").strip().lower() == "apk_install"
+
+
+def build_download_url(url):
+    url = str(url or "").strip()
+    if url.startswith("/"):
+        return SERVER.rstrip("/") + url
+    return url
+
+
+def pgyer_download_opener(url, job_id=""):
+    jar = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    page_req = urllib.request.Request(url, headers={"User-Agent": "Midscene-Runner/1.0"})
+    with opener.open(page_req, timeout=60) as resp:
+        body = resp.read().decode("utf-8", errors="ignore")
+    match = re.search(r'href=["\']([^"\']*/app/build/[^"\']+)["\']', body, flags=re.I)
+    if not match:
+        raise RuntimeError("蒲公英页面未解析到下载入口，请上传 APK 或填写 APK 直链。")
+    download_url = urllib.parse.urljoin(url, match.group(1))
+    if job_id:
+        post_job_progress(job_id, {
+            "progress": 12,
+            "current_task_name": "解析蒲公英下载页",
+            "current_task_index": 0,
+            "completed_task_count": 0,
+            "total_task_count": 3,
+            "message": "已找到蒲公英下载入口"
+        })
+    return opener, download_url
+
+
+def download_file(url, dest_path, job_id="", source=""):
+    target_url = build_download_url(url)
+    if not target_url:
+        raise RuntimeError("安装包下载地址为空")
+    headers = {
+        "User-Agent": "Midscene-Runner/1.0",
+        "Accept": "application/vnd.android.package-archive,*/*",
+    }
+    if target_url.startswith(SERVER.rstrip("/") + "/"):
+        headers["x-token"] = TOKEN
+    opener = urllib.request.build_opener()
+    if source == "pgyer":
+        opener, target_url = pgyer_download_opener(target_url, job_id=job_id)
+    req = urllib.request.Request(target_url, headers=headers)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    with opener.open(req, timeout=300) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        downloaded = 0
+        with open(dest_path, "wb") as f:
+            while True:
+                chunk = resp.read(512 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if job_id and total:
+                    progress = 10 + min(35, int(downloaded * 35 / max(total, 1)))
+                    post_job_progress(job_id, {
+                        "progress": progress,
+                        "current_task_name": "下载安装包",
+                        "current_task_index": 0,
+                        "completed_task_count": 0,
+                        "total_task_count": 3,
+                        "message": f"已下载 {downloaded // 1024 // 1024} MB"
+                    })
+    return dest_path
+
+
+def validate_apk_file(path, source=""):
+    with open(path, "rb") as f:
+        head = f.read(8)
+        f.seek(0)
+        sample = f.read(120)
+    if not head.startswith(b"PK"):
+        hint = "蒲公英短链返回的不是 APK 文件，请上传 APK 或填写 APK 直链。" if source == "pgyer" else "下载内容不是 APK 文件，请检查下载地址。"
+        preview = sample.decode("utf-8", errors="ignore").strip().replace("\n", " ")[:80]
+        raise RuntimeError(f"{hint}{f' 返回内容：{preview}' if preview else ''}")
+
+
+def install_apk_job(job):
+    job_id = job["job_id"]
+    started = time.time()
+    job_dir = WORKSPACE / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    install_mode = str(job.get("install_mode") or job.get("installMode") or "test_validation")
+    source = str(job.get("package_source") or job.get("source_type") or job.get("sourceType") or "upload")
+    apk_url = job.get("apk_url") or job.get("apkUrl") or ""
+    apk_name = safe_filename(job.get("apk_name") or job.get("apkName") or job.get("file") or "app.apk").replace(".yaml", ".apk").replace(".yml", ".apk")
+    app_package = str(job.get("app_package") or job.get("appPackage") or "").strip()
+
+    stdout = []
+    stderr = []
+    device_id = job.get("device_id") or ""
+    try:
+        if install_mode == "baseline_regression" and source != "production_url":
+            raise RuntimeError("基线回归只能安装线上包来源，不能安装测试上传包或蒲公英包。")
+        if not device_id:
+            device_ids = detect_device_ids()
+            device_id = device_ids[0] if device_ids else ""
+        if not device_id:
+            raise RuntimeError("未检测到可安装的 Android 设备")
+        post_job_progress(job_id, {
+            "progress": 8,
+            "current_task_name": "下载安装包",
+            "current_task_index": 0,
+            "completed_task_count": 0,
+            "total_task_count": 3,
+            "device_id": device_id,
+            "message": "Runner 已接收安装任务"
+        })
+        apk_path = job_dir / apk_name
+        download_file(apk_url, apk_path, job_id=job_id, source=source)
+        validate_apk_file(apk_path, source=source)
+        post_job_progress(job_id, {
+            "progress": 55,
+            "current_task_name": "ADB 安装",
+            "current_task_index": 1,
+            "completed_task_count": 1,
+            "total_task_count": 3,
+            "device_id": device_id,
+            "message": f"安装包下载完成：{apk_path.name}"
+        })
+        adb_bin, _ = resolve_adb_with_devices(require_devices=False)
+        result = run_cmd([adb_bin, "-s", device_id, "install", "-r", "-d", str(apk_path)], timeout=600)
+        stdout.append(result.stdout or "")
+        stderr.append(result.stderr or "")
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or result.stdout or "adb install 执行失败").strip())
+        verify_message = ""
+        if app_package:
+            verify = run_cmd([adb_bin, "-s", device_id, "shell", "pm", "path", app_package], timeout=30)
+            verify_message = (verify.stdout or verify.stderr or "").strip()
+            stdout.append(verify.stdout or "")
+            stderr.append(verify.stderr or "")
+            if verify.returncode != 0 or not verify_message:
+                raise RuntimeError(f"APK 已安装，但未检测到包名 {app_package}；请确认包名是否正确。")
+        post_job_progress(job_id, {
+            "progress": 100,
+            "current_task_name": "安装完成",
+            "current_task_index": 2,
+            "completed_task_count": 3,
+            "total_task_count": 3,
+            "device_id": device_id,
+            "message": verify_message or "APK 安装成功"
+        })
+        payload = {
+            "status": "success",
+            "duration": round(time.time() - started, 2),
+            "device_id": device_id,
+            "stdout": "\n".join(stdout)[-12000:],
+            "stderr": "\n".join(stderr)[-12000:],
+            "summary": {
+                "job_type": "apk_install",
+                "install_mode": install_mode,
+                "package_source": source,
+                "apk_name": apk_path.name,
+                "apk_path": str(apk_path),
+                "app_package": app_package,
+            },
+            "progress": 100,
+        }
+        write_text(job_dir / "final_result.json", json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload
+    except Exception as e:
+        message = str(e)
+        post_job_progress(job_id, {
+            "progress": 0,
+            "current_task_name": "安装失败",
+            "current_task_index": 0,
+            "completed_task_count": 0,
+            "total_task_count": 3,
+            "device_id": device_id,
+            "message": message
+        })
+        payload = {
+            "status": "failed",
+            "duration": round(time.time() - started, 2),
+            "device_id": device_id,
+            "stdout": "\n".join(stdout)[-12000:],
+            "stderr": ("\n".join(stderr) + "\n" + message).strip()[-12000:],
+            "summary": {
+                "job_type": "apk_install",
+                "install_mode": install_mode,
+                "package_source": source,
+                "apk_name": apk_name,
+                "app_package": app_package,
+            },
+            "error": message,
+            "progress": 0,
+        }
+        write_text(job_dir / "final_result.json", json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload
+
+
 def heartbeat(devices):
     payload = {
         "runner_id": RUNNER_ID,
@@ -756,6 +954,9 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
 
 
 def run_job(job):
+    if is_apk_install_job(job):
+        return install_apk_job(job)
+
     job_id = job["job_id"]
     job_dir = WORKSPACE / job_id
     job_dir.mkdir(parents=True, exist_ok=True)

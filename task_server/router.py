@@ -68,6 +68,7 @@ from task_server.services.job_service import (
     append_job_event,
     app_package_for_module,
     copy_or_move_task_file,
+    create_job,
     create_pending_job,
     find_job,
     job_allows_auto_device,
@@ -484,6 +485,7 @@ _MIME_MAP = {
     ".yml":  "text/yaml; charset=utf-8",
     ".txt":  "text/plain; charset=utf-8",
     ".mm":   "application/x-freemind; charset=utf-8",
+    ".apk":  "application/vnd.android.package-archive",
 }
 
 
@@ -503,6 +505,98 @@ def send_attachment(handler, body_bytes, filename, content_type):
         handler.wfile.write(body_bytes)
     except (BrokenPipeError, ConnectionResetError):
         pass
+
+
+APP_INSTALL_JOB_TYPE = "apk_install"
+APP_INSTALL_PACKAGE_DIR = safe_join(LEARNING_DIR, "apk-packages")
+
+
+def is_app_install_job(job):
+    job_type = str(job.get("job_type") or job.get("jobType") or job.get("type") or "").strip().lower()
+    return job_type == APP_INSTALL_JOB_TYPE
+
+
+def normalize_install_mode(value):
+    raw = str(value or "").strip().lower()
+    if raw in {"baseline", "baseline_regression", "production", "online"}:
+        return "baseline_regression"
+    return "test_validation"
+
+
+def normalize_package_source(value):
+    raw = str(value or "").strip().lower()
+    aliases = {
+        "file": "upload",
+        "manual": "upload",
+        "manual_upload": "upload",
+        "apk_upload": "upload",
+        "apk": "upload",
+        "apk_url": "url",
+        "direct_url": "url",
+        "link": "url",
+        "pgyer_url": "pgyer",
+        "pgyer": "pgyer",
+        "pgyer_short": "pgyer",
+        "online": "production_url",
+        "prod": "production_url",
+        "production": "production_url",
+        "production_url": "production_url",
+    }
+    return aliases.get(raw, raw if raw in {"upload", "url", "pgyer", "production_url"} else "upload")
+
+
+def clean_apk_filename(name):
+    filename = clean_asset_filename(name or "app.apk", "app.apk")
+    base, ext = os.path.splitext(filename)
+    if ext.lower() != ".apk":
+        filename = (base or "app") + ".apk"
+    return filename
+
+
+def app_install_package_meta_path(package_id):
+    return safe_join(APP_INSTALL_PACKAGE_DIR, clean_id(package_id, "apk"), "meta.json")
+
+
+def save_uploaded_apk_package(job_id, apk_name, content_base64):
+    if not content_base64:
+        raise ValueError("请先上传 APK 文件")
+    content = str(content_base64 or "").strip()
+    if "," in content and content.lower().startswith("data:"):
+        content = content.split(",", 1)[1]
+    try:
+        data = base64.b64decode(content, validate=True)
+    except Exception:
+        raise ValueError("APK 文件内容解析失败，请重新上传")
+    if not data:
+        raise ValueError("上传的 APK 文件为空")
+    if len(data) > MAX_UPLOAD_BODY_SIZE:
+        raise ValueError("APK 文件超过平台上传上限")
+    filename = clean_apk_filename(apk_name)
+    package_dir = safe_join(APP_INSTALL_PACKAGE_DIR, clean_id(job_id, "apk"))
+    os.makedirs(package_dir, exist_ok=True)
+    apk_path = safe_join(package_dir, filename)
+    write_bytes_file(apk_path, data)
+    write_json_file(safe_join(package_dir, "meta.json"), {
+        "package_id": job_id,
+        "filename": filename,
+        "size": len(data),
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    return {
+        "apk_name": filename,
+        "apk_size": len(data),
+        "apk_path": apk_path,
+        "apk_url": f"/api/app-install/package?id={urllib.parse.quote(clean_id(job_id, 'apk'))}",
+    }
+
+
+def validate_install_package_request(install_mode, package_source, apk_url):
+    if install_mode == "baseline_regression" and package_source != "production_url":
+        raise ValueError("基线回归只能安装线上包来源；测试包、上传包和蒲公英链接请用于“测试环境验证”。")
+    if package_source in {"url", "pgyer", "production_url"}:
+        parsed = urllib.parse.urlparse(apk_url or "")
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("请填写有效的安装包下载地址")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1346,6 +1440,106 @@ def _get_runners(handler, qs):
     handler._json({"ok": True, "runners": runners, "devices": devices})
 
 
+# ── 安装包更新任务 ──────────────────────────────────────────────────
+
+@route_get("/api/app-install/package")
+def _get_app_install_package(handler, qs):
+    if _require_runner_auth(handler):
+        return
+    package_id = clean_id(qs.get("id") or "", "apk")
+    meta_path = app_install_package_meta_path(package_id)
+    meta = read_json_file(meta_path, default={})
+    filename = clean_apk_filename(meta.get("filename") or "app.apk")
+    apk_path = safe_join(APP_INSTALL_PACKAGE_DIR, package_id, filename)
+    if not os.path.exists(apk_path):
+        handler._json({"ok": False, "error": "安装包不存在或已被清理"}, 404)
+        return
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", "application/vnd.android.package-archive")
+    handler.send_header("Content-Disposition", f'attachment; filename="{urllib.parse.quote(filename)}"')
+    handler.send_header("Content-Length", str(os.path.getsize(apk_path)))
+    handler.end_headers()
+    try:
+        with open(apk_path, "rb") as f:
+            shutil.copyfileobj(f, handler.wfile)
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+@route_post("/api/app-install/request")
+def _post_app_install_request(handler, qs):
+    if _require_user_auth(handler):
+        return
+    d = handler._body()
+    install_mode = normalize_install_mode(d.get("install_mode") or d.get("installMode") or d.get("mode"))
+    package_source = normalize_package_source(d.get("source_type") or d.get("sourceType") or d.get("package_source") or d.get("packageSource"))
+    runner_id = d.get("runner_id") or d.get("runnerId") or ""
+    device_id = d.get("device_id") or d.get("deviceId") or ""
+    device_strategy = normalize_device_strategy(
+        d.get("device_strategy") or d.get("deviceStrategy"),
+        device_id=device_id,
+        runner_id=runner_id,
+    )
+    if device_strategy != "auto" and not device_id and not runner_id:
+        handler._json({
+            "ok": False,
+            "error": "请选择安装设备；如确实需要平台分配，请明确选择“自动选择在线设备”。"
+        }, 400)
+        return
+    job_id = new_job_id()
+    apk_name = clean_apk_filename(d.get("apk_name") or d.get("apkName") or "app.apk")
+    apk_url = (d.get("apk_url") or d.get("apkUrl") or d.get("pgyer_url") or d.get("pgyerUrl") or "").strip()
+    apk_size = 0
+    try:
+        if package_source == "upload":
+            saved = save_uploaded_apk_package(
+                job_id,
+                apk_name,
+                d.get("contentBase64") or d.get("apkBase64") or d.get("fileBase64") or "",
+            )
+            apk_name = saved["apk_name"]
+            apk_url = saved["apk_url"]
+            apk_size = saved["apk_size"]
+        validate_install_package_request(install_mode, package_source, apk_url)
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+        return
+
+    mode_label = "基线回归" if install_mode == "baseline_regression" else "测试环境验证"
+    source_label = {
+        "upload": "上传 APK",
+        "url": "APK 直链",
+        "pgyer": "蒲公英链接",
+        "production_url": "线上包地址",
+    }.get(package_source, package_source)
+    job = create_job({
+        "job_id": job_id,
+        "job_type": APP_INSTALL_JOB_TYPE,
+        "type": APP_INSTALL_JOB_TYPE,
+        "module": "安装包更新",
+        "file": apk_name,
+        "status": "pending",
+        "run_mode": "baseline" if install_mode == "baseline_regression" else "test",
+        "target_runner_id": runner_id,
+        "device_id": device_id,
+        "device_strategy": device_strategy,
+        "target_task_name": f"{mode_label}安装包更新",
+        "current_task_name": "等待 Runner 下载并安装 APK",
+        "task_names": ["下载安装包", "ADB 安装", "安装结果校验"],
+        "total_task_count": 3,
+        "progress": 0,
+        "install_mode": install_mode,
+        "package_source": package_source,
+        "package_source_label": source_label,
+        "apk_name": apk_name,
+        "apk_url": apk_url,
+        "apk_size": apk_size,
+        "app_package": (d.get("app_package") or d.get("appPackage") or "").strip(),
+    })
+    handler._json({"ok": True, "job": job})
+
+
 # ── Runner 下一个任务 ───────────────────────────────────────────────
 
 @route_get("/api/runner/jobs/next")
@@ -1386,15 +1580,23 @@ def _get_runner_jobs_next(handler, qs):
                 selected["device_id"] = sorted(available_devices)[0]
             selected["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             save_jobs(jobs)
-            update_task_meta(selected["module"], selected["file"], {
-                "last_job_id": selected["job_id"],
-                "last_status": "running",
-                "last_target_task_name": selected.get("target_task_name", ""),
-                "last_run_at": selected["started_at"]
-            })
+            if not is_app_install_job(selected) and selected.get("module") and selected.get("file"):
+                update_task_meta(selected["module"], selected["file"], {
+                    "last_job_id": selected["job_id"],
+                    "last_status": "running",
+                    "last_target_task_name": selected.get("target_task_name", ""),
+                    "last_run_at": selected["started_at"]
+                })
 
     if not selected:
         handler._json({"ok": True, "job": None})
+        return
+
+    if is_app_install_job(selected):
+        job_payload = dict(selected)
+        job_payload["job_type"] = APP_INSTALL_JOB_TYPE
+        job_payload["type"] = APP_INSTALL_JOB_TYPE
+        handler._json({"ok": True, "job": job_payload})
         return
 
     try:
@@ -3036,14 +3238,15 @@ def _handle_runner_job_result(handler, job_id):
                 })
                 found["events"] = events[-80:]
             save_jobs(jobs)
-            update_task_meta(found["module"], found["file"], {
-                "last_job_id": job_id, "last_status": status,
-                "last_target_task_name": found.get("target_task_name", ""),
-                "last_run_at": found["finished_at"],
-                "last_report_url": report_url
-            })
+            if not is_app_install_job(found) and found.get("module") and found.get("file"):
+                update_task_meta(found["module"], found["file"], {
+                    "last_job_id": job_id, "last_status": status,
+                    "last_target_task_name": found.get("target_task_name", ""),
+                    "last_run_at": found["finished_at"],
+                    "last_report_url": report_url
+                })
     failure_review = None
-    if found and status != "success":
+    if found and status != "success" and not is_app_install_job(found):
         try:
             failure_review = call_dashscope_failure_review(found, stdout, stderr, summary)
         except Exception as e:

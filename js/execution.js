@@ -42,6 +42,13 @@ function setExecutionTab(tab) {
     loadDebugTraces(true).then(() => loadDebugSnapshots(true)).then(() => showExecutionCenter()).catch(() => showExecutionCenter());
     return;
   }
+  if (tab === 'install' || tab === 'runners') {
+    showExecutionCenter();
+    if (typeof loadRunnerDevices === 'function') {
+      loadRunnerDevices({force:true, quiet:true}).then(() => showExecutionCenter()).catch(() => showExecutionCenter());
+    }
+    return;
+  }
   showExecutionCenter();
 }
 
@@ -51,6 +58,10 @@ function showExecutionCenter() {
   activeWorkspaceMode = 'execution';
   area.className = 'editor-area';
   area.innerHTML = renderExecutionCenter();
+  if (executionActiveTab === 'install') {
+    if (typeof renderDeviceOptions === 'function') renderDeviceOptions('apk-install-device');
+    setTimeout(() => syncAppInstallMode(false), 0);
+  }
   const path = document.getElementById('toolbar-path');
   if (path) path.innerHTML = '<span>▶</span> 执行中心';
   const help = document.getElementById('toolbar-help');
@@ -65,6 +76,7 @@ function renderExecutionCenter() {
     ['debug', '调试执行'],
     ['sonic', '同步至 Sonic 平台'],
     ['rerun', '失败重跑'],
+    ['install', '安装包更新'],
     ['runners', 'Runner 状态'],
     ['trace', 'Trace 回放']
   ];
@@ -75,6 +87,7 @@ function renderExecutionCenter() {
   if (executionActiveTab === 'debug') body = renderExecutionTabDebug();
   else if (executionActiveTab === 'sonic') body = renderExecutionTabSonic();
   else if (executionActiveTab === 'rerun') body = renderExecutionTabRerun();
+  else if (executionActiveTab === 'install') body = renderExecutionTabAppInstall();
   else if (executionActiveTab === 'runners') body = renderExecutionTabRunners();
   else if (executionActiveTab === 'trace') body = renderExecutionTabTrace();
   return `
@@ -83,7 +96,7 @@ function renderExecutionCenter() {
         <div>
           <div class="workflow-kicker">EXECUTE · 单条调试 / 整文件回归 / Sonic 套件</div>
           <h2>调试执行中心</h2>
-          <p>单条/整文件由 Windows/Mac Runner 执行；Sonic 只负责已同步基线的测试套回归；Trace 用于回放、对比和定位链路问题。</p>
+          <p>单条/整文件由 Windows/Mac Runner 执行；安装包更新也由 Runner 通过 ADB 下发；Sonic 只负责已同步基线的测试套回归。</p>
         </div>
         <div class="review-actions">
           <button class="btn-sm primary" onclick="loadJobs(true).then(()=>showExecutionCenter())">刷新任务</button>
@@ -132,6 +145,10 @@ function refreshExecutionYamlList() {
   showExecutionCenter();
 }
 
+function isApkInstallJob(job = {}) {
+  return String(job.job_type || job.jobType || job.type || '').toLowerCase() === 'apk_install';
+}
+
 function renderExecutionTabDebug() {
   const rows = executionYamlRows();
   const currentLabel = currentModule && currentFile ? `${currentModule} / ${currentFile}` : '未选择';
@@ -156,6 +173,7 @@ function renderExecutionTabDebug() {
         <button class="btn-sm" onclick="refreshExecutionYamlList()">筛选</button>
         <button class="btn-sm" onclick="loadModules().then(()=>showExecutionCenter())">刷新 YAML</button>
         <button class="btn-sm" onclick="loadRunnerDevices && loadRunnerDevices({force:true}).then(()=>showExecutionCenter())">刷新 Runner</button>
+        <button class="btn-sm" onclick="setExecutionTab('install')">安装/更新 App（可选）</button>
       </div>
       ${rows.length ? `
         <div class="execution-yaml-list">
@@ -192,7 +210,7 @@ function renderExecutionTabDebug() {
 }
 
 function renderExecutionTabSonic() {
-  const jobs = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => j.module || j.file).slice(0, 60);
+  const jobs = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => !isApkInstallJob(j) && (j.module || j.file)).slice(0, 60);
   return `
     <div class="review-panel">
       <div class="section-head">
@@ -224,6 +242,7 @@ function renderExecutionTabSonic() {
 
 function renderExecutionTabRerun() {
   const failed = (Array.isArray(latestJobs) ? latestJobs : []).filter(j => {
+    if (isApkInstallJob(j)) return false;
     const s = String(j.status || '').toLowerCase();
     return ['failed', 'timeout', 'cancelled', 'error'].includes(s);
   }).slice(0, 80);
@@ -257,6 +276,218 @@ function renderExecutionTabRerun() {
       </table>` : `${renderEmptyState('failure_analysis')}`}
     </div>
   `;
+}
+
+function renderExecutionTabAppInstall() {
+  const devices = Array.isArray(runnerDevices) ? runnerDevices : [];
+  const installJobs = (Array.isArray(latestJobs) ? latestJobs : [])
+    .filter(j => isApkInstallJob(j))
+    .slice(0, 20);
+  const mode = document.getElementById('apk-install-mode')?.value || 'test_validation';
+  const source = document.getElementById('apk-install-source')?.value || (mode === 'baseline_regression' ? 'production_url' : 'upload');
+  const urlValue = document.getElementById('apk-install-url')?.value || '';
+  const appPackage = document.getElementById('apk-install-package')?.value || '';
+  return `
+    <div class="review-panel">
+      <div class="section-head">
+        <div>
+          <h3>安装包更新</h3>
+          <p>默认不用安装，YAML 可以直接执行；只有测试包或线上包需要更新时，才在这里创建 Runner 安装任务。</p>
+        </div>
+        <div class="review-actions">
+          <button class="btn-sm" onclick="loadRunnerDevices && loadRunnerDevices({force:true, quiet:true}).then(()=>showExecutionCenter())">刷新设备</button>
+          <button class="btn-sm" onclick="loadJobs(true, true).then(()=>showExecutionCenter())">刷新任务</button>
+        </div>
+      </div>
+      <div class="review-stats" style="grid-template-columns:repeat(3,1fr);">
+        <div class="review-stat"><strong>${devices.length}</strong><span>在线设备</span></div>
+        <div class="review-stat"><strong>${installJobs.filter(j => ['pending','running'].includes(String(j.status || '').toLowerCase())).length}</strong><span>安装中/待执行</span></div>
+        <div class="review-stat"><strong>可选</strong><span>不安装也能直接执行</span></div>
+      </div>
+      <div class="agent-form-grid" style="grid-template-columns:minmax(0,1fr) minmax(320px,420px); margin-top:12px;">
+        <div class="agent-card">
+          <h3>创建安装任务</h3>
+          <div class="agent-field">
+            <label for="apk-install-mode">使用场景</label>
+            <select id="apk-install-mode" onchange="syncAppInstallMode()">
+              <option value="test_validation" ${mode === 'test_validation' ? 'selected' : ''}>测试环境验证：可上传 APK / 蒲公英 / 直链</option>
+              <option value="baseline_regression" ${mode === 'baseline_regression' ? 'selected' : ''}>基线回归：只能使用线上包地址</option>
+            </select>
+          </div>
+          <div class="agent-field" style="margin-top:10px;">
+            <label for="apk-install-source">安装包来源</label>
+            <select id="apk-install-source" onchange="syncAppInstallMode()">
+              <option value="upload" ${source === 'upload' ? 'selected' : ''}>上传 APK（测试验证推荐）</option>
+              <option value="pgyer" ${source === 'pgyer' ? 'selected' : ''}>蒲公英链接（测试验证）</option>
+              <option value="url" ${source === 'url' ? 'selected' : ''}>APK 直链（测试验证）</option>
+              <option value="production_url" ${source === 'production_url' ? 'selected' : ''}>线上包地址（基线回归）</option>
+            </select>
+          </div>
+          <div class="agent-field" id="apk-install-file-field" style="margin-top:10px;">
+            <label for="apk-install-file">上传 APK</label>
+            <input id="apk-install-file" type="file" accept=".apk,application/vnd.android.package-archive">
+          </div>
+          <div class="agent-field" id="apk-install-url-field" style="margin-top:10px;">
+            <label for="apk-install-url">下载地址</label>
+            <input id="apk-install-url" value="${escapeHtml(urlValue)}" placeholder="https://www.pgyer.com/oY0S7Zg4 或 APK 直链">
+          </div>
+          <div class="agent-field" style="margin-top:10px;">
+            <label for="apk-install-package">包名校验（可选）</label>
+            <input id="apk-install-package" value="${escapeHtml(appPackage)}" placeholder="例如 com.kfb.model；不填则只校验 adb install 结果">
+          </div>
+        </div>
+        <div class="agent-card">
+          <h3>安装到哪台设备</h3>
+          <div class="agent-field">
+            <label for="apk-install-device">执行设备</label>
+            <select id="apk-install-device">
+              <option value="">请选择执行设备（不自动分配）</option>
+              <option value="__AUTO_DEVICE__">自动选择在线设备（可选）</option>
+            </select>
+          </div>
+          <div class="generate-hint" id="apk-install-hint" style="margin-top:10px;">测试前需要更新 App 时再安装；不需要更新时，直接去“调试执行”跑 YAML。</div>
+          <div class="generate-status" id="apk-install-status"></div>
+          <div class="review-actions" style="margin-top:12px;">
+            <button class="btn-sm primary" id="btn-create-apk-install" onclick="createApkInstallRequest()">创建安装任务</button>
+            <button class="btn-sm" onclick="setExecutionTab('debug')">不安装，直接执行</button>
+          </div>
+        </div>
+      </div>
+      <h3 style="margin-top:16px;">最近安装任务</h3>
+      ${installJobs.length ? `<table class="report-table" style="margin-top:12px;">
+        <thead><tr><th>安装包</th><th>场景</th><th>设备</th><th>状态</th><th>进度</th><th>时间</th></tr></thead>
+        <tbody>${installJobs.map(job => {
+          const status = String(job.status || '').toLowerCase();
+          const sourceLabel = job.package_source_label || job.packageSourceLabel || job.package_source || job.packageSource || '-';
+          const modeLabel = (job.install_mode || job.installMode) === 'baseline_regression' ? '基线回归' : '测试验证';
+          return `
+            <tr class="${status === 'failed' ? 'report-row failed' : ''}">
+              <td><strong>${escapeHtml(job.apk_name || job.apkName || job.file || job.job_id || '-')}</strong><div class="report-muted">${escapeHtml(sourceLabel)}</div></td>
+              <td>${escapeHtml(modeLabel)}</td>
+              <td>${escapeHtml(jobDeviceLabel(job))}</td>
+              <td><span class="status-pill ${status === 'success' ? 'success' : (['failed','timeout','cancelled'].includes(status) ? 'warn' : '')}">${escapeHtml(jobStatusText(job.status || ''))}</span></td>
+              <td>${escapeHtml(String(job.progress ?? 0))}%<div class="report-muted">${escapeHtml(job.current_task_name || job.currentTaskName || job.progress_message || '')}</div></td>
+              <td class="report-cell-time">${escapeHtml((job.finished_at || job.updated_at || job.started_at || job.created_at || '').replace('T',' ').slice(0,19))}</td>
+            </tr>
+          `;
+        }).join('')}</tbody>
+      </table>` : `${renderEmptyState('reports', '还没有安装包更新任务。默认可以直接执行 YAML，不需要先安装。')}`}
+    </div>
+  `;
+}
+
+function syncAppInstallMode(showNotice = true) {
+  const modeEl = document.getElementById('apk-install-mode');
+  const sourceEl = document.getElementById('apk-install-source');
+  const fileField = document.getElementById('apk-install-file-field');
+  const urlField = document.getElementById('apk-install-url-field');
+  const urlInput = document.getElementById('apk-install-url');
+  const hint = document.getElementById('apk-install-hint');
+  if (!modeEl || !sourceEl) return;
+  const isBaseline = modeEl.value === 'baseline_regression';
+  Array.from(sourceEl.options).forEach(option => {
+    option.disabled = isBaseline && option.value !== 'production_url';
+  });
+  if (isBaseline && sourceEl.value !== 'production_url') {
+    sourceEl.value = 'production_url';
+  }
+  const source = sourceEl.value;
+  if (fileField) fileField.style.display = source === 'upload' ? '' : 'none';
+  if (urlField) urlField.style.display = source === 'upload' ? 'none' : '';
+  if (urlInput) {
+    urlInput.placeholder = source === 'production_url'
+      ? '填写线上包 APK 下载地址'
+      : (source === 'pgyer' ? '填写蒲公英链接；如短链下载失败，请改用上传 APK' : '填写 APK 直链');
+  }
+  if (hint) {
+    hint.textContent = isBaseline
+      ? '基线回归会强制使用线上包地址，避免把测试包装到基线设备。'
+      : '测试环境验证可上传 APK，也可以填蒲公英或 APK 直链；默认不安装，直接执行 YAML。';
+    hint.className = isBaseline ? 'generate-hint warn' : 'generate-hint';
+  }
+  if (showNotice && isBaseline) {
+    showToast('基线回归已限制为线上包地址', 'success');
+  }
+}
+
+async function readApkUploadPayload(file) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  return {
+    apk_name: file.name,
+    contentBase64: dataUrl.split(',')[1] || '',
+  };
+}
+
+async function createApkInstallRequest() {
+  const status = document.getElementById('apk-install-status');
+  const button = document.getElementById('btn-create-apk-install');
+  const mode = document.getElementById('apk-install-mode')?.value || 'test_validation';
+  const source = document.getElementById('apk-install-source')?.value || 'upload';
+  const selectedDevice = requireRunnerDevice('apk-install-device', 'apk-install-status', '创建安装包更新任务');
+  if (!selectedDevice) return;
+  const payload = {
+    install_mode: mode,
+    source_type: source,
+    app_package: (document.getElementById('apk-install-package')?.value || '').trim(),
+    runner_id: selectedDevice.runner_id,
+    device_id: selectedDevice.device_id,
+    device_strategy: selectedDevice.device_strategy,
+  };
+  if (mode === 'baseline_regression' && source !== 'production_url') {
+    showToast('基线回归只能使用线上包地址', 'error');
+    syncAppInstallMode(false);
+    return;
+  }
+  if (source === 'upload') {
+    const file = document.getElementById('apk-install-file')?.files?.[0];
+    if (!file) {
+      showToast('请先选择 APK 文件', 'error');
+      return;
+    }
+    if (!/\.apk$/i.test(file.name || '')) {
+      showToast('上传文件必须是 .apk', 'error');
+      return;
+    }
+    Object.assign(payload, await readApkUploadPayload(file));
+  } else {
+    const url = (document.getElementById('apk-install-url')?.value || '').trim();
+    if (!/^https?:\/\//i.test(url)) {
+      showToast('请填写有效的下载地址', 'error');
+      return;
+    }
+    payload.apk_url = url;
+    payload.apk_name = source === 'production_url' ? '线上包.apk' : (source === 'pgyer' ? '蒲公英安装包.apk' : '下载安装包.apk');
+  }
+  if (status) {
+    status.textContent = '正在创建安装任务...';
+    status.className = 'generate-status show busy';
+  }
+  await LoadingManager.withLoading(async () => {
+    try {
+      const data = await apiRequest('/app-install/request', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      if (status) {
+        status.textContent = `已创建安装任务：${data.job?.job_id || ''}。Runner 会自动下载安装并回传 adb 结果。`;
+        status.className = 'generate-status show success';
+      }
+      showToast('✓ 安装任务已创建', 'success');
+      await loadJobs(false, true);
+      showExecutionCenter();
+    } catch(e) {
+      if (status) {
+        status.textContent = e.message || '创建安装任务失败';
+        status.className = 'generate-status show error';
+      }
+      showToast(e.message || '创建安装任务失败', 'error');
+    }
+  }, { btn: button, btnLabel: '创建中...' });
 }
 
 function renderExecutionTabRunners() {
