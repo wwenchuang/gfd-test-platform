@@ -97,30 +97,96 @@ function renderExecutionCenter() {
   `;
 }
 
+function executionYamlRows() {
+  const selectedModule = currentModule && modules[currentModule] ? currentModule : '';
+  const search = (document.getElementById('execution-yaml-search')?.value || '').trim().toLowerCase();
+  let rows = [];
+  Object.keys(modules || {}).sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(mod => {
+    if (selectedModule && mod !== selectedModule) return;
+    (modules[mod] || []).forEach(file => {
+      if (!/\.ya?ml$/i.test(file || '')) return;
+      const haystack = `${mod}/${file}`.toLowerCase();
+      if (search && !haystack.includes(search)) return;
+      rows.push({ mod, file });
+    });
+  });
+  return rows;
+}
+
+function executionModuleOptionsHtml() {
+  const selectedModule = currentModule && modules[currentModule] ? currentModule : '';
+  const options = Object.keys(modules || {}).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+    .map(mod => `<option value="${escapeHtml(mod)}" ${mod === selectedModule ? 'selected' : ''}>${escapeHtml(mod)}（${(modules[mod] || []).length}）</option>`)
+    .join('');
+  return `<option value="">全部模块</option>${options}`;
+}
+
+function selectExecutionModule(value) {
+  currentModule = value || null;
+  currentFile = currentModule && modules[currentModule]?.includes(currentFile) ? currentFile : null;
+  renderModules();
+  showExecutionCenter();
+}
+
+function refreshExecutionYamlList() {
+  showExecutionCenter();
+}
+
 function renderExecutionTabDebug() {
+  const rows = executionYamlRows();
+  const currentLabel = currentModule && currentFile ? `${currentModule} / ${currentFile}` : '未选择';
+  const runnerCount = Array.isArray(runnerDevices) ? runnerDevices.length : 0;
   return `
-    <div class="review-grid" style="grid-template-columns:repeat(3,1fr);">
-      <div class="review-panel">
-        <h3>① 选模块</h3>
-        <p>从左侧用例树选择模块。当前模块：<strong>${escapeHtml(currentModule || '未选择')}</strong></p>
-        <div class="review-actions"><button class="btn-sm" onclick="toggleLibrary(true)">展开用例树</button></div>
-      </div>
-      <div class="review-panel">
-        <h3>② 选 YAML</h3>
-        <p>选中 YAML 后会进入编辑器。当前文件：<strong>${escapeHtml(currentFile || '未打开')}</strong></p>
-        <div class="review-actions">
-          <button class="btn-sm" onclick="toggleLibrary(true)">查看 YAML 列表</button>
-          ${currentFile ? `<button class="btn-sm primary" onclick="openFile(${jsArg(currentModule)}, ${jsArg(currentFile)})">打开当前文件</button>` : ''}
+    <div class="execution-debug-board">
+      <div class="execution-debug-toolbar">
+        <div>
+          <h3>选择要调试的 YAML</h3>
+          <p>当前选择：<strong>${escapeHtml(currentLabel)}</strong>。单条调试会先打开 YAML 并选择 task，整文件执行才会跑完整文件。</p>
+        </div>
+        <div class="execution-runner-summary">
+          <strong>${runnerCount}</strong>
+          <span>在线 Runner 设备</span>
         </div>
       </div>
-      <div class="review-panel">
-        <h3>③ 执行</h3>
-        <p>单条调试只下发选中的 task；整文件回归才会按 YAML 内 tasks 顺序全部运行。</p>
-        <div class="review-actions">
-          <button class="btn-sm primary" onclick="document.getElementById('btn-run-file')?.click()" ${currentFile ? '' : 'disabled'}>执行整文件</button>
-          <button class="btn-sm" onclick="document.getElementById('btn-run-task')?.click()" ${currentFile ? '' : 'disabled'}>调试选中用例</button>
-        </div>
+      <div class="execution-filters">
+        <select id="execution-module-select" onchange="selectExecutionModule(this.value)">
+          ${executionModuleOptionsHtml()}
+        </select>
+        <input id="execution-yaml-search" value="${escapeHtml(document.getElementById('execution-yaml-search')?.value || '')}" placeholder="搜索 YAML 或模块..." onkeydown="if(event.key==='Enter') refreshExecutionYamlList()">
+        <button class="btn-sm" onclick="refreshExecutionYamlList()">筛选</button>
+        <button class="btn-sm" onclick="loadModules().then(()=>showExecutionCenter())">刷新 YAML</button>
+        <button class="btn-sm" onclick="loadRunnerDevices && loadRunnerDevices({force:true}).then(()=>showExecutionCenter())">刷新 Runner</button>
       </div>
+      ${rows.length ? `
+        <div class="execution-yaml-list">
+          <table class="assets-table execution-yaml-table">
+            <thead><tr><th>YAML 文件</th><th>模块</th><th>用例</th><th>Sonic</th><th>操作</th></tr></thead>
+            <tbody>
+              ${rows.map(row => {
+                const stats = typeof yamlStatsForFile === 'function' ? yamlStatsForFile(row.mod, row.file) : {};
+                const sonic = typeof sonicFileSummary === 'function' ? sonicFileSummary(row.mod, row.file) : { cls: '', text: '未知', title: '' };
+                const active = currentModule === row.mod && currentFile === row.file;
+                return `
+                  <tr class="${active ? 'active' : ''}">
+                    <td>
+                      <button class="asset-file-link" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)})">${escapeHtml(yamlDisplayName(row.file))}</button>
+                      <div class="asset-file-path">${escapeHtml(row.file)}</div>
+                    </td>
+                    <td>${escapeHtml(row.mod)}</td>
+                    <td>${typeof prioritySummaryHtml === 'function' ? prioritySummaryHtml(stats, true) : '-'}</td>
+                    <td><span class="task-ext sonic ${escapeHtml(sonic.cls)}" title="${escapeHtml(sonic.title || '')}">${escapeHtml(sonic.text || '-')}</span></td>
+                    <td class="asset-row-actions">
+                      <button class="btn-sm" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)})">打开</button>
+                      <button class="btn-sm primary" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)}).then(()=>showRunSelectedTask())">单条调试</button>
+                      <button class="btn-sm success" onclick="openFile(${jsArg(row.mod)}, ${jsArg(row.file)}).then(()=>showRunCurrentFile())">整文件执行</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : `<div class="job-empty">没有可调试的 YAML。请先在“用例资产”或“AI 生成用例”里创建用例。</div>`}
     </div>
   `;
 }

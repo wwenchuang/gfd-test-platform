@@ -85,6 +85,18 @@ function serve() {
       json(res, {cases: []});
       return;
     }
+    if (url.pathname === '/api/sonic/status') {
+      json(res, {ok: true, synced: false, cases: [], summary: {synced: 0, total: 0}});
+      return;
+    }
+    if (url.pathname === '/api/repair-drafts') {
+      json(res, {ok: true, drafts: []});
+      return;
+    }
+    if (url.pathname === '/api/baseline/page-refs') {
+      json(res, {ok: true, refs: []});
+      return;
+    }
     if (url.pathname === '/api/yaml-stats') {
       json(res, {
         ok: true,
@@ -102,8 +114,21 @@ function serve() {
     }
     if (url.pathname === '/api/file' && req.method === 'GET') {
       fileReadCount += 1;
-      res.writeHead(404, {'content-type': 'text/plain; charset=utf-8'});
-      res.end('file missing in smoke test');
+      const file = url.searchParams.get('file') || '调试用例.yaml';
+      const name = file.replace(/\.ya?ml$/i, '');
+      const yaml = [
+        'android:',
+        '  tasks:',
+        `    - name: "${name}主流程验证"`,
+        '      flow:',
+        '        - aiAssert: "页面加载正常，核心入口可见"',
+        `    - name: "${name}异常提示验证"`,
+        '      flow:',
+        '        - aiAssert: "页面无空白、无网络错误、无异常弹窗"',
+        '',
+      ].join('\n');
+      res.writeHead(200, {'content-type': 'text/plain; charset=utf-8'});
+      res.end(yaml);
       return;
     }
     if (url.pathname === '/api/jobs') {
@@ -270,7 +295,14 @@ async function anyVisible(locator) {
   try {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}});
     const errors = [];
+    const apiFailures = [];
     page.on('pageerror', err => errors.push(err.message));
+    page.on('response', response => {
+      const responseUrl = response.url();
+      if (responseUrl.includes('/api/') && response.status() >= 400) {
+        apiFailures.push(`${response.status()} ${responseUrl}`);
+      }
+    });
     await page.route('https://fonts.googleapis.com/**', route => {
       route.fulfill({status: 200, contentType: 'text/css', body: ''});
     });
@@ -325,9 +357,20 @@ async function anyVisible(locator) {
 
     await page.click('.workflow-step[data-workflow="execute"]');
     await page.waitForSelector('text=调试执行');
+    await page.waitForSelector('text=选择要调试的 YAML');
+    await page.waitForSelector('.execution-yaml-table');
+    if (!await anyVisible(page.locator('.execution-yaml-table button', {hasText: '单条调试'}))) throw new Error('execution debug table is missing single-task action');
+    if (!await anyVisible(page.locator('.execution-yaml-table button', {hasText: '整文件执行'}))) throw new Error('execution debug table is missing full-file action');
     await page.waitForSelector('text=Runner 进度');
     if (!await page.locator('.jobs-panel').isVisible()) throw new Error('execution page should show Runner progress panel');
     if (await page.locator('text=Agent 状态').isVisible()) throw new Error('execution page should not show Agent status title');
+    await page.screenshot({path: path.join(ARTIFACTS, 'execution.png'), fullPage: true});
+    await page.locator('.execution-yaml-table button', {hasText: '单条调试'}).first().click();
+    await page.waitForSelector('#modal-run-task.show');
+    await page.waitForSelector('text=选择用例（可多选）');
+    const runTaskOptions = await page.locator('#run-task-name option').count();
+    if (runTaskOptions < 2) throw new Error(`single-task modal did not parse YAML tasks, options=${runTaskOptions}`);
+    await page.click('#modal-run-task .btn-cancel');
 
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');
@@ -364,6 +407,7 @@ async function anyVisible(locator) {
     await page.click('button:has-text("测试当前策略")');
     await page.waitForTimeout(300);
     if (!/gateway ok/.test(dialogText)) throw new Error('AI Gateway test dialog did not include gateway ok');
+    if (apiFailures.length) throw new Error(`api failures: ${apiFailures.join(' | ')}`);
     if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`);
     console.log(JSON.stringify({
       ok: true,
@@ -371,6 +415,7 @@ async function anyVisible(locator) {
       screenshots: [
         path.join(ARTIFACTS, 'login.png'),
         path.join(ARTIFACTS, 'dashboard.png'),
+        path.join(ARTIFACTS, 'execution.png'),
         path.join(ARTIFACTS, 'agent.png'),
       ],
     }, null, 2));

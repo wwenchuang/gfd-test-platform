@@ -1232,7 +1232,7 @@ async function activateWorkflow(sectionKey) {
   applyLazyLoadForSection(activeWorkflow);
   if (activeWorkflow === 'repair') {
     showAiRepairCenter();
-    // 失败重跑不强制展开用例树，避免干扰
+    // 失败重跑不强制打开左侧目录，避免干扰
     toggleLibrary(false);
     return;
   }
@@ -1337,11 +1337,22 @@ function applyLazyLoadForSection(sectionKey) {
   ]);
 
   if (NEEDS_MODULES.has(sectionKey) && typeof ensureModulesLoaded === 'function') {
-    ensureModulesLoaded().catch(() => {});
+    ensureModulesLoaded().then(() => {
+      if (sectionKey === 'execute' && activeWorkflow === 'execute' && !hasOpenEditor() && typeof showExecutionCenter === 'function') {
+        showExecutionCenter();
+      }
+      if (sectionKey === 'assets' && activeWorkflow === 'assets' && !hasOpenEditor() && typeof showAssetsCenter === 'function') {
+        showAssetsCenter();
+      }
+    }).catch(() => {});
   }
 
   if (NEEDS_RUNNERS.has(sectionKey) && typeof ensureRunnersLoaded === 'function') {
-    ensureRunnersLoaded().catch(() => {});
+    ensureRunnersLoaded().then(() => {
+      if (sectionKey === 'execute' && activeWorkflow === 'execute' && !hasOpenEditor() && typeof showExecutionCenter === 'function') {
+        showExecutionCenter();
+      }
+    }).catch(() => {});
   }
 
   if (NEEDS_JOBS_POLLING.has(sectionKey)) {

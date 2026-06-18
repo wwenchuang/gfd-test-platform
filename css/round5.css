@@ -875,6 +875,83 @@
 /* ============ 执行页子 tab ============ */
 .execution-tabs { margin: 8px 0 12px 0; }
 .execution-tab-body { min-height: 200px; }
+.execution-debug-board {
+  border: 1px solid rgba(34,211,238,.28);
+  background: rgba(15,23,42,.66);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.execution-debug-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(51,80,109,.42);
+}
+.execution-debug-toolbar h3 {
+  margin: 0 0 4px;
+}
+.execution-debug-toolbar p {
+  margin: 0;
+  color: var(--text2);
+  line-height: 1.6;
+}
+.execution-runner-summary {
+  min-width: 120px;
+  padding: 10px 12px;
+  border: 1px solid rgba(51,80,109,.72);
+  border-radius: 8px;
+  background: rgba(2,6,23,.42);
+  text-align: center;
+}
+.execution-runner-summary strong {
+  display: block;
+  font-size: 22px;
+  color: var(--accent-strong);
+}
+.execution-runner-summary span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text3);
+  font-size: 11px;
+}
+.execution-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(220px, 1fr) auto auto auto;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(51,80,109,.42);
+}
+.execution-filters select,
+.execution-filters input {
+  border: 1px solid rgba(51,80,109,.72);
+  border-radius: 8px;
+  background: rgba(2,6,23,.72);
+  color: var(--text);
+  padding: 8px 10px;
+  min-width: 0;
+}
+.execution-yaml-list {
+  max-height: min(58vh, 620px);
+  overflow: auto;
+}
+.execution-yaml-table th,
+.execution-yaml-table td {
+  padding: 11px 12px;
+}
+@media (max-width: 1100px) {
+  .execution-debug-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .execution-filters {
+    grid-template-columns: 1fr;
+  }
+  .execution-yaml-list {
+    max-height: none;
+  }
+}
 
 /* ============ 模型配置策略卡片 ============ */
 .model-strategy-card {
