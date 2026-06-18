@@ -456,21 +456,24 @@ function updateGenerateKnowledgeCount() {
 
 async function loadRunnerDevices(options = {}) {
   const force = options && options.force;
+  const quiet = options && options.quiet;
   // round 4: 设备列表只在执行/生成等需要弹设备选择时拉取，后续切页直接复用
   if (!force && AppState.loaded.runners) {
     renderRunnerDevices();
-    if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
+    if (!quiet && activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
     return;
   }
   try {
     const data = await apiRequest('/runners');
+    AppState.runners = data.runners || {};
     runnerDevices = (data.devices || []).filter(device => device.runner_online && device.status === 'online');
     AppState.loaded.runners = true;
   } catch(e) {
+    AppState.runners = {};
     runnerDevices = [];
   }
   renderRunnerDevices();
-  if (activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
+  if (!quiet && activeWorkflow === 'dashboard' && !hasOpenEditor()) showWorkflowGuide('dashboard');
 }
 
 function ensureRunnersLoaded(options = {}) {
@@ -500,10 +503,53 @@ function renderDeviceOptions(selectId) {
   }
 }
 
+function renderAgentRunnerDeviceOptions(preferredValue) {
+  const select = document.getElementById('agent-runner-device');
+  if (!select) return;
+  const previous = preferredValue || select.value || '__AUTO_DEVICE__';
+  select.innerHTML = '<option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>';
+  runnerDevices.forEach(device => {
+    const opt = document.createElement('option');
+    opt.value = `${device.runner_id}::${device.device_id}`;
+    opt.textContent = `${device.label || device.device_id} / ${device.runner_id}`;
+    select.appendChild(opt);
+  });
+  if (runnerDevices.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = "";
+    opt.textContent = "暂无在线 Runner 设备";
+    select.appendChild(opt);
+  }
+  if (Array.from(select.options).some(opt => opt.value === previous)) {
+    select.value = previous;
+  } else {
+    select.value = runnerDevices.length ? '__AUTO_DEVICE__' : '';
+  }
+  updateAgentRunnerDeviceHint();
+}
+
+function updateAgentRunnerDeviceHint() {
+  const hint = document.getElementById('agent-runner-device-hint');
+  if (!hint) return;
+  const selected = selectedRunnerDevice('agent-runner-device');
+  if (selected.device_strategy === 'manual_required') {
+    hint.textContent = '暂无在线设备。请先启动 Mac/Windows Runner，或刷新 Runner 列表。';
+    hint.className = 'form-hint warn';
+  } else if (selected.device_strategy === 'auto') {
+    hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。`;
+    hint.className = 'form-hint';
+  } else {
+    const device = runnerDevices.find(item => item.runner_id === selected.runner_id && item.device_id === selected.device_id);
+    hint.textContent = `固定执行：${device?.label || selected.device_id} / ${selected.runner_id}`;
+    hint.className = 'form-hint';
+  }
+}
+
 function renderRunnerDevices() {
   renderDeviceOptions('generate-device');
   renderDeviceOptions('run-file-device');
   renderDeviceOptions('run-task-device');
+  renderAgentRunnerDeviceOptions();
 }
 
 function selectedRunnerDevice(selectId='generate-device') {

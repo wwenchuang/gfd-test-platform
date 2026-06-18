@@ -175,6 +175,9 @@ class AgentContext:
             "files": self.files,
             "sourceInputs": self.source_inputs,
             "sourceType": str(self.raw.get("sourceType") or self.raw.get("source_type") or "manual").strip().lower(),
+            "runnerId": str(self.raw.get("runnerId") or self.raw.get("runner_id") or "").strip(),
+            "deviceId": str(self.raw.get("deviceId") or self.raw.get("device_id") or "").strip(),
+            "deviceStrategy": str(self.raw.get("deviceStrategy") or self.raw.get("device_strategy") or "").strip(),
         }
 
 
@@ -302,6 +305,17 @@ def create_agent_run(payload):
         source_refs["figmaUrl"] = normalized_input.get("figmaUrl")
     model_provider_id = str(payload.get("modelProviderId") or payload.get("aiProviderId") or "").strip()
     selected_ai_model = str(payload.get("aiModel") or payload.get("model") or "").strip()
+    runner_id = str(payload.get("runnerId") or payload.get("runner_id") or "").strip()
+    device_id = str(payload.get("deviceId") or payload.get("device_id") or "").strip()
+    try:
+        from task_server.services import job_service
+        device_strategy = job_service.normalize_device_strategy(
+            payload.get("deviceStrategy") or payload.get("device_strategy"),
+            device_id=device_id,
+            runner_id=runner_id,
+        )
+    except Exception:
+        device_strategy = "fixed" if (runner_id or device_id) else "auto"
     steps = [
         {"step": s, "status": "PENDING", "startedAt": None, "endedAt": None, "summary": "", "artifactRefs": []}
         for s in AGENT_RUN_STEPS if s not in ("IDLE", "DONE", "FAILED", "WAIT_CONFIRM")
@@ -314,6 +328,9 @@ def create_agent_run(payload):
         "platform": str(payload.get("platform") or "android").strip(),
         "scope": str(payload.get("scope") or "smoke").strip(),
         "executionMode": execution_mode,
+        "runnerId": runner_id,
+        "deviceId": device_id,
+        "deviceStrategy": device_strategy,
         "sourceType": source_type,
         "sourceRefs": source_refs,
         "normalizedInput": normalized_input,
@@ -409,13 +426,14 @@ def preview_agent_plan(payload):
         "riskHits": risk_hits,
         "steps": [
             "1. 分析测试目标",
-            "2. 匹配已有用例或生成新用例",
-            "3. 生成并校验 Midscene YAML",
-            "4. 同步 Sonic 并执行测试",
-            "5. 收集报告并分析失败",
-            "6. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
-            "7. 高风险动作进入 WAIT_CONFIRM",
-            "8. 生成总结报告",
+            "2. 整理输入来源",
+            "3. 匹配已有用例或生成新用例",
+            "4. 生成并校验 Midscene YAML",
+            "5. 通过 Windows/Mac Runner 执行已确认 YAML",
+            "6. 收集报告并分析失败",
+            "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
+            "8. 高风险动作进入 WAIT_CONFIRM",
+            "9. 生成总结报告",
         ],
     }
 
@@ -4860,7 +4878,42 @@ def _tool_execution_precheck(run):
             from task_server.services import runner_service
             runners = runner_service.list_runners()
             online = [rid for rid, item in runners.items() if item.get("online")]
-            add("runner_online", bool(online), f"在线 Runner：{', '.join(online[:5])}" if online else "Runner 不在线")
+            selected_runner = str(run.get("runnerId") or run.get("runner_id") or "").strip()
+            selected_device = str(run.get("deviceId") or run.get("device_id") or "").strip()
+            selected_strategy = str(run.get("deviceStrategy") or run.get("device_strategy") or "auto").strip().lower()
+            online_devices = [
+                d for d in runner_service.all_online_devices()
+                if d.get("runner_online") and d.get("status") in ("online", "device")
+            ]
+            artifacts["runnerSelection"] = {
+                "runnerId": selected_runner,
+                "deviceId": selected_device,
+                "deviceStrategy": selected_strategy,
+                "onlineRunners": online[:20],
+                "onlineDevices": online_devices[:50],
+            }
+            if selected_runner:
+                runner = runners.get(selected_runner) or {}
+                runner_ok = bool(runner.get("online"))
+                runner_devices = runner_service.runner_device_ids(runner)
+                device_ok = (not selected_device) or selected_device in runner_devices
+                detail = f"指定 Runner：{selected_runner}"
+                if selected_device:
+                    detail += f"，设备：{selected_device}"
+                if not runner_ok:
+                    detail += "；Runner 不在线"
+                elif selected_device and not device_ok:
+                    detail += "；目标设备不在线"
+                else:
+                    detail += "；已在线"
+                add("runner_online", runner_ok and device_ok, detail)
+            elif selected_device:
+                device_ok = any(d.get("device_id") == selected_device for d in online_devices)
+                add("runner_online", device_ok, f"指定设备：{selected_device}，{'已在线' if device_ok else '未在线'}")
+            elif selected_strategy != "auto":
+                add("runner_online", False, "尚未选择执行设备；请在 Agent 表单选择具体设备，或选择自动分配在线设备")
+            else:
+                add("runner_online", bool(online_devices or online), f"在线 Runner：{', '.join(online[:5])}；在线设备 {len(online_devices)} 台" if online else "Runner 不在线")
         except Exception as exc:
             add("runner_online", False, f"读取 Runner 失败：{str(exc)[:120]}")
 
@@ -5446,6 +5499,13 @@ def _tool_run_sonic(run):
         else:
             # 默认 Runner Job 模式：只执行匹配到的 YAML；套件触发失败时也回退到这里。
             job_ids = []
+            selected_runner_id = str(run.get("runnerId") or run.get("runner_id") or "").strip()
+            selected_device_id = str(run.get("deviceId") or run.get("device_id") or "").strip()
+            selected_device_strategy = job_service.normalize_device_strategy(
+                run.get("deviceStrategy") or run.get("device_strategy") or "auto",
+                device_id=selected_device_id,
+                runner_id=selected_runner_id,
+            )
             for ref in file_refs:
                 try:
                     yf = str(ref.get("path") or "")
@@ -5458,7 +5518,9 @@ def _tool_run_sonic(run):
                         "module": mod,
                         "file": fn,
                         "target_task_name": fn.replace(".yaml", "").replace(".yml", ""),
-                        "device_strategy": "auto",
+                        "runner_id": selected_runner_id,
+                        "device_id": selected_device_id,
+                        "device_strategy": selected_device_strategy,
                     })
                     if job and job.get("job_id"):
                         job_ids.append(job["job_id"])

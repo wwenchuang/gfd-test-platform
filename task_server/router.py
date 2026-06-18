@@ -123,6 +123,7 @@ from task_server.services.repair_service import (
 from task_server.services.runner_service import (
     all_online_devices,
     annotate_job_queue_state,
+    list_runners,
     load_runners,
     midscene_runtime_env,
     normalize_device_list,
@@ -1340,8 +1341,7 @@ def _get_runners(handler, qs):
     if _require_user_auth(handler):
         return
     devices = all_online_devices()
-    with RUNNER_LOCK:
-        runners = load_runners()
+    runners = list_runners()
     handler._json({"ok": True, "runners": runners, "devices": devices})
 
 
@@ -3625,13 +3625,14 @@ def _post_agent_runs_preview(handler, qs):
             "riskHits": risk_hits,
             "steps": [
                 "1. 分析测试目标",
-                "2. 匹配已有用例或生成新用例",
-                "3. 生成并校验 Midscene YAML",
-                "4. 同步 Sonic 并执行测试",
-                "5. 收集报告并分析失败",
-                "6. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
-                "7. 高风险动作进入 WAIT_CONFIRM",
-                "8. 生成总结报告"
+                "2. 整理输入来源",
+                "3. 匹配已有用例或生成新用例",
+                "4. 生成并校验 Midscene YAML",
+                "5. 通过 Windows/Mac Runner 执行已确认 YAML",
+                "6. 收集报告并分析失败",
+                "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
+                "8. 高风险动作进入 WAIT_CONFIRM",
+                "9. 生成总结报告"
             ]
         }
     })

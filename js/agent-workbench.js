@@ -429,7 +429,7 @@ function launchDashboardAgent() {
 // Form field IDs used in the Agent workbench for value preservation across re-renders
 const _AGENT_FORM_FIELD_IDS = [
   'agent-goal', 'agent-app-name', 'agent-platform', 'agent-scope',
-  'agent-mode-select', 'agent-failed-job', 'agent-source-type',
+  'agent-mode-select', 'agent-runner-device', 'agent-failed-job', 'agent-source-type',
   'agent-source-generate-job-id', 'agent-source-case-set-id',
   'agent-source-figma-url', 'agent-source-requirement-text',
   'agent-source-failed-job-id'
@@ -519,6 +519,13 @@ async function showAgentWorkbench() {
             <select id="agent-model" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px;">
               <option value="">自动（服务端默认）</option>
             </select>
+          </div>
+          <div class="agent-field" style="grid-column:1/-1;">
+            <label for="agent-runner-device">执行机器 / 设备</label>
+            <select id="agent-runner-device" onchange="updateAgentRunnerDeviceHint()">
+              <option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>
+            </select>
+            <div class="form-hint" id="agent-runner-device-hint">正在读取在线 Runner 和设备...</div>
           </div>
           <div class="agent-field" style="grid-column:1/-1;">
             <label for="agent-source-type">输入来源</label>
@@ -671,6 +678,14 @@ async function showAgentWorkbench() {
   renderAgentCenter();
   updateToolbarState();
   loadAppList(savedFormState['agent-app-name']?.value);
+  renderAgentRunnerDeviceOptions(savedFormState['agent-runner-device']?.value);
+  if (!AppState.loaded.runners) {
+    loadRunnerDevices({force: true, quiet: true}).then(() => {
+      renderAgentRunnerDeviceOptions(savedFormState['agent-runner-device']?.value);
+    }).catch(() => {
+      renderAgentRunnerDeviceOptions(savedFormState['agent-runner-device']?.value);
+    });
+  }
   await loadAgentModelOptions(savedFormState['agent-model']?.value);
 }
 
@@ -1819,6 +1834,7 @@ function agentPayloadFromForm(options={}) {
   if (sourceMaterials.figmaUrl && !source.sourceRefs.figmaUrl) {
     source.sourceRefs.figmaUrl = sourceMaterials.figmaUrl;
   }
+  const runnerSelection = selectedRunnerDevice('agent-runner-device');
   return {
     mode,
     goal,
@@ -1833,6 +1849,9 @@ function agentPayloadFromForm(options={}) {
     platform,
     scope,
     executionMode: 'RUNNER_JOB',
+    runnerId: runnerSelection.runner_id,
+    deviceId: runnerSelection.device_id,
+    deviceStrategy: runnerSelection.device_strategy,
     model,
     modelProviderId: modelInfo.providerId || '',
     aiProviderId: modelInfo.providerId || '',
@@ -1871,11 +1890,17 @@ async function previewAgentPlan() {
       });
       const plan = data.plan || data;
       const hits = agentRiskHits(payload.goal);
+      const runnerLine = payload.deviceStrategy === 'fixed'
+        ? `执行设备：${payload.deviceId || '未指定设备'} / ${payload.runnerId || '任意 Runner'}`
+        : (payload.deviceStrategy === 'auto'
+          ? `执行设备：自动选择在线设备（当前 ${runnerDevices.length} 台在线）`
+          : '执行设备：暂无在线设备，执行前体检会阻断');
   const lines = [
         '全自动 Agent 执行计划：',
         `模式：${plan.mode || payload.mode}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
         `范围：${plan.scope || payload.scope}`,
+        runnerLine,
         `输入来源：${payload.sourceType || 'manual'}`,
         `输入资料：Figma ${payload.figmaUrl ? '1' : '0'} 个，文件 ${payload.files?.length || 0} 个，截图 ${payload.images?.length || 0} 张`,
         `风险：${hits.length ? hits.join('、') : '未命中高风险关键词'}`,
@@ -1885,7 +1910,7 @@ async function previewAgentPlan() {
           '2. 整理输入来源',
           '3. 匹配已有用例或生成新用例',
           '4. 生成并校验 Midscene YAML',
-          '5. 同步 Sonic 并执行测试',
+          '5. 通过 Windows/Mac Runner 执行已确认 YAML',
           '6. 收集报告并分析失败',
           '7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿',
           '8. 高风险或不确定动作进入 WAIT_CONFIRM',
