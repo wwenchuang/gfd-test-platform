@@ -311,6 +311,14 @@ async function anyVisible(locator) {
     if (!commandBox || commandBox.width < 700) throw new Error('dashboard command area is too narrow and may render vertical text');
     if (!jobsBox || jobsBox.width > 430) throw new Error(`jobs panel is too wide: ${jobsBox && jobsBox.width}`);
 
+    await page.click('.workflow-step:has-text("用例资产")');
+    await page.waitForSelector('text=YAML 文件');
+    await page.waitForSelector('.assets-table');
+    if (await page.locator('.jobs-panel').isVisible()) throw new Error('assets page should hide the right Agent/status panel');
+    const assetsBox = await page.locator('.assets-table-panel').boundingBox();
+    if (!assetsBox || assetsBox.width < 900) throw new Error(`assets table is too narrow: ${assetsBox && assetsBox.width}`);
+    await page.screenshot({path: path.join(ARTIFACTS, 'assets.png'), fullPage: true});
+
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');
     await page.waitForFunction(() => {

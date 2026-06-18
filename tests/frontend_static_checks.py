@@ -87,6 +87,8 @@ def main():
     require("YAML 校验失败时，不能显示" not in html, "Implementation details should not be visible as instructional UI text")
     # Assets entry exists in sidebar as asset center
     require("用例资产" in html and 'data-workflow="assets"' in html, "Assets must be accessible from sidebar")
+    require("function showAssetsCenter" in html and "assets-table" in html and "选择当前列表" in html, "Assets page must render a full-width asset table")
+    require("function updateWorkbenchPanelMode" in html and "hide-jobs" in html and "'config'" in html and "'generate'" in html, "Non-execution pages must hide the right status panel")
     require("你想让 Agent 测什么" in html and "启动全自动 Agent" in html, "Dashboard hero must present the simplified Agent workbench")
     require("showModelConfigCenter" in html and "查看模型策略" in html, "Dashboard must link to model config")
     require("dashboard-accordion" in html, "Secondary dashboard cards must be collapsible")

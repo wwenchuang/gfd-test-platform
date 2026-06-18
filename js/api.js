@@ -84,7 +84,7 @@ const WORKFLOW_SECTIONS = {
         { label: '打开Agent 工作台', cls: 'primary', fn: 'showAgentWorkbench()' }
       ]},
       { title: '查看运行轨迹', text: '每一步都会记录状态、耗时、输入输出摘要、产物和等待确认节点，便于排查全自动链路。', actions: [
-        { label: '刷新Agent 状态', fn: 'refreshAgentRuns(true)' }
+        { label: '刷新 Agent 状态', fn: 'refreshAgentRuns(true)' }
       ]},
       { title: '人工确认节点', text: '高风险动作、基线覆盖、飞书缺陷提交等动作都会停下来等你确认。', actions: [
         { label: '查看右侧执行中心', fn: 'renderAgentCenter()' }

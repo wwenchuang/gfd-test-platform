@@ -224,8 +224,11 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showAgentWorkbench();
     return;
   }
+  if (sectionKey === 'assets' && typeof showAssetsCenter === 'function') {
+    showAssetsCenter();
+    return;
+  }
   area.className = 'editor-area';
   area.innerHTML = workflowGuideHtml(sectionKey);
   updateToolbarState();
 }
-

@@ -183,6 +183,7 @@ function applyRecommendedStrategy() {
 }
 
 async function showModelConfigCenter() {
+  if (activeWorkflow !== 'config') setActiveWorkflow('config');
   activeWorkspaceMode = 'model-config';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 模型配置';

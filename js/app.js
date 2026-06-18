@@ -914,9 +914,30 @@ function jobTimelineHtml(job) {
 }
 
 async function focusJob(jobId) {
-  await loadJobs();
-  const row = Array.from(document.querySelectorAll('.job-row')).find(el => el.textContent.includes(jobId));
-  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!jobId) {
+    showToast('没有可定位的任务编号', 'warn');
+    return;
+  }
+  await loadJobs(true);
+  if (activeWorkflow !== 'execute') {
+    setActiveWorkflow('execute');
+    showExecutionCenter();
+    toggleLibrary(false);
+  } else if (typeof showExecutionCenter === 'function') {
+    showExecutionCenter();
+  }
+  setTimeout(() => {
+    const row = Array.from(document.querySelectorAll('.job-row, .report-row, tr, .job-meta'))
+      .find(el => el.textContent.includes(jobId));
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.classList.add('focus-flash');
+      setTimeout(() => row.classList.remove('focus-flash'), 1800);
+      showToast('已定位到执行任务', 'success');
+    } else {
+      showToast('已切到执行页，但没有找到这条任务；可能记录已被刷新或清理', 'warn');
+    }
+  }, 80);
 }
 
 function showRepairResultFromJob(jobId) {
@@ -1042,7 +1063,7 @@ function renderJobs() {
   const list = document.getElementById('jobs-list');
   const count = document.getElementById('jobs-count');
   if (!list || !count) return;
-  // Agent 状态：dashboard / agent_history / agent_confirm 默认走Agent 状态视图
+  // Agent 状态：dashboard / agent_history / agent_confirm 默认走 Agent 状态视图
   if (['dashboard', 'agent', 'agent_history', 'agent_confirm'].includes(activeWorkflow)) {
     renderAgentCenter();
     return;

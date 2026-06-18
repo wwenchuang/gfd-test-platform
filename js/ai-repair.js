@@ -270,6 +270,39 @@ function repairDraftStatusText(status) {
   return map[String(status || '').toUpperCase()] || '待处理';
 }
 
+function repairFailureTypeText(type) {
+  const map = {
+    SCRIPT_ISSUE: '脚本问题',
+    PRODUCT_BUG: '产品缺陷',
+    ENV_ISSUE: '环境问题',
+    UNKNOWN: '待人工复核'
+  };
+  return map[String(type || '').toUpperCase()] || '待人工复核';
+}
+
+function repairRiskText(level) {
+  const map = { low: '低', medium: '中', high: '高' };
+  return map[String(level || '').toLowerCase()] || '中';
+}
+
+function promptRepairUnavailable(reason) {
+  showToast(reason || '当前条件还不能执行这个操作，请先完成前一步。', 'warn');
+}
+
+async function copyRepairDraftYaml() {
+  const yaml = aiFailureDraft?.fixedYaml || '';
+  if (!yaml) {
+    promptRepairUnavailable('暂无修复草稿可复制，请先生成修复草稿');
+    return;
+  }
+  try {
+    await copyText(yaml);
+    showToast('已复制修复草稿', 'success');
+  } catch(e) {
+    showToast('复制失败，请手动选择文本', 'error');
+  }
+}
+
 function currentRepairDraft() {
   if (!aiFailureDraft) return null;
   const draftId = aiFailureDraft.draftId || aiFailureDraft.draft_id || '';
@@ -477,7 +510,7 @@ const FAILURE_TYPE_META = {
 
 function failureTypeChip(type) {
   const meta = FAILURE_TYPE_META[type] || FAILURE_TYPE_META.UNKNOWN;
-  return `<span class="failure-type-chip failure-${type.toLowerCase()}">${escapeHtml(meta.tag)} · ${escapeHtml(type)}</span>`;
+  return `<span class="failure-type-chip failure-${type.toLowerCase()}">${escapeHtml(meta.tag)}</span>`;
 }
 
 function aiRepairSummaryHtml(normalized) {
@@ -487,15 +520,15 @@ function aiRepairSummaryHtml(normalized) {
     <div class="review-panel ai-repair-analysis">
       <div class="section-head">
         <div>
-          <h3>结构化分析</h3>
-          <p>结构化展示失败归因；按类型路由到不同操作。</p>
+          <h3>失败原因判断</h3>
+          <p>先判断失败属于脚本、产品、环境还是不确定，再决定下一步。</p>
         </div>
         ${failureTypeChip(normalized.failureType)}
       </div>
       <div class="review-stats ai-repair-stat-grid">
-        <div class="review-stat"><strong>${escapeHtml(normalized.failureType)}</strong><span>失败类型</span></div>
-        <div class="review-stat"><strong>${escapeHtml(normalized.riskLevel || '-')}</strong><span>风险等级</span></div>
-        <div class="review-stat"><strong>${normalized.canAutoRepair ? '允许草稿' : '禁止自动修复'}</strong><span>修复策略</span></div>
+        <div class="review-stat"><strong>${escapeHtml(repairFailureTypeText(normalized.failureType))}</strong><span>失败类型</span></div>
+        <div class="review-stat"><strong>${escapeHtml(repairRiskText(normalized.riskLevel))}</strong><span>风险等级</span></div>
+        <div class="review-stat"><strong>${normalized.canAutoRepair ? '可生成草稿' : '只做人工处理'}</strong><span>下一步</span></div>
       </div>
       <div class="ai-repair-block">
         <div class="ai-repair-block-label">失败结论</div>
@@ -553,23 +586,26 @@ function repairYamlDraftHtml(normalized) {
   const draftId = draft?.draftId || draft?.draft_id || aiFailureDraft?.draftId || '';
   const draftStatus = draft ? repairDraftStatusText(draft.status) : '未保存草稿';
   const canApplyDraft = Boolean(draftId && aiFailureDraft?.fixedYaml && canRepair && ['DRAFTED', 'WAIT_CONFIRM'].includes(String(draft?.status || '').toUpperCase()));
+  const noDraftReason = !canRepair
+    ? `当前归因为${repairFailureTypeText(normalized.failureType)}，不能自动修 YAML`
+    : '请先点击“生成修复草稿”';
   return `
     <div class="review-panel ai-repair-draft-panel">
       <div class="section-head">
         <div>
           <h3>YAML 修复草稿</h3>
-          <p>这里只生成草稿，不自动覆盖原 YAML；保存到正式脚本前必须人工确认。</p>
+          <p>这里先生成可检查的草稿；只有你点“人工确认替换”后，才会覆盖正式 YAML，并自动备份原文件。</p>
           <div class="job-meta">草稿状态：${escapeHtml(draftStatus)}${draftId ? ` · ${escapeHtml(draftId)}` : ''}</div>
         </div>
         <div class="review-actions">
-          <button class="btn-sm ai" onclick="generateRepairYamlFromAnalysis()" ${canRepair ? '' : 'disabled title="只有 SCRIPT_ISSUE 才允许生成修复草稿"'}>生成修复草稿</button>
-          <button class="btn-sm" onclick="copyText(aiFailureDraft?.fixedYaml || '')" ${aiFailureDraft?.fixedYaml ? '' : 'disabled'}>复制草稿</button>
-          <button class="btn-sm" onclick="downloadAiGatewayYamlDraft()" ${aiFailureDraft?.fixedYaml ? '' : 'disabled'}>下载草稿</button>
-          <button class="btn-sm success" onclick="confirmApplyRepairDraft(${jsArg(draftId)})" ${canApplyDraft ? '' : 'disabled title="需要先生成并保存修复草稿"'}>人工确认替换</button>
-          <button class="btn-sm danger" onclick="rejectRepairDraft(${jsArg(draftId)})" ${draftId ? '' : 'disabled'}>拒绝草稿</button>
+          <button class="btn-sm ai" onclick="${canRepair ? 'generateRepairYamlFromAnalysis()' : `promptRepairUnavailable(${jsArg(noDraftReason)})`}">生成修复草稿</button>
+          <button class="btn-sm" onclick="${aiFailureDraft?.fixedYaml ? 'copyRepairDraftYaml()' : `promptRepairUnavailable(${jsArg('暂无修复草稿可复制，请先生成修复草稿')})`}">复制草稿</button>
+          <button class="btn-sm" onclick="${aiFailureDraft?.fixedYaml ? 'downloadAiGatewayYamlDraft()' : `promptRepairUnavailable(${jsArg('暂无修复草稿可下载，请先生成修复草稿')})`}">下载草稿</button>
+          <button class="btn-sm success" onclick="${canApplyDraft ? `confirmApplyRepairDraft(${jsArg(draftId)})` : `promptRepairUnavailable(${jsArg('需要先生成并保存修复草稿，才能人工确认替换')})`}">人工确认替换</button>
+          <button class="btn-sm danger" onclick="${draftId ? `rejectRepairDraft(${jsArg(draftId)})` : `promptRepairUnavailable(${jsArg('暂无可拒绝的修复草稿')})`}">拒绝草稿</button>
         </div>
       </div>
-      ${!canRepair ? `<div class="agent-risk show">当前归因为 ${escapeHtml(normalized.failureType)}，禁止自动修 YAML。请人工复核，或生成飞书缺陷草稿。</div>` : ''}
+      ${!canRepair ? `<div class="agent-risk show">当前归因为${escapeHtml(repairFailureTypeText(normalized.failureType))}，不建议自动改 YAML。请人工复核，或生成飞书缺陷草稿。</div>` : ''}
       ${riskHits.length ? `<div class="agent-risk show">该任务包含高风险动作：${escapeHtml(riskHits.join('、'))}。禁止自动执行，请人工确认后继续。</div>` : ''}
       <div class="agent-tabs">
         <button class="agent-tab ${aiFailureDraft?.activeTab === 'original' ? 'active' : ''}" onclick="showAiRepairTab('original')">原始 YAML</button>
@@ -581,15 +617,15 @@ function repairYamlDraftHtml(normalized) {
         : aiFailureDraft?.activeTab === 'validation'
           ? `<pre class="agent-artifact-box">${escapeHtml(validationText && validationText !== '{}' ? validationText : '暂无校验结果，请先生成修复 YAML。')}</pre>`
           : `<pre class="agent-artifact-box ${aiFailureDraft?.activeTab === 'fixed' ? 'yaml-fixed' : (aiFailureDraft?.activeTab === 'original' ? 'yaml-original' : '')}">${escapeHtml(aiRepairTabText(diffText, validationText))}</pre>`}
-      <div class="generate-hint">修复草稿不会自动覆盖当前文件或基线。后续接Agent 编排时，也会先进入“待我处理”。</div>
+      <div class="generate-hint">修复草稿不会自动覆盖当前文件或基线；所有替换动作都会先进入人工确认。</div>
     </div>
   `;
 }
 
 function aiRepairTabText(diffText='', validationText='') {
   const tab = aiFailureDraft?.activeTab || 'analysis';
-  if (tab === 'original') return aiFailureDraft?.originalYaml || '暂无原始 YAML。请从失败任务进入，或先打开 YAML 后分析。';
-  if (tab === 'fixed') return aiFailureDraft?.fixedYaml || '暂无修复 YAML 草稿。';
+  if (tab === 'original') return aiFailureDraft?.originalYaml || '暂无原始 YAML。\n\n建议：从执行页选择带 YAML 的失败任务进入，或先在用例资产里打开对应 YAML，再点击 AI 分析。';
+  if (tab === 'fixed') return aiFailureDraft?.fixedYaml || '暂无修复 YAML 草稿。\n\n如果失败类型是“脚本问题”，点击上方“生成修复草稿”。如果是产品缺陷、环境问题或待人工复核，不会自动改 YAML。';
   if (tab === 'diff') return [
     diffText ? `Diff 摘要:\n${diffText}` : '暂无 diff 摘要。',
     validationText && validationText !== '{}' ? `\n\n校验结果:\n${validationText}` : '\n\n校验结果：待生成草稿后校验。'
@@ -616,9 +652,9 @@ function showAiRepairCenter() {
     <div class="review-page ai-repair-page">
       <div class="review-head">
         <div>
-          <div class="workflow-kicker">AI REPAIR · 失败归因 / YAML 草稿 / 人工确认</div>
+          <div class="workflow-kicker">AI 修复 · 选失败任务 / 判断原因 / 生成草稿 / 人工确认</div>
           <h2>AI修复工作台</h2>
-          <p>从失败任务进入，先结构化判断失败类型，再生成可复核的 YAML 草稿。产品缺陷、环境问题和 UNKNOWN 不自动修脚本。</p>
+          <p>从左侧选择失败任务，先判断失败原因。只有脚本问题会生成 YAML 草稿；产品缺陷、环境问题和不确定问题只给处理建议，不自动改脚本。</p>
         </div>
         <div class="review-actions">
           <button class="btn-sm" onclick="loadJobs(true).then(() => showAiRepairCenter())">刷新失败任务</button>
@@ -634,8 +670,8 @@ function showAiRepairCenter() {
               <div class="yaml-task-nav-name">${escapeHtml(job.file || job.target_task_name || job.task_name || job.job_id || '失败任务')}</div>
               <div class="yaml-task-nav-meta">${escapeHtml([job.module, job.target_task_name, jobStatusText(job.status || 'failed')].filter(Boolean).join(' · '))}</div>
               <div class="yaml-task-nav-actions">
-                <button onclick="event.stopPropagation(); analyzeFailureFromJob(${jsArg(job.job_id || '')}, {renderPage:true})">分析</button>
-                <button onclick="event.stopPropagation(); focusJob(${jsArg(job.job_id || '')})">定位</button>
+                <button onclick="event.stopPropagation(); analyzeFailureFromJob(${jsArg(job.job_id || '')}, {renderPage:true})">AI分析</button>
+                <button onclick="event.stopPropagation(); focusJob(${jsArg(job.job_id || '')})">去执行页</button>
               </div>
             </div>
           `).join('')}</div>` : '<div class="job-empty">暂无失败任务。可以先执行 YAML，失败后这里会出现待分析项。</div>'}
