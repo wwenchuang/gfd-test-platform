@@ -26,6 +26,48 @@ def require(condition, message):
         raise AssertionError(message)
 
 
+def check_sonic_batch_payload_shapes():
+    from task_server.services import sonic_service
+
+    calls = []
+    original_publish_yaml = sonic_service.sonic_publish_yaml
+    original_task_dir = sonic_service.cfg.TASK_DIR
+
+    def fake_publish_yaml(payload):
+        calls.append(payload)
+        return {
+            "ok": True,
+            "results": [{"status": "published", "task_name": payload.get("taskName") or "case"}],
+        }
+
+    sonic_service.sonic_publish_yaml = fake_publish_yaml
+    try:
+        result = sonic_service.sonic_publish_batch({
+            "items": [
+                {"module": "M1", "file": "a.yaml", "force": True},
+                {"module": "M2", "file": "b.yaml"},
+            ]
+        })
+        require(result["ok"] is True and result["total_files"] == 2 and calls[0]["force"] is True, "Sonic batch must accept explicit items payloads")
+
+        calls.clear()
+        result = sonic_service.sonic_publish_batch({"module": "M3", "files": ["c.yaml", "d.yml"], "force": True})
+        require(result["total_files"] == 2 and all(call["module"] == "M3" for call in calls), "Sonic batch must accept module/files payloads")
+
+        calls.clear()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            module_dir = Path(temp_dir) / "M4"
+            module_dir.mkdir()
+            (module_dir / "e.yaml").write_text("android:\n  tasks: []\n", encoding="utf-8")
+            (module_dir / "ignore.txt").write_text("x", encoding="utf-8")
+            sonic_service.cfg.TASK_DIR = temp_dir
+            result = sonic_service.sonic_publish_batch({"module": "M4"})
+        require(result["total_files"] == 1 and calls[0]["file"] == "e.yaml", "Sonic batch must expand module-only payloads to YAML files")
+    finally:
+        sonic_service.sonic_publish_yaml = original_publish_yaml
+        sonic_service.cfg.TASK_DIR = original_task_dir
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -176,7 +218,9 @@ def main():
     require("DEFAULT_BUSINESS_FLOW" in prompt_builder_source and '"business_flow_required": True' in prompt_builder_source and '"business_flow_source"' in prompt_builder_source, "Prompt Center must provide required business-flow fallback metadata")
     require("business_flow 是强约束" in agent_prompt_source and "不得生成、匹配或执行不在主链上的无关任务" in agent_prompt_source, "Agent prompt must treat business_flow as an execution boundary")
     require("business_flow 是强约束" in case_prompt_source and "禁止生成不属于业务主链" in case_prompt_source, "Case prompt must treat business_flow as a generation boundary")
-    require('if isinstance(items, dict):' in sonic_service_source and '"total_files"' in sonic_service_source and '"synced_cases"' in sonic_service_source, "Sonic batch publish must accept frontend module/files payload and return clear totals")
+    require('if isinstance(items, dict):' in sonic_service_source and 'explicit_items = items.get("items")' in sonic_service_source and '"total_files"' in sonic_service_source and '"synced_cases"' in sonic_service_source, "Sonic batch publish must accept frontend module/files/items payload and return clear totals")
+    require('if not files and module:' in sonic_service_source and 'os.listdir(module_dir)' in sonic_service_source, "Sonic batch publish must default module-only payloads to all YAML files in that module")
+    check_sonic_batch_payload_shapes()
     require('task_k = f"{mod}::{_clean_filename(file)}"' in sonic_service_source and 'legacy_task_k = f"{mod}/{file}"' in sonic_service_source, "Sonic publish precheck must read task-meta by module::file key with legacy fallback")
     require("projects_payload = sonic_list_projects()" in router_source and 'projects_payload.get("projects")' in router_source, "Sonic diagnose route must handle sonic_list_projects dict payload after migration")
     require('"/api/sonic/run-case"' in router_source and '"deprecated": True' in router_source and '"/api/run-request"' in router_source, "Sonic single-case route must return a clear deprecation diagnostic instead of creating temp suites")

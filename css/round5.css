@@ -1218,7 +1218,7 @@
 .artifact-item a { color: #7dd3fc; text-decoration: none; }
 .artifact-item a:hover { text-decoration: underline; }
 
-/* ============ Step 详情展示（Sonic同步/执行进度/报告/分析/匹配） ============ */
+/* ============ Step 详情展示（同步至 Sonic 平台/执行进度/报告/分析/匹配） ============ */
 
 /* Step 状态颜色 */
 .step-partial .step-status-badge,

@@ -134,8 +134,8 @@ const WORKFLOW_SECTIONS = {
   },
   baseline: {
     index: '4',
-    title: '回归报告',
-    subtitle: '把验证过的 YAML 入库、版本化，并同步 Sonic 回归',
+    title: '同步至 Sonic 平台',
+    subtitle: '把验证过的 YAML 入库、版本化，并同步至 Sonic 平台用于回归',
     help: '通过状态标记区分草稿、待评审、已入库、基线、需维护，后续接缺陷平台也依赖这些状态。',
     cards: [
       { title: '标记生命周期', text: '选中文件后在“更多”里标记草稿、待评审、已入库、基线、需维护等状态。', actions: [
@@ -144,8 +144,8 @@ const WORKFLOW_SECTIONS = {
       { title: '历史版本', text: '保存、AI 修复、覆盖、移动前会保留版本，方便回滚稳定基线。', actions: [
         { label: '历史版本', fn: 'safeShowFileHistory()' }
       ]},
-      { title: '同步到 Sonic', text: '已入库或基线 YAML 可以同步为 Sonic 可选用例；Sonic 执行时按 case_id 回 Task 平台拉取最新版 YAML。', actions: [
-        { label: '同步当前 YAML', fn: 'publishCurrentFileToSonic()' }
+      { title: '同步至 Sonic 平台', text: '已入库或基线 YAML 可以同步为 Sonic 平台可选用例；Sonic 执行时按 case_id 回 Task 平台拉取最新版 YAML。', actions: [
+        { label: '同步当前 YAML 至 Sonic 平台', fn: 'publishCurrentFileToSonic()' }
       ]},
       { title: '批量维护', text: '支持按模块全选、批量移动、批量删除，后续可以按应用组织基线目录。', actions: [
         { label: '全选当前模块', fn: 'selectCurrentModuleFiles()' }

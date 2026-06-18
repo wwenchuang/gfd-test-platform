@@ -254,7 +254,7 @@ function dashboardNextItems(stats) {
   if (stats.baselineCount && stats.sonicSynced < stats.baselineCount) {
     items.push({
       cls: 'warn',
-      title: '有基线用例尚未同步 Sonic',
+      title: '有基线用例尚未同步至 Sonic 平台',
       text: '跑通的基线再进 Sonic。',
       action: '<button class="btn-sm success" onclick="activateWorkflow(\'baseline\')">处理基线</button>'
     });
@@ -379,7 +379,7 @@ function workflowDashboardHtml() {
                 <div class="dashboard-system-row"><strong>Midscene</strong><span>${runnerText}</span>${dashboardStatusPill(runnerDevices.length ? '在线' : '待检查', runnerDevices.length ? 'ok' : 'warn')}</div>
                 <div class="dashboard-system-row"><strong>Sonic</strong><span>${sonicText}</span>${dashboardStatusPill(sonicCaseRows.length ? '已连接' : '待绑定', sonicCaseRows.length ? 'ok' : 'warn')}</div>
               </div>
-              <div class="dashboard-accordion-note">AI 生成的草稿先在 Task 里调试；单条跑通后再入基线，需要长期回归的用例再同步 Sonic。</div>
+              <div class="dashboard-accordion-note">AI 生成的草稿先在 Task 里调试；单条跑通后再入基线，需要长期回归的用例再同步至 Sonic 平台。</div>
             </div>
           </details>
         </div>
@@ -805,7 +805,7 @@ const AGENT_TIMELINE_STEPS = [
   ['VALIDATE_YAML', '校验 YAML'],
   ['RISK_REVIEW', '风险判断'],
   ['EXECUTION_PRECHECK', '执行前体检'],
-  ['SYNC_SONIC', '同步 Sonic'],
+  ['SYNC_SONIC', '同步至 Sonic 平台'],
   ['RUN_SONIC', '执行任务'],
   ['COLLECT_REPORT', '收集报告'],
   ['ANALYZE_FAILURE', '分析失败'],
@@ -970,7 +970,7 @@ function stepStatusClass(status) {
   }
 }
 
-// ===== Sonic 同步失败详情 =====
+// ===== 同步至 Sonic 平台失败详情 =====
 function renderSonicSyncDetail(step, artifacts) {
   const sync = (artifacts || {}).sonicSync || {};
   const failed = sync.failed || [];
@@ -1518,7 +1518,7 @@ function renderAgentStepsPlan(run) {
     ['MATCH_CASES', '匹配已有用例'],
     ['GENERATE_YAML', '生成或补全 YAML'],
     ['VALIDATE_YAML', '校验 YAML'],
-    ['SYNC_SONIC', '同步 Sonic'],
+    ['SYNC_SONIC', '同步至 Sonic 平台'],
     ['RUN_TESTS', '执行测试'],
     ['COLLECT_REPORT', '收集报告'],
     ['ANALYZE_FAILURE', '分析失败'],

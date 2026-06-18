@@ -407,7 +407,7 @@ async function renderAgentConfirmPage() {
       <div class="workflow-hero">
         <div class="workflow-kicker">人工确认中心 · 草稿确认 / 高风险动作 / 缺陷提交</div>
         <h2>待我确认</h2>
-        <p>Agent只有在这里获得明确确认后，才会继续同步 Sonic、执行高风险动作或提交缺陷草稿。</p>
+        <p>Agent只有在这里获得明确确认后，才会继续同步至 Sonic 平台、执行高风险动作或提交缺陷草稿。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="renderAgentConfirmPage()">刷新确认项</button>
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
@@ -870,7 +870,7 @@ function renderAgentCenter() {
             ${[
               ['匹配用例', 'cases'],
               ['生成YAML', 'yaml'],
-              ['Sonic同步', 'sonic'],
+              ['同步至 Sonic 平台', 'sonic'],
               ['执行任务', 'execution'],
               ['报告', 'report'],
               ['失败分析', 'failure'],
@@ -974,7 +974,7 @@ function renderAgentCenter() {
             return renderArtifactItem('匹配用例', mcText, mc || artifacts.matchedCount, 'cases');
           })()}
           ${renderArtifactItem('生成YAML', (artifacts.generatedYaml || artifacts.yamlDraft) ? '已生成' : '', '', artifacts.generatedYaml || artifacts.yamlDraft, 'yaml')}
-          ${renderArtifactItem('Sonic同步', artifacts.sonicSync ? (agentToolStatusText(artifacts.sonicSync.status) || '已完成') : '', artifacts.sonicSync, 'sonic')}
+          ${renderArtifactItem('同步至 Sonic 平台', artifacts.sonicSync ? (agentToolStatusText(artifacts.sonicSync.status) || '已完成') : '', artifacts.sonicSync, 'sonic')}
           ${renderArtifactItem('执行任务', artifacts.jobId || artifacts.sonicJob || '', '', artifacts.jobId || artifacts.sonicJob, 'execution')}
           ${renderArtifactItem('报告', artifacts.reportId || (artifacts.report ? '已生成' : '') || '', '', artifacts.reportId || artifacts.report, 'report')}
           ${renderArtifactItem('失败分析', artifacts.failureAnalysis ? failureTypeText(artifacts.failureAnalysis.failureType || '已分析') : '', artifacts.failureAnalysis, 'failure')}
@@ -1086,7 +1086,7 @@ async function showPreflightDashboard(live=false) {
     setActiveWorkflow('system_config');
   }
   document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 环境体检';
-  document.getElementById('toolbar-help').textContent = '按体检结果处理异常，全部关键项正常后再同步到 Sonic。';
+  document.getElementById('toolbar-help').textContent = '按体检结果处理异常，全部关键项正常后再同步至 Sonic 平台。';
   document.getElementById('file-info').textContent = '环境体检';
   const area = document.getElementById('editor-area');
   area.className = 'editor-area';
@@ -1106,7 +1106,7 @@ function renderPreflightDashboard(data) {
   } else if (warn.length) {
     next.textContent = `下一步：核心链路可用，但建议处理 ${warn.map(item => item.title).join('、')}。`;
   } else {
-    next.textContent = '下一步：环境正常，可以上传需求新建自动化测试，或把已入库/基线用例同步到 Sonic。';
+    next.textContent = '下一步：环境正常，可以上传需求新建自动化测试，或把已入库/基线用例同步至 Sonic 平台。';
   }
   grid.innerHTML = checks.map(item => `
     <div class="preflight-card ${escapeHtml(item.status || (item.ok ? 'normal' : 'warn'))}">
@@ -1509,7 +1509,7 @@ function moduleDirectoryHtml(mod) {
         </div>
         <div class="module-directory-actions">
           <button class="btn-sm" onclick="selectCurrentModuleFiles()">全选模块文件</button>
-          <button class="btn-sm success" onclick="publishCurrentModuleToSonic()">同步模块到 Sonic</button>
+          <button class="btn-sm success" onclick="publishCurrentModuleToSonic()">同步当前模块至 Sonic 平台</button>
           <button class="btn-sm" onclick="showAddTask()">新建 YAML</button>
           <button class="btn-sm" onclick="showUpload()">上传 YAML</button>
           <button class="btn-sm danger" onclick="deleteCurrentModule()">删除模块</button>
@@ -1991,6 +1991,8 @@ function showAssetsCenter() {
               <button class="btn-sm" onclick="selectCurrentAssetRows()">选择当前列表</button>
               ${currentModule ? `<button class="btn-sm" onclick="selectCurrentModuleFiles();showAssetsCenter()">全选当前模块</button>` : ''}
               <button class="btn-sm" onclick="clearAssetSelection()">清空选择</button>
+              <button class="btn-sm success" onclick="publishSelectedFilesToSonic()" ${selectedFiles.size ? '' : 'disabled'}>同步已选至 Sonic 平台</button>
+              ${currentModule ? `<button class="btn-sm success" onclick="publishCurrentModuleToSonic()">同步当前模块至 Sonic 平台</button>` : ''}
               <button class="btn-sm" onclick="showBatchMove()" ${selectedFiles.size ? '' : 'disabled'}>批量移动</button>
               <button class="btn-sm danger" onclick="deleteSelectedFiles()" ${selectedFiles.size ? '' : 'disabled'}>批量删除</button>
               ${currentModule ? `<button class="btn-sm danger" onclick="deleteCurrentModule()">删除当前模块</button>` : ''}
@@ -2098,12 +2100,12 @@ function sonicFileSummary(mod, file) {
   const failed = rows.filter(row => (row.sonic || {}).status === 'failed').length;
   const legacy = rows.filter(row => (row.sonic || {}).step_state === 'legacy' || (row.sonic || {}).status === 'legacy').length;
   const mixed = rows.filter(row => (row.sonic || {}).step_state === 'mixed' || (row.sonic || {}).status === 'mixed').length;
-  if (failed) return { text: '同步失败', cls: 'failed', title: `${failed}/${rows.length} 条 Sonic 同步失败` };
+  if (failed) return { text: '同步失败', cls: 'failed', title: `${failed}/${rows.length} 条同步至 Sonic 平台失败` };
   if (mixed) return { text: '待清理', cls: 'mixed', title: `${mixed}/${rows.length} 条存在旧/重复执行步骤，请重新同步清理` };
   if (legacy) return { text: '旧模板', cls: 'legacy', title: `${legacy}/${rows.length} 条仍是 Sonic 旧模板` };
-  if (published === rows.length) return { text: '已同步', cls: 'published', title: `${published}/${rows.length} 条已同步到 Sonic` };
-  if (published > 0) return { text: `同步 ${published}/${rows.length}`, cls: 'partial', title: `${published}/${rows.length} 条已同步到 Sonic` };
-  return { text: '未同步', cls: 'missing', title: `0/${rows.length} 条同步到 Sonic` };
+  if (published === rows.length) return { text: '已同步', cls: 'published', title: `${published}/${rows.length} 条已同步至 Sonic 平台` };
+  if (published > 0) return { text: `同步 ${published}/${rows.length}`, cls: 'partial', title: `${published}/${rows.length} 条已同步至 Sonic 平台` };
+  return { text: '未同步', cls: 'missing', title: `0/${rows.length} 条同步至 Sonic 平台` };
 }
 
 function sonicBadgeHtml(mod, file) {
@@ -2609,7 +2611,7 @@ function renderSonicStatusRows(rows, containerId) {
   const list = document.getElementById(containerId);
   if (!list) return;
   if (!rows || !rows.length) {
-    list.innerHTML = '<div class="job-empty">暂无 Sonic 同步数据</div>';
+    list.innerHTML = '<div class="job-empty">暂无同步至 Sonic 平台数据</div>';
     return;
   }
   list.innerHTML = rows.map(row => {
@@ -2666,7 +2668,7 @@ async function refreshSonicPreview(force=false) {
     sonicStatusData = { module: currentModule, file: currentFile, ...data };
     renderSonicPreview();
   } catch(e) {
-    sub.textContent = 'Sonic 同步检查读取失败';
+    sub.textContent = '同步至 Sonic 平台检查读取失败';
     list.innerHTML = `<div class="generate-knowledge-empty">${escapeHtml(e.message || '读取失败')}</div>`;
   }
 }
@@ -2700,8 +2702,8 @@ function renderSonicPreview() {
 }
 
 async function showCurrentFileSonicStatus() {
-  if (!requireCurrentYaml('查看 Sonic 同步检查')) return;
-  document.getElementById('sonic-status-title').textContent = '当前 YAML 的 Sonic 同步状态';
+  if (!requireCurrentYaml('查看同步至 Sonic 平台检查')) return;
+  document.getElementById('sonic-status-title').textContent = '当前 YAML 的同步至 Sonic 平台状态';
   document.getElementById('sonic-status-summary').textContent = '正在读取当前文件同步状态...';
   document.getElementById('sonic-status-list').innerHTML = '<div class="job-empty">正在加载...</div>';
   openModal('modal-sonic-status');
@@ -2715,7 +2717,7 @@ async function showCurrentFileSonicStatus() {
     renderSonicStatusRows(data.cases || [], 'sonic-status-list');
     renderSonicPreview();
   } catch(e) {
-    document.getElementById('sonic-status-summary').textContent = e.message || '读取 Sonic 同步检查失败';
+    document.getElementById('sonic-status-summary').textContent = e.message || '读取同步至 Sonic 平台检查失败';
     document.getElementById('sonic-status-list').innerHTML = '';
   }
 }
@@ -2812,7 +2814,7 @@ function renderPublishCheckResult(data) {
   openModal('modal-sonic-status');
 }
 
-function renderSonicPublishResult(data, title='Sonic 同步结果') {
+function renderSonicPublishResult(data, title='同步至 Sonic 平台结果') {
   const results = data.results || [];
   const rows = [];
   results.forEach(item => {
@@ -2854,6 +2856,65 @@ function renderSonicPublishResult(data, title='Sonic 同步结果') {
   openModal('modal-sonic-status');
 }
 
+function selectedSonicFiles() {
+  return [...selectedFiles].map(key => {
+    const parts = String(key || '').split('::');
+    const mod = parts.shift() || '';
+    const file = parts.join('::');
+    return { module: mod, file };
+  }).filter(item => item.module && item.file && modules[item.module]?.includes(item.file) && /\.ya?ml$/i.test(item.file));
+}
+
+function sonicBatchItemNeedsForce(item) {
+  const status = fileMeta(item.module, item.file).status || 'draft';
+  return !['active', 'baseline'].includes(status);
+}
+
+async function publishSonicBatchItems(items, options={}) {
+  const targetItems = (items || [])
+    .filter(item => item && item.module && item.file && /\.ya?ml$/i.test(item.file))
+    .map(item => ({ module: item.module, file: item.file }));
+  if (!targetItems.length) {
+    showToast('请先选择要同步的 YAML 文件', 'error');
+    return;
+  }
+  const uniqueMap = new Map();
+  targetItems.forEach(item => uniqueMap.set(fileKey(item.module, item.file), item));
+  const uniqueItems = [...uniqueMap.values()];
+  const forceCount = uniqueItems.filter(sonicBatchItemNeedsForce).length;
+  const scopeText = options.scopeText || `${uniqueItems.length} 个 YAML`;
+  const warning = forceCount ? `\n\n注意：其中 ${forceCount} 个文件还不是“已入库/基线”，会按强制同步处理。` : '';
+  if (!confirm(`确认同步 ${scopeText} 至 Sonic 平台？${warning}\n\n同步后 Sonic 用例会通过 case_id 回 Task 平台拉取最新版 YAML。`)) return;
+  try {
+    showToast('正在同步至 Sonic 平台，请稍候...', 'success');
+    const data = await apiRequest('/sonic/publish-batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        items: uniqueItems.map(item => ({
+          ...item,
+          force: sonicBatchItemNeedsForce(item),
+        })),
+      })
+    });
+    const failed = Number(data.failed || 0);
+    const summary = `文件 ${data.total_files || 0} 个，用例 ${data.total_cases || 0} 条`;
+    showToast(failed ? `同步至 Sonic 平台完成：${summary}，失败 ${failed} 个文件` : `✓ 已同步至 Sonic 平台：${summary}`, failed ? 'error' : 'success');
+    await refreshSonicPreview(true);
+    await loadModules();
+    renderSonicPublishResult(data, options.title || '批量同步结果');
+  } catch(e) {
+    showToast(e.message || '同步至 Sonic 平台失败', 'error');
+  }
+}
+
+async function publishSelectedFilesToSonic() {
+  const items = selectedSonicFiles();
+  await publishSonicBatchItems(items, {
+    scopeText: `已选 ${items.length} 个 YAML`,
+    title: '已选 YAML 同步结果',
+  });
+}
+
 async function runSonicPublishCheck(taskName) {
   const data = await apiRequest('/sonic/publish-check', {
     method: 'POST',
@@ -2886,16 +2947,16 @@ async function deleteTaskApp(packageName) {
 }
 
 async function publishCurrentFileToSonic() {
-  if (!requireCurrentYaml('同步到 Sonic')) return;
+  if (!requireCurrentYaml('同步至 Sonic 平台')) return;
   const meta = fileMeta(currentModule, currentFile);
   const status = meta.status || 'draft';
   const force = status !== 'active' && status !== 'baseline';
-  if (force && !confirm('当前文件还不是“已入库/基线”状态。为了避免把草稿同步到 Sonic，建议先标记状态。确认仍要强制同步吗？')) {
+  if (force && !confirm('当前文件还不是“已入库/基线”状态。为了避免把草稿同步至 Sonic 平台，建议先标记状态。确认仍要强制同步吗？')) {
     return;
   }
   const taskName = detectSelectedTaskName() || '';
   const scopeText = taskName ? `当前选中用例「${taskName}」` : '当前 YAML 文件中的全部用例';
-  if (!confirm(`确认同步 ${scopeText} 到 Sonic？\n\n同步后 Sonic 用例会通过 case_id 回 Task 平台拉取最新版 YAML。`)) return;
+  if (!confirm(`确认同步 ${scopeText} 至 Sonic 平台？\n\n同步后 Sonic 用例会通过 case_id 回 Task 平台拉取最新版 YAML。`)) return;
   const btn = document.getElementById('btn-publish-sonic');
   const oldText = btn ? btn.textContent : '';
   if (btn) {
@@ -2918,7 +2979,7 @@ async function publishCurrentFileToSonic() {
     const count = (data.results || []).length;
     const failed = (data.results || []).filter(item => item.status === 'failed').length;
     const pinned = (data.caseIdChanges || []).length;
-    showToast(failed ? `Sonic 同步完成，但 ${failed}/${count} 个失败` : `✓ 已同步到 Sonic：${count} 条${pinned ? `，已固化 ${pinned} 个 case_id` : ''}`, failed ? 'error' : 'success');
+    showToast(failed ? `同步至 Sonic 平台完成，但 ${failed}/${count} 个失败` : `✓ 已同步至 Sonic 平台：${count} 条${pinned ? `，已固化 ${pinned} 个 case_id` : ''}`, failed ? 'error' : 'success');
     renderSonicPublishResult({
       ...data,
       total_files: 1,
@@ -2940,11 +3001,11 @@ async function publishCurrentFileToSonic() {
     await refreshSonicPreview(true);
     await loadModules();
   } catch(e) {
-    showToast(e.message || '同步到 Sonic 失败', 'error');
+    showToast(e.message || '同步至 Sonic 平台失败', 'error');
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = oldText || '同步到 Sonic';
+      btn.textContent = oldText || '同步至 Sonic 平台';
     }
   }
 }
@@ -2964,25 +3025,10 @@ async function publishCurrentModuleToSonic() {
     .filter(([mod, file]) => mod === currentModule && files.includes(file))
     .map(([, file]) => file);
   const targetFiles = selectedInModule.length ? selectedInModule : files;
-  const force = targetFiles.some(file => {
-    const status = fileMeta(currentModule, file).status || 'draft';
-    return !['active', 'baseline'].includes(status);
+  await publishSonicBatchItems(targetFiles.map(file => ({ module: currentModule, file })), {
+    scopeText: selectedInModule.length
+      ? `模块「${currentModule}」中已选 ${selectedInModule.length} 个 YAML`
+      : `模块「${currentModule}」全部 ${targetFiles.length} 个 YAML`,
+    title: selectedInModule.length ? '已选 YAML 同步结果' : '模块同步结果',
   });
-  const scopeText = selectedInModule.length ? `已选 ${selectedInModule.length} 个文件` : `模块内全部 ${targetFiles.length} 个文件`;
-  const warning = force ? '\n\n注意：其中存在非“已入库/基线”的文件，会按强制同步处理。' : '';
-  if (!confirm(`确认同步「${currentModule}」${scopeText} 到 Sonic？${warning}`)) return;
-  try {
-    showToast('正在同步模块到 Sonic，请稍候...', 'success');
-    const data = await apiRequest('/sonic/publish-batch', {
-      method: 'POST',
-      body: JSON.stringify({ module: currentModule, files: targetFiles, force })
-    });
-    const failed = data.failed || 0;
-    const summary = `文件 ${data.total_files || 0} 个，用例 ${data.total_cases || 0} 条`;
-    showToast(failed ? `Sonic 模块同步完成：${summary}，失败 ${failed} 个` : `✓ Sonic 模块同步完成：${summary}`, failed ? 'error' : 'success');
-    await refreshSonicPreview(true);
-    renderSonicPublishResult(data, selectedInModule.length ? '已选 YAML 同步结果' : '模块同步结果');
-  } catch(e) {
-    showToast(e.message || '模块同步到 Sonic 失败', 'error');
-  }
 }

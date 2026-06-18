@@ -2374,7 +2374,7 @@ function showGenerationReview(data={}) {
   area.className = 'editor-area';
   area.innerHTML = generationReviewHtml(data);
   document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 生成结果评审';
-  document.getElementById('toolbar-help').textContent = '先确认需求分析、风险和用例分类，再进入 Midscene 单条调试；跑通后再入 Task 基线和同步 Sonic。';
+  document.getElementById('toolbar-help').textContent = '先确认需求分析、风险和用例分类，再进入 Midscene 单条调试；跑通后再入 Task 基线并同步至 Sonic 平台。';
   document.getElementById('file-info').textContent = '生成结果评审';
   updateToolbarState('生成结果评审');
 }

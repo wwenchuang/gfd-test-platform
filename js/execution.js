@@ -29,7 +29,7 @@ function resetEditorToWorkflowGuide() {
   return false;
 }
 
-// Round 5: 执行页 4 个子 tab (调试执行 / Sonic同步 / 失败重跑 / Runner状态)
+// Round 5: 执行页 4 个子 tab (调试执行 / 同步至 Sonic 平台 / 失败重跑 / Runner状态)
 let executionActiveTab = 'debug';
 let debugTraceData = null;
 let debugSnapshotData = null;
@@ -54,7 +54,7 @@ function showExecutionCenter() {
   const path = document.getElementById('toolbar-path');
   if (path) path.innerHTML = '<span>▶</span> 执行中心';
   const help = document.getElementById('toolbar-help');
-  if (help) help.textContent = '调试执行 / Sonic 同步 / 失败重跑 / Runner 状态。';
+  if (help) help.textContent = '调试执行 / 同步至 Sonic 平台 / 失败重跑 / Runner 状态。';
   const info = document.getElementById('file-info');
   if (info) info.textContent = '执行中心';
   if (typeof updateToolbarState === 'function') updateToolbarState('执行中心');
@@ -63,7 +63,7 @@ function showExecutionCenter() {
 function renderExecutionCenter() {
   const tabs = [
     ['debug', '调试执行'],
-    ['sonic', 'Sonic 同步'],
+    ['sonic', '同步至 Sonic 平台'],
     ['rerun', '失败重跑'],
     ['runners', 'Runner 状态'],
     ['trace', 'Trace 回放']
@@ -197,8 +197,8 @@ function renderExecutionTabSonic() {
     <div class="review-panel">
       <div class="section-head">
         <div>
-          <h3>Sonic 同步</h3>
-          <p>把 YAML 用例同步到 Sonic 自动化平台；可单条或批量同步。</p>
+          <h3>同步至 Sonic 平台</h3>
+          <p>把 YAML 用例同步至 Sonic 平台；可单条或批量同步。</p>
         </div>
         <div class="review-actions">
           <button class="btn-sm" onclick="document.getElementById('btn-sonic-status')?.click()" ${currentFile ? '' : 'disabled title="请先打开 YAML 文件"'}>查看同步状态</button>
@@ -501,7 +501,7 @@ function showEditor(content) {
       <div class="sonic-preview">
         <div class="sonic-preview-head">
           <div>
-            <div class="sonic-preview-title">Sonic 同步</div>
+            <div class="sonic-preview-title">同步至 Sonic 平台</div>
             <div class="baseline-preview-sub" id="sonic-preview-sub">正在读取同步状态...</div>
           </div>
           <div class="sonic-preview-actions">

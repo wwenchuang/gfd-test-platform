@@ -92,7 +92,7 @@
           </button>
           <button class="workflow-step" data-workflow="baseline" onclick="activateWorkflow('baseline')">
             <span class="workflow-index">🔄</span>
-            <span class="workflow-main"><span class="workflow-name">设备同步</span></span>
+            <span class="workflow-main"><span class="workflow-name">同步至 Sonic 平台</span></span>
           </button>
           <button class="workflow-step" data-workflow="repair" onclick="activateWorkflow('repair')">
             <span class="workflow-index">🔃</span>
@@ -206,7 +206,7 @@
             <span class="action-label">当前文件</span>
             <button class="btn-sm btn-save" id="btn-save" onclick="saveFile()" style="display:none" title="保存当前编辑器中的 YAML">保存</button>
             <button class="btn-sm" id="btn-generation-review" onclick="showCurrentGenerationReview()" style="display:none" title="查看当前自动化脚本对应的需求分析、覆盖矩阵和用例卡片">生成分析</button>
-            <button class="btn-sm" id="toggle-refs-panel" onclick="toggleRefsPanel()" style="display:none" title="显示或隐藏左侧基线参考截图和 Sonic 同步信息">隐藏截图</button>
+            <button class="btn-sm" id="toggle-refs-panel" onclick="toggleRefsPanel()" style="display:none" title="显示或隐藏左侧基线参考截图和同步至 Sonic 平台信息">隐藏截图</button>
             <button class="btn-sm" id="toggle-case-panel" onclick="toggleCaseNavPanel()" style="display:none" title="显示或隐藏当前 YAML 用例列表">隐藏用例</button>
           </div>
           <div class="action-group file-only workflow-action" id="run-action-group" data-workflows="execute repair">
@@ -221,8 +221,8 @@
           </div>
           <div class="action-group file-only workflow-action" id="sonic-action-group" data-workflows="baseline">
             <span class="action-label">Sonic</span>
-            <button class="btn-sm" id="btn-sonic-status" onclick="showCurrentFileSonicStatus()" style="display:none" title="检查当前 YAML 是否同步到 Sonic，以及是否残留旧或重复执行步骤">同步检查</button>
-            <button class="btn-sm success" id="btn-publish-sonic" onclick="publishCurrentFileToSonic()" style="display:none" title="把当前 YAML 或当前选中用例同步到 Sonic 平台">同步到 Sonic</button>
+            <button class="btn-sm" id="btn-sonic-status" onclick="showCurrentFileSonicStatus()" style="display:none" title="检查当前 YAML 是否已同步至 Sonic 平台，以及是否残留旧或重复执行步骤">同步检查</button>
+            <button class="btn-sm success" id="btn-publish-sonic" onclick="publishCurrentFileToSonic()" style="display:none" title="把当前 YAML 或当前选中用例同步至 Sonic 平台">同步至 Sonic 平台</button>
           </div>
           <div class="action-group file-only workflow-action" id="more-action-group" data-workflows="generate execute repair baseline">
             <span class="action-label">更多</span>
@@ -460,11 +460,11 @@
   </div>
 </div>
 
-<!-- Modal: Sonic 同步状态 -->
+<!-- Modal: 同步至 Sonic 平台状态 -->
 <div class="modal-overlay" id="modal-sonic-status">
   <div class="modal wide">
     <div class="modal-head">
-      <h3 id="sonic-status-title">Sonic 同步状态</h3>
+      <h3 id="sonic-status-title">同步至 Sonic 平台状态</h3>
       <button class="modal-close" type="button" onclick="closeModal('modal-sonic-status')" title="关闭">×</button>
     </div>
     <div class="generate-hint" id="sonic-status-summary" style="margin-bottom:10px;"></div>
@@ -610,7 +610,7 @@
       <h3>新建脑图</h3>
       <button class="modal-close" type="button" onclick="closeMindmapCreateModal()" title="关闭">×</button>
     </div>
-    <div class="generate-hint">只生成脑图文件（FreeMind .mm）和生成分析，不写入 YAML 文件，不创建 Midscene 执行任务，不同步 Sonic。</div>
+    <div class="generate-hint">只生成脑图文件（FreeMind .mm）和生成分析，不写入 YAML 文件，不创建 Midscene 执行任务，不同步至 Sonic 平台。</div>
     <label class="modal-label" for="mindmap-title">脑图标题</label>
     <input type="text" id="mindmap-title" placeholder="如：语音识别模块测试用例脑图">
     <label class="modal-label" for="mindmap-module">归属模块</label>

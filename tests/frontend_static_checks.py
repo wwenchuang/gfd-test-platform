@@ -138,6 +138,8 @@ def main():
     require("选择要调试的 YAML" in html and "单条调试" in html and "整文件执行" in html, "Execution debug center must expose concrete run actions")
     require("selectExecutionModule" in html and "execution-yaml-search" in html, "Execution debug center must support module and YAML filtering")
     require("展开用例树" not in html and "查看 YAML 列表" not in html, "Execution debug center must not keep dead library-toggle actions")
+    require("同步至 Sonic 平台" in html and "Sonic 同步" not in html and "Sonic同步" not in html and "设备同步" not in html, "Sonic sync UI copy must use 同步至 Sonic 平台")
+    require("publishSelectedFilesToSonic" in html and "publishSonicBatchItems" in html and "同步已选至 Sonic 平台" in html, "Sonic batch sync must support selected YAML files from the asset center")
     require("function jobRunModeText" in html and "function markJobHandled" in html and "manual_confirmed" in html, "Runner side panel must label run mode and let users clear handled failures")
     require("取消任务" in html and "基线回归" in html and "调试执行" in html, "Runner side panel must expose cancel action and distinguish baseline from debug runs")
     require("取消运行" in html and "cancelAgentRunById" in html, "Agent confirmation cards must allow cancelling without entering the run detail")

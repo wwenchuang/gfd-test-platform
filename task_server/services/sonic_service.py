@@ -4797,21 +4797,43 @@ def sonic_publish_batch(items: Any) -> Dict[str, Any]:
     force = False
     if isinstance(items, dict):
         module = items.get("module") or ""
-        files = items.get("files") or []
-        if isinstance(files, str):
-            files = [files]
-        task_name = items.get("taskName") or items.get("task_name") or ""
         force = _safe_bool(items.get("force"))
-        items = [
-            {
-                "module": module,
-                "file": file,
-                "taskName": task_name,
-                "force": force,
-            }
-            for file in files
-            if isinstance(file, str) and file.strip()
-        ]
+        explicit_items = items.get("items")
+        if isinstance(explicit_items, list):
+            items = [
+                {
+                    "module": item.get("module") or module,
+                    "file": item.get("file") or item.get("filename") or "",
+                    "taskName": item.get("taskName") or item.get("task_name") or items.get("taskName") or items.get("task_name") or "",
+                    "force": _safe_bool(item.get("force")) or force,
+                }
+                for item in explicit_items
+                if isinstance(item, dict)
+            ]
+        else:
+            files = items.get("files") or []
+            if isinstance(files, str):
+                files = [files]
+            if not files and module:
+                try:
+                    module_dir = safe_join(cfg.TASK_DIR, module)
+                    files = [
+                        name for name in sorted(os.listdir(module_dir))
+                        if name.endswith((".yaml", ".yml"))
+                    ] if os.path.isdir(module_dir) else []
+                except Exception:
+                    files = []
+            task_name = items.get("taskName") or items.get("task_name") or ""
+            items = [
+                {
+                    "module": module,
+                    "file": file,
+                    "taskName": task_name,
+                    "force": force,
+                }
+                for file in files
+                if isinstance(file, str) and file.strip()
+            ]
     if not isinstance(items, list) or not items:
         return {
             "ok": False,
