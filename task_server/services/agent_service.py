@@ -653,6 +653,48 @@ def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
     return target_path, ""
 
 
+def _confirm_agent_yaml_files(run, artifacts, file_items):
+    refs = []
+    results = []
+    issues = []
+    module_default = clean_agent_module_name(run)
+    for item in file_items or []:
+        if not isinstance(item, dict):
+            continue
+        module = str(item.get("module") or module_default or "").strip()
+        file_name = str(item.get("file") or "").strip()
+        path = str(item.get("path") or "").strip()
+        if not path and module and file_name:
+            path = safe_join(TASK_DIR, module, file_name)
+        if not path or not os.path.exists(path):
+            issues.append(f"{file_name or path or '未命名 YAML'} 不存在")
+            continue
+        content = read_text_file(path, "")
+        check = validate_agent_yaml_content(content)
+        result = {"module": module, "file": file_name or os.path.basename(path), "path": path, **check}
+        results.append(result)
+        if not check.get("ok"):
+            issues.extend([f"{result['file']}：{issue}" for issue in (check.get("issues") or ["校验未通过"])])
+            continue
+        refs.append({
+            "type": "file",
+            "module": module,
+            "file": result["file"],
+            "path": path,
+            "content": "",
+            "confirmed": True,
+        })
+    if not refs:
+        return [], "YAML 文件校验未通过：" + "；".join(issues or ["没有可确认的 YAML 文件"])
+    artifacts["generatedYaml"] = ""
+    artifacts["generatedYamlPath"] = refs[0]["path"]
+    artifacts["generatedYamlPaths"] = [item["path"] for item in refs]
+    artifacts["draftConfirmed"] = True
+    artifacts["yamlRefs"] = refs
+    artifacts["yamlValidation"] = {"ok": not issues, "results": results, "issues": issues}
+    return refs, "" if not issues else "；".join(issues)
+
+
 def confirm_agent_step(run_id, step_id, decision, payload=None):
     """确认 Agent 待确认步骤。
 
@@ -4618,9 +4660,7 @@ def _agent_source_files_for_generation(run):
 def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text):
     """Reuse the mature requirement/Figma -> cases/mindmap pipeline for Agent drafts."""
     from task_server.services.yaml_service import (
-        cases_to_midscene_yaml,
         generate_mindmap_from_request,
-        validate_midscene_yaml,
     )
 
     case_set_id = f"agent-{run.get('runId') or unique_millis_id('agent')}"
@@ -4650,9 +4690,31 @@ def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
     cases_payload = result.get("cases") if isinstance(result, dict) else {}
     if not isinstance(cases_payload, dict):
         cases_payload = {}
-    _title, yaml_text = cases_to_midscene_yaml(cases_payload, app_package=_agent_app_package(run))
-    yaml_check = validate_midscene_yaml(yaml_text)
-    yaml_executability = validate_agent_yaml_content(yaml_text)
+    yaml_files = result.get("yamlFiles") or result.get("files") or []
+    yaml_file_items = []
+    for file_name in yaml_files:
+        if isinstance(file_name, dict):
+            name = str(file_name.get("file") or "").strip()
+        else:
+            name = str(file_name or "").strip()
+        if not name:
+            continue
+        yaml_file_items.append({
+            "module": module,
+            "file": name,
+            "path": safe_join(TASK_DIR, module, name),
+        })
+    yaml_validation_results = [
+        validate_agent_yaml_content(read_text_file(item["path"], ""))
+        for item in yaml_file_items
+        if item.get("path")
+    ]
+    yaml_executability = {
+        "ok": bool(yaml_file_items) and all(item.get("ok") for item in yaml_validation_results),
+        "mode": "split_by_case",
+        "fileCount": len(yaml_file_items),
+        "taskCount": sum(int(item.get("taskCount") or 0) for item in yaml_validation_results),
+    }
     artifacts = run.setdefault("artifacts", {})
     artifacts["generatedCases"] = cases_payload
     artifacts["generationPipeline"] = {
@@ -4661,8 +4723,10 @@ def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
         "caseCount": result.get("caseCount"),
         "manualCaseCount": result.get("manualCaseCount"),
         "scenarioCount": result.get("scenarioCount"),
+        "yamlFiles": [item.get("file") for item in yaml_file_items],
+        "yamlFileCount": len(yaml_file_items),
         "summaryFiles": result.get("summaryFiles"),
-        "yamlCheck": yaml_check,
+        "yamlCheck": result.get("yamlCheck") or {},
         "yamlExecutability": yaml_executability,
     }
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
@@ -4674,7 +4738,7 @@ def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
             source_context["figmaIgnoredPages"] = summary.get("ignored_figma_pages") or source_context.get("figmaIgnoredPages") or []
         if summary.get("knowledge_pages") or summary.get("used_reference_pages"):
             source_context["generationReferencePages"] = summary.get("knowledge_pages") or summary.get("used_reference_pages") or []
-    return yaml_text, result
+    return yaml_file_items, result
 
 
 def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
@@ -4746,32 +4810,29 @@ def _tool_generate_yaml(run):
             prompt_ctx = {}
         if _agent_is_new_requirement_run(run, source_context):
             try:
-                yaml_text, pipeline_result = _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
-                check = validate_agent_yaml_content(yaml_text)
-                if check.get("ok"):
-                    target_path, err = _confirm_agent_yaml_content(run, artifacts, yaml_text)
+                yaml_file_items, pipeline_result = _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
+                refs, err = _confirm_agent_yaml_files(run, artifacts, yaml_file_items)
+                if refs and not err:
+                    check = artifacts.get("yamlValidation") or {"ok": True, "issues": [], "results": []}
                     if err:
                         raise ValueError(err)
-                    artifacts["yamlValidation"] = {
-                        "ok": True,
-                        "issues": [],
-                        "autoConfirmed": True,
-                        "results": [{"type": "mindmap_pipeline", **check}],
-                    }
+                    artifacts["yamlValidation"] = {**check, "autoConfirmed": True}
                     call["status"] = "SUCCESS"
                     call["outputSummary"] = (
-                        "已调用需求解析/脑图生成/Figma解析主链生成 YAML 草稿，"
-                        f"用例 {pipeline_result.get('caseCount') or check.get('taskCount')} 条，"
-                        f"场景 {pipeline_result.get('scenarioCount') or 0} 个；可执行校验通过，已自动确认进入下一步"
+                        "已调用需求解析/脑图生成/Figma解析主链按用例拆分生成 YAML，"
+                        f"用例 {pipeline_result.get('caseCount') or len(refs)} 条，"
+                        f"场景 {pipeline_result.get('scenarioCount') or 0} 个，"
+                        f"YAML 文件 {len(refs)} 个；可执行校验通过，已自动确认进入下一步"
                     )
                     call["artifactRefs"] = [
-                        str(target_path or ""),
+                        *[str(item.get("path") or "") for item in refs[:20]],
                         str((pipeline_result.get("summaryFiles") or {}).get("mindmap") or ""),
                         str((pipeline_result.get("summaryFiles") or {}).get("markdown") or ""),
                     ]
                     return _finish_agent_tool_call(call, run)
-                artifacts["yamlValidation"] = {"ok": False, "issues": check.get("issues") or [], "results": [{"type": "mindmap_pipeline", **check}]}
-                artifacts.setdefault("generationPipeline", {})["yamlInvalid"] = check
+                artifacts.setdefault("generationPipeline", {})["yamlInvalid"] = artifacts.get("yamlValidation") or {"error": err}
+                if err:
+                    raise ValueError(err)
             except Exception as e:
                 artifacts.setdefault("generationPipeline", {})["error"] = str(e)[:500]
                 attach_diagnosis(call, make_diagnosis(

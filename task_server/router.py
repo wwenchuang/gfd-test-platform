@@ -176,6 +176,7 @@ from task_server.services.yaml_service import (
     case_ui_design_dir,
     cases_path,
     cases_to_midscene_yaml,
+    cases_to_separate_midscene_yamls,
     changed_line_count,
     delete_case_ui_design_asset,
     filtered_case_ui_design_assets_for_summary,
@@ -2026,29 +2027,48 @@ def _handle_convert_or_generate(handler, d):
         payload = normalize_cases_payload(raw_content)
         converted_payload = split_automation_ready_cases(payload)
         app_package = d.get("app_package") or d.get("appPackage") or app_package_for_module(mod) or ""
-        title, yaml = cases_to_midscene_yaml(converted_payload, app_package=app_package)
-        filename = clean_filename(d.get("file") or f"task-{slug_for_file(title)}.yaml")
+        requested_file = clean_filename(d.get("file") or "")
+        title, yaml_items = cases_to_separate_midscene_yamls(
+            converted_payload,
+            app_package=app_package,
+            base_file=requested_file or f"task-{slug_for_file(payload.get('title') or 'case')}.yaml",
+        )
+        filename = yaml_items[0]["file"]
+        yaml = yaml_items[0]["content"]
+        yaml_files = [item["file"] for item in yaml_items]
         module_dir = safe_join(TASK_DIR, mod)
         os.makedirs(module_dir, exist_ok=True)
-        write_text_file(safe_join(module_dir, filename), yaml)
+        for item in yaml_items:
+            write_text_file(safe_join(module_dir, item["file"]), item["content"])
         case_set_id = d.get("case_set_id") or d.get("caseSetId") or new_case_set_id()
         converted_payload["id"] = case_set_id
         converted_payload["module"] = mod
         write_json_file(cases_path(case_set_id), converted_payload)
-        yaml_check = validate_midscene_yaml(yaml)
-        yaml_executability = validate_midscene_yaml_executability(yaml)
+        yaml_checks = [{"file": item["file"], **validate_midscene_yaml(item["content"])} for item in yaml_items]
+        yaml_exec_checks = [{"file": item["file"], **validate_midscene_yaml_executability(item["content"])} for item in yaml_items]
+        yaml_check = {"ok": all(item.get("ok") for item in yaml_checks), "mode": "split_by_case", "file_count": len(yaml_items), "files": yaml_checks}
+        yaml_executability = {
+            "ok": all(item.get("ok") for item in yaml_exec_checks),
+            "mode": "split_by_case",
+            "file_count": len(yaml_items),
+            "files": yaml_exec_checks,
+            "taskCount": sum(int(item.get("taskCount") or 0) for item in yaml_exec_checks),
+        }
         summary = build_generation_summary(
             case_set_id, title, mod, filename, converted_payload,
             yaml_check=yaml_check, yaml_executability=yaml_executability
         )
+        summary["yaml_files"] = yaml_files
+        summary["yaml_file_count"] = len(yaml_files)
         summary_files = write_generation_summary(case_set_id, summary)
-        update_task_meta(mod, filename, {
-            "last_case_set_id": case_set_id,
-            "last_case_set_title": title,
-            "last_generated_at": summary.get("generated_at"),
-            "last_case_count": len(converted_payload.get("cases", [])),
-            "last_manual_case_count": len(converted_payload.get("manual_cases", [])),
-        })
+        for item in yaml_items:
+            update_task_meta(mod, item["file"], {
+                "last_case_set_id": case_set_id,
+                "last_case_set_title": title,
+                "last_generated_at": summary.get("generated_at"),
+                "last_case_count": 1,
+                "last_manual_case_count": len(converted_payload.get("manual_cases", [])),
+            })
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
         return
@@ -2057,8 +2077,10 @@ def _handle_convert_or_generate(handler, d):
         "case_set_id": case_set_id,
         "module": mod,
         "file": filename,
+        "yamlFiles": yaml_files,
+        "yamlFileCount": len(yaml_files),
         "content": yaml,
-        "files": [{"file": filename, "content": yaml, "title": title}],
+        "files": [{"file": item["file"], "content": item["content"], "title": item["title"]} for item in yaml_items],
         "caseCount": len(converted_payload["cases"]),
         "manualCaseCount": len(converted_payload.get("manual_cases", [])),
         "scenarioCount": len(converted_payload.get("scenarios", [])),
