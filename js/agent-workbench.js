@@ -1400,6 +1400,51 @@ function renderAgentArtifactContent(tab, run) {
   return `<pre class="agent-artifact-pre">${escapeHtml(text)}</pre>`;
 }
 
+function renderGenerateYamlDetail(step, artifacts) {
+  const pipeline = (artifacts || {}).generationPipeline || {};
+  const validation = (artifacts || {}).yamlValidation || {};
+  const summary = (artifacts || {}).generationSummary || {};
+  const summaryFiles = pipeline.summaryFiles || summary.summaryFiles || {};
+  const yamlFiles = Array.isArray(pipeline.yamlFiles) ? pipeline.yamlFiles.filter(Boolean) : [];
+  const validationResults = Array.isArray(validation.results) ? validation.results : [];
+  const fallback = validationResults.find(item => item && item.type === 'fallback') || {};
+  const executable = pipeline.yamlExecutability || {};
+  const sourceLabel = {
+    ui_yaml_pipeline: '完整 YAML 生成主链',
+    mindmap_pipeline: '旧脑图管线',
+  }[pipeline.source] || pipeline.source || '未记录';
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '生成链路', value: sourceLabel },
+    { label: 'YAML 文件', value: pipeline.yamlFileCount ?? yamlFiles.length ?? 0 },
+    { label: '用例', value: pipeline.caseCount ?? '-' },
+    { label: '可执行任务', value: executable.taskCount ?? fallback.taskCount ?? '-' },
+  ]);
+  if (pipeline.error) {
+    html += `<section class="agent-readable-panel"><strong>主链错误</strong><p>${escapeHtml(pipeline.error)}</p></section>`;
+  }
+  if (Array.isArray(validation.issues) && validation.issues.length) {
+    html += agentReadableList('校验结果', validation.issues.slice(0, 8));
+  }
+  if (validation.fallbackOk) {
+    html += `<section class="agent-readable-panel"><strong>兜底草稿</strong><p>完整生成链路没有产出可执行 YAML，系统已生成 ${escapeHtml(fallback.taskCount ?? '-')} 条待确认草稿。</p></section>`;
+  }
+  if (yamlFiles.length) {
+    html += agentReadableList('生成的 YAML', yamlFiles.slice(0, 20), file => `<b>${escapeHtml(file)}</b><span>已按单用例拆分，校验通过后会自动进入后续执行。</span>`);
+  }
+  const generatedArtifacts = [
+    summaryFiles.mindmap ? { label: '脑图 .mm', path: summaryFiles.mindmap } : null,
+    summaryFiles.markdown ? { label: '生成摘要', path: summaryFiles.markdown } : null,
+    summaryFiles.json ? { label: '结构化用例', path: summaryFiles.json } : null,
+  ].filter(Boolean);
+  if (generatedArtifacts.length) {
+    html += agentReadableList('同步生成产物', generatedArtifacts, item => `<b>${escapeHtml(item.label)}</b><span>${escapeHtml(item.path)}</span>`);
+  }
+  html += renderDiagnosisDetail((step || {}).diagnosis);
+  html += '</div>';
+  return html;
+}
+
 // ===== ANALYZE_FAILURE 分析详情 =====
 function renderAnalysisDetail(step, artifacts) {
   const analysis = (artifacts || {}).failureAnalysis || {};
@@ -1554,6 +1599,7 @@ function renderStepDetail(step, run) {
     case 'impact_analysis': return renderSourceContextDetail(step, artifacts);
     case 'case_retrieval': return renderMatchDetail(step, artifacts);
     case 'list_cases': return renderMatchDetail(step, artifacts);
+    case 'generate_yaml': return renderGenerateYamlDetail(step, artifacts);
     case 'execution_precheck': return renderExecutionPrecheckDetail(step, artifacts);
     case 'sonic_sync_case': return renderSonicSyncDetail(step, artifacts);
     case 'create_runner_job': return renderRunTaskDetail(step, artifacts);

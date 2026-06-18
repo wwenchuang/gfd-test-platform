@@ -85,6 +85,7 @@ def main():
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html and "downloadAgentMindmap" in html and "下载脑图" in html, "Agent artifacts must support copy plus YAML and mindmap download")
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
     require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")
+    require("renderGenerateYamlDetail" in html and "完整 YAML 生成主链" in html and "主链错误" in html, "Agent YAML generation step must show readable pipeline details")
     require("normalizeAgentReportArtifacts" in html and "isAgentYamlRef" in html and "normalizedAgentReportCounts" in html and "agentReportLooksYaml" in html, "Agent report rendering must not count YAML files as HTML execution reports")
     require("YAML 校验失败时，不能显示" not in html, "Implementation details should not be visible as instructional UI text")
     # Assets entry exists in sidebar as asset center

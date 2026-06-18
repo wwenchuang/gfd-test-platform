@@ -4665,10 +4665,10 @@ def _agent_source_files_for_generation(run):
     return files
 
 
-def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text):
-    """Reuse the mature requirement/Figma -> cases/mindmap pipeline for Agent drafts."""
+def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
+    """Reuse the mature requirement/Figma -> cases/mindmap/YAML pipeline for Agent drafts."""
     from task_server.services.yaml_service import (
-        generate_mindmap_from_request,
+        generate_ui_yaml_from_request,
     )
 
     case_set_id = f"agent-{run.get('runId') or unique_millis_id('agent')}"
@@ -4694,7 +4694,7 @@ def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
         "use_knowledge_context": False,
         "source": "agent",
     }
-    result = generate_mindmap_from_request(request_data, job_id=None)
+    result = generate_ui_yaml_from_request(request_data, job_id=None)
     cases_payload = result.get("cases") if isinstance(result, dict) else {}
     if not isinstance(cases_payload, dict):
         cases_payload = {}
@@ -4726,7 +4726,7 @@ def _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
     artifacts = run.setdefault("artifacts", {})
     artifacts["generatedCases"] = cases_payload
     artifacts["generationPipeline"] = {
-        "source": "mindmap_pipeline",
+        "source": "ui_yaml_pipeline",
         "caseSetId": result.get("case_set_id"),
         "caseCount": result.get("caseCount"),
         "manualCaseCount": result.get("manualCaseCount"),
@@ -4818,7 +4818,7 @@ def _tool_generate_yaml(run):
             prompt_ctx = {}
         if _agent_is_new_requirement_run(run, source_context):
             try:
-                yaml_file_items, pipeline_result = _agent_generate_yaml_from_mindmap_pipeline(run, source_context, source_text)
+                yaml_file_items, pipeline_result = _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text)
                 refs, err = _confirm_agent_yaml_files(run, artifacts, yaml_file_items)
                 if refs and not err:
                     check = artifacts.get("yamlValidation") or {"ok": True, "issues": [], "results": []}
@@ -4827,7 +4827,7 @@ def _tool_generate_yaml(run):
                     artifacts["yamlValidation"] = {**check, "autoConfirmed": True}
                     call["status"] = "SUCCESS"
                     call["outputSummary"] = (
-                        "已调用需求解析/脑图生成/Figma解析主链按用例拆分生成 YAML，"
+                        "已调用需求解析/脑图生成/Figma解析/YAML生成主链按用例拆分生成 YAML，"
                         f"用例 {pipeline_result.get('caseCount') or len(refs)} 条，"
                         f"场景 {pipeline_result.get('scenarioCount') or 0} 个，"
                         f"YAML 文件 {len(refs)} 个；可执行校验通过，已自动确认进入下一步"
@@ -4844,23 +4844,23 @@ def _tool_generate_yaml(run):
             except Exception as e:
                 artifacts.setdefault("generationPipeline", {})["error"] = str(e)[:500]
                 attach_diagnosis(call, make_diagnosis(
-                    "需求解析/脑图生成主链失败",
+                    "需求解析/脑图/YAML生成主链失败",
                     "已准备回退到 Agent 多任务兜底草稿。",
-                    ["检查 AI Skills / Figma Token", "查看 generationPipeline.error", "确认草稿后再同步 Sonic"],
+                    ["检查 AI Skills / Figma Token", "查看生成 YAML 详情", "确认草稿后再同步 Sonic"],
                     error=str(e)[:300],
                 ))
             fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
             fallback_check = validate_agent_yaml_content(fallback_yaml)
             if fallback_check.get("ok"):
-                _save_agent_yaml_draft(run, artifacts, fallback_yaml, draft_reason="fallback_after_mindmap_pipeline")
+                _save_agent_yaml_draft(run, artifacts, fallback_yaml, draft_reason="fallback_after_ui_yaml_pipeline")
                 artifacts["yamlValidation"] = {
                     "ok": False,
-                    "issues": ["需求解析/脑图生成主链未产出可执行 YAML"],
+                    "issues": ["需求解析/脑图/YAML生成主链未产出可执行 YAML"],
                     "fallbackOk": True,
                     "results": [{"type": "fallback", **fallback_check}],
                 }
                 call["status"] = "WAIT_CONFIRM"
-                call["outputSummary"] = f"需求解析/脑图主链未产出可执行 YAML，已生成多任务兜底草稿（{fallback_check.get('taskCount')} 条）"
+                call["outputSummary"] = f"需求解析/脑图/YAML生成主链未产出可执行 YAML，已生成多任务兜底草稿（{fallback_check.get('taskCount')} 条）"
                 return _finish_agent_tool_call(call, run)
             call["status"] = "FAILED"
             call["error"] = "需求解析主链和兜底草稿均未产出可执行 YAML：" + "；".join(fallback_check.get("issues") or [])
