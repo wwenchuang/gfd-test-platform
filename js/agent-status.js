@@ -2100,10 +2100,10 @@ function assetModuleListHtml() {
 function sonicFileSummary(mod, file) {
   const rows = sonicCaseRows.filter(row => row.module === mod && row.file === file && !row.error);
   if (!rows.length) return { text: '未同步', cls: 'missing', title: '未解析到 Sonic 可同步用例，或尚未同步' };
-  const published = rows.filter(row => (row.sonic || {}).status === 'published').length;
-  const failed = rows.filter(row => (row.sonic || {}).status === 'failed').length;
-  const legacy = rows.filter(row => (row.sonic || {}).step_state === 'legacy' || (row.sonic || {}).status === 'legacy').length;
-  const mixed = rows.filter(row => (row.sonic || {}).step_state === 'mixed' || (row.sonic || {}).status === 'mixed').length;
+  const published = rows.filter(row => row.step_state === 'bridge' || (row.sonic || {}).step_state === 'bridge' || (row.sonic || {}).status === 'published').length;
+  const failed = rows.filter(row => row.step_state === 'failed' || (row.sonic || {}).status === 'failed').length;
+  const legacy = rows.filter(row => row.step_state === 'legacy' || (row.sonic || {}).step_state === 'legacy' || (row.sonic || {}).status === 'legacy').length;
+  const mixed = rows.filter(row => row.step_state === 'mixed' || (row.sonic || {}).step_state === 'mixed' || (row.sonic || {}).status === 'mixed').length;
   if (failed) return { text: '同步失败', cls: 'failed', title: `${failed}/${rows.length} 条同步至 Sonic 平台失败` };
   if (mixed) return { text: '待清理', cls: 'mixed', title: `${mixed}/${rows.length} 条存在旧/重复执行步骤，请重新同步清理` };
   if (legacy) return { text: '旧模板', cls: 'legacy', title: `${legacy}/${rows.length} 条仍是 Sonic 旧模板` };

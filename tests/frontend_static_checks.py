@@ -141,6 +141,8 @@ def main():
     require("同步至 Sonic 平台" in html and "Sonic 同步" not in html and "Sonic同步" not in html and "设备同步" not in html, "Sonic sync UI copy must use 同步至 Sonic 平台")
     require("publishSelectedFilesToSonic" in html and "publishSonicBatchItems" in html and "同步当前已选至 Sonic 平台" in html and "selectedSonicFilesForCurrentFilters" in html, "Sonic batch sync must only publish selected YAML files from the current asset filter")
     require("await loadModules({force: true})" in html and "loadModules({force:true})" in html, "Sonic publish and asset refresh must force reload modules and sonic case rows")
+    require("row.step_state === 'bridge'" in html and "(row.sonic || {}).step_state === 'bridge'" in html, "Asset Sonic status must treat bridge step state as synced")
+    require("请求返回业务失败" in html and "请求失败：HTTP ${res.status}" in html and "HTTP 200" not in html, "API business failures must not be surfaced as HTTP 200 errors")
     require("function jobRunModeText" in html and "function markJobHandled" in html and "manual_confirmed" in html, "Runner side panel must label run mode and let users clear handled failures")
     require("function isRunnerExecutionJob" in html and "locallyHiddenRunnerJobIds" in html and "/^(gen|figma|mindmap|repair)_/i" in html, "Runner side panel must filter background/generated jobs and stale handled ids")
     require("activeWorkflow === 'assets'" in html and "selectedAssetRowsForCurrentFilters().map" in html, "Asset batch move/delete must use the current filtered selection")

@@ -1685,7 +1685,8 @@ async function readJsonResponse(res) {
     throw new Error(`接口返回的不是 JSON：HTTP ${res.status}${summary ? `，${summary}` : ''}`);
   }
   if (!res.ok || data.ok === false || data.success === false) {
-    throw new Error((data && data.error) || `请求失败：HTTP ${res.status}`);
+    const businessMessage = data && (data.error || data.message || data.reason);
+    throw new Error(businessMessage || (res.ok ? '请求返回业务失败，请查看操作结果详情' : `请求失败：HTTP ${res.status}`));
   }
   return data;
 }
