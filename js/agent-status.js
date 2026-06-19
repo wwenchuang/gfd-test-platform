@@ -2089,7 +2089,17 @@ function showAssetsCenter() {
           </div>
           <div class="assets-table-wrap">
             ${rows.length ? `
-              <table class="assets-table">
+              <table class="assets-table asset-library-table">
+                <colgroup>
+                  <col class="asset-col-select">
+                  <col class="asset-col-file">
+                  <col class="asset-col-module">
+                  <col class="asset-col-status">
+                  <col class="asset-col-run">
+                  <col class="asset-col-sonic">
+                  <col class="asset-col-cases">
+                  <col class="asset-col-actions">
+                </colgroup>
                 <thead><tr>
                   <th class="assets-select-cell"><input class="task-check" type="checkbox" title="全选当前列表" ${allRowsSelected ? 'checked' : ''} onchange="toggleCurrentAssetRows(this.checked)"></th>
                   <th>YAML 文件</th><th>模块</th><th>状态</th><th>最近执行</th><th>Sonic</th><th>用例</th><th>操作</th>

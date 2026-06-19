@@ -696,12 +696,34 @@
   border-collapse: collapse;
   font-size: 12px;
 }
+.asset-library-table {
+  min-width: 1040px;
+  table-layout: fixed;
+}
+.asset-library-table .asset-col-select { width: 42px; }
+.asset-library-table .asset-col-file { width: 24%; }
+.asset-library-table .asset-col-module { width: 18%; }
+.asset-library-table .asset-col-status { width: 76px; }
+.asset-library-table .asset-col-run { width: 86px; }
+.asset-library-table .asset-col-sonic { width: 94px; }
+.asset-library-table .asset-col-cases { width: 90px; }
+.asset-library-table .asset-col-actions { width: 290px; }
 .assets-table th,
 .assets-table td {
   padding: 9px 10px;
   border-bottom: 1px solid rgba(51,80,109,.42);
   text-align: left;
   vertical-align: middle;
+}
+.asset-library-table th:nth-child(4),
+.asset-library-table th:nth-child(5),
+.asset-library-table th:nth-child(6),
+.asset-library-table th:nth-child(7),
+.asset-library-table td:nth-child(4),
+.asset-library-table td:nth-child(5),
+.asset-library-table td:nth-child(6),
+.asset-library-table td:nth-child(7) {
+  white-space: nowrap;
 }
 .assets-table th {
   position: sticky;
@@ -719,7 +741,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  min-width: 230px;
+  min-width: 270px;
 }
 .assets-table tr.active,
 .assets-table tr:hover {
@@ -741,16 +763,29 @@
 }
 .asset-pill {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
   border: 1px solid rgba(51,80,109,.72);
   border-radius: 999px;
   padding: 2px 8px;
   color: var(--text2);
   background: rgba(8,11,18,.42);
+  line-height: 1.4;
+  white-space: nowrap;
 }
-.asset-row-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+.asset-library-table .status-pill,
+.asset-library-table .task-ext,
+.asset-library-table .task-ext.sonic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max-content;
+  max-width: 100%;
+  white-space: nowrap;
+  word-break: keep-all;
+  line-height: 1.35;
+  text-align: center;
 }
 @media (max-width: 1100px) {
   .assets-hero,
