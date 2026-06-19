@@ -442,6 +442,23 @@ const AGENT_SOURCE_TYPES = [
   ['failed_job', '引用失败任务', '只针对指定失败任务分析和修复']
 ];
 
+async function openAgentAppInstall() {
+  try {
+    if (typeof setExecutionTab !== 'function') {
+      showToast('安装包更新入口还没有加载完成，请稍后再试', 'warn');
+      return;
+    }
+    if (typeof activateWorkflow === 'function' && activeWorkflow !== 'execute') {
+      await activateWorkflow('execute');
+    } else if (typeof setActiveWorkflow === 'function' && activeWorkflow !== 'execute') {
+      setActiveWorkflow('execute');
+    }
+    setExecutionTab('install');
+  } catch (e) {
+    showToast('打开安装包更新失败：' + (e.message || e), 'error');
+  }
+}
+
 async function showAgentWorkbench() {
   const area = document.getElementById('editor-area');
   if (!area) return;
@@ -527,6 +544,13 @@ async function showAgentWorkbench() {
               <option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>
             </select>
             <div class="form-hint" id="agent-runner-device-hint">正在读取在线 Runner 和设备...</div>
+          </div>
+          <div class="agent-preflight-strip" style="grid-column:1/-1;">
+            <div>
+              <strong>运行前准备：App 安装/更新（可选）</strong>
+              <span>默认不安装，Agent 会直接生成并执行用例；需要验证测试包、蒲公英包或线上回归包时，先创建 Runner 安装任务。</span>
+            </div>
+            <button class="btn-sm" type="button" onclick="openAgentAppInstall()">安装/更新 App</button>
           </div>
           <div class="agent-field" style="grid-column:1/-1;">
             <label for="agent-source-type">输入来源</label>
