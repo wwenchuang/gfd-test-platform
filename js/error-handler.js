@@ -10,7 +10,7 @@ const ERROR_FRIENDLY_MAP = [
   { match: (s, m) => s === 401, icon: '🔐', msg: '登录已过期，请重新登录' },
   { match: (s, m) => s === 403, icon: '🚫', msg: '无权限执行此操作' },
   { match: (s, m) => s === 404, icon: '❌', msg: '请求的资源不存在' },
-  { match: (s, m) => s === 413, icon: '📦', msg: '上传内容过大，请减少文件大小' },
+  { match: (s, m) => s === 413, icon: '📦', msg: '上传内容过大，当前建议控制在 300M 以内' },
   { match: (s, m) => s === 502 || s === 504, icon: '⚠️', msg: '服务暂时不可用，请稍后重试' },
   // 关键词匹配（后端 Python 异常）
   { match: (s, m) => /is not defined|NameError/.test(m), icon: '⚠️', msg: '服务配置异常，请联系管理员或稍后重试' },

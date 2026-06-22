@@ -197,8 +197,8 @@ TASK_ALLOWED_ORIGINS = [
     for item in os.getenv("TASK_ALLOWED_ORIGINS", "http://101.34.197.12:8088,http://localhost:8088,http://127.0.0.1:8088").split(",")
     if item.strip()
 ]
-MAX_BODY_SIZE = env_int("TASK_MAX_BODY_SIZE", 20 * 1024 * 1024)
-MAX_UPLOAD_BODY_SIZE = env_int("TASK_MAX_UPLOAD_BODY_SIZE", 120 * 1024 * 1024)
+MAX_BODY_SIZE = env_int("TASK_MAX_BODY_SIZE", 300 * 1024 * 1024)
+MAX_UPLOAD_BODY_SIZE = env_int("TASK_MAX_UPLOAD_BODY_SIZE", 300 * 1024 * 1024)
 PORT = env_int("PORT", 8091)
 JOB_TIMEOUT_SECONDS = int(os.getenv("MIDSCENE_JOB_TIMEOUT_SECONDS", "1800"))
 

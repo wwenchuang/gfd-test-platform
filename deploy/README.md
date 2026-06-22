@@ -129,6 +129,8 @@ API keys stay in `.env` or systemd environment only.
 Report retention defaults are appended automatically during install when missing:
 
 ```bash
+export TASK_MAX_BODY_SIZE='314572800'
+export TASK_MAX_UPLOAD_BODY_SIZE='314572800'
 export MIDSCENE_AI_CHAT_TIMEOUT_SECONDS='480'
 export MIDSCENE_AI_CHAT_RETRY_COUNT='1'
 export MIDSCENE_COVERAGE_MODEL_WHEN_LOCAL_OK='0'
@@ -201,6 +203,17 @@ sudo cp deploy/nginx-midscene-task.conf /etc/nginx/conf.d/midscene-task.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+`deploy/install-server.sh` also writes a small upload-size override when Nginx is
+available:
+
+```bash
+client_max_body_size 300m;
+```
+
+If the public page is served by the Sonic reports container, the installer writes
+the same 300M limit into that container and reloads Nginx there. Override with
+`NGINX_CLIENT_MAX_BODY_SIZE=300m` only when the server needs a different limit.
 
 Then open:
 

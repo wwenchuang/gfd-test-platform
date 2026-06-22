@@ -1782,7 +1782,7 @@ async function readJsonResponse(res) {
       throw new Error('服务端生成超时 504：需求文件较大或模型响应较慢，需要调大 nginx proxy_read_timeout');
     }
     if (res.status === 413 || /request entity too large/i.test(summary)) {
-      throw new Error('上传内容过大 413：需要调大 nginx client_max_body_size');
+      throw new Error('上传内容过大 413：平台上传上限为 300M，请压缩文件或确认服务端 Nginx 配置已部署生效');
     }
     throw new Error(`接口返回的不是 JSON：HTTP ${res.status}${summary ? `，${summary}` : ''}`);
   }

@@ -9,6 +9,8 @@ USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
 PORT="${PORT:-8091}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
+NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
+NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -158,7 +160,23 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -
       echo "已同步页面到 Docker 容器：${WEB_CONTAINER}:${target_html}"
     fi
   done
+  docker exec "${WEB_CONTAINER}" sh -lc "printf 'client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};\n' > /etc/nginx/conf.d/midscene-upload-size.conf && nginx -t" \
+    && docker exec "${WEB_CONTAINER}" sh -lc "nginx -s reload 2>/dev/null || true" \
+    && echo "已更新 Docker Nginx 上传上限：${NGINX_CLIENT_MAX_BODY_SIZE}" \
+    || docker exec "${WEB_CONTAINER}" sh -lc "rm -f /etc/nginx/conf.d/midscene-upload-size.conf; nginx -t >/dev/null 2>&1 || true"
   docker exec "${WEB_CONTAINER}" sh -lc "nginx -s reload 2>/dev/null || true"
+fi
+
+if command -v nginx >/dev/null 2>&1 && [ -d "$(dirname "${NGINX_UPLOAD_LIMIT_CONF}")" ]; then
+  printf 'client_max_body_size %s;\n' "${NGINX_CLIENT_MAX_BODY_SIZE}" > "${NGINX_UPLOAD_LIMIT_CONF}"
+  if nginx -t; then
+    systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null || true
+    echo "已更新宿主机 Nginx 上传上限：${NGINX_CLIENT_MAX_BODY_SIZE}"
+  else
+    rm -f "${NGINX_UPLOAD_LIMIT_CONF}"
+    nginx -t >/dev/null 2>&1 || true
+    echo "警告：宿主机 Nginx 上传上限配置校验失败，已回滚 ${NGINX_UPLOAD_LIMIT_CONF}"
+  fi
 fi
 
 rm -rf "${APP_DIR}/ai_skills"
@@ -303,6 +321,8 @@ upgrade_env_default_if_old() {
 
 ensure_env_default "AI_SKILLS_DIR" "${APP_DIR}/ai_skills"
 upgrade_env_default_if_old "PORT" "8091" "8088"
+ensure_env_default "TASK_MAX_BODY_SIZE" "314572800"
+ensure_env_default "TASK_MAX_UPLOAD_BODY_SIZE" "314572800"
 ensure_env_default "FIGMA_PARSE_LIMIT" "80"
 ensure_env_default "FIGMA_REFERENCE_LIMIT" "36"
 ensure_env_default "FIGMA_MAX_REFERENCE_LIMIT" "72"
@@ -328,6 +348,8 @@ upgrade_env_default_if_old "FIGMA_REFERENCE_LIMIT" "36" "12|24"
 upgrade_env_default_if_old "FIGMA_MAX_REFERENCE_LIMIT" "72" "24|32|48"
 upgrade_env_default_if_old "FIGMA_VISUAL_IMAGE_LIMIT" "40" "16|24"
 upgrade_env_default_if_old "MIDSCENE_AI_VISION_IMAGE_LIMIT" "40" "16|24"
+upgrade_env_default_if_old "TASK_MAX_BODY_SIZE" "314572800" "20971520|52428800|83886080|125829120"
+upgrade_env_default_if_old "TASK_MAX_UPLOAD_BODY_SIZE" "314572800" "83886080|125829120"
 
 install -m 0644 "${SCRIPT_DIR}/midscene-task.service" "${SERVICE_FILE}"
 systemctl daemon-reload

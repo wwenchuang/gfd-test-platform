@@ -11,6 +11,13 @@ class BodyTooLarge(Exception):
     pass
 
 
+def _limit_mb(limit):
+    try:
+        return max(1, round(int(limit) / 1024 / 1024))
+    except Exception:
+        return 0
+
+
 class ResponseMixin:
     """HTTP 响应工具方法 Mixin，供 Handler 继承使用。"""
 
@@ -94,7 +101,7 @@ class ResponseMixin:
         upload_paths = ("/report", "/api/report/chunk", "/api/report/chunk-finish", "/api/app-install/request")
         limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
         if length > limit:
-            raise BodyTooLarge("请求体过大")
+            raise BodyTooLarge(f"请求体过大，当前上限约 {_limit_mb(limit)}MB")
         return self.rfile.read(length) if length else b""
 
     def _body_size_allowed(self, path):
@@ -103,7 +110,7 @@ class ResponseMixin:
         upload_paths = ("/report", "/api/report/chunk", "/api/report/chunk-finish", "/api/app-install/request")
         limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
         if length > limit:
-            self._json({"ok": False, "error": "请求体过大"}, 413)
+            self._json({"ok": False, "error": f"请求体过大，当前上限约 {_limit_mb(limit)}MB"}, 413)
             return False
         return True
 
