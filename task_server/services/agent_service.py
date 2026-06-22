@@ -39,6 +39,7 @@ from task_server.config import (
 )
 from task_server.schemas import AGENT_STATE_STEPS, HIGH_RISK_KEYWORDS, MIDSCENE_FLOW_ACTIONS
 from task_server.storage import (
+    clean_filename,
     read_json_cached,
     read_json_file,
     read_text_file,
@@ -47,7 +48,7 @@ from task_server.storage import (
     write_text_file,
     write_json_file,
 )
-from task_server.services.yaml_service import validate_midscene_yaml_executability
+from task_server.services.yaml_service import extract_midscene_tasks, slug_for_file, validate_midscene_yaml_executability
 from task_server.prompts import get_prompt_center
 
 # ---------------------------------------------------------------------------
@@ -663,6 +664,101 @@ def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
     return target_path, ""
 
 
+def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="", reason="auto_confirmed_yaml"):
+    """Save an executable generated YAML as confirmed files, splitting multi-task drafts."""
+    check = validate_agent_yaml_content(content)
+    if not check.get("ok"):
+        return [], "YAML 草稿校验未通过：" + "；".join(check.get("issues") or [])
+    if pyyaml is None:
+        target_path, err = _confirm_agent_yaml_content(run, artifacts, content, draft_path=draft_path)
+        return (artifacts.get("yamlRefs") or []) if target_path and not err else [], err
+    try:
+        parsed = pyyaml.safe_load(str(content or ""))
+    except Exception as exc:
+        return [], f"YAML 解析失败：{exc}"
+    platform, tasks = extract_midscene_tasks(parsed)
+    if not tasks:
+        return [], "YAML 没有可执行 tasks"
+    if len(tasks) <= 1:
+        target_path, err = _confirm_agent_yaml_content(run, artifacts, content, draft_path=draft_path)
+        if err:
+            return [], err
+        artifacts["yamlValidation"] = {
+            **(artifacts.get("yamlValidation") or {}),
+            "ok": True,
+            "issues": [],
+            "results": artifacts.get("yamlValidation", {}).get("results") or [{**(artifacts.get("yamlRefs") or [{}])[0], **check}],
+            "autoConfirmed": True,
+            "autoConfirmedFallback": bool(reason and "fallback" in reason),
+            "confirmReason": reason,
+        }
+        return artifacts.get("yamlRefs") or [], ""
+
+    module = clean_agent_module_name(run)
+    base_name = os.path.splitext(clean_agent_yaml_name(run))[0]
+    module_dir = safe_join(TASK_DIR, module)
+    os.makedirs(module_dir, exist_ok=True)
+    refs = []
+    results = []
+    used_files = set()
+    for index, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            continue
+        task_name = str(task.get("name") or f"用例{index}").strip()
+        file_name = clean_filename(f"{base_name}-{index:02d}-{slug_for_file(task_name)}.yaml")
+        if file_name in used_files:
+            stem, ext = os.path.splitext(file_name)
+            file_name = clean_filename(f"{stem}-{index}{ext or '.yaml'}")
+        used_files.add(file_name)
+        payload = {"tasks": [task]} if platform == "root" else {platform: {"tasks": [task]}}
+        yaml_text = pyyaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+        item_check = validate_agent_yaml_content(yaml_text)
+        result = {
+            "type": "file",
+            "module": module,
+            "file": file_name,
+            "path": safe_join(module_dir, file_name),
+            **item_check,
+        }
+        results.append(result)
+        if not item_check.get("ok"):
+            continue
+        write_text_file(result["path"], yaml_text)
+        refs.append({
+            "type": "file",
+            "module": module,
+            "file": file_name,
+            "path": result["path"],
+            "content": "",
+            "confirmed": True,
+            "reason": reason,
+        })
+    if not refs:
+        issues = []
+        for result in results:
+            issues.extend([f"{result.get('file')}: {issue}" for issue in (result.get("issues") or [])])
+        return [], "YAML 文件拆分后校验未通过：" + "；".join(issues or ["没有可确认的 YAML 文件"])
+    if draft_path:
+        artifacts["draftPath"] = draft_path
+    artifacts["generatedYaml"] = content
+    artifacts["generatedYamlPath"] = refs[0]["path"]
+    artifacts["generatedYamlPaths"] = [item["path"] for item in refs]
+    artifacts["draftConfirmed"] = True
+    artifacts["requiresConfirm"] = False
+    artifacts["yamlRefs"] = refs
+    artifacts["yamlValidation"] = {
+        "ok": True,
+        "results": results,
+        "issues": [],
+        "autoConfirmed": True,
+        "autoConfirmedFallback": bool(reason and "fallback" in reason),
+        "confirmReason": reason,
+        "splitFileCount": len(refs),
+        "taskCount": sum(int(item.get("taskCount") or 0) for item in results if item.get("ok")),
+    }
+    return refs, ""
+
+
 def _confirm_agent_yaml_files(run, artifacts, file_items):
     refs = []
     results = []
@@ -809,10 +905,16 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                     content = artifacts.get("generatedYaml") or ""
                 if not content.strip():
                     return {"error": "YAML 草稿不存在，无法确认", "run": run}
-                _target_path, err = _confirm_agent_yaml_content(run, artifacts, content, draft_path=draft_path)
+                refs, err = _confirm_agent_yaml_content_as_files(
+                    run,
+                    artifacts,
+                    content,
+                    draft_path=draft_path,
+                    reason="manual_confirmed_yaml_draft",
+                )
                 if err:
                     return {"error": err, "run": run}
-                mark_step_success("GENERATE_YAML", "已人工确认 YAML 草稿，转为正式 YAML，继续校验并交给 Runner 执行")
+                mark_step_success("GENERATE_YAML", f"已人工确认 YAML 草稿，转为 {len(refs)} 个正式 YAML，继续校验并交给 Runner 执行")
             elif ctype in ("case_retrieval_confirm", "case_match_uncertain"):
                 selected_cases = payload.get("selectedCases")
                 if isinstance(selected_cases, list):
@@ -2646,6 +2748,11 @@ def clean_agent_yaml_name(run):
     if not name.endswith((".yaml", ".yml")):
         name += ".yaml"
     return name
+
+
+def _agent_execution_mode(run):
+    execution_mode = str((run or {}).get("executionMode") or (run or {}).get("execution_mode") or "RUNNER_JOB").strip().upper()
+    return execution_mode if execution_mode in ("RUNNER_JOB", "SONIC_SUITE") else "RUNNER_JOB"
 
 
 def _looks_like_yaml_text(value):
@@ -4999,6 +5106,7 @@ def _tool_generate_yaml(run):
         except Exception:
             prompt_ctx = {}
         if _agent_is_new_requirement_run(run, source_context):
+            pipeline_error = ""
             try:
                 yaml_file_items, pipeline_result = _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text)
                 refs, err = _confirm_agent_yaml_files(run, artifacts, yaml_file_items)
@@ -5024,25 +5132,68 @@ def _tool_generate_yaml(run):
                 if err:
                     raise ValueError(err)
             except Exception as e:
-                artifacts.setdefault("generationPipeline", {})["error"] = str(e)[:500]
+                pipeline_error = str(e)[:500]
+                artifacts.setdefault("generationPipeline", {})["error"] = pipeline_error
                 attach_diagnosis(call, make_diagnosis(
                     "需求解析/脑图/YAML生成主链失败",
                     "已准备回退到 Agent 多任务兜底草稿。",
-                    ["检查 AI Skills / Figma Token", "查看生成 YAML 详情", "确认草稿后继续校验并交给 Runner 执行"],
+                    ["查看 generationPipeline.error", "检查 AI Skills / Figma Token", "Runner 模式下可执行兜底 YAML 将自动继续"],
                     error=str(e)[:300],
                 ))
             fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
             fallback_check = validate_agent_yaml_content(fallback_yaml)
             if fallback_check.get("ok"):
+                if _agent_execution_mode(run) == "RUNNER_JOB":
+                    os.makedirs(AGENT_DRAFT_DIR, exist_ok=True)
+                    draft_path = os.path.join(AGENT_DRAFT_DIR, f"{run.get('runId')}.yaml")
+                    write_text_file(draft_path, fallback_yaml)
+                    refs, err = _confirm_agent_yaml_content_as_files(
+                        run,
+                        artifacts,
+                        fallback_yaml,
+                        draft_path=draft_path,
+                        reason="fallback_after_ui_yaml_pipeline",
+                    )
+                    if refs and not err:
+                        artifacts.setdefault("generationPipeline", {})["fallbackAutoConfirmed"] = True
+                        artifacts["yamlValidation"] = {
+                            **(artifacts.get("yamlValidation") or {}),
+                            "ok": True,
+                            "issues": [],
+                            "pipelineIssues": ["需求解析/脑图/YAML生成主链未产出可执行 YAML"],
+                            "pipelineError": pipeline_error,
+                            "fallbackOk": True,
+                            "autoConfirmedFallback": True,
+                            "results": artifacts.get("yamlValidation", {}).get("results") or [{"type": "fallback", **fallback_check}],
+                        }
+                        quality = artifacts.setdefault("qualityReport", {})
+                        quality["status"] = "warn"
+                        quality["statusText"] = "已采用兜底 YAML"
+                        quality["yamlFileCount"] = len(refs)
+                        quality["executableTaskCount"] = int(fallback_check.get("taskCount") or len(refs))
+                        existing_warnings = [str(item).strip() for item in _as_list(quality.get("warnings")) if str(item).strip()]
+                        quality["warnings"] = [
+                            *existing_warnings,
+                            "需求解析主链未成功返回正式 YAML，已自动采用可执行兜底 YAML 继续 Runner 执行。",
+                        ][:20]
+                        call["status"] = "SUCCESS"
+                        call["outputSummary"] = (
+                            "需求解析/脑图/YAML生成主链未产出可执行 YAML，"
+                            f"已自动拆分并采用多任务兜底 YAML（{len(refs)} 个文件 / {fallback_check.get('taskCount')} 条任务），继续校验和 Runner 执行"
+                        )
+                        call["artifactRefs"] = [str(item.get("path") or "") for item in refs[:20]]
+                        return _finish_agent_tool_call(call, run)
+                    artifacts.setdefault("generationPipeline", {})["fallbackAutoConfirmError"] = err
                 _save_agent_yaml_draft(run, artifacts, fallback_yaml, draft_reason="fallback_after_ui_yaml_pipeline")
                 artifacts["yamlValidation"] = {
                     "ok": False,
                     "issues": ["需求解析/脑图/YAML生成主链未产出可执行 YAML"],
+                    "pipelineError": pipeline_error,
                     "fallbackOk": True,
                     "results": [{"type": "fallback", **fallback_check}],
                 }
                 call["status"] = "WAIT_CONFIRM"
-                call["outputSummary"] = f"需求解析/脑图/YAML生成主链未产出可执行 YAML，已生成多任务兜底草稿（{fallback_check.get('taskCount')} 条）"
+                call["outputSummary"] = f"需求解析/脑图/YAML生成主链未产出可执行 YAML，已生成多任务兜底草稿（{fallback_check.get('taskCount')} 条），等待确认后继续"
                 return _finish_agent_tool_call(call, run)
             call["status"] = "FAILED"
             call["error"] = "需求解析主链和兜底草稿均未产出可执行 YAML：" + "；".join(fallback_check.get("issues") or [])

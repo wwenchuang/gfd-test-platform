@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -66,6 +67,50 @@ def check_sonic_batch_payload_shapes():
     finally:
         sonic_service.sonic_publish_yaml = original_publish_yaml
         sonic_service.cfg.TASK_DIR = original_task_dir
+
+
+def check_agent_fallback_yaml_auto_confirm_split():
+    from task_server.services import agent_service
+
+    old_task_dir = agent_service.TASK_DIR
+    old_draft_dir = agent_service.AGENT_DRAFT_DIR
+    yaml_text = """android:
+  tasks:
+    - name: "AI建模入口验收"
+      flow:
+        - launch: com.kfb.model
+        - aiAssert: "AI建模入口可见"
+    - name: "AI建模语音输入验收"
+      flow:
+        - launch: com.kfb.model
+        - aiTap: "语音创作入口"
+        - aiAssert: "语音输入或长按说话提示可见"
+"""
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = os.path.join(temp_dir, "tasks")
+            agent_service.AGENT_DRAFT_DIR = os.path.join(temp_dir, "drafts")
+            run = {
+                "runId": "agent-static-split",
+                "target": "AI建模需求",
+                "module": "AI测试",
+                "artifacts": {},
+            }
+            artifacts = run["artifacts"]
+            refs, err = agent_service._confirm_agent_yaml_content_as_files(
+                run,
+                artifacts,
+                yaml_text,
+                reason="fallback_after_ui_yaml_pipeline",
+            )
+            require(not err, f"Fallback YAML split should not fail: {err}")
+            require(len(refs) == 2, "Fallback multi-task YAML must split into separate files")
+            require(all(ref.get("confirmed") and os.path.exists(ref.get("path", "")) for ref in refs), "Split fallback YAML files must be confirmed and written")
+            validation = artifacts.get("yamlValidation") or {}
+            require(validation.get("ok") and validation.get("autoConfirmedFallback"), "Split fallback YAML must be marked as auto-confirmed fallback")
+    finally:
+        agent_service.TASK_DIR = old_task_dir
+        agent_service.AGENT_DRAFT_DIR = old_draft_dir
 
 
 def main():
@@ -205,11 +250,13 @@ def main():
     require("def cases_to_separate_midscene_yamls" in yaml_service_source and '"mode": "split_by_case"' in yaml_service_source, "New requirement YAML generation must split automation cases into separate YAML files")
     require("cases_to_separate_midscene_yamls" in router_source and '"yamlFileCount"' in router_source, "YAML generation API must return split YAML file metadata")
     require("def _confirm_agent_yaml_files" in agent_service_source and '"generatedYamlPaths"' in agent_service_source and "YAML 文件" in agent_service_source, "Agent new-requirement pipeline must confirm multiple generated YAML files")
+    require("def _confirm_agent_yaml_content_as_files" in agent_service_source and '"autoConfirmedFallback"' in agent_service_source and "已自动拆分并采用多任务兜底 YAML" in agent_service_source, "Agent fallback YAML must auto-confirm and split into files for Runner mode")
     require("def _save_agent_yaml_draft" in agent_service_source and '"WAIT_CONFIRM"' in agent_service_source and '"generated_yaml_draft"' in agent_service_source, "Agent fallback YAML drafts must still support manual confirmation")
     require('mark_step_success("GENERATE_YAML"' in agent_service_source and "已人工确认 YAML 草稿" in agent_service_source, "Confirming a YAML draft must mark GENERATE_YAML complete and resume validation/execution")
     require("确认草稿后再同步 Sonic" not in agent_service_source, "Runner-mode YAML draft confirmation must not tell users to sync Sonic")
     require("pypdf" in (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8"), "Server install script must install pypdf for PDF requirement extraction")
     require("def _load_figma_context_for_agent" in agent_service_source and "load_figma_generation_context" in agent_service_source and '"figmaUsedPages"' in agent_service_source and '"figmaIgnoredPages"' in agent_service_source, "Agent Figma source must reuse the shared Figma requirement-filter extraction pipeline")
+    check_agent_fallback_yaml_auto_confirm_split()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
