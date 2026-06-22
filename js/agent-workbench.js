@@ -506,7 +506,7 @@ async function showAgentWorkbench() {
           </div>
           <div class="agent-field">
             <label for="agent-app-name">应用</label>
-            <select id="agent-app-name" onchange="updateAgentRunnerDeviceHint()"></select>
+            <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()"></select>
           </div>
           <div class="agent-field">
             <label for="agent-platform">平台</label>

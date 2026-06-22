@@ -546,13 +546,15 @@ function selectedAgentAppPackage() {
   return appPackageFromValue(select?.value || '', 'agent-app-name');
 }
 
-function runnerDeviceOptionLabel(device = {}) {
+function runnerDeviceOptionLabel(device = {}, packageName = '') {
   const bits = [
     runnerDeviceDisplayName(device),
     device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '',
     device.resolution || '',
     device.runner_id || '',
   ].filter(Boolean);
+  const appVersion = packageName ? runnerDeviceVersionLabel(device, packageName) : '';
+  if (appVersion) bits.push(appVersion);
   return bits.join(' / ');
 }
 
@@ -582,11 +584,12 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
   const select = document.getElementById('agent-runner-device');
   if (!select) return;
   const previous = preferredValue || select.value || '__AUTO_DEVICE__';
+  const appPackage = selectedAgentAppPackage();
   select.innerHTML = '<option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>';
   runnerDevices.forEach(device => {
     const opt = document.createElement('option');
     opt.value = `${device.runner_id}::${device.device_id}`;
-    opt.textContent = runnerDeviceOptionLabel(device);
+    opt.textContent = runnerDeviceOptionLabel(device, appPackage);
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -603,6 +606,24 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
   updateAgentRunnerDeviceHint();
 }
 
+function agentRunnerVersionSummary(appPackage = '') {
+  if (!runnerDevices.length) return '';
+  const rows = runnerDevices.slice(0, 3).map(device => {
+    const label = runnerDeviceDisplayName(device);
+    const version = appPackage
+      ? (runnerDeviceVersionLabel(device, appPackage) || `${appPackage} 未上报版本`)
+      : (runnerDeviceVersionLabel(device) || '未上报版本');
+    return `${label}：${version}`;
+  });
+  if (runnerDevices.length > 3) rows.push(`另 ${runnerDevices.length - 3} 台设备`);
+  return rows.join('；');
+}
+
+function refreshAgentRunnerDeviceByApp() {
+  const selectedValue = document.getElementById('agent-runner-device')?.value || '';
+  renderAgentRunnerDeviceOptions(selectedValue);
+}
+
 function updateAgentRunnerDeviceHint() {
   const hint = document.getElementById('agent-runner-device-hint');
   if (!hint) return;
@@ -613,7 +634,8 @@ function updateAgentRunnerDeviceHint() {
     hint.className = 'form-hint warn';
   } else if (selected.device_strategy === 'auto') {
     const appText = appPackage ? `当前应用：${appDisplayLabel(appPackage)}。` : '';
-    hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。${appText}`;
+    const versionText = agentRunnerVersionSummary(appPackage);
+    hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。${appText}${versionText ? `版本：${versionText}` : ''}`;
     hint.className = 'form-hint';
   } else {
     const device = runnerDevices.find(item => item.runner_id === selected.runner_id && item.device_id === selected.device_id);
