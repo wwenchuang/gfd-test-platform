@@ -279,6 +279,7 @@ const MODEL_ROUTER_FIELDS = [
 const AGENT_ARTIFACT_TABS = [
   ['plan', '执行计划'],
   ['cases', '测试用例'],
+  ['quality', '质量检查'],
   ['yaml', 'Midscene YAML'],
   ['validation', 'YAML 校验'],
   ['logs', '执行日志'],

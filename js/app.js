@@ -481,6 +481,37 @@ function ensureRunnersLoaded(options = {}) {
   return loadRunnerDevices(options);
 }
 
+function runnerDeviceDisplayName(device = {}) {
+  return device.label || [device.brand, device.model].filter(Boolean).join(' ') || device.device_id || '未知设备';
+}
+
+function runnerDeviceInstalledApp(device = {}, packageName = '') {
+  const packages = Array.isArray(device.installed_apps)
+    ? device.installed_apps
+    : (Array.isArray(device.installedApps) ? device.installedApps : []);
+  const pkg = String(packageName || '').trim();
+  if (!pkg) return packages.find(item => item && item.installed) || packages[0] || null;
+  return packages.find(item => item && item.package === pkg) || null;
+}
+
+function runnerDeviceVersionLabel(device = {}, packageName = '') {
+  const app = runnerDeviceInstalledApp(device, packageName);
+  if (!app) return '';
+  if (!app.installed) return `${app.package || packageName} 未安装`;
+  const version = [app.version_name || app.versionName, app.version_code || app.versionCode ? `(${app.version_code || app.versionCode})` : ''].filter(Boolean).join(' ');
+  return `${app.package || packageName} ${version || '已安装'}`.trim();
+}
+
+function runnerDeviceOptionLabel(device = {}) {
+  const bits = [
+    runnerDeviceDisplayName(device),
+    device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '',
+    device.resolution || '',
+    device.runner_id || '',
+  ].filter(Boolean);
+  return bits.join(' / ');
+}
+
 function renderDeviceOptions(selectId) {
   const select = document.getElementById(selectId);
   if (!select) return;
@@ -489,7 +520,7 @@ function renderDeviceOptions(selectId) {
   runnerDevices.forEach(device => {
     const opt = document.createElement('option');
     opt.value = `${device.runner_id}::${device.device_id}`;
-    opt.textContent = `${device.label || device.device_id} / ${device.runner_id}`;
+    opt.textContent = runnerDeviceOptionLabel(device);
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -511,7 +542,7 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
   runnerDevices.forEach(device => {
     const opt = document.createElement('option');
     opt.value = `${device.runner_id}::${device.device_id}`;
-    opt.textContent = `${device.label || device.device_id} / ${device.runner_id}`;
+    opt.textContent = runnerDeviceOptionLabel(device);
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -540,7 +571,8 @@ function updateAgentRunnerDeviceHint() {
     hint.className = 'form-hint';
   } else {
     const device = runnerDevices.find(item => item.runner_id === selected.runner_id && item.device_id === selected.device_id);
-    hint.textContent = `固定执行：${device?.label || selected.device_id} / ${selected.runner_id}`;
+    const version = device ? runnerDeviceVersionLabel(device) : '';
+    hint.textContent = `固定执行：${device ? runnerDeviceOptionLabel(device) : selected.device_id}${version ? `；${version}` : ''}`;
     hint.className = 'form-hint';
   }
 }

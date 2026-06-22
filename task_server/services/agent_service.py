@@ -4746,13 +4746,132 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             source_context["figmaIgnoredPages"] = summary.get("ignored_figma_pages") or source_context.get("figmaIgnoredPages") or []
         if summary.get("knowledge_pages") or summary.get("used_reference_pages"):
             source_context["generationReferencePages"] = summary.get("knowledge_pages") or summary.get("used_reference_pages") or []
+    artifacts["qualityReport"] = _build_agent_quality_report(run, result, yaml_file_items, yaml_executability)
     return yaml_file_items, result
+
+
+def _as_list(value):
+    if isinstance(value, list):
+        return value
+    if value in (None, ""):
+        return []
+    return [value]
+
+
+def _quality_points_from_payload(cases_payload):
+    if not isinstance(cases_payload, dict):
+        return []
+    analysis = cases_payload.get("analysis") if isinstance(cases_payload.get("analysis"), dict) else {}
+    candidates = (
+        analysis.get("requirement_points")
+        or analysis.get("requirementPoints")
+        or analysis.get("test_points")
+        or analysis.get("testPoints")
+        or cases_payload.get("requirement_points")
+        or []
+    )
+    return [str(item).strip() for item in _as_list(candidates) if str(item).strip()]
+
+
+def _build_agent_quality_report(run, generation_result, yaml_file_items=None, yaml_executability=None):
+    """Summarise generated artifacts into a reviewer-friendly quality report."""
+    result = generation_result if isinstance(generation_result, dict) else {}
+    artifacts = run.setdefault("artifacts", {})
+    cases_payload = result.get("cases") if isinstance(result.get("cases"), dict) else {}
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    counts = summary.get("counts") if isinstance(summary.get("counts"), dict) else {}
+    coverage = result.get("coverageAudit") if isinstance(result.get("coverageAudit"), dict) else {}
+    review = cases_payload.get("review") if isinstance(cases_payload.get("review"), dict) else {}
+    if not coverage and isinstance(review.get("coverage_audit"), dict):
+        coverage = review.get("coverage_audit") or {}
+
+    requirement_points = _quality_points_from_payload(cases_payload)
+    yaml_items = yaml_file_items or []
+    ui_assets = _as_list(summary.get("ui_design_assets")) + _as_list(summary.get("hidden_ui_design_assets"))
+    ignored_figma = _as_list(summary.get("ignored_figma_pages")) + _as_list(summary.get("excluded_figma_nodes"))
+    manual_cases = _as_list(result.get("manual_cases") or cases_payload.get("manual_cases"))
+    auto_case_count = _safe_int_local(result.get("caseCount"), len(_as_list(cases_payload.get("cases"))))
+    manual_case_count = _safe_int_local(result.get("manualCaseCount"), len(manual_cases))
+    scenario_count = _safe_int_local(result.get("scenarioCount"), len(_as_list(cases_payload.get("scenarios"))))
+    requirement_count = _safe_int_local(coverage.get("requirement_point_count"), len(requirement_points))
+    executable = yaml_executability if isinstance(yaml_executability, dict) else {}
+    executable_task_count = _safe_int_local(executable.get("taskCount"), len(yaml_items))
+    yaml_file_count = _safe_int_local(result.get("yamlFileCount"), len(yaml_items))
+
+    warnings: List[str] = []
+    blockers: List[str] = []
+    if requirement_count <= 0:
+        warnings.append("未识别到可追溯需求点，请检查需求解析是否命中真实文档。")
+    if scenario_count <= 0:
+        warnings.append("未形成业务场景，生成结果可能偏薄。")
+    if auto_case_count <= 0:
+        blockers.append("没有可自动化用例，不能生成可执行 YAML。")
+    if yaml_file_count <= 0 or executable_task_count <= 0:
+        blockers.append("没有可执行 YAML 文件或 android/ios tasks 为空。")
+    missing_case_points = [str(item) for item in _as_list(coverage.get("missing_case_points")) if str(item).strip()]
+    missing_scenario_points = [str(item) for item in _as_list(coverage.get("missing_scenario_points")) if str(item).strip()]
+    generic_assertions = [str(item) for item in _as_list(coverage.get("generic_assertion_cases")) if str(item).strip()]
+    if missing_case_points:
+        warnings.append(f"仍有 {len(missing_case_points)} 个需求点未进入自动化或人工用例。")
+    if missing_scenario_points:
+        warnings.append(f"仍有 {len(missing_scenario_points)} 个需求点未映射到场景。")
+    if generic_assertions:
+        warnings.append(f"{len(generic_assertions)} 条用例断言偏泛，需要补充更明确验收点。")
+    total_designed = auto_case_count + manual_case_count
+    if requirement_count >= 3 and total_designed < max(8, requirement_count * 2):
+        warnings.append("完整用例数量偏少，建议补齐边界、异常和人工验证场景。")
+    if (summary.get("figma_url") or result.get("figma_url") or (artifacts.get("sourceContext") or {}).get("figmaUrl")) and not ui_assets:
+        warnings.append("提供了 Figma 链接，但没有可展示的解析图片，请检查 Figma Token 或具体 Frame 链接。")
+
+    status = "pass"
+    if blockers:
+        status = "blocked"
+    elif warnings:
+        status = "warn"
+
+    summary_files = result.get("summaryFiles") or summary.get("summaryFiles") or {}
+    report = {
+        "status": status,
+        "statusText": {"pass": "通过", "warn": "需关注", "blocked": "阻断"}[status],
+        "caseSetId": result.get("case_set_id") or summary.get("case_set_id") or "",
+        "requirementPointCount": requirement_count,
+        "scenarioCount": scenario_count,
+        "automationCaseCount": auto_case_count,
+        "manualCaseCount": manual_case_count,
+        "totalCaseCount": total_designed,
+        "yamlFileCount": yaml_file_count,
+        "executableTaskCount": executable_task_count,
+        "figmaImageCount": len(ui_assets),
+        "ignoredFigmaCount": len(ignored_figma),
+        "coverageOk": bool(coverage.get("ok")) if coverage else not (missing_case_points or generic_assertions),
+        "coverage": {
+            "missingCasePoints": missing_case_points[:20],
+            "missingScenarioPoints": missing_scenario_points[:20],
+            "genericAssertionCases": generic_assertions[:20],
+        },
+        "warnings": warnings[:20],
+        "blockers": blockers[:20],
+        "artifacts": {
+            "mindmap": summary_files.get("mindmap") or summary_files.get("mm") or "",
+            "markdown": summary_files.get("markdown") or "",
+            "json": summary_files.get("json") or "",
+            "yamlFiles": [item.get("file") for item in yaml_items if isinstance(item, dict) and item.get("file")],
+        },
+        "layers": [
+            {"name": "完整测试用例 .mm", "count": total_designed, "ready": bool(summary_files.get("mindmap") or summary_files.get("mm"))},
+            {"name": "可自动化 YAML", "count": yaml_file_count, "ready": yaml_file_count > 0 and executable_task_count > 0},
+            {"name": "人工确认/人工用例", "count": manual_case_count + len(missing_case_points), "ready": True},
+            {"name": "Figma 解析图片", "count": len(ui_assets), "ready": len(ui_assets) > 0},
+        ],
+    }
+    return report
 
 
 def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
     os.makedirs(AGENT_DRAFT_DIR, exist_ok=True)
     draft_path = os.path.join(AGENT_DRAFT_DIR, f"{run.get('runId')}.yaml")
     write_text_file(draft_path, yaml_text)
+    check = validate_agent_yaml_content(yaml_text)
     artifacts["generatedYaml"] = yaml_text
     artifacts["draftPath"] = draft_path
     artifacts["draftConfirmed"] = False
@@ -4766,6 +4885,34 @@ def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
         "confirmed": False,
         "reason": draft_reason,
     }]
+    artifacts["qualityReport"] = {
+        "status": "warn" if check.get("ok") else "blocked",
+        "statusText": "草稿待确认" if check.get("ok") else "草稿不可执行",
+        "requirementPointCount": 0,
+        "scenarioCount": 0,
+        "automationCaseCount": 0,
+        "manualCaseCount": 0,
+        "totalCaseCount": 0,
+        "yamlFileCount": 0,
+        "executableTaskCount": int(check.get("taskCount") or 0),
+        "figmaImageCount": len(((artifacts.get("sourceContext") or {}).get("uiDesignAssets") or [])),
+        "ignoredFigmaCount": len(((artifacts.get("sourceContext") or {}).get("figmaIgnoredPages") or [])),
+        "coverageOk": False,
+        "coverage": {
+            "missingCasePoints": [],
+            "missingScenarioPoints": [],
+            "genericAssertionCases": [],
+        },
+        "warnings": ["当前是可确认 YAML 草稿，还不是正式拆分后的完整用例资产。"] if check.get("ok") else [],
+        "blockers": [] if check.get("ok") else (check.get("issues") or ["YAML 草稿校验未通过"]),
+        "artifacts": {"mindmap": "", "markdown": "", "json": "", "yamlFiles": []},
+        "layers": [
+            {"name": "完整测试用例 .mm", "count": 0, "ready": False},
+            {"name": "可自动化 YAML", "count": 0, "ready": False},
+            {"name": "人工确认/人工用例", "count": 1, "ready": True},
+            {"name": "Figma 解析图片", "count": len(((artifacts.get("sourceContext") or {}).get("uiDesignAssets") or [])), "ready": bool(((artifacts.get("sourceContext") or {}).get("uiDesignAssets") or []))},
+        ],
+    }
     artifacts["requiresConfirm"] = True
     run["status"] = "WAIT_CONFIRM"
     run["currentStep"] = "WAIT_CONFIRM"

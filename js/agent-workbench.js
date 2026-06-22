@@ -648,7 +648,7 @@ async function showAgentWorkbench() {
             <button class="agent-tab ${agentActiveTab === key ? 'active' : ''}" onclick="setAgentTab(${jsArg(key)})">${escapeHtml(label)}</button>
           `).join('')}
         </div>
-        <div class="agent-artifact-box ${['report', 'summary'].includes(agentActiveTab) ? 'rich' : ''}" id="agent-artifact-box">${renderAgentArtifactContent(agentActiveTab, run)}</div>
+        <div class="agent-artifact-box ${['quality', 'report', 'summary'].includes(agentActiveTab) ? 'rich' : ''}" id="agent-artifact-box">${renderAgentArtifactContent(agentActiveTab, run)}</div>
       </div>
       ` : `
       <div class="agent-card agent-empty-run-card">
@@ -786,7 +786,7 @@ function updateAgentWorkbenchDynamic() {
     return;
   }
   if (artifactBox && run) {
-    artifactBox.classList.toggle('rich', ['report', 'summary'].includes(agentActiveTab));
+    artifactBox.classList.toggle('rich', ['quality', 'report', 'summary'].includes(agentActiveTab));
     artifactBox.innerHTML = renderAgentArtifactContent(agentActiveTab, run);
   }
   if (riskLevelEl) {
@@ -1314,6 +1314,98 @@ function renderAgentReportArtifact(run) {
   return renderReportDetail(null, artifacts);
 }
 
+function renderAgentQualityArtifact(run) {
+  const artifacts = (run && run.artifacts) || {};
+  const quality = artifacts.qualityReport || {};
+  if (!quality || typeof quality !== 'object' || !Object.keys(quality).length) {
+    return `<div class="report-empty">暂无质量检查结果。新需求走完整生成主链后，会展示完整用例、自动化 YAML、人工用例和 Figma 解析情况。</div>`;
+  }
+  const status = String(quality.status || '').toLowerCase();
+  const tone = status === 'blocked' ? 'danger' : (status === 'warn' ? 'warn' : 'success');
+  const blockers = Array.isArray(quality.blockers) ? quality.blockers : [];
+  const warnings = Array.isArray(quality.warnings) ? quality.warnings : [];
+  const layers = Array.isArray(quality.layers) ? quality.layers : [];
+  const coverage = quality.coverage || {};
+  const artifactFiles = quality.artifacts || {};
+  const mindmap = agentMindmapInfo(artifacts);
+  let html = `
+    <div class="agent-quality-report">
+      <div class="final-report-hero ${tone}">
+        <div>
+          <span class="final-report-kicker">Agent 质量检查</span>
+          <h3>${escapeHtml(quality.statusText || '质量检查')}</h3>
+          <p>把本次生成结果按“完整用例、自动化 YAML、人工用例、Figma 图片”拆开看，方便判断覆盖是否足够。</p>
+        </div>
+        <strong class="final-report-conclusion ${tone}">${escapeHtml(quality.statusText || '-')}</strong>
+      </div>
+      <div class="report-summary-grid final-report-metrics">
+        <div><span>需求点</span><strong>${escapeHtml(quality.requirementPointCount ?? 0)}</strong></div>
+        <div><span>业务场景</span><strong>${escapeHtml(quality.scenarioCount ?? 0)}</strong></div>
+        <div><span>完整用例</span><strong>${escapeHtml(quality.totalCaseCount ?? 0)}</strong></div>
+        <div><span>YAML 文件</span><strong>${escapeHtml(quality.yamlFileCount ?? 0)}</strong></div>
+      </div>
+      <div class="agent-quality-layers">
+        ${layers.map(layer => `
+          <div class="${layer.ready ? 'ready' : 'not-ready'}">
+            <span>${escapeHtml(layer.name || '-')}</span>
+            <strong>${escapeHtml(layer.count ?? 0)}</strong>
+            <em>${layer.ready ? '已产出' : '未产出'}</em>
+          </div>
+        `).join('')}
+      </div>
+  `;
+  if (blockers.length || warnings.length) {
+    html += `
+      <section class="agent-readable-panel">
+        <strong>需要关注</strong>
+        <div class="agent-quality-notes">
+          ${blockers.map(item => `<div class="danger">阻断：${escapeHtml(item)}</div>`).join('')}
+          ${warnings.map(item => `<div class="warn">提醒：${escapeHtml(item)}</div>`).join('')}
+        </div>
+      </section>
+    `;
+  }
+  const missingCasePoints = Array.isArray(coverage.missingCasePoints) ? coverage.missingCasePoints : [];
+  const missingScenarioPoints = Array.isArray(coverage.missingScenarioPoints) ? coverage.missingScenarioPoints : [];
+  const genericAssertionCases = Array.isArray(coverage.genericAssertionCases) ? coverage.genericAssertionCases : [];
+  if (missingCasePoints.length || missingScenarioPoints.length || genericAssertionCases.length) {
+    html += `
+      <div class="final-report-layout">
+        <section class="final-report-panel">
+          <strong>覆盖缺口</strong>
+          ${missingCasePoints.length ? `<p>未覆盖需求点：${escapeHtml(missingCasePoints.slice(0, 8).join('；'))}</p>` : '<p>需求点已进入用例或人工项。</p>'}
+          ${missingScenarioPoints.length ? `<p>未映射场景：${escapeHtml(missingScenarioPoints.slice(0, 8).join('；'))}</p>` : ''}
+        </section>
+        <section class="final-report-panel">
+          <strong>断言质量</strong>
+          ${genericAssertionCases.length ? `<p>断言偏泛：${escapeHtml(genericAssertionCases.slice(0, 8).join('；'))}</p>` : '<p>未发现明显空泛断言。</p>'}
+        </section>
+      </div>
+    `;
+  }
+  const links = [
+    mindmap.url ? { label: '下载完整 .mm 脑图', url: mindmap.url } : null,
+    artifactFiles.markdown ? { label: '生成摘要文件', text: artifactFiles.markdown } : null,
+    artifactFiles.json ? { label: '结构化用例 JSON', text: artifactFiles.json } : null,
+  ].filter(Boolean);
+  if (links.length) {
+    html += `
+      <section class="final-report-panel final-report-wide">
+        <strong>生成产物</strong>
+        <div class="final-report-links">
+          ${links.map(item => item.url
+            ? `<a href="${escapeHtml(item.url)}" target="_blank">${escapeHtml(item.label)}</a>`
+            : `<span>${escapeHtml(item.label)}：${escapeHtml(item.text || '')}</span>`
+          ).join('')}
+        </div>
+      </section>
+    `;
+  }
+  html += renderFigmaPreviewGrid(agentFigmaPreviewItems(artifacts.sourceContext || {}, artifacts));
+  html += '</div>';
+  return html;
+}
+
 function renderAgentSummaryArtifact(run) {
   const artifacts = (run && run.artifacts) || {};
   const summary = artifacts.summary || {};
@@ -1418,6 +1510,7 @@ function renderAgentSummaryArtifact(run) {
 }
 
 function renderAgentArtifactContent(tab, run) {
+  if (tab === 'quality') return renderAgentQualityArtifact(run);
   if (tab === 'report') return renderAgentReportArtifact(run);
   if (tab === 'summary') return renderAgentSummaryArtifact(run);
   const text = typeof agentArtifactText === 'function' ? agentArtifactText(tab, run) : '';
@@ -1444,6 +1537,9 @@ function renderGenerateYamlDetail(step, artifacts) {
     { label: '用例', value: pipeline.caseCount ?? '-' },
     { label: '可执行任务', value: executable.taskCount ?? fallback.taskCount ?? '-' },
   ]);
+  if ((artifacts || {}).qualityReport) {
+    html += renderAgentQualityArtifact({artifacts});
+  }
   if (pipeline.error) {
     html += `<section class="agent-readable-panel"><strong>主链错误</strong><p>${escapeHtml(pipeline.error)}</p></section>`;
   }

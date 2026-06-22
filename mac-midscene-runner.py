@@ -37,6 +37,7 @@ _RUNTIME_ENV_ERROR = ""
 _RUNTIME_ENV_FETCHED_AT = 0
 RUNTIME_ENV_CACHE_SECONDS = int(os.getenv("MIDSCENE_RUNTIME_ENV_CACHE_SECONDS", "60"))
 WEAK_RUNNER_TOKENS = {"", "midscene2026", "change-me", "changeme", "test", "token"}
+DEFAULT_APP_PACKAGES = "com.kfb.model,com.xbxxhz.box"
 
 
 def validate_runner_config():
@@ -363,6 +364,43 @@ def parse_adb_devices(output):
     return devices, unauthorized, offline
 
 
+def runner_app_packages():
+    raw = os.getenv("RUNNER_APP_PACKAGES") or os.getenv("APP_PACKAGE") or DEFAULT_APP_PACKAGES
+    result = []
+    seen = set()
+    for item in re.split(r"[,;\s]+", raw or ""):
+        package = item.strip()
+        if not package or package in seen:
+            continue
+        seen.add(package)
+        result.append(package)
+    return result[:8]
+
+
+def adb_shell_text(adb_bin, device_id, *args, timeout=10):
+    result = run_cmd([adb_bin, "-s", device_id, "shell", *args], timeout=timeout)
+    return (result.stdout or "").strip()
+
+
+def detect_package_info(adb_bin, device_id, package_name):
+    info = {"package": package_name, "installed": False, "version_name": "", "version_code": ""}
+    try:
+        path = adb_shell_text(adb_bin, device_id, "pm", "path", package_name, timeout=10)
+        if not path:
+            return info
+        info["installed"] = True
+        dump = adb_shell_text(adb_bin, device_id, "dumpsys", "package", package_name, timeout=12)
+        name_match = re.search(r"versionName=([^\s]+)", dump)
+        code_match = re.search(r"versionCode=(\d+)", dump)
+        if name_match:
+            info["version_name"] = name_match.group(1)
+        if code_match:
+            info["version_code"] = code_match.group(1)
+    except Exception:
+        pass
+    return info
+
+
 def resolve_adb_with_devices(require_devices=True):
     global _ADB_BIN_CACHE
     configured = os.getenv("DEVICE_ID") or os.getenv("ANDROID_DEVICE_ID")
@@ -431,18 +469,36 @@ def detect_devices():
     for device_id in device_ids:
         brand = ""
         model = ""
+        android_version = ""
+        sdk = ""
+        resolution = ""
+        density = ""
+        installed_apps = []
         try:
-            brand = run_cmd([adb_bin, "-s", device_id, "shell", "getprop", "ro.product.brand"], timeout=10).stdout.strip()
-            model = run_cmd([adb_bin, "-s", device_id, "shell", "getprop", "ro.product.model"], timeout=10).stdout.strip()
+            brand = adb_shell_text(adb_bin, device_id, "getprop", "ro.product.brand", timeout=10)
+            model = adb_shell_text(adb_bin, device_id, "getprop", "ro.product.model", timeout=10)
+            android_version = adb_shell_text(adb_bin, device_id, "getprop", "ro.build.version.release", timeout=10)
+            sdk = adb_shell_text(adb_bin, device_id, "getprop", "ro.build.version.sdk", timeout=10)
+            resolution = re.sub(r"^Physical size:\s*", "", adb_shell_text(adb_bin, device_id, "wm", "size", timeout=10)).strip()
+            density = re.sub(r"^Physical density:\s*", "", adb_shell_text(adb_bin, device_id, "wm", "density", timeout=10)).strip()
+            installed_apps = [detect_package_info(adb_bin, device_id, pkg) for pkg in runner_app_packages()]
         except Exception:
             pass
         label = " ".join([part for part in [brand, model] if part]).strip() or device_id
+        preflight_ok = bool(adb_bin and device_id)
         devices.append({
             "device_id": device_id,
             "status": "online",
             "brand": brand,
             "model": model,
-            "label": label
+            "label": label,
+            "adb_path": adb_bin,
+            "android_version": android_version,
+            "sdk": sdk,
+            "resolution": resolution,
+            "density": density,
+            "installed_apps": installed_apps,
+            "preflight_status": "ready" if preflight_ok else "unknown",
         })
     return devices
 

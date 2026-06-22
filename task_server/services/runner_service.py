@@ -66,7 +66,7 @@ def save_runners(runners: Dict[str, Dict[str, Any]]) -> None:
 # 设备列表归一化（与 midscene-upload.py 中同名函数保持一致）
 # ---------------------------------------------------------------------------
 
-def normalize_device_list(devices: Optional[Iterable[Any]]) -> List[Dict[str, str]]:
+def normalize_device_list(devices: Optional[Iterable[Any]]) -> List[Dict[str, Any]]:
     """将 runner 上报的设备列表统一为标准结构。
 
     支持字符串数组与对象数组两种输入；缺少 ``device_id`` 的条目会被丢弃。
@@ -85,13 +85,22 @@ def normalize_device_list(devices: Optional[Iterable[Any]]) -> List[Dict[str, st
             continue
         if not device_id:
             continue
-        result.append({
+        row: Dict[str, Any] = {
             "device_id": str(device_id),
             "status": status,
             "label": meta.get("label") or meta.get("model") or str(device_id),
             "brand": meta.get("brand", ""),
             "model": meta.get("model", ""),
-        })
+        }
+        for key in (
+            "adb_path", "adbPath", "android_version", "androidVersion", "sdk",
+            "resolution", "density", "installed_apps", "installedApps",
+            "app_versions", "appVersions", "preflight", "preflight_status",
+            "preflightStatus",
+        ):
+            if isinstance(meta, dict) and key in meta:
+                row[key] = meta.get(key)
+        result.append(row)
     return result
 
 

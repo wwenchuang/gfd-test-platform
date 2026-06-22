@@ -185,6 +185,7 @@ def main():
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
     require("def _agent_generate_yaml_from_ui_pipeline" in agent_service_source and "generate_ui_yaml_from_request" in agent_service_source and '"split_by_case"' in agent_service_source and "ui_yaml_pipeline" in agent_service_source, "Agent new-requirement YAML generation must reuse the full requirement/Figma/YAML pipeline before fallback")
+    require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
     require("def _agent_wants_all_existing_cases" in agent_service_source and "识别到全量执行意图，复用已有 YAML" in agent_service_source and "不生成 YAML 草稿" in agent_service_source, "Agent must route explicit all-case requests to existing YAML reuse instead of draft generation")
     require('"matchAll": _agent_wants_all_existing_cases(target)' in agent_service_source and "只有用户明确说" in agent_service_source, "Agent goal analysis must not treat generic regression/baseline wording as all-case intent")
@@ -244,6 +245,7 @@ def main():
         require("Progress post failed" in runner_source, f"{runner_name} must print concrete progress callback failures instead of only HTTP 000")
         require("post_job_report_ready" in runner_source and "报告回传" in runner_source, f"{runner_name} must retry report-ready callback")
         require("结果回传" in runner_source and "轻量结果回传" in runner_source, f"{runner_name} must retry result callback and compact fallback")
+        require("RUNNER_APP_PACKAGES" in runner_source and "detect_package_info" in runner_source and '"installed_apps"' in runner_source and '"adb_path"' in runner_source, f"{runner_name} must report device preflight and installed app versions")
     require('os.replace(tmp, target)' in source and 'os.fsync(f.fileno())' in source and '.bad' in source, "write_json_file must use atomic replace and .bad fallback")
     require("REPAIR_DRAFTS_FILE" in source and "repair-drafts.json" in source, "Backend must persist AI repair drafts")
     for fn in ("load_repair_drafts", "save_repair_drafts", "upsert_repair_draft", "repair_drafts_for_job", "normalize_job_record"):

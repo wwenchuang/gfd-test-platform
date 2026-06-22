@@ -173,6 +173,7 @@ function agentArtifactText(tab, run = currentAgentRun()) {
   const artifacts = run.artifacts || {};
   if (tab === 'plan') return stringifyArtifact(artifacts.plan || '暂无执行计划');
   if (tab === 'cases') return stringifyArtifact(artifacts.matchedCases || artifacts.caseDraft || artifacts.cases || '暂无测试用例产物');
+  if (tab === 'quality') return stringifyArtifact(artifacts.qualityReport || '暂无质量检查结果');
   if (tab === 'yaml') return String(artifacts.generatedYaml || artifacts.yamlDraft || artifacts.yaml || '暂无 Midscene YAML');
   if (tab === 'validation') return stringifyArtifact(artifacts.yamlValidation || artifacts.validation || '暂无 YAML 校验结果');
   if (tab === 'logs') return stringifyArtifact(run.steps || []);
@@ -884,6 +885,7 @@ function renderAgentCenter() {
           <div class="artifacts-section">
             ${[
               ['匹配用例', 'cases'],
+              ['质量检查', 'quality'],
               ['生成YAML', 'yaml'],
               ['同步至 Sonic 平台', 'sonic'],
               ['执行任务', 'execution'],
@@ -988,6 +990,7 @@ function renderAgentCenter() {
             const mcText = mc ? `${Array.isArray(mc) ? mc.length : 1}个` : (artifacts.matchedCount ? `${artifacts.matchedCount}个` : '');
             return renderArtifactItem('匹配用例', mcText, mc || artifacts.matchedCount, 'cases');
           })()}
+          ${renderArtifactItem('质量检查', artifacts.qualityReport ? (artifacts.qualityReport.statusText || '已生成') : '', artifacts.qualityReport, 'quality')}
           ${renderArtifactItem('生成YAML', (artifacts.generatedYaml || artifacts.yamlDraft) ? '已生成' : '', '', artifacts.generatedYaml || artifacts.yamlDraft, 'yaml')}
           ${renderArtifactItem('同步至 Sonic 平台', artifacts.sonicSync ? (agentToolStatusText(artifacts.sonicSync.status) || '已完成') : '', artifacts.sonicSync, 'sonic')}
           ${renderArtifactItem('执行任务', artifacts.jobId || artifacts.sonicJob || '', '', artifacts.jobId || artifacts.sonicJob, 'execution')}

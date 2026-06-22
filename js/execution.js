@@ -278,6 +278,56 @@ function renderExecutionTabRerun() {
   `;
 }
 
+function allRunnerDeviceRowsForDisplay() {
+  const rows = [];
+  const runners = AppState.runners || {};
+  Object.entries(runners).forEach(([runnerId, runner]) => {
+    (runner.devices || []).forEach(device => {
+      rows.push({
+        ...device,
+        runner_id: runnerId,
+        runner_online: !!runner.online,
+        last_seen: runner.last_seen || device.last_seen || '',
+        workspace: runner.workspace || '',
+        hostname: runner.hostname || '',
+      });
+    });
+  });
+  return rows.length ? rows : (Array.isArray(runnerDevices) ? runnerDevices : []);
+}
+
+function renderRunnerDevicePreflightCards(devices = [], appPackage = '') {
+  if (!devices.length) {
+    return `<div class="report-empty">暂无在线设备。请先启动 Mac/Windows Runner，并确认 adb devices 能看到 device 状态。</div>`;
+  }
+  return `
+    <div class="runner-preflight-grid">
+      ${devices.map(device => {
+        const app = typeof runnerDeviceInstalledApp === 'function' ? runnerDeviceInstalledApp(device, appPackage) : null;
+        const appText = typeof runnerDeviceVersionLabel === 'function' ? runnerDeviceVersionLabel(device, appPackage) : '';
+        const ready = device.runner_online && device.status === 'online';
+        const appReady = !appPackage || (app && app.installed);
+        return `
+          <div class="runner-preflight-card ${ready && appReady ? 'ready' : 'warn'}">
+            <div class="runner-preflight-head">
+              <strong>${escapeHtml(typeof runnerDeviceDisplayName === 'function' ? runnerDeviceDisplayName(device) : (device.label || device.device_id || '-'))}</strong>
+              <span class="status-pill ${ready ? 'success' : 'warn'}">${ready ? '可执行' : '不可用'}</span>
+            </div>
+            <dl>
+              <div><dt>Runner</dt><dd>${escapeHtml(device.runner_id || '-')}</dd></div>
+              <div><dt>设备号</dt><dd>${escapeHtml(device.device_id || '-')}</dd></div>
+              <div><dt>系统</dt><dd>${escapeHtml(device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '未上报')}</dd></div>
+              <div><dt>分辨率</dt><dd>${escapeHtml(device.resolution || '未上报')}</dd></div>
+              <div><dt>ADB</dt><dd>${escapeHtml(device.adb_path || device.adbPath || '未上报')}</dd></div>
+              <div><dt>App</dt><dd>${escapeHtml(appText || (appPackage ? '未上报版本' : '未选择包名'))}</dd></div>
+            </dl>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function renderExecutionTabAppInstall() {
   const devices = Array.isArray(runnerDevices) ? runnerDevices : [];
   const installJobs = (Array.isArray(latestJobs) ? latestJobs : [])
@@ -304,6 +354,8 @@ function renderExecutionTabAppInstall() {
         <div class="review-stat"><strong>${installJobs.filter(j => ['pending','running'].includes(String(j.status || '').toLowerCase())).length}</strong><span>安装中/待执行</span></div>
         <div class="review-stat"><strong>可选</strong><span>不安装也能直接执行</span></div>
       </div>
+      <h3 style="margin-top:14px;">执行前设备检查</h3>
+      <div id="apk-install-preflight">${renderRunnerDevicePreflightCards(devices, appPackage)}</div>
       <div class="agent-form-grid" style="grid-template-columns:minmax(0,1fr) minmax(320px,420px); margin-top:12px;">
         <div class="agent-card">
           <h3>创建安装任务</h3>
@@ -333,7 +385,7 @@ function renderExecutionTabAppInstall() {
           </div>
           <div class="agent-field" style="margin-top:10px;">
             <label for="apk-install-package">包名校验（可选）</label>
-            <input id="apk-install-package" value="${escapeHtml(appPackage)}" placeholder="例如 com.kfb.model；不填则只校验 adb install 结果">
+            <input id="apk-install-package" value="${escapeHtml(appPackage)}" oninput="refreshAppInstallPreflight()" placeholder="例如 com.kfb.model；不填则只校验 adb install 结果">
           </div>
         </div>
         <div class="agent-card">
@@ -374,6 +426,13 @@ function renderExecutionTabAppInstall() {
       </table>` : `${renderEmptyState('reports', '还没有安装包更新任务。默认可以直接执行 YAML，不需要先安装。')}`}
     </div>
   `;
+}
+
+function refreshAppInstallPreflight() {
+  const target = document.getElementById('apk-install-preflight');
+  if (!target) return;
+  const appPackage = document.getElementById('apk-install-package')?.value || '';
+  target.innerHTML = renderRunnerDevicePreflightCards(Array.isArray(runnerDevices) ? runnerDevices : [], appPackage);
 }
 
 function syncAppInstallMode(showNotice = true) {
@@ -491,9 +550,11 @@ async function createApkInstallRequest() {
 }
 
 function renderExecutionTabRunners() {
-  const devices = Array.isArray(runnerDevices) ? runnerDevices : [];
+  const devices = allRunnerDeviceRowsForDisplay();
   const all = devices;
   const online = devices.filter(d => d.runner_online && (d.status === 'online'));
+  const runnerRows = Object.values(AppState.runners || {});
+  const onlineRunnerCount = runnerRows.filter(r => r && r.online).length;
   return `
     <div class="review-panel">
       <div class="section-head">
@@ -506,21 +567,25 @@ function renderExecutionTabRunners() {
         </div>
       </div>
       <div class="review-stats" style="grid-template-columns:repeat(3,1fr);">
-        <div class="review-stat"><strong>${online.length}</strong><span>在线 Runner</span></div>
+        <div class="review-stat"><strong>${onlineRunnerCount}</strong><span>在线 Runner</span></div>
+        <div class="review-stat"><strong>${online.length}</strong><span>在线设备</span></div>
         <div class="review-stat"><strong>${all.length}</strong><span>已登记设备</span></div>
-        <div class="review-stat"><strong>${all.length - online.length}</strong><span>离线/未上报</span></div>
       </div>
+      ${renderRunnerDevicePreflightCards(online, '')}
       ${all.length ? `<table class="report-table" style="margin-top:12px;">
-        <thead><tr><th>设备</th><th>Runner</th><th>状态</th><th>最近心跳</th></tr></thead>
+        <thead><tr><th>设备</th><th>Runner</th><th>状态</th><th>系统/分辨率</th><th>App 版本</th><th>最近心跳</th></tr></thead>
         <tbody>${all.map(d => {
           const isOnline = d.runner_online && d.status === 'online';
           const hb = d.last_heartbeat || d.heartbeat_at || d.updated_at || '';
+          const appLabel = typeof runnerDeviceVersionLabel === 'function' ? runnerDeviceVersionLabel(d) : '';
           return `
             <tr class="report-row ${isOnline ? 'success' : ''}">
-              <td>${escapeHtml(d.label || d.device_id || '-')}</td>
+              <td><strong>${escapeHtml(typeof runnerDeviceDisplayName === 'function' ? runnerDeviceDisplayName(d) : (d.label || d.device_id || '-'))}</strong><div class="report-muted">${escapeHtml(d.device_id || '')}</div></td>
               <td>${escapeHtml(d.runner_id || '-')}</td>
               <td><span class="status-pill ${isOnline ? 'success' : 'warn'}">${isOnline ? '在线' : (d.status || '离线')}</span></td>
-              <td class="report-cell-time">${escapeHtml(String(hb).replace('T',' ').slice(0,19) || '-')}</td>
+              <td>${escapeHtml(d.android_version || d.androidVersion ? `Android ${d.android_version || d.androidVersion}` : '-')}${d.resolution ? `<div class="report-muted">${escapeHtml(d.resolution)}</div>` : ''}</td>
+              <td>${escapeHtml(appLabel || '未上报')}</td>
+              <td class="report-cell-time">${escapeHtml(String(hb || d.last_seen || '').replace('T',' ').slice(0,19) || '-')}</td>
             </tr>
           `;
         }).join('')}</tbody>

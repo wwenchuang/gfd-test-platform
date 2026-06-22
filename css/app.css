@@ -4270,6 +4270,109 @@
     display: grid;
     gap: 12px;
   }
+  .agent-quality-report {
+    display: grid;
+    gap: 12px;
+  }
+  .agent-quality-layers {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .agent-quality-layers > div {
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 10px;
+    background: rgba(15, 23, 42, .62);
+  }
+  .agent-quality-layers > div.ready {
+    border-color: rgba(52, 211, 153, .28);
+  }
+  .agent-quality-layers > div.not-ready {
+    border-color: rgba(251, 191, 36, .34);
+  }
+  .agent-quality-layers span,
+  .agent-quality-layers em {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    font-style: normal;
+  }
+  .agent-quality-layers strong {
+    display: block;
+    color: var(--text);
+    font-size: 18px;
+    margin: 5px 0;
+  }
+  .agent-quality-notes {
+    display: grid;
+    gap: 7px;
+  }
+  .agent-quality-notes > div {
+    border: 1px solid rgba(148, 163, 184, .18);
+    border-radius: 7px;
+    padding: 8px;
+    color: var(--text2);
+    background: rgba(15, 23, 42, .48);
+  }
+  .agent-quality-notes > div.warn {
+    border-color: rgba(251, 191, 36, .38);
+    color: #fde68a;
+  }
+  .agent-quality-notes > div.danger {
+    border-color: rgba(251, 113, 133, .42);
+    color: #fecdd3;
+  }
+  .runner-preflight-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 10px;
+    margin: 10px 0 12px;
+  }
+  .runner-preflight-card {
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 12px;
+    background: rgba(15, 23, 42, .62);
+  }
+  .runner-preflight-card.ready {
+    border-color: rgba(52, 211, 153, .28);
+  }
+  .runner-preflight-card.warn {
+    border-color: rgba(251, 191, 36, .34);
+  }
+  .runner-preflight-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 9px;
+  }
+  .runner-preflight-head strong {
+    color: var(--text);
+    line-height: 1.35;
+  }
+  .runner-preflight-card dl {
+    display: grid;
+    gap: 7px;
+    margin: 0;
+  }
+  .runner-preflight-card dl div {
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+  }
+  .runner-preflight-card dt {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .runner-preflight-card dd {
+    margin: 0;
+    color: var(--text2);
+    overflow-wrap: anywhere;
+    font-size: 12px;
+  }
   .final-report-hero {
     display: flex;
     justify-content: space-between;
@@ -4622,6 +4725,7 @@
       width: 100%;
       justify-content: center;
     }
+    .agent-quality-layers { grid-template-columns: 1fr; }
     .report-summary-grid,
     .final-report-layout,
     .agent-info-grid { grid-template-columns: 1fr; }
