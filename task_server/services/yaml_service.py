@@ -3202,6 +3202,99 @@ def run_mindmap_only_job(job_id, request_data):
 
 
 
+def _prepared_figma_context_from_request(d):
+    raw = d.get("prepared_figma_context") or d.get("preparedFigmaContext") or {}
+    if not isinstance(raw, dict):
+        return {}
+    text_assets = [
+        str(item)
+        for item in (raw.get("textAssets") or raw.get("text_assets") or [])
+        if str(item or "").strip()
+    ]
+    image_assets = []
+    for item in raw.get("imageAssets") or raw.get("image_assets") or []:
+        if not isinstance(item, dict):
+            continue
+        image_b64 = item.get("base64") or item.get("contentBase64")
+        if not image_b64:
+            continue
+        name = clean_asset_filename(item.get("name") or "figma-design.png")
+        image_assets.append({
+            **item,
+            "name": name,
+            "mime": item.get("mime") or guess_mime(name),
+            "base64": image_b64,
+        })
+    used_pages = [item for item in (raw.get("usedPages") or raw.get("used_pages") or []) if isinstance(item, dict)]
+    ignored_pages = [item for item in (raw.get("ignoredPages") or raw.get("ignored_pages") or []) if isinstance(item, dict)]
+    saved_designs = [item for item in (raw.get("savedDesigns") or raw.get("saved_designs") or []) if isinstance(item, dict)]
+    if not (text_assets or image_assets or used_pages):
+        return {}
+    return {
+        "source": raw.get("source") or "prepared_figma",
+        "figmaUrl": raw.get("figmaUrl") or raw.get("figma_url") or "",
+        "textAssets": text_assets,
+        "imageAssets": image_assets,
+        "usedPages": used_pages,
+        "ignoredPages": ignored_pages,
+        "savedDesigns": saved_designs,
+    }
+
+
+def _save_prepared_figma_design_assets(case_set_id, prepared_figma_context, title="", module=""):
+    if not case_set_id or not prepared_figma_context:
+        return []
+    image_assets = prepared_figma_context.get("imageAssets") or []
+    used_pages = prepared_figma_context.get("usedPages") or []
+    if not image_assets:
+        return []
+    pages_by_image = {}
+    for page in used_pages:
+        if not isinstance(page, dict):
+            continue
+        for key in (page.get("screenshot"), page.get("image_name"), page.get("name")):
+            if key:
+                pages_by_image[str(key)] = page
+    files = []
+    for index, item in enumerate(image_assets, start=1):
+        if not isinstance(item, dict):
+            continue
+        image_b64 = item.get("base64") or item.get("contentBase64")
+        if not image_b64:
+            continue
+        # save_case_ui_design_files has a 5MB per-image guard; skip obviously large cached renders.
+        if len(str(image_b64)) > 7 * 1024 * 1024:
+            continue
+        name = clean_asset_filename(item.get("name") or f"figma-design-{index}.png")
+        page = pages_by_image.get(name)
+        if page is None and index - 1 < len(used_pages):
+            page = used_pages[index - 1] if isinstance(used_pages[index - 1], dict) else {}
+        if not isinstance(page, dict):
+            page = {}
+        figma = page.get("figma") if isinstance(page.get("figma"), dict) else {}
+        node_id = figma.get("node_id") or figma.get("nodeId") or page.get("page_id") or name
+        files.append({
+            "asset_id": f"figma-{node_id}",
+            "name": name,
+            "contentBase64": image_b64,
+            "page_name": page.get("page_name") or page.get("pageName") or item.get("page_name") or "",
+            "route": page.get("route") or item.get("route") or "",
+            "description": page.get("description") or item.get("description") or "",
+            "figma": {
+                **figma,
+                "reused_from_prepare_source": True,
+                "source": prepared_figma_context.get("source") or "prepared_figma",
+            },
+        })
+    if not files:
+        return []
+    try:
+        saved, _meta = save_case_ui_design_files(case_set_id, files, source="figma", title=title, module=module)
+        return saved
+    except Exception:
+        return []
+
+
 def generate_ui_yaml_from_request(d, job_id=None):
     title = d.get("title") or "UI自动化用例"
     module = d.get("module") or "AI测试"
@@ -3221,6 +3314,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         raise ValueError("生成后创建执行任务需要先选择执行设备；如确实需要平台分配，请明确选择“自动选择在线设备”。")
     files = d.get("files") or []
     reuse_assets = safe_bool(d.get("reuse_assets") or d.get("reuseAssets") or d.get("regenerate"))
+    prepared_figma_context = _prepared_figma_context_from_request(d)
 
     if job_id:
         update_generate_job(job_id, progress=10, step="保存上传资产", message="正在保存上传文件")
@@ -3250,11 +3344,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
         write_json_file(asset_meta_path(case_set_id), meta)
         meta = update_asset_request_context(case_set_id, d)
 
-    has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or meta.get("figma_url") or "").strip())
+    has_prepared_figma = bool(prepared_figma_context)
+    has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or meta.get("figma_url") or "").strip() or has_prepared_figma)
     if case_set_id and (has_figma or reuse_assets):
         removed = clear_auto_figma_ui_design_assets(case_set_id)
         if job_id and removed:
-            suffix = "，将重新按需求筛选" if has_figma else "，本次没有可用 Figma 链接，不再沿用旧误选页面"
+            suffix = "，将复用 Agent 准备阶段的 Figma 解析结果" if has_prepared_figma else ("，将重新按需求筛选" if has_figma else "，本次没有可用 Figma 链接，不再沿用旧误选页面")
             update_generate_job(job_id, progress=12, step="刷新 Figma UI 稿", message=f"已清理 {removed} 份旧的自动 Figma UI 稿{suffix}")
 
     if job_id:
@@ -3278,19 +3373,35 @@ def generate_ui_yaml_from_request(d, job_id=None):
             selected_page_ids,
             knowledge_tier
         )
-        figma_future = executor.submit(load_figma_generation_context, d, app_package, job_id, query_text, case_set_id, title, module)
+        figma_future = None
+        if not prepared_figma_context:
+            figma_future = executor.submit(load_figma_generation_context, d, app_package, job_id, query_text, case_set_id, title, module)
         try:
             knowledge_texts, knowledge_images, used_knowledge_pages = knowledge_future.result()
         except Exception as e:
             knowledge_texts, knowledge_images, used_knowledge_pages = [], [], []
             if job_id:
                 update_generate_job(job_id, progress=36, step="读取页面知识", message=f"页面知识读取失败，已跳过：{str(e)[:80]}")
-        try:
-            figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = figma_future.result()
-        except Exception as e:
-            figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = [], [], [], [], []
+        if prepared_figma_context:
+            figma_texts = prepared_figma_context.get("textAssets") or []
+            figma_images = prepared_figma_context.get("imageAssets") or []
+            used_figma_pages = prepared_figma_context.get("usedPages") or []
+            ignored_figma_pages = prepared_figma_context.get("ignoredPages") or []
+            saved_figma_designs = _save_prepared_figma_design_assets(case_set_id, prepared_figma_context, title=title, module=module)
             if job_id:
-                update_generate_job(job_id, progress=38, step="解析 Figma", message=f"Figma 解析失败，已跳过：{str(e)[:80]}")
+                update_generate_job(
+                    job_id,
+                    progress=38,
+                    step="复用 Figma 解析",
+                    message=f"已复用准备阶段解析结果：页面 {len(used_figma_pages)} 个，截图 {len(figma_images)} 张",
+                )
+        else:
+            try:
+                figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = figma_future.result()
+            except Exception as e:
+                figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = [], [], [], [], []
+                if job_id:
+                    update_generate_job(job_id, progress=38, step="解析 Figma", message=f"Figma 解析失败，已跳过：{str(e)[:80]}")
     used_reference_pages = used_figma_pages + used_knowledge_pages
     visual_text_assets = figma_texts + knowledge_texts
     # 脑图/YAML 视觉校准只使用当前 Figma 和人工上传截图。
@@ -3351,6 +3462,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
 
     review = payload.setdefault("review", {})
     review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
+    if prepared_figma_context:
+        review["prepared_figma_context_reused"] = {
+            "enabled": True,
+            "used_count": len(used_figma_pages),
+            "image_count": len(figma_images),
+            "saved_design_count": len(saved_figma_designs),
+            "source": prepared_figma_context.get("source") or "prepared_figma",
+        }
     if used_figma_pages or ignored_figma_pages:
         review["figma_requirement_filter"] = {
             "enabled": True,

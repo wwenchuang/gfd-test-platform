@@ -3087,6 +3087,102 @@ def _agent_app_package(run):
     return os.getenv("APP_PACKAGE", "com.kfb.model").strip() or "com.kfb.model"
 
 
+def _agent_safe_run_file_id(run):
+    raw = str((run or {}).get("runId") or unique_millis_id("agent"))
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._-")
+    return safe[:96] or "agent"
+
+
+def _agent_prepared_figma_context_path(run):
+    return safe_join(AGENT_DRAFT_DIR, f"{_agent_safe_run_file_id(run)}-figma-context.json")
+
+
+def _persist_agent_prepared_figma_context(run, figma_url, text_assets, image_assets, used_pages, ignored_pages, saved_designs):
+    payload = {
+        "version": 1,
+        "source": "agent_prepare_source",
+        "figmaUrl": figma_url or "",
+        "textAssets": [str(item) for item in (text_assets or []) if str(item or "").strip()],
+        "imageAssets": [item for item in (image_assets or []) if isinstance(item, dict) and item.get("base64")],
+        "usedPages": [item for item in (used_pages or []) if isinstance(item, dict)],
+        "ignoredPages": [item for item in (ignored_pages or []) if isinstance(item, dict)],
+        "savedDesigns": [item for item in (saved_designs or []) if isinstance(item, dict)],
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    path = _agent_prepared_figma_context_path(run)
+    write_json_file(path, payload)
+    return path, payload
+
+
+def _agent_prepared_figma_context_from_source(source_context):
+    if not isinstance(source_context, dict):
+        return {}
+    raw = source_context.get("preparedFigmaContext") or source_context.get("prepared_figma_context")
+    if not isinstance(raw, dict):
+        path = str(source_context.get("preparedFigmaContextPath") or source_context.get("prepared_figma_context_path") or "").strip()
+        raw = read_json_file(path, default={}) if path else {}
+    if not isinstance(raw, dict):
+        return {}
+    text_assets = [str(item) for item in (raw.get("textAssets") or raw.get("text_assets") or []) if str(item or "").strip()]
+    image_assets = []
+    for item in raw.get("imageAssets") or raw.get("image_assets") or []:
+        if not isinstance(item, dict):
+            continue
+        image_b64 = item.get("base64") or item.get("contentBase64")
+        if not image_b64:
+            continue
+        image_assets.append({
+            **item,
+            "base64": image_b64,
+            "name": item.get("name") or "figma-design.png",
+            "mime": item.get("mime") or "image/png",
+        })
+    used_pages = [item for item in (raw.get("usedPages") or raw.get("used_pages") or []) if isinstance(item, dict)]
+    ignored_pages = [item for item in (raw.get("ignoredPages") or raw.get("ignored_pages") or []) if isinstance(item, dict)]
+    saved_designs = [item for item in (raw.get("savedDesigns") or raw.get("saved_designs") or []) if isinstance(item, dict)]
+    if not (text_assets or image_assets or used_pages):
+        return {}
+    return {
+        "source": raw.get("source") or "agent_prepare_source",
+        "figmaUrl": raw.get("figmaUrl") or raw.get("figma_url") or source_context.get("figmaUrl") or "",
+        "textAssets": text_assets,
+        "imageAssets": image_assets,
+        "usedPages": used_pages,
+        "ignoredPages": ignored_pages,
+        "savedDesigns": saved_designs,
+    }
+
+
+def _agent_generate_progress_job_id(run):
+    return f"agent-generate-{_agent_safe_run_file_id(run)}"
+
+
+def _watch_agent_generate_yaml_progress(run, step, job_id, stop_event):
+    """Mirror shared generation-job progress into the Agent timeline."""
+    if not isinstance(step, dict):
+        return
+    try:
+        from task_server.services.yaml_service import generate_job_path
+    except Exception:
+        return
+    last_key = None
+    while not stop_event.wait(2.0):
+        job = read_json_file(generate_job_path(job_id), default={}) or {}
+        message = str(job.get("message") or "").strip()
+        stage = str(job.get("step") or "").strip() or "生成进度"
+        progress = job.get("progress")
+        status = str(job.get("status") or "running").upper()
+        if not message and not stage:
+            continue
+        key = (stage, message, progress, status)
+        if key == last_key:
+            continue
+        last_key = key
+        progress_text = f"{progress}%" if progress not in (None, "") else ""
+        suffix = f"（{progress_text}）" if progress_text else ""
+        _append_step_trace(run, step, f"{stage}{suffix}：{message or status}", status="RUNNING", progress=progress)
+
+
 def _load_figma_context_for_agent(run, context):
     """Use the shared Figma requirement-filter pipeline for Agent source context."""
     figma_url = str(context.get("figmaUrl") or "").strip()
@@ -3117,7 +3213,7 @@ def _load_figma_context_for_agent(run, context):
             "figma_reference_limit": normalized.get("figmaReferenceLimit") or refs.get("figmaReferenceLimit") or 36,
             "figma_max_reference_limit": normalized.get("figmaMaxReferenceLimit") or refs.get("figmaMaxReferenceLimit") or 72,
         }
-        text_assets, image_assets, used_pages, ignored_pages, _saved_designs = load_figma_generation_context(
+        text_assets, image_assets, used_pages, ignored_pages, saved_designs = load_figma_generation_context(
             request_data,
             _agent_app_package(run),
             run.get("runId", ""),
@@ -3128,6 +3224,17 @@ def _load_figma_context_for_agent(run, context):
         )
         if text_assets:
             context["figmaText"] = "\n\n".join(text_assets)[:12000]
+        prepared_path, _prepared = _persist_agent_prepared_figma_context(
+            run,
+            figma_url,
+            text_assets,
+            image_assets,
+            used_pages,
+            ignored_pages,
+            saved_designs,
+        )
+        context["preparedFigmaContextPath"] = prepared_path
+        context["figmaTextAssetCount"] = len(text_assets or [])
         context["uiDesigns"] = used_pages[:20]
         context["figmaUsedPages"] = used_pages[:20]
         context["figmaIgnoredPages"] = ignored_pages[:20]
@@ -3135,6 +3242,7 @@ def _load_figma_context_for_agent(run, context):
             {
                 "name": item.get("name") or f"figma-{idx + 1}.png",
                 "mime": item.get("mime") or "",
+                "hasContent": bool(item.get("base64")),
             }
             for idx, item in enumerate(image_assets or [])
             if isinstance(item, dict)
@@ -4869,6 +4977,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
     """Reuse the mature requirement/Figma -> cases/mindmap/YAML pipeline for Agent drafts."""
     from task_server.services.yaml_service import (
         generate_ui_yaml_from_request,
+        update_generate_job,
     )
 
     case_set_id = f"agent-{run.get('runId') or unique_millis_id('agent')}"
@@ -4883,6 +4992,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             "content": source_text,
             "source": "agent-source-context",
         }]
+    prepared_figma_context = _agent_prepared_figma_context_from_source(source_context)
     request_data = {
         "case_set_id": case_set_id,
         "title": title,
@@ -4890,11 +5000,64 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "files": files,
         "figma_url": source_context.get("figmaUrl") or "",
         "figmaUrl": source_context.get("figmaUrl") or "",
+        "prepared_figma_context": prepared_figma_context,
         "app_package": _agent_app_package(run),
         "use_knowledge_context": False,
         "source": "agent",
     }
-    result = generate_ui_yaml_from_request(request_data, job_id=None)
+    progress_job_id = _agent_generate_progress_job_id(run)
+    step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)
+    if prepared_figma_context and step:
+        _append_step_trace(
+            run,
+            step,
+            "复用已解析 Figma："
+            f"{len(prepared_figma_context.get('usedPages') or [])} 个页面，"
+            f"{len(prepared_figma_context.get('imageAssets') or [])} 张截图",
+            status="RUNNING",
+        )
+    stop_event = threading.Event()
+    watcher = None
+    update_generate_job(
+        progress_job_id,
+        status="running",
+        type="agent_generate_yaml",
+        progress=5,
+        step="准备生成",
+        message="Agent 已进入需求解析、脑图和 YAML 生成链路",
+        run_id=run.get("runId", ""),
+        case_set_id=case_set_id,
+    )
+    if step:
+        watcher = threading.Thread(
+            target=_watch_agent_generate_yaml_progress,
+            args=(run, step, progress_job_id, stop_event),
+            daemon=True,
+        )
+        watcher.start()
+    try:
+        result = generate_ui_yaml_from_request(request_data, job_id=progress_job_id)
+        update_generate_job(
+            progress_job_id,
+            status="success",
+            progress=100,
+            step="生成完成",
+            message="已完成 Agent YAML 生成",
+        )
+    except Exception as exc:
+        update_generate_job(
+            progress_job_id,
+            status="failed",
+            ok=False,
+            step="生成失败",
+            message=str(exc)[:200],
+            error=str(exc)[:1000],
+        )
+        raise
+    finally:
+        stop_event.set()
+        if watcher:
+            watcher.join(timeout=0.5)
     cases_payload = result.get("cases") if isinstance(result, dict) else {}
     if not isinstance(cases_payload, dict):
         cases_payload = {}
@@ -4936,6 +5099,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "summaryFiles": result.get("summaryFiles"),
         "yamlCheck": result.get("yamlCheck") or {},
         "yamlExecutability": yaml_executability,
+        "progressJobId": progress_job_id,
+        "reusedPreparedFigma": bool(prepared_figma_context),
     }
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
     if summary:

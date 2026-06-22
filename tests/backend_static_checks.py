@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import base64
 import os
 import sys
 import tempfile
@@ -138,6 +139,45 @@ def check_business_flow_filters_product_metrics():
     flow_text = " ".join(constraint.get("businessFlow") or [])
     require("token" not in flow_text.lower() and "一模一样" not in flow_text and "提高AI" not in flow_text, "Agent runtime business flow must filter product metrics and model goals")
     require("AI建模" in flow_text and ("语音" in flow_text or "长按" in flow_text), "Agent runtime business flow must keep AI modeling user actions")
+
+
+def check_agent_prepared_figma_context_reuse():
+    from task_server.services import agent_service, yaml_service
+
+    old_agent_draft_dir = agent_service.AGENT_DRAFT_DIR
+    old_asset_dir = yaml_service.ASSET_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.AGENT_DRAFT_DIR = os.path.join(temp_dir, "agent-drafts")
+            yaml_service.ASSET_DIR = os.path.join(temp_dir, "assets")
+            png_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nstatic-figma").decode("ascii")
+            used_pages = [{
+                "page_id": "4458:1905",
+                "page_name": "语音输入-长按",
+                "route": "AI建模/语音输入",
+                "screenshot": "figma-voice.png",
+                "figma": {"node_id": "4458:1905", "direct_group": True, "relevance_score": 13},
+            }]
+            path, _payload = agent_service._persist_agent_prepared_figma_context(
+                {"runId": "agent-static-figma"},
+                "https://figma.example/design/file?node-id=4458-1905",
+                ["[Figma设计稿页面]\n语音输入-长按\n按住说话"],
+                [{"name": "figma-voice.png", "mime": "image/png", "base64": png_b64}],
+                used_pages,
+                [],
+                [],
+            )
+            prepared = agent_service._agent_prepared_figma_context_from_source({"preparedFigmaContextPath": path})
+            require(prepared.get("imageAssets") and prepared["imageAssets"][0].get("base64"), "Agent prepared Figma cache must retain reusable image content outside run history")
+            normalized = yaml_service._prepared_figma_context_from_request({"preparedFigmaContext": prepared})
+            require(normalized.get("usedPages") and normalized.get("imageAssets"), "YAML generation must accept prepared Figma context")
+            saved = yaml_service._save_prepared_figma_design_assets("case-static-figma", normalized, title="AI建模", module="AI测试")
+            require(saved and saved[0].get("source") == "figma", "Prepared Figma images must be saved as current case UI design assets")
+            meta = yaml_service.list_case_ui_design_assets("case-static-figma")
+            require((meta.get("designs") or [{}])[0].get("exists"), "Saved prepared Figma UI design asset must be readable for report/download UI")
+    finally:
+        agent_service.AGENT_DRAFT_DIR = old_agent_draft_dir
+        yaml_service.ASSET_DIR = old_asset_dir
 
 
 def main():
@@ -283,7 +323,10 @@ def main():
     require("确认草稿后再同步 Sonic" not in agent_service_source, "Runner-mode YAML draft confirmation must not tell users to sync Sonic")
     require("pypdf" in (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8"), "Server install script must install pypdf for PDF requirement extraction")
     require("def _load_figma_context_for_agent" in agent_service_source and "load_figma_generation_context" in agent_service_source and '"figmaUsedPages"' in agent_service_source and '"figmaIgnoredPages"' in agent_service_source, "Agent Figma source must reuse the shared Figma requirement-filter extraction pipeline")
+    require("preparedFigmaContextPath" in agent_service_source and '"prepared_figma_context": prepared_figma_context' in agent_service_source, "Agent YAML generation must reuse prepared Figma context instead of reparsing when available")
+    require("def _prepared_figma_context_from_request" in yaml_service_source and "复用 Figma 解析" in yaml_service_source, "YAML generation must support prepared Figma context reuse")
     check_agent_fallback_yaml_auto_confirm_split()
+    check_agent_prepared_figma_context_reuse()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -512,7 +555,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 28})
+    print({"ok": True, "file": str(MODULE), "checks": 31})
 
 
 if __name__ == "__main__":
