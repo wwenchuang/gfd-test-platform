@@ -767,6 +767,21 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                         "status": "SKIPPED",
                     }]
 
+        def mark_step_success(step_name, summary):
+            for step in run.get("steps", []):
+                if step.get("step") == step_name:
+                    step["status"] = "SUCCESS"
+                    step["summary"] = summary
+                    step["endedAt"] = now
+                    step.setdefault("startedAt", now)
+                    trace = step.setdefault("liveTrace", [])
+                    trace.append({
+                        "time": now,
+                        "message": summary,
+                        "status": "SUCCESS",
+                    })
+                    break
+
         if draft_requested and ctype in ("case_retrieval_confirm", "case_match_uncertain"):
             artifacts = run.setdefault("artifacts", {})
             artifacts["matchedCases"] = []
@@ -797,6 +812,7 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                 _target_path, err = _confirm_agent_yaml_content(run, artifacts, content, draft_path=draft_path)
                 if err:
                     return {"error": err, "run": run}
+                mark_step_success("GENERATE_YAML", "已人工确认 YAML 草稿，转为正式 YAML，继续校验并交给 Runner 执行")
             elif ctype in ("case_retrieval_confirm", "case_match_uncertain"):
                 selected_cases = payload.get("selectedCases")
                 if isinstance(selected_cases, list):
@@ -4941,7 +4957,7 @@ def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
             "type": "generated_yaml_draft",
             "title": "确认 YAML 草稿",
             "action": "confirm_yaml_draft",
-            "message": "Agent 已生成 YAML 草稿。请确认、编辑或保存为正式 YAML 后，才能同步 Sonic 和执行。",
+            "message": "Agent 已生成 YAML 草稿。确认后会先校验 YAML，并在 Runner 模式下直接进入执行；只有基线回归/测试套模式才需要同步至 Sonic 平台。",
             "draftPath": draft_path,
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "decision": None,
@@ -5012,7 +5028,7 @@ def _tool_generate_yaml(run):
                 attach_diagnosis(call, make_diagnosis(
                     "需求解析/脑图/YAML生成主链失败",
                     "已准备回退到 Agent 多任务兜底草稿。",
-                    ["检查 AI Skills / Figma Token", "查看生成 YAML 详情", "确认草稿后再同步 Sonic"],
+                    ["检查 AI Skills / Figma Token", "查看生成 YAML 详情", "确认草稿后继续校验并交给 Runner 执行"],
                     error=str(e)[:300],
                 ))
             fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
@@ -5063,7 +5079,7 @@ def _tool_generate_yaml(run):
                             attach_diagnosis(call, make_diagnosis(
                                 "AI 生成 YAML 为空 tasks 或结构不可执行",
                                 "已基于需求/Figma 生成兜底草稿，但执行前仍需人工确认。",
-                                ["检查兜底草稿步骤", "结合 Figma 调整入口和断言", "确认后再同步 Sonic"],
+                                ["检查兜底草稿步骤", "结合 Figma 调整入口和断言", "确认后继续校验并执行"],
                                 failedYaml=check.get("issues") or [],
                             ))
                             return _finish_agent_tool_call(call, run)
@@ -5072,7 +5088,7 @@ def _tool_generate_yaml(run):
                         call["error"] = "AI 生成 YAML 未通过强校验：" + "；".join(check.get("issues") or [])
                         attach_diagnosis(call, make_diagnosis(
                             "AI 生成 YAML 为空 tasks 或结构不可执行",
-                            "兜底草稿也未通过强校验，不能同步 Sonic。",
+                            "兜底草稿也未通过强校验，不能进入执行。",
                             ["重新生成 YAML", "补充需求或 Figma 页面", "人工编辑 YAML 草稿后再确认"],
                             failedYaml=check.get("issues") or [],
                         ))
@@ -5091,7 +5107,7 @@ def _tool_generate_yaml(run):
                         attach_diagnosis(call, make_diagnosis(
                             "AI 生成 YAML 为空",
                             "已生成可人工确认的兜底草稿，避免链路直接中断。",
-                            ["检查兜底草稿步骤", "必要时人工补充关键路径", "确认后再同步 Sonic"],
+                            ["检查兜底草稿步骤", "必要时人工补充关键路径", "确认后继续校验并执行"],
                         ))
                     else:
                         attach_diagnosis(call, make_diagnosis(
