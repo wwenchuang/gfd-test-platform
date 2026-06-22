@@ -276,6 +276,7 @@ def create_agent_run(payload):
         - target / goal: 测试目标描述
         - mode: AUTO_SAFE | FULL_AUTO | SEMI_AUTO
         - appName: 应用名称
+        - appPackage/app_package: 应用包名，用于知识库、安装包和 Runner 版本校验
         - platform: android | ios
         - scope: smoke | regression | ...
         - sourceType: manual | requirement | figma | failed_job
@@ -303,6 +304,13 @@ def create_agent_run(payload):
     normalized_input = normalize_agent_input(payload)
     if normalized_input.get("figmaUrl") and not source_refs.get("figmaUrl"):
         source_refs["figmaUrl"] = normalized_input.get("figmaUrl")
+    app_package = str(
+        payload.get("appPackage")
+        or payload.get("app_package")
+        or source_refs.get("appPackage")
+        or source_refs.get("app_package")
+        or ""
+    ).strip()
     model_provider_id = str(payload.get("modelProviderId") or payload.get("aiProviderId") or "").strip()
     selected_ai_model = str(payload.get("aiModel") or payload.get("model") or "").strip()
     runner_id = str(payload.get("runnerId") or payload.get("runner_id") or "").strip()
@@ -325,6 +333,8 @@ def create_agent_run(payload):
         "mode": mode,
         "target": goal,
         "appName": str(payload.get("appName") or "").strip(),
+        "appPackage": app_package,
+        "app_package": app_package,
         "platform": str(payload.get("platform") or "android").strip(),
         "scope": str(payload.get("scope") or "smoke").strip(),
         "executionMode": execution_mode,
@@ -1280,6 +1290,11 @@ APP_DIR_KEYWORDS = {
     '小白学习': ['小白学习'],
 }
 
+APP_PACKAGE_BY_KEY = {
+    '智小白3D': 'com.kfb.model',
+    '小白学习': 'com.xbxxhz.box',
+}
+
 
 def get_available_apps():
     """扫描 server-tasks 目录，返回可用应用及其模块列表。"""
@@ -1309,6 +1324,7 @@ def get_available_apps():
             apps.append({
                 "key": app_key,
                 "name": f"{app_key} APP" if "APP" not in app_key else app_key,
+                "package": APP_PACKAGE_BY_KEY.get(app_key, ""),
                 "modules": modules
             })
             classified.update(modules)
@@ -2938,11 +2954,14 @@ def _find_job_for_agent(job_id=""):
 
 def _agent_app_package(run):
     refs = run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {}
-    return (
-        str(run.get("appPackage") or run.get("app_package") or refs.get("appPackage") or refs.get("app_package") or "").strip()
-        or os.getenv("APP_PACKAGE", "com.kfb.model").strip()
-        or "com.kfb.model"
-    )
+    explicit = str(run.get("appPackage") or run.get("app_package") or refs.get("appPackage") or refs.get("app_package") or "").strip()
+    if explicit:
+        return explicit
+    app_name = str(run.get("appName") or "").strip()
+    for app_key, package in APP_PACKAGE_BY_KEY.items():
+        if app_key and app_key in app_name:
+            return package
+    return os.getenv("APP_PACKAGE", "com.kfb.model").strip() or "com.kfb.model"
 
 
 def _load_figma_context_for_agent(run, context):

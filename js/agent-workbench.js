@@ -422,6 +422,7 @@ function launchDashboardAgent() {
     if (sourceInput) sourceInput.value = 'manual';
     renderAgentSourcePanel();
     updateAgentRiskHint();
+    if (typeof updateAgentRunnerDeviceHint === 'function') updateAgentRunnerDeviceHint();
   }, 0);
 }
 
@@ -505,7 +506,7 @@ async function showAgentWorkbench() {
           </div>
           <div class="agent-field">
             <label for="agent-app-name">应用</label>
-            <select id="agent-app-name"></select>
+            <select id="agent-app-name" onchange="updateAgentRunnerDeviceHint()"></select>
           </div>
           <div class="agent-field">
             <label for="agent-platform">平台</label>
@@ -738,15 +739,18 @@ async function loadAppList(preferredValue) {
       workbenchSelect.innerHTML = '';
       apps.forEach(app => {
         const opt = document.createElement('option');
-        opt.value = app.name;
-        opt.textContent = app.name;
-        opt.dataset.modules = JSON.stringify(app.modules);
+        opt.value = app.name || app.package || '';
+        opt.textContent = app.name || app.package || '未命名应用';
+        opt.dataset.package = app.package || app.appPackage || app.app_package || '';
+        opt.dataset.modules = JSON.stringify(app.modules || []);
         workbenchSelect.appendChild(opt);
       });
       // Restore previous selection if still valid
-      if (currentValue && Array.from(workbenchSelect.options).some(o => o.value === currentValue)) {
-        workbenchSelect.value = currentValue;
+      const selectedOption = Array.from(workbenchSelect.options).find(o => o.value === currentValue || o.dataset.package === currentValue);
+      if (selectedOption) {
+        workbenchSelect.value = selectedOption.value;
       }
+      if (typeof updateAgentRunnerDeviceHint === 'function') updateAgentRunnerDeviceHint();
     }
 
     // Populate dashboard select
@@ -756,13 +760,15 @@ async function loadAppList(preferredValue) {
       dashboardSelect.innerHTML = '';
       apps.forEach(app => {
         const opt = document.createElement('option');
-        opt.value = app.name;
-        opt.textContent = app.name;
-        opt.dataset.modules = JSON.stringify(app.modules);
+        opt.value = app.name || app.package || '';
+        opt.textContent = app.name || app.package || '未命名应用';
+        opt.dataset.package = app.package || app.appPackage || app.app_package || '';
+        opt.dataset.modules = JSON.stringify(app.modules || []);
         dashboardSelect.appendChild(opt);
       });
-      if (currentValue && Array.from(dashboardSelect.options).some(o => o.value === currentValue)) {
-        dashboardSelect.value = currentValue;
+      const selectedOption = Array.from(dashboardSelect.options).find(o => o.value === currentValue || o.dataset.package === currentValue);
+      if (selectedOption) {
+        dashboardSelect.value = selectedOption.value;
       }
     }
   } catch (e) {
@@ -2155,6 +2161,7 @@ function agentPayloadFromForm(options={}) {
     source.sourceRefs.figmaUrl = sourceMaterials.figmaUrl;
   }
   const runnerSelection = selectedRunnerDevice('agent-runner-device');
+  const appPackage = selectedAgentAppPackage();
   return {
     mode,
     goal,
@@ -2166,6 +2173,8 @@ function agentPayloadFromForm(options={}) {
     images: sourceMaterials.images,
     sourceInputs: sourceMaterials,
     appName,
+    appPackage,
+    app_package: appPackage,
     platform,
     scope,
     executionMode: 'RUNNER_JOB',

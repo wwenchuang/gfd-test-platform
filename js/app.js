@@ -502,6 +502,50 @@ function runnerDeviceVersionLabel(device = {}, packageName = '') {
   return `${app.package || packageName} ${version || '已安装'}`.trim();
 }
 
+function normalizeAppLookupText(value = '') {
+  return String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/APP$/i, '')
+    .trim();
+}
+
+function appPackageFromValue(value = '', selectId = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const select = selectId ? document.getElementById(selectId) : null;
+  const selectedOption = select?.selectedOptions?.[0];
+  const optionPackage = String(selectedOption?.dataset?.package || '').trim();
+  if (optionPackage) return optionPackage;
+  if (appInfoByPackage(raw)) return raw;
+
+  const rawKey = normalizeAppLookupText(raw);
+  const candidates = [
+    ...(Array.isArray(taskApps) ? taskApps : []),
+    ...(Array.isArray(knowledgeAppDetails) ? knowledgeAppDetails : []),
+  ];
+  const matched = candidates.find(app => {
+    const names = [
+      app?.package,
+      app?.name,
+      app?.key,
+      ...(Array.isArray(app?.aliases) ? app.aliases : []),
+    ].filter(Boolean);
+    return names.some(name => {
+      const key = normalizeAppLookupText(name);
+      return key && (key === rawKey || key.includes(rawKey) || rawKey.includes(key));
+    });
+  });
+  if (matched?.package) return matched.package;
+  if (rawKey.includes('小白学习')) return 'com.xbxxhz.box';
+  if (rawKey.includes('智小白') || rawKey.includes('3D')) return 'com.kfb.model';
+  return raw.includes('.') ? raw : '';
+}
+
+function selectedAgentAppPackage() {
+  const select = document.getElementById('agent-app-name');
+  return appPackageFromValue(select?.value || '', 'agent-app-name');
+}
+
 function runnerDeviceOptionLabel(device = {}) {
   const bits = [
     runnerDeviceDisplayName(device),
@@ -563,16 +607,19 @@ function updateAgentRunnerDeviceHint() {
   const hint = document.getElementById('agent-runner-device-hint');
   if (!hint) return;
   const selected = selectedRunnerDevice('agent-runner-device');
+  const appPackage = selectedAgentAppPackage();
   if (selected.device_strategy === 'manual_required') {
     hint.textContent = '暂无在线设备。请先启动 Mac/Windows Runner，或刷新 Runner 列表。';
     hint.className = 'form-hint warn';
   } else if (selected.device_strategy === 'auto') {
-    hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。`;
+    const appText = appPackage ? `当前应用：${appDisplayLabel(appPackage)}。` : '';
+    hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。${appText}`;
     hint.className = 'form-hint';
   } else {
     const device = runnerDevices.find(item => item.runner_id === selected.runner_id && item.device_id === selected.device_id);
-    const version = device ? runnerDeviceVersionLabel(device) : '';
-    hint.textContent = `固定执行：${device ? runnerDeviceOptionLabel(device) : selected.device_id}${version ? `；${version}` : ''}`;
+    const version = device ? runnerDeviceVersionLabel(device, appPackage) : '';
+    const appStatus = appPackage ? (version || `${appPackage} 未上报版本`) : '';
+    hint.textContent = `固定执行：${device ? runnerDeviceOptionLabel(device) : selected.device_id}${appStatus ? `；${appStatus}` : ''}`;
     hint.className = 'form-hint';
   }
 }

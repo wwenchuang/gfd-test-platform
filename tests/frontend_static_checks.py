@@ -193,6 +193,8 @@ def main():
     require("sourceType: source.sourceType" in html and "sourceRefs: source.sourceRefs" in html, "Agent payload must include sourceType/sourceRefs")
     require("agent-runner-device" in html and "renderAgentRunnerDeviceOptions" in html and "updateAgentRunnerDeviceHint" in html, "Agent workbench must expose online Runner/device selection")
     require("runnerId: runnerSelection.runner_id" in html and "deviceId: runnerSelection.device_id" in html and "deviceStrategy: runnerSelection.device_strategy" in html, "Agent payload must carry selected Runner/device strategy")
+    require("selectedAgentAppPackage" in html and "appPackage," in html and "app_package: appPackage" in html, "Agent payload must carry selected app package")
+    require("opt.dataset.package" in html and "runnerDeviceVersionLabel(device, appPackage)" in html, "Runner device version hint must use the selected app package")
     require("loadRunnerDevices({force: true, quiet: true})" in html and "自动选择在线设备（推荐）" in html, "Agent workbench must load online Runner devices without re-rendering the whole dashboard")
     require("if (sourceType === 'manual')" in html and "hasFiles" in html and "sourceType = 'requirement'" in html and "sourceType = 'figma'" in html, "Agent frontend must promote manual source type when files or Figma are attached")
     require("executionMode: 'RUNNER_JOB'" in html, "Agent payload must default to Runner job execution instead of Sonic suite execution")
