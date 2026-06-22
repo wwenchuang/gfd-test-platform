@@ -268,6 +268,7 @@ def main():
     require("validate_midscene_yaml(fixed_yaml)" in source and "YAML 校验未通过，不能应用" in source, "Repair draft apply must block invalid YAML")
     require('"APPLIED"' in source and '"REJECTED"' in source and '"WAIT_CONFIRM"' in source, "Repair draft statuses must include applied/rejected/waiting")
     backend = load_backend()
+    from task_server.services import knowledge_service as figma_backend
     require(backend.MAX_BODY_SIZE == 300 * 1024 * 1024, "Default JSON body limit must be 300MB for Agent source uploads")
     require(backend.MAX_UPLOAD_BODY_SIZE == 300 * 1024 * 1024, "Upload body limit must align with the 300MB Nginx limit")
     require(callable(backend.verify_session_token), "verify_session_token must be importable")
@@ -360,23 +361,47 @@ def main():
                 "absoluteBoundingBox": {"width": 375, "height": 812},
                 "children": [{"type": "TEXT", "characters": "按住说话"}],
             },
+            {
+                "id": "1:4",
+                "type": "FRAME",
+                "name": "引导5",
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "AI建模引导 点击按钮"}],
+            },
+            {
+                "id": "1:5",
+                "type": "FRAME",
+                "name": "语音输入-长按",
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "长按语音 直接说给 AI 听"}],
+            },
         ],
     }
-    frames = backend.figma_frame_candidates(root, limit=10, mode="smart", min_width=240, min_height=360, pinned_node_ids={"1:1"})
-    drafts = [backend.figma_frame_to_draft("com.demo", "https://figma.example", "file", frame) for frame in frames]
-    selected, ignored = backend.filter_figma_drafts_for_requirement(
+    frames = figma_backend.figma_frame_candidates(root, limit=10, mode="smart", min_width=240, min_height=360, pinned_node_ids={"1:1"})
+    drafts = [figma_backend.figma_frame_to_draft("com.demo", "https://figma.example", "file", frame) for frame in frames]
+    terms = figma_backend.figma_requirement_terms("点击语⾳创作弹窗，改交互，⻓按语⾳，AI建模⻚")
+    require("语音" in terms and "长按" in terms and "建模" in terms, "Requirement terms must normalize PDF compatibility CJK text")
+    selected, ignored = figma_backend.filter_figma_drafts_for_requirement(
         drafts,
-        "AI建模 入口 模型生成 图片 语音 输入",
-        limit=10,
+        "AI建模 入口 模型生成 图片 语⾳ 输入 引导5 ⻓按语⾳",
+        limit=1,
         min_score=5,
         max_limit=10,
         pinned_node_ids={"1:1"},
     )
     selected_names = {draft.get("page_name") for draft in selected}
-    require({"输入框1行", "语音输入-按住"}.issubset(selected_names), "Figma direct-node descendants must be kept as the requested design scope")
+    require(
+        {"输入框1行", "语音输入-按住", "引导5", "语音输入-长按"}.issubset(selected_names),
+        "Figma direct-node descendants must be kept as the requested design scope",
+    )
     require(all((draft.get("figma") or {}).get("direct_group") for draft in selected), "Direct-node descendants must carry direct_group metadata")
-    require(not backend.figma_direct_node_needs_parent_lookup({"type": "CANVAS", "children": [{}]}), "Figma canvas links must not force expensive parent lookup")
-    require(backend.figma_direct_node_needs_parent_lookup({"type": "TEXT", "characters": "AI建模"}), "Figma title/text links must lookup parent design scope")
+    require(all(figma_backend.figma_draft_generation_allowed(draft, min_score=999) for draft in selected), "Direct Figma pages must enter generation even when score threshold is high")
+    generation_drafts, generation_ignored = figma_backend.split_generation_figma_drafts(selected, min_score=999)
+    generation_names = {draft.get("page_name") for draft in generation_drafts}
+    require({"引导5", "语音输入-长按"}.issubset(generation_names), "Direct Figma pages must survive generation filtering")
+    require(not generation_ignored, "Direct Figma pages must not be moved to ignored generation list")
+    require(not figma_backend.figma_direct_node_needs_parent_lookup({"type": "CANVAS", "children": [{}]}), "Figma canvas links must not force expensive parent lookup")
+    require(figma_backend.figma_direct_node_needs_parent_lookup({"type": "TEXT", "characters": "AI建模"}), "Figma title/text links must lookup parent design scope")
     job_id = "static_duration_check"
     old_generate_dir = backend.GENERATE_JOB_DIR
     with tempfile.TemporaryDirectory() as temp_dir:

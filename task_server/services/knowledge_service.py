@@ -28,6 +28,7 @@ import shutil
 import socket
 import threading
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -2205,12 +2206,38 @@ def figma_draft_search_blob(draft: Dict[str, Any]) -> str:
         figma.get("canvas_name", ""),
         figma.get("direct_context", ""),
     ]
-    return " ".join(str(part or "") for part in parts)
+    return _normalize_requirement_search_text(" ".join(str(part or "") for part in parts))
+
+
+_CJK_COMPAT_TEXT_MAP = str.maketrans({
+    "⻓": "长",
+    "⻚": "页",
+    "⻔": "门",
+    "⻋": "车",
+    "⻜": "飞",
+    "戶": "户",
+})
+
+
+def _normalize_requirement_search_text(value: Any) -> str:
+    """Normalize PDF/Figma text before keyword extraction and matching."""
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return text.translate(_CJK_COMPAT_TEXT_MAP)
+
+
+def _figma_draft_identity(draft: Dict[str, Any]) -> str:
+    figma = (draft or {}).get("figma") or {}
+    return str(
+        figma.get("node_id")
+        or draft.get("page_id")
+        or draft.get("page_name")
+        or id(draft)
+    )
 
 
 def figma_requirement_terms(query_text: str) -> List[str]:
     """Migrated from ``midscene-upload.py:figma_requirement_terms``."""
-    raw_text = str(query_text or "").lower()
+    raw_text = _normalize_requirement_search_text(query_text).lower()
     terms: List[str] = []
     non_chinese_tokens = re.findall(r"[a-z0-9_./-]{2,}", raw_text)
     for token in non_chinese_tokens:
@@ -2229,6 +2256,7 @@ def figma_requirement_terms(query_text: str) -> List[str]:
         "弹窗", "提示", "确认", "取消", "颜色", "耗材", "打印", "模型", "图片", "语音",
         "识别", "生成", "预览", "提交", "编辑", "删除", "保存", "失败", "成功", "异常",
         "边界", "弱网", "缓存", "分页", "刷新", "排队", "并发", "超时",
+        "建模", "创作", "长按", "引导",
     }
     chinese_parts = re.findall(r"[\u4e00-\u9fff]{2,}", raw_text)
     for part in chinese_parts:
@@ -2262,7 +2290,7 @@ def score_figma_draft_for_requirement(
     terms = figma_requirement_terms(query_text)
     if not terms:
         return 0, []
-    blob = figma_draft_search_blob(draft).lower()
+    blob = _normalize_requirement_search_text(figma_draft_search_blob(draft)).lower()
     if not blob:
         return 0, []
     matched: List[str] = []
@@ -2282,15 +2310,15 @@ def score_figma_draft_for_requirement(
             score += 1
             if len(term) >= 4:
                 score += 1
-    page_name = str(draft.get("page_name") or "").lower()
-    query = str(query_text or "").lower()
+    page_name = _normalize_requirement_search_text(draft.get("page_name") or "").lower()
+    query = _normalize_requirement_search_text(query_text).lower()
     for term in terms:
         if term and term in page_name:
             score += 4
     if page_name and page_name in query:
         score += 5
     figma = draft.get("figma") or {}
-    canvas_name = str(figma.get("canvas_name") or "").lower()
+    canvas_name = _normalize_requirement_search_text(figma.get("canvas_name") or "").lower()
     if canvas_name and canvas_name in query:
         score += 1
     matched_important = [term for term in matched if term in important_terms]
@@ -2321,12 +2349,21 @@ def filter_figma_drafts_for_requirement(
     pinned_node_ids = {str(item) for item in (pinned_node_ids or []) if str(item or "").strip()}
     terms = figma_requirement_terms(query_text)
     if not terms:
-        selected = drafts[:max(1, min(limit, len(drafts)))]
+        direct_scope = [
+            draft for draft in drafts
+            if (draft.get("figma") or {}).get("pinned") or (draft.get("figma") or {}).get("direct_group")
+        ]
+        selected = direct_scope[:max(1, min(max_limit, len(direct_scope)))] if direct_scope else drafts[:max(1, min(limit, len(drafts)))]
         for draft in selected:
             figma = draft.setdefault("figma", {})
             figma["relevance_score"] = figma.get("relevance_score", 0)
-            figma["relevance_reason"] = "未提供明确需求关键词，保留前几个页面作为弱参考"
-        ignored = drafts[len(selected):]
+            figma["relevance_reason"] = (
+                "未提供明确需求关键词，但该页面位于 Figma 直链范围内，作为本次 UI 参考保留"
+                if figma.get("pinned") or figma.get("direct_group")
+                else "未提供明确需求关键词，保留前几个页面作为弱参考"
+            )
+        selected_ids = {_figma_draft_identity(draft) for draft in selected}
+        ignored = [draft for draft in drafts if _figma_draft_identity(draft) not in selected_ids]
         return selected, ignored
 
     scored: List[Tuple[int, Dict[str, Any]]] = []
@@ -2358,23 +2395,35 @@ def filter_figma_drafts_for_requirement(
         )
         scored.append((score, draft))
 
-    pinned_drafts = [draft for _score, draft in scored if (draft.get("figma") or {}).get("pinned")]
     top_score = max([score for score, _draft in scored] or [0])
     dynamic_min_score = min_score
     sorted_scored = sorted(scored, key=lambda item: item[0], reverse=True)
+    pinned_drafts = [draft for _score, draft in sorted_scored if (draft.get("figma") or {}).get("pinned")]
+    pinned_ids = {_figma_draft_identity(draft) for draft in pinned_drafts}
+    direct_group_drafts = [
+        draft for _score, draft in sorted_scored
+        if (draft.get("figma") or {}).get("direct_group")
+        and _figma_draft_identity(draft) not in pinned_ids
+    ]
+    direct_group_ids = {_figma_draft_identity(draft) for draft in direct_group_drafts}
     matched_pairs = [
         (score, draft) for score, draft in sorted_scored
-        if score >= dynamic_min_score and draft not in pinned_drafts
+        if score >= dynamic_min_score
+        and _figma_draft_identity(draft) not in pinned_ids
+        and _figma_draft_identity(draft) not in direct_group_ids
     ]
     matched = [draft for _score, draft in matched_pairs]
     strong_variant_count = 0
     if top_score >= 8:
         strong_threshold = max(dynamic_min_score, int(top_score * 0.75))
         strong_variant_count = len([draft for score, draft in matched_pairs if score >= strong_threshold])
-    if pinned_drafts or matched:
-        selected_limit = min(max_limit, max(limit, strong_variant_count + len(pinned_drafts)))
-        remaining_limit = max(0, selected_limit - len(pinned_drafts))
-        selected = pinned_drafts + matched[:min(remaining_limit, len(matched))]
+    if pinned_drafts or direct_group_drafts or matched:
+        forced_count = len(pinned_drafts) + len(direct_group_drafts)
+        selected_limit = min(max_limit, max(limit, strong_variant_count + forced_count))
+        direct_limit = max(0, selected_limit - len(pinned_drafts))
+        selected_direct = direct_group_drafts[:min(direct_limit, len(direct_group_drafts))]
+        remaining_limit = max(0, selected_limit - len(pinned_drafts) - len(selected_direct))
+        selected = pinned_drafts + selected_direct + matched[:min(remaining_limit, len(matched))]
     elif fallback_on_no_match:
         selected = [
             draft for _score, draft in sorted(
@@ -2386,13 +2435,10 @@ def filter_figma_drafts_for_requirement(
             figma["relevance_reason"] = "未命中需求关键词，仅作为低置信度兜底参考；建议复制具体 Frame 链接或补充需求说明"
     else:
         selected = []
-    selected_ids = {
-        ((draft.get("figma") or {}).get("node_id") or draft.get("page_id"))
-        for draft in selected
-    }
+    selected_ids = {_figma_draft_identity(draft) for draft in selected}
     ignored = [
         draft for _score, draft in scored
-        if (((draft.get("figma") or {}).get("node_id") or draft.get("page_id")) not in selected_ids)
+        if _figma_draft_identity(draft) not in selected_ids
     ]
     return selected, ignored
 
@@ -2583,7 +2629,7 @@ def figma_draft_generation_allowed(
 ) -> bool:
     """Migrated from ``midscene-upload.py:figma_draft_generation_allowed``."""
     figma = (draft or {}).get("figma") or {}
-    if figma.get("pinned"):
+    if figma.get("pinned") or figma.get("direct_group"):
         return True
     if min_score is None:
         min_score = figma_generation_min_relevance()
@@ -2691,6 +2737,8 @@ def figma_ignored_draft_summaries(
             "figma": {
                 "node_id": figma.get("node_id", ""),
                 "canvas_name": figma.get("canvas_name", ""),
+                "direct_group": bool(figma.get("direct_group")),
+                "direct_context": figma.get("direct_context", ""),
                 "relevance_score": figma.get("relevance_score", 0),
                 "relevance_terms": figma.get("relevance_terms", []),
                 "relevance_reason": figma.get("relevance_reason", ""),
@@ -2813,7 +2861,7 @@ def save_figma_design_assets_for_case(
             continue
         figma = draft.get("figma") or {}
         relevance_score = safe_int(figma.get("relevance_score"), 0)
-        if not figma.get("pinned") and relevance_score < min_save_score:
+        if not (figma.get("pinned") or figma.get("direct_group")) and relevance_score < min_save_score:
             continue
         node_id = figma.get("node_id") or draft.get("page_id") or draft.get("page_name") or ""
         files.append({
