@@ -113,6 +113,33 @@ def check_agent_fallback_yaml_auto_confirm_split():
         agent_service.AGENT_DRAFT_DIR = old_draft_dir
 
 
+def check_business_flow_filters_product_metrics():
+    from task_server.prompts.builders.business_context_builder import BusinessContextBuilder
+    from task_server.services import agent_service
+
+    noisy_requirement = (
+        "业务主链约束：生成模型释出 → 生成一模一样的 ip 样子 → 生成模型的 token 消耗 → 提高AI\n"
+        "AI建模页包含开始创作、图片建模、语音输入-长按，生成模型后查看结果。"
+    )
+    built = BusinessContextBuilder().build({
+        "target": "AI建模需求生成并执行",
+        "requirementText": noisy_requirement,
+    })
+    builder_flow_text = " ".join(built.get("business_flow") or [])
+    require("token" not in builder_flow_text.lower() and "一模一样" not in builder_flow_text and "提高AI" not in builder_flow_text, "Prompt business flow must filter product metrics and model goals")
+    require("AI建模" in builder_flow_text and ("语音" in builder_flow_text or "长按" in builder_flow_text), "Prompt business flow must keep real AI modeling user actions")
+
+    run = {
+        "runId": "agent-static-flow",
+        "target": "AI建模需求生成并执行",
+        "artifacts": {"sourceContext": {"requirementText": noisy_requirement}},
+    }
+    constraint = agent_service._ensure_business_flow_constraint(run)
+    flow_text = " ".join(constraint.get("businessFlow") or [])
+    require("token" not in flow_text.lower() and "一模一样" not in flow_text and "提高AI" not in flow_text, "Agent runtime business flow must filter product metrics and model goals")
+    require("AI建模" in flow_text and ("语音" in flow_text or "长按" in flow_text), "Agent runtime business flow must keep AI modeling user actions")
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -276,6 +303,8 @@ def main():
     require("TASK_DIR,\n        os.path.join(base_dir, 'midscene-tasks')" in agent_service_source, "Agent case retrieval must prefer formal TASK_DIR before draft server-tasks")
     require('call["keywords"] = keywords' in agent_service_source and "def _candidate_keyword_reasons" in agent_service_source and '"matchedKeywords"' in agent_service_source and "匹配关键词：" in agent_service_source, "Agent matching must expose actual matched keywords")
     require("DEFAULT_BUSINESS_FLOW" in prompt_builder_source and '"business_flow_required": True' in prompt_builder_source and '"business_flow_source"' in prompt_builder_source, "Prompt Center must provide required business-flow fallback metadata")
+    require("FLOW_META_TERMS" in prompt_builder_source and "ip样子" in prompt_builder_source and "token" in prompt_builder_source, "Prompt business flow must filter product/model metric nodes")
+    check_business_flow_filters_product_metrics()
     require("business_flow 是强约束" in agent_prompt_source and "不得生成、匹配或执行不在主链上的无关任务" in agent_prompt_source, "Agent prompt must treat business_flow as an execution boundary")
     require("business_flow 是强约束" in case_prompt_source and "禁止生成不属于业务主链" in case_prompt_source, "Case prompt must treat business_flow as a generation boundary")
     require('if isinstance(items, dict):' in sonic_service_source and 'explicit_items = items.get("items")' in sonic_service_source and '"total_files"' in sonic_service_source and '"synced_cases"' in sonic_service_source, "Sonic batch publish must accept frontend module/files/items payload and return clear totals")

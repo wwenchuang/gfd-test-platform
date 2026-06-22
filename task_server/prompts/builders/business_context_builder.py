@@ -8,6 +8,15 @@ from typing import Any, Dict, List
 
 HIGH_RISK_TERMS = ("支付", "删除", "覆盖基线", "确认打印", "开始打印", "提交订单")
 DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
+FLOW_ACTION_TERMS = (
+    "进入", "点击", "选择", "上传", "输入", "长按", "语音", "图片", "开始创作",
+    "AI建模", "ai建模", "首页", "导航", "入口", "弹窗", "生成模型", "查看", "作品",
+    "发送", "关闭", "结果",
+)
+FLOW_META_TERMS = (
+    "token", "api key", "apikey", "password", "成本", "消耗", "提高ai", "提升ai",
+    "优化ai", "一模一样", "ip样子", "ip形象", "模型效果", "算法", "准确率", "性能",
+)
 
 
 class BusinessContextBuilder:
@@ -113,9 +122,16 @@ class BusinessContextBuilder:
                 source = "requirement_text"
         cleaned = []
         for item in candidates:
-            item = re.sub(r"\s+", " ", str(item or "").strip(" -:：>→"))
+            item = self._clean_flow_node(item)
             if item and item not in cleaned:
                 cleaned.append(item)
+        inferred = self._fallback_flow_from_text(requirement_text)
+        if inferred:
+            merged = []
+            for item in inferred + cleaned:
+                if item and item not in merged:
+                    merged.append(item)
+            return merged[:12], "requirement_text" if source == "fallback" else source
         if cleaned:
             return cleaned[:12], source
         return list(DEFAULT_BUSINESS_FLOW), "default"
@@ -135,6 +151,31 @@ class BusinessContextBuilder:
             return quoted[:8]
         verbs = re.findall(r"(进入[^，。；\n]{2,24}|点击[^，。；\n]{2,24}|选择[^，。；\n]{2,24}|查看[^，。；\n]{2,24}|确认[^，。；\n]{2,24}|生成[^，。；\n]{2,24})", text)
         return verbs[:8]
+
+    def _clean_flow_node(self, value: Any) -> str:
+        text = re.sub(r"\s+", " ", str(value or "").strip(" -:：>→"))
+        if not text:
+            return ""
+        compact = re.sub(r"\s+", "", text).lower()
+        if any(term in compact for term in FLOW_META_TERMS):
+            return ""
+        if not any(term.lower() in compact or term in text for term in FLOW_ACTION_TERMS):
+            return ""
+        return text[:40]
+
+    def _fallback_flow_from_text(self, text: str) -> List[str]:
+        compact = re.sub(r"\s+", "", str(text or ""))
+        if any(term in compact for term in ("AI建模", "ai建模", "开始创作", "图片建模", "语音创作", "语音输入")):
+            flow = ["进入 AI建模页"]
+            if "开始创作" in compact:
+                flow.append("点击开始创作")
+            if "图片建模" in compact or "上传" in compact:
+                flow.append("选择图片建模并上传图片")
+            if "语音创作" in compact or "语音输入" in compact or "长按" in compact:
+                flow.append("选择语音创作并长按输入")
+            flow.append("生成模型并查看结果")
+            return flow
+        return []
 
     def _risk_hits(self, text: str) -> List[str]:
         return [term for term in HIGH_RISK_TERMS if term in str(text or "")]

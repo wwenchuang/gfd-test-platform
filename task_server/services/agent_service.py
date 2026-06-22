@@ -3338,6 +3338,50 @@ def _dedupe_business_terms(items, limit=12):
     return terms
 
 
+BUSINESS_FLOW_ACTION_TERMS = (
+    "进入", "点击", "选择", "上传", "输入", "长按", "语音", "图片", "开始创作",
+    "AI建模", "ai建模", "首页", "导航", "入口", "弹窗", "生成模型", "查看", "作品",
+    "发送", "关闭", "结果",
+)
+BUSINESS_FLOW_META_TERMS = (
+    "token", "api key", "apikey", "password", "成本", "消耗", "提高ai", "提升ai",
+    "优化ai", "一模一样", "ip样子", "ip形象", "模型效果", "算法", "准确率", "性能",
+)
+
+
+def _normalize_business_flow_text(value):
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = text.translate(str.maketrans({"⻓": "长", "⻚": "页", "⾳": "音"}))
+    return re.sub(r"\s+", " ", text).strip(" -:：>→")
+
+
+def _clean_business_flow_node(value):
+    text = _normalize_business_flow_text(value)
+    if not text:
+        return ""
+    compact = re.sub(r"\s+", "", text).lower()
+    if any(term in compact for term in BUSINESS_FLOW_META_TERMS):
+        return ""
+    if not any(term.lower() in compact or term in text for term in BUSINESS_FLOW_ACTION_TERMS):
+        return ""
+    return text[:40]
+
+
+def _fallback_business_flow_from_text(value):
+    compact = re.sub(r"\s+", "", _normalize_business_flow_text(value))
+    if any(term in compact for term in ("AI建模", "ai建模", "开始创作", "图片建模", "语音创作", "语音输入")):
+        flow = ["进入 AI建模页"]
+        if "开始创作" in compact:
+            flow.append("点击开始创作")
+        if "图片建模" in compact or "上传" in compact:
+            flow.append("选择图片建模并上传图片")
+        if "语音创作" in compact or "语音输入" in compact or "长按" in compact:
+            flow.append("选择语音创作并长按输入")
+        flow.append("生成模型并查看结果")
+        return flow
+    return []
+
+
 def _compact_business_flow_constraint(constraint):
     constraint = constraint if isinstance(constraint, dict) else {}
     flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
@@ -3365,16 +3409,17 @@ def _ensure_business_flow_constraint(run):
     current = artifacts.get("businessFlowConstraint") if isinstance(artifacts.get("businessFlowConstraint"), dict) else {}
     prompt_ctx = {}
     business_ctx = run.get("businessContext") if isinstance(run.get("businessContext"), dict) else {}
+    requirement_text = (
+        source_context.get("requirementText")
+        or normalized_input.get("requirementText")
+        or normalized_input.get("text")
+        or run.get("target", "")
+    )
     try:
         prompt_ctx = get_prompt_center().enrich({
             **run,
             "sourceContext": source_context,
-            "requirementText": (
-                source_context.get("requirementText")
-                or normalized_input.get("requirementText")
-                or normalized_input.get("text")
-                or run.get("target", "")
-            ),
+            "requirementText": requirement_text,
         })
         business_ctx = prompt_ctx.get("businessContext") if isinstance(prompt_ctx.get("businessContext"), dict) else business_ctx
     except Exception:
@@ -3386,15 +3431,28 @@ def _ensure_business_flow_constraint(run):
     expanded_flow = []
     for item in business_flow:
         for part in re.split(r"\s*(?:->|→|>|，|,|；|;|\n)\s*", str(item or "")):
-            part = part.strip(" -:：")
+            part = _clean_business_flow_node(part)
             if part and part not in expanded_flow:
                 expanded_flow.append(part)
     business_flow = expanded_flow
+    fallback_flow = _fallback_business_flow_from_text("\n".join([
+        str(run.get("target") or ""),
+        str(requirement_text or ""),
+        str(source_context.get("sourceSummary") or ""),
+    ]))
+    flow_joined = " ".join(business_flow)
+    if fallback_flow and (not business_flow or len(business_flow) < 3 or "AI建模" not in flow_joined):
+        merged_flow = []
+        for item in fallback_flow + business_flow:
+            if item and item not in merged_flow:
+                merged_flow.append(item)
+        business_flow = merged_flow
     if not business_flow:
         business_flow = list(AGENT_DEFAULT_BUSINESS_FLOW)
     business_flow_text = business_ctx.get("business_flow_text") or "\n".join(
         f"{idx + 1}. {item}" for idx, item in enumerate(business_flow)
     )
+    business_flow_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(business_flow))
     constraint = {
         "required": True,
         "strict": True,
