@@ -160,7 +160,7 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -
       echo "已同步页面到 Docker 容器：${WEB_CONTAINER}:${target_html}"
     fi
   done
-  docker exec "${WEB_CONTAINER}" sh -lc "if [ -d /etc/nginx ]; then find /etc/nginx -type f \( -name '*.conf' -o -name 'nginx.conf' \) -print | while IFS= read -r f; do sed -i 's/client_max_body_size[[:space:]][^;]*;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/g' \"\$f\"; done; fi; mkdir -p /etc/nginx/conf.d; printf 'client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};\n' > /etc/nginx/conf.d/midscene-upload-size.conf && nginx -t" \
+  docker exec "${WEB_CONTAINER}" sh -lc "if [ -d /etc/nginx ]; then find /etc/nginx -type f \( -name '*.conf' -o -name 'nginx.conf' \) -print | while IFS= read -r f; do tmp=\"/tmp/nginx-conf.\$\$.tmp\"; sed 's/client_max_body_size[[:space:]][^;]*;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/g' \"\$f\" > \"\$tmp\" && cat \"\$tmp\" > \"\$f\"; rm -f \"\$tmp\"; done; fi; mkdir -p /etc/nginx/conf.d; printf 'client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};\n' > /etc/nginx/conf.d/midscene-upload-size.conf && nginx -t" \
     && docker exec "${WEB_CONTAINER}" sh -lc "nginx -s reload 2>/dev/null || true" \
     && echo "已更新 Docker Nginx 上传上限：${NGINX_CLIENT_MAX_BODY_SIZE}" \
     || docker exec "${WEB_CONTAINER}" sh -lc "rm -f /etc/nginx/conf.d/midscene-upload-size.conf; nginx -t >/dev/null 2>&1 || true"
@@ -170,7 +170,10 @@ fi
 if command -v nginx >/dev/null 2>&1 && [ -d "$(dirname "${NGINX_UPLOAD_LIMIT_CONF}")" ]; then
   if [ -d /etc/nginx ]; then
     find /etc/nginx -type f \( -name '*.conf' -o -name 'nginx.conf' \) -print | while IFS= read -r nginx_conf; do
-      sed -i "s/client_max_body_size[[:space:]][^;]*;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/g" "${nginx_conf}"
+      tmp_conf="$(mktemp)"
+      sed "s/client_max_body_size[[:space:]][^;]*;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/g" "${nginx_conf}" > "${tmp_conf}"
+      cat "${tmp_conf}" > "${nginx_conf}"
+      rm -f "${tmp_conf}"
     done
   fi
   printf 'client_max_body_size %s;\n' "${NGINX_CLIENT_MAX_BODY_SIZE}" > "${NGINX_UPLOAD_LIMIT_CONF}"
