@@ -270,6 +270,58 @@ def get_agent_run(run_id):
     return next((r for r in runs if r.get("runId") == run_id), None)
 
 
+def _agent_cancel_progress_job(run_id, reason="用户取消"):
+    try:
+        from task_server.services.yaml_service import load_generate_job, update_generate_job
+        job_id = f"agent-generate-{_agent_safe_run_file_id({'runId': run_id})}"
+        if not load_generate_job(job_id):
+            return
+        update_generate_job(
+            job_id,
+            status="cancelled",
+            progress=99,
+            step="已取消",
+            message=str(reason or "用户取消"),
+            cancel_reason=str(reason or "用户取消"),
+        )
+    except Exception:
+        pass
+
+
+def _apply_agent_cancel_state(run, reason="用户取消"):
+    if not isinstance(run, dict):
+        return run
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    run["status"] = "CANCELLED"
+    run["currentStep"] = "CANCELLED"
+    run["pendingConfirmations"] = []
+    run["error"] = str(reason or "用户取消")
+    run["updatedAt"] = now
+    for step in run.get("steps") or []:
+        state = str(step.get("status") or "").upper()
+        if state == "RUNNING":
+            step["status"] = "CANCELLED"
+            step["summary"] = str(reason or "用户取消")
+            step["endedAt"] = now
+            step.setdefault("liveTrace", []).append({
+                "time": now,
+                "message": str(reason or "用户取消"),
+                "status": "CANCELLED",
+            })
+            del step["liveTrace"][:-30]
+        elif state == "PENDING":
+            step["status"] = "SKIPPED"
+            step["summary"] = "Agent 已取消，跳过"
+            step["endedAt"] = now
+    _refresh_agent_run_progress(run)
+    return run
+
+
+def _persisted_agent_run_is_cancelled(run_id):
+    persisted = get_agent_run(run_id)
+    return isinstance(persisted, dict) and str(persisted.get("status") or "").upper() == "CANCELLED"
+
+
 def create_agent_run(payload):
     """创建新 Agent 运行。
 
@@ -449,7 +501,7 @@ def preview_agent_plan(payload):
     }
 
 
-def cancel_agent_run(run_id):
+def cancel_agent_run(run_id, reason="用户取消"):
     """取消 Agent 运行。"""
     with AGENT_RUN_LOCK:
         runs = load_agent_runs()
@@ -458,13 +510,10 @@ def cancel_agent_run(run_id):
             return None
         if run.get("status") in ("DONE", "FAILED", "CANCELLED"):
             return run
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        run["status"] = "CANCELLED"
-        run["currentStep"] = "FAILED"
-        run["updatedAt"] = now
-        run["error"] = "用户取消"
+        _apply_agent_cancel_state(run, reason or "用户取消")
         save_agent_runs(runs)
-        return run
+    _agent_cancel_progress_job(run_id, reason or "用户取消")
+    return run
 
 
 def _normalize_case_selection_value(value):
@@ -970,10 +1019,8 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                 run["currentStep"] = "VALIDATE_YAML"
             run["updatedAt"] = now
         elif rejected:
-            run["status"] = "CANCELLED"
-            run["currentStep"] = "FAILED"
-            run["updatedAt"] = now
-            run["error"] = f"用户拒绝确认：{confirmation.get('type', '')}"
+            _apply_agent_cancel_state(run, f"用户拒绝确认：{confirmation.get('type', '')}")
+            _agent_cancel_progress_job(run.get("runId", ""), run.get("error") or "用户拒绝确认")
 
         save_agent_runs(runs)
         return run
@@ -7292,10 +7339,16 @@ def _execute_agent_step(run, step_name):
     result = None
     error = None
     try:
+        if _persisted_agent_run_is_cancelled(run.get("runId", "")):
+            _apply_agent_cancel_state(run, "用户取消")
+            return {"status": "CANCELLED", "summary": "用户取消"}, None
         tool_fn = _STEP_TOOL_MAP.get(step_name)
         if tool_fn:
             _append_step_trace(run, step, f"调用工具：{getattr(tool_fn, '__name__', step_name)}", tool=step_name)
             result = tool_fn(run)
+            if _persisted_agent_run_is_cancelled(run.get("runId", "")):
+                _apply_agent_cancel_state(run, "用户取消")
+                return {"status": "CANCELLED", "summary": "用户取消"}, None
         elif step_name == "APPLY_SAFE_REPAIR":
             # APPLY_SAFE_REPAIR 仅在确认后执行
             step["status"] = "SKIPPED"
@@ -7335,6 +7388,10 @@ def _execute_agent_step(run, step_name):
         _append_step_trace(run, step, f"执行异常：{error[:200]}", status="FAILED")
     # Update step status
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    if _persisted_agent_run_is_cancelled(run.get("runId", "")):
+        _apply_agent_cancel_state(run, "用户取消")
+        _persist_agent_run_snapshot(run)
+        return {"status": "CANCELLED", "summary": "用户取消"}, None
     step["endedAt"] = now
     step["durationMs"] = _compute_duration(step)
     if error:
@@ -7464,6 +7521,8 @@ def _execute_agent_steps(run_id):
                     step["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     continue
             result, error = _execute_agent_step(run, step_name)
+            if run.get("status") == "CANCELLED":
+                break
             if run.get("status") == "WAIT_CONFIRM" or (isinstance(result, dict) and result.get("status") == "WAIT_CONFIRM"):
                 run["status"] = "WAIT_CONFIRM"
                 run["currentStep"] = "WAIT_CONFIRM"

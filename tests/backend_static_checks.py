@@ -338,6 +338,9 @@ def main():
     require('"runner_id": selected_runner_id' in agent_service_source and '"device_id": selected_device_id' in agent_service_source and '"device_strategy": selected_device_strategy' in agent_service_source, "Agent Runner jobs must use the selected Runner/device strategy")
     require('case.get("device_strategy") or "auto"' in execution_adapter_source, "ExecutionAdapter local Runner jobs must default to automatic online-device assignment")
     require("def _append_step_trace" in agent_service_source and "_persist_agent_run_snapshot" in agent_service_source, "Agent timeline steps must persist live trace for running tools")
+    require("def cancel_agent_run(run_id, reason=" in agent_service_source and 'run["currentStep"] = "CANCELLED"' in agent_service_source and "_agent_cancel_progress_job" in agent_service_source, "Agent cancellation must mark a real cancelled state and cancel internal generation progress jobs")
+    require("cancel_agent_run(run_id" in router_source and "^/api/agent-runs/([^/]+)/cancel" in router_source, "Agent cancel route must use the unified cancellation service")
+    require("_persisted_agent_run_is_cancelled" in agent_service_source and 'result, error = _execute_agent_step(run, step_name)' in agent_service_source, "Agent worker must re-check persisted cancellation before overwriting running state")
     require("bridge_groovy_endpoint" in agent_service_source and "http_client.get" in agent_service_source and "PORT," in agent_service_source, "Execution precheck must probe local bridge-groovy endpoint with runner token through the unified HTTP client")
     require('call["blockers"] = blockers' in agent_service_source and 'call["warnings"] = warnings' in agent_service_source, "Execution precheck must expose blockers and warnings to the frontend")
     require("def _fuzzy_match_cases" in agent_service_source and "词序容错模糊匹配" in agent_service_source, "Agent fallback matching must handle Chinese word-order variations")
@@ -555,7 +558,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 31})
+    print({"ok": True, "file": str(MODULE), "checks": 34})
 
 
 if __name__ == "__main__":

@@ -46,11 +46,11 @@ from task_server.response import BodyTooLarge
 from task_server.services.agent_service import (
     _execute_agent_steps,
     advance_agent_run,
+    cancel_agent_run,
     confirm_agent_step,
     create_agent_run,
     get_available_apps,
     load_agent_runs,
-    save_agent_runs,
 )
 from task_server.services.case_service import (
     automatic_baseline_repair_enabled,
@@ -4028,20 +4028,10 @@ def _post_agent_runs_confirm(handler, qs, match):
 def _post_agent_runs_cancel(handler, qs, match):
     run_id = urllib.parse.unquote(match.group(1))
     d = handler._body()
-    with AGENT_RUN_LOCK:
-        runs = load_agent_runs()
-        run = next((r for r in runs if r.get("runId") == run_id), None)
-        if not run:
-            handler._json({"ok": False, "error": "Agent Run 不存在"}, 404)
-            return
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        run["status"] = "CANCELLED"
-        run["currentStep"] = "FAILED"
-        run["pendingConfirmations"] = []
-        reason = d.get("reason") or "用户取消"
-        run["error"] = reason
-        run["updatedAt"] = now
-        save_agent_runs(runs)
+    run = cancel_agent_run(run_id, d.get("reason") or "用户取消")
+    if not run:
+        handler._json({"ok": False, "error": "Agent Run 不存在"}, 404)
+        return
     handler._json({"ok": True, "run": run})
 
 

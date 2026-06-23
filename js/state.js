@@ -130,6 +130,7 @@ const AUTO_AGENT_STEP_LABELS = {
   GENERATE_BUG_DRAFT: '缺陷草稿',
   DONE: '完成',
   FAILED: '失败',
+  CANCELLED: '已取消',
   WAIT_CONFIRM: '待确认'
 };
 const AGENT_RISK_LEVELS = { LOW: 'low', MEDIUM: 'medium', HIGH: 'high' };

@@ -153,6 +153,7 @@ def main():
     require("ASSET_PAGE_SIZE" in html and "MODULE_DIRECTORY_PAGE_SIZE" in html and "paginationHtml" in html and "setAssetListPage" in html, "Long YAML asset lists must render with pagination")
     require("取消任务" in html and "基线回归" in html and "调试执行" in html, "Runner side panel must expose cancel action and distinguish baseline from debug runs")
     require("取消运行" in html and "cancelAgentRunById" in html, "Agent confirmation cards must allow cancelling without entering the run detail")
+    require("const canCancel = !agentRunIsTerminal(run)" in html and "canCancel ? `<button class=\"btn-sm danger\"" in html, "Running Agent history cards must expose direct cancellation")
     require("normalizeFailureAnalysis" in html and "SCRIPT_ISSUE" in html and "PRODUCT_BUG" in html and "ENV_ISSUE" in html and "UNKNOWN" in html, "AI repair must normalize and gate failure types")
     require("AI修复工作台" in html and "失败任务列表" in html and "结构化分析" in html and "YAML 修复草稿" in html, "AI repair must be an independent three-column workspace")
     require("原始 YAML" in html and "修复 YAML" in html and "Diff / 校验" in html, "YAML repair draft must show original, fixed, diff, and validation")
@@ -214,7 +215,7 @@ def main():
     require("Execution Trace Viewer" in trace_viewer and "/debug/traces" in trace_viewer and "sessionToken" in trace_viewer, "Trace viewer must render real trace data with session auth")
     require("一键应用推荐策略" in html and "applyRecommendedStrategy" in html, "Model config must support one-click recommended strategy")
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
-    print({"ok": True, "file": str(HTML), "checks": 58})
+    print({"ok": True, "file": str(HTML), "checks": 59})
 
 
 if __name__ == "__main__":
