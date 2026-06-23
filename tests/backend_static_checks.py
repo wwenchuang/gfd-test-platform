@@ -114,6 +114,53 @@ def check_agent_fallback_yaml_auto_confirm_split():
         agent_service.AGENT_DRAFT_DIR = old_draft_dir
 
 
+def check_agent_generation_pipeline_normalizes_validation_state():
+    from task_server.services import agent_service
+
+    original_is_new = agent_service._agent_is_new_requirement_run
+    original_generate = agent_service._agent_generate_yaml_from_ui_pipeline
+    original_confirm = agent_service._confirm_agent_yaml_files
+    try:
+        def fake_is_new(run, source_context=None):
+            return True
+
+        def fake_generate(run, source_context, source_text):
+            return [{"module": "AI测试", "file": "case.yaml", "path": "/tmp/case.yaml"}], {
+                "caseCount": 1,
+                "scenarioCount": 1,
+                "summaryFiles": {},
+            }
+
+        def fake_confirm(run, artifacts, file_items):
+            artifacts["yamlValidation"] = [{"legacy": "list-state"}]
+            return [{"type": "file", "module": "AI测试", "file": "case.yaml", "path": "/tmp/case.yaml", "confirmed": True}], ""
+
+        agent_service._agent_is_new_requirement_run = fake_is_new
+        agent_service._agent_generate_yaml_from_ui_pipeline = fake_generate
+        agent_service._confirm_agent_yaml_files = fake_confirm
+        run = {
+            "runId": "agent-static-validation-list",
+            "target": "AI建模需求",
+            "module": "AI测试",
+            "sourceType": "requirement",
+            "artifacts": {
+                "sourceContext": {
+                    "sourceType": "requirement",
+                    "sourceSummary": "需求文档 + Figma",
+                    "figmaUrl": "https://figma.test/file",
+                }
+            },
+        }
+        call = agent_service._tool_generate_yaml(run)
+        validation = run["artifacts"].get("yamlValidation") or {}
+        require(call.get("status") == "SUCCESS", f"Agent pipeline should survive list yamlValidation state: {call}")
+        require(isinstance(validation, dict) and validation.get("autoConfirmed"), "Agent yamlValidation must be normalized to dict and auto-confirmed")
+    finally:
+        agent_service._agent_is_new_requirement_run = original_is_new
+        agent_service._agent_generate_yaml_from_ui_pipeline = original_generate
+        agent_service._confirm_agent_yaml_files = original_confirm
+
+
 def check_business_flow_filters_product_metrics():
     from task_server.prompts.builders.business_context_builder import BusinessContextBuilder
     from task_server.services import agent_service
@@ -307,6 +354,7 @@ def main():
     require("def _agent_source_material_context" in agent_service_source and '"uploadedFiles"' in agent_service_source and '"uploadedImages"' in agent_service_source and '"sourceSummary"' in agent_service_source, "Agent prepare_source must normalize uploaded files/images into sourceContext")
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
+    check_agent_generation_pipeline_normalizes_validation_state()
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
     require("def _agent_generate_yaml_from_ui_pipeline" in agent_service_source and "generate_ui_yaml_from_request" in agent_service_source and '"split_by_case"' in agent_service_source and "ui_yaml_pipeline" in agent_service_source, "Agent new-requirement YAML generation must reuse the full requirement/Figma/YAML pipeline before fallback")
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")

@@ -5756,7 +5756,7 @@ def _tool_execution_precheck(run):
         if draft_refs and not file_refs:
             add("draft_confirmed", False, "存在未确认 YAML 草稿", "blocker")
 
-        validation = artifacts.get("yamlValidation") or {}
+        validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
         if not validation or not validation.get("ok"):
             validation_issues = []
             for ref in refs:
@@ -7222,7 +7222,7 @@ def _tool_diagnose_failure(run):
         else:
             failed_steps = [s for s in run.get("steps", []) if str(s.get("status")).upper() in ("FAILED", "PARTIAL_FAILED")]
             sync_failed = ((artifacts.get("sonicSync") or {}).get("failed") or [])
-            validation = artifacts.get("yamlValidation") or {}
+            validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
             if validation.get("issues"):
                 diagnosis = make_diagnosis(
                     "YAML 强校验未通过",
