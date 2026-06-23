@@ -230,6 +230,7 @@ def main():
     job_service_source = (ROOT / "task_server" / "services" / "job_service.py").read_text(encoding="utf-8")
     sonic_service_source = (ROOT / "task_server" / "services" / "sonic_service.py").read_text(encoding="utf-8")
     yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    ai_skill_service_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
     knowledge_service_source = (ROOT / "task_server" / "services" / "knowledge_service.py").read_text(encoding="utf-8")
     schemas_source = (ROOT / "task_server" / "schemas.py").read_text(encoding="utf-8")
     agent_service_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
@@ -325,6 +326,10 @@ def main():
     require("def _load_figma_context_for_agent" in agent_service_source and "load_figma_generation_context" in agent_service_source and '"figmaUsedPages"' in agent_service_source and '"figmaIgnoredPages"' in agent_service_source, "Agent Figma source must reuse the shared Figma requirement-filter extraction pipeline")
     require("preparedFigmaContextPath" in agent_service_source and '"prepared_figma_context": prepared_figma_context' in agent_service_source, "Agent YAML generation must reuse prepared Figma context instead of reparsing when available")
     require("def _prepared_figma_context_from_request" in yaml_service_source and "复用 Figma 解析" in yaml_service_source, "YAML generation must support prepared Figma context reuse")
+    require("def _ensure_rich_generation_scope" in yaml_service_source and "coverage_rounds = 2 if rich_scope.get(\"enabled\") else 1" in yaml_service_source, "Rich requirement/Figma inputs must raise generation scope and allow extra coverage repair")
+    require("def enforce_min_case_count_audit" in ai_skill_service_source and "case_count_below_min" in ai_skill_service_source, "Coverage auditor must not pass when automation case count is below target")
+    require("def _agent_has_rich_requirement_material" in agent_service_source and "fallbackDisabled" in agent_service_source and "未采用兜底 YAML" in agent_service_source, "Agent must not auto-run fallback YAML for rich requirement/Figma inputs")
+    require("def _agent_yaml_task_names_for_runner" in agent_service_source and '"task_names": task_names' in agent_service_source and '"target_task_name": target_task_name' in agent_service_source, "Agent Runner jobs must use YAML task names instead of file-name guesses")
     check_agent_fallback_yaml_auto_confirm_split()
     check_agent_prepared_figma_context_reuse()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
@@ -558,7 +563,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 34})
+    print({"ok": True, "file": str(MODULE), "checks": 38})
 
 
 if __name__ == "__main__":

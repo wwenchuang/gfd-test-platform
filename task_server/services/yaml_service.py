@@ -3202,6 +3202,90 @@ def run_mindmap_only_job(job_id, request_data):
 
 
 
+def _generation_scope_terms_from_rich_context(title, module, requirement_text_assets, used_figma_pages):
+    text = "\n".join([str(title or ""), str(module or "")] + [str(item or "") for item in (requirement_text_assets or [])])
+    compact = re.sub(r"\s+", "", text)
+    candidates: List[str] = []
+
+    def add(term):
+        term = str(term or "").strip(" -:：/、，,")
+        if len(term) < 2:
+            return
+        if term in candidates:
+            return
+        candidates.append(term)
+
+    priority_terms = (
+        "AI建模入口", "开始创作", "图片建模", "上传图片", "语音创作", "长按输入",
+        "生成模型", "模型生成中", "模型生成结果", "我的作品", "大家都在做",
+        "引导弹窗", "搜索图片", "重新生成", "失败提示", "空态展示",
+    )
+    for term in priority_terms:
+        if term in text or term in compact:
+            add(term)
+    for page in used_figma_pages or []:
+        if not isinstance(page, dict):
+            continue
+        name = first_non_empty(page.get("page_name"), page.get("pageName"), page.get("route"))
+        name = re.sub(r"^(figma-|页面|Frame\\s*)", "", str(name or ""), flags=re.I).strip()
+        if not name or name.lower() in {"frame", "root"}:
+            continue
+        if re.search(r"缺省|历史|反馈|成长报告", name) and "AI" not in name and "建模" not in name:
+            continue
+        add(name)
+    return candidates[:16]
+
+
+def _ensure_rich_generation_scope(payload, title, module, requirement_text_assets, used_figma_pages, figma_images):
+    """Raise generation targets for rich requirement+Figma inputs.
+
+    A large Figma scope plus a requirement document should not be treated as a
+    tiny one-path request just because the first analysis pass extracted too few
+    requirement points.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    requirement_size = sum(len(str(item or "")) for item in (requirement_text_assets or []))
+    figma_page_count = len(used_figma_pages or [])
+    figma_image_count = len(figma_images or [])
+    rich = requirement_size >= 800 or figma_page_count >= 8 or figma_image_count >= 8
+    if not rich:
+        return payload
+    analysis = payload.setdefault("analysis", {})
+    if not isinstance(analysis, dict):
+        analysis = {}
+        payload["analysis"] = analysis
+    points = normalize_text_list(
+        analysis.get("requirement_points")
+        or analysis.get("requirementPoints")
+        or analysis.get("test_points")
+        or analysis.get("testPoints")
+    )
+    min_points = 8 if figma_page_count >= 20 or requirement_size >= 2500 else 6
+    for term in _generation_scope_terms_from_rich_context(title, module, requirement_text_assets, used_figma_pages):
+        point = term if re.search(r"验收|覆盖|验证|测试", term) else f"{term}验收"
+        if any(point in old or old in point for old in points):
+            continue
+        points.append(point)
+        if len(points) >= min_points:
+            break
+    if len(points) < min_points:
+        for idx in range(len(points) + 1, min_points + 1):
+            points.append(f"需求文档核心场景{idx}覆盖")
+    analysis["requirement_points"] = points
+    review = payload.setdefault("review", {})
+    if isinstance(review, dict):
+        review["rich_generation_scope"] = {
+            "enabled": True,
+            "requirement_size": requirement_size,
+            "figma_page_count": figma_page_count,
+            "figma_image_count": figma_image_count,
+            "requirement_point_count": len(points),
+            "reason": "需求文档或 Figma 范围较大，已提高用例生成目标，避免只生成兜底级少量用例。",
+        }
+    return payload
+
+
 def _prepared_figma_context_from_request(d):
     raw = d.get("prepared_figma_context") or d.get("preparedFigmaContext") or {}
     if not isinstance(raw, dict):
@@ -3499,7 +3583,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
     if job_id:
         update_generate_job(job_id, progress=72, step="覆盖率审查", message="正在用 coverage_auditor 反查需求点、场景和用例覆盖，补齐遗漏场景")
     try:
-        payload, coverage_audit = improve_case_coverage(title, module, payload, max_rounds=1)
+        payload = _ensure_rich_generation_scope(payload, title, module, stage1_text_assets, used_figma_pages, figma_images)
+        rich_scope = ((payload.get("review") or {}).get("rich_generation_scope") or {}) if isinstance(payload, dict) else {}
+        coverage_rounds = 2 if rich_scope.get("enabled") else 1
+        payload, coverage_audit = improve_case_coverage(title, module, payload, max_rounds=coverage_rounds)
     except Exception as e:
         payload, coverage_audit = audit_case_coverage(payload)
         review = payload.setdefault("review", {})

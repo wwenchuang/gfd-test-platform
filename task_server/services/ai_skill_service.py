@@ -1327,12 +1327,32 @@ def build_case_coverage_repair_prompt(title, module, payload, audit):
 """
 
 
+def enforce_min_case_count_audit(audit, targets):
+    """Mark coverage audit as not-ok when generated cases are below target."""
+    if not isinstance(audit, dict):
+        audit = {}
+    target_min = safe_int((targets or {}).get("min_automation_cases"), 0)
+    case_count = safe_int(audit.get("case_count"), 0)
+    if target_min and case_count < target_min:
+        audit["ok"] = False
+        audit["case_count_below_min"] = True
+        audit["min_automation_cases"] = target_min
+        audit["actual_case_count"] = case_count
+        missing = normalize_text_list(audit.get("missing_case_points") or audit.get("missing_requirement_points"))
+        gap = f"自动化用例数量不足：当前 {case_count} 条，至少需要 {target_min} 条；请补齐正常、异常、边界、空态和状态变化场景"
+        if gap not in missing:
+            missing.append(gap)
+        audit["missing_case_points"] = missing
+    return audit
+
+
 def improve_case_coverage(title, module, payload, max_rounds=1):
     """改善用例覆盖度。"""
     current = normalize_cases_payload(payload)
     for _ in range(max_rounds):
         current, local_audit = audit_case_coverage(current)
         targets = generation_volume_targets(current.get("analysis") or {})
+        local_audit = enforce_min_case_count_audit(local_audit, targets)
         enough_cases = safe_int(local_audit.get("case_count"), 0) >= safe_int(targets.get("min_automation_cases"), 0)
         if local_audit.get("ok") and enough_cases and not AI_COVERAGE_MODEL_WHEN_LOCAL_OK:
             review = current.setdefault("review", {})
@@ -1343,6 +1363,7 @@ def improve_case_coverage(title, module, payload, max_rounds=1):
             return current, local_audit
         try:
             audit = call_coverage_auditor_skill(title, module, current, local_audit)
+            audit = enforce_min_case_count_audit(audit, targets)
             review = current.setdefault("review", {})
             review["coverage_audit"] = audit
         except Exception as exc:
@@ -1359,6 +1380,9 @@ def improve_case_coverage(title, module, payload, max_rounds=1):
         current["module"] = current.get("module") or module
         validate_ai_skill_output("cases_payload", current)
     current, audit = audit_case_coverage(current)
+    targets = generation_volume_targets(current.get("analysis") or {})
+    audit = enforce_min_case_count_audit(audit, targets)
+    current.setdefault("review", {})["coverage_audit"] = audit
     return current, audit
 
 

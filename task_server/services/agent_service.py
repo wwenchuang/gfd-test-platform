@@ -5006,6 +5006,41 @@ def _agent_fallback_yaml_draft(run, source_context, source_text):
 """
 
 
+def _agent_has_rich_requirement_material(source_context):
+    if not isinstance(source_context, dict):
+        return False
+    requirement_text = str(source_context.get("requirementText") or "")
+    return bool(
+        source_context.get("figmaUrl")
+        or source_context.get("figmaUsedPages")
+        or source_context.get("preparedFigmaContextPath")
+        or source_context.get("uploadedFiles")
+        or len(requirement_text) >= 500
+    )
+
+
+def _agent_yaml_task_names_for_runner(path):
+    text = read_text_file(path, "")
+    names = []
+    if text and pyyaml is not None:
+        try:
+            parsed = pyyaml.safe_load(text)
+            _platform, tasks = extract_midscene_tasks(parsed)
+            names = [
+                str(task.get("name") or "").strip()
+                for task in (tasks or [])
+                if isinstance(task, dict) and str(task.get("name") or "").strip()
+            ]
+        except Exception:
+            names = []
+    if not names:
+        for line in text.splitlines():
+            match = re.match(r"^\s*-\s+name:\s*(.+?)\s*$", line)
+            if match:
+                names.append(match.group(1).strip().strip("\"'"))
+    return names
+
+
 def _agent_source_files_for_generation(run):
     files = []
     for item in _agent_source_files(run):
@@ -5406,10 +5441,21 @@ def _tool_generate_yaml(run):
                 artifacts.setdefault("generationPipeline", {})["error"] = pipeline_error
                 attach_diagnosis(call, make_diagnosis(
                     "需求解析/脑图/YAML生成主链失败",
-                    "已准备回退到 Agent 多任务兜底草稿。",
-                    ["查看 generationPipeline.error", "检查 AI Skills / Figma Token", "Runner 模式下可执行兜底 YAML 将自动继续"],
+                    "不会自动采用少量兜底 YAML，避免复杂需求覆盖不足。",
+                    ["查看 generationPipeline.error", "检查 AI Skills / Figma Token", "重新生成或人工修正主链 YAML"],
                     error=str(e)[:300],
                 ))
+                if _agent_has_rich_requirement_material(source_context):
+                    artifacts["yamlValidation"] = {
+                        "ok": False,
+                        "issues": ["完整生成主链失败，已禁止自动采用兜底 YAML"],
+                        "fallbackDisabled": True,
+                        "pipelineError": pipeline_error,
+                    }
+                    call["status"] = "FAILED"
+                    call["error"] = f"完整生成主链失败，未采用兜底 YAML：{pipeline_error}"
+                    call["outputSummary"] = "完整生成主链失败，未采用兜底 YAML；请查看主链错误并重新生成"
+                    return _finish_agent_tool_call(call, run)
             fallback_yaml = _agent_fallback_yaml_draft(run, source_context, source_text)
             fallback_check = validate_agent_yaml_content(fallback_yaml)
             if fallback_check.get("ok"):
@@ -6445,10 +6491,14 @@ def _tool_run_sonic(run):
                         continue
                     mod = ref.get("module") or _task_dir_for_path(full_path)[0]
                     fn = ref.get("file") or os.path.basename(full_path)
+                    task_names = _agent_yaml_task_names_for_runner(full_path)
+                    target_task_name = task_names[0] if len(task_names) == 1 else ""
                     job = job_service.create_job({
                         "module": mod,
                         "file": fn,
-                        "target_task_name": fn.replace(".yaml", "").replace(".yml", ""),
+                        "target_task_name": target_task_name,
+                        "task_names": task_names,
+                        "current_task_name": target_task_name or (task_names[0] if task_names else ""),
                         "runner_id": selected_runner_id,
                         "device_id": selected_device_id,
                         "device_strategy": selected_device_strategy,
