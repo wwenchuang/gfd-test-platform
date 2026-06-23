@@ -182,11 +182,12 @@ def _dashscope_api_key(required: bool = True) -> str:
     value = (
         os.getenv("DASHSCOPE_API_KEY")
         or os.getenv("OPENAI_API_KEY")
+        or os.getenv("MIDSCENE_API_KEY")
         or FALLBACK_DASHSCOPE_API_KEY
         or ""
     ).strip().strip("\"'")
     if required and not value:
-        raise ValueError("未配置 DASHSCOPE_API_KEY/OPENAI_API_KEY")
+        raise ValueError("未配置 DASHSCOPE_API_KEY/OPENAI_API_KEY/MIDSCENE_API_KEY")
     return value
 
 
@@ -194,6 +195,7 @@ def _dashscope_base_url() -> str:
     return (
         os.getenv("DASHSCOPE_BASE_URL")
         or os.getenv("OPENAI_BASE_URL")
+        or os.getenv("MIDSCENE_BASE_URL")
         or DEFAULT_DASHSCOPE_BASE_URL
     ).rstrip("/")
 

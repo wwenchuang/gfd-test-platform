@@ -307,18 +307,24 @@ AI_GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8090").rstrip("/"
 def dashscope_api_key(required=True):
     """Resolve the DashScope API key from environment or fallback.
 
-    Checks DASHSCOPE_API_KEY, OPENAI_API_KEY, then FALLBACK_DASHSCOPE_API_KEY.
+    Checks DASHSCOPE_API_KEY, OPENAI_API_KEY, MIDSCENE_API_KEY, then FALLBACK_DASHSCOPE_API_KEY.
     Raises ``ValueError`` when *required* is True and no key is found.
     """
-    value = (os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY") or FALLBACK_DASHSCOPE_API_KEY or "").strip().strip("\"'")
+    value = (
+        os.getenv("DASHSCOPE_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("MIDSCENE_API_KEY")
+        or FALLBACK_DASHSCOPE_API_KEY
+        or ""
+    ).strip().strip("\"'")
     if required and not value:
-        raise ValueError("未配置 DASHSCOPE_API_KEY/OPENAI_API_KEY")
+        raise ValueError("未配置 DASHSCOPE_API_KEY/OPENAI_API_KEY/MIDSCENE_API_KEY")
     return value
 
 
 def dashscope_base_url():
     """Return the DashScope-compatible base URL."""
-    return (os.getenv("DASHSCOPE_BASE_URL") or os.getenv("OPENAI_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
+    return (os.getenv("DASHSCOPE_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("MIDSCENE_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
 
 
 def dashscope_text_model():

@@ -348,6 +348,24 @@ def extract_pdf_text(path):
     except Exception:
         pass
     try:
+        import pypdf
+        reader = pypdf.PdfReader(path)
+        parts = []
+        total = 0
+        for page in reader.pages[:30]:
+            text = page.extract_text() or ""
+            if not text.strip():
+                continue
+            parts.append(text)
+            total += len(text)
+            if total >= 30000:
+                break
+        extracted = "\n".join(parts).strip()
+        if extracted:
+            return extracted[:30000]
+    except Exception:
+        pass
+    try:
         with open(path, "rb") as f:
             return f.read(1024 * 1024).decode("utf-8", errors="ignore")
     except Exception:
@@ -811,15 +829,30 @@ def normalize_cases_payload(value: Any) -> dict:
         cases = [value]
     if not isinstance(cases, list) or not cases:
         raise ValueError("JSON 中必须包含非空 cases 数组")
+    scenarios = value.get("scenarios") or []
+    if not isinstance(scenarios, list):
+        scenarios = []
+    manual_cases = value.get("manual_cases") or value.get("manualCases") or []
+    if not isinstance(manual_cases, list):
+        manual_cases = []
+    analysis = value.get("analysis") or {}
+    if not isinstance(analysis, dict):
+        analysis = {}
+    review = value.get("review") or {}
+    if not isinstance(review, dict):
+        review = {
+            "normalization_warning": "模型返回的 review 不是对象，已自动重置为空对象",
+            "raw_review_type": type(value.get("review")).__name__,
+        }
 
     return {
         "title": value.get("title") or value.get("name") or "测试用例",
         "module": value.get("module") or "AI测试",
-        "analysis": value.get("analysis") or {},
-        "scenarios": value.get("scenarios") or [],
+        "analysis": analysis,
+        "scenarios": scenarios,
         "cases": cases,
-        "manual_cases": value.get("manual_cases") or value.get("manualCases") or [],
-        "review": value.get("review") or {},
+        "manual_cases": manual_cases,
+        "review": review,
     }
 
 

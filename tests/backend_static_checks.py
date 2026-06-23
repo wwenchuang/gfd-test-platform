@@ -221,6 +221,8 @@ def main():
     require("TASK_MAX_BODY_SIZE\" \"314572800" in deploy_install and "TASK_MAX_UPLOAD_BODY_SIZE\" \"314572800" in deploy_install, "Installer must set backend upload body limits to 300MB")
     require("TASK_MAX_BODY_SIZE='314572800'" in env_example and "TASK_MAX_UPLOAD_BODY_SIZE='314572800'" in env_example, "Environment example must document 300MB upload limits")
     require("SONIC_CALLBACK_TOKEN" in source and "query token auth is deprecated" in source, "Sonic callback auth must be separated and query token deprecated")
+    config_source = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
+    require("MIDSCENE_API_KEY" in config_source and "MIDSCENE_BASE_URL" in config_source, "Task model config must accept MIDSCENE_API_KEY/MIDSCENE_BASE_URL aliases")
     require('TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()' in source or 'MIDSCENE_RUNNER_TOKEN", ""' in source, "Runner token must not default to midscene2026")
     require('SONIC_CALLBACK_TOKEN = os.getenv("SONIC_CALLBACK_TOKEN", "").strip()' in source or 'SONIC_CALLBACK_TOKEN", ""' in source, "Sonic callback token must not default to runner token")
     require('TASK_SESSION_SECRET = os.getenv("TASK_SESSION_SECRET", "").strip()' in source or 'TASK_SESSION_SECRET", ""' in source, "Session secret must not default to runner token")
@@ -326,7 +328,10 @@ def main():
     require("def _load_figma_context_for_agent" in agent_service_source and "load_figma_generation_context" in agent_service_source and '"figmaUsedPages"' in agent_service_source and '"figmaIgnoredPages"' in agent_service_source, "Agent Figma source must reuse the shared Figma requirement-filter extraction pipeline")
     require("preparedFigmaContextPath" in agent_service_source and '"prepared_figma_context": prepared_figma_context' in agent_service_source, "Agent YAML generation must reuse prepared Figma context instead of reparsing when available")
     require("def _prepared_figma_context_from_request" in yaml_service_source and "复用 Figma 解析" in yaml_service_source, "YAML generation must support prepared Figma context reuse")
+    require("def extract_pdf_text" in yaml_service_source and "pypdf.PdfReader" in yaml_service_source, "YAML generation must extract PDF requirement text without relying only on pdftotext")
+    require("raw_review_type" in yaml_service_source and "if not isinstance(analysis, dict)" in yaml_service_source, "Generated case payload normalization must coerce malformed analysis/review containers")
     require("def _ensure_rich_generation_scope" in yaml_service_source and "coverage_rounds = 2 if rich_scope.get(\"enabled\") else 1" in yaml_service_source, "Rich requirement/Figma inputs must raise generation scope and allow extra coverage repair")
+    require("base_payload = normalize_cases_payload(base_payload)" in ai_skill_service_source and "grounded = normalize_cases_payload(grounded)" in ai_skill_service_source, "Visual grounding must normalize payload containers before merging review/analysis")
     require("def enforce_min_case_count_audit" in ai_skill_service_source and "case_count_below_min" in ai_skill_service_source, "Coverage auditor must not pass when automation case count is below target")
     require("def _agent_has_rich_requirement_material" in agent_service_source and "fallbackDisabled" in agent_service_source and "未采用兜底 YAML" in agent_service_source, "Agent must not auto-run fallback YAML for rich requirement/Figma inputs")
     require("def _agent_yaml_task_names_for_runner" in agent_service_source and '"task_names": task_names' in agent_service_source and '"target_task_name": target_task_name' in agent_service_source, "Agent Runner jobs must use YAML task names instead of file-name guesses")
@@ -563,7 +568,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 38})
+    print({"ok": True, "file": str(MODULE), "checks": 42})
 
 
 if __name__ == "__main__":

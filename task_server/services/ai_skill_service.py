@@ -1224,6 +1224,7 @@ def build_cases_payload_from_skills(title, module, text_assets):
 
 def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets):
     """调用 AI skill: visual_grounder。"""
+    base_payload = normalize_cases_payload(base_payload)
     payload = {
         "title": title,
         "module": module,
@@ -1243,6 +1244,7 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         timeout=360,
         temperature=0.1
     )
+    grounded = normalize_cases_payload(grounded)
     grounded["title"] = grounded.get("title") or title
     grounded["module"] = grounded.get("module") or module
     base_points = ((base_payload.get("analysis") or {}).get("requirement_points") or [])
@@ -1554,6 +1556,7 @@ def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_
     """Legacy 模式：直接调用 DashScope 精修用例。"""
     if not visual_text_assets and not image_assets:
         return base_payload
+    base_payload = normalize_cases_payload(base_payload)
     prompt = build_case_visual_refine_prompt(title, module, base_payload, visual_text_assets)
     content = dashscope_chat_content(prompt, image_assets=image_assets, temperature=0.1, timeout=360)
     payload = normalize_case_json_from_model(content)

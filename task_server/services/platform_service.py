@@ -347,15 +347,21 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 def dashscope_api_key(required=True):
-    value = (os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY") or FALLBACK_DASHSCOPE_API_KEY or "").strip().strip("\"'")
+    value = (
+        os.getenv("DASHSCOPE_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or os.getenv("MIDSCENE_API_KEY")
+        or FALLBACK_DASHSCOPE_API_KEY
+        or ""
+    ).strip().strip("\"'")
     if required and not value:
-        raise ValueError("未配置 DASHSCOPE_API_KEY/OPENAI_API_KEY")
+        raise ValueError("未配置 DASHSCOPE_API_KEY/OPENAI_API_KEY/MIDSCENE_API_KEY")
     return value
 
 
 
 def dashscope_base_url():
-    return (os.getenv("DASHSCOPE_BASE_URL") or os.getenv("OPENAI_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
+    return (os.getenv("DASHSCOPE_BASE_URL") or os.getenv("OPENAI_BASE_URL") or os.getenv("MIDSCENE_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
 
 
 
@@ -424,4 +430,3 @@ def read_text(path, default=""):
         return path.read_text(encoding="utf-8", errors="ignore")
     except Exception:
         return default
-
