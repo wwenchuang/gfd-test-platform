@@ -3178,16 +3178,15 @@ function setMindmapBusy(busy) {
     button.disabled = busy;
     button.textContent = busy ? '生成中...' : '只生成脑图';
   }
-  document.querySelectorAll('#modal-mindmap-create input, #modal-mindmap-create select, #modal-mindmap-create textarea, #modal-mindmap-create .btn-cancel, #modal-mindmap-create .asset-remove')
+  document.querySelectorAll('#modal-mindmap-create input, #modal-mindmap-create select, #modal-mindmap-create textarea, #modal-mindmap-create .asset-remove')
     .forEach(el => el.disabled = busy);
-  document.querySelectorAll('#modal-mindmap-create .modal-close')
+  document.querySelectorAll('#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel')
     .forEach(el => el.disabled = false);
 }
 
-function closeMindmapCreateModal() {
-  if (mindmapBusy) {
-    setMindmapStatus('脑图正在生成中，完成后会自动刷新列表。', 'busy');
-    return;
+function closeMindmapCreateModal(options = {}) {
+  if (mindmapBusy && !options.quiet) {
+    showToast('脑图任务会在后台继续，可在脑图中心查看进度。', 'success');
   }
   mindmapBusy = false;
   setMindmapBusy(false);
@@ -3229,8 +3228,9 @@ async function createMindmapOnly() {
   }
   setMindmapBusy(true);
   setMindmapStatus('正在创建只生成脑图的后台任务...', 'busy');
+  let created = null;
   try {
-    const created = await apiRequest('/cases/mindmap-only-async', {
+    created = await apiRequest('/cases/mindmap-only-async', {
       method: 'POST',
       body: JSON.stringify({
         title,
@@ -3242,17 +3242,37 @@ async function createMindmapOnly() {
         files
       })
     });
-    const data = await pollGenericJob(created.job_id, job => {
+  } catch(e) {
+    setMindmapStatus(e.message || '创建脑图任务失败', 'error');
+    showToast(e.message || '创建脑图任务失败', 'error');
+    setMindmapBusy(false);
+    return;
+  }
+
+  const jobId = created?.job_id || '';
+  if (!jobId) {
+    setMindmapStatus('创建脑图任务失败：后台未返回任务编号', 'error');
+    showToast('创建脑图任务失败：后台未返回任务编号', 'error');
+    setMindmapBusy(false);
+    return;
+  }
+  setMindmapStatus('脑图生成任务已提交，已切到脑图中心查看进度。', 'success');
+  showToast('✓ 脑图生成任务已提交，已切到脑图中心查看进度', 'success');
+  closeMindmapCreateModal({ quiet: true });
+  await showMindmapCenter();
+
+  try {
+    const data = await pollGenericJob(jobId, job => {
       setMindmapStatus(`${job.message || job.step || '正在生成脑图'} · ${Number(job.progress || 0)}%`, 'busy');
     });
     setMindmapStatus(`脑图已生成：${data.case_set_id || ''}`, 'success');
     showToast('✓ 脑图生成完成，未生成 YAML', 'success');
-    closeModal('modal-mindmap-create');
-    mindmapBusy = false;
     await showMindmapCenter();
   } catch(e) {
+    const suffix = jobId ? `（任务 ${jobId}）` : '';
     setMindmapStatus(e.message || '生成脑图失败', 'error');
-    showToast(e.message || '生成脑图失败', 'error');
+    showToast(`${e.message || '生成脑图失败'}${suffix}`, 'error');
+    await showMindmapCenter();
   } finally {
     setMindmapBusy(false);
   }

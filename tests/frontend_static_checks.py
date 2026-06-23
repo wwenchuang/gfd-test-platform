@@ -215,7 +215,9 @@ def main():
     require("Execution Trace Viewer" in trace_viewer and "/debug/traces" in trace_viewer and "sessionToken" in trace_viewer, "Trace viewer must render real trace data with session auth")
     require("一键应用推荐策略" in html and "applyRecommendedStrategy" in html, "Model config must support one-click recommended strategy")
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
-    print({"ok": True, "file": str(HTML), "checks": 59})
+    require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
+    require("脑图生成任务已提交，已切到脑图中心查看进度" in html and "closeMindmapCreateModal({ quiet: true })" in html and "await showMindmapCenter();" in html, "Mindmap create modal must auto-close after background job submission")
+    print({"ok": True, "file": str(HTML), "checks": 61})
 
 
 if __name__ == "__main__":
