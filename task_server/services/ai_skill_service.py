@@ -27,7 +27,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from task_server.config import (
     AI_CHAT_RETRY_COUNT,
     AI_CHAT_TIMEOUT_SECONDS,
+    AI_COVERAGE_AUDITOR_TIMEOUT_SECONDS,
     AI_COVERAGE_MODEL_WHEN_LOCAL_OK,
+    AI_COVERAGE_REPAIR_TIMEOUT_SECONDS,
+    AI_COVERAGE_TOTAL_BUDGET_SECONDS,
     AI_SKILLS_DIR,
     AI_VISION_IMAGE_LIMIT,
     DEFAULT_APP_PACKAGE,
@@ -157,12 +160,20 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
     return template.replace("{{payload}}", payload_text)
 
 
-def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temperature=0.1, timeout=180, fallback_prompt=""):
+def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temperature=0.1, timeout=180, fallback_prompt="", respect_global_timeout=True, retry_count=None):
     """执行 AI skill：渲染 prompt → 调用 DashScope → 校验输出。"""
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
         raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
-    raw = dashscope_chat_content(prompt, image_assets=image_assets, temperature=temperature, timeout=timeout, json_response=True)
+    raw = dashscope_chat_content(
+        prompt,
+        image_assets=image_assets,
+        temperature=temperature,
+        timeout=timeout,
+        json_response=True,
+        respect_global_timeout=respect_global_timeout,
+        retry_count=retry_count,
+    )
     result = normalize_model_json(raw)
     return validate_ai_skill_output(skill_name, result)
 
@@ -200,12 +211,17 @@ def build_dashscope_chat_body(prompt, image_assets=None, temperature=0.1, json_r
     return body
 
 
-def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=180, json_response=True, image_limit=None):
+def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=180, json_response=True, image_limit=None, respect_global_timeout=True, retry_count=None):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
     base_url = dashscope_base_url()
     model = dashscope_model_for_images(image_assets)
-    timeout = max(safe_int(timeout, 180), AI_CHAT_TIMEOUT_SECONDS)
+    timeout = safe_int(timeout, 180)
+    if respect_global_timeout:
+        timeout = max(timeout, AI_CHAT_TIMEOUT_SECONDS)
+    else:
+        timeout = max(30, timeout)
+    retries = AI_CHAT_RETRY_COUNT if retry_count is None else max(0, safe_int(retry_count, 0))
     body = json.dumps(build_dashscope_chat_body(
         prompt,
         image_assets=image_assets,
@@ -214,7 +230,7 @@ def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=1
         image_limit=image_limit
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
-    for attempt in range(AI_CHAT_RETRY_COUNT + 1):
+    for attempt in range(retries + 1):
         req = urllib.request.Request(
             f"{base_url}/chat/completions",
             data=body,
@@ -230,11 +246,11 @@ def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=1
             return resp_data["choices"][0]["message"]["content"]
         except (TimeoutError, socket.timeout, urllib.error.URLError) as e:
             last_error = e
-            if attempt < AI_CHAT_RETRY_COUNT:
+            if attempt < retries:
                 time.sleep(2 * (attempt + 1))
                 continue
             raise TimeoutError(
-                f"千问模型响应超时：{model} 在 {timeout}s 内未返回，已重试 {AI_CHAT_RETRY_COUNT} 次；"
+                f"千问模型响应超时：{model} 在 {timeout}s 内未返回，已重试 {retries} 次；"
                 "建议减少本次上传的大图/长文档，补充关键截图即可，或稍后重新生成"
             ) from e
         except Exception:
@@ -1252,6 +1268,8 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         payload,
         image_assets=image_assets,
         timeout=int(timeout_seconds or 360),
+        respect_global_timeout=timeout_seconds is None,
+        retry_count=None if timeout_seconds is None else 0,
         temperature=0.1
     )
     grounded = normalize_cases_payload(grounded)
@@ -1290,7 +1308,14 @@ def call_coverage_auditor_skill(title, module, payload, local_audit=None):
             "target_automation_cases": targets.get("target_automation_cases")
         }
     }
-    result = run_ai_skill("coverage_auditor", request, timeout=240, temperature=0.1)
+    result = run_ai_skill(
+        "coverage_auditor",
+        request,
+        timeout=AI_COVERAGE_AUDITOR_TIMEOUT_SECONDS,
+        temperature=0.1,
+        respect_global_timeout=False,
+        retry_count=0,
+    )
     result.setdefault("missing_case_points", result.get("missing_requirement_points") or [])
     result.setdefault("missing_scenario_points", [])
     result.setdefault("generic_assertion_cases", [])
@@ -1358,10 +1383,24 @@ def enforce_min_case_count_audit(audit, targets):
     return audit
 
 
-def improve_case_coverage(title, module, payload, max_rounds=1):
+def improve_case_coverage(title, module, payload, max_rounds=1, progress_callback=None, time_budget_seconds=None):
     """改善用例覆盖度。"""
     current = normalize_cases_payload(payload)
-    for _ in range(max_rounds):
+    started_at = time.time()
+    budget = safe_int(time_budget_seconds, AI_COVERAGE_TOTAL_BUDGET_SECONDS) or AI_COVERAGE_TOTAL_BUDGET_SECONDS
+
+    def emit(message, progress=None):
+        if callable(progress_callback):
+            try:
+                progress_callback(message, progress=progress)
+            except Exception:
+                pass
+
+    def budget_left():
+        return budget - int(time.time() - started_at)
+
+    for round_index in range(max_rounds):
+        emit(f"覆盖率审查：本地检查第 {round_index + 1}/{max_rounds} 轮", progress=72)
         current, local_audit = audit_case_coverage(current)
         targets = generation_volume_targets(current.get("analysis") or {})
         local_audit = enforce_min_case_count_audit(local_audit, targets)
@@ -1373,7 +1412,15 @@ def improve_case_coverage(title, module, payload, max_rounds=1):
             review["coverage_audit"] = local_audit
             review["coverage_auditor_skipped"] = "本地覆盖审查已通过且用例数达到下限，跳过额外模型审查以降低超时风险"
             return current, local_audit
+        if budget_left() <= 0:
+            review = current.setdefault("review", {})
+            local_audit["coverage_auditor_skill"] = "skipped_budget_exhausted"
+            local_audit["generation_targets"] = targets
+            review["coverage_audit"] = local_audit
+            review["coverage_auditor_skipped"] = f"覆盖审查已超过 {budget}s 总预算，保留本地覆盖结果继续生成 YAML"
+            return current, local_audit
         try:
+            emit(f"覆盖率审查：调用 coverage_auditor，第 {round_index + 1}/{max_rounds} 轮，剩余预算约 {max(0, budget_left())} 秒", progress=73)
             audit = call_coverage_auditor_skill(title, module, current, local_audit)
             audit = enforce_min_case_count_audit(audit, targets)
             review = current.setdefault("review", {})
@@ -1385,8 +1432,24 @@ def improve_case_coverage(title, module, payload, max_rounds=1):
             review["coverage_auditor_error"] = str(exc)
         if audit.get("ok"):
             return current, audit
+        if budget_left() < 30:
+            review = current.setdefault("review", {})
+            audit["coverage_repair_skipped"] = True
+            audit["coverage_repair_skip_reason"] = "剩余预算不足 30s，跳过覆盖修复大模型调用"
+            review["coverage_audit"] = audit
+            review["coverage_repair_skipped"] = audit["coverage_repair_skip_reason"]
+            return current, audit
+        emit(f"覆盖率审查：正在补齐遗漏场景，第 {round_index + 1}/{max_rounds} 轮，剩余预算约 {max(0, budget_left())} 秒", progress=74)
         prompt = build_case_coverage_repair_prompt(title, module, current, audit)
-        content = dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=360)
+        repair_timeout = max(30, min(AI_COVERAGE_REPAIR_TIMEOUT_SECONDS, max(30, budget_left())))
+        content = dashscope_chat_content(
+            prompt,
+            image_assets=None,
+            temperature=0.1,
+            timeout=repair_timeout,
+            respect_global_timeout=False,
+            retry_count=0,
+        )
         current = normalize_case_json_from_model(content)
         current["title"] = current.get("title") or title
         current["module"] = current.get("module") or module
@@ -1568,7 +1631,14 @@ def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_
         return base_payload
     base_payload = normalize_cases_payload(base_payload)
     prompt = build_case_visual_refine_prompt(title, module, base_payload, visual_text_assets)
-    content = dashscope_chat_content(prompt, image_assets=image_assets, temperature=0.1, timeout=int(timeout_seconds or 360))
+    content = dashscope_chat_content(
+        prompt,
+        image_assets=image_assets,
+        temperature=0.1,
+        timeout=int(timeout_seconds or 360),
+        respect_global_timeout=timeout_seconds is None,
+        retry_count=None if timeout_seconds is None else 0,
+    )
     payload = normalize_case_json_from_model(content)
     payload["title"] = payload.get("title") or title
     payload["module"] = payload.get("module") or module

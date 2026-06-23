@@ -80,6 +80,7 @@ from ..config import (
     FIGMA_PARSE_LIMIT,
     GENERATE_JOB_DIR,
     GENERATE_LOCK,
+    AI_COVERAGE_TOTAL_BUDGET_SECONDS,
     JOB_TIMEOUT_SECONDS,
     LEARNING_DIR,
     LONG_SLEEP_TO_WAITFOR_MS,
@@ -3623,7 +3624,22 @@ def generate_ui_yaml_from_request(d, job_id=None):
         payload = _ensure_rich_generation_scope(payload, title, module, stage1_text_assets, used_figma_pages, figma_images)
         rich_scope = ((payload.get("review") or {}).get("rich_generation_scope") or {}) if isinstance(payload, dict) else {}
         coverage_rounds = 2 if rich_scope.get("enabled") else 1
-        payload, coverage_audit = improve_case_coverage(title, module, payload, max_rounds=coverage_rounds)
+        def coverage_progress(message, progress=None):
+            if job_id:
+                update_generate_job(
+                    job_id,
+                    progress=safe_int(progress, 72),
+                    step="覆盖率审查",
+                    message=str(message or "正在检查需求点、场景和用例覆盖"),
+                )
+        payload, coverage_audit = improve_case_coverage(
+            title,
+            module,
+            payload,
+            max_rounds=coverage_rounds,
+            progress_callback=coverage_progress,
+            time_budget_seconds=AI_COVERAGE_TOTAL_BUDGET_SECONDS,
+        )
     except Exception as e:
         try:
             payload, coverage_audit = audit_case_coverage(payload)
