@@ -1222,7 +1222,7 @@ def build_cases_payload_from_skills(title, module, text_assets):
 # AI Skill: visual_grounder
 # ---------------------------------------------------------------------------
 
-def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets):
+def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None):
     """调用 AI skill: visual_grounder。"""
     base_payload = normalize_cases_payload(base_payload)
     payload = {
@@ -1241,7 +1241,7 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         "visual_grounder",
         payload,
         image_assets=image_assets,
-        timeout=360,
+        timeout=int(timeout_seconds or 360),
         temperature=0.1
     )
     grounded = normalize_cases_payload(grounded)
@@ -1552,13 +1552,13 @@ Figma / 截图 / 页面知识文本：
 """
 
 
-def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets):
+def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None):
     """Legacy 模式：直接调用 DashScope 精修用例。"""
     if not visual_text_assets and not image_assets:
         return base_payload
     base_payload = normalize_cases_payload(base_payload)
     prompt = build_case_visual_refine_prompt(title, module, base_payload, visual_text_assets)
-    content = dashscope_chat_content(prompt, image_assets=image_assets, temperature=0.1, timeout=360)
+    content = dashscope_chat_content(prompt, image_assets=image_assets, temperature=0.1, timeout=int(timeout_seconds or 360))
     payload = normalize_case_json_from_model(content)
     payload["title"] = payload.get("title") or title
     payload["module"] = payload.get("module") or module
@@ -1571,14 +1571,21 @@ def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_
     return payload
 
 
-def call_dashscope_refine_cases(title, module, base_payload, visual_text_assets, image_assets):
+def call_dashscope_refine_cases(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None, legacy_fallback=True):
     """精修用例：优先 visual_grounder skill，失败回退 legacy。"""
     if not visual_text_assets and not image_assets:
         return base_payload
     try:
-        return call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets)
+        if timeout_seconds is None:
+            return call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets)
+        return call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=timeout_seconds)
     except Exception as exc:
-        payload = call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets)
+        if not legacy_fallback:
+            raise
+        if timeout_seconds is None:
+            payload = call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets)
+        else:
+            payload = call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=timeout_seconds)
         review = payload.setdefault("review", {})
         review["visual_grounder_skill"] = "fallback_legacy_refine_prompt"
         review["visual_grounder_error"] = str(exc)

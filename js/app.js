@@ -1811,9 +1811,9 @@ async function pollGenerateJob(jobId) {
     const label = job.message || job.step || '正在生成';
     const stepIndex = progress >= 95 ? 4 : progress >= 80 ? 3 : progress >= 40 ? 2 : progress >= 15 ? 1 : 0;
 
-    if (status === 'failed') {
+    if (['failed', 'timeout', 'cancelled'].includes(status)) {
       setGenerateProgressError(job.step || '生成失败');
-      throw new Error(job.error || job.message || '生成失败');
+      throw new Error(job.error || job.message || jobStatusText(status) || '生成失败');
     }
 
     setGenerateProgress(progress, label, stepIndex);
@@ -1827,16 +1827,17 @@ async function pollGenerateJob(jobId) {
   }
 }
 
-async function pollGenericJob(jobId, onUpdate) {
+async function pollGenericJob(jobId, onUpdate, options = {}) {
   let tick = 0;
+  const refreshJobs = options.refreshJobs !== false;
   for (;;) {
     const data = await apiRequest(`/ui/generate-status?job_id=${encodeURIComponent(jobId)}`);
     const job = data.job || {};
     if (typeof onUpdate === 'function') onUpdate(job);
     tick += 1;
-    if (tick === 1 || tick % 3 === 0) loadJobs(false, true).catch(() => {});
-    if (job.status === 'failed') {
-      throw new Error(job.error || job.message || '任务失败');
+    if (refreshJobs && (tick === 1 || tick % 3 === 0)) loadJobs(false, true).catch(() => {});
+    if (['failed', 'timeout', 'cancelled'].includes(job.status || '')) {
+      throw new Error(job.error || job.message || jobStatusText(job.status || '') || '任务失败');
     }
     if (job.status === 'success') {
       return job.result || {};
@@ -2845,6 +2846,19 @@ function mindmapJobTimeValue(job={}) {
   return Date.parse((job.updated_at || job.finished_at || job.started_at || job.created_at || '').replace(' ', 'T')) || 0;
 }
 
+function isMindmapJobActive(job={}) {
+  return ['pending', 'running'].includes(job.status || '');
+}
+
+function mergeLatestBackgroundJob(job={}) {
+  if (!job || !job.job_id) return null;
+  const normalized = {...job, kind: 'background'};
+  const index = latestJobs.findIndex(item => (item.job_id || item.jobId || item.id) === normalized.job_id);
+  if (index >= 0) latestJobs[index] = {...latestJobs[index], ...normalized};
+  else latestJobs.unshift(normalized);
+  return normalized;
+}
+
 function mindmapBackgroundJobs(recordCaseSetIds = new Set()) {
   return generationJobs()
     .filter(isMindmapBackgroundJob)
@@ -2867,13 +2881,55 @@ function clearMindmapCenterRefresh() {
 
 function scheduleMindmapCenterRefresh(jobs = []) {
   clearMindmapCenterRefresh();
-  const hasActive = jobs.some(job => ['pending', 'running'].includes(job.status || ''));
+  const hasActive = jobs.some(isMindmapJobActive);
   if (!hasActive) return;
   mindmapCenterRefreshTimer = setTimeout(() => {
     if (activeWorkspaceMode === 'mindmap') {
-      showMindmapCenter();
+      refreshMindmapActiveTasks();
     }
   }, 5000);
+}
+
+function updateMindmapTaskSection(taskRows = []) {
+  mindmapCenterTaskJobs = taskRows;
+  const html = mindmapTaskSectionHtml(taskRows);
+  const section = document.getElementById('mindmap-task-section');
+  if (section) {
+    if (html) section.outerHTML = html;
+    else section.remove();
+    return;
+  }
+  const list = document.getElementById('mindmap-center-list');
+  if (list && html) list.insertAdjacentHTML('afterbegin', html);
+}
+
+async function refreshMindmapActiveTasks() {
+  clearMindmapCenterRefresh();
+  if (activeWorkspaceMode !== 'mindmap') return;
+  const activeJobs = (mindmapCenterTaskJobs || []).filter(isMindmapJobActive);
+  if (!activeJobs.length) return;
+  let shouldReloadFiles = false;
+  try {
+    await Promise.all(activeJobs.map(async job => {
+      const id = job.job_id || '';
+      if (!id) return;
+      const data = await apiRequest(`/ui/generate-status?job_id=${encodeURIComponent(id)}`);
+      const fresh = mergeLatestBackgroundJob(data.job || {});
+      if (fresh && !isMindmapJobActive(fresh)) shouldReloadFiles = true;
+    }));
+  } catch(e) {
+    const list = document.getElementById('mindmap-center-list');
+    if (list) list.insertAdjacentHTML('afterbegin', `<div class="generate-status show error">${escapeHtml(e.message || '刷新脑图任务失败')}</div>`);
+    scheduleMindmapCenterRefresh(activeJobs);
+    return;
+  }
+  if (shouldReloadFiles) {
+    await showMindmapCenter();
+    return;
+  }
+  const taskRows = mindmapBackgroundJobs(mindmapCenterRecordCaseSetIds);
+  updateMindmapTaskSection(taskRows);
+  scheduleMindmapCenterRefresh(taskRows);
 }
 
 function mindmapTaskSectionHtml(jobs = []) {
@@ -2881,7 +2937,7 @@ function mindmapTaskSectionHtml(jobs = []) {
   const activeCount = jobs.filter(job => ['pending', 'running'].includes(job.status || '')).length;
   const failedCount = jobs.filter(job => ['failed', 'timeout'].includes(job.status || '')).length;
   return `
-    <section class="generation-record-section mindmap-task-section">
+    <section id="mindmap-task-section" class="generation-record-section mindmap-task-section">
       <div class="section-head">
         <div>
           <h3>脑图生成任务</h3>
@@ -3002,7 +3058,9 @@ async function showMindmapCenter() {
     const list = document.getElementById('mindmap-center-list');
     if (!list) return;
     const recordCaseSetIds = new Set(rows.map(item => item.case_set_id).filter(Boolean));
+    mindmapCenterRecordCaseSetIds = recordCaseSetIds;
     const taskRows = mindmapBackgroundJobs(recordCaseSetIds);
+    mindmapCenterTaskJobs = taskRows;
     list.className = 'generation-record-sections';
     list.innerHTML = `
       ${jobLoadError ? `<div class="generate-status show error">${escapeHtml(jobLoadError)}</div>` : ''}
@@ -3373,7 +3431,11 @@ async function createMindmapOnly() {
   try {
     const data = await pollGenericJob(jobId, job => {
       setMindmapStatus(`${job.message || job.step || '正在生成脑图'} · ${Number(job.progress || 0)}%`, 'busy');
-    });
+      const fresh = mergeLatestBackgroundJob(job);
+      if (fresh && activeWorkspaceMode === 'mindmap') {
+        updateMindmapTaskSection(mindmapBackgroundJobs(mindmapCenterRecordCaseSetIds));
+      }
+    }, { refreshJobs: false });
     setMindmapStatus(`脑图已生成：${data.case_set_id || ''}`, 'success');
     showToast('✓ 脑图生成完成，未生成 YAML', 'success');
     await showMindmapCenter();

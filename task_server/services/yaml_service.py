@@ -83,6 +83,10 @@ from ..config import (
     JOB_TIMEOUT_SECONDS,
     LEARNING_DIR,
     LONG_SLEEP_TO_WAITFOR_MS,
+    MINDMAP_VISUAL_BATCH_SIZE,
+    MINDMAP_VISUAL_MAX_IMAGES,
+    MINDMAP_VISUAL_TIMEOUT_SECONDS,
+    MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS,
     MAX_LAUNCH_SLEEP_MS,
     MAX_STEP_SLEEP_MS,
     MAX_TERMINATE_SLEEP_MS,
@@ -4449,6 +4453,13 @@ def generate_mindmap_from_request(d, job_id=None):
     # 脑图只让当前 Figma 和人工上传截图进入视觉模型；
     # 页面知识库截图仅作为文本上下文，避免把历史无关 UI 图重新带回来。
     visual_image_assets = figma_images + uploaded_image_assets
+    max_visual_images = int(MINDMAP_VISUAL_MAX_IMAGES)
+    mindmap_visual_image_assets = visual_image_assets[:max_visual_images] if max_visual_images > 0 else []
+    selected_figma_count = min(len(figma_images), len(mindmap_visual_image_assets))
+    mindmap_figma_images = figma_images[:selected_figma_count]
+    mindmap_uploaded_images = mindmap_visual_image_assets[selected_figma_count:]
+    mindmap_visual_image_assets = mindmap_figma_images + mindmap_uploaded_images
+    skipped_visual_image_count = max(0, len(visual_image_assets) - len(mindmap_visual_image_assets))
     stage1_text_assets = (requirement_text_assets + visual_text_assets) or [
         "未提供独立需求文档，请根据标题、模块、当前 Figma/截图先归纳业务范围，再生成测试场景和用例脑图。"
     ]
@@ -4466,12 +4477,18 @@ def generate_mindmap_from_request(d, job_id=None):
     review = payload.setdefault("review", {})
     review["mindmap_only"] = True
     review["mindmap_quality_mode"] = "visual_grounded"
-    review["mindmap_visual_image_policy"] = "仅当前 Figma/手动上传图片进入视觉校准；页面知识默认不参与脑图-only生成，避免误引无关 UI 图。"
+    review["mindmap_visual_image_policy"] = (
+        f"需求文档、Figma 文本和页面名称全量参与脑图结构生成；图片只用于视觉校准。"
+        f"图片按每批 {MINDMAP_VISUAL_BATCH_SIZE} 张分批送入模型，最多纳入 {max_visual_images} 张，"
+        f"本次纳入 {len(mindmap_visual_image_assets)} 张，跳过 {skipped_visual_image_count} 张。"
+    )
+    review["mindmap_visual_timeout_seconds"] = MINDMAP_VISUAL_TIMEOUT_SECONDS
+    review["mindmap_visual_total_budget_seconds"] = MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS
     review["mindmap_knowledge_policy"] = (
         "已按用户选择引用页面知识" if use_knowledge_context
         else "只生成脑图默认不引用已有页面知识，避免把历史无关页面混入当前需求"
     )
-    if visual_text_assets or visual_image_assets:
+    if visual_text_assets or mindmap_visual_image_assets:
         if job_id:
             update_generate_job(
                 job_id,
@@ -4480,22 +4497,64 @@ def generate_mindmap_from_request(d, job_id=None):
                 message=visual_reference_message(
                     "正在校准脑图场景，实际送入模型",
                     figma_texts,
-                    figma_images,
+                    mindmap_figma_images,
                     ignored_figma_pages,
                     knowledge_texts,
                     [],
-                    uploaded_image_assets
+                    mindmap_uploaded_images
                 )
             )
-        try:
-            payload = call_dashscope_refine_cases(title, module, payload, visual_text_assets, visual_image_assets)
-            payload.setdefault("review", {})["mindmap_visual_grounded"] = True
-        except Exception as e:
-            review = payload.setdefault("review", {})
-            review["visual_refine_error"] = str(e)
-            review["visual_refine_fallback"] = "脑图视觉校准失败，已保留需求和 Figma 文本摘要生成脑图；建议重新生成或补充更聚焦的 Frame 链接"
+        visual_batches = [
+            mindmap_visual_image_assets[i:i + MINDMAP_VISUAL_BATCH_SIZE]
+            for i in range(0, len(mindmap_visual_image_assets), MINDMAP_VISUAL_BATCH_SIZE)
+        ] or [[]]
+        visual_start = time.time()
+        visual_batches_done = 0
+        visual_images_done = 0
+        visual_errors = []
+        for batch_index, image_batch in enumerate(visual_batches, start=1):
+            if job_id and generate_job_should_stop(job_id):
+                break
+            remaining_budget = int(MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS - (time.time() - visual_start))
+            if remaining_budget <= 0:
+                visual_errors.append("视觉校准总耗时预算已用完")
+                break
+            timeout_seconds = max(30, min(int(MINDMAP_VISUAL_TIMEOUT_SECONDS), remaining_budget))
             if job_id:
-                update_generate_job(job_id, progress=67, step="视觉校准跳过", message=f"脑图视觉校准失败但不阻塞：{str(e)[:100]}")
+                progress = min(74, 65 + int((batch_index - 1) / max(1, len(visual_batches)) * 9))
+                update_generate_job(
+                    job_id,
+                    progress=progress,
+                    step="视觉校准",
+                    message=f"正在分批校准 Figma/截图，第 {batch_index}/{len(visual_batches)} 批，图片 {len(image_batch)} 张"
+                )
+            try:
+                payload = call_dashscope_refine_cases(
+                    title,
+                    module,
+                    payload,
+                    visual_text_assets,
+                    image_batch,
+                    timeout_seconds=timeout_seconds,
+                    legacy_fallback=False,
+                )
+                visual_batches_done += 1
+                visual_images_done += len(image_batch)
+                payload.setdefault("review", {})["mindmap_visual_grounded"] = True
+            except Exception as e:
+                visual_errors.append(str(e))
+                if job_id:
+                    update_generate_job(job_id, progress=67, step="视觉校准跳过", message=f"第 {batch_index} 批视觉校准超时/失败，已降级继续：{str(e)[:100]}")
+                break
+        review = payload.setdefault("review", {})
+        review["mindmap_visual_batches"] = f"{visual_batches_done}/{len(visual_batches)}"
+        review["mindmap_visual_images_grounded"] = visual_images_done
+        if visual_errors:
+            review["visual_refine_error"] = "；".join(visual_errors)[-1000:]
+            review["visual_refine_fallback"] = (
+                "视觉校准部分批次超时或失败，已保留需求、PDF 文本和 Figma 页面文本继续生成脑图；"
+                "未完成的图片批次不会阻塞脑图产出。"
+            )
 
     if job_id:
         update_generate_job(job_id, progress=78, step="本地覆盖检查", message="正在做本地覆盖检查并写入脑图")

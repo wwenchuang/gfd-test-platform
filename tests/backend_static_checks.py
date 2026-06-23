@@ -379,6 +379,8 @@ def main():
     require("TASK_SMOKE_BASE_URL" in live_smoke_source and "/api/sonic/diagnose" in live_smoke_source and "/ai-gateway/ai/providers" in live_smoke_source, "Live API smoke script must cover auth, Sonic diagnose and AI Gateway")
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source, "Generation/mindmap visual grounding must not feed knowledge screenshots into the visual model")
     require("mindmap_visual_image_policy" in yaml_service_source, "Mindmap summary must document the visual image policy")
+    require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")
+    require("refreshMindmapActiveTasks" in app_js_source and "{ refreshJobs: false }" in app_js_source, "Mindmap center must update active tasks without full-list refresh flicker")
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")
     require('item.get("mindmap_updated_at") or item.get("generated_at")' in yaml_service_source, "Mindmap center must sort by latest mindmap update first")
     require("完整需求覆盖追踪矩阵" in yaml_service_source and "进入 YAML 的自动化用例" in yaml_service_source and "人工验证 / 待准备" in yaml_service_source, "Mindmap must preserve full requirement coverage beyond executable YAML cases")
