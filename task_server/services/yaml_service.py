@@ -3121,8 +3121,18 @@ def invalidate_modules_cache() -> None:
 
 # validate_midscene_yaml — sonic_service 等模块依赖
 def validate_midscene_yaml(yaml_text):
-    """兼容性别名，等价于 validate_yaml。"""
-    return validate_yaml(yaml_text)
+    """结构化 Midscene YAML 校验结果。
+
+    ``validate_yaml`` 是旧工具函数，返回 warning 列表；生成、修复和同步
+    链路已经按 dict 读取 ``ok`` / ``warnings``。这里统一转换，避免用
+    ``**validate_midscene_yaml(...)`` 合并时把 list 当 mapping。
+    """
+    warnings = validate_yaml(yaml_text)
+    return {
+        "ok": not bool(warnings),
+        "warnings": warnings,
+        "issues": warnings,
+    }
 
 # list_task_case_assets — sonic_service 等模块依赖
 # 实际实现在 case_service.py，此处提供重导出

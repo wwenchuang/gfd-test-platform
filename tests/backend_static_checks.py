@@ -161,6 +161,32 @@ def check_agent_generation_pipeline_normalizes_validation_state():
         agent_service._confirm_agent_yaml_files = original_confirm
 
 
+def check_midscene_yaml_validation_is_mapping():
+    from task_server.services import yaml_service
+
+    yaml_text = """android:
+  tasks:
+    - name: "AI建模入口验收"
+      flow:
+        - launch: com.kfb.model
+        - aiAssert: "AI建模入口可见"
+"""
+    result = yaml_service.validate_midscene_yaml(yaml_text)
+    require(isinstance(result, dict), "validate_midscene_yaml must return a mapping for generation callers")
+    require(result.get("ok") is True and isinstance(result.get("warnings"), list), "validate_midscene_yaml must expose ok/warnings")
+    _, yaml_items = yaml_service.cases_to_separate_midscene_yamls({
+        "title": "AI建模",
+        "module": "AI测试",
+        "cases": [{
+            "title": "AI建模入口验收",
+            "steps": ["打开 App", "进入 AI 建模"],
+            "assertions": ["AI建模入口可见"],
+        }],
+    }, app_package="com.kfb.model", base_file="ai-model.yaml")
+    merged = [{"file": item["file"], **yaml_service.validate_midscene_yaml(item["content"])} for item in yaml_items]
+    require(merged and merged[0].get("ok") is True, "Split YAML validation must be mergeable without list-as-mapping errors")
+
+
 def check_business_flow_filters_product_metrics():
     from task_server.prompts.builders.business_context_builder import BusinessContextBuilder
     from task_server.services import agent_service
@@ -355,6 +381,7 @@ def main():
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
+    check_midscene_yaml_validation_is_mapping()
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
     require("def _agent_generate_yaml_from_ui_pipeline" in agent_service_source and "generate_ui_yaml_from_request" in agent_service_source and '"split_by_case"' in agent_service_source and "ui_yaml_pipeline" in agent_service_source, "Agent new-requirement YAML generation must reuse the full requirement/Figma/YAML pipeline before fallback")
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")

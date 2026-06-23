@@ -10,6 +10,7 @@ import re
 import secrets
 import threading
 import time
+import traceback
 import urllib.parse
 import uuid
 import base64
@@ -5147,6 +5148,17 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             message="已完成 Agent YAML 生成",
         )
     except Exception as exc:
+        error_trace = traceback.format_exc()
+        try:
+            from task_server.services.yaml_service import generation_failure_detail, load_generate_job
+            current_job = load_generate_job(progress_job_id) or {}
+            error_detail = generation_failure_detail(exc, current_job)
+        except Exception:
+            error_detail = {
+                "type": "generation_error",
+                "message": str(exc)[:300],
+                "error": str(exc)[:1000],
+            }
         update_generate_job(
             progress_job_id,
             status="failed",
@@ -5154,6 +5166,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             step="生成失败",
             message=str(exc)[:200],
             error=str(exc)[:1000],
+            error_detail=error_detail,
+            error_trace=error_trace[-5000:],
         )
         raise
     finally:
@@ -5458,7 +5472,10 @@ def _tool_generate_yaml(run):
                     raise ValueError(err)
             except Exception as e:
                 pipeline_error = str(e)[:500]
-                artifacts.setdefault("generationPipeline", {})["error"] = pipeline_error
+                pipeline = artifacts.setdefault("generationPipeline", {})
+                pipeline["error"] = pipeline_error
+                pipeline["errorType"] = e.__class__.__name__
+                pipeline["errorTrace"] = traceback.format_exc()[-5000:]
                 attach_diagnosis(call, make_diagnosis(
                     "需求解析/脑图/YAML生成主链失败",
                     "不会自动采用少量兜底 YAML，避免复杂需求覆盖不足。",
