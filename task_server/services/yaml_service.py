@@ -3625,12 +3625,22 @@ def generate_ui_yaml_from_request(d, job_id=None):
         coverage_rounds = 2 if rich_scope.get("enabled") else 1
         payload, coverage_audit = improve_case_coverage(title, module, payload, max_rounds=coverage_rounds)
     except Exception as e:
-        payload, coverage_audit = audit_case_coverage(payload)
+        try:
+            payload, coverage_audit = audit_case_coverage(payload)
+        except Exception as audit_error:
+            payload = normalize_cases_payload(payload)
+            coverage_audit = {
+                "ok": False,
+                "coverage_auditor_skill": "fallback_normalized_payload",
+                "coverage_auditor_error": str(audit_error),
+                "case_count": len(payload.get("cases") or []),
+            }
         review = payload.setdefault("review", {})
         review["coverage_repair_error"] = str(e)
         review["remaining_risks"] = normalize_text_list(review.get("remaining_risks") or []) + [
             "覆盖率补全模型调用失败，已保留当前用例并记录覆盖审查结果"
         ]
+    payload = normalize_cases_payload(payload)
     payload["id"] = case_set_id
     payload["module"] = module
 

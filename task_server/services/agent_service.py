@@ -713,6 +713,25 @@ def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
     return target_path, ""
 
 
+def _agent_yaml_validation_state(value=None):
+    """Normalize historical yamlValidation payloads before dict merging."""
+    if isinstance(value, dict):
+        state = dict(value)
+        if not isinstance(state.get("results"), list):
+            state["results"] = []
+        if not isinstance(state.get("issues"), list):
+            state["issues"] = [str(state.get("issues"))] if state.get("issues") else []
+        state.setdefault("ok", not bool(state.get("issues")))
+        return state
+    if isinstance(value, list):
+        return {
+            "ok": False,
+            "issues": ["历史 YAML 校验状态不是对象，已自动归一化"],
+            "results": value,
+        }
+    return {"ok": True, "issues": [], "results": []}
+
+
 def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="", reason="auto_confirmed_yaml"):
     """Save an executable generated YAML as confirmed files, splitting multi-task drafts."""
     check = validate_agent_yaml_content(content)
@@ -732,11 +751,12 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
         target_path, err = _confirm_agent_yaml_content(run, artifacts, content, draft_path=draft_path)
         if err:
             return [], err
+        validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
         artifacts["yamlValidation"] = {
-            **(artifacts.get("yamlValidation") or {}),
+            **validation,
             "ok": True,
             "issues": [],
-            "results": artifacts.get("yamlValidation", {}).get("results") or [{**(artifacts.get("yamlRefs") or [{}])[0], **check}],
+            "results": validation.get("results") or [{**(artifacts.get("yamlRefs") or [{}])[0], **check}],
             "autoConfirmed": True,
             "autoConfirmedFallback": bool(reason and "fallback" in reason),
             "confirmReason": reason,
@@ -5416,7 +5436,7 @@ def _tool_generate_yaml(run):
                 yaml_file_items, pipeline_result = _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text)
                 refs, err = _confirm_agent_yaml_files(run, artifacts, yaml_file_items)
                 if refs and not err:
-                    check = artifacts.get("yamlValidation") or {"ok": True, "issues": [], "results": []}
+                    check = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
                     if err:
                         raise ValueError(err)
                     artifacts["yamlValidation"] = {**check, "autoConfirmed": True}
@@ -5472,15 +5492,16 @@ def _tool_generate_yaml(run):
                     )
                     if refs and not err:
                         artifacts.setdefault("generationPipeline", {})["fallbackAutoConfirmed"] = True
+                        validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
                         artifacts["yamlValidation"] = {
-                            **(artifacts.get("yamlValidation") or {}),
+                            **validation,
                             "ok": True,
                             "issues": [],
                             "pipelineIssues": ["需求解析/脑图/YAML生成主链未产出可执行 YAML"],
                             "pipelineError": pipeline_error,
                             "fallbackOk": True,
                             "autoConfirmedFallback": True,
-                            "results": artifacts.get("yamlValidation", {}).get("results") or [{"type": "fallback", **fallback_check}],
+                            "results": validation.get("results") or [{"type": "fallback", **fallback_check}],
                         }
                         quality = artifacts.setdefault("qualityReport", {})
                         quality["status"] = "warn"

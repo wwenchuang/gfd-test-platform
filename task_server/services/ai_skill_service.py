@@ -286,11 +286,21 @@ def normalize_case_json_from_model(text):
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?", "", text, flags=re.I).strip()
         text = re.sub(r"```$", "", text).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        text = text[start:end + 1]
-    payload = json.loads(text)
+    parse_error = None
+    try:
+        payload = json.loads(text)
+        return normalize_cases_payload(payload)
+    except Exception as exc:
+        parse_error = exc
+    starts = [(pos, char) for char, pos in (("{", text.find("{")), ("[", text.find("["))) if pos >= 0]
+    if not starts:
+        raise ValueError(f"模型未返回可解析 JSON：{parse_error}")
+    start, opener = min(starts, key=lambda item: item[0])
+    closer = "}" if opener == "{" else "]"
+    end = text.rfind(closer)
+    if end <= start:
+        raise ValueError("模型返回的 JSON 不完整")
+    payload = json.loads(text[start:end + 1])
     return normalize_cases_payload(payload)
 
 
