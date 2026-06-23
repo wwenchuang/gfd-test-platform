@@ -50,6 +50,7 @@ let generateProgressTimer = null;
 let generateProgressDelayTimer = null;
 let generateAppInputTimer = null;
 let jobsRefreshTimer = null;
+let mindmapCenterRefreshTimer = null;
 let latestJobs = [];
 let taskApps = [];
 let taskMeta = {};

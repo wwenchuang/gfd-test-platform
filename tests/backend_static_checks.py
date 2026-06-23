@@ -382,6 +382,7 @@ def main():
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")
     require('item.get("mindmap_updated_at") or item.get("generated_at")' in yaml_service_source, "Mindmap center must sort by latest mindmap update first")
     require("完整需求覆盖追踪矩阵" in yaml_service_source and "进入 YAML 的自动化用例" in yaml_service_source and "人工验证 / 待准备" in yaml_service_source, "Mindmap must preserve full requirement coverage beyond executable YAML cases")
+    require('job.get("type") in ("generate", "mindmap_only")' in yaml_service_source and 'old_type not in ("generate", "mindmap_only")' in router_source and "run_mindmap_only_job if old_type == \"mindmap_only\"" in router_source, "Mindmap-only background jobs must be listed as retryable and retry through the mindmap worker")
     for runner_name in ("windows-midscene-runner.py", "mac-midscene-runner.py"):
         runner_source = (ROOT / runner_name).read_text(encoding="utf-8")
         require("def http_json_retry" in runner_source, f"{runner_name} must retry transient callback failures")
@@ -568,7 +569,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 42})
+    print({"ok": True, "file": str(MODULE), "checks": 43})
 
 
 if __name__ == "__main__":

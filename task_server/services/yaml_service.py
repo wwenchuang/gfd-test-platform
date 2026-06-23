@@ -4039,7 +4039,7 @@ def sanitize_generate_job_for_client(job):
         return job
     safe = dict(job)
     request = safe.pop("request_data", None) or safe.pop("requestData", None)
-    safe["can_retry"] = job.get("type") == "generate" and bool(generate_retry_request_from_job(job))
+    safe["can_retry"] = job.get("type") in ("generate", "mindmap_only") and bool(generate_retry_request_from_job(job))
     if request:
         safe["request_summary"] = summarize_generate_request(request)
     if safe.get("error_trace"):

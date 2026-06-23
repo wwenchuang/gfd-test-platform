@@ -2738,8 +2738,9 @@ def _handle_generate_job_retry(handler, m, job_id):
     if not old_job:
         handler._json({"ok": False, "error": "生成任务不存在"}, 404)
         return
-    if old_job.get("type") != "generate":
-        handler._json({"ok": False, "error": "只有 AI 生成任务支持重试"}, 400)
+    old_type = old_job.get("type")
+    if old_type not in ("generate", "mindmap_only"):
+        handler._json({"ok": False, "error": "只有 AI 生成任务或脑图生成任务支持重试"}, 400)
         return
     request_data = generate_retry_request_from_job(old_job)
     if not request_data:
@@ -2747,7 +2748,7 @@ def _handle_generate_job_retry(handler, m, job_id):
         return
     next_job_id = generate_job_id()
     next_job = {
-        "ok": True, "job_id": next_job_id, "type": "generate",
+        "ok": True, "job_id": next_job_id, "type": old_type,
         "status": "pending", "progress": 0, "step": "排队中",
         "message": f"已从失败任务 {job_id} 创建重试",
         "case_set_id": request_data.get("case_set_id") or old_job.get("case_set_id") or "",
@@ -2756,7 +2757,8 @@ def _handle_generate_job_retry(handler, m, job_id):
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
     }
     save_generate_job(next_job)
-    worker = threading.Thread(target=run_generate_job, args=(next_job_id, request_data), daemon=True)
+    worker_target = run_mindmap_only_job if old_type == "mindmap_only" else run_generate_job
+    worker = threading.Thread(target=worker_target, args=(next_job_id, request_data), daemon=True)
     worker.start()
     handler._json({"ok": True, "job_id": next_job_id, "job": sanitize_generate_job_for_client(next_job)})
 

@@ -217,7 +217,11 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
     require("脑图生成任务已提交，已切到脑图中心查看进度" in html and "closeMindmapCreateModal({ quiet: true })" in html and "await showMindmapCenter();" in html, "Mindmap create modal must auto-close after background job submission")
-    print({"ok": True, "file": str(HTML), "checks": 61})
+    require("function isMindmapBackgroundJob" in html and "mindmapTaskSectionHtml" in html and "mindmapFilesSectionHtml" in html, "Mindmap center must render background task status separately from downloadable files")
+    require("generation-record-sections" in html and "脑图生成任务" in html and "脑图文件" in html, "Mindmap center must split task progress and mindmap files into readable sections")
+    require("activeWorkspaceMode === 'mindmap'" in html and "await showMindmapCenter();" in html, "Mindmap background actions must refresh the mindmap center after cancel/retry")
+    require("mindmapCenterRefreshTimer" in html and "scheduleMindmapCenterRefresh(taskRows)" in html and "pending', 'running" in html, "Mindmap center must auto-refresh while mindmap jobs are active")
+    print({"ok": True, "file": str(HTML), "checks": 65})
 
 
 if __name__ == "__main__":

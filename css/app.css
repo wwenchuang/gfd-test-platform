@@ -2440,6 +2440,42 @@
     display: grid;
     gap: 10px;
   }
+  .generation-record-sections {
+    display: grid;
+    gap: 14px;
+  }
+  .generation-record-section {
+    border: 1px solid rgba(51,80,109,.72);
+    border-radius: 8px;
+    background: rgba(7,12,24,.56);
+    padding: 12px;
+    display: grid;
+    gap: 10px;
+  }
+  .generation-record-section .section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(51,80,109,.52);
+  }
+  .generation-record-section .section-head h3 {
+    font-size: 16px;
+    line-height: 1.35;
+  }
+  .generation-record-section .section-head p {
+    margin-top: 4px;
+    color: var(--text2);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .mindmap-task-section {
+    border-color: rgba(34,211,238,.42);
+  }
+  .mindmap-file-section {
+    border-color: rgba(52,211,153,.36);
+  }
   .generation-record-card {
     padding: 14px;
     display: grid;

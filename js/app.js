@@ -717,7 +717,8 @@ function jobStatusText(status) {
     success: '成功',
     passed: '成功',
     failed: '失败',
-    cancelled: '已取消'
+    cancelled: '已取消',
+    timeout: '已超时'
   };
   return map[status] || status || '未知';
 }
@@ -1317,6 +1318,10 @@ async function cancelGenerateJob(jobId) {
     });
     showToast('✓ 后台生成任务已取消', 'success');
     await loadJobs(true);
+    if (activeWorkspaceMode === 'mindmap') {
+      await showMindmapCenter();
+      return;
+    }
     if (activeWorkflow === 'generate' && document.getElementById('editor-area')?.textContent.includes('生成任务与生成记录')) {
       renderGenerateJobsCenter();
     }
@@ -2581,7 +2586,7 @@ function generationJobActions(job) {
   const caseSetId = generationJobCaseSetId(job);
   const id = job.job_id || '';
   const parts = [];
-  if (job.status === 'failed' && id && (job.can_retry !== false)) {
+  if (['failed', 'timeout'].includes(job.status || '') && id && (job.can_retry !== false)) {
     parts.push(`<button class="btn-sm primary" onclick="retryGenerationJob(${jsArg(id)})">重试生成</button>`);
   }
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
@@ -2604,6 +2609,10 @@ async function retryGenerationJob(jobId) {
     });
     showToast(`✓ 已创建重试任务：${data.job_id || ''}`, 'success');
     await loadJobs(true);
+    if (activeWorkspaceMode === 'mindmap') {
+      await showMindmapCenter();
+      return;
+    }
     renderGenerateJobsCenter();
   } catch(e) {
     showToast(e.message || '重试生成失败', 'error');
@@ -2816,6 +2825,94 @@ async function refreshGenerateJobsCenter() {
   renderGenerateJobsCenter();
 }
 
+function isMindmapBackgroundJob(job={}) {
+  if (!job || job.kind !== 'background') return false;
+  if (job.type === 'mindmap_only') return true;
+  const result = job.result || {};
+  const request = job.request_summary || {};
+  const text = [
+    job.type,
+    job.step,
+    job.message,
+    result.case_set_id,
+    result.summaryFiles?.mindmap,
+    request.title,
+  ].filter(Boolean).join(' ');
+  return /脑图|mindmap|\.mm/i.test(text);
+}
+
+function mindmapJobTimeValue(job={}) {
+  return Date.parse((job.updated_at || job.finished_at || job.started_at || job.created_at || '').replace(' ', 'T')) || 0;
+}
+
+function mindmapBackgroundJobs(recordCaseSetIds = new Set()) {
+  return generationJobs()
+    .filter(isMindmapBackgroundJob)
+    .filter(job => {
+      const status = job.status || '';
+      const caseSetId = generationJobCaseSetId(job);
+      if (['pending', 'running', 'failed', 'timeout', 'cancelled'].includes(status)) return true;
+      return status === 'success' && caseSetId && !recordCaseSetIds.has(caseSetId);
+    })
+    .sort((a, b) => mindmapJobTimeValue(b) - mindmapJobTimeValue(a))
+    .slice(0, 12);
+}
+
+function clearMindmapCenterRefresh() {
+  if (mindmapCenterRefreshTimer) {
+    clearTimeout(mindmapCenterRefreshTimer);
+    mindmapCenterRefreshTimer = null;
+  }
+}
+
+function scheduleMindmapCenterRefresh(jobs = []) {
+  clearMindmapCenterRefresh();
+  const hasActive = jobs.some(job => ['pending', 'running'].includes(job.status || ''));
+  if (!hasActive) return;
+  mindmapCenterRefreshTimer = setTimeout(() => {
+    if (activeWorkspaceMode === 'mindmap') {
+      showMindmapCenter();
+    }
+  }, 5000);
+}
+
+function mindmapTaskSectionHtml(jobs = []) {
+  if (!jobs.length) return '';
+  const activeCount = jobs.filter(job => ['pending', 'running'].includes(job.status || '')).length;
+  const failedCount = jobs.filter(job => ['failed', 'timeout'].includes(job.status || '')).length;
+  return `
+    <section class="generation-record-section mindmap-task-section">
+      <div class="section-head">
+        <div>
+          <h3>脑图生成任务</h3>
+          <p>${activeCount ? `${activeCount} 个生成中` : '暂无生成中任务'}${failedCount ? `，${failedCount} 个需要处理` : ''}。这里展示后台任务，完成后会进入下方脑图文件区。</p>
+        </div>
+        <button class="btn-sm" onclick="showMindmapCenter()">刷新任务</button>
+      </div>
+      <div class="generation-record-list">
+        ${jobs.map(generationRecordCard).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function mindmapFilesSectionHtml(rows = []) {
+  return `
+    <section class="generation-record-section mindmap-file-section">
+      <div class="section-head">
+        <div>
+          <h3>脑图文件</h3>
+          <p>${rows.length ? `按最近更新时间排序，当前显示 ${rows.length} 条。` : '还没有可下载脑图。生成完成后会出现在这里。'}</p>
+        </div>
+        <button class="btn-sm" onclick="showMindmapCenter()">刷新文件</button>
+      </div>
+      ${rows.length
+        ? `<div class="generation-record-list">${rows.map(mindmapRecordCard).join('')}</div>`
+        : '<div class="generation-record-empty">暂无脑图。先点击「新建脑图」，任务提交后会在上方任务区显示进度。</div>'}
+    </section>
+  `;
+}
+
 function mindmapStatusText(item={}) {
   if (item.mindmap_deleted) return '已删除';
   if (item.mindmap_exists) return '可下载';
@@ -2894,17 +2991,29 @@ async function showMindmapCenter() {
   updateToolbarState('脑图中心');
   updateWorkflowActionGroups();
   try {
-    const data = await apiRequest('/cases/mindmaps?limit=120');
+    let jobLoadError = '';
+    const [data] = await Promise.all([
+      apiRequest('/cases/mindmaps?limit=120'),
+      loadJobs(false, true).catch(e => {
+        jobLoadError = e.message || '后台任务读取失败';
+      })
+    ]);
     const rows = data.mindmaps || [];
     const list = document.getElementById('mindmap-center-list');
     if (!list) return;
-    list.className = rows.length ? 'generation-record-list' : 'generation-record-empty';
-    list.innerHTML = rows.length
-      ? rows.map(mindmapRecordCard).join('')
-      : '暂无脑图。先在「AI 生成」完成一次用例生成；脑图中心只管理已生成分析的脑图文件。';
+    const recordCaseSetIds = new Set(rows.map(item => item.case_set_id).filter(Boolean));
+    const taskRows = mindmapBackgroundJobs(recordCaseSetIds);
+    list.className = 'generation-record-sections';
+    list.innerHTML = `
+      ${jobLoadError ? `<div class="generate-status show error">${escapeHtml(jobLoadError)}</div>` : ''}
+      ${mindmapTaskSectionHtml(taskRows)}
+      ${mindmapFilesSectionHtml(rows)}
+    `;
+    scheduleMindmapCenterRefresh(taskRows);
   } catch(e) {
     const list = document.getElementById('mindmap-center-list');
     if (list) list.innerHTML = escapeHtml(e.message || '读取脑图失败');
+    clearMindmapCenterRefresh();
   }
 }
 
