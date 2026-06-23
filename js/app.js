@@ -567,6 +567,7 @@ function renderDeviceOptions(selectId) {
     const opt = document.createElement('option');
     opt.value = `${device.runner_id}::${device.device_id}`;
     opt.textContent = runnerDeviceOptionLabel(device);
+    opt.title = opt.textContent;
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -590,6 +591,7 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
     const opt = document.createElement('option');
     opt.value = `${device.runner_id}::${device.device_id}`;
     opt.textContent = runnerDeviceOptionLabel(device, appPackage);
+    opt.title = opt.textContent;
     select.appendChild(opt);
   });
   if (runnerDevices.length === 0) {
@@ -609,7 +611,7 @@ function renderAgentRunnerDeviceOptions(preferredValue) {
 function agentRunnerVersionSummary(appPackage = '') {
   if (!runnerDevices.length) return '';
   const rows = runnerDevices.slice(0, 3).map(device => {
-    const label = runnerDeviceDisplayName(device);
+    const label = runnerDeviceOptionLabel(device);
     const version = appPackage
       ? (runnerDeviceVersionLabel(device, appPackage) || `${appPackage} 未上报版本`)
       : (runnerDeviceVersionLabel(device) || '未上报版本');
@@ -631,18 +633,18 @@ function updateAgentRunnerDeviceHint() {
   const appPackage = selectedAgentAppPackage();
   if (selected.device_strategy === 'manual_required') {
     hint.textContent = '暂无在线设备。请先启动 Mac/Windows Runner，或刷新 Runner 列表。';
-    hint.className = 'form-hint warn';
+    hint.className = 'form-hint agent-device-hint warn';
   } else if (selected.device_strategy === 'auto') {
     const appText = appPackage ? `当前应用：${appDisplayLabel(appPackage)}。` : '';
     const versionText = agentRunnerVersionSummary(appPackage);
     hint.textContent = `自动分配：当前 ${runnerDevices.length} 台在线设备可接任务。${appText}${versionText ? `版本：${versionText}` : ''}`;
-    hint.className = 'form-hint';
+    hint.className = 'form-hint agent-device-hint';
   } else {
     const device = runnerDevices.find(item => item.runner_id === selected.runner_id && item.device_id === selected.device_id);
     const version = device ? runnerDeviceVersionLabel(device, appPackage) : '';
     const appStatus = appPackage ? (version || `${appPackage} 未上报版本`) : '';
     hint.textContent = `固定执行：${device ? runnerDeviceOptionLabel(device) : selected.device_id}${appStatus ? `；${appStatus}` : ''}`;
-    hint.className = 'form-hint';
+    hint.className = 'form-hint agent-device-hint';
   }
 }
 

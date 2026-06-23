@@ -173,7 +173,22 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/runners') {
-      json(res, {devices: []});
+      json(res, {devices: [
+        {
+          runner_id: 'win-runner-01',
+          runner_online: true,
+          device_id: 'UQG0220513008845',
+          status: 'online',
+          label: 'OPPO PHM110',
+          brand: 'OPPO',
+          model: 'PHM110',
+          android_version: '15',
+          resolution: '1080×2412',
+          installed_apps: [
+            {package: 'com.kfb.model', installed: true, version_name: '1.16.0', version_code: 38}
+          ],
+        }
+      ]});
       return;
     }
     if (url.pathname === '/api/health') {
@@ -239,6 +254,24 @@ function serve() {
     }
     if (url.pathname === '/api/agent-runs') {
       json(res, {ok: true, runs: []});
+      return;
+    }
+    if (url.pathname === '/api/agent-runs/preview' && req.method === 'POST') {
+      json(res, {
+        ok: true,
+        plan: {
+          mode: 'AUTO_SAFE',
+          appName: '智小白3D APP',
+          platform: 'android',
+          scope: 'auto',
+          steps: [
+            '1. 理解目标和输入资料',
+            '2. 整理 Figma、需求文档和截图',
+            '3. 生成并校验 YAML',
+            '4. 交给 Runner 执行并刷新状态'
+          ],
+        },
+      });
       return;
     }
     if (url.pathname === '/api/agent-runs/start' && req.method === 'POST') {
@@ -434,6 +467,35 @@ async function anyVisible(locator) {
       const select = document.querySelector('#agent-model');
       return select && select.innerText.includes('Highway GPT-5 Mini') && select.innerText.includes('千问 Qwen Plus');
     });
+    if (!await page.locator('.agent-start-layout').isVisible()) throw new Error('Agent grouped start layout is missing');
+    if (await page.locator('.agent-form-section').count() < 2) throw new Error('Agent form sections are missing');
+    if (!await page.locator('.agent-start-button').isVisible()) throw new Error('Agent start button is missing after layout change');
+    await page.waitForFunction(() => {
+      const hint = document.querySelector('#agent-runner-device-hint');
+      return hint && hint.innerText.includes('win-runner-01') && hint.innerText.includes('com.kfb.model 1.16.0 (38)');
+    });
+    await page.selectOption('#agent-source-type', 'figma');
+    await page.waitForSelector('text=Figma 链接在下方');
+    await page.fill('#agent-source-figma-url', 'https://www.figma.com/design/mx4x043OQjy1IYB1OfUdxw/%E6%99%BA%E5%B0%8F%E7%99%BDAPP?node-id=4458-1905&p=f&t=visual-smoke-0');
+    const figmaWrapOk = await page.locator('#agent-source-figma-url').evaluate(el => {
+      const style = window.getComputedStyle(el);
+      return style.overflowWrap === 'anywhere' || style.wordBreak === 'break-all';
+    });
+    if (!figmaWrapOk) throw new Error('Long Figma URL input must wrap instead of hiding information');
+    let previewDialogText = '';
+    page.once('dialog', async dialog => {
+      previewDialogText = dialog.message();
+      await dialog.accept();
+    });
+    await page.click('button:has-text("预览计划")');
+    await page.waitForTimeout(300);
+    if (!/全自动 Agent执行计划/.test(previewDialogText) || !/执行设备/.test(previewDialogText)) throw new Error(`Agent preview button did not return a readable plan: ${previewDialogText}`);
+    await page.click('button:has-text("安装/更新 App")');
+    await page.waitForSelector('text=安装包更新');
+    await page.waitForSelector('#apk-install-device');
+    if (!await page.locator('text=执行前设备检查').isVisible()) throw new Error('Agent install shortcut did not open the install preflight panel');
+    await page.click('.workflow-step:has-text("Agent 工作台")');
+    await page.waitForSelector('#agent-goal');
     const agentModelOptions = await page.locator('#agent-model').innerText();
     if (!/自动（按模型策略：千问 Qwen Plus）/.test(agentModelOptions)) throw new Error(`Agent model auto option did not use AI Gateway router: ${agentModelOptions}`);
     if (!await page.locator('text=还没有选择运行记录').isVisible()) throw new Error('Agent workbench should open in new-run mode');

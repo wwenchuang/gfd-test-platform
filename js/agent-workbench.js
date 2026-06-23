@@ -498,69 +498,91 @@ async function showAgentWorkbench() {
 
       <!-- 主卡片：单一启动入口 -->
       <div class="agent-card agent-primary-card">
-        <div class="agent-form-grid">
-          <div class="agent-field" style="grid-column:1/-1;">
-            <label for="agent-goal">测试目标</label>
-            <textarea id="agent-goal" rows="3" oninput="updateAgentRiskHint()" placeholder="例如：回归智小白3D APP 关节龙打印流程，重点检查搜索、切片进度、确认打印按钮是否正常。"></textarea>
-            <div class="agent-risk" id="agent-risk-hint"></div>
-          </div>
-          <div class="agent-field">
-            <label for="agent-app-name">应用</label>
-            <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()"></select>
-          </div>
-          <div class="agent-field">
-            <label for="agent-platform">平台</label>
-            <select id="agent-platform">
-              <option value="android">Android</option>
-              <option value="ios">iOS</option>
-            </select>
-          </div>
-          <div class="agent-field">
-            <label for="agent-scope">执行范围</label>
-            <select id="agent-scope" onchange="toggleFailedJobField()">
-              <option value="auto" selected>自动（AI 判断）</option>
-              <option value="smoke">冒烟</option>
-              <option value="regression">回归</option>
-              <option value="failed_rerun">失败重跑</option>
-              <option value="module">指定模块</option>
-            </select>
-          </div>
-          <div class="agent-field">
-            <label for="agent-mode-select">Agent模式</label>
-            <select id="agent-mode-select" onchange="syncAgentModeRadios()">
-              <option value="AUTO_SAFE" selected>安全自动（默认）</option>
-              <option value="FULL_AUTO">全自动</option>
-              <option value="ANALYZE_ONLY">只分析</option>
-            </select>
-          </div>
-          <div class="agent-field">
-            <label for="agent-model">AI 模型</label>
-            <select id="agent-model" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);color:var(--text-primary);font-size:13px;">
-              <option value="">自动（服务端默认）</option>
-            </select>
-          </div>
-          <div class="agent-field" style="grid-column:1/-1;">
-            <label for="agent-runner-device">执行机器 / 设备</label>
-            <select id="agent-runner-device" onchange="updateAgentRunnerDeviceHint()">
-              <option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>
-            </select>
-            <div class="form-hint" id="agent-runner-device-hint">正在读取在线 Runner 和设备...</div>
-          </div>
-          <div class="agent-preflight-strip" style="grid-column:1/-1;">
-            <div>
-              <strong>运行前准备：App 安装/更新（可选）</strong>
-              <span>默认不安装，Agent 会直接生成并执行用例；需要验证测试包、蒲公英包或线上回归包时，先创建 Runner 安装任务。</span>
+        <div class="agent-form-grid agent-start-layout">
+          <section class="agent-form-section agent-goal-section">
+            <div class="agent-section-head">
+              <span>01</span>
+              <div>
+                <strong>测试目标</strong>
+                <em>先写你要验证什么，Agent 再判断范围和执行方式</em>
+              </div>
             </div>
-            <button class="btn-sm" type="button" onclick="openAgentAppInstall()">安装/更新 App</button>
-          </div>
-          <div class="agent-field" style="grid-column:1/-1;">
-            <label for="agent-source-type">输入来源</label>
-            <select id="agent-source-type" onchange="renderAgentSourcePanel()">
-              ${AGENT_SOURCE_TYPES.map(([value, label, desc]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)} - ${escapeHtml(desc)}</option>`).join('')}
-            </select>
-          </div>
-          <div id="agent-source-panel" class="agent-source-panel" style="grid-column:1/-1;"></div>
-          <div class="agent-source-materials" style="grid-column:1/-1;">
+            <div class="agent-field agent-goal-field">
+              <label for="agent-goal">目标描述</label>
+              <textarea id="agent-goal" rows="3" oninput="updateAgentRiskHint()" placeholder="例如：回归智小白3D APP 关节龙打印流程，重点检查搜索、切片进度、确认打印按钮是否正常。"></textarea>
+              <div class="agent-risk" id="agent-risk-hint"></div>
+            </div>
+            <div class="agent-field">
+              <label for="agent-source-type">输入来源</label>
+              <select id="agent-source-type" onchange="renderAgentSourcePanel()">
+                ${AGENT_SOURCE_TYPES.map(([value, label, desc]) => `<option value="${escapeHtml(value)}" title="${escapeHtml(desc)}">${escapeHtml(label)}</option>`).join('')}
+              </select>
+            </div>
+            <div id="agent-source-panel" class="agent-source-panel"></div>
+          </section>
+
+          <section class="agent-form-section agent-config-section">
+            <div class="agent-section-head">
+              <span>02</span>
+              <div>
+                <strong>执行配置</strong>
+                <em>应用、设备、模式和模型集中在这里选择</em>
+              </div>
+            </div>
+            <div class="agent-compact-grid">
+              <div class="agent-field">
+                <label for="agent-app-name">应用</label>
+                <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()"></select>
+              </div>
+              <div class="agent-field">
+                <label for="agent-platform">平台</label>
+                <select id="agent-platform">
+                  <option value="android">Android</option>
+                  <option value="ios">iOS</option>
+                </select>
+              </div>
+              <div class="agent-field">
+                <label for="agent-scope">执行范围</label>
+                <select id="agent-scope" onchange="toggleFailedJobField()">
+                  <option value="auto" selected>自动（AI 判断）</option>
+                  <option value="smoke">冒烟</option>
+                  <option value="regression">回归</option>
+                  <option value="failed_rerun">失败重跑</option>
+                  <option value="module">指定模块</option>
+                </select>
+              </div>
+              <div class="agent-field">
+                <label for="agent-mode-select">Agent 模式</label>
+                <select id="agent-mode-select" onchange="syncAgentModeRadios()">
+                  <option value="AUTO_SAFE" selected>安全自动（默认）</option>
+                  <option value="FULL_AUTO">全自动</option>
+                  <option value="ANALYZE_ONLY">只分析</option>
+                </select>
+              </div>
+              <div class="agent-field agent-wide-field">
+                <label for="agent-model">AI 模型</label>
+                <select id="agent-model">
+                  <option value="">自动（服务端默认）</option>
+                </select>
+              </div>
+              <div class="agent-field agent-wide-field">
+                <label for="agent-runner-device">执行机器 / 设备</label>
+                <select id="agent-runner-device" onchange="updateAgentRunnerDeviceHint()">
+                  <option value="__AUTO_DEVICE__">自动选择在线设备（推荐）</option>
+                </select>
+                <div class="form-hint agent-device-hint" id="agent-runner-device-hint">正在读取在线 Runner 和设备...</div>
+              </div>
+            </div>
+            <div class="agent-preflight-strip">
+              <div>
+                <strong>App 安装/更新（可选）</strong>
+                <span>默认不安装；验证测试包、蒲公英包或线上回归包时再创建 Runner 安装任务。</span>
+              </div>
+              <button class="btn-sm" type="button" onclick="openAgentAppInstall()">安装/更新 App</button>
+            </div>
+          </section>
+
+          <section class="agent-source-materials">
             <div class="agent-source-material-head">
               <div>
                 <h3>本次 Agent输入资料</h3>
@@ -571,7 +593,7 @@ async function showAgentWorkbench() {
             <div class="agent-source-grid">
               <div class="agent-field">
                 <label for="agent-source-figma-url">Figma / UI 设计稿链接</label>
-                <input id="agent-source-figma-url" placeholder="可选：优先粘贴具体 Frame 链接；文件链接会按目标筛选相关页面">
+                <textarea id="agent-source-figma-url" class="agent-url-input" rows="2" placeholder="可选：优先粘贴具体 Frame 链接；文件链接会按目标筛选相关页面"></textarea>
               </div>
               <div class="agent-field">
                 <label for="agent-source-requirement-text">需求补充说明</label>
@@ -588,8 +610,8 @@ async function showAgentWorkbench() {
               <input type="file" id="agent-source-file-input" accept=".txt,.md,.json,.pdf,.doc,.docx,.mm,.yaml,.yml,.png,.jpg,.jpeg" multiple style="display:none" onchange="handleAgentSourceFiles(this)">
             </div>
             <div class="agent-source-file-list asset-list" id="agent-source-file-list"></div>
-          </div>
-          <div class="agent-field" id="agent-failed-job-field" style="display:none;grid-column:1/-1;">
+          </section>
+          <div class="agent-field agent-failed-job-field" id="agent-failed-job-field" style="display:none;">
             <label for="agent-failed-job">最近失败任务</label>
             <select id="agent-failed-job">
               <option value="">自动选择最近失败任务</option>
@@ -608,11 +630,13 @@ async function showAgentWorkbench() {
           <input type="checkbox" id="agent-policy-validateYaml" checked>
           <input type="checkbox" id="agent-policy-safeRerun" checked>
         </div>
-        <div class="agent-actions" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;">
-          <button class="btn-sm primary" id="agent-start-btn" onclick="startAutoAgentRun()" ${agentBusy ? 'disabled' : ''} style="padding:12px 28px;font-size:15px;">启动 Agent</button>
-          <button class="btn-sm" onclick="previewAgentPlan()" ${agentBusy ? 'disabled' : ''}>预览计划</button>
-          <button class="btn-sm" onclick="activateWorkflow('agent_history')">查看历史</button>
-          <span class="generate-hint" id="agent-risk-level" style="margin-left:auto;">当前风险：${agentRiskText(riskLevel)}</span>
+        <div class="agent-actions">
+          <div class="agent-action-buttons">
+            <button class="btn-sm primary agent-start-button" id="agent-start-btn" onclick="startAutoAgentRun()" ${agentBusy ? 'disabled' : ''}>启动 Agent</button>
+            <button class="btn-sm" onclick="previewAgentPlan()" ${agentBusy ? 'disabled' : ''}>预览计划</button>
+            <button class="btn-sm" onclick="activateWorkflow('agent_history')">查看历史</button>
+          </div>
+          <span class="generate-hint agent-risk-level-chip" id="agent-risk-level">当前风险：${agentRiskText(riskLevel)}</span>
         </div>
       </div>
 
