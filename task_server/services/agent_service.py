@@ -4553,8 +4553,8 @@ def _tool_prepare_source(run):
             f"Figma 链接 {1 if context.get('figmaUrl') else 0} 个；"
             f"Figma 页面 {len(context.get('figmaUsedPages') or [])} 个，"
             f"忽略 {len(context.get('figmaIgnoredPages') or [])} 个，"
-            f"截图 {context.get('figmaImageCount') or 0} 张；"
-            f"上传资料 {material.get('fileCount') or 0} 个，其中截图 {material.get('imageCount') or 0} 张、"
+            f"Figma UI 图 {context.get('figmaImageCount') or 0} 张；"
+            f"上传资料 {material.get('fileCount') or 0} 个，其中上传截图 {material.get('imageCount') or 0} 张、"
             f"需求/说明文件 {material.get('requirementFileCount') or 0} 个。"
         )
         if context.get("figmaUrl") and not context.get("figmaText"):
@@ -5126,7 +5126,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             step,
             "复用已解析 Figma："
             f"{len(prepared_figma_context.get('usedPages') or [])} 个页面，"
-            f"{len(prepared_figma_context.get('imageAssets') or [])} 张截图",
+            f"{len(prepared_figma_context.get('imageAssets') or [])} 张 UI 图",
             status="RUNNING",
         )
     stop_event = threading.Event()

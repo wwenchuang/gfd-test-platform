@@ -3525,7 +3525,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     job_id,
                     progress=38,
                     step="复用 Figma 解析",
-                    message=f"已复用准备阶段解析结果：页面 {len(used_figma_pages)} 个，截图 {len(figma_images)} 张",
+                    message=f"已复用准备阶段解析结果：页面 {len(used_figma_pages)} 个，Figma UI 图 {len(figma_images)} 张",
                 )
         else:
             try:
