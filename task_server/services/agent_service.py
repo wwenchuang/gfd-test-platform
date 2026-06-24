@@ -1355,17 +1355,57 @@ def _risk_source_items(run):
 def _evaluate_risk_detail(run):
     """评估风险等级，并返回命中来源，避免只显示一个孤立关键词。"""
     sources = _risk_source_items(run)
+    non_blocking_detail = None
     for kw in AUTO_AGENT_RISK_KEYWORDS:
         for item in sources:
             text = item.get("text") or ""
             if kw in text:
+                snippet = _risk_match_snippet(text, kw)
+                if _risk_hit_is_requirement_background(kw, item.get("source"), snippet):
+                    non_blocking_detail = non_blocking_detail or {
+                        "level": "LOW",
+                        "keyword": kw,
+                        "source": item.get("source") or "未知来源",
+                        "snippet": snippet,
+                        "blocking": False,
+                        "classification": "requirement_background",
+                        "reason": "这是产品改版/需求背景描述，不是 Runner 将执行的危险动作，不阻断执行。",
+                    }
+                    continue
                 return {
                     "level": "HIGH",
                     "keyword": kw,
                     "source": item.get("source") or "未知来源",
-                    "snippet": _risk_match_snippet(text, kw),
+                    "snippet": snippet,
+                    "blocking": True,
                 }
+    if non_blocking_detail:
+        return non_blocking_detail
     return {"level": "LOW", "keyword": "", "source": "", "snippet": ""}
+
+
+def _risk_hit_is_requirement_background(keyword, source, snippet):
+    """把需求背景里的产品改版词从执行高风险里剥离出来。"""
+    kw = str(keyword or "").strip()
+    src = str(source or "").strip()
+    text = str(snippet or "").strip()
+    if kw != "删除" or src not in ("需求说明", "测试目标"):
+        return False
+    compact = re.sub(r"\s+", "", text)
+    action_markers = (
+        "点击删除", "点删除", "删除按钮", "确认删除", "执行删除", "批量删除",
+        "删除作品", "删除记录", "删除文件", "删除任务", "删除数据", "删除账号",
+        "删除订单", "删除模型", "删除素材", "删除草稿", "清空", "重置",
+    )
+    if any(marker in compact for marker in action_markers):
+        return False
+    requirement_markers = (
+        "新增模块", "删除老模块", "删除旧模块", "老模块", "旧模块", "原模块",
+        "入口", "导航栏", "首页", "卡片", "模块", "功能区", "页面",
+        "整合为", "合并", "改为", "替换", "下线", "隐藏", "去掉",
+        "文案", "排序", "设计稿", "需求", "调整", "迁移", "改版",
+    )
+    return any(marker in compact for marker in requirement_markers)
 
 
 def _risk_detail_summary(detail, fallback_keyword=""):
@@ -1374,7 +1414,11 @@ def _risk_detail_summary(detail, fallback_keyword=""):
         return "无高风险动作"
     source = str((detail or {}).get("source") or "未知来源").strip()
     snippet = str((detail or {}).get("snippet") or "").strip()
-    summary = f"命中高风险动作：{keyword}；来源：{source}"
+    if (detail or {}).get("blocking") is False:
+        reason = str((detail or {}).get("reason") or "仅作为需求背景记录，不阻断执行。").strip()
+        summary = f"需求背景关键词：{keyword}；来源：{source}；说明：{reason}"
+    else:
+        summary = f"命中高风险动作：{keyword}；来源：{source}"
     if snippet:
         summary += f"；触发片段：{snippet}"
     return summary
@@ -6032,8 +6076,9 @@ def _tool_risk_review(run):
         else:
             run["riskHits"] = []
             call["status"] = "SUCCESS"
-            call["outputSummary"] = "风险检查通过，无高风险关键词"
+            call["outputSummary"] = _risk_detail_summary(risk_detail, hit_kw) if hit_kw else "风险检查通过，无高风险关键词"
             call["riskLevel"] = "low"
+            call["riskDetail"] = risk_detail
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)
@@ -6294,7 +6339,8 @@ def _tool_execution_precheck(run):
                         "decision": None,
                     })
         else:
-            add("high_risk_confirm", True, "无高风险动作" if not high_risk else "已人工确认")
+            safe_detail = _risk_detail_summary(risk_detail, hit_kw) if hit_kw else "无高风险动作"
+            add("high_risk_confirm", True, safe_detail if not high_risk else "已人工确认")
 
         artifacts["executionPrecheck"] = {
             "checks": checks,

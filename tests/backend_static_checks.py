@@ -288,6 +288,54 @@ def check_agent_risk_detail_explains_source():
     require(not any(item.get("type") == "high_risk_action" for item in run.get("pendingConfirmations") or []), "Runner clear-action warnings must not create a blocking high-risk confirmation")
 
 
+def check_agent_requirement_background_delete_is_not_high_risk():
+    from task_server.services import agent_service
+
+    requirement_text = (
+        "AI建模改版：新增 AI 建模模块，导航栏中间的 3D 改为 AI 建模首页；"
+        "文字建模、图片建模删除，整合为 AI建模，并排序在新手必学后面。"
+    )
+    run = {
+        "runId": "agent-static-risk-background",
+        "target": "AI建模需求验证",
+        "executionMode": "RUNNER_JOB",
+        "artifacts": {
+            "sourceContext": {
+                "requirementText": requirement_text,
+            }
+        },
+    }
+    detail = agent_service._evaluate_risk_detail(run)
+    require(detail.get("level") == "LOW", "Requirement background delete wording must not become a blocking high risk")
+    require(detail.get("keyword") == "删除" and detail.get("blocking") is False, "Requirement background delete should be recorded as non-blocking context")
+    summary = agent_service._risk_detail_summary(detail)
+    require("需求背景关键词" in summary and "不阻断" in summary, "Non-blocking requirement risk summary must be understandable")
+    call = agent_service._tool_risk_review(run)
+    require(call.get("riskLevel") == "low" and "需求背景关键词" in call.get("outputSummary", ""), "Risk review must not block product-change delete wording")
+
+    dangerous_run = {
+        "runId": "agent-static-risk-delete-action",
+        "target": "删除作品流程验证",
+        "executionMode": "RUNNER_JOB",
+        "artifacts": {
+            "yamlRefs": [{
+                "type": "text",
+                "content": """android:
+  tasks:
+    - name: 删除作品流程验证
+      flow:
+        - launch: com.kfb.model
+        - aiTap: "点击删除作品按钮"
+        - aiAssert: "作品已删除"
+""",
+                "confirmed": True,
+            }]
+        },
+    }
+    dangerous_detail = agent_service._evaluate_risk_detail(dangerous_run)
+    require(dangerous_detail.get("level") == "HIGH" and dangerous_detail.get("blocking") is True, "Real delete actions in YAML must remain blocking high risk")
+
+
 def check_yaml_runner_eligibility_filter():
     from task_server.services import yaml_service
 
@@ -640,6 +688,7 @@ def main():
     check_agent_fallback_yaml_auto_confirm_split()
     check_agent_prepared_figma_context_reuse()
     check_agent_risk_detail_explains_source()
+    check_agent_requirement_background_delete_is_not_high_risk()
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
