@@ -2338,6 +2338,7 @@ def filter_figma_drafts_for_requirement(
     fallback_on_no_match: bool = False,
     pinned_node_ids: Optional[set] = None,
     max_limit: int = 24,
+    direct_scope_only: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Migrated from ``midscene-upload.py:filter_figma_drafts_for_requirement``.
 
@@ -2349,6 +2350,23 @@ def filter_figma_drafts_for_requirement(
     limit = max(1, int(limit or 12))
     max_limit = max(limit, int(max_limit or limit))
     pinned_node_ids = {str(item) for item in (pinned_node_ids or []) if str(item or "").strip()}
+    if direct_scope_only:
+        direct_scope = [
+            draft for draft in drafts
+            if (draft.get("figma") or {}).get("pinned") or (draft.get("figma") or {}).get("direct_group")
+        ]
+        if direct_scope:
+            for draft in direct_scope:
+                figma = draft.setdefault("figma", {})
+                figma["relevance_score"] = max(int(figma.get("relevance_score") or 0), min_score)
+                figma["relevance_reason"] = (
+                    "该页面位于用户粘贴的 Figma 直链范围内，本次只按该范围作为 UI 参考"
+                    if not figma.get("pinned")
+                    else "Figma 链接直接指定该节点，已强制保留为主要 UI 参考"
+                )
+            selected_ids = {_figma_draft_identity(draft) for draft in direct_scope}
+            ignored = [draft for draft in drafts if _figma_draft_identity(draft) not in selected_ids]
+            return direct_scope, ignored
     terms = figma_requirement_terms(query_text)
     if not terms:
         direct_scope = [
@@ -2469,6 +2487,7 @@ def parse_figma_design(data: Dict[str, Any]) -> Dict[str, Any]:
     min_height = max(1, int(data.get("min_height") or data.get("minHeight") or 360))
     requirement_query = data.get("requirement_query") or data.get("requirementQuery") or ""
     filter_by_requirement = _safe_bool(data.get("filter_by_requirement", data.get("filterByRequirement", True)))
+    direct_scope_only = _safe_bool(data.get("direct_scope_only", data.get("directScopeOnly", False)))
     reference_limit = max(1, min(
         int(data.get("reference_limit") or data.get("referenceLimit") or FIGMA_REFERENCE_LIMIT),
         limit, FIGMA_MAX_REFERENCE_LIMIT,
@@ -2549,6 +2568,7 @@ def parse_figma_design(data: Dict[str, Any]) -> Dict[str, Any]:
             limit=filter_limit, min_score=min_score,
             fallback_on_no_match=fallback_on_no_match,
             pinned_node_ids=pinned_node_ids, max_limit=max_reference_limit,
+            direct_scope_only=direct_scope_only,
         )
         mark_stage("requirement_filter")
     images = figma_image_map(

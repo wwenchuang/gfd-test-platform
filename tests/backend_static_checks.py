@@ -365,7 +365,7 @@ def check_agent_runner_failure_reason_summary():
 
 
 def check_agent_figma_context_defaults():
-    from task_server.services import agent_service, yaml_service
+    from task_server.services import agent_service, knowledge_service, yaml_service
 
     run = {
         "runId": "agent-static-figma",
@@ -398,6 +398,79 @@ def check_agent_figma_context_defaults():
     require(len(prepared["imageAssets"]) == 2, "Agent prepared Figma images must dedupe and not exceed used pages")
     server_prepared = yaml_service._prepared_figma_context_from_request({"prepared_figma_context": raw})
     require(len(server_prepared["usedPages"]) == 2 and len(server_prepared["imageAssets"]) == 2, "Server generation must normalize old prepared Figma context")
+
+    direct = [
+        {"page_id": f"direct-{idx}", "page_name": f"直链页面{idx}", "figma": {"node_id": f"1:{idx}", "direct_group": True}}
+        for idx in range(36)
+    ]
+    nearby = [
+        {"page_id": f"nearby-{idx}", "page_name": f"AI建模附近页面{idx}", "figma": {"node_id": f"2:{idx}"}}
+        for idx in range(5)
+    ]
+    selected, ignored = knowledge_service.filter_figma_drafts_for_requirement(
+        direct + nearby,
+        "AI建模 页面",
+        limit=36,
+        min_score=1,
+        max_limit=72,
+        direct_scope_only=True,
+    )
+    require(len(selected) == 36 and len(ignored) == 5, "Direct Figma links must keep the exact direct scope instead of adding nearby keyword matches")
+
+
+def check_agent_high_risk_confirm_resumes_precheck():
+    from task_server.services import agent_service
+
+    now = "2026-06-24T00:00:00"
+    run = {
+        "runId": "agent-static-risk-confirm",
+        "status": "WAIT_CONFIRM",
+        "currentStep": "WAIT_CONFIRM",
+        "riskLevel": "HIGH",
+        "riskConfirmed": False,
+        "pendingConfirmations": [{
+            "id": "confirm-risk",
+            "type": "high_risk_action",
+            "action": "confirm_high_risk_action",
+            "createdAt": now,
+        }],
+        "steps": [
+            {"step": "PLAN", "status": "SUCCESS"},
+            {"step": "PREPARE_SOURCE", "status": "SUCCESS"},
+            {"step": "IMPACT_ANALYSIS", "status": "SUCCESS"},
+            {"step": "CASE_RETRIEVAL", "status": "SUCCESS"},
+            {"step": "MATCH_CASES", "status": "SUCCESS"},
+            {"step": "GENERATE_YAML", "status": "SUCCESS"},
+            {"step": "VALIDATE_YAML", "status": "SUCCESS"},
+            {"step": "RISK_REVIEW", "status": "SUCCESS"},
+            {"step": "EXECUTION_PRECHECK", "status": "PENDING"},
+            {"step": "SYNC_SONIC", "status": "PENDING"},
+        ],
+        "artifacts": {},
+    }
+    original_load = agent_service.load_agent_runs
+    original_save = agent_service.save_agent_runs
+    store = [run]
+    saved = []
+
+    def fake_load():
+        return store
+
+    def fake_save(runs):
+        saved[:] = runs
+
+    agent_service.load_agent_runs = fake_load
+    agent_service.save_agent_runs = fake_save
+    try:
+        result = agent_service.confirm_agent_step("agent-static-risk-confirm", "confirm-risk", "confirmed", {})
+    finally:
+        agent_service.load_agent_runs = original_load
+        agent_service.save_agent_runs = original_save
+
+    require(result.get("status") == "RUNNING", "High-risk confirmation must resume the Agent")
+    require(result.get("currentStep") == "EXECUTION_PRECHECK", "High-risk confirmation must continue to execution precheck")
+    require(result.get("riskConfirmed") is True and not result.get("pendingConfirmations"), "High-risk confirmation must clear pending confirmation")
+    require(saved and saved[0].get("currentStep") == "EXECUTION_PRECHECK", "High-risk confirmation resume state must be persisted")
 
 
 def main():
@@ -570,6 +643,7 @@ def main():
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
+    check_agent_high_risk_confirm_resumes_precheck()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -616,7 +690,8 @@ def main():
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source, "Generation/mindmap visual grounding must not feed knowledge screenshots into the visual model")
     require("def _case_manual_block_reason" in yaml_service_source and "接口 Mock" in ai_skill_service_source and "排队/并发状态" in ai_skill_service_source, "YAML generation must keep non-runnable scenario coverage out of Runner YAML")
     require("需求文档是业务真相，Figma 是 UI 参考" in ai_skill_service_source and "需求文档决定本次要覆盖的业务范围" in automation_filter_source, "AI generation must treat requirements as business source of truth and Figma as UI reference")
-    require('"figma_max_reference_limit": max_reference_limit' in agent_service_source and "return False" in agent_service_source and "useSavedKnowledge" in agent_service_source, "Agent Figma parsing must default to current input and avoid saved page knowledge unless explicit")
+    require('"direct_scope_only": True' in agent_service_source and "direct_scope_only" in knowledge_service_source and "useSavedKnowledge" in agent_service_source, "Agent Figma parsing must use exact direct-link scope and avoid saved page knowledge unless explicit")
+    require('and not run.get("riskConfirmed")' in agent_service_source and 'next_pending_step_after("RISK_REVIEW")' in agent_service_source, "High-risk confirmation must not re-block after approval and must resume at the next pending step")
     require("MIDSCENE_REPLANNING_CYCLE_LIMIT\", 8" in config_source, "Default Midscene replanning limit should be high enough for normal complex UI flows")
     require("mindmap_visual_image_policy" in yaml_service_source, "Mindmap summary must document the visual image policy")
     require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")

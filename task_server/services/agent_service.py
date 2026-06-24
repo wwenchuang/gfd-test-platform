@@ -891,6 +891,27 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
             (c for c in run.get("pendingConfirmations", []) if c.get("id") == step_id),
             None,
         )
+
+        def next_pending_step_after(anchor_step=""):
+            order = {name: idx for idx, name in enumerate(_STEP_ORDER)}
+            start = order.get(str(anchor_step or ""), -1)
+            for name in _STEP_ORDER[start + 1:]:
+                step = next((s for s in run.get("steps", []) if s.get("step") == name), None)
+                if step and step.get("status") == "PENDING":
+                    return name
+            for name in _STEP_ORDER:
+                step = next((s for s in run.get("steps", []) if s.get("step") == name), None)
+                if step and step.get("status") == "PENDING":
+                    return name
+            return "DONE"
+
+        decision_key = str(decision or "").strip().lower()
+        approve_keys = (
+            "approve", "approved", "confirm", "confirmed", "yes", "true", "1",
+            "continue", "confirm_case_reuse", "confirm_yaml_draft",
+            "confirm_run", "confirm_bug", "confirm_bug_draft",
+            "apply_baseline", "apply_repair_and_rerun",
+        )
         if not confirmation:
             artifacts = run.setdefault("artifacts", {})
             if run.get("status") == "WAIT_CONFIRM" and (artifacts.get("draftPath") or artifacts.get("generatedYaml")):
@@ -901,15 +922,20 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                     "draftPath": artifacts.get("draftPath") or "",
                     "createdAt": now,
                 }
+            elif decision_key in approve_keys and not (run.get("pendingConfirmations") or []):
+                next_step = next_pending_step_after(run.get("lastConfirmedStep") or run.get("currentStep") or "")
+                if next_step == "DONE":
+                    run["status"] = "DONE"
+                    run["currentStep"] = "DONE"
+                    run["progress"] = 100
+                else:
+                    run["status"] = "RUNNING"
+                    run["currentStep"] = next_step
+                run["updatedAt"] = now
+                save_agent_runs(runs)
+                return run
             else:
                 return {"error": "确认项不存在", "run": run}
-        decision_key = str(decision or "").strip().lower()
-        approve_keys = (
-            "approve", "approved", "confirm", "confirmed", "yes", "true", "1",
-            "continue", "confirm_case_reuse", "confirm_yaml_draft",
-            "confirm_run", "confirm_bug", "confirm_bug_draft",
-            "apply_baseline", "apply_repair_and_rerun",
-        )
         generate_draft_keys = (
             "generate_yaml_draft", "generate_draft", "new_yaml",
             "create_yaml_draft", "reject_case_reuse",
@@ -1033,12 +1059,20 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                 mark_step_skipped("MATCH_CASES", "已确认复用 Case Retrieval 命中的 YAML，跳过旧匹配逻辑")
             elif ctype == "high_risk_action":
                 run["riskConfirmed"] = True
+                run["lastConfirmedStep"] = "RISK_REVIEW"
+            elif ctype == "unknown_failure":
+                run["unknownFailureConfirmed"] = True
+                run["lastConfirmedStep"] = "ANALYZE_FAILURE"
             run["pendingConfirmations"] = [
                 c for c in run.get("pendingConfirmations", []) if c.get("id") != step_id
             ]
             run["status"] = "RUNNING"
-            if run.get("currentStep") == "WAIT_CONFIRM":
-                run["currentStep"] = "VALIDATE_YAML"
+            if ctype == "high_risk_action":
+                run["currentStep"] = next_pending_step_after("RISK_REVIEW")
+            elif ctype == "unknown_failure":
+                run["currentStep"] = next_pending_step_after("ANALYZE_FAILURE")
+            elif run.get("currentStep") == "WAIT_CONFIRM":
+                run["currentStep"] = next_pending_step_after("GENERATE_YAML")
             run["updatedAt"] = now
         elif rejected:
             _apply_agent_cancel_state(run, f"用户拒绝确认：{confirmation.get('type', '')}")
@@ -3535,7 +3569,7 @@ def _load_figma_context_for_agent(run, context):
         case_set_id = _source_ref_value(refs, "caseSetId", "case_set_id")
         reference_limit = max(1, safe_int(normalized.get("figmaReferenceLimit") or refs.get("figmaReferenceLimit") or 36, 36))
         explicit_max_reference = normalized.get("figmaMaxReferenceLimit") or refs.get("figmaMaxReferenceLimit")
-        max_reference_limit = max(reference_limit, safe_int(explicit_max_reference, reference_limit)) if explicit_max_reference not in (None, "") else reference_limit
+        max_reference_limit = max(reference_limit, safe_int(explicit_max_reference, 72)) if explicit_max_reference not in (None, "") else 72
         query_text = "\n".join([
             str(run.get("target") or ""),
             str(context.get("requirementText") or ""),
@@ -3547,6 +3581,7 @@ def _load_figma_context_for_agent(run, context):
             "figma_limit": normalized.get("figmaLimit") or refs.get("figmaLimit") or 80,
             "figma_reference_limit": reference_limit,
             "figma_max_reference_limit": max_reference_limit,
+            "direct_scope_only": True,
         }
         text_assets, image_assets, used_pages, ignored_pages, saved_designs = load_figma_generation_context(
             request_data,
@@ -7979,7 +8014,7 @@ def _execute_agent_steps(run_id):
                             subsequent["startedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                             subsequent["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             # Post-step: RISK_REVIEW -> check if HIGH risk
-            if step_name == "RISK_REVIEW" and str(run.get("riskLevel") or "").upper() == "HIGH":
+            if step_name == "RISK_REVIEW" and str(run.get("riskLevel") or "").upper() == "HIGH" and not run.get("riskConfirmed"):
                 risk_detail = run.get("riskDetail") if isinstance(run.get("riskDetail"), dict) else {}
                 risk_keyword = risk_detail.get("keyword") or "、".join(run.get("riskHits", []))
                 if _runner_precheck_should_warn_risk(run, risk_keyword):
