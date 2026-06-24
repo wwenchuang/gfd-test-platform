@@ -130,6 +130,17 @@ async function loadAgentModelOptions(preferredValue='') {
     kind: 'auto'
   });
 
+  const cachedProviders = (typeof AppState !== 'undefined' && Array.isArray(AppState.modelProviders)) ? AppState.modelProviders : [];
+  const cachedRouterProviderId = normalizeAgentRouterProviderId((typeof AppState !== 'undefined' && AppState.modelRouter) ? AppState.modelRouter : {});
+  if (cachedProviders.length) {
+    const cachedProvider = cachedProviders.find(provider => provider.id === cachedRouterProviderId) || cachedProviders[0];
+    if (cachedProvider) {
+      autoOpt.textContent = `自动（按模型策略：${cachedProvider.name || cachedProvider.id}）`;
+      autoOpt.dataset.providerId = cachedProvider.id;
+      autoOpt.dataset.model = cachedProvider.model || '';
+    }
+  }
+
   let gatewayProviders = [];
   let routerProviderId = '';
   try {

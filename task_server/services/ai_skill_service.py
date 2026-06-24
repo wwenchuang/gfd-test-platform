@@ -1194,7 +1194,7 @@ def call_skill_automation_filter(title, module, analysis, scenarios):
         "generation_targets": targets,
         "automation_rules": {
             "allowed_actions": ["点击", "输入", "等待", "断言", "返回", "滚动", "处理弹窗", "回到首页"],
-            "manual_by_default": ["真实支付", "删除", "切账号", "清数据", "后台造数", "真实外设", "破坏网络"],
+            "manual_by_default": ["真实支付", "删除", "切账号", "清数据", "后台造数", "接口 Mock", "系统权限预置", "断网/弱网", "排队/并发状态", "真实外设", "纯设计稿对比"],
             "assertion_required": True
         }
     }
@@ -1489,13 +1489,15 @@ def build_case_generation_prompt(title, module, text_assets):
 2. JSON 根节点必须包含 title、module、analysis、scenarios、cases。
 3. JSON 根节点还可以包含 manual_cases、review，用于放置当前环境不可稳定自动执行的场景和自评审结果。
 4. cases 是数组，每条用例包含 case_id、title、priority、smoke、preconditions、steps、assertions、tags；建议额外包含 goal、start_page、business_path、expected_result、repair_hints、risk、coverage、data_requirements、automation_reason，便于后续 AI 修复和人工评审理解业务链路。
-5. cases 里放"当前默认测试环境可直接执行或可弱数据依赖执行"的 UI 自动化用例。只要能通过页面标题、入口、列表/空态、按钮状态、弹窗等 UI 信号验证，就应优先进入 cases。
-6. 不要因为数据结果可能为空就放弃自动化：列表类、记录类、收藏类、资源类页面必须兼容"有数据或空态"两种可见结果。只有依赖切换登录态、清空账号数据、特殊后台造数、特定付费账号、系统权限预置、真实支付/删除等高风险场景才放入 manual_cases。
+5. cases 里只放"当前默认测试环境可直接执行"的 UI 自动化用例：入口可自然到达、无需 Mock/造数/系统设置、结果能通过页面标题、入口、列表/空态、按钮状态、弹窗等 UI 信号验证。
+6. 不要因为数据结果可能为空就放弃自动化：列表类、记录类、收藏类、资源类页面必须兼容"有数据或空态"两种可见结果。依赖切换登录态、清空账号数据、特殊后台造数、接口 Mock、断网/弱网、排队或并发状态、服务器繁忙、系统权限预置、纯设计稿一致性对比、真实支付/删除等场景必须放入 manual_cases。
 7. 如果需求没有明确说明测试账号状态，默认认为当前账号已登录。
-8. steps 必须是用户可执行的 UI 操作，尽量使用页面真实文案、按钮名、Tab 名、入口名。
-9. assertions 必须表达"业务意图 + UI 可见信号"，避免抽象断言，也避免过严断言。除非需求明确要求完全一致，否则不要断言动态列表第几条、动态推荐内容、数量、时间、百分比、随机资源名。
-10. 覆盖主流程和当前状态下能自然到达的分支。不要只生成 1 条主流程；每个需求功能点通常至少生成 2-4 条自动化用例：入口可达、页面展示、关键交互、状态/空态/异常提示中可稳定执行的部分。
-11. 不要输出 YAML。
+8. 需求文档决定"测什么"；Figma/截图只辅助判断"从哪里进入、页面大概有哪些可见信号"。如果 Figma 和需求或真机页面可能不一致，不要把设计稿一致性写进自动化断言，应写入 repair_hints 或 manual_cases。
+9. steps 必须是用户可执行的 UI 操作，尽量使用页面真实文案、按钮名、Tab 名、入口名。
+10. assertions 必须表达"业务意图 + UI 可见信号"，避免抽象断言，也避免过严断言。除非需求明确要求完全一致，否则不要断言动态列表第几条、动态推荐内容、数量、时间、百分比、随机资源名，也不要写"与设计稿一致/模块排列顺序一致"这类 Runner 无法独立判断的断言。
+10.1 每条自动化 case 的 steps 建议 3-6 条，assertions 建议 1-3 条；不要把多个业务分支塞进同一条 YAML。
+11. 覆盖主流程和当前状态下能自然到达的分支。不要只生成 1 条主流程；每个需求功能点通常至少生成 2-4 条自动化用例：入口可达、页面展示、关键交互、状态/空态/异常提示中可稳定执行的部分。
+12. 不要输出 YAML。
 
 输出格式：
 {{
@@ -1606,12 +1608,13 @@ def build_case_visual_refine_prompt(title, module, base_payload, visual_text_ass
 4. 可以优化 steps、assertions、expected_result、repair_hints、start_page、business_path、data_requirements，但不要减少需求覆盖点。
 5. 如果视觉资料和需求冲突，在 repair_hints 或 manual_cases 里说明冲突；不要静默丢弃需求。
 6. 断言要贴近业务意图，不要过严。动态内容使用兼容表达，例如"展示列表内容或空态提示""页面展示标题或核心区域""按钮处于可点击状态"。
-7. 每条自动化 case 仍必须可独立执行，步骤短而稳定，不写坐标、XPath、控件层级和固定长等待。
+7. 每条自动化 case 仍必须可独立执行，步骤短而稳定，不写坐标、XPath、控件层级和固定长等待；需要 Mock/造数/断网/系统权限/排队并发状态/纯设计稿对比的内容转入 manual_cases。
 8. 如果第一阶段某条用例只有泛化断言，例如"页面正常展示/跳转成功/结果符合预期"，必须结合视觉资料或业务目标改成 UI 可见业务信号。
 9. 如果视觉资料能证明更多当前环境可稳定执行的分支，可以补充 cases，但不得生成和需求无关的控件清单。
 10. 输出必须仍是合法 JSON，保留 title、module、analysis、scenarios、cases、manual_cases、review。
 11. analysis.requirement_points 必须保留；review 中说明本次视觉校准做了哪些修正。
 12. 不允许因为视觉资料缺页就删掉需求场景；只能把入口不确定、数据不稳定、无法自动化的内容转入 manual_cases，并保留 scenarios 覆盖。
+12.1 需求文档是业务真相，Figma 是 UI 参考。不要把“与设计稿一致/视觉还原一致/模块排序一致/Figma 节点一致”直接作为 YAML 断言；应改成可见业务信号，或转入人工视觉验收。
 13. 保留并补强 analysis.coverage_matrix；视觉校准后，每个 requirement_point 仍必须能追溯到 scenarios、cases 或 manual_cases。
 
 当前标题：{title}

@@ -69,7 +69,7 @@ def midscene_env():
     env.setdefault("OPENAI_BASE_URL", env.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
     env.setdefault("MIDSCENE_MODEL_NAME", env.get("DASHSCOPE_VL_MODEL", "qwen3.6-plus"))
     env.setdefault("MIDSCENE_SKIP_CONFIG_CHECK", "1")
-    env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "5")
+    env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
     env.setdefault("NODE_TLS_REJECT_UNAUTHORIZED", "0")
     return env
 

@@ -288,6 +288,82 @@ def check_agent_risk_detail_explains_source():
     require(not any(item.get("type") == "high_risk_action" for item in run.get("pendingConfirmations") or []), "Runner clear-action warnings must not create a blocking high-risk confirmation")
 
 
+def check_yaml_runner_eligibility_filter():
+    from task_server.services import yaml_service
+
+    payload = {
+        "title": "AI建模需求",
+        "module": "AI测试",
+        "cases": [
+            {
+                "case_id": "TC-001",
+                "title": "AI建模入口与页面核心模块展示",
+                "preconditions": ["当前账号已登录"],
+                "steps": ["点击底部 Tab「AI建模」", "等待 AI建模主页核心区域加载"],
+                "assertions": ["页面展示开始创作、图片建模、语音创作、大家都在做或我的作品等核心模块"],
+            },
+            {
+                "case_id": "TC-002",
+                "title": "自传IP模型匹配成功走快速生成",
+                "preconditions": ["已配置匹配接口Mock"],
+                "steps": ["输入自传IP关键词", "点击开始生成"],
+                "assertions": ["页面跳转至快速生成页"],
+                "data_requirements": "Mock接口返回自传IP匹配成功数据",
+            },
+            {
+                "case_id": "TC-003",
+                "title": "系统通知权限关闭降级处理",
+                "preconditions": ["系统通知权限已关闭"],
+                "steps": ["提交生成任务"],
+                "assertions": ["页面展示权限关闭降级提示"],
+            },
+            {
+                "case_id": "TC-004",
+                "title": "首页入口排序与设计稿一致",
+                "steps": ["进入首页"],
+                "assertions": ["模块排列顺序与设计稿一致"],
+            },
+            {
+                "case_id": "TC-005",
+                "title": "Figma 节点视觉一致性检查",
+                "steps": ["进入 AI建模页"],
+                "assertions": ["页面视觉与 Figma 关键区域一致，画布尺寸与 node-id 保持一致"],
+            },
+        ],
+        "manual_cases": [],
+    }
+    filtered = yaml_service.split_automation_ready_cases(payload)
+    require(len(filtered["cases"]) == 1, "Only directly runnable AI modeling entry case should become YAML")
+    require(len(filtered["manual_cases"]) == 4, "Mock/permission/design-comparison cases must remain in manual coverage")
+    _, files = yaml_service.cases_to_separate_midscene_yamls(payload, app_package="com.kfb.model", base_file="ai-model.yaml")
+    require(len(files) == 1, "Separate YAML generation must only emit runner-eligible cases")
+    content = files[0]["content"]
+    require("确认前置条件" not in content, "Preconditions must stay in comments, not become flaky ai steps")
+    require('- aiWaitFor: "等待 AI建模主页核心区域加载"' in content, "Natural wait steps must become aiWaitFor actions, not generic ai actions")
+    require("input keyevent 187" not in content and "am kill-all" not in content, "Balanced launch guard must not inject recent-app cleanup into generated YAML")
+    require("自传IP模型匹配成功" not in content and "系统通知权限" not in content and "设计稿一致" not in content and "Figma" not in content, "Runner-ineligible scenarios must not leak into YAML")
+
+
+def check_agent_runner_failure_reason_summary():
+    from task_server.services import agent_service
+
+    failed = [{
+        "job_id": "job-static-failed",
+        "status": "failed",
+        "module": "AI_Agent_草稿",
+        "file": "case.yaml",
+        "target_task_name": "AI建模入口",
+        "runner_id": "win-runner-01",
+        "device_id": "ecbfd645",
+        "stdout_tail": "Error: Replanned 5 times, exceeding the limit.\nfailed to locate element: 开始生成",
+        "report_url": "http://example.test/report.html",
+    }]
+    reasons = agent_service._agent_job_failure_reasons(failed, limit=1)
+    require(reasons and reasons[0]["target"] == "AI建模入口", "Runner failure summary must keep task target")
+    require("failed to locate element" in reasons[0]["reason"], "Runner failure summary must use stdout/stderr tails when error is empty")
+    require(reasons[0]["runnerId"] == "win-runner-01" and reasons[0]["deviceId"] == "ecbfd645", "Runner failure summary must keep runner/device")
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -341,6 +417,7 @@ def main():
     sonic_service_source = (ROOT / "task_server" / "services" / "sonic_service.py").read_text(encoding="utf-8")
     yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     ai_skill_service_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
+    automation_filter_source = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
     knowledge_service_source = (ROOT / "task_server" / "services" / "knowledge_service.py").read_text(encoding="utf-8")
     schemas_source = (ROOT / "task_server" / "schemas.py").read_text(encoding="utf-8")
     agent_service_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
@@ -454,6 +531,8 @@ def main():
     check_agent_fallback_yaml_auto_confirm_split()
     check_agent_prepared_figma_context_reuse()
     check_agent_risk_detail_explains_source()
+    check_yaml_runner_eligibility_filter()
+    check_agent_runner_failure_reason_summary()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -498,6 +577,9 @@ def main():
     live_smoke_source = (ROOT / "tests" / "live_api_smoke.py").read_text(encoding="utf-8")
     require("TASK_SMOKE_BASE_URL" in live_smoke_source and "/api/sonic/diagnose" in live_smoke_source and "/ai-gateway/ai/providers" in live_smoke_source, "Live API smoke script must cover auth, Sonic diagnose and AI Gateway")
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source, "Generation/mindmap visual grounding must not feed knowledge screenshots into the visual model")
+    require("def _case_manual_block_reason" in yaml_service_source and "接口 Mock" in ai_skill_service_source and "排队/并发状态" in ai_skill_service_source, "YAML generation must keep non-runnable scenario coverage out of Runner YAML")
+    require("需求文档是业务真相，Figma 是 UI 参考" in ai_skill_service_source and "需求文档决定本次要覆盖的业务范围" in automation_filter_source, "AI generation must treat requirements as business source of truth and Figma as UI reference")
+    require("MIDSCENE_REPLANNING_CYCLE_LIMIT\", 8" in config_source, "Default Midscene replanning limit should be high enough for normal complex UI flows")
     require("mindmap_visual_image_policy" in yaml_service_source, "Mindmap summary must document the visual image policy")
     require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")
     require("refreshMindmapActiveTasks" in app_js_source and "{ refreshJobs: false }" in app_js_source, "Mindmap center must update active tasks without full-list refresh flicker")

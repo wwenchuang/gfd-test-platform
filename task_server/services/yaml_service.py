@@ -656,6 +656,8 @@ def action_type(text):
     text = str(text or "")
     if any(key in text for key in ("点击", "按钮", "勾选", "长按", "选择")):
         return "aiTap"
+    if any(key in text for key in ("等待", "直到出现", "直到看到", "加载完成", "加载完", "出现", "展示")):
+        return "aiWaitFor"
     return "ai"
 
 
@@ -888,6 +890,51 @@ def _case_has_meaningful_assertion(case: dict) -> bool:
     return any(text and not any(item in text for item in vague) for text in texts)
 
 
+def _case_execution_text(case: dict) -> str:
+    if not isinstance(case, dict):
+        return str(case or "")
+    values = [
+        case.get("title"),
+        case.get("name"),
+        case.get("scenario"),
+        case.get("goal"),
+        case.get("start_page") or case.get("startPage"),
+        case.get("business_path") or case.get("businessPath") or case.get("path"),
+        case.get("expected_result") or case.get("expectedResult") or case.get("expected"),
+        case.get("data_requirements") or case.get("dataRequirements") or case.get("test_data") or case.get("testData"),
+        case.get("automation_reason") or case.get("automationReason"),
+        " ".join(normalize_text_list(case.get("preconditions") or case.get("precondition"))),
+        " ".join(normalize_text_list(case.get("steps") or [])),
+        " ".join(normalize_text_list(case.get("assertions") or case.get("expects") or case.get("expected"))),
+        " ".join(normalize_text_list(case.get("tags") or [])),
+    ]
+    return " ".join(str(value or "") for value in values)
+
+
+def _case_manual_block_reason(case: dict) -> str:
+    """判断用例是否不适合直接转成 Runner YAML。
+
+    这里是 AI 筛选后的确定性二次闸门：完整测试设计仍保留在
+    manual_cases / 脑图里，但需要 Mock、造数、系统状态或纯设计稿对比的
+    场景不能直接下发 Runner，避免空闲设备执行一批必失败脚本。
+    """
+    text = _case_execution_text(case)
+    compact = re.sub(r"\s+", "", text).lower()
+    rules = [
+        (("mock", "接口mock", "接口返回", "服务端返回", "后台造数", "数据库", "后台配置", "已配置匹配接口"), "依赖接口 Mock、后台造数或服务端状态，当前 Runner 不能直接准备"),
+        (("断网", "弱网", "网络异常", "破坏网络", "服务器繁忙", "服务端异常", "5xx"), "依赖网络/服务端异常状态，需要测试环境或人工准备"),
+        (("系统权限", "通知权限", "系统通知权限", "系统设置", "权限关闭", "权限预置"), "依赖系统权限或系统设置状态，需要人工准备"),
+        (("未登录态", "切换登录态", "切账号", "退出登录", "首次登录", "新用户首次", "清除缓存", "清数据"), "依赖账号态或本地数据状态切换，不能默认直接执行"),
+        (("排队中", "并发", "并发数", "当前无排队任务", "任务队列", "取消任务"), "依赖队列/并发/异步任务状态，需要后台或人工准备"),
+        (("真实支付", "真实删除", "真实打印完成", "真实外设", "外部app"), "依赖高风险或外部资源，不适合直接自动化"),
+        (("设计稿一致", "与设计稿一致", "视觉还原", "完全一致", "模块排列顺序与设计稿", "figma关键区域", "figma设计稿", "figma一致", "画布尺寸", "node-id", "节点:", "节点："), "属于设计稿对比或视觉验收，Runner 无设计稿上下文时容易误判"),
+    ]
+    for terms, reason in rules:
+        if any(str(term).lower() in compact for term in terms):
+            return reason
+    return ""
+
+
 def _requirement_points_from_payload(payload: dict) -> List[str]:
     analysis = payload.get("analysis") if isinstance(payload, dict) else {}
     points: List[str] = []
@@ -1004,6 +1051,13 @@ def split_automation_ready_cases(payload: Any) -> dict:
     for case in normalized["cases"]:
         if not isinstance(case, dict):
             continue
+        manual_reason = _case_manual_block_reason(case)
+        if manual_reason:
+            item = dict(case)
+            item["reason"] = manual_reason
+            item["suggested_setup"] = item.get("suggested_setup") or item.get("setup") or "保留到完整测试用例/脑图，准备好数据、Mock 或环境后再人工转自动化"
+            manual.append(item)
+            continue
         steps = normalize_text_list(case.get("steps") or [])
         if not steps:
             manual.append({
@@ -1058,12 +1112,15 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
     if not app_package:
         return []
     mode = runtime_guard_mode()
-    flows = external_activity_cleanup_flow(indent) + [
+    flows = []
+    if mode == "strict":
+        flows.extend(external_activity_cleanup_flow(indent))
+    flows.extend([
         indent + "- runAdbShell: " + yaml_text("am force-stop " + app_package),
         indent + "- sleep: 1500",
         indent + "- launch: " + app_package,
         indent + "- sleep: 3000",
-    ]
+    ])
     if mode == "strict" or evidence_needs_popup_guard(evidence_text):
         flows.extend([
             indent + "- ai: " + yaml_text("如果出现权限弹窗、升级弹窗、广告弹窗、活动弹窗或引导浮层，优先点击允许、知道了、稍后、跳过、关闭或右上角关闭按钮；没有弹窗就继续"),
@@ -1320,17 +1377,12 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
     if app_package:
         flows.extend(launch_guard_flow(flow_indent + "  ", app_package))
 
-    for item in preconditions[:8]:
+    for item in normalized_steps[:12]:
         text = str(item).strip()
-        if text:
-            flows.append(flow_indent + "  - ai: " + yaml_text(f"确认前置条件：{text}"))
-
-    for item in normalized_steps[:40]:
-        text = str(item).strip()
-        if text:
+        if text and not text.startswith("确认前置条件"):
             flows.extend(flow_lines_for_step(flow_indent + "  ", text))
 
-    for item in assertions[:20]:
+    for item in assertions[:4]:
         text = str(item).strip()
         if text:
             if ENABLE_ASSERT_WAITFOR:

@@ -1361,6 +1361,82 @@ def _runner_precheck_should_warn_risk(run, hit_kw):
     return True
 
 
+def _agent_job_log_tail(value, limit=420):
+    text = str(value or "").replace("\r\n", "\n").strip()
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines:
+        text = " / ".join(lines[-6:])
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > limit:
+        return "..." + text[-limit:]
+    return text
+
+
+def _agent_job_field(job, snake_key, camel_key=None):
+    if not isinstance(job, dict):
+        return ""
+    if snake_key in job and job.get(snake_key) not in (None, ""):
+        return job.get(snake_key)
+    if camel_key and camel_key in job and job.get(camel_key) not in (None, ""):
+        return job.get(camel_key)
+    return ""
+
+
+def _agent_job_failure_reason(job):
+    candidates = [
+        ("error", None, "错误"),
+        ("report_upload_error", "reportUploadError", "报告上传"),
+        ("report_missing_reason", "reportMissingReason", "报告缺失"),
+        ("upload_warning", "uploadWarning", "报告警告"),
+        ("stderr_tail", "stderrTail", "Runner 错误"),
+        ("progress_message", "progressMessage", "执行进度"),
+        ("stdout_tail", "stdoutTail", "Runner 日志"),
+    ]
+    status = str(_agent_job_field(job, "status") or "").strip()
+    for snake_key, camel_key, label in candidates:
+        reason = _agent_job_log_tail(_agent_job_field(job, snake_key, camel_key))
+        if not reason:
+            continue
+        if snake_key == "progress_message" and reason.lower() in {"failed", "fail", "error", "timeout"}:
+            continue
+        return f"{label}: {reason}"
+    if status:
+        return f"Runner 回传状态：{status}"
+    return "Runner 已回传失败，但未带具体错误；请打开报告或查看 Runner 控制台日志。"
+
+
+def _agent_job_failure_target(job):
+    task_name = _agent_job_field(job, "target_task_name", "targetTaskName") or _agent_job_field(job, "current_task_name", "currentTaskName")
+    module = str(_agent_job_field(job, "module") or "").strip()
+    file_name = str(_agent_job_field(job, "file") or "").strip()
+    if task_name:
+        return str(task_name)
+    if module or file_name:
+        return "/".join(part for part in (module, file_name) if part)
+    return str(_agent_job_field(job, "job_id", "jobId") or "Runner 任务")
+
+
+def _agent_job_failure_reasons(jobs, limit=5):
+    reasons = []
+    for job in jobs or []:
+        if not isinstance(job, dict):
+            continue
+        reasons.append({
+            "jobId": _agent_job_field(job, "job_id", "jobId"),
+            "target": _agent_job_failure_target(job),
+            "reason": _agent_job_failure_reason(job),
+            "status": _agent_job_field(job, "status"),
+            "runnerId": _agent_job_field(job, "runner_id", "runnerId"),
+            "deviceId": _agent_job_field(job, "device_id", "deviceId"),
+            "reportUrl": _agent_job_field(job, "report_url", "reportUrl"),
+        })
+        if len(reasons) >= limit:
+            break
+    return reasons
+
+
 def _ai_gateway_available():
     """检查 AI Gateway 是否可用。"""
     try:
@@ -6709,6 +6785,13 @@ def _tool_run_sonic(run):
                 "timeout": wait_result["timeout"],
                 "waitTimeoutSeconds": wait_timeout,
             }
+            failure_reasons = _agent_job_failure_reasons(
+                list(wait_result.get("failed") or []) + list(wait_result.get("timeout") or []),
+                limit=8,
+            )
+            if failure_reasons:
+                run_artifacts["jobFailureReasons"] = failure_reasons
+                run_artifacts["jobResult"]["failureReasons"] = failure_reasons
 
             if wait_result["timeout"]:
                 call["status"] = "PARTIAL_FAILED"
@@ -6719,6 +6802,18 @@ def _tool_run_sonic(run):
                 else:
                     call["status"] = "FAILED"
                 summary_parts.append(f"{len(wait_result['failed'])} 个失败")
+                if failure_reasons:
+                    top_reasons = "；".join(
+                        f"{item.get('target')}: {item.get('reason')}"
+                        for item in failure_reasons[:3]
+                    )
+                    summary_parts.append(f"主要失败原因：{top_reasons}")
+                    attach_diagnosis(call, make_diagnosis(
+                        "Runner 任务执行失败",
+                        "任务已经下发到 Runner；设备空闲只代表可调度，实际失败来自 Runner/Midscene/ADB/YAML 执行回传。",
+                        ["查看失败任务的报告和错误尾巴", "确认手机页面、安装包版本和包名", "修正 YAML 或设备状态后重试"],
+                        failureReasons=failure_reasons,
+                    ))
 
             if wait_result["completed"]:
                 summary_parts.append(f"{len(wait_result['completed'])} 个成功")
