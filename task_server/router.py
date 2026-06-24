@@ -50,6 +50,8 @@ from task_server.services.agent_service import (
     confirm_agent_step,
     create_agent_run,
     get_available_apps,
+    get_agent_run,
+    list_agent_runs,
     load_agent_runs,
 )
 from task_server.services.case_service import (
@@ -1641,9 +1643,8 @@ def _get_runner_jobs_next(handler, qs):
 
 @route_get("/api/agent-runs")
 def _get_agent_runs(handler, qs):
-    with AGENT_RUN_LOCK:
-        runs = load_agent_runs()
-    handler._json({"ok": True, "runs": runs[:20]})
+    limit = safe_int((qs or {}).get("limit", ["20"])[0] if isinstance((qs or {}).get("limit"), list) else (qs or {}).get("limit"), 20)
+    handler._json({"ok": True, "runs": list_agent_runs(limit or 20)})
 
 
 # ── Agent Run 详情（正则匹配）──────────────────────────────────────
@@ -1651,9 +1652,7 @@ def _get_agent_runs(handler, qs):
 @route_get_regex(r"^/api/agent-runs/([^/]+)$")
 def _get_agent_run_detail(handler, qs, match):
     run_id = urllib.parse.unquote(match.group(1))
-    with AGENT_RUN_LOCK:
-        runs = load_agent_runs()
-    run = next((r for r in runs if r.get("runId") == run_id), None)
+    run = get_agent_run(run_id)
     if not run:
         handler._json({"ok": False, "error": "Agent Run 不存在"}, 404)
         return

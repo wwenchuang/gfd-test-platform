@@ -523,7 +523,7 @@ async function renderAgentConfirmPage(options = {}) {
   `;
 }
 
-function selectAgentRun(runId) {
+async function selectAgentRun(runId) {
   const run = agentRuns.find(item => item.runId === runId);
   if (!run) {
     showToast('未找到Agent 运行记录', 'error');
@@ -533,6 +533,17 @@ function selectAgentRun(runId) {
   AppState.currentAgentRun = agentCurrentRun;
   renderAgentCenter();
   showToast('已载入Agent轨迹', 'success');
+  try {
+    const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}`, { timeoutMs: 15000 });
+    const detail = normalizeAgentRun(data.run || data);
+    if (!detail) return;
+    agentCurrentRun = detail;
+    AppState.currentAgentRun = agentCurrentRun;
+    agentRuns = [detail, ...agentRuns.filter(item => item.runId !== detail.runId)].slice(0, 50);
+    renderAgentPageAfterRunUpdate();
+  } catch (e) {
+    showToast(e.message || '读取Agent轨迹详情失败', 'error');
+  }
 }
 
 function renderAgentPageAfterRunUpdate() {

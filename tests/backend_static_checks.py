@@ -4,6 +4,7 @@ import base64
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -334,6 +335,60 @@ def check_agent_requirement_background_delete_is_not_high_risk():
     }
     dangerous_detail = agent_service._evaluate_risk_detail(dangerous_run)
     require(dangerous_detail.get("level") == "HIGH" and dangerous_detail.get("blocking") is True, "Real delete actions in YAML must remain blocking high risk")
+
+
+def check_agent_generation_orphan_recovery():
+    from task_server.services import agent_service, yaml_service
+
+    old_runs_file = agent_service.AGENT_RUNS_FILE
+    old_generate_dir = yaml_service.GENERATE_JOB_DIR
+    old_started_ts = agent_service.AGENT_SERVICE_STARTED_TS
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.AGENT_RUNS_FILE = os.path.join(temp_dir, "agent-runs.json")
+            yaml_service.GENERATE_JOB_DIR = os.path.join(temp_dir, "generate-jobs")
+            os.makedirs(yaml_service.GENERATE_JOB_DIR, exist_ok=True)
+            now_ts = time.time()
+            agent_service.AGENT_SERVICE_STARTED_TS = now_ts
+            stale_text = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now_ts - 30))
+            run = {
+                "runId": "agent-static-orphan",
+                "status": "RUNNING",
+                "currentStep": "GENERATE_YAML",
+                "progress": 30,
+                "target": "AI建模需求验证",
+                "steps": [
+                    {"step": "PLAN", "status": "SUCCESS", "summary": "已规划"},
+                    {"step": "GENERATE_YAML", "status": "RUNNING", "startedAt": stale_text, "summary": "生成中"},
+                    {"step": "VALIDATE_YAML", "status": "PENDING"},
+                    {"step": "RUN_SONIC", "status": "PENDING"},
+                ],
+                "artifacts": {},
+            }
+            agent_service.save_agent_runs([run])
+            yaml_service.save_generate_job({
+                "job_id": agent_service._agent_generate_progress_job_id(run),
+                "type": "agent_generate_yaml",
+                "status": "running",
+                "progress": 65,
+                "step": "视觉校准",
+                "message": "正在校准入口、步骤和断言",
+                "created_at": stale_text,
+                "started_at": stale_text,
+                "updated_at": stale_text,
+            })
+            rows = agent_service.list_agent_runs(limit=5)
+            require(rows and rows[0].get("status") == "FAILED", "Agent list refresh must recover orphaned GENERATE_YAML runs after service restart")
+            recovered = agent_service.get_agent_run("agent-static-orphan")
+            require(recovered.get("status") == "FAILED" and recovered.get("currentStep") == "GENERATE_YAML", "Agent detail refresh must return recovered failed run")
+            pipeline = (recovered.get("artifacts") or {}).get("generationPipeline") or {}
+            require(pipeline.get("interruptedByServiceRestart") is True, "Recovered Agent generation must explain service restart interruption")
+            skipped = [s for s in recovered.get("steps") or [] if s.get("step") == "VALIDATE_YAML"]
+            require(skipped and skipped[0].get("status") == "SKIPPED", "Recovered Agent generation failure must skip dependent steps")
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_runs_file
+        yaml_service.GENERATE_JOB_DIR = old_generate_dir
+        agent_service.AGENT_SERVICE_STARTED_TS = old_started_ts
 
 
 def check_yaml_runner_eligibility_filter():
@@ -689,6 +744,7 @@ def main():
     check_agent_prepared_figma_context_reuse()
     check_agent_risk_detail_explains_source()
     check_agent_requirement_background_delete_is_not_high_risk()
+    check_agent_generation_orphan_recovery()
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()

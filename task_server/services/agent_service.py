@@ -69,6 +69,8 @@ AGENT_RISK_KEYWORDS = HIGH_RISK_KEYWORDS
 
 AUTO_AGENT_RISK_KEYWORDS = AGENT_RISK_KEYWORDS
 
+AGENT_SERVICE_STARTED_TS = time.time()
+
 AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
 
 AGENT_TOOLS = {
@@ -247,6 +249,153 @@ def save_agent_runs(runs):
     write_json_file(AGENT_RUNS_FILE, {"runs": runs})
 
 
+def _agent_parse_time(value):
+    if not value:
+        return 0
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return time.mktime(time.strptime(str(value)[:19], fmt))
+        except Exception:
+            continue
+    return 0
+
+
+def _agent_step_by_name(run, step_name):
+    for step in run.get("steps") or []:
+        if isinstance(step, dict) and step.get("step") == step_name:
+            return step
+    return None
+
+
+def _agent_generation_job_is_orphaned(job):
+    status = str((job or {}).get("status") or "").strip().lower()
+    if status != "running":
+        return False
+    updated_ts = (
+        _agent_parse_time((job or {}).get("updated_at"))
+        or _agent_parse_time((job or {}).get("started_at"))
+        or _agent_parse_time((job or {}).get("created_at"))
+    )
+    return bool(updated_ts and updated_ts < AGENT_SERVICE_STARTED_TS - 5)
+
+
+def _sync_agent_generation_job_state(run):
+    """服务重启或超时后，把共享生成任务状态同步回 Agent timeline。"""
+    if not isinstance(run, dict) or run.get("status") != "RUNNING":
+        return False
+    current_step = str(run.get("currentStep") or "").strip()
+    step = _agent_step_by_name(run, "GENERATE_YAML")
+    if current_step != "GENERATE_YAML" and not (step and step.get("status") == "RUNNING"):
+        return False
+
+    job_id = _agent_generate_progress_job_id(run)
+    try:
+        from task_server.services.yaml_service import load_generate_job, update_generate_job
+        job = load_generate_job(job_id)
+    except Exception:
+        job = None
+        update_generate_job = None
+    if not isinstance(job, dict):
+        return False
+
+    status = str(job.get("status") or "").strip().lower()
+    orphaned = _agent_generation_job_is_orphaned(job)
+    if orphaned and update_generate_job:
+        stage = str(job.get("step") or "生成 YAML").strip()
+        message = (
+            f"{stage}在服务重启后没有恢复后台线程，已停止本次 Agent 生成。"
+            "请重新发起 Agent 或从生成记录重试。"
+        )
+        job = update_generate_job(
+            job_id,
+            status="failed",
+            ok=False,
+            step=f"{stage}中断",
+            message=message,
+            error=message,
+            error_detail={
+                "type": "service_restart_interrupted",
+                "stage": stage,
+                "message": message,
+                "suggestion": "重新发起 Agent；如果是大 Figma/长文档，减少无关页面后重试。",
+            },
+        )
+        status = "failed"
+
+    if status not in ("failed", "timeout", "cancelled"):
+        return False
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    stage = str(job.get("step") or "生成 YAML").strip()
+    message = str(job.get("error") or job.get("message") or f"{stage}未完成").strip()
+    if not message:
+        message = f"{stage}未完成"
+    detail = job.get("error_detail") or job.get("failure_detail") or {}
+    if not isinstance(detail, dict):
+        detail = {"message": str(detail)}
+    if step:
+        step["status"] = "FAILED"
+        step["endedAt"] = now
+        step.setdefault("startedAt", now)
+        step["summary"] = message[:300]
+        step["error"] = message[:500]
+        trace = step.setdefault("liveTrace", [])
+        trace.append({
+            "time": now,
+            "message": message,
+            "status": "FAILED",
+            "progress": job.get("progress"),
+        })
+        del trace[:-30]
+    for later in run.get("steps") or []:
+        if isinstance(later, dict) and later.get("status") == "PENDING":
+            later["status"] = "SKIPPED"
+            later["summary"] = "生成 YAML 未完成，自动跳过后续步骤"
+            later["startedAt"] = now
+            later["endedAt"] = now
+    artifacts = run.setdefault("artifacts", {})
+    pipeline = artifacts.setdefault("generationPipeline", {})
+    pipeline.update({
+        "progressJobId": job_id,
+        "error": message,
+        "errorDetail": detail,
+        "interruptedByServiceRestart": bool(orphaned or detail.get("type") == "service_restart_interrupted"),
+        "jobStatus": status,
+    })
+    artifacts["diagnosis"] = make_diagnosis(
+        "Agent 生成 YAML 后台任务已中断或超时",
+        "当前 Agent 无法继续执行后续 YAML 校验和 Runner 调试。",
+        ["重新发起 Agent", "从生成记录重试", "减少无关 Figma 页面或大文件后重试"],
+        progressJobId=job_id,
+        generationStatus=status,
+        generationStage=stage,
+    )
+    run["status"] = "FAILED"
+    run["currentStep"] = "GENERATE_YAML"
+    run["error"] = message[:500]
+    run["updatedAt"] = now
+    run.setdefault("logs", []).append({
+        "time": now,
+        "message": message,
+    })
+    del run["logs"][:-200]
+    return True
+
+
+def recover_stale_agent_runs(limit=None):
+    """收敛服务重启/超时后遗留的 RUNNING Agent，避免 UI 假运行。"""
+    with AGENT_RUN_LOCK:
+        runs = load_agent_runs()
+        changed = False
+        scan_count = len(runs) if limit is None else max(1, min(len(runs), int(limit or 20)))
+        for run in runs[:scan_count]:
+            if _sync_agent_generation_job_state(run):
+                changed = True
+        if changed:
+            save_agent_runs(runs)
+        return runs
+
+
 def make_diagnosis(root_cause="", impact="", next_actions=None, **extra):
     diagnosis = {
         "rootCause": str(root_cause or "暂未定位根因"),
@@ -268,7 +417,7 @@ def attach_diagnosis(target, diagnosis):
 
 def get_agent_run(run_id):
     """获取单个 Agent 运行详情。"""
-    runs = load_agent_runs()
+    runs = recover_stale_agent_runs()
     return next((r for r in runs if r.get("runId") == run_id), None)
 
 
@@ -8174,12 +8323,14 @@ def list_agent_tools() -> List[Dict[str, Any]]:
 def list_agent_runs(limit: int = 20) -> List[Dict[str, Any]]:
     """带分页的 Agent Run 列表。"""
     limit = max(1, min(200, int(limit or 20)))
-    runs = load_agent_runs()
+    runs = recover_stale_agent_runs(limit=max(limit, 20))
     # 移除 steps 详细信息，仅保留摘要字段
     summaries: List[Dict[str, Any]] = []
     for run in runs:
         if not isinstance(run, dict):
             continue
+        steps = [s for s in (run.get("steps") or []) if isinstance(s, dict)]
+        last_step = next((s for s in reversed(steps) if s.get("summary") or s.get("error")), {})
         summaries.append({
             "runId": run.get("runId", ""),
             "mode": run.get("mode", ""),
@@ -8193,5 +8344,7 @@ def list_agent_runs(limit: int = 20) -> List[Dict[str, Any]]:
             "createdAt": run.get("createdAt", ""),
             "updatedAt": run.get("updatedAt", ""),
             "error": run.get("error"),
+            "summary": run.get("summary") or last_step.get("summary") or last_step.get("error"),
+            "pendingConfirmations": run.get("pendingConfirmations") or [],
         })
     return summaries[:limit]
