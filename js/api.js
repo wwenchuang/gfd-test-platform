@@ -331,7 +331,7 @@ async function readAiGatewayResponse(res) {
 }
 
 async function apiRequest(path, options = {}) {
-  const { skipAuthRedirect, ...rest } = options || {};
+  const { skipAuthRedirect, timeoutMs, ...rest } = options || {};
   const headers = authHeaders(rest.headers || {});
   // FormData 上传不要主动设置 Content-Type，浏览器会自动处理 boundary
   if (rest.body && !(rest.body instanceof FormData) && !headers.has('Content-Type')) {
@@ -345,10 +345,26 @@ async function apiRequest(path, options = {}) {
       && !(rest.body instanceof URLSearchParams)) {
     rest.body = JSON.stringify(rest.body);
   }
-  const res = await nativeFetch(`${API_BASE}${path}`, {
-    ...rest,
-    headers
-  });
+  let timeoutId = null;
+  if (Number(timeoutMs) > 0 && !rest.signal) {
+    const controller = new AbortController();
+    rest.signal = controller.signal;
+    timeoutId = setTimeout(() => controller.abort(), Number(timeoutMs));
+  }
+  let res;
+  try {
+    res = await nativeFetch(`${API_BASE}${path}`, {
+      ...rest,
+      headers
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      throw new Error(`请求超时，请稍后重试：${path}`);
+    }
+    throw e;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
   if (res.status === 401) {
     if (skipAuthRedirect) {
       // 登录页等场景下，由调用方处理 401（避免循环跳转登录页）

@@ -1,6 +1,8 @@
 // agent-status.js
 // Extracted from task-manager.html (no logic changes).
 
+let agentHistoryRequestSeq = 0;
+
 function agentStatusText(status) {
   const map = {
     START: '未开始',
@@ -307,22 +309,25 @@ function agentRiskDetailHtml(detail = {}, options = {}) {
 async function loadAgentRuns(options = {}) {
   // round 4: 默认只拉最近 10 条 Agent Run，避免一次性渲染大量历史拖慢首屏
   const limit = Number(options.limit) > 0 ? Number(options.limit) : 10;
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 15000;
   try {
     const url = limit ? `/agent-runs?limit=${encodeURIComponent(limit)}` : '/agent-runs';
-    const data = await apiRequest(url);
+    const data = await apiRequest(url, { timeoutMs });
     let runs = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
     // 后端如忽略 limit 参数，前端再兜底截取
     if (limit && runs.length > limit) runs = runs.slice(0, limit);
     agentRuns = runs;
     AppState.loaded.agentRuns = true;
     AppState.agentRuns = agentRuns;
-    renderAgentCenter();
+    if (options.render !== false) renderAgentCenter();
     // round 4: 加载完成后再决定是否开启 Agent 轮询
     if (typeof maybeAdjustAgentPolling === 'function') {
       maybeAdjustAgentPolling(activeWorkflow);
     }
+    return agentRuns;
   } catch(e) {
-    // silently ignore
+    AppState.loaded.agentRuns = false;
+    throw e;
   }
 }
 
@@ -362,19 +367,22 @@ function maybeAdjustAgentPolling(sectionKey) {
 
 async function loadAgentRunsHistory() {
   // round 4: 历史页主动加载更多（最多 50 条），避免点击“查看历史”仍只看见 10 条
+  const requestSeq = ++agentHistoryRequestSeq;
   renderAgentHistoryPage({ loading: true });
   try {
-    await loadAgentRuns({ limit: 50, force: true });
+    await loadAgentRuns({ limit: 50, force: true, render: false, timeoutMs: 15000 });
+    if (requestSeq !== agentHistoryRequestSeq || activeWorkflow !== 'agent_history') return;
     AppState.loaded.agentRuns = true;
     if (agentRuns.length) {
       showToast(`已加载 ${agentRuns.length} 条Agent 运行记录`, 'success');
     } else {
       showToast('暂无 Agent 运行记录', 'info');
     }
-  } catch (e) {
-    showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
-  } finally {
     renderAgentHistoryPage();
+  } catch (e) {
+    if (requestSeq !== agentHistoryRequestSeq || activeWorkflow !== 'agent_history') return;
+    showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
+    renderAgentHistoryPage({ error: e.message || '读取Agent历史失败，请确认后端接口已部署' });
   }
 }
 
@@ -422,18 +430,34 @@ function agentRunLoadingHtml(text = '正在刷新 Agent 运行记录...') {
   </div>`;
 }
 
+function agentRunErrorHtml(message = '读取Agent历史失败，请确认后端接口已部署') {
+  return `<div class="workflow-card agent-run-history-card failed">
+    <div class="agent-run-card-head">
+      <span class="status-pill warn">加载失败</span>
+      <span class="muted">运行记录没有刷新成功</span>
+    </div>
+    <div class="agent-run-title">无法加载 Agent 运行记录</div>
+    <div class="agent-run-summary">${escapeHtml(message)}</div>
+    <div class="workflow-card-actions">
+      <button class="btn-sm primary" onclick="loadAgentRunsHistory()">重试</button>
+      <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
+    </div>
+  </div>`;
+}
+
 function renderAgentHistoryPage(options = {}) {
   const area = document.getElementById('editor-area');
   if (!area) return;
   const loading = Boolean(options.loading);
+  const error = String(options.error || '').trim();
   const historyHtml = agentRuns.length
     ? agentRuns.map(run => agentRunCardHtml(run)).join('')
-    : (loading ? agentRunLoadingHtml() : renderEmptyState('agent_history'));
+    : (error ? agentRunErrorHtml(error) : (loading ? agentRunLoadingHtml() : renderEmptyState('agent_history')));
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
   document.getElementById('toolbar-help').textContent = '查看Agent历史运行、状态、进度和最后一步摘要。';
-  document.getElementById('file-info').textContent = loading ? 'Agent 运行记录刷新中' : `Agent 运行记录 ${agentRuns.length} 条`;
+  document.getElementById('file-info').textContent = error ? 'Agent 运行记录刷新失败' : (loading ? 'Agent 运行记录刷新中' : `Agent 运行记录 ${agentRuns.length} 条`);
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide">
@@ -598,7 +622,7 @@ async function refreshAgentRun(runId) {
 
 async function refreshAgentRuns(showMessage=false) {
   try {
-    const data = await apiRequest('/agent-runs');
+    const data = await apiRequest('/agent-runs', { timeoutMs: 15000 });
     agentRuns = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
     if (showMessage) showToast('✓ Agent历史已刷新', 'success');
     renderAgentPageAfterRunUpdate();

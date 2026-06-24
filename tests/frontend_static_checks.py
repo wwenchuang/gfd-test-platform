@@ -213,6 +213,8 @@ def main():
     require("renderExecutionPrecheckDetail" in html and "precheck-warnings" in html and "blockers" in html, "Execution precheck detail must show blockers and warnings")
     require("match-keywords" in html and "匹配关键词" in html and "detail.reasons" in html, "Agent match detail must show concrete matched keywords and candidate reasons")
     require("renderAgentHistoryPage" in html and "Agent 运行记录" in html, "Agent history menu must render a dedicated history page")
+    require("agentRunErrorHtml" in html and "无法加载 Agent 运行记录" in html and "请求超时，请稍后重试" in html, "Agent history refresh must show an error/retry state instead of staying in loading")
+    require("agentHistoryRequestSeq" in html and "activeWorkflow !== 'agent_history'" in html and "timeoutMs: 15000" in html, "Agent history refresh must guard stale requests and use a bounded timeout")
     require("renderAgentConfirmPage" in html and "人工确认中心" in html, "Agent confirmation menu must render a dedicated pending-confirmation page")
     require("renderActiveWorkflowPage" in html and "renderAgentHistoryPage(options)" in html and "renderAgentConfirmPage({ refresh: false" in html, "Agent refresh routing must render the current Agent sub-page instead of stale workbench content")
     require("agentRiskDetailFrom" in html and "agentRiskDetailHtml" in html and "风险来源" in html and "触发片段" in html, "Agent high-risk confirmations must show concrete source and triggering snippet")
