@@ -4207,7 +4207,44 @@
     gap: 12px;
   }
   .agent-source-upload-zone {
-    margin: 10px 0 8px;
+    margin: 12px 0 8px;
+    min-height: 76px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 16px;
+    text-align: left;
+    border-color: rgba(34,211,238,.48);
+    background:
+      linear-gradient(135deg, rgba(34,211,238,.12), rgba(20,184,166,.05)),
+      rgba(2, 6, 23, .64);
+    box-shadow: inset 0 0 0 1px rgba(34,211,238,.06);
+  }
+  .agent-source-upload-zone:hover,
+  .agent-source-upload-zone:focus {
+    border-color: var(--accent);
+    background:
+      linear-gradient(135deg, rgba(34,211,238,.18), rgba(20,184,166,.08)),
+      rgba(2, 6, 23, .82);
+  }
+  .agent-source-upload-copy {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+  }
+  .agent-source-upload-copy strong {
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+  }
+  .agent-source-upload-copy span {
+    color: var(--text2);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .agent-source-upload-zone .btn-sm {
+    flex: 0 0 auto;
   }
   .agent-source-file-list {
     max-height: 180px;
@@ -4876,6 +4913,14 @@
     .agent-compact-grid { grid-template-columns: 1fr; }
     .agent-source-grid { grid-template-columns: 1fr; }
     .agent-source-material-head { display: grid; }
+    .agent-source-upload-zone {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .agent-source-upload-zone .btn-sm {
+      justify-content: center;
+      width: 100%;
+    }
     .agent-preflight-strip {
       align-items: flex-start;
       flex-direction: column;

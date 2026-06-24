@@ -3,6 +3,51 @@
 
 // 记录用户手动展开的步骤索引，避免轮询刷新时收起
 const expandedStepIndexes = new Set();
+const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
+const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
+
+function agentDefaultApp() {
+  return {
+    name: DEFAULT_AGENT_APP_NAME,
+    package: DEFAULT_AGENT_APP_PACKAGE,
+    modules: []
+  };
+}
+
+function agentAppsWithDefault(apps) {
+  const list = Array.isArray(apps) ? apps.filter(Boolean) : [];
+  const hasDefault = list.some(app => {
+    const name = String(app.name || '').trim();
+    const packageName = String(app.package || app.appPackage || app.app_package || '').trim();
+    return name === DEFAULT_AGENT_APP_NAME || packageName === DEFAULT_AGENT_APP_PACKAGE;
+  });
+  return hasDefault ? list : [agentDefaultApp(), ...list];
+}
+
+function appendAgentAppOptions(select, apps, preferredValue) {
+  if (!select) return;
+  const currentValue = preferredValue || select.value || DEFAULT_AGENT_APP_NAME;
+  select.innerHTML = '';
+  agentAppsWithDefault(apps).forEach(app => {
+    const opt = document.createElement('option');
+    opt.value = app.name || app.package || '';
+    opt.textContent = app.name || app.package || '未命名应用';
+    opt.dataset.package = app.package || app.appPackage || app.app_package || '';
+    opt.dataset.modules = JSON.stringify(app.modules || []);
+    select.appendChild(opt);
+  });
+  const options = Array.from(select.options);
+  const selectedOption = options.find(o => (
+    o.value === currentValue ||
+    o.dataset.package === currentValue
+  )) || options.find(o => (
+    o.value === DEFAULT_AGENT_APP_NAME ||
+    o.dataset.package === DEFAULT_AGENT_APP_PACKAGE
+  ));
+  if (selectedOption) {
+    select.value = selectedOption.value;
+  }
+}
 
 function normalizeAgentProviderList(data) {
   const source = data?.providers;
@@ -302,7 +347,7 @@ function workflowDashboardHtml() {
                   </select>
                 </label>
                 <div class="agent-form-grid" style="grid-template-columns:1fr 1fr;">
-                  <label class="agent-field"><span>APP 名称</span><select id="dashboard-agent-app"></select></label>
+                  <label class="agent-field"><span>APP 名称</span><select id="dashboard-agent-app"><option value="智小白3D APP" data-package="com.kfb.model" selected>智小白3D APP</option></select></label>
                   <label class="agent-field"><span>平台</span><select id="dashboard-agent-platform"><option value="android">android</option><option value="ios">ios</option></select></label>
                 </div>
               </div>
@@ -405,7 +450,7 @@ async function analyzeDashboardFailure() {
 
 function launchDashboardAgent() {
   const goal = document.getElementById('dashboard-agent-goal')?.value || '';
-  const appName = document.getElementById('dashboard-agent-app')?.value || '智小白3D APP';
+  const appName = document.getElementById('dashboard-agent-app')?.value || DEFAULT_AGENT_APP_NAME;
   const platform = document.getElementById('dashboard-agent-platform')?.value || 'android';
   activeWorkflow = 'agent';
   renderWorkflowNav();
@@ -464,10 +509,8 @@ async function showAgentWorkbench() {
   const area = document.getElementById('editor-area');
   if (!area) return;
 
-  // 确保运行记录已加载（内部有防重复加载逻辑）
-  if (typeof ensureAgentRunsLoaded === 'function') {
-    await ensureAgentRunsLoaded({ limit: 10 });
-  }
+  const shouldHydrateRuns = typeof ensureAgentRunsLoaded === 'function'
+    && (typeof AppState === 'undefined' || !AppState.loaded?.agentRuns);
 
   const run = currentAgentRun();
   const mindmapUrl = agentMindmapDownloadUrl(run);
@@ -532,7 +575,9 @@ async function showAgentWorkbench() {
             <div class="agent-compact-grid">
               <div class="agent-field">
                 <label for="agent-app-name">应用</label>
-                <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()"></select>
+                <select id="agent-app-name" onchange="refreshAgentRunnerDeviceByApp()">
+                  <option value="智小白3D APP" data-package="com.kfb.model" selected>智小白3D APP</option>
+                </select>
               </div>
               <div class="agent-field">
                 <label for="agent-platform">平台</label>
@@ -606,7 +651,11 @@ async function showAgentWorkbench() {
                  ondragleave="handleAgentSourceDragLeave(event)"
                  ondrop="handleAgentSourceDrop(event)"
                  tabindex="0">
-              点击添加需求文档 / 截图，或拖拽、Ctrl/Command + V 粘贴截图/文本
+              <div class="agent-source-upload-copy">
+                <strong>添加需求资料</strong>
+                <span>支持 PDF / Word / Markdown / YAML / 截图；也可以拖拽或粘贴截图、文本。</span>
+              </div>
+              <button class="btn-sm primary" type="button" onclick="event.stopPropagation();document.getElementById('agent-source-file-input').click()">添加资料</button>
               <input type="file" id="agent-source-file-input" accept=".txt,.md,.json,.pdf,.doc,.docx,.mm,.yaml,.yml,.png,.jpg,.jpeg" multiple style="display:none" onchange="handleAgentSourceFiles(this)">
             </div>
             <div class="agent-source-file-list asset-list" id="agent-source-file-list"></div>
@@ -747,6 +796,17 @@ async function showAgentWorkbench() {
       renderAgentRunnerDeviceOptions(savedFormState['agent-runner-device']?.value);
     });
   }
+  if (shouldHydrateRuns) {
+    ensureAgentRunsLoaded({ limit: 10 }).then(() => {
+      if (activeWorkflow !== 'agent' && activeWorkflow !== 'dashboard') return;
+      if (typeof renderAgentCenter === 'function') renderAgentCenter();
+      if (document.getElementById('agent-progress') && typeof updateAgentWorkbenchDynamic === 'function') {
+        updateAgentWorkbenchDynamic();
+      }
+    }).catch(e => {
+      console.warn('Agent 运行记录后台刷新失败', e);
+    });
+  }
   await loadAgentModelOptions(savedFormState['agent-model']?.value);
 }
 
@@ -759,41 +819,14 @@ async function loadAppList(preferredValue) {
     // Populate workbench select
     const workbenchSelect = document.getElementById('agent-app-name');
     if (workbenchSelect) {
-      const currentValue = preferredValue || workbenchSelect.value;
-      workbenchSelect.innerHTML = '';
-      apps.forEach(app => {
-        const opt = document.createElement('option');
-        opt.value = app.name || app.package || '';
-        opt.textContent = app.name || app.package || '未命名应用';
-        opt.dataset.package = app.package || app.appPackage || app.app_package || '';
-        opt.dataset.modules = JSON.stringify(app.modules || []);
-        workbenchSelect.appendChild(opt);
-      });
-      // Restore previous selection if still valid
-      const selectedOption = Array.from(workbenchSelect.options).find(o => o.value === currentValue || o.dataset.package === currentValue);
-      if (selectedOption) {
-        workbenchSelect.value = selectedOption.value;
-      }
+      appendAgentAppOptions(workbenchSelect, apps, preferredValue);
       if (typeof updateAgentRunnerDeviceHint === 'function') updateAgentRunnerDeviceHint();
     }
 
     // Populate dashboard select
     const dashboardSelect = document.getElementById('dashboard-agent-app');
     if (dashboardSelect) {
-      const currentValue = preferredValue || dashboardSelect.value;
-      dashboardSelect.innerHTML = '';
-      apps.forEach(app => {
-        const opt = document.createElement('option');
-        opt.value = app.name || app.package || '';
-        opt.textContent = app.name || app.package || '未命名应用';
-        opt.dataset.package = app.package || app.appPackage || app.app_package || '';
-        opt.dataset.modules = JSON.stringify(app.modules || []);
-        dashboardSelect.appendChild(opt);
-      });
-      const selectedOption = Array.from(dashboardSelect.options).find(o => o.value === currentValue || o.dataset.package === currentValue);
-      if (selectedOption) {
-        dashboardSelect.value = selectedOption.value;
-      }
+      appendAgentAppOptions(dashboardSelect, apps, preferredValue);
     }
   } catch (e) {
     console.error('加载应用列表失败', e);
@@ -2160,7 +2193,7 @@ function setAgentTab(tab) {
 
 function agentPayloadFromForm(options={}) {
   let goal = document.getElementById('agent-goal')?.value.trim() || '';
-  const appName = document.getElementById('agent-app-name')?.value.trim() || '智小白3D APP';
+  const appName = document.getElementById('agent-app-name')?.value.trim() || DEFAULT_AGENT_APP_NAME;
   const platform = document.getElementById('agent-platform')?.value || 'android';
   const scope = document.getElementById('agent-scope')?.value || 'auto';
   const modelInfo = selectedAgentModelInfo();
@@ -2177,7 +2210,7 @@ function agentPayloadFromForm(options={}) {
   const analyzeOnly = selectedMode === 'ANALYZE_ONLY';
   const mode = analyzeOnly ? 'AUTO_SAFE' : (options.yamlOnly ? 'SEMI_AUTO' : selectedMode);
   const riskHits = agentRiskHits(goal);
-  const highRisk = riskHits.some(hit => ['支付', '删除', '覆盖基线', '格式化', '清空', '解绑', '重置'].includes(hit));
+  const highRisk = riskHits.some(hit => ['支付', '删除', '覆盖基线', '格式化', '解绑', '重置'].includes(hit));
   const autoRunEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-runSonic')?.checked && !highRisk;
   const autoRepairEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-autoRepair')?.checked && !highRisk;
   const source = collectAgentSourceRefs();

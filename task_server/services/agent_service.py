@@ -1273,6 +1273,16 @@ def _evaluate_risk(run):
     return "LOW", None
 
 
+def _runner_precheck_should_warn_risk(run, hit_kw):
+    """Runner 单条/多条调试里，部分 UI 清理动作只提醒，不阻断执行。"""
+    if _agent_execution_mode(run) != "RUNNER_JOB":
+        return False
+    hit = str(hit_kw or "").strip()
+    if hit != "清空":
+        return False
+    return True
+
+
 def _ai_gateway_available():
     """检查 AI Gateway 是否可用。"""
     try:
@@ -5786,14 +5796,17 @@ def _tool_execution_precheck(run):
         else:
             add("yaml_strong_validation", True, "已通过强校验")
 
-        try:
-            from task_server.services import sonic_service
-            sonic_service.sonic_request("GET", "/users/list", timeout=5)
-            add("sonic_reachable", True, "Sonic API 可访问")
-        except Exception as exc:
-            add("sonic_reachable", False, f"Sonic API 不可访问：{str(exc)[:180]}", "warning")
+        if should_require_sonic:
+            try:
+                from task_server.services import sonic_service
+                sonic_service.sonic_request("GET", "/users/list", timeout=5)
+                add("sonic_reachable", True, "Sonic API 可访问")
+            except Exception as exc:
+                add("sonic_reachable", False, f"Sonic API 不可访问：{str(exc)[:180]}", "blocker")
+        else:
+            add("sonic_reachable", True, "Runner 调试模式不需要访问 Sonic API，已跳过")
 
-        if file_refs:
+        if file_refs and should_require_sonic:
             try:
                 from task_server.services import sonic_service
                 first_ref = file_refs[0]
@@ -5825,6 +5838,8 @@ def _tool_execution_precheck(run):
                 if not should_require_sonic:
                     detail += "；Runner 调试模式不阻断"
                 add("sonic_project_suite_binding", False, detail, sonic_severity)
+        elif file_refs:
+            add("sonic_project_suite_binding", True, "Runner 调试模式已跳过 Sonic 项目/测试套绑定检查")
 
         public_base = os.getenv("MIDSCENE_PUBLIC_BASE_URL") or os.getenv("TASK_PUBLIC_BASE_URL") or ""
         add("public_base_url", bool(public_base), public_base or "未配置 MIDSCENE_PUBLIC_BASE_URL/TASK_PUBLIC_BASE_URL", "warning")
@@ -5832,62 +5847,65 @@ def _tool_execution_precheck(run):
         token_ok = bool(os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip())
         callback_ok = bool(os.getenv("SONIC_CALLBACK_TOKEN", "").strip())
         add("bridge_token", token_ok, "MIDSCENE_RUNNER_TOKEN 已配置" if token_ok else "MIDSCENE_RUNNER_TOKEN 未配置")
-        add("callback_token", callback_ok, "SONIC_CALLBACK_TOKEN 已配置" if callback_ok else "SONIC_CALLBACK_TOKEN 未配置", "warning")
-        bridge_path = os.getenv("SONIC_BRIDGE_GROOVY_PATH", "/opt/sonic-midscene-task-runner.groovy")
-        bridge_text = read_text_file(bridge_path, "") or read_text_file(os.path.join(os.getcwd(), "sonic-midscene-task-runner.groovy"), "")
-        bridge_has_endpoint = "/api/sonic/bridge-groovy" in bridge_text
-        bridge_has_token = "x-token" in bridge_text
-        # /api/sonic/bridge-groovy 是 Sonic 用例中的 bootstrap 地址；本地完整桥接脚本
-        # 可能只包含真实执行逻辑，不一定包含该 URL。endpoint 另行探测，避免误判。
-        bridge_ok = bool(bridge_text and bridge_has_token)
-        if bridge_ok:
-            bridge_detail = "桥接脚本包含 x-token"
-            if bridge_has_endpoint:
-                bridge_detail += " 和 bridge-groovy"
+        if should_require_sonic:
+            add("callback_token", callback_ok, "SONIC_CALLBACK_TOKEN 已配置" if callback_ok else "SONIC_CALLBACK_TOKEN 未配置", "warning")
+            bridge_path = os.getenv("SONIC_BRIDGE_GROOVY_PATH", "/opt/sonic-midscene-task-runner.groovy")
+            bridge_text = read_text_file(bridge_path, "") or read_text_file(os.path.join(os.getcwd(), "sonic-midscene-task-runner.groovy"), "")
+            bridge_has_endpoint = "/api/sonic/bridge-groovy" in bridge_text
+            bridge_has_token = "x-token" in bridge_text
+            # /api/sonic/bridge-groovy 是 Sonic 用例中的 bootstrap 地址；本地完整桥接脚本
+            # 可能只包含真实执行逻辑，不一定包含该 URL。endpoint 另行探测，避免误判。
+            bridge_ok = bool(bridge_text and bridge_has_token)
+            if bridge_ok:
+                bridge_detail = "桥接脚本包含 x-token"
+                if bridge_has_endpoint:
+                    bridge_detail += " 和 bridge-groovy"
+                else:
+                    bridge_detail += "；本地脚本未包含 bootstrap 地址，已改由 bridge-groovy endpoint 单独探测"
+            elif not bridge_text:
+                bridge_detail = "桥接脚本不存在"
             else:
-                bridge_detail += "；本地脚本未包含 bootstrap 地址，已改由 bridge-groovy endpoint 单独探测"
-        elif not bridge_text:
-            bridge_detail = "桥接脚本不存在"
-        else:
-            bridge_detail = "桥接脚本缺少 x-token"
-        add("bridge_groovy", bridge_ok, bridge_detail, sonic_severity)
-        bridge_case_id = ""
-        try:
-            if file_refs:
-                first_yaml = _yaml_ref_content(file_refs[0])
-                match = re.search(r"baseline\.case_id:\s*([A-Za-z0-9_\\-]+)", first_yaml)
-                bridge_case_id = match.group(1) if match else ""
-        except Exception:
+                bridge_detail = "桥接脚本缺少 x-token"
+            add("bridge_groovy", bridge_ok, bridge_detail, sonic_severity)
             bridge_case_id = ""
-        try:
-            if token_ok:
-                bridge_url = f"http://127.0.0.1:{PORT}/api/sonic/bridge-groovy"
-                if bridge_case_id:
-                    bridge_url += "?case_id=" + urllib.parse.quote(bridge_case_id)
-                resp = http_client.get(
-                    bridge_url,
-                    headers={"x-token": os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()},
-                    timeout=5,
-                    read_limit=2000,
-                )
-                body = resp.body
-                body_hint = body.strip()[:80]
-                body_ok = bool(body.strip()) and (
-                    "Midscene Sonic Bridge" in body
-                    or "bridgeVersion" in body
-                    or "runnerToken" in body
-                    or "/api/sonic/case" in body
-                    or body.lstrip().startswith("import ")
-                    or body.lstrip().startswith("//")
-                )
-                add("bridge_groovy_endpoint", resp.status == 200 and body_ok, f"HTTP {resp.status}，已返回桥接脚本" if body_ok else f"HTTP {resp.status}，响应异常：{body_hint}", sonic_severity)
-            else:
-                add("bridge_groovy_endpoint", False, "MIDSCENE_RUNNER_TOKEN 未配置，无法验证桥接接口", sonic_severity)
-        except Exception as exc:
-            detail = f"桥接接口不可达：{str(exc)[:180]}"
-            if not should_require_sonic:
-                detail += "；Runner 调试模式不阻断"
-            add("bridge_groovy_endpoint", False, detail, sonic_severity)
+            try:
+                if file_refs:
+                    first_yaml = _yaml_ref_content(file_refs[0])
+                    match = re.search(r"baseline\.case_id:\s*([A-Za-z0-9_\\-]+)", first_yaml)
+                    bridge_case_id = match.group(1) if match else ""
+            except Exception:
+                bridge_case_id = ""
+            try:
+                if token_ok:
+                    bridge_url = f"http://127.0.0.1:{PORT}/api/sonic/bridge-groovy"
+                    if bridge_case_id:
+                        bridge_url += "?case_id=" + urllib.parse.quote(bridge_case_id)
+                    resp = http_client.get(
+                        bridge_url,
+                        headers={"x-token": os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()},
+                        timeout=5,
+                        read_limit=2000,
+                    )
+                    body = resp.body
+                    body_hint = body.strip()[:80]
+                    body_ok = bool(body.strip()) and (
+                        "Midscene Sonic Bridge" in body
+                        or "bridgeVersion" in body
+                        or "runnerToken" in body
+                        or "/api/sonic/case" in body
+                        or body.lstrip().startswith("import ")
+                        or body.lstrip().startswith("//")
+                    )
+                    add("bridge_groovy_endpoint", resp.status == 200 and body_ok, f"HTTP {resp.status}，已返回桥接脚本" if body_ok else f"HTTP {resp.status}，响应异常：{body_hint}", sonic_severity)
+                else:
+                    add("bridge_groovy_endpoint", False, "MIDSCENE_RUNNER_TOKEN 未配置，无法验证桥接接口", sonic_severity)
+            except Exception as exc:
+                detail = f"桥接接口不可达：{str(exc)[:180]}"
+                add("bridge_groovy_endpoint", False, detail, sonic_severity)
+        else:
+            add("callback_token", True, "Runner 调试模式不需要 Sonic 回调 Token，已跳过")
+            add("bridge_groovy", True, "Runner 调试模式不使用 Sonic 桥接脚本，已跳过")
+            add("bridge_groovy_endpoint", True, "Runner 调试模式不调用 bridge-groovy，已跳过")
 
         try:
             from task_server.services import runner_service
@@ -5935,19 +5953,22 @@ def _tool_execution_precheck(run):
         risk_level, hit_kw = _evaluate_risk(run)
         high_risk = risk_level == "HIGH"
         if high_risk and not run.get("riskConfirmed"):
-            add("high_risk_confirm", False, f"命中高风险动作：{hit_kw}", "blocker")
-            run["status"] = "WAIT_CONFIRM"
-            run["currentStep"] = "WAIT_CONFIRM"
-            if not any(c.get("type") == "high_risk_action" for c in run.get("pendingConfirmations", [])):
-                run.setdefault("pendingConfirmations", []).append({
-                    "id": f"confirm-{int(time.time())}",
-                    "type": "high_risk_action",
-                    "title": "确认高风险动作",
-                    "action": "confirm_high_risk_action",
-                    "message": f"命中高风险关键词：{hit_kw}，请确认是否继续执行。",
-                    "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "decision": None,
-                })
+            if _runner_precheck_should_warn_risk(run, hit_kw):
+                add("high_risk_confirm", False, f"Runner 调试模式：{hit_kw} 仅提醒，不阻断；如涉及清空数据请人工复核", "warning")
+            else:
+                add("high_risk_confirm", False, f"命中高风险动作：{hit_kw}", "blocker")
+                run["status"] = "WAIT_CONFIRM"
+                run["currentStep"] = "WAIT_CONFIRM"
+                if not any(c.get("type") == "high_risk_action" for c in run.get("pendingConfirmations", [])):
+                    run.setdefault("pendingConfirmations", []).append({
+                        "id": f"confirm-{int(time.time())}",
+                        "type": "high_risk_action",
+                        "title": "确认高风险动作",
+                        "action": "confirm_high_risk_action",
+                        "message": f"命中高风险关键词：{hit_kw}，请确认是否继续执行。",
+                        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "decision": None,
+                    })
         else:
             add("high_risk_confirm", True, "无高风险动作" if not high_risk else "已人工确认")
 

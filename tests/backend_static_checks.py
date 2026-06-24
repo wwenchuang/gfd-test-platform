@@ -421,6 +421,8 @@ def main():
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
     require('should_require_sonic = execution_mode == "SONIC_SUITE"' in agent_service_source and 'Runner 调试模式不阻断' in agent_service_source, "Execution precheck must not block Runner jobs on Sonic publish-only checks")
+    require("Runner 调试模式已跳过 Sonic 项目/测试套绑定检查" in agent_service_source and "Runner 调试模式不需要访问 Sonic API" in agent_service_source, "Runner execution precheck must skip Sonic-only gates instead of showing them as failures")
+    require("def _runner_precheck_should_warn_risk" in agent_service_source and "仅提醒，不阻断" in agent_service_source, "Runner execution precheck must warn on benign clear actions without blocking debug execution")
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     require("Runner 调试模式：创建" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain single/multi Runner mode instead of suite execution")
     require('"runnerId": runner_id' in agent_service_source and '"deviceId": device_id' in agent_service_source and '"deviceStrategy": device_strategy' in agent_service_source, "Agent runs must persist selected Runner/device execution target")
