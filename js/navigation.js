@@ -224,6 +224,14 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showAgentWorkbench();
     return;
   }
+  if (sectionKey === 'agent_history' && typeof renderAgentHistoryPage === 'function') {
+    renderAgentHistoryPage();
+    return;
+  }
+  if (sectionKey === 'agent_confirm' && typeof renderAgentConfirmPage === 'function') {
+    renderAgentConfirmPage({ refresh: false });
+    return;
+  }
   if (sectionKey === 'assets' && typeof showAssetsCenter === 'function') {
     showAssetsCenter();
     return;

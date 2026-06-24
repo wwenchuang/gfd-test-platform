@@ -8,7 +8,8 @@ function showAuthedApp() {
   renderWorkflowNav();
   toggleLibrary(false); // Hide library by default, Agent workbench first
   updateContextToolbar();
-  showWorkflowGuide(activeWorkflow);
+  if (typeof renderActiveWorkflowPage === 'function') renderActiveWorkflowPage();
+  else showWorkflowGuide(activeWorkflow);
   // round 4: 首屏只加载 Agent 工作台必需的数据，其它模块进入对应页面再懒加载
   ensureAgentRunsLoaded({ limit: 10 }).catch(() => {});
 }
@@ -43,4 +44,3 @@ async function doLogout() {
   sessionStorage.removeItem('sessionToken');
   location.reload();
 }
-

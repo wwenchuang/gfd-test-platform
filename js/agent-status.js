@@ -274,6 +274,35 @@ function updateAgentRiskHint() {
     : '';
 }
 
+function agentRiskDetailFrom(run = {}, confirmation = {}) {
+  const artifacts = run && run.artifacts ? run.artifacts : {};
+  const detail = (confirmation && confirmation.riskDetail)
+    || (run && run.riskDetail)
+    || (artifacts && artifacts.riskReview)
+    || {};
+  const runRiskHits = Array.isArray(run.riskHits) ? run.riskHits.join('、') : String(run.riskHits || '');
+  return {
+    keyword: String((confirmation && confirmation.riskKeyword) || detail.keyword || runRiskHits || '').trim(),
+    source: String((confirmation && confirmation.riskSource) || detail.source || '').trim(),
+    snippet: String((confirmation && confirmation.riskSnippet) || detail.snippet || '').trim(),
+  };
+}
+
+function agentRiskDetailHtml(detail = {}, options = {}) {
+  const keyword = String(detail.keyword || '').trim();
+  const source = String(detail.source || '').trim();
+  const snippet = String(detail.snippet || '').trim();
+  if (!keyword && !source && !snippet) return '';
+  const cls = options.compact ? 'agent-risk-detail compact' : 'agent-risk-detail';
+  return `
+    <div class="${cls}">
+      ${keyword ? `<div><strong>风险关键词</strong><span>${escapeHtml(keyword)}</span></div>` : ''}
+      ${source ? `<div><strong>风险来源</strong><span>${escapeHtml(source)}</span></div>` : ''}
+      ${snippet ? `<div><strong>触发片段</strong><span>${escapeHtml(snippet)}</span></div>` : ''}
+    </div>
+  `;
+}
+
 
 async function loadAgentRuns(options = {}) {
   // round 4: 默认只拉最近 10 条 Agent Run，避免一次性渲染大量历史拖慢首屏
@@ -333,20 +362,28 @@ function maybeAdjustAgentPolling(sectionKey) {
 
 async function loadAgentRunsHistory() {
   // round 4: 历史页主动加载更多（最多 50 条），避免点击“查看历史”仍只看见 10 条
-  await loadAgentRuns({ limit: 50, force: true });
-  AppState.loaded.agentRuns = true;
-  if (agentRuns.length) {
-    showToast(`已加载 ${agentRuns.length} 条Agent 运行记录`, 'success');
-  } else {
-    showToast('暂无 Agent 运行记录', 'info');
+  renderAgentHistoryPage({ loading: true });
+  try {
+    await loadAgentRuns({ limit: 50, force: true });
+    AppState.loaded.agentRuns = true;
+    if (agentRuns.length) {
+      showToast(`已加载 ${agentRuns.length} 条Agent 运行记录`, 'success');
+    } else {
+      showToast('暂无 Agent 运行记录', 'info');
+    }
+  } catch (e) {
+    showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
+  } finally {
+    renderAgentHistoryPage();
   }
-  renderAgentHistoryPage();
 }
 
 function agentRunCardHtml(run, options = {}) {
   const steps = run.steps || [];
   const confirmations = run.pendingConfirmations || run.confirmations || [];
   const lastStep = steps.slice().reverse().find(step => step.status && step.status !== 'PENDING') || {};
+  const riskConfirmation = confirmations.find(item => item && (item.type === 'high_risk_action' || item.riskDetail || item.riskSource || item.riskSnippet)) || {};
+  const riskDetail = agentRiskDetailFrom(run, riskConfirmation);
   const mode = agentModeText(run.mode || run.options?.mode || '-');
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
   const status = agentStatusText(run.status);
@@ -368,6 +405,7 @@ function agentRunCardHtml(run, options = {}) {
       </div>
       <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
       <div class="agent-run-summary">${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</div>
+      ${agentRiskDetailHtml(riskDetail, { compact: true })}
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
       <div class="workflow-card-actions">
         <button class="btn-sm" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('agent')">查看轨迹</button>
@@ -378,14 +416,24 @@ function agentRunCardHtml(run, options = {}) {
   `;
 }
 
-function renderAgentHistoryPage() {
+function agentRunLoadingHtml(text = '正在刷新 Agent 运行记录...') {
+  return `<div class="workflow-card agent-run-history-card">
+    <div class="loading-inline"><span class="spinner"></span>${escapeHtml(text)}</div>
+  </div>`;
+}
+
+function renderAgentHistoryPage(options = {}) {
   const area = document.getElementById('editor-area');
   if (!area) return;
+  const loading = Boolean(options.loading);
+  const historyHtml = agentRuns.length
+    ? agentRuns.map(run => agentRunCardHtml(run)).join('')
+    : (loading ? agentRunLoadingHtml() : renderEmptyState('agent_history'));
   activeWorkspaceMode = 'agent-history';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> Agent 运行记录';
   document.getElementById('toolbar-help').textContent = '查看Agent历史运行、状态、进度和最后一步摘要。';
-  document.getElementById('file-info').textContent = `Agent 运行记录 ${agentRuns.length} 条`;
+  document.getElementById('file-info').textContent = loading ? 'Agent 运行记录刷新中' : `Agent 运行记录 ${agentRuns.length} 条`;
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide">
@@ -399,25 +447,39 @@ function renderAgentHistoryPage() {
         </div>
       </div>
       <div class="workflow-grid history-grid">
-        ${agentRuns.length ? agentRuns.map(run => agentRunCardHtml(run)).join('') : renderEmptyState('agent_history')}
+        ${historyHtml}
       </div>
     </div>
   `;
 }
 
-async function renderAgentConfirmPage() {
-  await loadAgentRuns({ limit: 50, force: true });
+async function renderAgentConfirmPage(options = {}) {
+  const refresh = options.refresh !== false;
+  if (refresh) {
+    renderAgentConfirmPage({ refresh: false, loading: true });
+    try {
+      await loadAgentRuns({ limit: 50, force: true });
+      AppState.loaded.agentRuns = true;
+    } catch (e) {
+      showToast(e.message || '读取待确认项失败，请确认后端接口已部署', 'error');
+    }
+    return renderAgentConfirmPage({ refresh: false });
+  }
   const area = document.getElementById('editor-area');
   if (!area) return;
+  const loading = Boolean(options.loading);
   const pending = agentRuns.filter(run => {
     const confirmations = run.pendingConfirmations || run.confirmations || [];
     return confirmations.length || /^WAIT_CONFIRM/.test(run.status || '');
   });
+  const confirmHtml = pending.length
+    ? pending.map(run => agentRunCardHtml(run, { confirm: true })).join('')
+    : (loading ? agentRunLoadingHtml('正在刷新待确认项...') : renderEmptyState('agent_confirm'));
   activeWorkspaceMode = 'agent-confirm';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> 待我确认';
   document.getElementById('toolbar-help').textContent = '高风险动作、YAML 草稿、执行 Sonic 和提交飞书缺陷都必须在这里人工确认。';
-  document.getElementById('file-info').textContent = `待确认 ${pending.length} 项`;
+  document.getElementById('file-info').textContent = loading ? '待确认项刷新中' : `待确认 ${pending.length} 项`;
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide">
@@ -431,7 +493,7 @@ async function renderAgentConfirmPage() {
         </div>
       </div>
       <div class="workflow-grid history-grid">
-        ${pending.length ? pending.map(run => agentRunCardHtml(run, { confirm: true })).join('') : renderEmptyState('agent_confirm')}
+        ${confirmHtml}
       </div>
     </div>
   `;
@@ -449,6 +511,31 @@ function selectAgentRun(runId) {
   showToast('已载入Agent轨迹', 'success');
 }
 
+function renderAgentPageAfterRunUpdate() {
+  renderAgentCenter();
+  if (activeWorkflow === 'agent_history') {
+    renderAgentHistoryPage();
+    return;
+  }
+  if (activeWorkflow === 'agent_confirm') {
+    renderAgentConfirmPage({ refresh: false });
+    return;
+  }
+  if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') {
+    if (document.getElementById('agent-goal') && typeof updateAgentWorkbenchDynamic === 'function') {
+      updateAgentWorkbenchDynamic();
+    } else {
+      showAgentWorkbench();
+    }
+    return;
+  }
+  if (typeof renderActiveWorkflowPage === 'function') {
+    renderActiveWorkflowPage({ refresh: false });
+  } else if (typeof renderJobs === 'function') {
+    renderJobs();
+  }
+}
+
 async function confirmAgentStep(runId, confirmationId, decision='confirmed') {
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}/confirm`, {
@@ -461,8 +548,7 @@ async function confirmAgentStep(runId, confirmationId, decision='confirmed') {
       showToast('✓ 已确认', 'success');
       stopAgentPollingIfDone(agentCurrentRun);
     }
-    renderAgentCenter();
-    showAgentWorkbench();
+    renderAgentPageAfterRunUpdate();
   } catch(e) {
     showToast(e.message || '确认失败', 'error');
   }
@@ -481,8 +567,7 @@ async function cancelAgentRunById(runId) {
       agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
       showToast('✓ 已取消', 'success');
     }
-    renderAgentCenter();
-    showAgentWorkbench();
+    renderAgentPageAfterRunUpdate();
   } catch(e) {
     showToast(e.message || '取消失败', 'error');
   }
@@ -502,19 +587,7 @@ async function refreshAgentRun(runId) {
       agentCurrentRun = run;
       agentRuns = [run, ...agentRuns.filter(item => item.runId !== run.runId)].slice(0, 20);
       stopAgentPollingIfDone(run);
-      if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') {
-        // Use lightweight dynamic update when the workbench form is already rendered,
-        // so user input in textarea/inputs is not lost during polling.
-        if (document.getElementById('agent-goal')) {
-          if (typeof updateAgentWorkbenchDynamic === 'function') updateAgentWorkbenchDynamic();
-          else showAgentWorkbench();
-        } else {
-          showAgentWorkbench();
-        }
-      } else {
-        renderJobs();
-      }
-      renderAgentCenter();
+      renderAgentPageAfterRunUpdate();
     }
     return run;
   } catch(e) {
@@ -528,10 +601,7 @@ async function refreshAgentRuns(showMessage=false) {
     const data = await apiRequest('/agent-runs');
     agentRuns = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
     if (showMessage) showToast('✓ Agent历史已刷新', 'success');
-    if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') {
-      if (document.getElementById('agent-goal') && typeof updateAgentWorkbenchDynamic === 'function') updateAgentWorkbenchDynamic();
-      else showAgentWorkbench();
-    } else renderJobs();
+    renderAgentPageAfterRunUpdate();
   } catch(e) {
     if (showMessage) showToast(e.message || '读取Agent历史失败，请确认后端接口已部署', 'error');
   }
@@ -546,9 +616,11 @@ async function confirmAgentRun(action='CONTINUE', confirmationId='', extra={}) {
       body: {confirmationId, action, decision: action, comment: action, ...(extra || {})}
     });
     agentCurrentRun = normalizeAgentRun(data.run || data);
+    if (agentCurrentRun) {
+      agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
+    }
     showToast('✓ 已记录确认', 'success');
-    if (activeWorkflow === 'agent') showAgentWorkbench();
-    else renderJobs();
+    renderAgentPageAfterRunUpdate();
   } catch(e) {
     showToast(e.message || '确认失败', 'error');
   }
@@ -564,9 +636,11 @@ async function cancelAgentRun() {
       body: {reason: 'manual'}
     });
     agentCurrentRun = normalizeAgentRun(data.run || data);
+    if (agentCurrentRun) {
+      agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
+    }
     showToast('✓ Agent 已取消', 'success');
-    if (activeWorkflow === 'agent' || activeWorkflow === 'dashboard') showAgentWorkbench();
-    else renderJobs();
+    renderAgentPageAfterRunUpdate();
   } catch(e) {
     showToast(e.message || '取消失败', 'error');
   }
@@ -719,7 +793,7 @@ function setConfirmCandidateSelection(pcId, checked) {
 function renderConfirmCard(run, pc) {
   const type = pc && pc.type ? String(pc.type) : 'confirm_before_run';
   const meta = CONFIRM_CARD_META[type] || { label: type, icon: '❓', highRisk: false, viewTab: 'plan' };
-  const isHighRisk = !!meta.highRisk || (run && run.riskLevel === 'high');
+  const isHighRisk = !!meta.highRisk || (run && String(run.riskLevel || '').toLowerCase() === 'high');
   const message = pc && pc.message ? String(pc.message) : '';
   const createdAt = pc && pc.createdAt ? String(pc.createdAt).replace('T', ' ').slice(0, 19) : '';
   const pcId = pc && pc.id ? String(pc.id) : '';
@@ -741,6 +815,7 @@ function renderConfirmCard(run, pc) {
   const riskKeyword = pc && pc.riskKeyword ? pc.riskKeyword
     : (run && run.riskKeyword ? run.riskKeyword
     : (run && run.riskHits && run.riskHits.length ? run.riskHits.join('、') : ''));
+  const riskDetail = agentRiskDetailFrom(run || {}, pc || {});
   const impactDescription = pc && pc.impactDescription ? pc.impactDescription : '';
 
   return `
@@ -753,6 +828,7 @@ function renderConfirmCard(run, pc) {
       </div>
       ${pendingAction ? `<div class="confirm-action">Agent 想要：${escapeHtml(String(pendingAction).slice(0, 200))}</div>` : ''}
       ${riskKeyword ? `<div class="confirm-risk">风险原因：命中关键词 "${escapeHtml(riskKeyword)}"</div>` : ''}
+      ${agentRiskDetailHtml(riskDetail)}
       ${impactDescription ? `<div class="confirm-impact">影响：${escapeHtml(String(impactDescription).slice(0, 200))}</div>` : ''}
       ${message ? `<div class="confirm-card-msg">${escapeHtml(message.slice(0, 240))}</div>` : ''}
       ${(type === 'case_retrieval_confirm' || type === 'case_match_uncertain') ? confirmCandidateListHtml(run, pc) : ''}
@@ -1164,6 +1240,23 @@ function setActiveWorkflow(sectionKey, options = {}) {
   if (help) help.textContent = section.help;
   updateContextToolbar();
   if (options.renderGuide && !hasOpenEditor()) showWorkflowGuide(activeWorkflow);
+}
+
+function renderActiveWorkflowPage(options = {}) {
+  if (activeWorkflow === 'dashboard' || activeWorkflow === 'agent') {
+    showAgentWorkbench();
+    return true;
+  }
+  if (activeWorkflow === 'agent_history') {
+    renderAgentHistoryPage(options);
+    return true;
+  }
+  if (activeWorkflow === 'agent_confirm') {
+    renderAgentConfirmPage({ refresh: false, ...(options || {}) });
+    return true;
+  }
+  showWorkflowGuide(activeWorkflow);
+  return false;
 }
 
 function updateWorkbenchPanelMode() {

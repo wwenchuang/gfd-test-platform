@@ -253,6 +253,41 @@ def check_agent_prepared_figma_context_reuse():
         yaml_service.ASSET_DIR = old_asset_dir
 
 
+def check_agent_risk_detail_explains_source():
+    from task_server.services import agent_service
+
+    yaml_text = """android:
+  tasks:
+    - name: "筛选清空提示验证"
+      flow:
+        - launch: com.kfb.model
+        - aiTap: "清空筛选条件"
+        - aiAssert: "筛选条件已恢复默认"
+"""
+    run = {
+        "runId": "agent-static-risk-detail",
+        "target": "筛选条件验证",
+        "executionMode": "RUNNER_JOB",
+        "artifacts": {
+            "yamlRefs": [{
+                "type": "text",
+                "content": yaml_text,
+                "confirmed": False,
+            }]
+        },
+        "steps": [{"step": "EXECUTION_PRECHECK", "status": "RUNNING"}],
+    }
+    detail = agent_service._evaluate_risk_detail(run)
+    require(detail.get("level") == "HIGH" and detail.get("keyword") == "清空", "Agent risk detail must identify the high-risk keyword")
+    require(detail.get("source") == "生成 YAML 草稿" and "清空筛选条件" in detail.get("snippet", ""), "Agent risk detail must explain the source and triggering snippet")
+    agent_service._tool_execution_precheck(run)
+    precheck = run.get("artifacts", {}).get("executionPrecheck") or {}
+    risk_check = next((item for item in precheck.get("checks") or [] if item.get("name") == "high_risk_confirm"), {})
+    require("来源：生成 YAML 草稿" in risk_check.get("detail", "") and "触发片段" in risk_check.get("detail", ""), "Execution precheck must expose risk source and snippet")
+    require(any(item.get("name") == "high_risk_confirm" for item in precheck.get("warnings") or []), "Runner clear actions must warn without blocking")
+    require(not any(item.get("type") == "high_risk_action" for item in run.get("pendingConfirmations") or []), "Runner clear-action warnings must not create a blocking high-risk confirmation")
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -418,12 +453,14 @@ def main():
     require("def _agent_yaml_task_names_for_runner" in agent_service_source and '"task_names": task_names' in agent_service_source and '"target_task_name": target_task_name' in agent_service_source, "Agent Runner jobs must use YAML task names instead of file-name guesses")
     check_agent_fallback_yaml_auto_confirm_split()
     check_agent_prepared_figma_context_reuse()
+    check_agent_risk_detail_explains_source()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
     require('should_require_sonic = execution_mode == "SONIC_SUITE"' in agent_service_source and 'Runner 调试模式不阻断' in agent_service_source, "Execution precheck must not block Runner jobs on Sonic publish-only checks")
     require("Runner 调试模式已跳过 Sonic 项目/测试套绑定检查" in agent_service_source and "Runner 调试模式不需要访问 Sonic API" in agent_service_source, "Runner execution precheck must skip Sonic-only gates instead of showing them as failures")
     require("def _runner_precheck_should_warn_risk" in agent_service_source and "仅提醒，不阻断" in agent_service_source, "Runner execution precheck must warn on benign clear actions without blocking debug execution")
+    require("def _evaluate_risk_detail" in agent_service_source and '"riskDetail"' in agent_service_source and '"riskSource"' in agent_service_source and '"riskSnippet"' in agent_service_source, "Agent high-risk confirmations must include source and snippet details")
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     require("Runner 调试模式：创建" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain single/multi Runner mode instead of suite execution")
     require('"runnerId": runner_id' in agent_service_source and '"deviceId": device_id' in agent_service_source and '"deviceStrategy": device_strategy' in agent_service_source, "Agent runs must persist selected Runner/device execution target")

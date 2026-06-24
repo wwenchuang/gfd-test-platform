@@ -1259,18 +1259,96 @@ def _append_step_trace(run, step, message, **extra):
     _persist_agent_run_snapshot(run)
 
 
-def _evaluate_risk(run):
-    """评估风险等级。"""
-    target = run.get("target", "")
+def _risk_match_snippet(text, keyword, radius=70):
+    compact = re.sub(r"\s+", " ", str(text or "")).strip()
+    keyword = str(keyword or "").strip()
+    if not compact:
+        return ""
+    if not keyword:
+        return compact[: radius * 2]
+    idx = compact.find(keyword)
+    if idx < 0:
+        return compact[: radius * 2]
+    start = max(0, idx - radius)
+    end = min(len(compact), idx + len(keyword) + radius)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(compact) else ""
+    return f"{prefix}{compact[start:end]}{suffix}"
+
+
+def _risk_yaml_source_label(ref):
+    module = str(ref.get("module") or "").strip()
+    file_name = str(ref.get("file") or "").strip()
+    path = str(ref.get("path") or "").strip()
+    ref_type = str(ref.get("type") or "").strip()
+    if module or file_name:
+        joined = "/".join(part for part in (module, file_name) if part)
+        return f"YAML：{joined}"
+    if path:
+        return f"YAML：{os.path.basename(path)}"
+    return "生成 YAML 草稿" if ref_type in ("draft", "text") else "YAML 内容"
+
+
+def _risk_source_items(run):
+    items = []
+    seen = set()
+
+    def push(label, text):
+        value = str(text or "").strip()
+        if not value:
+            return
+        key = (label, value[:500])
+        if key in seen:
+            return
+        seen.add(key)
+        items.append({"source": label, "text": value})
+
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    normalized = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
+    push("测试目标", run.get("target") or run.get("goal") or run.get("summary"))
+    push("需求说明", source_context.get("requirementText") or normalized.get("requirementText") or run.get("requirementText"))
+    push("Figma 文本", source_context.get("figmaText"))
     try:
         for ref in normalize_yaml_refs(run):
-            target += "\n" + _yaml_ref_content(ref)[:5000]
+            push(_risk_yaml_source_label(ref), _yaml_ref_content(ref)[:12000])
     except Exception:
         pass
+    return items
+
+
+def _evaluate_risk_detail(run):
+    """评估风险等级，并返回命中来源，避免只显示一个孤立关键词。"""
+    sources = _risk_source_items(run)
     for kw in AUTO_AGENT_RISK_KEYWORDS:
-        if kw in target:
-            return "HIGH", kw
-    return "LOW", None
+        for item in sources:
+            text = item.get("text") or ""
+            if kw in text:
+                return {
+                    "level": "HIGH",
+                    "keyword": kw,
+                    "source": item.get("source") or "未知来源",
+                    "snippet": _risk_match_snippet(text, kw),
+                }
+    return {"level": "LOW", "keyword": "", "source": "", "snippet": ""}
+
+
+def _risk_detail_summary(detail, fallback_keyword=""):
+    keyword = str((detail or {}).get("keyword") or fallback_keyword or "").strip()
+    if not keyword:
+        return "无高风险动作"
+    source = str((detail or {}).get("source") or "未知来源").strip()
+    snippet = str((detail or {}).get("snippet") or "").strip()
+    summary = f"命中高风险动作：{keyword}；来源：{source}"
+    if snippet:
+        summary += f"；触发片段：{snippet}"
+    return summary
+
+
+def _evaluate_risk(run):
+    """评估风险等级。"""
+    detail = _evaluate_risk_detail(run)
+    return detail.get("level") or "LOW", detail.get("keyword") or None
 
 
 def _runner_precheck_should_warn_risk(run, hit_kw):
@@ -5714,13 +5792,18 @@ def _tool_risk_review(run):
         "input": {"target": run.get("target", "")},
     }
     try:
-        risk_level, hit_kw = _evaluate_risk(run)
+        risk_detail = _evaluate_risk_detail(run)
+        risk_level = risk_detail.get("level") or "LOW"
+        hit_kw = risk_detail.get("keyword")
         run["riskLevel"] = risk_level
+        run["riskDetail"] = risk_detail
+        run.setdefault("artifacts", {})["riskReview"] = risk_detail
         if risk_level == "HIGH":
             run["riskHits"] = [hit_kw] if hit_kw else run.get("riskHits", [])
             call["status"] = "SUCCESS"
-            call["outputSummary"] = f"命中高风险关键词：{hit_kw}"
+            call["outputSummary"] = _risk_detail_summary(risk_detail, hit_kw)
             call["riskLevel"] = "high"
+            call["riskDetail"] = risk_detail
         else:
             run["riskHits"] = []
             call["status"] = "SUCCESS"
@@ -5755,7 +5838,13 @@ def _tool_execution_precheck(run):
             (warnings if severity == "warning" else blockers).append(row)
         try:
             artifacts = run.setdefault("artifacts", {})
-            artifacts["executionPrecheck"] = {"checks": checks, "blockers": blockers, "warnings": warnings, "diagnosis": None}
+            artifacts["executionPrecheck"] = {
+                "checks": checks,
+                "blockers": blockers,
+                "warnings": warnings,
+                "riskReview": artifacts.get("riskReview"),
+                "diagnosis": None,
+            }
             current_step = next((s for s in run.get("steps", []) if s.get("step") == "EXECUTION_PRECHECK"), None)
             if current_step and current_step.get("status") == "RUNNING":
                 _append_step_trace(
@@ -5950,13 +6039,19 @@ def _tool_execution_precheck(run):
         except Exception as exc:
             add("runner_online", False, f"读取 Runner 失败：{str(exc)[:120]}")
 
-        risk_level, hit_kw = _evaluate_risk(run)
+        risk_detail = _evaluate_risk_detail(run)
+        risk_level = risk_detail.get("level") or "LOW"
+        hit_kw = risk_detail.get("keyword")
+        run["riskLevel"] = risk_level
+        run["riskDetail"] = risk_detail
+        artifacts["riskReview"] = risk_detail
         high_risk = risk_level == "HIGH"
         if high_risk and not run.get("riskConfirmed"):
+            risk_summary = _risk_detail_summary(risk_detail, hit_kw)
             if _runner_precheck_should_warn_risk(run, hit_kw):
-                add("high_risk_confirm", False, f"Runner 调试模式：{hit_kw} 仅提醒，不阻断；如涉及清空数据请人工复核", "warning")
+                add("high_risk_confirm", False, f"Runner 调试模式仅提醒，不阻断；{risk_summary}", "warning")
             else:
-                add("high_risk_confirm", False, f"命中高风险动作：{hit_kw}", "blocker")
+                add("high_risk_confirm", False, risk_summary, "blocker")
                 run["status"] = "WAIT_CONFIRM"
                 run["currentStep"] = "WAIT_CONFIRM"
                 if not any(c.get("type") == "high_risk_action" for c in run.get("pendingConfirmations", [])):
@@ -5965,14 +6060,24 @@ def _tool_execution_precheck(run):
                         "type": "high_risk_action",
                         "title": "确认高风险动作",
                         "action": "confirm_high_risk_action",
-                        "message": f"命中高风险关键词：{hit_kw}，请确认是否继续执行。",
+                        "message": f"{risk_summary}。请确认是否继续执行。",
+                        "riskKeyword": hit_kw,
+                        "riskSource": risk_detail.get("source") or "",
+                        "riskSnippet": risk_detail.get("snippet") or "",
+                        "riskDetail": risk_detail,
                         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
                         "decision": None,
                     })
         else:
             add("high_risk_confirm", True, "无高风险动作" if not high_risk else "已人工确认")
 
-        artifacts["executionPrecheck"] = {"checks": checks, "blockers": blockers, "warnings": warnings, "diagnosis": None}
+        artifacts["executionPrecheck"] = {
+            "checks": checks,
+            "blockers": blockers,
+            "warnings": warnings,
+            "riskReview": artifacts.get("riskReview"),
+            "diagnosis": None,
+        }
         if blockers:
             root = "执行前体检未通过"
             if draft_refs and not file_refs:
@@ -7665,14 +7770,23 @@ def _execute_agent_steps(run_id):
                             subsequent["startedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                             subsequent["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             # Post-step: RISK_REVIEW -> check if HIGH risk
-            if step_name == "RISK_REVIEW" and run.get("riskLevel") == "high":
+            if step_name == "RISK_REVIEW" and str(run.get("riskLevel") or "").upper() == "HIGH":
+                risk_detail = run.get("riskDetail") if isinstance(run.get("riskDetail"), dict) else {}
+                risk_keyword = risk_detail.get("keyword") or "、".join(run.get("riskHits", []))
+                if _runner_precheck_should_warn_risk(run, risk_keyword):
+                    continue
                 run["status"] = "WAIT_CONFIRM"
                 run["currentStep"] = "WAIT_CONFIRM"
                 now = time.strftime("%Y-%m-%dT%H:%M:%S")
+                message = _risk_detail_summary(risk_detail, risk_keyword)
                 run.setdefault("pendingConfirmations", []).append({
                     "id": f"confirm-{int(time.time())}",
                     "type": "high_risk_action",
-                    "message": f"命中高风险关键词：{'、'.join(run.get('riskHits', []))}，请确认是否继续",
+                    "message": f"{message}，请确认是否继续",
+                    "riskKeyword": risk_keyword,
+                    "riskSource": risk_detail.get("source") or "",
+                    "riskSnippet": risk_detail.get("snippet") or "",
+                    "riskDetail": risk_detail,
                     "createdAt": now,
                     "decision": None,
                 })

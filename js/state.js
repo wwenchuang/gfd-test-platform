@@ -192,7 +192,7 @@ function agentModeText(value) {
 }
 
 function agentRiskText(value) {
-  return AGENT_RISK_LABELS[String(value || '')] || value || '低';
+  return AGENT_RISK_LABELS[String(value || '').toLowerCase()] || value || '低';
 }
 
 function agentStepLabel(value) {

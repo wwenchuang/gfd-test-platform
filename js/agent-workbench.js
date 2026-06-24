@@ -1696,12 +1696,16 @@ function renderExecutionPrecheckDetail(step, artifacts) {
   const checks = precheck.checks || firstCall.checks || [];
   const blockers = precheck.blockers || firstCall.blockers || [];
   const warnings = precheck.warnings || firstCall.warnings || [];
+  const riskDetail = precheck.riskReview || (artifacts || {}).riskReview || firstCall.riskDetail || {};
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
     { label: '体检项', value: checks.length },
     { label: '阻断', value: blockers.length },
     { label: '提醒', value: warnings.length },
   ]);
+  if (riskDetail.keyword && typeof agentRiskDetailHtml === 'function') {
+    html += agentRiskDetailHtml(riskDetail);
+  }
   if (blockers.length) {
     html += agentReadableList('阻断项', blockers, c => `<b>${escapeHtml(c.name || '')}</b><span>${escapeHtml(c.detail || '')}</span>`);
   }

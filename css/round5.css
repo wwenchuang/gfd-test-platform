@@ -1259,6 +1259,35 @@
   font-size: 12px;
   margin-bottom: 8px;
 }
+.agent-risk-detail {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(251, 191, 36, .35);
+  border-radius: 8px;
+  background: rgba(113, 63, 18, .16);
+  color: #fef3c7;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.agent-risk-detail.compact {
+  margin: 6px 0;
+  padding: 7px 8px;
+}
+.agent-risk-detail > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+.agent-risk-detail strong {
+  color: #fbbf24;
+}
+.agent-risk-detail span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 /* 产物区域 */
 .artifacts-section {

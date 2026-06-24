@@ -419,6 +419,15 @@ async function anyVisible(locator) {
     if (await page.locator('text=演示模式').count()) throw new Error('page incorrectly entered demo mode');
     if (getFileReadCount() !== 0) throw new Error(`dashboard should not read full YAML files during stats warmup, got ${getFileReadCount()}`);
 
+    await page.click('.workflow-step:has-text("运行记录")');
+    await page.waitForSelector('text=Agent 运行记录');
+    if (await page.locator('#agent-goal').isVisible()) throw new Error('Agent history page should not leave the workbench form visible');
+    await page.click('.workflow-step:has-text("待我确认")');
+    await page.waitForSelector('text=人工确认中心');
+    if (await page.locator('#agent-goal').isVisible()) throw new Error('Agent confirmation page should not leave the workbench form visible');
+    await page.click('.workflow-step:has-text("Agent 工作台")');
+    await page.waitForSelector('#agent-goal');
+
     const heroBox = await page.locator('.agent-hero').boundingBox();
     if (!heroBox || heroBox.height < 90 || heroBox.height > 260 || heroBox.width < 700) throw new Error(`dashboard hero layout is suspicious: ${JSON.stringify(heroBox)}`);
     const commandBox = await page.locator('.agent-primary-card').boundingBox();
