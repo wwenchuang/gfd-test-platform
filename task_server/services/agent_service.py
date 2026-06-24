@@ -37,6 +37,7 @@ from task_server.config import (
     dashscope_api_key,
     dashscope_base_url,
     dashscope_text_model,
+    safe_int,
 )
 from task_server.schemas import AGENT_STATE_STEPS, HIGH_RISK_KEYWORDS, MIDSCENE_FLOW_ACTIONS
 from task_server.storage import (
@@ -3237,6 +3238,32 @@ def _agent_source_material_context(run):
     }
 
 
+def _agent_truthy(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "y", "on", "enabled", "启用", "使用", "是"}
+
+
+def _agent_use_saved_knowledge_context(run, refs=None):
+    """Agent 新需求默认只使用本次输入资料，不自动混入历史页面知识。"""
+    refs = refs if isinstance(refs, dict) else {}
+    normalized = _agent_normalized_input(run)
+    source_inputs = _agent_source_inputs(run)
+    containers = (normalized, source_inputs, refs, run if isinstance(run, dict) else {})
+    for data in containers:
+        if not isinstance(data, dict):
+            continue
+        for key in ("useKnowledgeContext", "use_knowledge_context", "includeKnowledge", "include_knowledge"):
+            if key in data:
+                return _agent_truthy(data.get(key))
+        if data.get("knowledge_page_ids") or data.get("knowledgePageIds"):
+            return True
+    return False
+
+
 def _infer_agent_source_type(source_type, material, refs=None):
     source_type = str(source_type or "manual").lower()
     refs = refs if isinstance(refs, dict) else {}
@@ -3329,18 +3356,118 @@ def _agent_prepared_figma_context_path(run):
     return safe_join(AGENT_DRAFT_DIR, f"{_agent_safe_run_file_id(run)}-figma-context.json")
 
 
+def _agent_figma_page_key(item):
+    if not isinstance(item, dict):
+        return ""
+    figma = item.get("figma") or {}
+    for key in (
+        figma.get("node_id"),
+        item.get("node_id"),
+        item.get("page_id"),
+        item.get("pageId"),
+        item.get("screenshot"),
+        item.get("image_name"),
+    ):
+        value = str(key or "").strip()
+        if value:
+            return value
+    return " ".join(str(item.get(key) or "").strip() for key in ("page_name", "route", "description")).strip()
+
+
+def _agent_figma_image_key(item):
+    if not isinstance(item, dict):
+        return ""
+    for key in ("asset_id", "assetId", "name", "image_name", "screenshot"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    image_b64 = str(item.get("base64") or item.get("contentBase64") or "").strip()
+    return image_b64[:96]
+
+
+def _dedupe_agent_figma_pages(items):
+    result = []
+    seen = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        key = _agent_figma_page_key(item)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        result.append(item)
+    return result
+
+
+def _dedupe_agent_figma_images(items):
+    result = []
+    seen = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        image_b64 = item.get("base64") or item.get("contentBase64")
+        if not image_b64:
+            continue
+        key = _agent_figma_image_key(item)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        result.append({
+            **item,
+            "base64": image_b64,
+            "name": item.get("name") or "figma-design.png",
+            "mime": item.get("mime") or "image/png",
+        })
+    return result
+
+
+def _normalize_agent_prepared_figma_context(raw, fallback_figma_url=""):
+    if not isinstance(raw, dict):
+        return {}
+    text_assets = [str(item) for item in (raw.get("textAssets") or raw.get("text_assets") or []) if str(item or "").strip()]
+    used_pages = _dedupe_agent_figma_pages(raw.get("usedPages") or raw.get("used_pages") or [])
+    image_assets = _dedupe_agent_figma_images(raw.get("imageAssets") or raw.get("image_assets") or [])
+    if used_pages and len(image_assets) > len(used_pages):
+        page_image_names = {
+            str(page.get(key) or "").strip()
+            for page in used_pages
+            for key in ("screenshot", "image_name", "name")
+            if str(page.get(key) or "").strip()
+        }
+        matched_images = [item for item in image_assets if str(item.get("name") or "").strip() in page_image_names]
+        image_assets = matched_images or image_assets[:len(used_pages)]
+    ignored_pages = _dedupe_agent_figma_pages(raw.get("ignoredPages") or raw.get("ignored_pages") or [])
+    saved_designs = _dedupe_agent_figma_pages(raw.get("savedDesigns") or raw.get("saved_designs") or [])
+    if not (text_assets or image_assets or used_pages):
+        return {}
+    return {
+        "source": raw.get("source") or "agent_prepare_source",
+        "figmaUrl": raw.get("figmaUrl") or raw.get("figma_url") or fallback_figma_url or "",
+        "textAssets": text_assets,
+        "imageAssets": image_assets,
+        "usedPages": used_pages,
+        "ignoredPages": ignored_pages,
+        "savedDesigns": saved_designs,
+    }
+
+
 def _persist_agent_prepared_figma_context(run, figma_url, text_assets, image_assets, used_pages, ignored_pages, saved_designs):
-    payload = {
+    payload = _normalize_agent_prepared_figma_context({
         "version": 1,
         "source": "agent_prepare_source",
         "figmaUrl": figma_url or "",
-        "textAssets": [str(item) for item in (text_assets or []) if str(item or "").strip()],
-        "imageAssets": [item for item in (image_assets or []) if isinstance(item, dict) and item.get("base64")],
-        "usedPages": [item for item in (used_pages or []) if isinstance(item, dict)],
-        "ignoredPages": [item for item in (ignored_pages or []) if isinstance(item, dict)],
-        "savedDesigns": [item for item in (saved_designs or []) if isinstance(item, dict)],
+        "textAssets": text_assets or [],
+        "imageAssets": image_assets or [],
+        "usedPages": used_pages or [],
+        "ignoredPages": ignored_pages or [],
+        "savedDesigns": saved_designs or [],
+    }, fallback_figma_url=figma_url)
+    payload.update({
+        "version": 1,
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    }
+    })
     path = _agent_prepared_figma_context_path(run)
     write_json_file(path, payload)
     return path, payload
@@ -3355,34 +3482,7 @@ def _agent_prepared_figma_context_from_source(source_context):
         raw = read_json_file(path, default={}) if path else {}
     if not isinstance(raw, dict):
         return {}
-    text_assets = [str(item) for item in (raw.get("textAssets") or raw.get("text_assets") or []) if str(item or "").strip()]
-    image_assets = []
-    for item in raw.get("imageAssets") or raw.get("image_assets") or []:
-        if not isinstance(item, dict):
-            continue
-        image_b64 = item.get("base64") or item.get("contentBase64")
-        if not image_b64:
-            continue
-        image_assets.append({
-            **item,
-            "base64": image_b64,
-            "name": item.get("name") or "figma-design.png",
-            "mime": item.get("mime") or "image/png",
-        })
-    used_pages = [item for item in (raw.get("usedPages") or raw.get("used_pages") or []) if isinstance(item, dict)]
-    ignored_pages = [item for item in (raw.get("ignoredPages") or raw.get("ignored_pages") or []) if isinstance(item, dict)]
-    saved_designs = [item for item in (raw.get("savedDesigns") or raw.get("saved_designs") or []) if isinstance(item, dict)]
-    if not (text_assets or image_assets or used_pages):
-        return {}
-    return {
-        "source": raw.get("source") or "agent_prepare_source",
-        "figmaUrl": raw.get("figmaUrl") or raw.get("figma_url") or source_context.get("figmaUrl") or "",
-        "textAssets": text_assets,
-        "imageAssets": image_assets,
-        "usedPages": used_pages,
-        "ignoredPages": ignored_pages,
-        "savedDesigns": saved_designs,
-    }
+    return _normalize_agent_prepared_figma_context(raw, fallback_figma_url=source_context.get("figmaUrl") or "")
 
 
 def _agent_generate_progress_job_id(run):
@@ -3433,6 +3533,9 @@ def _load_figma_context_for_agent(run, context):
         refs = run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {}
         normalized = _agent_normalized_input(run)
         case_set_id = _source_ref_value(refs, "caseSetId", "case_set_id")
+        reference_limit = max(1, safe_int(normalized.get("figmaReferenceLimit") or refs.get("figmaReferenceLimit") or 36, 36))
+        explicit_max_reference = normalized.get("figmaMaxReferenceLimit") or refs.get("figmaMaxReferenceLimit")
+        max_reference_limit = max(reference_limit, safe_int(explicit_max_reference, reference_limit)) if explicit_max_reference not in (None, "") else reference_limit
         query_text = "\n".join([
             str(run.get("target") or ""),
             str(context.get("requirementText") or ""),
@@ -3442,8 +3545,8 @@ def _load_figma_context_for_agent(run, context):
             "figma_url": figma_url,
             "figma_mode": normalized.get("figmaMode") or refs.get("figmaMode") or "smart",
             "figma_limit": normalized.get("figmaLimit") or refs.get("figmaLimit") or 80,
-            "figma_reference_limit": normalized.get("figmaReferenceLimit") or refs.get("figmaReferenceLimit") or 36,
-            "figma_max_reference_limit": normalized.get("figmaMaxReferenceLimit") or refs.get("figmaMaxReferenceLimit") or 72,
+            "figma_reference_limit": reference_limit,
+            "figma_max_reference_limit": max_reference_limit,
         }
         text_assets, image_assets, used_pages, ignored_pages, saved_designs = load_figma_generation_context(
             request_data,
@@ -3456,7 +3559,7 @@ def _load_figma_context_for_agent(run, context):
         )
         if text_assets:
             context["figmaText"] = "\n\n".join(text_assets)[:12000]
-        prepared_path, _prepared = _persist_agent_prepared_figma_context(
+        prepared_path, prepared = _persist_agent_prepared_figma_context(
             run,
             figma_url,
             text_assets,
@@ -3465,11 +3568,17 @@ def _load_figma_context_for_agent(run, context):
             ignored_pages,
             saved_designs,
         )
+        text_assets = prepared.get("textAssets") or []
+        image_assets = prepared.get("imageAssets") or []
+        used_pages = prepared.get("usedPages") or []
+        ignored_pages = prepared.get("ignoredPages") or []
         context["preparedFigmaContextPath"] = prepared_path
         context["figmaTextAssetCount"] = len(text_assets or [])
-        context["uiDesigns"] = used_pages[:20]
-        context["figmaUsedPages"] = used_pages[:20]
-        context["figmaIgnoredPages"] = ignored_pages[:20]
+        context["uiDesigns"] = used_pages
+        context["figmaUsedPages"] = used_pages
+        context["figmaIgnoredPages"] = ignored_pages
+        context["figmaReferenceLimit"] = reference_limit
+        context["figmaMaxReferenceLimit"] = max_reference_limit
         context["figmaImageAssets"] = [
             {
                 "name": item.get("name") or f"figma-{idx + 1}.png",
@@ -4608,6 +4717,7 @@ def _tool_prepare_source(run):
     refs = run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {}
     source_type = str(run.get("sourceType") or refs.get("sourceType") or "manual").lower()
     material = _agent_source_material_context(run)
+    use_saved_knowledge = _agent_use_saved_knowledge_context(run, refs)
     inferred_source_type = _infer_agent_source_type(source_type, material, refs)
     if inferred_source_type != source_type:
         source_type = inferred_source_type
@@ -4633,6 +4743,7 @@ def _tool_prepare_source(run):
         "figmaImageCount": 0,
         "failedJobText": "",
         "knowledgePages": [],
+        "useSavedKnowledge": use_saved_knowledge,
         "uiDesigns": [],
         "uploadedFiles": [],
         "uploadedImages": [],
@@ -4688,10 +4799,12 @@ def _tool_prepare_source(run):
             elif has_generation_ref:
                 context["warnings"].append("未找到关联生成记录")
             context["figmaUrl"] = _source_ref_value(refs, "figmaUrl", "figma_url")
-            context["knowledgePages"] = _load_knowledge_pages_for_agent(run, f"{run.get('target','')} {context.get('requirementText','')}")
+            if use_saved_knowledge:
+                context["knowledgePages"] = _load_knowledge_pages_for_agent(run, f"{run.get('target','')} {context.get('requirementText','')}")
         else:
             context["requirementText"] = run.get("target", "")
-            context["knowledgePages"] = _load_knowledge_pages_for_agent(run, run.get("target", ""), limit=8)
+            if use_saved_knowledge:
+                context["knowledgePages"] = _load_knowledge_pages_for_agent(run, run.get("target", ""), limit=8)
 
         material_req = material.get("requirementText") or ""
         if material_req:
@@ -4708,6 +4821,7 @@ def _tool_prepare_source(run):
             f"Figma 页面 {len(context.get('figmaUsedPages') or [])} 个，"
             f"忽略 {len(context.get('figmaIgnoredPages') or [])} 个，"
             f"Figma UI 图 {context.get('figmaImageCount') or 0} 张；"
+            f"历史页面知识 {'已启用' if use_saved_knowledge else '未使用'}；"
             f"上传资料 {material.get('fileCount') or 0} 个，其中上传截图 {material.get('imageCount') or 0} 张、"
             f"需求/说明文件 {material.get('requirementFileCount') or 0} 个。"
         )
@@ -4721,7 +4835,7 @@ def _tool_prepare_source(run):
             or context.get("uploadedImages")
         ):
             context["warnings"].append("未找到可用 Figma/UI 资料")
-        if material.get("fileCount") and not context.get("knowledgePages"):
+        if use_saved_knowledge and material.get("fileCount") and not context.get("knowledgePages"):
             context["knowledgePages"] = _load_knowledge_pages_for_agent(
                 run,
                 f"{run.get('target','')} {context.get('requirementText','')}",

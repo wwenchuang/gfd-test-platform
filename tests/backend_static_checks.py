@@ -364,6 +364,42 @@ def check_agent_runner_failure_reason_summary():
     require(reasons[0]["runnerId"] == "win-runner-01" and reasons[0]["deviceId"] == "ecbfd645", "Runner failure summary must keep runner/device")
 
 
+def check_agent_figma_context_defaults():
+    from task_server.services import agent_service, yaml_service
+
+    run = {
+        "runId": "agent-static-figma",
+        "normalizedInput": {
+            "figmaUrl": "https://www.figma.com/design/file/app?node-id=1-2",
+        },
+        "sourceRefs": {},
+    }
+    require(agent_service._agent_use_saved_knowledge_context(run, run.get("sourceRefs")) is False, "Agent new requirement must not use saved page knowledge by default")
+    run["normalizedInput"]["useKnowledgeContext"] = True
+    require(agent_service._agent_use_saved_knowledge_context(run, run.get("sourceRefs")) is True, "Agent must allow explicit saved page knowledge")
+
+    raw = {
+        "figmaUrl": "https://figma.example/design",
+        "textAssets": ["a", "b"],
+        "usedPages": [
+            {"page_id": "p1", "page_name": "页面1", "screenshot": "p1.png", "figma": {"node_id": "1:1"}},
+            {"page_id": "p1-dup", "page_name": "页面1副本", "screenshot": "p1-copy.png", "figma": {"node_id": "1:1"}},
+            {"page_id": "p2", "page_name": "页面2", "screenshot": "p2.png", "figma": {"node_id": "1:2"}},
+        ],
+        "imageAssets": [
+            {"name": "p1.png", "base64": "aaa", "mime": "image/png"},
+            {"name": "p1.png", "base64": "aaa", "mime": "image/png"},
+            {"name": "p2.png", "base64": "bbb", "mime": "image/png"},
+            {"name": "old-extra.png", "base64": "ccc", "mime": "image/png"},
+        ],
+    }
+    prepared = agent_service._normalize_agent_prepared_figma_context(raw)
+    require(len(prepared["usedPages"]) == 2, "Agent prepared Figma pages must dedupe by node id")
+    require(len(prepared["imageAssets"]) == 2, "Agent prepared Figma images must dedupe and not exceed used pages")
+    server_prepared = yaml_service._prepared_figma_context_from_request({"prepared_figma_context": raw})
+    require(len(server_prepared["usedPages"]) == 2 and len(server_prepared["imageAssets"]) == 2, "Server generation must normalize old prepared Figma context")
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -533,6 +569,7 @@ def main():
     check_agent_risk_detail_explains_source()
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
+    check_agent_figma_context_defaults()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -579,6 +616,7 @@ def main():
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source, "Generation/mindmap visual grounding must not feed knowledge screenshots into the visual model")
     require("def _case_manual_block_reason" in yaml_service_source and "接口 Mock" in ai_skill_service_source and "排队/并发状态" in ai_skill_service_source, "YAML generation must keep non-runnable scenario coverage out of Runner YAML")
     require("需求文档是业务真相，Figma 是 UI 参考" in ai_skill_service_source and "需求文档决定本次要覆盖的业务范围" in automation_filter_source, "AI generation must treat requirements as business source of truth and Figma as UI reference")
+    require('"figma_max_reference_limit": max_reference_limit' in agent_service_source and "return False" in agent_service_source and "useSavedKnowledge" in agent_service_source, "Agent Figma parsing must default to current input and avoid saved page knowledge unless explicit")
     require("MIDSCENE_REPLANNING_CYCLE_LIMIT\", 8" in config_source, "Default Midscene replanning limit should be high enough for normal complex UI flows")
     require("mindmap_visual_image_policy" in yaml_service_source, "Mindmap summary must document the visual image policy")
     require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")

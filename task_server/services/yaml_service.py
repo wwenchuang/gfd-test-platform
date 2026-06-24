@@ -3386,6 +3386,49 @@ def _ensure_rich_generation_scope(payload, title, module, requirement_text_asset
     return payload
 
 
+def _prepared_figma_page_key(item):
+    if not isinstance(item, dict):
+        return ""
+    figma = item.get("figma") or {}
+    for key in (
+        figma.get("node_id"),
+        item.get("node_id"),
+        item.get("page_id"),
+        item.get("pageId"),
+        item.get("screenshot"),
+        item.get("image_name"),
+    ):
+        value = str(key or "").strip()
+        if value:
+            return value
+    return " ".join(str(item.get(key) or "").strip() for key in ("page_name", "route", "description")).strip()
+
+
+def _dedupe_prepared_figma_pages(items):
+    result = []
+    seen = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        key = _prepared_figma_page_key(item)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        result.append(item)
+    return result
+
+
+def _prepared_figma_image_key(item):
+    if not isinstance(item, dict):
+        return ""
+    for key in ("asset_id", "assetId", "name", "image_name", "screenshot"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return str(item.get("base64") or item.get("contentBase64") or "").strip()[:96]
+
+
 def _prepared_figma_context_from_request(d):
     raw = d.get("prepared_figma_context") or d.get("preparedFigmaContext") or {}
     if not isinstance(raw, dict):
@@ -3396,6 +3439,7 @@ def _prepared_figma_context_from_request(d):
         if str(item or "").strip()
     ]
     image_assets = []
+    seen_images = set()
     for item in raw.get("imageAssets") or raw.get("image_assets") or []:
         if not isinstance(item, dict):
             continue
@@ -3403,15 +3447,29 @@ def _prepared_figma_context_from_request(d):
         if not image_b64:
             continue
         name = clean_asset_filename(item.get("name") or "figma-design.png")
+        image_key = _prepared_figma_image_key({**item, "name": name})
+        if image_key and image_key in seen_images:
+            continue
+        if image_key:
+            seen_images.add(image_key)
         image_assets.append({
             **item,
             "name": name,
             "mime": item.get("mime") or guess_mime(name),
             "base64": image_b64,
         })
-    used_pages = [item for item in (raw.get("usedPages") or raw.get("used_pages") or []) if isinstance(item, dict)]
-    ignored_pages = [item for item in (raw.get("ignoredPages") or raw.get("ignored_pages") or []) if isinstance(item, dict)]
-    saved_designs = [item for item in (raw.get("savedDesigns") or raw.get("saved_designs") or []) if isinstance(item, dict)]
+    used_pages = _dedupe_prepared_figma_pages(raw.get("usedPages") or raw.get("used_pages") or [])
+    if used_pages and len(image_assets) > len(used_pages):
+        page_image_names = {
+            str(page.get(key) or "").strip()
+            for page in used_pages
+            for key in ("screenshot", "image_name", "name")
+            if str(page.get(key) or "").strip()
+        }
+        matched_images = [item for item in image_assets if str(item.get("name") or "").strip() in page_image_names]
+        image_assets = matched_images or image_assets[:len(used_pages)]
+    ignored_pages = _dedupe_prepared_figma_pages(raw.get("ignoredPages") or raw.get("ignored_pages") or [])
+    saved_designs = _dedupe_prepared_figma_pages(raw.get("savedDesigns") or raw.get("saved_designs") or [])
     if not (text_assets or image_assets or used_pages):
         return {}
     return {
