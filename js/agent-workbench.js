@@ -343,7 +343,7 @@ function workflowDashboardHtml() {
           <div>
             <div class="workflow-kicker">自动化 Agent · 自动规划 / 执行测试 / 失败分析 / 安全重跑</div>
             <h2>全自动 Agent 工作台</h2>
-            <p>输入测试目标后，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复草稿、重跑和报告沉淀；高风险动作进入人工确认。</p>
+            <p>输入测试目标后，Agent 自动完成用例选择、YAML 生成、Runner 执行、失败分析、修复草稿、重跑和报告沉淀；测试机业务风险只提醒，平台级写操作才人工确认。</p>
             <div class="agent-form-grid" style="margin-top:14px;">
               <label class="agent-field">
                 <span>你想让 Agent 测什么</span>
@@ -2296,9 +2296,9 @@ function agentPayloadFromForm(options={}) {
   const analyzeOnly = selectedMode === 'ANALYZE_ONLY';
   const mode = analyzeOnly ? 'AUTO_SAFE' : (options.yamlOnly ? 'SEMI_AUTO' : selectedMode);
   const riskHits = agentRiskHits(goal);
-  const highRisk = riskHits.some(hit => ['支付', '删除', '覆盖基线', '格式化', '解绑', '重置'].includes(hit));
-  const autoRunEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-runSonic')?.checked && !highRisk;
-  const autoRepairEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-autoRepair')?.checked && !highRisk;
+  const platformRisk = riskHits.some(hit => ['覆盖基线', '批量同步', '批量执行'].includes(hit));
+  const autoRunEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-runSonic')?.checked && !platformRisk;
+  const autoRepairEnabled = !options.yamlOnly && !!document.getElementById('agent-policy-autoRepair')?.checked && !platformRisk;
   const source = collectAgentSourceRefs();
   if (sourceMaterials.figmaUrl && !source.sourceRefs.figmaUrl) {
     source.sourceRefs.figmaUrl = sourceMaterials.figmaUrl;
@@ -2334,7 +2334,7 @@ function agentPayloadFromForm(options={}) {
     testCase: goal,
     autoRun: autoRunEnabled,
     autoRepair: autoRepairEnabled,
-    autoCreateBug: mode === 'FULL_AUTO' && !!document.getElementById('agent-policy-bugDraft')?.checked && !highRisk,
+    autoCreateBug: mode === 'FULL_AUTO' && !!document.getElementById('agent-policy-bugDraft')?.checked && !platformRisk,
     autoOverwriteBaseline: false,
     maxRetries: 2,
     requireConfirmBeforePrint: riskHits.includes('确认打印') || riskHits.includes('开始打印'),
@@ -2344,7 +2344,7 @@ function agentPayloadFromForm(options={}) {
       generateYaml: true,
       validateYaml: !!document.getElementById('agent-policy-validateYaml')?.checked,
       runSonic: autoRunEnabled,
-      safeRerun: !!document.getElementById('agent-policy-safeRerun')?.checked && !highRisk,
+      safeRerun: !!document.getElementById('agent-policy-safeRerun')?.checked && !platformRisk,
       bugDraftOnly: !!document.getElementById('agent-policy-bugDraft')?.checked,
       yamlOnly: Boolean(options.yamlOnly)
     }
@@ -2385,7 +2385,7 @@ async function previewAgentPlan() {
           '5. 通过 Windows/Mac Runner 执行已确认 YAML',
           '6. 收集报告并分析失败',
           '7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿',
-          '8. 高风险或不确定动作进入待确认',
+          '8. 测试机业务风险只提醒；平台级写操作进入待确认',
           '9. 生成总结报告'
         ])
       ];
@@ -2412,7 +2412,7 @@ async function startAgentRun(options={}) {
   }
   const riskHits = agentRiskHits(payload.goal);
   if (riskHits.length) {
-    showToast(`已识别风险词：${riskHits.join('、')}，Agent 会进入人工确认节点`, 'warn');
+    showToast(`已识别风险词：${riskHits.join('、')}，Runner 测试机执行只提醒不阻断；平台级写操作仍需确认`, 'warn');
   }
 
   // Disable button during request to prevent double-click

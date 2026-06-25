@@ -272,7 +272,7 @@ function updateAgentRiskHint() {
   const hits = agentRiskHits(input.value);
   hint.classList.toggle('show', hits.length > 0);
   hint.textContent = hits.length
-    ? `命中高风险关键词：${hits.join('、')}。Agent 会在执行前进入人工确认。`
+    ? `命中风险关键词：${hits.join('、')}。Runner 测试机执行只提醒不阻断；平台级写操作仍需人工确认。`
     : '';
 }
 
@@ -652,15 +652,15 @@ async function renderAgentConfirmPage(options = {}) {
   activeWorkspaceMode = 'agent-confirm';
   resetYamlToolbarForManager();
   document.getElementById('toolbar-path').innerHTML = '<span>⌂</span> 待我确认';
-  document.getElementById('toolbar-help').textContent = '高风险动作、YAML 草稿、执行 Sonic 和提交飞书缺陷都必须在这里人工确认。';
+  document.getElementById('toolbar-help').textContent = 'YAML 草稿、平台级写操作、执行 Sonic 套件和提交飞书缺陷会在这里等待确认；Runner 测试机业务风险只提醒不阻断。';
   document.getElementById('file-info').textContent = loading ? '待确认项刷新中' : `待确认 ${pending.length} 项`;
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="workflow-guide">
       <div class="workflow-hero">
-        <div class="workflow-kicker">人工确认中心 · 草稿确认 / 高风险动作 / 缺陷提交</div>
+        <div class="workflow-kicker">人工确认中心 · 草稿确认 / 平台级高风险 / 缺陷提交</div>
         <h2>待我确认</h2>
-        <p>Agent只有在这里获得明确确认后，才会继续同步至 Sonic 平台、执行高风险动作或提交缺陷草稿。</p>
+        <p>Agent只有在这里获得明确确认后，才会继续处理 YAML 草稿、平台级写操作、Sonic 套件或缺陷草稿；测试机业务风险不在这里阻断。</p>
         <div class="workflow-card-actions">
           <button class="btn-sm primary" onclick="renderAgentConfirmPage()">刷新确认项</button>
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回Agent 工作台</button>
@@ -891,7 +891,7 @@ const CONFIRM_CARD_META = {
   case_retrieval_confirm: { label: '确认复用用例', icon: '🔎', highRisk: false, viewTab: 'cases' },
   case_match_uncertain: { label: '确认用例来源', icon: '❔', highRisk: false, viewTab: 'cases' },
   generated_yaml_draft: { label: '确认 YAML 草稿', icon: '📝', highRisk: false, viewTab: 'yaml' },
-  high_risk_action: { label: '高风险动作', icon: '⚠️', highRisk: true, viewTab: 'plan' },
+  high_risk_action: { label: '平台级高风险', icon: '⚠️', highRisk: true, viewTab: 'plan' },
   apply_repair: { label: 'YAML 修复草稿', icon: '🛠', highRisk: false, viewTab: 'repair' },
   confirm_apply_yaml: { label: 'YAML 修复草稿', icon: '🛠', highRisk: false, viewTab: 'repair' },
   confirm_baseline_update: { label: '覆盖基线', icon: '📌', highRisk: true, viewTab: 'yaml' },
@@ -1041,7 +1041,7 @@ function confirmAgentRunAction(action, pcId, type, highRisk) {
     if (typeof openRiskConfirmModal === 'function') {
       openRiskConfirmModal({
         action: action,
-        message: type ? `即将执行：${type}` : '请确认执行高风险动作',
+        message: type ? `即将执行：${type}` : '请确认执行平台级高风险动作',
         onConfirm: () => {
           if (typeof confirmAgentRun === 'function') confirmAgentRun(action, pcId, extra);
         }
@@ -1058,7 +1058,7 @@ function confirmAgentRunAction(action, pcId, type, highRisk) {
 let riskConfirmCallback = null;
 
 function openRiskConfirmModal(opts = {}) {
-  const action = opts.action || '高风险动作';
+  const action = opts.action || '平台级高风险动作';
   const message = opts.message || '该操作可能会影响线上数据/真实环境，请仔细确认。';
   const keywords = Array.isArray(opts.keywords) && opts.keywords.length
     ? opts.keywords

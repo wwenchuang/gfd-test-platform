@@ -603,7 +603,7 @@ def advance_agent_run(run_id):
     """推进 Agent 运行状态机。
 
     启动后台线程执行步骤，与 midscene-upload.py 保持一致。
-    高风险目标会进入 WAIT_CONFIRM 状态等待人工确认。
+    Runner 测试机执行遇到业务风险词只提醒；平台级写操作仍进入 WAIT_CONFIRM。
     """
     with AGENT_RUN_LOCK:
         runs = load_agent_runs()
@@ -648,7 +648,7 @@ def preview_agent_plan(payload):
             "5. 通过 Windows/Mac Runner 执行已确认 YAML",
             "6. 收集报告并分析失败",
             "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
-            "8. 高风险动作进入 WAIT_CONFIRM",
+            "8. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
             "9. 生成总结报告",
         ],
     }
@@ -1302,6 +1302,11 @@ def tool_requires_confirm(tool_def, run):
     if tool_def.get("requiresConfirm"):
         return True
     if run.get("riskHits") and tool_def.get("write"):
+        tool_name = str(tool_def.get("name") or "").strip()
+        if _agent_execution_mode(run) == "RUNNER_JOB" and tool_name in {
+            "create_runner_job", "run_midscene_task", "retry_failed_job", "save_repair_draft"
+        }:
+            return False
         return True
     risk = tool_def.get("riskLevel", "low")
     perm = AGENT_PERMISSION_LEVELS.get(
@@ -1540,7 +1545,7 @@ def _risk_hit_is_requirement_background(keyword, source, snippet):
     kw = str(keyword or "").strip()
     src = str(source or "").strip()
     text = str(snippet or "").strip()
-    if kw != "删除" or src not in ("需求说明", "测试目标"):
+    if kw != "删除" or src not in ("需求说明", "测试目标", "Figma 文本"):
         return False
     compact = re.sub(r"\s+", "", text)
     action_markers = (
@@ -1582,11 +1587,15 @@ def _evaluate_risk(run):
 
 
 def _runner_precheck_should_warn_risk(run, hit_kw):
-    """Runner 单条/多条调试里，部分 UI 清理动作只提醒，不阻断执行。"""
+    """Runner 测试机执行的业务风险词只提醒，不阻断。
+
+    这里处理的是 App 内的测试步骤（例如删除旧模块、清空筛选、重置表单）。
+    覆盖基线、批量同步 Sonic、应用修复等平台级写操作仍由对应确认入口拦截。
+    """
     if _agent_execution_mode(run) != "RUNNER_JOB":
         return False
     hit = str(hit_kw or "").strip()
-    if hit != "清空":
+    if not hit:
         return False
     return True
 
@@ -2698,7 +2707,7 @@ def _tool_agent_plan(run):
                         "4. 通过 Windows/Mac Runner 执行已确认 YAML",
                         "5. 收集报告并分析失败",
                         "6. 生成修复草稿或缺陷草稿",
-                        "7. 高风险动作进入 WAIT_CONFIRM",
+                        "7. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
                         "8. 生成总结报告",
                     ]
                 plan = {
@@ -2725,7 +2734,7 @@ def _tool_agent_plan(run):
                         "4. 通过 Windows/Mac Runner 执行已确认 YAML",
                         "5. 收集报告并分析失败",
                         "6. 生成修复草稿或缺陷草稿",
-                        "7. 高风险动作进入 WAIT_CONFIRM",
+                        "7. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
                         "8. 生成总结报告",
                     ],
                     "mode": run.get("mode", "AUTO_SAFE"),
@@ -2746,7 +2755,7 @@ def _tool_agent_plan(run):
                     "4. 通过 Windows/Mac Runner 执行已确认 YAML",
                     "5. 收集报告并分析失败",
                     "6. 生成修复草稿或缺陷草稿",
-                    "7. 高风险动作进入 WAIT_CONFIRM",
+                    "7. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
                     "8. 生成总结报告",
                 ],
                 "mode": run.get("mode", "AUTO_SAFE"),
@@ -2765,7 +2774,7 @@ def _tool_agent_plan(run):
             ],
             "safetyGates": [
                 "YAML 强校验",
-                "高风险动作确认",
+                "平台级高风险确认",
                 "Runner/Sonic/Bridge 执行前体检",
                 "草稿或未确认 YAML 禁止自动执行",
             ],
@@ -6421,7 +6430,10 @@ def _tool_risk_review(run):
         if risk_level == "HIGH":
             run["riskHits"] = [hit_kw] if hit_kw else run.get("riskHits", [])
             call["status"] = "SUCCESS"
-            call["outputSummary"] = _risk_detail_summary(risk_detail, hit_kw)
+            summary_text = _risk_detail_summary(risk_detail, hit_kw)
+            if _runner_precheck_should_warn_risk(run, hit_kw):
+                summary_text = f"Runner 测试机风险提示，不阻断执行；{summary_text}"
+            call["outputSummary"] = summary_text
             call["riskLevel"] = "high"
             call["riskDetail"] = risk_detail
         else:
@@ -6679,7 +6691,7 @@ def _tool_execution_precheck(run):
                     run.setdefault("pendingConfirmations", []).append({
                         "id": f"confirm-{int(time.time())}",
                         "type": "high_risk_action",
-                        "title": "确认高风险动作",
+                        "title": "确认平台级高风险动作",
                         "action": "confirm_high_risk_action",
                         "message": f"{risk_summary}。请确认是否继续执行。",
                         "riskKeyword": hit_kw,
@@ -6716,7 +6728,7 @@ def _tool_execution_precheck(run):
             call["status"] = "WAIT_CONFIRM" if run.get("status") == "WAIT_CONFIRM" else "FAILED"
             call["error"] = root
             call["outputSummary"] = f"{root}：{blocker_text}" if blocker_text else root
-            next_actions = ["处理体检失败项", "确认 YAML 草稿/高风险动作", "确认 Runner 在线后重试"]
+            next_actions = ["处理体检失败项", "确认 YAML 草稿/平台级高风险动作", "确认 Runner 在线后重试"]
             if any(item["name"] == "runner_online" for item in blockers):
                 next_actions = ["启动 Windows/Mac Runner", "确认 Runner 控制台心跳正常", "刷新 Agent 后重试"]
             elif any(item["name"] in ("bridge_token", "bridge_groovy_endpoint") for item in blockers):

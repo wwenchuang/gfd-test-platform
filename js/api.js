@@ -29,7 +29,7 @@ const WORKFLOW_SECTIONS = {
     subtitle: '全自动 Agent 测试工作台',
     help: '输入测试目标后，Agent 自动完成用例选择、YAML 生成、Sonic 执行、失败分析、修复重跑和报告沉淀。',
     cards: [],
-    checklist: ['输入测试目标，选择范围和模式', '启动后右侧查看进度和确认节点', '高风险动作会停在待确认']
+    checklist: ['输入测试目标，选择范围和模式', '启动后右侧查看进度和确认节点', '测试机业务风险只提醒，平台级操作才确认']
   },
   assets: {
     index: '1',
@@ -78,7 +78,7 @@ const WORKFLOW_SECTIONS = {
     index: '2',
     title: 'AI Agent',
     subtitle: '全自动 Agent 编排生成、校验、执行、失败分析和安全重跑',
-    help: 'Agent 会按测试目标自动规划、生成用例和 YAML、校验、同步执行、分析失败并生成修复草稿；高风险动作会停在确认节点。',
+    help: 'Agent 会按测试目标自动规划、生成用例和 YAML、校验、Runner 执行、分析失败并生成修复草稿；测试机业务风险只提醒，平台级操作才确认。',
     cards: [
       { title: '启动全自动 Agent', text: '输入测试目标后，Agent 自动规划用例、生成 YAML、执行、分析失败、生成修复草稿并按风险策略等待确认。', actions: [
         { label: '打开Agent 工作台', cls: 'primary', fn: 'showAgentWorkbench()' }
@@ -86,7 +86,7 @@ const WORKFLOW_SECTIONS = {
       { title: '查看运行轨迹', text: '每一步都会记录状态、耗时、输入输出摘要、产物和等待确认节点，便于排查全自动链路。', actions: [
         { label: '刷新 Agent 状态', fn: 'refreshAgentRuns(true)' }
       ]},
-      { title: '人工确认节点', text: '高风险动作、基线覆盖、飞书缺陷提交等动作都会停下来等你确认。', actions: [
+      { title: '人工确认节点', text: 'YAML 草稿、基线覆盖、应用修复、飞书缺陷提交等平台级动作会停下来等你确认；测试机里的删除/清空类业务步骤只提示不阻断。', actions: [
         { label: '查看右侧执行中心', fn: 'renderAgentCenter()' }
       ]}
     ],
@@ -267,7 +267,7 @@ const WORKFLOW_SECTIONS = {
     index: '0',
     title: '待我确认',
     subtitle: 'Agent 等待人工确认的事项',
-    help: '高风险动作、修复草稿、基线覆盖等需要人工确认后才能继续。',
+    help: '修复草稿、基线覆盖等平台级写操作需要人工确认后才能继续；测试机业务步骤只做风险提示。',
     cards: [],
     checklist: []
   },

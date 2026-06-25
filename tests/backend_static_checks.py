@@ -288,6 +288,34 @@ def check_agent_risk_detail_explains_source():
     require(any(item.get("name") == "high_risk_confirm" for item in precheck.get("warnings") or []), "Runner clear actions must warn without blocking")
     require(not any(item.get("type") == "high_risk_action" for item in run.get("pendingConfirmations") or []), "Runner clear-action warnings must not create a blocking high-risk confirmation")
 
+    delete_run = {
+        "runId": "agent-static-risk-delete-runner",
+        "target": "删除入口验证",
+        "executionMode": "RUNNER_JOB",
+        "artifacts": {
+            "yamlRefs": [{
+                "type": "text",
+                "content": """android:
+  tasks:
+    - name: "删除旧模块入口验证"
+      flow:
+        - launch: com.kfb.model
+        - aiTap: "删除旧模块入口"
+        - aiAssert: "AI建模入口展示正确"
+""",
+                "confirmed": False,
+            }]
+        },
+        "steps": [{"step": "EXECUTION_PRECHECK", "status": "RUNNING"}],
+    }
+    agent_service._tool_execution_precheck(delete_run)
+    delete_precheck = delete_run.get("artifacts", {}).get("executionPrecheck") or {}
+    require(any(item.get("name") == "high_risk_confirm" for item in delete_precheck.get("warnings") or []), "Runner delete actions must warn without blocking")
+    require(
+        not any(item.get("name") == "high_risk_confirm" for item in delete_precheck.get("blockers") or []),
+        "Runner delete actions must not create a high-risk blocker"
+    )
+
 
 def check_agent_requirement_background_delete_is_not_high_risk():
     from task_server.services import agent_service
@@ -303,11 +331,12 @@ def check_agent_requirement_background_delete_is_not_high_risk():
         "artifacts": {
             "sourceContext": {
                 "requirementText": requirement_text,
+                "figmaText": requirement_text,
             }
         },
     }
     detail = agent_service._evaluate_risk_detail(run)
-    require(detail.get("level") == "LOW", "Requirement background delete wording must not become a blocking high risk")
+    require(detail.get("level") == "LOW", "Requirement/Figma background delete wording must not become a blocking high risk")
     require(detail.get("keyword") == "删除" and detail.get("blocking") is False, "Requirement background delete should be recorded as non-blocking context")
     summary = agent_service._risk_detail_summary(detail)
     require("需求背景关键词" in summary and "不阻断" in summary, "Non-blocking requirement risk summary must be understandable")
@@ -783,7 +812,7 @@ def main():
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
     require('should_require_sonic = execution_mode == "SONIC_SUITE"' in agent_service_source and 'Runner 调试模式不阻断' in agent_service_source, "Execution precheck must not block Runner jobs on Sonic publish-only checks")
     require("Runner 调试模式已跳过 Sonic 项目/测试套绑定检查" in agent_service_source and "Runner 调试模式不需要访问 Sonic API" in agent_service_source, "Runner execution precheck must skip Sonic-only gates instead of showing them as failures")
-    require("def _runner_precheck_should_warn_risk" in agent_service_source and "仅提醒，不阻断" in agent_service_source, "Runner execution precheck must warn on benign clear actions without blocking debug execution")
+    require("def _runner_precheck_should_warn_risk" in agent_service_source and "测试机执行的业务风险词只提醒，不阻断" in agent_service_source, "Runner execution precheck must warn on test-machine business risks without blocking debug execution")
     require("def _evaluate_risk_detail" in agent_service_source and '"riskDetail"' in agent_service_source and '"riskSource"' in agent_service_source and '"riskSnippet"' in agent_service_source, "Agent high-risk confirmations must include source and snippet details")
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     require("Runner 调试模式：创建" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain single/multi Runner mode instead of suite execution")

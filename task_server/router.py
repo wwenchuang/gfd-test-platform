@@ -3995,7 +3995,7 @@ def _post_agent_runs_preview(handler, qs):
                 "5. 通过 Windows/Mac Runner 执行已确认 YAML",
                 "6. 收集报告并分析失败",
                 "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
-                "8. 高风险动作进入 WAIT_CONFIRM",
+                "8. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
                 "9. 生成总结报告"
             ]
         }
