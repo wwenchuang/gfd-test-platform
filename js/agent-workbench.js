@@ -1980,8 +1980,8 @@ function renderAgentTimeline(run) {
   const items = AGENT_TIMELINE_STEPS.map(([key, label], idx) => {
     const data = timelineStepData(key, run) || {};
     let status = normalizeTimelineStatus(data.status || data.state);
-    if (runDone && key === 'DONE') {
-      status = 'success';
+    if (key === 'DONE' && runTerminal) {
+      status = runDone ? 'success' : (runStatus === 'CANCELLED' ? 'skipped' : 'failed');
     }
     if (runTerminal && key === 'WAIT_CONFIRM' && !pendingConfirmations.length && status === 'pending') {
       status = 'skipped';
@@ -2007,9 +2007,21 @@ function renderAgentTimeline(run) {
     if (isNotImplemented) status = 'skipped';
 
     const meta = TIMELINE_STATUS_META[status] || TIMELINE_STATUS_META.pending;
-    const summary = data.summary || data.message || '';
-    const errorText = (status === 'failed' && (data.error || data.errorMessage || data.failureReason))
+    let summary = data.summary || data.message || '';
+    if (key === 'DONE' && runTerminal && !summary) {
+      if (runDone) {
+        summary = 'Agent 流程已完成';
+      } else if (runStatus === 'CANCELLED') {
+        summary = '任务已取消，未进入完成态';
+      } else {
+        summary = '前序步骤失败，Agent 流程未进入完成态';
+      }
+    }
+    let errorText = (status === 'failed' && (data.error || data.errorMessage || data.failureReason))
       ? (data.error || data.errorMessage || data.failureReason) : '';
+    if (key === 'DONE' && runStatus === 'FAILED') {
+      errorText = errorText || run.error || run.errorMessage || run.message || '前序步骤失败';
+    }
     const dur = timelineDurationText(data);
     const artifacts = timelineArtifactLinks(data);
     const toolChips = timelineToolCallChips(data);

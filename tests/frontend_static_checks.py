@@ -89,6 +89,7 @@ def main():
     require("agent-input-chips" in html and "采用的 Figma 页面" in html and "上传资料" in html, "Agent input summary must be readable in cards instead of only showing runId")
     require("质量检查" in html and "renderAgentQualityArtifact" in html and "agent-quality-layers" in html and "完整用例、自动化 YAML、人工用例、Figma 图片" in html, "Agent quality report must render as readable layered cards")
     require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")
+    require("key === 'DONE' && runTerminal" in html and "前序步骤失败，Agent 流程未进入完成态" in html, "Agent terminal timeline must not leave the virtual DONE step pending after failure/cancel")
     require("renderGenerateYamlDetail" in html and "完整 YAML 生成主链" in html and "主链错误" in html, "Agent YAML generation step must show readable pipeline details")
     require("normalizeAgentReportArtifacts" in html and "isAgentYamlRef" in html and "normalizedAgentReportCounts" in html and "agentReportLooksYaml" in html, "Agent report rendering must not count YAML files as HTML execution reports")
     require("YAML 校验失败时，不能显示" not in html, "Implementation details should not be visible as instructional UI text")
