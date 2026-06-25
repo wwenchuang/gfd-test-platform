@@ -1132,6 +1132,97 @@ def main():
         and {"AI建模首页", "语音输入-长按", "图片建模-上传图片"}.issubset(frame_container_names),
         "Direct Figma frame containers must not be counted as UI images when child screen frames exist",
     )
+    model_launch_root = {
+        "id": "10:1",
+        "type": "FRAME",
+        "name": "模型上新",
+        "_figma_direct_link": True,
+        "absoluteBoundingBox": {"width": 980, "height": 720},
+        "children": [
+            {
+                "id": f"10:{idx}",
+                "type": "FRAME",
+                "name": f"首页备份 {idx}",
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [
+                    {"type": "TEXT", "characters": "发现 1 个新模型～ 立即查看"},
+                    {
+                        "id": f"10:{idx}:inner",
+                        "type": "FRAME",
+                        "name": "模型系列推荐",
+                        "absoluteBoundingBox": {"width": 330, "height": 520},
+                        "children": [
+                            {"type": "TEXT", "characters": "热门模型"},
+                            {"type": "TEXT", "characters": "最新模型"},
+                            {"type": "TEXT", "characters": "可编辑模型"},
+                        ],
+                    },
+                ],
+            }
+            for idx in (8, 18, 19, 15)
+        ],
+    }
+    model_launch_terms = figma_backend.figma_requirement_terms("模型上新测试：下拉刷新后展示新模型提示，点击立即查看")
+    require("上新" in model_launch_terms and "模型上新" in model_launch_terms and "下拉刷新" in model_launch_terms, "Model launch requirements must extract precise launch/refresh anchors")
+    model_launch_pages = figma_backend.figma_frame_candidates(
+        model_launch_root,
+        limit=20,
+        mode="smart",
+        min_width=240,
+        min_height=360,
+        pinned_node_ids={"10:1"},
+    )
+    model_launch_names = {
+        figma_backend.figma_page_name(frame, frame.get("_figma_canvas_name") or "")
+        for frame in model_launch_pages
+    }
+    require(
+        model_launch_names == {"首页备份 8", "首页备份 18", "首页备份 19", "首页备份 15"},
+        "Direct model-launch Figma scope must keep phone screens and exclude nested content modules",
+    )
+    sibling_scope_root = {
+        "id": "11:1",
+        "type": "CANVAS",
+        "name": "V1.6-AI建模+模型众测补偿+模型上新提示",
+        "_figma_direct_link": True,
+        "children": [
+            {"id": "11:2", "type": "FRAME", "name": "Frame 1", "absoluteBoundingBox": {"x": -1304, "y": -142, "width": 3756, "height": 100}, "children": [{"type": "TEXT", "characters": "AI建模"}]},
+            {"id": "11:3", "type": "FRAME", "name": "AI建模", "absoluteBoundingBox": {"x": -1304, "y": 58, "width": 375, "height": 812}, "children": [{"type": "TEXT", "characters": "开始创作"}]},
+            {"id": "11:4", "type": "FRAME", "name": "Frame 5", "absoluteBoundingBox": {"x": -1304, "y": 6541, "width": 3756, "height": 100}, "children": [{"type": "TEXT", "characters": "模型上新"}]},
+            *[
+                {
+                    "id": f"11:{idx}",
+                    "type": "FRAME",
+                    "name": f"首页备份 {name}",
+                    "absoluteBoundingBox": {"x": x, "y": 6741, "width": 375, "height": 812},
+                    "children": [{"type": "TEXT", "characters": "三维创作 模型系列推荐 立即查看"}],
+                }
+                for idx, name, x in ((8, 8, -1304), (18, 18, -829), (19, 19, -354), (15, 15, 121))
+            ],
+            {"id": "11:20", "type": "FRAME", "name": "成长报告", "absoluteBoundingBox": {"x": -1304, "y": 3013, "width": 375, "height": 812}, "children": [{"type": "TEXT", "characters": "成长报告"}]},
+        ],
+    }
+    sibling_scope = figma_backend.figma_requirement_sibling_scope_root(
+        sibling_scope_root,
+        "模型上新测试：首页下拉刷新，展示模型上新动效、新模型提示和立即查看入口",
+    )
+    require(sibling_scope and sibling_scope.get("id") == "11:4", "Figma title-bar scopes must be narrowed by explicit requirement subject")
+    sibling_pages = figma_backend.figma_frame_candidates(
+        sibling_scope,
+        limit=20,
+        mode="smart",
+        min_width=240,
+        min_height=360,
+        pinned_node_ids={"11:4"},
+    )
+    sibling_names = {
+        figma_backend.figma_page_name(frame, frame.get("_figma_canvas_name") or "")
+        for frame in sibling_pages
+    }
+    require(
+        sibling_names == {"首页备份 8", "首页备份 18", "首页备份 19", "首页备份 15"},
+        "Figma title-bar sibling scope must keep only the phone screens visually under that title",
+    )
     require(not figma_backend.figma_direct_node_needs_parent_lookup({"type": "CANVAS", "children": [{}]}), "Figma canvas links must not force expensive parent lookup")
     require(figma_backend.figma_direct_node_needs_parent_lookup({"type": "TEXT", "characters": "AI建模"}), "Figma title/text links must lookup parent design scope")
     job_id = "static_duration_check"

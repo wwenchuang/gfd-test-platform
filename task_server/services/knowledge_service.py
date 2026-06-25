@@ -1980,6 +1980,163 @@ def figma_collect_visual_nodes(
     return candidates[:limit]
 
 
+def _figma_theme_anchor_terms(query_text: str) -> List[str]:
+    terms = figma_requirement_terms(query_text)
+    generic = {
+        "页面", "功能", "测试", "验证", "入口", "按钮", "提示", "模型", "首页",
+        "刷新", "展示", "查看", "生成", "点击", "流程", "状态", "app", "android", "ios",
+    }
+    anchors: List[str] = []
+    for term in terms:
+        term = str(term or "").strip()
+        if not term or term in generic:
+            continue
+        if len(term) >= 4 or term in {"上新", "下拉刷新", "立即查看", "AI建模", "语音输入"}:
+            anchors.append(term)
+    query = _normalize_requirement_search_text(query_text)
+    for phrase in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,12}", query):
+        if "上新" in phrase or phrase in {"AI建模", "语音输入", "下拉刷新"}:
+            anchors.append(phrase)
+    return list(dict.fromkeys(anchors))[:20]
+
+
+def _figma_descendant_phone_screen_count(node: Dict[str, Any]) -> int:
+    count = 0
+
+    def walk(item: Any) -> None:
+        nonlocal count
+        if not isinstance(item, dict) or not figma_node_visible(item):
+            return
+        width, height = figma_node_size(item)
+        if item.get("type") == "FRAME" and figma_device_profile(width, height) == "phone":
+            count += 1
+        for child in item.get("children") or []:
+            walk(child)
+
+    for child in node.get("children") or []:
+        walk(child)
+    return count
+
+
+def figma_requirement_scope_root(root: Dict[str, Any], query_text: str) -> Optional[Dict[str, Any]]:
+    """Find a narrower Figma subgroup matching the explicit test subject.
+
+    Direct links often point to a large release canvas. If the user says
+    "模型上新测试", use the matching subgroup under that canvas instead of
+    feeding every unrelated phone screen into generation.
+    """
+    if not isinstance(root, dict) or not query_text:
+        return None
+    anchors = _figma_theme_anchor_terms(query_text)
+    if not anchors:
+        return None
+    root_id = root.get("id")
+    candidates: List[Tuple[int, float, Dict[str, Any]]] = []
+
+    def walk(node: Any, depth: int = 0) -> None:
+        if not isinstance(node, dict) or not figma_node_visible(node):
+            return
+        node_type = node.get("type") or ""
+        if node.get("id") != root_id and node_type in {"FRAME", "SECTION", "GROUP", "COMPONENT", "INSTANCE"}:
+            phone_count = _figma_descendant_phone_screen_count(node)
+            if phone_count >= 2:
+                width, height = figma_node_size(node)
+                if figma_device_profile(width, height) == "phone":
+                    for child in node.get("children") or []:
+                        walk(child, depth + 1)
+                    return
+                area = width * height
+                name_blob = _normalize_requirement_search_text(node.get("name") or "")
+                own_blob = _normalize_requirement_search_text(" ".join([name_blob] + figma_node_texts(node, limit=80)))
+                score = 0
+                for anchor in anchors:
+                    if anchor and anchor in name_blob:
+                        score += 8 + min(len(anchor), 8)
+                    elif anchor and anchor in own_blob:
+                        score += 4 + min(len(anchor), 6)
+                if score:
+                    score += min(phone_count, 12)
+                    score += min(depth, 8)
+                    candidates.append((score, area, node))
+        for child in node.get("children") or []:
+            walk(child, depth + 1)
+
+    walk(root, 0)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    return candidates[0][2]
+
+
+def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) -> Optional[Dict[str, Any]]:
+    """Build a virtual scope from a matching title bar and sibling phone screens."""
+    if not isinstance(root, dict) or not query_text:
+        return None
+    anchors = _figma_theme_anchor_terms(query_text)
+    if not anchors:
+        return None
+    children = [child for child in (root.get("children") or []) if isinstance(child, dict) and figma_node_visible(child)]
+    headings: List[Tuple[int, int, Dict[str, Any]]] = []
+    for idx, child in enumerate(children):
+        width, height = figma_node_size(child)
+        if height > 220 or width < 600:
+            continue
+        name_blob = _normalize_requirement_search_text(child.get("name") or "")
+        text_blob = _normalize_requirement_search_text(" ".join(figma_node_texts(child, limit=20)))
+        own_blob = " ".join([name_blob, text_blob])
+        score = 0
+        for anchor in anchors:
+            if anchor and anchor in name_blob:
+                score += 10 + min(len(anchor), 8)
+            elif anchor and anchor in own_blob:
+                score += 6 + min(len(anchor), 6)
+        if score:
+            headings.append((score, idx, child))
+    if not headings:
+        return None
+    headings.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    _score, heading_index, heading = headings[0]
+    heading_box = heading.get("absoluteBoundingBox") or {}
+    x0 = float(heading_box.get("x") or 0)
+    y0 = float(heading_box.get("y") or 0)
+    width = float(heading_box.get("width") or 0)
+    height = float(heading_box.get("height") or 0)
+    next_heading_y: Optional[float] = None
+    for _other_score, other_index, other in headings:
+        if other_index <= heading_index:
+            continue
+        other_y = float(((other.get("absoluteBoundingBox") or {}).get("y") or 0))
+        if other_y > y0 and (next_heading_y is None or other_y < next_heading_y):
+            next_heading_y = other_y
+    selected_children: List[Dict[str, Any]] = []
+    for child in children:
+        if child is heading:
+            continue
+        box = child.get("absoluteBoundingBox") or {}
+        child_x = float(box.get("x") or 0)
+        child_y = float(box.get("y") or 0)
+        child_w, child_h = figma_node_size(child)
+        if child.get("type") != "FRAME" or figma_device_profile(child_w, child_h) != "phone":
+            continue
+        if child_y < y0 + height - 2:
+            continue
+        if next_heading_y is not None and child_y >= next_heading_y - 2:
+            continue
+        if child_x < x0 - 2 or child_x > x0 + width + 2:
+            continue
+        selected_children.append(child)
+    if len(selected_children) < 2:
+        return None
+    selected_children.sort(key=lambda item: (
+        float(((item.get("absoluteBoundingBox") or {}).get("y") or 0)),
+        float(((item.get("absoluteBoundingBox") or {}).get("x") or 0)),
+    ))
+    scoped = dict(heading)
+    scoped["children"] = selected_children
+    scoped["_figma_sibling_scope"] = True
+    return scoped
+
+
 def figma_frame_candidates(
     root: Dict[str, Any],
     limit: int = 12,
@@ -2040,6 +2197,7 @@ def figma_frame_candidates(
     for item in selected:
         node = item["node"]
         node_id = node.get("id")
+        parent_profile = figma_device_profile(item["width"], item["height"])
         direct_children = [
             other for other in selected
             if other is not item
@@ -2052,7 +2210,6 @@ def figma_frame_candidates(
         if len(direct_children) >= 2:
             max_child_width = max((other["width"] for other in direct_children), default=0)
             max_child_height = max((other["height"] for other in direct_children), default=0)
-            parent_profile = figma_device_profile(item["width"], item["height"])
             looks_like_screen_group = (
                 parent_profile != "phone"
                 or item["width"] > max_child_width * 1.25
@@ -2067,7 +2224,22 @@ def figma_frame_candidates(
             parent_id = other["node"].get("_figma_parent_id") or ""
             if item.get("pinned"):
                 continue
-            if parent_id and parent_id == node.get("id") and other["area"] >= item["area"] * 0.15:
+            child_profile = figma_device_profile(other["width"], other["height"])
+            child_is_nested_full_screen = (
+                parent_profile == "phone"
+                and child_profile == "phone"
+                and other["width"] >= item["width"] * 0.72
+                and other["height"] >= item["height"] * 0.72
+            )
+            if parent_profile == "phone" and parent_id and parent_id == node.get("id") and not child_is_nested_full_screen:
+                child_like_ids.add(other["node"].get("id"))
+                continue
+            child_should_replace_parent = (
+                child_is_nested_full_screen
+                if parent_profile == "phone"
+                else other["area"] >= item["area"] * 0.15
+            )
+            if parent_id and parent_id == node.get("id") and child_should_replace_parent:
                 child_like_ids.add(node.get("id"))
     deduped = [item for item in selected if item["node"].get("id") not in child_like_ids or len(selected_ids) == 1]
 
@@ -2244,7 +2416,6 @@ def figma_draft_search_blob(draft: Dict[str, Any]) -> str:
         figma.get("name", ""),
         figma.get("page_name", ""),
         figma.get("canvas_name", ""),
-        figma.get("direct_context", ""),
     ]
     return _normalize_requirement_search_text(" ".join(str(part or "") for part in parts))
 
@@ -2296,7 +2467,7 @@ def figma_requirement_terms(query_text: str) -> List[str]:
         "弹窗", "提示", "确认", "取消", "颜色", "耗材", "打印", "模型", "图片", "语音",
         "识别", "生成", "预览", "提交", "编辑", "删除", "保存", "失败", "成功", "异常",
         "边界", "弱网", "缓存", "分页", "刷新", "排队", "并发", "超时",
-        "建模", "创作", "长按", "引导",
+        "建模", "创作", "长按", "引导", "上新", "立即查看", "下拉刷新",
     }
     chinese_parts = re.findall(r"[\u4e00-\u9fff]{2,}", raw_text)
     for part in chinese_parts:
@@ -2568,6 +2739,15 @@ def parse_figma_design(data: Dict[str, Any]) -> Dict[str, Any]:
         file_name = payload.get("name") or ""
     if not root:
         raise ValueError("没有读取到 Figma 节点，请确认链接权限和 node-id 是否正确")
+    if node_id and direct_scope_only and requirement_query:
+        scoped_root = (
+            figma_requirement_scope_root(root, requirement_query)
+            or figma_requirement_sibling_scope_root(root, requirement_query)
+        )
+        if scoped_root and scoped_root is not root:
+            root = scoped_root
+            selected_node_id = root.get("id") or selected_node_id
+            mark_stage("requirement_scope")
     pinned_node_ids = (
         {node_id, selected_node_id, root.get("id") if isinstance(root, dict) else ""}
         if node_id else set()
