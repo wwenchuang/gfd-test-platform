@@ -90,6 +90,10 @@ Move scenarios to `manual_cases` or mark as待准备 when they require:
 - Backend data seeding.
 - Specific coupons, addresses, documents, albums, or external app state.
 - Real printer/device-side completion that cannot be safely cancelled.
+- Search no-result fallback, account-specific work lists, empty states,
+  pagination bottoms, first-time permission dialogs, model evaluation scores,
+  generation interruption, duplicate-click protection, or old-entry absence
+  checks unless the test data/app version has been explicitly prepared.
 
 ## Search and File Picker
 
@@ -109,3 +113,6 @@ Move scenarios to `manual_cases` or mark as待准备 when they require:
   作为草稿待人工补充。
 - 如果 Figma/截图没有覆盖关键入口或结果页，不能编造控件；把缺口写入
   `manual_cases`、`data_requirements` 或人工确认建议。
+- 自动执行 YAML 优先做稳定冒烟：入口可达、页面核心模块、按钮/Tab 状态、
+  列表区域或空态二选一、无错误弹窗。完整覆盖继续放在 `.mm` 和
+  `manual_cases`，不要把所有验收点都塞进 Runner。

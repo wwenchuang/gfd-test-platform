@@ -1634,16 +1634,40 @@ def _agent_job_failure_reason(job):
         ("stdout_tail", "stdoutTail", "Runner 日志"),
     ]
     status = str(_agent_job_field(job, "status") or "").strip()
+    raw_text = "\n".join(
+        str(_agent_job_field(job, snake_key, camel_key) or "")
+        for snake_key, camel_key, _label in candidates
+    )
+    failure_type = _agent_job_failure_type(raw_text)
     for snake_key, camel_key, label in candidates:
         reason = _agent_job_log_tail(_agent_job_field(job, snake_key, camel_key))
         if not reason:
             continue
         if snake_key == "progress_message" and reason.lower() in {"failed", "fail", "error", "timeout"}:
             continue
-        return f"{label}: {reason}"
+        prefix = f"{failure_type}：" if failure_type else ""
+        return f"{prefix}{label}: {reason}"
     if status:
         return f"Runner 回传状态：{status}"
     return "Runner 已回传失败，但未带具体错误；请打开报告或查看 Runner 控制台日志。"
+
+
+def _agent_job_failure_type(text):
+    blob = str(text or "")
+    lowered = blob.lower()
+    if "replanned 5 times" in lowered or "replanningcyclelimit" in lowered:
+        return "Midscene 重规划超限"
+    if "timeout after 300s" in lowered:
+        return "Runner 单任务超时"
+    if "failed to locate element" in lowered:
+        return "元素定位失败"
+    if "waitfor timeout" in lowered or "assertion failed" in lowered:
+        if any(term in blob for term in ("并未出现", "未出现", "无法确认", "陈述为假", "StatementIsTruthy", "当前页面", "截图内容")):
+            return "断言/页面状态不匹配"
+        return "等待目标超时"
+    if "adb" in lowered and ("device" in lowered or "offline" in lowered):
+        return "ADB/设备异常"
+    return ""
 
 
 def _agent_job_failure_target(job):
@@ -1662,10 +1686,22 @@ def _agent_job_failure_reasons(jobs, limit=5):
     for job in jobs or []:
         if not isinstance(job, dict):
             continue
+        reason = _agent_job_failure_reason(job)
+        raw_text = "\n".join(
+            str(_agent_job_field(job, key, camel) or "")
+            for key, camel in (
+                ("error", None),
+                ("stderr_tail", "stderrTail"),
+                ("stdout_tail", "stdoutTail"),
+                ("report_missing_reason", "reportMissingReason"),
+                ("report_upload_error", "reportUploadError"),
+            )
+        )
         reasons.append({
             "jobId": _agent_job_field(job, "job_id", "jobId"),
             "target": _agent_job_failure_target(job),
-            "reason": _agent_job_failure_reason(job),
+            "reason": reason,
+            "failureType": _agent_job_failure_type(raw_text),
             "status": _agent_job_field(job, "status"),
             "runnerId": _agent_job_field(job, "runner_id", "runnerId"),
             "deviceId": _agent_job_field(job, "device_id", "deviceId"),
@@ -7475,6 +7511,12 @@ def _tool_collect_report(run):
                         "stderrTail": (job.get("stderr") or job.get("stderr_tail") or "")[-500:],
                         "stdoutTail": (job.get("stdout") or job.get("stdout_tail") or "")[-300:],
                     }
+                    fail_entry["failureReason"] = _agent_job_failure_reason(fail_entry)
+                    fail_entry["failureType"] = _agent_job_failure_type("\n".join([
+                        fail_entry.get("error", ""),
+                        fail_entry.get("stderrTail", ""),
+                        fail_entry.get("stdoutTail", ""),
+                    ]))
                     failed_jobs.append(fail_entry)
                     if status == "timeout":
                         timeout_jobs.append(fail_entry)
@@ -7520,6 +7562,12 @@ def _tool_collect_report(run):
                         "stdoutTail": fj.get("stdout_tail") or "",
                         "stderrTail": fj.get("stderr_tail") or "",
                         "error": fj.get("error", ""),
+                        "failureReason": _agent_job_failure_reason(fj),
+                        "failureType": _agent_job_failure_type("\n".join([
+                            str(fj.get("error") or ""),
+                            str(fj.get("stderr_tail") or ""),
+                            str(fj.get("stdout_tail") or ""),
+                        ])),
                     })
                     if fj.get("error"):
                         errors.append(fj.get("error"))
@@ -7537,6 +7585,12 @@ def _tool_collect_report(run):
                         "stderrTail": tj.get("stderr_tail") or "",
                         "error": tj.get("error") or "Runner 执行等待超时，报告尚未回传",
                     }
+                    timeout_entry["failureReason"] = _agent_job_failure_reason(timeout_entry)
+                    timeout_entry["failureType"] = _agent_job_failure_type("\n".join([
+                        timeout_entry.get("error", ""),
+                        timeout_entry.get("stderrTail", ""),
+                        timeout_entry.get("stdoutTail", ""),
+                    ]))
                     failed_jobs.append(timeout_entry)
                     timeout_jobs.append(timeout_entry)
                     errors.append(timeout_entry["error"])

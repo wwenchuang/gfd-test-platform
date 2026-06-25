@@ -1636,7 +1636,11 @@ function renderAgentSummaryArtifact(run) {
         <section class="final-report-panel final-report-wide">
           <strong>失败摘要</strong>
           <div class="final-report-failures">
-            ${failedJobs.slice(0, 8).map(job => `<div><b>${escapeHtml(agentCaseLabel(job))}</b><em>${escapeHtml(agentCaseSubLabel(job))}</em><span>${escapeHtml(job.error || job.status || '未知失败')}</span></div>`).join('')}
+            ${failedJobs.slice(0, 8).map(job => {
+              const reason = job.failureReason || job.reason || job.error || job.stderrTail || job.stdoutTail || job.status || '未知失败';
+              const type = job.failureType ? `失败类型：${job.failureType}` : agentCaseSubLabel(job);
+              return `<div><b>${escapeHtml(agentCaseLabel(job))}</b><em>${escapeHtml(type)}</em><span>${escapeHtml(reason)}</span></div>`;
+            }).join('')}
           </div>
           ${failedJobs.length > 8 ? `<p>只展示前 8 个失败，剩余 ${escapeHtml(failedJobs.length - 8)} 个请到执行报告或失败分析页查看。</p>` : ''}
         </section>

@@ -484,12 +484,48 @@ def check_yaml_runner_eligibility_filter():
                 "steps": ["进入 AI建模页"],
                 "assertions": ["页面视觉与 Figma 关键区域一致，画布尺寸与 node-id 保持一致"],
             },
+            {
+                "case_id": "TC-006",
+                "title": "我的作品模块空态与分页加载验证",
+                "steps": ["进入 AI建模页", "滚动我的作品列表到底部"],
+                "assertions": ["页面展示暂无作品或没有更多了提示"],
+            },
+            {
+                "case_id": "TC-007",
+                "title": "搜索引擎无结果兜底提示验证",
+                "steps": ["输入无意义字符并提交搜索"],
+                "assertions": ["页面展示未找到相关模型或兜底提示"],
+            },
+            {
+                "case_id": "TC-008",
+                "title": "语音创作首次权限弹窗验证",
+                "steps": ["点击语音创作入口"],
+                "assertions": ["页面展示麦克风权限申请弹窗"],
+            },
+            {
+                "case_id": "TC-009",
+                "title": "四维评估高匹配度引导文案验证",
+                "steps": ["提交图片建模", "等待四维评估结果"],
+                "assertions": ["评估结果展示高匹配度引导文案"],
+            },
+            {
+                "case_id": "TC-010",
+                "title": "生成按钮防重复点击验证",
+                "steps": ["点击生成按钮", "快速重复点击生成按钮"],
+                "assertions": ["页面展示生成中或按钮置灰状态"],
+            },
+            {
+                "case_id": "TC-011",
+                "title": "首页旧版建模入口清理验证",
+                "steps": ["进入首页"],
+                "assertions": ["旧版文字建模入口不出现"],
+            },
         ],
         "manual_cases": [],
     }
     filtered = yaml_service.split_automation_ready_cases(payload)
     require(len(filtered["cases"]) == 1, "Only directly runnable AI modeling entry case should become YAML")
-    require(len(filtered["manual_cases"]) == 4, "Mock/permission/design-comparison cases must remain in manual coverage")
+    require(len(filtered["manual_cases"]) == 10, "Mock/permission/design/data-state/transient cases must remain in manual coverage")
     _, files = yaml_service.cases_to_separate_midscene_yamls(payload, app_package="com.kfb.model", base_file="ai-model.yaml")
     require(len(files) == 1, "Separate YAML generation must only emit runner-eligible cases")
     content = files[0]["content"]
@@ -497,6 +533,7 @@ def check_yaml_runner_eligibility_filter():
     require('- aiWaitFor: "等待 AI建模主页核心区域加载"' in content, "Natural wait steps must become aiWaitFor actions, not generic ai actions")
     require("input keyevent 187" not in content and "am kill-all" not in content, "Balanced launch guard must not inject recent-app cleanup into generated YAML")
     require("自传IP模型匹配成功" not in content and "系统通知权限" not in content and "设计稿一致" not in content and "Figma" not in content, "Runner-ineligible scenarios must not leak into YAML")
+    require("我的作品模块空态" not in content and "无结果兜底" not in content and "权限弹窗" not in content and "四维评估" not in content and "防重复点击" not in content and "旧版建模入口" not in content, "Observed flaky AI modeling scenarios must not leak into Runner YAML")
 
 
 def check_agent_runner_failure_reason_summary():
@@ -515,7 +552,8 @@ def check_agent_runner_failure_reason_summary():
     }]
     reasons = agent_service._agent_job_failure_reasons(failed, limit=1)
     require(reasons and reasons[0]["target"] == "AI建模入口", "Runner failure summary must keep task target")
-    require("failed to locate element" in reasons[0]["reason"], "Runner failure summary must use stdout/stderr tails when error is empty")
+    require("Midscene 重规划超限" in reasons[0]["reason"] and "failed to locate element" in reasons[0]["reason"], "Runner failure summary must classify and use stdout/stderr tails when error is empty")
+    require(reasons[0]["failureType"] == "Midscene 重规划超限", "Runner failure summary must expose a concrete failure type")
     require(reasons[0]["runnerId"] == "win-runner-01" and reasons[0]["deviceId"] == "ecbfd645", "Runner failure summary must keep runner/device")
 
 
