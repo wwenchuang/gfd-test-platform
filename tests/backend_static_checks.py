@@ -809,6 +809,9 @@ def main():
     require('"/api/sonic/callback-diagnose"' in router_source and "healthReachableFromServer" in router_source, "Backend must expose callback diagnosis for HTTP 000")
     require("explainCallbackHttp000" in app_js_source and "/api/sonic/callback-diagnose" in app_js_source, "Frontend must show friendly HTTP 000 callback diagnosis")
     require("AI 分析并生成修复草稿" in task_page_source and "AI 修复当前文件" not in task_page_source, "Main repair button must say repair draft, not direct overwrite")
+    require('"yaml": original_yaml' in agent_service_source and 'resp.get("fixedYaml") or resp.get("fixed_yaml") or resp.get("optimizedYaml") or resp.get("yaml")' in agent_service_source, "Agent repair draft must send real YAML to AI Gateway and read all supported AI YAML response fields")
+    require('"repairSummary"' in agent_service_source and '"aiAttempted"' in agent_service_source and '"aiUsed"' in agent_service_source and '"evidenceSources"' in agent_service_source, "Agent repair draft must expose evidence, AI usage, and validation summary")
+    require('"rerunProgress"' in agent_service_source and '"learningSummary"' in agent_service_source, "Agent rerun and learning steps must persist readable timeline summaries")
     require(
         '"PLAN", "PREPARE_SOURCE", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,
         "Agent step order must prepare source, analyze impact, retrieve cases, then match cases"

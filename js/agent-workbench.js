@@ -1739,6 +1739,88 @@ function renderAnalysisDetail(step, artifacts) {
   return html;
 }
 
+function renderRepairDraftDetail(step, artifacts) {
+  const draft = (artifacts || {}).repairDraft || {};
+  const summary = (artifacts || {}).repairSummary || {};
+  const calls = (step && step.toolCalls) || [];
+  const call = calls.find(item => item && typeof item === 'object') || {};
+  const validation = summary.yamlValidation || draft.validation || call.yamlValidation || {};
+  const changes = summary.changes || draft.changes || [];
+  const source = draft.repairSource || call.repairSource || 'unknown';
+  const sourceText = {
+    ai_gateway: '已调用 AI，根据失败日志生成 YAML 草稿',
+    diagnosis_only: '仅保存诊断草稿，未生成可应用 YAML',
+    not_started: '未开始生成修复',
+  }[source] || source;
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '修复方式', value: sourceText },
+    { label: 'AI 调用', value: (summary.aiAttempted || call.aiAttempted) ? ((summary.aiUsed || call.aiUsed) ? '已调用并返回 YAML' : '已调用但未返回可用 YAML') : '未调用' },
+    { label: '失败任务', value: summary.targetTaskName || call.targetTaskName || draft.taskName || draft.task_name || '-' },
+    { label: 'YAML 校验', value: validation && Object.keys(validation).length ? (validation.ok ? '通过' : '未通过') : '未校验' },
+  ]);
+  if (draft.analysis || draft.suggestion) {
+    html += `<section class="agent-readable-panel"><strong>修复依据</strong><p>${escapeHtml(draft.analysis || '')}</p>${draft.suggestion ? `<p>${escapeHtml(draft.suggestion)}</p>` : ''}</section>`;
+  }
+  if (draft.evidence) {
+    html += `<section class="agent-readable-panel"><strong>使用的失败日志</strong><pre class="agent-artifact-pre">${escapeHtml(String(draft.evidence).slice(0, 1600))}</pre></section>`;
+  }
+  if (Array.isArray(changes) && changes.length) {
+    html += agentReadableList('修复变化', changes.slice(0, 8), item => `<span>${escapeHtml(typeof item === 'string' ? item : JSON.stringify(item))}</span>`);
+  }
+  if (validation && Array.isArray(validation.issues) && validation.issues.length) {
+    html += agentReadableList('校验问题', validation.issues.slice(0, 8));
+  }
+  if (draft.fixedYaml || draft.fixed_yaml) {
+    html += `<section class="agent-readable-panel"><strong>草稿状态</strong><p>已生成可查看/确认的 YAML 修复草稿，不会自动覆盖原 YAML。</p></section>`;
+  } else {
+    html += `<section class="agent-readable-panel"><strong>草稿状态</strong><p>没有生成可应用 YAML，只记录了失败证据；需要重新分析日志或人工修正。</p></section>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderRerunDetail(step, artifacts) {
+  const result = (artifacts || {}).rerunResult || {};
+  const sources = (artifacts || {}).rerunSources || [];
+  const skipped = (artifacts || {}).rerunSkippedJobs || [];
+  const progress = (artifacts || {}).rerunProgress || (artifacts || {}).jobProgress || {};
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '创建重跑任务', value: result.createdCount ?? sources.length ?? 0 },
+    { label: '成功', value: result.completedCount ?? progress.completed ?? 0 },
+    { label: '失败', value: result.failedCount ?? progress.failed ?? 0 },
+    { label: '超时', value: result.timeoutCount ?? progress.timeout ?? 0 },
+  ]);
+  html += renderRunTaskDetail(step, {...artifacts, jobProgress: progress, jobResult: result});
+  if (sources.length) {
+    html += agentReadableList('重跑映射', sources.slice(0, 10), item => `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(item.sourceJobId || '')} → ${escapeHtml(item.newJobId || '')}</span>`);
+  }
+  if (skipped.length) {
+    html += agentReadableList('跳过的任务', skipped.slice(0, 10), item => `<b>${escapeHtml(item.jobId || '')}</b><span>${escapeHtml(item.status || '')}</span>`);
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderLearningDetail(step, artifacts) {
+  const summary = (artifacts || {}).learningSummary || {};
+  const calls = (step && step.toolCalls) || [];
+  const call = calls.find(item => item && typeof item === 'object') || {};
+  const callSummary = call.learningSummary || {};
+  const merged = {...summary, ...callSummary};
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '匹配用例', value: merged.matchedCases ?? 0 },
+    { label: 'YAML 引用', value: merged.yamlRefs ?? 0 },
+    { label: '诊断结果', value: merged.hasDiagnosis ? '已沉淀' : '无' },
+    { label: '执行结果', value: merged.hasJobResult ? '已沉淀' : '无' },
+  ]);
+  html += `<section class="agent-readable-panel"><strong>沉淀内容</strong><p>写入 Agent 历史学习库，用于后续检索相似目标、参考历史用例、复用失败诊断和执行结果。不会覆盖当前 YAML。</p></section>`;
+  html += '</div>';
+  return html;
+}
+
 // ===== 匹配原因详情 =====
 function renderMatchDetail(step, artifacts) {
   const reason = (artifacts || {}).matchReason || '';
@@ -1879,6 +1961,9 @@ function renderStepDetail(step, run) {
     case 'read_report': return renderReportDetail(step, artifacts);
     case 'analyze_failure': return renderAnalysisDetail(step, artifacts);
     case 'diagnose_failure': return renderDiagnosisDetail((artifacts || {}).diagnosis || step.diagnosis);
+    case 'generate_repair_draft': return renderRepairDraftDetail(step, artifacts);
+    case 'retry_failed_job': return renderRerunDetail(step, artifacts);
+    case 'learn_from_result': return renderLearningDetail(step, artifacts);
     default: return '';
   }
 }

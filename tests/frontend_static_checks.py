@@ -161,6 +161,8 @@ def main():
     require("AI修复工作台" in html and "失败任务列表" in html and "结构化分析" in html and "YAML 修复草稿" in html, "AI repair must be an independent three-column workspace")
     require("原始 YAML" in html and "修复 YAML" in html and "Diff / 校验" in html, "YAML repair draft must show original, fixed, diff, and validation")
     require("/analyze-failure" in html and "used_full_logs" in html and "Runner 完整日志" in html, "Failed-job AI analysis must prefer backend full runner logs")
+    require("function renderRepairDraftDetail" in html and "修复方式" in html and "AI 调用" in html and "使用的失败日志" in html, "Agent timeline must explain repair draft source, AI usage, and failure evidence")
+    require("function renderRerunDetail" in html and "重跑映射" in html and "function renderLearningDetail" in html and "沉淀内容" in html, "Agent timeline must show safe-rerun progress and learning contents")
     require("failureReason" in html and "failureType" in html and "失败类型：" in html, "Agent final report must show concrete Runner failure reasons")
     require("PRODUCT_BUG 不允许" not in html, "Implementation details must not leak as rough internal copy")
     require("apiRequest('/reports/cleanup'" in html and "apiRequest('/cases/mindmap-only-async'" in html and "apiRequest('/ui/generate-yaml-async'" in html, "Long-running write endpoints must use apiRequest")
