@@ -237,6 +237,7 @@ def main():
     require("脑图生成任务已提交，已切到脑图中心查看进度" in html and "closeMindmapCreateModal({ quiet: true })" in html and "await showMindmapCenter();" in html, "Mindmap create modal must auto-close after background job submission")
     require("function isMindmapBackgroundJob" in html and "mindmapTaskSectionHtml" in html and "mindmapFilesSectionHtml" in html, "Mindmap center must render background task status separately from downloadable files")
     require("generation-record-sections" in html and "脑图生成任务" in html and "脑图文件" in html, "Mindmap center must split task progress and mindmap files into readable sections")
+    require("function mindmapRecordTimeValue" in html and "mindmap_sort_ts" in html and "mindmap-compact-list" in html and "function mindmapTaskRow" in html, "Mindmap center must sort latest first and use compact rows instead of oversized cards")
     require("activeWorkspaceMode === 'mindmap'" in html and "await showMindmapCenter();" in html, "Mindmap background actions must refresh the mindmap center after cancel/retry")
     require("mindmapCenterRefreshTimer" in html and "scheduleMindmapCenterRefresh(taskRows)" in html and "pending', 'running" in html, "Mindmap center must auto-refresh while mindmap jobs are active")
     print({"ok": True, "file": str(HTML), "checks": 65})

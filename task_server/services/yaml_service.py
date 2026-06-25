@@ -4498,6 +4498,21 @@ def generation_summary_path(case_set_id):
     return safe_join(CASE_DIR, case_set_id, "summary.json")
 
 
+def _mindmap_time_value(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    normalized = text.replace("T", " ").replace("Z", "").split(".")[0]
+    for fmt, size in (("%Y-%m-%d %H:%M:%S", 19), ("%Y-%m-%d %H:%M", 16), ("%Y-%m-%d", 10)):
+        try:
+            return time.mktime(time.strptime(normalized[:size], fmt))
+        except Exception:
+            continue
+    return 0.0
+
+
 
 def list_generation_mindmaps(limit=100):
     if not os.path.isdir(CASE_DIR):
@@ -4519,7 +4534,15 @@ def list_generation_mindmaps(limit=100):
         record = generation_mindmap_record(name)
         if record:
             records.append(record)
-    records.sort(key=lambda item: item.get("mindmap_updated_at") or item.get("generated_at") or "", reverse=True)
+    records.sort(
+        key=lambda item: (
+            item.get("mindmap_sort_ts")
+            or item.get("mindmap_updated_at")
+            or item.get("generated_at")
+            or ""
+        ),
+        reverse=True,
+    )
     return records[:max(1, min(500, limit))]
 
 
@@ -5301,19 +5324,24 @@ def generation_mindmap_record(case_set_id):
     record_deleted = generation_mindmap_record_is_deleted(case_set_id)
     size = 0
     updated_at = ""
+    updated_ts = 0.0
     try:
         if exists:
             stat = os.stat(mm_path)
             size = stat.st_size
+            updated_ts = stat.st_mtime
             updated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime))
     except Exception:
         pass
+    generated_at = summary.get("generated_at") or ""
+    generated_ts = _mindmap_time_value(generated_at)
+    sort_ts = max(updated_ts, generated_ts)
     return {
         "case_set_id": case_set_id,
         "title": summary.get("title") or case_set_id,
         "module": summary.get("module") or "",
         "yaml_file": summary.get("yaml_file") or "",
-        "generated_at": summary.get("generated_at") or "",
+        "generated_at": generated_at,
         "scenario_count": safe_int(counts.get("scenario_count"), 0),
         "automation_case_count": safe_int(counts.get("automation_case_count"), 0),
         "manual_case_count": safe_int(counts.get("manual_case_count"), 0),
@@ -5325,6 +5353,9 @@ def generation_mindmap_record(case_set_id):
         "mindmap_downloadable": exists and not deleted,
         "mindmap_size": size,
         "mindmap_updated_at": updated_at,
+        "mindmap_updated_ts": updated_ts,
+        "generated_ts": generated_ts,
+        "mindmap_sort_ts": sort_ts,
     }
 
 

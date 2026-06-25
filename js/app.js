@@ -2848,6 +2848,13 @@ function mindmapJobTimeValue(job={}) {
   return Date.parse((job.updated_at || job.finished_at || job.started_at || job.created_at || '').replace(' ', 'T')) || 0;
 }
 
+function mindmapRecordTimeValue(item={}) {
+  const explicit = Number(item.mindmap_sort_ts || item.mindmapSortTs || 0);
+  if (isFinite(explicit) && explicit > 0) return explicit * 1000;
+  const raw = item.mindmap_updated_at || item.generated_at || '';
+  return Date.parse(String(raw).replace(' ', 'T')) || 0;
+}
+
 function isMindmapJobActive(job={}) {
   return ['pending', 'running'].includes(job.status || '');
 }
@@ -2947,25 +2954,26 @@ function mindmapTaskSectionHtml(jobs = []) {
         </div>
         <button class="btn-sm" onclick="showMindmapCenter()">刷新任务</button>
       </div>
-      <div class="generation-record-list">
-        ${jobs.map(generationRecordCard).join('')}
+      <div class="mindmap-compact-list">
+        ${jobs.map(mindmapTaskRow).join('')}
       </div>
     </section>
   `;
 }
 
 function mindmapFilesSectionHtml(rows = []) {
+  const sortedRows = [...rows].sort((a, b) => mindmapRecordTimeValue(b) - mindmapRecordTimeValue(a));
   return `
     <section class="generation-record-section mindmap-file-section">
       <div class="section-head">
         <div>
           <h3>脑图文件</h3>
-          <p>${rows.length ? `按最近更新时间排序，当前显示 ${rows.length} 条。` : '还没有可下载脑图。生成完成后会出现在这里。'}</p>
+          <p>${sortedRows.length ? `按最近更新时间排序，当前显示 ${sortedRows.length} 条。` : '还没有可下载脑图。生成完成后会出现在这里。'}</p>
         </div>
         <button class="btn-sm" onclick="showMindmapCenter()">刷新文件</button>
       </div>
-      ${rows.length
-        ? `<div class="generation-record-list">${rows.map(mindmapRecordCard).join('')}</div>`
+      ${sortedRows.length
+        ? `<div class="mindmap-compact-list">${sortedRows.map(mindmapRecordCard).join('')}</div>`
         : '<div class="generation-record-empty">暂无脑图。先点击「新建脑图」，任务提交后会在上方任务区显示进度。</div>'}
     </section>
   `;
@@ -2983,6 +2991,40 @@ function mindmapStatusClass(item={}) {
   return 'pending';
 }
 
+function mindmapTaskRow(job={}) {
+  const status = job.status || 'unknown';
+  const caseSetId = generationJobCaseSetId(job);
+  const title = generationJobTitle(job);
+  const mod = generationJobModule(job);
+  const progress = Math.max(0, Math.min(100, Number(job.progress || (status === 'success' ? 100 : 0))));
+  const id = job.job_id || '';
+  const message = explainCallbackHttp000(job.message || job.step || jobKindText(job));
+  const actions = [];
+  if (['pending', 'running'].includes(status) && id) actions.push(`<button class="btn-sm danger" onclick="cancelGenerateJob(${jsArg(id)})">取消</button>`);
+  if (['failed', 'timeout'].includes(status) && id && job.can_retry !== false) actions.push(`<button class="btn-sm primary" onclick="retryGenerationJob(${jsArg(id)})">重试</button>`);
+  if (caseSetId) actions.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">分析</button>`);
+  if (caseSetId) actions.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>`);
+  if (id) actions.push(`<button class="btn-sm" onclick="focusJob(${jsArg(id)})">定位</button>`);
+  return `
+    <div class="mindmap-row task ${escapeHtml(status)}">
+      <div class="mindmap-row-main">
+        <span class="job-badge ${escapeHtml(status)}">${jobStatusText(status)}</span>
+        <div class="mindmap-row-title">
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml([mod, job.step, jobTimingText(job)].filter(Boolean).join(' · '))}</span>
+        </div>
+        <span class="mindmap-row-percent">${escapeHtml(String(Math.round(progress)))}%</span>
+      </div>
+      <div class="mindmap-row-progress"><div style="width:${progress}%;"></div></div>
+      <div class="mindmap-row-foot">
+        <span>${escapeHtml(message)}</span>
+        <span>${escapeHtml(id || caseSetId || '')}</span>
+      </div>
+      <div class="mindmap-row-actions">${actions.join('') || '<span class="job-link muted">暂无操作</span>'}</div>
+    </div>
+  `;
+}
+
 function mindmapRecordCard(item={}) {
   const caseSetId = item.case_set_id || '';
   const generatedAt = item.generated_at || '';
@@ -2990,26 +3032,29 @@ function mindmapRecordCard(item={}) {
   const priorityText = Object.entries(item.priority_counts || {})
     .map(([key, value]) => `${key} ${value}`)
     .join(' · ');
+  const primaryTime = updatedAt || generatedAt || '';
+  const coverageText = `${item.automation_case_count || 0} 自动化 · ${item.manual_case_count || 0} 人工 · ${item.scenario_count || 0} 场景`;
+  const metaText = [item.module, item.yaml_file].filter(Boolean).join(' / ') || caseSetId;
+  const detailText = [priorityText, item.smoke_count ? `冒烟 ${item.smoke_count}` : '', item.mindmap_size ? formatBytes(item.mindmap_size) : ''].filter(Boolean).join(' · ');
   return `
-    <div class="generation-record-card">
-      <div class="generation-record-top">
+    <div class="mindmap-row file ${mindmapStatusClass(item)}">
+      <div class="mindmap-row-main">
         <span class="job-badge ${mindmapStatusClass(item)}">${mindmapStatusText(item)}</span>
-        <strong>${escapeHtml(item.title || caseSetId || '测试用例脑图')}</strong>
-        <span>${escapeHtml(updatedAt ? `脑图更新 ${updatedAt}` : generatedAt)}</span>
-      </div>
-      <div class="job-progress">
-        <div class="job-progress-text">
-          <span>${escapeHtml([item.module, item.yaml_file].filter(Boolean).join(' / ') || caseSetId)}</span>
-          <span>${escapeHtml(`${item.automation_case_count || 0} 自动化 · ${item.manual_case_count || 0} 人工 · ${item.scenario_count || 0} 场景`)}</span>
+        <div class="mindmap-row-title">
+          <strong>${escapeHtml(item.title || caseSetId || '测试用例脑图')}</strong>
+          <span>${escapeHtml(metaText)}</span>
         </div>
-        <div class="job-progress-track"><div class="job-progress-bar" style="width:${item.mindmap_exists ? 100 : 35}%"></div></div>
+        <span class="mindmap-row-time">${escapeHtml(primaryTime ? `更新 ${primaryTime}` : '-')}</span>
       </div>
-      <p>${escapeHtml([priorityText, item.smoke_count ? `冒烟 ${item.smoke_count}` : '', item.mindmap_size ? formatBytes(item.mindmap_size) : '', generatedAt ? `生成 ${generatedAt}` : ''].filter(Boolean).join(' · ') || '脑图用于人工评审覆盖结构和测试点。')}</p>
-      <div class="generation-record-card-actions">
+      <div class="mindmap-row-foot">
+        <span>${escapeHtml(coverageText)}</span>
+        <span>${escapeHtml(detailText || (generatedAt ? `生成 ${generatedAt}` : '脑图用于人工评审覆盖结构和测试点'))}</span>
+      </div>
+      <div class="mindmap-row-actions">
         <button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>
-        ${item.mindmap_downloadable ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>` : ''}
-        <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}).then(() => showMindmapCenter())" title="只按现有生成分析刷新脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>
-        <button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)}).then(() => showMindmapCenter())">删除脑图</button>
+        ${item.mindmap_downloadable ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>` : ''}
+        <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}).then(() => showMindmapCenter())" title="只按现有生成分析刷新脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新</button>
+        <button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)}).then(() => showMindmapCenter())">删除文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmapRecord(${jsArg(caseSetId)})">删除记录</button>
       </div>
     </div>
@@ -3056,7 +3101,7 @@ async function showMindmapCenter() {
         jobLoadError = e.message || '后台任务读取失败';
       })
     ]);
-    const rows = data.mindmaps || [];
+    const rows = (data.mindmaps || []).sort((a, b) => mindmapRecordTimeValue(b) - mindmapRecordTimeValue(a));
     const list = document.getElementById('mindmap-center-list');
     if (!list) return;
     const recordCaseSetIds = new Set(rows.map(item => item.case_set_id).filter(Boolean));

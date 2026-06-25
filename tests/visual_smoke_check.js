@@ -172,6 +172,45 @@ function serve() {
       ]});
       return;
     }
+    if (url.pathname === '/api/cases/mindmaps') {
+      json(res, {ok: true, mindmaps: [
+        {
+          case_set_id: 'agent-newest',
+          title: '最新 AI 建模脑图',
+          module: 'AI_Agent_草稿',
+          yaml_file: 'AI建模.yaml',
+          generated_at: '2026-06-24 10:00:00',
+          scenario_count: 18,
+          automation_case_count: 12,
+          manual_case_count: 6,
+          smoke_count: 2,
+          priority_counts: {P0: 2, P1: 6, P2: 10},
+          mindmap_exists: true,
+          mindmap_downloadable: true,
+          mindmap_size: 39120,
+          mindmap_updated_at: '2026-06-25 15:29:48',
+          mindmap_sort_ts: 1782372588,
+        },
+        {
+          case_set_id: 'agent-old',
+          title: '较早模型众测方案',
+          module: 'AI_Agent_草稿',
+          yaml_file: '模型众测.yaml',
+          generated_at: '2026-06-23 14:40:05',
+          scenario_count: 47,
+          automation_case_count: 27,
+          manual_case_count: 10,
+          smoke_count: 1,
+          priority_counts: {P0: 1, P1: 18, P2: 28},
+          mindmap_exists: true,
+          mindmap_downloadable: true,
+          mindmap_size: 30210,
+          mindmap_updated_at: '2026-06-23 15:16:03',
+          mindmap_sort_ts: 1782198963,
+        }
+      ]});
+      return;
+    }
     if (url.pathname === '/api/runners') {
       json(res, {devices: [
         {
@@ -418,6 +457,17 @@ async function anyVisible(locator) {
     if (!await anyVisible(page.locator('text=启动 Agent'))) throw new Error('primary Agent action is missing');
     if (await page.locator('text=演示模式').count()) throw new Error('page incorrectly entered demo mode');
     if (getFileReadCount() !== 0) throw new Error(`dashboard should not read full YAML files during stats warmup, got ${getFileReadCount()}`);
+
+    await page.evaluate(() => showMindmapCenter());
+    await page.waitForSelector('text=脑图中心');
+    await page.waitForSelector('.mindmap-compact-list .mindmap-row.file');
+    const firstMindmapTitle = await page.locator('.mindmap-row.file .mindmap-row-title strong').first().innerText();
+    if (!/最新 AI 建模脑图/.test(firstMindmapTitle)) throw new Error(`mindmap list is not latest-first: ${firstMindmapTitle}`);
+    const mindmapRows = await page.locator('.mindmap-row.file').count();
+    if (mindmapRows < 2) throw new Error(`mindmap compact rows missing, rows=${mindmapRows}`);
+    const firstMindmapHeight = await page.locator('.mindmap-row.file').first().boundingBox();
+    if (!firstMindmapHeight || firstMindmapHeight.height > 150) throw new Error(`mindmap row is too tall: ${firstMindmapHeight && firstMindmapHeight.height}`);
+    await page.screenshot({path: path.join(ARTIFACTS, 'mindmap.png'), fullPage: true});
 
     await page.click('.workflow-step:has-text("运行记录")');
     await page.waitForSelector('text=Agent 运行记录');

@@ -923,7 +923,7 @@ def main():
     require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")
     require("refreshMindmapActiveTasks" in app_js_source and "{ refreshJobs: false }" in app_js_source, "Mindmap center must update active tasks without full-list refresh flicker")
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")
-    require('item.get("mindmap_updated_at") or item.get("generated_at")' in yaml_service_source, "Mindmap center must sort by latest mindmap update first")
+    require('"mindmap_sort_ts": sort_ts' in yaml_service_source and "def _mindmap_time_value" in yaml_service_source and 'item.get("mindmap_sort_ts")' in yaml_service_source, "Mindmap center must sort by robust numeric latest-update timestamp")
     require("完整需求覆盖追踪矩阵" in yaml_service_source and "进入 YAML 的自动化用例" in yaml_service_source and "人工验证 / 待准备" in yaml_service_source, "Mindmap must preserve full requirement coverage beyond executable YAML cases")
     require('job.get("type") in ("generate", "mindmap_only")' in yaml_service_source and 'old_type not in ("generate", "mindmap_only")' in router_source and "run_mindmap_only_job if old_type == \"mindmap_only\"" in router_source, "Mindmap-only background jobs must be listed as retryable and retry through the mindmap worker")
     for runner_name in ("windows-midscene-runner.py", "mac-midscene-runner.py"):
