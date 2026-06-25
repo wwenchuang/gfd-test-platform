@@ -1339,6 +1339,74 @@ def main():
     )
     require(not figma_backend.figma_direct_node_needs_parent_lookup({"type": "CANVAS", "children": [{}]}), "Figma canvas links must not force expensive parent lookup")
     require(figma_backend.figma_direct_node_needs_parent_lookup({"type": "TEXT", "characters": "AI建模"}), "Figma title/text links must lookup parent design scope")
+    require(
+        figma_backend.figma_direct_node_needs_parent_lookup({
+            "type": "FRAME",
+            "name": "Frame 1",
+            "absoluteBoundingBox": {"width": 3756, "height": 100},
+            "children": [{"type": "TEXT", "characters": "AI建模"}],
+        }),
+        "Direct Figma links to wide title-bar frames must lookup parent scope instead of importing one title image",
+    )
+    ai_title_scope_root = {
+        "id": "12:1",
+        "type": "CANVAS",
+        "name": "V1.6-AI建模",
+        "_figma_direct_link": True,
+        "children": [
+            {
+                "id": "12:2",
+                "type": "FRAME",
+                "name": "Frame 1",
+                "absoluteBoundingBox": {"x": -1304, "y": -142, "width": 3756, "height": 100},
+                "children": [{"type": "TEXT", "characters": "AI建模"}],
+            },
+            *[
+                {
+                    "id": f"12:{100 + idx}",
+                    "type": "FRAME",
+                    "name": f"AI建模页面 {idx:02d}",
+                    "absoluteBoundingBox": {
+                        "x": -1304 + ((idx - 1) % 6) * 475,
+                        "y": 58 + ((idx - 1) // 6) * 980,
+                        "width": 375,
+                        "height": 812,
+                    },
+                    "children": [{"type": "TEXT", "characters": "开始创作 图片建模 语音输入"}],
+                }
+                for idx in range(1, 37)
+            ],
+            {
+                "id": "12:999",
+                "type": "FRAME",
+                "name": "成长报告",
+                "absoluteBoundingBox": {"x": -1304, "y": 6000, "width": 3756, "height": 100},
+                "children": [{"type": "TEXT", "characters": "成长报告"}],
+            },
+            {
+                "id": "12:1000",
+                "type": "FRAME",
+                "name": "成长报告页面 01",
+                "absoluteBoundingBox": {"x": -1304, "y": 6160, "width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "成长报告 反馈有奖"}],
+            },
+        ],
+    }
+    ai_scope = figma_backend.figma_requirement_sibling_scope_root(
+        ai_title_scope_root,
+        "AI建模需求：首页进入 AI建模，生成模型并查看结果",
+    )
+    require(ai_scope and ai_scope.get("id") == "12:2", "AI modeling title-bar scope must resolve to the direct title frame")
+    require(len(ai_scope.get("children") or []) == 36, "AI modeling title-bar scope must stop at the next title bar and keep exactly 36 phone screens")
+    ai_pages = figma_backend.figma_frame_candidates(
+        ai_scope,
+        limit=40,
+        mode="smart",
+        min_width=240,
+        min_height=360,
+        pinned_node_ids={"12:2"},
+    )
+    require(len(ai_pages) == 36, "AI modeling title-bar scope must keep all 36 phone UI images, not only the title frame")
     job_id = "static_duration_check"
     old_generate_dir = backend.GENERATE_JOB_DIR
     with tempfile.TemporaryDirectory() as temp_dir:

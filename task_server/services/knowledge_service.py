@@ -1799,6 +1799,15 @@ def figma_direct_node_needs_parent_lookup(root: Dict[str, Any]) -> bool:
     if not isinstance(root, dict):
         return False
     node_type = root.get("type") or ""
+    width, height = figma_node_size(root)
+    looks_like_title_bar = (
+        node_type in {"FRAME", "SECTION"}
+        and width >= 600
+        and 0 < height <= 220
+        and figma_device_profile(width, height) != "phone"
+    )
+    if looks_like_title_bar:
+        return True
     if node_type in {"CANVAS", "FRAME", "SECTION", "COMPONENT", "INSTANCE"} and (root.get("children") or []):
         return False
     return True
@@ -2077,10 +2086,12 @@ def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) 
         return None
     children = [child for child in (root.get("children") or []) if isinstance(child, dict) and figma_node_visible(child)]
     headings: List[Tuple[int, int, Dict[str, Any]]] = []
+    title_bars: List[Tuple[int, Dict[str, Any]]] = []
     for idx, child in enumerate(children):
         width, height = figma_node_size(child)
         if height > 220 or width < 600:
             continue
+        title_bars.append((idx, child))
         name_blob = _normalize_requirement_search_text(child.get("name") or "")
         text_blob = _normalize_requirement_search_text(" ".join(figma_node_texts(child, limit=20)))
         own_blob = " ".join([name_blob, text_blob])
@@ -2102,7 +2113,7 @@ def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) 
     width = float(heading_box.get("width") or 0)
     height = float(heading_box.get("height") or 0)
     next_heading_y: Optional[float] = None
-    for _other_score, other_index, other in headings:
+    for other_index, other in title_bars:
         if other_index <= heading_index:
             continue
         other_y = float(((other.get("absoluteBoundingBox") or {}).get("y") or 0))
@@ -2741,8 +2752,8 @@ def parse_figma_design(data: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("没有读取到 Figma 节点，请确认链接权限和 node-id 是否正确")
     if node_id and direct_scope_only and requirement_query:
         scoped_root = (
-            figma_requirement_scope_root(root, requirement_query)
-            or figma_requirement_sibling_scope_root(root, requirement_query)
+            figma_requirement_sibling_scope_root(root, requirement_query)
+            or figma_requirement_scope_root(root, requirement_query)
         )
         if scoped_root and scoped_root is not root:
             root = scoped_root
