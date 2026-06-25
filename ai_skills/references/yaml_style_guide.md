@@ -72,6 +72,11 @@ Avoid:
 
 ## Assertion Style
 
+Generated Runner YAML should be sparse on assertions: keep one final
+business-visible `aiAssert` per task by default. Put intermediate page checks
+into `aiWaitFor`/steps, and keep full requirement coverage in `.mm`, summary,
+and manual cases.
+
 Prefer assertions that tolerate real data differences:
 
 - Page title is visible.

@@ -630,6 +630,7 @@ def normalize_text_list(value):
 YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
 YAML_REFERENCE_MAX_EXAMPLES = env_int("YAML_REFERENCE_MAX_EXAMPLES", 6)
 YAML_REFERENCE_MAX_SNIPPET_CHARS = env_int("YAML_REFERENCE_MAX_SNIPPET_CHARS", 2400)
+YAML_GENERATED_ASSERTION_LIMIT = max(1, min(3, env_int("MIDSCENE_GENERATED_ASSERTION_LIMIT", 1)))
 YAML_REFERENCE_MEMORY_FILE = os.path.join(LEARNING_DIR, "yaml-reference-memory.json")
 YAML_REFERENCE_STOPWORDS = {
     "测试", "验证", "页面", "功能", "需求", "用例", "执行", "当前", "进行", "是否", "可以", "需要",
@@ -841,6 +842,7 @@ def build_yaml_reference_examples_text(examples):
         "【现有 YAML 步骤经验库】",
         "下面片段来自平台已维护的 YAML 用例库。请学习其可执行步骤组织方式、等待策略、入口清理、外部跳转、弹窗处理和断言写法；",
         "只能复用与当前需求相关的动作结构，不要复制无关业务断言，不要把历史模块当成本次需求。",
+        "平台约束：过程检查优先写成 aiWaitFor 或普通 ai 步骤；每条 Runner YAML 默认只保留 1 个最终业务 aiAssert，完整覆盖点放到脑图、summary 或 manual_cases。",
         "",
     ]
     for idx, item in enumerate(examples[:YAML_REFERENCE_MAX_EXAMPLES], start=1):
@@ -1619,6 +1621,85 @@ def normalize_assertion_for_yaml(assertion, case):
     return "页面展示当前业务目标对应的标题、核心区域、列表内容或空态提示之一"
 
 
+def _assertion_rank_for_yaml(text, case):
+    """给候选断言排序，优先选择最像最终业务结果的可见断言。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return -100
+    lower = raw.lower()
+    score = 0
+    vague = (
+        "页面正常", "正常展示", "结果符合预期", "操作成功", "功能正常",
+        "跳转成功", "无异常", "符合预期", "当前页面内容符合预期",
+    )
+    if any(item in raw for item in vague):
+        score -= 10
+    expected = first_non_empty(
+        case_value(case, "expected_result", "expectedResult", "expected", "expectation"),
+        case_value(case, "goal", "business_goal", "objective"),
+        case_value(case, "coverage", "coverage_point", "test_point"),
+    )
+    if expected and raw == expected:
+        score += 12
+    elif expected and raw in expected:
+        score += 6
+    title = str(case.get("title") or case.get("name") or "").strip() if isinstance(case, dict) else ""
+    if title and title in raw:
+        score += 4
+    visible_words = (
+        "页面", "标题", "入口", "按钮", "tab", "Tab", "列表", "空态", "弹窗",
+        "提示", "状态", "进度", "结果", "详情", "卡片", "模块", "区域",
+    )
+    if any(word.lower() in lower or word in raw for word in visible_words):
+        score += 5
+    final_words = ("最终", "完成", "结果", "生成", "详情", "列表", "预览", "成功", "可见")
+    if any(word in raw for word in final_words):
+        score += 3
+    if len(raw) > 140:
+        score -= 4
+    if len(raw) < 8:
+        score -= 4
+    return score
+
+
+def select_yaml_assertions_for_case(case, assertions, step_expected=None):
+    """按平台风格选择 Runner YAML 断言，避免把所有验收点塞进 aiAssert。"""
+    case = case if isinstance(case, dict) else {}
+    candidates = []
+    expected = first_non_empty(
+        case_value(case, "expected_result", "expectedResult", "expectation"),
+        case_value(case, "expected", "expect"),
+    )
+    if expected:
+        candidates.append(expected)
+    candidates.extend(normalize_text_list(assertions))
+    candidates.extend(normalize_text_list(step_expected or []))
+
+    normalized = []
+    seen = set()
+    for item in candidates:
+        text = normalize_assertion_for_yaml(item, case)
+        if not text:
+            continue
+        key = re.sub(r"\s+", "", text)
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(text)
+
+    if not normalized:
+        title = str(case.get("title") or case.get("name") or "当前业务目标").strip()
+        normalized = [f"页面展示「{title}」相关标题、核心区域、列表内容或空态提示之一"]
+
+    ranked = sorted(
+        enumerate(normalized),
+        key=lambda item: (_assertion_rank_for_yaml(item[1], case), -item[0]),
+        reverse=True,
+    )
+    selected_indexes = sorted(idx for idx, _ in ranked[:YAML_GENERATED_ASSERTION_LIMIT])
+    return [normalized[idx] for idx in selected_indexes]
+
+
 def resolve_app_package(module="", file="", yaml_text="", explicit="", allow_default=False):
     """解析 app package。"""
     resolved = (
@@ -1653,10 +1734,10 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
         assertions = [assertions]
     elif not isinstance(assertions, list):
         assertions = normalize_text_list(assertions)
-    assertions = [normalize_assertion_for_yaml(item, case) for item in normalize_text_list(assertions)]
-    assertions = [item for item in assertions if item]
+    raw_assertions = normalize_text_list(assertions)
 
     normalized_steps = []
+    step_expected = []
     for step in steps:
         if isinstance(step, dict):
             action = step.get("action") or step.get("step") or step.get("description") or step.get("name")
@@ -1664,10 +1745,11 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
             if action:
                 normalized_steps.append(str(action))
             if expected:
-                assertions.append(str(expected))
+                step_expected.append(str(expected))
         else:
             normalized_steps.append(str(step))
 
+    assertions = select_yaml_assertions_for_case(case, raw_assertions, step_expected)
     meta = build_baseline_meta(case, normalized_steps, assertions)
 
     flows = []

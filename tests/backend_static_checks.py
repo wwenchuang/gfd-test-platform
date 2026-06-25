@@ -441,6 +441,118 @@ def check_yaml_reference_examples_are_general_step_library():
     require("aiTap" in all_text and "aiWaitFor" in all_text, "YAML reference examples must expose executable Midscene step actions")
     prompt_text = yaml_service.build_yaml_reference_examples_text(examples)
     require("现有 YAML 步骤经验库" in prompt_text and "不要复制无关业务断言" in prompt_text, "YAML reference prompt must be a general step library, not a hard-coded special case")
+    require("默认只保留 1 个最终业务 aiAssert" in prompt_text, "YAML reference prompt must constrain assertion density to platform style")
+
+
+def check_generated_yaml_uses_single_final_assertion():
+    from task_server.services import yaml_service
+
+    _, yaml_text = yaml_service.cases_to_midscene_yaml({
+        "_automation_ready": True,
+        "title": "AI建模入口",
+        "cases": [{
+            "title": "AI建模入口到达",
+            "app_package": "com.kfb.model",
+            "steps": [
+                {"action": "点击首页 AI建模入口", "expected": "首页 AI建模入口可见"},
+                {"action": "点击开始创作", "expected": "开始创作面板已打开"},
+                {"action": "进入图片建模上传入口", "expected": "图片建模上传区域可见"},
+            ],
+            "expected_result": "图片建模上传入口、提示文案或空态区域可见",
+            "assertions": [
+                "首页 AI建模入口可见",
+                "开始创作面板已打开",
+                "图片建模上传入口、提示文案或空态区域可见",
+            ],
+        }],
+    })
+    require(yaml_text.count("aiAssert:") == 1, "Generated YAML must keep one final business assertion by default")
+    require('aiAssert: "图片建模上传入口、提示文案或空态区域可见"' in yaml_text, "Generated YAML must keep the final expected business assertion")
+    require('aiAssert: "首页 AI建模入口可见"' not in yaml_text, "Generated YAML must not turn every step expected value into aiAssert")
+    require(yaml_service.validate_midscene_yaml(yaml_text).get("ok") is True, "Single-assertion generated YAML must remain executable")
+
+
+def check_ai_skills_receive_yaml_reference_context():
+    from task_server.services import ai_skill_service
+
+    calls = []
+    original_run_ai_skill = ai_skill_service.run_ai_skill
+
+    def fake_run_ai_skill(skill_name, payload=None, **_kwargs):
+        calls.append((skill_name, payload or {}))
+        if skill_name == "requirement_analyzer":
+            return {
+                "business_goals": ["验证 AI 建模入口"],
+                "roles": ["普通用户"],
+                "entry_points": ["首页 AI建模"],
+                "state_assumptions": [],
+                "data_assumptions": [],
+                "visible_outcomes": ["AI建模页可见"],
+                "risks": [],
+                "requirement_points": ["REQ-001 AI建模入口可达"],
+                "questions": [],
+                "confidence": "high",
+                "missing_inputs": [],
+                "blockers": [],
+                "assumptions": [],
+                "readiness_score": 90,
+                "readiness_level": "ready",
+                "source_quality": {"requirement": "sufficient", "ui": "sufficient", "knowledge": "partial"},
+            }
+        if skill_name == "scenario_designer":
+            return {"scenarios": [{
+                "feature": "AI建模",
+                "requirement_point": "REQ-001 AI建模入口可达",
+                "scenario": "入口可达",
+                "type": "正常流程",
+                "design_method": ["等价类"],
+                "business_path": "首页 -> AI建模",
+                "expected": "AI建模页可见",
+                "automation_suitable": True,
+                "reason": "UI 可见",
+            }]}
+        if skill_name == "automation_filter":
+            return {
+                "cases": [{
+                    "case_id": "TC-001",
+                    "title": "AI建模入口可达",
+                    "priority": "P1",
+                    "smoke": True,
+                    "scenario": "入口可达",
+                    "goal": "验证 AI 建模入口",
+                    "start_page": "App 首页",
+                    "business_path": "首页 -> AI建模",
+                    "expected_result": "AI建模页可见",
+                    "repair_hints": "参考平台入口点击写法",
+                    "risk": "",
+                    "coverage": "REQ-001 AI建模入口可达",
+                    "data_requirements": "",
+                    "automation_reason": "路径短且 UI 可见",
+                    "preconditions": [],
+                    "steps": ["点击首页 AI建模入口"],
+                    "assertions": ["AI建模页可见"],
+                    "tags": ["冒烟"],
+                }],
+                "manual_cases": [],
+                "review": {},
+            }
+        raise AssertionError(f"unexpected skill: {skill_name}")
+
+    ai_skill_service.run_ai_skill = fake_run_ai_skill
+    try:
+        payload = ai_skill_service.build_cases_payload_from_skills(
+            "AI建模测试",
+            "AI测试",
+            ["需求正文", "【现有 YAML 步骤经验库】\n```yaml\n- name: 入口\n  flow:\n    - aiTap: \"AI建模入口\"\n```"],
+        )
+    finally:
+        ai_skill_service.run_ai_skill = original_run_ai_skill
+
+    scenario_payload = next(item[1] for item in calls if item[0] == "scenario_designer")
+    automation_payload = next(item[1] for item in calls if item[0] == "automation_filter")
+    require("现有 YAML 步骤经验库" in scenario_payload.get("yaml_reference_context", ""), "Scenario designer must receive YAML reference context")
+    require("现有 YAML 步骤经验库" in automation_payload.get("yaml_reference_context", ""), "Automation filter must receive YAML reference context")
+    require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
 
 
 def check_yaml_runner_eligibility_filter():
@@ -852,7 +964,7 @@ def main():
     require("AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in yaml_service_source and 'job_type == "agent_generate_yaml"' in yaml_service_source, "Agent YAML generation must not share the short Runner job timeout")
     require("def refine_cases_with_yaml_visual_batches" in yaml_service_source and "YAML_VISUAL_BATCH_SIZE" in yaml_service_source and "legacy_fallback=False" in yaml_service_source, "YAML visual grounding must run in bounded batches without doubling timeout via legacy fallback")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
-    require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example, "Deployment env example must expose Agent YAML long-timeout and visual batching knobs")
+    require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
     require("text.find(\"[\")" in ai_skill_service_source and "return normalize_cases_payload(payload)" in ai_skill_service_source, "Model case JSON parser must accept root arrays as valid case payloads")
     require("fallback_normalized_payload" in yaml_service_source and "payload = normalize_cases_payload(payload)" in yaml_service_source, "Coverage repair failure must fall back to normalized payload instead of failing the full generation chain")
     require("def _agent_yaml_validation_state" in agent_service_source and "_agent_yaml_validation_state(artifacts.get(\"yamlValidation\"))" in agent_service_source, "Agent YAML validation state must be normalized before dict merging")
@@ -866,6 +978,8 @@ def main():
     check_agent_requirement_background_delete_is_not_high_risk()
     check_agent_generation_orphan_recovery()
     check_yaml_reference_examples_are_general_step_library()
+    check_generated_yaml_uses_single_final_assertion()
+    check_ai_skills_receive_yaml_reference_context()
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()

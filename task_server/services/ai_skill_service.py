@@ -326,6 +326,20 @@ def compact_text_assets(text_assets, max_chars=24000):
     return text[:max_chars]
 
 
+def extract_yaml_reference_context(text_assets, max_chars=14000):
+    """从输入资料中提取平台 YAML 写法参考，传递给后续 AI skill。"""
+    chunks = []
+    for item in text_assets or []:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        if "【现有 YAML 步骤经验库】" in text or "```yaml" in text or "YAML 步骤经验" in text:
+            chunks.append(text)
+    if not chunks:
+        return ""
+    return "\n\n".join(chunks)[:max_chars]
+
+
 # ---------------------------------------------------------------------------
 # Failure analysis helpers (migrated from midscene-upload.py)
 # ---------------------------------------------------------------------------
@@ -1167,14 +1181,15 @@ def build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases):
     return rows
 
 
-def call_skill_scenario_designer(title, module, analysis):
+def call_skill_scenario_designer(title, module, analysis, yaml_reference_context=""):
     """调用 AI skill: scenario_designer。"""
     targets = generation_volume_targets(analysis)
     payload = {
         "title": title,
         "module": module,
         "analysis": analysis,
-        "generation_targets": targets
+        "generation_targets": targets,
+        "yaml_reference_context": yaml_reference_context,
     }
     result = run_ai_skill("scenario_designer", payload, timeout=240)
     scenarios = result.get("scenarios") or []
@@ -1183,7 +1198,7 @@ def call_skill_scenario_designer(title, module, analysis):
     return scenarios
 
 
-def call_skill_automation_filter(title, module, analysis, scenarios):
+def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context=""):
     """调用 AI skill: automation_filter。"""
     targets = generation_volume_targets(analysis)
     payload = {
@@ -1192,10 +1207,12 @@ def call_skill_automation_filter(title, module, analysis, scenarios):
         "analysis": analysis,
         "scenarios": scenarios,
         "generation_targets": targets,
+        "yaml_reference_context": yaml_reference_context,
         "automation_rules": {
             "allowed_actions": ["点击", "输入", "等待", "断言", "返回", "滚动", "处理弹窗", "回到首页"],
             "manual_by_default": ["真实支付", "删除", "切账号", "清数据", "后台造数", "接口 Mock", "系统权限预置", "断网/弱网", "排队/并发状态", "真实外设", "纯设计稿对比"],
-            "assertion_required": True
+            "assertion_required": True,
+            "assertion_density": "每条自动化用例只写 1 条最终业务结果断言；过程校验写入 steps 的等待/检查动作，不要把每个验收点都塞进 assertions"
         }
     }
     result = run_ai_skill("automation_filter", payload, timeout=300)
@@ -1214,9 +1231,15 @@ def call_skill_automation_filter(title, module, analysis, scenarios):
 
 def build_cases_payload_from_skills(title, module, text_assets):
     """通过 AI skills pipeline 生成用例 payload。"""
+    yaml_reference_context = extract_yaml_reference_context(text_assets)
     analysis = call_skill_requirement_analyzer(title, module, text_assets)
-    scenarios = call_skill_scenario_designer(title, module, analysis)
-    filtered = call_skill_automation_filter(title, module, analysis, scenarios)
+    if yaml_reference_context:
+        analysis["yaml_reference_context_available"] = True
+        analysis["yaml_reference_rule"] = (
+            "后续场景设计和自动化筛选必须参考平台已有 YAML 步骤经验；只学习动作组织、等待策略和断言密度，不复制历史业务断言。"
+        )
+    scenarios = call_skill_scenario_designer(title, module, analysis, yaml_reference_context=yaml_reference_context)
+    filtered = call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context=yaml_reference_context)
     cases = filtered.get("cases") or []
     manual_cases = filtered.get("manual_cases") or []
     analysis["coverage_matrix"] = build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases)
@@ -1231,6 +1254,9 @@ def build_cases_payload_from_skills(title, module, text_assets):
     }
     review = payload.setdefault("review", {})
     review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1"
+    review["yaml_reference_context_used_by_skills"] = bool(yaml_reference_context)
+    if yaml_reference_context:
+        review["yaml_reference_context_rule"] = "用例库参考已传入 scenario_designer 和 automation_filter，用于学习平台步骤组织和断言密度。"
     review["requirement_readiness"] = {
         "score": analysis.get("readiness_score"),
         "level": analysis.get("readiness_level"),
