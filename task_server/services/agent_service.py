@@ -2502,13 +2502,19 @@ def tool_retry_failed_job(run, inp):
         if not module or not file:
             return {"ok": False, "error": "原任务缺少 module/file 信息"}
         attempt = (old_job.get("attempt") or 1) + 1
-        new_job = job_service.create_job({
-            "module": module,
-            "file": file,
-            "target_task_name": old_job.get("target_task_name", ""),
-            "attempt": attempt,
-            "parent_job_id": job_id,
-        })
+        new_job = job_service.create_pending_job(
+            module,
+            file,
+            auto_optimize=False,
+            max_attempt=safe_int(old_job.get("max_attempt"), 2),
+            attempt=attempt,
+            parent_job_id=job_id,
+            device_id=old_job.get("device_id", ""),
+            runner_id=old_job.get("target_runner_id") or old_job.get("runner_id", ""),
+            device_strategy=old_job.get("device_strategy") or old_job.get("deviceStrategy") or "",
+            run_mode=old_job.get("run_mode", "test"),
+            target_task_name=old_job.get("target_task_name") or old_job.get("current_task_name") or "",
+        )
         return {
             "ok": True,
             "newJobId": new_job.get("job_id", ""),
@@ -5721,6 +5727,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "summaryFiles": result.get("summaryFiles"),
         "yamlCheck": result.get("yamlCheck") or {},
         "yamlExecutability": yaml_executability,
+        "review": result.get("review") or {},
+        "coverageAudit": result.get("coverageAudit") or {},
         "progressJobId": progress_job_id,
         "reusedPreparedFigma": bool(prepared_figma_context),
     }
@@ -7238,12 +7246,14 @@ def _tool_collect_report(run):
                         "jobId": jid,
                         "module": job.get("module", ""),
                         "file": job.get("file", ""),
+                        "taskName": job_entry.get("taskName", ""),
                         "status": "success",
                     })
                     report_entry = {
                         "jobId": jid,
                         "module": job.get("module", ""),
                         "file": job.get("file", ""),
+                        "taskName": job_entry.get("taskName", ""),
                         "reportUrl": report_url,
                         "localPath": local_path,
                         "status": "success",
@@ -7299,7 +7309,7 @@ def _tool_collect_report(run):
                         "status": fj.get("status", "failed"),
                         "module": fj.get("module", ""),
                         "file": fj.get("file", ""),
-                        "taskName": fj.get("task_name") or fj.get("target_task_name") or "",
+                        "taskName": fj.get("taskName") or fj.get("task_name") or fj.get("target_task_name") or fj.get("current_task_name") or "",
                         "reportUrl": fj.get("report_url") or fj.get("reportUrl", ""),
                         "stdoutTail": fj.get("stdout_tail") or "",
                         "stderrTail": fj.get("stderr_tail") or "",
@@ -7315,7 +7325,7 @@ def _tool_collect_report(run):
                         "status": "timeout",
                         "module": tj.get("module", ""),
                         "file": tj.get("file", ""),
-                        "taskName": tj.get("task_name") or tj.get("target_task_name") or "",
+                        "taskName": tj.get("taskName") or tj.get("task_name") or tj.get("target_task_name") or tj.get("current_task_name") or "",
                         "reportUrl": tj.get("report_url") or tj.get("reportUrl", ""),
                         "stdoutTail": tj.get("stdout_tail") or "",
                         "stderrTail": tj.get("stderr_tail") or "",
@@ -7665,7 +7675,7 @@ def _tool_generate_bug_draft(run):
 
 
 def _tool_rerun(run):
-    """对失败任务重新创建 job。"""
+    """对失败任务重新创建 Runner job，并等待实际执行结果。"""
     call = {
         "callId": str(uuid.uuid4())[:8],
         "toolName": "retry_failed_job",
@@ -7677,21 +7687,83 @@ def _tool_rerun(run):
         from task_server.services import job_service
         job_ids = (run.get("artifacts") or {}).get("jobIds", [])
         retried = []
+        retry_sources = []
+        skipped = []
+        jobs = job_service.load_jobs()
         for jid in job_ids:
-            jobs = job_service.load_jobs()
             j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
             if j and str(j.get("status", "")).lower() in ("failed", "error", "timeout"):
-                new_job = job_service.create_job({
-                    "module": j.get("module", ""),
-                    "file": j.get("file", ""),
-                    "target_task_name": j.get("target_task_name", j.get("taskName", "")),
-                    "parent_job_id": jid,
-                })
+                target_task_name = j.get("target_task_name") or j.get("taskName") or j.get("current_task_name") or ""
+                new_job = job_service.create_pending_job(
+                    j.get("module", ""),
+                    j.get("file", ""),
+                    auto_optimize=False,
+                    max_attempt=safe_int(j.get("max_attempt"), 2),
+                    attempt=safe_int(j.get("attempt"), 1) + 1,
+                    parent_job_id=jid,
+                    device_id=j.get("device_id", ""),
+                    runner_id=j.get("target_runner_id") or j.get("runner_id", ""),
+                    device_strategy=j.get("device_strategy") or j.get("deviceStrategy") or "",
+                    run_mode=j.get("run_mode", "test"),
+                    target_task_name=target_task_name,
+                )
                 if new_job and new_job.get("job_id"):
                     retried.append(new_job["job_id"])
-        run.setdefault("artifacts", {})["retriedJobs"] = retried
-        call["status"] = "SUCCESS"
-        call["outputSummary"] = f"重跑 {len(retried)} 个失败任务"
+                    retry_sources.append({
+                        "sourceJobId": jid,
+                        "newJobId": new_job["job_id"],
+                        "module": j.get("module", ""),
+                        "file": j.get("file", ""),
+                        "targetTaskName": target_task_name,
+                    })
+            elif j:
+                skipped.append({"jobId": jid, "status": j.get("status", "")})
+            else:
+                skipped.append({"jobId": jid, "status": "not_found"})
+        artifacts = run.setdefault("artifacts", {})
+        artifacts["retriedJobs"] = retried
+        artifacts["rerunSources"] = retry_sources
+        artifacts["rerunSkippedJobs"] = skipped
+        call["createdJobIds"] = retried
+        call["outputSummary"] = f"已创建 {len(retried)} 个重跑任务"
+        if not retried:
+            call["status"] = "SKIPPED" if not retry_sources else "FAILED"
+            call["outputSummary"] = "没有可重跑的失败任务"
+            attach_diagnosis(call, make_diagnosis(
+                "没有创建任何重跑任务",
+                "安全重跑没有进入 Runner 执行队列。",
+                ["确认上一步执行任务是否真的失败", "查看 artifacts.jobIds 是否包含失败 job", "手动在执行中心选择失败任务重跑"],
+                skippedJobs=skipped[:10],
+            ))
+        else:
+            wait_timeout = job_service.runner_job_wait_timeout_seconds(len(retried))
+            wait_result = job_service.wait_jobs_finished(retried, run, timeout=wait_timeout, interval=5)
+            completed = wait_result.get("completed") or []
+            failed = wait_result.get("failed") or []
+            timeout_jobs = wait_result.get("timeout") or []
+            artifacts["rerunResult"] = {
+                "createdCount": len(retried),
+                "completedCount": len(completed),
+                "failedCount": len(failed),
+                "timeoutCount": len(timeout_jobs),
+                "completed": completed,
+                "failed": failed,
+                "timeout": timeout_jobs,
+                "waitTimeoutSeconds": wait_timeout,
+            }
+            summary = f"重跑执行完成：创建 {len(retried)} 个，成功 {len(completed)} 个，失败 {len(failed)} 个，超时 {len(timeout_jobs)} 个"
+            call["outputSummary"] = summary
+            if failed or timeout_jobs:
+                call["status"] = "PARTIAL_FAILED" if completed else "FAILED"
+                call["error"] = "重跑后仍有失败或超时任务"
+                attach_diagnosis(call, make_diagnosis(
+                    "重跑后仍有任务失败或超时",
+                    "这次重跑已经实际下发 Runner，但结果未全部通过。",
+                    ["查看重跑 job 报告", "根据失败日志判断脚本/产品/环境问题", "必要时生成修复草稿后再重跑"],
+                    failedJobs=(failed + timeout_jobs)[:10],
+                ))
+            else:
+                call["status"] = "SUCCESS"
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)

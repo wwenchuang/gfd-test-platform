@@ -158,6 +158,9 @@ __all__ = [
     "normalize_model_json",
     "normalize_yaml_scalar_value",
     "strip_yaml_quotes",
+    "collect_yaml_reference_examples",
+    "build_yaml_reference_examples_text",
+    "record_yaml_reference_examples",
     "case_to_task_yaml",
     "extract_midscene_tasks",
     "validate_midscene_yaml_executability",
@@ -606,6 +609,267 @@ def normalize_text_list(value):
         return [f"{key}：{val}" for key, val in value.items() if str(val).strip()]
     text = str(value or "").strip()
     return [text] if text else []
+
+
+YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
+YAML_REFERENCE_MAX_EXAMPLES = env_int("YAML_REFERENCE_MAX_EXAMPLES", 6)
+YAML_REFERENCE_MAX_SNIPPET_CHARS = env_int("YAML_REFERENCE_MAX_SNIPPET_CHARS", 2400)
+YAML_REFERENCE_MEMORY_FILE = os.path.join(LEARNING_DIR, "yaml-reference-memory.json")
+YAML_REFERENCE_STOPWORDS = {
+    "测试", "验证", "页面", "功能", "需求", "用例", "执行", "当前", "进行", "是否", "可以", "需要",
+    "点击", "进入", "打开", "显示", "相关", "流程", "按钮", "模块", "状态", "结果", "完成", "成功",
+    "失败", "检查", "确认", "一个", "这个", "那个", "用户", "操作", "场景", "自动化", "生成",
+}
+
+
+def _yaml_reference_repo_root():
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _yaml_reference_roots():
+    repo_root = _yaml_reference_repo_root()
+    candidates = [
+        TASK_DIR,
+        os.path.join(repo_root, "server-tasks"),
+        os.path.join(repo_root, "server-tasks-all"),
+    ]
+    roots = []
+    seen = set()
+    for root in candidates:
+        path = os.path.abspath(str(root or ""))
+        if not path or path in seen or not os.path.isdir(path):
+            continue
+        seen.add(path)
+        roots.append(path)
+    return roots
+
+
+def _yaml_reference_terms(text, limit=120):
+    text = str(text or "")
+    terms = []
+    seen = set()
+
+    def add(term):
+        term = str(term or "").strip().lower()
+        if len(term) < 2 or term in YAML_REFERENCE_STOPWORDS or term in seen:
+            return
+        seen.add(term)
+        terms.append(term)
+
+    for match in re.finditer(r"[A-Za-z0-9_./-]+|[\u4e00-\u9fff]+", text):
+        token = match.group(0).strip()
+        if not token:
+            continue
+        if re.fullmatch(r"[A-Za-z0-9_./-]+", token):
+            add(token)
+            continue
+        add(token)
+        if len(token) >= 4:
+            for size in (4, 3, 2):
+                for idx in range(0, max(0, len(token) - size + 1)):
+                    add(token[idx:idx + size])
+                    if len(terms) >= limit:
+                        return terms
+    return terms[:limit]
+
+
+def _iter_yaml_reference_files(max_files=None):
+    max_files = safe_int(max_files, YAML_REFERENCE_MAX_FILES)
+    count = 0
+    for root in _yaml_reference_roots():
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                name for name in dirnames
+                if not name.startswith(".") and name not in ("node_modules", "__pycache__")
+            ]
+            for filename in sorted(filenames):
+                if not filename.lower().endswith((".yaml", ".yml")) or filename.startswith("."):
+                    continue
+                path = os.path.join(dirpath, filename)
+                try:
+                    rel = os.path.relpath(path, root).replace("\\", "/")
+                except Exception:
+                    rel = filename
+                yield root, rel, path
+                count += 1
+                if count >= max_files:
+                    return
+
+
+def _yaml_reference_blocks(text):
+    lines = (text or "").splitlines()
+    starts = [idx for idx, line in enumerate(lines) if re.match(r"^\s*-\s+name:\s*.+", line)]
+    if not starts:
+        return []
+    blocks = []
+    for pos, start in enumerate(starts):
+        end = starts[pos + 1] if pos + 1 < len(starts) else len(lines)
+        block = "\n".join(lines[start:end]).strip()
+        if block:
+            blocks.append(block)
+    return blocks
+
+
+def _yaml_reference_title(block, fallback):
+    match = re.search(r"^\s*-\s+name:\s*(.+?)\s*$", block or "", flags=re.M)
+    return _clean_yaml_name(match.group(1)) if match else fallback
+
+
+def _yaml_reference_flow_actions(block):
+    actions = []
+    for match in re.finditer(r"^\s*-\s*([A-Za-z][A-Za-z0-9_]*)\s*:", block or "", flags=re.M):
+        action = match.group(1)
+        if action not in actions:
+            actions.append(action)
+    return actions[:20]
+
+
+def _yaml_reference_baseline_path(block):
+    match = re.search(r"#\s*baseline\.path\s*:\s*(.+)", block or "")
+    return match.group(1).strip() if match else ""
+
+
+def _trim_yaml_reference_snippet(block, max_chars=None):
+    max_chars = safe_int(max_chars, YAML_REFERENCE_MAX_SNIPPET_CHARS)
+    kept = []
+    for line in (block or "").splitlines():
+        stripped = line.rstrip()
+        if not stripped:
+            continue
+        if len(kept) > 48:
+            break
+        kept.append(stripped)
+    text = "\n".join(kept).strip()
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "\n  # ... 已截断，仅保留关键步骤参考"
+    return text
+
+
+def _score_yaml_reference(query_terms, module, title, rel_path, block):
+    haystack = "\n".join([rel_path, title, block[:5000]]).lower()
+    title_l = str(title or "").lower()
+    rel_l = str(rel_path or "").lower()
+    score = 0
+    matched = []
+    for term in query_terms or []:
+        if not term:
+            continue
+        hits = haystack.count(term)
+        if hits:
+            weight = 1 + min(5, len(term) // 2)
+            if term in title_l:
+                weight += 5
+            if term in rel_l:
+                weight += 3
+            score += min(14, hits * weight)
+            matched.append(term)
+    module_text = str(module or "").strip().lower()
+    if module_text and (module_text in rel_l or module_text in title_l):
+        score += 10
+        matched.append(module_text)
+    actions = _yaml_reference_flow_actions(block)
+    if actions:
+        score += min(8, len(actions))
+    if _yaml_reference_baseline_path(block):
+        score += 4
+    return score, matched[:12], actions
+
+
+def collect_yaml_reference_examples(query_text, module="", limit=None):
+    """Search all existing YAML tasks and return reusable step examples."""
+    limit = safe_int(limit, YAML_REFERENCE_MAX_EXAMPLES)
+    query_terms = _yaml_reference_terms(query_text)
+    scored = []
+    seen_hashes = set()
+    for _root, rel_path, path in _iter_yaml_reference_files():
+        try:
+            text = read_text_file(path, default="")
+        except Exception:
+            text = ""
+        if not text or "tasks:" not in text:
+            continue
+        blocks = _yaml_reference_blocks(text)
+        if not blocks:
+            continue
+        module_name = rel_path.split("/", 1)[0] if "/" in rel_path else ""
+        for block in blocks:
+            title = _yaml_reference_title(block, os.path.splitext(os.path.basename(path))[0])
+            block_hash = hashlib.sha1(block.encode("utf-8", "ignore")).hexdigest()[:12]
+            if block_hash in seen_hashes:
+                continue
+            seen_hashes.add(block_hash)
+            score, matched, actions = _score_yaml_reference(query_terms, module, title, rel_path, block)
+            if score < 5 and scored:
+                continue
+            scored.append({
+                "score": score,
+                "title": title,
+                "module": module_name,
+                "file": rel_path,
+                "path": path,
+                "matched_terms": matched,
+                "actions": actions,
+                "baseline_path": _yaml_reference_baseline_path(block),
+                "snippet": _trim_yaml_reference_snippet(block),
+                "hash": block_hash,
+            })
+    scored.sort(key=lambda item: (safe_int(item.get("score"), 0), item.get("title") or ""), reverse=True)
+    return scored[:max(1, limit)]
+
+
+def build_yaml_reference_examples_text(examples):
+    examples = [item for item in (examples or []) if isinstance(item, dict)]
+    if not examples:
+        return ""
+    lines = [
+        "【现有 YAML 步骤经验库】",
+        "下面片段来自平台已维护的 YAML 用例库。请学习其可执行步骤组织方式、等待策略、入口清理、外部跳转、弹窗处理和断言写法；",
+        "只能复用与当前需求相关的动作结构，不要复制无关业务断言，不要把历史模块当成本次需求。",
+        "",
+    ]
+    for idx, item in enumerate(examples[:YAML_REFERENCE_MAX_EXAMPLES], start=1):
+        matched = "、".join(item.get("matched_terms") or []) or "模块/步骤结构相近"
+        actions = " -> ".join(item.get("actions") or []) or "-"
+        lines.extend([
+            f"### 参考样例 {idx}: {item.get('title') or item.get('file')}",
+            f"- 来源: {item.get('file')}",
+            f"- 匹配: {matched}",
+            f"- 动作类型: {actions}",
+        ])
+        if item.get("baseline_path"):
+            lines.append(f"- 业务路径: {item.get('baseline_path')}")
+        lines.extend(["```yaml", item.get("snippet") or "", "```", ""])
+    return "\n".join(lines).strip()
+
+
+def record_yaml_reference_examples(case_set_id, title, module, examples):
+    examples = [item for item in (examples or []) if isinstance(item, dict)]
+    if not examples:
+        return ""
+    records = read_json_file(YAML_REFERENCE_MEMORY_FILE, default=[])
+    if not isinstance(records, list):
+        records = []
+    records.append({
+        "case_set_id": case_set_id,
+        "title": title,
+        "module": module,
+        "used_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "examples": [
+            {
+                "title": item.get("title"),
+                "module": item.get("module"),
+                "file": item.get("file"),
+                "score": item.get("score"),
+                "matched_terms": item.get("matched_terms") or [],
+                "actions": item.get("actions") or [],
+                "hash": item.get("hash"),
+            }
+            for item in examples[:YAML_REFERENCE_MAX_EXAMPLES]
+        ],
+    })
+    os.makedirs(os.path.dirname(YAML_REFERENCE_MEMORY_FILE), exist_ok=True)
+    write_json_file(YAML_REFERENCE_MEMORY_FILE, records[-200:])
+    return YAML_REFERENCE_MEMORY_FILE
 
 
 def case_priority(case):
@@ -3655,6 +3919,22 @@ def generate_ui_yaml_from_request(d, job_id=None):
     stage1_text_assets = requirement_text_assets or visual_text_assets or [
         "未提供独立需求文档，请根据标题、模块、Figma/截图和页面知识先归纳业务范围，再生成测试用例。"
     ]
+    yaml_reference_examples = collect_yaml_reference_examples(
+        "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
+        module=module,
+        limit=YAML_REFERENCE_MAX_EXAMPLES,
+    )
+    yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
+    if yaml_reference_text:
+        stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
+        if job_id:
+            names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_reference_examples[:3])
+            update_generate_job(
+                job_id,
+                progress=44,
+                step="检索用例库",
+                message=f"已检索现有 YAML 步骤经验 {len(yaml_reference_examples)} 条，生成时参考可执行写法：{names}",
+            )
     skill_pipeline_error = ""
     if USE_AI_SKILL_PIPELINE:
         try:
@@ -3703,6 +3983,26 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 update_generate_job(job_id, progress=67, step="视觉校准跳过", message=f"视觉校准失败但不阻塞生成：{str(e)[:100]}")
 
     review = payload.setdefault("review", {})
+    if yaml_reference_examples:
+        memory_path = record_yaml_reference_examples(case_set_id, title, module, yaml_reference_examples)
+        review["yaml_reference_examples"] = [
+            {
+                "title": item.get("title"),
+                "module": item.get("module"),
+                "file": item.get("file"),
+                "score": item.get("score"),
+                "matched_terms": item.get("matched_terms") or [],
+                "actions": item.get("actions") or [],
+                "baseline_path": item.get("baseline_path") or "",
+            }
+            for item in yaml_reference_examples
+        ]
+        review["yaml_step_library"] = {
+            "enabled": True,
+            "example_count": len(yaml_reference_examples),
+            "memory_path": memory_path,
+            "rule": "生成 YAML 前检索现有用例库，学习可执行步骤组织方式；只复用相关动作结构，不复制无关业务断言。",
+        }
     review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
     if prepared_figma_context:
         review["prepared_figma_context_reused"] = {
@@ -4339,6 +4639,18 @@ def write_generation_summary(case_set_id, summary):
                 filename=markdown_cell(item.get("filename") or item.get("name")),
                 size=markdown_cell(item.get("size")),
                 reason=markdown_cell(reason),
+            ))
+    yaml_reference_examples = ((summary.get("review") or {}).get("yaml_reference_examples") or [])
+    if yaml_reference_examples:
+        lines.extend(["", "### YAML 步骤经验参考", ""])
+        lines.append("生成 YAML 前已从现有用例库检索可复用步骤写法；这里只展示参考来源，实际生成仍以本次需求和 Figma 为准。")
+        lines.extend(["", "| 参考用例 | 来源 YAML | 匹配词 | 动作类型 |", "| --- | --- | --- | --- |"])
+        for item in yaml_reference_examples[:8]:
+            lines.append("| {title} | {file} | {matched} | {actions} |".format(
+                title=markdown_cell(item.get("title")),
+                file=markdown_cell(item.get("file")),
+                matched=markdown_cell("、".join(item.get("matched_terms") or [])),
+                actions=markdown_cell(" -> ".join(item.get("actions") or [])),
             ))
     lines.extend([
         "",

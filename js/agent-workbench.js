@@ -1195,6 +1195,7 @@ function normalizeAgentReportArtifacts(report = {}) {
       jobId: item.jobId || item.job_id || '',
       module: item.module || '',
       file: item.file || item.name || item.path || '',
+      taskName: item.taskName || item.task_name || item.target_task_name || item.current_task_name || item.currentTaskName || '',
       status: item.status || '',
     }));
   const yamlExecutionRefs = [
@@ -1202,6 +1203,24 @@ function normalizeAgentReportArtifacts(report = {}) {
     ...yamlFromReports,
   ];
   return { executionReports, yamlExecutionRefs };
+}
+
+function agentCaseLabel(item = {}) {
+  const task = String(
+    item.taskName || item.task_name || item.target_task_name || item.targetTaskName ||
+    item.current_task_name || item.currentTaskName || ''
+  ).trim();
+  const file = String(item.file || item.name || item.path || '').trim();
+  const jobId = String(item.jobId || item.job_id || '').trim();
+  return task || file || jobId || '未命名用例';
+}
+
+function agentCaseSubLabel(item = {}) {
+  return [
+    item.module || '',
+    item.file || item.name || item.path || '',
+    item.jobId || item.job_id ? `Job ${item.jobId || item.job_id}` : '',
+  ].filter(Boolean).join(' · ');
 }
 
 function agentArtifactsOf(runOrArtifacts = {}) {
@@ -1230,6 +1249,43 @@ function agentMindmapInfo(runOrArtifacts = {}) {
 
 function agentMindmapDownloadUrl(runOrArtifacts = {}) {
   return agentMindmapInfo(runOrArtifacts).url;
+}
+
+function agentYamlReferenceExamples(runOrArtifacts = {}) {
+  const artifacts = agentArtifactsOf(runOrArtifacts);
+  const reviews = [
+    artifacts.generationPipeline?.review,
+    artifacts.generationSummary?.review,
+    artifacts.generatedCases?.review,
+  ].filter(item => item && typeof item === 'object');
+  for (const review of reviews) {
+    if (Array.isArray(review.yaml_reference_examples) && review.yaml_reference_examples.length) {
+      return review.yaml_reference_examples;
+    }
+  }
+  return [];
+}
+
+function renderYamlReferenceExamples(examples = []) {
+  const visible = examples.filter(Boolean);
+  if (!visible.length) return '';
+  return `
+    <section class="final-report-panel final-report-wide yaml-reference-panel">
+      <strong>生成时参考的历史步骤</strong>
+      <p>Agent 会从现有 YAML 用例库学习可执行步骤写法，只复用相关动作结构，本次需求和 Figma 仍是主依据。</p>
+      <div class="yaml-reference-list">
+        ${visible.slice(0, 6).map(item => `
+          <div>
+            <b>${escapeHtml(item.title || item.file || '参考用例')}</b>
+            <span>${escapeHtml(item.file || '')}</span>
+            ${item.baseline_path ? `<em>${escapeHtml(item.baseline_path)}</em>` : ''}
+            <small>${escapeHtml([...(item.matched_terms || []), ...(item.actions || [])].slice(0, 10).join(' · ') || '按模块和步骤结构匹配')}</small>
+          </div>
+        `).join('')}
+      </div>
+      ${visible.length > 6 ? `<p>还有 ${escapeHtml(visible.length - 6)} 条参考已记录在生成摘要中。</p>` : ''}
+    </section>
+  `;
 }
 
 function downloadAgentMindmap() {
@@ -1342,11 +1398,12 @@ function renderReportDetail(step, artifacts) {
     html += '<div class="report-links">';
     html += '<div class="section-title">执行报告</div>';
     for (const r of reports.slice(0, 10)) {
-      const label = `${r.module || ''}/${r.file || ''}`;
+      const label = agentCaseLabel(r);
+      const subLabel = agentCaseSubLabel(r);
       if (r.reportUrl) {
-        html += `<a href="${escapeHtml(r.reportUrl)}" target="_blank" class="report-link">${escapeHtml(label)}</a>`;
+        html += `<a href="${escapeHtml(r.reportUrl)}" target="_blank" class="report-link report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || '打开执行报告')}</span></a>`;
       } else {
-        html += `<span class="report-local">${escapeHtml(label)}${r.localPath ? ` · ${escapeHtml(r.localPath)}` : ''}</span>`;
+        html += `<span class="report-local report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || r.localPath || '-')}</span></span>`;
       }
     }
     html += '</div>';
@@ -1356,7 +1413,7 @@ function renderReportDetail(step, artifacts) {
   if (yamlRefs.length > 0) {
     html += '<div class="report-links">';
     html += '<div class="section-title">执行 YAML</div>';
-    html += yamlRefs.slice(0, 10).map(item => `<span class="report-local">${escapeHtml(item.module || '')}/${escapeHtml(item.file || '')}</span>`).join('');
+    html += yamlRefs.slice(0, 10).map(item => `<span class="report-local report-case-link"><b>${escapeHtml(agentCaseLabel(item))}</b><span>${escapeHtml(agentCaseSubLabel(item))}</span></span>`).join('');
     html += '</div>';
   }
   if (mindmap.url || mindmap.path) {
@@ -1375,7 +1432,7 @@ function renderReportDetail(step, artifacts) {
     html += `<div class="failure-title">${failedJobs.length} 个任务失败：</div>`;
     html += '<ul class="failure-list">';
     for (const fj of failedJobs.slice(0, 5)) {
-      html += `<li><strong>${escapeHtml(fj.module || '')}/${escapeHtml(fj.file || '')}</strong>：${escapeHtml(fj.error || '未知')}</li>`;
+      html += `<li><strong>${escapeHtml(agentCaseLabel(fj))}</strong><span>${escapeHtml(agentCaseSubLabel(fj))}</span>：${escapeHtml(fj.error || '未知')}</li>`;
     }
     html += '</ul></div>';
   }
@@ -1498,6 +1555,7 @@ function renderAgentSummaryArtifact(run) {
   const visibleSteps = steps.filter(step => ['FAILED', 'PARTIAL_FAILED', 'SUCCESS', 'WAIT_CONFIRM'].includes(String(step.status || '').toUpperCase())).slice(-6);
   const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
   const mindmap = agentMindmapInfo(artifacts);
+  const referenceExamples = agentYamlReferenceExamples(artifacts);
   const conclusionClass = summary.conclusion === '通过' ? 'success' : (summary.conclusion === '执行中' ? 'warn' : 'danger');
   const target = summary.target || run?.target || '-';
   const generatedAt = String(summary.generatedAt || run?.updatedAt || '').replace('T', ' ').slice(0, 19);
@@ -1541,11 +1599,12 @@ function renderAgentSummaryArtifact(run) {
         <section class="final-report-panel">
           <strong>报告链接</strong>
           ${reports.length ? `<div class="final-report-links">${reports.slice(0, 6).map(item => {
-            const label = `${item.module || ''}/${item.file || ''}`;
+            const label = agentCaseLabel(item);
+            const subLabel = agentCaseSubLabel(item);
             return item.reportUrl
-              ? `<a href="${escapeHtml(item.reportUrl)}" target="_blank">${escapeHtml(label)}</a>`
-              : `<span>${escapeHtml(label || item.localPath || '-')}</span>`;
-          }).join('')}</div>` : '<p>暂无 HTML 报告链接。</p>'}
+              ? `<a href="${escapeHtml(item.reportUrl)}" target="_blank" class="report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || '打开执行报告')}</span></a>`
+              : `<span class="report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || item.localPath || '-')}</span></span>`;
+          }).join('')}</div>${reports.length > 6 ? `<p>还有 ${escapeHtml(reports.length - 6)} 份报告，可在执行报告页继续查看。</p>` : ''}` : '<p>暂无 HTML 报告链接。</p>'}
         </section>
         <section class="final-report-panel">
           <strong>下一步建议</strong>
@@ -1563,12 +1622,23 @@ function renderAgentSummaryArtifact(run) {
           </div>
         </section>
       ` : ''}
+      ${yamlRefs.length ? `
+        <section class="final-report-panel final-report-wide">
+          <strong>执行 YAML</strong>
+          <div class="final-report-file-list">
+            ${yamlRefs.slice(0, 18).map(item => `<span><b>${escapeHtml(agentCaseLabel(item))}</b><em>${escapeHtml(agentCaseSubLabel(item))}</em></span>`).join('')}
+          </div>
+          ${yamlRefs.length > 18 ? `<p>已展示前 18 个，剩余 ${escapeHtml(yamlRefs.length - 18)} 个可在执行任务列表中查看。</p>` : ''}
+        </section>
+      ` : ''}
+      ${renderYamlReferenceExamples(referenceExamples)}
       ${failedJobs.length ? `
         <section class="final-report-panel final-report-wide">
           <strong>失败摘要</strong>
           <div class="final-report-failures">
-            ${failedJobs.slice(0, 5).map(job => `<div><b>${escapeHtml(job.module || '')}/${escapeHtml(job.file || '')}</b><span>${escapeHtml(job.error || job.status || '未知失败')}</span></div>`).join('')}
+            ${failedJobs.slice(0, 8).map(job => `<div><b>${escapeHtml(agentCaseLabel(job))}</b><em>${escapeHtml(agentCaseSubLabel(job))}</em><span>${escapeHtml(job.error || job.status || '未知失败')}</span></div>`).join('')}
           </div>
+          ${failedJobs.length > 8 ? `<p>只展示前 8 个失败，剩余 ${escapeHtml(failedJobs.length - 8)} 个请到执行报告或失败分析页查看。</p>` : ''}
         </section>
       ` : ''}
       ${visibleSteps.length ? `
@@ -1626,6 +1696,7 @@ function renderGenerateYamlDetail(step, artifacts) {
   if (yamlFiles.length) {
     html += agentReadableList('生成的 YAML', yamlFiles.slice(0, 20), file => `<b>${escapeHtml(file)}</b><span>已按单用例拆分，校验通过后会自动进入后续执行。</span>`);
   }
+  html += renderYamlReferenceExamples(agentYamlReferenceExamples(artifacts || {}));
   const generatedArtifacts = [
     summaryFiles.mindmap ? { label: '脑图 .mm', path: summaryFiles.mindmap } : null,
     summaryFiles.markdown ? { label: '生成摘要', path: summaryFiles.markdown } : null,

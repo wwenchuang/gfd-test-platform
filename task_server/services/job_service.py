@@ -949,6 +949,7 @@ def _job_entry_from_record(job: Dict[str, Any], jid: str, status: str) -> Dict[s
         "file": job.get("file", ""),
         "target_task_name": job.get("target_task_name", ""),
         "current_task_name": job.get("current_task_name", ""),
+        "taskName": job.get("target_task_name") or job.get("current_task_name") or job.get("task_name") or "",
         "current_task_index": _job_int(job, "current_task_index", 0),
         "completed_task_count": _job_int(job, "completed_task_count", 0),
         "total_task_count": _job_int(job, "total_task_count", 0),

@@ -4676,8 +4676,48 @@
     text-decoration: none;
     overflow-wrap: anywhere;
   }
+  .report-case-link {
+    display: grid;
+    gap: 3px;
+  }
+  .report-case-link b {
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.35;
+  }
+  .report-case-link span {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
+  }
   .final-report-wide {
     grid-column: 1 / -1;
+  }
+  .final-report-file-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 8px;
+  }
+  .final-report-file-list span {
+    display: grid;
+    gap: 3px;
+    border: 1px solid var(--border2);
+    border-radius: 7px;
+    padding: 8px;
+    background: rgba(2, 6, 23, .46);
+  }
+  .final-report-file-list b {
+    color: var(--text);
+    font-size: 13px;
+  }
+  .final-report-file-list em {
+    color: var(--muted);
+    font-size: 12px;
+    font-style: normal;
+    overflow-wrap: anywhere;
   }
   .final-report-failures,
   .final-report-steps {
@@ -4703,9 +4743,46 @@
     color: var(--muted);
     font-style: normal;
   }
+  .final-report-failures em {
+    display: block;
+    color: var(--accent);
+    font-size: 12px;
+    font-style: normal;
+    margin-bottom: 4px;
+    overflow-wrap: anywhere;
+  }
   .final-report-steps b {
     color: var(--accent);
     font-size: 12px;
+  }
+  .yaml-reference-panel p {
+    margin-bottom: 10px;
+  }
+  .yaml-reference-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 8px;
+  }
+  .yaml-reference-list > div {
+    display: grid;
+    gap: 4px;
+    border: 1px solid rgba(34, 211, 238, .24);
+    border-radius: 8px;
+    padding: 10px;
+    background: rgba(8, 47, 73, .28);
+  }
+  .yaml-reference-list b {
+    color: var(--text);
+  }
+  .yaml-reference-list span,
+  .yaml-reference-list em,
+  .yaml-reference-list small {
+    color: var(--muted);
+    font-style: normal;
+    overflow-wrap: anywhere;
+  }
+  .yaml-reference-list small {
+    color: var(--accent);
   }
   .agent-readable-detail {
     display: grid;

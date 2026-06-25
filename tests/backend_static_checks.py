@@ -391,6 +391,29 @@ def check_agent_generation_orphan_recovery():
         agent_service.AGENT_SERVICE_STARTED_TS = old_started_ts
 
 
+def check_yaml_reference_examples_are_general_step_library():
+    from task_server.services import yaml_service
+
+    examples = yaml_service.collect_yaml_reference_examples(
+        "AI建模 图片建模 语音输入 选择图片 上传图片 跳转商城 微信导入 模型生成",
+        module="AI测试",
+        limit=5,
+    )
+    require(examples, "YAML generation must retrieve reusable examples from the existing YAML library")
+    all_text = "\n".join(
+        " ".join([
+            str(item.get("title") or ""),
+            str(item.get("file") or ""),
+            " ".join(item.get("actions") or []),
+            str(item.get("baseline_path") or ""),
+        ])
+        for item in examples
+    )
+    require("aiTap" in all_text and "aiWaitFor" in all_text, "YAML reference examples must expose executable Midscene step actions")
+    prompt_text = yaml_service.build_yaml_reference_examples_text(examples)
+    require("现有 YAML 步骤经验库" in prompt_text and "不要复制无关业务断言" in prompt_text, "YAML reference prompt must be a general step library, not a hard-coded special case")
+
+
 def check_yaml_runner_eligibility_filter():
     from task_server.services import yaml_service
 
@@ -745,6 +768,7 @@ def main():
     check_agent_risk_detail_explains_source()
     check_agent_requirement_background_delete_is_not_high_risk()
     check_agent_generation_orphan_recovery()
+    check_yaml_reference_examples_are_general_step_library()
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()

@@ -84,6 +84,7 @@ def main():
     require("return normalizeAgentRun(agentCurrentRun || null)" in html and "agentCurrentRun = agentRuns[0]" not in html, "Loading Agent history must not auto-select the latest run")
     require("copyAgentArtifact" in html and "downloadAgentYaml" in html and "downloadAgentMindmap" in html and "下载脑图" in html, "Agent artifacts must support copy plus YAML and mindmap download")
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
+    require("agentCaseLabel" in html and "report-case-link" in html and "生成时参考的历史步骤" in html, "Agent reports must show the concrete case name and YAML reference examples")
     require("质量检查" in html and "renderAgentQualityArtifact" in html and "agent-quality-layers" in html and "完整用例、自动化 YAML、人工用例、Figma 图片" in html, "Agent quality report must render as readable layered cards")
     require("agentInfoGrid" in html and "agentReadableList" in html and "agent-readable-panel" in html and "final-report-hero" in html, "Agent step details and final report must use readable card layouts")
     require("renderGenerateYamlDetail" in html and "完整 YAML 生成主链" in html and "主链错误" in html, "Agent YAML generation step must show readable pipeline details")
