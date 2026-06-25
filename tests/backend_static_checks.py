@@ -1365,10 +1365,10 @@ def main():
                 {
                     "id": f"12:{100 + idx}",
                     "type": "FRAME",
-                    "name": f"AI建模页面 {idx:02d}",
+                    "name": "AI" if idx % 4 else "语音输入",
                     "absoluteBoundingBox": {
-                        "x": -1304 + ((idx - 1) % 6) * 475,
-                        "y": 58 + ((idx - 1) // 6) * 980,
+                        "x": -1304 + ((idx - 1) % 12) * 475,
+                        "y": 58 + ((idx - 1) // 12) * 980,
                         "width": 375,
                         "height": 812,
                     },
@@ -1394,7 +1394,7 @@ def main():
     }
     ai_scope = figma_backend.figma_requirement_sibling_scope_root(
         ai_title_scope_root,
-        "AI建模需求：首页进入 AI建模，生成模型并查看结果",
+        "进入 AI建模页 生成模型并查看结果",
     )
     require(ai_scope and ai_scope.get("id") == "12:2", "AI modeling title-bar scope must resolve to the direct title frame")
     require(len(ai_scope.get("children") or []) == 36, "AI modeling title-bar scope must stop at the next title bar and keep exactly 36 phone screens")

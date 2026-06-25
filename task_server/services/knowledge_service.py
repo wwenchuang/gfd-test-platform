@@ -1997,15 +1997,19 @@ def _figma_theme_anchor_terms(query_text: str) -> List[str]:
     }
     anchors: List[str] = []
     for term in terms:
-        term = str(term or "").strip()
+        term = str(term or "").strip().lower()
         if not term or term in generic:
             continue
-        if len(term) >= 4 or term in {"上新", "下拉刷新", "立即查看", "AI建模", "语音输入"}:
+        if len(term) >= 4 or term in {"上新", "下拉刷新", "立即查看", "ai建模", "语音输入"}:
             anchors.append(term)
-    query = _normalize_requirement_search_text(query_text)
+    query = _normalize_requirement_search_text(query_text).lower()
+    if "ai建模" in query:
+        anchors.append("ai建模")
     for phrase in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,12}", query):
-        if "上新" in phrase or phrase in {"AI建模", "语音输入", "下拉刷新"}:
-            anchors.append(phrase)
+        if "ai建模" in phrase:
+            anchors.append("ai建模")
+        elif "上新" in phrase or phrase in {"语音输入", "下拉刷新"}:
+            anchors.append(phrase.lower())
     return list(dict.fromkeys(anchors))[:20]
 
 
@@ -2055,8 +2059,8 @@ def figma_requirement_scope_root(root: Dict[str, Any], query_text: str) -> Optio
                         walk(child, depth + 1)
                     return
                 area = width * height
-                name_blob = _normalize_requirement_search_text(node.get("name") or "")
-                own_blob = _normalize_requirement_search_text(" ".join([name_blob] + figma_node_texts(node, limit=80)))
+                name_blob = _normalize_requirement_search_text(node.get("name") or "").lower()
+                own_blob = _normalize_requirement_search_text(" ".join([name_blob] + figma_node_texts(node, limit=80))).lower()
                 score = 0
                 for anchor in anchors:
                     if anchor and anchor in name_blob:
@@ -2092,8 +2096,8 @@ def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) 
         if height > 220 or width < 600:
             continue
         title_bars.append((idx, child))
-        name_blob = _normalize_requirement_search_text(child.get("name") or "")
-        text_blob = _normalize_requirement_search_text(" ".join(figma_node_texts(child, limit=20)))
+        name_blob = _normalize_requirement_search_text(child.get("name") or "").lower()
+        text_blob = _normalize_requirement_search_text(" ".join(figma_node_texts(child, limit=20))).lower()
         own_blob = " ".join([name_blob, text_blob])
         score = 0
         for anchor in anchors:
@@ -2113,8 +2117,8 @@ def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) 
     width = float(heading_box.get("width") or 0)
     height = float(heading_box.get("height") or 0)
     next_heading_y: Optional[float] = None
-    for other_index, other in title_bars:
-        if other_index <= heading_index:
+    for _other_index, other in title_bars:
+        if other is heading:
             continue
         other_y = float(((other.get("absoluteBoundingBox") or {}).get("y") or 0))
         if other_y > y0 and (next_heading_y is None or other_y < next_heading_y):
@@ -2133,7 +2137,7 @@ def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) 
             continue
         if next_heading_y is not None and child_y >= next_heading_y - 2:
             continue
-        if child_x < x0 - 2 or child_x > x0 + width + 2:
+        if next_heading_y is None and (child_x < x0 - 2 or child_x > x0 + width + 2):
             continue
         selected_children.append(child)
     if len(selected_children) < 2:
@@ -2145,6 +2149,7 @@ def figma_requirement_sibling_scope_root(root: Dict[str, Any], query_text: str) 
     scoped = dict(heading)
     scoped["children"] = selected_children
     scoped["_figma_sibling_scope"] = True
+    scoped["_figma_direct_link"] = True
     return scoped
 
 
@@ -2265,7 +2270,10 @@ def figma_frame_candidates(
         page_name = figma_page_name(node, node.get("_figma_canvas_name") or "")
         device_profile = figma_device_profile(item["width"], item["height"])
         variant_signature = figma_variant_signature(node)
-        key = (page_name, device_profile, round(item["width"]), round(item["height"]), variant_signature)
+        if node.get("_figma_direct_group"):
+            key = ("direct-group", node.get("id") or id(node))
+        else:
+            key = (page_name, device_profile, round(item["width"]), round(item["height"]), variant_signature)
         if key in seen_names:
             continue
         seen_names.add(key)
