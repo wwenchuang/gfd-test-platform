@@ -96,6 +96,9 @@ from ..config import (
     TASK_DIR,
     USE_AI_SKILL_PIPELINE,
     VERSION_DIR,
+    YAML_VISUAL_BATCH_SIZE,
+    YAML_VISUAL_TIMEOUT_SECONDS,
+    YAML_VISUAL_TOTAL_BUDGET_SECONDS,
     env_int,
     safe_bool,
     safe_int,
@@ -218,12 +221,18 @@ def parse_time(value):
 GENERATE_JOB_ACTIVE_STATUSES = {"pending", "running"}
 GENERATE_JOB_TERMINAL_STATUSES = {"success", "failed", "cancelled", "timeout"}
 GENERATE_JOB_TIMEOUT_SECONDS = max(300, env_int("MIDSCENE_GENERATE_JOB_TIMEOUT_SECONDS", JOB_TIMEOUT_SECONDS))
+AGENT_GENERATE_YAML_TIMEOUT_SECONDS = max(
+    GENERATE_JOB_TIMEOUT_SECONDS,
+    env_int("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS", 7200),
+)
 MINDMAP_JOB_TIMEOUT_SECONDS = max(300, env_int("MIDSCENE_MINDMAP_JOB_TIMEOUT_SECONDS", min(JOB_TIMEOUT_SECONDS, GENERATE_JOB_TIMEOUT_SECONDS)))
 FIGMA_PARSE_JOB_TIMEOUT_SECONDS = max(120, env_int("MIDSCENE_FIGMA_PARSE_JOB_TIMEOUT_SECONDS", min(900, GENERATE_JOB_TIMEOUT_SECONDS)))
 
 
 def generate_job_timeout_seconds(job):
     job_type = str((job or {}).get("type") or "").strip().lower()
+    if job_type == "agent_generate_yaml":
+        return AGENT_GENERATE_YAML_TIMEOUT_SECONDS
     if job_type == "mindmap_only":
         return MINDMAP_JOB_TIMEOUT_SECONDS
     if job_type in ("figma_parse", "figma"):
@@ -259,7 +268,14 @@ def expire_generate_job_if_stale(job, persist=True):
 
     stage = job.get("step") or "生成任务"
     job_type = str(job.get("type") or "")
-    type_label = "脑图生成" if job_type == "mindmap_only" else ("Figma 解析" if job_type in ("figma_parse", "figma") else "AI 生成")
+    if job_type == "agent_generate_yaml":
+        type_label = "Agent YAML 生成"
+    elif job_type == "mindmap_only":
+        type_label = "脑图生成"
+    elif job_type in ("figma_parse", "figma"):
+        type_label = "Figma 解析"
+    else:
+        type_label = "AI 生成"
     message = (
         f"{type_label}超过 {timeout_seconds} 秒仍未完成，已自动标记为超时；"
         f"最后阶段：{stage}。这表示后台任务没有正常落到完成态；"
@@ -3971,7 +3987,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 )
             )
         try:
-            payload = call_dashscope_refine_cases(title, module, payload, visual_text_assets, visual_image_assets)
+            payload = refine_cases_with_yaml_visual_batches(
+                title,
+                module,
+                payload,
+                visual_text_assets,
+                visual_image_assets,
+                job_id=job_id,
+            )
         except Exception as e:
             review = payload.setdefault("review", {})
             review["visual_refine_error"] = str(e)
@@ -5375,6 +5398,131 @@ def visual_reference_message(prefix, figma_texts, figma_images, ignored_figma_pa
     if skipped_parts:
         parts.append("未使用：" + " + ".join(skipped_parts))
     return prefix + "，" + "；".join(parts)
+
+
+def _chunked_list(items, size):
+    size = max(1, safe_int(size, 1))
+    items = list(items or [])
+    for idx in range(0, len(items), size):
+        yield items[idx:idx + size]
+
+
+def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_assets, visual_image_assets, job_id=None):
+    """Run visual grounding in bounded batches for Figma-heavy YAML generation."""
+    image_assets = list(visual_image_assets or [])
+    text_assets = list(visual_text_assets or [])
+    if not text_assets and not image_assets:
+        return payload
+
+    review = payload.setdefault("review", {}) if isinstance(payload, dict) else {}
+    started = time.time()
+    visual_errors = []
+    completed_batches = 0
+
+    if not image_assets:
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=65,
+                step="视觉校准",
+                message=f"正在用 Figma/页面文本校准入口、步骤和断言，最多等待 {YAML_VISUAL_TIMEOUT_SECONDS} 秒",
+            )
+        try:
+            refined = call_dashscope_refine_cases(
+                title,
+                module,
+                payload,
+                text_assets,
+                [],
+                timeout_seconds=YAML_VISUAL_TIMEOUT_SECONDS,
+                legacy_fallback=False,
+            )
+            refined.setdefault("review", {})["yaml_visual_grounded"] = True
+            refined.setdefault("review", {})["yaml_visual_batches"] = {
+                "enabled": True,
+                "text_only": True,
+                "completed_batches": 1,
+                "timeout_seconds": YAML_VISUAL_TIMEOUT_SECONDS,
+            }
+            return refined
+        except Exception as exc:
+            review["visual_refine_error"] = str(exc)
+            review["visual_refine_skipped"] = "视觉校准超时或失败，已保留需求解析主结果继续生成 YAML"
+            return payload
+
+    batches = list(_chunked_list(image_assets, YAML_VISUAL_BATCH_SIZE))
+    total_batches = len(batches)
+    refined_payload = payload
+    for index, batch in enumerate(batches, start=1):
+        elapsed = int(time.time() - started)
+        remaining_budget = max(0, YAML_VISUAL_TOTAL_BUDGET_SECONDS - elapsed)
+        if remaining_budget <= 0:
+            visual_errors.append("视觉校准总耗时预算已用完")
+            break
+        if job_id and generate_job_should_stop(job_id):
+            visual_errors.append("生成任务已取消或被标记为停止")
+            break
+        timeout_seconds = max(60, min(int(YAML_VISUAL_TIMEOUT_SECONDS), remaining_budget))
+        progress = min(71, 64 + int((index / max(1, total_batches)) * 7))
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=progress,
+                step="视觉校准",
+                message=(
+                    f"正在分批校准 Figma/UI 图，第 {index}/{total_batches} 批，"
+                    f"本批 {len(batch)} 张，已用 {elapsed}s / 预算 {YAML_VISUAL_TOTAL_BUDGET_SECONDS}s，"
+                    f"本批最多等待 {timeout_seconds}s"
+                ),
+            )
+        try:
+            refined_payload = call_dashscope_refine_cases(
+                title,
+                module,
+                refined_payload,
+                text_assets,
+                batch,
+                timeout_seconds=timeout_seconds,
+                legacy_fallback=False,
+            )
+            completed_batches += 1
+            review = refined_payload.setdefault("review", {})
+            review["yaml_visual_grounded"] = True
+            review["yaml_visual_completed_batches"] = completed_batches
+            if job_id:
+                update_generate_job(
+                    job_id,
+                    progress=progress,
+                    step="视觉校准",
+                    message=f"第 {index}/{total_batches} 批视觉校准完成，已校准 {completed_batches} 批",
+                )
+        except Exception as exc:
+            visual_errors.append(f"第 {index} 批视觉校准失败：{str(exc)[:180]}")
+            if job_id:
+                update_generate_job(
+                    job_id,
+                    progress=progress,
+                    step="视觉校准",
+                    message=f"第 {index}/{total_batches} 批视觉校准失败，已记录并继续后续生成：{str(exc)[:100]}",
+                )
+
+    review = refined_payload.setdefault("review", {})
+    review["yaml_visual_batches"] = {
+        "enabled": True,
+        "image_count": len(image_assets),
+        "batch_size": YAML_VISUAL_BATCH_SIZE,
+        "total_batches": total_batches,
+        "completed_batches": completed_batches,
+        "timeout_seconds_per_batch": YAML_VISUAL_TIMEOUT_SECONDS,
+        "total_budget_seconds": YAML_VISUAL_TOTAL_BUDGET_SECONDS,
+        "errors": visual_errors[:8],
+    }
+    if visual_errors:
+        review["visual_refine_errors"] = visual_errors[:8]
+        review["remaining_risks"] = normalize_text_list(review.get("remaining_risks") or []) + [
+            "部分视觉校准批次超时或失败，已保留需求解析和已成功校准的 UI 信息继续生成 YAML"
+        ]
+    return refined_payload
 
 
 
