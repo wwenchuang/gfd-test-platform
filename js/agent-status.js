@@ -305,6 +305,155 @@ function agentRiskDetailHtml(detail = {}, options = {}) {
   `;
 }
 
+function agentInputFormatBytes(size) {
+  if (typeof formatBytes === 'function') return formatBytes(size || 0);
+  const num = Number(size || 0);
+  if (!Number.isFinite(num) || num <= 0) return '0 B';
+  if (num < 1024) return `${Math.round(num)} B`;
+  if (num < 1024 * 1024) return `${(num / 1024).toFixed(1)} KB`;
+  return `${(num / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function agentSourceTypeText(type) {
+  const key = String(type || '').toLowerCase();
+  return {
+    manual: '直接输入',
+    requirement: '需求资料',
+    figma: 'Figma 设计稿',
+    failed_job: '失败任务'
+  }[key] || key || '直接输入';
+}
+
+function agentInputFileKindText(kind) {
+  const key = String(kind || '').toLowerCase();
+  if (key === 'screenshot') return '截图';
+  if (key === 'requirement_text') return '文本';
+  if (key === 'requirement_file') return '文档';
+  return kind || '资料';
+}
+
+function agentInputSummaryFromRun(run = {}) {
+  const fromServer = run.inputSummary && typeof run.inputSummary === 'object' ? run.inputSummary : {};
+  const artifacts = run.artifacts && typeof run.artifacts === 'object' ? run.artifacts : {};
+  const source = artifacts.sourceContext && typeof artifacts.sourceContext === 'object' ? artifacts.sourceContext : {};
+  const normalized = run.normalizedInput && typeof run.normalizedInput === 'object' ? run.normalizedInput : {};
+  const sourceInputs = normalized.sourceInputs && typeof normalized.sourceInputs === 'object'
+    ? normalized.sourceInputs
+    : ((run.sourceInputs && typeof run.sourceInputs === 'object') ? run.sourceInputs : {});
+  const refs = run.sourceRefs && typeof run.sourceRefs === 'object' ? run.sourceRefs : {};
+  const files = Array.isArray(fromServer.files) ? fromServer.files : (Array.isArray(source.uploadedFiles) ? source.uploadedFiles : (Array.isArray(normalized.files) ? normalized.files : (Array.isArray(sourceInputs.files) ? sourceInputs.files : [])));
+  const images = Array.isArray(fromServer.images) ? fromServer.images : (Array.isArray(source.uploadedImages) ? source.uploadedImages : (Array.isArray(normalized.images) ? normalized.images : (Array.isArray(sourceInputs.images) ? sourceInputs.images : [])));
+  const figmaUsed = Array.isArray(fromServer.figmaUsedPages) ? fromServer.figmaUsedPages : (Array.isArray(source.figmaUsedPages) ? source.figmaUsedPages : (Array.isArray(source.uiDesigns) ? source.uiDesigns : []));
+  const figmaIgnored = Array.isArray(fromServer.figmaIgnoredPages) ? fromServer.figmaIgnoredPages : (Array.isArray(source.figmaIgnoredPages) ? source.figmaIgnoredPages : []);
+  const figmaUrl = String(fromServer.figmaUrl || source.figmaUrl || normalized.figmaUrl || sourceInputs.figmaUrl || refs.figmaUrl || refs.figma_url || '').trim();
+  const sourceType = String(fromServer.sourceType || source.sourceType || run.sourceType || normalized.sourceType || 'manual').trim();
+  const requirementFileCount = Number(fromServer.requirementFileCount ?? source.requirementFileCount ?? files.filter(file => String(file.kind || '').toLowerCase() !== 'screenshot').length);
+  const screenshotCount = Number(fromServer.screenshotCount ?? source.imageCount ?? images.length);
+  const figmaPageCount = Number(fromServer.figmaPageCount ?? figmaUsed.length);
+  const figmaIgnoredCount = Number(fromServer.figmaIgnoredCount ?? figmaIgnored.length);
+  const figmaUiImageCount = Number(fromServer.figmaUiImageCount ?? source.figmaImageCount ?? (Array.isArray(source.uiDesignAssets) ? source.uiDesignAssets.length : 0));
+  const target = String(fromServer.target || run.target || run.options?.goal || run.goal || normalized.text || '').trim();
+  const requirementTextPreview = String(
+    fromServer.requirementTextPreview
+    || source.requirementText
+    || normalized.requirementText
+    || sourceInputs.requirementText
+    || run.requirementText
+    || ''
+  ).trim();
+  const badges = Array.isArray(fromServer.badges) && fromServer.badges.length ? fromServer.badges : [
+    `来源：${agentSourceTypeText(sourceType)}`,
+    `Figma：${figmaUrl ? '1 个链接' : '未提供'}`,
+    `Figma 页面：${figmaPageCount}`,
+    `Figma UI 图：${figmaUiImageCount}`,
+    `上传文档：${requirementFileCount}`,
+    `上传截图：${screenshotCount}`
+  ];
+  return {
+    target,
+    sourceType,
+    sourceTypeText: fromServer.sourceTypeText || agentSourceTypeText(sourceType),
+    requirementTextPreview,
+    figmaUrl,
+    sourceSummary: fromServer.sourceSummary || source.sourceSummary || '',
+    figmaPageCount,
+    figmaIgnoredCount,
+    figmaUiImageCount,
+    requirementFileCount,
+    screenshotCount,
+    files,
+    images,
+    figmaUsedPages: figmaUsed,
+    figmaIgnoredPages: figmaIgnored,
+    appName: fromServer.appName || run.appName || '',
+    appPackage: fromServer.appPackage || run.appPackage || run.app_package || '',
+    platform: fromServer.platform || run.platform || '',
+    scope: fromServer.scope || run.scope || '',
+    mode: fromServer.mode || run.mode || '',
+    executionMode: fromServer.executionMode || run.executionMode || '',
+    runnerId: fromServer.runnerId || run.runnerId || normalized.runnerId || '',
+    deviceId: fromServer.deviceId || run.deviceId || normalized.deviceId || '',
+    deviceStrategy: fromServer.deviceStrategy || run.deviceStrategy || normalized.deviceStrategy || '',
+    model: fromServer.model || run.aiModel || run.model || '',
+    badges,
+    compactLine: fromServer.compactLine || badges.slice(0, 6).join('；')
+  };
+}
+
+function agentInputSummaryHtml(run = {}, options = {}) {
+  const summary = agentInputSummaryFromRun(run);
+  const compact = Boolean(options.compact);
+  const badges = summary.badges.slice(0, compact ? 6 : 10);
+  const files = Array.isArray(summary.files) ? summary.files : [];
+  const figmaPages = Array.isArray(summary.figmaUsedPages) ? summary.figmaUsedPages : [];
+  const hasDetails = summary.requirementTextPreview || summary.figmaUrl || files.length || figmaPages.length;
+  if (compact) {
+    return `
+      <div class="agent-input-summary compact">
+        <div class="agent-input-summary-title">本次输入</div>
+        <div class="agent-input-chips">${badges.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>
+        ${summary.requirementTextPreview ? `<div class="agent-input-line">${escapeHtml(summary.requirementTextPreview.slice(0, 160))}${summary.requirementTextPreview.length > 160 ? '...' : ''}</div>` : ''}
+      </div>
+    `;
+  }
+  return `
+    <div class="agent-side-card agent-input-summary">
+      <div class="agent-side-title">本次输入资料</div>
+      <div class="agent-input-chips">${badges.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>
+      <div class="agent-input-grid">
+        <div><strong>测试目标</strong><span>${escapeHtml(summary.target || '未填写')}</span></div>
+        <div><strong>应用/包名</strong><span>${escapeHtml([summary.appName, summary.appPackage].filter(Boolean).join(' / ') || '未指定')}</span></div>
+        <div><strong>执行设备</strong><span>${escapeHtml(summary.deviceStrategy === 'auto' ? '自动选择在线设备' : [summary.runnerId, summary.deviceId].filter(Boolean).join(' / ') || '未指定')}</span></div>
+        <div><strong>模型</strong><span>${escapeHtml(summary.model || '按模型策略自动选择')}</span></div>
+      </div>
+      ${summary.figmaUrl ? `<div class="agent-input-block"><strong>Figma / UI 链接</strong><p>${escapeHtml(summary.figmaUrl)}</p></div>` : ''}
+      ${summary.requirementTextPreview ? `<div class="agent-input-block"><strong>需求/补充说明</strong><p>${escapeHtml(summary.requirementTextPreview)}</p></div>` : ''}
+      ${summary.sourceSummary ? `<div class="agent-input-block"><strong>解析摘要</strong><p>${escapeHtml(summary.sourceSummary)}</p></div>` : ''}
+      ${files.length ? `
+        <div class="agent-input-block">
+          <strong>上传资料</strong>
+          <div class="agent-input-file-list">
+            ${files.slice(0, 12).map(file => `
+              <span title="${escapeHtml(file.name || '')}">
+                ${escapeHtml(file.name || '未命名资料')} · ${escapeHtml(file.kindLabel || agentInputFileKindText(file.kind))} · ${escapeHtml(agentInputFormatBytes(file.size || 0))}
+              </span>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+      ${figmaPages.length ? `
+        <div class="agent-input-block">
+          <strong>采用的 Figma 页面</strong>
+          <div class="agent-input-file-list">
+            ${figmaPages.slice(0, 8).map(page => `<span>${escapeHtml(page.name || page.page_name || page.pageName || 'Figma 页面')}</span>`).join('')}
+          </div>
+        </div>
+      ` : ''}
+      ${!hasDetails ? '<div class="agent-input-empty">这条历史记录没有保存更多输入资料。</div>' : ''}
+    </div>
+  `;
+}
+
 
 async function loadAgentRuns(options = {}) {
   // round 4: 默认只拉最近 10 条 Agent Run，避免一次性渲染大量历史拖慢首屏
@@ -411,6 +560,7 @@ function agentRunCardHtml(run, options = {}) {
         <span>模式：${escapeHtml(mode)}</span>
         <span>当前步骤：${escapeHtml(agentStepLabel(run.currentStep))}</span>
       </div>
+      ${agentInputSummaryHtml(run, { compact: true })}
       <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
       <div class="agent-run-summary">${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</div>
       ${agentRiskDetailHtml(riskDetail, { compact: true })}
@@ -1056,6 +1206,8 @@ function renderAgentCenter() {
         </div>
       </div>
 
+      ${agentInputSummaryHtml(run)}
+
       <!-- Block 2: 待我确认 -->
       ${confirmations.length > 0 || run.status === 'WAIT_CONFIRM' || run.status === 'WAIT_CONFIRM_RUN' || run.status === 'WAIT_CONFIRM_BUG' ? `
       <div class="agent-side-card agent-confirm">
@@ -1137,13 +1289,17 @@ function renderAgentCenter() {
       <div class="agent-side-card">
         <div class="agent-side-title" style="font-size:14px;font-weight:600;">最近运行</div>
         <div class="agent-timeline">
-          ${agentRuns.slice(0, 10).map(r => `
+          ${agentRuns.slice(0, 10).map(r => {
+            const input = agentInputSummaryFromRun(r);
+            const title = input.target || r.target || r.options?.goal || r.runId || '未命名任务';
+            return `
             <div class="agent-timeline-item ${r.status === 'DONE' ? 'success' : (r.status === 'CANCELLED' || r.status === 'FAILED' ? 'failed' : (r.status === 'WAIT_CONFIRM' ? 'waiting' : 'running'))}">
-              <strong>${escapeHtml((r.runId || '').slice(0, 20))}</strong>
-              <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentModeText(r.mode))}</div>
+              <strong>${escapeHtml(String(title).slice(0, 36))}</strong>
+              <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentStepLabel(r.currentStep))}</div>
+              <div class="agent-timeline-input">${escapeHtml(input.compactLine || input.badges?.slice(0, 3).join('；') || '')}</div>
               <div style="font-size:11px;color:var(--text3);">${escapeHtml((r.updatedAt || '').replace('T', ' ').slice(0, 16))}</div>
             </div>
-          `).join('') || `${renderEmptyState('agent_history')}`}
+          `}).join('') || `${renderEmptyState('agent_history')}`}
         </div>
       </div>
     </div>

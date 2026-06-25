@@ -418,7 +418,8 @@ def attach_diagnosis(target, diagnosis):
 def get_agent_run(run_id):
     """获取单个 Agent 运行详情。"""
     runs = recover_stale_agent_runs()
-    return next((r for r in runs if r.get("runId") == run_id), None)
+    run = next((r for r in runs if r.get("runId") == run_id), None)
+    return _agent_run_with_input_summary(run, detailed=True) if run else None
 
 
 def _agent_cancel_progress_job(run_id, reason="用户取消"):
@@ -583,6 +584,7 @@ def create_agent_run(payload):
         "riskHits": risk_hits,
         "error": None,
     }
+    run["inputSummary"] = _agent_input_summary(run, detailed=True)
     _ensure_business_flow_constraint(run)
     _checkpoint_agent_state(run, "created", "PLAN", "RUNNING")
     # 如果指定了 failedJobId，附加到 run 上
@@ -3439,6 +3441,198 @@ def _agent_file_meta(item):
         "skippedContent": bool(item.get("skippedContent")),
         "note": str(item.get("note") or "").strip(),
     }
+
+
+def _agent_text_preview(value, limit=500):
+    text = _clean_agent_source_text(value or "")
+    if not text:
+        return ""
+    limit = max(40, int(limit or 500))
+    return text if len(text) <= limit else f"{text[:limit].rstrip()}..."
+
+
+def _agent_list_length(value):
+    return len(value) if isinstance(value, list) else 0
+
+
+def _agent_file_label(kind):
+    kind = str(kind or "").strip()
+    if kind == "screenshot":
+        return "截图"
+    if kind == "requirement_text":
+        return "文本"
+    if kind == "requirement_file":
+        return "文档"
+    return kind or "资料"
+
+
+def _agent_public_file_meta(item):
+    meta = dict(item or {}) if isinstance(item, dict) else {}
+    name = str(meta.get("name") or "未命名资料").strip()
+    kind = str(meta.get("kind") or _agent_file_kind(meta) or "requirement_file").strip()
+    return {
+        "name": name,
+        "kind": kind,
+        "kindLabel": _agent_file_label(kind),
+        "type": str(meta.get("type") or "").strip(),
+        "size": meta.get("size") or 0,
+        "hasText": bool(meta.get("hasText") or meta.get("content") or meta.get("text")),
+        "hasBinary": bool(meta.get("hasBinary") or meta.get("contentBase64")),
+        "skippedContent": bool(meta.get("skippedContent")),
+        "note": str(meta.get("note") or "").strip(),
+    }
+
+
+def _agent_public_file_list(items, limit=10):
+    result = []
+    seen = set()
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        meta = _agent_public_file_meta(item)
+        key = (meta.get("name"), str(meta.get("size")), meta.get("kind"))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(meta)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _agent_figma_page_brief(page):
+    if not isinstance(page, dict):
+        return {}
+    figma = page.get("figma") if isinstance(page.get("figma"), dict) else {}
+    return {
+        "name": str(page.get("page_name") or page.get("pageName") or figma.get("page_name") or "Figma 页面").strip(),
+        "nodeId": str(page.get("node_id") or page.get("nodeId") or figma.get("node_id") or "").strip(),
+        "score": page.get("relevance_score", figma.get("relevance_score")),
+        "reason": _agent_text_preview(page.get("relevance_reason") or figma.get("relevance_reason") or "", 160),
+        "image": str(page.get("screenshot") or page.get("image_name") or figma.get("screenshot") or "").strip(),
+    }
+
+
+def _agent_input_summary(run, detailed=False):
+    """Return a user-readable, content-safe summary of the original Agent input."""
+    run = run if isinstance(run, dict) else {}
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    normalized = _agent_normalized_input(run)
+    source_inputs = _agent_source_inputs(run) or (normalized.get("sourceInputs") if isinstance(normalized.get("sourceInputs"), dict) else {})
+    refs = run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {}
+
+    target = str(run.get("target") or run.get("goal") or normalized.get("text") or "").strip()
+    requirement_text = (
+        source_context.get("requirementText")
+        or normalized.get("requirementText")
+        or source_inputs.get("requirementText")
+        or run.get("requirementText")
+        or run.get("requirement")
+        or ""
+    )
+    figma_url = (
+        source_context.get("figmaUrl")
+        or normalized.get("figmaUrl")
+        or source_inputs.get("figmaUrl")
+        or _source_ref_value(refs, "figmaUrl", "figma_url")
+    )
+    uploaded_files_raw = source_context.get("uploadedFiles") if isinstance(source_context.get("uploadedFiles"), list) else _agent_source_files(run)
+    uploaded_images_raw = source_context.get("uploadedImages") if isinstance(source_context.get("uploadedImages"), list) else _agent_source_images(run)
+    uploaded_files = _agent_public_file_list(uploaded_files_raw or [], 200)
+    uploaded_images = _agent_public_file_list(uploaded_images_raw or [], 80)
+    file_count = int(source_context.get("fileCount") or len(uploaded_files_raw or []))
+    screenshot_count = int(source_context.get("imageCount") or len(uploaded_images_raw or []))
+    requirement_file_count = int(
+        source_context.get("requirementFileCount")
+        or len([f for f in (uploaded_files or []) if str(f.get("kind") or "") != "screenshot"])
+    )
+    figma_used = source_context.get("figmaUsedPages") or source_context.get("uiDesigns") or []
+    figma_ignored = source_context.get("figmaIgnoredPages") or []
+    figma_image_count = int(
+        source_context.get("figmaImageCount")
+        or _agent_list_length(source_context.get("uiDesignAssets"))
+        or 0
+    )
+    source_type = str(source_context.get("sourceType") or run.get("sourceType") or normalized.get("sourceType") or "manual").strip().lower()
+    source_type_text = {
+        "manual": "直接输入",
+        "requirement": "需求资料",
+        "figma": "Figma 设计稿",
+        "failed_job": "失败任务",
+    }.get(source_type, source_type or "直接输入")
+
+    app_name = str(run.get("appName") or "").strip()
+    app_package = _agent_app_package(run)
+    platform = str(run.get("platform") or "android").strip()
+    runner_id = str(run.get("runnerId") or normalized.get("runnerId") or "").strip()
+    device_id = str(run.get("deviceId") or normalized.get("deviceId") or "").strip()
+    device_strategy = str(run.get("deviceStrategy") or normalized.get("deviceStrategy") or "").strip()
+    model = str(run.get("aiModel") or run.get("model") or "").strip()
+    execution_mode = str(run.get("executionMode") or "").strip().upper()
+
+    badges = [
+        f"来源：{source_type_text}",
+        f"Figma：{'1 个链接' if figma_url else '未提供'}",
+        f"Figma 页面：{_agent_list_length(figma_used)}",
+        f"Figma UI 图：{figma_image_count}",
+        f"上传文档：{requirement_file_count}",
+        f"上传截图：{screenshot_count}",
+    ]
+    if app_name:
+        badges.append(f"应用：{app_name}")
+    if device_strategy == "auto":
+        badges.append("设备：自动选择")
+    elif runner_id or device_id:
+        badges.append(f"设备：{runner_id or '任意 Runner'} / {device_id or '任意设备'}")
+    if model:
+        badges.append(f"模型：{model}")
+
+    summary = {
+        "target": target,
+        "sourceType": source_type,
+        "sourceTypeText": source_type_text,
+        "requirementTextPreview": _agent_text_preview(requirement_text, 1500 if detailed else 420),
+        "figmaUrl": str(figma_url or "").strip(),
+        "sourceSummary": str(source_context.get("sourceSummary") or "").strip(),
+        "figmaPageCount": _agent_list_length(figma_used),
+        "figmaIgnoredCount": _agent_list_length(figma_ignored),
+        "figmaUiImageCount": figma_image_count,
+        "fileCount": file_count,
+        "requirementFileCount": requirement_file_count,
+        "screenshotCount": screenshot_count,
+        "files": uploaded_files[:20 if detailed else 6],
+        "images": uploaded_images[:12 if detailed else 4],
+        "appName": app_name,
+        "appPackage": app_package,
+        "platform": platform,
+        "scope": str(run.get("scope") or "").strip(),
+        "mode": str(run.get("mode") or "").strip(),
+        "executionMode": execution_mode,
+        "runnerId": runner_id,
+        "deviceId": device_id,
+        "deviceStrategy": device_strategy,
+        "model": model,
+        "badges": badges,
+        "compactLine": "；".join(badges[:6]),
+    }
+    if detailed:
+        summary["figmaUsedPages"] = [_agent_figma_page_brief(item) for item in figma_used[:30] if isinstance(item, dict)]
+        summary["figmaIgnoredPages"] = [_agent_figma_page_brief(item) for item in figma_ignored[:20] if isinstance(item, dict)]
+        summary["sourceRefs"] = {
+            key: str(value)
+            for key, value in refs.items()
+            if key in ("generateJobId", "caseSetId", "figmaUrl", "failedJobId", "jobId") and value not in (None, "")
+        }
+    return summary
+
+
+def _agent_run_with_input_summary(run, detailed=False):
+    if not isinstance(run, dict):
+        return run
+    enriched = dict(run)
+    enriched["inputSummary"] = _agent_input_summary(run, detailed=detailed)
+    return enriched
 
 
 def _agent_source_material_context(run):
@@ -8408,7 +8602,14 @@ def list_agent_runs(limit: int = 20) -> List[Dict[str, Any]]:
             "mode": run.get("mode", ""),
             "target": run.get("target", ""),
             "appName": run.get("appName", ""),
+            "appPackage": run.get("appPackage") or run.get("app_package") or "",
             "platform": run.get("platform", ""),
+            "scope": run.get("scope", ""),
+            "executionMode": run.get("executionMode", ""),
+            "runnerId": run.get("runnerId", ""),
+            "deviceId": run.get("deviceId", ""),
+            "deviceStrategy": run.get("deviceStrategy", ""),
+            "sourceType": run.get("sourceType", ""),
             "status": run.get("status", ""),
             "currentStep": run.get("currentStep", ""),
             "progress": run.get("progress", 0),
@@ -8417,6 +8618,7 @@ def list_agent_runs(limit: int = 20) -> List[Dict[str, Any]]:
             "updatedAt": run.get("updatedAt", ""),
             "error": run.get("error"),
             "summary": run.get("summary") or last_step.get("summary") or last_step.get("error"),
+            "inputSummary": _agent_input_summary(run, detailed=False),
             "pendingConfirmations": run.get("pendingConfirmations") or [],
         })
     return summaries[:limit]
