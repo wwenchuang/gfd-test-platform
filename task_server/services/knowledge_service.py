@@ -1636,6 +1636,10 @@ def parse_figma_url(figma_url: str) -> Tuple[str, str]:
     return file_key, node_id
 
 
+def figma_node_visible(node: Any) -> bool:
+    return not (isinstance(node, dict) and node.get("visible") is False)
+
+
 def figma_api_json(path: str, query: Optional[Dict[str, str]] = None) -> Any:
     """Migrated from ``midscene-upload.py:figma_api_json``."""
     token = figma_token()
@@ -1668,6 +1672,8 @@ def figma_node_texts(node: Dict[str, Any], limit: int = 60) -> List[str]:
 
     def walk(item: Any) -> None:
         if len(texts) >= limit or not isinstance(item, dict):
+            return
+        if not figma_node_visible(item):
             return
         if item.get("type") == "TEXT":
             text = (item.get("characters") or item.get("name") or "").strip()
@@ -1702,7 +1708,11 @@ def figma_child_count(node: Dict[str, Any]) -> int:
         nonlocal count
         if not isinstance(item, dict):
             return
+        if not figma_node_visible(item):
+            return
         for child in item.get("children") or []:
+            if not figma_node_visible(child):
+                continue
             count += 1
             walk(child)
 
@@ -1911,6 +1921,8 @@ def figma_collect_visual_nodes(
     """Migrated from ``midscene-upload.py:figma_collect_visual_nodes``."""
     visual_types = {"FRAME", "COMPONENT", "INSTANCE", "SECTION"}
     candidates: List[Dict[str, Any]] = []
+    if not figma_node_visible(root):
+        return candidates
     direct_root = bool(root.get("_figma_direct_link"))
     direct_context_text = " ".join([
         str(root.get("name") or ""),
@@ -1925,6 +1937,8 @@ def figma_collect_visual_nodes(
         current_canvas: str = "",
         in_direct_group: bool = False,
     ) -> None:
+        if not figma_node_visible(parent):
+            return
         if parent.get("type") == "CANVAS":
             current_canvas = parent.get("name") or current_canvas
         next_direct_group = bool(
@@ -1935,6 +1949,8 @@ def figma_collect_visual_nodes(
         for child in parent.get("children") or []:
             if len(candidates) >= limit:
                 return
+            if not figma_node_visible(child):
+                continue
             child["_figma_depth"] = depth + 1
             child["_figma_parent_name"] = parent_name
             child["_figma_parent_id"] = parent_id
@@ -2023,6 +2039,28 @@ def figma_frame_candidates(
     child_like_ids: set = set()
     for item in selected:
         node = item["node"]
+        node_id = node.get("id")
+        direct_children = [
+            other for other in selected
+            if other is not item
+            and (other["node"].get("_figma_parent_id") or "") == node_id
+            and other["node"].get("type") == "FRAME"
+            and other["width"] >= min_width
+            and other["height"] >= min_height
+            and other["score"] >= 3
+        ]
+        if len(direct_children) >= 2:
+            max_child_width = max((other["width"] for other in direct_children), default=0)
+            max_child_height = max((other["height"] for other in direct_children), default=0)
+            parent_profile = figma_device_profile(item["width"], item["height"])
+            looks_like_screen_group = (
+                parent_profile != "phone"
+                or item["width"] > max_child_width * 1.25
+                or item["height"] > max_child_height * 1.25
+            )
+            if looks_like_screen_group:
+                child_like_ids.add(node_id)
+                continue
         for other in selected:
             if other is item:
                 continue
@@ -2959,6 +2997,7 @@ def load_figma_generation_context(
         "reference_limit": data.get("figma_reference_limit") or data.get("figmaReferenceLimit") or FIGMA_REFERENCE_LIMIT,
         "max_reference_limit": data.get("figma_max_reference_limit") or data.get("figmaMaxReferenceLimit") or FIGMA_MAX_REFERENCE_LIMIT,
         "min_relevance_score": min_relevance_score,
+        "direct_scope_only": _safe_bool(data.get("direct_scope_only", data.get("directScopeOnly", False))),
     })
     if excluded_node_ids:
         kept_drafts: List[Dict[str, Any]] = []

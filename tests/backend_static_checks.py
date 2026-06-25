@@ -572,6 +572,28 @@ def check_agent_figma_context_defaults():
     )
     require(len(selected) == 36 and len(ignored) == 5, "Direct Figma links must keep the exact direct scope instead of adding nearby keyword matches")
 
+    captured_parse_payload = {}
+    original_parse_figma_design = knowledge_service.parse_figma_design
+
+    def fake_parse_figma_design(payload):
+        captured_parse_payload.update(payload)
+        return {"drafts": [], "ignored_drafts": []}
+
+    knowledge_service.parse_figma_design = fake_parse_figma_design
+    try:
+        knowledge_service.load_figma_generation_context(
+            {
+                "figma_url": "https://figma.example/design/file/app?node-id=1-2",
+                "direct_scope_only": True,
+            },
+            "com.demo",
+            "agent-static-figma",
+            "AI建模 页面",
+        )
+    finally:
+        knowledge_service.parse_figma_design = original_parse_figma_design
+    require(captured_parse_payload.get("direct_scope_only") is True, "Agent Figma generation context must pass direct_scope_only to the parser")
+
 
 def check_agent_high_risk_confirm_resumes_precheck():
     from task_server.services import agent_service
@@ -988,6 +1010,14 @@ def main():
                 "absoluteBoundingBox": {"width": 375, "height": 812},
                 "children": [{"type": "TEXT", "characters": "长按语音 直接说给 AI 听"}],
             },
+            {
+                "id": "1:6",
+                "type": "FRAME",
+                "name": "隐藏旧版页面",
+                "visible": False,
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "旧版隐藏内容"}],
+            },
         ],
     }
     frames = figma_backend.figma_frame_candidates(root, limit=10, mode="smart", min_width=240, min_height=360, pinned_node_ids={"1:1"})
@@ -1007,12 +1037,60 @@ def main():
         {"输入框1行", "语音输入-按住", "引导5", "语音输入-长按"}.issubset(selected_names),
         "Figma direct-node descendants must be kept as the requested design scope",
     )
+    require("隐藏旧版页面" not in selected_names, "Hidden Figma frames must not be counted as UI images")
     require(all((draft.get("figma") or {}).get("direct_group") for draft in selected), "Direct-node descendants must carry direct_group metadata")
     require(all(figma_backend.figma_draft_generation_allowed(draft, min_score=999) for draft in selected), "Direct Figma pages must enter generation even when score threshold is high")
     generation_drafts, generation_ignored = figma_backend.split_generation_figma_drafts(selected, min_score=999)
     generation_names = {draft.get("page_name") for draft in generation_drafts}
     require({"引导5", "语音输入-长按"}.issubset(generation_names), "Direct Figma pages must survive generation filtering")
     require(not generation_ignored, "Direct Figma pages must not be moved to ignored generation list")
+    frame_container = {
+        "id": "9:1",
+        "type": "FRAME",
+        "name": "AI建模总画布",
+        "_figma_direct_link": True,
+        "absoluteBoundingBox": {"width": 1700, "height": 900},
+        "children": [
+            {
+                "id": "9:2",
+                "type": "FRAME",
+                "name": "AI建模首页",
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "开始创作"}],
+            },
+            {
+                "id": "9:3",
+                "type": "FRAME",
+                "name": "语音输入-长按",
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "长按语音"}],
+            },
+            {
+                "id": "9:4",
+                "type": "FRAME",
+                "name": "图片建模-上传图片",
+                "absoluteBoundingBox": {"width": 375, "height": 812},
+                "children": [{"type": "TEXT", "characters": "上传图片"}],
+            },
+        ],
+    }
+    frame_container_pages = figma_backend.figma_frame_candidates(
+        frame_container,
+        limit=10,
+        mode="smart",
+        min_width=240,
+        min_height=360,
+        pinned_node_ids={"9:1"},
+    )
+    frame_container_names = {
+        figma_backend.figma_page_name(frame, frame.get("_figma_canvas_name") or "")
+        for frame in frame_container_pages
+    }
+    require(
+        "AI建模总画布" not in frame_container_names
+        and {"AI建模首页", "语音输入-长按", "图片建模-上传图片"}.issubset(frame_container_names),
+        "Direct Figma frame containers must not be counted as UI images when child screen frames exist",
+    )
     require(not figma_backend.figma_direct_node_needs_parent_lookup({"type": "CANVAS", "children": [{}]}), "Figma canvas links must not force expensive parent lookup")
     require(figma_backend.figma_direct_node_needs_parent_lookup({"type": "TEXT", "characters": "AI建模"}), "Figma title/text links must lookup parent design scope")
     job_id = "static_duration_check"
