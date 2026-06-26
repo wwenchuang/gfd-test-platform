@@ -1407,6 +1407,26 @@ def main():
         pinned_node_ids={"12:2"},
     )
     require(len(ai_pages) == 36, "AI modeling title-bar scope must keep all 36 phone UI images, not only the title frame")
+    _texts, duplicate_name_images, duplicate_name_pages = figma_backend.figma_drafts_to_generation_assets([
+        {
+            "app_package": "com.kfb.model",
+            "page_id": "12:101",
+            "page_name": "AI",
+            "route": "Figma 设计稿：AI",
+            "screenshot": {"name": "figma-AI-手机.png", "contentBase64": base64.b64encode(b"image-a").decode("ascii")},
+            "figma": {"node_id": "12:101", "direct_group": True, "pinned": False, "relevance_score": 5},
+        },
+        {
+            "app_package": "com.kfb.model",
+            "page_id": "12:102",
+            "page_name": "AI",
+            "route": "Figma 设计稿：AI",
+            "screenshot": {"name": "figma-AI-手机.png", "contentBase64": base64.b64encode(b"image-b").decode("ascii")},
+            "figma": {"node_id": "12:102", "direct_group": True, "pinned": False, "relevance_score": 5},
+        },
+    ], limit_images=10)
+    require(len(duplicate_name_images) == 2 and len({item["name"] for item in duplicate_name_images}) == 2, "Figma image assets must keep same-name direct-scope variants by node id")
+    require(len(duplicate_name_pages) == 2 and all(page.get("screenshot") for page in duplicate_name_pages), "Figma used pages must keep screenshots for same-name direct-scope variants")
     job_id = "static_duration_check"
     old_generate_dir = backend.GENERATE_JOB_DIR
     with tempfile.TemporaryDirectory() as temp_dir:

@@ -2958,7 +2958,10 @@ def figma_drafts_to_generation_assets(
         text_assets.append("[Figma设计稿页面]\n" + "\n".join(figma_context) + "\n" + knowledge_page_text(page))
         screenshot = draft.get("screenshot") or {}
         if screenshot.get("contentBase64") and len(image_assets) < limit_images:
-            name = clean_asset_filename(screenshot.get("name") or f"figma-{clean_id(page['page_name'])}.png")
+            raw_name = clean_asset_filename(screenshot.get("name") or f"figma-{clean_id(page['page_name'])}.png")
+            stem, ext = os.path.splitext(raw_name)
+            node_suffix = clean_id(str(figma.get("node_id") or page.get("page_id") or len(image_assets) + 1))
+            name = clean_asset_filename(f"{stem}-{node_suffix}{ext or '.png'}")
             image_assets.append({
                 "name": name,
                 "mime": _guess_mime(name),

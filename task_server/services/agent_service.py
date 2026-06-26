@@ -4032,20 +4032,37 @@ def _load_figma_context_for_agent(run, context):
         )
         if text_assets:
             context["figmaText"] = "\n\n".join(text_assets)[:12000]
-        prepared_path, prepared = _persist_agent_prepared_figma_context(
-            run,
-            figma_url,
-            text_assets,
-            image_assets,
-            used_pages,
-            ignored_pages,
-            saved_designs,
-        )
+        prepared_path = ""
+        try:
+            prepared_path, prepared = _persist_agent_prepared_figma_context(
+                run,
+                figma_url,
+                text_assets,
+                image_assets,
+                used_pages,
+                ignored_pages,
+                saved_designs,
+            )
+        except Exception as persist_exc:
+            prepared = _normalize_agent_prepared_figma_context({
+                "version": 2,
+                "source": "agent_prepare_source",
+                "figmaUrl": figma_url,
+                "textAssets": text_assets,
+                "imageAssets": image_assets,
+                "usedPages": used_pages,
+                "ignoredPages": ignored_pages,
+                "savedDesigns": saved_designs,
+            }, fallback_figma_url=figma_url)
+            context.setdefault("warnings", []).append(
+                f"Figma 已解析但缓存保存失败，不影响本次使用：{str(persist_exc)[:80]}"
+            )
         text_assets = prepared.get("textAssets") or []
         image_assets = prepared.get("imageAssets") or []
         used_pages = prepared.get("usedPages") or []
         ignored_pages = prepared.get("ignoredPages") or []
         context["preparedFigmaContextPath"] = prepared_path
+        context["figmaParseVersion"] = "direct-scope-v2"
         context["figmaTextAssetCount"] = len(text_assets or [])
         context["uiDesigns"] = used_pages
         context["figmaUsedPages"] = used_pages
