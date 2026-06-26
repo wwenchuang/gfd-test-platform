@@ -231,13 +231,14 @@ FIGMA_PARSE_JOB_TIMEOUT_SECONDS = max(120, env_int("MIDSCENE_FIGMA_PARSE_JOB_TIM
 
 def generate_job_timeout_seconds(job):
     job_type = str((job or {}).get("type") or "").strip().lower()
+    explicit_timeout = safe_int((job or {}).get("timeout_seconds") or (job or {}).get("timeoutSeconds"), 0)
     if job_type == "agent_generate_yaml":
-        return AGENT_GENERATE_YAML_TIMEOUT_SECONDS
+        return max(AGENT_GENERATE_YAML_TIMEOUT_SECONDS, explicit_timeout)
     if job_type == "mindmap_only":
-        return MINDMAP_JOB_TIMEOUT_SECONDS
+        return max(MINDMAP_JOB_TIMEOUT_SECONDS, explicit_timeout)
     if job_type in ("figma_parse", "figma"):
-        return FIGMA_PARSE_JOB_TIMEOUT_SECONDS
-    return GENERATE_JOB_TIMEOUT_SECONDS
+        return max(FIGMA_PARSE_JOB_TIMEOUT_SECONDS, explicit_timeout)
+    return max(GENERATE_JOB_TIMEOUT_SECONDS, explicit_timeout)
 
 
 def generate_job_elapsed_seconds(job, now_ts=None):
@@ -5537,6 +5538,13 @@ def _chunked_list(items, size):
         yield items[idx:idx + size]
 
 
+def yaml_visual_total_budget_for_batches(total_batches, per_batch_timeout=None):
+    """Use actual batch count to avoid cutting off long Figma visual grounding."""
+    total_batches = max(1, safe_int(total_batches, 1))
+    per_batch_timeout = max(60, safe_int(per_batch_timeout or YAML_VISUAL_TIMEOUT_SECONDS, YAML_VISUAL_TIMEOUT_SECONDS))
+    return max(int(YAML_VISUAL_TOTAL_BUDGET_SECONDS), total_batches * per_batch_timeout)
+
+
 def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_assets, visual_image_assets, job_id=None):
     """Run visual grounding in bounded batches for Figma-heavy YAML generation."""
     image_assets = list(visual_image_assets or [])
@@ -5582,10 +5590,17 @@ def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_as
 
     batches = list(_chunked_list(image_assets, YAML_VISUAL_BATCH_SIZE))
     total_batches = len(batches)
+    total_budget_seconds = yaml_visual_total_budget_for_batches(total_batches, YAML_VISUAL_TIMEOUT_SECONDS)
+    if job_id:
+        update_generate_job(
+            job_id,
+            timeout_seconds=max(AGENT_GENERATE_YAML_TIMEOUT_SECONDS, total_budget_seconds),
+            visual_total_budget_seconds=total_budget_seconds,
+        )
     refined_payload = payload
     for index, batch in enumerate(batches, start=1):
         elapsed = int(time.time() - started)
-        remaining_budget = max(0, YAML_VISUAL_TOTAL_BUDGET_SECONDS - elapsed)
+        remaining_budget = max(0, total_budget_seconds - elapsed)
         if remaining_budget <= 0:
             visual_errors.append("视觉校准总耗时预算已用完")
             break
@@ -5601,7 +5616,7 @@ def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_as
                 step="视觉校准",
                 message=(
                     f"正在分批校准 Figma/UI 图，第 {index}/{total_batches} 批，"
-                    f"本批 {len(batch)} 张，已用 {elapsed}s / 预算 {YAML_VISUAL_TOTAL_BUDGET_SECONDS}s，"
+                    f"本批 {len(batch)} 张，已用 {elapsed}s / 动态预算 {total_budget_seconds}s，"
                     f"本批最多等待 {timeout_seconds}s"
                 ),
             )
@@ -5644,7 +5659,8 @@ def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_as
         "total_batches": total_batches,
         "completed_batches": completed_batches,
         "timeout_seconds_per_batch": YAML_VISUAL_TIMEOUT_SECONDS,
-        "total_budget_seconds": YAML_VISUAL_TOTAL_BUDGET_SECONDS,
+        "total_budget_seconds": total_budget_seconds,
+        "configured_min_total_budget_seconds": YAML_VISUAL_TOTAL_BUDGET_SECONDS,
         "errors": visual_errors[:8],
     }
     if visual_errors:

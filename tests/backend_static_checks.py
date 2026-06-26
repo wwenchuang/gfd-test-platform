@@ -972,9 +972,17 @@ def main():
     install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
     require(
         "YAML_VISUAL_BATCH_SIZE = max(1, env_int(\"MIDSCENE_YAML_VISUAL_BATCH_SIZE\", 4))" in config_source
+        and "YAML_VISUAL_TIMEOUT_SECONDS = max(60, env_int(\"MIDSCENE_YAML_VISUAL_TIMEOUT_SECONDS\", 900))" in config_source
         and 'ensure_env_default "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4"' in install_script
         and 'upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4" "8"' in install_script,
         "YAML visual grounding must default to smaller batches for large Figma inputs"
+    )
+    require(
+        "def yaml_visual_total_budget_for_batches" in yaml_service_source
+        and "total_batches * per_batch_timeout" in yaml_service_source
+        and "visual_total_budget_seconds" in yaml_service_source
+        and "explicit_timeout" in yaml_service_source,
+        "YAML visual grounding total budget must scale with actual batch count and extend the outer generation job timeout"
     )
     require("服务重启后没有恢复后台线程" not in agent_service_source and "服务重启后线程丢失" not in yaml_service_source, "Generation timeout copy must not falsely blame manual service restart")
     require("text.find(\"[\")" in ai_skill_service_source and "return normalize_cases_payload(payload)" in ai_skill_service_source, "Model case JSON parser must accept root arrays as valid case payloads")
