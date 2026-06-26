@@ -407,11 +407,13 @@ def check_agent_generation_orphan_recovery():
                 "updated_at": stale_text,
             })
             rows = agent_service.list_agent_runs(limit=5)
-            require(rows and rows[0].get("status") == "FAILED", "Agent list refresh must recover orphaned GENERATE_YAML runs after service restart")
+            require(rows and rows[0].get("status") == "FAILED", "Agent list refresh must recover orphaned GENERATE_YAML runs after worker loss")
             recovered = agent_service.get_agent_run("agent-static-orphan")
             require(recovered.get("status") == "FAILED" and recovered.get("currentStep") == "GENERATE_YAML", "Agent detail refresh must return recovered failed run")
             pipeline = (recovered.get("artifacts") or {}).get("generationPipeline") or {}
-            require(pipeline.get("interruptedByServiceRestart") is True, "Recovered Agent generation must explain service restart interruption")
+            require(pipeline.get("interruptedByWorkerLost") is True, "Recovered Agent generation must explain worker/model interruption")
+            require(pipeline.get("interruptedByServiceRestart") is not True, "Recovered Agent generation must not blame user-visible service restart by default")
+            require("服务重启后没有恢复后台线程" not in recovered.get("error", ""), "Recovered Agent error must not imply the user restarted the service")
             skipped = [s for s in recovered.get("steps") or [] if s.get("step") == "VALIDATE_YAML"]
             require(skipped and skipped[0].get("status") == "SKIPPED", "Recovered Agent generation failure must skip dependent steps")
     finally:
@@ -967,6 +969,14 @@ def main():
     require("def refine_cases_with_yaml_visual_batches" in yaml_service_source and "YAML_VISUAL_BATCH_SIZE" in yaml_service_source and "legacy_fallback=False" in yaml_service_source, "YAML visual grounding must run in bounded batches without doubling timeout via legacy fallback")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
+    install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+    require(
+        "YAML_VISUAL_BATCH_SIZE = max(1, env_int(\"MIDSCENE_YAML_VISUAL_BATCH_SIZE\", 4))" in config_source
+        and 'ensure_env_default "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4"' in install_script
+        and 'upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4" "8"' in install_script,
+        "YAML visual grounding must default to smaller batches for large Figma inputs"
+    )
+    require("服务重启后没有恢复后台线程" not in agent_service_source and "服务重启后线程丢失" not in yaml_service_source, "Generation timeout copy must not falsely blame manual service restart")
     require("text.find(\"[\")" in ai_skill_service_source and "return normalize_cases_payload(payload)" in ai_skill_service_source, "Model case JSON parser must accept root arrays as valid case payloads")
     require("fallback_normalized_payload" in yaml_service_source and "payload = normalize_cases_payload(payload)" in yaml_service_source, "Coverage repair failure must fall back to normalized payload instead of failing the full generation chain")
     require("def _agent_yaml_validation_state" in agent_service_source and "_agent_yaml_validation_state(artifacts.get(\"yamlValidation\"))" in agent_service_source, "Agent YAML validation state must be normalized before dict merging")

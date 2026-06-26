@@ -358,6 +358,12 @@ upgrade_env_default_if_old "FIGMA_VISUAL_IMAGE_LIMIT" "40" "16|24"
 upgrade_env_default_if_old "MIDSCENE_AI_VISION_IMAGE_LIMIT" "40" "16|24"
 upgrade_env_default_if_old "TASK_MAX_BODY_SIZE" "314572800" "20971520|52428800|83886080|125829120"
 upgrade_env_default_if_old "TASK_MAX_UPLOAD_BODY_SIZE" "314572800" "83886080|125829120"
+ensure_env_default "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4"
+ensure_env_default "MIDSCENE_YAML_VISUAL_TIMEOUT_SECONDS" "600"
+ensure_env_default "MIDSCENE_YAML_VISUAL_TOTAL_BUDGET_SECONDS" "3600"
+upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4" "8"
+upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_TIMEOUT_SECONDS" "600" "900"
+upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_TOTAL_BUDGET_SECONDS" "3600" "5400"
 
 install -m 0644 "${SCRIPT_DIR}/midscene-task.service" "${SERVICE_FILE}"
 systemctl daemon-reload

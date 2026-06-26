@@ -279,8 +279,26 @@ def _agent_generation_job_is_orphaned(job):
     return bool(updated_ts and updated_ts < AGENT_SERVICE_STARTED_TS - 5)
 
 
+def _agent_orphaned_generation_message(stage, job):
+    """Explain a lost background job without implying the user manually restarted it."""
+    stage = str(stage or "生成 YAML").strip()
+    raw_message = str((job or {}).get("message") or "").strip()
+    is_visual_stage = "视觉" in stage or "校准" in raw_message or "Figma/UI" in raw_message
+    if is_visual_stage:
+        reason = "视觉模型批次长时间未返回，或生成进程/后台线程被系统中断。"
+        action = "可以从生成记录重试；如果仍卡住，建议减少单次送入的 Figma 图片批次或跳过部分视觉校准。"
+    else:
+        reason = "生成进程/后台线程中断，可能是进程异常退出、系统自动拉起、网络请求长时间无响应或外部模型调用未返回。"
+        action = "可以重新发起 Agent，或从生成记录重试。"
+    return (
+        f"{stage}后台任务已失联，已停止本次 Agent 生成。"
+        f"{reason}"
+        f"{action}"
+    )
+
+
 def _sync_agent_generation_job_state(run):
-    """服务重启或超时后，把共享生成任务状态同步回 Agent timeline。"""
+    """同步共享生成任务状态，收敛后台线程中断、超时或取消后的 Agent timeline。"""
     if not isinstance(run, dict) or run.get("status") != "RUNNING":
         return False
     current_step = str(run.get("currentStep") or "").strip()
@@ -302,10 +320,7 @@ def _sync_agent_generation_job_state(run):
     orphaned = _agent_generation_job_is_orphaned(job)
     if orphaned and update_generate_job:
         stage = str(job.get("step") or "生成 YAML").strip()
-        message = (
-            f"{stage}在服务重启后没有恢复后台线程，已停止本次 Agent 生成。"
-            "请重新发起 Agent 或从生成记录重试。"
-        )
+        message = _agent_orphaned_generation_message(stage, job)
         job = update_generate_job(
             job_id,
             status="failed",
@@ -314,10 +329,13 @@ def _sync_agent_generation_job_state(run):
             message=message,
             error=message,
             error_detail={
-                "type": "service_restart_interrupted",
+                "type": "worker_lost_or_model_stalled",
                 "stage": stage,
                 "message": message,
-                "suggestion": "重新发起 Agent；如果是大 Figma/长文档，减少无关页面后重试。",
+                "last_job_message": job.get("message") or "",
+                "service_started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(AGENT_SERVICE_STARTED_TS)),
+                "job_updated_at": job.get("updated_at") or job.get("started_at") or job.get("created_at") or "",
+                "suggestion": "从生成记录重试；如果是大 Figma/长文档，减少无关页面或降低视觉批次数后重试。",
             },
         )
         status = "failed"
@@ -359,13 +377,14 @@ def _sync_agent_generation_job_state(run):
         "progressJobId": job_id,
         "error": message,
         "errorDetail": detail,
-        "interruptedByServiceRestart": bool(orphaned or detail.get("type") == "service_restart_interrupted"),
+        "interruptedByWorkerLost": bool(orphaned or detail.get("type") in ("service_restart_interrupted", "worker_lost_or_model_stalled")),
+        "interruptedByServiceRestart": bool(detail.get("type") == "service_restart_interrupted"),
         "jobStatus": status,
     })
     artifacts["diagnosis"] = make_diagnosis(
-        "Agent 生成 YAML 后台任务已中断或超时",
+        "Agent 生成 YAML 后台任务中断或超时",
         "当前 Agent 无法继续执行后续 YAML 校验和 Runner 调试。",
-        ["重新发起 Agent", "从生成记录重试", "减少无关 Figma 页面或大文件后重试"],
+        ["从生成记录重试", "必要时减少无关 Figma 页面或大文件后重试", "如果连续卡在同一批视觉校准，降低视觉批次大小或改为只用关键截图"],
         progressJobId=job_id,
         generationStatus=status,
         generationStage=stage,

@@ -279,7 +279,7 @@ def expire_generate_job_if_stale(job, persist=True):
     message = (
         f"{type_label}超过 {timeout_seconds} 秒仍未完成，已自动标记为超时；"
         f"最后阶段：{stage}。这表示后台任务没有正常落到完成态；"
-        "常见原因包括网络请求超时、服务重启后线程丢失，或外部服务长时间未返回。"
+        "常见原因包括网络请求超时、生成进程/后台线程中断，或外部模型服务长时间未返回。"
     )
     detail = generation_failure_detail(TimeoutError(message), {**job, "step": stage})
     changes = {
