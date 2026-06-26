@@ -4008,11 +4008,17 @@ def _load_figma_context_for_agent(run, context):
         reference_limit = max(1, safe_int(normalized.get("figmaReferenceLimit") or refs.get("figmaReferenceLimit") or 36, 36))
         explicit_max_reference = normalized.get("figmaMaxReferenceLimit") or refs.get("figmaMaxReferenceLimit")
         max_reference_limit = max(reference_limit, safe_int(explicit_max_reference, 72)) if explicit_max_reference not in (None, "") else 72
+        file_name_query = " ".join(
+            str((item or {}).get("name") or "")
+            for item in context.get("uploadedFiles") or []
+            if isinstance(item, dict)
+        )
         query_text = "\n".join([
             str(run.get("target") or ""),
-            str(context.get("requirementText") or ""),
-            " ".join(str((item or {}).get("name") or "") for item in context.get("uploadedFiles") or [] if isinstance(item, dict)),
+            file_name_query,
         ]).strip()
+        if not query_text:
+            query_text = str(context.get("requirementText") or "")[:1200]
         request_data = {
             "figma_url": figma_url,
             "figma_mode": normalized.get("figmaMode") or refs.get("figmaMode") or "smart",
@@ -4063,6 +4069,7 @@ def _load_figma_context_for_agent(run, context):
         ignored_pages = prepared.get("ignoredPages") or []
         context["preparedFigmaContextPath"] = prepared_path
         context["figmaParseVersion"] = "direct-scope-v2"
+        context["figmaScopeQuery"] = query_text[:500]
         context["figmaTextAssetCount"] = len(text_assets or [])
         context["uiDesigns"] = used_pages
         context["figmaUsedPages"] = used_pages

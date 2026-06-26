@@ -954,6 +954,8 @@ def main():
     require("确认草稿后再同步 Sonic" not in agent_service_source, "Runner-mode YAML draft confirmation must not tell users to sync Sonic")
     require("pypdf" in (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8"), "Server install script must install pypdf for PDF requirement extraction")
     require("def _load_figma_context_for_agent" in agent_service_source and "load_figma_generation_context" in agent_service_source and '"figmaUsedPages"' in agent_service_source and '"figmaIgnoredPages"' in agent_service_source, "Agent Figma source must reuse the shared Figma requirement-filter extraction pipeline")
+    require('"figmaScopeQuery"' in agent_service_source and 'file_name_query = " ".join' in agent_service_source, "Agent Figma scope selection must use concise target/file-name query")
+    require('query_text = str(context.get("requirementText") or "")[:1200]' in agent_service_source, "Agent Figma scope may only fall back to requirement text when concise query is empty")
     require("preparedFigmaContextPath" in agent_service_source and '"prepared_figma_context": prepared_figma_context' in agent_service_source, "Agent YAML generation must reuse prepared Figma context instead of reparsing when available")
     require("def _prepared_figma_context_from_request" in yaml_service_source and "复用 Figma 解析" in yaml_service_source, "YAML generation must support prepared Figma context reuse")
     require("def extract_pdf_text" in yaml_service_source and "pypdf.PdfReader" in yaml_service_source, "YAML generation must extract PDF requirement text without relying only on pdftotext")
