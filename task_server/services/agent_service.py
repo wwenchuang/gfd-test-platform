@@ -41,6 +41,7 @@ from task_server.config import (
 )
 from task_server.schemas import AGENT_STATE_STEPS, HIGH_RISK_KEYWORDS, MIDSCENE_FLOW_ACTIONS
 from task_server.storage import (
+    clean_id,
     clean_filename,
     read_json_cached,
     read_json_file,
@@ -60,6 +61,7 @@ from task_server.prompts import get_prompt_center
 AGENT_TOOL_CALLS_FILE = os.path.join(LEARNING_DIR, "agent-tool-calls.json")
 AGENT_TOOL_CALL_LOCK = threading.Lock()
 AGENT_DRAFT_DIR = os.path.join(LEARNING_DIR, "agent-drafts")
+AGENT_CANCEL_DIR = os.path.join(LEARNING_DIR, "agent-cancel")
 AGENT_LEARNING_FILE = os.path.join(LEARNING_DIR, "agent-learning.json")
 AGENT_LEARNING_LOCK = threading.Lock()
 
@@ -76,6 +78,27 @@ AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作",
 
 def _trace_time_text():
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _agent_cancel_marker_path(run_id):
+    return os.path.join(AGENT_CANCEL_DIR, f"{clean_id(str(run_id or ''), 'run')}.cancel")
+
+
+def _mark_agent_run_cancel_requested(run_id, reason="用户取消"):
+    try:
+        os.makedirs(AGENT_CANCEL_DIR, exist_ok=True)
+        write_text_file(_agent_cancel_marker_path(run_id), str(reason or "用户取消"))
+    except Exception:
+        pass
+
+
+def _agent_run_cancel_requested(run):
+    if not isinstance(run, dict):
+        return False
+    if str(run.get("status") or "").upper() == "CANCELLED":
+        return True
+    run_id = str(run.get("runId") or "").strip()
+    return bool(run_id and os.path.exists(_agent_cancel_marker_path(run_id)))
 
 AGENT_TOOLS = {
     # READ_TOOLS
@@ -461,8 +484,82 @@ def _sync_agent_generation_job_state(run):
     return True
 
 
+def _latest_step_trace_ts(step):
+    for item in reversed((step or {}).get("liveTrace") or []):
+        ts = _agent_parse_time((item or {}).get("time"))
+        if ts:
+            return ts
+    return _agent_parse_time((step or {}).get("startedAt"))
+
+
+def _agent_next_pending_step_name(run):
+    for item in (run or {}).get("steps") or []:
+        if isinstance(item, dict) and item.get("status") == "PENDING":
+            return item.get("step") or ""
+    return ""
+
+
+def _recover_completed_running_step(run):
+    """Finish a RUNNING step when its tool call already returned.
+
+    This prevents the UI from staying on a completed tool card forever if the
+    worker is interrupted between persisting the tool result and finalising the
+    step status.
+    """
+    if not isinstance(run, dict) or run.get("status") != "RUNNING":
+        return False, False
+    stall_seconds = safe_int(os.getenv("MIDSCENE_AGENT_STEP_FINISH_STALL_SECONDS"), 120)
+    now_ts = time.time()
+    for step in run.get("steps") or []:
+        if not isinstance(step, dict) or step.get("status") != "RUNNING":
+            continue
+        calls = [item for item in (step.get("toolCalls") or []) if isinstance(item, dict)]
+        if not calls:
+            continue
+        last_call = calls[-1]
+        call_status = str(last_call.get("status") or "").upper()
+        if call_status not in ("SUCCESS", "SKIPPED", "PARTIAL_FAILED", "WAIT_CONFIRM", "FAILED"):
+            continue
+        last_ts = _latest_step_trace_ts(step)
+        if last_ts and now_ts - last_ts < max(30, stall_seconds):
+            continue
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        if call_status == "FAILED":
+            step["status"] = "FAILED"
+            step["error"] = str(last_call.get("error") or last_call.get("outputSummary") or "工具调用失败")[:500]
+        elif call_status == "WAIT_CONFIRM":
+            step["status"] = "WAIT_CONFIRM"
+            run["status"] = "WAIT_CONFIRM"
+            run["currentStep"] = "WAIT_CONFIRM"
+        else:
+            step["status"] = "PARTIAL_FAILED" if call_status == "PARTIAL_FAILED" else ("SKIPPED" if call_status == "SKIPPED" else "SUCCESS")
+        step["endedAt"] = now
+        step["durationMs"] = _compute_duration(step)
+        step["summary"] = (
+            last_call.get("outputSummary")
+            or last_call.get("summary")
+            or last_call.get("message")
+            or step.get("summary")
+            or f"{step.get('step') or 'Agent 步骤'} 已完成"
+        )
+        step.setdefault("liveTrace", []).append({
+            "time": _trace_time_text(),
+            "message": "工具已返回结果，自动补齐步骤完成状态并继续后续步骤。",
+            "status": step.get("status"),
+        })
+        del step["liveTrace"][:-30]
+        if run.get("status") == "RUNNING":
+            next_step = _agent_next_pending_step_name(run)
+            run["currentStep"] = next_step or "DONE"
+        run["updatedAt"] = now
+        _refresh_agent_run_progress(run)
+        return True, bool(run.get("status") == "RUNNING" and _agent_next_pending_step_name(run))
+    return False, False
+
+
 def recover_stale_agent_runs(limit=None):
     """收敛服务重启/超时后遗留的 RUNNING Agent，避免 UI 假运行。"""
+    resume_ids = []
     with AGENT_RUN_LOCK:
         runs = load_agent_runs()
         changed = False
@@ -470,9 +567,38 @@ def recover_stale_agent_runs(limit=None):
         for run in runs[:scan_count]:
             if _sync_agent_generation_job_state(run):
                 changed = True
+            recovered, should_resume = _recover_completed_running_step(run)
+            if recovered:
+                changed = True
+            if should_resume and run.get("runId"):
+                resume_ids.append(run.get("runId"))
         if changed:
             save_agent_runs(runs)
-        return runs
+    for run_id in dict.fromkeys(resume_ids):
+        try:
+            worker = threading.Thread(target=_execute_agent_steps, args=(run_id,), daemon=True)
+            worker.start()
+        except Exception:
+            pass
+    return runs
+
+
+def _persisted_agent_run_is_cancelled(run_id):
+    """Lightweight cancel check for compatibility callers."""
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return False
+    if os.path.exists(_agent_cancel_marker_path(run_id)):
+        return True
+    try:
+        data = read_json_file(AGENT_RUNS_FILE, default={"runs": []})
+        runs = data if isinstance(data, list) else (data.get("runs") or [])
+        for item in runs:
+            if isinstance(item, dict) and item.get("runId") == run_id:
+                return str(item.get("status") or "").upper() == "CANCELLED"
+    except Exception:
+        return False
+    return False
 
 
 def make_diagnosis(root_cause="", impact="", next_actions=None, **extra):
@@ -546,27 +672,6 @@ def _apply_agent_cancel_state(run, reason="用户取消"):
             step["endedAt"] = now
     _refresh_agent_run_progress(run)
     return run
-
-
-def _persisted_agent_run_is_cancelled(run_id):
-    """Lightweight cancel check for hot execution paths.
-
-    Do not call the detailed run getter here: it performs stale-run recovery and may
-    inspect generation jobs. Step execution calls this before tool dispatch, so
-    it must stay a cheap persisted-state read.
-    """
-    run_id = str(run_id or "").strip()
-    if not run_id:
-        return False
-    try:
-        data = read_json_file(AGENT_RUNS_FILE, default={"runs": []})
-        runs = data if isinstance(data, list) else (data.get("runs") or [])
-        for item in runs:
-            if isinstance(item, dict) and item.get("runId") == run_id:
-                return str(item.get("status") or "").upper() == "CANCELLED"
-    except Exception:
-        return False
-    return False
 
 
 def create_agent_run(payload):
@@ -751,6 +856,7 @@ def preview_agent_plan(payload):
 
 def cancel_agent_run(run_id, reason="用户取消"):
     """取消 Agent 运行。"""
+    _mark_agent_run_cancel_requested(run_id, reason or "用户取消")
     with AGENT_RUN_LOCK:
         runs = load_agent_runs()
         run = next((r for r in runs if r.get("runId") == run_id), None)
@@ -8611,13 +8717,13 @@ def _execute_agent_step(run, step_name):
         tool_name = getattr(tool_fn, "__name__", step_name) if tool_fn else step_name
         if tool_fn:
             _append_step_trace(run, step, f"准备调用工具：{tool_name}", status="RUNNING", tool=step_name)
-        if _persisted_agent_run_is_cancelled(run.get("runId", "")):
+        if _agent_run_cancel_requested(run):
             _apply_agent_cancel_state(run, "用户取消")
             return {"status": "CANCELLED", "summary": "用户取消"}, None
         if tool_fn:
             _append_step_trace(run, step, f"调用工具：{tool_name}", tool=step_name)
             result = tool_fn(run)
-            if _persisted_agent_run_is_cancelled(run.get("runId", "")):
+            if _agent_run_cancel_requested(run):
                 _apply_agent_cancel_state(run, "用户取消")
                 return {"status": "CANCELLED", "summary": "用户取消"}, None
         elif step_name == "APPLY_SAFE_REPAIR":
@@ -8659,7 +8765,7 @@ def _execute_agent_step(run, step_name):
         _append_step_trace(run, step, f"执行异常：{error[:200]}", status="FAILED")
     # Update step status
     now = time.strftime("%Y-%m-%dT%H:%M:%S")
-    if _persisted_agent_run_is_cancelled(run.get("runId", "")):
+    if _agent_run_cancel_requested(run):
         _apply_agent_cancel_state(run, "用户取消")
         _persist_agent_run_snapshot(run)
         return {"status": "CANCELLED", "summary": "用户取消"}, None

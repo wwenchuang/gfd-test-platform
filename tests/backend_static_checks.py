@@ -802,6 +802,48 @@ def check_agent_high_risk_confirm_resumes_precheck():
     require(saved and saved[0].get("currentStep") == "EXECUTION_PRECHECK", "High-risk confirmation resume state must be persisted")
 
 
+def check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads():
+    from task_server.services import agent_service
+
+    source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    step_body = source.split("def _execute_agent_step", 1)[1].split("\ndef _execute_agent_steps", 1)[0]
+    require("_persisted_agent_run_is_cancelled" not in step_body, "Agent step hot path must not read full persisted run history for cancellation")
+    require(source.count("def _persisted_agent_run_is_cancelled") == 1, "Agent cancel helper must not be duplicated")
+
+    old_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 300))
+    run = {
+        "runId": "agent-static-completed-tool-recovery",
+        "status": "RUNNING",
+        "currentStep": "PREPARE_SOURCE",
+        "progress": 6,
+        "steps": [
+            {"step": "PLAN", "status": "SUCCESS"},
+            {
+                "step": "PREPARE_SOURCE",
+                "status": "RUNNING",
+                "startedAt": old_ts,
+                "summary": "",
+                "toolCalls": [{
+                    "status": "SUCCESS",
+                    "outputSummary": "已整理 requirement 输入来源，Figma 页面 36 个，Figma UI 图 36 张",
+                }],
+                "liveTrace": [{
+                    "time": old_ts,
+                    "message": "已整理 requirement 输入来源，Figma 页面 36 个，Figma UI 图 36 张",
+                    "status": "SUCCESS",
+                }],
+            },
+            {"step": "IMPACT_ANALYSIS", "status": "PENDING"},
+        ],
+    }
+    recovered, should_resume = agent_service._recover_completed_running_step(run)
+    require(recovered is True and should_resume is True, "Completed tool calls left RUNNING must recover and request resume")
+    step = run["steps"][1]
+    require(step.get("status") == "SUCCESS" and step.get("endedAt"), "Recovered completed tool step must be finalized as SUCCESS")
+    require(run.get("currentStep") == "IMPACT_ANALYSIS", "Recovered Agent must advance to the next pending step")
+    require("自动补齐步骤完成状态" in (step.get("liveTrace") or [])[-1].get("message", ""), "Recovered step must explain the auto-finalization")
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -1004,6 +1046,7 @@ def main():
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
+    check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -1481,7 +1524,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 43})
+    print({"ok": True, "file": str(MODULE), "checks": 44})
 
 
 if __name__ == "__main__":
