@@ -73,6 +73,10 @@ AGENT_SERVICE_STARTED_TS = time.time()
 
 AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
 
+
+def _trace_time_text():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
 AGENT_TOOLS = {
     # READ_TOOLS
     "list_cases": {"name": "list_cases", "title": "读取用例列表", "category": "READ", "riskLevel": "low", "write": False, "requiresConfirm": False},
@@ -314,6 +318,62 @@ def _sync_agent_generation_job_state(run):
         job = None
         update_generate_job = None
     if not isinstance(job, dict):
+        stall_seconds = safe_int(os.getenv("MIDSCENE_AGENT_TOOL_DISPATCH_STALL_SECONDS"), 180)
+        started_ts = _agent_parse_time((step or {}).get("startedAt") or run.get("updatedAt"))
+        if started_ts and time.time() - started_ts >= max(60, stall_seconds):
+            now = time.strftime("%Y-%m-%dT%H:%M:%S")
+            message = (
+                "生成 YAML 步骤已进入运行态，但后台生成任务没有创建。"
+                "这通常表示 Agent 调度在工具调用前被阻塞或中断，请部署最新修复后重新发起。"
+            )
+            if step:
+                step["status"] = "FAILED"
+                step["endedAt"] = now
+                step.setdefault("startedAt", now)
+                step["summary"] = message
+                step["error"] = message
+                trace = step.setdefault("liveTrace", [])
+                trace.append({
+                    "time": _trace_time_text(),
+                    "message": message,
+                    "status": "FAILED",
+                })
+                del trace[:-30]
+            for later in run.get("steps") or []:
+                if isinstance(later, dict) and later.get("status") == "PENDING":
+                    later["status"] = "SKIPPED"
+                    later["summary"] = "生成 YAML 没有创建后台任务，自动跳过后续步骤"
+                    later["startedAt"] = now
+                    later["endedAt"] = now
+            artifacts = run.setdefault("artifacts", {})
+            pipeline = artifacts.setdefault("generationPipeline", {})
+            pipeline.update({
+                "progressJobId": job_id,
+                "error": message,
+                "errorDetail": {
+                    "type": "tool_dispatch_stalled",
+                    "stage": "生成 YAML",
+                    "message": message,
+                    "suggestion": "部署最新 Agent 调度修复后重新发起；如果仍卡住，查看服务端日志中该 runId 的异常。",
+                },
+                "jobStatus": "missing",
+            })
+            artifacts["diagnosis"] = make_diagnosis(
+                "Agent 生成 YAML 调度中断",
+                "后台生成任务没有创建，后续 YAML 校验和 Runner 调试不会执行。",
+                ["部署最新修复后重新发起", "查看服务端日志中该 runId 的异常", "确认 Agent 生成任务目录可写"],
+                progressJobId=job_id,
+                generationStatus="missing",
+                generationStage="生成 YAML",
+            )
+            run["status"] = "FAILED"
+            run["currentStep"] = "GENERATE_YAML"
+            run["error"] = message[:500]
+            run["updatedAt"] = now
+            run.setdefault("logs", []).append({"time": now, "message": message})
+            del run["logs"][:-200]
+            _refresh_agent_run_progress(run)
+            return True
         return False
 
     status = str(job.get("status") or "").strip().lower()
@@ -359,7 +419,7 @@ def _sync_agent_generation_job_state(run):
         step["error"] = message[:500]
         trace = step.setdefault("liveTrace", [])
         trace.append({
-            "time": now,
+            "time": _trace_time_text(),
             "message": message,
             "status": "FAILED",
             "progress": job.get("progress"),
@@ -475,7 +535,7 @@ def _apply_agent_cancel_state(run, reason="用户取消"):
             step["summary"] = str(reason or "用户取消")
             step["endedAt"] = now
             step.setdefault("liveTrace", []).append({
-                "time": now,
+                "time": _trace_time_text(),
                 "message": str(reason or "用户取消"),
                 "status": "CANCELLED",
             })
@@ -489,8 +549,24 @@ def _apply_agent_cancel_state(run, reason="用户取消"):
 
 
 def _persisted_agent_run_is_cancelled(run_id):
-    persisted = get_agent_run(run_id)
-    return isinstance(persisted, dict) and str(persisted.get("status") or "").upper() == "CANCELLED"
+    """Lightweight cancel check for hot execution paths.
+
+    Do not call the detailed run getter here: it performs stale-run recovery and may
+    inspect generation jobs. Step execution calls this before tool dispatch, so
+    it must stay a cheap persisted-state read.
+    """
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return False
+    try:
+        data = read_json_file(AGENT_RUNS_FILE, default={"runs": []})
+        runs = data if isinstance(data, list) else (data.get("runs") or [])
+        for item in runs:
+            if isinstance(item, dict) and item.get("runId") == run_id:
+                return str(item.get("status") or "").upper() == "CANCELLED"
+    except Exception:
+        return False
+    return False
 
 
 def create_agent_run(payload):
@@ -1125,7 +1201,7 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                     step["startedAt"] = now
                     step["endedAt"] = now
                     step["liveTrace"] = [{
-                        "time": now,
+                        "time": _trace_time_text(),
                         "message": summary,
                         "status": "SKIPPED",
                     }]
@@ -1139,7 +1215,7 @@ def confirm_agent_step(run_id, step_id, decision, payload=None):
                     step.setdefault("startedAt", now)
                     trace = step.setdefault("liveTrace", [])
                     trace.append({
-                        "time": now,
+                        "time": _trace_time_text(),
                         "message": summary,
                         "status": "SUCCESS",
                     })
@@ -1432,7 +1508,7 @@ def _agent_log(run, message):
         return
     trace = run.setdefault("trace", [])
     trace.append({
-        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "time": _trace_time_text(),
         "message": str(message or ""),
     })
     del trace[:-80]
@@ -1458,7 +1534,7 @@ def _append_step_trace(run, step, message, **extra):
     if not isinstance(step, dict):
         return
     row = {
-        "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "time": _trace_time_text(),
         "message": str(message or ""),
     }
     if extra:
@@ -8505,7 +8581,7 @@ def _execute_agent_step(run, step_name):
     step["startedAt"] = now
     step["toolCalls"] = []
     step["liveTrace"] = [{
-        "time": now,
+        "time": _trace_time_text(),
         "message": f"开始执行 {step_name}",
         "status": "RUNNING",
     }]
@@ -8513,7 +8589,7 @@ def _execute_agent_step(run, step_name):
     flow_brief = " → ".join((business_constraint.get("businessFlow") or [])[:4])
     if flow_brief:
         step["liveTrace"].append({
-            "time": now,
+            "time": _trace_time_text(),
             "message": f"业务主链约束：{flow_brief}",
             "status": "RUNNING",
         })
@@ -8531,12 +8607,15 @@ def _execute_agent_step(run, step_name):
     result = None
     error = None
     try:
+        tool_fn = _STEP_TOOL_MAP.get(step_name)
+        tool_name = getattr(tool_fn, "__name__", step_name) if tool_fn else step_name
+        if tool_fn:
+            _append_step_trace(run, step, f"准备调用工具：{tool_name}", status="RUNNING", tool=step_name)
         if _persisted_agent_run_is_cancelled(run.get("runId", "")):
             _apply_agent_cancel_state(run, "用户取消")
             return {"status": "CANCELLED", "summary": "用户取消"}, None
-        tool_fn = _STEP_TOOL_MAP.get(step_name)
         if tool_fn:
-            _append_step_trace(run, step, f"调用工具：{getattr(tool_fn, '__name__', step_name)}", tool=step_name)
+            _append_step_trace(run, step, f"调用工具：{tool_name}", tool=step_name)
             result = tool_fn(run)
             if _persisted_agent_run_is_cancelled(run.get("runId", "")):
                 _apply_agent_cancel_state(run, "用户取消")
@@ -8675,7 +8754,7 @@ def _execute_agent_steps(run_id):
                 step["endedAt"] = now
                 step["summary"] = "Runner 单条/多条调试模式不需要同步 Sonic，已跳过"
                 step["liveTrace"] = [{
-                    "time": now,
+                    "time": _trace_time_text(),
                     "message": "当前执行模式为 RUNNER_JOB，直接交给 Windows/Mac Runner 执行已匹配 YAML，不调用 Sonic 测试套同步。",
                     "status": "SKIPPED",
                 }]
