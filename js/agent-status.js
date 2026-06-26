@@ -2,6 +2,7 @@
 // Extracted from task-manager.html (no logic changes).
 
 let agentHistoryRequestSeq = 0;
+let agentRunSelectionSeq = 0;
 
 function agentStatusText(status) {
   const map = {
@@ -102,6 +103,42 @@ function normalizeAgentRun(run) {
     status: run.status || 'START',
     currentStep: run.currentStep || 'START'
   };
+}
+
+function agentRunSortTime(run) {
+  const created = parseAgentTime(run?.createdAt || run?.created_at || run?.startedAt || run?.started_at);
+  if (Number.isFinite(created)) return created;
+  const match = String(run?.runId || '').match(/(?:agent|gen|job)[-_](\d{10,})/);
+  if (match) return Number(match[1]);
+  const updated = parseAgentTime(run?.updatedAt || run?.updated_at || run?.finishedAt || run?.endedAt);
+  return Number.isFinite(updated) ? updated : 0;
+}
+
+function agentRunsByCreatedDesc(runs, limit = 0) {
+  const sorted = (runs || []).map(normalizeAgentRun).filter(Boolean).sort((a, b) => {
+    const delta = agentRunSortTime(b) - agentRunSortTime(a);
+    if (delta) return delta;
+    return String(b.runId || '').localeCompare(String(a.runId || ''));
+  });
+  return limit > 0 ? sorted.slice(0, limit) : sorted;
+}
+
+function setAgentRuns(runs, limit = 0) {
+  agentRuns = agentRunsByCreatedDesc(runs, limit);
+  AppState.agentRuns = agentRuns;
+  return agentRuns;
+}
+
+function mergeAgentRun(run, limit = 50) {
+  const normalized = normalizeAgentRun(run);
+  if (!normalized?.runId) return null;
+  const merged = [normalized, ...agentRuns.filter(item => item.runId !== normalized.runId)];
+  setAgentRuns(merged, limit);
+  return normalized;
+}
+
+function agentRunDisplayTime(run) {
+  return String(run?.createdAt || run?.created_at || run?.startedAt || run?.updatedAt || '').replace('T', ' ').slice(0, 19);
 }
 
 function agentRunProgressPct(run) {
@@ -462,12 +499,8 @@ async function loadAgentRuns(options = {}) {
   try {
     const url = limit ? `/agent-runs?limit=${encodeURIComponent(limit)}` : '/agent-runs';
     const data = await apiRequest(url, { timeoutMs });
-    let runs = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
-    // 后端如忽略 limit 参数，前端再兜底截取
-    if (limit && runs.length > limit) runs = runs.slice(0, limit);
-    agentRuns = runs;
+    setAgentRuns(data.runs || [], limit);
     AppState.loaded.agentRuns = true;
-    AppState.agentRuns = agentRuns;
     if (options.render !== false) renderAgentCenter();
     // round 4: 加载完成后再决定是否开启 Agent 轮询
     if (typeof maybeAdjustAgentPolling === 'function') {
@@ -552,7 +585,7 @@ function agentRunCardHtml(run, options = {}) {
     <div class="workflow-card agent-run-history-card ${escapeHtml(cardStatus)}">
       <div class="agent-run-card-head">
         <span class="status-pill ${escapeHtml(pill)}">${escapeHtml(status)}</span>
-        <span class="muted mono">${escapeHtml((run.updatedAt || run.createdAt || '').replace('T', ' ').slice(0, 19))}</span>
+        <span class="muted mono">${escapeHtml(agentRunDisplayTime(run))}</span>
       </div>
       <div class="agent-run-title">${escapeHtml(String(target).slice(0, 80))}</div>
       <div class="agent-run-meta">
@@ -566,8 +599,8 @@ function agentRunCardHtml(run, options = {}) {
       ${agentRiskDetailHtml(riskDetail, { compact: true })}
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
       <div class="workflow-card-actions">
-        <button class="btn-sm" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('agent')">查看轨迹</button>
-        ${options.confirm ? `<button class="btn-sm success" onclick="selectAgentRun(${jsArg(run.runId || '')});activateWorkflow('dashboard')">处理确认</button>` : ''}
+        <button class="btn-sm" onclick="openAgentRunTrace(${jsArg(run.runId || '')})">查看轨迹</button>
+        ${options.confirm ? `<button class="btn-sm success" onclick="openAgentRunTrace(${jsArg(run.runId || '')}, 'dashboard')">处理确认</button>` : ''}
         ${canCancel ? `<button class="btn-sm danger" onclick="cancelAgentRunById(${jsArg(run.runId || '')})">取消运行</button>` : ''}
       </div>
     </div>
@@ -674,6 +707,7 @@ async function renderAgentConfirmPage(options = {}) {
 }
 
 async function selectAgentRun(runId) {
+  const selectionSeq = ++agentRunSelectionSeq;
   const run = agentRuns.find(item => item.runId === runId);
   if (!run) {
     showToast('未找到Agent 运行记录', 'error');
@@ -686,14 +720,21 @@ async function selectAgentRun(runId) {
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}`, { timeoutMs: 15000 });
     const detail = normalizeAgentRun(data.run || data);
+    if (selectionSeq !== agentRunSelectionSeq || detail?.runId !== runId) return;
     if (!detail) return;
     agentCurrentRun = detail;
     AppState.currentAgentRun = agentCurrentRun;
-    agentRuns = [detail, ...agentRuns.filter(item => item.runId !== detail.runId)].slice(0, 50);
+    mergeAgentRun(detail, 50);
     renderAgentPageAfterRunUpdate();
   } catch (e) {
+    if (selectionSeq !== agentRunSelectionSeq) return;
     showToast(e.message || '读取Agent轨迹详情失败', 'error');
   }
+}
+
+async function openAgentRunTrace(runId, workflow = 'agent') {
+  await selectAgentRun(runId);
+  activateWorkflow(workflow);
 }
 
 function renderAgentPageAfterRunUpdate() {
@@ -727,11 +768,15 @@ async function confirmAgentStep(runId, confirmationId, decision='confirmed') {
       method: 'POST',
       body: { confirmationId, decision, action: decision }
     });
-    agentCurrentRun = normalizeAgentRun(data.run || data);
-    if (agentCurrentRun) {
-      agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
+    const confirmedRun = normalizeAgentRun(data.run || data);
+    if (confirmedRun) {
+      mergeAgentRun(confirmedRun, 50);
+      if (!agentCurrentRun?.runId || agentCurrentRun.runId === confirmedRun.runId) {
+        agentCurrentRun = confirmedRun;
+        AppState.currentAgentRun = agentCurrentRun;
+      }
       showToast('✓ 已确认', 'success');
-      stopAgentPollingIfDone(agentCurrentRun);
+      stopAgentPollingIfDone(confirmedRun);
     }
     renderAgentPageAfterRunUpdate();
   } catch(e) {
@@ -747,9 +792,13 @@ async function cancelAgentRunById(runId) {
       method: 'POST',
       body: { reason: 'manual' }
     });
-    agentCurrentRun = normalizeAgentRun(data.run || data);
-    if (agentCurrentRun) {
-      agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
+    const cancelledRun = normalizeAgentRun(data.run || data);
+    if (cancelledRun) {
+      mergeAgentRun(cancelledRun, 50);
+      if (agentCurrentRun?.runId === cancelledRun.runId) {
+        agentCurrentRun = cancelledRun;
+        AppState.currentAgentRun = agentCurrentRun;
+      }
       showToast('✓ 已取消', 'success');
     }
     renderAgentPageAfterRunUpdate();
@@ -768,9 +817,10 @@ async function refreshAgentRun(runId) {
   try {
     const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}`);
     const run = normalizeAgentRun(data.run || data);
+    if (agentCurrentRun?.runId && agentCurrentRun.runId !== runId) return null;
     if (run) {
       agentCurrentRun = run;
-      agentRuns = [run, ...agentRuns.filter(item => item.runId !== run.runId)].slice(0, 20);
+      mergeAgentRun(run, 50);
       stopAgentPollingIfDone(run);
       renderAgentPageAfterRunUpdate();
     }
@@ -784,7 +834,7 @@ async function refreshAgentRun(runId) {
 async function refreshAgentRuns(showMessage=false) {
   try {
     const data = await apiRequest('/agent-runs', { timeoutMs: 15000 });
-    agentRuns = (data.runs || []).map(normalizeAgentRun).filter(Boolean);
+    setAgentRuns(data.runs || [], 50);
     if (showMessage) showToast('✓ Agent历史已刷新', 'success');
     renderAgentPageAfterRunUpdate();
   } catch(e) {
@@ -802,7 +852,7 @@ async function confirmAgentRun(action='CONTINUE', confirmationId='', extra={}) {
     });
     agentCurrentRun = normalizeAgentRun(data.run || data);
     if (agentCurrentRun) {
-      agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
+      mergeAgentRun(agentCurrentRun, 50);
     }
     showToast('✓ 已记录确认', 'success');
     renderAgentPageAfterRunUpdate();
@@ -822,7 +872,7 @@ async function cancelAgentRun() {
     });
     agentCurrentRun = normalizeAgentRun(data.run || data);
     if (agentCurrentRun) {
-      agentRuns = [agentCurrentRun, ...agentRuns.filter(r => r.runId !== agentCurrentRun.runId)].slice(0, 20);
+      mergeAgentRun(agentCurrentRun, 50);
     }
     showToast('✓ Agent 已取消', 'success');
     renderAgentPageAfterRunUpdate();
@@ -1167,7 +1217,7 @@ function renderAgentCenter() {
               <div class="agent-timeline-item ${r.status === 'DONE' ? 'success' : (r.status === 'CANCELLED' || r.status === 'FAILED' ? 'failed' : (r.status === 'WAIT_CONFIRM' ? 'waiting' : 'running'))}">
                 <strong>${escapeHtml((r.runId || '').slice(0, 20))}</strong>
                 <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentModeText(r.mode))}</div>
-                <div style="font-size:11px;color:var(--text3);">${escapeHtml((r.updatedAt || '').replace('T', ' ').slice(0, 16))}</div>
+                <div style="font-size:11px;color:var(--text3);">${escapeHtml(agentRunDisplayTime(r).slice(0, 16))}</div>
               </div>
             `).join('') || `${renderEmptyState('agent_history')}`}
           </div>
@@ -1297,7 +1347,7 @@ function renderAgentCenter() {
               <strong>${escapeHtml(String(title).slice(0, 36))}</strong>
               <div>${escapeHtml(agentStatusText(r.status))} · ${escapeHtml(agentStepLabel(r.currentStep))}</div>
               <div class="agent-timeline-input">${escapeHtml(input.compactLine || input.badges?.slice(0, 3).join('；') || '')}</div>
-              <div style="font-size:11px;color:var(--text3);">${escapeHtml((r.updatedAt || '').replace('T', ' ').slice(0, 16))}</div>
+              <div style="font-size:11px;color:var(--text3);">${escapeHtml(agentRunDisplayTime(r).slice(0, 16))}</div>
             </div>
           `}).join('') || `${renderEmptyState('agent_history')}`}
         </div>
