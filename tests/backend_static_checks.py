@@ -843,6 +843,83 @@ def check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads():
     require(run.get("currentStep") == "IMPACT_ANALYSIS", "Recovered Agent must advance to the next pending step")
     require("自动补齐步骤完成状态" in (step.get("liveTrace") or [])[-1].get("message", ""), "Recovered step must explain the auto-finalization")
 
+    stalled = {
+        "runId": "agent-static-stalled-dispatch",
+        "status": "RUNNING",
+        "currentStep": "IMPACT_ANALYSIS",
+        "progress": 10,
+        "steps": [
+            {"step": "PLAN", "status": "SUCCESS"},
+            {"step": "PREPARE_SOURCE", "status": "SUCCESS"},
+            {
+                "step": "IMPACT_ANALYSIS",
+                "status": "RUNNING",
+                "startedAt": old_ts,
+                "summary": "",
+                "toolCalls": [],
+                "liveTrace": [
+                    {"time": old_ts, "message": "开始执行 IMPACT_ANALYSIS", "status": "RUNNING"},
+                    {"time": old_ts, "message": "准备调用工具：_tool_impact_analysis", "status": "RUNNING"},
+                ],
+            },
+        ],
+    }
+    recovered, should_resume = agent_service._recover_stalled_tool_dispatch_step(stalled)
+    stalled_step = stalled["steps"][2]
+    require(recovered is True and should_resume is True, "Steps stalled before actual tool call must be requeued")
+    require(stalled_step.get("status") == "PENDING" and stalled.get("currentStep") == "IMPACT_ANALYSIS", "Requeued stalled tool dispatch must remain on the same step")
+    require("重新排队" in stalled_step.get("summary", ""), "Requeued stalled tool dispatch must explain the recovery")
+
+
+def check_agent_history_compacts_uploaded_blobs_after_prepare():
+    from task_server.services import agent_service
+
+    blob = base64.b64encode(b"large-pdf-content" * 2000).decode("ascii")
+    file_item = {
+        "name": "AI 建模页需求文档.pdf",
+        "type": "application/pdf",
+        "kind": "requirement_file",
+        "size": len(blob),
+        "contentBase64": blob,
+        "content": "x" * 2000,
+    }
+    run = {
+        "runId": "agent-static-compact-input",
+        "target": "AI建模UI测试",
+        "normalizedInput": {
+            "files": [dict(file_item)],
+            "sourceInputs": {
+                "files": [dict(file_item)],
+                "requirementFiles": [dict(file_item)],
+                "images": [],
+            },
+        },
+        "artifacts": {
+            "sourceContext": {
+                "requirementText": "已解析出的需求文本",
+                "uploadedFiles": [{"name": file_item["name"], "kind": file_item["kind"], "size": file_item["size"]}],
+                "uploadedImages": [],
+                "figmaUsedPages": [],
+                "figmaImageCount": 0,
+            }
+        },
+    }
+    before_size = len(json_dumps_for_check(run))
+    changed = agent_service._compact_agent_run_input_blobs(run)
+    after_size = len(json_dumps_for_check(run))
+    compacted_file = run["normalizedInput"]["files"][0]
+    nested_file = run["normalizedInput"]["sourceInputs"]["requirementFiles"][0]
+    require(changed is True, "Agent run compaction must report changes when uploaded blobs are present")
+    require("contentBase64" not in compacted_file and "content" not in compacted_file, "Top-level normalized files must drop raw uploaded content")
+    require("contentBase64" not in nested_file and nested_file.get("contentRemoved") is True, "Nested sourceInputs files must also drop duplicated raw content")
+    require(compacted_file.get("name") == file_item["name"] and compacted_file.get("size") == file_item["size"], "Compaction must keep file metadata visible")
+    require(after_size < before_size / 3, "Agent persisted run should shrink substantially after source preparation")
+
+
+def json_dumps_for_check(value):
+    import json
+    return json.dumps(value, ensure_ascii=False)
+
 
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
@@ -1047,6 +1124,7 @@ def main():
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
+    check_agent_history_compacts_uploaded_blobs_after_prepare()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -1524,7 +1602,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 44})
+    print({"ok": True, "file": str(MODULE), "checks": 45})
 
 
 if __name__ == "__main__":

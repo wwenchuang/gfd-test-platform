@@ -276,6 +276,92 @@ def save_agent_runs(runs):
     write_json_file(AGENT_RUNS_FILE, {"runs": runs})
 
 
+AGENT_INLINE_BLOB_KEYS = {
+    "contentBase64", "base64", "dataUrl", "data", "bytes", "arrayBuffer",
+    "fileContent", "rawContent", "blob",
+}
+
+
+def _compact_agent_upload_item(item):
+    """Drop raw uploaded bytes from persisted Agent history after source parsing."""
+    if not isinstance(item, dict):
+        return item, False
+    compacted = dict(item)
+    changed = False
+    removed = {}
+    for key in list(compacted.keys()):
+        value = compacted.get(key)
+        should_remove = key in AGENT_INLINE_BLOB_KEYS
+        if key == "content" and isinstance(value, str) and len(value) > 1000:
+            should_remove = True
+        if key == "text" and isinstance(value, str) and len(value) > 4000:
+            compacted["textPreview"] = _clean_agent_source_text(value, limit=1200)
+            compacted["hasText"] = True
+            should_remove = True
+        if not should_remove:
+            continue
+        if isinstance(value, str):
+            removed[key] = len(value)
+        else:
+            try:
+                removed[key] = len(json.dumps(value, ensure_ascii=False))
+            except Exception:
+                removed[key] = 1
+        compacted.pop(key, None)
+        changed = True
+    if changed:
+        compacted["contentRemoved"] = True
+        compacted["removedContentBytes"] = int(sum(removed.values()))
+        compacted.setdefault("hasBinary", bool(removed))
+        compacted.setdefault("note", "原始上传内容已解析并从运行记录移除，避免 Agent 状态刷新变慢")
+    return compacted, changed
+
+
+def _compact_agent_upload_list(items):
+    if not isinstance(items, list):
+        return items, False
+    changed = False
+    compacted_items = []
+    for item in items:
+        compacted, item_changed = _compact_agent_upload_item(item)
+        compacted_items.append(compacted)
+        changed = changed or item_changed
+    return compacted_items, changed
+
+
+def _compact_agent_run_input_blobs(run):
+    """Keep Agent history small once PREPARE_SOURCE has extracted usable context."""
+    if not isinstance(run, dict):
+        return False
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    if not isinstance(artifacts.get("sourceContext"), dict):
+        return False
+    changed = False
+    containers = [run]
+    normalized = run.get("normalizedInput")
+    if isinstance(normalized, dict):
+        containers.append(normalized)
+        source_inputs = normalized.get("sourceInputs")
+        if isinstance(source_inputs, dict):
+            containers.append(source_inputs)
+    source_inputs = run.get("sourceInputs")
+    if isinstance(source_inputs, dict):
+        containers.append(source_inputs)
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        for key in ("files", "images", "requirementFiles", "imageRefs"):
+            compacted, item_changed = _compact_agent_upload_list(container.get(key))
+            if item_changed:
+                container[key] = compacted
+                changed = True
+    if changed:
+        artifacts["inputBlobsCompacted"] = True
+        artifacts["inputBlobsCompactedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        run["inputSummary"] = _agent_input_summary(run, detailed=True)
+    return changed
+
+
 def _agent_parse_time(value):
     if not value:
         return 0
@@ -557,6 +643,47 @@ def _recover_completed_running_step(run):
     return False, False
 
 
+def _recover_stalled_tool_dispatch_step(run):
+    """Requeue a RUNNING step that stalled before the tool was called."""
+    if not isinstance(run, dict) or run.get("status") != "RUNNING":
+        return False, False
+    stall_seconds = safe_int(os.getenv("MIDSCENE_AGENT_TOOL_DISPATCH_STALL_SECONDS"), 180)
+    now_ts = time.time()
+    for step in run.get("steps") or []:
+        if not isinstance(step, dict) or step.get("status") != "RUNNING":
+            continue
+        if step.get("step") == "GENERATE_YAML":
+            continue
+        if step.get("toolCalls"):
+            continue
+        trace = step.get("liveTrace") or []
+        messages = [str((item or {}).get("message") or "") for item in trace if isinstance(item, dict)]
+        prepared = any("准备调用工具" in item for item in messages)
+        called = any("调用工具" in item and "准备调用工具" not in item for item in messages)
+        if not prepared or called:
+            continue
+        last_ts = _latest_step_trace_ts(step)
+        if last_ts and now_ts - last_ts < max(30, stall_seconds):
+            continue
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        step["status"] = "PENDING"
+        step["summary"] = "工具调用前中断，已自动重新排队"
+        step["startedAt"] = None
+        step["endedAt"] = None
+        step["durationMs"] = 0
+        step.setdefault("liveTrace", []).append({
+            "time": _trace_time_text(),
+            "message": "工具调用前长时间没有进入实际调用，自动重新排队并继续执行。",
+            "status": "PENDING",
+        })
+        del step["liveTrace"][:-30]
+        run["currentStep"] = step.get("step") or run.get("currentStep")
+        run["updatedAt"] = now
+        _refresh_agent_run_progress(run)
+        return True, True
+    return False, False
+
+
 def recover_stale_agent_runs(limit=None):
     """收敛服务重启/超时后遗留的 RUNNING Agent，避免 UI 假运行。"""
     resume_ids = []
@@ -567,7 +694,14 @@ def recover_stale_agent_runs(limit=None):
         for run in runs[:scan_count]:
             if _sync_agent_generation_job_state(run):
                 changed = True
+            if _compact_agent_run_input_blobs(run):
+                changed = True
             recovered, should_resume = _recover_completed_running_step(run)
+            if recovered:
+                changed = True
+            if should_resume and run.get("runId"):
+                resume_ids.append(run.get("runId"))
+            recovered, should_resume = _recover_stalled_tool_dispatch_step(run)
             if recovered:
                 changed = True
             if should_resume and run.get("runId"):
@@ -8739,6 +8873,8 @@ def _execute_agent_step(run, step_name):
             return result, None
         # Collect tool call into step
         if result and isinstance(result, dict):
+            if step_name == "PREPARE_SOURCE" and result.get("status") in ("SUCCESS", "PARTIAL_FAILED"):
+                _compact_agent_run_input_blobs(run)
             result.setdefault("businessFlowConstraint", _compact_business_flow_constraint(business_constraint))
             result.setdefault("toolEligibility", {
                 "allowed": True,
