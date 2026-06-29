@@ -7831,6 +7831,121 @@ def _tool_run_sonic(run):
     return call
 
 
+def _failed_job_id(item):
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("jobId") or item.get("job_id") or item.get("id") or "").strip()
+
+
+def _failed_job_task_name(item):
+    if not isinstance(item, dict):
+        return ""
+    return str(
+        item.get("taskName") or item.get("task_name") or
+        item.get("target_task_name") or item.get("current_task_name") or
+        item.get("name") or ""
+    ).strip()
+
+
+def _normalize_failed_execution_item(item, fallback=None):
+    if not isinstance(item, dict):
+        return None
+    fallback = fallback if isinstance(fallback, dict) else {}
+    job_id = _failed_job_id(item) or _failed_job_id(fallback)
+    module = str(item.get("module") or fallback.get("module") or "").strip()
+    file_name = str(item.get("file") or item.get("filename") or fallback.get("file") or "").strip()
+    task_name = _failed_job_task_name(item) or _failed_job_task_name(fallback)
+    error = str(item.get("error") or item.get("fail_reason") or fallback.get("error") or "").strip()
+    stdout_tail = str(item.get("stdoutTail") or item.get("stdout_tail") or fallback.get("stdoutTail") or fallback.get("stdout_tail") or "").strip()
+    stderr_tail = str(item.get("stderrTail") or item.get("stderr_tail") or fallback.get("stderrTail") or fallback.get("stderr_tail") or "").strip()
+    reason = str(item.get("failureReason") or item.get("failure_reason") or "").strip()
+    if not reason:
+        reason = _agent_job_failure_reason({
+            **item,
+            "error": error,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+        })
+    failure_type = str(item.get("failureType") or item.get("failure_type") or "").strip()
+    if not failure_type:
+        failure_type = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail]))
+    return {
+        "jobId": job_id,
+        "status": str(item.get("status") or fallback.get("status") or "failed").strip() or "failed",
+        "module": module,
+        "file": file_name,
+        "taskName": task_name,
+        "reportUrl": item.get("reportUrl") or item.get("report_url") or fallback.get("reportUrl") or fallback.get("report_url") or "",
+        "localPath": item.get("localPath") or item.get("local_report_path") or item.get("localReportPath") or fallback.get("localPath") or "",
+        "error": error,
+        "stdoutTail": stdout_tail[-1200:],
+        "stderrTail": stderr_tail[-1600:],
+        "failureReason": reason,
+        "failureType": failure_type,
+    }
+
+
+def _agent_failed_execution_items(run):
+    """Return the single source of truth for failed Runner execution items."""
+    artifacts = (run or {}).get("artifacts") or {}
+    raw_items = []
+    report = artifacts.get("report") if isinstance(artifacts.get("report"), dict) else {}
+    if report:
+        raw_items.extend(report.get("failedJobs") or [])
+        raw_items.extend(report.get("timeoutJobs") or [])
+    job_result = artifacts.get("jobResult") if isinstance(artifacts.get("jobResult"), dict) else {}
+    if job_result:
+        raw_items.extend(job_result.get("failed") or [])
+        raw_items.extend(job_result.get("timeout") or [])
+
+    # If report collection did not run yet, fall back to persisted job records.
+    try:
+        from task_server.services import job_service
+        job_ids = [str(jid) for jid in (artifacts.get("jobIds") or []) if str(jid or "").strip()]
+        if job_ids:
+            jobs = job_service.load_jobs()
+            known = {_failed_job_id(item) for item in raw_items if isinstance(item, dict)}
+            for jid in job_ids:
+                if jid in known:
+                    continue
+                job = next((j for j in jobs if j.get("job_id") == jid or j.get("jobId") == jid), None)
+                if not job:
+                    continue
+                if str(job.get("status") or "").lower() in ("failed", "error", "timeout", "cancelled"):
+                    raw_items.append({
+                        **job,
+                        "jobId": jid,
+                        "taskName": job.get("target_task_name") or job.get("current_task_name") or "",
+                        "stderrTail": job.get("stderr_tail") or "",
+                        "stdoutTail": job.get("stdout_tail") or "",
+                    })
+    except Exception:
+        pass
+
+    failure_analysis = artifacts.get("failureAnalysis") if isinstance(artifacts.get("failureAnalysis"), dict) else {}
+    if failure_analysis and (_failed_job_id(failure_analysis) or failure_analysis.get("file") or failure_analysis.get("taskName")):
+        raw_items.append(failure_analysis)
+
+    normalized = []
+    by_key = {}
+    for item in raw_items:
+        norm = _normalize_failed_execution_item(item)
+        if not norm:
+            continue
+        key = norm.get("jobId") or f"{norm.get('module')}::{norm.get('file')}::{norm.get('taskName')}"
+        if not key or key in by_key:
+            continue
+        by_key[key] = norm
+        normalized.append(norm)
+    return normalized
+
+
+def _agent_persist_failed_execution_items(run):
+    items = _agent_failed_execution_items(run)
+    run.setdefault("artifacts", {})["failedExecutionItems"] = items
+    return items
+
+
 def _tool_collect_report(run):
     """收集执行报告 - 基于已完成的job收集真实报告。"""
     call = {
@@ -8073,6 +8188,7 @@ def _tool_collect_report(run):
             "errors": [e for e in errors if e],
             "summary": summary,
         }
+        artifacts["failedExecutionItems"] = _agent_failed_execution_items(run)
         run["artifacts"] = artifacts
 
         if report_status in ("failed", "waiting", "missing"):
@@ -8132,8 +8248,7 @@ def _tool_analyze_failure(run):
     }
     try:
         artifacts = run.get("artifacts") or {}
-        report_data = artifacts.get("report") or {}
-        failed_jobs = report_data.get("failedJobs") or []
+        failed_jobs = _agent_persist_failed_execution_items(run)
         sonic_sync = artifacts.get("sonicSync") or {}
         sonic_failed = sonic_sync.get("failed") or []
         precheck_diagnosis = ((artifacts.get("executionPrecheck") or {}).get("diagnosis")
@@ -8180,9 +8295,9 @@ def _tool_analyze_failure(run):
             # 有执行失败
             failure_type = "SCRIPT_ISSUE"
             failure_context = f"执行失败 {len(failed_jobs)} 个任务:\n"
-            for fj in failed_jobs[:5]:
+            for fj in failed_jobs[:12]:
                 failure_context += f"- {fj.get('module', '')}/{fj.get('file', '')} ({fj.get('status', '')})：{fj.get('error', '')}\n"
-                stderr = fj.get("stderr_tail", "")
+                stderr = fj.get("stderrTail") or fj.get("stderr_tail") or ""
                 if stderr:
                     failure_context += f"  stderr: {stderr[:200]}\n"
 
@@ -8200,7 +8315,16 @@ def _tool_analyze_failure(run):
                 result = _ai_gateway_post("/ai/analyze-failure", {
                     "failureType": failure_type,
                     "context": failure_context[:2000],
-                    "failedJobs": [{"jobId": fj.get("jobId", ""), "file": fj.get("file", ""), "error": fj.get("error", "")} for fj in failed_jobs[:5]],
+                    "failedJobs": [
+                        {
+                            "jobId": fj.get("jobId", ""),
+                            "taskName": fj.get("taskName", ""),
+                            "file": fj.get("file", ""),
+                            "error": fj.get("error", ""),
+                            "failureReason": fj.get("failureReason", ""),
+                        }
+                        for fj in failed_jobs[:12]
+                    ],
                 }, timeout=30)
                 if isinstance(result, dict):
                     analysis["conclusion"] = result.get("conclusion") or result.get("analysis", "")
@@ -8216,9 +8340,15 @@ def _tool_analyze_failure(run):
             analysis["recommendation"] = "请检查失败日志手动分析"
 
         artifacts["failureAnalysis"] = analysis
+        artifacts["failedExecutionItems"] = failed_jobs
         run["artifacts"] = artifacts
 
         call["status"] = "SUCCESS"
+        call["failedTaskCount"] = len(failed_jobs)
+        call["failedTasks"] = [
+            {"jobId": item.get("jobId"), "taskName": item.get("taskName"), "file": item.get("file"), "reason": item.get("failureReason")}
+            for item in failed_jobs[:20]
+        ]
         call["outputSummary"] = f"分析完成: {failure_type}，{len(failed_jobs)} 个任务失败，{len(sonic_failed)} 个同步失败"
 
     except Exception as e:
@@ -8256,178 +8386,216 @@ def _tool_generate_repair(run):
             call["outputSummary"] = "未知失败类型，进入人工复核"
             return call
         artifacts = run.setdefault("artifacts", {})
-        failed_jobs = []
-        report = artifacts.get("report") if isinstance(artifacts.get("report"), dict) else {}
-        if isinstance(report, dict):
-            failed_jobs.extend(report.get("failedJobs") or [])
-            failed_jobs.extend(report.get("timeoutJobs") or [])
-        job_result = artifacts.get("jobResult") if isinstance(artifacts.get("jobResult"), dict) else {}
-        if isinstance(job_result, dict):
-            failed_jobs.extend(job_result.get("failed") or [])
-            failed_jobs.extend(job_result.get("timeout") or [])
-        if fa.get("jobId") or fa.get("job_id"):
-            failed_jobs.append({
-                "jobId": fa.get("jobId") or fa.get("job_id"),
-                "module": fa.get("module", ""),
-                "file": fa.get("file", ""),
-                "taskName": fa.get("taskName") or fa.get("task_name") or "",
-                "error": fa.get("summary") or fa.get("error") or "",
-            })
-        seen = set()
-        deduped = []
-        for item in failed_jobs:
-            if not isinstance(item, dict):
-                continue
-            key = item.get("jobId") or item.get("job_id") or f"{item.get('module')}/{item.get('file')}/{item.get('taskName')}"
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(item)
-        failed_jobs = deduped
-        target_job = failed_jobs[0] if failed_jobs else {}
-        module = str(target_job.get("module") or fa.get("module") or "").strip()
-        file_name = clean_filename(target_job.get("file") or fa.get("file") or "")
-        task_name = str(
-            target_job.get("taskName") or target_job.get("task_name") or
-            target_job.get("target_task_name") or target_job.get("current_task_name") or
-            fa.get("taskName") or fa.get("task_name") or ""
-        ).strip()
-        original_yaml = ""
-        if module and file_name:
-            try:
-                original_yaml = read_text_file(safe_join(TASK_DIR, module, file_name), default="")
-            except Exception:
-                original_yaml = ""
-        evidence_parts = [
-            f"失败类型：{ft}",
-            f"Agent 目标：{run.get('target', '')}",
-            f"失败用例：{task_name or file_name}",
-            f"失败原因：{target_job.get('failureReason') or fa.get('summary') or target_job.get('error') or ''}",
-            f"Runner 错误：{target_job.get('error') or ''}",
-            f"stderr：{target_job.get('stderrTail') or target_job.get('stderr_tail') or ''}",
-            f"stdout：{target_job.get('stdoutTail') or target_job.get('stdout_tail') or ''}",
-        ]
-        evidence = "\n".join(part for part in evidence_parts if str(part).strip() and not str(part).endswith("："))
-        draft_id = unique_millis_id("repair")
-        draft = {
-            "draftId": draft_id,
-            "jobId": target_job.get("jobId") or target_job.get("job_id") or fa.get("jobId") or "",
-            "module": module,
-            "file": file_name,
-            "taskName": task_name,
-            "type": ft,
-            "failureType": ft,
-            "riskLevel": "medium",
-            "analysis": fa.get("conclusion") or fa.get("summary") or "根据失败日志生成修复草稿",
-            "suggestion": fa.get("suggestion") or fa.get("recommendation") or "建议修复定位器、等待条件或断言范围",
-            "originalYaml": original_yaml,
-            "fixedYaml": "",
-            "draftYaml": "",
-            "evidence": evidence[:4000],
-            "repairSource": "not_started",
-        }
-        repair_summary = {
-            "draftId": draft_id,
-            "targetJobId": draft.get("jobId", ""),
-            "targetTaskName": task_name,
-            "module": module,
-            "file": file_name,
-            "failureType": ft,
-            "evidenceSources": ["失败类型", "Agent 目标", "Runner 错误", "stdout/stderr 尾部", "原始 YAML"],
-            "aiAttempted": False,
-            "aiUsed": False,
-            "yamlValidation": {},
-            "changes": [],
-        }
-        if not original_yaml.strip():
+        failed_jobs = _agent_persist_failed_execution_items(run)
+        if not failed_jobs:
             call["status"] = "SKIPPED"
-            call["outputSummary"] = "未找到原始 YAML，不能生成可应用修复草稿"
-            repair_summary["blockedReason"] = "missing_original_yaml"
-            draft["analysis"] = "未找到原始 YAML；仅保留失败证据，无法生成可应用修复。"
-            draft["repairSource"] = "diagnosis_only"
-            try:
-                from task_server.services import repair_service
-                saved = repair_service.upsert_repair_draft(draft)
-                artifacts["repairDraft"] = saved
-                artifacts["repairSummary"] = repair_summary
-            except Exception:
-                artifacts["repairDraft"] = draft
-                artifacts["repairSummary"] = repair_summary
+            call["outputSummary"] = "没有失败任务，跳过修复草稿"
             return call
-        if _ai_gateway_available():
-            repair_summary["aiAttempted"] = True
-            resp = None
-            try:
-                resp = _ai_gateway_post("/ai/optimize-yaml", {
-                    "yaml": original_yaml,
-                    "target": run.get("target", ""),
-                    "requirement": run.get("target", ""),
-                    "failureAnalysis": evidence,
-                    "issues": evidence,
-                }, timeout=120)
-            except Exception as e:
-                resp = {"error": str(e)[:300]}
-            fixed_yaml = ""
-            if isinstance(resp, dict):
-                fixed_yaml = str(resp.get("fixedYaml") or resp.get("fixed_yaml") or resp.get("optimizedYaml") or resp.get("yaml") or "").strip()
-                if resp.get("changes"):
-                    changes = resp.get("changes")
-                    repair_summary["changes"] = changes if isinstance(changes, list) else [str(changes)]
-                if resp.get("diff") or resp.get("diff_summary"):
-                    draft["diff"] = resp.get("diff") or resp.get("diff_summary")
-            if fixed_yaml:
-                validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
-                if not isinstance(validation, dict) or "ok" not in validation:
-                    validation = validate_midscene_yaml_executability(fixed_yaml)
-                draft["fixedYaml"] = fixed_yaml[:200000]
-                draft["fixed_yaml"] = draft["fixedYaml"]
-                draft["draftYaml"] = draft["fixedYaml"][:5000]
-                draft["validation"] = validation
-                draft["repairSource"] = "ai_gateway"
-                draft["status"] = "WAIT_CONFIRM"
-                repair_summary["aiUsed"] = True
-                repair_summary["yamlValidation"] = validation
-                repair_summary["taskCount"] = validation.get("taskCount")
-                if validation.get("ok"):
-                    call["status"] = "SUCCESS"
-                    call["outputSummary"] = f"AI 已根据失败日志生成修复草稿：{task_name or file_name or '未命名用例'}"
-                else:
-                    call["status"] = "PARTIAL_FAILED"
-                    call["error"] = "AI 返回的修复 YAML 未通过校验"
-                    call["outputSummary"] = "AI 已返回修复草稿，但 YAML 校验未通过，请人工检查后再应用"
-            else:
-                call["status"] = "SKIPPED"
-                call["outputSummary"] = "AI 未返回可应用 YAML，仅保存失败证据和诊断草稿"
-                repair_summary["blockedReason"] = "ai_no_yaml"
-                if isinstance(resp, dict) and resp.get("error"):
-                    repair_summary["aiError"] = resp.get("error")
-                    call["error"] = str(resp.get("error"))[:500]
-                draft["repairSource"] = "diagnosis_only"
-        else:
-            call["status"] = "SKIPPED"
-            call["outputSummary"] = "AI Gateway 不可用，仅保存失败证据和诊断草稿"
-            repair_summary["blockedReason"] = "ai_gateway_unavailable"
-            draft["repairSource"] = "diagnosis_only"
+
+        max_items = max(1, safe_int(os.getenv("MIDSCENE_AGENT_REPAIR_MAX_ITEMS"), 20))
+        repair_targets = failed_jobs[:max_items]
+        all_failure_context = "\n".join(
+            f"{idx + 1}. {item.get('taskName') or item.get('file') or item.get('jobId')} | "
+            f"{item.get('file') or ''} | {item.get('failureReason') or item.get('error') or ''}"
+            for idx, item in enumerate(failed_jobs[:30])
+        )
+        ai_available = _ai_gateway_available()
+        ai_timeout = max(20, safe_int(os.getenv("MIDSCENE_AGENT_REPAIR_TIMEOUT_SECONDS"), 90))
+        saved_drafts = []
+        summary_items = []
+        ai_attempted_count = 0
+        ai_used_count = 0
+        validation_passed_count = 0
+        blocked_count = 0
+
         try:
             from task_server.services import repair_service
-            saved = repair_service.upsert_repair_draft(draft)
         except Exception:
-            saved = draft
-        artifacts["repairDraft"] = saved
-        artifacts.setdefault("repairDrafts", [])
-        artifacts["repairDrafts"] = [saved] + [
-            item for item in artifacts.get("repairDrafts", [])
-            if isinstance(item, dict) and (item.get("draftId") or item.get("draft_id")) != draft_id
-        ][:9]
+            repair_service = None
+
+        for index, target_job in enumerate(repair_targets, start=1):
+            module = str(target_job.get("module") or fa.get("module") or "").strip()
+            file_name = clean_filename(target_job.get("file") or fa.get("file") or "")
+            task_name = str(target_job.get("taskName") or fa.get("taskName") or fa.get("task_name") or "").strip()
+            original_yaml = ""
+            if module and file_name:
+                try:
+                    original_yaml = read_text_file(safe_join(TASK_DIR, module, file_name), default="")
+                except Exception:
+                    original_yaml = ""
+            evidence_parts = [
+                f"失败类型：{ft}",
+                f"失败序号：{index}/{len(failed_jobs)}",
+                f"Agent 目标：{run.get('target', '')}",
+                f"失败用例：{task_name or file_name}",
+                f"失败原因：{target_job.get('failureReason') or fa.get('summary') or target_job.get('error') or ''}",
+                f"Runner 错误：{target_job.get('error') or ''}",
+                f"stderr：{target_job.get('stderrTail') or target_job.get('stderr_tail') or ''}",
+                f"stdout：{target_job.get('stdoutTail') or target_job.get('stdout_tail') or ''}",
+                f"本次全部失败摘要：\n{all_failure_context}",
+            ]
+            evidence = "\n".join(part for part in evidence_parts if str(part).strip() and not str(part).endswith("："))
+            draft_id = unique_millis_id("repair")
+            draft = {
+                "draftId": draft_id,
+                "jobId": target_job.get("jobId") or "",
+                "module": module,
+                "file": file_name,
+                "taskName": task_name,
+                "type": ft,
+                "failureType": ft,
+                "riskLevel": "medium",
+                "analysis": fa.get("conclusion") or fa.get("summary") or "根据失败日志生成修复草稿",
+                "suggestion": fa.get("suggestion") or fa.get("recommendation") or "建议修复定位器、等待条件或断言范围",
+                "originalYaml": original_yaml,
+                "fixedYaml": "",
+                "draftYaml": "",
+                "evidence": evidence[:5000],
+                "repairSource": "not_started",
+                "batchIndex": index,
+                "batchTotal": len(failed_jobs),
+            }
+            item_summary = {
+                "draftId": draft_id,
+                "targetJobId": draft.get("jobId", ""),
+                "targetTaskName": task_name,
+                "module": module,
+                "file": file_name,
+                "failureReason": target_job.get("failureReason") or target_job.get("error") or "",
+                "aiAttempted": False,
+                "aiUsed": False,
+                "yamlValidation": {},
+                "changes": [],
+                "repairSource": "not_started",
+            }
+
+            if not original_yaml.strip():
+                blocked_count += 1
+                item_summary["blockedReason"] = "missing_original_yaml"
+                draft["analysis"] = "未找到原始 YAML；仅保留失败证据，无法生成可应用修复。"
+                draft["repairSource"] = "diagnosis_only"
+            elif ai_available:
+                ai_attempted_count += 1
+                item_summary["aiAttempted"] = True
+                resp = None
+                try:
+                    resp = _ai_gateway_post("/ai/optimize-yaml", {
+                        "yaml": original_yaml,
+                        "target": run.get("target", ""),
+                        "requirement": run.get("target", ""),
+                        "taskName": task_name,
+                        "failureAnalysis": evidence,
+                        "issues": evidence,
+                        "allFailedJobs": failed_jobs[:30],
+                    }, timeout=ai_timeout)
+                except Exception as e:
+                    resp = {"error": str(e)[:300]}
+                fixed_yaml = ""
+                if isinstance(resp, dict):
+                    fixed_yaml = str(resp.get("fixedYaml") or resp.get("fixed_yaml") or resp.get("optimizedYaml") or resp.get("yaml") or "").strip()
+                    if resp.get("changes"):
+                        changes = resp.get("changes")
+                        item_summary["changes"] = changes if isinstance(changes, list) else [str(changes)]
+                    if resp.get("diff") or resp.get("diff_summary"):
+                        draft["diff"] = resp.get("diff") or resp.get("diff_summary")
+                if fixed_yaml:
+                    validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
+                    if not isinstance(validation, dict) or "ok" not in validation:
+                        validation = validate_midscene_yaml_executability(fixed_yaml)
+                    draft["fixedYaml"] = fixed_yaml[:200000]
+                    draft["fixed_yaml"] = draft["fixedYaml"]
+                    draft["draftYaml"] = draft["fixedYaml"][:5000]
+                    draft["validation"] = validation
+                    draft["repairSource"] = "ai_gateway"
+                    draft["status"] = "WAIT_CONFIRM"
+                    item_summary["aiUsed"] = True
+                    item_summary["yamlValidation"] = validation
+                    item_summary["taskCount"] = validation.get("taskCount")
+                    ai_used_count += 1
+                    if validation.get("ok"):
+                        validation_passed_count += 1
+                    else:
+                        item_summary["blockedReason"] = "yaml_validation_failed"
+                else:
+                    blocked_count += 1
+                    item_summary["blockedReason"] = "ai_no_yaml"
+                    if isinstance(resp, dict) and resp.get("error"):
+                        item_summary["aiError"] = resp.get("error")
+                        draft["aiError"] = resp.get("error")
+                    draft["repairSource"] = "diagnosis_only"
+            else:
+                blocked_count += 1
+                item_summary["blockedReason"] = "ai_gateway_unavailable"
+                draft["repairSource"] = "diagnosis_only"
+
+            item_summary["repairSource"] = draft.get("repairSource")
+            try:
+                saved = repair_service.upsert_repair_draft(draft) if repair_service else draft
+            except Exception:
+                saved = draft
+            saved_drafts.append(saved)
+            summary_items.append(item_summary)
+
+        existing = [
+            item for item in (artifacts.get("repairDrafts") or [])
+            if isinstance(item, dict)
+        ]
+        new_ids = {item.get("draftId") or item.get("draft_id") for item in saved_drafts if isinstance(item, dict)}
+        artifacts["repairDrafts"] = saved_drafts + [
+            item for item in existing
+            if (item.get("draftId") or item.get("draft_id")) not in new_ids
+        ][:max(0, 30 - len(saved_drafts))]
+        if saved_drafts:
+            artifacts["repairDraft"] = saved_drafts[0]
+        repair_summary = {
+            "draftIds": [item.get("draftId") or item.get("draft_id") for item in saved_drafts if isinstance(item, dict)],
+            "draftCount": len(saved_drafts),
+            "failedTaskCount": len(failed_jobs),
+            "repairTargetCount": len(repair_targets),
+            "repairScope": "all_failed_tasks" if len(repair_targets) == len(failed_jobs) else "partial_failed_tasks",
+            "skippedFailedTaskCount": max(0, len(failed_jobs) - len(repair_targets)),
+            "blockedCount": blocked_count,
+            "aiAttempted": ai_attempted_count > 0,
+            "aiAttemptedCount": ai_attempted_count,
+            "aiUsed": ai_used_count > 0,
+            "aiUsedCount": ai_used_count,
+            "validationPassedCount": validation_passed_count,
+            "failureType": ft,
+            "evidenceSources": ["失败类型", "Agent 目标", "Runner 错误", "stdout/stderr 尾部", "原始 YAML", "整批失败摘要"],
+            "items": summary_items,
+            "targetTasks": [
+                item.get("targetTaskName") or item.get("file") or item.get("targetJobId")
+                for item in summary_items
+            ],
+            "yamlValidation": summary_items[0].get("yamlValidation") if summary_items else {},
+            "changes": summary_items[0].get("changes") if summary_items else [],
+        }
         artifacts["repairSummary"] = repair_summary
-        call["repairDraftId"] = draft_id
-        call["repairSource"] = draft.get("repairSource")
+        call["repairDraftIds"] = repair_summary["draftIds"]
+        call["repairDraftId"] = repair_summary["draftIds"][0] if repair_summary["draftIds"] else ""
+        call["repairSource"] = "batch"
+        call["failedTaskCount"] = len(failed_jobs)
+        call["repairTargetCount"] = len(repair_targets)
         call["aiAttempted"] = repair_summary.get("aiAttempted")
         call["aiUsed"] = repair_summary.get("aiUsed")
+        call["aiAttemptedCount"] = ai_attempted_count
+        call["aiUsedCount"] = ai_used_count
         call["yamlValidation"] = repair_summary.get("yamlValidation")
-        call["targetJobId"] = repair_summary.get("targetJobId")
-        call["targetTaskName"] = task_name
+        call["targetTaskName"] = "、".join([str(x) for x in repair_summary["targetTasks"][:3] if x])
         call["artifactRefs"] = ["repair"]
+        if ai_used_count:
+            call["status"] = "SUCCESS" if validation_passed_count == ai_used_count and blocked_count == 0 else "PARTIAL_FAILED"
+            call["outputSummary"] = (
+                f"AI 已生成 {ai_used_count} 条可应用修复草稿，覆盖 {len(repair_targets)}/{len(failed_jobs)} 条失败任务"
+            )
+            if validation_passed_count != ai_used_count:
+                call["error"] = f"{ai_used_count - validation_passed_count} 条修复 YAML 未通过校验"
+        elif saved_drafts:
+            call["status"] = "SKIPPED"
+            call["outputSummary"] = f"未生成可应用 YAML，已保存 {len(saved_drafts)} 条诊断草稿，覆盖 {len(repair_targets)}/{len(failed_jobs)} 条失败任务"
+        else:
+            call["status"] = "SKIPPED"
+            call["outputSummary"] = "没有生成修复草稿"
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)
@@ -8499,13 +8667,21 @@ def _tool_rerun(run):
     }
     try:
         from task_server.services import job_service
-        job_ids = (run.get("artifacts") or {}).get("jobIds", [])
+        artifacts = run.setdefault("artifacts", {})
+        failed_items = _agent_persist_failed_execution_items(run)
+        failed_ids = [_failed_job_id(item) for item in failed_items if _failed_job_id(item)]
+        if failed_ids:
+            job_ids = failed_ids
+        else:
+            job_ids = [str(jid) for jid in (artifacts.get("jobIds") or []) if str(jid or "").strip()]
+        source_by_id = {item.get("jobId"): item for item in failed_items if item.get("jobId")}
         retried = []
         retry_sources = []
         skipped = []
         jobs = job_service.load_jobs()
         for jid in job_ids:
             j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
+            source = source_by_id.get(jid) or {}
             if j and str(j.get("status", "")).lower() in ("failed", "error", "timeout"):
                 target_task_name = j.get("target_task_name") or j.get("taskName") or j.get("current_task_name") or ""
                 new_job = job_service.create_pending_job(
@@ -8529,25 +8705,51 @@ def _tool_rerun(run):
                         "module": j.get("module", ""),
                         "file": j.get("file", ""),
                         "targetTaskName": target_task_name,
+                        "failureReason": source.get("failureReason") or source.get("error") or "",
+                        "sourceStatus": j.get("status", ""),
                     })
             elif j:
-                skipped.append({"jobId": jid, "status": j.get("status", "")})
+                skipped.append({
+                    "jobId": jid,
+                    "status": j.get("status", ""),
+                    "taskName": source.get("taskName") or j.get("target_task_name") or j.get("current_task_name") or "",
+                    "reason": "不是失败/超时终态，不创建重跑任务",
+                })
             else:
-                skipped.append({"jobId": jid, "status": "not_found"})
-        artifacts = run.setdefault("artifacts", {})
+                skipped.append({
+                    "jobId": jid,
+                    "status": "not_found",
+                    "taskName": source.get("taskName") or "",
+                    "reason": "原始 job 已不存在",
+                })
         artifacts["retriedJobs"] = retried
         artifacts["rerunSources"] = retry_sources
         artifacts["rerunSkippedJobs"] = skipped
+        artifacts["rerunProgress"] = {
+            "scope": "failed_tasks",
+            "sourceFailedCount": len(failed_items),
+            "targetCount": len(job_ids),
+            "createdCount": len(retried),
+            "skippedCount": len(skipped),
+            "createdJobIds": retried,
+            "sources": retry_sources,
+            "skipped": skipped,
+            "status": "CREATED" if retried else "SKIPPED",
+        }
         call["createdJobIds"] = retried
-        call["outputSummary"] = f"已创建 {len(retried)} 个重跑任务"
+        call["sourceFailedCount"] = len(failed_items)
+        call["targetCount"] = len(job_ids)
+        call["skippedCount"] = len(skipped)
+        call["outputSummary"] = f"基于 {len(failed_items)} 个失败任务，创建 {len(retried)} 个重跑任务"
         if not retried:
             call["status"] = "SKIPPED" if not retry_sources else "FAILED"
             call["outputSummary"] = "没有可重跑的失败任务"
             attach_diagnosis(call, make_diagnosis(
                 "没有创建任何重跑任务",
                 "安全重跑没有进入 Runner 执行队列。",
-                ["确认上一步执行任务是否真的失败", "查看 artifacts.jobIds 是否包含失败 job", "手动在执行中心选择失败任务重跑"],
+                ["确认上一步执行任务是否真的失败", "查看 failedExecutionItems 是否包含失败 job", "手动在执行中心选择失败任务重跑"],
                 skippedJobs=skipped[:10],
+                failedExecutionItems=failed_items[:10],
             ))
         else:
             wait_timeout = job_service.runner_job_wait_timeout_seconds(len(retried))
@@ -8565,10 +8767,22 @@ def _tool_rerun(run):
                 "timeout": timeout_jobs,
                 "waitTimeoutSeconds": wait_timeout,
             }
-            artifacts["rerunProgress"] = dict(artifacts.get("jobProgress") or {})
-            summary = f"重跑执行完成：创建 {len(retried)} 个，成功 {len(completed)} 个，失败 {len(failed)} 个，超时 {len(timeout_jobs)} 个"
+            progress = dict(artifacts.get("jobProgress") or {})
+            progress.update({
+                "scope": "failed_tasks",
+                "sourceFailedCount": len(failed_items),
+                "targetCount": len(job_ids),
+                "createdCount": len(retried),
+                "skippedCount": len(skipped),
+                "createdJobIds": retried,
+                "sources": retry_sources,
+                "skipped": skipped,
+            })
+            artifacts["rerunProgress"] = progress
+            summary = f"重跑执行完成：失败任务 {len(failed_items)} 个，创建 {len(retried)} 个，成功 {len(completed)} 个，失败 {len(failed)} 个，超时 {len(timeout_jobs)} 个"
             call["outputSummary"] = summary
             call["rerunResult"] = artifacts["rerunResult"]
+            call["rerunProgress"] = artifacts["rerunProgress"]
             if failed or timeout_jobs:
                 call["status"] = "PARTIAL_FAILED" if completed else "FAILED"
                 call["error"] = "重跑后仍有失败或超时任务"
@@ -8611,15 +8825,16 @@ def _tool_generate_summary(run):
         failed_jobs = report.get("failedJobs") or []
         timeout_jobs = report.get("timeoutJobs") or []
         running_jobs = report.get("runningJobs") or []
+        failed_execution_items = artifacts.get("failedExecutionItems") or _agent_failed_execution_items(run)
         conclusion = "通过"
-        if failed or failed_jobs or timeout_jobs:
+        if failed or failed_jobs or timeout_jobs or failed_execution_items:
             conclusion = "未通过"
         elif running_jobs:
             conclusion = "执行中"
         elif report.get("status") == "missing":
             conclusion = "报告缺失"
         next_actions = []
-        if failed_jobs or timeout_jobs:
+        if failed_execution_items or failed_jobs or timeout_jobs:
             next_actions.extend(["打开失败任务报告或 Runner 日志", "确认是脚本问题后生成修复草稿", "修复后重跑失败用例"])
         elif running_jobs:
             next_actions.extend(["等待 Runner 回传执行结果", "刷新 Agent 运行状态"])
@@ -8637,9 +8852,18 @@ def _tool_generate_summary(run):
             "skipped": skipped,
             "matchedCount": matched_count,
             "reportCount": report_count,
-            "failedJobCount": len(failed_jobs),
+            "failedJobCount": len(failed_execution_items) or len(failed_jobs),
             "timeoutJobCount": len(timeout_jobs),
             "runningJobCount": len(running_jobs),
+            "failedTasks": [
+                {
+                    "jobId": item.get("jobId"),
+                    "taskName": item.get("taskName"),
+                    "file": item.get("file"),
+                    "reason": item.get("failureReason") or item.get("error"),
+                }
+                for item in failed_execution_items[:30]
+            ],
             "failureType": failure.get("failureType") or "NONE",
             "nextActions": next_actions[:5],
             "reportStatus": report.get("status") or "",

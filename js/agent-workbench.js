@@ -1717,6 +1717,7 @@ function renderGenerateYamlDetail(step, artifacts) {
 // ===== ANALYZE_FAILURE 分析详情 =====
 function renderAnalysisDetail(step, artifacts) {
   const analysis = (artifacts || {}).failureAnalysis || {};
+  const failedItems = (artifacts || {}).failedExecutionItems || [];
   let html = '<div class="analysis-detail agent-readable-detail">';
   const typeLabel = {
     'NONE': '无失败',
@@ -1726,9 +1727,16 @@ function renderAnalysisDetail(step, artifacts) {
   }[analysis.failureType] || analysis.failureType || '未分析';
   html += agentInfoGrid([
     { label: '失败类型', value: typeLabel },
+    { label: '失败任务数', value: failedItems.length || '-' },
     { label: '结论', value: analysis.conclusion || '暂无' },
     { label: '建议', value: analysis.recommendation || '暂无' },
   ]);
+  if (failedItems.length) {
+    html += agentReadableList('失败任务明细', failedItems.slice(0, 15), item => (
+      `<b>${escapeHtml(item.taskName || item.file || item.jobId || '失败任务')}</b>` +
+      `<span>${escapeHtml(item.file || '')}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`
+    ));
+  }
   if (analysis.conclusion) {
     html += `<section class="agent-readable-panel"><strong>分析结论</strong><p>${escapeHtml(analysis.conclusion)}</p></section>`;
   }
@@ -1741,6 +1749,7 @@ function renderAnalysisDetail(step, artifacts) {
 
 function renderRepairDraftDetail(step, artifacts) {
   const draft = (artifacts || {}).repairDraft || {};
+  const drafts = (artifacts || {}).repairDrafts || (draft && Object.keys(draft).length ? [draft] : []);
   const summary = (artifacts || {}).repairSummary || {};
   const calls = (step && step.toolCalls) || [];
   const call = calls.find(item => item && typeof item === 'object') || {};
@@ -1755,10 +1764,19 @@ function renderRepairDraftDetail(step, artifacts) {
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
     { label: '修复方式', value: sourceText },
-    { label: 'AI 调用', value: (summary.aiAttempted || call.aiAttempted) ? ((summary.aiUsed || call.aiUsed) ? '已调用并返回 YAML' : '已调用但未返回可用 YAML') : '未调用' },
-    { label: '失败任务', value: summary.targetTaskName || call.targetTaskName || draft.taskName || draft.task_name || '-' },
+    { label: '失败任务', value: summary.failedTaskCount ?? call.failedTaskCount ?? '-' },
+    { label: '修复目标', value: summary.repairTargetCount ?? call.repairTargetCount ?? drafts.length ?? 0 },
+    { label: '草稿数量', value: summary.draftCount ?? drafts.length ?? 0 },
+    { label: 'AI 返回 YAML', value: summary.aiUsedCount ?? (summary.aiUsed || call.aiUsed ? 1 : 0) },
     { label: 'YAML 校验', value: validation && Object.keys(validation).length ? (validation.ok ? '通过' : '未通过') : '未校验' },
   ]);
+  const items = Array.isArray(summary.items) ? summary.items : [];
+  if (items.length) {
+    html += agentReadableList('修复覆盖的失败任务', items.slice(0, 15), item => {
+      const status = item.aiUsed ? '已返回 YAML' : (item.blockedReason ? `未生成：${item.blockedReason}` : '已保存诊断');
+      return `<b>${escapeHtml(item.targetTaskName || item.file || item.targetJobId || '失败任务')}</b><span>${escapeHtml(status)} · ${escapeHtml(item.failureReason || '')}</span>`;
+    });
+  }
   if (draft.analysis || draft.suggestion) {
     html += `<section class="agent-readable-panel"><strong>修复依据</strong><p>${escapeHtml(draft.analysis || '')}</p>${draft.suggestion ? `<p>${escapeHtml(draft.suggestion)}</p>` : ''}</section>`;
   }
@@ -1787,6 +1805,8 @@ function renderRerunDetail(step, artifacts) {
   const progress = (artifacts || {}).rerunProgress || (artifacts || {}).jobProgress || {};
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
+    { label: '来源失败任务', value: progress.sourceFailedCount ?? sources.length ?? 0 },
+    { label: '计划重跑', value: progress.targetCount ?? sources.length ?? 0 },
     { label: '创建重跑任务', value: result.createdCount ?? sources.length ?? 0 },
     { label: '成功', value: result.completedCount ?? progress.completed ?? 0 },
     { label: '失败', value: result.failedCount ?? progress.failed ?? 0 },
@@ -1794,10 +1814,10 @@ function renderRerunDetail(step, artifacts) {
   ]);
   html += renderRunTaskDetail(step, {...artifacts, jobProgress: progress, jobResult: result});
   if (sources.length) {
-    html += agentReadableList('重跑映射', sources.slice(0, 10), item => `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(item.sourceJobId || '')} → ${escapeHtml(item.newJobId || '')}</span>`);
+    html += agentReadableList('重跑映射', sources.slice(0, 15), item => `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(item.sourceJobId || '')} → ${escapeHtml(item.newJobId || '')}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`);
   }
   if (skipped.length) {
-    html += agentReadableList('跳过的任务', skipped.slice(0, 10), item => `<b>${escapeHtml(item.jobId || '')}</b><span>${escapeHtml(item.status || '')}</span>`);
+    html += agentReadableList('跳过的任务', skipped.slice(0, 15), item => `<b>${escapeHtml(item.taskName || item.jobId || '')}</b><span>${escapeHtml(item.status || '')}${item.reason ? ' · ' + escapeHtml(item.reason) : ''}</span>`);
   }
   html += '</div>';
   return html;

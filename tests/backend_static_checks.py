@@ -1167,6 +1167,9 @@ def main():
     require("AI 分析并生成修复草稿" in task_page_source and "AI 修复当前文件" not in task_page_source, "Main repair button must say repair draft, not direct overwrite")
     require('"yaml": original_yaml' in agent_service_source and 'resp.get("fixedYaml") or resp.get("fixed_yaml") or resp.get("optimizedYaml") or resp.get("yaml")' in agent_service_source, "Agent repair draft must send real YAML to AI Gateway and read all supported AI YAML response fields")
     require('"repairSummary"' in agent_service_source and '"aiAttempted"' in agent_service_source and '"aiUsed"' in agent_service_source and '"evidenceSources"' in agent_service_source, "Agent repair draft must expose evidence, AI usage, and validation summary")
+    require("def _agent_failed_execution_items" in agent_service_source and '"failedExecutionItems"' in agent_service_source, "Agent failure, repair, and rerun steps must share one failed-task source of truth")
+    require('"failedTaskCount"' in agent_service_source and '"repairTargetCount"' in agent_service_source and '"draftCount"' in agent_service_source, "Agent repair summary must expose batch scope and draft counts")
+    require('"sourceFailedCount"' in agent_service_source and '"targetCount"' in agent_service_source and '"rerunSources"' in agent_service_source, "Agent rerun must expose source failed count, target count, and rerun mappings")
     require('"rerunProgress"' in agent_service_source and '"learningSummary"' in agent_service_source, "Agent rerun and learning steps must persist readable timeline summaries")
     require(
         '"PLAN", "PREPARE_SOURCE", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,

@@ -216,8 +216,22 @@ function agentArtifactText(tab, run = currentAgentRun()) {
   if (tab === 'yaml') return String(artifacts.generatedYaml || artifacts.yamlDraft || artifacts.yaml || '暂无 Midscene YAML');
   if (tab === 'validation') return stringifyArtifact(artifacts.yamlValidation || artifacts.validation || '暂无 YAML 校验结果');
   if (tab === 'logs') return stringifyArtifact(run.steps || []);
-  if (tab === 'failure') return stringifyArtifact(artifacts.diagnosis || artifacts.failureAnalysis || run.failureAnalysis || run.error || '暂无失败分析');
-  if (tab === 'repair') return stringifyArtifact(artifacts.repairDraft || artifacts.repairSuggestion || artifacts.repairedYaml || '暂无修复草稿');
+  if (tab === 'failure') return stringifyArtifact({
+    analysis: artifacts.failureAnalysis || run.failureAnalysis || run.error || '暂无失败分析',
+    failedExecutionItems: artifacts.failedExecutionItems || [],
+    diagnosis: artifacts.diagnosis || null,
+  });
+  if (tab === 'repair') return stringifyArtifact({
+    summary: artifacts.repairSummary || {},
+    drafts: artifacts.repairDrafts || (artifacts.repairDraft ? [artifacts.repairDraft] : []),
+  });
+  if (tab === 'execution') return stringifyArtifact({
+    jobProgress: artifacts.jobProgress || {},
+    jobResult: artifacts.jobResult || {},
+    rerunProgress: artifacts.rerunProgress || {},
+    rerunResult: artifacts.rerunResult || {},
+    rerunSources: artifacts.rerunSources || [],
+  });
   if (tab === 'bug') return stringifyArtifact(artifacts.bugDraft || artifacts.bug || '暂无缺陷草稿');
   if (tab === 'summary') {
     const s = artifacts.summary || {};
@@ -1328,10 +1342,22 @@ function renderAgentCenter() {
           ${renderArtifactItem('质量检查', artifacts.qualityReport ? (artifacts.qualityReport.statusText || '已生成') : '', artifacts.qualityReport, 'quality')}
           ${renderArtifactItem('生成YAML', (artifacts.generatedYaml || artifacts.yamlDraft) ? '已生成' : '', '', artifacts.generatedYaml || artifacts.yamlDraft, 'yaml')}
           ${renderArtifactItem('同步至 Sonic 平台', artifacts.sonicSync ? (agentToolStatusText(artifacts.sonicSync.status) || '已完成') : '', artifacts.sonicSync, 'sonic')}
-          ${renderArtifactItem('执行任务', artifacts.jobId || artifacts.sonicJob || '', '', artifacts.jobId || artifacts.sonicJob, 'execution')}
+          ${(() => {
+            const progress = artifacts.rerunProgress || artifacts.jobProgress || {};
+            const created = progress.createdCount || artifacts.rerunResult?.createdCount || 0;
+            const total = progress.sourceFailedCount || progress.total || artifacts.jobResult?.failedCount || 0;
+            const text = created ? `重跑 ${created}/${total || created}` : (artifacts.jobId || artifacts.sonicJob || (progress.total ? `${progress.total} 个任务` : ''));
+            return renderArtifactItem('执行任务', text, progress.total || created || artifacts.jobId || artifacts.sonicJob, 'execution');
+          })()}
           ${renderArtifactItem('报告', artifacts.reportId || (artifacts.report ? '已生成' : '') || '', '', artifacts.reportId || artifacts.report, 'report')}
           ${renderArtifactItem('失败分析', artifacts.failureAnalysis ? failureTypeText(artifacts.failureAnalysis.failureType || '已分析') : '', artifacts.failureAnalysis, 'failure')}
-          ${renderArtifactItem('修复草稿', artifacts.repairDraftId || (artifacts.repairDraft ? '已生成' : '') || '', '', artifacts.repairDraftId || artifacts.repairDraft, 'repair')}
+          ${(() => {
+            const summary = artifacts.repairSummary || {};
+            const countText = summary.draftCount
+              ? `${summary.draftCount} 条 / 失败 ${summary.failedTaskCount || summary.repairTargetCount || summary.draftCount}`
+              : (artifacts.repairDraftId || (artifacts.repairDraft ? '已生成' : '') || '');
+            return renderArtifactItem('修复草稿', countText, summary.draftCount || artifacts.repairDraftId || artifacts.repairDraft, 'repair');
+          })()}
           ${renderArtifactItem('缺陷草稿', artifacts.bugDraftId || (artifacts.bugDraft ? '已生成' : '') || '', '', artifacts.bugDraftId || artifacts.bugDraft, 'bug')}
           ${renderArtifactItem('总结', artifacts.summary ? '已生成' : '', artifacts.summary, 'summary')}
         </div>
