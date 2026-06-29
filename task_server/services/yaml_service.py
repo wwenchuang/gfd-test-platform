@@ -119,6 +119,7 @@ from ..storage import (
     write_text_file,
 )
 from .yaml_pattern_service import (
+    build_yaml_library_profile_text,
     build_yaml_pattern_contract_text,
     extract_yaml_patterns_from_examples,
     summarize_yaml_patterns,
@@ -168,6 +169,7 @@ __all__ = [
     "normalize_yaml_scalar_value",
     "strip_yaml_quotes",
     "collect_yaml_reference_examples",
+    "collect_yaml_baseline_library_examples",
     "build_yaml_reference_examples_text",
     "record_yaml_reference_examples",
     "extract_yaml_patterns_from_examples",
@@ -745,6 +747,8 @@ def _yaml_reference_flow_actions(block):
     actions = []
     for match in re.finditer(r"^\s*-\s*([A-Za-z][A-Za-z0-9_]*)\s*:", block or "", flags=re.M):
         action = match.group(1)
+        if action not in MIDSCENE_FLOW_ACTIONS:
+            continue
         if action not in actions:
             actions.append(action)
     return actions[:20]
@@ -843,6 +847,47 @@ def collect_yaml_reference_examples(query_text, module="", limit=None):
     return scored[:max(1, limit)]
 
 
+def collect_yaml_baseline_library_examples(limit=None):
+    """Collect a broad baseline profile from all maintained YAML tasks."""
+    limit = safe_int(limit, env_int("YAML_BASELINE_PROFILE_MAX_EXAMPLES", 120))
+    rows = []
+    seen_hashes = set()
+    for _root, rel_path, path in _iter_yaml_reference_files(max_files=YAML_REFERENCE_MAX_FILES):
+        try:
+            text = read_text_file(path, default="")
+        except Exception:
+            text = ""
+        if not text or "tasks:" not in text:
+            continue
+        blocks = _yaml_reference_blocks(text)
+        if not blocks:
+            continue
+        module_name = rel_path.split("/", 1)[0] if "/" in rel_path else ""
+        for block in blocks:
+            actions = _yaml_reference_flow_actions(block)
+            if not actions:
+                continue
+            block_hash = hashlib.sha1(block.encode("utf-8", "ignore")).hexdigest()[:12]
+            if block_hash in seen_hashes:
+                continue
+            seen_hashes.add(block_hash)
+            rows.append({
+                "score": 0,
+                "title": _yaml_reference_title(block, os.path.splitext(os.path.basename(path))[0]),
+                "module": module_name,
+                "file": rel_path,
+                "path": path,
+                "matched_terms": ["全量基线"],
+                "actions": actions,
+                "baseline_path": _yaml_reference_baseline_path(block),
+                "snippet": _trim_yaml_reference_snippet(block),
+                "hash": block_hash,
+            })
+            if len(rows) >= max(1, limit):
+                return rows
+    return rows
+
+
 def build_yaml_reference_examples_text(examples):
     examples = [item for item in (examples or []) if isinstance(item, dict)]
     if not examples:
@@ -852,7 +897,7 @@ def build_yaml_reference_examples_text(examples):
         "下面片段来自平台已维护的 YAML 用例库。请学习其可执行步骤组织方式、等待策略、入口清理、外部跳转、弹窗处理和断言写法；",
         "只能复用与当前需求相关的动作结构，不要复制无关业务断言，不要把历史模块当成本次需求。",
         "强约束：生成 YAML 时必须优先仿写这些样例中的动作序列和等待方式；不要自由创造平台未支持 action。",
-        "平台约束：过程检查优先写成 aiWaitFor 或普通 ai 步骤；每条 Runner YAML 默认只保留 1 个最终业务 aiAssert，完整覆盖点放到脑图、summary 或 manual_cases。",
+        "平台约束：过程检查优先写成 aiWaitFor 或普通 ai 步骤；相似基线没有 aiAssert 时不要强行补断言，完整覆盖点放到脑图、summary 或 manual_cases。",
         "",
     ]
     for idx, item in enumerate(examples[:YAML_REFERENCE_MAX_EXAMPLES], start=1):
@@ -875,9 +920,9 @@ def build_executable_smoke_yaml_policy_text():
     return "\n".join([
         "【Runner YAML 可执行优先规则】",
         "1. 自动化 YAML 的第一目标是能在 Runner 上独立冒烟执行；完整覆盖留在 .mm、summary、manual_cases，不要把所有验收点都塞进一个脚本。",
-        "2. 每个 YAML 文件默认只覆盖一个清晰业务检查点；长流程必须拆成多个 YAML 文件，每个文件自己包含启动、到达入口、核心动作、最终校验和清理。",
-        "3. Figma 只作为 UI 参考，实际 App 可能有文案、顺序和样式差异；断言必须写成语义化结果，不要照抄 Figma 上的长文案、尺寸、坐标或全部元素。",
-        "4. 过程检查优先用 aiWaitFor / aiTap / aiInput / aiAction；aiAssert 默认只保留 1 个最终业务结果，除非明确需要多终态校验。",
+        "2. 每个 YAML 文件默认只覆盖一个清晰业务检查点；长流程必须拆成多个 YAML 文件，每个文件自己包含启动、到达入口、核心动作、终态等待/判断和清理。",
+        "3. Figma 只作为 UI 参考，实际 App 可能有文案、顺序和样式差异；不要照抄 Figma 上的长文案、尺寸、坐标或全部元素。",
+        "4. 过程检查优先用 aiWaitFor / aiTap / aiInput / aiAction；是否使用 aiAssert 以相似基线写法和需求明确要求为准，不要为了补断言强行生成。",
         "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
     ]).strip()
@@ -1437,7 +1482,7 @@ def audit_case_coverage(payload: Any) -> Tuple[dict, dict]:
         "missing_case_points": missing_cases,
         "missing_scenario_points": missing_scenarios,
         "generic_assertion_cases": generic_assertions,
-        "ok": not missing_cases and not generic_assertions,
+        "ok": not missing_cases,
     }
     return normalized, review["coverage_audit"]
 
@@ -1467,19 +1512,12 @@ def split_automation_ready_cases(payload: Any) -> dict:
                 "suggested_setup": "补充业务路径和页面入口后再转自动化",
             })
             continue
-        if not _case_has_meaningful_assertion(case):
-            manual.append({
-                "title": case.get("title") or case.get("name") or "未命名用例",
-                "reason": "缺少明确业务断言，避免生成只点击不验证的自动化用例",
-                "suggested_setup": "补充页面标题、目标列表/空态、弹窗文案、按钮状态等 UI 可见断言",
-            })
-            continue
         ready.append(case)
     normalized["cases"] = ready
     normalized["manual_cases"] = manual
     normalized["_automation_ready"] = True
     if not ready:
-        raise ValueError("没有可转换为自动化 YAML 的用例：请补充可执行步骤和明确 UI 断言")
+        raise ValueError("没有可转换为自动化 YAML 的用例：请补充可执行 UI 步骤")
     return normalized
 
 
@@ -1790,8 +1828,7 @@ def select_yaml_assertions_for_case(case, assertions, step_expected=None):
         normalized.append(text)
 
     if not normalized:
-        title = str(case.get("title") or case.get("name") or "当前业务目标").strip()
-        normalized = [f"页面展示「{title}」相关标题、核心区域、列表内容或空态提示之一"]
+        return []
 
     ranked = sorted(
         enumerate(normalized),
@@ -3379,7 +3416,7 @@ def cases_to_separate_midscene_yamls(payload: Any, app_package: str = "", base_f
         })
 
     if not files:
-        raise ValueError("没有可转换为自动化 YAML 的用例：请补充可执行步骤和明确 UI 断言")
+        raise ValueError("没有可转换为自动化 YAML 的用例：请补充可执行 UI 步骤")
     return title, files
 
 
@@ -4142,6 +4179,23 @@ def generate_ui_yaml_from_request(d, job_id=None):
         limit=YAML_REFERENCE_MAX_EXAMPLES,
     )
     yaml_action_contract = load_yaml_action_contract()
+    yaml_baseline_library_examples = collect_yaml_baseline_library_examples()
+    yaml_library_patterns = extract_yaml_patterns_from_examples(yaml_baseline_library_examples, limit=12)
+    yaml_library_profile = summarize_yaml_patterns(yaml_library_patterns)
+    yaml_library_profile_text = build_yaml_library_profile_text(
+        yaml_library_patterns,
+        yaml_library_profile,
+        total_examples=len(yaml_baseline_library_examples),
+    )
+    if yaml_library_profile_text:
+        stage1_text_assets = list(stage1_text_assets) + [yaml_library_profile_text]
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=43,
+                step="扫描全量基线",
+                message=f"已扫描 {len(yaml_baseline_library_examples)} 条基线样本，提炼 {len(yaml_library_patterns)} 个全局写法模式",
+            )
     yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=5)
     yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
     if yaml_reference_text:
@@ -4261,6 +4315,24 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 for item in yaml_baseline_patterns[:5]
             ],
             "rule": "AI 只能按相似基线动作模式做业务变量替换和少量步骤微调，禁止自由创造 Runner 不支持的 action。",
+        }
+    if yaml_library_patterns:
+        review["yaml_baseline_library_profile"] = {
+            "enabled": True,
+            "example_count": len(yaml_baseline_library_examples),
+            "pattern_count": len(yaml_library_patterns),
+            "summary": yaml_library_profile,
+            "patterns": [
+                {
+                    "title": item.get("title"),
+                    "module": item.get("module"),
+                    "file": item.get("file"),
+                    "actions": item.get("actions") or [],
+                    "sample_labels": item.get("sample_labels") or [],
+                }
+                for item in yaml_library_patterns[:12]
+            ],
+            "rule": "每次生成前扫描全量基线库，提炼平台通用写法；相似 Top5 只用于当前需求的局部仿写。",
         }
     review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
     if prepared_figma_context:

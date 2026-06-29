@@ -24,8 +24,7 @@
     "terminate"
   ],
   "required_for_flow": [
-    "aiWaitFor",
-    "aiAssert"
+    "aiWaitFor"
   ],
   "transition_actions": [
     "ai",

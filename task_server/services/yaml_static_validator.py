@@ -48,7 +48,7 @@ def load_yaml_action_contract(path: str = CONTRACT_PATH) -> dict:
         allowed = set(MIDSCENE_FLOW_ACTIONS)
     allowed &= set(MIDSCENE_FLOW_ACTIONS)
     data["allowed_actions"] = sorted(allowed)
-    data.setdefault("required_for_flow", ["aiWaitFor", "aiAssert"])
+    data.setdefault("required_for_flow", ["aiWaitFor"])
     data.setdefault("transition_actions", ["aiTap", "aiInput", "aiAction", "aiAct", "ai", "launch", "runAdbShell"])
     data.setdefault("assertion_actions", ["aiAssert", "aiBoolean", "aiQuery", "aiAsk"])
     data.setdefault("wait_actions", ["aiWaitFor", "sleep"])
@@ -228,11 +228,11 @@ def validate_yaml_static_executable(yaml_text: str, *, strict: bool = False) -> 
                     result["launchGuard"] = True
                 if action in ("aiTap", "aiInput", "aiAction", "aiAct", "ai", "aiScroll", "launch"):
                     if not any(
-                        isinstance(next_step, dict) and any(key in next_step for key in ("aiWaitFor", "sleep", "aiAssert"))
+                        isinstance(next_step, dict) and any(key in next_step for key in ("aiWaitFor", "sleep", "ai", "aiAction", "aiAssert"))
                         for next_step in flow[step_index: step_index + 3]
                     ):
                         result["warnings"].append(
-                            f"tasks[{task_index}].flow[{step_index}] {action} 后缺少就近等待或断言，慢设备上容易失败"
+                            f"tasks[{task_index}].flow[{step_index}] {action} 后缺少就近等待或终态判断，慢设备上容易失败"
                         )
                 step_text = _step_text(step)
                 for phrase in forbidden_phrases:
@@ -240,12 +240,6 @@ def validate_yaml_static_executable(yaml_text: str, *, strict: bool = False) -> 
                         result["warnings"].append(
                             f"tasks[{task_index}].flow[{step_index}] 包含过泛描述“{phrase}”，建议改成具体页面状态或业务结果"
                         )
-        if not task_has_assert:
-            message = f"tasks[{task_index}] 缺少最终业务断言 aiAssert/aiBoolean/aiQuery"
-            if strict:
-                result["errors"].append(message)
-            else:
-                result["warnings"].append(message)
         if not task_has_wait:
             result["warnings"].append(f"tasks[{task_index}] 缺少 aiWaitFor/sleep 等待，执行稳定性偏低")
 

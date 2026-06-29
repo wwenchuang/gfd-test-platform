@@ -236,6 +236,23 @@ def check_yaml_static_validation_and_patterns():
     require(patterns and "aiTap" in patterns[0].get("actions", []), "YAML baseline pattern extractor must capture action sequences")
     contract_text = build_yaml_pattern_contract_text(patterns, contract)
     require("禁止生成白名单外 action" in contract_text and "动作序列" in contract_text, "YAML pattern contract must constrain model generation")
+    block_examples = [{
+        "title": "单任务片段",
+        "file": "base.yaml",
+        "actions": ["name", "aiTap", "aiAssert"],
+        "snippet": """- name: 单任务片段
+  flow:
+    - aiTap: 首页入口
+    - aiAssert: 结果出现
+""",
+    }]
+    block_patterns = extract_yaml_patterns_from_examples(block_examples)
+    require(
+        block_patterns and "name" not in block_patterns[0].get("actions", []) and block_patterns[0].get("actions") == ["aiTap", "aiAssert"],
+        "YAML pattern extractor must parse task-block snippets and never treat name as an action",
+    )
+    profile_text = build_yaml_pattern_contract_text(block_patterns, contract)
+    require("至少保留一个最终业务 aiAssert" not in profile_text, "YAML pattern contract must not force extra aiAssert")
 
 
 def check_business_flow_filters_product_metrics():
@@ -493,7 +510,7 @@ def check_yaml_reference_examples_are_general_step_library():
     require("aiTap" in all_text and "aiWaitFor" in all_text, "YAML reference examples must expose executable Midscene step actions")
     prompt_text = yaml_service.build_yaml_reference_examples_text(examples)
     require("现有 YAML 步骤经验库" in prompt_text and "不要复制无关业务断言" in prompt_text, "YAML reference prompt must be a general step library, not a hard-coded special case")
-    require("默认只保留 1 个最终业务 aiAssert" in prompt_text, "YAML reference prompt must constrain assertion density to platform style")
+    require("不要强行补断言" in prompt_text, "YAML reference prompt must not force aiAssert when baselines do not use it")
 
 
 def check_generated_yaml_uses_single_final_assertion():
@@ -524,6 +541,16 @@ def check_generated_yaml_uses_single_final_assertion():
     require(yaml_service.validate_midscene_yaml(yaml_text).get("ok") is True, "Single-assertion generated YAML must remain executable")
     stability = yaml_service.review_generated_yaml_smoke_stability(yaml_text)
     require(stability.get("ok") is True and stability.get("assertCount") == 1 and stability.get("launchGuard") is True, "Generated YAML smoke-stability review must inspect assertion density and launch guards")
+    _, no_assert_yaml = yaml_service.cases_to_midscene_yaml({
+        "_automation_ready": True,
+        "title": "AI建模入口",
+        "cases": [{
+            "title": "AI建模入口到达",
+            "app_package": "com.kfb.model",
+            "steps": ["点击首页 AI建模入口", "等待 AI建模页面打开"],
+        }],
+    }, app_package="com.kfb.model")
+    require("aiAssert:" not in no_assert_yaml, "Generated YAML must not invent aiAssert when the case has no assertion material")
 
 
 def check_ai_skills_receive_yaml_reference_context():
@@ -1274,6 +1301,7 @@ def main():
     require("def build_executable_smoke_yaml_policy_text" in yaml_service_source and "def review_generated_yaml_smoke_stability" in yaml_service_source and '"yamlSmokeStability"' in yaml_service_source, "YAML generation must enforce and report Runner smoke-execution stability")
     require("yaml_static_validator.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and (ROOT / "task_server" / "config_data" / "yaml_actions.json").exists(), "YAML generation must have a static action contract and validator")
     require("extract_yaml_patterns_from_examples" in yaml_service_source and "build_yaml_pattern_contract_text" in yaml_service_source and '"yaml_pattern_contract"' in yaml_service_source, "YAML generation must extract baseline executable patterns before prompting")
+    require("def collect_yaml_baseline_library_examples" in yaml_service_source and "build_yaml_library_profile_text" in yaml_service_source and '"yaml_baseline_library_profile"' in yaml_service_source, "YAML generation must scan the full baseline library, not only query-matched examples")
     require("validate_yaml_static_executable" in yaml_service_source and '"yamlStaticValidation"' in yaml_service_source and '"execution_level"' in yaml_service_source, "Generated YAML must record static execution levels and validation results")
     require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
