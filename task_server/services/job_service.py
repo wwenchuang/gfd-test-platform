@@ -60,6 +60,10 @@ DEVICE_STRATEGY_AUTO = "auto"
 DEVICE_STRATEGY_MANUAL_REQUIRED = "manual_required"
 
 
+def _trace_time_text() -> str:
+    return time.strftime(_TIME_FMT)
+
+
 def normalize_device_strategy(value: Any = "", device_id: str = "", runner_id: str = "") -> str:
     """标准化执行设备策略。
 
@@ -1030,7 +1034,7 @@ def _update_agent_job_progress_trace(
         step["outputSummary"] = summary
         if should_trace:
             step.setdefault("liveTrace", []).append({
-                "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "time": _trace_time_text(),
                 "message": summary,
                 "status": status,
             })
@@ -1039,7 +1043,7 @@ def _update_agent_job_progress_trace(
     trace = run.setdefault("trace", [])
     if should_trace:
         trace.append({
-            "time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "time": _trace_time_text(),
             "message": summary,
         })
         del trace[:-120]

@@ -89,6 +89,28 @@ function toggleMoreMenu(event) {
   document.getElementById('more-actions')?.classList.toggle('show');
 }
 
+function formatDisplayTime(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const zoneAware = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+  if (zoneAware) {
+    const date = new Date(text);
+    if (!Number.isNaN(date.getTime())) {
+      return new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).format(date).replace(/\//g, '-');
+    }
+  }
+  return text.replace('T', ' ').slice(0, 19);
+}
+
 function showToast(msg, type = 'success', duration) {
   const t = document.getElementById('toast');
   if (!t) return;

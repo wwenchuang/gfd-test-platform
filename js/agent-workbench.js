@@ -1038,7 +1038,7 @@ function timelineLiveTraceDetail(step) {
       <div class="failure-title">实时轨迹</div>
       ${rows.slice(-12).map(row => `
         <div class="step-live-trace-row status-${escapeHtml(String(row.status || '').toLowerCase())}">
-          <span>${escapeHtml(row.time || '')}</span>
+          <span>${escapeHtml(formatDisplayTime(row.time))}</span>
           <strong>${escapeHtml(row.message || '')}</strong>
         </div>
       `).join('')}
