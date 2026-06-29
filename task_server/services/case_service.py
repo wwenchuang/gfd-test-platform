@@ -415,8 +415,9 @@ def read_file_version(module, file, version_id):
 # 用例生成 — generation_volume_targets（迁移自 midscene-upload.py）
 # ---------------------------------------------------------------------------
 
-def generation_volume_targets(analysis):
+def generation_volume_targets(analysis, mode="full"):
     """根据分析结果计算生成数量目标。"""
+    mode = str(mode or "full").strip().lower()
     points = normalize_text_list((analysis or {}).get("requirement_points"))
     risks = normalize_text_list((analysis or {}).get("risks"))
     visible = normalize_text_list((analysis or {}).get("visible_outcomes"))
@@ -439,7 +440,14 @@ def generation_volume_targets(analysis):
     if blockers:
         min_cases = max(4, min_cases - 4)
         target_cases = max(min_cases, target_cases - 6)
+    if mode in {"mindmap", "compact_mindmap"}:
+        min_cases = 0
+        target_cases = max(0, min(12, point_count * 2 + min(len(visible), 4)))
+        max_cases = max(12, min(24, point_count * 3 + min(len(risks), 6) + min(len(visible), 6)))
+        min_scenarios = max(4, point_count * 2)
+        target_scenarios = max(min_scenarios, min(30, point_count * 4 + min(len(risks), 8) + min(len(visible), 6)))
     return {
+        "mode": mode,
         "requirement_point_count": point_count,
         "min_automation_cases": min_cases,
         "target_automation_cases": target_cases,
@@ -460,14 +468,14 @@ def generation_volume_targets(analysis):
 # 用例生成 — build_cases_payload_from_skills（delegated to ai_skill_service）
 # ---------------------------------------------------------------------------
 
-def build_cases_payload_from_skills(title, module, text_assets):
+def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
     """通过 AI skills pipeline 生成用例 payload。
 
     Source: midscene-upload.py 行 15852-15880。
     Delegated to ``ai_skill_service.build_cases_payload_from_skills``。
     """
     from task_server.services.ai_skill_service import build_cases_payload_from_skills as _build
-    return _build(title, module, text_assets)
+    return _build(title, module, text_assets, mode=mode)
 
 
 # ---------------------------------------------------------------------------

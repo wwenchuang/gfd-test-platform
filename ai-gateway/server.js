@@ -126,13 +126,7 @@ function publicProvider(providerId, providerConfig) {
   };
 }
 
-async function routeFor(action) {
-  const router = await readJson(ROUTER_FILE, {});
-  const configured = router[action] || {};
-  const providersData = await readProviders();
-  const providerId = normalizeLegacyProviderId(configured.providerId || configured.provider || 'qwen_plus');
-  const providerConfig = providersData.providers?.[providerId];
-  if (!providerConfig) throw new Error(`未配置 providerId：${providerId}`);
+function routeFromProviderConfig(action, providerId, providerConfig, configured = {}) {
   return {
     action,
     providerId,
@@ -147,6 +141,40 @@ async function routeFor(action) {
     defaultMaxTokens: providerConfig.defaultMaxTokens,
     temperature: Number.isFinite(Number(configured.temperature)) ? Number(configured.temperature) : 0.2,
   };
+}
+
+async function routeFor(action) {
+  const router = await readJson(ROUTER_FILE, {});
+  const configured = router[action] || {};
+  const providersData = await readProviders();
+  const providerId = normalizeLegacyProviderId(configured.providerId || configured.provider || 'qwen_plus');
+  const providerConfig = providersData.providers?.[providerId];
+  if (!providerConfig) throw new Error(`未配置 providerId：${providerId}`);
+  return routeFromProviderConfig(action, providerId, providerConfig, configured);
+}
+
+async function routeCandidatesFor(action) {
+  const router = await readJson(ROUTER_FILE, {});
+  const configured = router[action] || {};
+  const providersData = await readProviders();
+  const ids = [
+    configured.providerId || configured.provider || 'qwen_plus',
+    ...(
+      Array.isArray(configured.fallbackProviderIds)
+        ? configured.fallbackProviderIds
+        : Array.isArray(configured.fallbackProviders)
+          ? configured.fallbackProviders
+          : []
+    ),
+  ].map(normalizeLegacyProviderId);
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  const routes = [];
+  for (const providerId of uniqueIds) {
+    const providerConfig = providersData.providers?.[providerId];
+    if (providerConfig) routes.push(routeFromProviderConfig(action, providerId, providerConfig, configured));
+  }
+  if (!routes.length) throw new Error(`能力 ${action} 没有可用 provider`);
+  return routes;
 }
 
 async function routeForProviderId(providerId) {
@@ -184,21 +212,21 @@ function clientForRoute(route) {
   });
 }
 
-function completionOptionsForRoute(route, prompt, body) {
-  const options = {
+function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
+  const completionOptions = {
     model: route.model,
     messages: [
       {role: 'system', content: prompt},
-      {role: 'user', content: buildUserMessage(route.action || 'chat', body)},
+      {role: 'user', content: callOptions.userMessage || buildUserMessage(route.action || 'chat', body)},
     ],
   };
   if (route.temperatureLocked) {
-    options.temperature = typeof route.fixedTemperature === 'number' ? route.fixedTemperature : 1;
+    completionOptions.temperature = typeof route.fixedTemperature === 'number' ? route.fixedTemperature : 1;
   } else {
-    options.temperature = route.temperature;
+    completionOptions.temperature = typeof callOptions.temperature === 'number' ? callOptions.temperature : route.temperature;
   }
-  if (route.defaultMaxTokens) options.max_tokens = route.defaultMaxTokens;
-  return options;
+  if (route.defaultMaxTokens) completionOptions.max_tokens = route.defaultMaxTokens;
+  return completionOptions;
 }
 
 async function appendAiLog(entry) {
@@ -222,46 +250,81 @@ function buildUserMessage(action, body) {
   return `请根据以下 JSON 输入完成任务：\n${JSON.stringify(context, null, 2)}`;
 }
 
+function isRetryableAiError(errorText) {
+  const text = String(errorText || '').toLowerCase();
+  return (
+    text.includes('timeout') ||
+    text.includes('timed out') ||
+    text.includes('econnreset') ||
+    text.includes('etimedout') ||
+    text.includes('socket') ||
+    text.includes('429') ||
+    text.includes('rate limit') ||
+    text.includes('throttl') ||
+    text.includes('overload') ||
+    text.includes('503') ||
+    text.includes('502') ||
+    text.includes('504') ||
+    text.includes('500')
+  );
+}
+
 async function callAi(action, body, options = {}) {
   const id = uuidv4();
-  const startedAt = Date.now();
-  const route = await routeFor(action);
-  const prompt = await readPrompt(action);
+  const prompt = options.promptOverride ?? await readPrompt(action);
+  const routes = options.disableFallback || body?.disableFallback
+    ? [await routeFor(action)]
+    : await routeCandidatesFor(action);
   let output = '';
-  let success = false;
-  let errorText = null;
-
-  try {
-    if (MOCK_ENABLED) {
-      output = mockAiOutput(action, body);
+  let lastErrorText = null;
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = routes[index];
+    const startedAt = Date.now();
+    let success = false;
+    let errorText = null;
+    try {
+      if (MOCK_ENABLED) {
+        output = mockAiOutput(action, body);
+        if (options.stripFence) output = stripMarkdownFence(output);
+        success = true;
+        return {id, route: {...route, mock: true}, output};
+      }
+      const client = clientForRoute(route);
+      const completion = await client.chat.completions.create(completionOptionsForRoute(
+        {...route, action},
+        prompt,
+        body,
+        {userMessage: options.userMessage, temperature: options.temperature},
+      ));
+      output = completion.choices?.[0]?.message?.content || '';
       if (options.stripFence) output = stripMarkdownFence(output);
       success = true;
-      return {id, route: {...route, mock: true}, output};
+      return {id, route, output};
+    } catch (error) {
+      errorText = sanitizeError(error);
+      lastErrorText = errorText;
+      if (!isRetryableAiError(errorText) || index === routes.length - 1) {
+        throw new Error(errorText);
+      }
+    } finally {
+      await appendAiLog({
+        id,
+        time: new Date().toISOString(),
+        action,
+        providerId: route.providerId,
+        provider: route.providerName || route.provider,
+        model: route.model,
+        success,
+        durationMs: Date.now() - startedAt,
+        fallbackIndex: index,
+        fallbackTotal: routes.length,
+        inputPreview: preview(body),
+        outputPreview: preview(output),
+        error: errorText,
+      }).catch(() => {});
     }
-    const client = clientForRoute(route);
-    const completion = await client.chat.completions.create(completionOptionsForRoute({...route, action}, prompt, body));
-    output = completion.choices?.[0]?.message?.content || '';
-    if (options.stripFence) output = stripMarkdownFence(output);
-    success = true;
-    return {id, route, output};
-  } catch (error) {
-    errorText = sanitizeError(error);
-    throw new Error(errorText);
-  } finally {
-    await appendAiLog({
-      id,
-      time: new Date().toISOString(),
-      action,
-      providerId: route.providerId,
-      provider: route.providerName || route.provider,
-      model: route.model,
-      success,
-      durationMs: Date.now() - startedAt,
-      inputPreview: preview(body),
-      outputPreview: preview(output),
-      error: errorText,
-    }).catch(() => {});
   }
+  throw new Error(lastErrorText || 'AI Gateway 调用失败');
 }
 
 function mockAiOutput(action, body) {
@@ -429,31 +492,60 @@ app.post('/ai/providers/test', asyncRoute(async (req, res) => {
 app.get('/ai/model-router', asyncRoute(async (_req, res) => {
   const router = await readJson(ROUTER_FILE, {});
   const normalized = {};
+  const fallbackRouter = {};
   for (const action of ROUTER_ACTIONS) {
-    normalized[action] = normalizeLegacyProviderId(router[action]?.providerId || router[action]?.provider || 'qwen_plus');
+    const configured = router[action] || {};
+    normalized[action] = normalizeLegacyProviderId(configured.providerId || configured.provider || 'qwen_plus');
+    fallbackRouter[action] = (
+      Array.isArray(configured.fallbackProviderIds)
+        ? configured.fallbackProviderIds
+        : Array.isArray(configured.fallbackProviders)
+          ? configured.fallbackProviders
+          : []
+    ).map(normalizeLegacyProviderId);
   }
   res.json({
     success: true,
     router: normalized,
+    fallbackRouter,
   });
 }));
 
 app.post('/ai/model-router', asyncRoute(async (req, res) => {
   const providersData = await readProviders();
+  const currentRouter = await readJson(ROUTER_FILE, {});
   const source = req.body?.router && typeof req.body.router === 'object' ? req.body.router : (req.body || {});
   const nextRouter = {};
   for (const action of ROUTER_ACTIONS) {
-    const providerId = normalizeLegacyProviderId(source[action] || 'qwen_plus');
+    const raw = source[action];
+    const current = currentRouter[action] || {};
+    const providerId = normalizeLegacyProviderId(
+      typeof raw === 'object' && raw
+        ? (raw.providerId || raw.provider)
+        : (raw || current.providerId || current.provider || 'qwen_plus')
+    );
+    const fallbackProviderIds = (
+      typeof raw === 'object' && raw
+        ? (raw.fallbackProviderIds || raw.fallbackProviders || [])
+        : (current.fallbackProviderIds || current.fallbackProviders || [])
+    ).map(normalizeLegacyProviderId).filter((id) => id && id !== providerId);
     if (!providersData.providers?.[providerId]) {
       res.status(400).json({success: false, error: `能力 ${action} 选择了不存在的 providerId：${providerId}`});
       return;
     }
-    nextRouter[action] = {providerId};
+    for (const fallbackId of fallbackProviderIds) {
+      if (!providersData.providers?.[fallbackId]) {
+        res.status(400).json({success: false, error: `能力 ${action} 选择了不存在的 fallback providerId：${fallbackId}`});
+        return;
+      }
+    }
+    nextRouter[action] = {providerId, fallbackProviderIds};
   }
   await writeJson(ROUTER_FILE, nextRouter);
   res.json({
     success: true,
     router: Object.fromEntries(Object.entries(nextRouter).map(([action, item]) => [action, item.providerId])),
+    fallbackRouter: Object.fromEntries(Object.entries(nextRouter).map(([action, item]) => [action, item.fallbackProviderIds || []])),
   });
 }));
 
@@ -487,6 +579,30 @@ app.post('/ai/generate-case', asyncRoute(async (req, res) => {
   res.json({
     success: true,
     data: output,
+  });
+}));
+
+app.post('/ai/skill', asyncRoute(async (req, res) => {
+  const skillName = String(req.body?.skillName || req.body?.skill || 'skill').trim();
+  const prompt = String(req.body?.prompt || '').trim();
+  if (!prompt) {
+    res.status(400).json({success: false, error: 'prompt required'});
+    return;
+  }
+  const body = {
+    skillName,
+    payload: req.body?.payload || {},
+  };
+  const {output, route} = await callAi('generate_case', body, {
+    promptOverride: '你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。',
+    userMessage: prompt,
+    temperature: typeof req.body?.temperature === 'number' ? req.body.temperature : 0.1,
+  });
+  res.json({
+    success: true,
+    content: output,
+    providerId: route.providerId,
+    model: route.model,
   });
 }));
 
@@ -524,16 +640,25 @@ app.post('/ai/chat', asyncRoute(async (req, res) => {
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({error: 'messages required'});
   }
-  const route = providerId || provider ? await routeForProviderId(providerId || provider) : await routeFor('agent_plan');
-  const client = clientForRoute(route);
-  const chatRoute = {...route, action: 'agent_plan'};
-  const completionOptions = completionOptionsForRoute(chatRoute, '', {messages});
-  completionOptions.messages = messages;
-  if (model && !route.temperatureLocked) completionOptions.model = model;
-  if (!route.temperatureLocked && typeof temperature === 'number') completionOptions.temperature = temperature;
-  const completion = await client.chat.completions.create(completionOptions);
-  const content = completion.choices?.[0]?.message?.content || '';
-  res.json({success: true, content, providerId: route.providerId, model: completionOptions.model});
+  const routes = providerId || provider ? [await routeForProviderId(providerId || provider)] : await routeCandidatesFor('agent_plan');
+  let lastError = null;
+  for (let index = 0; index < routes.length; index += 1) {
+    const route = {...routes[index], action: 'agent_plan'};
+    try {
+      const client = clientForRoute(route);
+      const completionOptions = completionOptionsForRoute(route, '', {messages}, {temperature});
+      completionOptions.messages = messages;
+      if (model && !route.temperatureLocked) completionOptions.model = model;
+      const completion = await client.chat.completions.create(completionOptions);
+      const content = completion.choices?.[0]?.message?.content || '';
+      res.json({success: true, content, providerId: route.providerId, model: completionOptions.model});
+      return;
+    } catch (error) {
+      lastError = sanitizeError(error);
+      if (!isRetryableAiError(lastError) || index === routes.length - 1) throw new Error(lastError);
+    }
+  }
+  throw new Error(lastError || 'chat failed');
 }));
 
 app.post('/ai/generate-bug', asyncRoute(async (req, res) => {

@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from task_server.config import (
     AI_CHAT_RETRY_COUNT,
     AI_CHAT_TIMEOUT_SECONDS,
+    AI_GATEWAY_URL,
     AI_COVERAGE_AUDITOR_TIMEOUT_SECONDS,
     AI_COVERAGE_MODEL_WHEN_LOCAL_OK,
     AI_COVERAGE_REPAIR_TIMEOUT_SECONDS,
@@ -165,6 +166,20 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
         raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
+    if not image_assets and safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True):
+        try:
+            raw = ai_gateway_skill_content(
+                skill_name,
+                prompt,
+                payload=payload,
+                timeout=timeout,
+                temperature=temperature,
+                json_response=True,
+            )
+            result = normalize_model_json(raw)
+            return validate_ai_skill_output(skill_name, result)
+        except Exception:
+            pass
     raw = dashscope_chat_content(
         prompt,
         image_assets=image_assets,
@@ -176,6 +191,28 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
     )
     result = normalize_model_json(raw)
     return validate_ai_skill_output(skill_name, result)
+
+
+def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temperature=0.1, json_response=True):
+    """Call AI Gateway for text-only skills, with DashScope direct call as caller fallback."""
+    body = json.dumps({
+        "skillName": skill_name,
+        "prompt": prompt,
+        "payload": payload or {},
+        "temperature": temperature,
+        "jsonResponse": json_response,
+    }, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        f"{AI_GATEWAY_URL}/ai/skill",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=max(30, safe_int(timeout, 180))) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if not data.get("success"):
+        raise RuntimeError(str(data.get("error") or "AI Gateway skill 调用失败"))
+    return data.get("content") or data.get("data") or ""
 
 
 # ---------------------------------------------------------------------------
@@ -1110,10 +1147,10 @@ def call_skill_requirement_analyzer(title, module, text_assets):
 # AI Skill: scenario_designer / automation_filter
 # ---------------------------------------------------------------------------
 
-def generation_volume_targets(analysis):
+def generation_volume_targets(analysis, mode="full"):
     """根据分析结果计算生成数量目标。"""
     from task_server.services.case_service import generation_volume_targets as _gvt
-    return _gvt(analysis)
+    return _gvt(analysis, mode=mode)
 
 
 def scenario_requirement_point(scenario):
@@ -1181,9 +1218,9 @@ def build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases):
     return rows
 
 
-def call_skill_scenario_designer(title, module, analysis, yaml_reference_context=""):
+def call_skill_scenario_designer(title, module, analysis, yaml_reference_context="", mode="full"):
     """调用 AI skill: scenario_designer。"""
-    targets = generation_volume_targets(analysis)
+    targets = generation_volume_targets(analysis, mode=mode)
     payload = {
         "title": title,
         "module": module,
@@ -1198,9 +1235,9 @@ def call_skill_scenario_designer(title, module, analysis, yaml_reference_context
     return scenarios
 
 
-def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context=""):
+def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context="", mode="full"):
     """调用 AI skill: automation_filter。"""
-    targets = generation_volume_targets(analysis)
+    targets = generation_volume_targets(analysis, mode=mode)
     payload = {
         "title": title,
         "module": module,
@@ -1229,8 +1266,9 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
     }
 
 
-def build_cases_payload_from_skills(title, module, text_assets):
+def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
     """通过 AI skills pipeline 生成用例 payload。"""
+    mode = str(mode or "full").strip().lower()
     yaml_reference_context = extract_yaml_reference_context(text_assets)
     analysis = call_skill_requirement_analyzer(title, module, text_assets)
     if yaml_reference_context:
@@ -1238,8 +1276,8 @@ def build_cases_payload_from_skills(title, module, text_assets):
         analysis["yaml_reference_rule"] = (
             "后续场景设计和自动化筛选必须参考平台已有 YAML 步骤经验；只学习动作组织、等待策略和断言密度，不复制历史业务断言。"
         )
-    scenarios = call_skill_scenario_designer(title, module, analysis, yaml_reference_context=yaml_reference_context)
-    filtered = call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context=yaml_reference_context)
+    scenarios = call_skill_scenario_designer(title, module, analysis, yaml_reference_context=yaml_reference_context, mode=mode)
+    filtered = call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context=yaml_reference_context, mode=mode)
     cases = filtered.get("cases") or []
     manual_cases = filtered.get("manual_cases") or []
     analysis["coverage_matrix"] = build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases)
@@ -1253,6 +1291,7 @@ def build_cases_payload_from_skills(title, module, text_assets):
         "review": filtered.get("review") or {}
     }
     review = payload.setdefault("review", {})
+    review["generation_mode"] = mode
     review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1"
     review["yaml_reference_context_used_by_skills"] = bool(yaml_reference_context)
     if yaml_reference_context:

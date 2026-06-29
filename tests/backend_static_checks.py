@@ -945,6 +945,100 @@ def check_agent_worker_start_is_idempotent():
     require(len(started) == 2, "Agent worker guard must start only one thread per run id")
 
 
+def check_snapshot_store_concurrent_save():
+    from task_server.core.replay import snapshot_store
+
+    old_snapshot_file = snapshot_store.SNAPSHOT_FILE
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot_store.SNAPSHOT_FILE = os.path.join(temp_dir, "snapshots.json")
+            store = snapshot_store.SnapshotStore()
+            import threading
+            threads = [
+                threading.Thread(target=store.save, args=({"traceId": f"trace-{idx}"},), kwargs={"source_id": f"src-{idx}"})
+                for idx in range(20)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            rows = store.list(limit=None)
+            require(len(rows) == 20, "SnapshotStore concurrent saves must not lose records")
+            require(len({row.get("id") for row in rows}) == 20, "SnapshotStore concurrent saves must keep unique snapshots")
+    finally:
+        snapshot_store.SNAPSHOT_FILE = old_snapshot_file
+
+
+def check_production_debug_execution_guard_static():
+    router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    config_source = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
+    require("TASK_ENABLE_DEBUG_EXECUTION" in config_source, "Config must expose TASK_ENABLE_DEBUG_EXECUTION")
+    require("def _debug_execution_enabled" in router_source and "生产环境未开启 Debug 执行接口" in router_source, "Debug execution routes must be guarded in production")
+    for marker in ("_post_debug_dag_run", "_post_debug_dag_parallel", "_post_debug_execution_run"):
+        chunk = router_source[router_source.find(f"def {marker}") : router_source.find("@route_", router_source.find(f"def {marker}") + 1)]
+        require("_debug_execution_enabled(handler)" in chunk, f"{marker} must require debug execution switch")
+
+
+def check_execution_adapter_prompt_center_delay():
+    from task_server.execution.execution_adapter import ExecutionAdapter
+
+    adapter = ExecutionAdapter()
+    require(not adapter._should_enrich_with_prompt_center({}, "local"), "Local Runner mode must not enrich through PromptCenter by default")
+    require(adapter._should_enrich_with_prompt_center({"usePromptCenter": True}, "local"), "Explicit PromptCenter opt-in must still work")
+    require(adapter._should_enrich_with_prompt_center({}, "dag"), "DAG debug mode should keep PromptCenter enrichment")
+    require(adapter.available_modes().get("default") == "local", "ExecutionAdapter default mode must remain local")
+
+
+def check_mindmap_compact_mode():
+    from task_server.services import yaml_service
+
+    summary = {
+        "title": "AI建模测试",
+        "mindmap_mode": "compact",
+        "analysis": {
+            "business_flow": ["进入 AI建模页", "点击开始创作", "选择图片建模"],
+            "requirement_points": ["图片建模入口", "语音输入入口"],
+            "risks": ["模型生成耗时较长"],
+            "coverage_matrix": [{"requirement_point": "图片建模入口", "auto_cases": ["TC-001"]}],
+        },
+        "scenarios": [{"scenario": "图片建模入口展示", "feature": "AI建模"}],
+        "cases": [{"case_id": "TC-001", "title": "图片建模入口展示", "priority": "P1", "business_path": "进入 AI建模页 点击开始创作 选择图片建模"}],
+        "manual_cases": [{"title": "模型生成结果人工复核", "reason": "模型返回耗时和结果内容不稳定"}],
+        "review": {"mindmap_only": True, "mindmap_mode": "compact"},
+    }
+    compact = yaml_service.build_generation_mindmap(summary)
+    require("业务主线与覆盖" in compact and "可执行 YAML 用例" in compact, "Compact mindmap must expose readable business flow and YAML sections")
+    require("完整需求覆盖追踪矩阵" not in compact, "Compact mindmap must not render the full verbose coverage matrix")
+    full = yaml_service.build_generation_mindmap({**summary, "mindmap_mode": "full", "review": {}})
+    require("完整需求覆盖追踪矩阵" in full, "Full mindmap mode must remain available for compatibility")
+
+
+def check_generation_volume_targets_modes():
+    from task_server.services import case_service
+
+    analysis = {
+        "requirement_points": [f"需求点 {idx}" for idx in range(6)],
+        "risks": ["风险1", "风险2"],
+        "visible_outcomes": ["结果1", "结果2"],
+    }
+    full = case_service.generation_volume_targets(analysis, mode="full")
+    mindmap = case_service.generation_volume_targets(analysis, mode="mindmap")
+    require(full["target_automation_cases"] > mindmap["target_automation_cases"], "Mindmap mode must use lighter automation targets than full generation")
+    require(mindmap["mode"] == "mindmap", "Generation targets must record the selected mode")
+
+
+def check_ai_gateway_fallback_and_skill_static():
+    gateway_source = (ROOT / "ai-gateway" / "server.js").read_text(encoding="utf-8")
+    router_config = (ROOT / "ai-gateway" / "config" / "model-router.json").read_text(encoding="utf-8")
+    ai_skill_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
+    app_js_source = (ROOT / "js" / "app.js").read_text(encoding="utf-8")
+    require("routeCandidatesFor" in gateway_source and "fallbackProviderIds" in gateway_source, "AI Gateway must support provider fallback routing")
+    require("app.post('/ai/skill'" in gateway_source, "AI Gateway must expose a text AI Skill endpoint")
+    require("AI_GATEWAY_URL" in ai_skill_source and "ai_gateway_skill_content" in ai_skill_source and "if not image_assets" in ai_skill_source, "Text AI skills must try AI Gateway while image skills stay on DashScope VL")
+    require('"fallbackProviderIds"' in router_config and "highway_gpt5_mini" in router_config, "Model router config must include fallback providers")
+    require("mindmapMode: 'compact'" in app_js_source, "Mindmap-only frontend requests must use compact mindmap mode")
+
+
 def json_dumps_for_check(value):
     import json
     return json.dumps(value, ensure_ascii=False)
@@ -1155,6 +1249,12 @@ def main():
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()
+    check_snapshot_store_concurrent_save()
+    check_production_debug_execution_guard_static()
+    check_execution_adapter_prompt_center_delay()
+    check_mindmap_compact_mode()
+    check_generation_volume_targets_modes()
+    check_ai_gateway_fallback_and_skill_static()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -1634,7 +1734,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 46})
+    print({"ok": True, "file": str(MODULE), "checks": 52})
 
 
 if __name__ == "__main__":

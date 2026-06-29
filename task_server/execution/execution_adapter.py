@@ -31,10 +31,6 @@ class ExecutionAdapter:
 
     def run(self, case: Dict[str, Any], mode: str | None = None) -> Dict[str, Any]:
         case = case if isinstance(case, dict) else {}
-        try:
-            case = get_prompt_center().enrich(case)
-        except Exception:
-            case = dict(case)
         selected_mode = str(
             mode
             or case.get("executionCoreMode")
@@ -44,6 +40,11 @@ class ExecutionAdapter:
             or case.get("execution_mode")
             or "local"
         ).strip().lower()
+        if self._should_enrich_with_prompt_center(case, selected_mode):
+            try:
+                case = get_prompt_center().enrich(case)
+            except Exception:
+                case = dict(case)
         if selected_mode in self.DAG_MODES:
             return self._dag(case)
         if selected_mode in self.PARALLEL_MODES:
@@ -53,6 +54,11 @@ class ExecutionAdapter:
         if selected_mode in self.REMOTE_MODES:
             return self._remote(case)
         return self._local(case)
+
+    def _should_enrich_with_prompt_center(self, case: Dict[str, Any], selected_mode: str) -> bool:
+        if bool(case.get("usePromptCenter") or case.get("use_prompt_center")):
+            return True
+        return selected_mode in self.DAG_MODES or selected_mode in self.PARALLEL_MODES or selected_mode in self.SHADOW_MODES
 
     def available_modes(self) -> Dict[str, Any]:
         return {

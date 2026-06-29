@@ -184,6 +184,7 @@ AI_SKILLS_DIR = os.getenv(
 # Runtime environment constants
 # ---------------------------------------------------------------------------
 APP_ENV = os.getenv("TASK_APP_ENV", "prod").strip().lower()
+TASK_ENABLE_DEBUG_EXECUTION = env_int("TASK_ENABLE_DEBUG_EXECUTION", 0) != 0
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 SONIC_CALLBACK_TOKEN = os.getenv("SONIC_CALLBACK_TOKEN", "").strip()
 TASK_ADMIN_USER = os.getenv("TASK_ADMIN_USER", "admin")

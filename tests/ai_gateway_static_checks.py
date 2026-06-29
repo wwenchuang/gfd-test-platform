@@ -89,7 +89,17 @@ def main():
     require("/ai/optimize-yaml" in server and "/ai/chat" in server, "server must expose AI Gateway integration endpoints")
     require("PROVIDERS_FILE" in server and "apiKeyEnv" in server and "providerId" in server, "server must route by providers.json and apiKeyEnv")
     require("clientForRoute" in server and "process.env[route.apiKeyEnv]" in server, "server must read API keys server-side only")
-    require("temperatureLocked" in server and "fixedTemperature" in server and "options.temperature = typeof route.fixedTemperature" in server, "locked-temperature providers must be enforced")
+    require(
+        "temperatureLocked" in server
+        and "fixedTemperature" in server
+        and (
+            "options.temperature = typeof route.fixedTemperature" in server
+            or "completionOptions.temperature = typeof route.fixedTemperature" in server
+        ),
+        "locked-temperature providers must be enforced"
+    )
+    require("routeCandidatesFor" in server and "fallbackProviderIds" in server, "server must support provider fallback routing")
+    require("app.post('/ai/skill'" in server, "server must expose AI Skill endpoint")
     for forbidden_param in ("top_p", "presence_penalty", "frequency_penalty"):
         require(forbidden_param not in server, f"server must not send {forbidden_param} to gpt-5")
     for endpoint in ("/agent/run", "/agent/runs/:runId/confirm", "/agent/runs/:runId/cancel"):

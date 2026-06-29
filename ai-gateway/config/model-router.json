@@ -1,20 +1,45 @@
 {
   "generate_case": {
-    "providerId": "qwen_plus"
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt5_mini",
+      "highway_gpt4_1_mini",
+      "highway_deepseek"
+    ]
   },
   "generate_yaml": {
-    "providerId": "qwen_plus"
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt5_mini",
+      "highway_gpt4_1_mini"
+    ]
   },
   "analyze_failure": {
-    "providerId": "qwen_plus"
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt4_1_mini",
+      "highway_deepseek"
+    ]
   },
   "optimize_yaml": {
-    "providerId": "qwen_plus"
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt5_mini",
+      "highway_gpt4_1_mini"
+    ]
   },
   "agent_plan": {
-    "providerId": "qwen_plus"
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt5_mini",
+      "highway_gpt4_1_mini",
+      "highway_deepseek"
+    ]
   },
   "generate_bug": {
-    "providerId": "qwen_plus"
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt4_1_mini"
+    ]
   }
 }

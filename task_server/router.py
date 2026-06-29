@@ -26,7 +26,7 @@ from task_server.config import (
     FIGMA_PARSE_LIMIT, AI_SKILLS_DIR,
     REPORT_RETENTION_DAYS, REPORT_RETENTION_MIN_KEEP,
     ENABLE_AUTOMATIC_BASELINE_REPAIR,
-    APP_ENV, ENV_FILE_LOAD_STATUS,
+    APP_ENV, TASK_ENABLE_DEBUG_EXECUTION, ENV_FILE_LOAD_STATUS,
     safe_int, safe_bool, AGENT_RISK_KEYWORDS,
     JOB_LOCK, RUNNER_LOCK, AGENT_RUN_LOCK, SONIC_LOCK,
     PORT, SONIC_SUITE_COMPLETION_PATHS,
@@ -1759,6 +1759,17 @@ def _post_debug_snapshots(handler, qs):
     handler._json(result, status)
 
 
+def _debug_execution_enabled(handler):
+    if APP_ENV == "prod" and not TASK_ENABLE_DEBUG_EXECUTION:
+        handler._json({
+            "ok": False,
+            "error": "生产环境未开启 Debug 执行接口",
+            "detail": "如确需在生产环境调用 debug 执行，请设置 TASK_ENABLE_DEBUG_EXECUTION=1 后重启服务。",
+        }, 403)
+        return False
+    return True
+
+
 @route_post("/api/debug/replay")
 def _post_debug_replay(handler, qs):
     if _debug_auth_required(handler):
@@ -1766,6 +1777,8 @@ def _post_debug_replay(handler, qs):
     d = handler._body()
     snapshot_id = str(d.get("snapshotId") or d.get("snapshot_id") or d.get("id") or "").strip()
     dry_run = safe_bool(d.get("dryRun", d.get("dry_run", True)))
+    if not dry_run and not _debug_execution_enabled(handler):
+        return
     result = _execution_facade().replay_snapshot(snapshot_id, dry_run=dry_run)
     status = int(result.pop("status", 200) or 200)
     handler._json(result, status)
@@ -1787,6 +1800,8 @@ def _post_debug_diff(handler, qs):
 def _post_debug_dag_run(handler, qs):
     if _debug_auth_required(handler):
         return
+    if not _debug_execution_enabled(handler):
+        return
     d = handler._body()
     ctx = d.get("context") if isinstance(d.get("context"), dict) else dict(d)
     result = _execution_facade().run_dag(d, ctx)
@@ -1796,6 +1811,8 @@ def _post_debug_dag_run(handler, qs):
 @route_post("/api/debug/dag/parallel")
 def _post_debug_dag_parallel(handler, qs):
     if _debug_auth_required(handler):
+        return
+    if not _debug_execution_enabled(handler):
         return
     d = handler._body()
     ctx = d.get("context") if isinstance(d.get("context"), dict) else dict(d)
@@ -1814,6 +1831,8 @@ def _get_debug_execution_modes(handler, qs):
 def _post_debug_execution_run(handler, qs):
     if _debug_auth_required(handler):
         return
+    if not _debug_execution_enabled(handler):
+        return
     d = handler._body()
     mode = str(d.get("mode") or d.get("executionCoreMode") or "local").strip()
     ctx = d.get("context") if isinstance(d.get("context"), dict) else dict(d)
@@ -1831,6 +1850,8 @@ def _post_debug_execution_shadow_compare(handler, qs):
     if not isinstance(modes, list):
         modes = ["dag", "parallel"]
     dry_run = safe_bool(d.get("dryRun", d.get("dry_run", True)), True)
+    if not dry_run and not _debug_execution_enabled(handler):
+        return
     result = _execution_facade().shadow_compare(ctx, shadow_modes=modes, dry_run=dry_run)
     handler._json({"ok": True, "result": result})
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,7 @@ from task_server.storage import read_json_file, write_json_file
 
 
 SNAPSHOT_FILE = os.path.join(LEARNING_DIR, "execution-snapshots.json")
+_SNAPSHOT_WRITE_LOCK = threading.Lock()
 
 
 class SnapshotStore:
@@ -29,21 +31,22 @@ class SnapshotStore:
         write_json_file(SNAPSHOT_FILE, {"snapshots": snapshots[-500:]})
 
     def save(self, trace: Dict[str, Any], context: Optional[Dict[str, Any]] = None, source_id: str = "") -> Dict[str, Any]:
-        data = self._load()
-        snap_id = f"snap-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
-        snapshot = {
-            "id": snap_id,
-            "snapshotId": snap_id,
-            "sourceId": source_id or str((trace or {}).get("traceId") or ""),
-            "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "trace": trace if isinstance(trace, dict) else {},
-            "context": context if isinstance(context, dict) else {},
-        }
-        snapshots = data.get("snapshots") if isinstance(data.get("snapshots"), list) else []
-        snapshots.insert(0, snapshot)
-        data["snapshots"] = snapshots
-        self._save(data)
-        return snapshot
+        with _SNAPSHOT_WRITE_LOCK:
+            data = self._load()
+            snap_id = f"snap-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+            snapshot = {
+                "id": snap_id,
+                "snapshotId": snap_id,
+                "sourceId": source_id or str((trace or {}).get("traceId") or ""),
+                "createdAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "trace": trace if isinstance(trace, dict) else {},
+                "context": context if isinstance(context, dict) else {},
+            }
+            snapshots = data.get("snapshots") if isinstance(data.get("snapshots"), list) else []
+            snapshots.insert(0, snapshot)
+            data["snapshots"] = snapshots
+            self._save(data)
+            return snapshot
 
     def get(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
         snapshot_id = str(snapshot_id or "").strip()

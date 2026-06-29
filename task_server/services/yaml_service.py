@@ -4999,6 +4999,7 @@ def generate_mindmap_from_request(d, job_id=None):
     case_set_id = d.get("case_set_id") or new_case_set_id()
     files = d.get("files") or []
     has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or "").strip())
+    mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "compact").strip().lower() or "compact"
 
     if job_id:
         update_generate_job(job_id, progress=10, step="保存资料", message="正在保存脑图资料")
@@ -5071,7 +5072,7 @@ def generate_mindmap_from_request(d, job_id=None):
         update_generate_job(job_id, progress=50, step="生成用例结构", message="正在生成场景、用例、边界和人工待准备事项")
     if USE_AI_SKILL_PIPELINE:
         try:
-            payload = build_cases_payload_from_skills(title, module, stage1_text_assets)
+            payload = build_cases_payload_from_skills(title, module, stage1_text_assets, mode="mindmap")
         except Exception as e:
             payload = call_dashscope_cases(title, module, stage1_text_assets, [])
             payload.setdefault("review", {})["skill_pipeline_error"] = str(e)
@@ -5080,6 +5081,7 @@ def generate_mindmap_from_request(d, job_id=None):
 
     review = payload.setdefault("review", {})
     review["mindmap_only"] = True
+    review["mindmap_mode"] = mindmap_mode
     review["mindmap_quality_mode"] = "visual_grounded"
     review["mindmap_visual_image_policy"] = (
         f"需求文档、Figma 文本和页面名称全量参与脑图结构生成；图片只用于视觉校准。"
@@ -5184,6 +5186,8 @@ def generate_mindmap_from_request(d, job_id=None):
     )
     review = summary.setdefault("review", {})
     review["mindmap_only"] = True
+    review["mindmap_mode"] = mindmap_mode
+    summary["mindmap_mode"] = mindmap_mode
     review["coverage_audit"] = coverage_audit
     if ignored_figma_pages:
         summary["ignored_figma_pages"] = ignored_figma_pages
@@ -5213,6 +5217,126 @@ def generate_mindmap_from_request(d, job_id=None):
 
 
 def build_generation_mindmap(summary):
+    summary = summary if isinstance(summary, dict) else {}
+    mode = str(summary.get("mindmap_mode") or summary.get("mindmapMode") or "").strip().lower()
+    review = summary.get("review") if isinstance(summary.get("review"), dict) else {}
+    mode = mode or str(review.get("mindmap_mode") or review.get("mindmapMode") or "full").strip().lower()
+    if mode in {"compact", "mindmap", "compact_mindmap"}:
+        return build_generation_mindmap_compact(summary)
+    return build_generation_mindmap_full(summary)
+
+
+def _compact_generation_flow(summary, analysis, scenarios):
+    values = normalize_text_list(
+        analysis.get("business_flow")
+        or analysis.get("businessFlow")
+        or analysis.get("business_paths")
+        or analysis.get("businessPaths")
+        or summary.get("business_flow")
+        or summary.get("businessFlow")
+    )
+    if not values:
+        values = normalize_text_list(analysis.get("requirement_points") or analysis.get("requirementPoints"))
+    if not values:
+        values = [
+            first_non_empty(item.get("scenario"), item.get("name"), item.get("title"))
+            for item in scenarios
+            if isinstance(item, dict)
+        ]
+    return normalize_text_list(values)[:12]
+
+
+def _compact_case_matches(label, case):
+    text = " ".join(normalize_text_list([
+        (case or {}).get("title"),
+        (case or {}).get("scenario"),
+        (case or {}).get("coverage"),
+        (case or {}).get("business_path"),
+        (case or {}).get("goal"),
+        (case or {}).get("expected_result"),
+    ]))
+    label_key = scenario_key(label)
+    text_key = scenario_key(text)
+    return bool(label_key and text_key and (label_key in text_key or text_key in label_key))
+
+
+def build_generation_mindmap_compact(summary):
+    summary = summary if isinstance(summary, dict) else {}
+    title = summary.get("title") or "自动化测试"
+    analysis = summary.get("analysis") or summary.get("requirement_analysis") or {}
+    if not isinstance(analysis, dict):
+        analysis = {}
+    scenarios = [item for item in (summary.get("scenarios") or []) if isinstance(item, dict)]
+    cases = [item for item in (summary.get("cases") or []) if isinstance(item, dict)]
+    manual_cases = [item for item in (summary.get("manual_cases") or []) if isinstance(item, dict)]
+    counts = summary.get("counts") if isinstance(summary.get("counts"), dict) else {}
+    flow_nodes = _compact_generation_flow(summary, analysis, scenarios)
+    root_children = []
+
+    if flow_nodes:
+        flow_children = []
+        for idx, flow in enumerate(flow_nodes, start=1):
+            matched = [case for case in cases if _compact_case_matches(flow, case)][:5]
+            children = [mm_node(case_mm_title(case), indent=3) for case in matched]
+            if not children:
+                related_scenarios = [
+                    first_non_empty(item.get("scenario"), item.get("name"), item.get("title"))
+                    for item in scenarios
+                    if _compact_case_matches(flow, item)
+                ][:5]
+                children = [mm_node(item, indent=3) for item in related_scenarios]
+            if not children:
+                children = [mm_node("待在生成分析或人工用例中确认覆盖", indent=3)]
+            flow_children.append(mm_node(f"{idx}. {flow}", children, indent=2))
+        root_children.append(mm_node("业务主线与覆盖", flow_children, indent=1))
+
+    priority_groups = {}
+    for case in cases:
+        priority = str(case.get("priority") or "未标级").upper()
+        priority_groups.setdefault(priority, []).append(case)
+    auto_children = []
+    for priority in ["P0", "P1", "P2", "P3", "未标级"]:
+        group = priority_groups.get(priority) or []
+        if not group:
+            continue
+        auto_children.append(mm_node(
+            f"{priority} 自动化用例（{len(group)} 条）",
+            [mm_node(case_mm_title(case), indent=3) for case in group[:10]],
+            indent=2,
+        ))
+    if auto_children:
+        root_children.append(mm_node("可执行 YAML 用例", auto_children, indent=1))
+
+    if manual_cases:
+        root_children.append(mm_node(
+            "人工验证 / 环境准备",
+            [
+                mm_node(
+                    first_non_empty(case.get("title"), case.get("name"), case.get("reason"), "人工验证项"),
+                    [mm_node(f"原因：{first_non_empty(case.get('reason'), case.get('data_requirements'), '需要人工准备或确认')}", indent=3)],
+                    indent=2,
+                )
+                for case in manual_cases[:12]
+            ],
+            indent=1,
+        ))
+
+    risks = normalize_text_list(analysis.get("risks") or analysis.get("questions") or analysis.get("open_questions"))
+    if risks:
+        root_children.append(mm_node("风险与待确认", [mm_node(item, indent=2) for item in risks[:10]], indent=1))
+
+    counts_children = [
+        mm_node(f"场景：{len(scenarios) or safe_int(counts.get('scenario_count'), 0)}", indent=2),
+        mm_node(f"自动化：{len(cases) or safe_int(counts.get('automation_case_count'), 0)}", indent=2),
+        mm_node(f"人工：{len(manual_cases) or safe_int(counts.get('manual_case_count'), 0)}", indent=2),
+    ]
+    root_children.append(mm_node("生成产物", counts_children, indent=1))
+
+    root = mm_node(f"{title}-测试用例", root_children, indent=0)
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<map version="1.0.1">\n' + root + "\n</map>\n"
+
+
+def build_generation_mindmap_full(summary):
     title = summary.get("title") or "自动化测试"
     root_children = []
     scenarios = [item for item in (summary.get("scenarios") or []) if isinstance(item, dict)]

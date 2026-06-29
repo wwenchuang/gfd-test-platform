@@ -131,6 +131,15 @@
 - 如果因为数据、权限、支付、真实外设等原因达不到目标数量，必须把无法自动化的场景放入 `manual_cases`，并在 `review.manual_reason_summary` 说明。
 - 禁止为了凑数量复制同一路径、只改标题或只改断言；每条 case 必须有不同 coverage/risk/business_path/expected_result 中至少一项。
 
+## 脑图模式
+
+如果输入 `generation_targets.mode` 是 `mindmap` 或 `compact_mindmap`：
+
+- `cases` 只保留稳定、短路径、可独立执行的代表性自动化用例。
+- 不要为了达到完整测试覆盖，把低稳定场景硬塞进自动化 YAML。
+- `manual_cases` 必须承接完整测试设计中的人工验证、环境准备、账号/数据态、模型异步和视觉差异检查。
+- `review.quantity_check` 需要说明“完整覆盖在脑图中体现，可执行 YAML 只保留稳定子集”。
+
 ## 输出 JSON
 
 {

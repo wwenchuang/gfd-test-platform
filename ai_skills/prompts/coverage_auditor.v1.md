@@ -25,6 +25,14 @@
 9. 数量合理性：参考输入 payload.review.generation_targets 或 generation_targets。中等需求只生成 8 条左右通常属于覆盖偏薄，除非大量场景已明确进入 manual_cases。
 10. 可执行性：自动化用例必须具备稳定起点、清晰 UI 目标、可见断言、可清理收尾；如果缺少这些条件，应判为待修复或转人工清单。
 
+## 脑图模式
+
+如果输入 `generation_targets.mode` 是 `mindmap` 或 `compact_mindmap`：
+
+- 审查重点是需求点、场景、人工用例是否完整，不强制自动化用例达到全量生成数量。
+- 自动化不足时，只有在缺少人工承接说明时才判为失败。
+- 允许“完整测试覆盖在脑图/manual_cases，稳定子集进入 cases”的产物结构。
+
 ## 泛化断言判定
 
 以下属于泛化断言，应进入 `generic_assertion_cases`：

@@ -3453,6 +3453,7 @@ async function createMindmapOnly() {
         figma_url: figmaUrl,
         figma_mode: document.getElementById('mindmap-figma-mode').value || 'smart',
         figma_limit: Number(document.getElementById('mindmap-figma-limit').value || 80),
+        mindmapMode: 'compact',
         files
       })
     });
