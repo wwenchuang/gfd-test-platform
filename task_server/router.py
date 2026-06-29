@@ -183,6 +183,7 @@ from task_server.services.yaml_service import (
     cases_to_separate_midscene_yamls,
     changed_line_count,
     delete_case_ui_design_asset,
+    dry_run_midscene_yaml,
     filtered_case_ui_design_assets_for_summary,
     find_figma_url_for_case_set,
     generate_job_id,
@@ -2267,6 +2268,29 @@ def _post_generate_yaml(handler, qs):
     _handle_convert_or_generate(handler, d)
 
 
+@route_post("/api/yaml/dry-run")
+def _post_yaml_dry_run(handler, qs):
+    if _require_post_auth(handler, qs):
+        return
+    try:
+        d = handler._body()
+    except Exception as e:
+        handler._json({"ok": False, "error": f"JSON 解析失败：{e}"}, 400)
+        return
+    try:
+        result = dry_run_midscene_yaml(
+            d.get("content") or d.get("yaml") or d.get("yamlText") or "",
+            module=d.get("module") or "",
+            file=d.get("file") or "",
+            app_package=d.get("app_package") or d.get("appPackage") or "",
+        )
+        handler._json(result, 200 if result.get("ok") else 400)
+    except FileNotFoundError as e:
+        handler._json({"ok": False, "error": str(e)}, 404)
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 500)
+
+
 def _handle_convert_or_generate(handler, d):
     """公共逻辑：convert-cases-json 和 generate-yaml 共用。"""
     mod = d.get("module", "AI测试")
@@ -2297,6 +2321,13 @@ def _handle_convert_or_generate(handler, d):
         write_json_file(cases_path(case_set_id), converted_payload)
         yaml_checks = [{"file": item["file"], **validate_midscene_yaml(item["content"])} for item in yaml_items]
         yaml_exec_checks = [{"file": item["file"], **validate_midscene_yaml_executability(item["content"])} for item in yaml_items]
+        yaml_static_checks = [
+            {
+                "file": item["file"],
+                **(dry_run_midscene_yaml(item["content"], app_package=app_package).get("yamlStaticValidation") or {}),
+            }
+            for item in yaml_items
+        ]
         yaml_check = {"ok": all(item.get("ok") for item in yaml_checks), "mode": "split_by_case", "file_count": len(yaml_items), "files": yaml_checks}
         yaml_executability = {
             "ok": all(item.get("ok") for item in yaml_exec_checks),
@@ -2305,20 +2336,38 @@ def _handle_convert_or_generate(handler, d):
             "files": yaml_exec_checks,
             "taskCount": sum(int(item.get("taskCount") or 0) for item in yaml_exec_checks),
         }
+        yaml_static_validation = {
+            "ok": all(item.get("ok") for item in yaml_static_checks),
+            "mode": "split_by_case",
+            "file_count": len(yaml_items),
+            "files": yaml_static_checks,
+            "errorCount": sum(len(item.get("errors") or []) for item in yaml_static_checks),
+            "warningCount": sum(len(item.get("warnings") or []) for item in yaml_static_checks),
+            "executionLevelCounts": {},
+        }
+        for item in yaml_static_checks:
+            level = item.get("executionLevel") or "draft"
+            yaml_static_validation["executionLevelCounts"][level] = yaml_static_validation["executionLevelCounts"].get(level, 0) + 1
         summary = build_generation_summary(
             case_set_id, title, mod, filename, converted_payload,
             yaml_check=yaml_check, yaml_executability=yaml_executability
         )
         summary["yaml_files"] = yaml_files
         summary["yaml_file_count"] = len(yaml_files)
+        summary["yaml_static_validation"] = yaml_static_validation
         summary_files = write_generation_summary(case_set_id, summary)
         for item in yaml_items:
+            static_check = next((row for row in yaml_static_checks if row.get("file") == item["file"]), {})
             update_task_meta(mod, item["file"], {
                 "last_case_set_id": case_set_id,
                 "last_case_set_title": title,
                 "last_generated_at": summary.get("generated_at"),
                 "last_case_count": 1,
                 "last_manual_case_count": len(converted_payload.get("manual_cases", [])),
+                "execution_level": static_check.get("executionLevel") or "draft",
+                "yaml_static_ok": bool(static_check.get("ok")),
+                "yaml_static_errors": list(static_check.get("errors") or [])[:8],
+                "yaml_static_warnings": list(static_check.get("warnings") or [])[:8],
             })
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
@@ -2339,7 +2388,8 @@ def _handle_convert_or_generate(handler, d):
         "summary": summary,
         "summaryFiles": summary_files,
         "yamlCheck": yaml_check,
-        "yamlExecutability": yaml_executability
+        "yamlExecutability": yaml_executability,
+        "yamlStaticValidation": yaml_static_validation
     })
 
 

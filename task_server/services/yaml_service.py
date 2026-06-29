@@ -125,6 +125,7 @@ from .yaml_pattern_service import (
     summarize_yaml_patterns,
 )
 from .yaml_static_validator import load_yaml_action_contract, validate_yaml_static_executable
+from .yaml_template_matcher import build_yaml_template_matcher_text, select_best_baseline_template
 
 __all__ = [
     "yaml_text",
@@ -174,6 +175,7 @@ __all__ = [
     "record_yaml_reference_examples",
     "extract_yaml_patterns_from_examples",
     "validate_yaml_static_executable",
+    "dry_run_midscene_yaml",
     "case_to_task_yaml",
     "extract_midscene_tasks",
     "validate_midscene_yaml_executability",
@@ -3544,6 +3546,55 @@ def validate_midscene_yaml_executability(text):
     }
 
 
+def dry_run_midscene_yaml(yaml_text: str = "", *, module: str = "", file: str = "", app_package: str = "") -> dict:
+    """Mock Runner dry-run for YAML load/action/field validation.
+
+    This does not touch any device. It verifies the same YAML text through the
+    generic parser, Runner-oriented executable validator and the stricter action
+    whitelist validator, then returns one consolidated result for Agent/UI use.
+    """
+    source = "inline"
+    if not str(yaml_text or "").strip() and module and file:
+        yaml_text = read_text_file(safe_join(TASK_DIR, module, clean_filename(file)), default="")
+        source = "file"
+    original = str(yaml_text or "")
+    normalized, guard_changes = normalize_yaml_runtime_guards(original, app_package=app_package)
+    yaml_check = validate_midscene_yaml(normalized)
+    yaml_executability = validate_midscene_yaml_executability(normalized)
+    yaml_static_validation = validate_yaml_static_executable(normalized)
+    ok = bool(
+        yaml_check.get("ok")
+        and yaml_executability.get("ok")
+        and yaml_static_validation.get("ok")
+    )
+    errors = []
+    errors.extend(str(item) for item in yaml_check.get("issues") or [] if str(item).strip())
+    errors.extend(str(item) for item in yaml_executability.get("issues") or [] if str(item).strip())
+    errors.extend(str(item) for item in yaml_static_validation.get("errors") or [] if str(item).strip())
+    warnings = []
+    warnings.extend(str(item) for item in yaml_check.get("warnings") or [] if str(item).strip())
+    warnings.extend(str(item) for item in yaml_static_validation.get("warnings") or [] if str(item).strip())
+    return {
+        "ok": ok,
+        "mode": "mock_dry_run",
+        "source": source,
+        "runnerTouched": False,
+        "deviceTouched": False,
+        "module": module,
+        "file": file,
+        "executionLevel": yaml_static_validation.get("executionLevel") or ("executable" if ok else "draft"),
+        "taskCount": yaml_executability.get("taskCount") or yaml_static_validation.get("taskCount") or 0,
+        "errors": list(dict.fromkeys(errors)),
+        "warnings": list(dict.fromkeys(warnings)),
+        "normalizedChanged": normalized.strip() != original.strip(),
+        "guardChanges": guard_changes,
+        "yamlCheck": yaml_check,
+        "yamlExecutability": yaml_executability,
+        "yamlStaticValidation": yaml_static_validation,
+        "message": "dry-run 通过：YAML 可被平台规则加载" if ok else "dry-run 未通过：请先修复 YAML 结构或动作字段",
+    }
+
+
 def validate_midscene_flow(content: str) -> List[str]:
     """校验 Midscene flow 动作是否合法。"""
     warnings: List[str] = []
@@ -4208,6 +4259,22 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="检索用例库",
                 message=f"已检索现有 YAML 步骤经验 {len(yaml_reference_examples)} 条，生成时参考可执行写法：{names}",
             )
+    yaml_template_candidates = select_best_baseline_template(
+        "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
+        yaml_reference_examples or yaml_baseline_library_examples,
+        limit=5,
+    )
+    yaml_template_matcher_text = build_yaml_template_matcher_text(yaml_template_candidates)
+    if yaml_template_matcher_text:
+        stage1_text_assets = list(stage1_text_assets) + [yaml_template_matcher_text]
+        if job_id:
+            template_names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_template_candidates[:3])
+            update_generate_job(
+                job_id,
+                progress=44,
+                step="匹配 YAML 模板",
+                message=f"已选择 {len(yaml_template_candidates)} 个相似基线模板，生成时按模板填槽：{template_names}",
+            )
     yaml_pattern_contract_text = build_yaml_pattern_contract_text(yaml_baseline_patterns, yaml_action_contract)
     if yaml_pattern_contract_text:
         stage1_text_assets = list(stage1_text_assets) + [yaml_pattern_contract_text]
@@ -4295,6 +4362,24 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "example_count": len(yaml_reference_examples),
             "memory_path": memory_path,
             "rule": "生成 YAML 前检索现有用例库，学习可执行步骤组织方式；只复用相关动作结构，不复制无关业务断言。",
+        }
+    if yaml_template_candidates:
+        review["yaml_template_matcher"] = {
+            "enabled": True,
+            "template_count": len(yaml_template_candidates),
+            "templates": [
+                {
+                    "rank": item.get("template_rank"),
+                    "title": item.get("title"),
+                    "module": item.get("module"),
+                    "file": item.get("file"),
+                    "score": item.get("template_score") or item.get("score"),
+                    "matched_terms": item.get("matched_terms") or [],
+                    "actions": item.get("actions") or [],
+                }
+                for item in yaml_template_candidates[:5]
+            ],
+            "rule": "需求先匹配 Top5 相似基线模板，AI 只能按模板做业务变量替换和少量步骤微调。",
         }
     if yaml_baseline_patterns:
         review["yaml_pattern_contract"] = {

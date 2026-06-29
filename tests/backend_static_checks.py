@@ -197,6 +197,11 @@ def check_yaml_static_validation_and_patterns():
         load_yaml_action_contract,
         validate_yaml_static_executable,
     )
+    from task_server.services.yaml_template_matcher import (
+        build_yaml_template_matcher_text,
+        select_best_baseline_template,
+    )
+    from task_server.services.yaml_service import dry_run_midscene_yaml
 
     contract = load_yaml_action_contract()
     require("aiTap" in contract.get("allowed_actions", []), "YAML action contract must include real Midscene actions")
@@ -253,6 +258,23 @@ def check_yaml_static_validation_and_patterns():
     )
     profile_text = build_yaml_pattern_contract_text(block_patterns, contract)
     require("至少保留一个最终业务 aiAssert" not in profile_text, "YAML pattern contract must not force extra aiAssert")
+
+    templates = select_best_baseline_template("AI建模 图片建模 上传图片", [
+        {
+            "title": "图片建模上传",
+            "file": "AI测试/图片建模上传.yaml",
+            "actions": ["aiTap", "aiWaitFor", "aiInput"],
+            "snippet": valid_yaml,
+        },
+        {"title": "无关客服", "file": "客服.yaml", "actions": ["aiTap"]},
+    ])
+    require(templates and templates[0].get("title") == "图片建模上传", "YAML template matcher must select the most relevant baseline template")
+    template_text = build_yaml_template_matcher_text(templates)
+    require("套模板填槽" in template_text and "不要重新设计结构" in template_text, "YAML template matcher prompt must force template-based generation")
+    dry = dry_run_midscene_yaml(valid_yaml)
+    require(dry.get("ok") and dry.get("mode") == "mock_dry_run" and dry.get("runnerTouched") is False, "YAML dry-run must validate without touching Runner/device")
+    dry_bad = dry_run_midscene_yaml(invalid_yaml)
+    require(not dry_bad.get("ok") and dry_bad.get("errors"), "YAML dry-run must return actionable errors for invalid YAML")
 
 
 def check_business_flow_filters_product_metrics():
@@ -1301,7 +1323,9 @@ def main():
     require("def build_executable_smoke_yaml_policy_text" in yaml_service_source and "def review_generated_yaml_smoke_stability" in yaml_service_source and '"yamlSmokeStability"' in yaml_service_source, "YAML generation must enforce and report Runner smoke-execution stability")
     require("yaml_static_validator.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and (ROOT / "task_server" / "config_data" / "yaml_actions.json").exists(), "YAML generation must have a static action contract and validator")
     require("extract_yaml_patterns_from_examples" in yaml_service_source and "build_yaml_pattern_contract_text" in yaml_service_source and '"yaml_pattern_contract"' in yaml_service_source, "YAML generation must extract baseline executable patterns before prompting")
+    require("yaml_template_matcher.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and "select_best_baseline_template" in yaml_service_source and '"yaml_template_matcher"' in yaml_service_source, "YAML generation must select Top baseline templates before prompting")
     require("def collect_yaml_baseline_library_examples" in yaml_service_source and "build_yaml_library_profile_text" in yaml_service_source and '"yaml_baseline_library_profile"' in yaml_service_source, "YAML generation must scan the full baseline library, not only query-matched examples")
+    require("@route_post(\"/api/yaml/dry-run\")" in router_source and "dry_run_midscene_yaml" in router_source, "YAML dry-run API must be exposed for Agent/UI preflight")
     require("validate_yaml_static_executable" in yaml_service_source and '"yamlStaticValidation"' in yaml_service_source and '"execution_level"' in yaml_service_source, "Generated YAML must record static execution levels and validation results")
     require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
