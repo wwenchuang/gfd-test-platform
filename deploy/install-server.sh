@@ -130,16 +130,33 @@ if [ -d "${WEB_DIR}" ]; then
 fi
 
 if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "${WEB_CONTAINER}"; then
-  mapfile -t container_pages < <(docker exec "${WEB_CONTAINER}" sh -lc "find / -name task-manager.html 2>/dev/null" | tr -d '\r')
-  if [ "${#container_pages[@]}" -eq 0 ]; then
-    container_pages=("/var/www/html/task-manager.html")
-  fi
+  mapfile -t existing_container_pages < <(docker exec "${WEB_CONTAINER}" sh -lc "find / -name task-manager.html 2>/dev/null" | tr -d '\r')
+  container_pages=(
+    "/usr/share/nginx/html/task-manager.html"
+    "/usr/share/nginx/html/reports/task-manager.html"
+    "/var/www/html/task-manager.html"
+    "/www/html/task-manager.html"
+    "${existing_container_pages[@]}"
+  )
+  deduped_container_pages=()
+  seen_container_pages="|"
+  for target_html in "${container_pages[@]}"; do
+    target_html="$(printf '%s' "${target_html}" | tr -d '\r')"
+    [ -n "${target_html}" ] || continue
+    case "${seen_container_pages}" in
+      *"|${target_html}|"*) continue ;;
+    esac
+    seen_container_pages="${seen_container_pages}${target_html}|"
+    deduped_container_pages+=("${target_html}")
+  done
+  container_pages=("${deduped_container_pages[@]}")
   for target_html in "${container_pages[@]}"; do
     if [ -n "${target_html}" ]; then
+      target_dir="$(dirname "${target_html}")"
+      docker exec "${WEB_CONTAINER}" sh -lc "mkdir -p '${target_dir}'"
       docker exec "${WEB_CONTAINER}" sh -lc "if [ -f '${target_html}' ]; then cp '${target_html}' '${target_html}.bak.$(date +%Y%m%d-%H%M%S)'; fi"
       docker cp "${SRC_DIR}/task-manager.html" "${WEB_CONTAINER}:${target_html}"
       docker exec "${WEB_CONTAINER}" sh -lc "chmod 644 '${target_html}'"
-      target_dir="$(dirname "${target_html}")"
       docker cp "${SRC_DIR}/trace-viewer.html" "${WEB_CONTAINER}:${target_dir}/trace-viewer.html"
       docker exec "${WEB_CONTAINER}" sh -lc "chmod 644 '${target_dir}/trace-viewer.html'"
       if [ -d "${SRC_DIR}/assets" ]; then
