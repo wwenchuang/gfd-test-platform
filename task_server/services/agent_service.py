@@ -3723,6 +3723,61 @@ def validate_agent_yaml_content(yaml_text):
     }
 
 
+def _agent_yaml_dry_run_for_ref(run, ref):
+    from task_server.services.yaml_service import dry_run_midscene_yaml
+
+    module = str(ref.get("module") or "").strip()
+    file = str(ref.get("file") or "").strip()
+    path = str(ref.get("path") or "").strip()
+    if path and not (module and file):
+        module, file = _task_dir_for_path(path)
+    content = _yaml_ref_content(ref)
+    dry = dry_run_midscene_yaml(content, module=module, file=file, app_package=_agent_app_package(run))
+    return dry
+
+
+def _compact_yaml_dry_run_result(dry):
+    return {
+        "ok": bool((dry or {}).get("ok")),
+        "mode": (dry or {}).get("mode") or "mock_dry_run",
+        "executionLevel": (dry or {}).get("executionLevel") or "",
+        "taskCount": (dry or {}).get("taskCount") or 0,
+        "errors": list((dry or {}).get("errors") or [])[:12],
+        "warnings": list((dry or {}).get("warnings") or [])[:8],
+        "normalizedChanged": bool((dry or {}).get("normalizedChanged")),
+        "guardChanges": list((dry or {}).get("guardChanges") or [])[:12],
+        "message": (dry or {}).get("message") or "",
+    }
+
+
+def _agent_yaml_dry_run_rows(run, refs):
+    results = []
+    issues = []
+    ok_count = 0
+    for ref in refs:
+        label = ref.get("path") or ref.get("file") or ref.get("type")
+        content = _yaml_ref_content(ref)
+        strong_check = validate_agent_yaml_content(content)
+        dry = _agent_yaml_dry_run_for_ref(run, ref)
+        dry_compact = _compact_yaml_dry_run_result(dry)
+        ref_issues = dry_compact.get("errors") or strong_check.get("issues") or []
+        row = {
+            **ref,
+            "ok": bool(dry_compact.get("ok")),
+            "issues": ref_issues,
+            "taskCount": dry_compact.get("taskCount") or strong_check.get("taskCount", 0),
+            "executionLevel": dry_compact.get("executionLevel"),
+            "dryRun": dry_compact,
+            "strongCheck": strong_check,
+        }
+        results.append(row)
+        if row.get("ok"):
+            ok_count += 1
+        else:
+            issues.append(f"{label}: {'; '.join(str(item) for item in ref_issues[:5])}")
+    return results, issues, ok_count
+
+
 def _source_ref_value(refs, *names):
     refs = refs if isinstance(refs, dict) else {}
     for name in names:
@@ -6819,32 +6874,20 @@ def _tool_validate_yaml(run):
             _log_tool_call(call, run.get("runId", ""))
             return call
 
-        ok_count = 0
-        results = []
-        issues = []
-        for ref in refs:
-            label = ref.get("path") or ref.get("file") or ref.get("type")
-            content = _yaml_ref_content(ref)
-            check = validate_agent_yaml_content(content)
-            row = {**ref, "ok": bool(check.get("ok")), "issues": check.get("issues") or [], "taskCount": check.get("taskCount", 0)}
-            results.append(row)
-            if check.get("ok"):
-                ok_count += 1
-            else:
-                issues.append(f"{label}: {'; '.join(check.get('issues') or [])}")
+        results, issues, ok_count = _agent_yaml_dry_run_rows(run, refs)
         artifacts["yamlValidation"] = {"ok": not issues, "results": results, "issues": issues}
         if issues:
             call["status"] = "FAILED"
             call["error"] = issues[0][:300]
             attach_diagnosis(call, make_diagnosis(
-                "YAML 强校验未通过",
-                "YAML 无法安全同步 Sonic 或执行测试。",
-                ["重新生成 YAML", "人工编辑 YAML 草稿", "确认 android/ios.tasks 为非空", "保存为正式 YAML 后再执行"],
+                "YAML dry-run 未通过",
+                "YAML 在创建 Runner 任务前未通过平台加载校验。",
+                ["查看 dry-run 错误", "重新生成 YAML", "人工编辑 YAML 草稿", "保存为正式 YAML 后再执行"],
                 failedYaml=results[0].get("path") or results[0].get("type") if results else "",
             ))
         else:
             call["status"] = "SUCCESS"
-        call["outputSummary"] = f"强校验 {len(refs)} 个 YAML，{ok_count} 个通过" + (f"；问题：{'; '.join(issues[:3])}" if issues else "")
+        call["outputSummary"] = f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过" + (f"；问题：{'; '.join(issues[:3])}" if issues else "")
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)
@@ -6949,18 +6992,21 @@ def _tool_execution_precheck(run):
         if draft_refs and not file_refs:
             add("draft_confirmed", False, "存在未确认 YAML 草稿", "blocker")
 
-        validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
-        if not validation or not validation.get("ok"):
-            validation_issues = []
-            for ref in refs:
-                check = validate_agent_yaml_content(_yaml_ref_content(ref))
-                if not check.get("ok"):
-                    validation_issues.extend(check.get("issues") or [])
-            ok = not validation_issues and bool(refs)
-            artifacts["yamlValidation"] = {"ok": ok, "issues": validation_issues, "results": validation.get("results") or []}
-            add("yaml_strong_validation", ok, "；".join(validation_issues[:3]) if validation_issues else "通过")
-        else:
-            add("yaml_strong_validation", True, "已通过强校验")
+        dry_results, validation_issues, yaml_ok_count = _agent_yaml_dry_run_rows(run, refs)
+        yaml_dry_ok = not validation_issues and bool(refs)
+        artifacts["yamlValidation"] = {"ok": yaml_dry_ok, "issues": validation_issues, "results": dry_results}
+        artifacts["yamlDryRun"] = {
+            "ok": yaml_dry_ok,
+            "checked": len(refs),
+            "passed": yaml_ok_count,
+            "failed": len(refs) - yaml_ok_count,
+            "results": dry_results,
+        }
+        add(
+            "yaml_dry_run",
+            yaml_dry_ok,
+            f"{yaml_ok_count}/{len(refs)} 个 YAML 通过 dry-run" if yaml_dry_ok else "；".join(validation_issues[:3]),
+        )
 
         if should_require_sonic:
             try:
@@ -7685,6 +7731,7 @@ def _tool_run_sonic(run):
 
         # 更新 artifacts
         run_artifacts = run.setdefault("artifacts", {})
+        job_ids = []
         if sonic_result_id:
             run_artifacts["sonicResultId"] = sonic_result_id
 
@@ -7717,7 +7764,6 @@ def _tool_run_sonic(run):
                 summary_parts.append(f"❌ {sonic_wait.get('status', 'unknown')}: {sonic_wait.get('summary', '')}")
         else:
             # 默认 Runner Job 模式：只执行匹配到的 YAML；套件触发失败时也回退到这里。
-            job_ids = []
             selected_runner_id = str(run.get("runnerId") or run.get("runner_id") or "").strip()
             selected_device_id = str(run.get("deviceId") or run.get("device_id") or "").strip()
             selected_device_strategy = job_service.normalize_device_strategy(
@@ -7725,14 +7771,35 @@ def _tool_run_sonic(run):
                 device_id=selected_device_id,
                 runner_id=selected_runner_id,
             )
+            dry_run_results = []
+            dry_run_blocked = []
             for ref in file_refs:
                 try:
                     yf = str(ref.get("path") or "")
                     full_path = yf
                     if not os.path.exists(full_path):
+                        dry_run_blocked.append({
+                            "module": ref.get("module") or "",
+                            "file": ref.get("file") or os.path.basename(full_path),
+                            "path": full_path,
+                            "reason": "YAML 文件不存在，未创建 Runner 任务",
+                        })
                         continue
                     mod = ref.get("module") or _task_dir_for_path(full_path)[0]
                     fn = ref.get("file") or os.path.basename(full_path)
+                    dry = _agent_yaml_dry_run_for_ref(run, {**ref, "module": mod, "file": fn, "path": full_path})
+                    dry_compact = _compact_yaml_dry_run_result(dry)
+                    dry_row = {"module": mod, "file": fn, "path": full_path, **dry_compact}
+                    dry_run_results.append(dry_row)
+                    if not dry_compact.get("ok"):
+                        dry_run_blocked.append({
+                            "module": mod,
+                            "file": fn,
+                            "path": full_path,
+                            "reason": "Runner 下发前 dry-run 未通过",
+                            "errors": list(dry_compact.get("errors") or [])[:8],
+                        })
+                        continue
                     task_names = _agent_yaml_task_names_for_runner(full_path)
                     target_task_name = task_names[0] if len(task_names) == 1 else ""
                     job = job_service.create_job({
@@ -7747,18 +7814,35 @@ def _tool_run_sonic(run):
                     })
                     if job and job.get("job_id"):
                         job_ids.append(job["job_id"])
-                except Exception:
-                    pass
+                except Exception as exc:
+                    dry_run_blocked.append({
+                        "module": ref.get("module") or "",
+                        "file": ref.get("file") or os.path.basename(str(ref.get("path") or "")),
+                        "path": str(ref.get("path") or ""),
+                        "reason": f"创建 Runner 任务前异常：{str(exc)[:180]}",
+                    })
 
-            summary_parts = [f"Runner 调试模式：创建 {len(job_ids)} 个本地任务"]
+            dry_run_passed = sum(1 for item in dry_run_results if item.get("ok"))
+            run_artifacts["runnerDryRun"] = {
+                "ok": not dry_run_blocked,
+                "checked": len(dry_run_results),
+                "blockedCount": len(dry_run_blocked),
+                "createdCount": len(job_ids),
+                "results": dry_run_results,
+                "blocked": dry_run_blocked,
+            }
+            summary_parts = [
+                f"Runner 调试模式：dry-run 通过 {dry_run_passed} 个，拦截 {len(dry_run_blocked)} 个，创建 {len(job_ids)} 个本地任务"
+            ]
             run_artifacts["jobIds"] = job_ids
             if not job_ids:
                 call["status"] = "FAILED"
-                call["error"] = "Runner 任务创建失败"
+                call["error"] = "Runner 任务创建失败" if not dry_run_blocked else "Runner 下发前 dry-run 未通过"
                 attach_diagnosis(call, make_diagnosis(
-                    "Runner 任务创建失败",
-                    "已确认 YAML 未能进入本地执行队列。",
-                    ["检查 YAML 文件是否存在", "检查任务目录权限", "确认 Runner 在线后重试"],
+                    "Runner 任务未创建",
+                    "已确认 YAML 未能进入本地执行队列；若 dry-run 已拦截，说明文件在下发前就不满足平台加载要求。",
+                    ["查看 runnerDryRun 拦截原因", "修复 YAML 后再重试", "确认任务目录权限和 Runner 在线"],
+                    blocked=dry_run_blocked[:8],
                 ))
 
         # === 等待本地 Job 执行完成（仅 Runner 模式） ===
@@ -7819,6 +7903,11 @@ def _tool_run_sonic(run):
 
             if wait_result["completed"]:
                 summary_parts.append(f"{len(wait_result['completed'])} 个成功")
+
+        runner_dry_run = run_artifacts.get("runnerDryRun") or {}
+        if runner_dry_run.get("blockedCount") and not call.get("status"):
+            call["status"] = "PARTIAL_FAILED"
+            summary_parts.append(f"{runner_dry_run.get('blockedCount')} 个未下发")
 
         call["status"] = call.get("status") or "SUCCESS"
         call["outputSummary"] = "，".join(summary_parts)

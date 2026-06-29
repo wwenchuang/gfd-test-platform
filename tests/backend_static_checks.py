@@ -201,7 +201,7 @@ def check_yaml_static_validation_and_patterns():
         build_yaml_template_matcher_text,
         select_best_baseline_template,
     )
-    from task_server.services.yaml_service import dry_run_midscene_yaml
+    from task_server.services.yaml_service import dry_run_midscene_yaml, repair_generated_yaml_static_errors
 
     contract = load_yaml_action_contract()
     require("aiTap" in contract.get("allowed_actions", []), "YAML action contract must include real Midscene actions")
@@ -273,6 +273,8 @@ def check_yaml_static_validation_and_patterns():
     require("套模板填槽" in template_text and "不要重新设计结构" in template_text, "YAML template matcher prompt must force template-based generation")
     dry = dry_run_midscene_yaml(valid_yaml)
     require(dry.get("ok") and dry.get("mode") == "mock_dry_run" and dry.get("runnerTouched") is False, "YAML dry-run must validate without touching Runner/device")
+    repair = repair_generated_yaml_static_errors(valid_yaml, max_attempts=0)
+    require(repair.get("ok") and repair.get("dryRun", {}).get("runnerTouched") is False, "YAML static repair must short-circuit valid YAML without touching Runner/device")
     dry_bad = dry_run_midscene_yaml(invalid_yaml)
     require(not dry_bad.get("ok") and dry_bad.get("errors"), "YAML dry-run must return actionable errors for invalid YAML")
 
@@ -1327,7 +1329,9 @@ def main():
     require("def collect_yaml_baseline_library_examples" in yaml_service_source and "build_yaml_library_profile_text" in yaml_service_source and '"yaml_baseline_library_profile"' in yaml_service_source, "YAML generation must scan the full baseline library, not only query-matched examples")
     require("@route_post(\"/api/yaml/dry-run\")" in router_source and "dry_run_midscene_yaml" in router_source, "YAML dry-run API must be exposed for Agent/UI preflight")
     require("validate_yaml_static_executable" in yaml_service_source and '"yamlStaticValidation"' in yaml_service_source and '"execution_level"' in yaml_service_source, "Generated YAML must record static execution levels and validation results")
+    require("def repair_generated_yaml_static_errors" in yaml_service_source and '"yamlStaticRepair"' in yaml_service_source and "只修复 YAML 结构和动作字段" in yaml_service_source, "Generated YAML must run a narrow static repair loop before writing/executing files")
     require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
+    require("def _agent_yaml_dry_run_for_ref" in agent_service_source and '"yamlDryRun"' in agent_service_source and '"runnerDryRun"' in agent_service_source and "Runner 下发前 dry-run 未通过" in agent_service_source, "Agent must dry-run YAML before validation, precheck and Runner job creation")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
@@ -1385,7 +1389,7 @@ def main():
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("_start_agent_worker" in router_source and "target=_execute_agent_steps" not in router_source, "Agent routes must start workers through the duplicate-safe service helper")
-    require("Runner 调试模式：创建" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain single/multi Runner mode instead of suite execution")
+    require("Runner 调试模式：dry-run 通过" in agent_service_source and "创建 {len(job_ids)} 个本地任务" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain dry-run/local Runner mode instead of suite execution")
     require('"runnerId": runner_id' in agent_service_source and '"deviceId": device_id' in agent_service_source and '"deviceStrategy": device_strategy' in agent_service_source, "Agent runs must persist selected Runner/device execution target")
     require('"runnerSelection"' in agent_service_source and "尚未选择执行设备" in agent_service_source and "runner_service.all_online_devices" in agent_service_source, "Agent execution precheck must validate selected/auto Runner devices")
     require('"runner_id": selected_runner_id' in agent_service_source and '"device_id": selected_device_id' in agent_service_source and '"device_strategy": selected_device_strategy' in agent_service_source, "Agent Runner jobs must use the selected Runner/device strategy")

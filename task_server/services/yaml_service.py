@@ -176,6 +176,7 @@ __all__ = [
     "extract_yaml_patterns_from_examples",
     "validate_yaml_static_executable",
     "dry_run_midscene_yaml",
+    "repair_generated_yaml_static_errors",
     "case_to_task_yaml",
     "extract_midscene_tasks",
     "validate_midscene_yaml_executability",
@@ -197,6 +198,7 @@ automatic_baseline_repair_enabled = _lazy("automatic_baseline_repair_enabled", "
 build_cases_payload_from_skills = _lazy("build_cases_payload_from_skills", "task_server.services.ai_skill_service")
 call_dashscope_cases = _lazy("call_dashscope_cases", "task_server.services.ai_skill_service")
 call_dashscope_refine_cases = _lazy("call_dashscope_refine_cases", "task_server.services.ai_skill_service")
+dashscope_chat_content = _lazy("dashscope_chat_content", "task_server.services.ai_skill_service")
 improve_case_coverage = _lazy("improve_case_coverage", "task_server.services.ai_skill_service")
 normalize_requirement_analysis_result = _lazy("normalize_requirement_analysis_result", "task_server.services.ai_skill_service")
 generation_volume_targets = _lazy("generation_volume_targets", "task_server.services.ai_skill_service")
@@ -644,6 +646,8 @@ YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
 YAML_REFERENCE_MAX_EXAMPLES = env_int("YAML_REFERENCE_MAX_EXAMPLES", 6)
 YAML_REFERENCE_MAX_SNIPPET_CHARS = env_int("YAML_REFERENCE_MAX_SNIPPET_CHARS", 2400)
 YAML_GENERATED_ASSERTION_LIMIT = max(1, min(3, env_int("MIDSCENE_GENERATED_ASSERTION_LIMIT", 1)))
+YAML_STATIC_REPAIR_ATTEMPTS = max(0, min(2, env_int("MIDSCENE_YAML_STATIC_REPAIR_ATTEMPTS", 1)))
+YAML_STATIC_REPAIR_TIMEOUT_SECONDS = max(30, env_int("MIDSCENE_YAML_STATIC_REPAIR_TIMEOUT_SECONDS", 90))
 YAML_REFERENCE_MEMORY_FILE = os.path.join(LEARNING_DIR, "yaml-reference-memory.json")
 YAML_REFERENCE_STOPWORDS = {
     "测试", "验证", "页面", "功能", "需求", "用例", "执行", "当前", "进行", "是否", "可以", "需要",
@@ -3595,6 +3599,129 @@ def dry_run_midscene_yaml(yaml_text: str = "", *, module: str = "", file: str = 
     }
 
 
+def _yaml_static_repair_prompt(yaml_text, dry_run, *, title="", module="", file="", app_package=""):
+    errors = dry_run.get("errors") or []
+    warnings = dry_run.get("warnings") or []
+    return f"""你是 Midscene YAML 静态可执行修复助手。只修复 YAML 结构和动作字段，不新增测试用例、不扩写步骤、不补业务断言。
+
+要求：
+1. 保持原有 task 数量、task 名称、业务路径和页面语义。
+2. 只修复会导致解析/Runner 加载失败的问题，例如 YAML 顶层结构、android.tasks/ios.tasks、flow 数组、动作字段为空、不支持动作、同一步多个动作、明显缺失包名启动保护。
+3. 不要引入现有 YAML 中没有的复杂动作；优先保持 aiWaitFor、aiTap、aiInput、aiAssert、runAdbShell、sleep、launch 等常见写法。
+4. 输出必须是 JSON 对象，字段为 analysis、changes、content；content 必须是完整 YAML 字符串。
+
+上下文：
+- 标题：{title or ""}
+- 模块：{module or ""}
+- 文件：{file or ""}
+- App 包名：{app_package or ""}
+- dry-run 错误：{json.dumps(errors[:12], ensure_ascii=False)}
+- dry-run 警告：{json.dumps(warnings[:8], ensure_ascii=False)}
+
+当前 YAML：
+```yaml
+{str(yaml_text or "")[:24000]}
+```
+"""
+
+
+def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file="", app_package="", max_attempts=None):
+    """Repair generated YAML only enough to pass static/dry-run checks.
+
+    This is intentionally narrow: it is not a coverage optimizer and must not add
+    new scenarios. The goal is to keep generated YAML from entering Runner when it
+    cannot even be parsed or loaded.
+    """
+    original = str(yaml_text or "")
+    current, guard_changes = normalize_yaml_runtime_guards(original, app_package=app_package)
+    attempts = []
+    if guard_changes:
+        attempts.append({
+            "attempt": 0,
+            "type": "runtime_guard_normalize",
+            "ok": True,
+            "changes": guard_changes[:12],
+        })
+    dry = dry_run_midscene_yaml(current, module=module, file=file, app_package=app_package)
+    if dry.get("ok"):
+        return {
+            "ok": True,
+            "content": current,
+            "changed": current.strip() != original.strip(),
+            "attempts": attempts,
+            "dryRun": dry,
+        }
+
+    attempts.append({
+        "attempt": 0,
+        "type": "dry_run",
+        "ok": False,
+        "errors": list(dry.get("errors") or [])[:12],
+        "warnings": list(dry.get("warnings") or [])[:8],
+    })
+    limit = YAML_STATIC_REPAIR_ATTEMPTS if max_attempts is None else max(0, safe_int(max_attempts, YAML_STATIC_REPAIR_ATTEMPTS))
+    if limit <= 0 or not (dry.get("errors") or []):
+        return {
+            "ok": False,
+            "content": current,
+            "changed": current.strip() != original.strip(),
+            "attempts": attempts,
+            "dryRun": dry,
+        }
+
+    for attempt in range(1, limit + 1):
+        try:
+            prompt = _yaml_static_repair_prompt(
+                current,
+                dry,
+                title=title,
+                module=module,
+                file=file,
+                app_package=app_package,
+            )
+            raw = dashscope_chat_content(
+                prompt,
+                image_assets=[],
+                temperature=0.05,
+                timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
+                json_response=True,
+                respect_global_timeout=False,
+                retry_count=0,
+            )
+            repaired = normalize_yaml_from_model(raw)
+            candidate, candidate_guard_changes = normalize_yaml_runtime_guards(repaired.get("content") or "", app_package=app_package)
+            candidate_dry = dry_run_midscene_yaml(candidate, module=module, file=file, app_package=app_package)
+            attempts.append({
+                "attempt": attempt,
+                "type": "ai_static_repair",
+                "ok": bool(candidate_dry.get("ok")),
+                "analysis": str(repaired.get("analysis") or "")[:500],
+                "changes": list(repaired.get("changes") or [])[:12],
+                "guardChanges": candidate_guard_changes[:12],
+                "errors": list(candidate_dry.get("errors") or [])[:12],
+            })
+            current = candidate
+            dry = candidate_dry
+            if dry.get("ok"):
+                break
+        except Exception as exc:
+            attempts.append({
+                "attempt": attempt,
+                "type": "ai_static_repair",
+                "ok": False,
+                "error": str(exc)[:500],
+            })
+            break
+
+    return {
+        "ok": bool(dry.get("ok")),
+        "content": current,
+        "changed": current.strip() != original.strip(),
+        "attempts": attempts,
+        "dryRun": dry,
+    }
+
+
 def validate_midscene_flow(content: str) -> List[str]:
     """校验 Midscene flow 动作是否合法。"""
     warnings: List[str] = []
@@ -4504,6 +4631,35 @@ def generate_ui_yaml_from_request(d, job_id=None):
         update_generate_job(job_id, progress=85, step="转换 YAML", message="正在按用例拆分生成 Midscene YAML")
     converted_payload = split_automation_ready_cases(payload)
     _, yaml_items = cases_to_separate_midscene_yamls(converted_payload, app_package=app_package, base_file=yaml_file)
+
+    if job_id:
+        update_generate_job(job_id, progress=86, step="修复 YAML", message="正在对生成 YAML 做静态 dry-run 和必要修复")
+    yaml_static_repair_results = []
+    repaired_yaml_items = []
+    for item in yaml_items:
+        repair = repair_generated_yaml_static_errors(
+            item.get("content") or "",
+            title=title,
+            module=module,
+            file=item.get("file") or "",
+            app_package=app_package,
+        )
+        next_item = dict(item)
+        if repair.get("content"):
+            next_item["content"] = repair.get("content")
+        dry = repair.get("dryRun") or {}
+        yaml_static_repair_results.append({
+            "file": item.get("file") or "",
+            "ok": bool(repair.get("ok")),
+            "changed": bool(repair.get("changed")),
+            "attempts": repair.get("attempts") or [],
+            "errors": list(dry.get("errors") or [])[:12],
+            "warnings": list(dry.get("warnings") or [])[:8],
+            "executionLevel": dry.get("executionLevel") or "draft",
+            "taskCount": dry.get("taskCount") or 0,
+        })
+        repaired_yaml_items.append(next_item)
+    yaml_items = repaired_yaml_items
     yaml_file = yaml_items[0]["file"]
     yaml = yaml_items[0]["content"]
     yaml_files = [item["file"] for item in yaml_items]
@@ -4564,6 +4720,15 @@ def generate_ui_yaml_from_request(d, job_id=None):
     }
     review["yaml_smoke_stability"] = yaml_smoke_stability
     review["yaml_static_validation"] = yaml_static_validation
+    review["yaml_static_repair"] = {
+        "enabled": True,
+        "attemptLimit": YAML_STATIC_REPAIR_ATTEMPTS,
+        "file_count": len(yaml_static_repair_results),
+        "repaired_count": sum(1 for item in yaml_static_repair_results if item.get("changed")),
+        "passed_count": sum(1 for item in yaml_static_repair_results if item.get("ok")),
+        "files": yaml_static_repair_results,
+        "rule": "只修复 YAML 结构和动作字段，不新增用例、不补断言、不改业务覆盖。",
+    }
 
     summary = build_generation_summary(
         case_set_id,
@@ -4579,6 +4744,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     summary["yaml_file_count"] = len(yaml_files)
     summary["yaml_smoke_stability"] = yaml_smoke_stability
     summary["yaml_static_validation"] = yaml_static_validation
+    summary["yaml_static_repair"] = review.get("yaml_static_repair")
     if ignored_figma_pages:
         summary["ignored_figma_pages"] = ignored_figma_pages
     ui_design_meta = filtered_case_ui_design_assets_for_summary(case_set_id, summary)
@@ -4650,6 +4816,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "yamlExecutability": yaml_executability,
         "yamlSmokeStability": yaml_smoke_stability,
         "yamlStaticValidation": yaml_static_validation,
+        "yamlStaticRepair": review.get("yaml_static_repair"),
         "summary": summary,
         "summaryFiles": summary_files,
         "job": job,
