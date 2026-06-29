@@ -1028,6 +1028,30 @@ def cancel_agent_run(run_id, reason="用户取消"):
     return run
 
 
+def delete_agent_run(run_id):
+    """Delete a terminal Agent run record from history."""
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return {"ok": False, "status": 400, "error": "Agent Run ID 不能为空"}
+    with AGENT_RUN_LOCK:
+        runs = load_agent_runs()
+        index = next((idx for idx, item in enumerate(runs) if isinstance(item, dict) and item.get("runId") == run_id), -1)
+        if index < 0:
+            return {"ok": False, "status": 404, "error": "Agent Run 不存在"}
+        run = runs[index]
+        status = str(run.get("status") or "").upper()
+        if status not in {"DONE", "FINISH", "FAILED", "CANCELLED"}:
+            return {
+                "ok": False,
+                "status": 409,
+                "error": "运行中或待确认的 Agent 任务不能直接删除，请先取消运行",
+                "run": run,
+            }
+        removed = runs.pop(index)
+        save_agent_runs(runs)
+        return {"ok": True, "deleted": True, "runId": run_id, "run": removed}
+
+
 def _normalize_case_selection_value(value):
     text = str(value or "").replace("\\", "/").strip()
     text = re.sub(r"/+", "/", text)

@@ -578,6 +578,7 @@ function agentRunCardHtml(run, options = {}) {
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
   const status = agentStatusText(run.status);
   const canCancel = !agentRunIsTerminal(run);
+  const canDelete = agentRunIsTerminal(run);
   const pill = agentRunPillClass(run);
   const cardStatus = agentRunCardStatusClass(run);
   const progress = agentRunProgressPct(run);
@@ -602,6 +603,7 @@ function agentRunCardHtml(run, options = {}) {
         <button class="btn-sm" onclick="openAgentRunTrace(${jsArg(run.runId || '')})">查看轨迹</button>
         ${options.confirm ? `<button class="btn-sm success" onclick="openAgentRunTrace(${jsArg(run.runId || '')}, 'dashboard')">处理确认</button>` : ''}
         ${canCancel ? `<button class="btn-sm danger" onclick="cancelAgentRunById(${jsArg(run.runId || '')})">取消运行</button>` : ''}
+        ${canDelete ? `<button class="btn-sm danger" onclick="deleteAgentRunById(${jsArg(run.runId || '')})">删除记录</button>` : ''}
       </div>
     </div>
   `;
@@ -804,6 +806,25 @@ async function cancelAgentRunById(runId) {
     renderAgentPageAfterRunUpdate();
   } catch(e) {
     showToast(e.message || '取消失败', 'error');
+  }
+}
+
+async function deleteAgentRunById(runId) {
+  if (!runId) return;
+  if (!confirm(`确认删除Agent 运行记录 ${runId}？\n删除后只会从运行历史中移除，不会删除已生成的 YAML、报告或脑图文件。`)) return;
+  try {
+    await apiRequest(`/agent-runs/${encodeURIComponent(runId)}`, {
+      method: 'DELETE'
+    });
+    agentRuns = agentRuns.filter(run => run.runId !== runId);
+    if (agentCurrentRun?.runId === runId) {
+      agentCurrentRun = null;
+      AppState.currentAgentRun = null;
+    }
+    showToast('✓ 已删除运行记录', 'success');
+    renderAgentPageAfterRunUpdate();
+  } catch(e) {
+    showToast(e.message || '删除运行记录失败', 'error');
   }
 }
 

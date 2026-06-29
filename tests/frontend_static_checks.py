@@ -223,6 +223,7 @@ def main():
     require("agentRunErrorHtml" in html and "无法加载 Agent 运行记录" in html and "请求超时，请稍后重试" in html, "Agent history refresh must show an error/retry state instead of staying in loading")
     require("agentHistoryRequestSeq" in html and "activeWorkflow !== 'agent_history'" in html and "timeoutMs: 15000" in html, "Agent history refresh must guard stale requests and use a bounded timeout")
     require("async function selectAgentRun" in html and "apiRequest(`/agent-runs/${encodeURIComponent(runId)}`" in html, "Agent history cards must fetch full run detail before showing timeline")
+    require("deleteAgentRunById" in html and "删除记录" in html and "method: 'DELETE'" in html, "Agent terminal run history cards must allow deleting failed/completed records")
     require("agentRunsByCreatedDesc" in html and "agentRunSortTime" in html and "mergeAgentRun" in html, "Agent history updates must keep cards sorted by creation time instead of last update time")
     require("agentRunSelectionSeq" in html and "openAgentRunTrace" in html and "selectionSeq !== agentRunSelectionSeq" in html, "Agent history detail loading must ignore stale click/request races")
     require("renderAgentConfirmPage" in html and "人工确认中心" in html, "Agent confirmation menu must render a dedicated pending-confirmation page")

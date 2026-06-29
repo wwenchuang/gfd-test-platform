@@ -49,6 +49,7 @@ from task_server.services.agent_service import (
     cancel_agent_run,
     confirm_agent_step,
     create_agent_run,
+    delete_agent_run,
     get_available_apps,
     get_agent_run,
     list_agent_runs,
@@ -4085,6 +4086,18 @@ def _require_delete_auth(handler):
     if path.startswith("/api/"):
         return _require_user_auth(handler)
     return False
+
+
+# ── Agent 运行记录删除 ──────────────────────────────────────────────
+
+@route_delete_regex(r"^/api/agent-runs/([^/]+)$")
+def _delete_agent_run(handler, qs, match):
+    if _require_delete_auth(handler):
+        return
+    run_id = urllib.parse.unquote(match.group(1))
+    result = delete_agent_run(run_id)
+    status = int(result.pop("status", 200) or 200)
+    handler._json(result, status)
 
 
 # ── 文件删除 ────────────────────────────────────────────────────────
