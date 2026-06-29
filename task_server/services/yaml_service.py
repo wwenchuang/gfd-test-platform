@@ -118,6 +118,12 @@ from ..storage import (
     write_json_file,
     write_text_file,
 )
+from .yaml_pattern_service import (
+    build_yaml_pattern_contract_text,
+    extract_yaml_patterns_from_examples,
+    summarize_yaml_patterns,
+)
+from .yaml_static_validator import load_yaml_action_contract, validate_yaml_static_executable
 
 __all__ = [
     "yaml_text",
@@ -164,6 +170,8 @@ __all__ = [
     "collect_yaml_reference_examples",
     "build_yaml_reference_examples_text",
     "record_yaml_reference_examples",
+    "extract_yaml_patterns_from_examples",
+    "validate_yaml_static_executable",
     "case_to_task_yaml",
     "extract_midscene_tasks",
     "validate_midscene_yaml_executability",
@@ -843,6 +851,7 @@ def build_yaml_reference_examples_text(examples):
         "【现有 YAML 步骤经验库】",
         "下面片段来自平台已维护的 YAML 用例库。请学习其可执行步骤组织方式、等待策略、入口清理、外部跳转、弹窗处理和断言写法；",
         "只能复用与当前需求相关的动作结构，不要复制无关业务断言，不要把历史模块当成本次需求。",
+        "强约束：生成 YAML 时必须优先仿写这些样例中的动作序列和等待方式；不要自由创造平台未支持 action。",
         "平台约束：过程检查优先写成 aiWaitFor 或普通 ai 步骤；每条 Runner YAML 默认只保留 1 个最终业务 aiAssert，完整覆盖点放到脑图、summary 或 manual_cases。",
         "",
     ]
@@ -4132,6 +4141,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
         module=module,
         limit=YAML_REFERENCE_MAX_EXAMPLES,
     )
+    yaml_action_contract = load_yaml_action_contract()
+    yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=5)
     yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
     if yaml_reference_text:
         stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
@@ -4142,6 +4153,17 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 progress=44,
                 step="检索用例库",
                 message=f"已检索现有 YAML 步骤经验 {len(yaml_reference_examples)} 条，生成时参考可执行写法：{names}",
+            )
+    yaml_pattern_contract_text = build_yaml_pattern_contract_text(yaml_baseline_patterns, yaml_action_contract)
+    if yaml_pattern_contract_text:
+        stage1_text_assets = list(stage1_text_assets) + [yaml_pattern_contract_text]
+        if job_id:
+            pattern_names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_baseline_patterns[:3])
+            update_generate_job(
+                job_id,
+                progress=44,
+                step="抽取基线模式",
+                message=f"已抽取 {len(yaml_baseline_patterns)} 个可执行基线模式，限制模型按白名单动作仿写：{pattern_names}",
             )
     smoke_policy_text = build_executable_smoke_yaml_policy_text()
     stage1_text_assets = list(stage1_text_assets) + [smoke_policy_text]
@@ -4219,6 +4241,26 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "example_count": len(yaml_reference_examples),
             "memory_path": memory_path,
             "rule": "生成 YAML 前检索现有用例库，学习可执行步骤组织方式；只复用相关动作结构，不复制无关业务断言。",
+        }
+    if yaml_baseline_patterns:
+        review["yaml_pattern_contract"] = {
+            "enabled": True,
+            "pattern_count": len(yaml_baseline_patterns),
+            "summary": summarize_yaml_patterns(yaml_baseline_patterns),
+            "allowed_actions": yaml_action_contract.get("allowed_actions") or [],
+            "patterns": [
+                {
+                    "title": item.get("title"),
+                    "module": item.get("module"),
+                    "file": item.get("file"),
+                    "score": item.get("score"),
+                    "matched_terms": item.get("matched_terms") or [],
+                    "actions": item.get("actions") or [],
+                    "sample_labels": item.get("sample_labels") or [],
+                }
+                for item in yaml_baseline_patterns[:5]
+            ],
+            "rule": "AI 只能按相似基线动作模式做业务变量替换和少量步骤微调，禁止自由创造 Runner 不支持的 action。",
         }
     review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
     if prepared_figma_context:
@@ -4311,6 +4353,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     yaml_checks = []
     yaml_executability_checks = []
     yaml_smoke_stability_checks = []
+    yaml_static_validation_checks = []
     module_dir = safe_join(TASK_DIR, module)
     os.makedirs(module_dir, exist_ok=True)
     for item in yaml_items:
@@ -4318,6 +4361,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         yaml_checks.append({"file": item["file"], **validate_midscene_yaml(item["content"])})
         yaml_executability_checks.append({"file": item["file"], **validate_midscene_yaml_executability(item["content"])})
         yaml_smoke_stability_checks.append({"file": item["file"], **review_generated_yaml_smoke_stability(item["content"])})
+        yaml_static_validation_checks.append({"file": item["file"], **validate_yaml_static_executable(item["content"])})
     yaml_check = {
         "ok": all(item.get("ok") for item in yaml_checks),
         "mode": "split_by_case",
@@ -4340,6 +4384,20 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "warningCount": sum(len(item.get("warnings") or []) for item in yaml_smoke_stability_checks),
         "rule": "Runner 冒烟可执行优先：默认一条最终业务断言，过程使用等待和动作，参考现有 YAML 经验库。",
     }
+    execution_level_counts = {}
+    for item in yaml_static_validation_checks:
+        level = item.get("executionLevel") or "draft"
+        execution_level_counts[level] = execution_level_counts.get(level, 0) + 1
+    yaml_static_validation = {
+        "ok": all(item.get("ok") for item in yaml_static_validation_checks),
+        "mode": "split_by_case",
+        "file_count": len(yaml_items),
+        "files": yaml_static_validation_checks,
+        "errorCount": sum(len(item.get("errors") or []) for item in yaml_static_validation_checks),
+        "warningCount": sum(len(item.get("warnings") or []) for item in yaml_static_validation_checks),
+        "executionLevelCounts": execution_level_counts,
+        "rule": "生成后做动作白名单和静态可执行校验；有静态错误的 YAML 标记为草稿，不进入 Runner 自动执行。",
+    }
     review = converted_payload.setdefault("review", {})
     review["executable_smoke_policy"] = {
         "enabled": True,
@@ -4348,6 +4406,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "rule": "生成 YAML 时优先保证 Runner 冒烟可执行，完整覆盖保留在 mm/summary/manual_cases。",
     }
     review["yaml_smoke_stability"] = yaml_smoke_stability
+    review["yaml_static_validation"] = yaml_static_validation
 
     summary = build_generation_summary(
         case_set_id,
@@ -4362,6 +4421,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     summary["yaml_files"] = yaml_files
     summary["yaml_file_count"] = len(yaml_files)
     summary["yaml_smoke_stability"] = yaml_smoke_stability
+    summary["yaml_static_validation"] = yaml_static_validation
     if ignored_figma_pages:
         summary["ignored_figma_pages"] = ignored_figma_pages
     ui_design_meta = filtered_case_ui_design_assets_for_summary(case_set_id, summary)
@@ -4372,17 +4432,33 @@ def generate_ui_yaml_from_request(d, job_id=None):
     if ui_design_meta.get("excluded_figma_nodes"):
         summary["excluded_figma_nodes"] = ui_design_meta.get("excluded_figma_nodes") or []
     summary_files = write_generation_summary(case_set_id, summary)
+    static_by_file = {item.get("file"): item for item in yaml_static_validation_checks}
     for item in yaml_items:
+        static_check = static_by_file.get(item["file"], {})
         update_task_meta(module, item["file"], {
             "last_case_set_id": case_set_id,
             "last_case_set_title": title,
             "last_generated_at": summary.get("generated_at"),
             "last_case_count": 1,
             "last_manual_case_count": len(converted_payload.get("manual_cases", [])),
+            "execution_level": static_check.get("executionLevel") or "draft",
+            "yaml_static_ok": bool(static_check.get("ok")),
+            "yaml_static_errors": list(static_check.get("errors") or [])[:8],
+            "yaml_static_warnings": list(static_check.get("warnings") or [])[:8],
         })
     jobs = []
+    job_skipped_yaml_files = []
     if create_job:
         for item in yaml_items:
+            static_check = static_by_file.get(item["file"], {})
+            if static_check and not static_check.get("ok"):
+                job_skipped_yaml_files.append({
+                    "file": item["file"],
+                    "executionLevel": static_check.get("executionLevel") or "draft",
+                    "errors": list(static_check.get("errors") or [])[:8],
+                    "reason": "静态可执行校验未通过，已降级为草稿，未创建 Runner 任务。",
+                })
+                continue
             jobs.append(create_pending_job(
                 module,
                 item["file"],
@@ -4416,10 +4492,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "yamlCheck": yaml_check,
         "yamlExecutability": yaml_executability,
         "yamlSmokeStability": yaml_smoke_stability,
+        "yamlStaticValidation": yaml_static_validation,
         "summary": summary,
         "summaryFiles": summary_files,
         "job": job,
-        "jobs": jobs
+        "jobs": jobs,
+        "jobSkippedYamlFiles": job_skipped_yaml_files,
     }
 
 

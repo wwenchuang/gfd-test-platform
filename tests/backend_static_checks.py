@@ -188,6 +188,56 @@ def check_midscene_yaml_validation_is_mapping():
     require(merged and merged[0].get("ok") is True, "Split YAML validation must be mergeable without list-as-mapping errors")
 
 
+def check_yaml_static_validation_and_patterns():
+    from task_server.services.yaml_pattern_service import (
+        build_yaml_pattern_contract_text,
+        extract_yaml_patterns_from_examples,
+    )
+    from task_server.services.yaml_static_validator import (
+        load_yaml_action_contract,
+        validate_yaml_static_executable,
+    )
+
+    contract = load_yaml_action_contract()
+    require("aiTap" in contract.get("allowed_actions", []), "YAML action contract must include real Midscene actions")
+    require("verify" in contract.get("forbidden_actions", []), "YAML action contract must explicitly forbid pseudo actions")
+
+    valid_yaml = """android:
+  tasks:
+    - name: demo
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: 首页加载完成
+        - aiTap: AI建模入口
+        - aiWaitFor: AI建模页打开
+        - aiAssert: AI建模入口可见
+"""
+    valid = validate_yaml_static_executable(valid_yaml)
+    require(valid.get("ok") and valid.get("executionLevel") in ("executable", "needs_review"), "Valid YAML must pass static executable validation")
+
+    invalid_yaml = """android:
+  tasks:
+    - name: bad
+      flow:
+        - verify: 检查是否正常
+"""
+    invalid = validate_yaml_static_executable(invalid_yaml)
+    require(not invalid.get("ok") and "verify" in invalid.get("blockedActions", []), "Pseudo actions must be blocked before Runner execution")
+
+    examples = [{
+        "title": "AI建模入口",
+        "module": "AI测试",
+        "file": "AI测试/入口.yaml",
+        "score": 99,
+        "matched_terms": ["AI建模"],
+        "snippet": valid_yaml,
+    }]
+    patterns = extract_yaml_patterns_from_examples(examples)
+    require(patterns and "aiTap" in patterns[0].get("actions", []), "YAML baseline pattern extractor must capture action sequences")
+    contract_text = build_yaml_pattern_contract_text(patterns, contract)
+    require("禁止生成白名单外 action" in contract_text and "动作序列" in contract_text, "YAML pattern contract must constrain model generation")
+
+
 def check_business_flow_filters_product_metrics():
     from task_server.prompts.builders.business_context_builder import BusinessContextBuilder
     from task_server.services import agent_service
@@ -1165,7 +1215,7 @@ def main():
     require("validate_midscene_yaml_executability(yaml_text)" in agent_service_source, "Agent YAML validation must use the shared executable YAML validator")
     for service_path in (ROOT / "task_server" / "services").glob("*.py"):
         text = service_path.read_text(encoding="utf-8")
-        if service_path.name == "yaml_service.py":
+        if service_path.name in ("yaml_service.py", "yaml_pattern_service.py", "yaml_static_validator.py"):
             continue
         require('parsed.get("tasks")' not in text, f"{service_path.name} must not directly read parsed.tasks; use extract_midscene_tasks")
     require('"/api/sonic/callback-diagnose"' in router_source and "healthReachableFromServer" in router_source, "Backend must expose callback diagnosis for HTTP 000")
@@ -1190,6 +1240,7 @@ def main():
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
     check_midscene_yaml_validation_is_mapping()
+    check_yaml_static_validation_and_patterns()
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
     require("def _agent_generate_yaml_from_ui_pipeline" in agent_service_source and "generate_ui_yaml_from_request" in agent_service_source and '"split_by_case"' in agent_service_source and "ui_yaml_pipeline" in agent_service_source, "Agent new-requirement YAML generation must reuse the full requirement/Figma/YAML pipeline before fallback")
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
@@ -1221,6 +1272,10 @@ def main():
     require("AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in yaml_service_source and 'job_type == "agent_generate_yaml"' in yaml_service_source, "Agent YAML generation must not share the short Runner job timeout")
     require("def refine_cases_with_yaml_visual_batches" in yaml_service_source and "YAML_VISUAL_BATCH_SIZE" in yaml_service_source and "legacy_fallback=False" in yaml_service_source, "YAML visual grounding must run in bounded batches without doubling timeout via legacy fallback")
     require("def build_executable_smoke_yaml_policy_text" in yaml_service_source and "def review_generated_yaml_smoke_stability" in yaml_service_source and '"yamlSmokeStability"' in yaml_service_source, "YAML generation must enforce and report Runner smoke-execution stability")
+    require("yaml_static_validator.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and (ROOT / "task_server" / "config_data" / "yaml_actions.json").exists(), "YAML generation must have a static action contract and validator")
+    require("extract_yaml_patterns_from_examples" in yaml_service_source and "build_yaml_pattern_contract_text" in yaml_service_source and '"yaml_pattern_contract"' in yaml_service_source, "YAML generation must extract baseline executable patterns before prompting")
+    require("validate_yaml_static_executable" in yaml_service_source and '"yamlStaticValidation"' in yaml_service_source and '"execution_level"' in yaml_service_source, "Generated YAML must record static execution levels and validation results")
+    require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")

@@ -1,0 +1,68 @@
+{
+  "allowed_actions": [
+    "ai",
+    "aiAct",
+    "aiAction",
+    "aiAsk",
+    "aiAssert",
+    "aiBoolean",
+    "aiHover",
+    "aiInput",
+    "aiKeyboardPress",
+    "aiNumber",
+    "aiQuery",
+    "aiScroll",
+    "aiString",
+    "aiTap",
+    "aiWaitFor",
+    "javascript",
+    "launch",
+    "recordToReport",
+    "runAdbShell",
+    "runWdaRequest",
+    "sleep",
+    "terminate"
+  ],
+  "required_for_flow": [
+    "aiWaitFor",
+    "aiAssert"
+  ],
+  "transition_actions": [
+    "ai",
+    "aiAct",
+    "aiAction",
+    "aiInput",
+    "aiKeyboardPress",
+    "aiScroll",
+    "aiTap",
+    "launch",
+    "runAdbShell"
+  ],
+  "assertion_actions": [
+    "aiAssert",
+    "aiBoolean",
+    "aiQuery",
+    "aiAsk"
+  ],
+  "wait_actions": [
+    "aiWaitFor",
+    "sleep"
+  ],
+  "forbidden_actions": [
+    "check",
+    "verify",
+    "observe",
+    "ensure",
+    "检查",
+    "确认",
+    "观察",
+    "验证"
+  ],
+  "forbidden_phrases": [
+    "检查是否正常",
+    "确认是否正常",
+    "观察页面",
+    "验证功能正常",
+    "看一下是否正常"
+  ]
+}

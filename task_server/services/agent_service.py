@@ -6372,6 +6372,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "yamlFileCount": len(yaml_file_items),
         "summaryFiles": result.get("summaryFiles"),
         "yamlCheck": result.get("yamlCheck") or {},
+        "yamlStaticValidation": result.get("yamlStaticValidation") or {},
         "yamlExecutability": yaml_executability,
         "review": result.get("review") or {},
         "coverageAudit": result.get("coverageAudit") or {},
