@@ -64,6 +64,8 @@ AGENT_DRAFT_DIR = os.path.join(LEARNING_DIR, "agent-drafts")
 AGENT_CANCEL_DIR = os.path.join(LEARNING_DIR, "agent-cancel")
 AGENT_LEARNING_FILE = os.path.join(LEARNING_DIR, "agent-learning.json")
 AGENT_LEARNING_LOCK = threading.Lock()
+AGENT_ACTIVE_WORKERS = set()
+AGENT_ACTIVE_WORKERS_LOCK = threading.Lock()
 
 AGENT_RUN_STEPS = AGENT_STATE_STEPS
 
@@ -99,6 +101,33 @@ def _agent_run_cancel_requested(run):
         return True
     run_id = str(run.get("runId") or "").strip()
     return bool(run_id and os.path.exists(_agent_cancel_marker_path(run_id)))
+
+
+def _run_agent_steps_guarded(run_id):
+    try:
+        _execute_agent_steps(run_id)
+    finally:
+        with AGENT_ACTIVE_WORKERS_LOCK:
+            AGENT_ACTIVE_WORKERS.discard(str(run_id or ""))
+
+
+def _start_agent_worker(run_id):
+    """Start one background executor per run in the current service process."""
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return False
+    with AGENT_ACTIVE_WORKERS_LOCK:
+        if run_id in AGENT_ACTIVE_WORKERS:
+            return False
+        AGENT_ACTIVE_WORKERS.add(run_id)
+    try:
+        worker = threading.Thread(target=_run_agent_steps_guarded, args=(run_id,), daemon=True)
+        worker.start()
+        return True
+    except Exception:
+        with AGENT_ACTIVE_WORKERS_LOCK:
+            AGENT_ACTIVE_WORKERS.discard(run_id)
+        return False
 
 AGENT_TOOLS = {
     # READ_TOOLS
@@ -709,11 +738,7 @@ def recover_stale_agent_runs(limit=None):
         if changed:
             save_agent_runs(runs)
     for run_id in dict.fromkeys(resume_ids):
-        try:
-            worker = threading.Thread(target=_execute_agent_steps, args=(run_id,), daemon=True)
-            worker.start()
-        except Exception:
-            pass
+        _start_agent_worker(run_id)
     return runs
 
 
@@ -955,8 +980,7 @@ def advance_agent_run(run_id):
         save_agent_runs(runs)
 
     # Start background step execution
-    worker = threading.Thread(target=_execute_agent_steps, args=(run_id,), daemon=True)
-    worker.start()
+    _start_agent_worker(run_id)
     return run
 
 

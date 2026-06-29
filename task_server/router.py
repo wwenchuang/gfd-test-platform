@@ -44,7 +44,7 @@ from task_server.auth import (
 from task_server.response import BodyTooLarge
 
 from task_server.services.agent_service import (
-    _execute_agent_steps,
+    _start_agent_worker,
     advance_agent_run,
     cancel_agent_run,
     confirm_agent_step,
@@ -4020,8 +4020,7 @@ def _post_agent_runs_confirm(handler, qs, match):
         handler._json({"ok": False, "error": result.get("error"), "run": result.get("run")}, 400)
         return
     if result.get("status") == "RUNNING":
-        worker = threading.Thread(target=_execute_agent_steps, args=(run_id,), daemon=True)
-        worker.start()
+        _start_agent_worker(run_id)
     handler._json({"ok": True, "run": result})
 
 

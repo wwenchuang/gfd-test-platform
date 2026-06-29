@@ -916,6 +916,35 @@ def check_agent_history_compacts_uploaded_blobs_after_prepare():
     require(after_size < before_size / 3, "Agent persisted run should shrink substantially after source preparation")
 
 
+def check_agent_worker_start_is_idempotent():
+    from task_server.services import agent_service
+
+    original_thread = agent_service.threading.Thread
+    started = []
+
+    class FakeThread:
+        def __init__(self, target, args=(), daemon=None):
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self):
+            started.append({"target": getattr(self.target, "__name__", ""), "args": self.args, "daemon": self.daemon})
+
+    agent_service.threading.Thread = FakeThread
+    agent_service.AGENT_ACTIVE_WORKERS.clear()
+    try:
+        first = agent_service._start_agent_worker("agent-static-worker")
+        second = agent_service._start_agent_worker("agent-static-worker")
+        other = agent_service._start_agent_worker("agent-static-worker-2")
+    finally:
+        agent_service.threading.Thread = original_thread
+        agent_service.AGENT_ACTIVE_WORKERS.clear()
+
+    require(first is True and second is False and other is True, "Agent worker start must suppress duplicate run executors")
+    require(len(started) == 2, "Agent worker guard must start only one thread per run id")
+
+
 def json_dumps_for_check(value):
     import json
     return json.dumps(value, ensure_ascii=False)
@@ -1125,6 +1154,7 @@ def main():
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
+    check_agent_worker_start_is_idempotent()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
@@ -1133,6 +1163,8 @@ def main():
     require("def _runner_precheck_should_warn_risk" in agent_service_source and "测试机执行的业务风险词只提醒，不阻断" in agent_service_source, "Runner execution precheck must warn on test-machine business risks without blocking debug execution")
     require("def _evaluate_risk_detail" in agent_service_source and '"riskDetail"' in agent_service_source and '"riskSource"' in agent_service_source and '"riskSnippet"' in agent_service_source, "Agent high-risk confirmations must include source and snippet details")
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
+    router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    require("_start_agent_worker" in router_source and "target=_execute_agent_steps" not in router_source, "Agent routes must start workers through the duplicate-safe service helper")
     require("Runner 调试模式：创建" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain single/multi Runner mode instead of suite execution")
     require('"runnerId": runner_id' in agent_service_source and '"deviceId": device_id' in agent_service_source and '"deviceStrategy": device_strategy' in agent_service_source, "Agent runs must persist selected Runner/device execution target")
     require('"runnerSelection"' in agent_service_source and "尚未选择执行设备" in agent_service_source and "runner_service.all_online_devices" in agent_service_source, "Agent execution precheck must validate selected/auto Runner devices")
@@ -1602,7 +1634,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 45})
+    print({"ok": True, "file": str(MODULE), "checks": 46})
 
 
 if __name__ == "__main__":
