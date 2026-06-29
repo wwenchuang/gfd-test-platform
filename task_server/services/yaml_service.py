@@ -861,6 +861,98 @@ def build_yaml_reference_examples_text(examples):
     return "\n".join(lines).strip()
 
 
+def build_executable_smoke_yaml_policy_text():
+    """Explicit generation policy for Runner-first executable YAML."""
+    return "\n".join([
+        "【Runner YAML 可执行优先规则】",
+        "1. 自动化 YAML 的第一目标是能在 Runner 上独立冒烟执行；完整覆盖留在 .mm、summary、manual_cases，不要把所有验收点都塞进一个脚本。",
+        "2. 每个 YAML 文件默认只覆盖一个清晰业务检查点；长流程必须拆成多个 YAML 文件，每个文件自己包含启动、到达入口、核心动作、最终校验和清理。",
+        "3. Figma 只作为 UI 参考，实际 App 可能有文案、顺序和样式差异；断言必须写成语义化结果，不要照抄 Figma 上的长文案、尺寸、坐标或全部元素。",
+        "4. 过程检查优先用 aiWaitFor / aiTap / aiInput / aiAction；aiAssert 默认只保留 1 个最终业务结果，除非明确需要多终态校验。",
+        "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
+        "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
+    ]).strip()
+
+
+def review_generated_yaml_smoke_stability(yaml_text):
+    """Review generated YAML for smoke-execution stability without blocking valid YAML."""
+    check = validate_midscene_yaml_executability(yaml_text)
+    review = {
+        "ok": bool(check.get("ok")),
+        "platform": check.get("platform") or "",
+        "taskCount": int(check.get("taskCount") or 0),
+        "issues": list(check.get("issues") or []),
+        "warnings": [],
+        "assertCount": 0,
+        "waitForCount": 0,
+        "launchGuard": False,
+        "cleanupGuard": False,
+        "taskReviews": [],
+        "rule": "Runner 冒烟可执行优先：单文件单业务检查点，少断言，复用现有 YAML 稳定步骤。",
+    }
+    if _pyyaml is None or not str(yaml_text or "").strip():
+        if _pyyaml is None:
+            review["warnings"].append("服务端未安装 PyYAML，无法做稳定性细查")
+        return review
+    try:
+        parsed = _pyyaml.safe_load(str(yaml_text or ""))
+    except Exception as exc:
+        review["warnings"].append(f"YAML 稳定性审查解析失败：{exc}")
+        return review
+    _platform, tasks = extract_midscene_tasks(parsed)
+    for index, task in enumerate(tasks or [], start=1):
+        if not isinstance(task, dict):
+            continue
+        flow = task.get("flow") if isinstance(task.get("flow"), list) else []
+        task_asserts = 0
+        task_waits = 0
+        long_asserts = []
+        has_launch = False
+        has_cleanup = False
+        action_count = 0
+        for item in flow:
+            if not isinstance(item, dict):
+                continue
+            action_count += len([key for key in item if key in MIDSCENE_FLOW_ACTIONS])
+            if "aiAssert" in item:
+                task_asserts += 1
+                text = str(item.get("aiAssert") or "")
+                if len(text) > 180:
+                    long_asserts.append(text[:80])
+            if "aiWaitFor" in item:
+                task_waits += 1
+            if "launch" in item:
+                has_launch = True
+            shell = str(item.get("runAdbShell") or "")
+            if "force-stop" in shell:
+                has_cleanup = True
+        review["assertCount"] += task_asserts
+        review["waitForCount"] += task_waits
+        review["launchGuard"] = review["launchGuard"] or has_launch
+        review["cleanupGuard"] = review["cleanupGuard"] or has_cleanup
+        item_review = {
+            "name": task.get("name") or f"tasks[{index}]",
+            "assertCount": task_asserts,
+            "waitForCount": task_waits,
+            "actionCount": action_count,
+            "launchGuard": has_launch,
+            "cleanupGuard": has_cleanup,
+            "warnings": [],
+        }
+        if task_asserts > YAML_GENERATED_ASSERTION_LIMIT:
+            item_review["warnings"].append(f"aiAssert 数量 {task_asserts} 超过平台默认 {YAML_GENERATED_ASSERTION_LIMIT} 个，建议保留最终业务断言")
+        if long_asserts:
+            item_review["warnings"].append("存在过长 aiAssert，可能把需求/Figma 文案直接塞进断言")
+        if not has_launch:
+            item_review["warnings"].append("缺少 launch 启动保护，单独执行时可能依赖上一个页面状态")
+        if task_waits == 0:
+            item_review["warnings"].append("缺少 aiWaitFor 等待，页面加载慢时容易失败")
+        review["warnings"].extend(item_review["warnings"])
+        review["taskReviews"].append(item_review)
+    review["stable"] = bool(review["ok"] and not review["warnings"])
+    return review
+
+
 def record_yaml_reference_examples(case_set_id, title, module, examples):
     examples = [item for item in (examples or []) if isinstance(item, dict)]
     if not examples:
@@ -4051,6 +4143,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="检索用例库",
                 message=f"已检索现有 YAML 步骤经验 {len(yaml_reference_examples)} 条，生成时参考可执行写法：{names}",
             )
+    smoke_policy_text = build_executable_smoke_yaml_policy_text()
+    stage1_text_assets = list(stage1_text_assets) + [smoke_policy_text]
     skill_pipeline_error = ""
     if USE_AI_SKILL_PIPELINE:
         try:
@@ -4216,12 +4310,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
     yaml_files = [item["file"] for item in yaml_items]
     yaml_checks = []
     yaml_executability_checks = []
+    yaml_smoke_stability_checks = []
     module_dir = safe_join(TASK_DIR, module)
     os.makedirs(module_dir, exist_ok=True)
     for item in yaml_items:
         write_text_file(safe_join(module_dir, item["file"]), item["content"])
         yaml_checks.append({"file": item["file"], **validate_midscene_yaml(item["content"])})
         yaml_executability_checks.append({"file": item["file"], **validate_midscene_yaml_executability(item["content"])})
+        yaml_smoke_stability_checks.append({"file": item["file"], **review_generated_yaml_smoke_stability(item["content"])})
     yaml_check = {
         "ok": all(item.get("ok") for item in yaml_checks),
         "mode": "split_by_case",
@@ -4235,6 +4331,23 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "files": yaml_executability_checks,
         "taskCount": sum(int(item.get("taskCount") or 0) for item in yaml_executability_checks),
     }
+    yaml_smoke_stability = {
+        "ok": all(item.get("ok") for item in yaml_smoke_stability_checks),
+        "stable": all(item.get("stable") for item in yaml_smoke_stability_checks),
+        "mode": "split_by_case",
+        "file_count": len(yaml_items),
+        "files": yaml_smoke_stability_checks,
+        "warningCount": sum(len(item.get("warnings") or []) for item in yaml_smoke_stability_checks),
+        "rule": "Runner 冒烟可执行优先：默认一条最终业务断言，过程使用等待和动作，参考现有 YAML 经验库。",
+    }
+    review = converted_payload.setdefault("review", {})
+    review["executable_smoke_policy"] = {
+        "enabled": True,
+        "assertion_limit": YAML_GENERATED_ASSERTION_LIMIT,
+        "reference_example_count": len(yaml_reference_examples),
+        "rule": "生成 YAML 时优先保证 Runner 冒烟可执行，完整覆盖保留在 mm/summary/manual_cases。",
+    }
+    review["yaml_smoke_stability"] = yaml_smoke_stability
 
     summary = build_generation_summary(
         case_set_id,
@@ -4248,6 +4361,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     )
     summary["yaml_files"] = yaml_files
     summary["yaml_file_count"] = len(yaml_files)
+    summary["yaml_smoke_stability"] = yaml_smoke_stability
     if ignored_figma_pages:
         summary["ignored_figma_pages"] = ignored_figma_pages
     ui_design_meta = filtered_case_ui_design_assets_for_summary(case_set_id, summary)
@@ -4301,6 +4415,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "knowledgePages": used_reference_pages,
         "yamlCheck": yaml_check,
         "yamlExecutability": yaml_executability,
+        "yamlSmokeStability": yaml_smoke_stability,
         "summary": summary,
         "summaryFiles": summary_files,
         "job": job,

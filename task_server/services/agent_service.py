@@ -8656,6 +8656,199 @@ def _tool_generate_bug_draft(run):
     return call
 
 
+def _agent_repair_drafts_for_rerun(artifacts):
+    """Return de-duplicated repair drafts attached to the current Agent run."""
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    candidates = []
+    if isinstance(artifacts.get("repairDrafts"), list):
+        candidates.extend(item for item in artifacts.get("repairDrafts") if isinstance(item, dict))
+    if isinstance(artifacts.get("repairDraft"), dict):
+        candidates.append(artifacts.get("repairDraft"))
+    result = []
+    seen = set()
+    for item in candidates:
+        key = (
+            item.get("draftId") or item.get("draft_id") or
+            item.get("jobId") or item.get("job_id") or
+            f"{item.get('module')}::{item.get('file')}::{item.get('taskName') or item.get('task_name')}"
+        )
+        key = str(key or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _agent_repair_draft_fixed_yaml(draft):
+    if not isinstance(draft, dict):
+        return ""
+    for key in ("fixedYaml", "fixed_yaml", "optimizedYaml", "optimized_yaml", "yaml", "content"):
+        value = draft.get(key)
+        if isinstance(value, str) and value.strip() and value.strip() != str(draft.get("originalYaml") or "").strip():
+            return value.strip()
+    return ""
+
+
+def _agent_repair_draft_matches_failed_item(draft, item):
+    if not isinstance(draft, dict) or not isinstance(item, dict):
+        return False
+    draft_job_id = str(draft.get("jobId") or draft.get("job_id") or "").strip()
+    item_job_id = _failed_job_id(item)
+    if draft_job_id and item_job_id and draft_job_id == item_job_id:
+        return True
+    draft_file = str(draft.get("file") or "").strip()
+    item_file = str(item.get("file") or "").strip()
+    draft_task = str(draft.get("taskName") or draft.get("task_name") or "").strip()
+    item_task = _failed_job_task_name(item)
+    if draft_file and item_file and draft_file == item_file:
+        return not draft_task or not item_task or draft_task == item_task
+    if draft_task and item_task and draft_task == item_task:
+        return True
+    return False
+
+
+def _agent_find_repair_source(draft, failed_items, jobs):
+    failed_items = [item for item in (failed_items or []) if isinstance(item, dict)]
+    jobs = [item for item in (jobs or []) if isinstance(item, dict)]
+    draft_job_id = str(draft.get("jobId") or draft.get("job_id") or "").strip() if isinstance(draft, dict) else ""
+    source_item = None
+    if draft_job_id:
+        source_item = next((item for item in failed_items if _failed_job_id(item) == draft_job_id), None)
+    if source_item is None:
+        source_item = next((item for item in failed_items if _agent_repair_draft_matches_failed_item(draft, item)), None)
+    source_job_id = draft_job_id or _failed_job_id(source_item or {})
+    source_job = None
+    if source_job_id:
+        source_job = next((job for job in jobs if job.get("job_id") == source_job_id or job.get("jobId") == source_job_id), None)
+    if source_job is None and source_item:
+        source_job = next((
+            job for job in jobs
+            if str(job.get("module") or "") == str(source_item.get("module") or "")
+            and str(job.get("file") or "") == str(source_item.get("file") or "")
+        ), None)
+    return source_item or {}, source_job or {}
+
+
+def _agent_repair_yaml_task_names(yaml_text):
+    if pyyaml is None:
+        return []
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return []
+    return [str(task.get("name") or "").strip() for task in tasks if isinstance(task, dict) and str(task.get("name") or "").strip()]
+
+
+def _agent_prepare_repair_rerun_targets(run, failed_items, jobs):
+    """Materialize usable repair drafts as temporary YAML files for safe rerun."""
+    artifacts = run.setdefault("artifacts", {})
+    repair_summary = artifacts.get("repairSummary") if isinstance(artifacts.get("repairSummary"), dict) else {}
+    drafts = _agent_repair_drafts_for_rerun(artifacts)
+    has_repair_drafts = bool(drafts) or safe_int(repair_summary.get("draftCount"), 0) > 0
+    if not has_repair_drafts:
+        return {"hasRepairDrafts": False, "targets": [], "skipped": []}
+
+    run_slug = clean_id(str(run.get("runId") or unique_millis_id("agent")), "agent")[:48]
+    module = _safe_agent_slug(f"AI_Agent_修复重跑_{run_slug}", "AI_Agent_修复重跑")
+    module_dir = safe_join(TASK_DIR, module)
+    os.makedirs(module_dir, exist_ok=True)
+    targets = []
+    skipped = []
+    used_keys = set()
+
+    for index, draft in enumerate(drafts, start=1):
+        draft_id = str(draft.get("draftId") or draft.get("draft_id") or f"draft-{index}").strip()
+        source_item, source_job = _agent_find_repair_source(draft, failed_items, jobs)
+        if failed_items and not source_item:
+            skipped.append({
+                "draftId": draft_id,
+                "jobId": draft.get("jobId") or draft.get("job_id") or "",
+                "taskName": draft.get("taskName") or draft.get("task_name") or draft.get("file") or "",
+                "status": "not_matched",
+                "reason": "修复草稿未匹配到本次失败任务，未参与重跑",
+            })
+            continue
+        source_job_id = str(
+            draft.get("jobId") or draft.get("job_id") or
+            source_item.get("jobId") or source_item.get("job_id") or
+            source_job.get("job_id") or source_job.get("jobId") or ""
+        ).strip()
+        key = source_job_id or f"{draft.get('file')}::{draft.get('taskName') or draft.get('task_name')}::{draft_id}"
+        if key in used_keys:
+            continue
+        used_keys.add(key)
+        fixed_yaml = _agent_repair_draft_fixed_yaml(draft)
+        if not fixed_yaml:
+            skipped.append({
+                "draftId": draft_id,
+                "jobId": source_job_id,
+                "taskName": draft.get("taskName") or source_item.get("taskName") or draft.get("file") or "",
+                "status": "missing_yaml",
+                "reason": "修复草稿没有可执行 YAML 内容，未重跑旧脚本",
+            })
+            continue
+        validation = draft.get("validation") or draft.get("yamlValidation") or {}
+        if not isinstance(validation, dict) or "ok" not in validation:
+            validation = validate_midscene_yaml_executability(fixed_yaml)
+        if not validation.get("ok"):
+            skipped.append({
+                "draftId": draft_id,
+                "jobId": source_job_id,
+                "taskName": draft.get("taskName") or source_item.get("taskName") or draft.get("file") or "",
+                "status": "invalid_yaml",
+                "reason": "修复 YAML 未通过可执行校验，未重跑旧脚本",
+                "issues": validation.get("issues") or [],
+            })
+            continue
+        source_name = (
+            draft.get("taskName") or draft.get("task_name") or
+            source_item.get("taskName") or source_item.get("file") or
+            draft.get("file") or draft_id or f"repair-{index}"
+        )
+        file_name = clean_filename(f"{index:02d}-{slug_for_file(source_name)}-{clean_id(draft_id, 'repair')[:8]}.yaml")
+        path = safe_join(module_dir, file_name)
+        write_text_file(path, fixed_yaml)
+        task_names = _agent_repair_yaml_task_names(fixed_yaml)
+        targets.append({
+            "draftId": draft_id,
+            "sourceJobId": source_job_id,
+            "sourceModule": source_item.get("module") or source_job.get("module") or draft.get("module") or "",
+            "sourceFile": source_item.get("file") or source_job.get("file") or draft.get("file") or "",
+            "sourceTaskName": source_item.get("taskName") or source_job.get("target_task_name") or draft.get("taskName") or draft.get("task_name") or "",
+            "module": module,
+            "file": file_name,
+            "path": path,
+            "taskNames": task_names,
+            "validation": validation,
+            "sourceItem": source_item,
+            "sourceJob": source_job,
+            "failureReason": source_item.get("failureReason") or source_item.get("error") or draft.get("analysis") or "",
+        })
+
+    artifacts["rerunRepairYamlRefs"] = [
+        {
+            "draftId": item.get("draftId"),
+            "sourceJobId": item.get("sourceJobId"),
+            "sourceModule": item.get("sourceModule"),
+            "sourceFile": item.get("sourceFile"),
+            "sourceTaskName": item.get("sourceTaskName"),
+            "module": item.get("module"),
+            "file": item.get("file"),
+            "path": item.get("path"),
+            "taskNames": item.get("taskNames") or [],
+        }
+        for item in targets
+    ]
+    return {
+        "hasRepairDrafts": True,
+        "draftCount": len(drafts),
+        "targets": targets,
+        "skipped": skipped,
+        "module": module,
+    }
+
+
 def _tool_rerun(run):
     """对失败任务重新创建 Runner job，并等待实际执行结果。"""
     call = {
@@ -8679,54 +8872,113 @@ def _tool_rerun(run):
         retry_sources = []
         skipped = []
         jobs = job_service.load_jobs()
-        for jid in job_ids:
-            j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
-            source = source_by_id.get(jid) or {}
-            if j and str(j.get("status", "")).lower() in ("failed", "error", "timeout"):
-                target_task_name = j.get("target_task_name") or j.get("taskName") or j.get("current_task_name") or ""
+        repair_plan = _agent_prepare_repair_rerun_targets(run, failed_items, jobs)
+        uses_repair_draft = bool(repair_plan.get("hasRepairDrafts"))
+        if uses_repair_draft:
+            for target in repair_plan.get("targets") or []:
+                j = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
+                source = target.get("sourceItem") if isinstance(target.get("sourceItem"), dict) else {}
+                source_job_id = target.get("sourceJobId") or source.get("jobId") or j.get("job_id") or ""
                 new_job = job_service.create_pending_job(
-                    j.get("module", ""),
-                    j.get("file", ""),
+                    target.get("module", ""),
+                    target.get("file", ""),
                     auto_optimize=False,
                     max_attempt=safe_int(j.get("max_attempt"), 2),
                     attempt=safe_int(j.get("attempt"), 1) + 1,
-                    parent_job_id=jid,
-                    device_id=j.get("device_id", ""),
+                    parent_job_id=source_job_id,
+                    device_id=j.get("device_id") or run.get("deviceId") or run.get("device_id") or "",
                     runner_id=j.get("target_runner_id") or j.get("runner_id", ""),
                     device_strategy=j.get("device_strategy") or j.get("deviceStrategy") or "",
                     run_mode=j.get("run_mode", "test"),
-                    target_task_name=target_task_name,
+                    target_task_name="",
                 )
                 if new_job and new_job.get("job_id"):
                     retried.append(new_job["job_id"])
                     retry_sources.append({
-                        "sourceJobId": jid,
+                        "source": "repair_draft",
+                        "draftId": target.get("draftId") or "",
+                        "sourceJobId": source_job_id,
                         "newJobId": new_job["job_id"],
-                        "module": j.get("module", ""),
-                        "file": j.get("file", ""),
-                        "targetTaskName": target_task_name,
-                        "failureReason": source.get("failureReason") or source.get("error") or "",
+                        "module": target.get("module", ""),
+                        "file": target.get("file", ""),
+                        "path": target.get("path", ""),
+                        "sourceModule": target.get("sourceModule", ""),
+                        "sourceFile": target.get("sourceFile", ""),
+                        "targetTaskName": target.get("sourceTaskName") or (target.get("taskNames") or [""])[0],
+                        "repairTaskNames": target.get("taskNames") or [],
+                        "failureReason": target.get("failureReason") or source.get("failureReason") or source.get("error") or "",
                         "sourceStatus": j.get("status", ""),
+                        "note": "使用 AI 修复草稿生成的临时 YAML 重跑，未覆盖原始 YAML",
                     })
-            elif j:
+            skipped.extend(repair_plan.get("skipped") or [])
+            covered_source_ids = {item.get("sourceJobId") for item in retry_sources if item.get("sourceJobId")}
+            for item in failed_items:
+                item_id = _failed_job_id(item)
+                if item_id and item_id in covered_source_ids:
+                    continue
+                if any(_agent_repair_draft_matches_failed_item({"jobId": skipped_item.get("jobId"), "file": skipped_item.get("file"), "taskName": skipped_item.get("taskName")}, item) for skipped_item in skipped):
+                    continue
                 skipped.append({
-                    "jobId": jid,
-                    "status": j.get("status", ""),
-                    "taskName": source.get("taskName") or j.get("target_task_name") or j.get("current_task_name") or "",
-                    "reason": "不是失败/超时终态，不创建重跑任务",
+                    "jobId": item_id,
+                    "taskName": _failed_job_task_name(item) or item.get("file") or "",
+                    "status": item.get("status") or "failed",
+                    "reason": "没有可用修复草稿，未重跑旧 YAML",
                 })
-            else:
-                skipped.append({
-                    "jobId": jid,
-                    "status": "not_found",
-                    "taskName": source.get("taskName") or "",
-                    "reason": "原始 job 已不存在",
-                })
+        else:
+            for jid in job_ids:
+                j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
+                source = source_by_id.get(jid) or {}
+                if j and str(j.get("status", "")).lower() in ("failed", "error", "timeout"):
+                    target_task_name = j.get("target_task_name") or j.get("taskName") or j.get("current_task_name") or ""
+                    new_job = job_service.create_pending_job(
+                        j.get("module", ""),
+                        j.get("file", ""),
+                        auto_optimize=False,
+                        max_attempt=safe_int(j.get("max_attempt"), 2),
+                        attempt=safe_int(j.get("attempt"), 1) + 1,
+                        parent_job_id=jid,
+                        device_id=j.get("device_id", ""),
+                        runner_id=j.get("target_runner_id") or j.get("runner_id", ""),
+                        device_strategy=j.get("device_strategy") or j.get("deviceStrategy") or "",
+                        run_mode=j.get("run_mode", "test"),
+                        target_task_name=target_task_name,
+                    )
+                    if new_job and new_job.get("job_id"):
+                        retried.append(new_job["job_id"])
+                        retry_sources.append({
+                            "source": "original_yaml",
+                            "sourceJobId": jid,
+                            "newJobId": new_job["job_id"],
+                            "module": j.get("module", ""),
+                            "file": j.get("file", ""),
+                            "targetTaskName": target_task_name,
+                            "failureReason": source.get("failureReason") or source.get("error") or "",
+                            "sourceStatus": j.get("status", ""),
+                        })
+                elif j:
+                    skipped.append({
+                        "jobId": jid,
+                        "status": j.get("status", ""),
+                        "taskName": source.get("taskName") or j.get("target_task_name") or j.get("current_task_name") or "",
+                        "reason": "不是失败/超时终态，不创建重跑任务",
+                    })
+                else:
+                    skipped.append({
+                        "jobId": jid,
+                        "status": "not_found",
+                        "taskName": source.get("taskName") or "",
+                        "reason": "原始 job 已不存在",
+                    })
         artifacts["retriedJobs"] = retried
         artifacts["rerunSources"] = retry_sources
         artifacts["rerunSkippedJobs"] = skipped
         artifacts["rerunProgress"] = {
             "scope": "failed_tasks",
+            "source": "repair_draft" if uses_repair_draft else "original_yaml",
+            "usesRepairDraft": uses_repair_draft,
+            "repairDraftCount": repair_plan.get("draftCount", 0) if uses_repair_draft else 0,
+            "appliedRepairDraftCount": len(repair_plan.get("targets") or []) if uses_repair_draft else 0,
+            "notRerunOriginalYaml": uses_repair_draft,
             "sourceFailedCount": len(failed_items),
             "targetCount": len(job_ids),
             "createdCount": len(retried),
@@ -8740,14 +8992,21 @@ def _tool_rerun(run):
         call["sourceFailedCount"] = len(failed_items)
         call["targetCount"] = len(job_ids)
         call["skippedCount"] = len(skipped)
-        call["outputSummary"] = f"基于 {len(failed_items)} 个失败任务，创建 {len(retried)} 个重跑任务"
+        call["usesRepairDraft"] = uses_repair_draft
+        call["outputSummary"] = (
+            f"基于 {len(failed_items)} 个失败任务，"
+            f"{'使用修复草稿' if uses_repair_draft else '使用原始 YAML'}创建 {len(retried)} 个重跑任务"
+        )
         if not retried:
-            call["status"] = "SKIPPED" if not retry_sources else "FAILED"
-            call["outputSummary"] = "没有可重跑的失败任务"
+            call["status"] = "FAILED" if uses_repair_draft else ("SKIPPED" if not retry_sources else "FAILED")
+            call["outputSummary"] = (
+                "已有修复草稿但没有可执行 YAML，已阻止重跑原脚本"
+                if uses_repair_draft else "没有可重跑的失败任务"
+            )
             attach_diagnosis(call, make_diagnosis(
                 "没有创建任何重跑任务",
-                "安全重跑没有进入 Runner 执行队列。",
-                ["确认上一步执行任务是否真的失败", "查看 failedExecutionItems 是否包含失败 job", "手动在执行中心选择失败任务重跑"],
+                "安全重跑没有进入 Runner 执行队列；如果已有修复草稿，系统不会再静默重跑旧 YAML。",
+                ["查看 repairSummary 中每条草稿的 AI/YAML 校验结果", "重新生成修复草稿", "必要时人工修正 YAML 后再重跑"],
                 skippedJobs=skipped[:10],
                 failedExecutionItems=failed_items[:10],
             ))
@@ -8770,6 +9029,11 @@ def _tool_rerun(run):
             progress = dict(artifacts.get("jobProgress") or {})
             progress.update({
                 "scope": "failed_tasks",
+                "source": "repair_draft" if uses_repair_draft else "original_yaml",
+                "usesRepairDraft": uses_repair_draft,
+                "repairDraftCount": repair_plan.get("draftCount", 0) if uses_repair_draft else 0,
+                "appliedRepairDraftCount": len(repair_plan.get("targets") or []) if uses_repair_draft else 0,
+                "notRerunOriginalYaml": uses_repair_draft,
                 "sourceFailedCount": len(failed_items),
                 "targetCount": len(job_ids),
                 "createdCount": len(retried),
@@ -8780,6 +9044,8 @@ def _tool_rerun(run):
             })
             artifacts["rerunProgress"] = progress
             summary = f"重跑执行完成：失败任务 {len(failed_items)} 个，创建 {len(retried)} 个，成功 {len(completed)} 个，失败 {len(failed)} 个，超时 {len(timeout_jobs)} 个"
+            if uses_repair_draft:
+                summary += f"；使用修复草稿 {len(repair_plan.get('targets') or [])}/{repair_plan.get('draftCount', 0)} 条，未覆盖失败任务 {len(skipped)} 个"
             call["outputSummary"] = summary
             call["rerunResult"] = artifacts["rerunResult"]
             call["rerunProgress"] = artifacts["rerunProgress"]
@@ -8791,6 +9057,15 @@ def _tool_rerun(run):
                     "这次重跑已经实际下发 Runner，但结果未全部通过。",
                     ["查看重跑 job 报告", "根据失败日志判断脚本/产品/环境问题", "必要时生成修复草稿后再重跑"],
                     failedJobs=(failed + timeout_jobs)[:10],
+                ))
+            elif uses_repair_draft and skipped:
+                call["status"] = "PARTIAL_FAILED"
+                call["error"] = "仅重跑了可用修复草稿，仍有失败任务未覆盖"
+                attach_diagnosis(call, make_diagnosis(
+                    "修复重跑覆盖不完整",
+                    "系统只重跑了有可执行修复 YAML 的失败任务，未静默回退到旧 YAML。",
+                    ["查看跳过的任务", "重新生成缺失任务的修复草稿", "确认是否需要人工处理剩余失败"],
+                    skippedJobs=skipped[:10],
                 ))
             else:
                 call["status"] = "SUCCESS"

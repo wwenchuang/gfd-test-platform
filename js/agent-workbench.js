@@ -1803,18 +1803,25 @@ function renderRerunDetail(step, artifacts) {
   const sources = (artifacts || {}).rerunSources || [];
   const skipped = (artifacts || {}).rerunSkippedJobs || [];
   const progress = (artifacts || {}).rerunProgress || (artifacts || {}).jobProgress || {};
+  const sourceText = progress.usesRepairDraft ? '修复草稿' : (progress.source === 'original_yaml' ? '原始 YAML' : '未记录');
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
+    { label: '重跑来源', value: sourceText },
     { label: '来源失败任务', value: progress.sourceFailedCount ?? sources.length ?? 0 },
     { label: '计划重跑', value: progress.targetCount ?? sources.length ?? 0 },
     { label: '创建重跑任务', value: result.createdCount ?? sources.length ?? 0 },
+    { label: '修复草稿', value: progress.usesRepairDraft ? `${progress.appliedRepairDraftCount || 0}/${progress.repairDraftCount || 0}` : '-' },
     { label: '成功', value: result.completedCount ?? progress.completed ?? 0 },
     { label: '失败', value: result.failedCount ?? progress.failed ?? 0 },
     { label: '超时', value: result.timeoutCount ?? progress.timeout ?? 0 },
   ]);
   html += renderRunTaskDetail(step, {...artifacts, jobProgress: progress, jobResult: result});
   if (sources.length) {
-    html += agentReadableList('重跑映射', sources.slice(0, 15), item => `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(item.sourceJobId || '')} → ${escapeHtml(item.newJobId || '')}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`);
+    html += agentReadableList('重跑映射', sources.slice(0, 15), item => {
+      const repaired = item.source === 'repair_draft' ? ` · 修复文件：${item.module || ''}/${item.file || ''}` : '';
+      const original = item.sourceFile ? `原始：${item.sourceFile}` : (item.sourceJobId || '');
+      return `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(original)} → ${escapeHtml(item.newJobId || '')}${escapeHtml(repaired)}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`;
+    });
   }
   if (skipped.length) {
     html += agentReadableList('跳过的任务', skipped.slice(0, 15), item => `<b>${escapeHtml(item.taskName || item.jobId || '')}</b><span>${escapeHtml(item.status || '')}${item.reason ? ' · ' + escapeHtml(item.reason) : ''}</span>`);

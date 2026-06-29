@@ -467,11 +467,13 @@ def check_generated_yaml_uses_single_final_assertion():
                 "图片建模上传入口、提示文案或空态区域可见",
             ],
         }],
-    })
+    }, app_package="com.kfb.model")
     require(yaml_text.count("aiAssert:") == 1, "Generated YAML must keep one final business assertion by default")
     require('aiAssert: "图片建模上传入口、提示文案或空态区域可见"' in yaml_text, "Generated YAML must keep the final expected business assertion")
     require('aiAssert: "首页 AI建模入口可见"' not in yaml_text, "Generated YAML must not turn every step expected value into aiAssert")
     require(yaml_service.validate_midscene_yaml(yaml_text).get("ok") is True, "Single-assertion generated YAML must remain executable")
+    stability = yaml_service.review_generated_yaml_smoke_stability(yaml_text)
+    require(stability.get("ok") is True and stability.get("assertCount") == 1 and stability.get("launchGuard") is True, "Generated YAML smoke-stability review must inspect assertion density and launch guards")
 
 
 def check_ai_skills_receive_yaml_reference_context():
@@ -1109,6 +1111,7 @@ def main():
     trace_exporter_source = (ROOT / "task_server" / "core" / "debugger" / "trace_exporter.py").read_text(encoding="utf-8")
     snapshot_store_source = (ROOT / "task_server" / "core" / "replay" / "snapshot_store.py").read_text(encoding="utf-8")
     app_js_source = (ROOT / "js" / "app.js").read_text(encoding="utf-8")
+    agent_workbench_source = (ROOT / "js" / "agent-workbench.js").read_text(encoding="utf-8")
     task_page_source = (ROOT / "task-manager.html").read_text(encoding="utf-8")
     execution_js_source = (ROOT / "js" / "execution.js").read_text(encoding="utf-8")
     trace_viewer_source = (ROOT / "trace-viewer.html").read_text(encoding="utf-8")
@@ -1171,6 +1174,8 @@ def main():
     require('"failedTaskCount"' in agent_service_source and '"repairTargetCount"' in agent_service_source and '"draftCount"' in agent_service_source, "Agent repair summary must expose batch scope and draft counts")
     require('"sourceFailedCount"' in agent_service_source and '"targetCount"' in agent_service_source and '"rerunSources"' in agent_service_source, "Agent rerun must expose source failed count, target count, and rerun mappings")
     require('"rerunProgress"' in agent_service_source and '"learningSummary"' in agent_service_source, "Agent rerun and learning steps must persist readable timeline summaries")
+    require("def _agent_prepare_repair_rerun_targets" in agent_service_source and '"usesRepairDraft"' in agent_service_source and '"notRerunOriginalYaml"' in agent_service_source, "Agent safe rerun must materialize repair drafts and avoid silently rerunning old YAML")
+    require("已有修复草稿但没有可执行 YAML" in agent_service_source and "没有可用修复草稿，未重跑旧 YAML" in agent_service_source, "Agent safe rerun must explain missing or invalid repair drafts instead of reporting false success")
     require(
         '"PLAN", "PREPARE_SOURCE", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,
         "Agent step order must prepare source, analyze impact, retrieve cases, then match cases"
@@ -1212,6 +1217,8 @@ def main():
     require("respect_global_timeout=timeout_seconds is None" in ai_skill_service_source and "retry_count=None if timeout_seconds is None else 0" in ai_skill_service_source, "Short visual grounding timeouts must bypass the global long AI timeout")
     require("AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in yaml_service_source and 'job_type == "agent_generate_yaml"' in yaml_service_source, "Agent YAML generation must not share the short Runner job timeout")
     require("def refine_cases_with_yaml_visual_batches" in yaml_service_source and "YAML_VISUAL_BATCH_SIZE" in yaml_service_source and "legacy_fallback=False" in yaml_service_source, "YAML visual grounding must run in bounded batches without doubling timeout via legacy fallback")
+    require("def build_executable_smoke_yaml_policy_text" in yaml_service_source and "def review_generated_yaml_smoke_stability" in yaml_service_source and '"yamlSmokeStability"' in yaml_service_source, "YAML generation must enforce and report Runner smoke-execution stability")
+    require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
     install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
