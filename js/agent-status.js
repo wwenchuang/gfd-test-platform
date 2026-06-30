@@ -214,7 +214,11 @@ function agentArtifactText(tab, run = currentAgentRun()) {
   if (tab === 'cases') return stringifyArtifact(artifacts.matchedCases || artifacts.caseDraft || artifacts.cases || '暂无测试用例产物');
   if (tab === 'quality') return stringifyArtifact(artifacts.qualityReport || '暂无质量检查结果');
   if (tab === 'yaml') return String(artifacts.generatedYaml || artifacts.yamlDraft || artifacts.yaml || '暂无 Midscene YAML');
-  if (tab === 'validation') return stringifyArtifact(artifacts.yamlValidation || artifacts.validation || '暂无 YAML 校验结果');
+  if (tab === 'validation') return stringifyArtifact({
+    yamlValidation: artifacts.yamlValidation || artifacts.validation || '暂无 YAML 校验结果',
+    generatedCaseGroups: artifacts.generatedCaseGroups || artifacts.yamlValidation?.executionGroups || null,
+    runnerExecutionGate: artifacts.runnerExecutionGate || null,
+  });
   if (tab === 'logs') return stringifyArtifact(run.steps || []);
   if (tab === 'failure') return stringifyArtifact({
     analysis: artifacts.failureAnalysis || run.failureAnalysis || run.error || '暂无失败分析',

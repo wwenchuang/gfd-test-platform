@@ -1260,6 +1260,7 @@ def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
         "issues": [],
         "executionGate": executable_score,
     }
+    _sync_agent_generated_case_groups(artifacts)
     return target_path, ""
 
 
@@ -1280,6 +1281,109 @@ def _agent_yaml_validation_state(value=None):
             "results": value,
         }
     return {"ok": True, "issues": [], "results": []}
+
+
+def _agent_execution_level(value):
+    level = str(value or "").strip().lower()
+    return level if level in {"executable", "needs_review", "draft", "manual"} else "draft"
+
+
+def _agent_case_group_item_from_validation(result):
+    result = result if isinstance(result, dict) else {}
+    score = result.get("executableScore") if isinstance(result.get("executableScore"), dict) else {}
+    level = _agent_execution_level(score.get("level") or score.get("executionLevel") or result.get("level") or result.get("executionLevel"))
+    reasons = score.get("reasons")
+    if not isinstance(reasons, list):
+        reasons = list(score.get("errors") or []) + list(score.get("warnings") or [])
+    task_scores = [item for item in (score.get("taskScores") or []) if isinstance(item, dict)]
+    first_task = task_scores[0] if task_scores else {}
+    return {
+        "name": first_task.get("name") or result.get("target_task_name") or result.get("file") or "未命名用例",
+        "module": result.get("module") or "",
+        "file": result.get("file") or "",
+        "path": result.get("path") or "",
+        "ok": bool(result.get("ok", True)),
+        "score": int(score.get("score") or 0),
+        "level": level,
+        "executionLevel": level,
+        "priority": first_task.get("priority") or "",
+        "smokeCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate")),
+        "mainBusinessChain": bool(first_task.get("mainBusinessChain")),
+        "baselineEvidence": bool(score.get("baselineEvidence") or first_task.get("baselineEvidence")),
+        "reasons": [str(item) for item in reasons if str(item or "").strip()][:8],
+    }
+
+
+def _sync_agent_generated_case_groups(artifacts, validation_results=None):
+    """Expose generated YAML as executable / review / draft / manual buckets."""
+    if not isinstance(artifacts, dict):
+        return {}
+    if validation_results is None:
+        validation = artifacts.get("yamlValidation") if isinstance(artifacts.get("yamlValidation"), dict) else {}
+        validation_results = validation.get("results") or []
+    groups = {
+        "executable_cases": [],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+    }
+    for result in validation_results or []:
+        if not isinstance(result, dict):
+            continue
+        item = _agent_case_group_item_from_validation(result)
+        bucket = {
+            "executable": "executable_cases",
+            "needs_review": "needs_review_cases",
+            "manual": "manual_cases",
+        }.get(item["level"], "draft_cases")
+        groups[bucket].append(item)
+
+    generated_cases = artifacts.get("generatedCases") if isinstance(artifacts.get("generatedCases"), dict) else {}
+    existing_manual = generated_cases.get("manual_cases") or generated_cases.get("manualCases") or []
+    seen_manual = {
+        str(item.get("name") or item.get("title") or item.get("file") or item)[:180]
+        for item in groups["manual_cases"]
+        if isinstance(item, dict)
+    }
+    for case in existing_manual if isinstance(existing_manual, list) else []:
+        if isinstance(case, dict):
+            label = str(case.get("name") or case.get("title") or case.get("case_name") or "人工用例").strip()
+            reasons = case.get("reasons") if isinstance(case.get("reasons"), list) else [str(case.get("reason") or "需要人工判断")]
+            item = {
+                **case,
+                "name": label,
+                "level": "manual",
+                "executionLevel": "manual",
+                "score": int(case.get("score") or 0),
+                "reasons": reasons,
+            }
+        else:
+            label = str(case or "人工用例").strip()
+            item = {"name": label, "level": "manual", "executionLevel": "manual", "score": 0, "reasons": ["需要人工判断"]}
+        key = label[:180]
+        if key and key not in seen_manual:
+            groups["manual_cases"].append(item)
+            seen_manual.add(key)
+
+    grouped = {
+        **groups,
+        "counts": {
+            "executable": len(groups["executable_cases"]),
+            "needs_review": len(groups["needs_review_cases"]),
+            "draft": len(groups["draft_cases"]),
+            "manual": len(groups["manual_cases"]),
+        },
+        "rule": "只有 executable_cases 允许自动下发 Runner；needs_review/draft/manual 只展示或人工处理。",
+    }
+    artifacts["generatedCaseGroups"] = grouped
+    if isinstance(generated_cases, dict):
+        generated_cases.update(groups)
+        generated_cases["execution_level_counts"] = grouped["counts"]
+        artifacts["generatedCases"] = generated_cases
+    validation = artifacts.get("yamlValidation")
+    if isinstance(validation, dict):
+        validation["executionGroups"] = grouped
+    return grouped
 
 
 def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="", reason="auto_confirmed_yaml"):
@@ -1311,6 +1415,7 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
             "autoConfirmedFallback": bool(reason and "fallback" in reason),
             "confirmReason": reason,
         }
+        _sync_agent_generated_case_groups(artifacts)
         return artifacts.get("yamlRefs") or [], ""
 
     module = clean_agent_module_name(run)
@@ -1383,9 +1488,11 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
             "executableCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
             "needsReviewCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
             "draftCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
+            "manualCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "manual"),
             "results": results,
         },
     }
+    _sync_agent_generated_case_groups(artifacts, results)
     return refs, ""
 
 
@@ -1445,8 +1552,10 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             "executableCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
             "needsReviewCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
             "draftCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
+            "manualCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "manual"),
         },
     }
+    _sync_agent_generated_case_groups(artifacts, results)
     return refs, "" if not issues else "；".join(issues)
 
 
@@ -2162,6 +2271,30 @@ def _agent_job_failure_reasons(jobs, limit=5):
         if len(reasons) >= limit:
             break
     return reasons
+
+
+def _agent_smoke_failure_bucket(failure_reasons, dry_run_blocked=None):
+    text = "\n".join(
+        [
+            str(item.get("failureType") or "") + " " + str(item.get("reason") or "")
+            for item in (failure_reasons or [])
+            if isinstance(item, dict)
+        ] + [
+            str(item.get("reason") or "") + " " + " ".join(str(err) for err in (item.get("errors") or []))
+            for item in (dry_run_blocked or [])
+            if isinstance(item, dict)
+        ]
+    )
+    lowered = text.lower()
+    if "执行等级" in text or "executable" in lowered or "dry-run" in lowered or "yaml" in lowered:
+        return "YAML 可执行性不足"
+    if "failed to locate" in lowered or "元素定位" in text or "找不到" in text or "未找到" in text or "locate element" in lowered:
+        return "元素定位失败"
+    if "页面状态" in text or "页面" in text and ("不匹配" in text or "未出现" in text or "超时" in text) or "waitfor timeout" in lowered or "assertion failed" in lowered:
+        return "页面状态不匹配"
+    if text.strip():
+        return "Runner 失败"
+    return "Runner 失败"
 
 
 def _ai_gateway_available():
@@ -3811,7 +3944,8 @@ def _agent_is_generated_yaml_run(run):
 def _score_agent_yaml_ref_for_execution(run, ref):
     content = _yaml_ref_content(ref)
     score = score_midscene_yaml_executable(content, generated=_agent_is_generated_yaml_run(run))
-    return {**ref, "executableScore": score, "executionLevel": score.get("executionLevel") or ref.get("executionLevel") or ""}
+    level = score.get("level") or score.get("executionLevel") or ref.get("executionLevel") or ""
+    return {**ref, "executableScore": score, "level": level, "executionLevel": level}
 
 
 def _select_agent_runner_refs(run, refs):
@@ -3832,6 +3966,7 @@ def _select_agent_runner_refs(run, refs):
             "blocked": [],
         }
     scored = [_score_agent_yaml_ref_for_execution(run, ref) for ref in refs]
+    _sync_agent_generated_case_groups(artifacts, scored)
     selected, blocked = rank_executable_yaml_refs(scored, limit=AGENT_GENERATED_RUNNER_SMOKE_LIMIT)
     deferred = [
         item for item in blocked
@@ -3849,6 +3984,7 @@ def _select_agent_runner_refs(run, refs):
         "executableCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
         "needsReviewCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
         "draftCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
+        "manualCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "manual"),
         "results": scored,
         "selected": selected,
         "blocked": blocked,
@@ -6574,6 +6710,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
     }
     artifacts = run.setdefault("artifacts", {})
     artifacts["generatedCases"] = cases_payload
+    if isinstance(result.get("generatedCaseGroups"), dict):
+        artifacts["generatedCaseGroups"] = result.get("generatedCaseGroups")
     artifacts["generationPipeline"] = {
         "source": "ui_yaml_pipeline",
         "caseSetId": result.get("case_set_id"),
@@ -6586,6 +6724,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "yamlCheck": result.get("yamlCheck") or {},
         "yamlStaticValidation": result.get("yamlStaticValidation") or {},
         "yamlExecutability": yaml_executability,
+        "yamlExecutableScores": result.get("yamlExecutableScores") or [],
+        "generatedCaseGroups": result.get("generatedCaseGroups") or {},
         "review": result.get("review") or {},
         "coverageAudit": result.get("coverageAudit") or {},
         "progressJobId": progress_job_id,
@@ -7159,6 +7299,7 @@ def _tool_execution_precheck(run):
                     f"首批可执行 {execution_gate.get('selectedCount', 0)}/{execution_gate.get('totalCount', 0)}；"
                     f"executable {execution_gate.get('executableCount', 0)}，"
                     f"需复核 {execution_gate.get('needsReviewCount', 0)}，草稿 {execution_gate.get('draftCount', 0)}，"
+                    f"人工 {execution_gate.get('manualCount', 0)}，"
                     f"延后 {execution_gate.get('deferredCount', 0)}"
                 ),
                 severity,
@@ -7166,7 +7307,15 @@ def _tool_execution_precheck(run):
 
         dry_results, validation_issues, yaml_ok_count = _agent_yaml_dry_run_rows(run, refs)
         yaml_dry_ok = not validation_issues and bool(refs)
-        artifacts["yamlValidation"] = {"ok": yaml_dry_ok, "issues": validation_issues, "results": dry_results}
+        previous_validation = artifacts.get("yamlValidation") if isinstance(artifacts.get("yamlValidation"), dict) else {}
+        artifacts["yamlValidation"] = {
+            "ok": yaml_dry_ok,
+            "issues": validation_issues,
+            "results": dry_results,
+            "executionGroups": previous_validation.get("executionGroups") or artifacts.get("generatedCaseGroups") or {},
+        }
+        if _agent_is_generated_yaml_run(run):
+            _sync_agent_generated_case_groups(artifacts, dry_results)
         artifacts["yamlDryRun"] = {
             "ok": yaml_dry_ok,
             "checked": len(refs),
@@ -7954,7 +8103,8 @@ def _tool_run_sonic(run):
                     "Agent 生成的 YAML 未达到 executable，未创建 Runner 任务；"
                     f"可执行 {(execution_gate or {}).get('executableCount', 0)} 个，"
                     f"需复核 {(execution_gate or {}).get('needsReviewCount', 0)} 个，"
-                    f"草稿 {(execution_gate or {}).get('draftCount', 0)} 个"
+                    f"草稿 {(execution_gate or {}).get('draftCount', 0)} 个，"
+                    f"人工 {(execution_gate or {}).get('manualCount', 0)} 个"
                 )
                 attach_diagnosis(call, make_diagnosis(
                     "生成 YAML 未通过自动执行准入",
@@ -8127,6 +8277,28 @@ def _tool_run_sonic(run):
             if failure_reasons:
                 run_artifacts["jobFailureReasons"] = failure_reasons
                 run_artifacts["jobResult"]["failureReasons"] = failure_reasons
+
+            if (locals().get("execution_gate") or {}).get("enabled"):
+                smoke_total = len(wait_result["completed"]) + len(wait_result["failed"]) + len(wait_result["timeout"])
+                smoke_failed = len(wait_result["failed"]) + len(wait_result["timeout"])
+                smoke_failure_rate = (smoke_failed / smoke_total) if smoke_total else 0
+                if smoke_total and smoke_failure_rate > 0.5:
+                    gate = run_artifacts.get("runnerExecutionGate") if isinstance(run_artifacts.get("runnerExecutionGate"), dict) else dict(execution_gate or {})
+                    stop_reason = _agent_smoke_failure_bucket(failure_reasons, locals().get("dry_run_blocked", []))
+                    stop_info = {
+                        "enabled": True,
+                        "stopFurtherExecution": True,
+                        "reason": stop_reason,
+                        "smokeExecutedCount": smoke_total,
+                        "smokeFailedCount": smoke_failed,
+                        "smokePassedCount": len(wait_result["completed"]),
+                        "smokeFailureRate": round(smoke_failure_rate, 4),
+                        "rule": "首批 smoke 执行失败率超过 50%，停止后续批量执行。",
+                    }
+                    gate.update(stop_info)
+                    run_artifacts["runnerExecutionGate"] = gate
+                    run_artifacts["runnerSmokeGate"] = stop_info
+                    summary_parts.append(f"首批 smoke 失败率 {int(round(smoke_failure_rate * 100))}%，已停止后续批量执行：{stop_reason}")
 
             if wait_result["timeout"]:
                 call["status"] = "PARTIAL_FAILED"

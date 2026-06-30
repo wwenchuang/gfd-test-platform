@@ -255,6 +255,7 @@ def check_yaml_static_validation_and_patterns():
     require(valid.get("ok") and valid.get("executionLevel") in ("executable", "needs_review"), "Valid YAML must pass static executable validation")
     executable_score = score_midscene_yaml_executable(valid_yaml)
     require(executable_score.get("executionLevel") == "executable" and executable_score.get("score", 0) >= 78, "Generated YAML scorer must allow stable executable smoke YAML")
+    require(executable_score.get("level") == "executable" and isinstance(executable_score.get("reasons"), list), "Generated YAML scorer must expose level and reasons")
 
     invalid_yaml = """android:
   tasks:
@@ -264,6 +265,8 @@ def check_yaml_static_validation_and_patterns():
 """
     invalid = validate_yaml_static_executable(invalid_yaml)
     require(not invalid.get("ok") and "verify" in invalid.get("blockedActions", []), "Pseudo actions must be blocked before Runner execution")
+    invalid_score = score_midscene_yaml_executable(invalid_yaml)
+    require(invalid_score.get("level") == "draft" and invalid_score.get("reasons"), "Unsupported Midscene actions must be downgraded to draft with reasons")
     unstable_yaml = """android:
   tasks:
     - name: unstable
@@ -273,12 +276,37 @@ def check_yaml_static_validation_and_patterns():
 """
     unstable_score = score_midscene_yaml_executable(unstable_yaml)
     require(unstable_score.get("executionLevel") != "executable" and unstable_score.get("warnings"), "Generated YAML scorer must block tap-only unstable YAML")
+    missing_assert_yaml = """android:
+  tasks:
+    - name: missing assertion
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: 首页底部导航已加载
+        - aiTap: AI建模入口
+        - aiWaitFor: AI建模页打开
+"""
+    missing_assert_score = score_midscene_yaml_executable(missing_assert_yaml)
+    require(missing_assert_score.get("executionLevel") == "needs_review" and any("aiAssert" in reason for reason in missing_assert_score.get("reasons", [])), "Missing aiAssert must downgrade generated YAML to needs_review")
+    generic_query_yaml = """android:
+  tasks:
+    - name: generic query
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: 首页底部导航已加载
+        - aiQuery: 页面
+        - aiAssert: AI建模入口可见
+"""
+    generic_query_score = score_midscene_yaml_executable(generic_query_yaml)
+    require(generic_query_score.get("executionLevel") != "executable" and any("aiQuery" in reason for reason in generic_query_score.get("reasons", [])), "Generic aiQuery must downgrade generated YAML")
     selected, blocked = rank_executable_yaml_refs([
-        {"file": "01-stable.yaml", "executableScore": executable_score},
+        {"file": "02-p1.yaml", "executableScore": executable_score},
         {"file": "unstable.yaml", "executableScore": unstable_score},
-        {"file": "02-overflow.yaml", "executableScore": executable_score},
+        {"file": "01-p0-main.yaml", "executableScore": {
+            **executable_score,
+            "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "priority": "P0", "mainBusinessChain": True}],
+        }},
     ], limit=1)
-    require(len(selected) == 1 and selected[0]["file"] == "01-stable.yaml" and len(blocked) == 2, "Runner gate must select executable smoke subset and explain blocked YAML")
+    require(len(selected) == 1 and selected[0]["file"] == "01-p0-main.yaml" and len(blocked) == 2, "Runner gate must prioritize P0 main-chain executable smoke subset and explain blocked YAML")
 
     examples = [{
         "title": "AI建模入口",

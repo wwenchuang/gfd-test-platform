@@ -1554,6 +1554,79 @@ function renderAgentQualityArtifact(run) {
   return html;
 }
 
+function agentGeneratedCaseGroups(artifacts = {}) {
+  const direct = artifacts.generatedCaseGroups || {};
+  const validation = artifacts.yamlValidation || {};
+  const fromValidation = validation.executionGroups || {};
+  const generated = artifacts.generatedCases || {};
+  const pick = key => {
+    const value = direct[key] || fromValidation[key] || generated[key] || [];
+    return Array.isArray(value) ? value : [];
+  };
+  return {
+    executable_cases: pick('executable_cases'),
+    needs_review_cases: pick('needs_review_cases'),
+    draft_cases: pick('draft_cases'),
+    manual_cases: pick('manual_cases'),
+  };
+}
+
+function renderGeneratedExecutionLevelSummary(artifacts = {}) {
+  const groups = agentGeneratedCaseGroups(artifacts);
+  const labels = [
+    ['executable_cases', '可执行', '可自动进入 Runner 首批冒烟'],
+    ['needs_review_cases', '需确认', '需要人工看原因后再决定是否执行'],
+    ['draft_cases', '草稿', '只是测试设计或 YAML 草稿，不自动执行'],
+    ['manual_cases', '人工', '需要人工检查或不适合自动化'],
+  ];
+  const total = labels.reduce((sum, [key]) => sum + groups[key].length, 0);
+  if (!total) return '';
+  const listHtml = labels.map(([key, label, desc]) => {
+    const rows = groups[key] || [];
+    return `
+      <section class="final-report-panel">
+        <strong>${label} ${rows.length}</strong>
+        <p>${desc}</p>
+        ${rows.length ? `<div class="final-report-file-list compact">${rows.slice(0, 6).map(item => {
+          const name = item.name || item.file || item.title || item.case_name || '未命名用例';
+          const score = item.score || item.executableScore?.score || 0;
+          const reason = Array.isArray(item.reasons) ? item.reasons[0] : (item.reason || '');
+          return `<span><b>${escapeHtml(name)}</b><em>${score ? `评分 ${escapeHtml(score)}` : escapeHtml(item.executionLevel || item.level || label)}${reason ? ` · ${escapeHtml(reason)}` : ''}</em></span>`;
+        }).join('')}</div>${rows.length > 6 ? `<p>还有 ${escapeHtml(rows.length - 6)} 条未展开。</p>` : ''}` : '<p>暂无。</p>'}
+      </section>
+    `;
+  }).join('');
+  return `
+    <section class="final-report-panel final-report-wide generated-execution-levels">
+      <strong>生成结果执行分层</strong>
+      <p>平台只会把“可执行”里的首批冒烟用例下发 Runner；其他结果保留给人工复核、补充或后续扩展。</p>
+      <div class="report-summary-grid final-report-metrics">
+        ${labels.map(([key, label]) => `<div><span>${label}</span><strong>${escapeHtml(groups[key].length)}</strong></div>`).join('')}
+      </div>
+      <div class="final-report-layout">${listHtml}</div>
+    </section>
+  `;
+}
+
+function renderRunnerExecutionGateSummary(artifacts = {}) {
+  const gate = artifacts.runnerExecutionGate || artifacts.runnerSmokeGate || {};
+  if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
+  const stop = gate.stopFurtherExecution ? `已停止后续批量执行：${gate.reason || '首批 smoke 失败率过高'}` : '首批冒烟准入已启用';
+  return `
+    <section class="final-report-panel final-report-wide">
+      <strong>Runner 自动执行准入</strong>
+      <p>${escapeHtml(stop)}</p>
+      <div class="report-summary-grid final-report-metrics">
+        <div><span>首批上限</span><strong>${escapeHtml(gate.limit ?? '-')}</strong></div>
+        <div><span>已选择</span><strong>${escapeHtml(gate.selectedCount ?? gate.smokeExecutedCount ?? 0)}</strong></div>
+        <div><span>已延后</span><strong>${escapeHtml(gate.deferredCount ?? 0)}</strong></div>
+        <div><span>被拦截</span><strong>${escapeHtml(gate.blockingCount ?? gate.blockedCount ?? 0)}</strong></div>
+      </div>
+      ${gate.smokeFailureRate ? `<p>首批失败率：${escapeHtml(Math.round(Number(gate.smokeFailureRate || 0) * 100))}%</p>` : ''}
+    </section>
+  `;
+}
+
 function renderAgentSummaryArtifact(run) {
   const artifacts = (run && run.artifacts) || {};
   const summary = artifacts.summary || {};
@@ -1597,6 +1670,8 @@ function renderAgentSummaryArtifact(run) {
         <div><span>HTML 报告</span><strong>${escapeHtml(reports.length || summary.reportCount || 0)}</strong></div>
         <div><span>失败/超时</span><strong>${escapeHtml((failedJobs.length || summary.failedJobCount || 0) + (timeoutJobs.length || summary.timeoutJobCount || 0))}</strong></div>
       </div>
+      ${renderGeneratedExecutionLevelSummary(artifacts)}
+      ${renderRunnerExecutionGateSummary(artifacts)}
       <div class="final-report-layout">
         <section class="final-report-panel">
           <strong>执行概览</strong>
@@ -1705,6 +1780,8 @@ function renderGenerateYamlDetail(step, artifacts) {
   if ((artifacts || {}).qualityReport) {
     html += renderAgentQualityArtifact({artifacts});
   }
+  html += renderGeneratedExecutionLevelSummary(artifacts || {});
+  html += renderRunnerExecutionGateSummary(artifacts || {});
   if (pipeline.error) {
     html += `<section class="agent-readable-panel"><strong>主链错误</strong><p>${escapeHtml(pipeline.error)}</p></section>`;
   }

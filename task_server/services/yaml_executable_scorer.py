@@ -17,7 +17,18 @@ TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
 WAIT_ACTIONS = {"aiWaitFor", "sleep"}
 START_GUARD_WORDS = ("首页", "入口", "已加载", "加载完成", "底部导航", "AI建模", "模型库", "课程", "我的")
 SMOKE_WORDS = ("冒烟", "P0", "P1", "入口", "主流程", "核心", "基础", "跳转", "展示")
-VAGUE_PHRASES = ("检查是否正常", "确认是否正常", "页面正常", "功能正常", "验证功能正常")
+MAIN_CHAIN_WORDS = ("主流程", "主链", "核心", "入口", "开始创作", "AI建模", "图片建模", "文字建模", "语音创作", "生成模型")
+VAGUE_PHRASES = (
+    "检查是否正常", "确认是否正常", "页面正常", "功能正常", "验证功能正常",
+    "验证页面正确", "检查页面正确", "页面正确", "结果正常", "状态正常",
+)
+GENERIC_QUERY_WORDS = ("页面", "按钮", "元素", "内容", "状态", "结果", "区域", "入口")
+MANUAL_HINT_WORDS = (
+    "人工", "手工", "manual", "肉眼", "视觉还原", "设计稿一致", "UI一致",
+    "真实支付", "真实扣费", "后台造数", "线下确认", "外部人工",
+)
+BASELINE_HINT_RE = re.compile(r"(baseline\.|基线|matched\s*baseline|from\s*baseline|参考样例)", re.I)
+PRIORITY_RE = re.compile(r"\b(P[0-3])\b", re.I)
 
 
 def _extract_tasks(parsed: Any) -> Tuple[str, List[Any]]:
@@ -83,6 +94,44 @@ def _task_smoke_candidate(task: Dict[str, Any]) -> bool:
     return any(word in text for word in SMOKE_WORDS)
 
 
+def _task_priority(task: Dict[str, Any], fallback_text: str = "") -> str:
+    blob = " ".join([
+        str(task.get("priority") or ""),
+        str(task.get("name") or ""),
+        str(task.get("tags") or ""),
+        fallback_text,
+    ])
+    match = PRIORITY_RE.search(blob)
+    return match.group(1).upper() if match else ""
+
+
+def _has_main_chain_signal(task: Dict[str, Any]) -> bool:
+    text = str(task.get("name") or "") + " " + " ".join(_step_text(step) for step in task.get("flow") or [])
+    return any(word in text for word in MAIN_CHAIN_WORDS)
+
+
+def _manual_hint(task: Dict[str, Any]) -> bool:
+    text = " ".join([
+        str(task.get("executionLevel") or ""),
+        str(task.get("level") or ""),
+        str(task.get("type") or ""),
+        str(task.get("name") or ""),
+        str(task.get("reason") or ""),
+        " ".join(_step_text(step) for step in task.get("flow") or []),
+    ]).lower()
+    return any(word.lower() in text for word in MANUAL_HINT_WORDS)
+
+
+def _ai_query_too_generic(text: str) -> bool:
+    query = re.sub(r"\s+", "", str(text or ""))
+    if len(query) < 6:
+        return True
+    if any(phrase in query for phrase in VAGUE_PHRASES):
+        return True
+    compact = re.sub(r"[，。！？、,.!?;；:：\"'“”‘’（）()【】\[\]\s]", "", query)
+    return compact in GENERIC_QUERY_WORDS
+
+
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
     """Score whether YAML is safe enough to auto-send to Runner.
 
@@ -95,12 +144,15 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         "ok": False,
         "score": 0,
         "executionLevel": "draft",
+        "level": "draft",
         "platform": "",
         "taskCount": 0,
         "errors": [],
         "warnings": [],
+        "reasons": [],
         "taskScores": [],
         "smokeCandidate": False,
+        "baselineEvidence": bool(BASELINE_HINT_RE.search(text)),
         "rule": "Agent 自动生成 YAML 只有达到 executable 才会下发 Runner；needs_review/draft 留作人工确认或后续扩展。",
     }
     if not text.strip():
@@ -131,12 +183,16 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         score = 100
         errors: List[str] = []
         warnings: List[str] = []
+        task_text = ""
+        baseline_evidence = bool(result["baselineEvidence"])
         if not isinstance(task, dict):
             errors.append("任务不是对象")
             score = 0
             flow = []
         else:
             flow = task.get("flow") if isinstance(task.get("flow"), list) else []
+            task_text = str(task.get("name") or "") + " " + " ".join(_step_text(step) for step in flow)
+            baseline_evidence = baseline_evidence or bool(BASELINE_HINT_RE.search(task_text))
             if not task_name:
                 warnings.append("缺少任务名，报告中无法定位用例")
                 score -= 5
@@ -150,6 +206,8 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         unguarded_taps = 0
         missing_followups = 0
         vague_steps = 0
+        generic_queries = 0
+        manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
         if flow and not start_guard:
             warnings.append("缺少稳定起点/启动守卫，可能依赖上一个页面状态")
@@ -166,21 +224,26 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             if "aiAssert" in actions:
                 assert_count += 1
             if any(action in TRANSITION_ACTIONS for action in actions):
-                if "aiTap" in actions and not _has_previous_wait(flow, step_index):
+                if "aiTap" in actions and not (baseline_evidence or _has_previous_wait(flow, step_index)):
                     unguarded_taps += 1
                 if not _has_followup_wait_or_terminal(flow, step_index):
                     missing_followups += 1
             step_text = _step_text(step)
             if any(phrase in step_text for phrase in VAGUE_PHRASES):
                 vague_steps += 1
+            if "aiQuery" in actions and _ai_query_too_generic(step_text):
+                generic_queries += 1
         if action_count < 3:
             warnings.append("步骤过少，无法形成稳定的冒烟路径")
             score -= 20
         if wait_count == 0:
             warnings.append("缺少 aiWaitFor/sleep 等待，页面加载慢时容易失败")
             score -= 25
+        if assert_count == 0:
+            warnings.append("缺少 aiAssert 明确业务结果，Runner 只能判断流程是否走完")
+            score -= 12
         if unguarded_taps:
-            warnings.append(f"{unguarded_taps} 个 aiTap 前缺少就近 aiWaitFor/sleep")
+            warnings.append(f"{unguarded_taps} 个 aiTap 前缺少就近 aiWaitFor/sleep 或成功基线依据")
             score -= min(35, 12 * unguarded_taps)
         if missing_followups:
             warnings.append(f"{missing_followups} 个交互动作后缺少等待或终态判断")
@@ -191,22 +254,34 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if vague_steps:
             warnings.append(f"{vague_steps} 个步骤描述过泛")
             score -= min(15, 5 * vague_steps)
+        if generic_queries:
+            warnings.append(f"{generic_queries} 个 aiQuery 过短或过泛，容易定位不到真实元素")
+            score -= min(20, 10 * generic_queries)
         if len(flow) > 36:
             warnings.append("单条用例步骤过长，建议拆分后执行")
             score -= 15
 
         score = max(0, min(100, score))
         level = "draft" if errors or score < 55 else ("needs_review" if score < 78 or warnings else "executable")
+        if manual_hint and not errors and level != "executable":
+            level = "manual"
+        reasons = errors + warnings
         task_score = {
             "name": task_name,
             "score": score,
             "executionLevel": level,
+            "level": level,
+            "reasons": reasons,
             "errors": errors,
             "warnings": warnings,
             "actionCount": action_count,
             "waitCount": wait_count,
             "assertCount": assert_count,
             "startGuard": start_guard,
+            "baselineEvidence": baseline_evidence,
+            "priority": _task_priority(task, task_text) if isinstance(task, dict) else "",
+            "mainBusinessChain": _has_main_chain_signal(task) if isinstance(task, dict) else False,
+            "manualHint": manual_hint,
             "smokeCandidate": _task_smoke_candidate(task) if isinstance(task, dict) else False,
         }
         task_scores.append(task_score)
@@ -216,6 +291,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
     result["score"] = int(round(total_score / max(1, len(task_scores))))
     result["errors"] = [f"{item['name']}: {err}" for item in task_scores for err in item.get("errors") or []]
     result["warnings"] = [f"{item['name']}: {warn}" for item in task_scores for warn in item.get("warnings") or []]
+    result["reasons"] = result["errors"] + result["warnings"]
     result["smokeCandidate"] = any(item.get("smokeCandidate") for item in task_scores)
     if result["errors"]:
         result["executionLevel"] = "draft"
@@ -223,8 +299,11 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         result["executionLevel"] = "executable"
     elif any(item.get("executionLevel") == "draft" for item in task_scores):
         result["executionLevel"] = "draft"
+    elif all(item.get("executionLevel") == "manual" for item in task_scores):
+        result["executionLevel"] = "manual"
     else:
         result["executionLevel"] = "needs_review"
+    result["level"] = result["executionLevel"]
     result["ok"] = result["executionLevel"] == "executable"
     return result
 
@@ -242,9 +321,23 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
 
     def sort_key(item: dict):
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
-        label = f"{item.get('file') or ''} {item.get('module') or ''}"
-        smoke = bool(score.get("smokeCandidate") or re.search(r"(冒烟|P0|P1|入口|主流程|基础)", label, flags=re.I))
-        return (0 if smoke else 1, -int(score.get("score") or 0), str(item.get("file") or ""))
+        task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+        label = f"{item.get('file') or ''} {item.get('module') or ''} " + " ".join(str(task.get("name") or "") for task in task_scores)
+        priority_text = " ".join([label] + [str(task.get("priority") or "") for task in task_scores])
+        priority_match = PRIORITY_RE.search(priority_text)
+        priority = priority_match.group(1).upper() if priority_match else ""
+        priority_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}.get(priority, 4)
+        main_chain = bool(any(task.get("mainBusinessChain") for task in task_scores) or any(word in label for word in MAIN_CHAIN_WORDS))
+        baseline = bool(score.get("baselineEvidence") or any(task.get("baselineEvidence") for task in task_scores))
+        smoke = bool(score.get("smokeCandidate") or re.search(r"(冒烟|smoke|P0|P1|入口|主流程|基础)", label, flags=re.I))
+        return (
+            priority_rank,
+            0 if main_chain else 1,
+            0 if baseline else 1,
+            0 if smoke else 1,
+            -int(score.get("score") or 0),
+            str(item.get("file") or ""),
+        )
 
     ranked = sorted(executable, key=sort_key)
     limit = max(1, int(limit or 3))

@@ -71,6 +71,8 @@ except Exception:  # pragma: no cover - PyYAML optional
 
 import threading
 
+from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+
 from ..config import (
     ASSET_DIR,
     CASE_DIR,
@@ -5041,6 +5043,50 @@ def generate_ui_yaml_from_request(d, job_id=None):
         summary["excluded_figma_nodes"] = ui_design_meta.get("excluded_figma_nodes") or []
     summary_files = write_generation_summary(case_set_id, summary)
     static_by_file = {item.get("file"): item for item in yaml_static_validation_checks}
+    yaml_executable_scores = []
+    generated_case_groups = {
+        "executable_cases": [],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+    }
+    for item in yaml_items:
+        score = score_midscene_yaml_executable(item.get("content") or "", generated=True)
+        task_scores = [row for row in (score.get("taskScores") or []) if isinstance(row, dict)]
+        first_task = task_scores[0] if task_scores else {}
+        level = str(score.get("level") or score.get("executionLevel") or "draft")
+        row = {
+            "name": first_task.get("name") or item.get("title") or item.get("file"),
+            "file": item.get("file"),
+            "case_id": item.get("case_id"),
+            "score": score.get("score") or 0,
+            "level": level,
+            "executionLevel": level,
+            "priority": first_task.get("priority") or "",
+            "smokeCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate")),
+            "mainBusinessChain": bool(first_task.get("mainBusinessChain")),
+            "baselineEvidence": bool(score.get("baselineEvidence") or first_task.get("baselineEvidence")),
+            "reasons": list(score.get("reasons") or [])[:8],
+        }
+        yaml_executable_scores.append({"file": item.get("file"), **score})
+        bucket = {
+            "executable": "executable_cases",
+            "needs_review": "needs_review_cases",
+            "manual": "manual_cases",
+        }.get(level, "draft_cases")
+        generated_case_groups[bucket].append(row)
+    generated_case_groups["counts"] = {
+        "executable": len(generated_case_groups["executable_cases"]),
+        "needs_review": len(generated_case_groups["needs_review_cases"]),
+        "draft": len(generated_case_groups["draft_cases"]),
+        "manual": len(generated_case_groups["manual_cases"]),
+    }
+    generated_case_groups["rule"] = "只有 executable_cases 允许自动创建 Runner 任务；其他分组只展示或人工处理。"
+    converted_payload["executable_cases"] = generated_case_groups["executable_cases"]
+    converted_payload["needs_review_cases"] = generated_case_groups["needs_review_cases"]
+    converted_payload["draft_cases"] = generated_case_groups["draft_cases"]
+    converted_payload["manual_cases"] = list(converted_payload.get("manual_cases") or []) + generated_case_groups["manual_cases"]
+    converted_payload["execution_level_counts"] = generated_case_groups["counts"]
     for item in yaml_items:
         static_check = static_by_file.get(item["file"], {})
         update_task_meta(module, item["file"], {
@@ -5056,6 +5102,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         })
     jobs = []
     job_skipped_yaml_files = []
+    score_by_file = {item.get("file"): item for item in yaml_executable_scores}
     if create_job:
         for item in yaml_items:
             static_check = static_by_file.get(item["file"], {})
@@ -5065,6 +5112,16 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     "executionLevel": static_check.get("executionLevel") or "draft",
                     "errors": list(static_check.get("errors") or [])[:8],
                     "reason": "静态可执行校验未通过，已降级为草稿，未创建 Runner 任务。",
+                })
+                continue
+            executable_score = score_by_file.get(item["file"], {})
+            if executable_score and executable_score.get("executionLevel") != "executable":
+                job_skipped_yaml_files.append({
+                    "file": item["file"],
+                    "executionLevel": executable_score.get("executionLevel") or executable_score.get("level") or "draft",
+                    "score": executable_score.get("score") or 0,
+                    "reasons": list(executable_score.get("reasons") or [])[:8],
+                    "reason": "YAML 可执行性评分未达到 executable，未创建 Runner 任务。",
                 })
                 continue
             jobs.append(create_pending_job(
@@ -5099,6 +5156,11 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "knowledgePages": used_reference_pages,
         "yamlCheck": yaml_check,
         "yamlExecutability": yaml_executability,
+        "yamlExecutableScores": yaml_executable_scores,
+        "generatedCaseGroups": generated_case_groups,
+        "executable_cases": generated_case_groups["executable_cases"],
+        "needs_review_cases": generated_case_groups["needs_review_cases"],
+        "draft_cases": generated_case_groups["draft_cases"],
         "yamlSmokeStability": yaml_smoke_stability,
         "yamlStaticValidation": yaml_static_validation,
         "yamlStaticRepair": review.get("yaml_static_repair"),
