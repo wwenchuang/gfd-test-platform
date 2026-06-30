@@ -2479,6 +2479,13 @@
     display: grid;
     gap: 14px;
   }
+  .mindmap-center-split {
+    display: grid;
+    grid-template-columns: minmax(320px, .82fr) minmax(520px, 1.18fr);
+    align-items: start;
+    gap: 14px;
+    min-width: 0;
+  }
   .generation-record-section {
     border: 1px solid rgba(51,80,109,.72);
     border-radius: 8px;
@@ -2486,6 +2493,7 @@
     padding: 12px;
     display: grid;
     gap: 10px;
+    min-width: 0;
   }
   .generation-record-section .section-head {
     display: flex;
@@ -2516,6 +2524,9 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: stretch;
     gap: 12px;
+  }
+  .mindmap-center-split .mindmap-compact-list {
+    grid-template-columns: 1fr;
   }
   .mindmap-row {
     border: 1px solid rgba(51,80,109,.68);
@@ -2653,6 +2664,11 @@
     color: var(--text2);
     font-family: var(--sans);
     background: rgba(8,11,18,.32);
+  }
+  @media (max-width: 1180px) {
+    .mindmap-center-split {
+      grid-template-columns: 1fr;
+    }
   }
   @media (max-width: 900px) {
     .mindmap-compact-list {

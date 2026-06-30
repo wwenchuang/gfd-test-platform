@@ -5016,6 +5016,24 @@ def load_generate_job(job_id):
 
 
 
+def delete_generate_job(job_id):
+    path = generate_job_path(job_id)
+    with GENERATE_LOCK:
+        job = read_json_file(path, default=None)
+        if not isinstance(job, dict):
+            return {"ok": False, "deleted": False, "error": "生成任务不存在"}
+        job = expire_generate_job_if_stale(job, persist=False)
+        status = str(job.get("status") or "").strip().lower()
+        if status in {"pending", "running"}:
+            return {"ok": False, "deleted": False, "error": "生成任务仍在执行，请先取消后再删除"}
+        try:
+            os.remove(path)
+            return {"ok": True, "deleted": True, "job": sanitize_generate_job_for_client(job)}
+        except FileNotFoundError:
+            return {"ok": True, "deleted": False, "job": sanitize_generate_job_for_client(job)}
+
+
+
 def generate_job_id():
     return unique_millis_id("gen")
 

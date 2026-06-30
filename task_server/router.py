@@ -183,6 +183,7 @@ from task_server.services.yaml_service import (
     cases_to_separate_midscene_yamls,
     changed_line_count,
     delete_case_ui_design_asset,
+    delete_generate_job,
     dry_run_midscene_yaml,
     filtered_case_ui_design_assets_for_summary,
     find_figma_url_for_case_set,
@@ -2818,6 +2819,22 @@ def _post_generate_jobs_action(handler, qs, path):
         _handle_generate_job_cancel(handler, None, job_id, d)
         return
     handler._json({"ok": False, "error": "未知生成任务操作", "path": path}, 404)
+
+
+@route_delete_prefix("/api/ui/generate-jobs/")
+def _delete_generate_jobs_action(handler, qs, path):
+    prefix = "/api/ui/generate-jobs/"
+    tail = path[len(prefix):] if path.startswith(prefix) else ""
+    parts = [part for part in tail.split("/") if part]
+    job_id = parts[0] if parts else ""
+    if not job_id:
+        handler._json({"ok": False, "error": "job_id 不能为空"}, 400)
+        return
+    result = delete_generate_job(job_id)
+    if not result.get("ok"):
+        handler._json(result, 400 if result.get("error") else 404)
+        return
+    handler._json(result)
 
 
 def _handle_generate_job_retry(handler, m, job_id):

@@ -1332,6 +1332,25 @@ async function cancelGenerateJob(jobId) {
   }
 }
 
+async function deleteGenerateJob(jobId) {
+  if (!jobId) return;
+  if (!confirm(`确认删除后台生成任务记录 ${jobId}？不会删除已经生成的脑图文件或用例产物。`)) return;
+  try {
+    await apiRequest(`/ui/generate-jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' });
+    showToast('✓ 后台生成任务记录已删除', 'success');
+    await loadJobs(true);
+    if (activeWorkspaceMode === 'mindmap') {
+      await showMindmapCenter();
+      return;
+    }
+    if (activeWorkflow === 'generate' && document.getElementById('editor-area')?.textContent.includes('生成任务与生成记录')) {
+      renderGenerateJobsCenter();
+    }
+  } catch(e) {
+    showToast(e.message || '删除生成任务失败', 'error');
+  }
+}
+
 async function retryJob(jobId) {
   try {
     await postJobAction(jobId, 'retry', {});
@@ -2974,12 +2993,13 @@ function updateMindmapTaskSection(taskRows = []) {
   const html = mindmapTaskSectionHtml(sortedRows);
   const section = document.getElementById('mindmap-task-section');
   if (section) {
-    if (html) section.outerHTML = html;
-    else section.remove();
+    section.outerHTML = html;
     return;
   }
+  const split = document.querySelector('#mindmap-center-list .mindmap-center-split');
   const list = document.getElementById('mindmap-center-list');
-  if (list && html) list.insertAdjacentHTML('afterbegin', html);
+  if (split) split.insertAdjacentHTML('afterbegin', html);
+  else if (list) list.insertAdjacentHTML('afterbegin', html);
 }
 
 async function refreshMindmapActiveTasks() {
@@ -3013,7 +3033,6 @@ async function refreshMindmapActiveTasks() {
 
 function mindmapTaskSectionHtml(jobs = []) {
   const sortedJobs = sortMindmapJobsByTime(jobs);
-  if (!sortedJobs.length) return '';
   const activeCount = sortedJobs.filter(job => ['pending', 'running'].includes(job.status || '')).length;
   const failedCount = sortedJobs.filter(job => ['failed', 'timeout'].includes(job.status || '')).length;
   return `
@@ -3021,13 +3040,13 @@ function mindmapTaskSectionHtml(jobs = []) {
       <div class="section-head">
         <div>
           <h3>脑图生成任务</h3>
-          <p>${activeCount ? `${activeCount} 个生成中` : '暂无生成中任务'}${failedCount ? `，${failedCount} 个需要处理` : ''}。按最近更新时间倒序，完成后会进入下方脑图文件区。</p>
+          <p>${activeCount ? `${activeCount} 个生成中` : '暂无生成中任务'}${failedCount ? `，${failedCount} 个需要处理` : ''}。按最近更新时间倒序，完成后会进入右侧脑图文件区。</p>
         </div>
         <button class="btn-sm" onclick="showMindmapCenter()">刷新任务</button>
       </div>
-      <div class="mindmap-compact-list">
-        ${sortedJobs.map(mindmapTaskRow).join('')}
-      </div>
+      ${sortedJobs.length
+        ? `<div class="mindmap-compact-list">${sortedJobs.map(mindmapTaskRow).join('')}</div>`
+        : '<div class="generation-record-empty">暂无后台脑图任务。点击左上「新建脑图」后，这里会显示生成进度。</div>'}
     </section>
   `;
 }
@@ -3073,6 +3092,7 @@ function mindmapTaskRow(job={}) {
   const actions = [];
   if (['pending', 'running'].includes(status) && id) actions.push(`<button class="btn-sm danger" onclick="cancelGenerateJob(${jsArg(id)})">取消</button>`);
   if (['failed', 'timeout'].includes(status) && id && job.can_retry !== false) actions.push(`<button class="btn-sm primary" onclick="retryGenerationJob(${jsArg(id)})">重试</button>`);
+  if (!['pending', 'running'].includes(status) && id) actions.push(`<button class="btn-sm danger" onclick="deleteGenerateJob(${jsArg(id)})">删除任务</button>`);
   if (caseSetId) actions.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">分析</button>`);
   if (caseSetId) actions.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>`);
   if (id) actions.push(`<button class="btn-sm" onclick="focusJob(${jsArg(id)})">定位</button>`);
@@ -3182,8 +3202,10 @@ async function showMindmapCenter() {
     list.className = 'generation-record-sections';
     list.innerHTML = `
       ${jobLoadError ? `<div class="generate-status show error">${escapeHtml(jobLoadError)}</div>` : ''}
-      ${mindmapTaskSectionHtml(taskRows)}
-      ${mindmapFilesSectionHtml(rows)}
+      <div class="mindmap-center-split">
+        ${mindmapTaskSectionHtml(taskRows)}
+        ${mindmapFilesSectionHtml(rows)}
+      </div>
     `;
     scheduleMindmapCenterRefresh(taskRows);
   } catch(e) {
