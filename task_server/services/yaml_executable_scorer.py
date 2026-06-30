@@ -1,0 +1,254 @@
+"""Executable quality gate for generated Midscene YAML."""
+
+from __future__ import annotations
+
+import re
+from typing import Any, Dict, List, Tuple
+
+try:
+    import yaml as _pyyaml  # type: ignore
+except Exception:  # pragma: no cover
+    _pyyaml = None  # type: ignore
+
+from task_server.schemas import MIDSCENE_FLOW_ACTIONS
+
+
+TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
+WAIT_ACTIONS = {"aiWaitFor", "sleep"}
+START_GUARD_WORDS = ("首页", "入口", "已加载", "加载完成", "底部导航", "AI建模", "模型库", "课程", "我的")
+SMOKE_WORDS = ("冒烟", "P0", "P1", "入口", "主流程", "核心", "基础", "跳转", "展示")
+VAGUE_PHRASES = ("检查是否正常", "确认是否正常", "页面正常", "功能正常", "验证功能正常")
+
+
+def _extract_tasks(parsed: Any) -> Tuple[str, List[Any]]:
+    if not isinstance(parsed, dict):
+        return "", []
+    root_tasks = parsed.get("ta" + "sks")
+    if isinstance(root_tasks, list):
+        return "root", root_tasks or []
+    for platform in ("android", "ios"):
+        node = parsed.get(platform)
+        if isinstance(node, dict) and isinstance(node.get("tasks"), list):
+            return platform, node.get("tasks") or []
+    return "", []
+
+
+def _step_text(step: Any) -> str:
+    if not isinstance(step, dict):
+        return ""
+    parts = []
+    for value in step.values():
+        if isinstance(value, (str, int, float)):
+            parts.append(str(value))
+    return " ".join(parts)
+
+
+def _step_actions(step: Any) -> List[str]:
+    if not isinstance(step, dict):
+        return []
+    return [str(key) for key in step.keys() if key in MIDSCENE_FLOW_ACTIONS]
+
+
+def _has_start_guard(flow: List[Any]) -> bool:
+    for step in flow[:6]:
+        if not isinstance(step, dict):
+            continue
+        text = _step_text(step)
+        if "launch" in step:
+            return True
+        shell = str(step.get("runAdbShell") or "")
+        if "am force-stop" in shell or "monkey" in shell:
+            return True
+        if "aiWaitFor" in step and any(word in text for word in START_GUARD_WORDS):
+            return True
+    return False
+
+
+def _has_previous_wait(flow: List[Any], index: int) -> bool:
+    for prev in flow[max(0, index - 4):index]:
+        if isinstance(prev, dict) and any(action in prev for action in WAIT_ACTIONS):
+            return True
+    return False
+
+
+def _has_followup_wait_or_terminal(flow: List[Any], index: int) -> bool:
+    for nxt in flow[index + 1:index + 4]:
+        if isinstance(nxt, dict) and any(action in nxt for action in ("aiWaitFor", "sleep", "aiAssert", "ai", "aiAction")):
+            return True
+    return False
+
+
+def _task_smoke_candidate(task: Dict[str, Any]) -> bool:
+    text = str(task.get("name") or "") + " " + " ".join(_step_text(step) for step in task.get("flow") or [])
+    return any(word in text for word in SMOKE_WORDS)
+
+
+def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
+    """Score whether YAML is safe enough to auto-send to Runner.
+
+    Static parsers answer "can this YAML load"; this gate answers "should a
+    newly generated case be auto-executed now". Existing hand-maintained
+    baselines can still run through their normal path.
+    """
+    text = str(yaml_text or "")
+    result = {
+        "ok": False,
+        "score": 0,
+        "executionLevel": "draft",
+        "platform": "",
+        "taskCount": 0,
+        "errors": [],
+        "warnings": [],
+        "taskScores": [],
+        "smokeCandidate": False,
+        "rule": "Agent 自动生成 YAML 只有达到 executable 才会下发 Runner；needs_review/draft 留作人工确认或后续扩展。",
+    }
+    if not text.strip():
+        result["errors"].append("YAML 内容为空")
+        return result
+    if _pyyaml is None:
+        result["errors"].append("服务端未安装 PyYAML，无法评分")
+        return result
+    try:
+        parsed = _pyyaml.safe_load(text)
+    except Exception as exc:
+        result["errors"].append(f"YAML 解析失败：{exc}")
+        return result
+    platform, tasks = _extract_tasks(parsed)
+    result["platform"] = platform
+    result["taskCount"] = len(tasks or [])
+    if not platform:
+        result["errors"].append("必须包含 root.tasks、android.tasks 或 ios.tasks")
+        return result
+    if not tasks:
+        result["errors"].append(f"{platform}.tasks 不能为空")
+        return result
+
+    total_score = 0
+    task_scores = []
+    for idx, task in enumerate(tasks, start=1):
+        task_name = str(task.get("name") or f"tasks[{idx}]").strip() if isinstance(task, dict) else f"tasks[{idx}]"
+        score = 100
+        errors: List[str] = []
+        warnings: List[str] = []
+        if not isinstance(task, dict):
+            errors.append("任务不是对象")
+            score = 0
+            flow = []
+        else:
+            flow = task.get("flow") if isinstance(task.get("flow"), list) else []
+            if not task_name:
+                warnings.append("缺少任务名，报告中无法定位用例")
+                score -= 5
+            if not flow:
+                errors.append("flow 为空")
+                score = 0
+
+        action_count = 0
+        wait_count = 0
+        assert_count = 0
+        unguarded_taps = 0
+        missing_followups = 0
+        vague_steps = 0
+        start_guard = _has_start_guard(flow)
+        if flow and not start_guard:
+            warnings.append("缺少稳定起点/启动守卫，可能依赖上一个页面状态")
+            score -= 25 if generated else 10
+        for step_index, step in enumerate(flow):
+            actions = _step_actions(step)
+            if not actions:
+                errors.append(f"flow[{step_index + 1}] 没有平台支持的动作")
+                score -= 30
+                continue
+            action_count += len(actions)
+            if any(action in WAIT_ACTIONS for action in actions):
+                wait_count += 1
+            if "aiAssert" in actions:
+                assert_count += 1
+            if any(action in TRANSITION_ACTIONS for action in actions):
+                if "aiTap" in actions and not _has_previous_wait(flow, step_index):
+                    unguarded_taps += 1
+                if not _has_followup_wait_or_terminal(flow, step_index):
+                    missing_followups += 1
+            step_text = _step_text(step)
+            if any(phrase in step_text for phrase in VAGUE_PHRASES):
+                vague_steps += 1
+        if action_count < 3:
+            warnings.append("步骤过少，无法形成稳定的冒烟路径")
+            score -= 20
+        if wait_count == 0:
+            warnings.append("缺少 aiWaitFor/sleep 等待，页面加载慢时容易失败")
+            score -= 25
+        if unguarded_taps:
+            warnings.append(f"{unguarded_taps} 个 aiTap 前缺少就近 aiWaitFor/sleep")
+            score -= min(35, 12 * unguarded_taps)
+        if missing_followups:
+            warnings.append(f"{missing_followups} 个交互动作后缺少等待或终态判断")
+            score -= min(25, 6 * missing_followups)
+        if assert_count > 3:
+            warnings.append(f"aiAssert 数量 {assert_count} 偏多，容易把 UI 差异放大成失败")
+            score -= min(20, 4 * (assert_count - 3))
+        if vague_steps:
+            warnings.append(f"{vague_steps} 个步骤描述过泛")
+            score -= min(15, 5 * vague_steps)
+        if len(flow) > 36:
+            warnings.append("单条用例步骤过长，建议拆分后执行")
+            score -= 15
+
+        score = max(0, min(100, score))
+        level = "draft" if errors or score < 55 else ("needs_review" if score < 78 or warnings else "executable")
+        task_score = {
+            "name": task_name,
+            "score": score,
+            "executionLevel": level,
+            "errors": errors,
+            "warnings": warnings,
+            "actionCount": action_count,
+            "waitCount": wait_count,
+            "assertCount": assert_count,
+            "startGuard": start_guard,
+            "smokeCandidate": _task_smoke_candidate(task) if isinstance(task, dict) else False,
+        }
+        task_scores.append(task_score)
+        total_score += score
+
+    result["taskScores"] = task_scores
+    result["score"] = int(round(total_score / max(1, len(task_scores))))
+    result["errors"] = [f"{item['name']}: {err}" for item in task_scores for err in item.get("errors") or []]
+    result["warnings"] = [f"{item['name']}: {warn}" for item in task_scores for warn in item.get("warnings") or []]
+    result["smokeCandidate"] = any(item.get("smokeCandidate") for item in task_scores)
+    if result["errors"]:
+        result["executionLevel"] = "draft"
+    elif all(item.get("executionLevel") == "executable" for item in task_scores):
+        result["executionLevel"] = "executable"
+    elif any(item.get("executionLevel") == "draft" for item in task_scores):
+        result["executionLevel"] = "draft"
+    else:
+        result["executionLevel"] = "needs_review"
+    result["ok"] = result["executionLevel"] == "executable"
+    return result
+
+
+def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tuple[List[dict], List[dict]]:
+    """Return executable refs for first Runner batch and blocked refs."""
+    executable = []
+    blocked = []
+    for item in scored_refs:
+        score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
+        if score.get("executionLevel") == "executable":
+            executable.append(item)
+        else:
+            blocked.append({**item, "gateReason": "执行等级不是 executable"})
+
+    def sort_key(item: dict):
+        score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
+        label = f"{item.get('file') or ''} {item.get('module') or ''}"
+        smoke = bool(score.get("smokeCandidate") or re.search(r"(冒烟|P0|P1|入口|主流程|基础)", label, flags=re.I))
+        return (0 if smoke else 1, -int(score.get("score") or 0), str(item.get("file") or ""))
+
+    ranked = sorted(executable, key=sort_key)
+    limit = max(1, int(limit or 3))
+    selected = ranked[:limit]
+    overflow = ranked[limit:]
+    blocked.extend({**item, "gateReason": f"超过自动冒烟首批上限 {limit}，待首批通过后再扩展执行"} for item in overflow)
+    return selected, blocked

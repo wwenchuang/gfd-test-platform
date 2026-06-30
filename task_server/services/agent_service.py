@@ -52,6 +52,7 @@ from task_server.storage import (
     write_json_file,
 )
 from task_server.services.yaml_service import extract_midscene_tasks, slug_for_file, validate_midscene_yaml_executability
+from task_server.services.yaml_executable_scorer import rank_executable_yaml_refs, score_midscene_yaml_executable
 from task_server.prompts import get_prompt_center
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,11 @@ AUTO_AGENT_RISK_KEYWORDS = AGENT_RISK_KEYWORDS
 AGENT_SERVICE_STARTED_TS = time.time()
 
 AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
+
+AGENT_GENERATED_RUNNER_SMOKE_LIMIT = max(
+    1,
+    min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)),
+)
 
 
 def _trace_time_text():
@@ -1227,6 +1233,7 @@ def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
     check = validate_agent_yaml_content(content)
     if not check.get("ok"):
         return None, "YAML 草稿校验未通过：" + "；".join(check.get("issues") or [])
+    executable_score = score_midscene_yaml_executable(content, generated=True)
     module = clean_agent_module_name(run)
     file_name = clean_agent_yaml_name(run)
     target_path = safe_join(TASK_DIR, module, file_name)
@@ -1244,8 +1251,15 @@ def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
         "path": target_path,
         "content": "",
         "confirmed": True,
+        "executionLevel": executable_score.get("executionLevel"),
+        "executableScore": executable_score,
     }]
-    artifacts["yamlValidation"] = {"ok": True, "results": [{**artifacts["yamlRefs"][0], **check}], "issues": []}
+    artifacts["yamlValidation"] = {
+        "ok": True,
+        "results": [{**artifacts["yamlRefs"][0], **check, "executableScore": executable_score}],
+        "issues": [],
+        "executionGate": executable_score,
+    }
     return target_path, ""
 
 
@@ -1318,12 +1332,15 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
         payload = {"tasks": [task]} if platform == "root" else {platform: {"tasks": [task]}}
         yaml_text = pyyaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
         item_check = validate_agent_yaml_content(yaml_text)
+        executable_score = score_midscene_yaml_executable(yaml_text, generated=True)
         result = {
             "type": "file",
             "module": module,
             "file": file_name,
             "path": safe_join(module_dir, file_name),
             **item_check,
+            "executionLevel": executable_score.get("executionLevel"),
+            "executableScore": executable_score,
         }
         results.append(result)
         if not item_check.get("ok"):
@@ -1337,6 +1354,8 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
             "content": "",
             "confirmed": True,
             "reason": reason,
+            "executionLevel": executable_score.get("executionLevel"),
+            "executableScore": executable_score,
         })
     if not refs:
         issues = []
@@ -1360,6 +1379,12 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
         "confirmReason": reason,
         "splitFileCount": len(refs),
         "taskCount": sum(int(item.get("taskCount") or 0) for item in results if item.get("ok")),
+        "executionGate": {
+            "executableCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
+            "needsReviewCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
+            "draftCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
+            "results": results,
+        },
     }
     return refs, ""
 
@@ -1382,7 +1407,15 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             continue
         content = read_text_file(path, "")
         check = validate_agent_yaml_content(content)
-        result = {"module": module, "file": file_name or os.path.basename(path), "path": path, **check}
+        executable_score = score_midscene_yaml_executable(content, generated=True)
+        result = {
+            "module": module,
+            "file": file_name or os.path.basename(path),
+            "path": path,
+            **check,
+            "executionLevel": executable_score.get("executionLevel"),
+            "executableScore": executable_score,
+        }
         results.append(result)
         if not check.get("ok"):
             issues.extend([f"{result['file']}：{issue}" for issue in (check.get("issues") or ["校验未通过"])])
@@ -1394,6 +1427,8 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             "path": path,
             "content": "",
             "confirmed": True,
+            "executionLevel": executable_score.get("executionLevel"),
+            "executableScore": executable_score,
         })
     if not refs:
         return [], "YAML 文件校验未通过：" + "；".join(issues or ["没有可确认的 YAML 文件"])
@@ -1402,7 +1437,16 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
     artifacts["generatedYamlPaths"] = [item["path"] for item in refs]
     artifacts["draftConfirmed"] = True
     artifacts["yamlRefs"] = refs
-    artifacts["yamlValidation"] = {"ok": not issues, "results": results, "issues": issues}
+    artifacts["yamlValidation"] = {
+        "ok": not issues,
+        "results": results,
+        "issues": issues,
+        "executionGate": {
+            "executableCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
+            "needsReviewCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
+            "draftCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
+        },
+    }
     return refs, "" if not issues else "；".join(issues)
 
 
@@ -3693,6 +3737,9 @@ def normalize_yaml_refs(run):
                 "path": item.get("path") or "",
                 "content": item.get("content") or "",
                 "confirmed": bool(item.get("confirmed")),
+                "reason": item.get("reason") or "",
+                "executionLevel": item.get("executionLevel") or "",
+                "executableScore": item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {},
             }
             if ref["path"] and not (ref["module"] and ref["file"]):
                 ref["module"], ref["file"] = _task_dir_for_path(ref["path"])
@@ -3748,6 +3795,71 @@ def validate_agent_yaml_content(yaml_text):
     }
 
 
+def _agent_is_generated_yaml_run(run):
+    artifacts = (run or {}).setdefault("artifacts", {})
+    pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    if pipeline.get("source") in ("ui_yaml_pipeline", "agent_generate_yaml"):
+        return True
+    if pipeline.get("fallbackAutoConfirmed") or pipeline.get("progressJobId"):
+        return True
+    validation = artifacts.get("yamlValidation") if isinstance(artifacts.get("yamlValidation"), dict) else {}
+    if validation.get("autoConfirmed") or validation.get("autoConfirmedFallback"):
+        return True
+    return bool(artifacts.get("generatedYamlPaths") and not artifacts.get("matchedCases"))
+
+
+def _score_agent_yaml_ref_for_execution(run, ref):
+    content = _yaml_ref_content(ref)
+    score = score_midscene_yaml_executable(content, generated=_agent_is_generated_yaml_run(run))
+    return {**ref, "executableScore": score, "executionLevel": score.get("executionLevel") or ref.get("executionLevel") or ""}
+
+
+def _select_agent_runner_refs(run, refs):
+    """Gate Agent-generated YAML before Runner creation.
+
+    Hand-maintained or user-selected baseline YAML is not limited here. Generated
+    YAML must prove it is executable and only the first smoke batch is sent.
+    """
+    refs = [ref for ref in refs or [] if isinstance(ref, dict)]
+    artifacts = (run or {}).setdefault("artifacts", {})
+    if not refs or not _agent_is_generated_yaml_run(run):
+        return refs, {
+            "enabled": False,
+            "reason": "非 Agent 新生成 YAML，不启用自动冒烟限流",
+            "selectedCount": len(refs),
+            "blockedCount": 0,
+            "results": [],
+            "blocked": [],
+        }
+    scored = [_score_agent_yaml_ref_for_execution(run, ref) for ref in refs]
+    selected, blocked = rank_executable_yaml_refs(scored, limit=AGENT_GENERATED_RUNNER_SMOKE_LIMIT)
+    deferred = [
+        item for item in blocked
+        if str(item.get("gateReason") or "").startswith("超过自动冒烟首批上限")
+    ]
+    blocking = [item for item in blocked if item not in deferred]
+    gate = {
+        "enabled": True,
+        "limit": AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
+        "totalCount": len(scored),
+        "selectedCount": len(selected),
+        "blockedCount": len(blocked),
+        "blockingCount": len(blocking),
+        "deferredCount": len(deferred),
+        "executableCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
+        "needsReviewCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
+        "draftCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
+        "results": scored,
+        "selected": selected,
+        "blocked": blocked,
+        "blocking": blocking,
+        "deferred": deferred,
+        "rule": "Agent 新生成 YAML 首批只下发 executable 冒烟用例，默认最多 3 条；其余待首批通过后再扩展。",
+    }
+    artifacts["runnerExecutionGate"] = gate
+    return selected, gate
+
+
 def _agent_yaml_dry_run_for_ref(run, ref):
     from task_server.services.yaml_service import dry_run_midscene_yaml
 
@@ -3801,6 +3913,7 @@ def _agent_yaml_dry_run_rows(run, refs):
         label = ref.get("path") or ref.get("file") or ref.get("type")
         content = _yaml_ref_content(ref)
         strong_check = validate_agent_yaml_content(content)
+        executable_score = score_midscene_yaml_executable(content, generated=_agent_is_generated_yaml_run(run))
         dry = _agent_yaml_dry_run_for_ref(run, ref)
         dry_compact = _compact_yaml_dry_run_result(dry)
         ref_issues = dry_compact.get("errors") or strong_check.get("issues") or []
@@ -3809,7 +3922,8 @@ def _agent_yaml_dry_run_rows(run, refs):
             "ok": bool(dry_compact.get("ok")),
             "issues": ref_issues,
             "taskCount": dry_compact.get("taskCount") or strong_check.get("taskCount", 0),
-            "executionLevel": dry_compact.get("executionLevel"),
+            "executionLevel": executable_score.get("executionLevel") or dry_compact.get("executionLevel"),
+            "executableScore": executable_score,
             "dryRun": dry_compact,
             "strongCheck": strong_check,
         }
@@ -7035,6 +7149,21 @@ def _tool_execution_precheck(run):
         if draft_refs and not file_refs:
             add("draft_confirmed", False, "存在未确认 YAML 草稿", "blocker")
 
+        selected_refs, execution_gate = _select_agent_runner_refs(run, file_refs)
+        if execution_gate.get("enabled"):
+            severity = "blocker" if not selected_refs else "warning"
+            add(
+                "generated_yaml_executable_gate",
+                bool(selected_refs),
+                (
+                    f"首批可执行 {execution_gate.get('selectedCount', 0)}/{execution_gate.get('totalCount', 0)}；"
+                    f"executable {execution_gate.get('executableCount', 0)}，"
+                    f"需复核 {execution_gate.get('needsReviewCount', 0)}，草稿 {execution_gate.get('draftCount', 0)}，"
+                    f"延后 {execution_gate.get('deferredCount', 0)}"
+                ),
+                severity,
+            )
+
         dry_results, validation_issues, yaml_ok_count = _agent_yaml_dry_run_rows(run, refs)
         yaml_dry_ok = not validation_issues and bool(refs)
         artifacts["yamlValidation"] = {"ok": yaml_dry_ok, "issues": validation_issues, "results": dry_results}
@@ -7814,9 +7943,32 @@ def _tool_run_sonic(run):
                 device_id=selected_device_id,
                 runner_id=selected_runner_id,
             )
+            file_refs, execution_gate = _select_agent_runner_refs(run, file_refs)
+            gate_blocked = list((execution_gate or {}).get("blocking") or [])
+            gate_deferred = list((execution_gate or {}).get("deferred") or [])
+            if (execution_gate or {}).get("enabled") and not file_refs:
+                run_artifacts["runnerExecutionGate"] = execution_gate
+                call["status"] = "FAILED"
+                call["error"] = "Agent 生成的 YAML 未达到自动执行准入"
+                call["outputSummary"] = (
+                    "Agent 生成的 YAML 未达到 executable，未创建 Runner 任务；"
+                    f"可执行 {(execution_gate or {}).get('executableCount', 0)} 个，"
+                    f"需复核 {(execution_gate or {}).get('needsReviewCount', 0)} 个，"
+                    f"草稿 {(execution_gate or {}).get('draftCount', 0)} 个"
+                )
+                attach_diagnosis(call, make_diagnosis(
+                    "生成 YAML 未通过自动执行准入",
+                    "文件可以作为用例资产保留，但还不应该直接下发 Runner。",
+                    ["查看 runnerExecutionGate 明细", "优先修复缺少稳定起点/等待的 YAML", "确认后再手工执行或重新生成"],
+                    blocked=gate_blocked[:8],
+                ))
+                call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                call["durationMs"] = _compute_duration(call)
+                _log_tool_call(call, run.get("runId", ""))
+                return call
             runner_dry_run_enabled, runner_dry_run_reason = _runner_supports_yaml_dry_run(selected_runner_id)
             dry_run_results = []
-            dry_run_blocked = []
+            dry_run_blocked = gate_blocked[:]
             runner_dry_run_jobs = []
             for ref in file_refs:
                 try:
@@ -7920,10 +8072,17 @@ def _tool_run_sonic(run):
                 "runnerJobIds": runner_dry_run_jobs,
                 "results": dry_run_results,
                 "blocked": dry_run_blocked,
+                "deferred": gate_deferred,
+                "deferredCount": len(gate_deferred),
+                "executionGate": execution_gate,
             }
             summary_parts = [
                 f"Runner 调试模式：{run_artifacts['runnerDryRun']['mode']} 通过 {dry_run_passed} 个，拦截 {len(dry_run_blocked)} 个，创建 {len(job_ids)} 个本地任务"
             ]
+            if (execution_gate or {}).get("enabled"):
+                summary_parts.append(
+                    f"执行准入：首批选择 {execution_gate.get('selectedCount', 0)} / {execution_gate.get('totalCount', 0)} 个 generated YAML，延后 {execution_gate.get('deferredCount', 0)} 个"
+                )
             run_artifacts["jobIds"] = job_ids
             if not job_ids:
                 call["status"] = "FAILED"

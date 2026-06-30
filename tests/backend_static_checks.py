@@ -226,6 +226,10 @@ def check_yaml_static_validation_and_patterns():
         load_yaml_action_contract,
         validate_yaml_static_executable,
     )
+    from task_server.services.yaml_executable_scorer import (
+        rank_executable_yaml_refs,
+        score_midscene_yaml_executable,
+    )
     from task_server.services.yaml_template_matcher import (
         build_yaml_template_matcher_text,
         evaluate_baseline_template_matching,
@@ -249,6 +253,8 @@ def check_yaml_static_validation_and_patterns():
 """
     valid = validate_yaml_static_executable(valid_yaml)
     require(valid.get("ok") and valid.get("executionLevel") in ("executable", "needs_review"), "Valid YAML must pass static executable validation")
+    executable_score = score_midscene_yaml_executable(valid_yaml)
+    require(executable_score.get("executionLevel") == "executable" and executable_score.get("score", 0) >= 78, "Generated YAML scorer must allow stable executable smoke YAML")
 
     invalid_yaml = """android:
   tasks:
@@ -258,6 +264,21 @@ def check_yaml_static_validation_and_patterns():
 """
     invalid = validate_yaml_static_executable(invalid_yaml)
     require(not invalid.get("ok") and "verify" in invalid.get("blockedActions", []), "Pseudo actions must be blocked before Runner execution")
+    unstable_yaml = """android:
+  tasks:
+    - name: unstable
+      flow:
+        - aiTap: AI建模入口
+        - aiTap: 图片建模
+"""
+    unstable_score = score_midscene_yaml_executable(unstable_yaml)
+    require(unstable_score.get("executionLevel") != "executable" and unstable_score.get("warnings"), "Generated YAML scorer must block tap-only unstable YAML")
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "01-stable.yaml", "executableScore": executable_score},
+        {"file": "unstable.yaml", "executableScore": unstable_score},
+        {"file": "02-overflow.yaml", "executableScore": executable_score},
+    ], limit=1)
+    require(len(selected) == 1 and selected[0]["file"] == "01-stable.yaml" and len(blocked) == 2, "Runner gate must select executable smoke subset and explain blocked YAML")
 
     examples = [{
         "title": "AI建模入口",

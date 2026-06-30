@@ -116,6 +116,11 @@ Move scenarios to `manual_cases` or mark as待准备 when they require:
 
 - 新生成 YAML 必须优先满足“能独立执行”：前置启动、稳定起点、弹窗处理、
   清晰导航、可见断言、收尾清理都要齐。
+- 新需求自动下发 Runner 前会做执行准入：只有 `executionLevel=executable`
+  的 YAML 可以进入首批执行；`needs_review` 和 `draft` 只能作为草稿、脑图或
+  人工确认材料。
+- Agent 自动生成的新 YAML 首批只跑少量稳定冒烟，默认最多 3 条；首批通过后
+  再扩展，不要一开始把 10+ 条新生成用例全部下发。
 - 普通页面切换只允许短 `sleep` 稳定；接口、加载、生成、切片、列表刷新等
   异步状态必须用 `aiWaitFor` + `timeout` 等待真实 UI 信号。
 - `aiTap`、`aiInput`、`aiWaitFor`、`aiAssert` 的提示词必须包含页面/区域/控件
