@@ -2625,6 +2625,12 @@ def _post_cases_mindmap(handler, qs):
         writable_summary["review"] = review
         mm_path = write_generation_mindmap(case_set_id, writable_summary)
         stat = os.stat(mm_path)
+        updated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime))
+        writable_summary["mindmap_updated_at"] = updated_at
+        writable_summary["mindmap_size"] = stat.st_size
+        review["mindmap_refreshed_at"] = updated_at
+        writable_summary["review"] = review
+        write_json_file(generation_summary_path(case_set_id), writable_summary)
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
@@ -2632,7 +2638,7 @@ def _post_cases_mindmap(handler, qs):
         "ok": True, "case_set_id": case_set_id, "mindmap": mm_path,
         "mindmap_exists": True, "mindmap_deleted": False,
         "mindmap_size": stat.st_size,
-        "mindmap_updated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
+        "mindmap_updated_at": updated_at,
         "message": "已按现有生成分析刷新完整脑图文件；不会重新调用 AI，不会改 YAML 或用例"
     })
 

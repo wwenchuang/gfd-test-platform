@@ -904,7 +904,7 @@ function jobActions(job) {
       parts.push(`<button class="job-action" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
       if (job.type !== 'mindmap_only') parts.push(`<button class="job-action" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>`);
       parts.push(`<a class="job-action" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>`);
-      parts.push(`<button class="job-action" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)})" title="只按现有生成分析刷新脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>`);
+      parts.push(`<button class="job-action" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>`);
     }
     if (isGenerateBackgroundJob(job) && mod && file && /\.ya?ml$/i.test(file)) {
       parts.push(`<button class="job-action" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">打开YAML</button>`);
@@ -2436,7 +2436,7 @@ function generationReviewHtml(data={}) {
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回工作台</button>
           ${caseSetId ? `<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>` : ''}
           ${caseSetId ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>` : ''}
-          ${caseSetId ? `<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)})" title="只按现有生成分析刷新脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>` : ''}
+          ${caseSetId ? `<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>` : ''}
           ${caseSetId ? `<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>` : ''}
           ${mod && file ? `<button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">查看自动化脚本</button>` : ''}
           ${mod && file ? `<button class="btn-sm success" onclick="openFile(${jsArg(mod)}, ${jsArg(file)}).then(() => showRunSelectedTask())">单条调试</button>` : ''}
@@ -2595,7 +2595,7 @@ function generationJobActions(job) {
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
   if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>`);
   if (caseSetId) parts.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>`);
-  if (caseSetId) parts.push(`<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)})" title="只按现有生成分析刷新脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>`);
+  if (caseSetId) parts.push(`<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>`);
   if (caseSetId) parts.push(`<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>`);
   if (mod && file && /\.ya?ml$/i.test(file)) parts.push(`<button class="btn-sm primary" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">打开 YAML</button>`);
   if (id) parts.push(`<button class="btn-sm" onclick="focusJob(${jsArg(id)})">定位执行中心</button>`);
@@ -2676,10 +2676,16 @@ async function submitRegenerateGenerationCases(caseSetId, supplement='', files=[
   }
 }
 
-async function regenerateGenerationMindmap(caseSetId) {
+async function regenerateGenerationMindmap(caseSetId, triggerEl=null) {
   if (!caseSetId) {
     showToast('这个生成任务没有关联批次 ID', 'error');
     return;
+  }
+  const button = triggerEl && triggerEl.tagName ? triggerEl : null;
+  const originalText = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = '重建中...';
   }
   try {
     const data = await apiRequest(mindmapApiPath(caseSetId), {
@@ -2688,13 +2694,25 @@ async function regenerateGenerationMindmap(caseSetId) {
     });
     const sizeText = data.mindmap_size ? `，${formatBytes(data.mindmap_size)}` : '';
     const timeText = data.mindmap_updated_at ? `，更新时间 ${data.mindmap_updated_at}` : '';
-    showToast(data.ok ? `✓ 已按现有生成分析刷新完整脑图文件${sizeText}${timeText}` : '刷新脑图完成', 'success');
+    showToast(data.ok ? `✓ 已重建完整脑图文件${sizeText}${timeText}` : '脑图文件已重建', 'success');
+    if (button) button.textContent = '已重建';
+    if (activeWorkspaceMode === 'mindmap' && document.getElementById('mindmap-center-list')) {
+      await showMindmapCenter();
+      return data;
+    }
     if (activeWorkflow === 'generate' && document.getElementById('editor-area')?.textContent.includes('生成任务与生成记录')) {
       await loadJobs(true);
       renderGenerateJobsCenter();
     }
+    return data;
   } catch(e) {
-    showToast(e.message || '刷新脑图失败', 'error');
+    showToast(e.message || '重建脑图失败', 'error');
+    throw e;
+  } finally {
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = originalText || '重建文件';
+    }
   }
 }
 
@@ -2706,7 +2724,7 @@ async function deleteGenerationMindmap(caseSetId) {
   if (!confirm(`确认删除生成批次 ${caseSetId} 的脑图文件（FreeMind .mm）？不会删除 YAML 和生成分析。`)) return;
   try {
     const data = await apiRequest(mindmapApiPath(caseSetId), { method: 'DELETE' });
-    showToast(data.deleted ? '✓ 已删除脑图文件，需要时可点“刷新脑图文件”恢复' : '脑图文件原本不存在，已记录删除状态', data.deleted ? 'success' : 'error');
+    showToast(data.deleted ? '✓ 已删除脑图文件，需要时可点“重建脑图文件”恢复' : '脑图文件原本不存在，已记录删除状态', data.deleted ? 'success' : 'error');
     if (activeWorkflow === 'generate' && document.getElementById('editor-area')?.textContent.includes('生成任务与生成记录')) {
       renderGenerateJobsCenter();
     }
@@ -3106,7 +3124,7 @@ function mindmapRecordCard(item={}) {
       <div class="mindmap-row-actions">
         <button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>
         ${item.mindmap_downloadable ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>` : ''}
-        <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}).then(() => showMindmapCenter())" title="只按现有生成分析刷新脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新</button>
+        <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)}).then(() => showMindmapCenter())">删除文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmapRecord(${jsArg(caseSetId)})">删除记录</button>
       </div>
@@ -3126,9 +3144,9 @@ async function showMindmapCenter() {
       <div class="generation-record-head">
         <div class="workflow-kicker">MINDMAP CENTER · FreeMind .mm 文件</div>
         <h2>脑图中心</h2>
-        <p>这里管理脑图文件（FreeMind .mm）。刷新脑图只重写文件；重新生成用例才会重新调用 AI、更新用例和 YAML。</p>
+        <p>这里管理脑图文件（FreeMind .mm）。重建脑图只重写文件；重新生成用例才会重新调用 AI、更新用例和 YAML。</p>
         <div class="generate-hint">
-          刷新脑图文件：不调用千问、不改用例、不改 YAML，只把当前生成分析重新写成脑图文件。
+          重建脑图文件：不调用千问、不改用例、不改 YAML，只把当前生成分析重新写成脑图文件。
           重新生成用例：重新读取需求/Figma/截图，重新生成用例、生成分析和脑图；完整 YAML 流程还会覆盖 YAML。
         </div>
         <div class="generation-record-actions">
