@@ -1584,7 +1584,8 @@ def _get_runner_jobs_next(handler, qs):
                 selected["device_id"] = sorted(available_devices)[0]
             selected["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             save_jobs(jobs)
-            if not is_app_install_job(selected) and selected.get("module") and selected.get("file"):
+            selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
+            if not is_app_install_job(selected) and not selected_is_yaml_dry_run and selected.get("module") and selected.get("file"):
                 update_task_meta(selected["module"], selected["file"], {
                     "last_job_id": selected["job_id"],
                     "last_status": "running",
@@ -1595,6 +1596,7 @@ def _get_runner_jobs_next(handler, qs):
     if not selected:
         handler._json({"ok": True, "job": None})
         return
+    selected_is_yaml_dry_run = str(selected.get("job_type") or selected.get("type") or "").strip().lower() == "yaml_dry_run"
 
     if is_app_install_job(selected):
         job_payload = dict(selected)
@@ -1636,6 +1638,9 @@ def _get_runner_jobs_next(handler, qs):
             "runner_id": selected.get("runner_id", ""),
             "target_runner_id": selected.get("target_runner_id", ""),
             "device_strategy": selected.get("device_strategy") or selected.get("deviceStrategy") or "",
+            "job_type": selected.get("job_type") or selected.get("type") or "",
+            "type": selected.get("type") or selected.get("job_type") or "",
+            "run_mode": selected.get("run_mode") or "",
             "yaml_content": yaml_content
         }
     })
@@ -3311,7 +3316,8 @@ def _handle_runner_job_result(handler, job_id):
                 })
                 found["events"] = events[-80:]
             save_jobs(jobs)
-            if not is_app_install_job(found) and found.get("module") and found.get("file"):
+            found_is_yaml_dry_run = str(found.get("job_type") or found.get("type") or "").strip().lower() == "yaml_dry_run"
+            if not is_app_install_job(found) and not found_is_yaml_dry_run and found.get("module") and found.get("file"):
                 update_task_meta(found["module"], found["file"], {
                     "last_job_id": job_id, "last_status": status,
                     "last_target_task_name": found.get("target_task_name", ""),
@@ -3319,7 +3325,8 @@ def _handle_runner_job_result(handler, job_id):
                     "last_report_url": report_url
                 })
     failure_review = None
-    if found and status != "success" and not is_app_install_job(found):
+    found_is_yaml_dry_run = bool(found and str(found.get("job_type") or found.get("type") or "").strip().lower() == "yaml_dry_run")
+    if found and status != "success" and not is_app_install_job(found) and not found_is_yaml_dry_run:
         try:
             failure_review = call_dashscope_failure_review(found, stdout, stderr, summary)
         except Exception as e:

@@ -199,6 +199,7 @@ def check_yaml_static_validation_and_patterns():
     )
     from task_server.services.yaml_template_matcher import (
         build_yaml_template_matcher_text,
+        evaluate_baseline_template_matching,
         select_best_baseline_template,
     )
     from task_server.services.yaml_service import dry_run_midscene_yaml, repair_generated_yaml_static_errors
@@ -271,6 +272,21 @@ def check_yaml_static_validation_and_patterns():
     require(templates and templates[0].get("title") == "图片建模上传", "YAML template matcher must select the most relevant baseline template")
     template_text = build_yaml_template_matcher_text(templates)
     require("套模板填槽" in template_text and "不要重新设计结构" in template_text, "YAML template matcher prompt must force template-based generation")
+    template_eval = evaluate_baseline_template_matching([
+        {
+            "title": "图片建模上传",
+            "file": "AI测试/图片建模上传.yaml",
+            "actions": ["aiTap", "aiWaitFor", "aiInput"],
+            "snippet": valid_yaml,
+        },
+        {
+            "title": "语音创作长按",
+            "file": "AI测试/语音创作长按.yaml",
+            "actions": ["aiTap", "aiWaitFor"],
+            "snippet": valid_yaml,
+        },
+    ], samples=[{"name": "图片建模上传", "requirement": "图片建模 上传图片", "must_match_any": ["图片", "上传"]}])
+    require(template_eval.get("passed") == 1 and template_eval.get("samples"), "YAML template matcher quality eval must report fixed sample results")
     dry = dry_run_midscene_yaml(valid_yaml)
     require(dry.get("ok") and dry.get("mode") == "mock_dry_run" and dry.get("runnerTouched") is False, "YAML dry-run must validate without touching Runner/device")
     repair = repair_generated_yaml_static_errors(valid_yaml, max_attempts=0)
@@ -1389,7 +1405,7 @@ def main():
     require('step_name == "SYNC_SONIC" and execution_mode != "SONIC_SUITE"' in agent_service_source and "Runner 单条/多条调试模式不需要同步 Sonic" in agent_service_source, "Runner Agent execution must skip Sonic sync and run matched YAML directly")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("_start_agent_worker" in router_source and "target=_execute_agent_steps" not in router_source, "Agent routes must start workers through the duplicate-safe service helper")
-    require("Runner 调试模式：dry-run 通过" in agent_service_source and "创建 {len(job_ids)} 个本地任务" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain dry-run/local Runner mode instead of suite execution")
+    require("runner_yaml_dry_run" in agent_service_source and "mock_dry_run" in agent_service_source and "创建 {len(job_ids)} 个本地任务" in agent_service_source and "避免“匹配 1 条却跑完整套件”" in agent_service_source, "Agent RUN_TASK must explain dry-run/local Runner mode instead of suite execution")
     require('"runnerId": runner_id' in agent_service_source and '"deviceId": device_id' in agent_service_source and '"deviceStrategy": device_strategy' in agent_service_source, "Agent runs must persist selected Runner/device execution target")
     require('"runnerSelection"' in agent_service_source and "尚未选择执行设备" in agent_service_source and "runner_service.all_online_devices" in agent_service_source, "Agent execution precheck must validate selected/auto Runner devices")
     require('"runner_id": selected_runner_id' in agent_service_source and '"device_id": selected_device_id' in agent_service_source and '"device_strategy": selected_device_strategy' in agent_service_source, "Agent Runner jobs must use the selected Runner/device strategy")
@@ -1854,13 +1870,25 @@ def main():
     require("location /ai-gateway/" in nginx, "Nginx template must proxy /ai-gateway/")
     require("proxy_pass http://127.0.0.1:8090/" in nginx, "Nginx /ai-gateway/ must point to local AI Gateway")
     require("proxy_read_timeout 300s" in nginx, "AI Gateway proxy must allow long model reads")
+    runner_sources = "\n".join([
+        (ROOT / "windows-midscene-runner.py").read_text(encoding="utf-8"),
+        (ROOT / "mac-midscene-runner.py").read_text(encoding="utf-8"),
+    ])
+    require("RUNNER_CAPABILITIES" in runner_sources and '"yaml_dry_run": True' in runner_sources, "Both runners must advertise yaml_dry_run capability")
+    require("def run_yaml_dry_run_job" in runner_sources and "YAML dry-run 不生成 HTML 报告" in runner_sources, "Both runners must support local YAML dry-run jobs without Midscene execution")
+    router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")
+    agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")
+    yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    require("quality_eval" in yaml_source and "evaluate_baseline_template_matching" in yaml_source, "YAML generation review must include template matcher quality eval")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("TASK_APP_ENV='prod'" in env_example and "TASK_ALLOW_QUERY_TOKEN='0'" in env_example, "Env example must document production mode and disabled query token auth")
     for module_path in ["task_server/config.py", "task_server/auth.py", "task_server/storage.py", "task_server/repair_service.py", "task_server/sonic_service.py"]:
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 54})
+    print({"ok": True, "file": str(MODULE), "checks": 59})
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, List, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 
 _STOPWORDS = {
@@ -108,3 +108,74 @@ def build_yaml_template_matcher_text(templates: Iterable[dict]) -> str:
             lines.extend(["```yaml", snippet[:1800], "```"])
         lines.append("")
     return "\n".join(lines).strip()
+
+
+YAML_TEMPLATE_MATCH_EVAL_SAMPLES: List[Dict[str, Any]] = [
+    {
+        "name": "图片建模上传",
+        "requirement": "AI建模 图片建模 上传图片 图库 选择图片",
+        "must_match_any": ["图片", "图库", "上传", "建模"],
+    },
+    {
+        "name": "语音创作长按",
+        "requirement": "AI建模 语音创作 长按输入 文案",
+        "must_match_any": ["语音", "长按", "输入"],
+    },
+    {
+        "name": "模型列表与详情",
+        "requirement": "模型列表 推荐卡片 点击跳转 模型详情 返回首页",
+        "must_match_any": ["模型", "列表", "详情", "卡片"],
+    },
+    {
+        "name": "外部跳转",
+        "requirement": "打开微信 跳转商城 返回 App",
+        "must_match_any": ["微信", "商城", "跳转", "返回"],
+    },
+]
+
+
+def evaluate_baseline_template_matching(
+    baseline_cases: Iterable[dict],
+    samples: Optional[Iterable[dict]] = None,
+    limit: int = 5,
+) -> Dict[str, Any]:
+    """Run deterministic smoke evaluation for template retrieval quality.
+
+    This is intentionally lightweight: it checks whether fixed representative
+    requirements can retrieve baseline snippets whose title/file/tags/actions
+    contain expected domain words. The result is metadata for review, not a
+    hard generation blocker.
+    """
+    cases = [case for case in (baseline_cases or []) if isinstance(case, dict)]
+    rows: List[Dict[str, Any]] = []
+    for sample in (samples or YAML_TEMPLATE_MATCH_EVAL_SAMPLES):
+        if not isinstance(sample, dict):
+            continue
+        expected = [str(item).lower() for item in (sample.get("must_match_any") or []) if str(item).strip()]
+        templates = select_best_baseline_template(sample.get("requirement") or sample.get("name"), cases, limit=limit)
+        matched_text = "\n".join(_case_text(item).lower() for item in templates)
+        hit_terms = [term for term in expected if term and term in matched_text]
+        rows.append({
+            "name": sample.get("name") or sample.get("requirement") or "样例",
+            "expected": expected,
+            "hit_terms": hit_terms,
+            "ok": bool(hit_terms),
+            "top": [
+                {
+                    "title": item.get("title"),
+                    "module": item.get("module"),
+                    "file": item.get("file"),
+                    "score": item.get("template_score") or item.get("score") or 0,
+                }
+                for item in templates[:3]
+            ],
+        })
+    passed = sum(1 for row in rows if row.get("ok"))
+    return {
+        "enabled": True,
+        "sample_count": len(rows),
+        "passed": passed,
+        "failed": max(0, len(rows) - passed),
+        "pass_rate": round(passed / len(rows), 3) if rows else 0,
+        "samples": rows,
+    }

@@ -136,6 +136,7 @@ def _build_runner_record(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
         "devices": devices,
         "workspace": payload.get("workspace", ""),
         "hostname": payload.get("hostname", ""),
+        "capabilities": payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {},
         "last_seen": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
         "last_seen_ts": now,
     }

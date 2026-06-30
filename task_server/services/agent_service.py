@@ -3736,6 +3736,24 @@ def _agent_yaml_dry_run_for_ref(run, ref):
     return dry
 
 
+def _runner_supports_yaml_dry_run(runner_id):
+    runner_id = str(runner_id or "").strip()
+    if not runner_id:
+        return False, "未指定 Runner，使用本地 dry-run"
+    try:
+        from task_server.services.runner_service import list_runners
+
+        runner = (list_runners() or {}).get(runner_id) or {}
+        caps = runner.get("capabilities") if isinstance(runner.get("capabilities"), dict) else {}
+        if not runner.get("online"):
+            return False, f"Runner {runner_id} 不在线，使用本地 dry-run"
+        if caps.get("yaml_dry_run"):
+            return True, f"Runner {runner_id} 支持真实 YAML dry-run"
+        return False, f"Runner {runner_id} 未上报 yaml_dry_run 能力，使用本地 dry-run"
+    except Exception as exc:
+        return False, f"读取 Runner 能力失败：{str(exc)[:120]}"
+
+
 def _compact_yaml_dry_run_result(dry):
     return {
         "ok": bool((dry or {}).get("ok")),
@@ -7771,8 +7789,10 @@ def _tool_run_sonic(run):
                 device_id=selected_device_id,
                 runner_id=selected_runner_id,
             )
+            runner_dry_run_enabled, runner_dry_run_reason = _runner_supports_yaml_dry_run(selected_runner_id)
             dry_run_results = []
             dry_run_blocked = []
+            runner_dry_run_jobs = []
             for ref in file_refs:
                 try:
                     yf = str(ref.get("path") or "")
@@ -7800,6 +7820,48 @@ def _tool_run_sonic(run):
                             "errors": list(dry_compact.get("errors") or [])[:8],
                         })
                         continue
+                    if runner_dry_run_enabled:
+                        dry_task_names = _agent_yaml_task_names_for_runner(full_path)
+                        dry_job = job_service.create_job({
+                            "module": mod,
+                            "file": fn,
+                            "target_task_name": dry_task_names[0] if len(dry_task_names) == 1 else "",
+                            "task_names": dry_task_names,
+                            "current_task_name": dry_task_names[0] if dry_task_names else "",
+                            "runner_id": selected_runner_id,
+                            "device_id": selected_device_id,
+                            "device_strategy": "fixed" if selected_device_id else "auto",
+                            "job_type": "yaml_dry_run",
+                            "type": "yaml_dry_run",
+                            "run_mode": "yaml_dry_run",
+                            "dry_run": True,
+                            "parent_run_id": run.get("runId", ""),
+                        })
+                        dry_job_id = dry_job.get("job_id") if dry_job else ""
+                        if dry_job_id:
+                            runner_dry_run_jobs.append(dry_job_id)
+                            dry_row["runnerDryRunJobId"] = dry_job_id
+                            wait_dry = job_service.wait_jobs_finished([dry_job_id], run, timeout=120, interval=3)
+                            dry_row["runnerDryRun"] = {
+                                "completed": len(wait_dry.get("completed") or []),
+                                "failed": len(wait_dry.get("failed") or []),
+                                "timeout": len(wait_dry.get("timeout") or []),
+                                "jobId": dry_job_id,
+                            }
+                            if not wait_dry.get("completed"):
+                                failed_rows = list(wait_dry.get("failed") or []) + list(wait_dry.get("timeout") or [])
+                                dry_run_blocked.append({
+                                    "module": mod,
+                                    "file": fn,
+                                    "path": full_path,
+                                    "reason": "Runner 真实 dry-run 未通过",
+                                    "job_id": dry_job_id,
+                                    "errors": [
+                                        str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
+                                        for item in failed_rows[:5]
+                                    ],
+                                })
+                                continue
                     task_names = _agent_yaml_task_names_for_runner(full_path)
                     target_task_name = task_names[0] if len(task_names) == 1 else ""
                     job = job_service.create_job({
@@ -7828,11 +7890,14 @@ def _tool_run_sonic(run):
                 "checked": len(dry_run_results),
                 "blockedCount": len(dry_run_blocked),
                 "createdCount": len(job_ids),
+                "mode": "runner_yaml_dry_run" if runner_dry_run_enabled else "mock_dry_run",
+                "reason": runner_dry_run_reason,
+                "runnerJobIds": runner_dry_run_jobs,
                 "results": dry_run_results,
                 "blocked": dry_run_blocked,
             }
             summary_parts = [
-                f"Runner 调试模式：dry-run 通过 {dry_run_passed} 个，拦截 {len(dry_run_blocked)} 个，创建 {len(job_ids)} 个本地任务"
+                f"Runner 调试模式：{run_artifacts['runnerDryRun']['mode']} 通过 {dry_run_passed} 个，拦截 {len(dry_run_blocked)} 个，创建 {len(job_ids)} 个本地任务"
             ]
             run_artifacts["jobIds"] = job_ids
             if not job_ids:

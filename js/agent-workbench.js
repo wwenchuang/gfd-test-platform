@@ -1100,7 +1100,24 @@ function renderSonicSyncDetail(step, artifacts) {
 function renderRunTaskDetail(step, artifacts) {
   const progress = (artifacts || {}).jobProgress || {};
   const result = (artifacts || {}).jobResult || {};
+  const runnerDryRun = (artifacts || {}).runnerDryRun || {};
   let html = '<div class="job-progress">';
+  if (runnerDryRun && (runnerDryRun.checked != null || runnerDryRun.createdCount != null)) {
+    html += agentInfoGrid([
+      { label: '执行前 dry-run', value: runnerDryRun.mode || 'mock_dry_run' },
+      { label: '检查 YAML', value: runnerDryRun.checked ?? 0 },
+      { label: '拦截', value: runnerDryRun.blockedCount ?? 0 },
+      { label: '真实 dry-run Job', value: (runnerDryRun.runnerJobIds || []).length || '-' },
+    ]);
+    if (runnerDryRun.reason) {
+      html += `<section class="agent-readable-panel"><strong>dry-run 说明</strong><p>${escapeHtml(runnerDryRun.reason)}</p></section>`;
+    }
+    if (Array.isArray(runnerDryRun.blocked) && runnerDryRun.blocked.length) {
+      html += agentReadableList('dry-run 拦截明细', runnerDryRun.blocked.slice(0, 12), item => (
+        `<b>${escapeHtml(item.file || item.path || '')}</b><span>${escapeHtml(item.reason || '')}${item.job_id ? ' · Job ' + escapeHtml(item.job_id) : ''}${item.errors ? ' · ' + escapeHtml((item.errors || []).join('；')) : ''}</span>`
+      ));
+    }
+  }
   if (progress.total > 0) {
     const timeoutText = progress.timeoutSeconds || progress.timeout
       ? ` / 上限 ${escapeHtml(String(progress.timeoutSeconds || progress.timeout))}s`
@@ -1780,6 +1797,13 @@ function renderRepairDraftDetail(step, artifacts) {
   if (draft.analysis || draft.suggestion) {
     html += `<section class="agent-readable-panel"><strong>修复依据</strong><p>${escapeHtml(draft.analysis || '')}</p>${draft.suggestion ? `<p>${escapeHtml(draft.suggestion)}</p>` : ''}</section>`;
   }
+  if (drafts.length) {
+    html += agentReadableList('修复草稿文件', drafts.slice(0, 20), item => {
+      const target = item.targetTaskName || item.taskName || item.file || item.targetJobId || '修复草稿';
+      const status = item.fixedYaml || item.fixed_yaml ? '已生成 YAML 草稿' : (item.analysis ? '仅生成诊断' : '未生成');
+      return `<b>${escapeHtml(target)}</b><span>${escapeHtml(status)}${item.path ? ' · ' + escapeHtml(item.path) : ''}</span>`;
+    });
+  }
   if (draft.evidence) {
     html += `<section class="agent-readable-panel"><strong>使用的失败日志</strong><pre class="agent-artifact-pre">${escapeHtml(String(draft.evidence).slice(0, 1600))}</pre></section>`;
   }
@@ -1823,6 +1847,12 @@ function renderRerunDetail(step, artifacts) {
       return `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(original)} → ${escapeHtml(item.newJobId || '')}${escapeHtml(repaired)}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`;
     });
   }
+  const created = Array.isArray(result.created) ? result.created : (Array.isArray(result.jobs) ? result.jobs : []);
+  if (created.length) {
+    html += agentReadableList('重跑任务清单', created.slice(0, 20), item => (
+      `<b>${escapeHtml(item.job_id || item.jobId || item.newJobId || item.file || '')}</b><span>${escapeHtml(item.module || '')}/${escapeHtml(item.file || '')}${item.target_task_name || item.targetTaskName ? ' · ' + escapeHtml(item.target_task_name || item.targetTaskName) : ''}</span>`
+    ));
+  }
   if (skipped.length) {
     html += agentReadableList('跳过的任务', skipped.slice(0, 15), item => `<b>${escapeHtml(item.taskName || item.jobId || '')}</b><span>${escapeHtml(item.status || '')}${item.reason ? ' · ' + escapeHtml(item.reason) : ''}</span>`);
   }
@@ -1844,6 +1874,16 @@ function renderLearningDetail(step, artifacts) {
     { label: '执行结果', value: merged.hasJobResult ? '已沉淀' : '无' },
   ]);
   html += `<section class="agent-readable-panel"><strong>沉淀内容</strong><p>写入 Agent 历史学习库，用于后续检索相似目标、参考历史用例、复用失败诊断和执行结果。不会覆盖当前 YAML。</p></section>`;
+  const learningItems = [];
+  if (merged.matchedCases) learningItems.push(`相似用例：${merged.matchedCases} 条`);
+  if (merged.yamlRefs) learningItems.push(`YAML 写法引用：${merged.yamlRefs} 条`);
+  if (merged.hasDiagnosis) learningItems.push('失败诊断：已记录失败类型、原因和建议动作');
+  if (merged.hasJobResult) learningItems.push('执行结果：已记录成功/失败/超时统计和报告链接');
+  const failureReasons = (artifacts || {}).jobFailureReasons || (artifacts || {}).failureReasons || [];
+  if (Array.isArray(failureReasons) && failureReasons.length) {
+    learningItems.push(`失败原因样本：${failureReasons.length} 条`);
+  }
+  html += agentReadableList('学习明细', learningItems);
   html += '</div>';
   return html;
 }
@@ -1892,12 +1932,21 @@ function renderExecutionPrecheckDetail(step, artifacts) {
   const blockers = precheck.blockers || firstCall.blockers || [];
   const warnings = precheck.warnings || firstCall.warnings || [];
   const riskDetail = precheck.riskReview || (artifacts || {}).riskReview || firstCall.riskDetail || {};
+  const yamlDryRun = (artifacts || {}).yamlDryRun || {};
+  const runnerDryRun = (artifacts || {}).runnerDryRun || {};
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
     { label: '体检项', value: checks.length },
     { label: '阻断', value: blockers.length },
     { label: '提醒', value: warnings.length },
+    { label: 'YAML dry-run', value: yamlDryRun.checked != null ? `${yamlDryRun.passed || 0}/${yamlDryRun.checked || 0}` : '-' },
+    { label: 'Runner dry-run', value: runnerDryRun.checked != null ? `${(runnerDryRun.checked || 0) - (runnerDryRun.blockedCount || 0)}/${runnerDryRun.checked || 0}` : '-' },
   ]);
+  if (yamlDryRun && Array.isArray(yamlDryRun.results) && yamlDryRun.results.length) {
+    html += agentReadableList('YAML dry-run 结果', yamlDryRun.results.slice(0, 12), item => (
+      `<b>${escapeHtml(item.file || item.path || '')}</b><span>${item.ok ? '通过' : '未通过'}${item.errors ? ' · ' + escapeHtml((item.errors || []).join('；')) : ''}</span>`
+    ));
+  }
   if (riskDetail.keyword && typeof agentRiskDetailHtml === 'function') {
     html += agentRiskDetailHtml(riskDetail);
   }

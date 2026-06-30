@@ -125,7 +125,11 @@ from .yaml_pattern_service import (
     summarize_yaml_patterns,
 )
 from .yaml_static_validator import load_yaml_action_contract, validate_yaml_static_executable
-from .yaml_template_matcher import build_yaml_template_matcher_text, select_best_baseline_template
+from .yaml_template_matcher import (
+    build_yaml_template_matcher_text,
+    evaluate_baseline_template_matching,
+    select_best_baseline_template,
+)
 
 __all__ = [
     "yaml_text",
@@ -4491,6 +4495,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "rule": "生成 YAML 前检索现有用例库，学习可执行步骤组织方式；只复用相关动作结构，不复制无关业务断言。",
         }
     if yaml_template_candidates:
+        template_quality = evaluate_baseline_template_matching(yaml_baseline_library_examples, limit=5)
         review["yaml_template_matcher"] = {
             "enabled": True,
             "template_count": len(yaml_template_candidates),
@@ -4507,6 +4512,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 for item in yaml_template_candidates[:5]
             ],
             "rule": "需求先匹配 Top5 相似基线模板，AI 只能按模板做业务变量替换和少量步骤微调。",
+            "quality_eval": template_quality,
         }
     if yaml_baseline_patterns:
         review["yaml_pattern_contract"] = {

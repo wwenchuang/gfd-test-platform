@@ -35,6 +35,10 @@ _RUNTIME_ENV_FETCHED_AT = 0
 RUNTIME_ENV_CACHE_SECONDS = int(os.getenv("MIDSCENE_RUNTIME_ENV_CACHE_SECONDS", "60"))
 WEAK_RUNNER_TOKENS = {"", "midscene2026", "change-me", "changeme", "test", "token"}
 DEFAULT_APP_PACKAGES = "com.kfb.model,com.xbxxhz.box"
+RUNNER_CAPABILITIES = {
+    "yaml_dry_run": True,
+    "apk_install": True,
+}
 
 
 def validate_runner_config():
@@ -692,6 +696,7 @@ def heartbeat(devices):
         "runner_id": RUNNER_ID,
         "hostname": socket.gethostname(),
         "workspace": str(WORKSPACE),
+        "capabilities": RUNNER_CAPABILITIES,
         "devices": devices
     }
     return http_json("POST", "/api/runner/heartbeat", payload)
@@ -736,6 +741,77 @@ def parse_app_package(yaml_text):
         if match and "." in match.group(1):
             return match.group(1).strip()
     return os.getenv("APP_PACKAGE", "").strip()
+
+
+def is_yaml_dry_run_job(job):
+    job_type = str(job.get("job_type") or job.get("type") or "").strip().lower()
+    run_mode = str(job.get("run_mode") or "").strip().lower()
+    return job_type == "yaml_dry_run" or run_mode == "yaml_dry_run" or bool(job.get("dry_run"))
+
+
+def dry_run_yaml_issues(yaml_text):
+    text = yaml_text or ""
+    issues = []
+    task_names = parse_yaml_task_names(text)
+    if not text.strip():
+        issues.append("YAML 内容为空")
+    if "android:" not in text and "ios:" not in text:
+        issues.append("缺少 android 或 ios 平台根节点")
+    if not task_names:
+        issues.append("未解析到 tasks.name")
+    if not re.search(r"^\s*flow\s*:\s*$", text, re.M):
+        issues.append("未解析到 flow")
+    if not re.search(r"^\s*-\s+(aiTap|aiWaitFor|aiAssert|launch|terminate|sleep|runAdbShell)\s*:", text, re.M):
+        issues.append("flow 中未解析到可执行 Midscene 动作")
+    return issues
+
+
+def run_yaml_dry_run_job(job):
+    job_id = job["job_id"]
+    started = time.time()
+    job_dir = WORKSPACE / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    yaml_name = safe_filename(job.get("file") or "dry-run.yaml")
+    yaml_text = job.get("yaml_content", "") or ""
+    yaml_path = job_dir / yaml_name
+    write_text(yaml_path, yaml_text)
+    task_names = parse_yaml_task_names(yaml_text)
+    app_package = parse_app_package(yaml_text)
+    issues = dry_run_yaml_issues(yaml_text)
+    post_job_progress(job_id, {
+        "progress": 100 if not issues else 20,
+        "current_task_name": task_names[0] if task_names else "",
+        "current_task_index": 0,
+        "completed_task_count": len(task_names) if not issues else 0,
+        "total_task_count": len(task_names),
+        "message": "YAML dry-run 通过" if not issues else "YAML dry-run 未通过",
+    })
+    summary = {
+        "dry_run": True,
+        "mode": "runner_yaml_dry_run",
+        "task_count": len(task_names),
+        "task_names": task_names[:50],
+        "app_package": app_package,
+        "issues": issues,
+        "yaml_path": str(yaml_path),
+    }
+    stdout = f"YAML dry-run checked {len(task_names)} task(s); app={app_package or '-'}"
+    stderr = "\n".join(issues)
+    return {
+        "status": "passed" if not issues else "failed",
+        "duration": round(time.time() - started, 2),
+        "device_id": job.get("device_id") or "",
+        "attempts": [],
+        "stdout": stdout,
+        "stderr": stderr,
+        "summary": summary,
+        "screenshots": [],
+        "report_url": "",
+        "local_report_path": "",
+        "report_upload_error": "",
+        "report_missing_reason": "YAML dry-run 不生成 HTML 报告",
+        "report_upload_pending": False,
+    }
 
 
 def inject_external_page_escape(yaml_text):
@@ -996,6 +1072,8 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
 def run_job(job):
     if is_apk_install_job(job):
         return install_apk_job(job)
+    if is_yaml_dry_run_job(job):
+        return run_yaml_dry_run_job(job)
 
     job_id = job["job_id"]
     job_dir = WORKSPACE / job_id
