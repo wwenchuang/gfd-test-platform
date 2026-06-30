@@ -31,6 +31,11 @@ Each generated baseline task should follow this shape:
 For `com.kfb.model` 3D printing flows:
 
 - Start from App 首页 unless the case explicitly requires another page.
+- 当前智小白 3D 首页底部中间 Tab 是 `AI建模`。不要再假设底部中间是旧的 3D/创作入口。
+- 首页中部横向功能入口可能需要左右滑动后才能看到 `标牌`、`趣味印章`、`涂鸦建模` 等入口；涉及这些入口时，先用 `aiScroll`/`ai` 描述“横向滑动功能入口区域”，再点击可见入口。
+- 首页 `AI建模` 功能卡/底部 `AI建模` Tab 会进入 AI 建模合集或 AI 建模内页；不要在首页 `三维创作` 区域查找旧的 `文字输入` 入口。
+- AI 建模文字建模链路以真机可见页面为准：可能先展示参考图和 `没有喜欢的`，也可能直接出现 `不补充 直接生成`；这两个步骤必须写成条件处理，不得作为必然出现的固定路径。
+- `大家都在做`、推荐列表、骨架屏、缩放控件、动态素材标题都可能随版本/账号/网络变化；除非真机当前页面明确可见，否则不要写成自动化必过断言，优先转人工或待准备。
 - After launch, handle leftover slicing/printing tasks:
   - If the home page shows `模型处理完成` or `去打印`, enter print preview.
   - Tap `取消打印`.
@@ -39,6 +44,7 @@ For `com.kfb.model` 3D printing flows:
 - Long model generation/slicing waits may use `aiWaitFor` with `240000`.
 - Print flows should stop before real printing when possible:
   - Wait for `下一步`, `取消打印`, progress completion, or preview state.
+  - 点击 `下一步` 后如果出现 `请确认耗材颜色` 弹窗，点击蓝色 `确认` 后通常会直接进入模型生成预览页；如果没有弹窗，再继续等待/点击 `下一步`。
   - Cancel and confirm instead of leaving a queued print task behind.
 
 ## Local Xiaobai Learning Conventions

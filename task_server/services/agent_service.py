@@ -1996,6 +1996,30 @@ def _agent_job_log_tail(value, limit=420):
     return text
 
 
+def _agent_job_error_excerpt(value, limit=420):
+    text = str(value or "").replace("\r\n", "\n").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    patterns = [
+        "failed to locate element",
+        "waitfor timeout",
+        "assertion failed",
+        "invalid parameters",
+        "replanned",
+        "serviceerror",
+        "error:",
+    ]
+    for pattern in patterns:
+        idx = lowered.find(pattern)
+        if idx < 0:
+            continue
+        snippet = text[idx:idx + limit]
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+        return snippet[:limit]
+    return _agent_job_log_tail(text, limit=limit)
+
+
 def _agent_job_field(job, snake_key, camel_key=None):
     if not isinstance(job, dict):
         return ""
@@ -2013,8 +2037,8 @@ def _agent_job_failure_reason(job):
         ("report_missing_reason", "reportMissingReason", "报告缺失"),
         ("upload_warning", "uploadWarning", "报告警告"),
         ("stderr_tail", "stderrTail", "Runner 错误"),
-        ("progress_message", "progressMessage", "执行进度"),
         ("stdout_tail", "stdoutTail", "Runner 日志"),
+        ("progress_message", "progressMessage", "执行进度"),
     ]
     status = str(_agent_job_field(job, "status") or "").strip()
     raw_text = "\n".join(
@@ -2023,7 +2047,8 @@ def _agent_job_failure_reason(job):
     )
     failure_type = _agent_job_failure_type(raw_text)
     for snake_key, camel_key, label in candidates:
-        reason = _agent_job_log_tail(_agent_job_field(job, snake_key, camel_key))
+        raw_reason = _agent_job_field(job, snake_key, camel_key)
+        reason = _agent_job_error_excerpt(raw_reason) if snake_key in ("stderr_tail", "stdout_tail") else _agent_job_log_tail(raw_reason)
         if not reason:
             continue
         if snake_key == "progress_message" and reason.lower() in {"failed", "fail", "error", "timeout"}:

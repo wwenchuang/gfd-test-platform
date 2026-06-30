@@ -1551,11 +1551,45 @@ def main():
         },
     ]
     from task_server.services import agent_service
-    from task_server.services.yaml_service import validate_midscene_yaml_executability
+    from task_server.services.yaml_service import dry_run_midscene_yaml, split_automation_ready_cases, validate_midscene_yaml_executability
+    from task_server.services.yaml_static_validator import validate_yaml_static_executable
     empty_yaml = validate_midscene_yaml_executability("android:\n  tasks: []\n")
     require(not empty_yaml.get("ok") and "不能为空" in "；".join(empty_yaml.get("issues") or []), "Empty android.tasks must fail executable validation")
     valid_yaml = validate_midscene_yaml_executability("android:\n  tasks:\n    - name: demo\n      flow:\n        - aiTap: 首页搜索框\n")
     require(valid_yaml.get("ok") and valid_yaml.get("taskCount") == 1, "Valid android.tasks YAML must pass executable validation")
+    missing_input_value_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiInput: 当前页面输入框\n"
+    missing_input_value = validate_midscene_yaml_executability(missing_input_value_yaml)
+    require(not missing_input_value.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value.get("issues") or []), "Executable validation must reject aiInput without value before Runner")
+    missing_input_value_static = validate_yaml_static_executable(missing_input_value_yaml)
+    require(not missing_input_value_static.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value_static.get("errors") or []), "Static YAML validation must reject aiInput without value")
+    ai_model_payload = {
+        "title": "AI建模 UI测试",
+        "module": "AI测试",
+        "cases": [
+            {
+                "title": "「开始创作」三种入口点击跳转验证",
+                "steps": ["在首页三维创作区点击文字输入入口"],
+                "assertions": ["进入 AI建模页"],
+            },
+            {
+                "title": "首页底部 AI建模入口可达",
+                "steps": ["点击 AI建模入口"],
+                "assertions": ["AI建模页面展示开始创作或图片建模入口"],
+            },
+        ],
+    }
+    split_payload = split_automation_ready_cases(ai_model_payload)
+    require(len(split_payload.get("cases") or []) == 1 and len(split_payload.get("manual_cases") or []) == 1, "AI建模 hard gate must move old-entry cases to manual before Runner")
+    require("底部中间 Tab「AI建模」" in "；".join(split_payload["cases"][0].get("steps") or []), "AI建模 eligible cases must get current app entry navigation before YAML conversion")
+    old_ai_model_yaml = """android:
+  tasks:
+    - name: "开始创作三种入口点击跳转验证"
+      flow:
+        - aiTap: "首页三维创作区域的文字输入入口"
+        - aiWaitFor: "大家都在做区域出现"
+"""
+    old_ai_model_dry = dry_run_midscene_yaml(old_ai_model_yaml, app_package="com.kfb.model")
+    require(not old_ai_model_dry.get("ok") and "旧版" in "；".join(old_ai_model_dry.get("errors") or []), "YAML dry-run must block current-app old AI modeling entry before Runner")
     fuzzy_items, fuzzy_scored = agent_service._fuzzy_match_cases("回归一下查看打印记录基线测试用例", fuzzy_yamls, ["回归一下查看打印记录基线测试用例"])
     require(fuzzy_items and fuzzy_items[0]["file_name"] == "打印记录查看.yaml", "Agent fuzzy fallback must match 查看打印记录 to 打印记录查看.yaml")
     require(fuzzy_scored and fuzzy_scored[0][0] >= 55, "Agent fuzzy fallback score threshold must accept clear reordered Chinese matches")

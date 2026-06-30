@@ -1076,6 +1076,8 @@ def build_executable_smoke_yaml_policy_text():
         "4. 过程检查优先用 aiWaitFor / aiTap / aiInput / aiAction；是否使用 aiAssert 以相似基线写法和需求明确要求为准，不要为了补断言强行生成。",
         "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
+        "7. 智小白 3D AI建模链路必须按当前真机入口写：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的“文字输入”；标牌/印章入口需要先横向滑动功能入口区域。",
+        "8. 动态推荐、骨架屏、缩放控件、固定推荐标题、旧入口缺失验证不能作为自动化必过断言；没有稳定真机信号时转入 manual_cases/summary。",
     ]).strip()
 
 
@@ -1517,6 +1519,29 @@ def _case_manual_block_reason(case: dict) -> str:
         return "属于改版后旧入口缺失校验，需先确认 App 版本和页面状态，再转自动化"
     if has_any("排序", "排列顺序") and has_any("首页", "模块", "入口", "卡片"):
         return "属于 UI 顺序/视觉验收，真机数据与 Figma 容易不一致，默认转人工复核"
+    is_xiaobai_ai_model = has_any("ai建模", "图片建模", "语音创作", "文字建模", "标牌", "趣味印章", "印章", "com.kfb.model", "智小白3d")
+    if is_xiaobai_ai_model:
+        if has_any("三种入口", "多入口") and has_any("开始创作", "跳转", "验证"):
+            return "当前 App 入口已改版，不能把历史多入口作为自动化必经路径；请按当前底部 AI建模 Tab/首页卡片重写"
+        if has_any("文字输入") and has_any("首页", "三维创作", "开始创作", "入口"):
+            return "当前首页三维创作区没有旧版文字输入入口，直接执行会定位失败"
+        if (
+            has_any("大家都在做", "骨架屏", "缩放控件", "固定推荐", "推荐标题", "素材标题")
+            and not has_any("或", "任一", "任意", "之一", "任意一个")
+        ):
+            return "依赖动态推荐、加载瞬态或历史设计稿控件，当前真机不保证出现，不能直接下发 Runner"
+        if has_any("欢迎态") and has_any("我是小魔法师"):
+            return "欢迎态文案已随版本变化，不能用历史固定文案作为自动化断言"
+        if has_any("没有喜欢的", "四维补充", "不补充直接生成"):
+            return "AI建模推荐/补充分支是条件路径，不保证每次出现；应写条件处理或转待准备，不作为固定 Runner 用例"
+        if has_any("键盘弹出", "输入框聚焦", "软键盘"):
+            return "软键盘显隐受输入法和系统状态影响，Runner 视觉断言不稳定"
+        if has_any("语音创作") and has_any("长按输入", "录音", "麦克风", "权限", "直接说", "点击语音"):
+            return "语音链路依赖麦克风权限、长按录音和系统状态，默认转待准备用例"
+        if has_any("文件选择器", "相册", "上传图片") and not has_any("已准备测试图片", "固定测试图片", "测试图片已准备"):
+            return "图片/相册/文件选择依赖本机文件和系统选择器，未声明测试图片时不直接自动化"
+        if has_any("模型打印编辑页") and has_any("一键应用", "尺寸参数", "返回操作"):
+            return "模型生成后的编辑页依赖上游生成结果和动态控件，未命中稳定基线前不直接执行"
     rules = [
         (("mock", "接口mock", "接口返回", "服务端返回", "后台造数", "数据库", "后台配置", "已配置匹配接口", "造数"), "依赖接口 Mock、后台造数或服务端状态，当前 Runner 不能直接准备"),
         (("断网", "弱网", "网络异常", "破坏网络", "服务器繁忙", "服务端异常", "5xx"), "依赖网络/服务端异常状态，需要测试环境或人工准备"),
@@ -1530,6 +1555,37 @@ def _case_manual_block_reason(case: dict) -> str:
         if any(str(term).lower() in compact for term in terms):
             return reason
     return ""
+
+
+def _normalize_runner_case_for_current_app(case: dict) -> dict:
+    """Make still-eligible cases follow current app navigation before YAML conversion."""
+    if not isinstance(case, dict):
+        return case
+    text = _case_execution_text(case)
+    compact = re.sub(r"\s+", "", text).lower()
+    steps = normalize_text_list(case.get("steps") or [])
+    if not steps:
+        return case
+
+    next_case = dict(case)
+    step_blob = re.sub(r"\s+", "", " ".join(steps)).lower()
+    if any(term in compact for term in ("ai建模", "图片建模", "文字建模", "语音创作")):
+        if "底部中间tab" not in step_blob and "底部tab" not in step_blob and "首页可见ai建模" not in step_blob:
+            steps = [
+                "点击底部中间 Tab「AI建模」或首页可见的「AI建模」功能卡片，进入 AI建模功能页",
+                "等待页面出现「AI建模」、开始创作、图片建模、语音创作或输入框中的任意一个稳定信号",
+            ] + steps
+            next_case["steps"] = steps
+            hint = first_non_empty(next_case.get("repair_hints") or next_case.get("repairHints"))
+            add_hint = "当前版本优先从底部中间 Tab「AI建模」进入，不要在首页三维创作区查找旧入口。"
+            next_case["repair_hints"] = f"{hint}；{add_hint}" if hint else add_hint
+    if any(term in compact for term in ("标牌", "趣味印章", "印章")):
+        if "横向" not in step_blob and "滑动" not in step_blob:
+            steps = [
+                "在首页中部功能入口区域横向滑动，直到「标牌」或「趣味印章」入口可见",
+            ] + steps
+            next_case["steps"] = steps
+    return next_case
 
 
 def _requirement_points_from_payload(payload: dict) -> List[str]:
@@ -1663,7 +1719,7 @@ def split_automation_ready_cases(payload: Any) -> dict:
                 "suggested_setup": "补充业务路径和页面入口后再转自动化",
             })
             continue
-        ready.append(case)
+        ready.append(_normalize_runner_case_for_current_app(case))
     normalized["cases"] = ready
     normalized["manual_cases"] = manual
     normalized["_automation_ready"] = True
@@ -3686,6 +3742,8 @@ def validate_midscene_yaml_executability(text):
             for action in action_keys:
                 if action in ("ai", "aiAct", "aiAction", "aiTap", "aiAssert", "aiWaitFor", "aiInput") and _yaml_action_value_blank(item.get(action)):
                     issues.append(f"tasks[{idx}].flow[{fidx}] {action} 内容不能为空")
+                if action == "aiInput" and _yaml_action_value_blank(item.get("value")):
+                    issues.append(f"tasks[{idx}].flow[{fidx}] aiInput 必须包含 value")
     return {
         "ok": not issues,
         "platform": platform,
@@ -3693,6 +3751,82 @@ def validate_midscene_yaml_executability(text):
         "issues": issues,
         "riskHits": risk_hits,
     }
+
+
+def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", module: str = "", file: str = "") -> List[str]:
+    """Block YAML that is structurally valid but known to fail on the current App UI."""
+    if _pyyaml is None:
+        return []
+    raw = str(yaml_text or "")
+    scope_text = f"{app_package} {module} {file} {raw}"
+    scope_compact = re.sub(r"\s+", "", scope_text).lower()
+    is_xiaobai_ai_model = (
+        "com.kfb.model" in scope_compact
+        or any(term in scope_compact for term in ("智小白3d", "ai建模", "图片建模", "文字建模", "语音创作", "标牌", "趣味印章", "涂鸦建模"))
+    )
+    if not is_xiaobai_ai_model:
+        return []
+    try:
+        parsed = _pyyaml.safe_load(raw)
+    except Exception:
+        return []
+    _, tasks = extract_midscene_tasks(parsed)
+    if not tasks:
+        return []
+
+    issues: List[str] = []
+
+    def text_has(compact: str, *terms: str) -> bool:
+        return any(str(term).lower() in compact for term in terms)
+
+    for idx, task in enumerate(tasks, 1):
+        if not isinstance(task, dict):
+            continue
+        name = str(task.get("name") or f"tasks[{idx}]").strip()
+        flow = task.get("flow") if isinstance(task.get("flow"), list) else []
+        fragments = [name]
+        action_rows: List[Tuple[str, str]] = []
+        for item in flow:
+            if not isinstance(item, dict):
+                continue
+            for key, value in item.items():
+                if key in MIDSCENE_FLOW_ACTIONS:
+                    val = str(value or "")
+                    action_rows.append((key, val))
+                    fragments.append(val)
+                elif key in ("value", "prompt", "description"):
+                    fragments.append(str(value or ""))
+        task_text = "\n".join(fragments)
+        compact = re.sub(r"\s+", "", task_text).lower()
+        prefix = f"{name}: "
+
+        if text_has(compact, "三种入口", "多入口") and text_has(compact, "开始创作", "跳转", "验证"):
+            issues.append(prefix + "当前 App 入口已改版，旧版多入口验证不能直接下发 Runner")
+        if text_has(compact, "文字输入") and text_has(compact, "首页", "三维创作", "开始创作", "入口"):
+            issues.append(prefix + "当前首页没有旧版“文字输入”入口，需改为底部 AI建模 Tab/当前真机入口")
+        if (
+            text_has(compact, "大家都在做", "骨架屏", "缩放控件", "固定推荐", "推荐标题", "素材标题")
+            and not text_has(compact, "或", "任一", "任意", "之一", "任意一个")
+        ):
+            issues.append(prefix + "包含动态推荐/加载瞬态/历史稿控件，不能作为自动化必过断言")
+        if text_has(compact, "我是小魔法师"):
+            issues.append(prefix + "欢迎态文案随版本变化，不能作为固定 wait/assert 信号")
+        if text_has(compact, "标牌", "趣味印章", "涂鸦建模") and not text_has(compact, "横向", "滑动", "aiScroll"):
+            issues.append(prefix + "横向功能入口缺少滑动步骤，真机上目标入口可能不可见")
+        for action, value in action_rows:
+            action_text = re.sub(r"\s+", "", value).lower()
+            if action in ("aiTap", "aiWaitFor", "aiAssert") and text_has(action_text, "没有喜欢的", "不补充直接生成"):
+                issues.append(prefix + "条件分支被写成固定动作；应改为 ai 条件处理或转待准备")
+            if (
+                action in ("aiTap", "aiWaitFor", "aiAssert")
+                and text_has(action_text, "语音创作")
+                and text_has(action_text, "长按输入", "录音", "麦克风", "权限", "直接说", "点击语音")
+            ):
+                issues.append(prefix + "语音录音链路依赖权限/麦克风/长按状态，默认不直接 Runner 执行")
+        if text_has(compact, "上传图片", "选择图片", "相册") and not text_has(compact, "已准备测试图片", "固定测试图片", "测试图片已准备"):
+            issues.append(prefix + "图片上传链路未声明固定测试图片，系统选择器/相册数据不稳定")
+
+    return list(dict.fromkeys(issues))
 
 
 def dry_run_midscene_yaml(yaml_text: str = "", *, module: str = "", file: str = "", app_package: str = "") -> dict:
@@ -3711,15 +3845,18 @@ def dry_run_midscene_yaml(yaml_text: str = "", *, module: str = "", file: str = 
     yaml_check = validate_midscene_yaml(normalized)
     yaml_executability = validate_midscene_yaml_executability(normalized)
     yaml_static_validation = validate_yaml_static_executable(normalized)
+    semantic_issues = _yaml_current_app_semantic_issues(normalized, app_package=app_package, module=module, file=file)
     ok = bool(
         yaml_check.get("ok")
         and yaml_executability.get("ok")
         and yaml_static_validation.get("ok")
+        and not semantic_issues
     )
     errors = []
     errors.extend(str(item) for item in yaml_check.get("issues") or [] if str(item).strip())
     errors.extend(str(item) for item in yaml_executability.get("issues") or [] if str(item).strip())
     errors.extend(str(item) for item in yaml_static_validation.get("errors") or [] if str(item).strip())
+    errors.extend(str(item) for item in semantic_issues if str(item).strip())
     warnings = []
     warnings.extend(str(item) for item in yaml_check.get("warnings") or [] if str(item).strip())
     warnings.extend(str(item) for item in yaml_static_validation.get("warnings") or [] if str(item).strip())
@@ -3740,6 +3877,7 @@ def dry_run_midscene_yaml(yaml_text: str = "", *, module: str = "", file: str = 
         "yamlCheck": yaml_check,
         "yamlExecutability": yaml_executability,
         "yamlStaticValidation": yaml_static_validation,
+        "semanticIssues": semantic_issues,
         "message": "dry-run 通过：YAML 可被平台规则加载" if ok else "dry-run 未通过：请先修复 YAML 结构或动作字段",
     }
 

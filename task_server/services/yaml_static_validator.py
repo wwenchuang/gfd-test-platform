@@ -216,8 +216,11 @@ def validate_yaml_static_executable(yaml_text: str, *, strict: bool = False) -> 
                 value = step.get(action)
                 if action in ("ai", "aiAct", "aiAction", "aiTap", "aiAssert", "aiWaitFor") and _value_blank(value):
                     result["errors"].append(f"tasks[{task_index}].flow[{step_index}] {action} 内容不能为空")
-                if action == "aiInput" and _value_blank(value) and _value_blank(step.get("value")):
-                    result["errors"].append(f"tasks[{task_index}].flow[{step_index}] aiInput 必须包含输入目标或 value")
+                if action == "aiInput":
+                    if _value_blank(value):
+                        result["errors"].append(f"tasks[{task_index}].flow[{step_index}] aiInput 输入目标不能为空")
+                    if _value_blank(step.get("value")):
+                        result["errors"].append(f"tasks[{task_index}].flow[{step_index}] aiInput 必须包含 value")
                 if action in contract.get("assertion_actions", []):
                     task_has_assert = True
                     result["assertCount"] += 1
