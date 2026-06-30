@@ -5438,11 +5438,12 @@ def list_generation_mindmaps(limit=100):
         if record:
             records.append(record)
     records.sort(
-        key=lambda item: (
-            item.get("mindmap_sort_ts")
-            or item.get("mindmap_updated_at")
-            or item.get("generated_at")
-            or ""
+        key=lambda item: max(
+            _mindmap_time_value(item.get("mindmap_sort_ts")),
+            _mindmap_time_value(item.get("mindmap_updated_ts")),
+            _mindmap_time_value(item.get("mindmap_updated_at")),
+            _mindmap_time_value(item.get("generated_ts")),
+            _mindmap_time_value(item.get("generated_at")),
         ),
         reverse=True,
     )

@@ -53,6 +53,7 @@ let jobsRefreshTimer = null;
 let mindmapCenterRefreshTimer = null;
 let mindmapCenterRecordCaseSetIds = new Set();
 let mindmapCenterTaskJobs = [];
+let mindmapCenterFileRows = [];
 let latestJobs = [];
 let taskApps = [];
 let taskMeta = {};
