@@ -347,7 +347,12 @@ def scenario_key(value):
 
 
 def scenario_method_text(scenario):
-    methods = normalize_text_list((scenario or {}).get("method") or (scenario or {}).get("methods"))
+    methods = normalize_text_list(
+        (scenario or {}).get("design_method")
+        or (scenario or {}).get("designMethod")
+        or (scenario or {}).get("method")
+        or (scenario or {}).get("methods")
+    )
     return " / ".join(methods[:2])
 
 
@@ -357,7 +362,143 @@ def case_mm_title(case):
     title = str(case.get("title") or case.get("case_name") or case.get("name") or "未命名用例").strip()
     priority = str(case.get("priority") or "").strip().upper()
     suffix = f" [{priority}]" if priority else ""
+    if is_smoke_case(case):
+        suffix = f"{suffix} flag=冒烟"
     return f"{prefix} {title}{suffix}".strip()
+
+
+def _mindmap_step_text(step):
+    if isinstance(step, dict):
+        action = first_non_empty(
+            step.get("step"),
+            step.get("action"),
+            step.get("desc"),
+            step.get("description"),
+            step.get("name"),
+            step.get("prompt"),
+        )
+        value = first_non_empty(step.get("value"), step.get("input"), step.get("text"))
+        if value and value not in str(action):
+            return f"{action}：{value}" if action else str(value)
+        return str(action or "").strip()
+    return str(step or "").strip()
+
+
+def _mindmap_step_expected(step):
+    if not isinstance(step, dict):
+        return []
+    return normalize_text_list(
+        step.get("expect")
+        or step.get("expected")
+        or step.get("assertion")
+        or step.get("assertions")
+        or step.get("result")
+    )
+
+
+def case_mindmap_detail_nodes(case, indent=4):
+    case = case if isinstance(case, dict) else {}
+    raw_steps = case.get("steps") or case.get("flow") or []
+    if isinstance(raw_steps, str):
+        raw_steps = [raw_steps]
+    elif not isinstance(raw_steps, list):
+        raw_steps = normalize_text_list(raw_steps)
+
+    steps = []
+    step_expected = []
+    for step in raw_steps:
+        text = _mindmap_step_text(step)
+        if text:
+            steps.append(text)
+        step_expected.extend(_mindmap_step_expected(step))
+
+    if not steps:
+        path = first_non_empty(
+            case_value(case, "business_path", "businessPath", "path", "flow_path", "flowPath", "navigation_path", "navigationPath")
+        )
+        if path:
+            steps = [part.strip() for part in re.split(r"\s*(?:->|→|>|/)\s*", str(path)) if part.strip()]
+
+    expectations = normalize_text_list(
+        case.get("assertions")
+        or case.get("expects")
+        or case.get("expected")
+        or case.get("expect")
+    )
+    expected_result = first_non_empty(
+        case_value(case, "expected_result", "expectedResult", "expectation")
+    )
+    if expected_result:
+        expectations.insert(0, expected_result)
+    expectations.extend(step_expected)
+
+    deduped_expectations = []
+    seen = set()
+    for item in expectations:
+        key = re.sub(r"\s+", "", str(item or ""))
+        if key and key not in seen:
+            seen.add(key)
+            deduped_expectations.append(item)
+
+    children = []
+    if steps:
+        children.append(mm_node(
+            "测试步骤",
+            [mm_node(f"{idx}. {item}", indent=indent + 1) for idx, item in enumerate(steps[:12], start=1)],
+            indent=indent,
+        ))
+    else:
+        children.append(mm_node("测试步骤", [mm_node("待补充明确操作步骤", indent=indent + 1)], indent=indent))
+
+    if deduped_expectations:
+        children.append(mm_node(
+            "预期结果",
+            [mm_node(f"{idx}. {item}", indent=indent + 1) for idx, item in enumerate(deduped_expectations[:10], start=1)],
+            indent=indent,
+        ))
+    else:
+        children.append(mm_node("预期结果", [mm_node("按需求验收点检查页面结果符合预期", indent=indent + 1)], indent=indent))
+
+    data_requirements = first_non_empty(case_value(case, "data_requirements", "dataRequirements", "test_data", "testData"))
+    if data_requirements:
+        children.append(mm_node(f"测试数据/前置：{data_requirements}", indent=indent))
+    return children
+
+
+def scenario_as_mindmap_case(scenario):
+    scenario = scenario if isinstance(scenario, dict) else {}
+    name = first_non_empty(scenario.get("scenario"), scenario.get("name"), scenario.get("title"), "未命名场景")
+    path = first_non_empty(
+        scenario.get("business_path"),
+        scenario.get("businessPath"),
+        scenario.get("path"),
+        scenario.get("flow_path"),
+        scenario.get("flowPath"),
+    )
+    expected = first_non_empty(
+        scenario.get("expected"),
+        scenario.get("expected_result"),
+        scenario.get("expectedResult"),
+        scenario.get("visible_outcome"),
+        scenario.get("visibleOutcome"),
+    )
+    reason = first_non_empty(scenario.get("reason"), scenario.get("automation_reason"), scenario.get("automationReason"))
+    steps = []
+    if path:
+        steps = [part.strip() for part in re.split(r"\s*(?:->|→|>|/)\s*", str(path)) if part.strip()]
+    if not steps:
+        steps = [f"按场景“{name}”准备测试条件", "执行需求描述中的核心操作", "观察页面反馈、状态变化或提示文案"]
+    assertions = [expected] if expected else [f"场景“{name}”的可见结果符合需求描述"]
+    title_prefix = "人工/待准备" if scenario.get("automation_suitable") is False else "场景检查"
+    row = {
+        "title": f"{title_prefix}：{name}",
+        "priority": first_non_empty(scenario.get("priority"), "P2"),
+        "steps": steps,
+        "assertions": assertions,
+        "expected_result": expected,
+        "data_requirements": reason if scenario.get("automation_suitable") is False else "",
+    }
+    return row
 
 
 def is_image_file(filename):
@@ -5522,7 +5663,7 @@ def generate_mindmap_from_request(d, job_id=None):
     case_set_id = d.get("case_set_id") or new_case_set_id()
     files = d.get("files") or []
     has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or "").strip())
-    mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "compact").strip().lower() or "compact"
+    mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "full").strip().lower() or "full"
 
     if job_id:
         update_generate_job(job_id, progress=10, step="保存资料", message="正在保存脑图资料")
@@ -5973,10 +6114,10 @@ def build_generation_mindmap_full(summary):
             scenario_cases = [case for case in cases if scenario_key(case.get("scenario")) == scenario_key(scenario_name)]
             for case in scenario_cases:
                 matched_case_ids.add(id(case))
+            if not scenario_cases:
+                scenario_cases = [scenario_as_mindmap_case(scenario)]
             for case in scenario_cases[:6]:
-                case_children = []
-                if case.get("expected_result"):
-                    case_children.append(mm_node(f"检查：{case.get('expected_result')}", indent=4))
+                case_children = case_mindmap_detail_nodes(case, indent=4)
                 if case.get("risk"):
                     case_children.append(mm_node(f"风险：{case.get('risk')}", indent=4))
                 scenario_children.append(mm_node(case_mm_title(case), case_children, indent=3))
@@ -5995,7 +6136,10 @@ def build_generation_mindmap_full(summary):
             if case_feature == feature and id(case) not in matched_case_ids:
                 orphan_cases.append(case)
         if orphan_cases:
-            orphan_children = [mm_node(case_mm_title(case), indent=3) for case in orphan_cases[:10]]
+            orphan_children = [
+                mm_node(case_mm_title(case), case_mindmap_detail_nodes(case, indent=4), indent=3)
+                for case in orphan_cases[:10]
+            ]
             if len(orphan_cases) > 10:
                 orphan_children.append(mm_node(f"其余 {len(orphan_cases) - 10} 条用例见 YAML/生成分析", indent=3))
             feature_children.append(mm_node("未匹配场景的自动化用例（等价类）", orphan_children, indent=2))
@@ -6027,10 +6171,14 @@ def build_generation_mindmap_full(summary):
         manual_children = []
         for case in manual_cases:
             title_text = case.get("title") or case.get("name") or "人工用例"
-            manual_children.append(mm_node(title_text, [
+            details = [
                 mm_node(f"原因：{case.get('reason') or '需要人工确认或准备数据'}", indent=3),
                 mm_node(f"准备建议：{case.get('suggested_setup') or case.get('setup') or '按实际环境准备'}", indent=3),
-            ], indent=2))
+            ]
+            extra = case_mindmap_detail_nodes(case, indent=3)
+            if extra:
+                details.extend(extra)
+            manual_children.append(mm_node(title_text, details, indent=2))
         root_children.append(mm_node("人工用例 / 待准备", manual_children, indent=1))
 
     review = summary.get("review") or {}

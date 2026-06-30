@@ -610,7 +610,7 @@
       <h3>新建脑图</h3>
       <button class="modal-close" type="button" onclick="closeMindmapCreateModal()" title="关闭">×</button>
     </div>
-    <div class="generate-hint">只生成脑图文件（FreeMind .mm）和生成分析，不写入 YAML 文件，不创建 Midscene 执行任务，不同步至 Sonic 平台。</div>
+    <div class="generate-hint">生成完整测试用例脑图（FreeMind .mm）和生成分析，包含场景、用例、步骤和预期；不写入 YAML 文件，不创建 Midscene 执行任务，不同步至 Sonic 平台。</div>
     <label class="modal-label" for="mindmap-title">脑图标题</label>
     <input type="text" id="mindmap-title" placeholder="如：语音识别模块测试用例脑图">
     <label class="modal-label" for="mindmap-module">归属模块</label>
@@ -644,7 +644,7 @@
     <div class="generate-status" id="mindmap-status"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeMindmapCreateModal()">取消</button>
-      <button class="btn-confirm" id="btn-create-mindmap" onclick="createMindmapOnly()">只生成脑图</button>
+      <button class="btn-confirm" id="btn-create-mindmap" onclick="createMindmapOnly()">生成完整脑图</button>
     </div>
   </div>
 </div>

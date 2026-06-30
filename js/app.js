@@ -2682,10 +2682,13 @@ async function regenerateGenerationMindmap(caseSetId) {
     return;
   }
   try {
-    const data = await apiRequest(mindmapApiPath(caseSetId), { method: 'POST' });
+    const data = await apiRequest(mindmapApiPath(caseSetId), {
+      method: 'POST',
+      body: JSON.stringify({ case_set_id: caseSetId, mindmapMode: 'full' })
+    });
     const sizeText = data.mindmap_size ? `，${formatBytes(data.mindmap_size)}` : '';
     const timeText = data.mindmap_updated_at ? `，更新时间 ${data.mindmap_updated_at}` : '';
-    showToast(data.ok ? `✓ 已按现有生成分析刷新脑图文件${sizeText}${timeText}` : '刷新脑图完成', 'success');
+    showToast(data.ok ? `✓ 已按现有生成分析刷新完整脑图文件${sizeText}${timeText}` : '刷新脑图完成', 'success');
     if (activeWorkflow === 'generate' && document.getElementById('editor-area')?.textContent.includes('生成任务与生成记录')) {
       await loadJobs(true);
       renderGenerateJobsCenter();
@@ -2844,15 +2847,63 @@ function isMindmapBackgroundJob(job={}) {
   return /脑图|mindmap|\.mm/i.test(text);
 }
 
+function parseMindmapTimeValue(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    if (typeof value === 'number' && isFinite(value) && value > 0) {
+      return value > 100000000000 ? value : value * 1000;
+    }
+    const text = String(value || '').trim();
+    if (!text) continue;
+    const numeric = Number(text);
+    if (isFinite(numeric) && numeric > 0) {
+      return numeric > 100000000000 ? numeric : numeric * 1000;
+    }
+    const parsed = Date.parse(text.replace(' ', 'T'));
+    if (isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function mindmapJobIdTimeValue(job={}) {
+  const id = String(job.job_id || job.jobId || job.id || '');
+  const match = id.match(/(?:gen|mindmap|agent|job)[_-](\d{10,})/i);
+  if (!match) return 0;
+  const value = Number(match[1]);
+  return isFinite(value) ? (value > 100000000000 ? value : value * 1000) : 0;
+}
+
 function mindmapJobTimeValue(job={}) {
-  return Date.parse((job.updated_at || job.finished_at || job.started_at || job.created_at || '').replace(' ', 'T')) || 0;
+  const result = job.result || {};
+  return parseMindmapTimeValue(
+    job.updated_at, job.updatedAt,
+    job.finished_at, job.finishedAt,
+    job.started_at, job.startedAt,
+    job.created_at, job.createdAt,
+    result.updated_at, result.updatedAt,
+    result.generated_at, result.generatedAt,
+    mindmapJobIdTimeValue(job)
+  );
 }
 
 function mindmapRecordTimeValue(item={}) {
   const explicit = Number(item.mindmap_sort_ts || item.mindmapSortTs || 0);
-  if (isFinite(explicit) && explicit > 0) return explicit * 1000;
-  const raw = item.mindmap_updated_at || item.generated_at || '';
-  return Date.parse(String(raw).replace(' ', 'T')) || 0;
+  return parseMindmapTimeValue(
+    explicit > 0 ? explicit : 0,
+    item.mindmap_updated_at, item.mindmapUpdatedAt,
+    item.updated_at, item.updatedAt,
+    item.generated_at, item.generatedAt,
+    item.created_at, item.createdAt,
+    item.case_set_id
+  );
+}
+
+function sortMindmapJobsByTime(jobs = []) {
+  return [...jobs].sort((a, b) => mindmapJobTimeValue(b) - mindmapJobTimeValue(a));
+}
+
+function sortMindmapRecordsByTime(rows = []) {
+  return [...rows].sort((a, b) => mindmapRecordTimeValue(b) - mindmapRecordTimeValue(a));
 }
 
 function isMindmapJobActive(job={}) {
@@ -2900,8 +2951,9 @@ function scheduleMindmapCenterRefresh(jobs = []) {
 }
 
 function updateMindmapTaskSection(taskRows = []) {
-  mindmapCenterTaskJobs = taskRows;
-  const html = mindmapTaskSectionHtml(taskRows);
+  const sortedRows = sortMindmapJobsByTime(taskRows);
+  mindmapCenterTaskJobs = sortedRows;
+  const html = mindmapTaskSectionHtml(sortedRows);
   const section = document.getElementById('mindmap-task-section');
   if (section) {
     if (html) section.outerHTML = html;
@@ -2942,27 +2994,28 @@ async function refreshMindmapActiveTasks() {
 }
 
 function mindmapTaskSectionHtml(jobs = []) {
-  if (!jobs.length) return '';
-  const activeCount = jobs.filter(job => ['pending', 'running'].includes(job.status || '')).length;
-  const failedCount = jobs.filter(job => ['failed', 'timeout'].includes(job.status || '')).length;
+  const sortedJobs = sortMindmapJobsByTime(jobs);
+  if (!sortedJobs.length) return '';
+  const activeCount = sortedJobs.filter(job => ['pending', 'running'].includes(job.status || '')).length;
+  const failedCount = sortedJobs.filter(job => ['failed', 'timeout'].includes(job.status || '')).length;
   return `
     <section id="mindmap-task-section" class="generation-record-section mindmap-task-section">
       <div class="section-head">
         <div>
           <h3>脑图生成任务</h3>
-          <p>${activeCount ? `${activeCount} 个生成中` : '暂无生成中任务'}${failedCount ? `，${failedCount} 个需要处理` : ''}。这里展示后台任务，完成后会进入下方脑图文件区。</p>
+          <p>${activeCount ? `${activeCount} 个生成中` : '暂无生成中任务'}${failedCount ? `，${failedCount} 个需要处理` : ''}。按最近更新时间倒序，完成后会进入下方脑图文件区。</p>
         </div>
         <button class="btn-sm" onclick="showMindmapCenter()">刷新任务</button>
       </div>
       <div class="mindmap-compact-list">
-        ${jobs.map(mindmapTaskRow).join('')}
+        ${sortedJobs.map(mindmapTaskRow).join('')}
       </div>
     </section>
   `;
 }
 
 function mindmapFilesSectionHtml(rows = []) {
-  const sortedRows = [...rows].sort((a, b) => mindmapRecordTimeValue(b) - mindmapRecordTimeValue(a));
+  const sortedRows = sortMindmapRecordsByTime(rows);
   return `
     <section class="generation-record-section mindmap-file-section">
       <div class="section-head">
@@ -3101,7 +3154,7 @@ async function showMindmapCenter() {
         jobLoadError = e.message || '后台任务读取失败';
       })
     ]);
-    const rows = (data.mindmaps || []).sort((a, b) => mindmapRecordTimeValue(b) - mindmapRecordTimeValue(a));
+    const rows = sortMindmapRecordsByTime(data.mindmaps || []);
     const list = document.getElementById('mindmap-center-list');
     if (!list) return;
     const recordCaseSetIds = new Set(rows.map(item => item.case_set_id).filter(Boolean));
@@ -3390,7 +3443,7 @@ function setMindmapBusy(busy) {
   const button = document.getElementById('btn-create-mindmap');
   if (button) {
     button.disabled = busy;
-    button.textContent = busy ? '生成中...' : '只生成脑图';
+    button.textContent = busy ? '生成中...' : '生成完整脑图';
   }
   document.querySelectorAll('#modal-mindmap-create input, #modal-mindmap-create select, #modal-mindmap-create textarea, #modal-mindmap-create .asset-remove')
     .forEach(el => el.disabled = busy);
@@ -3422,7 +3475,7 @@ function showCreateMindmapModal() {
   document.getElementById('mindmap-asset-files').value = '';
   mindmapAssetFiles = [];
   renderMindmapAssetList();
-  setMindmapStatus('上传需求、已有用例或截图后，只生成脑图文件（FreeMind .mm），不生成 YAML。');
+  setMindmapStatus('上传需求、已有用例或截图后，生成包含场景、用例、步骤和预期的完整 FreeMind 脑图；不生成 YAML。');
   document.getElementById('modal-mindmap-create').classList.add('show');
   loadKnowledgeApps().then(() => syncAppSelect('mindmap'));
 }
@@ -3441,7 +3494,7 @@ async function createMindmapOnly() {
     files.push({ name: `mindmap-supplement-${Date.now()}.txt`, content: supplement, size: supplement.length, type: 'text/plain' });
   }
   setMindmapBusy(true);
-  setMindmapStatus('正在创建只生成脑图的后台任务...', 'busy');
+  setMindmapStatus('正在创建完整测试用例脑图后台任务...', 'busy');
   let created = null;
   try {
     created = await apiRequest('/cases/mindmap-only-async', {
@@ -3453,7 +3506,7 @@ async function createMindmapOnly() {
         figma_url: figmaUrl,
         figma_mode: document.getElementById('mindmap-figma-mode').value || 'smart',
         figma_limit: Number(document.getElementById('mindmap-figma-limit').value || 80),
-        mindmapMode: 'compact',
+        mindmapMode: 'full',
         files
       })
     });

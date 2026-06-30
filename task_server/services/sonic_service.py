@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import html as html_lib
 import json
 import os
@@ -1468,15 +1469,43 @@ def _default_feishu_webhook_for_package(package: str) -> str:
     )
 
 
-def _task_app_feishu_webhook(app: Optional[dict]) -> str:
-    if not app:
-        return _validate_feishu_webhook(os.getenv("FEISHU_WEBHOOK_DEFAULT", ""))
-    return _validate_feishu_webhook(
-        app.get("feishu_webhook")
-        or app.get("feishuWebhook")
-        or _default_feishu_webhook_for_package(app.get("package", ""))
-        or ""
+def _feishu_webhook_fingerprint(webhook: str) -> str:
+    value = str(webhook or "").strip()
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12] if value else ""
+
+
+def _task_app_feishu_webhook_meta(app: Optional[dict]) -> dict:
+    app = app or {}
+    package = app.get("package", "") if isinstance(app, dict) else ""
+    app_webhook = (
+        app.get("feishu_webhook") or app.get("feishuWebhook") or ""
+        if isinstance(app, dict) else ""
     )
+    package_key = _env_key_for_package("FEISHU_WEBHOOK_", package) if package else ""
+    package_webhook = os.getenv(package_key, "") if package_key else ""
+    default_webhook = os.getenv("FEISHU_WEBHOOK_DEFAULT", "")
+    if app_webhook:
+        source = "task_app"
+        webhook = app_webhook
+    elif package_webhook:
+        source = package_key
+        webhook = package_webhook
+    elif default_webhook:
+        source = "FEISHU_WEBHOOK_DEFAULT"
+        webhook = default_webhook
+    else:
+        source = "missing"
+        webhook = ""
+    webhook = _validate_feishu_webhook(webhook)
+    return {
+        "webhook": webhook,
+        "source": source,
+        "fingerprint": _feishu_webhook_fingerprint(webhook),
+    }
+
+
+def _task_app_feishu_webhook(app: Optional[dict]) -> str:
+    return _task_app_feishu_webhook_meta(app).get("webhook", "")
 
 
 def _post_feishu_card(webhook: str, card: dict) -> dict:
@@ -1492,7 +1521,14 @@ def _post_feishu_card(webhook: str, card: dict) -> dict:
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
-        return json.loads(raw) if raw else {"ok": True}
+        result = json.loads(raw) if raw else {"ok": True}
+        if isinstance(result, dict):
+            code = result.get("code")
+            status_code = result.get("StatusCode")
+            if code not in (None, 0, "0") or status_code not in (None, 0, "0"):
+                msg = result.get("msg") or result.get("StatusMessage") or result.get("message") or result
+                raise ValueError(f"飞书机器人返回失败：{msg}")
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -3742,8 +3778,10 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
             })
             return
         app = suite.get("app") or sonic_suite_app_info(suite.get("app_package", ""), "")
+        webhook_meta = {}
         try:
-            webhook = _task_app_feishu_webhook(app)
+            webhook_meta = _task_app_feishu_webhook_meta(app)
+            webhook = webhook_meta.get("webhook", "")
         except ValueError as e:
             webhook = ""
             suite["send_error"] = str(e)
@@ -3758,17 +3796,21 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
             return
         if not webhook:
             suite["send_error"] = "未配置应用飞书机器人 Webhook"
+            suite["feishu_webhook_source"] = webhook_meta.get("source", "missing")
+            suite["feishu_webhook_fingerprint"] = webhook_meta.get("fingerprint", "")
             state["suites"][suite_key] = suite
             save_sonic_suite_results(state)
             cfg.SONIC_SUITE_TIMERS.pop(suite_key, None)
             _append_notify_log(
                 "suite_summary_error",
-                {"suite_key": suite_key, "app_package": suite.get("app_package", ""), "app_name": suite.get("app_name", ""), "count": len(suite.get("results") or [])},
+                {"suite_key": suite_key, "app_package": suite.get("app_package", ""), "app_name": suite.get("app_name", ""), "count": len(suite.get("results") or []), "webhook_source": suite.get("feishu_webhook_source", "")},
                 error=suite["send_error"],
             )
             return
         suite["send_in_progress"] = True
         suite["send_started_ts"] = now_ts
+        suite["feishu_webhook_source"] = webhook_meta.get("source", "")
+        suite["feishu_webhook_fingerprint"] = webhook_meta.get("fingerprint", "")
         state.setdefault("suites", {})[suite_key] = suite
         save_sonic_suite_results(state)
 
@@ -3961,6 +4003,8 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
             suite["sent_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             suite["sent_count"] = len(suite.get("results") or [])
         suite["send_error"] = send_error
+        suite["feishu_response_code"] = resp.get("code", resp.get("StatusCode")) if isinstance(resp, dict) else ""
+        suite["feishu_response_msg"] = resp.get("msg", resp.get("StatusMessage", "")) if isinstance(resp, dict) else ""
         suite["send_in_progress"] = False
         suite["send_started_ts"] = 0
         if suite_report_url:
@@ -3995,7 +4039,12 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
         cfg.SONIC_SUITE_TIMERS.pop(suite_key, None)
     _append_notify_log(
         "suite_summary_sent" if not send_error else "suite_summary_error",
-        {"suite_key": suite_key, "count": len(suite.get("results") or [])},
+        {
+            "suite_key": suite_key,
+            "count": len(suite.get("results") or []),
+            "webhook_source": suite.get("feishu_webhook_source", ""),
+            "webhook_fingerprint": suite.get("feishu_webhook_fingerprint", ""),
+        },
         result=resp,
         error=send_error,
     )

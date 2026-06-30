@@ -71,6 +71,35 @@ def check_sonic_batch_payload_shapes():
         sonic_service.cfg.TASK_DIR = original_task_dir
 
 
+def check_sonic_feishu_delivery_meta():
+    from task_server.services import sonic_service
+
+    old_default = os.environ.get("FEISHU_WEBHOOK_DEFAULT")
+    old_package = os.environ.get("FEISHU_WEBHOOK_COM_KFB_MODEL")
+    try:
+        os.environ["FEISHU_WEBHOOK_DEFAULT"] = "https://open.feishu.cn/open-apis/bot/v2/hook/default"
+        os.environ.pop("FEISHU_WEBHOOK_COM_KFB_MODEL", None)
+        meta = sonic_service._task_app_feishu_webhook_meta({"package": "com.kfb.model"})
+        require(meta.get("source") == "FEISHU_WEBHOOK_DEFAULT" and meta.get("fingerprint"), "Feishu delivery must expose default webhook source and fingerprint")
+        os.environ["FEISHU_WEBHOOK_COM_KFB_MODEL"] = "https://open.feishu.cn/open-apis/bot/v2/hook/package"
+        meta = sonic_service._task_app_feishu_webhook_meta({"package": "com.kfb.model"})
+        require(meta.get("source") == "FEISHU_WEBHOOK_COM_KFB_MODEL", "Package-specific Feishu webhook must be preferred over default")
+        meta = sonic_service._task_app_feishu_webhook_meta({
+            "package": "com.kfb.model",
+            "feishu_webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/app",
+        })
+        require(meta.get("source") == "task_app", "Task app Feishu webhook must be preferred over env config")
+    finally:
+        if old_default is None:
+            os.environ.pop("FEISHU_WEBHOOK_DEFAULT", None)
+        else:
+            os.environ["FEISHU_WEBHOOK_DEFAULT"] = old_default
+        if old_package is None:
+            os.environ.pop("FEISHU_WEBHOOK_COM_KFB_MODEL", None)
+        else:
+            os.environ["FEISHU_WEBHOOK_COM_KFB_MODEL"] = old_package
+
+
 def check_agent_fallback_yaml_auto_confirm_split():
     from task_server.services import agent_service
 
@@ -1155,7 +1184,7 @@ def check_ai_gateway_fallback_and_skill_static():
     require("app.post('/ai/skill'" in gateway_source, "AI Gateway must expose a text AI Skill endpoint")
     require("AI_GATEWAY_URL" in ai_skill_source and "ai_gateway_skill_content" in ai_skill_source and "if not image_assets" in ai_skill_source, "Text AI skills must try AI Gateway while image skills stay on DashScope VL")
     require('"fallbackProviderIds"' in router_config and "highway_gpt5_mini" in router_config, "Model router config must include fallback providers")
-    require("mindmapMode: 'compact'" in app_js_source, "Mindmap-only frontend requests must use compact mindmap mode")
+    require("mindmapMode: 'full'" in app_js_source, "Mindmap-only frontend requests must default to full test-case mindmap mode")
 
 
 def json_dumps_for_check(value):
@@ -1431,6 +1460,7 @@ def main():
     require('if isinstance(items, dict):' in sonic_service_source and 'explicit_items = items.get("items")' in sonic_service_source and '"total_files"' in sonic_service_source and '"synced_cases"' in sonic_service_source, "Sonic batch publish must accept frontend module/files/items payload and return clear totals")
     require('if not files and module:' in sonic_service_source and 'os.listdir(module_dir)' in sonic_service_source, "Sonic batch publish must default module-only payloads to all YAML files in that module")
     check_sonic_batch_payload_shapes()
+    check_sonic_feishu_delivery_meta()
     require('task_k = f"{mod}::{_clean_filename(file)}"' in sonic_service_source and 'legacy_task_k = f"{mod}/{file}"' in sonic_service_source, "Sonic publish precheck must read task-meta by module::file key with legacy fallback")
     require("projects_payload = sonic_list_projects()" in router_source and 'projects_payload.get("projects")' in router_source, "Sonic diagnose route must handle sonic_list_projects dict payload after migration")
     require('"/api/sonic/run-case"' in router_source and '"deprecated": True' in router_source and '"/api/run-request"' in router_source, "Sonic single-case route must return a clear deprecation diagnostic instead of creating temp suites")
@@ -1544,8 +1574,10 @@ def main():
         "report_checkpoints": ["检查点一", "检查点二"]
     }
     mindmap = backend.build_generation_mindmap(sample)
-    require("测试步骤" not in mindmap, "compact mindmap must not expand every execution step")
-    require("自动化用例分级" in mindmap, "compact mindmap must keep priority grouping")
+    require("测试步骤" in mindmap and "预期结果" in mindmap, "Default mindmap must expand complete case steps and expected results")
+    compact_mindmap = backend.build_generation_mindmap({**sample, "mindmap_mode": "compact"})
+    require("测试步骤" not in compact_mindmap, "Explicit compact mindmap must remain summary-only")
+    require("自动化用例分级" in mindmap, "Full mindmap must keep priority grouping")
     root = {
         "id": "1:1",
         "type": "SECTION",
@@ -1888,7 +1920,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 59})
+    print({"ok": True, "file": str(MODULE), "checks": 60})
 
 
 if __name__ == "__main__":

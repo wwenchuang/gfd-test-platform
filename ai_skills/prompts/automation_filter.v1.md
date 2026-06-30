@@ -140,6 +140,22 @@
 - `manual_cases` 必须承接完整测试设计中的人工验证、环境准备、账号/数据态、模型异步和视觉差异检查。
 - `review.quantity_check` 需要说明“完整覆盖在脑图中体现，可执行 YAML 只保留稳定子集”。
 
+## 人工用例完整性
+
+进入 `manual_cases` 的场景也必须是完整测试用例，不允许只写标题或一句原因。
+
+每条 `manual_cases` 至少包含：
+
+- `title`: 人工用例标题
+- `priority`: P0/P1/P2/P3
+- `scenario`: 对应场景
+- `reason`: 为什么不能稳定自动化
+- `suggested_setup`: 人工准备建议
+- `steps`: 3-8 条可执行检查步骤
+- `assertions` 或 `expected_result`: 可检查预期结果
+
+如果只是外部依赖或后台造数，也要写清“如何准备、如何操作、如何判断通过”。这些人工用例会进入完整 `.mm` 脑图，不能丢失测试设计。
+
 ## 输出 JSON
 
 {

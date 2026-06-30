@@ -2602,13 +2602,11 @@ def _post_ui_generate_yaml_async(handler, qs):
 
 @route_post("/api/cases/mindmap")
 def _post_cases_mindmap(handler, qs):
-    case_set_id = qs.get("case_set_id") or qs.get("id")
-    if not case_set_id:
-        try:
-            d = handler._body()
-            case_set_id = d.get("case_set_id") or d.get("id")
-        except Exception:
-            case_set_id = ""
+    try:
+        d = handler._body()
+    except Exception:
+        d = {}
+    case_set_id = qs.get("case_set_id") or qs.get("id") or d.get("case_set_id") or d.get("id")
     if not case_set_id:
         handler._json({"ok": False, "error": "case_set_id 不能为空"}, 400)
         return
@@ -2618,7 +2616,14 @@ def _post_cases_mindmap(handler, qs):
         return
     try:
         clear_generation_mindmap_deleted(case_set_id)
-        mm_path = write_generation_mindmap(case_set_id, summary)
+        mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "full").strip().lower() or "full"
+        writable_summary = dict(summary)
+        writable_summary["mindmap_mode"] = mindmap_mode
+        review = writable_summary.get("review") if isinstance(writable_summary.get("review"), dict) else {}
+        review = dict(review)
+        review["mindmap_mode"] = mindmap_mode
+        writable_summary["review"] = review
+        mm_path = write_generation_mindmap(case_set_id, writable_summary)
         stat = os.stat(mm_path)
     except ValueError:
         handler._json({"ok": False, "error": "非法路径"}, 400)
@@ -2628,7 +2633,7 @@ def _post_cases_mindmap(handler, qs):
         "mindmap_exists": True, "mindmap_deleted": False,
         "mindmap_size": stat.st_size,
         "mindmap_updated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
-        "message": "已按现有生成分析刷新脑图文件；不会重新调用 AI，不会改 YAML 或用例"
+        "message": "已按现有生成分析刷新完整脑图文件；不会重新调用 AI，不会改 YAML 或用例"
     })
 
 

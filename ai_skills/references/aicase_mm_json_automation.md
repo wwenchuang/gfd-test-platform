@@ -1,76 +1,113 @@
-# AiCase mm / JSON / Midscene Automation Reference
+# AiCase-mm-JSON-自动化参考规范
 
-This reference captures the external AiCase skill pattern used by this
-platform when generating test assets.
+本平台生成需求测试资产时，必须按“测试场景 -> 测试用例 -> FreeMind .mm -> Midscene YAML -> 可选 JSON”的顺序组织结果。
 
-## Required Flow
+## 角色
 
-1. Read requirement documents, UI drafts, screenshots, and page knowledge.
-2. Extract business goals, feature points, rules, roles, data assumptions,
-   visible outcomes, risks, blockers, and missing inputs.
-3. Design test scenarios before creating cases.
-4. Cover normal flows, negative flows, and boundary or critical state flows.
-5. Mark each scenario with design methods such as equivalence partitioning,
-   boundary value analysis, state transition, permission matrix, error guessing,
-   or business rule validation.
-6. Generate automation cases only when the current environment can run them
-   stably with UI-visible assertions.
-7. Put high-risk, destructive, payment, account switching, data seeding,
-   external dependency, and non-UI-verifiable checks into manual_cases.
-8. Mark smoke cases with `smoke=true` and tag/flag `冒烟`.
-9. Use P0/P1/P2/P3 priority carefully:
-   - P0: release-blocking core baseline flows.
-   - P1: core feature paths and important business risks.
-   - P2: common branches, empty states, and stable negative prompts.
-   - P3: low-frequency boundaries or experience checks.
-10. Self-review coverage, automation suitability, assertion quality,
-    duplication, data dependency, and remaining risk before saving outputs.
-11. Scale case volume by requirement complexity. Tiny requirements may produce
-    6-12 automation cases, but medium requirements with 3-5 requirement points
-    should usually produce 12-28 automation cases. Complex requirements should
-    usually produce 18-45 automation cases. Manual cases do not count toward the
-    automation case target.
-12. Do not inflate count by duplicating the same path. Additional cases must
-    cover different requirement points, data states, empty states, boundary
-    values, negative prompts, permission or state transitions, loading failures,
-    return interruption, or repeated operation risks.
+以资深软件测试业务专家视角执行：
 
-## Output Assets
+- 阅读需求文档、Figma、截图、页面知识和已有用例。
+- 提取关键功能点、业务规则、输入输出、状态变化、风险点和待确认项。
+- 先设计测试场景，再生成测试用例，最后再筛选可自动化 YAML。
 
-The generation result should preserve these artifacts:
+## 强制约束
 
-- FreeMind `.mm`: for manual review, grouped as feature -> scenario -> case ->
-  steps -> expected results.
-- Midscene YAML: for direct upload or execution by the Task platform.
-- JSON summary: for structured review, UI rendering, and secondary processing.
-- Markdown summary: for readable audit and handoff.
+1. 覆盖所有关键功能点，不得只生成摘要或标题。
+2. 必须包含正常流程、异常流程、边界值、状态迁移和人工待准备项。
+3. 使用等价类、边界值、决策表、状态迁移、错误推测和业务规则校验等方法。
+4. 用例标题必须清晰，步骤必须可执行，预期必须可检查。
+5. FreeMind `.mm` 是完整测试用例脑图，不是摘要。不能只写需求点、场景名或 YAML 文件名。
+6. Midscene YAML 只保留适合 Runner 稳定执行的自动化子集；完整覆盖必须留在 `.mm`、summary 和 manual_cases。
+7. 冒烟用例必须标注 `flag=冒烟`。
+8. 生成后必须自评审：去重、补漏、修正不可执行步骤、检查覆盖关系。
+9. 不得写入 token、API key、真实账号密码等敏感信息。
 
-## FreeMind Structure
+## FreeMind `.mm` 输出结构
 
-Root: `<topic>-测试用例`
+根节点：`<用例主题>-测试用例`
 
-Hierarchy:
+层级必须是：
 
-- Feature point
-- Scenario name with design method label
-- Case name with priority and `flag=冒烟` when applicable
-- Test steps as numbered lines
-- Expected results as numbered UI-visible checks
+- 二级：功能点
+- 三级：场景名称，包含方法标注，例如 `模型筛选空态（等价类 / 边界值）`
+- 四级：用例名称，包含优先级和 `flag=冒烟`（如适用）
+- 五级：`测试步骤`
+- 六级：按 1、2、3 展开的具体操作步骤
+- 五级：`预期结果`
+- 六级：按 1、2、3 展开的可检查结果
 
-## Midscene YAML Guidance
+人工用例也必须进入 `.mm`，并写清：
 
-- Prefer natural-language Midscene actions over brittle selectors or coordinates.
-- Use `ai`, `aiTap`, `aiInput`, `aiAssert`, `aiWaitFor`, `aiScroll`, and
-  Android back shell commands when appropriate.
-- Avoid fixed long sleeps. Prefer waiting for visible UI conditions.
-- Every task should have clear baseline metadata: case id, priority, smoke,
-  goal, start page, business path, expected result, and repair hints.
-- Assertions must verify visible business signals such as page title, tab state,
-  entry card, button text, result region, list or empty state, dialog title,
-  status label, or operation prompt.
+- 原因
+- 准备建议
+- 可执行检查步骤
+- 预期结果
 
-## Sensitive Data Rule
+## JSON 用例结构
 
-Never write real tokens, API keys, passwords, phone numbers, ID numbers, or
-private accounts into generated `.mm`, YAML, JSON, Markdown, logs, or reports.
-Use placeholders and data requirement notes instead.
+推荐结构：
+
+```json
+{
+  "title": "模型库测试",
+  "module": "模型库",
+  "analysis": {
+    "requirement_points": [],
+    "coverage_matrix": []
+  },
+  "scenarios": [],
+  "cases": [
+    {
+      "case_id": "TC-001",
+      "title": "模型库默认空闲筛选展示",
+      "priority": "P1",
+      "smoke": true,
+      "scenario": "默认筛选",
+      "goal": "验证模型库默认展示空闲设备可打印模型",
+      "business_path": "进入模型库 -> 查看设备状态筛选 -> 检查列表",
+      "preconditions": ["已登录", "账号有可用设备"],
+      "steps": [
+        "进入模型库页面",
+        "查看设备状态筛选默认值",
+        "检查模型列表或空态"
+      ],
+      "assertions": [
+        "设备状态筛选默认显示空闲",
+        "页面展示适配当前设备的模型列表或明确空态"
+      ],
+      "expected_result": "模型库按空闲设备状态完成过滤并展示可检查结果",
+      "data_requirements": "准备至少一个已绑定机型账号",
+      "repair_hints": "入口和文案以真机页面为准，Figma 只作参考"
+    }
+  ],
+  "manual_cases": [],
+  "review": {}
+}
+```
+
+## Midscene YAML 约束
+
+- YAML 的第一目标是能在 Runner 上独立冒烟执行。
+- 每个 YAML 文件默认只覆盖一个清晰业务检查点。
+- 不要把完整需求所有验收点塞进一个 YAML。
+- 优先学习现有 YAML 用例库的动作组织、等待策略、入口清理、外部跳转、弹窗处理方式。
+- Figma 只作为 UI 参考，实际 App 文案和顺序可能不同；自动化断言必须以真机可见信号为准。
+
+常用动作：
+
+- `ai`：通用规划或条件处理
+- `aiTap`：点击
+- `aiInput`：输入
+- `aiWaitFor`：等待可见状态
+- `aiAssert`：最终业务断言
+- `aiScroll`：滚动
+- `runAdbShell: "input keyevent 4"`：Android 返回
+
+## 自评审清单
+
+- 每个需求点是否至少进入一个场景。
+- 每个核心场景是否有完整用例步骤和预期。
+- 不适合自动化的内容是否进入 manual_cases，而不是丢弃。
+- YAML 是否只保留稳定、短路径、可独立执行的自动化用例。
+- `.mm` 是否能让人工直接复核完整测试覆盖。
+- 是否避免重复用例、空泛步骤、不可检查预期和敏感信息。

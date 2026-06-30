@@ -1158,7 +1158,7 @@
     display: grid;
     grid-template-columns: minmax(180px, 1.2fr) minmax(160px, .8fr) minmax(160px, .8fr) minmax(220px, 1.4fr);
     gap: 10px;
-    padding: 10px;
+    padding: 9px 10px;
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
@@ -1208,7 +1208,7 @@
   }
   .knowledge-card-actions {
     display: flex;
-    gap: 6px;
+    gap: 5px;
     flex-wrap: wrap;
   }
   @media (max-width: 1100px) {
@@ -2513,16 +2513,20 @@
   }
   .mindmap-compact-list {
     display: grid;
-    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 12px;
   }
   .mindmap-row {
     border: 1px solid rgba(51,80,109,.68);
     border-radius: 8px;
     background: rgba(9,16,30,.72);
-    padding: 10px 12px;
+    padding: 8px 10px;
     display: grid;
-    gap: 8px;
+    grid-template-rows: auto auto auto auto;
+    gap: 4px;
     min-width: 0;
+    min-height: 0;
   }
   .mindmap-row:hover {
     border-color: rgba(34,211,238,.58);
@@ -2550,15 +2554,16 @@
   .mindmap-row-title {
     min-width: 0;
     display: grid;
-    gap: 3px;
+    gap: 2px;
   }
   .mindmap-row-title strong {
     color: var(--text);
     font-size: 14px;
-    line-height: 1.35;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .mindmap-row-title span,
   .mindmap-row-foot,
@@ -2566,7 +2571,7 @@
   .mindmap-row-percent {
     color: var(--text2);
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.35;
   }
   .mindmap-row-time,
   .mindmap-row-percent {
@@ -2575,15 +2580,16 @@
   }
   .mindmap-row-foot {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 12px;
+    gap: 2px;
     min-width: 0;
+    align-content: start;
   }
   .mindmap-row-foot span {
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
   }
   .mindmap-row-progress {
     height: 4px;
@@ -2599,11 +2605,17 @@
   }
   .mindmap-row-actions {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+    flex-wrap: nowrap;
+    gap: 5px;
+    align-self: end;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
+  .mindmap-row-actions::-webkit-scrollbar { display: none; }
   .mindmap-row-actions .btn-sm {
-    padding: 6px 10px;
+    padding: 3px 7px;
+    white-space: nowrap;
   }
   .generation-record-card {
     padding: 14px;
@@ -2643,6 +2655,9 @@
     background: rgba(8,11,18,.32);
   }
   @media (max-width: 900px) {
+    .mindmap-compact-list {
+      grid-template-columns: 1fr;
+    }
     .mindmap-row-main,
     .mindmap-row-foot {
       grid-template-columns: 1fr;
