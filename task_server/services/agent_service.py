@@ -80,7 +80,7 @@ AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作",
 
 AGENT_GENERATED_RUNNER_SMOKE_LIMIT = max(
     1,
-    min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)),
+    min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)),
 )
 AGENT_GENERATED_RUNNER_EXPAND_LIMIT = max(
     AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
@@ -3952,6 +3952,31 @@ def _score_agent_yaml_ref_for_execution(run, ref):
     return {**ref, "executableScore": score, "level": level, "executionLevel": level}
 
 
+def _agent_generated_runner_smoke_limit(run):
+    """Return dynamic smoke batch size for newly generated YAML.
+
+    Generation computes this from requirement size. The environment variable is
+    only an upper bound, not a fixed batch size for every requirement.
+    """
+    artifacts = (run or {}).get("artifacts") if isinstance(run, dict) else {}
+    if not isinstance(artifacts, dict):
+        artifacts = {}
+    candidates = []
+    pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    review = pipeline.get("review") if isinstance(pipeline.get("review"), dict) else {}
+    candidates.append(review.get("generation_targets") if isinstance(review, dict) else None)
+    generated = artifacts.get("generatedCases") if isinstance(artifacts.get("generatedCases"), dict) else {}
+    generated_review = generated.get("review") if isinstance(generated.get("review"), dict) else {}
+    candidates.append(generated_review.get("generation_targets") if isinstance(generated_review, dict) else None)
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        limit = safe_int(item.get("smoke_cases"), 0)
+        if limit > 0:
+            return max(1, min(AGENT_GENERATED_RUNNER_SMOKE_LIMIT, limit))
+    return AGENT_GENERATED_RUNNER_SMOKE_LIMIT
+
+
 def _select_agent_runner_refs(run, refs):
     """Gate Agent-generated YAML before Runner creation.
 
@@ -3971,7 +3996,8 @@ def _select_agent_runner_refs(run, refs):
         }
     scored = [_score_agent_yaml_ref_for_execution(run, ref) for ref in refs]
     _sync_agent_generated_case_groups(artifacts, scored)
-    selected, blocked = rank_executable_yaml_refs(scored, limit=AGENT_GENERATED_RUNNER_SMOKE_LIMIT)
+    smoke_limit = _agent_generated_runner_smoke_limit(run)
+    selected, blocked = rank_executable_yaml_refs(scored, limit=smoke_limit)
     deferred = [
         item for item in blocked
         if str(item.get("gateReason") or "").startswith("超过自动冒烟首批上限")
@@ -3979,7 +4005,8 @@ def _select_agent_runner_refs(run, refs):
     blocking = [item for item in blocked if item not in deferred]
     gate = {
         "enabled": True,
-        "limit": AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
+        "limit": smoke_limit,
+        "maxLimit": AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
         "expandLimit": AGENT_GENERATED_RUNNER_EXPAND_LIMIT,
         "totalCount": len(scored),
         "selectedCount": len(selected),
@@ -3995,7 +4022,7 @@ def _select_agent_runner_refs(run, refs):
         "blocked": blocked,
         "blocking": blocking,
         "deferred": deferred,
-        "rule": "Agent 新生成 YAML 首批只下发 executable 冒烟用例，默认最多 3 条；其余待首批通过后再扩展。",
+        "rule": "Agent 新生成 YAML 首批只下发 executable 冒烟用例；小需求 3 条，中等需求 5 条，大需求最多 8 条，其余待首批通过后再扩展。",
     }
     artifacts["runnerExecutionGate"] = gate
     return selected, gate

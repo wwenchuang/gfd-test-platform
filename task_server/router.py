@@ -175,6 +175,10 @@ from task_server.services.sonic_service import (
     task_case_sonic_context,
     touch_sonic_suite_activity,
 )
+from task_server.services.yaml_baseline_cache import (
+    get_yaml_baseline_cache,
+    get_yaml_baseline_cache_status,
+)
 from task_server.services.yaml_service import (
     build_generation_summary,
     case_ui_design_dir,
@@ -869,6 +873,17 @@ def _get_yaml_stats(handler, qs):
     handler._json({"ok": True, "stats": result})
 
 
+@route_get("/api/yaml/baseline-cache/status")
+def _get_yaml_baseline_cache_status(handler, qs):
+    if _require_user_auth(handler):
+        return
+    try:
+        force = safe_bool(qs.get("force"), False)
+        handler._json(get_yaml_baseline_cache_status(force=force))
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 500)
+
+
 # ── Task Meta ────────────────────────────────────────────────────────
 
 @route_get("/api/task-meta")
@@ -1411,7 +1426,7 @@ def generation_smoke_yaml_refs(summary):
 
 
 def generation_smoke_rerun_default_limit():
-    return max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)))
+    return max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)))
 
 
 # ── 脑图列表 ────────────────────────────────────────────────────────
@@ -2555,6 +2570,25 @@ def _post_yaml_dry_run(handler, qs):
         handler._json(result, 200 if result.get("ok") else 400)
     except FileNotFoundError as e:
         handler._json({"ok": False, "error": str(e)}, 404)
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 500)
+
+
+@route_post("/api/yaml/baseline-cache/refresh")
+def _post_yaml_baseline_cache_refresh(handler, qs):
+    if _require_post_auth(handler, qs):
+        return
+    try:
+        cache = get_yaml_baseline_cache(force=True)
+        handler._json({
+            "ok": True,
+            "fileCount": cache.get("fileCount", 0),
+            "caseCount": cache.get("caseCount", 0),
+            "generatedAt": cache.get("generatedAt"),
+            "generatedAtText": cache.get("generatedAtText"),
+            "fingerprint": cache.get("fingerprint"),
+            "status": get_yaml_baseline_cache_status(force=False),
+        })
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 500)
 

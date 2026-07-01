@@ -446,17 +446,27 @@ def generation_volume_targets(analysis, mode="full"):
         max_cases = max(12, min(24, point_count * 3 + min(len(risks), 6) + min(len(visible), 6)))
         min_scenarios = max(4, point_count * 2)
         target_scenarios = max(min_scenarios, min(30, point_count * 4 + min(len(risks), 8) + min(len(visible), 6)))
+    if point_count <= 2 and complexity <= 5:
+        smoke_cases = 3
+    elif point_count <= 5:
+        smoke_cases = 5
+    else:
+        smoke_cases = 8
     return {
         "mode": mode,
         "requirement_point_count": point_count,
         "min_automation_cases": min_cases,
         "target_automation_cases": target_cases,
         "max_automation_cases": max_cases,
+        "smoke_cases": smoke_cases,
+        "smoke_max_cases": 8,
+        "continue_threshold": 0.5,
         "min_scenarios": min_scenarios,
         "target_scenarios": target_scenarios,
         "manual_cases_not_counted": True,
         "guidance": (
             "按需求点、正常/异常/边界/状态/空态覆盖扩容；不要为了数量重复同一路径。"
+            "新生成 YAML 下发 Runner 时按需求规模先执行 3/5/8 条冒烟，通过率不低于 50% 再继续剩余可执行用例。"
             "无法稳定自动化的场景进入 manual_cases，但不计入自动化 cases 数。"
         ),
         "missing_inputs": missing,

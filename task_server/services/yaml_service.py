@@ -126,6 +126,11 @@ from .yaml_pattern_service import (
     extract_yaml_patterns_from_examples,
     summarize_yaml_patterns,
 )
+from .yaml_baseline_cache import (
+    get_yaml_baseline_cache,
+    get_yaml_baseline_cache_status,
+    search_baseline_examples,
+)
 from .yaml_static_validator import load_yaml_action_contract, validate_yaml_static_executable
 from .yaml_template_matcher import (
     build_yaml_template_matcher_text,
@@ -959,85 +964,25 @@ def _score_yaml_reference(query_terms, module, title, rel_path, block):
 
 
 def collect_yaml_reference_examples(query_text, module="", limit=None):
-    """Search all existing YAML tasks and return reusable step examples."""
+    """Search cached YAML baseline tasks and return reusable step examples."""
     limit = safe_int(limit, YAML_REFERENCE_MAX_EXAMPLES)
-    query_terms = _yaml_reference_terms(query_text)
-    scored = []
-    seen_hashes = set()
-    for _root, rel_path, path in _iter_yaml_reference_files():
-        try:
-            text = read_text_file(path, default="")
-        except Exception:
-            text = ""
-        if not text or "tasks:" not in text:
-            continue
-        blocks = _yaml_reference_blocks(text)
-        if not blocks:
-            continue
-        module_name = rel_path.split("/", 1)[0] if "/" in rel_path else ""
-        for block in blocks:
-            title = _yaml_reference_title(block, os.path.splitext(os.path.basename(path))[0])
-            block_hash = hashlib.sha1(block.encode("utf-8", "ignore")).hexdigest()[:12]
-            if block_hash in seen_hashes:
-                continue
-            seen_hashes.add(block_hash)
-            score, matched, actions = _score_yaml_reference(query_terms, module, title, rel_path, block)
-            if score < 5 and scored:
-                continue
-            scored.append({
-                "score": score,
-                "title": title,
-                "module": module_name,
-                "file": rel_path,
-                "path": path,
-                "matched_terms": matched,
-                "actions": actions,
-                "baseline_path": _yaml_reference_baseline_path(block),
-                "snippet": _trim_yaml_reference_snippet(block),
-                "hash": block_hash,
-            })
-    scored.sort(key=lambda item: (safe_int(item.get("score"), 0), item.get("title") or ""), reverse=True)
-    return scored[:max(1, limit)]
+    return search_baseline_examples(query_text, module=module, limit=max(1, limit))
 
 
 def collect_yaml_baseline_library_examples(limit=None):
-    """Collect a broad baseline profile from all maintained YAML tasks."""
+    """Collect a broad baseline profile from the persisted YAML baseline cache."""
     limit = safe_int(limit, env_int("YAML_BASELINE_PROFILE_MAX_EXAMPLES", 120))
+    cache = get_yaml_baseline_cache(force=False)
     rows = []
-    seen_hashes = set()
-    for _root, rel_path, path in _iter_yaml_reference_files(max_files=YAML_REFERENCE_MAX_FILES):
-        try:
-            text = read_text_file(path, default="")
-        except Exception:
-            text = ""
-        if not text or "tasks:" not in text:
+    for item in cache.get("items") or []:
+        if not isinstance(item, dict):
             continue
-        blocks = _yaml_reference_blocks(text)
-        if not blocks:
-            continue
-        module_name = rel_path.split("/", 1)[0] if "/" in rel_path else ""
-        for block in blocks:
-            actions = _yaml_reference_flow_actions(block)
-            if not actions:
-                continue
-            block_hash = hashlib.sha1(block.encode("utf-8", "ignore")).hexdigest()[:12]
-            if block_hash in seen_hashes:
-                continue
-            seen_hashes.add(block_hash)
-            rows.append({
-                "score": 0,
-                "title": _yaml_reference_title(block, os.path.splitext(os.path.basename(path))[0]),
-                "module": module_name,
-                "file": rel_path,
-                "path": path,
-                "matched_terms": ["全量基线"],
-                "actions": actions,
-                "baseline_path": _yaml_reference_baseline_path(block),
-                "snippet": _trim_yaml_reference_snippet(block),
-                "hash": block_hash,
-            })
-            if len(rows) >= max(1, limit):
-                return rows
+        row = dict(item)
+        row.setdefault("score", 0)
+        row.setdefault("matched_terms", ["基线缓存"])
+        rows.append(row)
+        if len(rows) >= max(1, limit):
+            break
     return rows
 
 
@@ -4643,6 +4588,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         module=module,
         limit=YAML_REFERENCE_MAX_EXAMPLES,
     )
+    yaml_baseline_cache_status = get_yaml_baseline_cache_status()
     yaml_action_contract = load_yaml_action_contract()
     yaml_baseline_library_examples = collect_yaml_baseline_library_examples()
     yaml_library_patterns = extract_yaml_patterns_from_examples(yaml_baseline_library_examples, limit=12)
@@ -4658,8 +4604,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
             update_generate_job(
                 job_id,
                 progress=43,
-                step="扫描全量基线",
-                message=f"已扫描 {len(yaml_baseline_library_examples)} 条基线样本，提炼 {len(yaml_library_patterns)} 个全局写法模式",
+                step="读取基线缓存",
+                message=(
+                    f"基线缓存 cache_hit={str(yaml_baseline_cache_status.get('cacheHit')).lower()}，"
+                    f"文件 {yaml_baseline_cache_status.get('fileCount', 0)} 个，"
+                    f"样本 {yaml_baseline_cache_status.get('caseCount', 0)} 条；"
+                    f"本次提炼 {len(yaml_library_patterns)} 个全局写法模式"
+                ),
             )
     yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=5)
     yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
@@ -4777,6 +4728,11 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "memory_path": memory_path,
             "rule": "生成 YAML 前检索现有用例库，学习可执行步骤组织方式；只复用相关动作结构，不复制无关业务断言。",
         }
+    review["yaml_baseline_cache"] = {
+        "enabled": True,
+        **yaml_baseline_cache_status,
+        "rule": "基线库先构建缓存，生成 YAML 时只从缓存中取 TopN 相似基线片段给模型仿写，避免每次现场全量读取 YAML。",
+    }
     if yaml_template_candidates:
         template_quality = evaluate_baseline_template_matching(yaml_baseline_library_examples, limit=5)
         review["yaml_template_matcher"] = {
@@ -4833,7 +4789,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 }
                 for item in yaml_library_patterns[:12]
             ],
-            "rule": "每次生成前扫描全量基线库，提炼平台通用写法；相似 Top5 只用于当前需求的局部仿写。",
+            "rule": "从 YAML 基线缓存提炼平台通用写法；相似 Top5 只用于当前需求的局部仿写。",
         }
     review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
     if prepared_figma_context:

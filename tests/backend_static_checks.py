@@ -609,6 +609,7 @@ def check_agent_generation_orphan_recovery():
 
 def check_yaml_reference_examples_are_general_step_library():
     from task_server.services import yaml_service
+    from task_server.services.yaml_baseline_cache import get_yaml_baseline_cache_status, search_baseline_examples
 
     examples = yaml_service.collect_yaml_reference_examples(
         "AI建模 图片建模 语音输入 选择图片 上传图片 跳转商城 微信导入 模型生成",
@@ -616,6 +617,10 @@ def check_yaml_reference_examples_are_general_step_library():
         limit=5,
     )
     require(examples, "YAML generation must retrieve reusable examples from the existing YAML library")
+    cached_examples = search_baseline_examples("AI建模 图片建模 上传图片", module="AI测试", limit=3)
+    cache_status = get_yaml_baseline_cache_status()
+    require(cached_examples and cache_status.get("caseCount", 0) >= len(cached_examples), "YAML baseline cache must provide searchable baseline snippets")
+    require("cacheHit" in cache_status and "fingerprint" in cache_status, "YAML baseline cache status must expose cache hit and fingerprint")
     all_text = "\n".join(
         " ".join([
             str(item.get("title") or ""),
@@ -1222,6 +1227,11 @@ def check_generation_volume_targets_modes():
     mindmap = case_service.generation_volume_targets(analysis, mode="mindmap")
     require(full["target_automation_cases"] > mindmap["target_automation_cases"], "Mindmap mode must use lighter automation targets than full generation")
     require(mindmap["mode"] == "mindmap", "Generation targets must record the selected mode")
+    small = case_service.generation_volume_targets({"requirement_points": ["入口"]}, mode="full")
+    medium = case_service.generation_volume_targets({"requirement_points": ["入口", "列表", "详情"]}, mode="full")
+    large = case_service.generation_volume_targets({"requirement_points": [str(i) for i in range(6)]}, mode="full")
+    require(small["smoke_cases"] == 3 and medium["smoke_cases"] == 5 and large["smoke_cases"] == 8, "Generated smoke batch must scale by requirement size instead of always using 8")
+    require(large["max_automation_cases"] > large["smoke_cases"], "Smoke batch size must not cap total generated automation cases")
 
 
 def check_ai_gateway_fallback_and_skill_static():
@@ -1453,7 +1463,17 @@ def main():
     require("yaml_static_validator.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and (ROOT / "task_server" / "config_data" / "yaml_actions.json").exists(), "YAML generation must have a static action contract and validator")
     require("extract_yaml_patterns_from_examples" in yaml_service_source and "build_yaml_pattern_contract_text" in yaml_service_source and '"yaml_pattern_contract"' in yaml_service_source, "YAML generation must extract baseline executable patterns before prompting")
     require("yaml_template_matcher.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and "select_best_baseline_template" in yaml_service_source and '"yaml_template_matcher"' in yaml_service_source, "YAML generation must select Top baseline templates before prompting")
-    require("def collect_yaml_baseline_library_examples" in yaml_service_source and "build_yaml_library_profile_text" in yaml_service_source and '"yaml_baseline_library_profile"' in yaml_service_source, "YAML generation must scan the full baseline library, not only query-matched examples")
+    require(
+        "yaml_baseline_cache.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py"))
+        and "search_baseline_examples" in yaml_service_source
+        and '"yaml_baseline_cache"' in yaml_service_source,
+        "YAML generation must use the cached baseline index instead of reading the full YAML library on every generation"
+    )
+    require(
+        "@route_get(\"/api/yaml/baseline-cache/status\")" in router_source
+        and "@route_post(\"/api/yaml/baseline-cache/refresh\")" in router_source,
+        "YAML baseline cache status and refresh APIs must be exposed"
+    )
     require("@route_post(\"/api/yaml/dry-run\")" in router_source and "dry_run_midscene_yaml" in router_source, "YAML dry-run API must be exposed for Agent/UI preflight")
     require("@route_post(\"/api/cases/rerun-smoke\")" in router_source and "generation_smoke_yaml_refs" in router_source and "create_pending_job(" in router_source, "Generated smoke YAML must support rerun without re-uploading source material")
     require("generation_smoke_rerun_default_limit" in router_source and "MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT" in router_source and "run_all" in router_source and "totalSmokeCount" in router_source, "Generated smoke rerun must default to the first smoke batch unless explicitly running all smoke cases")
@@ -1465,6 +1485,7 @@ def main():
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
+    require("MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS" in env_example and "MIDSCENE_YAML_BASELINE_CACHE_PATH" in env_example, "Deployment env example must expose YAML baseline cache knobs")
     install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
     require(
         "YAML_VISUAL_BATCH_SIZE = max(1, env_int(\"MIDSCENE_YAML_VISUAL_BATCH_SIZE\", 4))" in config_source
