@@ -34,6 +34,7 @@ let executionActiveTab = 'debug';
 let debugTraceData = null;
 let debugSnapshotData = null;
 let selectedTraceSnapshots = [];
+let apkInstallDeviceRefreshPromise = null;
 
 function setExecutionTab(tab) {
   executionActiveTab = tab;
@@ -147,6 +148,51 @@ function refreshExecutionYamlList() {
 
 function isApkInstallJob(job = {}) {
   return String(job.job_type || job.jobType || job.type || '').toLowerCase() === 'apk_install';
+}
+
+function apkInstallJobId(job = {}) {
+  return job.job_id || job.jobId || job.id || '';
+}
+
+function normalizedJobStatus(job = {}) {
+  return String(job.status || '').toLowerCase();
+}
+
+function isActiveJobStatus(status = '') {
+  return ['pending', 'running'].includes(String(status || '').toLowerCase());
+}
+
+function isTerminalJobStatus(status = '') {
+  return ['success', 'failed', 'timeout', 'cancelled', 'canceled'].includes(String(status || '').toLowerCase());
+}
+
+function handleApkInstallJobsUpdated(previousJobs = [], currentJobs = []) {
+  if (typeof loadRunnerDevices !== 'function') return;
+  const previousById = new Map((Array.isArray(previousJobs) ? previousJobs : []).map(job => [apkInstallJobId(job), job]));
+  const settled = (Array.isArray(currentJobs) ? currentJobs : []).filter(job => {
+    if (!isApkInstallJob(job)) return false;
+    const id = apkInstallJobId(job);
+    if (!id) return false;
+    if (!isTerminalJobStatus(normalizedJobStatus(job))) return false;
+    const previous = previousById.get(id);
+    return previous && isActiveJobStatus(normalizedJobStatus(previous));
+  });
+  if (!settled.length || apkInstallDeviceRefreshPromise) return;
+  apkInstallDeviceRefreshPromise = (async () => {
+    for (const delayMs of [0, 3000, 8000]) {
+      if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
+      await loadRunnerDevices({force: true, quiet: true});
+      if (activeWorkspaceMode === 'execution' && executionActiveTab === 'install') {
+        showExecutionCenter();
+      } else {
+        refreshAppInstallPreflight();
+      }
+    }
+  })()
+    .catch(() => {})
+    .finally(() => {
+      apkInstallDeviceRefreshPromise = null;
+    });
 }
 
 function renderExecutionTabDebug() {

@@ -1445,7 +1445,11 @@ async function loadJobs(manual=false, forceJobList=false) {
     ]);
     const runnerJobs = (data.jobs || []).map(job => ({...job, kind: 'runner'}));
     const backgroundJobs = (data.background_jobs || []).map(job => ({...job, kind: 'background'}));
+    const previousJobs = latestJobs;
     latestJobs = [...runnerJobs, ...backgroundJobs];
+    if (typeof handleApkInstallJobsUpdated === 'function') {
+      handleApkInstallJobsUpdated(previousJobs, latestJobs);
+    }
     AppState.loaded.jobs = true;
     renderJobs();
     renderModules();
