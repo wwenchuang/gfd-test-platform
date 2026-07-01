@@ -39,6 +39,10 @@ RUNNER_CAPABILITIES = {
     "yaml_dry_run": True,
     "apk_install": True,
 }
+DEVICE_MARKET_NAME_BY_MODEL = {
+    "ELS-AN00": "HUAWEI P40 Pro",
+    "PHM110": "OPPO Reno9",
+}
 
 
 def validate_runner_config():
@@ -46,6 +50,33 @@ def validate_runner_config():
         raise RuntimeError("TASK_SERVER 未配置，请设置为 Task 平台地址，例如 http://101.34.197.12:8088")
     if TOKEN in WEAK_RUNNER_TOKENS:
         raise RuntimeError("MIDSCENE_RUNNER_TOKEN 未配置或仍使用弱默认值，请与服务端 /opt/midscene.env 保持一致")
+
+
+def normalize_device_model(value):
+    return str(value or "").strip().upper().replace("_", "-")
+
+
+def device_market_name(adb_bin, device_id, brand="", model=""):
+    props = (
+        "ro.product.marketname",
+        "ro.product.vendor.marketname",
+        "ro.config.marketing_name",
+        "ro.vendor.product.marketname",
+        "ro.product.odm.marketname",
+        "ro.product.oplus.marketname",
+        "ro.product.system.marketname",
+    )
+    for prop in props:
+        try:
+            value = adb_shell_text(adb_bin, device_id, "getprop", prop, timeout=5)
+        except Exception:
+            value = ""
+        if value:
+            return value
+    mapped = DEVICE_MARKET_NAME_BY_MODEL.get(normalize_device_model(model))
+    if mapped:
+        return mapped
+    return " ".join([part for part in [brand, model] if part]).strip()
 
 
 def midscene_env():
@@ -475,14 +506,18 @@ def detect_devices():
             installed_apps = [detect_package_info(adb_bin, device_id, pkg) for pkg in runner_app_packages()]
         except Exception:
             pass
-        label = " ".join([part for part in [brand, model] if part]).strip() or device_id
+        raw_label = " ".join([part for part in [brand, model] if part]).strip() or device_id
+        display_name = device_market_name(adb_bin, device_id, brand, model) or raw_label
         preflight_ok = bool(adb_bin and device_id)
         devices.append({
             "device_id": device_id,
             "status": "online",
             "brand": brand,
             "model": model,
-            "label": label,
+            "label": display_name,
+            "raw_label": raw_label,
+            "display_name": display_name,
+            "market_name": display_name,
             "adb_path": adb_bin,
             "android_version": android_version,
             "sdk": sdk,

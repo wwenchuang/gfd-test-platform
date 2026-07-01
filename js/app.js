@@ -481,8 +481,31 @@ function ensureRunnersLoaded(options = {}) {
   return loadRunnerDevices(options);
 }
 
+const DEVICE_MARKET_NAME_BY_MODEL = {
+  'ELS-AN00': 'HUAWEI P40 Pro',
+  'PHM110': 'OPPO Reno9',
+};
+
+function normalizeDeviceModel(value = '') {
+  return String(value || '').trim().toUpperCase().replace(/_/g, '-');
+}
+
+function deviceMarketName(device = {}) {
+  const direct = device.display_name || device.displayName || device.market_name || device.marketName || device.marketing_name || device.marketingName;
+  if (direct) return String(direct).trim();
+  const model = device.model || '';
+  const mapped = DEVICE_MARKET_NAME_BY_MODEL[normalizeDeviceModel(model)];
+  if (mapped) return mapped;
+  const label = String(device.label || '').trim();
+  if (label) {
+    const labelMapped = DEVICE_MARKET_NAME_BY_MODEL[normalizeDeviceModel(label.split(/\s+/).pop())];
+    if (labelMapped) return labelMapped;
+  }
+  return '';
+}
+
 function runnerDeviceDisplayName(device = {}) {
-  return device.label || [device.brand, device.model].filter(Boolean).join(' ') || device.device_id || '未知设备';
+  return deviceMarketName(device) || device.label || [device.brand, device.model].filter(Boolean).join(' ') || device.device_id || '未知设备';
 }
 
 function runnerDeviceInstalledApp(device = {}, packageName = '') {

@@ -41,6 +41,30 @@ from .job_service import job_allows_auto_device, load_task_meta, normalize_devic
 # ---------------------------------------------------------------------------
 # 与 midscene-upload.py 中 ``all_online_devices`` 保持一致：45s 内有心跳视为在线。
 ONLINE_TIMEOUT_SECONDS = 45
+DEVICE_MARKET_NAME_BY_MODEL = {
+    "ELS-AN00": "HUAWEI P40 Pro",
+    "PHM110": "OPPO Reno9",
+}
+
+
+def normalize_device_model(value: Any) -> str:
+    return str(value or "").strip().upper().replace("_", "-")
+
+
+def device_market_name(meta: Dict[str, Any]) -> str:
+    """Return user-facing phone marketing name, falling back to brand/model."""
+    if not isinstance(meta, dict):
+        meta = {}
+    for key in ("display_name", "displayName", "market_name", "marketName", "marketing_name", "marketingName", "public_name", "publicName"):
+        value = str(meta.get(key) or "").strip()
+        if value:
+            return value
+    model = str(meta.get("model") or "").strip()
+    mapped = DEVICE_MARKET_NAME_BY_MODEL.get(normalize_device_model(model))
+    if mapped:
+        return mapped
+    brand = str(meta.get("brand") or "").strip()
+    return " ".join(part for part in (brand, model) if part).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -85,10 +109,15 @@ def normalize_device_list(devices: Optional[Iterable[Any]]) -> List[Dict[str, An
             continue
         if not device_id:
             continue
+        raw_label = meta.get("label") or meta.get("model") or str(device_id)
+        display_name = device_market_name(meta) or str(raw_label)
         row: Dict[str, Any] = {
             "device_id": str(device_id),
             "status": status,
-            "label": meta.get("label") or meta.get("model") or str(device_id),
+            "label": display_name,
+            "raw_label": raw_label,
+            "display_name": display_name,
+            "market_name": display_name,
             "brand": meta.get("brand", ""),
             "model": meta.get("model", ""),
         }
