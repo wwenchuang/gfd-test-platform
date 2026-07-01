@@ -2312,6 +2312,14 @@ function generatedCaseGroupsFromSummary(summary={}) {
   };
 }
 
+const GENERATED_SMOKE_RERUN_DEFAULT_LIMIT = 8;
+
+function generatedSmokeRerunLimit(totalCount=0) {
+  const total = Math.max(0, Number(totalCount) || 0);
+  if (!total) return GENERATED_SMOKE_RERUN_DEFAULT_LIMIT;
+  return Math.min(GENERATED_SMOKE_RERUN_DEFAULT_LIMIT, total);
+}
+
 function generatedSmokeRefs(summary={}) {
   const groups = generatedCaseGroupsFromSummary(summary);
   const cases = Array.isArray(summary.cases) ? summary.cases.filter(item => item && typeof item === 'object') : [];
@@ -2355,6 +2363,7 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
   const groups = generatedCaseGroupsFromSummary(summary);
   const executableCount = groups.executable_cases.length;
   const visibleRefs = refs.slice(0, 12);
+  const defaultLimit = generatedSmokeRerunLimit(refs.length);
   return `
     <div class="review-panel generated-smoke-adjustment">
       <div class="section-head" style="align-items:flex-start;">
@@ -2363,7 +2372,12 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
           <p>首次生成时，Agent 会自动下发通过准入的首批冒烟用例，不需要人工介入。这里用于首次失败、安装包更新或页面入口变化后，手动微调 YAML 再复跑。</p>
           <p>需要改入口、等待、滑动、弹窗或定位描述时，先打开 YAML 编辑并保存，再点“重跑冒烟”。重跑只使用当前已保存的 YAML，不会重新上传资料或重新分析需求。</p>
         </div>
-        ${caseSetId && refs.length ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)})">重跑冒烟 ${escapeHtml(refs.length)}</button>` : ''}
+        ${caseSetId && refs.length ? `
+          <div class="review-actions">
+            <button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${defaultLimit}, false, ${refs.length})">重跑首批冒烟 ${escapeHtml(defaultLimit)}/${escapeHtml(refs.length)}</button>
+            ${refs.length > defaultLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${refs.length})">重跑全部冒烟 ${escapeHtml(refs.length)}</button>` : ''}
+          </div>
+        ` : ''}
       </div>
       ${refs.length ? `
         <div class="review-list smoke-adjust-list">
@@ -2736,7 +2750,7 @@ function smokeRerunDevicePayload() {
   return { runner_id: '', device_id: '', device_strategy: 'auto' };
 }
 
-async function rerunGenerationSmokeCases(caseSetId, moduleName='') {
+async function rerunGenerationSmokeCases(caseSetId, moduleName='', limit=GENERATED_SMOKE_RERUN_DEFAULT_LIMIT, runAll=false, totalCount=0) {
   if (!caseSetId) {
     showToast('缺少生成批次 ID，无法重跑冒烟', 'error');
     return;
@@ -2745,11 +2759,16 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='') {
   const deviceText = selected.device_strategy === 'fixed'
     ? (jobDeviceLabel({device_id: selected.device_id, runner_id: selected.runner_id}) || selected.device_id)
     : '自动选择在线设备';
+  const safeLimit = runAll ? 0 : Math.max(1, Number(limit) || GENERATED_SMOKE_RERUN_DEFAULT_LIMIT);
+  const scopeText = runAll
+    ? `全部冒烟${totalCount ? `（${totalCount} 条）` : ''}`
+    : `首批冒烟（最多 ${safeLimit} 条${totalCount ? ` / 共 ${totalCount} 条` : ''}）`;
   const ok = confirm([
-    '重新执行本批次的冒烟用例？',
+    `重新执行本批次的${scopeText}？`,
     '',
     '只会重新创建已生成 YAML 的 Runner 任务，不会重新上传资料，也不会重新做需求分析。',
     '如果刚刚手动编辑并保存过 YAML，本次会使用当前保存内容执行。',
+    runAll ? '注意：全部冒烟会创建更多 Runner 任务，建议首批通过后再使用。' : '默认和首次 Agent 自动执行一致，只跑首批冒烟。',
     `执行设备：${deviceText}`
   ].join('\n'));
   if (!ok) return;
@@ -2762,12 +2781,15 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='') {
         run_mode: 'test',
         runner_id: selected.runner_id,
         device_id: selected.device_id,
-        device_strategy: selected.device_strategy
+        device_strategy: selected.device_strategy,
+        limit: safeLimit,
+        run_all: !!runAll
       }
     });
     await loadJobs(false, true);
     const skipped = data.skippedCount ? `，跳过 ${data.skippedCount} 个` : '';
-    showToast(`✓ 已创建 ${data.createdCount || 0} 个冒烟重跑任务${skipped}`, 'success', 5000);
+    const selectedText = data.selectedCount ? `，本次选择 ${data.selectedCount}${data.totalSmokeCount ? `/${data.totalSmokeCount}` : ''}` : '';
+    showToast(`✓ 已创建 ${data.createdCount || 0} 个冒烟重跑任务${selectedText}${skipped}`, 'success', 5000);
   } catch (e) {
     showToast(e.message || '重跑冒烟失败', 'error');
   }

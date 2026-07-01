@@ -1410,6 +1410,10 @@ def generation_smoke_yaml_refs(summary):
     return refs
 
 
+def generation_smoke_rerun_default_limit():
+    return max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)))
+
+
 # ── 脑图列表 ────────────────────────────────────────────────────────
 
 @route_get("/api/cases/mindmaps")
@@ -3194,10 +3198,11 @@ def _post_cases_rerun_smoke(handler, qs):
         runner_id=runner_id,
     )
     run_mode = d.get("run_mode") or d.get("runMode") or "test"
-    limit = safe_int(d.get("limit") or d.get("max") or 0, 0)
-    refs = generation_smoke_yaml_refs(summary)
-    if limit > 0:
-        refs = refs[:limit]
+    run_all = safe_bool(d.get("run_all") or d.get("runAll") or d.get("all"))
+    raw_limit = d.get("limit") if d.get("limit") is not None else d.get("max")
+    limit = 0 if run_all else safe_int(raw_limit, generation_smoke_rerun_default_limit())
+    all_refs = generation_smoke_yaml_refs(summary)
+    refs = all_refs if limit <= 0 else all_refs[:limit]
     if not refs:
         handler._json({
             "ok": False,
@@ -3244,6 +3249,9 @@ def _post_cases_rerun_smoke(handler, qs):
             "error": "没有成功创建冒烟重跑任务",
             "case_set_id": case_set_id,
             "selectedCount": len(refs),
+            "totalSmokeCount": len(all_refs),
+            "limit": limit,
+            "runAll": run_all,
             "skipped": skipped,
         }, 400)
         return
@@ -3256,6 +3264,9 @@ def _post_cases_rerun_smoke(handler, qs):
         "runner_id": runner_id,
         "device_id": device_id,
         "selectedCount": len(refs),
+        "totalSmokeCount": len(all_refs),
+        "limit": limit,
+        "runAll": run_all,
         "createdCount": len(created),
         "skippedCount": len(skipped),
         "created": created,
