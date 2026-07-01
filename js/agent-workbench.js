@@ -1599,7 +1599,7 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   return `
     <section class="final-report-panel final-report-wide generated-execution-levels">
       <strong>生成结果执行分层</strong>
-      <p>平台只会把“可执行”里的首批冒烟用例下发 Runner；其他结果保留给人工复核、补充或后续扩展。</p>
+      <p>平台会先下发“可执行”里的首批冒烟用例；首批失败率不高时会继续扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
       <div class="report-summary-grid final-report-metrics">
         ${labels.map(([key, label]) => `<div><span>${label}</span><strong>${escapeHtml(groups[key].length)}</strong></div>`).join('')}
       </div>
@@ -1611,7 +1611,12 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
 function renderRunnerExecutionGateSummary(artifacts = {}) {
   const gate = artifacts.runnerExecutionGate || artifacts.runnerSmokeGate || {};
   if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
-  const stop = gate.stopFurtherExecution ? `已停止后续批量执行：${gate.reason || '首批 smoke 失败率过高'}` : '首批冒烟准入已启用';
+  let stop = '首批冒烟准入已启用';
+  if (gate.stopFurtherExecution) {
+    stop = `已停止后续批量执行：${gate.reason || '首批 smoke 失败率过高'}`;
+  } else if (gate.expandedExecution) {
+    stop = `首批冒烟通过，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
+  }
   return `
     <section class="final-report-panel final-report-wide">
       <strong>Runner 自动执行准入</strong>
@@ -1619,7 +1624,8 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
       <div class="report-summary-grid final-report-metrics">
         <div><span>首批上限</span><strong>${escapeHtml(gate.limit ?? '-')}</strong></div>
         <div><span>已选择</span><strong>${escapeHtml(gate.selectedCount ?? gate.smokeExecutedCount ?? 0)}</strong></div>
-        <div><span>已延后</span><strong>${escapeHtml(gate.deferredCount ?? 0)}</strong></div>
+        <div><span>扩展执行</span><strong>${escapeHtml(gate.expandedCreatedCount ?? 0)}</strong></div>
+        <div><span>剩余待跑</span><strong>${escapeHtml(gate.remainingDeferredCount ?? gate.deferredCount ?? 0)}</strong></div>
         <div><span>被拦截</span><strong>${escapeHtml(gate.blockingCount ?? gate.blockedCount ?? 0)}</strong></div>
       </div>
       ${gate.smokeFailureRate ? `<p>首批失败率：${escapeHtml(Math.round(Number(gate.smokeFailureRate || 0) * 100))}%</p>` : ''}

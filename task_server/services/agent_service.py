@@ -82,6 +82,10 @@ AGENT_GENERATED_RUNNER_SMOKE_LIMIT = max(
     1,
     min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)),
 )
+AGENT_GENERATED_RUNNER_EXPAND_LIMIT = max(
+    AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
+    min(100, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT"), 30)),
+)
 
 
 def _trace_time_text():
@@ -3976,6 +3980,7 @@ def _select_agent_runner_refs(run, refs):
     gate = {
         "enabled": True,
         "limit": AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
+        "expandLimit": AGENT_GENERATED_RUNNER_EXPAND_LIMIT,
         "totalCount": len(scored),
         "selectedCount": len(selected),
         "blockedCount": len(blocked),
@@ -4038,6 +4043,138 @@ def _compact_yaml_dry_run_result(dry):
         "normalizedChanged": bool((dry or {}).get("normalizedChanged")),
         "guardChanges": list((dry or {}).get("guardChanges") or [])[:12],
         "message": (dry or {}).get("message") or "",
+    }
+
+
+def _agent_merge_runner_wait_results(*results):
+    merged = {"completed": [], "failed": [], "timeout": []}
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        for key in ("completed", "failed", "timeout"):
+            merged[key].extend(list(result.get(key) or []))
+    return merged
+
+
+def _agent_create_runner_jobs_for_refs(
+    run,
+    refs,
+    selected_runner_id,
+    selected_device_id,
+    selected_device_strategy,
+    *,
+    runner_dry_run_enabled=False,
+    dry_run_timeout=120,
+    initial_blocked=None,
+    phase="smoke",
+):
+    from task_server.services import job_service
+
+    job_ids = []
+    dry_run_results = []
+    dry_run_blocked = list(initial_blocked or [])
+    runner_dry_run_jobs = []
+    for ref in refs or []:
+        try:
+            full_path = str(ref.get("path") or "")
+            if not os.path.exists(full_path):
+                dry_run_blocked.append({
+                    "module": ref.get("module") or "",
+                    "file": ref.get("file") or os.path.basename(full_path),
+                    "path": full_path,
+                    "phase": phase,
+                    "reason": "YAML 文件不存在，未创建 Runner 任务",
+                })
+                continue
+            mod = ref.get("module") or _task_dir_for_path(full_path)[0]
+            fn = ref.get("file") or os.path.basename(full_path)
+            dry = _agent_yaml_dry_run_for_ref(run, {**ref, "module": mod, "file": fn, "path": full_path})
+            dry_compact = _compact_yaml_dry_run_result(dry)
+            dry_row = {"module": mod, "file": fn, "path": full_path, "phase": phase, **dry_compact}
+            dry_run_results.append(dry_row)
+            if not dry_compact.get("ok"):
+                dry_run_blocked.append({
+                    "module": mod,
+                    "file": fn,
+                    "path": full_path,
+                    "phase": phase,
+                    "reason": "Runner 下发前 dry-run 未通过",
+                    "errors": list(dry_compact.get("errors") or [])[:8],
+                })
+                continue
+            if runner_dry_run_enabled:
+                dry_task_names = _agent_yaml_task_names_for_runner(full_path)
+                dry_job = job_service.create_job({
+                    "module": mod,
+                    "file": fn,
+                    "target_task_name": dry_task_names[0] if len(dry_task_names) == 1 else "",
+                    "task_names": dry_task_names,
+                    "current_task_name": dry_task_names[0] if dry_task_names else "",
+                    "runner_id": selected_runner_id,
+                    "device_id": selected_device_id,
+                    "device_strategy": "fixed" if selected_device_id else "auto",
+                    "job_type": "yaml_dry_run",
+                    "type": "yaml_dry_run",
+                    "run_mode": "yaml_dry_run",
+                    "dry_run": True,
+                    "parent_run_id": run.get("runId", ""),
+                    "phase": phase,
+                })
+                dry_job_id = dry_job.get("job_id") if dry_job else ""
+                if dry_job_id:
+                    runner_dry_run_jobs.append(dry_job_id)
+                    dry_row["runnerDryRunJobId"] = dry_job_id
+                    wait_dry = job_service.wait_jobs_finished([dry_job_id], run, timeout=dry_run_timeout, interval=3)
+                    dry_row["runnerDryRun"] = {
+                        "completed": len(wait_dry.get("completed") or []),
+                        "failed": len(wait_dry.get("failed") or []),
+                        "timeout": len(wait_dry.get("timeout") or []),
+                        "jobId": dry_job_id,
+                    }
+                    if not wait_dry.get("completed"):
+                        failed_rows = list(wait_dry.get("failed") or []) + list(wait_dry.get("timeout") or [])
+                        dry_run_blocked.append({
+                            "module": mod,
+                            "file": fn,
+                            "path": full_path,
+                            "phase": phase,
+                            "reason": "Runner 真实 dry-run 未通过",
+                            "job_id": dry_job_id,
+                            "errors": [
+                                str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
+                                for item in failed_rows[:5]
+                            ],
+                        })
+                        continue
+            task_names = _agent_yaml_task_names_for_runner(full_path)
+            target_task_name = task_names[0] if len(task_names) == 1 else ""
+            job = job_service.create_job({
+                "module": mod,
+                "file": fn,
+                "target_task_name": target_task_name,
+                "task_names": task_names,
+                "current_task_name": target_task_name or (task_names[0] if task_names else ""),
+                "runner_id": selected_runner_id,
+                "device_id": selected_device_id,
+                "device_strategy": selected_device_strategy,
+                "parent_run_id": run.get("runId", ""),
+                "phase": phase,
+            })
+            if job and job.get("job_id"):
+                job_ids.append(job["job_id"])
+        except Exception as exc:
+            dry_run_blocked.append({
+                "module": ref.get("module") or "",
+                "file": ref.get("file") or os.path.basename(str(ref.get("path") or "")),
+                "path": str(ref.get("path") or ""),
+                "phase": phase,
+                "reason": f"创建 Runner 任务前异常：{str(exc)[:180]}",
+            })
+    return {
+        "jobIds": job_ids,
+        "dryRunResults": dry_run_results,
+        "dryRunBlocked": dry_run_blocked,
+        "runnerDryRunJobs": runner_dry_run_jobs,
     }
 
 
@@ -8117,99 +8254,20 @@ def _tool_run_sonic(run):
                 _log_tool_call(call, run.get("runId", ""))
                 return call
             runner_dry_run_enabled, runner_dry_run_reason = _runner_supports_yaml_dry_run(selected_runner_id)
-            dry_run_results = []
-            dry_run_blocked = gate_blocked[:]
-            runner_dry_run_jobs = []
-            for ref in file_refs:
-                try:
-                    yf = str(ref.get("path") or "")
-                    full_path = yf
-                    if not os.path.exists(full_path):
-                        dry_run_blocked.append({
-                            "module": ref.get("module") or "",
-                            "file": ref.get("file") or os.path.basename(full_path),
-                            "path": full_path,
-                            "reason": "YAML 文件不存在，未创建 Runner 任务",
-                        })
-                        continue
-                    mod = ref.get("module") or _task_dir_for_path(full_path)[0]
-                    fn = ref.get("file") or os.path.basename(full_path)
-                    dry = _agent_yaml_dry_run_for_ref(run, {**ref, "module": mod, "file": fn, "path": full_path})
-                    dry_compact = _compact_yaml_dry_run_result(dry)
-                    dry_row = {"module": mod, "file": fn, "path": full_path, **dry_compact}
-                    dry_run_results.append(dry_row)
-                    if not dry_compact.get("ok"):
-                        dry_run_blocked.append({
-                            "module": mod,
-                            "file": fn,
-                            "path": full_path,
-                            "reason": "Runner 下发前 dry-run 未通过",
-                            "errors": list(dry_compact.get("errors") or [])[:8],
-                        })
-                        continue
-                    if runner_dry_run_enabled:
-                        dry_task_names = _agent_yaml_task_names_for_runner(full_path)
-                        dry_job = job_service.create_job({
-                            "module": mod,
-                            "file": fn,
-                            "target_task_name": dry_task_names[0] if len(dry_task_names) == 1 else "",
-                            "task_names": dry_task_names,
-                            "current_task_name": dry_task_names[0] if dry_task_names else "",
-                            "runner_id": selected_runner_id,
-                            "device_id": selected_device_id,
-                            "device_strategy": "fixed" if selected_device_id else "auto",
-                            "job_type": "yaml_dry_run",
-                            "type": "yaml_dry_run",
-                            "run_mode": "yaml_dry_run",
-                            "dry_run": True,
-                            "parent_run_id": run.get("runId", ""),
-                        })
-                        dry_job_id = dry_job.get("job_id") if dry_job else ""
-                        if dry_job_id:
-                            runner_dry_run_jobs.append(dry_job_id)
-                            dry_row["runnerDryRunJobId"] = dry_job_id
-                            wait_dry = job_service.wait_jobs_finished([dry_job_id], run, timeout=120, interval=3)
-                            dry_row["runnerDryRun"] = {
-                                "completed": len(wait_dry.get("completed") or []),
-                                "failed": len(wait_dry.get("failed") or []),
-                                "timeout": len(wait_dry.get("timeout") or []),
-                                "jobId": dry_job_id,
-                            }
-                            if not wait_dry.get("completed"):
-                                failed_rows = list(wait_dry.get("failed") or []) + list(wait_dry.get("timeout") or [])
-                                dry_run_blocked.append({
-                                    "module": mod,
-                                    "file": fn,
-                                    "path": full_path,
-                                    "reason": "Runner 真实 dry-run 未通过",
-                                    "job_id": dry_job_id,
-                                    "errors": [
-                                        str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
-                                        for item in failed_rows[:5]
-                                    ],
-                                })
-                                continue
-                    task_names = _agent_yaml_task_names_for_runner(full_path)
-                    target_task_name = task_names[0] if len(task_names) == 1 else ""
-                    job = job_service.create_job({
-                        "module": mod,
-                        "file": fn,
-                        "target_task_name": target_task_name,
-                        "task_names": task_names,
-                        "current_task_name": target_task_name or (task_names[0] if task_names else ""),
-                        "runner_id": selected_runner_id,
-                        "device_id": selected_device_id,
-                        "device_strategy": selected_device_strategy,
-                    })
-                    if job and job.get("job_id"):
-                        job_ids.append(job["job_id"])
-                except Exception as exc:
-                    dry_run_blocked.append({
-                        "module": ref.get("module") or "",
-                        "file": ref.get("file") or os.path.basename(str(ref.get("path") or "")),
-                        "path": str(ref.get("path") or ""),
-                        "reason": f"创建 Runner 任务前异常：{str(exc)[:180]}",
-                    })
+            created = _agent_create_runner_jobs_for_refs(
+                run,
+                file_refs,
+                selected_runner_id,
+                selected_device_id,
+                selected_device_strategy,
+                runner_dry_run_enabled=runner_dry_run_enabled,
+                initial_blocked=gate_blocked,
+                phase="smoke",
+            )
+            dry_run_results = created["dryRunResults"]
+            dry_run_blocked = created["dryRunBlocked"]
+            runner_dry_run_jobs = created["runnerDryRunJobs"]
+            job_ids = created["jobIds"]
 
             dry_run_passed = sum(1 for item in dry_run_results if item.get("ok"))
             run_artifacts["runnerDryRun"] = {
@@ -8269,6 +8327,15 @@ def _tool_run_sonic(run):
                 "failed": wait_result["failed"],
                 "timeout": wait_result["timeout"],
                 "waitTimeoutSeconds": wait_timeout,
+                "phases": {
+                    "smoke": {
+                        "jobIds": list(job_ids),
+                        "completedCount": len(wait_result["completed"]),
+                        "failedCount": len(wait_result["failed"]),
+                        "timeoutCount": len(wait_result["timeout"]),
+                        "waitTimeoutSeconds": wait_timeout,
+                    }
+                },
             }
             failure_reasons = _agent_job_failure_reasons(
                 list(wait_result.get("failed") or []) + list(wait_result.get("timeout") or []),
@@ -8282,8 +8349,14 @@ def _tool_run_sonic(run):
                 smoke_total = len(wait_result["completed"]) + len(wait_result["failed"]) + len(wait_result["timeout"])
                 smoke_failed = len(wait_result["failed"]) + len(wait_result["timeout"])
                 smoke_failure_rate = (smoke_failed / smoke_total) if smoke_total else 0
+                gate = run_artifacts.get("runnerExecutionGate") if isinstance(run_artifacts.get("runnerExecutionGate"), dict) else dict(execution_gate or {})
+                gate.update({
+                    "smokeExecutedCount": smoke_total,
+                    "smokeFailedCount": smoke_failed,
+                    "smokePassedCount": len(wait_result["completed"]),
+                    "smokeFailureRate": round(smoke_failure_rate, 4),
+                })
                 if smoke_total and smoke_failure_rate > 0.5:
-                    gate = run_artifacts.get("runnerExecutionGate") if isinstance(run_artifacts.get("runnerExecutionGate"), dict) else dict(execution_gate or {})
                     stop_reason = _agent_smoke_failure_bucket(failure_reasons, locals().get("dry_run_blocked", []))
                     stop_info = {
                         "enabled": True,
@@ -8299,10 +8372,102 @@ def _tool_run_sonic(run):
                     run_artifacts["runnerExecutionGate"] = gate
                     run_artifacts["runnerSmokeGate"] = stop_info
                     summary_parts.append(f"首批 smoke 失败率 {int(round(smoke_failure_rate * 100))}%，已停止后续批量执行：{stop_reason}")
+                elif smoke_total and gate_deferred:
+                    expand_refs = gate_deferred[:AGENT_GENERATED_RUNNER_EXPAND_LIMIT]
+                    remaining_deferred = gate_deferred[len(expand_refs):]
+                    gate.update({
+                        "stopFurtherExecution": False,
+                        "expandedExecution": True,
+                        "expandedPlannedCount": len(expand_refs),
+                        "remainingDeferredCount": len(remaining_deferred),
+                    })
+                    summary_parts.append(
+                        f"首批 smoke 失败率 {int(round(smoke_failure_rate * 100))}%，继续执行剩余 executable {len(expand_refs)} 个"
+                    )
+                    expanded_created = _agent_create_runner_jobs_for_refs(
+                        run,
+                        expand_refs,
+                        selected_runner_id,
+                        selected_device_id,
+                        selected_device_strategy,
+                        runner_dry_run_enabled=runner_dry_run_enabled,
+                        phase="expanded",
+                    )
+                    expanded_job_ids = list(expanded_created.get("jobIds") or [])
+                    expanded_blocked = list(expanded_created.get("dryRunBlocked") or [])
+                    runner_dry_run = run_artifacts.get("runnerDryRun") if isinstance(run_artifacts.get("runnerDryRun"), dict) else {}
+                    runner_dry_run.setdefault("results", []).extend(expanded_created.get("dryRunResults") or [])
+                    runner_dry_run.setdefault("blocked", []).extend(expanded_blocked)
+                    runner_dry_run.setdefault("runnerJobIds", []).extend(expanded_created.get("runnerDryRunJobs") or [])
+                    runner_dry_run["expandedResults"] = expanded_created.get("dryRunResults") or []
+                    runner_dry_run["expandedBlocked"] = expanded_blocked
+                    runner_dry_run["expandedCreatedCount"] = len(expanded_job_ids)
+                    runner_dry_run["expandedChecked"] = len(expanded_created.get("dryRunResults") or [])
+                    runner_dry_run["checked"] = len(runner_dry_run.get("results") or [])
+                    runner_dry_run["blockedCount"] = len(runner_dry_run.get("blocked") or [])
+                    runner_dry_run["createdCount"] = len(run_artifacts.get("jobIds") or []) + len(expanded_job_ids)
+                    runner_dry_run["ok"] = not runner_dry_run.get("blocked")
+                    run_artifacts["runnerDryRun"] = runner_dry_run
+
+                    gate.update({
+                        "expandedCreatedCount": len(expanded_job_ids),
+                        "expandedBlockedCount": len(expanded_blocked),
+                        "expandedJobIds": expanded_job_ids,
+                    })
+                    if expanded_blocked:
+                        summary_parts.append(f"扩展阶段 {len(expanded_blocked)} 个未下发")
+                    if expanded_job_ids:
+                        run_artifacts["jobIds"] = list(run_artifacts.get("jobIds") or []) + expanded_job_ids
+                        _persist_agent_run_snapshot(run)
+                        expanded_timeout = job_service.runner_job_wait_timeout_seconds(len(expanded_job_ids))
+                        expanded_wait = job_service.wait_jobs_finished(expanded_job_ids, run, timeout=expanded_timeout, interval=5)
+                        wait_result = _agent_merge_runner_wait_results(wait_result, expanded_wait)
+                        run_artifacts["jobResult"].update({
+                            "completedCount": len(wait_result["completed"]),
+                            "failedCount": len(wait_result["failed"]),
+                            "timeoutCount": len(wait_result["timeout"]),
+                            "completed": wait_result["completed"],
+                            "failed": wait_result["failed"],
+                            "timeout": wait_result["timeout"],
+                            "waitTimeoutSeconds": max(wait_timeout, expanded_timeout),
+                        })
+                        run_artifacts["jobResult"].setdefault("phases", {})["expanded"] = {
+                            "jobIds": expanded_job_ids,
+                            "completedCount": len(expanded_wait.get("completed") or []),
+                            "failedCount": len(expanded_wait.get("failed") or []),
+                            "timeoutCount": len(expanded_wait.get("timeout") or []),
+                            "waitTimeoutSeconds": expanded_timeout,
+                        }
+                        gate.update({
+                            "expandedCompletedCount": len(expanded_wait.get("completed") or []),
+                            "expandedFailedCount": len(expanded_wait.get("failed") or []),
+                            "expandedTimeoutCount": len(expanded_wait.get("timeout") or []),
+                        })
+                        summary_parts.append(
+                            "扩展执行 "
+                            f"{len(expanded_job_ids)} 个：成功 {len(expanded_wait.get('completed') or [])}，"
+                            f"失败 {len(expanded_wait.get('failed') or [])}，超时 {len(expanded_wait.get('timeout') or [])}"
+                        )
+                    run_artifacts["runnerExecutionGate"] = gate
+                    run_artifacts["runnerSmokeGate"] = gate
+                    failure_reasons = _agent_job_failure_reasons(
+                        list(wait_result.get("failed") or []) + list(wait_result.get("timeout") or []),
+                        limit=8,
+                    )
+                    if failure_reasons:
+                        run_artifacts["jobFailureReasons"] = failure_reasons
+                        run_artifacts["jobResult"]["failureReasons"] = failure_reasons
+                    else:
+                        run_artifacts.pop("jobFailureReasons", None)
+                        run_artifacts["jobResult"].pop("failureReasons", None)
+                else:
+                    run_artifacts["runnerExecutionGate"] = gate
+                    run_artifacts["runnerSmokeGate"] = gate
 
             if wait_result["timeout"]:
                 call["status"] = "PARTIAL_FAILED"
-                summary_parts.append(f"{len(wait_result['timeout'])} 个超时（等待上限 {wait_timeout}s）")
+                effective_wait_timeout = (run_artifacts.get("jobResult") or {}).get("waitTimeoutSeconds") or wait_timeout
+                summary_parts.append(f"{len(wait_result['timeout'])} 个超时（等待上限 {effective_wait_timeout}s）")
             elif wait_result["failed"]:
                 if wait_result["completed"]:
                     call["status"] = "PARTIAL_FAILED"
@@ -8330,6 +8495,7 @@ def _tool_run_sonic(run):
             call["status"] = "PARTIAL_FAILED"
             summary_parts.append(f"{runner_dry_run.get('blockedCount')} 个未下发")
 
+        job_ids = run_artifacts.get("jobIds", job_ids)
         call["status"] = call.get("status") or "SUCCESS"
         call["outputSummary"] = "，".join(summary_parts)
         call["artifactRefs"] = job_ids[:10]
