@@ -241,6 +241,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
+    require("js/execution.js?v=20260701-apk-chunk" in html and "js/app.js?v=20260701-apk-chunk" in html, "APK chunk upload JS must bump task-manager cache version")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
     require("脑图生成任务已提交，已切到脑图中心查看进度" in html and "closeMindmapCreateModal({ quiet: true })" in html and "await showMindmapCenter();" in html, "Mindmap create modal must auto-close after background job submission")
     require("function isMindmapBackgroundJob" in html and "mindmapTaskSectionHtml" in html and "mindmapFilesSectionHtml" in html, "Mindmap center must render background task status separately from downloadable files")
