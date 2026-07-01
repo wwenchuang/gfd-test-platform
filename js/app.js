@@ -2493,6 +2493,7 @@ function generationReviewHtml(data={}) {
         <div class="review-actions">
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回工作台</button>
           ${caseSetId ? `<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>` : ''}
+          ${caseSetId ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)})">重跑冒烟</button>` : ''}
           ${caseSetId ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>` : ''}
           ${caseSetId ? `<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>` : ''}
           ${caseSetId ? `<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>` : ''}
@@ -2598,6 +2599,52 @@ async function showCurrentGenerationReview() {
     showGenerationReview(data.summary || {});
   } catch(e) {
     showToast(e.message || '读取生成分析失败', 'error');
+  }
+}
+
+function smokeRerunDevicePayload() {
+  const candidateIds = ['agent-runner-device', 'generate-device', 'run-file-device', 'run-task-device'];
+  for (const id of candidateIds) {
+    if (!document.getElementById(id)) continue;
+    const selected = selectedRunnerDevice(id);
+    if (selected.device_strategy !== 'manual_required') return selected;
+  }
+  return { runner_id: '', device_id: '', device_strategy: 'auto' };
+}
+
+async function rerunGenerationSmokeCases(caseSetId, moduleName='') {
+  if (!caseSetId) {
+    showToast('缺少生成批次 ID，无法重跑冒烟', 'error');
+    return;
+  }
+  const selected = smokeRerunDevicePayload();
+  const deviceText = selected.device_strategy === 'fixed'
+    ? (jobDeviceLabel({device_id: selected.device_id, runner_id: selected.runner_id}) || selected.device_id)
+    : '自动选择在线设备';
+  const ok = confirm([
+    '重新执行本批次的冒烟用例？',
+    '',
+    '只会重新创建已生成 YAML 的 Runner 任务，不会重新上传资料，也不会重新做需求分析。',
+    `执行设备：${deviceText}`
+  ].join('\n'));
+  if (!ok) return;
+  try {
+    const data = await apiRequest('/cases/rerun-smoke', {
+      method: 'POST',
+      body: {
+        case_set_id: caseSetId,
+        module: moduleName || '',
+        run_mode: 'test',
+        runner_id: selected.runner_id,
+        device_id: selected.device_id,
+        device_strategy: selected.device_strategy
+      }
+    });
+    await loadJobs(false, true);
+    const skipped = data.skippedCount ? `，跳过 ${data.skippedCount} 个` : '';
+    showToast(`✓ 已创建 ${data.createdCount || 0} 个冒烟重跑任务${skipped}`, 'success', 5000);
+  } catch (e) {
+    showToast(e.message || '重跑冒烟失败', 'error');
   }
 }
 

@@ -1304,6 +1304,112 @@ def _get_cases_summary(handler, qs):
     })
 
 
+def _summary_yaml_file_list(summary):
+    raw_files = (
+        (summary or {}).get("yaml_files")
+        or (summary or {}).get("yamlFiles")
+        or []
+    )
+    if isinstance(raw_files, str):
+        raw_files = [raw_files]
+    files = []
+    for item in raw_files:
+        if isinstance(item, dict):
+            file_name = item.get("file") or item.get("path") or item.get("name")
+        else:
+            file_name = str(item or "")
+        file_name = file_name.strip()
+        if file_name:
+            files.append(file_name)
+    single_file = str((summary or {}).get("yaml_file") or "").strip()
+    if single_file and single_file not in files:
+        files.append(single_file)
+    return files
+
+
+def _case_is_smoke(row):
+    if not isinstance(row, dict):
+        return False
+    if row.get("smoke") is True or row.get("smokeCandidate") is True:
+        return True
+    text_parts = []
+    for key in ("flag", "flags", "tags"):
+        value = row.get(key)
+        if isinstance(value, list):
+            text_parts.extend(str(item) for item in value)
+        elif value:
+            text_parts.append(str(value))
+    return "冒烟" in " ".join(text_parts)
+
+
+def _case_priority(row):
+    if not isinstance(row, dict):
+        return ""
+    return str(row.get("priority") or row.get("level") or "").strip().upper()
+
+
+def generation_smoke_yaml_refs(summary):
+    """Return executable smoke YAML refs for a generated case set."""
+    if not isinstance(summary, dict):
+        return []
+    cases = [case for case in (summary.get("cases") or []) if isinstance(case, dict)]
+    cases_by_id = {
+        str(case.get("case_id") or case.get("id") or "").strip(): case
+        for case in cases
+        if str(case.get("case_id") or case.get("id") or "").strip()
+    }
+    yaml_files = _summary_yaml_file_list(summary)
+    groups = summary.get("generatedCaseGroups") or {}
+    executable_rows = (
+        groups.get("executable_cases")
+        or summary.get("executable_cases")
+        or []
+    )
+    refs = []
+    seen = set()
+
+    def add_ref(file_name, row=None, target_task_name=""):
+        file_name = str(file_name or "").strip()
+        if not file_name:
+            return
+        key = (file_name, str(target_task_name or ""))
+        if key in seen:
+            return
+        seen.add(key)
+        refs.append({
+            "file": file_name,
+            "name": (row or {}).get("name") or (row or {}).get("title") or target_task_name or file_name,
+            "case_id": (row or {}).get("case_id") or (row or {}).get("id") or "",
+            "priority": _case_priority(row),
+            "score": (row or {}).get("score") or 0,
+            "target_task_name": target_task_name or "",
+        })
+
+    for row in executable_rows:
+        if not isinstance(row, dict):
+            continue
+        case = cases_by_id.get(str(row.get("case_id") or "").strip()) or {}
+        merged = {**case, **row}
+        if not _case_is_smoke(merged):
+            continue
+        add_ref(row.get("file"), merged)
+
+    if refs:
+        return refs
+
+    # Backward compatibility for old summaries that were written before
+    # generatedCaseGroups/yamlExecutableScores were persisted.
+    one_file = len(yaml_files) == 1
+    for index, case in enumerate(cases):
+        if not _case_is_smoke(case):
+            continue
+        if index < len(yaml_files):
+            add_ref(yaml_files[index], case)
+        elif one_file:
+            add_ref(yaml_files[0], case, target_task_name=case.get("title") or case.get("name") or "")
+    return refs
+
+
 # ── 脑图列表 ────────────────────────────────────────────────────────
 
 @route_get("/api/cases/mindmaps")
@@ -3060,6 +3166,101 @@ def _post_runner_heartbeat(handler, qs):
         }
         save_runners(runners)
     handler._json({"ok": True, "runner_id": runner_id, "devices": devices})
+
+
+# ── 生成批次冒烟重跑 ───────────────────────────────────────────────
+
+@route_post("/api/cases/rerun-smoke")
+def _post_cases_rerun_smoke(handler, qs):
+    d = handler._body()
+    case_set_id = d.get("case_set_id") or d.get("caseSetId") or d.get("id")
+    if not case_set_id:
+        handler._json({"ok": False, "error": "case_set_id 不能为空"}, 400)
+        return
+    summary = read_json_file(generation_summary_path(case_set_id), default=None)
+    if not summary:
+        handler._json({"ok": False, "error": "生成汇总不存在，无法重跑冒烟用例"}, 404)
+        return
+    module = d.get("module") or d.get("mod") or summary.get("module") or ""
+    if not module:
+        handler._json({"ok": False, "error": "生成汇总缺少模块信息，无法创建 Runner 任务"}, 400)
+        return
+
+    runner_id = d.get("runner_id") or d.get("runnerId") or ""
+    device_id = d.get("device_id") or d.get("deviceId") or ""
+    device_strategy = normalize_device_strategy(
+        d.get("device_strategy") or d.get("deviceStrategy") or "auto",
+        device_id=device_id,
+        runner_id=runner_id,
+    )
+    run_mode = d.get("run_mode") or d.get("runMode") or "test"
+    limit = safe_int(d.get("limit") or d.get("max") or 0, 0)
+    refs = generation_smoke_yaml_refs(summary)
+    if limit > 0:
+        refs = refs[:limit]
+    if not refs:
+        handler._json({
+            "ok": False,
+            "error": "这个生成批次没有可直接重跑的冒烟 YAML；请先重新生成或在评审页确认可执行用例。"
+        }, 400)
+        return
+
+    created = []
+    skipped = []
+    for ref in refs:
+        file_name = ref.get("file") or ""
+        target_task_name = ref.get("target_task_name") or ""
+        try:
+            yaml_path = safe_join(TASK_DIR, module, file_name)
+        except ValueError:
+            skipped.append({**ref, "reason": "非法 YAML 路径"})
+            continue
+        if not os.path.exists(yaml_path):
+            skipped.append({**ref, "reason": "YAML 文件不存在"})
+            continue
+        if target_task_name:
+            try:
+                yaml_content = read_text_file(yaml_path)
+                app_package = resolve_app_package(module, file_name, yaml_content)
+                yaml_with_single_task(yaml_content, target_task_name, app_package=app_package)
+            except Exception as e:
+                skipped.append({**ref, "reason": str(e)})
+                continue
+        job = create_pending_job(
+            module,
+            file_name,
+            auto_optimize=False,
+            device_id=device_id,
+            runner_id=runner_id,
+            device_strategy=device_strategy,
+            run_mode=run_mode,
+            target_task_name=target_task_name,
+        )
+        created.append({**ref, "job_id": job.get("job_id"), "job": job})
+
+    if not created:
+        handler._json({
+            "ok": False,
+            "error": "没有成功创建冒烟重跑任务",
+            "case_set_id": case_set_id,
+            "selectedCount": len(refs),
+            "skipped": skipped,
+        }, 400)
+        return
+
+    handler._json({
+        "ok": True,
+        "case_set_id": case_set_id,
+        "module": module,
+        "device_strategy": device_strategy,
+        "runner_id": runner_id,
+        "device_id": device_id,
+        "selectedCount": len(refs),
+        "createdCount": len(created),
+        "skippedCount": len(skipped),
+        "created": created,
+        "skipped": skipped,
+    })
 
 
 # ── Cases 前缀匹配（POST）───────────────────────────────────────────

@@ -3621,6 +3621,8 @@ def cases_to_separate_midscene_yamls(payload: Any, app_package: str = "", base_f
             "file": unique_name,
             "title": case_title,
             "case_id": first_non_empty(case.get("case_id"), case.get("id"), f"TC-{index:03d}"),
+            "priority": case_priority(case),
+            "smoke": is_smoke_case(case),
             "content": rendered,
         })
 
@@ -5062,8 +5064,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "score": score.get("score") or 0,
             "level": level,
             "executionLevel": level,
-            "priority": first_task.get("priority") or "",
-            "smokeCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate")),
+            "priority": first_task.get("priority") or item.get("priority") or "",
+            "smoke": bool(item.get("smoke")),
+            "smokeCandidate": bool(item.get("smoke") or score.get("smokeCandidate") or first_task.get("smokeCandidate")),
             "mainBusinessChain": bool(first_task.get("mainBusinessChain")),
             "baselineEvidence": bool(score.get("baselineEvidence") or first_task.get("baselineEvidence")),
             "reasons": list(score.get("reasons") or [])[:8],
@@ -5087,6 +5090,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
     converted_payload["draft_cases"] = generated_case_groups["draft_cases"]
     converted_payload["manual_cases"] = list(converted_payload.get("manual_cases") or []) + generated_case_groups["manual_cases"]
     converted_payload["execution_level_counts"] = generated_case_groups["counts"]
+    summary["generatedCaseGroups"] = generated_case_groups
+    summary["executable_cases"] = generated_case_groups["executable_cases"]
+    summary["needs_review_cases"] = generated_case_groups["needs_review_cases"]
+    summary["draft_cases"] = generated_case_groups["draft_cases"]
+    summary["manual_cases"] = converted_payload.get("manual_cases", [])
+    summary["yamlExecutableScores"] = yaml_executable_scores
+    summary["execution_level_counts"] = generated_case_groups["counts"]
+    summary_files = write_generation_summary(case_set_id, summary)
     for item in yaml_items:
         static_check = static_by_file.get(item["file"], {})
         update_task_meta(module, item["file"], {

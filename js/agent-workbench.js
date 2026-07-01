@@ -1573,6 +1573,8 @@ function agentGeneratedCaseGroups(artifacts = {}) {
 
 function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   const groups = agentGeneratedCaseGroups(artifacts);
+  const mindmap = agentMindmapInfo(artifacts);
+  const smokeExecutableCount = (groups.executable_cases || []).filter(item => item && (item.smoke || item.smokeCandidate)).length;
   const labels = [
     ['executable_cases', '可执行', '可自动进入 Runner 首批冒烟'],
     ['needs_review_cases', '需确认', '需要人工看原因后再决定是否执行'],
@@ -1598,8 +1600,14 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   }).join('');
   return `
     <section class="final-report-panel final-report-wide generated-execution-levels">
-      <strong>生成结果执行分层</strong>
-      <p>平台会先下发“可执行”里的首批冒烟用例；首批失败率不高时会继续扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
+      <div class="section-head">
+        <div>
+          <strong>生成结果执行分层</strong>
+          <p>平台会先下发“可执行”里的首批冒烟用例；首批失败率不高时会继续扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
+        </div>
+        ${mindmap.caseSetId ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)})">重跑冒烟${smokeExecutableCount ? ` ${escapeHtml(smokeExecutableCount)}` : ''}</button>` : ''}
+      </div>
+      ${mindmap.caseSetId ? '<p>重跑冒烟只重新创建已生成 YAML 的 Runner 任务，不会重新上传资料或重新分析需求。</p>' : ''}
       <div class="report-summary-grid final-report-metrics">
         ${labels.map(([key, label]) => `<div><span>${label}</span><strong>${escapeHtml(groups[key].length)}</strong></div>`).join('')}
       </div>
