@@ -701,7 +701,16 @@ function requireRunnerDevice(selectId='generate-device', statusId='', actionLabe
 }
 
 function jobDeviceLabel(job = {}) {
-  if (job.device_id || job.deviceId) return job.device_id || job.deviceId;
+  const deviceId = job.device_id || job.deviceId || '';
+  if (deviceId) {
+    const runnerId = job.target_runner_id || job.targetRunnerId || job.runner_id || job.runnerId || '';
+    const device = (Array.isArray(runnerDevices) ? runnerDevices : []).find(item => {
+      if (!item || item.device_id !== deviceId) return false;
+      return !runnerId || item.runner_id === runnerId;
+    }) || (Array.isArray(runnerDevices) ? runnerDevices : []).find(item => item && item.device_id === deviceId);
+    if (device) return runnerDeviceDisplayName(device);
+    return deviceId;
+  }
   const strategy = job.device_strategy || job.deviceStrategy || '';
   return strategy === 'auto' ? '自动选择在线设备' : '未指定设备';
 }
