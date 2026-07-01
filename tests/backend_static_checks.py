@@ -746,6 +746,16 @@ def check_ai_skills_receive_yaml_reference_context():
                 "manual_cases": [],
                 "review": {},
             }
+        if skill_name == "smoke_selector":
+            return {
+                "smoke_case_ids": ["TC-001"],
+                "review": {
+                    "normal_chain_covered": True,
+                    "selection_reason": "覆盖 AI 建模入口正常主链",
+                    "missing_normal_chain_reason": "",
+                    "rejected_case_ids": [],
+                },
+            }
         raise AssertionError(f"unexpected skill: {skill_name}")
 
     ai_skill_service.run_ai_skill = fake_run_ai_skill
@@ -760,9 +770,37 @@ def check_ai_skills_receive_yaml_reference_context():
 
     scenario_payload = next(item[1] for item in calls if item[0] == "scenario_designer")
     automation_payload = next(item[1] for item in calls if item[0] == "automation_filter")
+    smoke_payload = next(item[1] for item in calls if item[0] == "smoke_selector")
     require("现有 YAML 步骤经验库" in scenario_payload.get("yaml_reference_context", ""), "Scenario designer must receive YAML reference context")
     require("现有 YAML 步骤经验库" in automation_payload.get("yaml_reference_context", ""), "Automation filter must receive YAML reference context")
+    require(smoke_payload.get("yaml_reference_context_available") is True, "Smoke selector must know YAML reference context was available")
+    require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "AI smoke selector must record normal-chain coverage")
     require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
+
+
+def check_smoke_selection_requires_explicit_ai_mark():
+    from task_server.services import yaml_service
+    from task_server.services import ai_skill_service
+
+    keyword_only = {
+        "case_id": "TC-001",
+        "title": "核心入口展示验证",
+        "priority": "P0",
+        "scenario": "主流程入口",
+        "steps": ["点击入口"],
+        "assertions": ["页面展示核心区域"],
+    }
+    require(yaml_service.is_smoke_case(keyword_only) is False, "P0/P1 and keyword-only cases must not be auto-promoted to smoke")
+    explicit = {**keyword_only, "smoke": True}
+    require(yaml_service.is_smoke_case(explicit) is True, "Explicit AI/user smoke mark must still be honored")
+    cases = [dict(keyword_only), {**keyword_only, "case_id": "TC-002", "smoke": True, "tags": ["冒烟"]}]
+    selected, review = ai_skill_service.apply_smoke_selection_to_cases(
+        cases,
+        {"smoke_case_ids": ["TC-002"], "review": {"normal_chain_covered": True}},
+        {"smoke_cases": 3},
+    )
+    require(selected[0].get("smoke") is False and selected[1].get("smoke") is True, "Smoke selection must clear stale smoke marks and apply AI-selected IDs only")
+    require(review.get("selected_case_ids") == ["TC-002"], "Smoke selection review must expose selected IDs")
 
 
 def check_yaml_runner_eligibility_filter():
@@ -1523,6 +1561,7 @@ def main():
     check_yaml_reference_examples_are_general_step_library()
     check_generated_yaml_uses_single_final_assertion()
     check_ai_skills_receive_yaml_reference_context()
+    check_smoke_selection_requires_explicit_ai_mark()
     check_yaml_runner_eligibility_filter()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
@@ -1587,6 +1626,13 @@ def main():
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source, "Generation/mindmap visual grounding must not feed knowledge screenshots into the visual model")
     require("def _case_manual_block_reason" in yaml_service_source and "接口 Mock" in ai_skill_service_source and "排队/并发状态" in ai_skill_service_source, "YAML generation must keep non-runnable scenario coverage out of Runner YAML")
     require("需求文档是业务真相，Figma 是 UI 参考" in ai_skill_service_source and "需求文档决定本次要覆盖的业务范围" in automation_filter_source, "AI generation must treat requirements as business source of truth and Figma as UI reference")
+    smoke_selector_prompt = (ROOT / "ai_skills" / "prompts" / "smoke_selector.v1.md").read_text(encoding="utf-8")
+    require(
+        "def call_skill_smoke_selector" in ai_skill_service_source
+        and "select_smoke_cases_for_payload" in yaml_service_source
+        and "不再按 P0/P1 或关键词" in smoke_selector_prompt,
+        "Smoke cases must be selected by an independent AI selector before Runner execution"
+    )
     require('"direct_scope_only": True' in agent_service_source and "direct_scope_only" in knowledge_service_source and "useSavedKnowledge" in agent_service_source, "Agent Figma parsing must use exact direct-link scope and avoid saved page knowledge unless explicit")
     require('and not run.get("riskConfirmed")' in agent_service_source and 'next_pending_step_after("RISK_REVIEW")' in agent_service_source, "High-risk confirmation must not re-block after approval and must resume at the next pending step")
     require("MIDSCENE_REPLANNING_CYCLE_LIMIT\", 8" in config_source, "Default Midscene replanning limit should be high enough for normal complex UI flows")

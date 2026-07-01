@@ -213,6 +213,7 @@ dashscope_chat_content = _lazy("dashscope_chat_content", "task_server.services.a
 improve_case_coverage = _lazy("improve_case_coverage", "task_server.services.ai_skill_service")
 normalize_requirement_analysis_result = _lazy("normalize_requirement_analysis_result", "task_server.services.ai_skill_service")
 generation_volume_targets = _lazy("generation_volume_targets", "task_server.services.ai_skill_service")
+select_smoke_cases_for_payload = _lazy("select_smoke_cases_for_payload", "task_server.services.ai_skill_service")
 load_knowledge_context = _lazy("load_knowledge_context", "task_server.services.knowledge_service")
 load_figma_generation_context = _lazy("load_figma_generation_context", "task_server.services.knowledge_service")
 parse_figma_design = _lazy("parse_figma_design", "task_server.services.knowledge_service")
@@ -1240,7 +1241,12 @@ def case_tags(case):
 
 
 def is_smoke_case(case):
-    """判断是否为冒烟用例。"""
+    """判断是否为冒烟用例。
+
+    新生成用例的首批自动执行必须来自 AI 明确标记或用户显式标记。
+    不再根据 P0/P1、标题关键词、入口/主流程等规则自动推断，避免把
+    历史记录、干扰、旧入口、弱路径误当成冒烟。
+    """
     explicit = case_value(case, "smoke", "is_smoke", "isSmoke", "smoke_test", "smokeTest", "flag")
     tags = case_tags(case)
     flags = normalize_text_list(case.get("flag") or case.get("flags") or [])
@@ -1250,15 +1256,7 @@ def is_smoke_case(case):
         return True
     if any("冒烟" in flag or "smoke" in flag.lower() for flag in flags):
         return True
-    priority = case_priority(case)
-    clue = " ".join([
-        str(case.get("title") or ""),
-        str(case.get("scenario") or ""),
-        str(case.get("coverage") or ""),
-        str(case.get("risk") or ""),
-        str(case.get("automation_reason") or case.get("automationReason") or "")
-    ])
-    return priority in ("P0", "P1") and any(word in clue for word in ("主流程", "核心", "入口", "关键", "冒烟"))
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -4951,6 +4949,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "覆盖率补全模型调用失败，已保留当前用例并记录覆盖审查结果"
         ]
     payload = normalize_cases_payload(payload)
+    try:
+        payload = select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context=yaml_reference_text)
+    except Exception as smoke_error:
+        review = payload.setdefault("review", {})
+        review["smoke_selector_final_error"] = str(smoke_error)
+        review["smoke_selector_final_policy"] = "最终冒烟筛选失败时不使用 P0/P1 或关键词兜底，保留现有显式 smoke 标记。"
     payload["id"] = case_set_id
     payload["module"] = module
 

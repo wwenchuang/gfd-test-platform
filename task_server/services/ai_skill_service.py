@@ -1268,6 +1268,180 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
     }
 
 
+def _smoke_case_id(case, index):
+    """Return a stable case id for smoke selection and back-fill when missing."""
+    if not isinstance(case, dict):
+        return f"TC-{index:03d}"
+    case_id = first_non_empty(case.get("case_id"), case.get("caseId"), case.get("id"))
+    if not case_id:
+        case_id = f"TC-{index:03d}"
+        case["case_id"] = case_id
+    return str(case_id).strip()
+
+
+def _compact_case_for_smoke_selector(case, index):
+    """Build a compact, model-friendly view of a generated case."""
+    case = case if isinstance(case, dict) else {}
+    return {
+        "case_id": _smoke_case_id(case, index),
+        "title": first_non_empty(case.get("title"), case.get("name")),
+        "priority": case_priority(case),
+        "current_smoke": is_smoke_case(case),
+        "scenario": first_non_empty(case.get("scenario"), case.get("scene")),
+        "goal": first_non_empty(case.get("goal"), case.get("objective"), case.get("description")),
+        "coverage": first_non_empty(case.get("coverage"), case.get("requirement_point"), case.get("requirementPoint")),
+        "business_path": first_non_empty(case.get("business_path"), case.get("businessPath"), case.get("path")),
+        "expected_result": first_non_empty(case.get("expected_result"), case.get("expectedResult"), case.get("expected")),
+        "automation_reason": first_non_empty(case.get("automation_reason"), case.get("automationReason")),
+        "data_requirements": first_non_empty(case.get("data_requirements"), case.get("dataRequirements"), case.get("test_data"), case.get("testData")),
+        "preconditions": normalize_text_list(case.get("preconditions") or case.get("precondition"))[:4],
+        "steps": normalize_text_list(case.get("steps"))[:8],
+        "assertions": normalize_text_list(case.get("assertions") or case.get("expects") or case.get("expected"))[:4],
+        "tags": case_tags(case)[:8],
+    }
+
+
+def _smoke_selection_target_limit(targets):
+    limit = safe_int((targets or {}).get("smoke_cases"), 3)
+    return max(1, min(8, limit or 3))
+
+
+def _normalize_smoke_selector_result(result, cases, targets, *, source):
+    """Normalize and filter smoke selector output against existing cases."""
+    cases = [case for case in (cases or []) if isinstance(case, dict)]
+    id_order = [_smoke_case_id(case, index) for index, case in enumerate(cases, start=1)]
+    valid = set(id_order)
+    limit = _smoke_selection_target_limit(targets)
+    selected: List[str] = []
+    invalid: List[str] = []
+    for raw in normalize_text_list((result or {}).get("smoke_case_ids")):
+        case_id = str(raw or "").strip()
+        if not case_id:
+            continue
+        if case_id in valid and case_id not in selected:
+            selected.append(case_id)
+        elif case_id not in valid and case_id not in invalid:
+            invalid.append(case_id)
+    selected = selected[:limit]
+    review = dict((result or {}).get("review") or {})
+    review.update({
+        "selector_source": source,
+        "selected_case_ids": selected,
+        "selected_count": len(selected),
+        "target_smoke_cases": limit,
+        "invalid_case_ids": invalid,
+        "rule": "冒烟由 AI 二次筛选；后端不再按 P0/P1 或关键词自动提升为冒烟。",
+    })
+    return {
+        "smoke_case_ids": selected,
+        "review": review,
+    }
+
+
+def _fallback_smoke_selection_from_existing(cases, targets, error=""):
+    """Fallback to explicit AI/user smoke marks only; never infer from keywords."""
+    selected: List[str] = []
+    for index, case in enumerate(cases or [], start=1):
+        if isinstance(case, dict) and is_smoke_case(case):
+            selected.append(_smoke_case_id(case, index))
+    selected = selected[:_smoke_selection_target_limit(targets)]
+    return _normalize_smoke_selector_result({
+        "smoke_case_ids": selected,
+        "review": {
+            "normal_chain_covered": bool(selected),
+            "selection_reason": "smoke_selector 不可用时，仅沿用 automation_filter 已明确标记的冒烟；没有再用关键词/P0/P1 推断。",
+            "missing_normal_chain_reason": "" if selected else "未获得 AI 二次筛选结果，且生成用例中没有明确 smoke=true 的候选。",
+            "selector_error": error,
+            "rejected_case_ids": [],
+        }
+    }, cases, targets, source="fallback_explicit_smoke_only")
+
+
+def _set_case_smoke(case, enabled):
+    """Set smoke flag and keep visible tags consistent."""
+    if not isinstance(case, dict):
+        return
+    case["smoke"] = bool(enabled)
+    tags = [tag for tag in case_tags(case) if "冒烟" not in tag and "smoke" not in tag.lower()]
+    flags = [flag for flag in normalize_text_list(case.get("flags") or []) if "冒烟" not in flag and "smoke" not in flag.lower()]
+    if enabled:
+        tags.append("冒烟")
+    case["tags"] = tags
+    if flags:
+        case["flags"] = flags
+    elif "flags" in case:
+        case.pop("flags", None)
+    if case.get("flag") and ("冒烟" in str(case.get("flag")) or "smoke" in str(case.get("flag")).lower()):
+        case.pop("flag", None)
+
+
+def apply_smoke_selection_to_cases(cases, selection, targets):
+    """Apply final AI smoke selection to cases and clear previous smoke drift."""
+    cases = [case for case in (cases or []) if isinstance(case, dict)]
+    normalized = _normalize_smoke_selector_result(selection or {}, cases, targets, source=((selection or {}).get("review") or {}).get("selector_source") or "smoke_selector")
+    selected = set(normalized.get("smoke_case_ids") or [])
+    for index, case in enumerate(cases, start=1):
+        case_id = _smoke_case_id(case, index)
+        _set_case_smoke(case, case_id in selected)
+        if case_id in selected:
+            case["smoke_selection_rank"] = (normalized.get("smoke_case_ids") or []).index(case_id) + 1
+        else:
+            case.pop("smoke_selection_rank", None)
+    return cases, normalized.get("review") or {}
+
+
+def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_cases=None, yaml_reference_context="", mode="full"):
+    """调用 AI skill: smoke_selector，对已生成用例做独立冒烟筛选。"""
+    targets = generation_volume_targets(analysis, mode=mode)
+    cases = [case for case in (cases or []) if isinstance(case, dict)]
+    payload = {
+        "title": title,
+        "module": module,
+        "analysis": analysis if isinstance(analysis, dict) else {},
+        "scenarios": scenarios if isinstance(scenarios, list) else [],
+        "cases": [_compact_case_for_smoke_selector(case, index) for index, case in enumerate(cases, start=1)],
+        "manual_cases": manual_cases if isinstance(manual_cases, list) else [],
+        "generation_targets": targets,
+        "yaml_reference_context_available": bool(yaml_reference_context),
+        "selection_rules": {
+            "must_cover_normal_business_chain": True,
+            "max_smoke_cases": _smoke_selection_target_limit(targets),
+            "choose_from_existing_case_ids_only": True,
+            "do_not_select_old_entry_or_history_or_interference_cases": True,
+            "do_not_infer_smoke_from_priority_or_keywords": True,
+        },
+    }
+    result = run_ai_skill("smoke_selector", payload, timeout=180)
+    return _normalize_smoke_selector_result(result, cases, targets, source="smoke_selector.v1")
+
+
+def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context=""):
+    """Run final smoke selection on a normalized cases payload."""
+    normalized = normalize_cases_payload(payload)
+    cases = normalized.get("cases") or []
+    targets = generation_volume_targets(normalized.get("analysis") or {}, mode=mode)
+    try:
+        selection = call_skill_smoke_selector(
+            title or normalized.get("title"),
+            module or normalized.get("module"),
+            normalized.get("analysis") or {},
+            normalized.get("scenarios") or [],
+            cases,
+            normalized.get("manual_cases") or [],
+            yaml_reference_context=yaml_reference_context,
+            mode=mode,
+        )
+    except Exception as exc:
+        selection = _fallback_smoke_selection_from_existing(cases, targets, error=str(exc))
+    cases, smoke_review = apply_smoke_selection_to_cases(cases, selection, targets)
+    normalized["cases"] = cases
+    review = normalized.setdefault("review", {})
+    review["smoke_selector_skill"] = smoke_review.get("selector_source") or "smoke_selector.v1"
+    review["smoke_selection"] = smoke_review
+    review["smoke_case_ids"] = smoke_review.get("selected_case_ids") or []
+    return normalized
+
+
 def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
@@ -1307,6 +1481,9 @@ def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
         "questions": analysis.get("questions") or [],
     }
     normalized = normalize_cases_payload(payload)
+    normalized = select_smoke_cases_for_payload(title, module, normalized, mode=mode, yaml_reference_context=yaml_reference_context)
+    review = normalized.setdefault("review", {})
+    review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> smoke_selector.v1"
     validate_ai_skill_output("cases_payload", normalized)
     return normalized
 
@@ -1878,6 +2055,9 @@ __all__ = [
     "build_skill_coverage_matrix",
     "call_skill_scenario_designer",
     "call_skill_automation_filter",
+    "call_skill_smoke_selector",
+    "select_smoke_cases_for_payload",
+    "apply_smoke_selection_to_cases",
     "build_cases_payload_from_skills",
     # Visual grounder
     "call_visual_grounder_skill",

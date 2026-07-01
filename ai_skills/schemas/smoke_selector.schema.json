@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["smoke_case_ids", "review"],
+  "properties": {
+    "smoke_case_ids": {"type": "array"},
+    "review": {"type": "object"}
+  }
+}
