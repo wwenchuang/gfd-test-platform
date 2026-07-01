@@ -2271,6 +2271,129 @@ function reviewCaseCard(caseItem={}, type='auto') {
   `;
 }
 
+function summaryYamlFileList(summary={}) {
+  const files = [];
+  const add = value => {
+    const file = String(value || '').trim();
+    if (file && !files.includes(file)) files.push(file);
+  };
+  const rawList = summary.yaml_files || summary.yamlFiles || [];
+  (Array.isArray(rawList) ? rawList : [rawList]).forEach(item => {
+    if (item && typeof item === 'object') add(item.file || item.name || item.path);
+    else add(item);
+  });
+  add(summary.yaml_file || summary.yamlFile);
+  return files;
+}
+
+function reviewCaseIsSmoke(row={}) {
+  if (!row || typeof row !== 'object') return false;
+  if (row.smoke === true || row.smokeCandidate === true || row.is_smoke === true || row.isSmoke === true) return true;
+  const tokens = [];
+  ['flag', 'flags', 'tags'].forEach(key => {
+    const value = row[key];
+    if (Array.isArray(value)) tokens.push(...value.map(String));
+    else if (value !== undefined && value !== null) tokens.push(String(value));
+  });
+  return /冒烟|smoke/i.test(tokens.join(' '));
+}
+
+function generatedCaseGroupsFromSummary(summary={}) {
+  const groups = summary.generatedCaseGroups || summary.generated_case_groups || {};
+  const list = key => {
+    const value = groups[key] || summary[key] || [];
+    return Array.isArray(value) ? value.filter(item => item && typeof item === 'object') : [];
+  };
+  return {
+    executable_cases: list('executable_cases'),
+    needs_review_cases: list('needs_review_cases'),
+    draft_cases: list('draft_cases'),
+    manual_cases: list('manual_cases')
+  };
+}
+
+function generatedSmokeRefs(summary={}) {
+  const groups = generatedCaseGroupsFromSummary(summary);
+  const cases = Array.isArray(summary.cases) ? summary.cases.filter(item => item && typeof item === 'object') : [];
+  const casesById = new Map(cases.map(item => [String(item.case_id || item.caseId || item.id || '').trim(), item]).filter(([id]) => id));
+  const yamlFiles = summaryYamlFileList(summary);
+  const refs = [];
+  const seen = new Set();
+  const addRef = (file, row={}) => {
+    const fileName = String(file || '').trim();
+    if (!fileName) return;
+    const key = `${fileName}::${row.case_id || row.caseId || row.name || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push({
+      file: fileName,
+      name: row.name || row.title || row.case_name || row.caseName || fileName,
+      caseId: row.case_id || row.caseId || row.id || '',
+      priority: row.priority || row.level || '',
+      score: row.score || row.executableScore?.score || '',
+      reasons: Array.isArray(row.reasons) ? row.reasons : []
+    });
+  };
+
+  groups.executable_cases.forEach(row => {
+    const caseRow = casesById.get(String(row.case_id || row.caseId || '').trim()) || {};
+    const merged = { ...caseRow, ...row };
+    if (reviewCaseIsSmoke(merged)) addRef(row.file || merged.file, merged);
+  });
+  if (refs.length) return refs;
+
+  const oneFile = yamlFiles.length === 1;
+  cases.forEach((caseRow, index) => {
+    if (!reviewCaseIsSmoke(caseRow)) return;
+    addRef(yamlFiles[index] || (oneFile ? yamlFiles[0] : ''), caseRow);
+  });
+  return refs;
+}
+
+function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
+  const refs = generatedSmokeRefs(summary);
+  const groups = generatedCaseGroupsFromSummary(summary);
+  const executableCount = groups.executable_cases.length;
+  const visibleRefs = refs.slice(0, 12);
+  return `
+    <div class="review-panel generated-smoke-adjustment">
+      <div class="section-head" style="align-items:flex-start;">
+        <div>
+          <h3>冒烟用例调整</h3>
+          <p>首次生成时，Agent 会自动下发通过准入的首批冒烟用例，不需要人工介入。这里用于首次失败、安装包更新或页面入口变化后，手动微调 YAML 再复跑。</p>
+          <p>需要改入口、等待、滑动、弹窗或定位描述时，先打开 YAML 编辑并保存，再点“重跑冒烟”。重跑只使用当前已保存的 YAML，不会重新上传资料或重新分析需求。</p>
+        </div>
+        ${caseSetId && refs.length ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)})">重跑冒烟 ${escapeHtml(refs.length)}</button>` : ''}
+      </div>
+      ${refs.length ? `
+        <div class="review-list smoke-adjust-list">
+          ${visibleRefs.map(ref => `
+            <div>
+              <div class="review-case-title">
+                <strong>${escapeHtml(ref.name)}</strong>
+                <span>${reviewTag(ref.priority || '冒烟', 'ok')}</span>
+              </div>
+              <p>${escapeHtml(ref.file)}${ref.score ? ` · 评分 ${escapeHtml(ref.score)}` : ''}${ref.caseId ? ` · ${escapeHtml(ref.caseId)}` : ''}</p>
+              ${ref.reasons?.length ? `<p>提示：${escapeHtml(ref.reasons.slice(0, 2).join('；'))}</p>` : ''}
+              <div class="review-design-actions">
+                ${mod ? `<button class="btn-sm primary" onclick="openFile(${jsArg(mod)}, ${jsArg(ref.file)})">编辑 YAML</button>` : ''}
+                ${mod ? `<button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(ref.file)}).then(() => showRunSelectedTask())">打开调试</button>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        ${refs.length > visibleRefs.length ? `<p>已展示前 ${visibleRefs.length} 条冒烟 YAML，剩余 ${escapeHtml(refs.length - visibleRefs.length)} 条可在用例资产中继续编辑。</p>` : ''}
+      ` : `
+        <div class="generate-hint">
+          当前批次没有标记为可重跑的冒烟 YAML${executableCount ? `，但有 ${escapeHtml(executableCount)} 条可执行用例。` : '。'}
+          如需重跑，请先在补充说明中明确冒烟范围后重新生成，或在用例资产里手动打开单条 YAML 调试。
+        </div>
+      `}
+      <p>如果你想让下次生成的用例结构变化，例如入口路径、先跑哪些场景、哪些不自动化，请在下面“人工确认 / 补充资料”中补充规则后重新生成。</p>
+    </div>
+  `;
+}
+
 function appendManualCaseToSupplement(title, reason) {
   const textarea = document.getElementById('review-supplement-text');
   if (!textarea) {
@@ -2521,6 +2644,7 @@ function generationReviewHtml(data={}) {
       </div>
       ${reviewYamlExecutabilityHtml(yamlExecutability)}
       ${reviewReadinessHtml(analysis, review)}
+      ${caseSetId ? generationSmokeAdjustmentHtml(summary, mod, caseSetId) : ''}
       ${caseSetId ? reviewSupplementHtml(caseSetId, analysis, review) : ''}
       ${caseSetId ? reviewUiDesignsHtml(caseSetId, summary) : ''}
       <div class="review-grid">
@@ -2625,6 +2749,7 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='') {
     '重新执行本批次的冒烟用例？',
     '',
     '只会重新创建已生成 YAML 的 Runner 任务，不会重新上传资料，也不会重新做需求分析。',
+    '如果刚刚手动编辑并保存过 YAML，本次会使用当前保存内容执行。',
     `执行设备：${deviceText}`
   ].join('\n'));
   if (!ok) return;
@@ -2699,6 +2824,7 @@ function generationJobActions(job) {
   }
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
   if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>`);
+  if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)})">重跑冒烟</button>`);
   if (caseSetId) parts.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>`);
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>`);
   if (caseSetId) parts.push(`<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>`);
