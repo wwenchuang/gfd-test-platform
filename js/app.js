@@ -2314,10 +2314,33 @@ function generatedCaseGroupsFromSummary(summary={}) {
 
 const GENERATED_SMOKE_RERUN_DEFAULT_LIMIT = 8;
 
-function generatedSmokeRerunLimit(totalCount=0) {
-  const total = Math.max(0, Number(totalCount) || 0);
-  if (!total) return GENERATED_SMOKE_RERUN_DEFAULT_LIMIT;
-  return Math.min(GENERATED_SMOKE_RERUN_DEFAULT_LIMIT, total);
+function generatedSmokeTargets(summary={}) {
+  if (!summary || typeof summary !== 'object') return {};
+  const review = summary.review || summary.generation_review || {};
+  const coverageAudit = review.coverage_audit || review.coverageAudit || {};
+  const candidates = [
+    review.generation_targets,
+    review.generationTargets,
+    coverageAudit.generation_targets,
+    coverageAudit.generationTargets,
+    summary.generation_targets,
+    summary.generationTargets
+  ];
+  return candidates.find(item => item && typeof item === 'object') || {};
+}
+
+function generatedSmokeRerunLimit(summaryOrTotal={}, totalCount=0) {
+  const summary = summaryOrTotal && typeof summaryOrTotal === 'object' ? summaryOrTotal : {};
+  const total = Math.max(0, Number(summaryOrTotal && typeof summaryOrTotal === 'object' ? totalCount : summaryOrTotal) || 0);
+  const targets = generatedSmokeTargets(summary);
+  const configuredMax = Math.max(1, Math.min(
+    GENERATED_SMOKE_RERUN_DEFAULT_LIMIT,
+    Number(targets.smoke_max_cases || targets.smokeMaxCases || GENERATED_SMOKE_RERUN_DEFAULT_LIMIT) || GENERATED_SMOKE_RERUN_DEFAULT_LIMIT
+  ));
+  const dynamicLimit = Number(targets.smoke_cases || targets.smokeCases || 0);
+  const baseLimit = dynamicLimit > 0 ? Math.max(1, Math.min(configuredMax, dynamicLimit)) : configuredMax;
+  if (!total) return baseLimit;
+  return Math.max(1, Math.min(baseLimit, total));
 }
 
 function generatedSmokeRefs(summary={}) {
@@ -2363,7 +2386,7 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
   const groups = generatedCaseGroupsFromSummary(summary);
   const executableCount = groups.executable_cases.length;
   const visibleRefs = refs.slice(0, 12);
-  const defaultLimit = generatedSmokeRerunLimit(refs.length);
+  const defaultLimit = generatedSmokeRerunLimit(summary, refs.length);
   return `
     <div class="review-panel generated-smoke-adjustment">
       <div class="section-head" style="align-items:flex-start;">
@@ -2616,6 +2639,8 @@ function generationReviewHtml(data={}) {
   const reportCheckpoints = Array.isArray(summary.report_checkpoints) ? summary.report_checkpoints : [];
   const reportCheckpointText = reportCheckpoints.slice(0, 5).map((item, index) => `${index + 1}. ${item}`).join('\n');
   const generationTargets = review.generation_targets || review.coverage_audit?.generation_targets || {};
+  const smokeRefs = generatedSmokeRefs(summary);
+  const smokeDefaultLimit = generatedSmokeRerunLimit(summary, smokeRefs.length);
   const targetText = generationTargets.target_automation_cases
     ? `${generationTargets.min_automation_cases || '-'}-${generationTargets.max_automation_cases || generationTargets.target_automation_cases}`
     : '-';
@@ -2630,7 +2655,7 @@ function generationReviewHtml(data={}) {
         <div class="review-actions">
           <button class="btn-sm" onclick="activateWorkflow('dashboard')">回工作台</button>
           ${caseSetId ? `<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>` : ''}
-          ${caseSetId ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)})">重跑冒烟</button>` : ''}
+          ${caseSetId && smokeRefs.length ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${smokeDefaultLimit}, false, ${smokeRefs.length})">重跑首批冒烟 ${escapeHtml(smokeDefaultLimit)}/${escapeHtml(smokeRefs.length)}</button>` : ''}
           ${caseSetId ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>` : ''}
           ${caseSetId ? `<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>` : ''}
           ${caseSetId ? `<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>` : ''}
@@ -2759,10 +2784,13 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='', limit=GENERAT
   const deviceText = selected.device_strategy === 'fixed'
     ? (jobDeviceLabel({device_id: selected.device_id, runner_id: selected.runner_id}) || selected.device_id)
     : '自动选择在线设备';
-  const safeLimit = runAll ? 0 : Math.max(1, Number(limit) || GENERATED_SMOKE_RERUN_DEFAULT_LIMIT);
+  const explicitLimit = !runAll && Number(limit) > 0;
+  const safeLimit = runAll ? 0 : (explicitLimit ? Math.max(1, Number(limit) || 0) : 0);
   const scopeText = runAll
     ? `全部冒烟${totalCount ? `（${totalCount} 条）` : ''}`
-    : `首批冒烟（最多 ${safeLimit} 条${totalCount ? ` / 共 ${totalCount} 条` : ''}）`;
+    : (explicitLimit
+      ? `首批冒烟（最多 ${safeLimit} 条${totalCount ? ` / 共 ${totalCount} 条` : ''}）`
+      : '首批冒烟（按本批次规模自动选择）');
   const ok = confirm([
     `重新执行本批次的${scopeText}？`,
     '',
@@ -2773,18 +2801,19 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='', limit=GENERAT
   ].join('\n'));
   if (!ok) return;
   try {
+    const body = {
+      case_set_id: caseSetId,
+      module: moduleName || '',
+      run_mode: 'test',
+      runner_id: selected.runner_id,
+      device_id: selected.device_id,
+      device_strategy: selected.device_strategy,
+      run_all: !!runAll
+    };
+    if (explicitLimit || runAll) body.limit = safeLimit;
     const data = await apiRequest('/cases/rerun-smoke', {
       method: 'POST',
-      body: {
-        case_set_id: caseSetId,
-        module: moduleName || '',
-        run_mode: 'test',
-        runner_id: selected.runner_id,
-        device_id: selected.device_id,
-        device_strategy: selected.device_strategy,
-        limit: safeLimit,
-        run_all: !!runAll
-      }
+      body
     });
     await loadJobs(false, true);
     const skipped = data.skippedCount ? `，跳过 ${data.skippedCount} 个` : '';
@@ -2846,7 +2875,7 @@ function generationJobActions(job) {
   }
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>`);
   if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm primary" onclick="regenerateGenerationCases(${jsArg(caseSetId)})">重新生成用例</button>`);
-  if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)})">重跑冒烟</button>`);
+  if (caseSetId && job.type !== 'mindmap_only') parts.push(`<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, false, 0)">重跑首批冒烟</button>`);
   if (caseSetId) parts.push(`<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载脑图</a>`);
   if (caseSetId) parts.push(`<button class="btn-sm" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">重建脑图文件</button>`);
   if (caseSetId) parts.push(`<button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除脑图</button>`);

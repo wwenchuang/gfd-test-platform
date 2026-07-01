@@ -1425,8 +1425,28 @@ def generation_smoke_yaml_refs(summary):
     return refs
 
 
-def generation_smoke_rerun_default_limit():
-    return max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)))
+def generation_smoke_rerun_default_limit(summary=None):
+    upper = max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)))
+    if not isinstance(summary, dict):
+        return upper
+    review = summary.get("review") if isinstance(summary.get("review"), dict) else {}
+    coverage_audit = review.get("coverage_audit") if isinstance(review.get("coverage_audit"), dict) else {}
+    candidates = [
+        review.get("generation_targets"),
+        review.get("generationTargets"),
+        coverage_audit.get("generation_targets"),
+        coverage_audit.get("generationTargets"),
+        summary.get("generation_targets"),
+        summary.get("generationTargets"),
+    ]
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        smoke_limit = safe_int(item.get("smoke_cases") or item.get("smokeCases"), 0)
+        smoke_max = safe_int(item.get("smoke_max_cases") or item.get("smokeMaxCases"), upper)
+        if smoke_limit > 0:
+            return max(1, min(upper, smoke_max or upper, smoke_limit))
+    return upper
 
 
 # ── 脑图列表 ────────────────────────────────────────────────────────
@@ -3234,7 +3254,10 @@ def _post_cases_rerun_smoke(handler, qs):
     run_mode = d.get("run_mode") or d.get("runMode") or "test"
     run_all = safe_bool(d.get("run_all") or d.get("runAll") or d.get("all"))
     raw_limit = d.get("limit") if d.get("limit") is not None else d.get("max")
-    limit = 0 if run_all else safe_int(raw_limit, generation_smoke_rerun_default_limit())
+    default_limit = generation_smoke_rerun_default_limit(summary)
+    limit = 0 if run_all else safe_int(raw_limit, default_limit)
+    if not run_all and limit <= 0:
+        limit = default_limit
     all_refs = generation_smoke_yaml_refs(summary)
     refs = all_refs if limit <= 0 else all_refs[:limit]
     if not refs:

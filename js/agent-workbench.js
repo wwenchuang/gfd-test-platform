@@ -1571,10 +1571,53 @@ function agentGeneratedCaseGroups(artifacts = {}) {
   };
 }
 
+function agentGeneratedSmokeTargets(artifacts = {}) {
+  const pipeline = artifacts.generationPipeline || {};
+  const summary = artifacts.generationSummary || {};
+  const generated = artifacts.generatedCases || {};
+  const gate = artifacts.runnerExecutionGate || artifacts.runnerSmokeGate || {};
+  const reviews = [
+    gate,
+    pipeline.review,
+    summary.review,
+    generated.review,
+  ];
+  for (const review of reviews) {
+    if (!review || typeof review !== 'object') continue;
+    const coverageAudit = review.coverage_audit || review.coverageAudit || {};
+    const candidates = [
+      review.generation_targets,
+      review.generationTargets,
+      coverageAudit.generation_targets,
+      coverageAudit.generationTargets,
+    ];
+    const found = candidates.find(item => item && typeof item === 'object');
+    if (found) return found;
+  }
+  return {};
+}
+
+function agentGeneratedSmokeRerunLimit(artifacts = {}, totalCount = 0) {
+  const total = Math.max(0, Number(totalCount) || 0);
+  const gate = artifacts.runnerExecutionGate || artifacts.runnerSmokeGate || {};
+  const gateLimit = Number(gate.limit || gate.smokeLimit || 0);
+  const targets = agentGeneratedSmokeTargets(artifacts);
+  const fallbackUpper = typeof GENERATED_SMOKE_RERUN_DEFAULT_LIMIT !== 'undefined' ? GENERATED_SMOKE_RERUN_DEFAULT_LIMIT : 8;
+  const upper = Math.max(1, Math.min(
+    fallbackUpper,
+    Number(targets.smoke_max_cases || targets.smokeMaxCases || fallbackUpper) || fallbackUpper
+  ));
+  const targetLimit = Number(targets.smoke_cases || targets.smokeCases || 0);
+  const base = gateLimit > 0 ? gateLimit : (targetLimit > 0 ? targetLimit : upper);
+  const limit = Math.max(1, Math.min(upper, base));
+  return total ? Math.max(1, Math.min(limit, total)) : limit;
+}
+
 function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   const groups = agentGeneratedCaseGroups(artifacts);
   const mindmap = agentMindmapInfo(artifacts);
   const smokeExecutableCount = (groups.executable_cases || []).filter(item => item && (item.smoke || item.smokeCandidate)).length;
+  const smokeLimit = agentGeneratedSmokeRerunLimit(artifacts, smokeExecutableCount);
   const labels = [
     ['executable_cases', '可执行', '可自动进入 Runner 首批冒烟'],
     ['needs_review_cases', '需确认', '需要人工看原因后再决定是否执行'],
@@ -1605,9 +1648,14 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
           <strong>生成结果执行分层</strong>
           <p>平台会先下发“可执行”里的首批冒烟用例；首批失败率不高时会继续扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
         </div>
-        ${mindmap.caseSetId ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)})">重跑冒烟${smokeExecutableCount ? ` ${escapeHtml(smokeExecutableCount)}` : ''}</button>` : ''}
+        ${mindmap.caseSetId && smokeExecutableCount ? `
+          <div class="review-actions">
+            <button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${smokeLimit}, false, ${smokeExecutableCount})">重跑首批冒烟 ${escapeHtml(smokeLimit)}/${escapeHtml(smokeExecutableCount)}</button>
+            ${smokeExecutableCount > smokeLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${smokeExecutableCount})">重跑全部冒烟 ${escapeHtml(smokeExecutableCount)}</button>` : ''}
+          </div>
+        ` : ''}
       </div>
-      ${mindmap.caseSetId ? '<p>重跑冒烟只重新创建已生成 YAML 的 Runner 任务，不会重新上传资料或重新分析需求。</p>' : ''}
+      ${mindmap.caseSetId ? '<p>重跑首批冒烟会按本次需求规模选择 3/5/8 条；全部冒烟需要手动点“重跑全部冒烟”，不会重新上传资料或重新分析需求。</p>' : ''}
       <div class="report-summary-grid final-report-metrics">
         ${labels.map(([key, label]) => `<div><span>${label}</span><strong>${escapeHtml(groups[key].length)}</strong></div>`).join('')}
       </div>
