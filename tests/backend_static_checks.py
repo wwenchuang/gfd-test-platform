@@ -1236,6 +1236,39 @@ def check_ai_gateway_fallback_and_skill_static():
     require("mindmapMode: 'full'" in app_js_source, "Mindmap-only frontend requests must default to full test-case mindmap mode")
 
 
+def check_apk_chunk_upload_roundtrip():
+    from task_server import router
+
+    old_package_dir = router.APP_INSTALL_PACKAGE_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            router.APP_INSTALL_PACKAGE_DIR = temp_dir
+            upload_id = "apk-static-check"
+            router.save_apk_upload_chunk(
+                upload_id,
+                "demo.apk",
+                0,
+                2,
+                6,
+                base64.b64encode(b"abc").decode("ascii"),
+            )
+            router.save_apk_upload_chunk(
+                upload_id,
+                "demo.apk",
+                1,
+                2,
+                6,
+                base64.b64encode(b"def").decode("ascii"),
+            )
+            saved = router.finish_apk_upload_chunks(upload_id, "demo.apk", 2, 6)
+            require(saved["apk_url"].startswith("/api/app-install/package?id="), "APK chunk finish must return an internal package URL")
+            require(Path(saved["apk_path"]).read_bytes() == b"abcdef", "APK chunk finish must assemble the original bytes")
+            ref = router.uploaded_apk_package_from_url(saved["apk_url"])
+            require(ref and ref["apk_size"] == 6 and ref["apk_name"] == "demo.apk", "APK install request must resolve chunk-uploaded package references")
+    finally:
+        router.APP_INSTALL_PACKAGE_DIR = old_package_dir
+
+
 def json_dumps_for_check(value):
     import json
     return json.dumps(value, ensure_ascii=False)
@@ -1556,6 +1589,7 @@ def main():
     from task_server.services import knowledge_service as figma_backend
     require(backend.MAX_BODY_SIZE == 300 * 1024 * 1024, "Default JSON body limit must be 300MB for Agent source uploads")
     require(backend.MAX_UPLOAD_BODY_SIZE == 300 * 1024 * 1024, "Upload body limit must align with the 300MB Nginx limit")
+    check_apk_chunk_upload_roundtrip()
     require(callable(backend.verify_session_token), "verify_session_token must be importable")
     require(backend.clean_filename(".yaml") == "task.yaml", "clean_filename must not keep empty .yaml names")
     require(backend.clean_filename("._bad.yaml") == "bad.yaml", "clean_filename must remove hidden macOS prefix")

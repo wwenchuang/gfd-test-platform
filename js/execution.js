@@ -469,16 +469,74 @@ function syncAppInstallMode(showNotice = true) {
   }
 }
 
-async function readApkUploadPayload(file) {
-  const dataUrl = await new Promise((resolve, reject) => {
+const APK_UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const step = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+
+function apkUploadStatusText(file, index, total) {
+  const format = typeof formatBytes === 'function' ? formatBytes : (size => `${Math.round((size || 0) / 1024 / 1024)}MB`);
+  return `正在分片上传 APK：${index}/${total}，${file.name}，${format(file.size)}。`;
+}
+
+async function readFileSliceBase64(blob) {
+  const buffer = await new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onload = () => resolve(reader.result);
     reader.onerror = reject;
-    reader.readAsDataURL(file);
+    reader.readAsArrayBuffer(blob);
+  });
+  return arrayBufferToBase64(buffer);
+}
+
+async function uploadApkInChunks(file, statusEl) {
+  const totalChunks = Math.max(1, Math.ceil(file.size / APK_UPLOAD_CHUNK_SIZE));
+  const uploadId = `apk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  for (let index = 0; index < totalChunks; index += 1) {
+    const start = index * APK_UPLOAD_CHUNK_SIZE;
+    const end = Math.min(file.size, start + APK_UPLOAD_CHUNK_SIZE);
+    if (statusEl) {
+      statusEl.textContent = apkUploadStatusText(file, index + 1, totalChunks);
+      statusEl.className = 'generate-status show busy';
+    }
+    const chunkBase64 = await readFileSliceBase64(file.slice(start, end));
+    await apiRequest('/app-install/upload-chunk', {
+      method: 'POST',
+      body: {
+        upload_id: uploadId,
+        filename: file.name,
+        index,
+        total_chunks: totalChunks,
+        total_size: file.size,
+        chunk_base64: chunkBase64,
+      },
+      timeoutMs: 120000,
+    });
+  }
+  if (statusEl) {
+    statusEl.textContent = 'APK 分片上传完成，正在合并校验...';
+    statusEl.className = 'generate-status show busy';
+  }
+  const data = await apiRequest('/app-install/upload-finish', {
+    method: 'POST',
+    body: {
+      upload_id: uploadId,
+      filename: file.name,
+      total_chunks: totalChunks,
+      total_size: file.size,
+    },
+    timeoutMs: 120000,
   });
   return {
     apk_name: file.name,
-    contentBase64: dataUrl.split(',')[1] || '',
+    ...data,
   };
 }
 
@@ -502,6 +560,7 @@ async function createApkInstallRequest() {
     syncAppInstallMode(false);
     return;
   }
+  let uploadFile = null;
   if (source === 'upload') {
     const file = document.getElementById('apk-install-file')?.files?.[0];
     if (!file) {
@@ -512,7 +571,7 @@ async function createApkInstallRequest() {
       showToast('上传文件必须是 .apk', 'error');
       return;
     }
-    Object.assign(payload, await readApkUploadPayload(file));
+    uploadFile = file;
   } else {
     const url = (document.getElementById('apk-install-url')?.value || '').trim();
     if (!/^https?:\/\//i.test(url)) {
@@ -528,9 +587,18 @@ async function createApkInstallRequest() {
   }
   await LoadingManager.withLoading(async () => {
     try {
+      if (uploadFile) {
+        // 上传 APK 不能整包转 Base64 放进 JSON；235MB 文件会膨胀到 300MB 以上。
+        // 先分片上传到服务端，再把合并后的内部下载地址交给 Runner 安装。
+        Object.assign(payload, await uploadApkInChunks(uploadFile, status));
+      }
+      if (status) {
+        status.textContent = '正在创建安装任务...';
+        status.className = 'generate-status show busy';
+      }
       const data = await apiRequest('/app-install/request', {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: payload
       });
       if (status) {
         status.textContent = `已创建安装任务：${data.job?.job_id || ''}。Runner 会自动下载安装并回传 adb 结果。`;

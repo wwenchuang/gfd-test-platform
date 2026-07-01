@@ -562,6 +562,10 @@ def app_install_package_meta_path(package_id):
     return safe_join(APP_INSTALL_PACKAGE_DIR, clean_id(package_id, "apk"), "meta.json")
 
 
+def app_install_package_url(package_id):
+    return f"/api/app-install/package?id={urllib.parse.quote(clean_id(package_id, 'apk'))}"
+
+
 def save_uploaded_apk_package(job_id, apk_name, content_base64):
     if not content_base64:
         raise ValueError("请先上传 APK 文件")
@@ -591,7 +595,117 @@ def save_uploaded_apk_package(job_id, apk_name, content_base64):
         "apk_name": filename,
         "apk_size": len(data),
         "apk_path": apk_path,
-        "apk_url": f"/api/app-install/package?id={urllib.parse.quote(clean_id(job_id, 'apk'))}",
+        "apk_url": app_install_package_url(job_id),
+    }
+
+
+def save_apk_upload_chunk(upload_id, apk_name, index, total_chunks, total_size, content_base64):
+    package_id = clean_id(upload_id, "apk")
+    filename = clean_apk_filename(apk_name)
+    index = safe_int(index, -1)
+    total_chunks = safe_int(total_chunks, 0)
+    total_size = safe_int(total_size, 0)
+    if not package_id or index < 0 or total_chunks <= 0 or index >= total_chunks:
+        raise ValueError("APK 分片参数不完整")
+    if total_size <= 0:
+        raise ValueError("APK 文件大小异常")
+    if total_size > MAX_UPLOAD_BODY_SIZE:
+        raise ValueError(f"APK 文件超过平台上传上限 {MAX_UPLOAD_BODY_SIZE // 1024 // 1024}MB")
+    content = str(content_base64 or "").strip()
+    if not content:
+        raise ValueError("APK 分片内容为空")
+    try:
+        data = base64.b64decode(content, validate=True)
+    except Exception:
+        raise ValueError("APK 分片内容解析失败，请重新上传")
+    if not data:
+        raise ValueError("APK 分片内容为空")
+    package_dir = safe_join(APP_INSTALL_PACKAGE_DIR, package_id)
+    chunk_dir = safe_join(package_dir, ".chunks")
+    os.makedirs(chunk_dir, exist_ok=True)
+    write_bytes_file(safe_join(chunk_dir, f"{index:05d}.part"), data)
+    write_json_file(safe_join(package_dir, "upload.json"), {
+        "package_id": package_id,
+        "filename": filename,
+        "total_chunks": total_chunks,
+        "total_size": total_size,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    return {"package_id": package_id, "index": index, "total_chunks": total_chunks}
+
+
+def finish_apk_upload_chunks(upload_id, apk_name, total_chunks, total_size):
+    package_id = clean_id(upload_id, "apk")
+    total_chunks = safe_int(total_chunks, 0)
+    total_size = safe_int(total_size, 0)
+    package_dir = safe_join(APP_INSTALL_PACKAGE_DIR, package_id)
+    upload_meta = read_json_file(safe_join(package_dir, "upload.json"), default={}) or {}
+    filename = clean_apk_filename(apk_name or upload_meta.get("filename") or "app.apk")
+    expected_chunks = safe_int(upload_meta.get("total_chunks"), total_chunks)
+    expected_size = safe_int(upload_meta.get("total_size"), total_size)
+    if not package_id or expected_chunks <= 0:
+        raise ValueError("APK 分片上传不存在")
+    if expected_size <= 0 or expected_size > MAX_UPLOAD_BODY_SIZE:
+        raise ValueError(f"APK 文件超过平台上传上限 {MAX_UPLOAD_BODY_SIZE // 1024 // 1024}MB")
+    chunk_dir = safe_join(package_dir, ".chunks")
+    parts = [safe_join(chunk_dir, f"{index:05d}.part") for index in range(expected_chunks)]
+    for index, part in enumerate(parts):
+        if not os.path.exists(part):
+            raise ValueError(f"APK 上传缺少分片 {index + 1}/{expected_chunks}")
+    received_size = sum(os.path.getsize(part) for part in parts)
+    if received_size != expected_size:
+        raise ValueError(f"APK 分片大小不一致：收到 {received_size} 字节，预期 {expected_size} 字节")
+    final_path = safe_join(package_dir, filename)
+    tmp_final = final_path + f".tmp.{os.getpid()}.{threading.get_ident()}"
+    try:
+        with open(tmp_final, "wb") as out:
+            for part in parts:
+                with open(part, "rb") as f:
+                    shutil.copyfileobj(f, out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp_final, final_path)
+    finally:
+        if os.path.exists(tmp_final):
+            try:
+                os.remove(tmp_final)
+            except Exception:
+                pass
+    shutil.rmtree(chunk_dir, ignore_errors=True)
+    meta = {
+        "package_id": package_id,
+        "filename": filename,
+        "size": received_size,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "upload_mode": "chunked",
+    }
+    write_json_file(safe_join(package_dir, "meta.json"), meta)
+    return {
+        "package_id": package_id,
+        "apk_name": filename,
+        "apk_size": received_size,
+        "apk_path": final_path,
+        "apk_url": app_install_package_url(package_id),
+    }
+
+
+def uploaded_apk_package_from_url(apk_url):
+    parsed = urllib.parse.urlparse(str(apk_url or "").strip())
+    if parsed.path != "/api/app-install/package":
+        return None
+    package_id = clean_id((urllib.parse.parse_qs(parsed.query).get("id") or [""])[0], "apk")
+    meta = read_json_file(app_install_package_meta_path(package_id), default={}) or {}
+    filename = clean_apk_filename(meta.get("filename") or "app.apk")
+    apk_path = safe_join(APP_INSTALL_PACKAGE_DIR, package_id, filename)
+    if not os.path.exists(apk_path):
+        raise ValueError("已上传的 APK 文件不存在，请重新上传")
+    size = os.path.getsize(apk_path)
+    return {
+        "package_id": package_id,
+        "apk_name": filename,
+        "apk_size": size,
+        "apk_path": apk_path,
+        "apk_url": app_install_package_url(package_id),
     }
 
 
@@ -1472,6 +1586,42 @@ def _get_app_install_package(handler, qs):
         pass
 
 
+@route_post("/api/app-install/upload-chunk")
+def _post_app_install_upload_chunk(handler, qs):
+    if _require_user_auth(handler):
+        return
+    try:
+        d = handler._body()
+        result = save_apk_upload_chunk(
+            d.get("upload_id") or d.get("uploadId") or "",
+            d.get("filename") or d.get("apk_name") or d.get("apkName") or "app.apk",
+            d.get("index"),
+            d.get("total_chunks") or d.get("totalChunks") or d.get("total"),
+            d.get("total_size") or d.get("totalSize") or d.get("size"),
+            d.get("chunk_base64") or d.get("chunkBase64") or d.get("contentBase64") or "",
+        )
+        handler._json({"ok": True, **result})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/app-install/upload-finish")
+def _post_app_install_upload_finish(handler, qs):
+    if _require_user_auth(handler):
+        return
+    try:
+        d = handler._body()
+        result = finish_apk_upload_chunks(
+            d.get("upload_id") or d.get("uploadId") or "",
+            d.get("filename") or d.get("apk_name") or d.get("apkName") or "app.apk",
+            d.get("total_chunks") or d.get("totalChunks") or d.get("total"),
+            d.get("total_size") or d.get("totalSize") or d.get("size"),
+        )
+        handler._json({"ok": True, **result})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
 @route_post("/api/app-install/request")
 def _post_app_install_request(handler, qs):
     if _require_user_auth(handler):
@@ -1498,11 +1648,13 @@ def _post_app_install_request(handler, qs):
     apk_size = 0
     try:
         if package_source == "upload":
-            saved = save_uploaded_apk_package(
-                job_id,
-                apk_name,
-                d.get("contentBase64") or d.get("apkBase64") or d.get("fileBase64") or "",
-            )
+            content_base64 = d.get("contentBase64") or d.get("apkBase64") or d.get("fileBase64") or ""
+            if content_base64:
+                saved = save_uploaded_apk_package(job_id, apk_name, content_base64)
+            else:
+                saved = uploaded_apk_package_from_url(apk_url)
+                if not saved:
+                    raise ValueError("上传包缺少分片上传结果，请重新选择 APK 上传")
             apk_name = saved["apk_name"]
             apk_url = saved["apk_url"]
             apk_size = saved["apk_size"]

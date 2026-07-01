@@ -29,6 +29,7 @@ def main():
     # checks below should still cover the full deployable bundle, so we
     # concatenate task-manager.html + css/app.css + js/*.js as a single blob.
     html = _read_bundle()
+    execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     require("<title>功夫豆测试平台</title>" in html, "Browser title must use 功夫豆测试平台")
     require("Midscene Task 管理平台" not in html and "Midscene Task 管理" not in html, "Old product title must not appear in the UI")
     require('<span class="header-logo">⚡</span>' not in html and '<div class="login-logo">⚡' not in html, "Old lightning emoji brand logo must not be used")
@@ -238,6 +239,8 @@ def main():
     require("Execution Trace Viewer" in trace_viewer and "/debug/traces" in trace_viewer and "sessionToken" in trace_viewer, "Trace viewer must render real trace data with session auth")
     require("一键应用推荐策略" in html and "applyRecommendedStrategy" in html, "Model config must support one-click recommended strategy")
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
+    require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
+    require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
     require("脑图生成任务已提交，已切到脑图中心查看进度" in html and "closeMindmapCreateModal({ quiet: true })" in html and "await showMindmapCenter();" in html, "Mindmap create modal must auto-close after background job submission")
     require("function isMindmapBackgroundJob" in html and "mindmapTaskSectionHtml" in html and "mindmapFilesSectionHtml" in html, "Mindmap center must render background task status separately from downloadable files")

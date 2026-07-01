@@ -98,7 +98,14 @@ class ResponseMixin:
         """读取原始请求体"""
         length = int(self.headers.get("Content-Length", 0))
         qs, path = self._qs()
-        upload_paths = ("/report", "/api/report/chunk", "/api/report/chunk-finish", "/api/app-install/request")
+        upload_paths = (
+            "/report",
+            "/api/report/chunk",
+            "/api/report/chunk-finish",
+            "/api/app-install/request",
+            "/api/app-install/upload-chunk",
+            "/api/app-install/upload-finish",
+        )
         limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
         if length > limit:
             raise BodyTooLarge(f"请求体过大，当前上限约 {_limit_mb(limit)}MB")
@@ -107,7 +114,14 @@ class ResponseMixin:
     def _body_size_allowed(self, path):
         """验证请求体大小是否允许"""
         length = int(self.headers.get("Content-Length", 0))
-        upload_paths = ("/report", "/api/report/chunk", "/api/report/chunk-finish", "/api/app-install/request")
+        upload_paths = (
+            "/report",
+            "/api/report/chunk",
+            "/api/report/chunk-finish",
+            "/api/app-install/request",
+            "/api/app-install/upload-chunk",
+            "/api/app-install/upload-finish",
+        )
         limit = MAX_UPLOAD_BODY_SIZE if path in upload_paths else MAX_BODY_SIZE
         if length > limit:
             self._json({"ok": False, "error": f"请求体过大，当前上限约 {_limit_mb(limit)}MB"}, 413)
