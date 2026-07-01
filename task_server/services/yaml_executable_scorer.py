@@ -314,10 +314,12 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
     blocked = []
     for item in scored_refs:
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
-        if score.get("executionLevel") == "executable":
+        if score.get("executionLevel") != "executable":
+            blocked.append({**item, "gateReason": "执行等级不是 executable"})
+        elif item.get("smoke") is True or item.get("is_smoke") is True or item.get("isSmoke") is True:
             executable.append(item)
         else:
-            blocked.append({**item, "gateReason": "执行等级不是 executable"})
+            blocked.append({**item, "gateReason": "非 AI 明确标记的首批冒烟用例，待首批通过后再扩展执行"})
 
     def sort_key(item: dict):
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
@@ -329,12 +331,10 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
         priority_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}.get(priority, 4)
         main_chain = bool(any(task.get("mainBusinessChain") for task in task_scores) or any(word in label for word in MAIN_CHAIN_WORDS))
         baseline = bool(score.get("baselineEvidence") or any(task.get("baselineEvidence") for task in task_scores))
-        smoke = bool(score.get("smokeCandidate") or re.search(r"(冒烟|smoke|P0|P1|入口|主流程|基础)", label, flags=re.I))
         return (
             priority_rank,
             0 if main_chain else 1,
             0 if baseline else 1,
-            0 if smoke else 1,
             -int(score.get("score") or 0),
             str(item.get("file") or ""),
         )

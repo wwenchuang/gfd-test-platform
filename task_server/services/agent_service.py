@@ -1301,6 +1301,7 @@ def _agent_case_group_item_from_validation(result):
         reasons = list(score.get("errors") or []) + list(score.get("warnings") or [])
     task_scores = [item for item in (score.get("taskScores") or []) if isinstance(item, dict)]
     first_task = task_scores[0] if task_scores else {}
+    explicit_smoke = bool(result.get("smoke") or result.get("is_smoke") or result.get("isSmoke"))
     return {
         "name": first_task.get("name") or result.get("target_task_name") or result.get("file") or "未命名用例",
         "module": result.get("module") or "",
@@ -1311,9 +1312,12 @@ def _agent_case_group_item_from_validation(result):
         "level": level,
         "executionLevel": level,
         "priority": first_task.get("priority") or "",
-        "smokeCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate")),
+        "smoke": explicit_smoke,
+        "smokeCandidate": explicit_smoke,
+        "runnerCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate") or result.get("runnerCandidate")),
         "mainBusinessChain": bool(first_task.get("mainBusinessChain")),
         "baselineEvidence": bool(score.get("baselineEvidence") or first_task.get("baselineEvidence")),
+        "scopeReview": result.get("scopeReview") if isinstance(result.get("scopeReview"), dict) else score.get("scopeReview") if isinstance(score.get("scopeReview"), dict) else {},
         "reasons": [str(item) for item in reasons if str(item or "").strip()][:8],
     }
 
@@ -3877,6 +3881,10 @@ def normalize_yaml_refs(run):
                 "reason": item.get("reason") or "",
                 "executionLevel": item.get("executionLevel") or "",
                 "executableScore": item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {},
+                "scopeReview": item.get("scopeReview") if isinstance(item.get("scopeReview"), dict) else {},
+                "smoke": bool(item.get("smoke")),
+                "smokeCandidate": bool(item.get("smoke")),
+                "runnerCandidate": bool(item.get("runnerCandidate")),
             }
             if ref["path"] and not (ref["module"] and ref["file"]):
                 ref["module"], ref["file"] = _task_dir_for_path(ref["path"])
@@ -3948,8 +3956,18 @@ def _agent_is_generated_yaml_run(run):
 def _score_agent_yaml_ref_for_execution(run, ref):
     content = _yaml_ref_content(ref)
     score = score_midscene_yaml_executable(content, generated=_agent_is_generated_yaml_run(run))
+    scope_review = ref.get("scopeReview") if isinstance(ref.get("scopeReview"), dict) else {}
+    if scope_review.get("ok") is False:
+        score = dict(score)
+        reasons = list(scope_review.get("reasons") or []) + list(score.get("reasons") or [])
+        score["score"] = min(int(score.get("score") or 0), 74)
+        score["executionLevel"] = "needs_review"
+        score["level"] = "needs_review"
+        score["ok"] = False
+        score["scopeReview"] = scope_review
+        score["reasons"] = [str(item) for item in reasons if str(item or "").strip()][:8]
     level = score.get("level") or score.get("executionLevel") or ref.get("executionLevel") or ""
-    return {**ref, "executableScore": score, "level": level, "executionLevel": level}
+    return {**ref, "executableScore": score, "level": level, "executionLevel": level, "scopeReview": scope_review}
 
 
 def _agent_generated_runner_smoke_limit(run):
@@ -4001,6 +4019,7 @@ def _select_agent_runner_refs(run, refs):
     deferred = [
         item for item in blocked
         if str(item.get("gateReason") or "").startswith("超过自动冒烟首批上限")
+        or str(item.get("gateReason") or "").startswith("非 AI 明确标记的首批冒烟用例")
     ]
     blocking = [item for item in blocked if item not in deferred]
     gate = {
@@ -4213,13 +4232,18 @@ def _agent_yaml_dry_run_rows(run, refs):
         label = ref.get("path") or ref.get("file") or ref.get("type")
         content = _yaml_ref_content(ref)
         strong_check = validate_agent_yaml_content(content)
-        executable_score = score_midscene_yaml_executable(content, generated=_agent_is_generated_yaml_run(run))
+        scored_ref = _score_agent_yaml_ref_for_execution(run, ref)
+        executable_score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
         dry = _agent_yaml_dry_run_for_ref(run, ref)
         dry_compact = _compact_yaml_dry_run_result(dry)
-        ref_issues = dry_compact.get("errors") or strong_check.get("issues") or []
+        scope_review = scored_ref.get("scopeReview") if isinstance(scored_ref.get("scopeReview"), dict) else {}
+        scope_issues = list(scope_review.get("reasons") or []) if scope_review.get("ok") is False else []
+        ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []
+        if not ref_issues and executable_score.get("executionLevel") != "executable":
+            ref_issues = list(executable_score.get("reasons") or [])[:5] or [f"执行等级为 {executable_score.get('executionLevel') or 'unknown'}"]
         row = {
-            **ref,
-            "ok": bool(dry_compact.get("ok")),
+            **scored_ref,
+            "ok": bool(dry_compact.get("ok")) and executable_score.get("executionLevel") == "executable",
             "issues": ref_issues,
             "taskCount": dry_compact.get("taskCount") or strong_check.get("taskCount", 0),
             "executionLevel": executable_score.get("executionLevel") or dry_compact.get("executionLevel"),
@@ -6849,6 +6873,12 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         cases_payload = {}
     yaml_files = result.get("yamlFiles") or result.get("files") or []
     yaml_file_items = []
+    generated_group_by_file = {}
+    generated_groups = result.get("generatedCaseGroups") if isinstance(result.get("generatedCaseGroups"), dict) else {}
+    for group_key in ("executable_cases", "needs_review_cases", "draft_cases", "manual_cases"):
+        for row in generated_groups.get(group_key) or []:
+            if isinstance(row, dict) and row.get("file"):
+                generated_group_by_file[str(row.get("file"))] = row
     for file_name in yaml_files:
         if isinstance(file_name, dict):
             name = str(file_name.get("file") or "").strip()
@@ -6856,11 +6886,25 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             name = str(file_name or "").strip()
         if not name:
             continue
-        yaml_file_items.append({
+        row_meta = generated_group_by_file.get(name) or {}
+        item = {
             "module": module,
             "file": name,
             "path": safe_join(TASK_DIR, module, name),
-        })
+        }
+        if row_meta:
+            item.update({
+                "executionLevel": row_meta.get("executionLevel") or row_meta.get("level") or "",
+                "level": row_meta.get("level") or row_meta.get("executionLevel") or "",
+                "score": row_meta.get("score") or 0,
+                "smoke": bool(row_meta.get("smoke")),
+                "smokeCandidate": bool(row_meta.get("smoke")),
+                "runnerCandidate": bool(row_meta.get("runnerCandidate")),
+                "scopeReview": row_meta.get("scopeReview") if isinstance(row_meta.get("scopeReview"), dict) else {},
+                "reasons": row_meta.get("reasons") if isinstance(row_meta.get("reasons"), list) else [],
+                "case_id": row_meta.get("case_id") or "",
+            })
+        yaml_file_items.append(item)
     yaml_validation_results = [
         validate_agent_yaml_content(read_text_file(item["path"], ""))
         for item in yaml_file_items

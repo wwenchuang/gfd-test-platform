@@ -179,6 +179,7 @@ from task_server.services.yaml_baseline_cache import (
     get_yaml_baseline_cache,
     get_yaml_baseline_cache_status,
 )
+from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
 from task_server.services.yaml_service import (
     build_generation_summary,
     case_ui_design_dir,
@@ -194,6 +195,7 @@ from task_server.services.yaml_service import (
     generate_job_id,
     generate_retry_request_from_job,
     generate_ui_yaml_from_request,
+    generated_case_requirement_scope_review,
     generation_artifact_filename,
     clear_generation_mindmap_deleted,
     generation_mindmap_is_deleted,
@@ -1345,7 +1347,7 @@ def _summary_yaml_file_list(summary):
 def _case_is_smoke(row):
     if not isinstance(row, dict):
         return False
-    if row.get("smoke") is True or row.get("smokeCandidate") is True:
+    if row.get("smoke") is True or row.get("is_smoke") is True or row.get("isSmoke") is True:
         return True
     text_parts = []
     for key in ("flag", "flags", "tags"):
@@ -1422,6 +1424,179 @@ def generation_smoke_yaml_refs(summary):
             add_ref(yaml_files[index], case)
         elif one_file:
             add_ref(yaml_files[0], case, target_task_name=case.get("title") or case.get("name") or "")
+    return refs
+
+
+def generation_executable_yaml_refs(summary, *, include_smoke=True):
+    """Return executable generated YAML refs, optionally excluding smoke cases."""
+    if not isinstance(summary, dict):
+        return []
+    cases = [case for case in (summary.get("cases") or []) if isinstance(case, dict)]
+    cases_by_id = {
+        str(case.get("case_id") or case.get("id") or "").strip(): case
+        for case in cases
+        if str(case.get("case_id") or case.get("id") or "").strip()
+    }
+    groups = summary.get("generatedCaseGroups") or {}
+    executable_rows = (
+        groups.get("executable_cases")
+        or summary.get("executable_cases")
+        or []
+    )
+    refs = []
+    seen = set()
+    for row in executable_rows:
+        if not isinstance(row, dict):
+            continue
+        file_name = str(row.get("file") or "").strip()
+        if not file_name:
+            continue
+        case = cases_by_id.get(str(row.get("case_id") or "").strip()) or {}
+        merged = {**case, **row}
+        if not include_smoke and _case_is_smoke(merged):
+            continue
+        key = (file_name, str(merged.get("target_task_name") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append({
+            "file": file_name,
+            "name": merged.get("name") or merged.get("title") or merged.get("case_name") or file_name,
+            "case_id": merged.get("case_id") or merged.get("id") or "",
+            "priority": _case_priority(merged),
+            "score": merged.get("score") or 0,
+            "target_task_name": merged.get("target_task_name") or "",
+        })
+    return refs
+
+
+def _summary_case_map(summary):
+    cases = [case for case in (summary.get("cases") or []) if isinstance(case, dict)] if isinstance(summary, dict) else []
+    return {
+        str(case.get("case_id") or case.get("caseId") or case.get("id") or "").strip(): case
+        for case in cases
+        if str(case.get("case_id") or case.get("caseId") or case.get("id") or "").strip()
+    }
+
+
+def _summary_requirement_analysis(summary):
+    merged = {}
+    if not isinstance(summary, dict):
+        return merged
+    for source in (
+        summary.get("analysis"),
+        summary.get("requirement_analysis"),
+        summary.get("requirementAnalysis"),
+        (summary.get("review") or {}).get("analysis") if isinstance(summary.get("review"), dict) else None,
+    ):
+        if isinstance(source, dict):
+            merged.update(source)
+    return merged
+
+
+def _summary_generated_rows(summary):
+    if not isinstance(summary, dict):
+        return []
+    groups = summary.get("generatedCaseGroups") or {}
+    rows = []
+    seen = set()
+    for bucket in ("executable_cases", "needs_review_cases", "draft_cases", "manual_cases"):
+        for row in (groups.get(bucket) or summary.get(bucket) or []):
+            if not isinstance(row, dict):
+                continue
+            file_name = str(row.get("file") or "").strip()
+            target_task_name = str(row.get("target_task_name") or "").strip()
+            if not file_name:
+                continue
+            key = (file_name, target_task_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    for file_name in _summary_yaml_file_list(summary):
+        key = (file_name, "")
+        if key not in seen:
+            seen.add(key)
+            rows.append({"file": file_name})
+    return rows
+
+
+def _summary_has_generated_buckets(summary):
+    if not isinstance(summary, dict):
+        return False
+    groups = summary.get("generatedCaseGroups") or {}
+    for bucket in ("executable_cases", "needs_review_cases", "draft_cases", "manual_cases"):
+        if groups.get(bucket) or summary.get(bucket):
+            return True
+    return False
+
+
+def generation_current_executable_yaml_refs(summary, module, *, include_smoke=True, require_smoke=False):
+    """Re-score the YAML files currently saved on disk and return runnable refs.
+
+    Generated case groups are snapshots. Users can edit the generated YAML after
+    review, so rerun actions must score the current file content instead of
+    trusting the old generation-time bucket.
+    """
+    if not isinstance(summary, dict) or not module:
+        return []
+    cases_by_id = _summary_case_map(summary)
+    requirement_analysis = _summary_requirement_analysis(summary)
+    refs = []
+    seen = set()
+    for row in _summary_generated_rows(summary):
+        file_name = str(row.get("file") or "").strip()
+        if not file_name:
+            continue
+        source_case = cases_by_id.get(str(row.get("case_id") or row.get("caseId") or "").strip()) or {}
+        merged = {**source_case, **row}
+        is_smoke = _case_is_smoke(merged)
+        if require_smoke and not is_smoke:
+            continue
+        if not include_smoke and is_smoke:
+            continue
+        target_task_name = str(merged.get("target_task_name") or "").strip()
+        key = (file_name, target_task_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            yaml_path = safe_join(TASK_DIR, module, file_name)
+        except ValueError:
+            continue
+        if not os.path.exists(yaml_path):
+            continue
+        try:
+            yaml_content = read_text_file(yaml_path)
+            yaml_to_score = yaml_content
+            if target_task_name:
+                app_package = resolve_app_package(module, file_name, yaml_content)
+                yaml_to_score = yaml_with_single_task(yaml_content, target_task_name, app_package=app_package)
+            score = score_midscene_yaml_executable(yaml_to_score, generated=True)
+        except Exception:
+            continue
+        if score.get("executionLevel") != "executable":
+            continue
+        task_scores = [item for item in (score.get("taskScores") or []) if isinstance(item, dict)]
+        task_names = [str(item.get("name") or "").strip() for item in task_scores if str(item.get("name") or "").strip()]
+        scope_case = {
+            "title": " / ".join(task_names) or target_task_name or file_name,
+            "priority": merged.get("priority") or "",
+            "tags": merged.get("tags") or merged.get("flags") or merged.get("flag") or [],
+        }
+        scope_review = generated_case_requirement_scope_review(scope_case, requirement_analysis, yaml_to_score)
+        if not scope_review.get("ok"):
+            continue
+        refs.append({
+            "file": file_name,
+            "name": task_names[0] if task_names else (merged.get("name") or merged.get("title") or file_name),
+            "case_id": merged.get("case_id") or merged.get("caseId") or merged.get("id") or "",
+            "priority": _case_priority(merged),
+            "score": score.get("score") or 0,
+            "target_task_name": target_task_name,
+            "executionLevel": score.get("executionLevel") or "executable",
+            "currentYamlScored": True,
+        })
     return refs
 
 
@@ -3253,17 +3428,29 @@ def _post_cases_rerun_smoke(handler, qs):
     )
     run_mode = d.get("run_mode") or d.get("runMode") or "test"
     run_all = safe_bool(d.get("run_all") or d.get("runAll") or d.get("all"))
+    rerun_scope = str(d.get("scope") or d.get("rerunScope") or d.get("run_scope") or "smoke").strip().lower()
     raw_limit = d.get("limit") if d.get("limit") is not None else d.get("max")
     default_limit = generation_smoke_rerun_default_limit(summary)
     limit = 0 if run_all else safe_int(raw_limit, default_limit)
     if not run_all and limit <= 0:
         limit = default_limit
-    all_refs = generation_smoke_yaml_refs(summary)
+    if rerun_scope in ("remaining", "remaining_executable", "non_smoke", "rest"):
+        all_refs = generation_current_executable_yaml_refs(summary, module, include_smoke=False)
+        scope_label = "剩余可执行 YAML"
+    elif rerun_scope in ("executable", "all_executable"):
+        all_refs = generation_current_executable_yaml_refs(summary, module, include_smoke=True)
+        scope_label = "全部可执行 YAML"
+    else:
+        rerun_scope = "smoke"
+        all_refs = generation_current_executable_yaml_refs(summary, module, require_smoke=True)
+        if not all_refs and not _summary_has_generated_buckets(summary):
+            all_refs = generation_smoke_yaml_refs(summary)
+        scope_label = "冒烟 YAML"
     refs = all_refs if limit <= 0 else all_refs[:limit]
     if not refs:
         handler._json({
             "ok": False,
-            "error": "这个生成批次没有可直接重跑的冒烟 YAML；请先重新生成或在评审页确认可执行用例。"
+            "error": f"这个生成批次没有可直接重跑的{scope_label}；请先在评审页打开并修正 YAML，保存后再重新执行。"
         }, 400)
         return
 
@@ -3303,12 +3490,14 @@ def _post_cases_rerun_smoke(handler, qs):
     if not created:
         handler._json({
             "ok": False,
-            "error": "没有成功创建冒烟重跑任务",
+            "error": f"没有成功创建{scope_label}重跑任务",
             "case_set_id": case_set_id,
             "selectedCount": len(refs),
             "totalSmokeCount": len(all_refs),
+            "totalSelectableCount": len(all_refs),
             "limit": limit,
             "runAll": run_all,
+            "scope": rerun_scope,
             "skipped": skipped,
         }, 400)
         return
@@ -3322,8 +3511,10 @@ def _post_cases_rerun_smoke(handler, qs):
         "device_id": device_id,
         "selectedCount": len(refs),
         "totalSmokeCount": len(all_refs),
+        "totalSelectableCount": len(all_refs),
         "limit": limit,
         "runAll": run_all,
+        "scope": rerun_scope,
         "createdCount": len(created),
         "skippedCount": len(skipped),
         "created": created,

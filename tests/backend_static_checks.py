@@ -304,9 +304,15 @@ def check_yaml_static_validation_and_patterns():
         {"file": "01-p0-main.yaml", "executableScore": {
             **executable_score,
             "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "priority": "P0", "mainBusinessChain": True}],
-        }},
+        }, "smoke": True},
     ], limit=1)
-    require(len(selected) == 1 and selected[0]["file"] == "01-p0-main.yaml" and len(blocked) == 2, "Runner gate must prioritize P0 main-chain executable smoke subset and explain blocked YAML")
+    require(
+        len(selected) == 1
+        and selected[0]["file"] == "01-p0-main.yaml"
+        and len(blocked) == 2
+        and any("非 AI 明确标记" in str(item.get("gateReason") or "") for item in blocked),
+        "Runner gate must only auto-run AI-explicit smoke YAML and explain blocked executable YAML",
+    )
 
     examples = [{
         "title": "AI建模入口",

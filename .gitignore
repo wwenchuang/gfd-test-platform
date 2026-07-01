@@ -12,6 +12,7 @@ dist/
 *.tar.gz
 
 ai-gateway/logs/
+task-data/
 tests/artifacts/
 
 .env

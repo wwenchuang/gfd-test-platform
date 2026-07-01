@@ -1613,10 +1613,25 @@ function agentGeneratedSmokeRerunLimit(artifacts = {}, totalCount = 0) {
   return total ? Math.max(1, Math.min(limit, total)) : limit;
 }
 
+function agentGeneratedCaseIsSmoke(item = {}) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.smoke === true || item.is_smoke === true || item.isSmoke === true) return true;
+  const tokens = [];
+  ['flag', 'flags', 'tags'].forEach(key => {
+    const value = item[key];
+    if (Array.isArray(value)) tokens.push(...value.map(String));
+    else if (value !== undefined && value !== null) tokens.push(String(value));
+  });
+  return /冒烟|smoke/i.test(tokens.join(' '));
+}
+
 function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   const groups = agentGeneratedCaseGroups(artifacts);
   const mindmap = agentMindmapInfo(artifacts);
-  const smokeExecutableCount = (groups.executable_cases || []).filter(item => item && (item.smoke || item.smokeCandidate)).length;
+  const smokeExecutableCount = (groups.executable_cases || []).filter(agentGeneratedCaseIsSmoke).length;
+  const remainingExecutableCount = Math.max(0, (groups.executable_cases || []).length - smokeExecutableCount);
+  const generatedCount = ['executable_cases', 'needs_review_cases', 'draft_cases', 'manual_cases']
+    .reduce((sum, key) => sum + ((groups[key] || []).length), 0);
   const smokeLimit = agentGeneratedSmokeRerunLimit(artifacts, smokeExecutableCount);
   const labels = [
     ['executable_cases', '可执行', '可自动进入 Runner 首批冒烟'],
@@ -1636,7 +1651,13 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
           const name = item.name || item.file || item.title || item.case_name || '未命名用例';
           const score = item.score || item.executableScore?.score || 0;
           const reason = Array.isArray(item.reasons) ? item.reasons[0] : (item.reason || '');
-          return `<span><b>${escapeHtml(name)}</b><em>${score ? `评分 ${escapeHtml(score)}` : escapeHtml(item.executionLevel || item.level || label)}${reason ? ` · ${escapeHtml(reason)}` : ''}</em></span>`;
+          const mod = item.module || item.mod || '';
+          const file = item.file || '';
+          return `<span>
+            <b>${escapeHtml(name)}</b>
+            <em>${score ? `评分 ${escapeHtml(score)}` : escapeHtml(item.executionLevel || item.level || label)}${reason ? ` · ${escapeHtml(reason)}` : ''}</em>
+            ${mod && file ? `<button class="btn-sm" onclick="openFile(${jsArg(mod)}, ${jsArg(file)})">编辑 YAML</button>` : ''}
+          </span>`;
         }).join('')}</div>${rows.length > 6 ? `<p>还有 ${escapeHtml(rows.length - 6)} 条未展开。</p>` : ''}` : '<p>暂无。</p>'}
       </section>
     `;
@@ -1648,10 +1669,12 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
           <strong>生成结果执行分层</strong>
           <p>平台会先下发“可执行”里的首批冒烟用例；首批失败率不高时会继续扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
         </div>
-        ${mindmap.caseSetId && smokeExecutableCount ? `
+        ${mindmap.caseSetId && (smokeExecutableCount || remainingExecutableCount || generatedCount) ? `
           <div class="review-actions">
-            <button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${smokeLimit}, false, ${smokeExecutableCount})">重跑首批冒烟 ${escapeHtml(smokeLimit)}/${escapeHtml(smokeExecutableCount)}</button>
+            ${smokeExecutableCount ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${smokeLimit}, false, ${smokeExecutableCount})">重跑首批冒烟 ${escapeHtml(smokeLimit)}/${escapeHtml(smokeExecutableCount)}</button>` : ''}
             ${smokeExecutableCount > smokeLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${smokeExecutableCount})">重跑全部冒烟 ${escapeHtml(smokeExecutableCount)}</button>` : ''}
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${Math.max(remainingExecutableCount, generatedCount)}, 'remaining_executable')">继续执行剩余可执行</button>
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${generatedCount}, 'all_executable')">重新评分并执行当前可执行</button>
           </div>
         ` : ''}
       </div>

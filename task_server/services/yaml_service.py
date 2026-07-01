@@ -794,6 +794,91 @@ def normalize_text_list(value):
     return [text] if text else []
 
 
+SCOPE_GUARD_UNREQUESTED_PATTERNS = (
+    "历史", "打印记录", "记录干扰", "干扰", "慢加载", "超时", "防抖", "重复进入",
+    "返回重进", "状态保持", "渲染残留", "清理缓存", "缓存", "空态", "无结果",
+    "规格切换", "分页", "旧入口", "骨架屏",
+)
+SCOPE_GUARD_CHANGE_KEYWORDS = (
+    "百度网盘", "baiduDisk", "网盘入口", "网盘导入", "新增入口", "导入入口",
+)
+
+
+def _scope_guard_join_values(*values) -> str:
+    parts: List[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            parts.extend(_scope_guard_join_values(key, val) for key, val in value.items())
+        elif isinstance(value, list):
+            parts.extend(_scope_guard_join_values(item) for item in value)
+        elif value not in (None, ""):
+            parts.append(str(value))
+    return " ".join(part for part in parts if part).strip()
+
+
+def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_text: str = "") -> dict:
+    """Detect generated cases that drift outside the current requirement scope.
+
+    AI can legitimately propose richer coverage, but newly generated YAML must not
+    auto-run scenarios that are not traceable to the current requirement document.
+    This guard only downgrades execution eligibility; it does not delete cases.
+    """
+    case = case if isinstance(case, dict) else {}
+    analysis = analysis if isinstance(analysis, dict) else {}
+    requirement_blob = _scope_guard_join_values(
+        analysis.get("requirement_points"),
+        analysis.get("requirementPoints"),
+        analysis.get("test_points"),
+        analysis.get("testPoints"),
+        analysis.get("business_goals"),
+        analysis.get("businessGoals"),
+        analysis.get("entry_points"),
+        analysis.get("entryPoints"),
+        analysis.get("visible_outcomes"),
+        analysis.get("visibleOutcomes"),
+        analysis.get("business_flow"),
+        analysis.get("businessFlow"),
+        analysis.get("risks"),
+        analysis.get("assumptions"),
+    )
+    case_blob = _scope_guard_join_values(
+        case.get("title"),
+        case.get("name"),
+        case.get("scenario"),
+        case.get("goal"),
+        case.get("coverage"),
+        case.get("risk"),
+        case.get("business_path"),
+        case.get("businessPath"),
+        case.get("expected_result"),
+        case.get("expectedResult"),
+        case.get("preconditions"),
+        case.get("steps"),
+        case.get("assertions"),
+        case.get("tags"),
+        yaml_text[:3000],
+    )
+    compact_requirement = re.sub(r"\s+", "", requirement_blob)
+    compact_case = re.sub(r"\s+", "", case_blob)
+    reasons: List[str] = []
+
+    if compact_requirement and any(term in compact_requirement for term in SCOPE_GUARD_CHANGE_KEYWORDS):
+        if not any(term in compact_case for term in SCOPE_GUARD_CHANGE_KEYWORDS):
+            reasons.append("未覆盖本需求新增/变更的入口或导入选项")
+
+    for word in SCOPE_GUARD_UNREQUESTED_PATTERNS:
+        if word in compact_case and word not in compact_requirement:
+            reasons.append(f"包含需求未说明的扩展场景：{word}")
+            if len(reasons) >= 3:
+                break
+
+    return {
+        "ok": not reasons,
+        "reasons": reasons,
+        "rule": "生成用例必须能追溯到当前需求点；需求未提到的历史记录、缓存、超时、干扰等扩展场景不自动执行。",
+    }
+
+
 YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
 YAML_REFERENCE_MAX_EXAMPLES = env_int("YAML_REFERENCE_MAX_EXAMPLES", 6)
 YAML_REFERENCE_MAX_SNIPPET_CHARS = env_int("YAML_REFERENCE_MAX_SNIPPET_CHARS", 2400)
@@ -3568,6 +3653,7 @@ def cases_to_separate_midscene_yamls(payload: Any, app_package: str = "", base_f
             "case_id": first_non_empty(case.get("case_id"), case.get("id"), f"TC-{index:03d}"),
             "priority": case_priority(case),
             "smoke": is_smoke_case(case),
+            "case": case,
             "content": rendered,
         })
 
@@ -5008,24 +5094,58 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "draft_cases": [],
         "manual_cases": [],
     }
+    generated_cases_by_id = {
+        str(case.get("case_id") or case.get("caseId") or case.get("id") or "").strip(): case
+        for case in (converted_payload.get("cases") or [])
+        if isinstance(case, dict) and str(case.get("case_id") or case.get("caseId") or case.get("id") or "").strip()
+    }
+    generated_cases_by_title = {
+        str(case.get("title") or case.get("name") or "").strip(): case
+        for case in (converted_payload.get("cases") or [])
+        if isinstance(case, dict) and str(case.get("title") or case.get("name") or "").strip()
+    }
+    requirement_analysis = converted_payload.get("analysis") if isinstance(converted_payload.get("analysis"), dict) else {}
     for item in yaml_items:
         score = score_midscene_yaml_executable(item.get("content") or "", generated=True)
         task_scores = [row for row in (score.get("taskScores") or []) if isinstance(row, dict)]
         first_task = task_scores[0] if task_scores else {}
         level = str(score.get("level") or score.get("executionLevel") or "draft")
+        source_case = (
+            item.get("case")
+            or generated_cases_by_id.get(str(item.get("case_id") or "").strip())
+            or generated_cases_by_title.get(str(item.get("title") or "").strip())
+            or {}
+        )
+        scope_review = generated_case_requirement_scope_review(source_case, requirement_analysis, item.get("content") or "")
+        reasons = list(score.get("reasons") or [])[:8]
+        if not scope_review.get("ok"):
+            level = "needs_review" if level == "executable" else level
+            score = dict(score)
+            scope_reasons = list(scope_review.get("reasons") or [])
+            score["score"] = min(safe_int(score.get("score"), 0), 74)
+            score["executionLevel"] = level
+            score["level"] = level
+            score["ok"] = level == "executable"
+            score["scopeReview"] = scope_review
+            score["reasons"] = (scope_reasons + reasons)[:8]
+            reasons = list(score.get("reasons") or [])[:8]
+        explicit_smoke = bool(item.get("smoke"))
         row = {
             "name": first_task.get("name") or item.get("title") or item.get("file"),
+            "module": module,
             "file": item.get("file"),
             "case_id": item.get("case_id"),
             "score": score.get("score") or 0,
             "level": level,
             "executionLevel": level,
             "priority": first_task.get("priority") or item.get("priority") or "",
-            "smoke": bool(item.get("smoke")),
-            "smokeCandidate": bool(item.get("smoke") or score.get("smokeCandidate") or first_task.get("smokeCandidate")),
+            "smoke": explicit_smoke,
+            "smokeCandidate": explicit_smoke,
+            "runnerCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate")),
             "mainBusinessChain": bool(first_task.get("mainBusinessChain")),
             "baselineEvidence": bool(score.get("baselineEvidence") or first_task.get("baselineEvidence")),
-            "reasons": list(score.get("reasons") or [])[:8],
+            "scopeReview": scope_review,
+            "reasons": reasons,
         }
         yaml_executable_scores.append({"file": item.get("file"), **score})
         bucket = {

@@ -1249,7 +1249,9 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
             "allowed_actions": ["点击", "输入", "等待", "断言", "返回", "滚动", "处理弹窗", "回到首页"],
             "manual_by_default": ["真实支付", "删除", "切账号", "清数据", "后台造数", "接口 Mock", "系统权限预置", "断网/弱网", "排队/并发状态", "真实外设", "纯设计稿对比"],
             "assertion_required": True,
-            "assertion_density": "每条自动化用例只写 1 条最终业务结果断言；过程校验写入 steps 的等待/检查动作，不要把每个验收点都塞进 assertions"
+            "assertion_density": "每条自动化用例只写 1 条最终业务结果断言；过程校验写入 steps 的等待/检查动作，不要把每个验收点都塞进 assertions",
+            "scope_guard": "每条 cases 必须映射当前 analysis.requirement_points/business_goals；需求未提到的历史记录、缓存、慢加载、超时、干扰、重复点击、防抖、旧入口不存在等扩展场景只能进入 manual_cases/needs_review，不得作为自动执行 YAML。",
+            "smoke_selection": "smoke=true 必须由 AI 基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。小需求通常 3 条以内，中大需求最多 5-8 条。"
         }
     }
     result = run_ai_skill("automation_filter", payload, timeout=300)
