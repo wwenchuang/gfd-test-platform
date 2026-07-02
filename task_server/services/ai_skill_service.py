@@ -1251,7 +1251,7 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
             "assertion_required": True,
             "assertion_density": "每条自动化用例只写 1 条最终业务结果断言；过程校验写入 steps 的等待/检查动作，不要把每个验收点都塞进 assertions",
             "scope_guard": "每条 cases 必须映射当前 analysis.requirement_points/business_goals；需求未提到的历史记录、缓存、慢加载、超时、干扰、重复点击、防抖、旧入口不存在等扩展场景只能进入 manual_cases/needs_review，不得作为自动执行 YAML。",
-            "smoke_selection": "smoke=true 必须由 AI 基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。小需求通常 3 条以内，中大需求最多 5-8 条。"
+            "smoke_selection": "smoke=true 必须基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。冒烟候选池小需求通常 3 条以内，中大需求最多 5-8 条；Runner 首批自动下发最多 3 条。"
         }
     }
     result = run_ai_skill("automation_filter", payload, timeout=300)
@@ -1306,12 +1306,118 @@ def _smoke_selection_target_limit(targets):
     return max(1, min(8, limit or 3))
 
 
+def _smoke_first_batch_limit(targets):
+    """首批 Runner 冒烟固定最多 3 条；完整冒烟池仍按需求规模保留。"""
+    return max(1, min(3, _smoke_selection_target_limit(targets)))
+
+
+def _local_smoke_case_score(case, index, analysis=None, yaml_reference_context=""):
+    """本地规则筛选冒烟，避免额外模型调用和关键词粗暴提升。"""
+    case = case if isinstance(case, dict) else {}
+    analysis = analysis if isinstance(analysis, dict) else {}
+    text = " ".join(normalize_text_list([
+        case.get("title"),
+        case.get("name"),
+        case.get("scenario"),
+        case.get("goal"),
+        case.get("coverage"),
+        case.get("requirement_point"),
+        case.get("business_path"),
+        case.get("expected_result"),
+        case.get("automation_reason"),
+        case.get("baseline_match"),
+        case.get("baselineMatch"),
+        case.get("matched_baseline"),
+        case.get("matchedBaseline"),
+        case.get("yaml_reference"),
+        case.get("yamlReference"),
+        case.get("steps"),
+        case.get("assertions"),
+        case.get("tags"),
+    ])).lower()
+    score = max(0, 100 - index)
+    priority = case_priority(case).upper()
+    score += {"P0": 40, "HIGH": 35, "P1": 24, "P2": 10}.get(priority, 0)
+    if is_smoke_case(case):
+        score += 20
+    if any(str(case.get(key) or "").strip() for key in ("business_path", "businessPath", "start_page", "startPage")):
+        score += 18
+    if any(word in text for word in ("主链", "主流程", "正常", "入口", "核心", "完成", "成功")):
+        score += 16
+    baseline_fields = (
+        case.get("baselineMatched"),
+        case.get("baseline_matched"),
+        case.get("baseline_match"),
+        case.get("baselineMatch"),
+        case.get("matched_baseline"),
+        case.get("matchedBaseline"),
+        case.get("yaml_reference"),
+        case.get("yamlReference"),
+    )
+    if any(bool(item) for item in baseline_fields) or (yaml_reference_context and any(word in text for word in ("基线", "参考", "稳定", "可执行"))):
+        score += 10
+    steps = normalize_text_list(case.get("steps"))
+    assertions = normalize_text_list(case.get("assertions") or case.get("expects") or case.get("expected"))
+    if 2 <= len(steps) <= 8:
+        score += 12
+    elif len(steps) > 12:
+        score -= 18
+    if assertions or str(case.get("expected_result") or "").strip():
+        score += 10
+    negative_terms = (
+        "历史", "干扰", "异常", "失败", "超时", "慢加载", "骨架屏", "空态", "防抖",
+        "重复点击", "权限", "断网", "弱网", "删除", "支付", "mock", "后台造数", "外部",
+    )
+    if any(term in text for term in negative_terms):
+        score -= 45
+    requirement_points = normalize_text_list(analysis.get("requirement_points"))
+    if requirement_points:
+        matched = sum(1 for point in requirement_points if point and str(point).lower() in text)
+        if matched:
+            score += min(24, matched * 8)
+        elif index > 1:
+            score -= 12
+    return score
+
+
+def _local_smoke_selector_result(title, module, analysis, cases, targets, yaml_reference_context=""):
+    """本地冒烟选择：首批最多 3 条，优先主链/P0/基线稳定写法。"""
+    ranked = []
+    for index, case in enumerate(cases or [], start=1):
+        if not isinstance(case, dict):
+            continue
+        case_id = _smoke_case_id(case, index)
+        ranked.append((
+            _local_smoke_case_score(case, index, analysis=analysis, yaml_reference_context=yaml_reference_context),
+            -index,
+            case_id,
+        ))
+    ranked.sort(reverse=True)
+    limit = _smoke_first_batch_limit(targets)
+    selected = [case_id for score, _idx, case_id in ranked if score > 0][:limit]
+    if not selected and ranked:
+        selected = [ranked[0][2]]
+    return _normalize_smoke_selector_result({
+        "smoke_case_ids": selected,
+        "review": {
+            "normal_chain_covered": bool(selected),
+            "selection_reason": "本地规则按主业务链、P0、基线依据、步骤稳定性和执行评分选择首批冒烟；不再额外调用 smoke_selector 模型。",
+            "missing_normal_chain_reason": "" if selected else "没有可用于首批执行的自动化用例。",
+            "rejected_case_ids": [],
+            "scored_candidates": [
+                {"case_id": case_id, "score": score}
+                for score, _idx, case_id in ranked[:8]
+            ],
+        },
+    }, cases, targets, source="local_smoke_gate.v1")
+
+
 def _normalize_smoke_selector_result(result, cases, targets, *, source):
     """Normalize and filter smoke selector output against existing cases."""
     cases = [case for case in (cases or []) if isinstance(case, dict)]
     id_order = [_smoke_case_id(case, index) for index, case in enumerate(cases, start=1)]
     valid = set(id_order)
-    limit = _smoke_selection_target_limit(targets)
+    limit = _smoke_first_batch_limit(targets)
     selected: List[str] = []
     invalid: List[str] = []
     for raw in normalize_text_list((result or {}).get("smoke_case_ids")):
@@ -1329,8 +1435,9 @@ def _normalize_smoke_selector_result(result, cases, targets, *, source):
         "selected_case_ids": selected,
         "selected_count": len(selected),
         "target_smoke_cases": limit,
+        "smoke_pool_limit": _smoke_selection_target_limit(targets),
         "invalid_case_ids": invalid,
-        "rule": "冒烟由 AI 二次筛选；后端不再按 P0/P1 或关键词自动提升为冒烟。",
+        "rule": "冒烟由本地准入规则选择；首批最多 3 条，不再额外调用 smoke_selector 模型。",
     })
     return {
         "smoke_case_ids": selected,
@@ -1391,28 +1498,17 @@ def apply_smoke_selection_to_cases(cases, selection, targets):
 
 
 def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_cases=None, yaml_reference_context="", mode="full"):
-    """调用 AI skill: smoke_selector，对已生成用例做独立冒烟筛选。"""
+    """本地冒烟门禁选择，保留函数名兼容旧调用。"""
     targets = generation_volume_targets(analysis, mode=mode)
     cases = [case for case in (cases or []) if isinstance(case, dict)]
-    payload = {
-        "title": title,
-        "module": module,
-        "analysis": analysis if isinstance(analysis, dict) else {},
-        "scenarios": scenarios if isinstance(scenarios, list) else [],
-        "cases": [_compact_case_for_smoke_selector(case, index) for index, case in enumerate(cases, start=1)],
-        "manual_cases": manual_cases if isinstance(manual_cases, list) else [],
-        "generation_targets": targets,
-        "yaml_reference_context_available": bool(yaml_reference_context),
-        "selection_rules": {
-            "must_cover_normal_business_chain": True,
-            "max_smoke_cases": _smoke_selection_target_limit(targets),
-            "choose_from_existing_case_ids_only": True,
-            "do_not_select_old_entry_or_history_or_interference_cases": True,
-            "do_not_infer_smoke_from_priority_or_keywords": True,
-        },
-    }
-    result = run_ai_skill("smoke_selector", payload, timeout=180)
-    return _normalize_smoke_selector_result(result, cases, targets, source="smoke_selector.v1")
+    return _local_smoke_selector_result(
+        title,
+        module,
+        analysis if isinstance(analysis, dict) else {},
+        cases,
+        targets,
+        yaml_reference_context=yaml_reference_context,
+    )
 
 
 def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context=""):
@@ -1436,7 +1532,7 @@ def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_ref
     cases, smoke_review = apply_smoke_selection_to_cases(cases, selection, targets)
     normalized["cases"] = cases
     review = normalized.setdefault("review", {})
-    review["smoke_selector_skill"] = smoke_review.get("selector_source") or "smoke_selector.v1"
+    review["smoke_selector_skill"] = smoke_review.get("selector_source") or "local_smoke_gate.v1"
     review["smoke_selection"] = smoke_review
     review["smoke_case_ids"] = smoke_review.get("selected_case_ids") or []
     return normalized
@@ -1483,7 +1579,7 @@ def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
     normalized = normalize_cases_payload(payload)
     normalized = select_smoke_cases_for_payload(title, module, normalized, mode=mode, yaml_reference_context=yaml_reference_context)
     review = normalized.setdefault("review", {})
-    review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> smoke_selector.v1"
+    review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> local_smoke_gate.v1"
     validate_ai_skill_output("cases_payload", normalized)
     return normalized
 

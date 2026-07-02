@@ -2312,7 +2312,7 @@ function generatedCaseGroupsFromSummary(summary={}) {
   };
 }
 
-const GENERATED_SMOKE_RERUN_DEFAULT_LIMIT = 8;
+const GENERATED_SMOKE_RERUN_DEFAULT_LIMIT = 3;
 
 function generatedSmokeTargets(summary={}) {
   if (!summary || typeof summary !== 'object') return {};
@@ -2806,7 +2806,7 @@ async function rerunGenerationSmokeCases(caseSetId, moduleName='', limit=GENERAT
     '',
     '只会重新创建已生成 YAML 的 Runner 任务，不会重新上传资料，也不会重新做需求分析。',
     '如果刚刚手动编辑并保存过 YAML，本次会使用当前保存内容执行。',
-    runAll ? `注意：${scopeName}会创建更多 Runner 任务，建议首批通过后再使用。` : '默认和首次 Agent 自动执行一致，只跑首批冒烟。',
+    runAll ? `注意：${scopeName}会创建更多 Runner 任务，建议首批通过率稳定后再使用。` : '默认和首次 Agent 自动执行一致，只跑首批 3 条以内冒烟。',
     `执行设备：${deviceText}`
   ].join('\n'));
   if (!ok) return;

@@ -1602,8 +1602,9 @@ def generation_current_executable_yaml_refs(summary, module, *, include_smoke=Tr
 
 def generation_smoke_rerun_default_limit(summary=None):
     upper = max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)))
+    first_upper = max(1, min(3, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT"), 3)))
     if not isinstance(summary, dict):
-        return upper
+        return first_upper
     review = summary.get("review") if isinstance(summary.get("review"), dict) else {}
     coverage_audit = review.get("coverage_audit") if isinstance(review.get("coverage_audit"), dict) else {}
     candidates = [
@@ -1620,8 +1621,8 @@ def generation_smoke_rerun_default_limit(summary=None):
         smoke_limit = safe_int(item.get("smoke_cases") or item.get("smokeCases"), 0)
         smoke_max = safe_int(item.get("smoke_max_cases") or item.get("smokeMaxCases"), upper)
         if smoke_limit > 0:
-            return max(1, min(upper, smoke_max or upper, smoke_limit))
-    return upper
+            return max(1, min(first_upper, upper, smoke_max or upper, smoke_limit))
+    return first_upper
 
 
 # ── 脑图列表 ────────────────────────────────────────────────────────

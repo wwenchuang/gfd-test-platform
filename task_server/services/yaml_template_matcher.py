@@ -61,9 +61,9 @@ def simple_similarity(requirement: Any, candidate: Any) -> int:
     return score
 
 
-def select_best_baseline_template(requirement: Any, baseline_cases: Iterable[dict], limit: int = 5) -> List[dict]:
+def select_best_baseline_template(requirement: Any, baseline_cases: Iterable[dict], limit: int = 3) -> List[dict]:
     """Return Top-N baseline YAML templates relevant to a requirement."""
-    limit = max(1, min(8, int(limit or 5)))
+    limit = max(1, min(3, int(limit or 3)))
     scored = []
     for case in baseline_cases or []:
         if not isinstance(case, dict):
@@ -88,12 +88,12 @@ def build_yaml_template_matcher_text(templates: Iterable[dict]) -> str:
     if not templates:
         return ""
     lines = [
-        "【相似基线模板 Top5：套模板填槽】",
+        "【相似基线模板 Top3：套模板填槽】",
         "生成 YAML 时不要重新设计结构，优先基于下面候选模板做业务变量替换和少量步骤微调。",
         "只能复用相关动作组织方式、等待策略和入口清理写法；不要复制无关业务断言。",
         "",
     ]
-    for item in templates[:5]:
+    for item in templates[:3]:
         actions = " -> ".join(str(v) for v in (item.get("actions") or []) if str(v).strip()) or "-"
         matched = "、".join(str(v) for v in (item.get("matched_terms") or []) if str(v).strip()) or item.get("template_reason") or "-"
         lines.extend([
@@ -105,7 +105,7 @@ def build_yaml_template_matcher_text(templates: Iterable[dict]) -> str:
         ])
         snippet = str(item.get("snippet") or "").strip()
         if snippet:
-            lines.extend(["```yaml", snippet[:1800], "```"])
+            lines.extend(["```yaml", snippet[:1200], "```"])
         lines.append("")
     return "\n".join(lines).strip()
 

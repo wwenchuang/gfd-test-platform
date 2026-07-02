@@ -262,8 +262,8 @@ def build_yaml_pattern_contract_text(patterns: Iterable[dict], action_contract: 
     ]
     if patterns:
         lines.append("")
-        lines.append("【相似基线动作模式 Top5】")
-    for idx, pattern in enumerate(patterns[:5], start=1):
+        lines.append("【相似基线动作模式 Top3】")
+    for idx, pattern in enumerate(patterns[:3], start=1):
         actions = " -> ".join(pattern.get("actions") or []) or "-"
         labels = "；".join(pattern.get("sample_labels") or [])[:260] or "-"
         matched = "、".join(pattern.get("matched_terms") or []) or "结构相近"

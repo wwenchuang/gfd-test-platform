@@ -1602,7 +1602,7 @@ function agentGeneratedSmokeRerunLimit(artifacts = {}, totalCount = 0) {
   const gate = artifacts.runnerExecutionGate || artifacts.runnerSmokeGate || {};
   const gateLimit = Number(gate.limit || gate.smokeLimit || 0);
   const targets = agentGeneratedSmokeTargets(artifacts);
-  const fallbackUpper = typeof GENERATED_SMOKE_RERUN_DEFAULT_LIMIT !== 'undefined' ? GENERATED_SMOKE_RERUN_DEFAULT_LIMIT : 8;
+  const fallbackUpper = typeof GENERATED_SMOKE_RERUN_DEFAULT_LIMIT !== 'undefined' ? GENERATED_SMOKE_RERUN_DEFAULT_LIMIT : 3;
   const upper = Math.max(1, Math.min(
     fallbackUpper,
     Number(targets.smoke_max_cases || targets.smokeMaxCases || fallbackUpper) || fallbackUpper
@@ -1668,7 +1668,7 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
       <div class="section-head">
         <div>
           <strong>生成结果执行分层</strong>
-          <p>平台会先下发“可执行”里的首批冒烟用例；首批全部通过后才会小批量扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
+          <p>平台会先下发“可执行”里的首批冒烟用例；首批通过率不低于 50% 后才会小批量扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
         </div>
         ${mindmap.caseSetId && (smokeExecutableCount || remainingExecutableCount || generatedCount) ? `
           <div class="review-actions">
@@ -1679,7 +1679,7 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
           </div>
         ` : ''}
       </div>
-      ${mindmap.caseSetId ? '<p>重跑首批冒烟会按本次需求规模选择 3/5/8 条；继续执行也默认按小批次下发。执行全部可执行需要手动触发，不会重新上传资料或重新分析需求。</p>' : ''}
+      ${mindmap.caseSetId ? '<p>重跑首批冒烟默认最多 3 条；继续执行也默认按小批次下发。执行全部可执行需要手动触发，不会重新上传资料或重新分析需求。</p>' : ''}
       <div class="report-summary-grid final-report-metrics">
         ${labels.map(([key, label]) => `<div><span>${label}</span><strong>${escapeHtml(groups[key].length)}</strong></div>`).join('')}
       </div>
@@ -1693,9 +1693,9 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
   if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
   let stop = '首批冒烟准入已启用';
   if (gate.stopFurtherExecution) {
-    stop = `已停止后续批量执行：${gate.reason || '首批冒烟存在失败'}`;
+    stop = `已停止后续批量执行：${gate.reason || '首批冒烟通过率低于 50%'}`;
   } else if (gate.expandedExecution) {
-    stop = `首批冒烟通过，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
+    stop = `首批冒烟通过率达标，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
   }
   return `
     <section class="final-report-panel final-report-wide">

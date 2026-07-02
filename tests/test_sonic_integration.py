@@ -256,22 +256,12 @@ def test_build_cases_payload_from_skills_composes_three_stage_pipeline():
                 "manual_cases": [],
                 "review": {"automation_check": "可自动化"},
             }
-        if skill_name == "smoke_selector":
-            return {
-                "smoke_case_ids": ["TC-001"],
-                "review": {
-                    "normal_chain_covered": True,
-                    "selection_reason": "覆盖目标页正常主链",
-                    "missing_normal_chain_reason": "",
-                    "rejected_case_ids": [],
-                },
-            }
         raise AssertionError(skill_name)
 
     try:
         midscene.run_ai_skill = fake_run_ai_skill
         payload = midscene.build_cases_payload_from_skills("标题", "模块", ["需求文本"])
-        assert calls == ["requirement_analyzer", "scenario_designer", "automation_filter", "smoke_selector"]
+        assert calls == ["requirement_analyzer", "scenario_designer", "automation_filter"]
         assert payload["analysis"]["requirement_points"] == ["用户可以进入目标页"]
         assert payload["cases"][0]["case_id"] == "TC-001"
         assert payload["cases"][0]["smoke"] is True

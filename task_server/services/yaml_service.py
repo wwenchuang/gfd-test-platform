@@ -121,7 +121,6 @@ from ..storage import (
     write_text_file,
 )
 from .yaml_pattern_service import (
-    build_yaml_library_profile_text,
     build_yaml_pattern_contract_text,
     extract_yaml_patterns_from_examples,
     summarize_yaml_patterns,
@@ -1002,8 +1001,8 @@ def apply_generated_case_scope_gate(payload: Any) -> dict:
 
 
 YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
-YAML_REFERENCE_MAX_EXAMPLES = env_int("YAML_REFERENCE_MAX_EXAMPLES", 6)
-YAML_REFERENCE_MAX_SNIPPET_CHARS = env_int("YAML_REFERENCE_MAX_SNIPPET_CHARS", 2400)
+YAML_REFERENCE_MAX_EXAMPLES = max(1, min(3, env_int("YAML_REFERENCE_MAX_EXAMPLES", 3)))
+YAML_REFERENCE_MAX_SNIPPET_CHARS = max(800, min(1200, env_int("YAML_REFERENCE_MAX_SNIPPET_CHARS", 1200)))
 YAML_GENERATED_ASSERTION_LIMIT = max(1, min(3, env_int("MIDSCENE_GENERATED_ASSERTION_LIMIT", 1)))
 YAML_STATIC_REPAIR_ATTEMPTS = max(0, min(2, env_int("MIDSCENE_YAML_STATIC_REPAIR_ATTEMPTS", 1)))
 YAML_STATIC_REPAIR_TIMEOUT_SECONDS = max(30, env_int("MIDSCENE_YAML_STATIC_REPAIR_TIMEOUT_SECONDS", 90))
@@ -4798,13 +4797,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
     yaml_baseline_library_examples = collect_yaml_baseline_library_examples()
     yaml_library_patterns = extract_yaml_patterns_from_examples(yaml_baseline_library_examples, limit=12)
     yaml_library_profile = summarize_yaml_patterns(yaml_library_patterns)
-    yaml_library_profile_text = build_yaml_library_profile_text(
-        yaml_library_patterns,
-        yaml_library_profile,
-        total_examples=len(yaml_baseline_library_examples),
-    )
-    if yaml_library_profile_text:
-        stage1_text_assets = list(stage1_text_assets) + [yaml_library_profile_text]
+    # 全量基线缓存只用于状态、评估和检索来源；模型 prompt 只接收本次需求 Top3
+    # 相似基线片段，避免全局模式把无关历史用例带进当前需求。
+    if yaml_library_patterns:
         if job_id:
             update_generate_job(
                 job_id,
@@ -4814,10 +4809,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     f"基线缓存 cache_hit={str(yaml_baseline_cache_status.get('cacheHit')).lower()}，"
                     f"文件 {yaml_baseline_cache_status.get('fileCount', 0)} 个，"
                     f"样本 {yaml_baseline_cache_status.get('caseCount', 0)} 条；"
-                    f"本次提炼 {len(yaml_library_patterns)} 个全局写法模式"
+                    "本次只把 Top3 相似基线片段送入模型"
                 ),
             )
-    yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=5)
+    yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=3)
     yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
     if yaml_reference_text:
         stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
@@ -4831,8 +4826,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
             )
     yaml_template_candidates = select_best_baseline_template(
         "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
-        yaml_reference_examples or yaml_baseline_library_examples,
-        limit=5,
+        yaml_reference_examples,
+        limit=YAML_REFERENCE_MAX_EXAMPLES,
     )
     yaml_template_matcher_text = build_yaml_template_matcher_text(yaml_template_candidates)
     if yaml_template_matcher_text:
@@ -4939,7 +4934,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "rule": "基线库先构建缓存，生成 YAML 时只从缓存中取 TopN 相似基线片段给模型仿写，避免每次现场全量读取 YAML。",
     }
     if yaml_template_candidates:
-        template_quality = evaluate_baseline_template_matching(yaml_baseline_library_examples, limit=5)
+        template_quality = evaluate_baseline_template_matching(yaml_reference_examples, limit=3)
         review["yaml_template_matcher"] = {
             "enabled": True,
             "template_count": len(yaml_template_candidates),
@@ -4953,9 +4948,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     "matched_terms": item.get("matched_terms") or [],
                     "actions": item.get("actions") or [],
                 }
-                for item in yaml_template_candidates[:5]
+                for item in yaml_template_candidates[:3]
             ],
-            "rule": "需求先匹配 Top5 相似基线模板，AI 只能按模板做业务变量替换和少量步骤微调。",
+            "rule": "需求先匹配 Top3 相似基线模板，AI 只能按模板做业务变量替换和少量步骤微调。",
             "quality_eval": template_quality,
         }
     if yaml_baseline_patterns:
@@ -4974,7 +4969,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     "actions": item.get("actions") or [],
                     "sample_labels": item.get("sample_labels") or [],
                 }
-                for item in yaml_baseline_patterns[:5]
+                for item in yaml_baseline_patterns[:3]
             ],
             "rule": "AI 只能按相似基线动作模式做业务变量替换和少量步骤微调，禁止自由创造 Runner 不支持的 action。",
         }
@@ -4994,7 +4989,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 }
                 for item in yaml_library_patterns[:12]
             ],
-            "rule": "从 YAML 基线缓存提炼平台通用写法；相似 Top5 只用于当前需求的局部仿写。",
+            "rule": "从 YAML 基线缓存提炼平台通用写法；相似 Top3 只用于当前需求的局部仿写。",
         }
     review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
     if prepared_figma_context:

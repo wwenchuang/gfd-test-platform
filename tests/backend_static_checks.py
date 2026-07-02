@@ -776,16 +776,6 @@ def check_ai_skills_receive_yaml_reference_context():
                 "manual_cases": [],
                 "review": {},
             }
-        if skill_name == "smoke_selector":
-            return {
-                "smoke_case_ids": ["TC-001"],
-                "review": {
-                    "normal_chain_covered": True,
-                    "selection_reason": "覆盖 AI 建模入口正常主链",
-                    "missing_normal_chain_reason": "",
-                    "rejected_case_ids": [],
-                },
-            }
         raise AssertionError(f"unexpected skill: {skill_name}")
 
     ai_skill_service.run_ai_skill = fake_run_ai_skill
@@ -800,11 +790,10 @@ def check_ai_skills_receive_yaml_reference_context():
 
     scenario_payload = next(item[1] for item in calls if item[0] == "scenario_designer")
     automation_payload = next(item[1] for item in calls if item[0] == "automation_filter")
-    smoke_payload = next(item[1] for item in calls if item[0] == "smoke_selector")
     require("现有 YAML 步骤经验库" in scenario_payload.get("yaml_reference_context", ""), "Scenario designer must receive YAML reference context")
     require("现有 YAML 步骤经验库" in automation_payload.get("yaml_reference_context", ""), "Automation filter must receive YAML reference context")
-    require(smoke_payload.get("yaml_reference_context_available") is True, "Smoke selector must know YAML reference context was available")
-    require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "AI smoke selector must record normal-chain coverage")
+    require("smoke_selector" not in [item[0] for item in calls], "Smoke selection must be local and must not add another model call")
+    require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "Local smoke gate must record normal-chain coverage")
     require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
 
 
@@ -829,8 +818,58 @@ def check_smoke_selection_requires_explicit_ai_mark():
         {"smoke_case_ids": ["TC-002"], "review": {"normal_chain_covered": True}},
         {"smoke_cases": 3},
     )
-    require(selected[0].get("smoke") is False and selected[1].get("smoke") is True, "Smoke selection must clear stale smoke marks and apply AI-selected IDs only")
+    require(selected[0].get("smoke") is False and selected[1].get("smoke") is True, "Smoke selection must clear stale smoke marks and apply selected IDs only")
     require(review.get("selected_case_ids") == ["TC-002"], "Smoke selection review must expose selected IDs")
+    payload = {
+        "analysis": {"requirement_points": ["新增百度网盘入口", "入口跳转结果"]},
+        "cases": [
+            {
+                "case_id": "TC-001",
+                "title": "历史打印记录干扰入口可见性",
+                "priority": "P0",
+                "steps": ["进入历史打印记录", "检查百度网盘入口"],
+                "assertions": ["入口可见"],
+            },
+            {
+                "case_id": "TC-002",
+                "title": "文档打印首页展示新增百度网盘入口",
+                "priority": "P0",
+                "business_path": "首页 -> 文档打印 -> 百度网盘入口",
+                "baselineMatched": True,
+                "steps": ["等待文档打印首页", "点击百度网盘入口"],
+                "assertions": ["百度网盘入口可见"],
+            },
+            {
+                "case_id": "TC-003",
+                "title": "百度网盘入口跳转授权页",
+                "priority": "P1",
+                "business_path": "文档打印 -> 百度网盘入口 -> 授权页",
+                "baselineMatched": True,
+                "steps": ["等待入口", "点击百度网盘入口", "等待授权页"],
+                "assertions": ["授权页可见"],
+            },
+            {
+                "case_id": "TC-004",
+                "title": "百度网盘入口返回首页",
+                "priority": "P2",
+                "business_path": "文档打印 -> 百度网盘入口 -> 返回",
+                "steps": ["进入入口", "返回"],
+                "assertions": ["文档打印首页可见"],
+            },
+            {
+                "case_id": "TC-005",
+                "title": "慢加载重试提示",
+                "priority": "P1",
+                "steps": ["断网", "点击入口"],
+                "assertions": ["错误提示"],
+            },
+        ],
+    }
+    selected_payload = ai_skill_service.select_smoke_cases_for_payload("百度网盘入口", "文档打印", payload)
+    smoke_ids = selected_payload["review"]["smoke_case_ids"]
+    require(len(smoke_ids) <= 3, "Local smoke gate must only select the first batch of at most 3 cases")
+    require("TC-001" not in smoke_ids and "TC-005" not in smoke_ids, "Local smoke gate must not prefer history/interference cases over the current normal chain")
+    require({"TC-002", "TC-003"}.issubset(set(smoke_ids)), "Local smoke gate must prioritize normal-chain baseline-backed cases")
 
 
 def check_yaml_runner_eligibility_filter():
@@ -1551,18 +1590,18 @@ def main():
     )
     require("@route_post(\"/api/yaml/dry-run\")" in router_source and "dry_run_midscene_yaml" in router_source, "YAML dry-run API must be exposed for Agent/UI preflight")
     require("@route_post(\"/api/cases/rerun-smoke\")" in router_source and "generation_smoke_yaml_refs" in router_source and "create_pending_job(" in router_source, "Generated smoke YAML must support rerun without re-uploading source material")
-    require("generation_smoke_rerun_default_limit(summary)" in router_source and "smoke_cases" in router_source and "MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT" in router_source and "run_all" in router_source and "totalSmokeCount" in router_source, "Generated smoke rerun must default to dynamic 3/5/8 first batches unless explicitly running all smoke cases")
+    require("generation_smoke_rerun_default_limit(summary)" in router_source and "smoke_cases" in router_source and "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" in router_source and "run_all" in router_source and "totalSmokeCount" in router_source, "Generated smoke rerun must default to a first batch of at most 3 unless explicitly running all smoke cases")
     require("validate_yaml_static_executable" in yaml_service_source and '"yamlStaticValidation"' in yaml_service_source and '"execution_level"' in yaml_service_source, "Generated YAML must record static execution levels and validation results")
     require("def repair_generated_yaml_static_errors" in yaml_service_source and '"yamlStaticRepair"' in yaml_service_source and "只修复 YAML 结构和动作字段" in yaml_service_source, "Generated YAML must run a narrow static repair loop before writing/executing files")
     require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
     require("def _agent_yaml_dry_run_for_ref" in agent_service_source and '"yamlDryRun"' in agent_service_source and '"runnerDryRun"' in agent_service_source and "Runner 下发前 dry-run 未通过" in agent_service_source, "Agent must dry-run YAML before validation, precheck and Runner job creation")
-    require("AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source and "首批冒烟存在失败时停止自动扩展" in agent_service_source and "expandedBatchLimit" in agent_service_source, "Agent must only expand generated YAML in batches after the first smoke batch fully passes")
+    require("AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source and "首批冒烟通过率低于 50%" in agent_service_source and "expandedBatchLimit" in agent_service_source, "Agent must only expand generated YAML in batches after the first smoke batch reaches the pass-rate gate")
     require("def apply_generated_case_scope_gate" in yaml_service_source and "需求范围不匹配的生成用例不再转换为自动化 YAML" in yaml_service_source, "Generated cases outside current requirement scope must be kept out of auto-run YAML")
     require("baseline.*" not in yaml_executable_scorer_source and "命中基线" in yaml_executable_scorer_source, "Generated baseline metadata comments must not be treated as successful baseline evidence")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
-    require("MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in env_example and "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in deploy_install, "Deployment scripts must expose generated YAML expansion batch size")
+    require("MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in env_example and "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in deploy_install and "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" in env_example and "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" in deploy_install, "Deployment scripts must expose generated YAML first smoke and expansion batch size")
     require("MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS" in env_example and "MIDSCENE_YAML_BASELINE_CACHE_PATH" in env_example, "Deployment env example must expose YAML baseline cache knobs")
     install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
     require(
@@ -1660,12 +1699,12 @@ def main():
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source, "Generation/mindmap visual grounding must not feed knowledge screenshots into the visual model")
     require("def _case_manual_block_reason" in yaml_service_source and "接口 Mock" in ai_skill_service_source and "排队/并发状态" in ai_skill_service_source, "YAML generation must keep non-runnable scenario coverage out of Runner YAML")
     require("需求文档是业务真相，Figma 是 UI 参考" in ai_skill_service_source and "需求文档决定本次要覆盖的业务范围" in automation_filter_source, "AI generation must treat requirements as business source of truth and Figma as UI reference")
-    smoke_selector_prompt = (ROOT / "ai_skills" / "prompts" / "smoke_selector.v1.md").read_text(encoding="utf-8")
     require(
         "def call_skill_smoke_selector" in ai_skill_service_source
         and "select_smoke_cases_for_payload" in yaml_service_source
-        and "不再按 P0/P1 或关键词" in smoke_selector_prompt,
-        "Smoke cases must be selected by an independent AI selector before Runner execution"
+        and "run_ai_skill(\"smoke_selector\"" not in ai_skill_service_source
+        and "local_smoke_gate.v1" in ai_skill_service_source,
+        "Smoke cases must be selected by local gating before Runner execution"
     )
     require('"direct_scope_only": True' in agent_service_source and "direct_scope_only" in knowledge_service_source and "useSavedKnowledge" in agent_service_source, "Agent Figma parsing must use exact direct-link scope and avoid saved page knowledge unless explicit")
     require('and not run.get("riskConfirmed")' in agent_service_source and 'next_pending_step_after("RISK_REVIEW")' in agent_service_source, "High-risk confirmation must not re-block after approval and must resume at the next pending step")

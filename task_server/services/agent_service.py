@@ -82,6 +82,10 @@ AGENT_GENERATED_RUNNER_SMOKE_LIMIT = max(
     1,
     min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)),
 )
+AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT = max(
+    1,
+    min(3, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT"), 3)),
+)
 AGENT_GENERATED_RUNNER_EXPAND_LIMIT = max(
     AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
     min(100, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT"), 30)),
@@ -4001,8 +4005,8 @@ def _agent_generated_runner_smoke_limit(run):
             continue
         limit = safe_int(item.get("smoke_cases"), 0)
         if limit > 0:
-            return max(1, min(AGENT_GENERATED_RUNNER_SMOKE_LIMIT, limit))
-    return AGENT_GENERATED_RUNNER_SMOKE_LIMIT
+            return max(1, min(AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT, limit))
+    return AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT
 
 
 def _select_agent_runner_refs(run, refs):
@@ -4035,6 +4039,7 @@ def _select_agent_runner_refs(run, refs):
     gate = {
         "enabled": True,
         "limit": smoke_limit,
+        "firstSmokeLimit": AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT,
         "maxLimit": AGENT_GENERATED_RUNNER_SMOKE_LIMIT,
         "expandLimit": AGENT_GENERATED_RUNNER_EXPAND_LIMIT,
         "expandBatchLimit": AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT,
@@ -4052,7 +4057,7 @@ def _select_agent_runner_refs(run, refs):
         "blocked": blocked,
         "blocking": blocking,
         "deferred": deferred,
-        "rule": "Agent 新生成 YAML 首批只下发 executable 冒烟用例；小需求 3 条，中等需求 5 条，大需求最多 8 条。首批必须全部通过才自动扩展，扩展按小批次执行。",
+        "rule": "Agent 新生成 YAML 首批只下发 executable 冒烟用例，首批最多 3 条；冒烟通过率不低于 50% 才自动扩展，扩展按小批次执行。",
     }
     artifacts["runnerExecutionGate"] = gate
     return selected, gate
@@ -8437,8 +8442,9 @@ def _tool_run_sonic(run):
                     "smokeFailedCount": smoke_failed,
                     "smokePassedCount": len(wait_result["completed"]),
                     "smokeFailureRate": round(smoke_failure_rate, 4),
+                    "smokePassRate": round(1 - smoke_failure_rate, 4) if smoke_total else 0,
                 })
-                if smoke_total and smoke_failed:
+                if smoke_total and smoke_failure_rate > 0.5:
                     stop_reason = _agent_smoke_failure_bucket(failure_reasons, locals().get("dry_run_blocked", []))
                     stop_info = {
                         "enabled": True,
@@ -8448,12 +8454,13 @@ def _tool_run_sonic(run):
                         "smokeFailedCount": smoke_failed,
                         "smokePassedCount": len(wait_result["completed"]),
                         "smokeFailureRate": round(smoke_failure_rate, 4),
-                        "rule": "首批冒烟存在失败时停止自动扩展；先修复入口、等待或定位问题，避免批量制造同类失败。",
+                        "smokePassRate": round(1 - smoke_failure_rate, 4),
+                        "rule": "首批冒烟通过率低于 50% 时停止自动扩展；先修复入口、等待或定位问题，避免批量制造同类失败。",
                     }
                     gate.update(stop_info)
                     run_artifacts["runnerExecutionGate"] = gate
                     run_artifacts["runnerSmokeGate"] = stop_info
-                    summary_parts.append(f"首批冒烟失败 {smoke_failed}/{smoke_total}，已停止后续批量执行：{stop_reason}")
+                    summary_parts.append(f"首批冒烟通过率低于 50%（失败 {smoke_failed}/{smoke_total}），已停止后续批量执行：{stop_reason}")
                 elif smoke_total and gate_deferred:
                     expand_limit = min(AGENT_GENERATED_RUNNER_EXPAND_LIMIT, AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT)
                     expand_refs = gate_deferred[:expand_limit]
@@ -8466,7 +8473,7 @@ def _tool_run_sonic(run):
                         "remainingDeferredCount": len(remaining_deferred),
                     })
                     summary_parts.append(
-                        f"首批冒烟全部通过，继续小批量执行剩余 executable {len(expand_refs)} 个"
+                        f"首批冒烟通过率不低于 50%，继续小批量执行剩余 executable {len(expand_refs)} 个"
                     )
                     expanded_created = _agent_create_runner_jobs_for_refs(
                         run,
