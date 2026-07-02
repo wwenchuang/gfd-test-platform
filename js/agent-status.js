@@ -207,13 +207,124 @@ function agentProgressHtml(run = currentAgentRun()) {
   `;
 }
 
+function artifactHasValue(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function firstArtifactValue(...values) {
+  return values.find(artifactHasValue);
+}
+
+function agentGeneratedCaseArtifact(artifacts = {}) {
+  const generatedCases = artifacts.generatedCases;
+  const generatedGroups = artifacts.generatedCaseGroups || artifacts.yamlValidation?.executionGroups;
+  const matchedCases = Array.isArray(artifacts.matchedCases) && artifacts.matchedCases.length
+    ? artifacts.matchedCases
+    : null;
+  const payload = {};
+  if (artifactHasValue(generatedCases)) payload.generatedCases = generatedCases;
+  if (artifactHasValue(generatedGroups)) payload.executionGroups = generatedGroups;
+  if (matchedCases) payload.matchedCases = matchedCases;
+  if (artifactHasValue(artifacts.caseDraft)) payload.caseDraft = artifacts.caseDraft;
+  if (artifactHasValue(artifacts.cases)) payload.cases = artifacts.cases;
+  if (artifactHasValue(artifacts.qualityReport)) {
+    const quality = artifacts.qualityReport || {};
+    payload.qualitySummary = {
+      status: quality.statusText || quality.status || '',
+      totalCaseCount: quality.totalCaseCount,
+      automationCaseCount: quality.automationCaseCount,
+      manualCaseCount: quality.manualCaseCount,
+      yamlFileCount: quality.yamlFileCount,
+    };
+  }
+  return artifactHasValue(payload) ? payload : null;
+}
+
+function agentYamlRefsFromArtifacts(artifacts = {}) {
+  const refs = [];
+  const seen = new Set();
+  const add = (raw, source, statusText = '') => {
+    if (!raw || typeof raw !== 'object') return;
+    const item = {...raw};
+    item.source = item.source || source;
+    item.statusText = item.statusText || statusText;
+    const key = [
+      item.module || '',
+      item.file || item.name || '',
+      item.path || '',
+      item.source || '',
+      item.statusText || '',
+    ].join('::');
+    if (seen.has(key)) return;
+    seen.add(key);
+    refs.push(item);
+  };
+  (Array.isArray(artifacts.yamlRefs) ? artifacts.yamlRefs : []).forEach(item => add(item, 'yamlRefs', '可执行'));
+  (Array.isArray(artifacts.quarantinedYamlRefs) ? artifacts.quarantinedYamlRefs : []).forEach(item => add(item, 'quarantinedYamlRefs', '已隔离'));
+  const validation = artifacts.yamlValidation || {};
+  (Array.isArray(validation.quarantinedRefs) ? validation.quarantinedRefs : []).forEach(item => add(item, 'yamlValidation.quarantinedRefs', '已隔离'));
+  const pipeline = artifacts.generationPipeline || {};
+  (Array.isArray(pipeline.yamlFiles) ? pipeline.yamlFiles : []).forEach(file => {
+    if (typeof file === 'string') add({file}, 'generationPipeline.yamlFiles', '已生成');
+    else add(file, 'generationPipeline.yamlFiles', '已生成');
+  });
+  (Array.isArray(artifacts.generatedYamlPaths) ? artifacts.generatedYamlPaths : []).forEach(path => add({path}, 'generatedYamlPaths', '已生成'));
+  return refs;
+}
+
+function agentYamlArtifactPayload(artifacts = {}) {
+  const raw = firstArtifactValue(artifacts.generatedYaml, artifacts.yamlDraft, artifacts.yaml);
+  if (typeof raw === 'string' && raw.trim()) return raw;
+  const refs = agentYamlRefsFromArtifacts(artifacts);
+  const validation = artifacts.yamlValidation || {};
+  const pipeline = artifacts.generationPipeline || {};
+  if (!refs.length && !artifactHasValue(validation) && !artifactHasValue(pipeline)) return null;
+  return {
+    note: refs.length
+      ? '本次 YAML 已按单用例拆分保存，不再以内联大 YAML 展示。可在下方文件清单中打开或下载。'
+      : '本次没有可展示的 Midscene YAML 文件。',
+    yamlFiles: refs.map(item => ({
+      module: item.module || '',
+      file: item.file || item.name || '',
+      path: item.path || '',
+      status: item.statusText || item.executionLevel || item.level || item.reason || '',
+      score: item.score || item.executableScore?.score || '',
+      smoke: Boolean(item.smoke || item.smokeCandidate || item.runnerCandidate),
+      issues: item.issues || item.executableScore?.errors || item.executableScore?.warnings || [],
+    })),
+    validation: artifactHasValue(validation) ? {
+      ok: validation.ok,
+      partialOk: validation.partialOk,
+      passedCount: validation.passedCount,
+      failedCount: validation.failedCount,
+      issues: validation.issues || [],
+    } : null,
+    generation: artifactHasValue(pipeline) ? {
+      caseSetId: pipeline.caseSetId,
+      yamlFileCount: pipeline.yamlFileCount,
+      caseCount: pipeline.caseCount,
+      source: pipeline.source,
+    } : null,
+  };
+}
+
 function agentArtifactText(tab, run = currentAgentRun()) {
   if (!run) return '暂无 Agent 产物。启动 Agent 后这里会展示生成结果。';
   const artifacts = run.artifacts || {};
-  if (tab === 'plan') return stringifyArtifact(artifacts.plan || '暂无执行计划');
-  if (tab === 'cases') return stringifyArtifact(artifacts.matchedCases || artifacts.caseDraft || artifacts.cases || '暂无测试用例产物');
+  if (!artifactHasValue(artifacts)) return 'Agent 运行详情尚未加载完整，请稍等或点击“查看轨迹”重新载入。';
+  if (tab === 'plan') return stringifyArtifact(firstArtifactValue(artifacts.plan) || '暂无执行计划');
+  if (tab === 'cases') return stringifyArtifact(agentGeneratedCaseArtifact(artifacts) || '暂无测试用例产物');
   if (tab === 'quality') return stringifyArtifact(artifacts.qualityReport || '暂无质量检查结果');
-  if (tab === 'yaml') return String(artifacts.generatedYaml || artifacts.yamlDraft || artifacts.yaml || '暂无 Midscene YAML');
+  if (tab === 'yaml') {
+    const yamlPayload = agentYamlArtifactPayload(artifacts);
+    return typeof yamlPayload === 'string'
+      ? yamlPayload
+      : stringifyArtifact(yamlPayload || '暂无 Midscene YAML');
+  }
   if (tab === 'validation') return stringifyArtifact({
     yamlValidation: artifacts.yamlValidation || artifacts.validation || '暂无 YAML 校验结果',
     generatedCaseGroups: artifacts.generatedCaseGroups || artifacts.yamlValidation?.executionGroups || null,
@@ -930,17 +1041,45 @@ async function copyAgentArtifact() {
   }
 }
 
-function downloadAgentYaml() {
-  const yaml = agentArtifactText('yaml', currentAgentRun());
-  if (!yaml || yaml.includes('暂无 Midscene YAML')) {
+async function downloadAgentYaml() {
+  const run = currentAgentRun();
+  const artifacts = run?.artifacts || {};
+  let yaml = firstArtifactValue(artifacts.generatedYaml, artifacts.yamlDraft, artifacts.yaml);
+  let suffix = 'yaml';
+  if (!yaml) {
+    const refs = agentYamlRefsFromArtifacts(artifacts);
+    const chunks = [];
+    for (const ref of refs) {
+      let content = typeof ref.content === 'string' && ref.content.trim() ? ref.content : '';
+      const mod = ref.module || '';
+      const file = ref.file || ref.name || '';
+      if (!content && mod && file && typeof apiTextRequest === 'function') {
+        try {
+          content = await apiTextRequest(`/file?module=${encodeURIComponent(mod)}&file=${encodeURIComponent(file)}`);
+        } catch {
+          content = '';
+        }
+      }
+      if (content && content.trim()) {
+        chunks.push(`# ${[mod, file].filter(Boolean).join('/') || ref.path || 'YAML'}\n${content.trim()}`);
+      }
+    }
+    if (chunks.length) {
+      yaml = chunks.join('\n\n---\n\n');
+    } else if (refs.length) {
+      suffix = 'json';
+      yaml = stringifyArtifact(agentYamlArtifactPayload(artifacts));
+    }
+  }
+  if (!yaml || String(yaml).includes('暂无 Midscene YAML')) {
     showToast('暂无可下载 YAML', 'error');
     return;
   }
-  const blob = new Blob([yaml], {type: 'text/yaml;charset=utf-8'});
+  const blob = new Blob([String(yaml)], {type: suffix === 'yaml' ? 'text/yaml;charset=utf-8' : 'application/json;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${safeFilename(currentAgentRun()?.options?.goal || 'agent-yaml')}.yaml`;
+  a.download = `${safeFilename(run?.options?.goal || run?.target || 'agent-yaml')}.${suffix}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
