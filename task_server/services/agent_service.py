@@ -52,7 +52,11 @@ from task_server.storage import (
     write_json_file,
 )
 from task_server.services.yaml_service import extract_midscene_tasks, slug_for_file, validate_midscene_yaml_executability
-from task_server.services.yaml_executable_scorer import rank_executable_yaml_refs, score_midscene_yaml_executable
+from task_server.services.yaml_executable_scorer import (
+    rank_executable_yaml_refs,
+    score_midscene_yaml_executable,
+    tap_prompt_looks_assertion,
+)
 from task_server.prompts import get_prompt_center
 
 # ---------------------------------------------------------------------------
@@ -3985,10 +3989,10 @@ def _agent_followup_wait_text(step):
 
 
 def _agent_repair_missing_interaction_followups(yaml_text):
-    """Locally add lightweight waits after generated interactions.
+    """Locally repair generated YAML executable-gate issues.
 
-    This fixes executable-gate structure only. It does not add business
-    assertions, expand scenarios, or change the intended flow.
+    This fixes structure only. It does not add business assertions, expand
+    scenarios, or change the intended flow.
     """
     if pyyaml is None or not str(yaml_text or "").strip():
         return {"changed": False, "content": yaml_text, "changes": []}
@@ -4013,6 +4017,19 @@ def _agent_repair_missing_interaction_followups(yaml_text):
                 index += 1
                 continue
             action_keys = [key for key in step.keys() if key in MIDSCENE_FLOW_ACTIONS]
+            if "aiTap" in action_keys and tap_prompt_looks_assertion(_agent_step_prompt_text(step)):
+                prompt = str(step.get("aiTap") or "").strip()
+                if prompt:
+                    step.pop("aiTap", None)
+                    step["aiWaitFor"] = prompt
+                    step.setdefault("timeout", 60000)
+                    changes.append({
+                        "task": task.get("name") or f"tasks[{task_index}]",
+                        "flowIndex": index,
+                        "changed": "aiTap -> aiWaitFor",
+                        "prompt": prompt[:180],
+                    })
+                    action_keys = [key for key in step.keys() if key in MIDSCENE_FLOW_ACTIONS]
             if (
                 any(action in AGENT_TRANSITION_ACTIONS for action in action_keys)
                 and not _agent_flow_has_followup_wait(flow, index)
@@ -4394,7 +4411,7 @@ def _agent_yaml_dry_run_rows(run, refs):
                 dry_after = _agent_yaml_dry_run_for_ref(run, repaired_ref)
                 dry_compact_after = _compact_yaml_dry_run_result(dry_after)
                 auto_repair = {
-                    "type": "local_missing_followup_wait",
+                    "type": "local_yaml_executable_gate_repair",
                     "changed": True,
                     "changes": list(repaired.get("changes") or [])[:12],
                     "ok": bool(dry_compact_after.get("ok")) and executable_score_after.get("executionLevel") == "executable",

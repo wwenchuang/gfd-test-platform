@@ -33,6 +33,16 @@ NON_TAP_INTENT_WORDS = (
     "检查", "验证", "确认是否", "是否展示", "是否显示", "是否存在",
     "页面展示", "页面显示", "页面稳定展示", "文案清晰", "可见", "存在",
 )
+TAP_ACTION_WORDS = (
+    "点击", "点按", "轻触", "选择", "进入", "打开", "切换", "返回", "关闭",
+    "上传", "提交", "下一步", "上一步", "确认打印", "确认按钮", "确定按钮",
+    "开始", "重试", "刷新", "搜索", "滑动", "滚动", "长按", "勾选", "取消",
+    "保存", "下载",
+)
+ASSERTION_CONTEXT_WORDS = (
+    "是否", "页面", "展示", "显示", "存在", "可见", "加载", "稳定",
+    "正确", "一致", "结果", "文案", "状态",
+)
 GENERIC_QUERY_WORDS = ("页面", "按钮", "元素", "内容", "状态", "结果", "区域", "入口")
 MANUAL_HINT_WORDS = (
     "人工", "手工", "manual", "肉眼", "视觉还原", "设计稿一致", "UI一致",
@@ -185,9 +195,18 @@ def _tap_prompt_looks_assertion(text: str) -> bool:
     compact = re.sub(r"\s+", "", prompt)
     if not compact:
         return False
-    if compact.startswith(("检查", "验证", "确认", "等待")):
+    if any(word in compact for word in TAP_ACTION_WORDS):
+        return False
+    if compact.startswith(("检查", "验证")):
+        return True
+    if compact.startswith(("确认", "等待")) and any(word in compact for word in ASSERTION_CONTEXT_WORDS):
         return True
     return any(word in compact for word in NON_TAP_INTENT_WORDS)
+
+
+def tap_prompt_looks_assertion(text: str) -> bool:
+    """Public helper shared by Agent-side local YAML repair."""
+    return _tap_prompt_looks_assertion(text)
 
 
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:

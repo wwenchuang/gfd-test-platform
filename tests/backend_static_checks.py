@@ -230,6 +230,7 @@ def check_yaml_static_validation_and_patterns():
         rank_executable_yaml_refs,
         score_midscene_yaml_executable,
     )
+    from task_server.services.agent_service import _agent_repair_missing_interaction_followups
     from task_server.services.yaml_template_matcher import (
         build_yaml_template_matcher_text,
         evaluate_baseline_template_matching,
@@ -302,6 +303,22 @@ def check_yaml_static_validation_and_patterns():
 """
     generic_query_score = score_midscene_yaml_executable(generic_query_yaml)
     require(generic_query_score.get("executionLevel") != "executable" and any("aiQuery" in reason for reason in generic_query_score.get("reasons", [])), "Generic aiQuery must downgrade generated YAML")
+    wait_then_click_yaml = """android:
+  tasks:
+    - name: 百度网盘入口基础可见性
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 等待首页加载稳定，点击「文档打印」icon
+        - aiWaitFor: 文档打印首页加载完成
+        - aiAssert: 百度网盘入口按钮可见
+"""
+    wait_then_click_score = score_midscene_yaml_executable(wait_then_click_yaml)
+    require(
+        wait_then_click_score.get("executionLevel") == "executable"
+        and not any("aiTap 描述像检查/断言" in reason for reason in wait_then_click_score.get("reasons", [])),
+        "Generated YAML scorer must not block actionable aiTap prompts that include wait context and a real click target",
+    )
     assertion_tap_yaml = """android:
   tasks:
     - name: 文档打印首页展示百度网盘入口
@@ -319,6 +336,13 @@ def check_yaml_static_validation_and_patterns():
         assertion_tap_score.get("executionLevel") != "executable"
         and any("aiTap 描述像检查/断言" in reason for reason in assertion_tap_score.get("reasons", [])),
         "Generated YAML scorer must block assertion-like aiTap prompts before Runner execution",
+    )
+    repaired_assertion_tap = _agent_repair_missing_interaction_followups(assertion_tap_yaml)
+    require(
+        repaired_assertion_tap.get("changed")
+        and "aiWaitFor" in repaired_assertion_tap.get("content", "")
+        and score_midscene_yaml_executable(repaired_assertion_tap.get("content", "")).get("executionLevel") == "executable",
+        "Agent validation must locally repair assertion-like aiTap prompts before failing the whole run",
     )
     boundary_smoke_yaml = """android:
   tasks:
