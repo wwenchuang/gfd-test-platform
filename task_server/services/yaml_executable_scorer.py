@@ -20,12 +20,18 @@ SMOKE_WORDS = ("冒烟", "P0", "P1", "入口", "主流程", "核心", "基础", 
 SMOKE_EXCLUDE_WORDS = (
     "未安装", "拒绝授权", "授权失败", "非会员", "权限", "边界", "异常", "降级",
     "防抖", "重复", "历史", "返回", "缓存", "弱网", "超时", "宽屏", "多设备",
-    "一致性", "失败", "错误", "不可用", "无数据", "空状态", "极限",
+    "一致性", "弹窗", "拦截", "失败", "错误", "不可用", "无数据", "空状态", "极限",
 )
+SMOKE_STRONG_WORDS = ("冒烟", "P0", "P1", "主流程", "主链", "核心", "基础")
+SMOKE_NAME_WORDS = ("入口", "展示")
 MAIN_CHAIN_WORDS = ("主流程", "主链", "核心", "入口", "开始创作", "AI建模", "图片建模", "文字建模", "语音创作", "生成模型")
 VAGUE_PHRASES = (
     "检查是否正常", "确认是否正常", "页面正常", "功能正常", "验证功能正常",
     "验证页面正确", "检查页面正确", "页面正确", "结果正常", "状态正常",
+)
+NON_TAP_INTENT_WORDS = (
+    "检查", "验证", "确认是否", "是否展示", "是否显示", "是否存在",
+    "页面展示", "页面显示", "页面稳定展示", "文案清晰", "可见", "存在",
 )
 GENERIC_QUERY_WORDS = ("页面", "按钮", "元素", "内容", "状态", "结果", "区域", "入口")
 MANUAL_HINT_WORDS = (
@@ -98,10 +104,16 @@ def _has_followup_wait_or_terminal(flow: List[Any], index: int) -> bool:
 
 
 def _task_smoke_candidate(task: Dict[str, Any]) -> bool:
-    text = str(task.get("name") or "") + " " + " ".join(_step_text(step) for step in task.get("flow") or [])
-    if _has_smoke_exclusion(text):
+    name_text = " ".join([
+        str(task.get("name") or ""),
+        str(task.get("priority") or ""),
+        str(task.get("tags") or ""),
+    ])
+    if _has_smoke_exclusion(name_text):
         return False
-    return any(word in text for word in SMOKE_WORDS)
+    if any(word in name_text for word in SMOKE_STRONG_WORDS):
+        return True
+    return any(word in name_text for word in SMOKE_NAME_WORDS)
 
 
 def _has_smoke_exclusion(text: str) -> bool:
@@ -117,6 +129,17 @@ def _ref_smoke_excluded(item: dict, score: dict, task_scores: List[dict]) -> boo
         " ".join(" ".join(str(reason) for reason in (task.get("reasons") or [])) for task in task_scores),
     ])
     return _has_smoke_exclusion(label)
+
+
+def _ref_has_smoke_priority(item: dict, task_scores: List[dict]) -> bool:
+    label = " ".join([
+        str(item.get("file") or ""),
+        str(item.get("module") or ""),
+        str(item.get("priority") or ""),
+        " ".join(str(task.get("priority") or "") for task in task_scores),
+    ])
+    match = PRIORITY_RE.search(label)
+    return bool(match and match.group(1).upper() in ("P0", "P1"))
 
 
 def _task_priority(task: Dict[str, Any], fallback_text: str = "") -> str:
@@ -155,6 +178,16 @@ def _ai_query_too_generic(text: str) -> bool:
         return True
     compact = re.sub(r"[，。！？、,.!?;；:：\"'“”‘’（）()【】\[\]\s]", "", query)
     return compact in GENERIC_QUERY_WORDS
+
+
+def _tap_prompt_looks_assertion(text: str) -> bool:
+    prompt = str(text or "").strip()
+    compact = re.sub(r"\s+", "", prompt)
+    if not compact:
+        return False
+    if compact.startswith(("检查", "验证", "确认", "等待")):
+        return True
+    return any(word in compact for word in NON_TAP_INTENT_WORDS)
 
 
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
@@ -233,6 +266,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         missing_followups = 0
         vague_steps = 0
         generic_queries = 0
+        non_tap_intents = 0
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
         if flow and not start_guard:
@@ -253,6 +287,8 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
                 transition_count += 1
                 if "aiTap" in actions and not (baseline_evidence or _has_previous_wait(flow, step_index)):
                     unguarded_taps += 1
+                if "aiTap" in actions and _tap_prompt_looks_assertion(_step_text(step)):
+                    non_tap_intents += 1
                 if not _has_followup_wait_or_terminal(flow, step_index):
                     missing_followups += 1
             step_text = _step_text(step)
@@ -272,6 +308,9 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if unguarded_taps:
             warnings.append(f"{unguarded_taps} 个 aiTap 前缺少就近 aiWaitFor/sleep 或成功基线依据")
             score -= min(35, 12 * unguarded_taps)
+        if non_tap_intents:
+            warnings.append(f"{non_tap_intents} 个 aiTap 描述像检查/断言，不应点击；应改为 aiWaitFor 或 aiAssert")
+            score -= min(45, 30 * non_tap_intents)
         if missing_followups:
             warnings.append(f"{missing_followups} 个交互动作后缺少等待或终态判断")
             score -= min(25, 6 * missing_followups)
@@ -357,6 +396,7 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
                 or item.get("smokeCandidate") is True
                 or item.get("runnerCandidate") is True
                 or score.get("smokeCandidate") is True
+                or _ref_has_smoke_priority(item, task_scores)
                 or any(task.get("smokeCandidate") for task in task_scores)
             )
             smoke_excluded = _ref_smoke_excluded(item, score, task_scores)

@@ -1887,18 +1887,6 @@ def external_activity_cleanup_flow(indent):
     return [
         indent + "- runAdbShell: " + yaml_text("input keyevent 3"),
         indent + "- sleep: 500",
-        indent + "- runAdbShell: " + yaml_text("input keyevent 187"),
-        indent + "- sleep: 1000",
-        indent + "- runAdbShell: " + yaml_text("input swipe 540 1900 540 350 300"),
-        indent + "- sleep: 500",
-        indent + "- runAdbShell: " + yaml_text("input swipe 540 1900 540 350 300"),
-        indent + "- sleep: 500",
-        indent + "- runAdbShell: " + yaml_text("input swipe 540 1900 540 350 300"),
-        indent + "- sleep: 500",
-        indent + "- runAdbShell: " + yaml_text("input keyevent 3"),
-        indent + "- sleep: 500",
-        indent + "- runAdbShell: " + yaml_text("am kill-all"),
-        indent + "- sleep: 500",
     ]
 
 

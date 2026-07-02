@@ -302,6 +302,24 @@ def check_yaml_static_validation_and_patterns():
 """
     generic_query_score = score_midscene_yaml_executable(generic_query_yaml)
     require(generic_query_score.get("executionLevel") != "executable" and any("aiQuery" in reason for reason in generic_query_score.get("reasons", [])), "Generic aiQuery must downgrade generated YAML")
+    assertion_tap_yaml = """android:
+  tasks:
+    - name: 文档打印首页展示百度网盘入口
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 点击「文档打印」icon
+        - aiWaitFor: 文档打印首页加载完成
+        - aiTap: 检查页面是否展示「百度网盘」入口按钮
+        - aiWaitFor: 页面稳定展示「百度网盘」入口按钮，文案清晰可点击
+        - aiAssert: 页面稳定展示「百度网盘」入口按钮，文案清晰可点击
+"""
+    assertion_tap_score = score_midscene_yaml_executable(assertion_tap_yaml)
+    require(
+        assertion_tap_score.get("executionLevel") != "executable"
+        and any("aiTap 描述像检查/断言" in reason for reason in assertion_tap_score.get("reasons", [])),
+        "Generated YAML scorer must block assertion-like aiTap prompts before Runner execution",
+    )
     boundary_smoke_yaml = """android:
   tasks:
     - name: 未安装百度App时WebView降级跳转成功
@@ -357,9 +375,15 @@ def check_yaml_static_validation_and_patterns():
         "smokeCandidate": True,
         "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "name": "非会员用户访问入口权限边界校验", "smokeCandidate": True, "mainBusinessChain": False}],
     }
+    popup_score = {
+        **executable_score,
+        "smokeCandidate": True,
+        "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "name": "跳转过程中弹窗拦截处理", "smokeCandidate": True, "mainBusinessChain": False}],
+    }
     selected, blocked = rank_executable_yaml_refs([
         {"file": "01-normal.yaml", "executableScore": normal_smoke_score},
         {"file": "02-boundary.yaml", "executableScore": excluded_smoke_score, "smoke": True},
+        {"file": "03-popup.yaml", "executableScore": popup_score, "smoke": True},
     ], limit=3)
     require(
         len(selected) == 1
