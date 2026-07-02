@@ -133,6 +133,7 @@ from task_server.services.runner_service import (
     normalize_device_list,
     platform_preflight_dashboard,
     public_report_url,
+    register_runner,
     runner_device_ids,
     runtime_env_preview,
     save_runners,
@@ -3386,20 +3387,8 @@ def _post_runner_heartbeat(handler, qs):
     if _require_user_auth(handler):
         return
     d = handler._body()
-    runner_id = d.get("runner_id") or d.get("runnerId") or "runner"
-    devices = normalize_device_list(d.get("devices") or [])
-    with RUNNER_LOCK:
-        runners = load_runners()
-        runners[runner_id] = {
-            "runner_id": runner_id,
-            "devices": devices,
-            "workspace": d.get("workspace", ""),
-            "hostname": d.get("hostname", ""),
-            "last_seen": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "last_seen_ts": time.time()
-        }
-        save_runners(runners)
-    handler._json({"ok": True, "runner_id": runner_id, "devices": devices})
+    record = register_runner(d)
+    handler._json({"ok": True, "runner_id": record.get("runner_id"), "devices": record.get("devices") or [], "capabilities": record.get("capabilities") or {}})
 
 
 # ── 生成批次冒烟重跑 ───────────────────────────────────────────────
