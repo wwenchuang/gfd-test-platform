@@ -1633,6 +1633,7 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
   const generatedCount = ['executable_cases', 'needs_review_cases', 'draft_cases', 'manual_cases']
     .reduce((sum, key) => sum + ((groups[key] || []).length), 0);
   const smokeLimit = agentGeneratedSmokeRerunLimit(artifacts, smokeExecutableCount);
+  const remainingLimit = agentGeneratedSmokeRerunLimit(artifacts, remainingExecutableCount || (groups.executable_cases || []).length);
   const labels = [
     ['executable_cases', '可执行', '可自动进入 Runner 首批冒烟'],
     ['needs_review_cases', '需确认', '需要人工看原因后再决定是否执行'],
@@ -1667,18 +1668,18 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
       <div class="section-head">
         <div>
           <strong>生成结果执行分层</strong>
-          <p>平台会先下发“可执行”里的首批冒烟用例；首批失败率不高时会继续扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
+          <p>平台会先下发“可执行”里的首批冒烟用例；首批全部通过后才会小批量扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
         </div>
         ${mindmap.caseSetId && (smokeExecutableCount || remainingExecutableCount || generatedCount) ? `
           <div class="review-actions">
             ${smokeExecutableCount ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${smokeLimit}, false, ${smokeExecutableCount})">重跑首批冒烟 ${escapeHtml(smokeLimit)}/${escapeHtml(smokeExecutableCount)}</button>` : ''}
             ${smokeExecutableCount > smokeLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${smokeExecutableCount})">重跑全部冒烟 ${escapeHtml(smokeExecutableCount)}</button>` : ''}
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${Math.max(remainingExecutableCount, generatedCount)}, 'remaining_executable')">继续执行剩余可执行</button>
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${generatedCount}, 'all_executable')">重新评分并执行当前可执行</button>
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', ${remainingLimit}, false, ${Math.max(remainingExecutableCount, (groups.executable_cases || []).length)}, 'remaining_executable')">继续下一批可执行 ${escapeHtml(remainingLimit)}/${escapeHtml(Math.max(remainingExecutableCount, (groups.executable_cases || []).length))}</button>
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(mindmap.caseSetId)}, '', 0, true, ${generatedCount}, 'all_executable')">执行全部当前可执行</button>
           </div>
         ` : ''}
       </div>
-      ${mindmap.caseSetId ? '<p>重跑首批冒烟会按本次需求规模选择 3/5/8 条；全部冒烟需要手动点“重跑全部冒烟”，不会重新上传资料或重新分析需求。</p>' : ''}
+      ${mindmap.caseSetId ? '<p>重跑首批冒烟会按本次需求规模选择 3/5/8 条；继续执行也默认按小批次下发。执行全部可执行需要手动触发，不会重新上传资料或重新分析需求。</p>' : ''}
       <div class="report-summary-grid final-report-metrics">
         ${labels.map(([key, label]) => `<div><span>${label}</span><strong>${escapeHtml(groups[key].length)}</strong></div>`).join('')}
       </div>
@@ -1692,7 +1693,7 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
   if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
   let stop = '首批冒烟准入已启用';
   if (gate.stopFurtherExecution) {
-    stop = `已停止后续批量执行：${gate.reason || '首批 smoke 失败率过高'}`;
+    stop = `已停止后续批量执行：${gate.reason || '首批冒烟存在失败'}`;
   } else if (gate.expandedExecution) {
     stop = `首批冒烟通过，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
   }

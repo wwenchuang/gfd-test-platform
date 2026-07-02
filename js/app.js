@@ -2390,6 +2390,7 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
     .reduce((sum, key) => sum + (groups[key] || []).length, 0);
   const visibleRefs = refs.slice(0, 12);
   const defaultLimit = generatedSmokeRerunLimit(summary, refs.length);
+  const remainingLimit = generatedSmokeRerunLimit(summary, remainingExecutableCount || executableCount);
   return `
     <div class="review-panel generated-smoke-adjustment">
       <div class="section-head" style="align-items:flex-start;">
@@ -2402,8 +2403,8 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
           <div class="review-actions">
             ${refs.length ? `<button class="btn-sm success" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${defaultLimit}, false, ${refs.length})">重跑首批冒烟 ${escapeHtml(defaultLimit)}/${escapeHtml(refs.length)}</button>` : ''}
             ${refs.length > defaultLimit ? `<button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${refs.length})">重跑全部冒烟 ${escapeHtml(refs.length)}</button>` : ''}
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${Math.max(remainingExecutableCount, generatedCount)}, 'remaining_executable')">继续执行剩余可执行</button>
-            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${generatedCount}, 'all_executable')">重新评分并执行当前可执行</button>
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, ${remainingLimit}, false, ${Math.max(remainingExecutableCount, executableCount)}, 'remaining_executable')">继续下一批可执行 ${escapeHtml(remainingLimit)}/${escapeHtml(Math.max(remainingExecutableCount, executableCount))}</button>
+            <button class="btn-sm" onclick="rerunGenerationSmokeCases(${jsArg(caseSetId)}, ${jsArg(mod)}, 0, true, ${generatedCount}, 'all_executable')">执行全部当前可执行</button>
           </div>
         ` : ''}
       </div>
@@ -2428,7 +2429,7 @@ function generationSmokeAdjustmentHtml(summary={}, mod='', caseSetId='') {
       ` : `
         <div class="generate-hint">
           当前批次没有标记为可重跑的冒烟 YAML${executableCount ? `，但有 ${escapeHtml(executableCount)} 条可执行用例。` : '。'}
-          可以先在用例资产里手工编辑 YAML，保存后点击“重新评分并执行当前可执行”。
+          可以先在用例资产里手工编辑 YAML，保存后点击“执行全部当前可执行”或按小批次继续执行。
         </div>
       `}
       <p>如果你想让下次生成的用例结构变化，例如入口路径、先跑哪些场景、哪些不自动化，请在下面“人工确认 / 补充资料”中补充规则后重新生成。</p>

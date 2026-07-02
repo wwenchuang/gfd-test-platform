@@ -27,7 +27,10 @@ MANUAL_HINT_WORDS = (
     "人工", "手工", "manual", "肉眼", "视觉还原", "设计稿一致", "UI一致",
     "真实支付", "真实扣费", "后台造数", "线下确认", "外部人工",
 )
-BASELINE_HINT_RE = re.compile(r"(baseline\.|基线|matched\s*baseline|from\s*baseline|参考样例)", re.I)
+# Generated baseline metadata comments are trace data, not proof that the case
+# matched a successful baseline. Treat only explicit template/reference wording
+# as baseline execution evidence.
+BASELINE_HINT_RE = re.compile(r"(命中基线|相似基线|基线模板|matched\s*baseline|from\s*baseline|参考样例)", re.I)
 PRIORITY_RE = re.compile(r"\b(P[0-3])\b", re.I)
 
 

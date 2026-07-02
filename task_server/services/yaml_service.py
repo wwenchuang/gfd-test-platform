@@ -801,8 +801,16 @@ SCOPE_GUARD_UNREQUESTED_PATTERNS = (
     "规格切换", "分页", "旧入口", "骨架屏",
 )
 SCOPE_GUARD_CHANGE_KEYWORDS = (
-    "百度网盘", "baiduDisk", "网盘入口", "网盘导入", "新增入口", "导入入口",
+    "百度网盘", "网盘入口", "网盘导入", "百度导入", "新增入口", "导入入口",
+    "AI建模", "图片建模", "语音创作", "文字建模", "开始创作", "标牌", "印章",
+    "涂鸦建模", "模型导入", "模型上新", "中台", "耗材颜色", "确认耗材",
 )
+SCOPE_GUARD_GENERIC_TOKENS = {
+    "测试", "验证", "页面", "功能", "需求", "用例", "执行", "当前", "进行", "是否",
+    "可以", "需要", "点击", "进入", "打开", "显示", "相关", "流程", "按钮", "模块",
+    "状态", "结果", "完成", "成功", "失败", "检查", "确认", "用户", "操作", "场景",
+    "自动化", "生成", "入口", "新增", "调整", "支持", "正常", "展示", "首页",
+}
 
 
 def _scope_guard_join_values(*values) -> str:
@@ -815,6 +823,53 @@ def _scope_guard_join_values(*values) -> str:
         elif value not in (None, ""):
             parts.append(str(value))
     return " ".join(part for part in parts if part).strip()
+
+
+def _scope_guard_tokens(text: str) -> List[str]:
+    normalized = re.sub(r"REQ[-_ ]?\d+\s*[:：.-]?", " ", str(text or ""), flags=re.I)
+    normalized = normalized.lower()
+    raw = re.findall(r"[a-z0-9_.-]{2,}|[\u4e00-\u9fff]{2,}", normalized)
+    tokens: List[str] = []
+
+    def add(token: str):
+        token = str(token or "").strip().lower()
+        if not token or token in SCOPE_GUARD_GENERIC_TOKENS:
+            return
+        if re.fullmatch(r"\d+", token):
+            return
+        if token not in tokens:
+            tokens.append(token)
+
+    for token in raw:
+        add(token)
+        if re.fullmatch(r"[\u4e00-\u9fff]{5,}", token):
+            for size in (2, 3, 4):
+                for idx in range(0, max(0, len(token) - size + 1)):
+                    add(token[idx:idx + size])
+    return tokens
+
+
+def _scope_guard_topic_terms(requirement_blob: str) -> List[str]:
+    compact = re.sub(r"\s+", "", str(requirement_blob or ""))
+    terms = []
+    aliases = [
+        ("百度网盘", ("百度网盘", "网盘")),
+        ("AI建模", ("AI建模", "ai建模")),
+        ("图片建模", ("图片建模",)),
+        ("语音创作", ("语音创作", "语音输入")),
+        ("文字建模", ("文字建模", "文本输入")),
+        ("标牌", ("标牌",)),
+        ("印章", ("印章", "趣味印章")),
+        ("涂鸦建模", ("涂鸦建模", "涂鸦")),
+        ("模型导入", ("模型导入", "导入模型")),
+        ("模型上新", ("模型上新", "上新")),
+        ("耗材颜色", ("耗材颜色", "确认耗材")),
+        ("中台模型库", ("中台模型库", "中台")),
+    ]
+    for canonical, words in aliases:
+        if any(word in compact for word in words):
+            terms.append(canonical)
+    return list(dict.fromkeys(terms))
 
 
 def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_text: str = "") -> dict:
@@ -845,6 +900,10 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     case_blob = _scope_guard_join_values(
         case.get("title"),
         case.get("name"),
+        case.get("requirement_point"),
+        case.get("requirementPoint"),
+        case.get("source_requirement_point"),
+        case.get("sourceRequirementPoint"),
         case.get("scenario"),
         case.get("goal"),
         case.get("coverage"),
@@ -861,11 +920,22 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     )
     compact_requirement = re.sub(r"\s+", "", requirement_blob)
     compact_case = re.sub(r"\s+", "", case_blob)
+    compact_case_lower = compact_case.lower()
     reasons: List[str] = []
+
+    topic_terms = _scope_guard_topic_terms(requirement_blob)
+    if topic_terms:
+        missing_topics = [
+            term for term in topic_terms
+            if term.lower() not in compact_case_lower
+            and not any(alias.lower() in compact_case_lower for alias in _scope_guard_tokens(term))
+        ]
+        if len(missing_topics) == len(topic_terms):
+            reasons.append("用例未命中当前需求核心对象：" + "、".join(topic_terms[:4]))
 
     if compact_requirement and any(term in compact_requirement for term in SCOPE_GUARD_CHANGE_KEYWORDS):
         if not any(term in compact_case for term in SCOPE_GUARD_CHANGE_KEYWORDS):
-            reasons.append("未覆盖本需求新增/变更的入口或导入选项")
+            reasons.append("未覆盖本需求新增/变更的入口、模块或导入选项")
 
     for word in SCOPE_GUARD_UNREQUESTED_PATTERNS:
         if word in compact_case and word not in compact_requirement:
@@ -873,11 +943,62 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
             if len(reasons) >= 3:
                 break
 
+    requirement_tokens = _scope_guard_tokens(requirement_blob)
+    case_tokens = set(_scope_guard_tokens(case_blob))
+    strong_tokens = [
+        token for token in requirement_tokens
+        if len(token) >= 3 and token not in SCOPE_GUARD_GENERIC_TOKENS
+    ][:12]
+    if strong_tokens and case_tokens:
+        hit_count = sum(1 for token in strong_tokens if token in case_tokens or token in compact_case)
+        if hit_count == 0 and not reasons:
+            reasons.append("用例标题/步骤无法追溯到当前需求关键词：" + "、".join(strong_tokens[:5]))
+
     return {
         "ok": not reasons,
         "reasons": reasons,
         "rule": "生成用例必须能追溯到当前需求点；需求未提到的历史记录、缓存、超时、干扰等扩展场景不自动执行。",
     }
+
+
+def apply_generated_case_scope_gate(payload: Any) -> dict:
+    """Move off-scope generated automation cases out of the YAML execution pool."""
+    normalized = normalize_cases_payload(payload)
+    analysis = normalized.get("analysis") if isinstance(normalized.get("analysis"), dict) else {}
+    kept: List[dict] = []
+    moved: List[dict] = []
+    for case in normalized.get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        review = generated_case_requirement_scope_review(case, analysis)
+        if review.get("ok"):
+            kept.append(case)
+            continue
+        item = dict(case)
+        item["executionLevel"] = item.get("executionLevel") or "needs_review"
+        item["scopeReview"] = review
+        item["reason"] = "当前需求范围审查未通过：" + "；".join(review.get("reasons") or [])
+        item["suggested_setup"] = item.get("suggested_setup") or item.get("setup") or "人工确认是否属于本次需求范围；确认后可手动编辑 YAML 再执行"
+        moved.append(item)
+
+    if moved:
+        normalized["cases"] = kept
+        normalized["manual_cases"] = list(normalized.get("manual_cases") or []) + moved
+        review = normalized.setdefault("review", {})
+        review["scope_gate"] = {
+            "enabled": True,
+            "moved_to_manual_count": len(moved),
+            "kept_automation_count": len(kept),
+            "examples": [
+                {
+                    "title": item.get("title") or item.get("name") or "未命名用例",
+                    "reasons": (item.get("scopeReview") or {}).get("reasons") or [],
+                }
+                for item in moved[:8]
+            ],
+            "rule": "需求范围不匹配的生成用例不再转换为自动化 YAML，避免无关历史/相邻场景进入 Runner。",
+        }
+    return normalized
 
 
 YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
@@ -4955,6 +5076,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         review = payload.setdefault("review", {})
         review["smoke_selector_final_error"] = str(smoke_error)
         review["smoke_selector_final_policy"] = "最终冒烟筛选失败时不使用 P0/P1 或关键词兜底，保留现有显式 smoke 标记。"
+    payload = apply_generated_case_scope_gate(payload)
     payload["id"] = case_set_id
     payload["module"] = module
 

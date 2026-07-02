@@ -235,7 +235,11 @@ def check_yaml_static_validation_and_patterns():
         evaluate_baseline_template_matching,
         select_best_baseline_template,
     )
-    from task_server.services.yaml_service import dry_run_midscene_yaml, repair_generated_yaml_static_errors
+    from task_server.services.yaml_service import (
+        apply_generated_case_scope_gate,
+        dry_run_midscene_yaml,
+        repair_generated_yaml_static_errors,
+    )
 
     contract = load_yaml_action_contract()
     require("aiTap" in contract.get("allowed_actions", []), "YAML action contract must include real Midscene actions")
@@ -312,6 +316,32 @@ def check_yaml_static_validation_and_patterns():
         and len(blocked) == 2
         and any("非 AI 明确标记" in str(item.get("gateReason") or "") for item in blocked),
         "Runner gate must only auto-run AI-explicit smoke YAML and explain blocked executable YAML",
+    )
+    scoped_payload = apply_generated_case_scope_gate({
+        "analysis": {
+            "requirement_points": ["基础打印模块新增百度网盘入口"],
+            "business_flow": ["进入文档打印首页", "展示百度网盘入口", "点击百度网盘入口"],
+        },
+        "cases": [
+            {
+                "case_id": "BAIDU_001",
+                "title": "文档打印首页正常展示百度网盘入口",
+                "steps": ["进入文档打印首页", "等待百度网盘入口显示"],
+                "assertions": ["百度网盘入口可见"],
+            },
+            {
+                "case_id": "HISTORY_001",
+                "title": "历史打印记录干扰入口可见性",
+                "steps": ["进入历史打印记录", "检查入口显示"],
+                "assertions": ["入口可见"],
+            },
+        ],
+    })
+    require(
+        len(scoped_payload.get("cases") or []) == 1
+        and "百度网盘" in scoped_payload["cases"][0]["title"]
+        and any("历史打印记录" in str(item.get("title") or "") for item in scoped_payload.get("manual_cases") or []),
+        "Generated cases outside the current requirement scope must be kept out of the auto-run case pool",
     )
 
     examples = [{
@@ -1383,6 +1413,7 @@ def main():
     job_service_source = (ROOT / "task_server" / "services" / "job_service.py").read_text(encoding="utf-8")
     sonic_service_source = (ROOT / "task_server" / "services" / "sonic_service.py").read_text(encoding="utf-8")
     yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    yaml_executable_scorer_source = (ROOT / "task_server" / "services" / "yaml_executable_scorer.py").read_text(encoding="utf-8")
     ai_skill_service_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
     automation_filter_source = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
     knowledge_service_source = (ROOT / "task_server" / "services" / "knowledge_service.py").read_text(encoding="utf-8")
@@ -1525,10 +1556,13 @@ def main():
     require("def repair_generated_yaml_static_errors" in yaml_service_source and '"yamlStaticRepair"' in yaml_service_source and "只修复 YAML 结构和动作字段" in yaml_service_source, "Generated YAML must run a narrow static repair loop before writing/executing files")
     require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
     require("def _agent_yaml_dry_run_for_ref" in agent_service_source and '"yamlDryRun"' in agent_service_source and '"runnerDryRun"' in agent_service_source and "Runner 下发前 dry-run 未通过" in agent_service_source, "Agent must dry-run YAML before validation, precheck and Runner job creation")
-    require("AGENT_GENERATED_RUNNER_EXPAND_LIMIT" in agent_service_source and "expandedExecution" in agent_service_source and "继续执行剩余 executable" in agent_service_source, "Agent must expand beyond the initial smoke batch after generated YAML passes the smoke gate")
+    require("AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source and "首批冒烟存在失败时停止自动扩展" in agent_service_source and "expandedBatchLimit" in agent_service_source, "Agent must only expand generated YAML in batches after the first smoke batch fully passes")
+    require("def apply_generated_case_scope_gate" in yaml_service_source and "需求范围不匹配的生成用例不再转换为自动化 YAML" in yaml_service_source, "Generated cases outside current requirement scope must be kept out of auto-run YAML")
+    require("baseline.*" not in yaml_executable_scorer_source and "命中基线" in yaml_executable_scorer_source, "Generated baseline metadata comments must not be treated as successful baseline evidence")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
+    require("MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in env_example and "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in deploy_install, "Deployment scripts must expose generated YAML expansion batch size")
     require("MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS" in env_example and "MIDSCENE_YAML_BASELINE_CACHE_PATH" in env_example, "Deployment env example must expose YAML baseline cache knobs")
     install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
     require(
