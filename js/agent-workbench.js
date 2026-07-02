@@ -1894,6 +1894,56 @@ function renderGenerateYamlDetail(step, artifacts) {
   return html;
 }
 
+function renderValidateYamlDetail(step, artifacts) {
+  const validation = (artifacts || {}).yamlValidation || {};
+  const quarantined = Array.isArray((artifacts || {}).quarantinedYamlRefs)
+    ? (artifacts || {}).quarantinedYamlRefs
+    : (Array.isArray(validation.quarantinedRefs) ? validation.quarantinedRefs : []);
+  const results = Array.isArray(validation.results) ? validation.results : [];
+  const issues = Array.isArray(validation.issues) ? validation.issues : [];
+  const autoRepairs = Array.isArray(validation.autoRepairs) ? validation.autoRepairs.filter(Boolean) : [];
+  const passedCount = validation.passedCount ?? results.filter(item => item && item.ok).length;
+  const failedCount = validation.failedCount ?? results.filter(item => item && !item.ok).length;
+  let html = '<div class="match-detail agent-readable-detail">';
+  html += agentInfoGrid([
+    { label: '校验 YAML', value: results.length || (passedCount + failedCount) || '-' },
+    { label: '通过', value: passedCount || 0 },
+    { label: '已隔离', value: failedCount || quarantined.length || 0 },
+    { label: '自动修复', value: validation.autoRepairedCount ?? autoRepairs.length ?? 0 },
+    { label: '后续执行', value: quarantined.length || failedCount ? '只下发通过项' : '全部可继续' },
+  ]);
+  if (validation.partialOk) {
+    html += `<section class="agent-readable-panel"><strong>部分通过</strong><p>未通过的 YAML 已隔离为需人工复核，不会创建 Runner 任务；通过的 YAML 会继续进入执行前体检。</p></section>`;
+  }
+  if (autoRepairs.length) {
+    html += agentReadableList('自动修复', autoRepairs.slice(0, 8), item => {
+      const after = item.after || {};
+      const changes = Array.isArray(item.changes) ? item.changes.length : 0;
+      return `<b>${escapeHtml(item.type || '结构修复')}</b><span>补齐 ${escapeHtml(changes)} 处等待/终态判断；修复后 ${after.dryRunOk ? 'dry-run 通过' : '仍需复核'} · ${escapeHtml(after.executionLevel || '-')}</span>`;
+    });
+  }
+  if (quarantined.length) {
+    html += agentReadableList('已隔离 YAML', quarantined.slice(0, 12), item => {
+      const issuesText = Array.isArray(item.issues) && item.issues.length
+        ? item.issues.slice(0, 2).join('；')
+        : (item.reason || '未通过可执行性准入');
+      return `<b>${escapeHtml(item.file || item.path || '未命名 YAML')}</b><span>${escapeHtml(issuesText)}</span>`;
+    });
+  }
+  if (issues.length) {
+    html += agentReadableList('校验问题', issues.slice(0, 8));
+  }
+  if (results.length) {
+    html += agentReadableList('校验明细', results.slice(0, 20), item => {
+      const status = item.ok ? '通过' : '隔离';
+      const reason = Array.isArray(item.issues) && item.issues.length ? item.issues[0] : (item.reason || '');
+      return `<b>${escapeHtml(item.file || item.path || item.type || 'YAML')}</b><span>${escapeHtml(status)} · ${escapeHtml(item.executionLevel || '-')}${reason ? ' · ' + escapeHtml(reason) : ''}</span>`;
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
 // ===== ANALYZE_FAILURE 分析详情 =====
 function renderAnalysisDetail(step, artifacts) {
   const analysis = (artifacts || {}).failureAnalysis || {};
@@ -2194,6 +2244,7 @@ function renderStepDetail(step, run) {
     case 'case_retrieval': return renderMatchDetail(step, artifacts);
     case 'list_cases': return renderMatchDetail(step, artifacts);
     case 'generate_yaml': return renderGenerateYamlDetail(step, artifacts);
+    case 'validate_yaml': return renderValidateYamlDetail(step, artifacts);
     case 'execution_precheck': return renderExecutionPrecheckDetail(step, artifacts);
     case 'sonic_sync_case': return renderSonicSyncDetail(step, artifacts);
     case 'create_runner_job': return renderRunTaskDetail(step, artifacts);

@@ -1397,6 +1397,78 @@ def json_dumps_for_check(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def check_agent_yaml_validate_partial_quarantine():
+    from task_server.services import agent_service
+
+    good_yaml = """
+android:
+  tasks:
+    - name: "P0 AI建模入口冒烟"
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: "首页已加载完成，底部导航和 AI建模入口可见"
+        - aiTap: "底部中间 AI建模入口"
+        - aiWaitFor: "AI建模页已加载完成，开始创作入口可见"
+        - aiAssert: "AI建模页核心入口展示正常"
+"""
+    bad_yaml = """
+android:
+  tasks:
+    - name: "过泛的草稿用例"
+      flow:
+        - aiTap: "入口"
+        - aiWaitFor: "页面"
+"""
+    run = {
+        "runId": "agent-static-partial-validate",
+        "target": "AI建模 UI测试",
+        "artifacts": {
+            "generationPipeline": {"source": "agent_generate_yaml"},
+            "yamlRefs": [
+                {"type": "file", "file": "good.yaml", "content": good_yaml, "confirmed": True},
+                {"type": "file", "file": "bad.yaml", "content": bad_yaml, "confirmed": True},
+            ],
+        },
+    }
+    call = agent_service._tool_validate_yaml(run)
+    artifacts = run.get("artifacts") or {}
+    validation = artifacts.get("yamlValidation") or {}
+    require(call.get("status") == "PARTIAL_FAILED", "Agent YAML validation must not fail the whole run when at least one generated YAML passes")
+    require(validation.get("partialOk") is True and validation.get("passedCount") == 1 and validation.get("failedCount") == 1, "Partial YAML validation must record pass/fail counts")
+    require(len(artifacts.get("yamlRefs") or []) == 1 and len(artifacts.get("quarantinedYamlRefs") or []) == 1, "Failed generated YAML must be quarantined while passing YAML remains executable")
+
+
+def check_agent_yaml_validate_auto_repairs_missing_wait():
+    from task_server.services import agent_service
+
+    missing_wait_yaml = """
+android:
+  tasks:
+    - name: "P0 返回入口状态刷新"
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: "首页已加载完成，底部导航和 AI建模入口可见"
+        - aiAssert: "首页核心入口展示正常"
+        - aiTap: "从其他打印模块返回一寸引导页"
+"""
+    run = {
+        "runId": "agent-static-auto-repair-validate",
+        "target": "AI建模 UI测试",
+        "artifacts": {
+            "generationPipeline": {"source": "agent_generate_yaml"},
+            "yamlRefs": [
+                {"type": "file", "file": "repair.yaml", "content": missing_wait_yaml, "confirmed": True},
+            ],
+        },
+    }
+    call = agent_service._tool_validate_yaml(run)
+    validation = (run.get("artifacts") or {}).get("yamlValidation") or {}
+    require(call.get("status") == "SUCCESS", "Agent YAML validation must auto-repair missing post-interaction waits when the repaired YAML is executable")
+    require(validation.get("autoRepairedCount") == 1, "Auto repair count must be exposed for Agent YAML validation")
+    fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
+    require("aiWaitFor" in fixed_content and "返回后的目标页面已加载完成" in fixed_content, "Auto repair must insert a lightweight wait without adding extra business assertions")
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -1636,6 +1708,8 @@ def main():
     check_ai_skills_receive_yaml_reference_context()
     check_smoke_selection_requires_explicit_ai_mark()
     check_yaml_runner_eligibility_filter()
+    check_agent_yaml_validate_partial_quarantine()
+    check_agent_yaml_validate_auto_repairs_missing_wait()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()

@@ -3942,6 +3942,103 @@ def _yaml_ref_content(ref):
     return read_text_file(path, "") if path else ""
 
 
+AGENT_TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
+AGENT_FOLLOWUP_ACTIONS = {"aiWaitFor", "sleep", "aiAssert", "ai", "aiAction"}
+
+
+def _agent_flow_has_followup_wait(flow, index):
+    for nxt in flow[index + 1:index + 4]:
+        if isinstance(nxt, dict) and any(action in nxt for action in AGENT_FOLLOWUP_ACTIONS):
+            return True
+    return False
+
+
+def _agent_step_prompt_text(step):
+    if not isinstance(step, dict):
+        return ""
+    parts = []
+    for value in step.values():
+        if isinstance(value, (str, int, float)):
+            parts.append(str(value))
+    return " ".join(parts)
+
+
+def _agent_followup_wait_text(step):
+    text = _agent_step_prompt_text(step)
+    compact = re.sub(r"\s+", "", text)
+    if "返回" in compact:
+        return "返回后的目标页面已加载完成，关键入口或列表状态可见"
+    if any(word in compact for word in ("上传", "选择图片", "相册", "图库")):
+        return "图片选择或上传后的页面状态已稳定，可继续下一步"
+    if any(word in compact for word in ("确认", "下一步", "生成", "提交", "完成")):
+        return "当前操作后的页面已完成加载，下一步入口或结果状态可见"
+    if any(word in compact for word in ("滑动", "滚动", "横向")):
+        return "滑动后的目标区域已稳定显示"
+    return "当前操作后的页面状态已稳定，可继续下一步"
+
+
+def _agent_repair_missing_interaction_followups(yaml_text):
+    """Locally add lightweight waits after generated interactions.
+
+    This fixes executable-gate structure only. It does not add business
+    assertions, expand scenarios, or change the intended flow.
+    """
+    if pyyaml is None or not str(yaml_text or "").strip():
+        return {"changed": False, "content": yaml_text, "changes": []}
+    try:
+        parsed = pyyaml.safe_load(str(yaml_text or ""))
+    except Exception:
+        return {"changed": False, "content": yaml_text, "changes": []}
+    platform, tasks = extract_midscene_tasks(parsed)
+    if not tasks:
+        return {"changed": False, "content": yaml_text, "changes": []}
+    changes = []
+    for task_index, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            continue
+        flow = task.get("flow")
+        if not isinstance(flow, list):
+            continue
+        index = 0
+        while index < len(flow):
+            step = flow[index]
+            if not isinstance(step, dict):
+                index += 1
+                continue
+            action_keys = [key for key in step.keys() if key in MIDSCENE_FLOW_ACTIONS]
+            if (
+                any(action in AGENT_TRANSITION_ACTIONS for action in action_keys)
+                and not _agent_flow_has_followup_wait(flow, index)
+            ):
+                wait_text = _agent_followup_wait_text(step)
+                wait_step = {"aiWaitFor": wait_text, "timeout": 60000}
+                flow.insert(index + 1, wait_step)
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "afterFlowIndex": index + 1,
+                    "inserted": wait_text,
+                })
+                index += 2
+                continue
+            index += 1
+    if not changes:
+        return {"changed": False, "content": yaml_text, "changes": []}
+    try:
+        content = pyyaml.safe_dump(parsed, allow_unicode=True, sort_keys=False)
+    except Exception:
+        return {"changed": False, "content": yaml_text, "changes": []}
+    return {"changed": True, "content": content, "changes": changes}
+
+
+def _agent_write_repaired_yaml_ref(ref, content):
+    path = str(ref.get("path") or "").strip()
+    if path:
+        write_text_file(path, content)
+    else:
+        ref["content"] = content
+    return ref
+
+
 def validate_agent_yaml_content(yaml_text):
     """Agent 强校验统一走 yaml_service，避免迁移后各处规则不一致。"""
     check = validate_midscene_yaml_executability(yaml_text)
@@ -4252,6 +4349,45 @@ def _agent_yaml_dry_run_rows(run, refs):
         executable_score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
         dry = _agent_yaml_dry_run_for_ref(run, ref)
         dry_compact = _compact_yaml_dry_run_result(dry)
+        auto_repair = None
+        needs_repair = (
+            bool(content)
+            and (
+                not dry_compact.get("ok")
+                or "交互动作后缺少等待或终态判断" in "；".join(str(item) for item in (executable_score.get("reasons") or []))
+            )
+        )
+        if needs_repair:
+            repaired = _agent_repair_missing_interaction_followups(content)
+            if repaired.get("changed"):
+                repaired_ref = dict(ref)
+                _agent_write_repaired_yaml_ref(repaired_ref, repaired.get("content") or content)
+                strong_check_after = validate_agent_yaml_content(repaired.get("content") or "")
+                scored_ref_after = _score_agent_yaml_ref_for_execution(run, repaired_ref)
+                executable_score_after = scored_ref_after.get("executableScore") if isinstance(scored_ref_after.get("executableScore"), dict) else {}
+                dry_after = _agent_yaml_dry_run_for_ref(run, repaired_ref)
+                dry_compact_after = _compact_yaml_dry_run_result(dry_after)
+                auto_repair = {
+                    "type": "local_missing_followup_wait",
+                    "changed": True,
+                    "changes": list(repaired.get("changes") or [])[:12],
+                    "ok": bool(dry_compact_after.get("ok")) and executable_score_after.get("executionLevel") == "executable",
+                    "before": {
+                        "dryRunOk": bool(dry_compact.get("ok")),
+                        "executionLevel": executable_score.get("executionLevel"),
+                    },
+                    "after": {
+                        "dryRunOk": bool(dry_compact_after.get("ok")),
+                        "executionLevel": executable_score_after.get("executionLevel"),
+                    },
+                }
+                if auto_repair["ok"]:
+                    ref = repaired_ref
+                    content = repaired.get("content") or content
+                    strong_check = strong_check_after
+                    scored_ref = scored_ref_after
+                    executable_score = executable_score_after
+                    dry_compact = dry_compact_after
         scope_review = scored_ref.get("scopeReview") if isinstance(scored_ref.get("scopeReview"), dict) else {}
         scope_issues = list(scope_review.get("reasons") or []) if scope_review.get("ok") is False else []
         ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []
@@ -4267,6 +4403,8 @@ def _agent_yaml_dry_run_rows(run, refs):
             "dryRun": dry_compact,
             "strongCheck": strong_check,
         }
+        if auto_repair:
+            row["autoRepair"] = auto_repair
         results.append(row)
         if row.get("ok"):
             ok_count += 1
@@ -7396,19 +7534,88 @@ def _tool_validate_yaml(run):
             return call
 
         results, issues, ok_count = _agent_yaml_dry_run_rows(run, refs)
-        artifacts["yamlValidation"] = {"ok": not issues, "results": results, "issues": issues}
-        if issues:
+        passed_results = [row for row in results if isinstance(row, dict) and row.get("ok")]
+        failed_results = [row for row in results if isinstance(row, dict) and not row.get("ok")]
+        repaired_results = [
+            row for row in results
+            if isinstance(row, dict)
+            and isinstance(row.get("autoRepair"), dict)
+            and row.get("autoRepair", {}).get("ok")
+        ]
+        passed_refs = [
+            {
+                "type": row.get("type") or "file",
+                "module": row.get("module") or "",
+                "file": row.get("file") or "",
+                "path": row.get("path") or "",
+                "content": row.get("content") or "",
+                "confirmed": bool(row.get("confirmed", True)),
+                "reason": row.get("reason") or "",
+                "executionLevel": row.get("executionLevel") or "",
+                "executableScore": row.get("executableScore") if isinstance(row.get("executableScore"), dict) else {},
+                "scopeReview": row.get("scopeReview") if isinstance(row.get("scopeReview"), dict) else {},
+                "smoke": bool(row.get("smoke")),
+                "runnerCandidate": bool(row.get("runnerCandidate")),
+            }
+            for row in passed_results
+        ]
+        quarantined_refs = [
+            {
+                "type": row.get("type") or "file",
+                "module": row.get("module") or "",
+                "file": row.get("file") or "",
+                "path": row.get("path") or "",
+                "executionLevel": row.get("executionLevel") or "draft",
+                "issues": list(row.get("issues") or [])[:8],
+                "dryRun": row.get("dryRun") if isinstance(row.get("dryRun"), dict) else {},
+                "executableScore": row.get("executableScore") if isinstance(row.get("executableScore"), dict) else {},
+                "reason": "YAML dry-run 或可执行性准入未通过，已隔离，不下发 Runner。",
+            }
+            for row in failed_results
+        ]
+        if passed_refs and (failed_results or repaired_results):
+            artifacts["yamlRefs"] = passed_refs
+            artifacts["quarantinedYamlRefs"] = quarantined_refs
+        elif not failed_results:
+            artifacts["quarantinedYamlRefs"] = []
+        artifacts["yamlValidation"] = {
+            "ok": bool(passed_refs) and not failed_results,
+            "partialOk": bool(passed_refs) and bool(failed_results),
+            "results": results,
+            "issues": issues,
+            "passedCount": len(passed_results),
+            "failedCount": len(failed_results),
+            "quarantinedRefs": quarantined_refs,
+            "autoRepairedCount": len(repaired_results),
+            "autoRepairs": [row.get("autoRepair") for row in repaired_results],
+        }
+        _sync_agent_generated_case_groups(artifacts, results)
+        if failed_results and not passed_refs:
             call["status"] = "FAILED"
-            call["error"] = issues[0][:300]
+            call["error"] = issues[0][:300] if issues else "YAML dry-run 全部未通过"
             attach_diagnosis(call, make_diagnosis(
-                "YAML dry-run 未通过",
-                "YAML 在创建 Runner 任务前未通过平台加载校验。",
+                "YAML dry-run 全部未通过",
+                "没有可继续下发 Runner 的 YAML。",
                 ["查看 dry-run 错误", "重新生成 YAML", "人工编辑 YAML 草稿", "保存为正式 YAML 后再执行"],
-                failedYaml=results[0].get("path") or results[0].get("type") if results else "",
+                failedYaml=failed_results[0].get("path") or failed_results[0].get("type") if failed_results else "",
             ))
+        elif failed_results:
+            call["status"] = "PARTIAL_FAILED"
+            call["partialFailed"] = True
+            call["quarantinedYamlRefs"] = quarantined_refs
+            call["outputSummary"] = (
+                f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过；"
+                f"{len(failed_results)} 个已隔离，不阻断后续执行"
+                + (f"；自动修复 {len(repaired_results)} 个" if repaired_results else "")
+            )
         else:
             call["status"] = "SUCCESS"
-        call["outputSummary"] = f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过" + (f"；问题：{'; '.join(issues[:3])}" if issues else "")
+            call["outputSummary"] = (
+                f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过"
+                + (f"；自动修复 {len(repaired_results)} 个" if repaired_results else "")
+            )
+        if not call.get("outputSummary"):
+            call["outputSummary"] = f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过" + (f"；问题：{'; '.join(issues[:3])}" if issues else "")
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)
@@ -7552,6 +7759,14 @@ def _tool_execution_precheck(run):
             yaml_dry_ok,
             f"{yaml_ok_count}/{len(refs)} 个 YAML 通过 dry-run" if yaml_dry_ok else "；".join(validation_issues[:3]),
         )
+        quarantined_refs = artifacts.get("quarantinedYamlRefs") if isinstance(artifacts.get("quarantinedYamlRefs"), list) else []
+        if quarantined_refs:
+            add(
+                "yaml_quarantine",
+                True,
+                f"{len(quarantined_refs)} 个 YAML 未通过准入，已隔离为需人工复核，不下发 Runner",
+                "warning",
+            )
 
         if should_require_sonic:
             try:

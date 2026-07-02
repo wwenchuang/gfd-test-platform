@@ -206,6 +206,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         action_count = 0
         wait_count = 0
         assert_count = 0
+        transition_count = 0
         unguarded_taps = 0
         missing_followups = 0
         vague_steps = 0
@@ -227,6 +228,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             if "aiAssert" in actions:
                 assert_count += 1
             if any(action in TRANSITION_ACTIONS for action in actions):
+                transition_count += 1
                 if "aiTap" in actions and not (baseline_evidence or _has_previous_wait(flow, step_index)):
                     unguarded_taps += 1
                 if not _has_followup_wait_or_terminal(flow, step_index):
@@ -254,6 +256,9 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if assert_count > 3:
             warnings.append(f"aiAssert 数量 {assert_count} 偏多，容易把 UI 差异放大成失败")
             score -= min(20, 4 * (assert_count - 3))
+        if transition_count > 8:
+            warnings.append(f"交互动作 {transition_count} 个偏多，建议拆成更短的自动化链路")
+            score -= min(20, 3 * (transition_count - 8))
         if vague_steps:
             warnings.append(f"{vague_steps} 个步骤描述过泛")
             score -= min(15, 5 * vague_steps)
@@ -278,6 +283,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             "errors": errors,
             "warnings": warnings,
             "actionCount": action_count,
+            "transitionCount": transition_count,
             "waitCount": wait_count,
             "assertCount": assert_count,
             "startGuard": start_guard,
