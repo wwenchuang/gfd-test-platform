@@ -314,8 +314,40 @@ def check_yaml_static_validation_and_patterns():
         len(selected) == 1
         and selected[0]["file"] == "01-p0-main.yaml"
         and len(blocked) == 2
-        and any("非 AI 明确标记" in str(item.get("gateReason") or "") for item in blocked),
-        "Runner gate must only auto-run AI-explicit smoke YAML and explain blocked executable YAML",
+        and any("超过自动冒烟首批上限" in str(item.get("gateReason") or "") for item in blocked),
+        "Runner gate must rank explicit smoke YAML first and defer overflow executable YAML",
+    )
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "candidate.yaml", "executableScore": {**executable_score, "smokeCandidate": True}},
+        {"file": "not-candidate.yaml", "executableScore": {
+            **executable_score,
+            "smokeCandidate": False,
+            "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "smokeCandidate": False, "mainBusinessChain": False}],
+        }},
+    ], limit=3)
+    require(
+        len(selected) == 1
+        and selected[0]["file"] == "candidate.yaml"
+        and any("非首批冒烟候选" in str(item.get("gateReason") or "") for item in blocked),
+        "Runner gate must accept scorer smokeCandidate and defer non-candidates when candidates exist",
+    )
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "fallback-1.yaml", "executableScore": {
+            **executable_score,
+            "smokeCandidate": False,
+            "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "smokeCandidate": False, "mainBusinessChain": False}],
+        }},
+        {"file": "fallback-2.yaml", "executableScore": {
+            **executable_score,
+            "smokeCandidate": False,
+            "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "smokeCandidate": False, "mainBusinessChain": False}],
+        }},
+    ], limit=1)
+    require(
+        len(selected) == 1
+        and selected[0].get("fallbackSmokeSelection") is True
+        and any("超过自动冒烟首批上限" in str(item.get("gateReason") or "") for item in blocked),
+        "Runner gate must fall back to top executable YAML instead of failing with zero first-batch cases",
     )
     scoped_payload = apply_generated_case_scope_gate({
         "analysis": {

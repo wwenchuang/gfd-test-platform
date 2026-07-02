@@ -1316,6 +1316,13 @@ def _agent_case_group_item_from_validation(result):
     task_scores = [item for item in (score.get("taskScores") or []) if isinstance(item, dict)]
     first_task = task_scores[0] if task_scores else {}
     explicit_smoke = bool(result.get("smoke") or result.get("is_smoke") or result.get("isSmoke"))
+    runner_candidate = bool(
+        explicit_smoke
+        or result.get("smokeCandidate")
+        or result.get("runnerCandidate")
+        or score.get("smokeCandidate")
+        or first_task.get("smokeCandidate")
+    )
     return {
         "name": first_task.get("name") or result.get("target_task_name") or result.get("file") or "未命名用例",
         "module": result.get("module") or "",
@@ -1327,8 +1334,8 @@ def _agent_case_group_item_from_validation(result):
         "executionLevel": level,
         "priority": first_task.get("priority") or "",
         "smoke": explicit_smoke,
-        "smokeCandidate": explicit_smoke,
-        "runnerCandidate": bool(score.get("smokeCandidate") or first_task.get("smokeCandidate") or result.get("runnerCandidate")),
+        "smokeCandidate": runner_candidate,
+        "runnerCandidate": runner_candidate,
         "mainBusinessChain": bool(first_task.get("mainBusinessChain")),
         "baselineEvidence": bool(score.get("baselineEvidence") or first_task.get("baselineEvidence")),
         "scopeReview": result.get("scopeReview") if isinstance(result.get("scopeReview"), dict) else score.get("scopeReview") if isinstance(score.get("scopeReview"), dict) else {},
@@ -4078,7 +4085,25 @@ def _score_agent_yaml_ref_for_execution(run, ref):
         score["scopeReview"] = scope_review
         score["reasons"] = [str(item) for item in reasons if str(item or "").strip()][:8]
     level = score.get("level") or score.get("executionLevel") or ref.get("executionLevel") or ""
-    return {**ref, "executableScore": score, "level": level, "executionLevel": level, "scopeReview": scope_review}
+    task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+    runner_candidate = bool(
+        ref.get("smoke")
+        or ref.get("is_smoke")
+        or ref.get("isSmoke")
+        or ref.get("smokeCandidate")
+        or ref.get("runnerCandidate")
+        or score.get("smokeCandidate")
+        or any(task.get("smokeCandidate") for task in task_scores)
+    )
+    return {
+        **ref,
+        "executableScore": score,
+        "level": level,
+        "executionLevel": level,
+        "scopeReview": scope_review,
+        "smokeCandidate": runner_candidate,
+        "runnerCandidate": runner_candidate,
+    }
 
 
 def _agent_generated_runner_smoke_limit(run):
@@ -4130,7 +4155,7 @@ def _select_agent_runner_refs(run, refs):
     deferred = [
         item for item in blocked
         if str(item.get("gateReason") or "").startswith("超过自动冒烟首批上限")
-        or str(item.get("gateReason") or "").startswith("非 AI 明确标记的首批冒烟用例")
+        or str(item.get("gateReason") or "").startswith("非首批冒烟候选")
     ]
     blocking = [item for item in blocked if item not in deferred]
     gate = {
@@ -4149,12 +4174,13 @@ def _select_agent_runner_refs(run, refs):
         "needsReviewCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
         "draftCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "draft"),
         "manualCount": sum(1 for item in scored if (item.get("executableScore") or {}).get("executionLevel") == "manual"),
+        "fallbackSmokeSelection": bool(selected) and any(item.get("fallbackSmokeSelection") for item in selected),
         "results": scored,
         "selected": selected,
         "blocked": blocked,
         "blocking": blocking,
         "deferred": deferred,
-        "rule": "Agent 新生成 YAML 首批只下发 executable 冒烟用例，首批最多 3 条；冒烟通过率不低于 50% 才自动扩展，扩展按小批次执行。",
+        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有候选时按 executable 评分兜底选择首批。冒烟通过率不低于 50% 才自动扩展，扩展按小批次执行。",
     }
     artifacts["runnerExecutionGate"] = gate
     return selected, gate
@@ -7555,6 +7581,7 @@ def _tool_validate_yaml(run):
                 "executableScore": row.get("executableScore") if isinstance(row.get("executableScore"), dict) else {},
                 "scopeReview": row.get("scopeReview") if isinstance(row.get("scopeReview"), dict) else {},
                 "smoke": bool(row.get("smoke")),
+                "smokeCandidate": bool(row.get("smokeCandidate")),
                 "runnerCandidate": bool(row.get("runnerCandidate")),
             }
             for row in passed_results

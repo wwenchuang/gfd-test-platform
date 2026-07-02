@@ -1616,6 +1616,7 @@ function agentGeneratedSmokeRerunLimit(artifacts = {}, totalCount = 0) {
 function agentGeneratedCaseIsSmoke(item = {}) {
   if (!item || typeof item !== 'object') return false;
   if (item.smoke === true || item.is_smoke === true || item.isSmoke === true) return true;
+  if (item.smokeCandidate === true || item.runnerCandidate === true) return true;
   const tokens = [];
   ['flag', 'flags', 'tags'].forEach(key => {
     const value = item[key];

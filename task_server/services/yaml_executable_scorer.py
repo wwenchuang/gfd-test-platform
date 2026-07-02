@@ -319,16 +319,37 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
 
 def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tuple[List[dict], List[dict]]:
     """Return executable refs for first Runner batch and blocked refs."""
-    executable = []
+    eligible = []
+    candidates = []
     blocked = []
     for item in scored_refs:
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
         if score.get("executionLevel") != "executable":
             blocked.append({**item, "gateReason": "执行等级不是 executable"})
-        elif item.get("smoke") is True or item.get("is_smoke") is True or item.get("isSmoke") is True:
-            executable.append(item)
         else:
-            blocked.append({**item, "gateReason": "非 AI 明确标记的首批冒烟用例，待首批通过后再扩展执行"})
+            task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+            smoke_candidate = bool(
+                item.get("smoke") is True
+                or item.get("is_smoke") is True
+                or item.get("isSmoke") is True
+                or item.get("smokeCandidate") is True
+                or item.get("runnerCandidate") is True
+                or score.get("smokeCandidate") is True
+                or any(task.get("smokeCandidate") for task in task_scores)
+            )
+            row = {**item, "smokeCandidate": smoke_candidate, "runnerCandidate": smoke_candidate}
+            eligible.append(row)
+            if smoke_candidate:
+                candidates.append(row)
+
+    if candidates:
+        executable = candidates
+        candidate_ids = {id(item) for item in candidates}
+        for item in eligible:
+            if id(item) not in candidate_ids:
+                blocked.append({**item, "gateReason": "非首批冒烟候选，待首批通过后再扩展执行"})
+    else:
+        executable = [{**item, "fallbackSmokeSelection": True} for item in eligible]
 
     def sort_key(item: dict):
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
