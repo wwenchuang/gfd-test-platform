@@ -302,6 +302,22 @@ def check_yaml_static_validation_and_patterns():
 """
     generic_query_score = score_midscene_yaml_executable(generic_query_yaml)
     require(generic_query_score.get("executionLevel") != "executable" and any("aiQuery" in reason for reason in generic_query_score.get("reasons", [])), "Generic aiQuery must downgrade generated YAML")
+    boundary_smoke_yaml = """android:
+  tasks:
+    - name: 未安装百度App时WebView降级跳转成功
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: 文档打印首页加载完成，百度网盘入口可见
+        - aiTap: 百度网盘入口
+        - aiWaitFor: WebView 或下载提示页面已打开
+        - aiAssert: 未安装百度App时出现可理解的降级提示
+"""
+    boundary_smoke_score = score_midscene_yaml_executable(boundary_smoke_yaml)
+    require(
+        boundary_smoke_score.get("executionLevel") == "executable"
+        and boundary_smoke_score.get("smokeCandidate") is False,
+        "Boundary/permission/degraded executable cases must not enter the first smoke batch",
+    )
     selected, blocked = rank_executable_yaml_refs([
         {"file": "02-p1.yaml", "executableScore": executable_score},
         {"file": "unstable.yaml", "executableScore": unstable_score},
@@ -330,6 +346,26 @@ def check_yaml_static_validation_and_patterns():
         and selected[0]["file"] == "candidate.yaml"
         and any("非首批冒烟候选" in str(item.get("gateReason") or "") for item in blocked),
         "Runner gate must accept scorer smokeCandidate and defer non-candidates when candidates exist",
+    )
+    normal_smoke_score = {
+        **executable_score,
+        "smokeCandidate": True,
+        "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "name": "文档打印首页正常展示百度网盘入口", "smokeCandidate": True, "mainBusinessChain": True}],
+    }
+    excluded_smoke_score = {
+        **executable_score,
+        "smokeCandidate": True,
+        "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "name": "非会员用户访问入口权限边界校验", "smokeCandidate": True, "mainBusinessChain": False}],
+    }
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "01-normal.yaml", "executableScore": normal_smoke_score},
+        {"file": "02-boundary.yaml", "executableScore": excluded_smoke_score, "smoke": True},
+    ], limit=3)
+    require(
+        len(selected) == 1
+        and selected[0]["file"] == "01-normal.yaml"
+        and any("异常/边界/权限类用例" in str(item.get("gateReason") or "") for item in blocked),
+        "Runner gate must exclude abnormal/boundary/permission cases from the first smoke batch even when AI marks them as smoke",
     )
     selected, blocked = rank_executable_yaml_refs([
         {"file": "fallback-1.yaml", "executableScore": {

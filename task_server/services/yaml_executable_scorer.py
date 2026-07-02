@@ -17,6 +17,11 @@ TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
 WAIT_ACTIONS = {"aiWaitFor", "sleep"}
 START_GUARD_WORDS = ("首页", "入口", "已加载", "加载完成", "底部导航", "AI建模", "模型库", "课程", "我的")
 SMOKE_WORDS = ("冒烟", "P0", "P1", "入口", "主流程", "核心", "基础", "跳转", "展示")
+SMOKE_EXCLUDE_WORDS = (
+    "未安装", "拒绝授权", "授权失败", "非会员", "权限", "边界", "异常", "降级",
+    "防抖", "重复", "历史", "返回", "缓存", "弱网", "超时", "宽屏", "多设备",
+    "一致性", "失败", "错误", "不可用", "无数据", "空状态", "极限",
+)
 MAIN_CHAIN_WORDS = ("主流程", "主链", "核心", "入口", "开始创作", "AI建模", "图片建模", "文字建模", "语音创作", "生成模型")
 VAGUE_PHRASES = (
     "检查是否正常", "确认是否正常", "页面正常", "功能正常", "验证功能正常",
@@ -94,7 +99,24 @@ def _has_followup_wait_or_terminal(flow: List[Any], index: int) -> bool:
 
 def _task_smoke_candidate(task: Dict[str, Any]) -> bool:
     text = str(task.get("name") or "") + " " + " ".join(_step_text(step) for step in task.get("flow") or [])
+    if _has_smoke_exclusion(text):
+        return False
     return any(word in text for word in SMOKE_WORDS)
+
+
+def _has_smoke_exclusion(text: str) -> bool:
+    return any(word in str(text or "") for word in SMOKE_EXCLUDE_WORDS)
+
+
+def _ref_smoke_excluded(item: dict, score: dict, task_scores: List[dict]) -> bool:
+    label = " ".join([
+        str(item.get("file") or ""),
+        str(item.get("module") or ""),
+        str(score.get("reason") or ""),
+        " ".join(str(task.get("name") or "") for task in task_scores),
+        " ".join(" ".join(str(reason) for reason in (task.get("reasons") or [])) for task in task_scores),
+    ])
+    return _has_smoke_exclusion(label)
 
 
 def _task_priority(task: Dict[str, Any], fallback_text: str = "") -> str:
@@ -337,7 +359,10 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
                 or score.get("smokeCandidate") is True
                 or any(task.get("smokeCandidate") for task in task_scores)
             )
-            row = {**item, "smokeCandidate": smoke_candidate, "runnerCandidate": smoke_candidate}
+            smoke_excluded = _ref_smoke_excluded(item, score, task_scores)
+            if smoke_excluded:
+                smoke_candidate = False
+            row = {**item, "smokeCandidate": smoke_candidate, "runnerCandidate": smoke_candidate, "smokeExcluded": smoke_excluded}
             eligible.append(row)
             if smoke_candidate:
                 candidates.append(row)
@@ -347,9 +372,18 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
         candidate_ids = {id(item) for item in candidates}
         for item in eligible:
             if id(item) not in candidate_ids:
-                blocked.append({**item, "gateReason": "非首批冒烟候选，待首批通过后再扩展执行"})
+                reason = "异常/边界/权限类用例不进入首批冒烟，待首批通过后再扩展执行" if item.get("smokeExcluded") else "非首批冒烟候选，待首批通过后再扩展执行"
+                blocked.append({**item, "gateReason": reason})
     else:
-        executable = [{**item, "fallbackSmokeSelection": True} for item in eligible]
+        fallback_pool = [item for item in eligible if not item.get("smokeExcluded")]
+        if fallback_pool:
+            executable = [{**item, "fallbackSmokeSelection": True} for item in fallback_pool]
+            fallback_ids = {id(item) for item in fallback_pool}
+            for item in eligible:
+                if id(item) not in fallback_ids:
+                    blocked.append({**item, "gateReason": "异常/边界/权限类用例不进入首批冒烟，待首批通过后再扩展执行"})
+        else:
+            executable = [{**item, "fallbackSmokeSelection": True} for item in eligible]
 
     def sort_key(item: dict):
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
@@ -361,7 +395,9 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
         priority_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}.get(priority, 4)
         main_chain = bool(any(task.get("mainBusinessChain") for task in task_scores) or any(word in label for word in MAIN_CHAIN_WORDS))
         baseline = bool(score.get("baselineEvidence") or any(task.get("baselineEvidence") for task in task_scores))
+        smoke_excluded = bool(item.get("smokeExcluded") or _has_smoke_exclusion(label))
         return (
+            1 if smoke_excluded else 0,
             priority_rank,
             0 if main_chain else 1,
             0 if baseline else 1,
