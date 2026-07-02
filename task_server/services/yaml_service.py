@@ -1231,6 +1231,7 @@ def build_executable_smoke_yaml_policy_text():
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
         "7. 智小白 3D AI建模链路必须按当前真机入口写：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的“文字输入”；标牌/印章入口需要先横向滑动功能入口区域。",
         "8. 动态推荐、骨架屏、缩放控件、固定推荐标题、旧入口缺失验证不能作为自动化必过断言；没有稳定真机信号时转入 manual_cases/summary。",
+        "9. 不要生成固定坐标的最近任务清理，例如 input swipe 540 1900 540 350；如需脱离外部页面，必须使用平台启动守卫注入的 wm size 动态坐标方案。",
     ]).strip()
 
 
@@ -1890,6 +1891,33 @@ def external_activity_cleanup_flow(indent):
     ]
 
 
+def dynamic_recent_tasks_cleanup_flow(indent):
+    """Return a screen-size aware recent-task cleanup guard.
+
+    固定坐标的最近任务清理在不同手机分辨率上容易误滑。这里在设备端
+    读取 ``wm size``，按宽高比例计算滑动坐标，只用于新生成 YAML 的
+    启动前兜底；已有基线 YAML 不做迁移。
+    """
+    script = (
+        "input keyevent 3; "
+        "sleep 1; "
+        "size=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); "
+        "if [ -n \"$size\" ]; then "
+        "w=${size%x*}; h=${size#*x}; "
+        "x=$((w/2)); y1=$((h*82/100)); y2=$((h*18/100)); "
+        "input keyevent 187; sleep 1; "
+        "input swipe $x $y1 $x $y2 300; "
+        "input swipe $x $y1 $x $y2 300; "
+        "input swipe $x $y1 $x $y2 300; "
+        "input keyevent 3; "
+        "else input keyevent 3; fi"
+    )
+    return [
+        indent + "- runAdbShell: " + yaml_text(script),
+        indent + "- sleep: 800",
+    ]
+
+
 def launch_guard_flow(indent, app_package=None, evidence_text=""):
     """生成启动守卫流程。"""
     app_package = (app_package or "").strip()
@@ -1898,7 +1926,9 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
     mode = runtime_guard_mode()
     flows = []
     if mode == "strict":
-        flows.extend(external_activity_cleanup_flow(indent))
+        flows.extend(dynamic_recent_tasks_cleanup_flow(indent))
+    elif mode == "balanced":
+        flows.extend(dynamic_recent_tasks_cleanup_flow(indent))
     flows.extend([
         indent + "- runAdbShell: " + yaml_text("am force-stop " + app_package),
         indent + "- sleep: 1500",
@@ -3616,7 +3646,7 @@ def normalize_task_block_runtime_guards(block, app_package=None, evidence_text="
             changes.append("补充弹窗/浮层兜底处理")
     elif first_flow_key == "launch":
         launch_package = (app_package or extract_app_package_from_yaml(block) or "").strip()
-        insert = external_activity_cleanup_flow(indent)
+        insert = dynamic_recent_tasks_cleanup_flow(indent) if runtime_guard_mode() in ("balanced", "strict") else external_activity_cleanup_flow(indent)
         if launch_package:
             insert += [
                 indent + "- runAdbShell: " + yaml_text("am force-stop " + launch_package),

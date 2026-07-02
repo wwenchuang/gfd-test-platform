@@ -1052,7 +1052,8 @@ def check_yaml_runner_eligibility_filter():
     content = files[0]["content"]
     require("确认前置条件" not in content, "Preconditions must stay in comments, not become flaky ai steps")
     require('- aiWaitFor: "等待 AI建模主页核心区域加载"' in content, "Natural wait steps must become aiWaitFor actions, not generic ai actions")
-    require("input keyevent 187" not in content and "am kill-all" not in content, "Balanced launch guard must not inject recent-app cleanup into generated YAML")
+    require("wm size" in content and "input keyevent 187" in content, "Balanced launch guard must use screen-size aware recent-task cleanup")
+    require("input swipe 540 1900 540 350" not in content and "am kill-all" not in content, "Generated YAML must not inject fixed-coordinate recent-app cleanup")
     require("自传IP模型匹配成功" not in content and "系统通知权限" not in content and "设计稿一致" not in content and "Figma" not in content, "Runner-ineligible scenarios must not leak into YAML")
     require("我的作品模块空态" not in content and "无结果兜底" not in content and "权限弹窗" not in content and "四维评估" not in content and "防重复点击" not in content and "旧版建模入口" not in content, "Observed flaky AI modeling scenarios must not leak into Runner YAML")
 
