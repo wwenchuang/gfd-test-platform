@@ -611,6 +611,8 @@ FLOW_CHILD_KEYS = {
     "title", "duration", "target", "query", "schema",
 }
 
+FLOW_ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
+
 
 # ---------------------------------------------------------------------------
 # 基础 YAML 字符串处理
@@ -1231,7 +1233,7 @@ def build_executable_smoke_yaml_policy_text():
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
         "7. 智小白 3D AI建模链路必须按当前真机入口写：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的“文字输入”；标牌/印章入口需要先横向滑动功能入口区域。",
         "8. 动态推荐、骨架屏、缩放控件、固定推荐标题、旧入口缺失验证不能作为自动化必过断言；没有稳定真机信号时转入 manual_cases/summary。",
-        "9. 不要生成固定坐标的最近任务清理，例如 input swipe 540 1900 540 350；如需脱离外部页面，必须使用平台启动守卫注入的 wm size 动态坐标方案。",
+        "9. 不要生成固定坐标的最近任务清理，例如 input swipe 540 1900 540 350；如需脱离外部页面，必须使用平台启动守卫注入的 wm size 动态坐标方案，且 shell 内不要使用 ${var%...}/${var#...} 这类会被 Midscene 误当环境变量插值的写法。",
     ]).strip()
 
 
@@ -1903,7 +1905,7 @@ def dynamic_recent_tasks_cleanup_flow(indent):
         "sleep 1; "
         "size=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); "
         "if [ -n \"$size\" ]; then "
-        "w=${size%x*}; h=${size#*x}; "
+        "w=$(echo \"$size\" | cut -d x -f 1); h=$(echo \"$size\" | cut -d x -f 2); "
         "x=$((w/2)); y1=$((h*82/100)); y2=$((h*18/100)); "
         "input keyevent 187; sleep 1; "
         "input swipe $x $y1 $x $y2 300; "
@@ -3911,6 +3913,23 @@ def validate_midscene_yaml_executability(text):
             if len(action_keys) > 1:
                 issues.append(f"tasks[{idx}].flow[{fidx}] 同时声明多个动作：{action_keys}")
             for action in action_keys:
+                action_value = item.get(action)
+                if action == "runAdbShell" and isinstance(action_value, str) and re.search(r"\$\{[^}]+\}", action_value):
+                    issues.append(
+                        f"tasks[{idx}].flow[{fidx}] runAdbShell 包含 `${{...}}` shell 参数展开，"
+                        "Midscene 会先按环境变量插值解析；请改用 cut/awk 等不含 `${}` 的写法"
+                    )
+                if isinstance(action_value, str):
+                    prefix_match = FLOW_ACTION_PREFIX_RE.match(action_value)
+                    if prefix_match and prefix_match.group(1) in MIDSCENE_FLOW_ACTIONS:
+                        prefix = prefix_match.group(1)
+                        if prefix == action:
+                            issues.append(f"tasks[{idx}].flow[{fidx}] {action} 内容重复包含动作前缀 `{prefix}:`")
+                        else:
+                            issues.append(
+                                f"tasks[{idx}].flow[{fidx}] 声明为 {action}，但内容前缀是 `{prefix}:`，"
+                                "会导致动作语义错误"
+                            )
                 if action in ("ai", "aiAct", "aiAction", "aiTap", "aiAssert", "aiWaitFor", "aiInput") and _yaml_action_value_blank(item.get(action)):
                     issues.append(f"tasks[{idx}].flow[{fidx}] {action} 内容不能为空")
                 if action == "aiInput" and _yaml_action_value_blank(item.get("value")):

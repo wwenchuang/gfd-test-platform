@@ -344,6 +344,48 @@ def check_yaml_static_validation_and_patterns():
         and score_midscene_yaml_executable(repaired_assertion_tap.get("content", "")).get("executionLevel") == "executable",
         "Agent validation must locally repair assertion-like aiTap prompts before failing the whole run",
     )
+    prefixed_action_yaml = """android:
+  tasks:
+    - name: 文档打印首页展示百度网盘入口
+      flow:
+        - runAdbShell: "input keyevent 3; sleep 1; size=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); if [ -n \\"$size\\" ]; then w=${size%x*}; h=${size#*x}; input keyevent 187; fi"
+        - ai: "runAdbShell: am force-stop com.xbxxhz.box"
+        - ai: "sleep: 1500"
+        - ai: "launch: com.xbxxhz.box"
+        - ai: "sleep: 3000"
+        - aiWaitFor: "aiWaitFor: 回到App首页并等待页面加载稳定"
+        - aiTap: "aiTap: 点击「文档打印」icon"
+        - aiTap: "aiWaitFor: 页面展示「百度网盘」文案，入口可见且可点击"
+        - aiTap: "aiAssert: 页面展示「百度网盘」文案，入口可见且可点击"
+"""
+    prefixed_score = score_midscene_yaml_executable(prefixed_action_yaml)
+    require(
+        prefixed_score.get("executionLevel") != "executable"
+        and any("动作前缀" in reason or "${...}" in reason for reason in prefixed_score.get("reasons", [])),
+        "Generated YAML scorer must block unsafe shell expansion and nested action prefixes",
+    )
+    prefixed_dry = dry_run_midscene_yaml(prefixed_action_yaml, app_package="com.xbxxhz.box")
+    require(
+        prefixed_dry.get("ok") is False
+        and any("动作前缀" in err or "${...}" in err for err in prefixed_dry.get("errors", [])),
+        "Mock dry-run must reject nested action prefixes before Runner execution",
+    )
+    repaired_prefixed = _agent_repair_missing_interaction_followups(prefixed_action_yaml)
+    repaired_prefixed_content = repaired_prefixed.get("content", "")
+    require(
+        repaired_prefixed.get("changed")
+        and "${size" not in repaired_prefixed_content
+        and "cut -d x -f 1" in repaired_prefixed_content
+        and 'runAdbShell: am force-stop com.xbxxhz.box' in repaired_prefixed_content
+        and 'aiWaitFor: 页面展示「百度网盘」文案，入口可见且可点击' in repaired_prefixed_content
+        and 'aiAssert: 页面展示「百度网盘」文案，入口可见且可点击' in repaired_prefixed_content
+        and score_midscene_yaml_executable(repaired_prefixed_content).get("executionLevel") == "executable",
+        "Agent validation must repair prefixed action values and unsafe dynamic cleanup before Runner execution",
+    )
+    require(
+        dry_run_midscene_yaml(repaired_prefixed_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Agent-repaired prefixed YAML must load through mock dry-run before Runner execution",
+    )
     boundary_smoke_yaml = """android:
   tasks:
     - name: 未安装百度App时WebView降级跳转成功
@@ -1077,6 +1119,7 @@ def check_yaml_runner_eligibility_filter():
     require("确认前置条件" not in content, "Preconditions must stay in comments, not become flaky ai steps")
     require('- aiWaitFor: "等待 AI建模主页核心区域加载"' in content, "Natural wait steps must become aiWaitFor actions, not generic ai actions")
     require("wm size" in content and "input keyevent 187" in content, "Balanced launch guard must use screen-size aware recent-task cleanup")
+    require("cut -d x -f 1" in content and "${size" not in content, "Screen-size aware cleanup must avoid Midscene `${...}` env interpolation")
     require("input swipe 540 1900 540 350" not in content and "am kill-all" not in content, "Generated YAML must not inject fixed-coordinate recent-app cleanup")
     require("自传IP模型匹配成功" not in content and "系统通知权限" not in content and "设计稿一致" not in content and "Figma" not in content, "Runner-ineligible scenarios must not leak into YAML")
     require("我的作品模块空态" not in content and "无结果兜底" not in content and "权限弹窗" not in content and "四维评估" not in content and "防重复点击" not in content and "旧版建模入口" not in content, "Observed flaky AI modeling scenarios must not leak into Runner YAML")
@@ -1584,6 +1627,38 @@ android:
     require(validation.get("autoRepairedCount") == 1, "Auto repair count must be exposed for Agent YAML validation")
     fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
     require("aiWaitFor" in fixed_content and "返回后的目标页面已加载完成" in fixed_content, "Auto repair must insert a lightweight wait without adding extra business assertions")
+
+    prefixed_yaml = """
+android:
+  tasks:
+    - name: "文档打印首页展示百度网盘入口"
+      flow:
+        - runAdbShell: "input keyevent 3; sleep 1; size=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); if [ -n \\"$size\\" ]; then w=${size%x*}; h=${size#*x}; input keyevent 187; fi"
+        - ai: "runAdbShell: am force-stop com.xbxxhz.box"
+        - ai: "sleep: 1500"
+        - ai: "launch: com.xbxxhz.box"
+        - ai: "sleep: 3000"
+        - aiWaitFor: "aiWaitFor: 回到App首页并等待页面加载稳定"
+        - aiTap: "aiTap: 点击「文档打印」icon"
+        - aiTap: "aiWaitFor: 页面展示「百度网盘」文案，入口可见且可点击"
+        - aiTap: "aiAssert: 页面展示「百度网盘」文案，入口可见且可点击"
+"""
+    run = {
+        "runId": "agent-static-auto-repair-prefixed",
+        "target": "学习打印基础打印增加百度网盘入口",
+        "artifacts": {
+            "generationPipeline": {"source": "agent_generate_yaml"},
+            "yamlRefs": [
+                {"type": "file", "file": "prefixed.yaml", "content": prefixed_yaml, "confirmed": True},
+            ],
+        },
+    }
+    call = agent_service._tool_validate_yaml(run)
+    validation = (run.get("artifacts") or {}).get("yamlValidation") or {}
+    fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
+    require(call.get("status") == "SUCCESS", "Agent YAML validation must auto-repair nested action prefixes instead of failing the whole run")
+    require(validation.get("autoRepairedCount") == 1 and "${size" not in fixed_content and "cut -d x -f 1" in fixed_content, "Agent YAML validation must expose auto repair and remove unsafe shell expansion")
+    require("aiTap: aiWaitFor" not in fixed_content and "aiTap: aiAssert" not in fixed_content, "Agent YAML validation must not keep action prefixes inside action values")
 
 
 def main():

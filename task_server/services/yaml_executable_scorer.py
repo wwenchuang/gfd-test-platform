@@ -44,6 +44,7 @@ ASSERTION_CONTEXT_WORDS = (
     "正确", "一致", "结果", "文案", "状态",
 )
 GENERIC_QUERY_WORDS = ("页面", "按钮", "元素", "内容", "状态", "结果", "区域", "入口")
+ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
 MANUAL_HINT_WORDS = (
     "人工", "手工", "manual", "肉眼", "视觉还原", "设计稿一致", "UI一致",
     "真实支付", "真实扣费", "后台造数", "线下确认", "外部人工",
@@ -286,6 +287,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         vague_steps = 0
         generic_queries = 0
         non_tap_intents = 0
+        nested_action_prefixes = 0
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
         if flow and not start_guard:
@@ -311,6 +313,24 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
                 if not _has_followup_wait_or_terminal(flow, step_index):
                     missing_followups += 1
             step_text = _step_text(step)
+            for action in actions:
+                action_value = step.get(action) if isinstance(step, dict) else None
+                if action == "runAdbShell" and isinstance(action_value, str) and re.search(r"\$\{[^}]+\}", action_value):
+                    errors.append(
+                        f"flow[{step_index + 1}] runAdbShell 包含 `${{...}}` shell 参数展开，Midscene 会按环境变量插值解析"
+                    )
+                    score -= 55
+                if isinstance(action_value, str):
+                    prefix_match = ACTION_PREFIX_RE.match(action_value)
+                    if prefix_match and prefix_match.group(1) in MIDSCENE_FLOW_ACTIONS:
+                        nested_action_prefixes += 1
+                        prefix = prefix_match.group(1)
+                        if prefix == action:
+                            warnings.append(f"flow[{step_index + 1}] {action} 内容重复包含动作前缀 `{prefix}:`")
+                            score -= 12
+                        else:
+                            errors.append(f"flow[{step_index + 1}] 声明为 {action}，但内容前缀是 `{prefix}:`")
+                            score -= 40
             if any(phrase in step_text for phrase in VAGUE_PHRASES):
                 vague_steps += 1
             if "aiQuery" in actions and _ai_query_too_generic(step_text):
@@ -345,6 +365,8 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if generic_queries:
             warnings.append(f"{generic_queries} 个 aiQuery 过短或过泛，容易定位不到真实元素")
             score -= min(20, 10 * generic_queries)
+        if nested_action_prefixes:
+            warnings.append(f"{nested_action_prefixes} 个步骤内容嵌套了动作名前缀，需要先规范化再执行")
         if len(flow) > 36:
             warnings.append("单条用例步骤过长，建议拆分后执行")
             score -= 15

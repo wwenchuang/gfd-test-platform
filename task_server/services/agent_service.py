@@ -3955,6 +3955,59 @@ def _yaml_ref_content(ref):
 
 AGENT_TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
 AGENT_FOLLOWUP_ACTIONS = {"aiWaitFor", "sleep", "aiAssert", "ai", "aiAction"}
+AGENT_ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
+
+
+def _agent_dynamic_recent_tasks_cleanup_script():
+    """Keep generated cleanup screen-size aware without Midscene `${...}` interpolation."""
+    return (
+        "input keyevent 3; sleep 1; "
+        "size=$(wm size | grep -oE '[0-9]+x[0-9]+' | tail -1); "
+        "if [ -n \"$size\" ]; then "
+        "w=$(echo \"$size\" | cut -d x -f 1); h=$(echo \"$size\" | cut -d x -f 2); "
+        "x=$((w/2)); y1=$((h*82/100)); y2=$((h*18/100)); "
+        "input keyevent 187; sleep 1; "
+        "input swipe $x $y1 $x $y2 300; input swipe $x $y1 $x $y2 300; input swipe $x $y1 $x $y2 300; "
+        "input keyevent 3; else input keyevent 3; fi"
+    )
+
+
+def _agent_normalize_prefixed_action_step(step):
+    if not isinstance(step, dict):
+        return None
+    action_keys = [key for key in list(step.keys()) if key in MIDSCENE_FLOW_ACTIONS]
+    if len(action_keys) != 1:
+        return None
+    action = action_keys[0]
+    value = step.get(action)
+    if action == "runAdbShell" and isinstance(value, str) and ("${size%x*}" in value or "${size#*x}" in value):
+        step[action] = _agent_dynamic_recent_tasks_cleanup_script()
+        return {"changed": "replace unsafe runAdbShell recent-task cleanup"}
+    if not isinstance(value, str):
+        return None
+    match = AGENT_ACTION_PREFIX_RE.match(value)
+    if not match:
+        return None
+    prefixed_action = match.group(1)
+    if prefixed_action not in MIDSCENE_FLOW_ACTIONS:
+        return None
+    payload = match.group(2).strip()
+    if prefixed_action == action:
+        step[action] = safe_int(payload, 800) if action == "sleep" else payload
+        return {"changed": f"strip duplicated action prefix {action}"}
+    step.pop(action, None)
+    if prefixed_action == "sleep":
+        step[prefixed_action] = safe_int(payload, 800)
+    else:
+        step[prefixed_action] = payload
+    for child_key in ("timeout", "keyName", "direction", "distance", "scrollType"):
+        if prefixed_action in ("sleep", "runAdbShell", "launch"):
+            step.pop(child_key, None)
+    if prefixed_action != "aiInput":
+        step.pop("value", None)
+    if prefixed_action == "aiWaitFor":
+        step.setdefault("timeout", 60000)
+    return {"changed": f"convert {action} value prefix to {prefixed_action}", "from": action, "to": prefixed_action}
 
 
 def _agent_flow_has_followup_wait(flow, index):
@@ -4016,6 +4069,13 @@ def _agent_repair_missing_interaction_followups(yaml_text):
             if not isinstance(step, dict):
                 index += 1
                 continue
+            normalized_action = _agent_normalize_prefixed_action_step(step)
+            if normalized_action:
+                normalized_action.update({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": index,
+                })
+                changes.append(normalized_action)
             action_keys = [key for key in step.keys() if key in MIDSCENE_FLOW_ACTIONS]
             if "aiTap" in action_keys and tap_prompt_looks_assertion(_agent_step_prompt_text(step)):
                 prompt = str(step.get("aiTap") or "").strip()
@@ -4048,7 +4108,7 @@ def _agent_repair_missing_interaction_followups(yaml_text):
     if not changes:
         return {"changed": False, "content": yaml_text, "changes": []}
     try:
-        content = pyyaml.safe_dump(parsed, allow_unicode=True, sort_keys=False)
+        content = pyyaml.safe_dump(parsed, allow_unicode=True, sort_keys=False, width=100000)
     except Exception:
         return {"changed": False, "content": yaml_text, "changes": []}
     return {"changed": True, "content": content, "changes": changes}
