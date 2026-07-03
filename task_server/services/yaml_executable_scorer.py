@@ -202,6 +202,10 @@ def _tap_prompt_looks_assertion(text: str) -> bool:
     compact = re.sub(r"\s+", "", prompt)
     if not compact:
         return False
+    if compact.startswith(("等待", "直到", "等到")):
+        has_action_after_wait = any(word in compact for word in ("点击", "点按", "轻触", "选择", "长按", "勾选"))
+        if not has_action_after_wait:
+            return True
     if any(word in compact for word in TAP_ACTION_WORDS):
         return False
     if compact.startswith(("检查", "验证")):

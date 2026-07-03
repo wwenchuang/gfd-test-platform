@@ -1001,7 +1001,7 @@ def check_ai_skills_receive_yaml_reference_context():
 
 
 def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
-    from task_server.services import ai_skill_service
+    from task_server.services import ai_skill_service, yaml_service
 
     doc_text = "\n".join([
         "三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后",
@@ -1059,6 +1059,24 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     require(sum(1 for case in cases if case.get("smoke")) == 3, "Fallback automation filter must keep first smoke batch at 3 cases")
     require(all(len(case.get("assertions") or []) <= 1 for case in cases), "Fallback automation filter must keep low assertion density")
     require(any("埋点" in str(item.get("title") or item.get("reason") or "") for item in manual_cases), "Tracking verification must be kept as manual/special verification")
+    step_blob = "\n".join("\n".join(case.get("steps") or []) for case in cases)
+    for expected in ["本地导入", "相册导入", "微信导入", "5寸照片", "一寸照", "图片拼版", "扫描仪扫描"]:
+        require(expected in step_blob, f"Fallback automation steps must use concrete screenshot/page wording: {expected}")
+    require("对应打印/导入页面" not in step_blob, "Fallback automation steps must not use vague navigation like 对应打印/导入页面")
+    yaml_text = "\n".join(
+        item.get("content", "")
+        for item in yaml_service.cases_to_separate_midscene_yamls(filtered, app_package="com.xbxxhz.box", base_file="baidu.yaml")[1]
+    )
+    require("aiTap: \"等待" not in yaml_text and "aiTap: '等待" not in yaml_text and "aiTap: 等待" not in yaml_text, "Fallback YAML must not turn wait-state checks into aiTap actions")
+    wait_tap_score = yaml_service.score_midscene_yaml_executable("""android:
+  tasks:
+    - name: 等待句误判点击
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 首页已加载
+        - aiTap: 等待百度网盘授权或文件选择页面打开
+""")
+    require(wait_tap_score.get("executionLevel") != "executable", "Executable scorer must reject aiTap prompts that are actually wait-state checks")
     for forbidden in ["历史", "备份", "引导", "Frame", "节点"]:
         require(forbidden not in case_titles, f"Fallback automation cases must not use Figma/internal wording: {forbidden}")
 

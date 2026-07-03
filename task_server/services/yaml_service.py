@@ -1427,6 +1427,9 @@ def is_smoke_case(case):
 def action_type(text):
     """根据文本判断动作类型。"""
     text = str(text or "")
+    stripped = text.strip()
+    if stripped.startswith(("等待", "直到出现", "直到看到", "直到", "等到")):
+        return "aiWaitFor"
     if any(key in text for key in ("点击", "按钮", "勾选", "长按", "选择")):
         return "aiTap"
     if any(key in text for key in ("等待", "直到出现", "直到看到", "加载完成", "加载完", "出现", "展示")):
