@@ -3082,10 +3082,15 @@ def _save_case_ui_design_files(
             data_bytes = base64.b64decode(content_b64)
         except Exception:
             continue
-        _write_bytes_file(os.path.join(meta_dir, clean_asset_filename(name)), data_bytes)
+        ext = os.path.splitext(clean_asset_filename(name))[1].lower() or ".png"
+        filename = clean_asset_filename(f"{asset_id}{ext}")
+        _write_bytes_file(os.path.join(meta_dir, filename), data_bytes)
         entry = {
             "asset_id": asset_id,
             "name": name,
+            "filename": filename,
+            "mime": _guess_mime(filename),
+            "size": len(data_bytes),
             "source": source,
             "page_name": file_data.get("page_name", ""),
             "route": file_data.get("route", ""),

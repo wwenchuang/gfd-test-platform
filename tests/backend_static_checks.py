@@ -1000,6 +1000,69 @@ def check_ai_skills_receive_yaml_reference_context():
     require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
 
 
+def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
+    from task_server.services import ai_skill_service
+
+    doc_text = "\n".join([
+        "三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后",
+        "照片打印：普通照片打印、普通证件照、智能证件照、照片拼版导入时增加百度网盘导入选项",
+        "扫描复印：复印扫描首页增加百度网盘导入入口",
+        "埋点：百度网盘文档、照片、复印入口点击上报",
+    ])
+    fallback_analysis = ai_skill_service._fallback_requirement_analysis(
+        "基础打印模块增加百度网盘入口",
+        "基础打印",
+        [doc_text],
+        error="timeout",
+    )
+    extracted_points = " ".join(fallback_analysis.get("requirement_points") or [])
+    for expected in ["三方文档打印", "普通照片打印", "普通证件照", "智能证件照", "照片拼版", "扫描复印", "埋点"]:
+        require(expected in extracted_points, f"Fallback requirement analyzer must extract {expected}")
+
+    analysis = {
+        "business_goals": ["基础打印模块增加百度网盘入口"],
+        "requirement_points": [
+            "三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后",
+            "照片打印：普通照片打印、普通证件照、智能证件照、照片拼版导入时增加百度网盘导入选项",
+            "扫描复印：复印扫描首页增加百度网盘导入入口",
+            "埋点：百度网盘文档、照片、复印入口点击上报",
+        ],
+        "visible_outcomes": ["百度网盘入口可见", "点击后进入授权或导入流程"],
+    }
+    targets = {"target_scenarios": 8, "target_automation_cases": 8, "max_cases": 12, "smoke_cases": 3}
+    scenarios = ai_skill_service._fallback_scenarios_from_analysis(
+        "基础打印模块增加百度网盘入口",
+        "基础打印",
+        analysis,
+        targets=targets,
+        error="timeout",
+    )
+    scenario_titles = " ".join(item.get("scenario", "") for item in scenarios)
+    require(len(scenarios) >= 6, "Fallback scenario designer must preserve all explicit Baidu Netdisk requirement branches")
+    for expected in ["文档打印", "普通照片打印", "普通证件照", "智能证件照", "照片拼版", "扫描复印"]:
+        require(expected in scenario_titles, f"Fallback scenarios must cover {expected}")
+    for forbidden in ["历史", "备份", "引导", "Frame", "节点"]:
+        require(forbidden not in scenario_titles, f"Fallback scenarios must not use Figma/internal wording: {forbidden}")
+
+    filtered = ai_skill_service._fallback_automation_filter_from_scenarios(
+        "基础打印模块增加百度网盘入口",
+        "基础打印",
+        analysis,
+        scenarios,
+        targets=targets,
+        error="timeout",
+    )
+    cases = filtered.get("cases") or []
+    manual_cases = filtered.get("manual_cases") or []
+    case_titles = " ".join(case.get("title", "") for case in cases)
+    require(len(cases) >= 6, "Fallback automation filter must emit conservative cases instead of failing the pipeline")
+    require(sum(1 for case in cases if case.get("smoke")) == 3, "Fallback automation filter must keep first smoke batch at 3 cases")
+    require(all(len(case.get("assertions") or []) <= 1 for case in cases), "Fallback automation filter must keep low assertion density")
+    require(any("埋点" in str(item.get("title") or item.get("reason") or "") for item in manual_cases), "Tracking verification must be kept as manual/special verification")
+    for forbidden in ["历史", "备份", "引导", "Frame", "节点"]:
+        require(forbidden not in case_titles, f"Fallback automation cases must not use Figma/internal wording: {forbidden}")
+
+
 def check_smoke_selection_requires_explicit_ai_mark():
     from task_server.services import yaml_service
     from task_server.services import ai_skill_service
@@ -1243,6 +1306,33 @@ def check_agent_figma_context_defaults():
         direct_scope_only=True,
     )
     require(len(selected) == 36 and len(ignored) == 5, "Direct Figma links must keep the exact direct scope instead of adding nearby keyword matches")
+
+    old_learning_dir = knowledge_service.LEARNING_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            knowledge_service.LEARNING_DIR = temp_dir
+            duplicate_png = "figma-引导1-手机-一寸照.png"
+            saved, meta = knowledge_service._save_case_ui_design_files("case-dupe-figma", [
+                {
+                    "asset_id": "figma-1-218",
+                    "name": duplicate_png,
+                    "contentBase64": base64.b64encode(b"node-218").decode("ascii"),
+                    "page_name": "引导1",
+                },
+                {
+                    "asset_id": "figma-1-327",
+                    "name": duplicate_png,
+                    "contentBase64": base64.b64encode(b"node-327").decode("ascii"),
+                    "page_name": "引导1",
+                },
+            ])
+            design_dir = Path(temp_dir) / "case-ui-designs" / "case-dupe-figma"
+            saved_files = sorted(path.name for path in design_dir.glob("*.png"))
+            filenames = [item.get("filename") for item in meta.get("designs") or []]
+            require(len(saved) == 2 and len(saved_files) == 2, "Same-name Figma variants must save as distinct physical image files")
+            require(len(set(filenames)) == 2 and all(name in saved_files for name in filenames), "Same-name Figma variants must keep distinct meta filenames")
+    finally:
+        knowledge_service.LEARNING_DIR = old_learning_dir
 
     captured_parse_payload = {}
     original_parse_figma_design = knowledge_service.parse_figma_design
@@ -1943,6 +2033,7 @@ def main():
     check_yaml_reference_examples_are_general_step_library()
     check_generated_yaml_uses_single_final_assertion()
     check_ai_skills_receive_yaml_reference_context()
+    check_ai_skill_timeout_fallbacks_are_requirement_scoped()
     check_smoke_selection_requires_explicit_ai_mark()
     check_yaml_runner_eligibility_filter()
     check_agent_yaml_validate_partial_quarantine()
