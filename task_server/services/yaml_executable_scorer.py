@@ -21,6 +21,7 @@ SMOKE_EXCLUDE_WORDS = (
     "未安装", "拒绝授权", "授权失败", "非会员", "权限", "边界", "异常", "降级",
     "防抖", "重复", "历史", "返回", "缓存", "弱网", "超时", "宽屏", "多设备",
     "一致性", "弹窗", "拦截", "失败", "错误", "不可用", "无数据", "空状态", "极限",
+    "备份", "加载过程", "未完全加载", "多次刷新",
 )
 SMOKE_STRONG_WORDS = ("冒烟", "P0", "P1", "主流程", "主链", "核心", "基础")
 SMOKE_NAME_WORDS = ("入口", "展示")
@@ -48,6 +49,11 @@ ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
 MANUAL_HINT_WORDS = (
     "人工", "手工", "manual", "肉眼", "视觉还原", "设计稿一致", "UI一致",
     "真实支付", "真实扣费", "后台造数", "线下确认", "外部人工",
+)
+FIGMA_INTERNAL_WORDS = ("备份", "frame", "节点", "画板", "画布", "设计稿")
+SECONDARY_EXPANSION_WORDS = (
+    "弹窗遮挡", "连续", "多次刷新", "加载过程", "未完全加载", "宽屏",
+    "一致性", "返回后", "状态保持", "弱网", "防抖", "旧入口", "历史",
 )
 # Generated baseline metadata comments are trace data, not proof that the case
 # matched a successful baseline. Treat only explicit template/reference wording
@@ -277,6 +283,15 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             if not flow:
                 errors.append("flow 为空")
                 score = 0
+
+        task_name_text = str(task_name or "")
+        task_name_lower = task_name_text.lower()
+        if generated and any(word in task_name_lower for word in FIGMA_INTERNAL_WORDS):
+            warnings.append("用例标题/步骤包含 Figma 内部页名或设计稿标识，应改为业务名称后再自动执行")
+            score -= 35
+        if generated and not baseline_evidence and any(word in task_name_text for word in SECONDARY_EXPANSION_WORDS):
+            warnings.append("异常/边界/鲁棒性扩展缺少成功基线依据，默认需确认后执行")
+            score -= 30
 
         action_count = 0
         wait_count = 0

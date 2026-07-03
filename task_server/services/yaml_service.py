@@ -799,10 +799,12 @@ def normalize_text_list(value):
 SCOPE_GUARD_UNREQUESTED_PATTERNS = (
     "历史", "打印记录", "记录干扰", "干扰", "慢加载", "超时", "防抖", "重复进入",
     "返回重进", "状态保持", "渲染残留", "清理缓存", "缓存", "空态", "无结果",
-    "规格切换", "分页", "旧入口", "骨架屏",
+    "规格切换", "分页", "旧入口", "骨架屏", "弹窗遮挡", "连续", "多次刷新",
+    "加载过程", "未完全加载", "宽屏", "一致性", "返回后",
 )
 SCOPE_GUARD_CHANGE_KEYWORDS = (
     "百度网盘", "网盘入口", "网盘导入", "百度导入", "新增入口", "导入入口",
+    "文档打印", "照片打印", "扫描复印", "普通照片", "证件照", "照片拼版",
     "AI建模", "图片建模", "语音创作", "文字建模", "开始创作", "标牌", "印章",
     "涂鸦建模", "模型导入", "模型上新", "中台", "耗材颜色", "确认耗材",
 )
@@ -812,6 +814,7 @@ SCOPE_GUARD_GENERIC_TOKENS = {
     "状态", "结果", "完成", "成功", "失败", "检查", "确认", "用户", "操作", "场景",
     "自动化", "生成", "入口", "新增", "调整", "支持", "正常", "展示", "首页",
 }
+FIGMA_INTERNAL_CASE_NAME_RE = re.compile(r"(备份\s*\d*|frame\s*\d*|节点|画板|画布|设计稿)", re.I)
 
 
 def _scope_guard_join_values(*values) -> str:
@@ -855,6 +858,11 @@ def _scope_guard_topic_terms(requirement_blob: str) -> List[str]:
     terms = []
     aliases = [
         ("百度网盘", ("百度网盘", "网盘")),
+        ("文档打印", ("文档打印", "三方文档打印")),
+        ("照片打印", ("照片打印", "普通照片打印")),
+        ("证件照", ("证件照", "普通证件照", "智能证件照", "一寸照", "1寸", "2寸")),
+        ("照片拼版", ("照片拼版",)),
+        ("扫描复印", ("扫描复印", "复印扫描")),
         ("AI建模", ("AI建模", "ai建模")),
         ("图片建模", ("图片建模",)),
         ("语音创作", ("语音创作", "语音输入")),
@@ -871,6 +879,33 @@ def _scope_guard_topic_terms(requirement_blob: str) -> List[str]:
         if any(word in compact for word in words):
             terms.append(canonical)
     return list(dict.fromkeys(terms))
+
+
+def build_requirement_semantic_constraints_text(text_assets: List[str], title: str = "") -> str:
+    """Build deterministic requirement constraints before asking AI to compose YAML.
+
+    This is deliberately rule-based: the model can decide wording and steps, but
+    it must not replace explicit requirement points with nearby Figma page names
+    or generic robustness cases.
+    """
+    blob = "\n".join([str(title or "")] + [str(item or "") for item in (text_assets or [])])
+    compact = re.sub(r"\s+", "", blob)
+    constraints: List[str] = []
+
+    if "百度网盘" in compact and any(word in compact for word in ("基础打印", "文档打印", "照片打印", "扫描复印", "复印扫描")):
+        constraints.append("""【需求文档硬约束：基础打印模块新增百度网盘入口】
+本需求的业务范围以需求文档为准，Figma 只作为 UI 参考，不允许把 Figma 内部页名当作用例主题。
+必须优先覆盖这些业务功能点：
+1. 三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后。
+2. 照片打印：普通照片打印、普通证件照、智能证件照、照片拼版导入时增加百度网盘导入选项。
+3. 扫描复印：复印/扫描首页增加百度网盘导入入口。
+4. 埋点/终态关注：百度网盘文档、百度网盘照片、百度网盘复印入口可见，并可点击或进入授权/导入流程。
+生成约束：
+- 用例标题必须使用业务名称，不得出现“首页备份2、备份、引导1、Frame、节点、画板、设计稿”等 Figma 内部名称。
+- 首批冒烟只覆盖正常入口链路：文档打印入口展示与点击、照片打印导入入口、扫描复印入口。
+- 弹窗遮挡、连续进出、加载过程中点击、宽屏适配、多次刷新、返回状态一致性等鲁棒性场景，如果需求文档未明确要求，只能放到需确认/人工扩展，不得进入自动冒烟。""")
+
+    return "\n\n".join(item.strip() for item in constraints if item.strip())
 
 
 def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_text: str = "") -> dict:
@@ -923,6 +958,9 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     compact_case = re.sub(r"\s+", "", case_blob)
     compact_case_lower = compact_case.lower()
     reasons: List[str] = []
+    title_blob = _scope_guard_join_values(case.get("title"), case.get("name"))
+    if FIGMA_INTERNAL_CASE_NAME_RE.search(title_blob):
+        reasons.append("用例标题包含 Figma 内部页名/设计稿标识，应改为业务名称后再自动执行")
 
     topic_terms = _scope_guard_topic_terms(requirement_blob)
     if topic_terms:
@@ -4824,6 +4862,16 @@ def generate_ui_yaml_from_request(d, job_id=None):
     stage1_text_assets = requirement_text_assets or visual_text_assets or [
         "未提供独立需求文档，请根据标题、模块、Figma/截图和页面知识先归纳业务范围，再生成测试用例。"
     ]
+    semantic_constraints_text = build_requirement_semantic_constraints_text(stage1_text_assets, title)
+    if semantic_constraints_text:
+        stage1_text_assets = list(stage1_text_assets) + [semantic_constraints_text]
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=42,
+                step="识别需求主链",
+                message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
+            )
     yaml_reference_examples = collect_yaml_reference_examples(
         "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
         module=module,

@@ -238,6 +238,7 @@ def check_yaml_static_validation_and_patterns():
     )
     from task_server.services.yaml_service import (
         apply_generated_case_scope_gate,
+        build_requirement_semantic_constraints_text,
         dry_run_midscene_yaml,
         repair_generated_yaml_static_errors,
     )
@@ -500,6 +501,50 @@ def check_yaml_static_validation_and_patterns():
         and "百度网盘" in scoped_payload["cases"][0]["title"]
         and any("历史打印记录" in str(item.get("title") or "") for item in scoped_payload.get("manual_cases") or []),
         "Generated cases outside the current requirement scope must be kept out of the auto-run case pool",
+    )
+    baidu_constraints = build_requirement_semantic_constraints_text([
+        "基础打印模块增加百度网盘入口：三方文档打印百度网盘入口移至第2个，本地文档之后；"
+        "照片打印包含普通照片打印、普通证件照、智能证件照、照片拼版导入时增加百度网盘导入选项；"
+        "扫描复印首页增加百度网盘导入入口。"
+    ], "基础打印模块增加百度网盘入口")
+    require(
+        "三方文档打印" in baidu_constraints
+        and "照片拼版" in baidu_constraints
+        and "扫描复印" in baidu_constraints
+        and "首页备份2" in baidu_constraints,
+        "Baidu Netdisk requirement constraints must preserve real business scope and forbid Figma internal page names",
+    )
+    figma_name_yaml = """android:
+  tasks:
+    - name: 文档打印首页备份2展示百度网盘入口
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 文档打印首页加载完成
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 百度网盘授权页或导入页打开
+        - aiAssert: 百度网盘入口已进入授权或导入流程
+"""
+    figma_name_score = score_midscene_yaml_executable(figma_name_yaml)
+    require(
+        figma_name_score.get("executionLevel") != "executable"
+        and any("Figma 内部页名" in reason for reason in figma_name_score.get("reasons", [])),
+        "Generated YAML with Figma internal page names must not be treated as executable",
+    )
+    unsupported_expansion_yaml = """android:
+  tasks:
+    - name: 弹窗遮挡场景下点击百度网盘入口
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 文档打印首页加载完成
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 百度网盘授权页或导入页打开
+        - aiAssert: 百度网盘入口可用
+"""
+    unsupported_expansion_score = score_midscene_yaml_executable(unsupported_expansion_yaml)
+    require(
+        unsupported_expansion_score.get("executionLevel") != "executable"
+        and any("鲁棒性扩展" in reason for reason in unsupported_expansion_score.get("reasons", [])),
+        "Generated YAML with unsupported robustness expansion must require review instead of auto execution",
     )
 
     examples = [{
