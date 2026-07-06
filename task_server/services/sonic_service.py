@@ -2278,6 +2278,137 @@ def sonic_suite_effective_status(suite: dict) -> str:
     return status
 
 
+SONIC_NON_SCRIPT_FAILURE_CATEGORIES = {
+    "ai_model_service",
+    "runner_network",
+    "runner_environment",
+}
+
+
+def sonic_suite_failure_text(item: dict) -> str:
+    item = item or {}
+    parts = [
+        item.get("error"),
+        item.get("stderr_tail"),
+        item.get("progress_message"),
+        item.get("message"),
+        item.get("status_text"),
+    ]
+    return "\n".join(str(part) for part in parts if part not in (None, ""))
+
+
+def sonic_suite_failure_category(item: dict) -> dict:
+    text = sonic_suite_failure_text(item).lower()
+    if not text:
+        return {"category": "unknown", "label": "原因未知", "non_script": False}
+    ai_markers = (
+        "ai call error",
+        "failed to call ai model service",
+        "model service",
+        "model-provider",
+        "model provider",
+        "qwen",
+        "dashscope",
+        "openai",
+        "llm",
+    )
+    if any(marker in text for marker in ai_markers) or (
+        "request was aborted" in text and ("ai" in text or "model" in text)
+    ):
+        return {"category": "ai_model_service", "label": "AI模型服务异常", "non_script": True}
+    network_markers = (
+        "connection timed out",
+        "connect timeout",
+        "read timeout",
+        "socket timeout",
+        "socket hang up",
+        "econnreset",
+        "etimedout",
+        "winerror 10054",
+        "winerror 10060",
+        "network",
+        "网络",
+        "连接超时",
+        "远程主机强迫关闭",
+    )
+    if any(marker in text for marker in network_markers):
+        return {"category": "runner_network", "label": "网络/Runner连接异常", "non_script": True}
+    env_markers = (
+        "device offline",
+        "no devices",
+        "adb server",
+        "uiautomator",
+        "midscene_bin",
+        "adb_bin",
+        "runner error",
+        "runner 进程",
+        "设备离线",
+        "adb 异常",
+    )
+    if any(marker in text for marker in env_markers):
+        return {"category": "runner_environment", "label": "Runner/设备环境异常", "non_script": True}
+    return {"category": "script_or_product", "label": "脚本或产品校验失败", "non_script": False}
+
+
+def sonic_suite_failure_profile(suite: dict) -> dict:
+    failed_items = [item for item in (suite or {}).get("results") or [] if item.get("status") == "failed"]
+    categories: Dict[str, int] = {}
+    labels: Dict[str, str] = {}
+    non_script_count = 0
+    for item in failed_items:
+        meta = sonic_suite_failure_category(item)
+        category = meta["category"]
+        categories[category] = categories.get(category, 0) + 1
+        labels[category] = meta["label"]
+        if meta.get("non_script"):
+            non_script_count += 1
+    primary = ""
+    if categories:
+        primary = sorted(categories.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
+    return {
+        "failed_count": len(failed_items),
+        "categories": categories,
+        "primary_category": primary,
+        "primary_label": labels.get(primary, "原因未知"),
+        "non_script_count": non_script_count,
+        "non_script_only": bool(failed_items and non_script_count == len(failed_items)),
+    }
+
+
+def sonic_suite_notification_outcome(suite: dict) -> dict:
+    status = sonic_suite_effective_status(suite)
+    meta = sonic_suite_status_meta(status)
+    outcome = {
+        "status": status,
+        "status_label": meta["text"],
+        "class": meta["class"],
+        "color": meta["color"],
+        "icon": meta["icon"],
+        "failed_label": "失败",
+        "detail_heading": "失败明细",
+        "non_script_issue": False,
+        "reason_label": "",
+    }
+    profile = sonic_suite_failure_profile(suite)
+    if status == "failed" and profile.get("non_script_only"):
+        stats = sonic_suite_display_stats(suite)
+        partial = _safe_int(stats.get("passed"), 0) > 0
+        base_label = "部分完成" if partial else "未完成"
+        reason_label = profile.get("primary_label") or "执行环境异常"
+        outcome.update({
+            "status": "warning",
+            "status_label": f"{base_label}（{reason_label}）",
+            "class": "warn",
+            "color": "orange",
+            "icon": "⚠️",
+            "failed_label": "未判定",
+            "detail_heading": "异常明细",
+            "non_script_issue": True,
+            "reason_label": reason_label,
+        })
+    return outcome
+
+
 def sonic_suite_finished_in_sonic(suite: dict) -> bool:
     return bool(
         ((suite or {}).get("sonic_completion") or {}).get("finished")
@@ -3009,10 +3140,10 @@ def write_sonic_suite_summary_report(suite: dict) -> str:
     app_name = sonic_notify_pretty_title_text(app.get("name") or suite.get("app_name") or app.get("package") or "Sonic")
     run_mode = suite.get("run_mode") or "baseline"
     mode_label = "基线回归" if run_mode == "baseline" else "测试执行"
-    status = sonic_suite_effective_status(suite)
-    status_meta = sonic_suite_status_meta(status)
-    status_text = status_meta["text"]
-    status_class = status_meta["class"]
+    outcome = sonic_suite_notification_outcome(suite)
+    status_text = outcome["status_label"]
+    status_class = outcome["class"]
+    failed_label = outcome["failed_label"]
     stats = sonic_suite_display_stats(suite)
     total = stats["total"]
     passed = stats["passed"]
@@ -3036,8 +3167,19 @@ def write_sonic_suite_summary_report(suite: dict) -> str:
     rows = []
     for idx, item in enumerate(results, start=1):
         item_status = item.get("status") or "-"
-        cls = "pass" if item_status == "success" else ("fail" if item_status == "failed" else "warn")
-        label = "通过" if item_status == "success" else ("失败" if item_status == "failed" else item_status)
+        failure_meta = sonic_suite_failure_category(item) if item_status == "failed" else {}
+        if item_status == "success":
+            cls = "pass"
+            label = "通过"
+        elif item_status == "failed" and failure_meta.get("non_script"):
+            cls = "warn"
+            label = failure_meta.get("label") or failed_label
+        elif item_status == "failed":
+            cls = "fail"
+            label = "失败"
+        else:
+            cls = "warn"
+            label = item_status
         midscene_url = item.get("report_url") or ""
         report_pending = _safe_bool(item.get("report_upload_pending"))
         report_error = item.get("report_upload_error")
@@ -3135,7 +3277,7 @@ def write_sonic_suite_summary_report(suite: dict) -> str:
         <span class="pill">结论：<b class="{status_class}" style="background:transparent;color:var(--{status_class})">{h(status_text)}</b></span>
         <span class="pill">总数：{total}</span>
         <span class="pill">通过：{passed}</span>
-        <span class="pill">失败：{failed}</span>
+        <span class="pill">{h(failed_label)}：{failed}</span>
         <span class="pill">告警：{warning}</span>
         {f'<span class="pill">待回传：{pending}</span>' if pending else ''}
         {f'<span class="pill">开始：{h(started_text)}</span>' if started_text else ''}
@@ -3170,11 +3312,11 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     app_name = sonic_notify_pretty_title_text(app.get("name") or suite.get("app_name") or app.get("package") or "Sonic")
     run_mode = suite.get("run_mode") or "baseline"
     mode_label = "基线回归" if run_mode == "baseline" else "测试执行"
-    status = sonic_suite_effective_status(suite)
-    status_meta = sonic_suite_status_meta(status)
-    color = status_meta["color"]
-    icon = status_meta["icon"]
-    status_label = status_meta["text"]
+    outcome = sonic_suite_notification_outcome(suite)
+    color = outcome["color"]
+    icon = outcome["icon"]
+    status_label = outcome["status_label"]
+    failed_label = outcome["failed_label"]
     stats = sonic_suite_display_stats(suite)
     total = stats["total"]
     passed = stats["passed"]
@@ -3184,11 +3326,22 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     devices = sorted({item.get("device_id") for item in results if item.get("device_id")})
     modules = sorted({item.get("module") for item in results if item.get("module")})
     elements = [
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**结论：** <font color='{color}'>{icon} {status_label}</font>"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**结论：** <font color='{color}'>{icon} {mode_label}{status_label}</font>"}},
         {"tag": "div", "text": {"tag": "lark_md", "content": f"**应用：** {app_name}"}},
         {"tag": "div", "text": {"tag": "lark_md", "content": f"**范围：** {mode_label} · {total} 条用例"}},
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**统计：** 通过 {passed} / 失败 {failed} / 告警 {warning}"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**统计：** 通过 {passed} / {failed_label} {failed} / 告警 {warning}"}},
     ]
+    if outcome.get("non_script_issue"):
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    f"**说明：** 本次异常归因为{outcome.get('reason_label') or '执行环境异常'}，"
+                    "不按脚本/产品缺陷口径通知；请先确认模型服务、Runner 或网络状态。"
+                ),
+            },
+        })
     if stats.get("pending"):
         pending_text = (
             f"{stats.get('pending')} 条用例在 Sonic 已结束后仍未回传 Task 平台，请检查桥接脚本或接口权限"
@@ -3233,11 +3386,14 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     if failed_items:
         lines = []
         for item in failed_items[:5]:
+            failure_meta = sonic_suite_failure_category(item)
             reason = sonic_notify_compact(item.get("error") or item.get("stderr_tail") or item.get("progress_message") or "请查看报告", 80)
-            lines.append(f"- {sonic_suite_result_line(item)}：{reason}")
+            prefix = failure_meta.get("label") if failure_meta.get("non_script") else "失败"
+            lines.append(f"- [{prefix}] {sonic_suite_result_line(item)}：{reason}")
         if len(failed_items) > 5:
-            lines.append(f"- 还有 {len(failed_items) - 5} 条失败，请在 Task 平台执行中心查看")
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "**失败明细：**\n" + "\n".join(lines)}})
+            remaining_label = "异常/未判定" if outcome.get("non_script_issue") else "失败"
+            lines.append(f"- 还有 {len(failed_items) - 5} 条{remaining_label}，请在 Task 平台执行中心查看")
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**{outcome.get('detail_heading') or '失败明细'}：**\n" + "\n".join(lines)}})
     sonic_report_urls = [
         sonic_report_url,
         suite.get("sonic_report_url"),

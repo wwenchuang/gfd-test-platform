@@ -619,6 +619,33 @@ def test_sonic_completed_suite_reports_missing_task_callbacks():
     assert "待回传" not in text
 
 
+def test_ai_model_abort_notification_is_not_labeled_baseline_failure():
+    suite = {
+        "suite_key": "suite-ai-abort",
+        "app_package": "com.kfb.model",
+        "run_mode": "baseline",
+        "results": [
+            {"status": "success", "module": "3D打印基线", "target_task_name": "普通印章打印"},
+            {
+                "status": "failed",
+                "module": "3D打印基线",
+                "target_task_name": "十二生肖印章打印",
+                "error": (
+                    "failed to locate element:\n"
+                    "AI call error: failed to call AI model service (qwen3.6-plus): Request was aborted.\n"
+                    "Trouble shooting: https://midscenejs.com/model-provider.html"
+                ),
+            },
+        ],
+    }
+    card = midscene.build_sonic_suite_summary_card(suite)
+    text = str(card)
+    assert "基线回归部分完成（AI模型服务异常）" in text
+    assert "基线回归失败" not in text
+    assert "未判定 1" in text
+    assert "[AI模型服务异常]" in text
+
+
 def test_suite_summary_report_renders_missing_task_callbacks_as_rows():
     old_report_dir = midscene.REPORT_DIR
     try:
@@ -2473,6 +2500,7 @@ if __name__ == "__main__":
     test_sonic_failed_status_does_not_mean_suite_finished()
     test_sonic_suite_summary_card_marks_pending_as_warning()
     test_sonic_completed_suite_reports_missing_task_callbacks()
+    test_ai_model_abort_notification_is_not_labeled_baseline_failure()
     test_suite_summary_report_renders_missing_task_callbacks_as_rows()
     test_sonic_result_id_derives_fixed_report_url_without_lookup()
     test_feishu_reason_does_not_emit_irrecoverable_mojibake()
