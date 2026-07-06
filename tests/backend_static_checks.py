@@ -1953,6 +1953,42 @@ android:
     require(len(refs) == 1 and refs[0].get("file") == "02-good.yaml", "Quarantined generatedYamlPath must not be re-added to executable YAML refs")
 
 
+def check_agent_execution_gate_repairs_before_smoke_selection():
+    from task_server.services import agent_service
+
+    assertion_tap_yaml = """
+android:
+  tasks:
+    - name: "文档打印首页展示百度网盘入口"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "App 首页加载完成"
+        - aiTap: "点击「文档打印」icon"
+        - aiWaitFor: "文档打印首页加载完成"
+        - aiTap: "首页文档打印入口页-百度网盘入口可见性检查"
+        - aiAssert: "页面展示百度网盘入口可见"
+"""
+    run = {
+        "runId": "agent-static-gate-repair-before-smoke",
+        "target": "基础打印新增百度网盘入口",
+        "artifacts": {
+            "generationPipeline": {"source": "agent_generate_yaml"},
+            "yamlRefs": [
+                {"type": "file", "file": "01-baidu-entry.yaml", "content": assertion_tap_yaml, "confirmed": True, "smoke": True},
+            ],
+        },
+    }
+    selected, gate = agent_service._select_agent_runner_refs(run, agent_service.normalize_yaml_refs(run))
+    fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
+    require(gate.get("autoRepairCount") == 1, "Generated YAML runner gate must repair local executable issues before smoke selection")
+    require(len(selected) == 1 and gate.get("selectedCount") == 1, "Repairable generated YAML must not be blocked before first smoke selection")
+    require(
+        "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in fixed_content
+        and "aiWaitFor: 页面展示百度网盘入口可见" in fixed_content,
+        "Runner gate repair must persist repaired YAML content before precheck/dispatch",
+    )
+
+
 def main():
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
@@ -2203,6 +2239,7 @@ def main():
     check_agent_yaml_validate_partial_quarantine()
     check_agent_yaml_validate_auto_repairs_missing_wait()
     check_agent_quarantine_refs_do_not_reenter_precheck()
+    check_agent_execution_gate_repairs_before_smoke_selection()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()

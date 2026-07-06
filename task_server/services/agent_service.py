@@ -4206,6 +4206,116 @@ def _score_agent_yaml_ref_for_execution(run, ref):
     }
 
 
+def _agent_yaml_ref_key(ref):
+    if not isinstance(ref, dict):
+        return ("", "", "", "")
+    path = str(ref.get("path") or "").strip()
+    if path:
+        return ("path", os.path.normpath(path), "", "")
+    return (
+        "logical",
+        str(ref.get("type") or "file"),
+        str(ref.get("module") or ""),
+        str(ref.get("file") or ""),
+    )
+
+
+def _agent_update_yaml_ref_artifact(run, original_ref, repaired_ref):
+    artifacts = (run or {}).setdefault("artifacts", {})
+    refs = artifacts.get("yamlRefs") if isinstance(artifacts.get("yamlRefs"), list) else []
+    original_key = _agent_yaml_ref_key(original_ref)
+    repaired_key = _agent_yaml_ref_key(repaired_ref)
+    updated = False
+    next_refs = []
+    for item in refs:
+        if isinstance(item, dict) and _agent_yaml_ref_key(item) in (original_key, repaired_key):
+            next_refs.append({**item, **repaired_ref})
+            updated = True
+        else:
+            next_refs.append(item)
+    if updated:
+        artifacts["yamlRefs"] = next_refs
+
+
+def _agent_ref_needs_local_execution_repair(scored_ref):
+    score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
+    reason_text = "；".join(str(item) for item in (score.get("reasons") or []))
+    return any(fragment in reason_text for fragment in (
+        "交互动作后缺少等待或终态判断",
+        "aiTap 描述像检查/断言",
+        "动作前缀",
+        "${...}",
+        "shell 参数展开",
+    ))
+
+
+def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
+    """Apply deterministic generated-YAML repair before any execution gate.
+
+    WHartTest's useful pattern here is staged validation: repair/load/score must
+    happen before a case is selected or rejected for execution. This helper keeps
+    that order consistent for validate, precheck and Runner dispatch.
+    """
+    if not isinstance(ref, dict):
+        return ref, None
+    content = _yaml_ref_content(ref)
+    if not str(content or "").strip():
+        return ref, None
+    scored_before = _score_agent_yaml_ref_for_execution(run, ref)
+    if not _agent_ref_needs_local_execution_repair(scored_before):
+        return scored_before, None
+    repaired = _agent_repair_missing_interaction_followups(content)
+    if not repaired.get("changed"):
+        return scored_before, None
+
+    repaired_ref = {**ref}
+    _agent_write_repaired_yaml_ref(repaired_ref, repaired.get("content") or content)
+    scored_after = _score_agent_yaml_ref_for_execution(run, repaired_ref)
+    dry_after = _agent_yaml_dry_run_for_ref(run, repaired_ref)
+    dry_compact = _compact_yaml_dry_run_result(dry_after)
+    after_score = scored_after.get("executableScore") if isinstance(scored_after.get("executableScore"), dict) else {}
+    auto_repair = {
+        "type": "local_yaml_execution_repair",
+        "reason": reason,
+        "changed": True,
+        "changes": list(repaired.get("changes") or [])[:12],
+        "ok": bool(dry_compact.get("ok")) and after_score.get("executionLevel") == "executable",
+        "before": {
+            "executionLevel": (scored_before.get("executableScore") or {}).get("executionLevel"),
+            "reasons": list((scored_before.get("executableScore") or {}).get("reasons") or [])[:6],
+        },
+        "after": {
+            "executionLevel": after_score.get("executionLevel"),
+            "dryRunOk": bool(dry_compact.get("ok")),
+            "reasons": list(after_score.get("reasons") or [])[:6],
+        },
+        "dryRun": dry_compact,
+    }
+    scored_after["autoRepair"] = auto_repair
+    _agent_update_yaml_ref_artifact(run, ref, scored_after)
+    artifacts = (run or {}).setdefault("artifacts", {})
+    repairs = artifacts.get("yamlExecutionRepairs") if isinstance(artifacts.get("yamlExecutionRepairs"), list) else []
+    repairs.append({
+        "module": scored_after.get("module") or "",
+        "file": scored_after.get("file") or "",
+        "path": scored_after.get("path") or "",
+        **auto_repair,
+    })
+    artifacts["yamlExecutionRepairs"] = repairs[-50:]
+    return scored_after, auto_repair
+
+
+def _agent_repair_yaml_refs_for_execution(run, refs, *, reason="execution_gate"):
+    repaired_refs = []
+    repairs = []
+    for ref in refs or []:
+        repaired_ref, repair = _agent_repair_yaml_ref_for_execution(run, ref, reason=reason)
+        repaired_refs.append(repaired_ref)
+        if repair:
+            repairs.append(repair)
+    return repaired_refs, repairs
+
+
 def _agent_generated_runner_smoke_limit(run):
     """Return dynamic smoke batch size for newly generated YAML.
 
@@ -4248,6 +4358,7 @@ def _select_agent_runner_refs(run, refs):
             "results": [],
             "blocked": [],
         }
+    refs, repairs = _agent_repair_yaml_refs_for_execution(run, refs, reason="runner_gate")
     scored = [_score_agent_yaml_ref_for_execution(run, ref) for ref in refs]
     _sync_agent_generated_case_groups(artifacts, scored)
     smoke_limit = _agent_generated_runner_smoke_limit(run)
@@ -4280,6 +4391,7 @@ def _select_agent_runner_refs(run, refs):
         "blocked": blocked,
         "blocking": blocking,
         "deferred": deferred,
+        "autoRepairCount": len(repairs),
         "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有候选时按 executable 评分兜底选择首批。冒烟通过率不低于 50% 才自动扩展，扩展按小批次执行。",
     }
     artifacts["runnerExecutionGate"] = gate
@@ -4361,6 +4473,7 @@ def _agent_create_runner_jobs_for_refs(
     runner_dry_run_jobs = []
     for ref in refs or []:
         try:
+            ref, pre_dispatch_repair = _agent_repair_yaml_ref_for_execution(run, ref, reason=f"runner_dispatch:{phase}")
             full_path = str(ref.get("path") or "")
             if not os.path.exists(full_path):
                 dry_run_blocked.append({
@@ -4376,6 +4489,8 @@ def _agent_create_runner_jobs_for_refs(
             dry = _agent_yaml_dry_run_for_ref(run, {**ref, "module": mod, "file": fn, "path": full_path})
             dry_compact = _compact_yaml_dry_run_result(dry)
             dry_row = {"module": mod, "file": fn, "path": full_path, "phase": phase, **dry_compact}
+            if pre_dispatch_repair:
+                dry_row["autoRepair"] = pre_dispatch_repair
             dry_run_results.append(dry_row)
             if not dry_compact.get("ok"):
                 dry_run_blocked.append({
@@ -4468,6 +4583,7 @@ def _agent_yaml_dry_run_rows(run, refs):
     issues = []
     ok_count = 0
     for ref in refs:
+        ref, auto_repair = _agent_repair_yaml_ref_for_execution(run, ref, reason="yaml_dry_run")
         label = ref.get("path") or ref.get("file") or ref.get("type")
         content = _yaml_ref_content(ref)
         strong_check = validate_agent_yaml_content(content)
@@ -4475,7 +4591,6 @@ def _agent_yaml_dry_run_rows(run, refs):
         executable_score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
         dry = _agent_yaml_dry_run_for_ref(run, ref)
         dry_compact = _compact_yaml_dry_run_result(dry)
-        auto_repair = None
         executable_reason_text = "；".join(str(item) for item in (executable_score.get("reasons") or []))
         needs_repair = (
             bool(content)
