@@ -71,7 +71,11 @@ except Exception:  # pragma: no cover - PyYAML optional
 
 import threading
 
-from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable, tap_prompt_looks_assertion
+from task_server.services.yaml_executable_scorer import (
+    assertion_tap_to_wait_prompt,
+    score_midscene_yaml_executable,
+    tap_prompt_looks_assertion,
+)
 
 from ..config import (
     ASSET_DIR,
@@ -4158,15 +4162,6 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
     if not tasks:
         return {"changed": False, "content": original, "changes": []}
 
-    def wait_prompt_from_assertion_tap(prompt: str) -> str:
-        text = str(prompt or "").strip()
-        text = re.sub(r"^(请)?(检查|验证|确认)\s*", "", text)
-        text = text.replace("是否展示", "展示").replace("是否显示", "显示").replace("是否存在", "存在")
-        text = text.replace("是否可见", "可见").replace("是否正确", "正确")
-        if text and not text.startswith(("页面", "当前页面", "目标页面", "App", "文档打印", "百度网盘")):
-            text = "页面" + text
-        return text or str(prompt or "").strip()
-
     changes = []
     for task_index, task in enumerate(tasks, start=1):
         if not isinstance(task, dict):
@@ -4180,7 +4175,7 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
             prompt = str(step.get("aiTap") or "").strip()
             if not prompt or not tap_prompt_looks_assertion(prompt):
                 continue
-            wait_prompt = wait_prompt_from_assertion_tap(prompt)
+            wait_prompt = assertion_tap_to_wait_prompt(prompt)
             step.pop("aiTap", None)
             step["aiWaitFor"] = wait_prompt
             step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)

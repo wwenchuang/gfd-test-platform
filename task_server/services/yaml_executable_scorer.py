@@ -220,6 +220,65 @@ def tap_prompt_looks_assertion(text: str) -> bool:
     return _tap_prompt_looks_assertion(text)
 
 
+def assertion_tap_to_wait_prompt(text: str) -> str:
+    """Convert an assertion-like aiTap prompt into a page-state wait prompt.
+
+    Generated YAML sometimes turns a case title such as
+    "首页文档打印入口页-百度网盘入口可见性检查" into aiTap.  That is not a click
+    target; it should become a wait/assertion-style page-state prompt before
+    dry-run or Runner execution.
+    """
+    original = str(text or "").strip()
+    prompt = original
+    prompt = re.sub(r"^\s*请?(检查|验证|确认是否|确认|等待|查看)\s*", "", prompt)
+    prompt = prompt.strip(" ：:-—")
+
+    for separator in (" - ", " — ", "：", ":", "-", "—"):
+        if separator not in prompt:
+            continue
+        left, right = prompt.rsplit(separator, 1)
+        right = right.strip()
+        left = left.strip()
+        if (
+            right
+            and any(word in right for word in ("入口", "按钮", "可见", "展示", "显示", "存在", "百度网盘"))
+            and (
+                any(word in left for word in ("首页", "页面", "入口页", "文档打印", "引导页"))
+                or len(left) >= 6
+            )
+        ):
+            prompt = right
+            break
+
+    replacements = (
+        ("可见性检查", "可见"),
+        ("可见性校验", "可见"),
+        ("可见性验证", "可见"),
+        ("展示检查", "展示"),
+        ("展示校验", "展示"),
+        ("展示验证", "展示"),
+        ("显示检查", "显示"),
+        ("显示校验", "显示"),
+        ("显示验证", "显示"),
+        ("是否展示", "展示"),
+        ("是否显示", "显示"),
+        ("是否存在", "存在"),
+        ("是否可见", "可见"),
+        ("是否正确", "正确"),
+    )
+    for old, new in replacements:
+        prompt = prompt.replace(old, new)
+
+    prompt = re.sub(r"(检查|校验|验证)$", "", prompt).strip(" ：:-—")
+    if not prompt:
+        return original
+    if prompt.startswith(("页面", "当前页面", "目标页面", "App")):
+        return prompt
+    if any(word in prompt for word in ("入口", "按钮", "文案", "可见", "展示", "显示", "存在", "加载", "状态")):
+        return f"页面展示{prompt}"
+    return f"页面{prompt}"
+
+
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
     """Score whether YAML is safe enough to auto-send to Runner.
 

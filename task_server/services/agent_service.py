@@ -53,6 +53,7 @@ from task_server.storage import (
 )
 from task_server.services.yaml_service import extract_midscene_tasks, slug_for_file, validate_midscene_yaml_executability
 from task_server.services.yaml_executable_scorer import (
+    assertion_tap_to_wait_prompt,
     rank_executable_yaml_refs,
     score_midscene_yaml_executable,
     tap_prompt_looks_assertion,
@@ -4058,13 +4059,7 @@ def _agent_followup_wait_text(step):
 
 
 def _agent_assertion_tap_to_wait_prompt(prompt):
-    text = str(prompt or "").strip()
-    text = re.sub(r"^(请)?(检查|验证|确认)\s*", "", text)
-    text = text.replace("是否展示", "展示").replace("是否显示", "显示").replace("是否存在", "存在")
-    text = text.replace("是否可见", "可见").replace("是否正确", "正确")
-    if text and not text.startswith(("页面", "当前页面", "目标页面", "App", "文档打印", "百度网盘")):
-        text = "页面" + text
-    return text or str(prompt or "").strip()
+    return assertion_tap_to_wait_prompt(prompt)
 
 
 def _agent_repair_missing_interaction_followups(yaml_text):
@@ -4515,13 +4510,12 @@ def _agent_yaml_dry_run_rows(run, refs):
                         "executionLevel": executable_score_after.get("executionLevel"),
                     },
                 }
-                if auto_repair["ok"]:
-                    ref = repaired_ref
-                    content = repaired.get("content") or content
-                    strong_check = strong_check_after
-                    scored_ref = scored_ref_after
-                    executable_score = executable_score_after
-                    dry_compact = dry_compact_after
+                ref = repaired_ref
+                content = repaired.get("content") or content
+                strong_check = strong_check_after
+                scored_ref = scored_ref_after
+                executable_score = executable_score_after
+                dry_compact = dry_compact_after
         scope_review = scored_ref.get("scopeReview") if isinstance(scored_ref.get("scopeReview"), dict) else {}
         scope_issues = list(scope_review.get("reasons") or []) if scope_review.get("ok") is False else []
         ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []

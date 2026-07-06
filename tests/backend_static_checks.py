@@ -228,6 +228,7 @@ def check_yaml_static_validation_and_patterns():
         validate_yaml_static_executable,
     )
     from task_server.services.yaml_executable_scorer import (
+        assertion_tap_to_wait_prompt,
         rank_executable_yaml_refs,
         score_midscene_yaml_executable,
     )
@@ -347,6 +348,29 @@ def check_yaml_static_validation_and_patterns():
         and "aiWaitFor" in repaired_assertion_tap.get("content", "")
         and score_midscene_yaml_executable(repaired_assertion_tap.get("content", "")).get("executionLevel") == "executable",
         "Agent validation must locally repair assertion-like aiTap prompts before failing the whole run",
+    )
+    require(
+        assertion_tap_to_wait_prompt("首页文档打印入口页-百度网盘入口可见性检查") == "页面展示百度网盘入口可见",
+        "Assertion-like aiTap title prompts must be converted into concrete page-state waits",
+    )
+    title_assertion_tap_yaml = """android:
+  tasks:
+    - name: 首页文档打印入口页-百度网盘入口可见性检查
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 点击「文档打印」icon
+        - aiWaitFor: 文档打印首页加载完成
+        - aiTap: 首页文档打印入口页-百度网盘入口可见性检查
+        - aiAssert: 页面展示百度网盘入口可见
+"""
+    title_assertion_repair = repair_generated_yaml_executable_gate_issues(title_assertion_tap_yaml)
+    title_assertion_content = title_assertion_repair.get("content", "")
+    require(
+        title_assertion_repair.get("changed")
+        and "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in title_assertion_content
+        and "aiWaitFor: 页面展示百度网盘入口可见" in title_assertion_content,
+        "Generated YAML repair must handle title-style assertion aiTap prompts from Agent cases",
     )
     generation_policy = build_executable_smoke_yaml_policy_text()
     require(
@@ -1788,7 +1812,7 @@ android:
         - aiWaitFor: "App 首页加载完成"
         - aiTap: "点击「文档打印」icon"
         - aiWaitFor: "文档打印首页加载完成"
-        - aiTap: "检查页面是否展示「百度网盘」入口按钮"
+        - aiTap: "首页文档打印入口页-百度网盘入口可见性检查"
         - aiWaitFor: "页面稳定展示「百度网盘」入口按钮，文案清晰可点击"
         - aiAssert: "页面稳定展示「百度网盘」入口按钮，文案清晰可点击"
 """
@@ -1807,7 +1831,33 @@ android:
     fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
     require(call.get("status") == "SUCCESS", "Agent YAML validation must repair assertion-like aiTap prompts before quarantine/precheck")
     require(validation.get("autoRepairedCount") == 1, "Assertion-like aiTap repair must be counted")
-    require("aiTap: 检查页面是否展示" not in fixed_content and "aiWaitFor: 页面展示" in fixed_content, "Assertion-like aiTap must become a concrete aiWaitFor page-state prompt")
+    require(
+        "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in fixed_content
+        and "aiWaitFor: 页面展示百度网盘入口可见" in fixed_content,
+        "Assertion-like title aiTap must become a concrete aiWaitFor page-state prompt",
+    )
+    still_needs_review_yaml = """
+android:
+  tasks:
+    - name: "首页文档打印入口页-百度网盘入口可见性检查"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "App 首页加载完成"
+        - aiTap: "首页文档打印入口页-百度网盘入口可见性检查"
+"""
+    rows, issues, ok_count = agent_service._agent_yaml_dry_run_rows(
+        {"runId": "agent-static-auto-repair-adopt", "artifacts": {"generationPipeline": {"source": "agent_generate_yaml"}}},
+        [{"type": "file", "file": "title-assertion.yaml", "content": still_needs_review_yaml, "confirmed": True}],
+    )
+    repaired_row_content = (rows[0] if rows else {}).get("content") or ""
+    repaired_row_issues = "；".join(str(item) for item in ((rows[0] if rows else {}).get("issues") or []) + issues)
+    require(
+        ok_count == 0
+        and "aiWaitFor: 页面展示百度网盘入口可见" in repaired_row_content
+        and "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in repaired_row_content
+        and "aiTap 描述像检查/断言" not in repaired_row_issues,
+        "Agent dry-run rows must keep repaired YAML even when the case still needs review for other reasons",
+    )
 
     missing_wait_yaml = """
 android:
