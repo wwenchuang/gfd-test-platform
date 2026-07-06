@@ -2151,7 +2151,14 @@ def main():
     require("def repair_generated_yaml_static_errors" in yaml_service_source and '"yamlStaticRepair"' in yaml_service_source and "只修复 YAML 结构和动作字段" in yaml_service_source, "Generated YAML must run a narrow static repair loop before writing/executing files")
     require("jobSkippedYamlFiles" in yaml_service_source and "静态可执行校验未通过" in yaml_service_source, "Generated YAML with static errors must not auto-create Runner jobs")
     require("def _agent_yaml_dry_run_for_ref" in agent_service_source and '"yamlDryRun"' in agent_service_source and '"runnerDryRun"' in agent_service_source and "Runner 下发前 dry-run 未通过" in agent_service_source, "Agent must dry-run YAML before validation, precheck and Runner job creation")
-    require("AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source and "首批冒烟通过率低于 50%" in agent_service_source and "expandedBatchLimit" in agent_service_source, "Agent must only expand generated YAML in batches after the first smoke batch reaches the pass-rate gate")
+    require(
+        "AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source
+        and "首批冒烟通过率低于 50%" in agent_service_source
+        and "expandedBatchLimit" in agent_service_source
+        and "expandedBatches" in agent_service_source
+        and "第 {batch_index} 批扩展" in agent_service_source,
+        "Agent must continue generated YAML execution in visible batches after the first smoke batch reaches the pass-rate gate",
+    )
     require("def apply_generated_case_scope_gate" in yaml_service_source and "需求范围不匹配的生成用例不再转换为自动化 YAML" in yaml_service_source, "Generated cases outside current requirement scope must be kept out of auto-run YAML")
     require("baseline.*" not in yaml_executable_scorer_source and "命中基线" in yaml_executable_scorer_source, "Generated baseline metadata comments must not be treated as successful baseline evidence")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")

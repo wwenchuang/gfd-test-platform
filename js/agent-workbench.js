@@ -1694,10 +1694,21 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
   if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
   let stop = '首批冒烟准入已启用';
   if (gate.stopFurtherExecution) {
-    stop = `已停止后续批量执行：${gate.reason || '首批冒烟通过率低于 50%'}`;
+    stop = `已停止后续批量执行：${gate.expandedStopReason || gate.reason || '首批冒烟通过率低于 50%'}`;
   } else if (gate.expandedExecution) {
     stop = `首批冒烟通过率达标，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
   }
+  const expandedBatches = Array.isArray(gate.expandedBatches) ? gate.expandedBatches : [];
+  const expandedBatchHtml = expandedBatches.length ? `
+    <div class="final-report-file-list compact">
+      ${expandedBatches.map(batch => `
+        <span>
+          <b>第 ${escapeHtml(batch.batch || '-')} 批：计划 ${escapeHtml(batch.plannedCount ?? 0)}，下发 ${escapeHtml(batch.createdCount ?? 0)}</b>
+          <em>成功 ${escapeHtml(batch.completedCount ?? 0)} · 失败 ${escapeHtml(batch.failedCount ?? 0)} · 超时 ${escapeHtml(batch.timeoutCount ?? 0)} · 拦截 ${escapeHtml(batch.blockedCount ?? 0)}</em>
+        </span>
+      `).join('')}
+    </div>
+  ` : '';
   return `
     <section class="final-report-panel final-report-wide">
       <strong>Runner 自动执行准入</strong>
@@ -1710,6 +1721,7 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
         <div><span>被拦截</span><strong>${escapeHtml(gate.blockingCount ?? gate.blockedCount ?? 0)}</strong></div>
       </div>
       ${gate.smokeFailureRate ? `<p>首批失败率：${escapeHtml(Math.round(Number(gate.smokeFailureRate || 0) * 100))}%</p>` : ''}
+      ${expandedBatchHtml}
     </section>
   `;
 }

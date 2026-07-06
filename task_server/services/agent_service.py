@@ -8821,90 +8821,164 @@ def _tool_run_sonic(run):
                     run_artifacts["runnerSmokeGate"] = stop_info
                     summary_parts.append(f"首批冒烟通过率低于 50%（失败 {smoke_failed}/{smoke_total}），已停止后续批量执行：{stop_reason}")
                 elif smoke_total and gate_deferred:
-                    expand_limit = min(AGENT_GENERATED_RUNNER_EXPAND_LIMIT, AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT)
-                    expand_refs = gate_deferred[:expand_limit]
-                    remaining_deferred = gate_deferred[len(expand_refs):]
+                    expand_batch_limit = max(1, min(AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT, AGENT_GENERATED_RUNNER_EXPAND_LIMIT))
+                    pending_deferred = list(gate_deferred)[:AGENT_GENERATED_RUNNER_EXPAND_LIMIT]
+                    overflow_deferred = list(gate_deferred)[AGENT_GENERATED_RUNNER_EXPAND_LIMIT:]
+                    expanded_batches = []
+                    expanded_job_ids_all = []
+                    expanded_blocked_all = []
+                    expanded_dry_results_all = []
+                    expanded_completed_count = 0
+                    expanded_failed_count = 0
+                    expanded_timeout_count = 0
+                    expanded_stop_reason = ""
+                    batch_index = 0
                     gate.update({
                         "stopFurtherExecution": False,
                         "expandedExecution": True,
-                        "expandedBatchLimit": expand_limit,
-                        "expandedPlannedCount": len(expand_refs),
-                        "remainingDeferredCount": len(remaining_deferred),
+                        "expandedBatchLimit": expand_batch_limit,
+                        "expandedPlannedCount": len(pending_deferred),
+                        "expandedOverflowCount": len(overflow_deferred),
                     })
-                    summary_parts.append(
-                        f"首批冒烟通过率不低于 50%，继续小批量执行剩余 executable {len(expand_refs)} 个"
-                    )
-                    expanded_created = _agent_create_runner_jobs_for_refs(
-                        run,
-                        expand_refs,
-                        selected_runner_id,
-                        selected_device_id,
-                        selected_device_strategy,
-                        runner_dry_run_enabled=runner_dry_run_enabled,
-                        phase="expanded",
-                    )
-                    expanded_job_ids = list(expanded_created.get("jobIds") or [])
-                    expanded_blocked = list(expanded_created.get("dryRunBlocked") or [])
-                    runner_dry_run = run_artifacts.get("runnerDryRun") if isinstance(run_artifacts.get("runnerDryRun"), dict) else {}
-                    runner_dry_run.setdefault("results", []).extend(expanded_created.get("dryRunResults") or [])
-                    runner_dry_run.setdefault("blocked", []).extend(expanded_blocked)
-                    runner_dry_run.setdefault("runnerJobIds", []).extend(expanded_created.get("runnerDryRunJobs") or [])
-                    runner_dry_run["expandedResults"] = expanded_created.get("dryRunResults") or []
-                    runner_dry_run["expandedBlocked"] = expanded_blocked
-                    runner_dry_run["expandedCreatedCount"] = len(expanded_job_ids)
-                    runner_dry_run["expandedChecked"] = len(expanded_created.get("dryRunResults") or [])
-                    runner_dry_run["checked"] = len(runner_dry_run.get("results") or [])
-                    runner_dry_run["blockedCount"] = len(runner_dry_run.get("blocked") or [])
-                    runner_dry_run["createdCount"] = len(run_artifacts.get("jobIds") or []) + len(expanded_job_ids)
-                    runner_dry_run["ok"] = not runner_dry_run.get("blocked")
-                    run_artifacts["runnerDryRun"] = runner_dry_run
 
-                    gate.update({
-                        "expandedCreatedCount": len(expanded_job_ids),
-                        "expandedBlockedCount": len(expanded_blocked),
-                        "expandedJobIds": expanded_job_ids,
-                    })
-                    if expanded_blocked:
-                        summary_parts.append(f"扩展阶段 {len(expanded_blocked)} 个未下发")
-                    if expanded_job_ids:
-                        run_artifacts["jobIds"] = list(run_artifacts.get("jobIds") or []) + expanded_job_ids
-                        _persist_agent_run_snapshot(run)
-                        expanded_timeout = job_service.runner_job_wait_timeout_seconds(len(expanded_job_ids))
-                        expanded_wait = job_service.wait_jobs_finished(expanded_job_ids, run, timeout=expanded_timeout, interval=5)
-                        wait_result = _agent_merge_runner_wait_results(wait_result, expanded_wait)
-                        run_artifacts["jobResult"].update({
-                            "completedCount": len(wait_result["completed"]),
-                            "failedCount": len(wait_result["failed"]),
-                            "timeoutCount": len(wait_result["timeout"]),
-                            "completed": wait_result["completed"],
-                            "failed": wait_result["failed"],
-                            "timeout": wait_result["timeout"],
-                            "waitTimeoutSeconds": max(wait_timeout, expanded_timeout),
-                        })
-                        run_artifacts["jobResult"].setdefault("phases", {})["expanded"] = {
-                            "jobIds": expanded_job_ids,
-                            "completedCount": len(expanded_wait.get("completed") or []),
-                            "failedCount": len(expanded_wait.get("failed") or []),
-                            "timeoutCount": len(expanded_wait.get("timeout") or []),
-                            "waitTimeoutSeconds": expanded_timeout,
-                        }
-                        gate.update({
-                            "expandedCompletedCount": len(expanded_wait.get("completed") or []),
-                            "expandedFailedCount": len(expanded_wait.get("failed") or []),
-                            "expandedTimeoutCount": len(expanded_wait.get("timeout") or []),
-                        })
-                        expanded_total = len(expanded_wait.get("completed") or []) + len(expanded_wait.get("failed") or []) + len(expanded_wait.get("timeout") or [])
-                        expanded_failed = len(expanded_wait.get("failed") or []) + len(expanded_wait.get("timeout") or [])
-                        if expanded_total:
-                            expanded_failure_rate = expanded_failed / expanded_total
-                            gate["expandedFailureRate"] = round(expanded_failure_rate, 4)
-                            if expanded_failed:
-                                gate["stopFurtherExecution"] = True
-                                gate["expandedStopReason"] = "扩展批次存在失败，后续可执行用例需先复核或手动继续执行"
+                    while pending_deferred:
+                        batch_index += 1
+                        expand_refs = pending_deferred[:expand_batch_limit]
+                        pending_deferred = pending_deferred[expand_batch_limit:]
+                        phase_name = f"expanded-{batch_index}"
                         summary_parts.append(
-                            "扩展执行 "
-                            f"{len(expanded_job_ids)} 个：成功 {len(expanded_wait.get('completed') or [])}，"
-                            f"失败 {len(expanded_wait.get('failed') or [])}，超时 {len(expanded_wait.get('timeout') or [])}"
+                            f"首批冒烟通过率不低于 50%，继续第 {batch_index} 批剩余 executable {len(expand_refs)} 个"
+                        )
+                        expanded_created = _agent_create_runner_jobs_for_refs(
+                            run,
+                            expand_refs,
+                            selected_runner_id,
+                            selected_device_id,
+                            selected_device_strategy,
+                            runner_dry_run_enabled=runner_dry_run_enabled,
+                            phase=phase_name,
+                        )
+                        expanded_job_ids = list(expanded_created.get("jobIds") or [])
+                        expanded_blocked = list(expanded_created.get("dryRunBlocked") or [])
+                        expanded_dry_results = list(expanded_created.get("dryRunResults") or [])
+                        expanded_runner_dry_jobs = list(expanded_created.get("runnerDryRunJobs") or [])
+                        expanded_job_ids_all.extend(expanded_job_ids)
+                        expanded_blocked_all.extend(expanded_blocked)
+                        expanded_dry_results_all.extend(expanded_dry_results)
+
+                        runner_dry_run = run_artifacts.get("runnerDryRun") if isinstance(run_artifacts.get("runnerDryRun"), dict) else {}
+                        runner_dry_run.setdefault("results", []).extend(expanded_dry_results)
+                        runner_dry_run.setdefault("blocked", []).extend(expanded_blocked)
+                        runner_dry_run.setdefault("runnerJobIds", []).extend(expanded_runner_dry_jobs)
+                        runner_dry_run["expandedResults"] = expanded_dry_results_all
+                        runner_dry_run["expandedBlocked"] = expanded_blocked_all
+                        runner_dry_run["expandedCreatedCount"] = len(expanded_job_ids_all)
+                        runner_dry_run["expandedChecked"] = len(expanded_dry_results_all)
+                        runner_dry_run["checked"] = len(runner_dry_run.get("results") or [])
+                        runner_dry_run["blockedCount"] = len(runner_dry_run.get("blocked") or [])
+                        runner_dry_run["createdCount"] = len(run_artifacts.get("jobIds") or []) + len(expanded_job_ids)
+                        runner_dry_run["ok"] = not runner_dry_run.get("blocked")
+                        run_artifacts["runnerDryRun"] = runner_dry_run
+
+                        batch_result = {
+                            "batch": batch_index,
+                            "phase": phase_name,
+                            "plannedCount": len(expand_refs),
+                            "createdCount": len(expanded_job_ids),
+                            "blockedCount": len(expanded_blocked),
+                            "jobIds": expanded_job_ids,
+                            "blocked": expanded_blocked[:8],
+                        }
+                        if expanded_blocked:
+                            summary_parts.append(f"第 {batch_index} 批扩展阶段 {len(expanded_blocked)} 个未下发")
+
+                        if expanded_job_ids:
+                            run_artifacts["jobIds"] = list(run_artifacts.get("jobIds") or []) + expanded_job_ids
+                            _persist_agent_run_snapshot(run)
+                            expanded_timeout = job_service.runner_job_wait_timeout_seconds(len(expanded_job_ids))
+                            expanded_wait = job_service.wait_jobs_finished(expanded_job_ids, run, timeout=expanded_timeout, interval=5)
+                            wait_result = _agent_merge_runner_wait_results(wait_result, expanded_wait)
+                            run_artifacts["jobResult"].update({
+                                "completedCount": len(wait_result["completed"]),
+                                "failedCount": len(wait_result["failed"]),
+                                "timeoutCount": len(wait_result["timeout"]),
+                                "completed": wait_result["completed"],
+                                "failed": wait_result["failed"],
+                                "timeout": wait_result["timeout"],
+                                "waitTimeoutSeconds": max(wait_timeout, expanded_timeout),
+                            })
+                            phase_result = {
+                                "jobIds": expanded_job_ids,
+                                "completedCount": len(expanded_wait.get("completed") or []),
+                                "failedCount": len(expanded_wait.get("failed") or []),
+                                "timeoutCount": len(expanded_wait.get("timeout") or []),
+                                "waitTimeoutSeconds": expanded_timeout,
+                            }
+                            run_artifacts["jobResult"].setdefault("phases", {})[phase_name] = phase_result
+                            batch_result.update(phase_result)
+                            batch_total = phase_result["completedCount"] + phase_result["failedCount"] + phase_result["timeoutCount"]
+                            batch_failed = phase_result["failedCount"] + phase_result["timeoutCount"]
+                            expanded_completed_count += phase_result["completedCount"]
+                            expanded_failed_count += phase_result["failedCount"]
+                            expanded_timeout_count += phase_result["timeoutCount"]
+                            batch_failure_rate = (batch_failed / batch_total) if batch_total else 0
+                            batch_result["failureRate"] = round(batch_failure_rate, 4)
+                            summary_parts.append(
+                                f"第 {batch_index} 批扩展执行 {len(expanded_job_ids)} 个："
+                                f"成功 {phase_result['completedCount']}，失败 {phase_result['failedCount']}，超时 {phase_result['timeoutCount']}"
+                            )
+                            if batch_total and batch_failure_rate > 0.5:
+                                expanded_stop_reason = f"第 {batch_index} 批扩展失败率超过 50%，暂停后续扩展"
+                        elif expanded_blocked:
+                            expanded_stop_reason = f"第 {batch_index} 批扩展 dry-run 拦截 {len(expanded_blocked)} 个，暂停后续扩展"
+                        else:
+                            expanded_stop_reason = f"第 {batch_index} 批扩展未创建 Runner 任务，暂停后续扩展"
+
+                        expanded_batches.append(batch_result)
+                        gate.update({
+                            "expandedBatches": expanded_batches,
+                            "expandedCreatedCount": len(expanded_job_ids_all),
+                            "expandedBlockedCount": len(expanded_blocked_all),
+                            "expandedJobIds": expanded_job_ids_all,
+                            "expandedCompletedCount": expanded_completed_count,
+                            "expandedFailedCount": expanded_failed_count,
+                            "expandedTimeoutCount": expanded_timeout_count,
+                            "remainingDeferredCount": len(pending_deferred) + len(overflow_deferred),
+                        })
+                        run_artifacts["runnerExecutionGate"] = gate
+                        run_artifacts["runnerSmokeGate"] = gate
+                        _persist_agent_run_snapshot(run)
+                        if expanded_stop_reason:
+                            break
+
+                    remaining_deferred = pending_deferred + overflow_deferred
+                    expanded_total = expanded_completed_count + expanded_failed_count + expanded_timeout_count
+                    expanded_failed_total = expanded_failed_count + expanded_timeout_count
+                    if expanded_total:
+                        gate["expandedFailureRate"] = round(expanded_failed_total / expanded_total, 4)
+                    if not expanded_stop_reason and overflow_deferred:
+                        expanded_stop_reason = f"达到扩展上限 {AGENT_GENERATED_RUNNER_EXPAND_LIMIT}，剩余 {len(overflow_deferred)} 个可手动继续"
+                    gate.update({
+                        "expandedBatches": expanded_batches,
+                        "expandedBatchCount": len(expanded_batches),
+                        "expandedCreatedCount": len(expanded_job_ids_all),
+                        "expandedBlockedCount": len(expanded_blocked_all),
+                        "expandedJobIds": expanded_job_ids_all,
+                        "expandedCompletedCount": expanded_completed_count,
+                        "expandedFailedCount": expanded_failed_count,
+                        "expandedTimeoutCount": expanded_timeout_count,
+                        "remainingDeferredCount": len(remaining_deferred),
+                        "remainingDeferred": remaining_deferred[:30],
+                        "stopFurtherExecution": bool(expanded_stop_reason),
+                        "expandedStopReason": expanded_stop_reason,
+                    })
+                    if expanded_stop_reason:
+                        summary_parts.append(expanded_stop_reason)
+                    elif expanded_job_ids_all or expanded_blocked_all:
+                        summary_parts.append(
+                            f"扩展阶段完成：共下发 {len(expanded_job_ids_all)} 个，"
+                            f"成功 {expanded_completed_count}，失败 {expanded_failed_count}，超时 {expanded_timeout_count}，"
+                            f"dry-run 拦截 {len(expanded_blocked_all)} 个"
                         )
                     run_artifacts["runnerExecutionGate"] = gate
                     run_artifacts["runnerSmokeGate"] = gate

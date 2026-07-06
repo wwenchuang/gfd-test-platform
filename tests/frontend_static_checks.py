@@ -241,6 +241,7 @@ def main():
     require("GENERATED_SMOKE_RERUN_DEFAULT_LIMIT = 3" in html and "generatedSmokeTargets" in html and "generatedSmokeRerunLimit(summary" in html and "重跑首批冒烟" in html and "重跑全部冒烟" in html and "run_all" in html, "Generated smoke rerun must default to at most 3 first-batch smoke cases and require an explicit all-smoke action")
     require("继续下一批可执行" in html and "执行全部当前可执行" in html and "remaining_executable" in html, "Generated executable rerun must support small-batch continuation and explicit full execution")
     require("agentGeneratedSmokeRerunLimit" in html and "重跑首批冒烟 ${escapeHtml(smokeLimit)}/${escapeHtml(smokeExecutableCount)}" in html and "重跑冒烟${smokeExecutableCount" not in html, "Agent artifact rerun button must show first-batch count instead of total executable smoke count")
+    require("expandedBatches" in html and "expandedStopReason" in html and "第 ${escapeHtml(batch.batch || '-')} 批" in html, "Agent final report must expose expanded execution batches instead of looking smoke-only")
     require("runSonicSingleCase" not in html and "/sonic/run-case" not in html and "Sonic 临时套执行" not in html, "Frontend must not expose Sonic temporary-suite single-case execution")
     require("Trace 回放" in html and "/debug/traces" in html and "/debug/replay" in html and "/debug/diff" in html, "Execution center must expose Trace replay/diff debugger")
     trace_viewer = (ROOT / "trace-viewer.html").read_text(encoding="utf-8")
