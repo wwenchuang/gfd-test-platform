@@ -283,6 +283,34 @@ def assertion_tap_to_wait_prompt(text: str) -> str:
     return f"页面{prompt}"
 
 
+def _compact_text(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).lower()
+
+
+def _is_baidu_netdisk_tap_prompt(text: str) -> bool:
+    compact = _compact_text(text)
+    if "百度网盘" not in compact:
+        return False
+    return any(word in compact for word in ("点击", "点按", "轻触", "进入", "打开", "选择", "入口", "导入"))
+
+
+def _is_baidu_post_click_target_prompt(text: str) -> bool:
+    compact = _compact_text(text)
+    if "百度网盘" not in compact:
+        return False
+    return any(word in compact for word in ("授权", "登录", "文件选择", "文件列表", "暂无数据", "空状态", "确定", "搜索", "返回", "提示页", "相关页面"))
+
+
+def _is_baidu_original_entry_prompt(text: str) -> bool:
+    compact = _compact_text(text)
+    if "百度网盘" not in compact:
+        return False
+    return any(word in compact for word in (
+        "入口展示", "展示入口", "入口可见", "页面展示", "页面显示", "稳定显示",
+        "可见性", "入口按钮可见", "导入方式", "首页展示", "首页的百度网盘入口",
+    ))
+
+
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
     """Score whether YAML is safe enough to auto-send to Runner.
 
@@ -370,18 +398,22 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         generic_queries = 0
         non_tap_intents = 0
         nested_action_prefixes = 0
+        baidu_original_state_after_click = 0
         replan_risk = "low"
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
         if flow and not start_guard:
             warnings.append("缺少稳定起点/启动守卫，可能依赖上一个页面状态")
             score -= 25 if generated else 10
+        after_baidu_tap = False
         for step_index, step in enumerate(flow):
             actions = _step_actions(step)
             if not actions:
                 errors.append(f"flow[{step_index + 1}] 没有平台支持的动作")
                 score -= 30
                 continue
+            if any(action in actions for action in ("launch", "runAdbShell")):
+                after_baidu_tap = False
             action_count += len(actions)
             if any(action in WAIT_ACTIONS for action in actions):
                 wait_count += 1
@@ -418,6 +450,10 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
                 vague_steps += 1
             if "aiQuery" in actions and _ai_query_too_generic(step_text):
                 generic_queries += 1
+            if "aiTap" in actions and _is_baidu_netdisk_tap_prompt(step_text):
+                after_baidu_tap = True
+            elif after_baidu_tap and any(action in actions for action in ("aiWaitFor", "aiAssert")) and _is_baidu_original_entry_prompt(step_text):
+                baidu_original_state_after_click += 1
         if action_count < 3:
             warnings.append("步骤过少，无法形成稳定的冒烟路径")
             score -= 20
@@ -448,6 +484,9 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if generic_queries:
             warnings.append(f"{generic_queries} 个 aiQuery 过短或过泛，容易定位不到真实元素")
             score -= min(40, 25 * generic_queries)
+        if baidu_original_state_after_click:
+            warnings.append(f"{baidu_original_state_after_click} 个百度网盘点击后仍检查原业务页入口，实际会进入第三方/空状态页")
+            score -= min(45, 35 * baidu_original_state_after_click)
         if nested_action_prefixes:
             warnings.append(f"{nested_action_prefixes} 个步骤内容嵌套了动作名前缀，需要先规范化再执行")
         if len(flow) > 36:

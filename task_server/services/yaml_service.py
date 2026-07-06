@@ -1274,6 +1274,7 @@ def build_executable_smoke_yaml_policy_text():
         "3. Figma 只作为 UI 参考，实际 App 可能有文案、顺序和样式差异；不要照抄 Figma 上的长文案、尺寸、坐标或全部元素。",
         "4. 只有真实点击目标才能用 aiTap；检查/验证/是否展示/是否存在/页面可见/状态一致这类语义必须用 aiWaitFor 或按基线习惯保留为轻量 ai，不要为了补断言强行生成 aiAssert。",
         "4.1 用例标题里的“展示/检查/验证/可见性”不能直接变成 aiTap；如果只是检查入口是否存在，写 aiWaitFor；只有明确按钮/入口本身才写 aiTap。",
+        "4.2 点击百度网盘、微信、相册、相机等第三方/系统入口后，后续等待和断言必须面向跳转后的授权页、文件选择页、空状态页或提示页，不能继续等待原业务页的入口展示。",
         "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
         "7. 智小白 3D AI建模链路必须按当前真机入口写：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的“文字输入”；标牌/印章入口需要先横向滑动功能入口区域。",
@@ -3991,6 +3992,46 @@ def validate_midscene_yaml_executability(text):
     }
 
 
+BAIDU_NETDISK_POST_CLICK_WAIT = (
+    "百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开，"
+    "页面出现返回、搜索、确定、暂无数据、文件列表任一稳定信号"
+)
+BAIDU_NETDISK_POST_CLICK_ASSERT = (
+    "点击百度网盘入口后进入百度网盘相关页面或出现可识别提示，"
+    "未白屏、未闪退、未停留在原入口页"
+)
+BAIDU_NETDISK_POST_CLICK_TIMEOUT_MS = 60000
+
+
+def _compact_text(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).lower()
+
+
+def _is_baidu_netdisk_tap_prompt(text: str) -> bool:
+    compact = _compact_text(text)
+    if "百度网盘" not in compact:
+        return False
+    return any(word in compact for word in ("点击", "点按", "轻触", "进入", "打开", "选择", "入口", "导入"))
+
+
+def _is_baidu_post_click_target_prompt(text: str) -> bool:
+    compact = _compact_text(text)
+    if "百度网盘" not in compact:
+        return False
+    return any(word in compact for word in ("授权", "登录", "文件选择", "文件列表", "暂无数据", "空状态", "确定", "搜索", "返回", "提示页", "相关页面"))
+
+
+def _is_baidu_original_entry_prompt(text: str) -> bool:
+    compact = _compact_text(text)
+    if "百度网盘" not in compact:
+        return False
+    original_state_words = (
+        "入口展示", "展示入口", "入口可见", "页面展示", "页面显示", "稳定显示",
+        "可见性", "入口按钮可见", "导入方式", "首页展示", "首页的百度网盘入口",
+    )
+    return any(word in compact for word in original_state_words)
+
+
 def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", module: str = "", file: str = "") -> List[str]:
     """Block YAML that is structurally valid but known to fail on the current App UI."""
     if _pyyaml is None:
@@ -4002,7 +4043,11 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
         "com.kfb.model" in scope_compact
         or any(term in scope_compact for term in ("智小白3d", "ai建模", "图片建模", "文字建模", "语音创作", "标牌", "趣味印章", "涂鸦建模"))
     )
-    if not is_xiaobai_ai_model:
+    is_xiaobai_scan = (
+        "com.xbxxhz.box" in scope_compact
+        or any(term in scope_compact for term in ("小白扫描王", "文档打印", "证件照", "照片打印", "扫描复印", "百度网盘"))
+    )
+    if not (is_xiaobai_ai_model or is_xiaobai_scan):
         return []
     try:
         parsed = _pyyaml.safe_load(raw)
@@ -4063,6 +4108,16 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
                 issues.append(prefix + "语音录音链路依赖权限/麦克风/长按状态，默认不直接 Runner 执行")
         if text_has(compact, "上传图片", "选择图片", "相册") and not text_has(compact, "已准备测试图片", "固定测试图片", "测试图片已准备"):
             issues.append(prefix + "图片上传链路未声明固定测试图片，系统选择器/相册数据不稳定")
+        if is_xiaobai_scan:
+            after_baidu_tap = False
+            for action, value in action_rows:
+                if action in ("launch", "runAdbShell"):
+                    after_baidu_tap = False
+                if action == "aiTap" and _is_baidu_netdisk_tap_prompt(value):
+                    after_baidu_tap = True
+                    continue
+                if after_baidu_tap and action in ("aiWaitFor", "aiAssert") and _is_baidu_original_entry_prompt(value):
+                    issues.append(prefix + "点击百度网盘后仍在等待原业务页入口展示，应改为等待百度网盘授权/文件选择/空状态等跳转后信号")
 
     return list(dict.fromkeys(issues))
 
@@ -4172,11 +4227,42 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
         flow = task.get("flow")
         if not isinstance(flow, list):
             continue
+        after_baidu_tap = False
         for step_index, step in enumerate(flow, start=1):
-            if not isinstance(step, dict) or "aiTap" not in step:
+            if not isinstance(step, dict):
+                continue
+            if any(key in step for key in ("launch", "runAdbShell")):
+                after_baidu_tap = False
+
+            if after_baidu_tap:
+                if "aiWaitFor" in step and _is_baidu_original_entry_prompt(step.get("aiWaitFor")):
+                    prompt = str(step.get("aiWaitFor") or "")
+                    step["aiWaitFor"] = BAIDU_NETDISK_POST_CLICK_WAIT
+                    step["timeout"] = max(int(step.get("timeout") or 0), BAIDU_NETDISK_POST_CLICK_TIMEOUT_MS)
+                    changes.append({
+                        "task": task.get("name") or f"tasks[{task_index}]",
+                        "flowIndex": step_index,
+                        "changed": "baidu post-click aiWaitFor",
+                        "prompt": prompt[:180],
+                        "waitFor": BAIDU_NETDISK_POST_CLICK_WAIT,
+                    })
+                if "aiAssert" in step and _is_baidu_original_entry_prompt(step.get("aiAssert")):
+                    prompt = str(step.get("aiAssert") or "")
+                    step["aiAssert"] = BAIDU_NETDISK_POST_CLICK_ASSERT
+                    changes.append({
+                        "task": task.get("name") or f"tasks[{task_index}]",
+                        "flowIndex": step_index,
+                        "changed": "baidu post-click aiAssert",
+                        "prompt": prompt[:180],
+                        "assert": BAIDU_NETDISK_POST_CLICK_ASSERT,
+                    })
+
+            if "aiTap" not in step:
                 continue
             prompt = str(step.get("aiTap") or "").strip()
             if not prompt or not tap_prompt_looks_assertion(prompt):
+                if _is_baidu_netdisk_tap_prompt(prompt):
+                    after_baidu_tap = True
                 continue
             wait_prompt = assertion_tap_to_wait_prompt(prompt)
             step.pop("aiTap", None)

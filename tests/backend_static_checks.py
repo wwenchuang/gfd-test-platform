@@ -247,6 +247,7 @@ def check_yaml_static_validation_and_patterns():
         evaluate_baseline_template_matching,
         select_best_baseline_template,
     )
+    from task_server.services import ai_skill_service
     from task_server.services.yaml_service import (
         apply_generated_case_scope_gate,
         build_executable_smoke_yaml_policy_text,
@@ -491,6 +492,55 @@ def check_yaml_static_validation_and_patterns():
         and "新增入口类需求" in generation_policy
         and "第三方授权页" in generation_policy,
         "YAML generation policy must keep first-smoke entry checks short and defer unstable external flows",
+    )
+    require(
+        "点击百度网盘" in generation_policy
+        and "不能继续等待原业务页的入口展示" in generation_policy,
+        "YAML generation policy must explicitly handle third-party entry post-click state",
+    )
+    baidu_mixed_state_yaml = """android:
+  tasks:
+    - name: 普通证件照百度网盘入口展示与点击验证
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 点击「证件照」或「一寸照」入口
+        - aiWaitFor: 证件照页面加载完成
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 普通证件照页面展示百度网盘入口
+        - aiAssert: 普通证件照页面展示百度网盘入口，点击后进入百度网盘授权、登录或文件选择流程
+"""
+    baidu_mixed_score = score_midscene_yaml_executable(baidu_mixed_state_yaml)
+    require(
+        baidu_mixed_score.get("executionLevel") != "executable"
+        and any("百度网盘点击后" in reason for reason in baidu_mixed_score.get("reasons", [])),
+        "Generated YAML scorer must downgrade cases that check original entry state after clicking Baidu Netdisk",
+    )
+    baidu_mixed_repair = repair_generated_yaml_executable_gate_issues(baidu_mixed_state_yaml)
+    baidu_mixed_content = baidu_mixed_repair.get("content", "")
+    require(
+        baidu_mixed_repair.get("changed")
+        and "普通证件照页面展示百度网盘入口" not in baidu_mixed_content
+        and "百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开" in baidu_mixed_content
+        and dry_run_midscene_yaml(baidu_mixed_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated YAML repair must convert Baidu Netdisk post-click original-page checks to target-page waits/assertions",
+    )
+    baidu_bad_dry = dry_run_midscene_yaml(baidu_mixed_state_yaml, app_package="com.xbxxhz.box")
+    require(
+        baidu_bad_dry.get("ok") is False
+        and any("点击百度网盘后仍在等待原业务页入口展示" in err for err in baidu_bad_dry.get("errors", [])),
+        "Mock dry-run must catch Baidu Netdisk semantic state mismatch before Runner execution",
+    )
+    fallback_steps, fallback_assertions = ai_skill_service._fallback_steps_for_scenario({
+        "feature": "普通证件照",
+        "requirement_point": "普通证件照导入方式中展示百度网盘入口，点击后进入百度网盘导入或授权流程。",
+    })
+    fallback_blob = "\n".join(fallback_steps + fallback_assertions)
+    require(
+        "普通证件照页面展示百度网盘入口" not in fallback_blob
+        and "百度网盘授权页、登录页、文件选择页、空状态页或提示页" in fallback_blob
+        and "未停留在原入口页" in fallback_blob,
+        "Local Baidu Netdisk fallback generation must not assert the original business page after the click",
     )
     service_repaired_assertion_tap = repair_generated_yaml_executable_gate_issues(assertion_tap_yaml)
     service_repaired_content = service_repaired_assertion_tap.get("content", "")
