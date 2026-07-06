@@ -1121,10 +1121,21 @@
   font-weight: 600;
 }
 .risk-modal-input-label {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  max-width: 100%;
+  min-height: 22px;
+  padding: 3px 8px 3px 7px;
   font-size: 12px;
-  color: var(--text2);
-  margin-bottom: 6px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: var(--label-text, #dffaff);
+  border: 1px solid var(--label-border, rgba(34, 211, 238, .36));
+  border-left: 3px solid var(--accent);
+  border-radius: 7px;
+  background: linear-gradient(180deg, var(--label-bg, rgba(34, 211, 238, .08)), rgba(34, 211, 238, .035));
+  margin-bottom: 8px;
 }
 .risk-modal-input {
   width: 100%;
