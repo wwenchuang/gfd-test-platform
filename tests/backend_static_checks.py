@@ -237,7 +237,11 @@ def check_yaml_static_validation_and_patterns():
         build_generated_yaml_execution_plan,
         classify_generated_yaml_smoke_blocker,
     )
-    from task_server.services.agent_service import _agent_repair_missing_interaction_followups
+    from task_server.services.agent_service import (
+        _agent_repair_missing_interaction_followups,
+        _agent_yaml_dry_run_rows,
+        normalize_yaml_refs,
+    )
     from task_server.services.yaml_template_matcher import (
         build_yaml_template_matcher_text,
         evaluate_baseline_template_matching,
@@ -291,6 +295,48 @@ def check_yaml_static_validation_and_patterns():
 """
     unstable_score = score_midscene_yaml_executable(unstable_yaml)
     require(unstable_score.get("executionLevel") != "executable" and unstable_score.get("warnings"), "Generated YAML scorer must block tap-only unstable YAML")
+    baseline_reuse_yaml = """android:
+  tasks:
+    - name: 文档打印-百度网盘打印
+      flow:
+        - aiTap: 文档打印
+        - aiWaitFor: 文档打印首页加载完成
+        - aiTap: 百度网盘
+        - aiWaitFor: 百度网盘入口页加载完成
+        - aiTap: 登录或授权按钮
+        - aiWaitFor: 百度网盘文件列表加载完成
+        - aiTap: 选择第一个文档
+        - aiWaitFor: 打印预览页加载完成
+"""
+    baseline_generated_score = score_midscene_yaml_executable(baseline_reuse_yaml, generated=True)
+    require(
+        baseline_generated_score.get("executionLevel") != "executable",
+        "Generated YAML scorer should still flag baseline-style YAML when it is newly generated",
+    )
+    baseline_run = {
+        "runId": "agent-baseline-regression",
+        "artifacts": {
+            "matchedCases": ["/opt/midscene-tasks/小白学习基线用例-基础打印/百度网盘打印.yaml"],
+            "yamlRefs": [{
+                "type": "file",
+                "module": "小白学习基线用例-基础打印",
+                "file": "百度网盘打印.yaml",
+                "path": "/opt/midscene-tasks/小白学习基线用例-基础打印/百度网盘打印.yaml",
+                "content": baseline_reuse_yaml,
+                "confirmed": True,
+            }],
+        },
+    }
+    baseline_refs = normalize_yaml_refs(baseline_run)
+    baseline_rows, baseline_issues, baseline_ok_count = _agent_yaml_dry_run_rows(baseline_run, baseline_refs)
+    require(
+        baseline_ok_count == 1
+        and not baseline_issues
+        and baseline_rows[0].get("ok")
+        and baseline_rows[0].get("validationMode") == "baseline"
+        and (baseline_rows[0].get("executableScore") or {}).get("baselineValidation") is True,
+        "Matched formal baseline YAML must use baseline validation and must not be quarantined by generated-YAML scoring",
+    )
     missing_assert_yaml = """android:
   tasks:
     - name: missing assertion

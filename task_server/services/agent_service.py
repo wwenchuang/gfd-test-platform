@@ -3913,6 +3913,9 @@ def normalize_yaml_refs(run):
                 continue
             ref = {
                 "type": item.get("type") or "file",
+                "source": item.get("source") or "",
+                "generated": bool(item.get("generated")),
+                "validationMode": item.get("validationMode") or "",
                 "module": item.get("module") or "",
                 "file": item.get("file") or "",
                 "path": item.get("path") or "",
@@ -3937,13 +3940,13 @@ def normalize_yaml_refs(run):
         if path in known_paths:
             continue
         module, file = _task_dir_for_path(path)
-        refs.append({"type": "file", "module": module, "file": file, "path": path, "content": "", "confirmed": True})
+        refs.append({"type": "file", "source": "baseline", "validationMode": "baseline", "module": module, "file": file, "path": path, "content": "", "confirmed": True})
         known_paths.add(path)
 
     draft_path = artifacts.get("draftPath") or ""
     if draft_path and draft_path not in known_paths and not is_quarantined_path(draft_path):
         module, file = _task_dir_for_path(draft_path)
-        refs.append({"type": "draft", "module": module, "file": file, "path": draft_path, "content": "", "confirmed": False})
+        refs.append({"type": "draft", "source": "generated", "generated": True, "validationMode": "generated", "module": module, "file": file, "path": draft_path, "content": "", "confirmed": False})
         known_paths.add(draft_path)
 
     generated_path = artifacts.get("generatedYamlPath") or ""
@@ -3954,13 +3957,13 @@ def normalize_yaml_refs(run):
         and not _looks_like_yaml_text(generated_path)
     ):
         module, file = _task_dir_for_path(generated_path)
-        refs.append({"type": "file", "module": module, "file": file, "path": generated_path, "content": "", "confirmed": True})
+        refs.append({"type": "file", "source": "generated", "generated": True, "validationMode": "generated", "module": module, "file": file, "path": generated_path, "content": "", "confirmed": True})
         known_paths.add(generated_path)
 
     generated = artifacts.get("generatedYaml")
     if isinstance(generated, str) and generated.strip() and _looks_like_yaml_text(generated):
         if not any(item.get("type") == "text" and item.get("content") == generated for item in refs):
-            refs.append({"type": "text", "module": "", "file": "", "path": "", "content": generated, "confirmed": False})
+            refs.append({"type": "text", "source": "generated", "generated": True, "validationMode": "generated", "module": "", "file": "", "path": "", "content": generated, "confirmed": False})
 
     artifacts["yamlRefs"] = refs
     return refs
@@ -3971,6 +3974,60 @@ def _yaml_ref_content(ref):
         return str(ref.get("content") or "")
     path = ref.get("path") or ""
     return read_text_file(path, "") if path else ""
+
+
+def _agent_norm_path(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return os.path.normpath(text)
+    except Exception:
+        return text
+
+
+def _agent_yaml_ref_source(run, ref):
+    """Classify YAML refs so generated gates do not quarantine formal baselines."""
+    ref = ref if isinstance(ref, dict) else {}
+    artifacts = (run or {}).get("artifacts") if isinstance(run, dict) else {}
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    explicit = str(ref.get("source") or "").strip().lower()
+    if explicit in ("generated", "draft", "ai_generated", "agent_generated"):
+        return "generated"
+    if explicit in ("baseline", "matched", "existing", "manual", "formal"):
+        return "baseline"
+    if ref.get("generated") is True:
+        return "generated"
+    ref_type = str(ref.get("type") or "").strip().lower()
+    if ref_type in ("draft", "text"):
+        return "generated"
+
+    path = _agent_norm_path(ref.get("path") or "")
+    generated_paths = set()
+    for item in artifacts.get("generatedYamlPaths") or []:
+        if isinstance(item, str) and item.strip():
+            generated_paths.add(_agent_norm_path(item))
+    if artifacts.get("generatedYamlPath"):
+        generated_paths.add(_agent_norm_path(artifacts.get("generatedYamlPath")))
+    if artifacts.get("draftPath"):
+        generated_paths.add(_agent_norm_path(artifacts.get("draftPath")))
+    if path and path in generated_paths:
+        return "generated"
+
+    matched_paths = {
+        _agent_norm_path(item)
+        for item in artifacts.get("matchedCases") or []
+        if isinstance(item, str) and item.strip() and not _looks_like_yaml_text(item)
+    }
+    if path and path in matched_paths:
+        return "baseline"
+    if path and not _agent_is_generated_yaml_run(run):
+        return "baseline"
+    return "generated" if _agent_is_generated_yaml_run(run) else "baseline"
+
+
+def _agent_yaml_ref_is_generated(run, ref):
+    return _agent_yaml_ref_source(run, ref) == "generated"
 
 
 AGENT_TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
@@ -4176,7 +4233,10 @@ def _agent_is_generated_yaml_run(run):
 
 def _score_agent_yaml_ref_for_execution(run, ref):
     content = _yaml_ref_content(ref)
-    score = score_midscene_yaml_executable(content, generated=_agent_is_generated_yaml_run(run))
+    source = _agent_yaml_ref_source(run, ref)
+    generated_ref = source == "generated"
+    score = score_midscene_yaml_executable(content, generated=generated_ref)
+    score = {**score, "validationMode": source, "generated": generated_ref}
     scope_review = ref.get("scopeReview") if isinstance(ref.get("scopeReview"), dict) else {}
     if scope_review.get("ok") is False:
         score = dict(score)
@@ -4200,6 +4260,9 @@ def _score_agent_yaml_ref_for_execution(run, ref):
     )
     return {
         **ref,
+        "source": ref.get("source") or source,
+        "generated": generated_ref,
+        "validationMode": source,
         "executableScore": score,
         "level": level,
         "executionLevel": level,
@@ -4265,6 +4328,8 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
     if not str(content or "").strip():
         return ref, None
     scored_before = _score_agent_yaml_ref_for_execution(run, ref)
+    if not _agent_yaml_ref_is_generated(run, ref):
+        return scored_before, None
     if not _agent_ref_needs_local_execution_repair(scored_before):
         return scored_before, None
     repaired = _agent_repair_missing_interaction_followups(content)
@@ -4602,6 +4667,8 @@ def _agent_yaml_dry_run_rows(run, refs):
     issues = []
     ok_count = 0
     for ref in refs:
+        source = _agent_yaml_ref_source(run, ref)
+        generated_ref = source == "generated"
         ref, auto_repair = _agent_repair_yaml_ref_for_execution(run, ref, reason="yaml_dry_run")
         label = ref.get("path") or ref.get("file") or ref.get("type")
         content = _yaml_ref_content(ref)
@@ -4612,6 +4679,8 @@ def _agent_yaml_dry_run_rows(run, refs):
         dry_compact = _compact_yaml_dry_run_result(dry)
         executable_reason_text = "；".join(str(item) for item in (executable_score.get("reasons") or []))
         needs_repair = (
+            generated_ref
+            and
             bool(content)
             and (
                 not dry_compact.get("ok")
@@ -4652,15 +4721,44 @@ def _agent_yaml_dry_run_rows(run, refs):
                 dry_compact = dry_compact_after
         scope_review = scored_ref.get("scopeReview") if isinstance(scored_ref.get("scopeReview"), dict) else {}
         scope_issues = list(scope_review.get("reasons") or []) if scope_review.get("ok") is False else []
-        ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []
-        if not ref_issues and executable_score.get("executionLevel") != "executable":
+        if generated_ref:
+            ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []
+        else:
+            ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []
+        if generated_ref and not ref_issues and executable_score.get("executionLevel") != "executable":
             ref_issues = list(executable_score.get("reasons") or [])[:5] or [f"执行等级为 {executable_score.get('executionLevel') or 'unknown'}"]
+        row_ok = bool(dry_compact.get("ok")) and bool(strong_check.get("ok"))
+        if generated_ref:
+            row_ok = row_ok and executable_score.get("executionLevel") == "executable"
+        elif row_ok:
+            executable_score = {
+                **executable_score,
+                "ok": True,
+                "score": max(int(executable_score.get("score") or 0), 80),
+                "executionLevel": "executable",
+                "level": "executable",
+                "validationMode": "baseline",
+                "baselineValidation": True,
+                "rule": "正式/匹配基线 YAML 使用基线校验模式：平台加载与 dry-run 通过即可继续执行；生成质量评分仅作为提示。",
+            }
+            scored_ref = {
+                **scored_ref,
+                "source": "baseline",
+                "validationMode": "baseline",
+                "generated": False,
+                "executionLevel": "executable",
+                "level": "executable",
+                "executableScore": executable_score,
+            }
+            ref_issues = []
         row = {
             **scored_ref,
-            "ok": bool(dry_compact.get("ok")) and executable_score.get("executionLevel") == "executable",
+            "ok": row_ok,
             "issues": ref_issues,
             "taskCount": dry_compact.get("taskCount") or strong_check.get("taskCount", 0),
             "executionLevel": executable_score.get("executionLevel") or dry_compact.get("executionLevel"),
+            "validationMode": source,
+            "generated": generated_ref,
             "executableScore": executable_score,
             "dryRun": dry_compact,
             "strongCheck": strong_check,
@@ -7807,6 +7905,9 @@ def _tool_validate_yaml(run):
         passed_refs = [
             {
                 "type": row.get("type") or "file",
+                "source": row.get("source") or row.get("validationMode") or "",
+                "generated": bool(row.get("generated")),
+                "validationMode": row.get("validationMode") or "",
                 "module": row.get("module") or "",
                 "file": row.get("file") or "",
                 "path": row.get("path") or "",
@@ -7825,6 +7926,9 @@ def _tool_validate_yaml(run):
         quarantined_refs = [
             {
                 "type": row.get("type") or "file",
+                "source": row.get("source") or row.get("validationMode") or "",
+                "generated": bool(row.get("generated")),
+                "validationMode": row.get("validationMode") or "",
                 "module": row.get("module") or "",
                 "file": row.get("file") or "",
                 "path": row.get("path") or "",
