@@ -211,6 +211,8 @@ def main():
     require("agentRunnerVersionSummary" in html and "版本：" in html and "refreshAgentRunnerDeviceByApp" in html, "Agent auto runner mode must show selected-app versions and refresh on app change")
     require("agent-start-layout" in html and "agent-form-section" in html and "agent-compact-grid" in html, "Agent start form must use grouped readable sections instead of one long form")
     require("agent-url-input" in html and "word-break: break-all" in html and "agent-device-hint" in html and "overflow-wrap: anywhere" in html, "Agent long Figma/device information must wrap and remain fully visible")
+    require(".agent-field label {\n    display: inline-flex" in html and "label.agent-field > span {\n    display: inline-flex" in html and ".modal-label {\n    display: inline-flex" in html, "Agent and modal field labels must use highlighted label chips")
+    require(".form-group label {\n    display: inline-flex" in html and ".figma-limit-field span {\n    display: inline-flex" in html, "Login and advanced Figma field labels must use highlighted label chips")
     require("agent-start-button" in html and "agent-action-buttons" in html and "openAgentAppInstall" in html, "Agent primary actions must stay explicit and clickable after layout optimization")
     require("DEFAULT_AGENT_APP_NAME" in html and "appendAgentAppOptions" in html and "智小白3D APP" in html, "Agent app selectors must default to 智小白3D APP even before /api/apps finishes")
     require("shouldHydrateRuns" in html and "ensureAgentRunsLoaded({ limit: 10 }).then" in html, "Agent workbench must render before background history refresh completes")
