@@ -4506,7 +4506,7 @@ def _select_agent_runner_refs(run, refs):
         "blocking": blocking,
         "deferred": deferred,
         "autoRepairCount": len(repairs),
-        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有候选时按 executable 评分兜底选择首批。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；只有脚本/YAML/定位/超时类问题会阻断扩展，产品结果失败会记录后继续按批执行。",
+        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有稳定冒烟候选时不强行下发第三方授权、外部跳转或文件选择链路，需先生成或修正入口可见性短链路。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；只有脚本/YAML/定位/超时类问题会阻断扩展，产品结果失败会记录后继续按批执行。",
     }
     execution_plan = build_generated_yaml_execution_plan(
         scored,
@@ -11195,8 +11195,9 @@ def _execute_agent_steps(run_id):
                     "ANALYZE_FAILURE", "GENERATE_REPAIR", "GENERATE_BUG_DRAFT",
                     "COLLECT_REPORT", "GENERATE_SUMMARY", "RERUN", "DIAGNOSE_FAILURE", "LEARN_FROM_RESULT",
                 )
-                if step_name in NON_CRITICAL_STEPS:
-                    pass  # Non-critical, continue
+                POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)
+                if step_name in NON_CRITICAL_STEPS or step_name in POST_FAILURE_ANALYSIS_STEPS:
+                    pass  # Continue into report collection, failure analysis and repair planning.
                 else:
                     run["status"] = "FAILED"
                     run["error"] = str(error)[:500]

@@ -657,6 +657,47 @@ def check_yaml_static_validation_and_patterns():
         and boundary_smoke_score.get("smokeCandidate") is False,
         "Boundary/permission/degraded executable cases must not enter the first smoke batch",
     )
+    baidu_visibility_yaml = """android:
+  tasks:
+    - name: 文档打印首页百度网盘入口可见性验证
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白扫描王首页已加载，底部首页导航可见
+        - aiWaitFor: 文档打印首页展示百度网盘入口
+        - aiAssert: 文档打印首页百度网盘入口可见
+"""
+    baidu_visibility_score = score_midscene_yaml_executable(baidu_visibility_yaml)
+    require(
+        baidu_visibility_score.get("executionLevel") == "executable"
+        and baidu_visibility_score.get("smokeCandidate") is True,
+        "Baidu netdisk entry visibility-only YAML should be eligible for first smoke",
+    )
+    baidu_external_click_yaml = """android:
+  tasks:
+    - name: 文档打印百度网盘入口展示与点击验证
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白扫描王首页已加载，底部首页导航可见
+        - aiWaitFor: 文档打印首页展示百度网盘入口
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 百度网盘授权、登录或文件选择页面已打开
+        - aiAssert: 点击百度网盘入口后进入百度网盘相关流程
+"""
+    baidu_external_click_score = score_midscene_yaml_executable(baidu_external_click_yaml)
+    require(
+        baidu_external_click_score.get("executionLevel") == "executable"
+        and baidu_external_click_score.get("smokeCandidate") is False,
+        "Third-party Baidu click/authorization flow can be executable but must not be selected as first smoke",
+    )
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "baidu-click.yaml", "executableScore": baidu_external_click_score, "smoke": True},
+    ], limit=3)
+    require(
+        len(selected) == 0
+        and len(blocked) == 1
+        and "没有稳定的首批冒烟候选" in str(blocked[0].get("gateReason") or ""),
+        "Runner gate must not fall back to third-party click flows when no stable first-smoke candidate exists",
+    )
     selected, blocked = rank_executable_yaml_refs([
         {"file": "02-p1.yaml", "executableScore": executable_score},
         {"file": "unstable.yaml", "executableScore": unstable_score},
@@ -3025,6 +3066,7 @@ def main():
     require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")
     agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")
+    require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")
     yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     require("quality_eval" in yaml_source and "evaluate_baseline_template_matching" in yaml_source, "YAML generation review must include template matcher quality eval")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
@@ -3033,7 +3075,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 60})
+    print({"ok": True, "file": str(MODULE), "checks": 61})
 
 
 if __name__ == "__main__":

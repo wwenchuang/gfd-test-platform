@@ -21,7 +21,8 @@ SMOKE_EXCLUDE_WORDS = (
     "未安装", "拒绝授权", "授权失败", "非会员", "权限", "边界", "异常", "降级",
     "防抖", "重复", "历史", "返回", "缓存", "弱网", "超时", "宽屏", "多设备",
     "一致性", "弹窗", "拦截", "失败", "错误", "不可用", "无数据", "空状态", "极限",
-    "备份", "加载过程", "未完全加载", "多次刷新",
+    "备份", "加载过程", "未完全加载", "多次刷新", "授权", "登录", "文件选择",
+    "WebView", "外部", "第三方", "SDK", "点击验证",
 )
 SMOKE_STRONG_WORDS = ("冒烟", "P0", "P1", "主流程", "主链", "核心", "基础")
 SMOKE_NAME_WORDS = ("入口", "展示")
@@ -65,6 +66,8 @@ SECONDARY_EXPANSION_WORDS = (
     "弹窗遮挡", "连续", "多次刷新", "加载过程", "未完全加载", "宽屏",
     "一致性", "返回后", "状态保持", "弱网", "防抖", "旧入口", "历史",
 )
+EXTERNAL_ENTRY_WORDS = ("百度网盘", "微信", "相册", "相机", "拍照", "文件选择", "WebView")
+EXTERNAL_FLOW_WORDS = ("授权", "登录", "文件选择", "WebView", "外部", "第三方", "SDK", "点击后", "跳转", "打开")
 # Generated baseline metadata comments are trace data, not proof that the case
 # matched a successful baseline. Treat only explicit template/reference wording
 # as baseline execution evidence.
@@ -136,7 +139,9 @@ def _task_smoke_candidate(task: Dict[str, Any]) -> bool:
         str(task.get("priority") or ""),
         str(task.get("tags") or ""),
     ])
-    if _has_smoke_exclusion(name_text):
+    flow_text = " ".join(_step_text(step) for step in (task.get("flow") or []) if isinstance(step, dict))
+    full_text = f"{name_text} {flow_text}"
+    if _has_smoke_exclusion(name_text) or _has_external_flow_exclusion(full_text):
         return False
     if any(word in name_text for word in SMOKE_STRONG_WORDS):
         return True
@@ -147,6 +152,15 @@ def _has_smoke_exclusion(text: str) -> bool:
     return any(word in str(text or "") for word in SMOKE_EXCLUDE_WORDS)
 
 
+def _has_external_flow_exclusion(text: str) -> bool:
+    compact = _compact_text(str(text or ""))
+    if not compact:
+        return False
+    return any(word.lower() in compact for word in EXTERNAL_ENTRY_WORDS) and any(
+        word.lower() in compact for word in EXTERNAL_FLOW_WORDS
+    )
+
+
 def _ref_smoke_excluded(item: dict, score: dict, task_scores: List[dict]) -> bool:
     label = " ".join([
         str(item.get("file") or ""),
@@ -155,7 +169,7 @@ def _ref_smoke_excluded(item: dict, score: dict, task_scores: List[dict]) -> boo
         " ".join(str(task.get("name") or "") for task in task_scores),
         " ".join(" ".join(str(reason) for reason in (task.get("reasons") or [])) for task in task_scores),
     ])
-    return _has_smoke_exclusion(label)
+    return _has_smoke_exclusion(label) or _has_external_flow_exclusion(label)
 
 
 def _ref_has_smoke_priority(item: dict, task_scores: List[dict]) -> bool:
@@ -677,7 +691,12 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
                 if id(item) not in fallback_ids:
                     blocked.append({**item, "gateReason": "异常/边界/权限类用例不进入首批冒烟，待首批完成执行准入后再扩展执行"})
         else:
-            executable = [{**item, "fallbackSmokeSelection": True} for item in eligible]
+            executable = []
+            for item in eligible:
+                blocked.append({
+                    **item,
+                    "gateReason": "没有稳定的首批冒烟候选；当前 executable 用例均涉及异常/边界/第三方授权或外部跳转，需先生成或修正入口可见性短链路。",
+                })
 
     def sort_key(item: dict):
         score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
