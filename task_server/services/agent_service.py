@@ -51,7 +51,12 @@ from task_server.storage import (
     write_text_file,
     write_json_file,
 )
-from task_server.services.yaml_service import extract_midscene_tasks, slug_for_file, validate_midscene_yaml_executability
+from task_server.services.yaml_service import (
+    extract_midscene_tasks,
+    repair_generated_yaml_executable_gate_issues,
+    slug_for_file,
+    validate_midscene_yaml_executability,
+)
 from task_server.services.yaml_executable_scorer import (
     assertion_tap_to_wait_prompt,
     rank_executable_yaml_refs,
@@ -4153,14 +4158,23 @@ def _agent_repair_missing_interaction_followups(yaml_text):
     """
     if pyyaml is None or not str(yaml_text or "").strip():
         return {"changed": False, "content": yaml_text, "changes": []}
+    gate_repair = repair_generated_yaml_executable_gate_issues(str(yaml_text or ""))
+    base_changes = []
+    if gate_repair.get("changed"):
+        yaml_text = gate_repair.get("content") or yaml_text
+        base_changes.extend(list(gate_repair.get("changes") or []))
     try:
         parsed = pyyaml.safe_load(str(yaml_text or ""))
     except Exception:
+        if base_changes:
+            return {"changed": True, "content": yaml_text, "changes": base_changes}
         return {"changed": False, "content": yaml_text, "changes": []}
     platform, tasks = extract_midscene_tasks(parsed)
     if not tasks:
+        if base_changes:
+            return {"changed": True, "content": yaml_text, "changes": base_changes}
         return {"changed": False, "content": yaml_text, "changes": []}
-    changes = []
+    changes = list(base_changes)
     for task_index, task in enumerate(tasks, start=1):
         if not isinstance(task, dict):
             continue
@@ -4332,6 +4346,13 @@ def _agent_ref_needs_local_execution_repair(scored_ref):
     return any(fragment in reason_text for fragment in (
         "交互动作后缺少等待或终态判断",
         "aiTap 描述像检查/断言",
+        "条件式 aiTap",
+        "复合 ai 动作",
+        "百度网盘点击后仍",
+        "生成用例动作",
+        "等待链路",
+        "交互和等待组合偏长",
+        "重规划",
         "动作前缀",
         "${...}",
         "shell 参数展开",
@@ -4650,6 +4671,11 @@ def _agent_create_runner_jobs_for_refs(
                         "jobId": dry_job_id,
                     }
                     if dry_failed:
+                        dry_row["ok"] = False
+                        dry_row.setdefault("errors", []).extend([
+                            str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
+                            for item in dry_failed[:5]
+                        ])
                         dry_run_blocked.append({
                             "module": mod,
                             "file": fn,
@@ -4664,9 +4690,24 @@ def _agent_create_runner_jobs_for_refs(
                         })
                         continue
                     if dry_timeout and not dry_completed:
-                        dry_row.setdefault("warnings", []).append(
-                            "Runner 真实 dry-run 等待超时，未判定 YAML 失败；继续按本地 dry-run 下发正式任务"
-                        )
+                        message = "Runner 真实 dry-run 等待超时，未下发正式任务；请先查看 dry-run 报告、确认 Runner 网络/模型服务后重试"
+                        dry_row["ok"] = False
+                        dry_row.setdefault("errors", []).append(message)
+                        dry_row.setdefault("warnings", []).append(message)
+                        runner_meta = dry_row.setdefault("runnerDryRun", {})
+                        if isinstance(runner_meta, dict):
+                            runner_meta["inconclusive"] = True
+                            runner_meta["blockedFormalDispatch"] = True
+                        dry_run_blocked.append({
+                            "module": mod,
+                            "file": fn,
+                            "path": full_path,
+                            "phase": phase,
+                            "reason": "Runner 真实 dry-run 未完成，已阻止正式下发",
+                            "job_id": dry_job_id,
+                            "errors": [message],
+                        })
+                        continue
             task_names = _agent_yaml_task_names_for_runner(full_path)
             target_task_name = task_names[0] if len(task_names) == 1 else ""
             job = job_service.create_job({
@@ -4723,6 +4764,13 @@ def _agent_yaml_dry_run_rows(run, refs):
                 not dry_compact.get("ok")
                 or "交互动作后缺少等待或终态判断" in executable_reason_text
                 or "aiTap 描述像检查/断言" in executable_reason_text
+                or "条件式 aiTap" in executable_reason_text
+                or "复合 ai 动作" in executable_reason_text
+                or "百度网盘点击后仍" in executable_reason_text
+                or "生成用例动作" in executable_reason_text
+                or "等待链路" in executable_reason_text
+                or "交互和等待组合偏长" in executable_reason_text
+                or "重规划" in executable_reason_text
                 or "动作前缀" in executable_reason_text
             )
         )

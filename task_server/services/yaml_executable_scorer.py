@@ -41,6 +41,15 @@ TAP_ACTION_WORDS = (
     "开始", "重试", "刷新", "搜索", "滑动", "滚动", "长按", "勾选", "取消",
     "保存", "下载",
 )
+CONDITIONAL_ACTION_PREFIXES = ("如果", "若", "如当前", "当", "假如")
+CONDITIONAL_ACTION_MARKERS = (
+    "则点击", "则点", "则选择", "则进入", "则不操作", "否则", "如果没有", "如果未",
+    "若没有", "若未", "不在首页", "当前不在",
+)
+BROAD_AI_ACTION_WORDS = (
+    "查找", "寻找", "找到", "翻看", "滑动查找", "进入", "处理", "判断", "根据",
+    "如果", "若", "直到", "完成", "继续",
+)
 ASSERTION_CONTEXT_WORDS = (
     "是否", "页面", "展示", "显示", "存在", "可见", "加载", "稳定",
     "正确", "一致", "结果", "文案", "状态",
@@ -203,6 +212,10 @@ def _tap_prompt_looks_assertion(text: str) -> bool:
     compact = re.sub(r"\s+", "", prompt)
     if not compact:
         return False
+    if _is_conditional_action_prompt(compact):
+        return True
+    if any(word in compact for word in ("展示与点击验证", "可见性检查", "可见性校验", "可见性验证")):
+        return True
     if compact.startswith(("等待", "直到", "等到")):
         has_action_after_wait = any(word in compact for word in ("点击", "点按", "轻触", "长按", "勾选"))
         if not has_action_after_wait:
@@ -219,6 +232,47 @@ def _tap_prompt_looks_assertion(text: str) -> bool:
 def tap_prompt_looks_assertion(text: str) -> bool:
     """Public helper shared by Agent-side local YAML repair."""
     return _tap_prompt_looks_assertion(text)
+
+
+def _is_conditional_action_prompt(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if not compact:
+        return False
+    return compact.startswith(CONDITIONAL_ACTION_PREFIXES) or any(word in compact for word in CONDITIONAL_ACTION_MARKERS)
+
+
+def prompt_is_conditional_action(text: str) -> bool:
+    """Public helper: conditional clicks must not be emitted as aiTap."""
+    return _is_conditional_action_prompt(text)
+
+
+def conditional_action_to_wait_prompt(text: str) -> str:
+    """Turn a conditional aiTap prompt into a passive page-state wait.
+
+    A generated step such as "如果当前不在首页，点击底部首页" is not a stable click
+    target.  It should not be executed as aiTap.  The runner should instead wait
+    for a known page state and let the launch guard provide the deterministic
+    app entry.
+    """
+    compact = re.sub(r"\s+", "", str(text or "").strip())
+    if "首页" in compact:
+        return "App 首页或底部导航已稳定显示"
+    if "百度网盘" in compact:
+        return "页面展示百度网盘入口或百度网盘相关提示"
+    if "入口" in compact:
+        return "目标入口区域已稳定显示"
+    return "当前页面状态已稳定，可继续下一步"
+
+
+def _ai_step_too_broad(text: str) -> bool:
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if not compact:
+        return False
+    if len(compact) < 8:
+        return True
+    if any(word in compact for word in BROAD_AI_ACTION_WORDS):
+        return True
+    return "；" in compact or ";" in compact
 
 
 def assertion_tap_to_wait_prompt(text: str) -> str:
@@ -305,10 +359,13 @@ def _is_baidu_original_entry_prompt(text: str) -> bool:
     compact = _compact_text(text)
     if "百度网盘" not in compact:
         return False
-    return any(word in compact for word in (
+    original_state = any(word in compact for word in (
         "入口展示", "展示入口", "入口可见", "页面展示", "页面显示", "稳定显示",
         "可见性", "入口按钮可见", "导入方式", "首页展示", "首页的百度网盘入口",
+        "文档打印首页的百度网盘入口", "普通照片打印页面展示", "普通证件照页面展示",
     ))
+    mixed_post_click = original_state and any(word in compact for word in ("点击后进入", "授权", "登录", "文件选择", "流程"))
+    return original_state or mixed_post_click
 
 
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
@@ -397,6 +454,8 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         vague_steps = 0
         generic_queries = 0
         non_tap_intents = 0
+        conditional_actions = 0
+        broad_ai_steps = 0
         nested_action_prefixes = 0
         baidu_original_state_after_click = 0
         replan_risk = "low"
@@ -425,6 +484,10 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
                     unguarded_taps += 1
                 if "aiTap" in actions and _tap_prompt_looks_assertion(_step_text(step)):
                     non_tap_intents += 1
+                if "aiTap" in actions and _is_conditional_action_prompt(_step_text(step)):
+                    conditional_actions += 1
+                if generated and not baseline_evidence and any(action in actions for action in ("ai", "aiAction", "aiAct")) and _ai_step_too_broad(_step_text(step)):
+                    broad_ai_steps += 1
                 if not _has_followup_wait_or_terminal(flow, step_index):
                     missing_followups += 1
             step_text = _step_text(step)
@@ -469,6 +532,12 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if non_tap_intents:
             warnings.append(f"{non_tap_intents} 个 aiTap 描述像检查/断言，不应点击；应改为 aiWaitFor 或 aiAssert")
             score -= min(45, 30 * non_tap_intents)
+        if conditional_actions:
+            warnings.append(f"{conditional_actions} 个条件式 aiTap 不是稳定点击目标，应拆成 aiWaitFor/确定动作")
+            score -= min(55, 35 * conditional_actions)
+        if broad_ai_steps:
+            warnings.append(f"{broad_ai_steps} 个复合 ai 动作包含查找/进入/判断等多意图，建议拆成等待、点击和终态等待")
+            score -= min(40, 18 * broad_ai_steps)
         if missing_followups:
             warnings.append(f"{missing_followups} 个交互动作后缺少等待或终态判断")
             score -= min(25, 6 * missing_followups)
@@ -494,11 +563,15 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             score -= 15
         if generated and not baseline_evidence:
             if action_count > 12:
-                replan_risk = "high"
-                warnings.append(
-                    f"生成用例动作 {action_count} 个且无成功基线依据，容易触发 Midscene 重规划超限或 Runner 超时，建议拆成短链路"
-                )
-                score -= min(30, 18 + 2 * (action_count - 12))
+                if transition_count > 3:
+                    replan_risk = "high"
+                    warnings.append(
+                        f"生成用例动作 {action_count} 个且无成功基线依据，容易触发 Midscene 重规划超限或 Runner 超时，建议拆成短链路"
+                    )
+                    score -= min(30, 18 + 2 * (action_count - 12))
+                else:
+                    warnings.append(f"生成用例动作 {action_count} 个偏长，但主要为等待/启动保护；建议后续拆短")
+                    score -= min(8, action_count - 12)
             if wait_count >= 7 and assert_count <= 1:
                 replan_risk = "high"
                 warnings.append(

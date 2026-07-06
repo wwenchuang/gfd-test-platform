@@ -1035,6 +1035,21 @@ def _job_progress_detail(job: Dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def _agent_runner_phase_label(phase_key: str, *, running: bool, wait_timeout: bool = False) -> str:
+    lower = str(phase_key or "").lower()
+    if "dry-run" in lower or "dry_run" in lower:
+        base = "Runner dry-run"
+    elif "smoke" in lower:
+        base = "首批冒烟"
+    elif "expand" in lower or "remaining" in lower:
+        base = "扩展执行"
+    else:
+        base = "Runner"
+    if wait_timeout:
+        return f"{base}等待报告超时"
+    return f"{base}执行中" if running else f"{base}执行结束"
+
+
 def _update_agent_job_progress_trace(
     run: Dict[str, Any],
     *,
@@ -1056,10 +1071,7 @@ def _update_agent_job_progress_trace(
     should_trace = force or elapsed <= 1 or (elapsed - last_trace_at) >= 15 or not running
     running_names = [_short_job_label(_job_label(item)) for item in running[:3]]
     wait_timeout_jobs = wait_timeout_jobs or []
-    if wait_timeout_jobs:
-        state_label = "Runner 等待报告超时"
-    else:
-        state_label = "Runner 执行中" if running else "Runner 执行结束"
+    state_label = _agent_runner_phase_label(phase_key, running=bool(running), wait_timeout=bool(wait_timeout_jobs))
     phase_prefix = f"{phase_key}：" if phase_key != "runner" else ""
     summary = (
         f"{phase_prefix}{state_label}：{len(completed)} 成功 / {len(failed)} 失败 / "

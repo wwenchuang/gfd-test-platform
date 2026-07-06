@@ -73,6 +73,8 @@ import threading
 
 from task_server.services.yaml_executable_scorer import (
     assertion_tap_to_wait_prompt,
+    conditional_action_to_wait_prompt,
+    prompt_is_conditional_action,
     score_midscene_yaml_executable,
     tap_prompt_looks_assertion,
 )
@@ -1275,6 +1277,7 @@ def build_executable_smoke_yaml_policy_text():
         "4. 只有真实点击目标才能用 aiTap；检查/验证/是否展示/是否存在/页面可见/状态一致这类语义必须用 aiWaitFor 或按基线习惯保留为轻量 ai，不要为了补断言强行生成 aiAssert。",
         "4.1 用例标题里的“展示/检查/验证/可见性”不能直接变成 aiTap；如果只是检查入口是否存在，写 aiWaitFor；只有明确按钮/入口本身才写 aiTap。",
         "4.2 点击百度网盘、微信、相册、相机等第三方/系统入口后，后续等待和断言必须面向跳转后的授权页、文件选择页、空状态页或提示页，不能继续等待原业务页的入口展示。",
+        "4.3 禁止把“如果当前不在首页则点击首页”“找到并点击”“向右翻看并查找”写成一个 aiTap/ai 动作；必须拆成稳定等待、必要滑动/点击、跳转后等待。",
         "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
         "7. 智小白 3D AI建模链路必须按当前真机入口写：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的“文字输入”；标牌/印章入口需要先横向滑动功能入口区域。",
@@ -4028,8 +4031,11 @@ def _is_baidu_original_entry_prompt(text: str) -> bool:
     original_state_words = (
         "入口展示", "展示入口", "入口可见", "页面展示", "页面显示", "稳定显示",
         "可见性", "入口按钮可见", "导入方式", "首页展示", "首页的百度网盘入口",
+        "文档打印首页的百度网盘入口", "普通照片打印页面展示", "普通证件照页面展示",
     )
-    return any(word in compact for word in original_state_words)
+    original_state = any(word in compact for word in original_state_words)
+    mixed_post_click = original_state and any(word in compact for word in ("点击后进入", "授权", "登录", "文件选择", "流程"))
+    return original_state or mixed_post_click
 
 
 def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", module: str = "", file: str = "") -> List[str]:
@@ -4106,7 +4112,15 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
                 and text_has(action_text, "长按输入", "录音", "麦克风", "权限", "直接说", "点击语音")
             ):
                 issues.append(prefix + "语音录音链路依赖权限/麦克风/长按状态，默认不直接 Runner 执行")
-        if text_has(compact, "上传图片", "选择图片", "相册") and not text_has(compact, "已准备测试图片", "固定测试图片", "测试图片已准备"):
+        unstable_upload = (
+            text_has(compact, "上传图片", "选择图片", "图片上传", "图片选择", "照片选择", "从相册选择", "图库选择", "系统相册选择")
+            or (text_has(compact, "相机拍照") and text_has(compact, "拍照上传", "点击拍照", "确认使用照片", "使用照片"))
+            or (
+                text_has(compact, "相册")
+                and text_has(compact, "上传图片", "选择图片", "图片上传", "图片选择", "照片选择", "从相册选择")
+            )
+        )
+        if unstable_upload and not text_has(compact, "已准备测试图片", "固定测试图片", "测试图片已准备"):
             issues.append(prefix + "图片上传链路未声明固定测试图片，系统选择器/相册数据不稳定")
         if is_xiaobai_scan:
             after_baidu_tap = False
@@ -4202,6 +4216,55 @@ def _yaml_static_repair_prompt(yaml_text, dry_run, *, title="", module="", file=
 """
 
 
+def _replace_step_action(step: dict, old_key: str, new_key: str, value: str, *, timeout: int = 0) -> None:
+    original_value = step.pop(old_key, None)
+    next_step = {new_key: value}
+    if timeout:
+        next_step["timeout"] = timeout
+    for key, existing in list(step.items()):
+        next_step[key] = existing
+    step.clear()
+    step.update(next_step)
+    if original_value is not None and old_key == new_key:
+        step[new_key] = value
+
+
+def _repair_generated_broad_ai_step(step: dict) -> dict:
+    """Normalize broad generated ai steps into one executable intention."""
+    if not isinstance(step, dict):
+        return {}
+    action_key = next((key for key in ("ai", "aiAction", "aiAct") if key in step), "")
+    if not action_key:
+        return {}
+    prompt = str(step.get(action_key) or "").strip()
+    compact = _compact_text(prompt)
+    if not compact:
+        return {}
+
+    replacement_key = ""
+    replacement_prompt = ""
+    timeout = DEFAULT_WAITFOR_TIMEOUT_MS
+    if "文档导入入口区域" in compact and any(word in compact for word in ("找到", "查找", "这一行")):
+        replacement_key = "aiWaitFor"
+        replacement_prompt = "首页文档导入入口区域已稳定显示，本地导入、相册导入、微信导入或百度网盘入口可见"
+    elif "向右翻看" in compact and "百度网盘" in compact:
+        replacement_key = "aiWaitFor"
+        replacement_prompt = "首页文档导入入口区域已显示「百度网盘」入口；如果入口在横向列表右侧，当前页面允许继续查找该入口"
+    elif "进入" in compact and ("证件照" in compact or "一寸照" in compact):
+        replacement_key = "aiTap"
+        replacement_prompt = "一寸照入口"
+        timeout = 0
+
+    if not replacement_key:
+        return {}
+    _replace_step_action(step, action_key, replacement_key, replacement_prompt, timeout=timeout)
+    return {
+        "changed": f"{action_key} -> {replacement_key}",
+        "prompt": prompt[:180],
+        "replacement": replacement_prompt[:180],
+    }
+
+
 def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
     """Repair local executable-gate issues before generated YAML is persisted.
 
@@ -4234,6 +4297,14 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
             if any(key in step for key in ("launch", "runAdbShell")):
                 after_baidu_tap = False
 
+            broad_repair = _repair_generated_broad_ai_step(step)
+            if broad_repair:
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    **broad_repair,
+                })
+
             if after_baidu_tap:
                 if "aiWaitFor" in step and _is_baidu_original_entry_prompt(step.get("aiWaitFor")):
                     prompt = str(step.get("aiWaitFor") or "")
@@ -4260,6 +4331,19 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
             if "aiTap" not in step:
                 continue
             prompt = str(step.get("aiTap") or "").strip()
+            if prompt and prompt_is_conditional_action(prompt):
+                wait_prompt = conditional_action_to_wait_prompt(prompt)
+                step.pop("aiTap", None)
+                step["aiWaitFor"] = wait_prompt
+                step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    "changed": "conditional aiTap -> aiWaitFor",
+                    "prompt": prompt[:180],
+                    "waitFor": wait_prompt[:180],
+                })
+                continue
             if not prompt or not tap_prompt_looks_assertion(prompt):
                 if _is_baidu_netdisk_tap_prompt(prompt):
                     after_baidu_tap = True

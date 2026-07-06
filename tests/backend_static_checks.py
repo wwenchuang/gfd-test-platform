@@ -531,6 +531,47 @@ def check_yaml_static_validation_and_patterns():
         and any("点击百度网盘后仍在等待原业务页入口展示" in err for err in baidu_bad_dry.get("errors", [])),
         "Mock dry-run must catch Baidu Netdisk semantic state mismatch before Runner execution",
     )
+    conditional_tap_yaml = """android:
+  tasks:
+    - name: 文档打印百度网盘入口展示与点击验证
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 如果当前不在首页，点击底部「首页」回到首页
+        - aiWaitFor: 文档打印入口可见
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 文档打印首页的百度网盘入口可见，点击后进入百度网盘授权、登录或文件选择流程
+"""
+    conditional_score = score_midscene_yaml_executable(conditional_tap_yaml)
+    require(
+        conditional_score.get("executionLevel") != "executable"
+        and any("条件式 aiTap" in reason for reason in conditional_score.get("reasons", [])),
+        "Generated YAML scorer must block conditional aiTap prompts before Runner execution",
+    )
+    conditional_repair = repair_generated_yaml_executable_gate_issues(conditional_tap_yaml)
+    conditional_content = conditional_repair.get("content", "")
+    require(
+        conditional_repair.get("changed")
+        and "如果当前不在首页" not in conditional_content
+        and "App 首页或底部导航已稳定显示" in conditional_content
+        and "百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开" in conditional_content,
+        "Generated YAML repair must convert conditional aiTap and mixed Baidu post-click checks before dispatch",
+    )
+    photo_entry_yaml = """android:
+  tasks:
+    - name: 普通照片打印百度网盘入口展示与点击验证
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 点击首页或基础打印入口中的「相册导入」进入普通照片打印
+        - aiWaitFor: 等待进入「5寸照片」或普通照片打印页面，页面展示「相册导入」「微信导入」「相机拍照」等导入方式
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开
+"""
+    require(
+        dry_run_midscene_yaml(photo_entry_yaml, app_package="com.xbxxhz.box").get("ok") is True,
+        "Mock dry-run must not mistake photo/album entry display checks for unstable image upload flows",
+    )
     fallback_steps, fallback_assertions = ai_skill_service._fallback_steps_for_scenario({
         "feature": "普通证件照",
         "requirement_point": "普通证件照导入方式中展示百度网盘入口，点击后进入百度网盘导入或授权流程。",
