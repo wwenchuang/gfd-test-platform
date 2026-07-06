@@ -32,7 +32,8 @@ VAGUE_PHRASES = (
 )
 NON_TAP_INTENT_WORDS = (
     "检查", "验证", "确认是否", "是否展示", "是否显示", "是否存在",
-    "页面展示", "页面显示", "页面稳定展示", "文案清晰", "可见", "存在",
+    "页面展示", "页面显示", "页面稳定展示", "展示", "显示",
+    "文案清晰", "可见", "可见性", "存在", "状态刷新", "校验", "断言",
 )
 TAP_ACTION_WORDS = (
     "点击", "点按", "轻触", "选择", "进入", "打开", "切换", "返回", "关闭",
@@ -203,7 +204,7 @@ def _tap_prompt_looks_assertion(text: str) -> bool:
     if not compact:
         return False
     if compact.startswith(("等待", "直到", "等到")):
-        has_action_after_wait = any(word in compact for word in ("点击", "点按", "轻触", "选择", "长按", "勾选"))
+        has_action_after_wait = any(word in compact for word in ("点击", "点按", "轻触", "长按", "勾选"))
         if not has_action_after_wait:
             return True
     if any(word in compact for word in TAP_ACTION_WORDS):
@@ -270,6 +271,9 @@ def assertion_tap_to_wait_prompt(text: str) -> str:
         prompt = prompt.replace(old, new)
 
     prompt = re.sub(r"(检查|校验|验证)$", "", prompt).strip(" ：:-—")
+    display_match = re.match(r"^(?:.*?(?:首页|页面|入口页))?展示(.+)$", prompt)
+    if display_match and display_match.group(1).strip():
+        prompt = display_match.group(1).strip()
     if not prompt:
         return original
     if prompt.startswith(("页面", "当前页面", "目标页面", "App")):
@@ -442,7 +446,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             score -= min(15, 5 * vague_steps)
         if generic_queries:
             warnings.append(f"{generic_queries} 个 aiQuery 过短或过泛，容易定位不到真实元素")
-            score -= min(20, 10 * generic_queries)
+            score -= min(40, 25 * generic_queries)
         if nested_action_prefixes:
             warnings.append(f"{nested_action_prefixes} 个步骤内容嵌套了动作名前缀，需要先规范化再执行")
         if len(flow) > 36:
@@ -450,7 +454,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             score -= 15
 
         score = max(0, min(100, score))
-        level = "draft" if errors or score < 55 else ("needs_review" if score < 78 or warnings else "executable")
+        level = "draft" if errors or score < 55 else ("needs_review" if score < 78 else "executable")
         if manual_hint and not errors and level != "executable":
             level = "manual"
         reasons = errors + warnings

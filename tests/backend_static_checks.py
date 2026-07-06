@@ -231,6 +231,11 @@ def check_yaml_static_validation_and_patterns():
         assertion_tap_to_wait_prompt,
         rank_executable_yaml_refs,
         score_midscene_yaml_executable,
+        tap_prompt_looks_assertion,
+    )
+    from task_server.services.yaml_execution_plan import (
+        build_generated_yaml_execution_plan,
+        classify_generated_yaml_smoke_blocker,
     )
     from task_server.services.agent_service import _agent_repair_missing_interaction_followups
     from task_server.services.yaml_template_matcher import (
@@ -296,7 +301,11 @@ def check_yaml_static_validation_and_patterns():
         - aiWaitFor: AI建模页打开
 """
     missing_assert_score = score_midscene_yaml_executable(missing_assert_yaml)
-    require(missing_assert_score.get("executionLevel") == "needs_review" and any("aiAssert" in reason for reason in missing_assert_score.get("reasons", [])), "Missing aiAssert must downgrade generated YAML to needs_review")
+    require(
+        missing_assert_score.get("executionLevel") == "executable"
+        and any("aiAssert" in reason for reason in missing_assert_score.get("reasons", [])),
+        "Missing aiAssert must be a quality warning, not an automatic execution blocker",
+    )
     generic_query_yaml = """android:
   tasks:
     - name: generic query
@@ -353,6 +362,11 @@ def check_yaml_static_validation_and_patterns():
         assertion_tap_to_wait_prompt("首页文档打印入口页-百度网盘入口可见性检查") == "页面展示百度网盘入口可见",
         "Assertion-like aiTap title prompts must be converted into concrete page-state waits",
     )
+    require(
+        tap_prompt_looks_assertion("文档打印首页展示百度网盘入口")
+        and assertion_tap_to_wait_prompt("文档打印首页展示百度网盘入口") == "页面展示百度网盘入口",
+        "Title-style display prompts must be treated as page-state waits instead of clickable targets",
+    )
     title_assertion_tap_yaml = """android:
   tasks:
     - name: 首页文档打印入口页-百度网盘入口可见性检查
@@ -371,6 +385,26 @@ def check_yaml_static_validation_and_patterns():
         and "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in title_assertion_content
         and "aiWaitFor: 页面展示百度网盘入口可见" in title_assertion_content,
         "Generated YAML repair must handle title-style assertion aiTap prompts from Agent cases",
+    )
+    homepage_display_tap_yaml = """android:
+  tasks:
+    - name: 文档打印首页展示百度网盘入口
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 点击「文档打印」icon
+        - aiWaitFor: 文档打印首页加载完成
+        - aiTap: 文档打印首页展示百度网盘入口
+        - aiAssert: 页面展示百度网盘入口可见
+"""
+    homepage_display_repair = repair_generated_yaml_executable_gate_issues(homepage_display_tap_yaml)
+    homepage_display_content = homepage_display_repair.get("content", "")
+    require(
+        homepage_display_repair.get("changed")
+        and "aiTap: 文档打印首页展示百度网盘入口" not in homepage_display_content
+        and "aiWaitFor: 页面展示百度网盘入口" in homepage_display_content
+        and score_midscene_yaml_executable(homepage_display_content).get("executionLevel") == "executable",
+        "Generated YAML repair must fix display-title aiTap prompts without blocking otherwise executable cases",
     )
     generation_policy = build_executable_smoke_yaml_policy_text()
     require(
@@ -524,6 +558,41 @@ def check_yaml_static_validation_and_patterns():
         and selected[0].get("fallbackSmokeSelection") is True
         and any("超过自动冒烟首批上限" in str(item.get("gateReason") or "") for item in blocked),
         "Runner gate must fall back to top executable YAML instead of failing with zero first-batch cases",
+    )
+    execution_plan = build_generated_yaml_execution_plan(
+        [{"file": "01-normal.yaml", "executableScore": normal_smoke_score}, {"file": "02-boundary.yaml", "executableScore": boundary_smoke_score}],
+        [{"file": "01-normal.yaml", "executableScore": normal_smoke_score}],
+        [{"file": "02-boundary.yaml", "executableScore": boundary_smoke_score, "gateReason": "非首批冒烟候选，延后执行"}],
+        [],
+        smoke_limit=1,
+        first_smoke_upper=3,
+        expand_limit=20,
+        expand_batch_limit=5,
+    )
+    require(
+        execution_plan.get("readiness", {}).get("canDispatch") is True
+        and execution_plan.get("counts", {}).get("selectedSmoke") == 1
+        and execution_plan.get("counts", {}).get("deferredExecutable") == 1,
+        "Generated YAML execution plan must expose selected smoke and deferred executable cases",
+    )
+    product_smoke_blocker = classify_generated_yaml_smoke_blocker(
+        [{"failureType": "ASSERTION_FAILED", "reason": "断言失败：百度网盘入口未展示"}],
+        [],
+        smoke_total=1,
+        smoke_failed=1,
+        timeout_count=0,
+    )
+    dry_run_smoke_blocker = classify_generated_yaml_smoke_blocker(
+        [],
+        [{"file": "bad.yaml", "reason": "YAML dry-run 未通过", "errors": ["非官方 action"]}],
+        smoke_total=1,
+        smoke_failed=0,
+        timeout_count=0,
+    )
+    require(
+        product_smoke_blocker.get("block") is False
+        and dry_run_smoke_blocker.get("block") is True,
+        "Smoke gate must distinguish product assertion failures from YAML/dry-run execution blockers",
     )
     scoped_payload = apply_generated_case_scope_gate({
         "analysis": {
@@ -1852,11 +1921,11 @@ android:
     repaired_row_content = (rows[0] if rows else {}).get("content") or ""
     repaired_row_issues = "；".join(str(item) for item in ((rows[0] if rows else {}).get("issues") or []) + issues)
     require(
-        ok_count == 0
+        ok_count == 1
         and "aiWaitFor: 页面展示百度网盘入口可见" in repaired_row_content
         and "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in repaired_row_content
         and "aiTap 描述像检查/断言" not in repaired_row_issues,
-        "Agent dry-run rows must keep repaired YAML even when the case still needs review for other reasons",
+        "Agent dry-run rows must adopt repaired executable YAML instead of keeping a stale blocker",
     )
 
     missing_wait_yaml = """
@@ -2045,6 +2114,7 @@ def main():
     sonic_service_source = (ROOT / "task_server" / "services" / "sonic_service.py").read_text(encoding="utf-8")
     yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     yaml_executable_scorer_source = (ROOT / "task_server" / "services" / "yaml_executable_scorer.py").read_text(encoding="utf-8")
+    yaml_execution_plan_source = (ROOT / "task_server" / "services" / "yaml_execution_plan.py").read_text(encoding="utf-8")
     ai_skill_service_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
     automation_filter_source = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
     knowledge_service_source = (ROOT / "task_server" / "services" / "knowledge_service.py").read_text(encoding="utf-8")
@@ -2190,7 +2260,7 @@ def main():
     require(
         "AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source
         and "def _agent_smoke_execution_blocker" in agent_service_source
-        and "产品断言失败或页面状态不匹配会记录为结果" in agent_service_source
+        and "产品断言失败或页面状态不匹配会记录为测试结果" in yaml_execution_plan_source
         and "expandedBatchLimit" in agent_service_source
         and "expandedBatches" in agent_service_source
         and "第 {batch_index} 批扩展" in agent_service_source,

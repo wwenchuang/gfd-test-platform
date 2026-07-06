@@ -1692,12 +1692,21 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
 function renderRunnerExecutionGateSummary(artifacts = {}) {
   const gate = artifacts.runnerExecutionGate || artifacts.runnerSmokeGate || {};
   if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
+  const plan = gate.executionPlan || artifacts.generatedYamlExecutionPlan || {};
+  const planReadiness = (plan && typeof plan === 'object' && plan.readiness && typeof plan.readiness === 'object') ? plan.readiness : {};
+  const planCounts = (plan && typeof plan === 'object' && plan.counts && typeof plan.counts === 'object') ? plan.counts : {};
+  const planLimits = (plan && typeof plan === 'object' && plan.limits && typeof plan.limits === 'object') ? plan.limits : {};
+  const blockingReasons = Array.isArray(planReadiness.blockingReasons) ? planReadiness.blockingReasons : [];
   let stop = '首批冒烟准入已启用';
   if (gate.stopFurtherExecution) {
     stop = `已停止后续批量执行：${gate.expandedStopReason || gate.reason || '首批冒烟不可执行或未产出有效结果'}`;
   } else if (gate.expandedExecution) {
     stop = `首批冒烟已完成执行准入，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
   }
+  const readinessText = planReadiness.stopFurtherExecution || gate.stopFurtherExecution
+    ? '已阻断扩展'
+    : (planReadiness.canDispatch === false ? '未达到下发准入' : '可下发/可继续');
+  const policyText = gate.smokeFailurePolicy || planReadiness.smokeFailurePolicy || '冒烟用于验证 YAML 能下发、能运行、能产生日志；产品断言失败记录为测试结果。';
   const expandedBatches = Array.isArray(gate.expandedBatches) ? gate.expandedBatches : [];
   const expandedBatchHtml = expandedBatches.length ? `
     <div class="final-report-file-list compact">
@@ -1713,14 +1722,21 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
     <section class="final-report-panel final-report-wide">
       <strong>Runner 自动执行准入</strong>
       <p>${escapeHtml(stop)}</p>
+      <p><b>准入状态：</b>${escapeHtml(readinessText)}；<b>策略：</b>${escapeHtml(policyText)}</p>
       <div class="report-summary-grid final-report-metrics">
-        <div><span>首批上限</span><strong>${escapeHtml(gate.limit ?? '-')}</strong></div>
+        <div><span>首批上限</span><strong>${escapeHtml(gate.limit ?? planLimits.smokeLimit ?? '-')}</strong></div>
         <div><span>已选择</span><strong>${escapeHtml(gate.selectedCount ?? gate.smokeExecutedCount ?? 0)}</strong></div>
         <div><span>扩展执行</span><strong>${escapeHtml(gate.expandedCreatedCount ?? 0)}</strong></div>
         <div><span>剩余待跑</span><strong>${escapeHtml(gate.remainingDeferredCount ?? gate.deferredCount ?? 0)}</strong></div>
         <div><span>被拦截</span><strong>${escapeHtml(gate.blockingCount ?? gate.blockedCount ?? 0)}</strong></div>
+        <div><span>可执行总数</span><strong>${escapeHtml(planCounts.executable ?? gate.executableCount ?? 0)}</strong></div>
       </div>
       ${gate.smokeFailureRate ? `<p>首批失败率：${escapeHtml(Math.round(Number(gate.smokeFailureRate || 0) * 100))}%</p>` : ''}
+      ${blockingReasons.length ? `
+        <div class="final-report-file-list compact">
+          ${blockingReasons.slice(0, 5).map(reason => `<span><b>准入阻断</b><em>${escapeHtml(reason)}</em></span>`).join('')}
+        </div>
+      ` : ''}
       ${expandedBatchHtml}
     </section>
   `;
