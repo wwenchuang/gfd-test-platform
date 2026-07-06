@@ -1669,7 +1669,7 @@ function renderGeneratedExecutionLevelSummary(artifacts = {}) {
       <div class="section-head">
         <div>
           <strong>生成结果执行分层</strong>
-          <p>平台会先下发“可执行”里的首批冒烟用例；首批通过率不低于 50% 后才会小批量扩展执行剩余可执行用例，需确认、草稿和人工项不会自动下发。</p>
+          <p>平台会先下发“可执行”里的首批冒烟用例；首批用于确认 YAML 能下发、能运行、能产生日志。脚本/YAML/定位/超时类问题会暂停扩展，产品结果失败会记录为测试结果。</p>
         </div>
         ${mindmap.caseSetId && (smokeExecutableCount || remainingExecutableCount || generatedCount) ? `
           <div class="review-actions">
@@ -1694,9 +1694,9 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
   if (!gate || typeof gate !== 'object' || !gate.enabled) return '';
   let stop = '首批冒烟准入已启用';
   if (gate.stopFurtherExecution) {
-    stop = `已停止后续批量执行：${gate.expandedStopReason || gate.reason || '首批冒烟通过率低于 50%'}`;
+    stop = `已停止后续批量执行：${gate.expandedStopReason || gate.reason || '首批冒烟不可执行或未产出有效结果'}`;
   } else if (gate.expandedExecution) {
-    stop = `首批冒烟通过率达标，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
+    stop = `首批冒烟已完成执行准入，已扩展执行 ${gate.expandedCreatedCount ?? gate.expandedPlannedCount ?? 0} 条`;
   }
   const expandedBatches = Array.isArray(gate.expandedBatches) ? gate.expandedBatches : [];
   const expandedBatchHtml = expandedBatches.length ? `

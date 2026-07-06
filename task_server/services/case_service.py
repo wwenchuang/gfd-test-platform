@@ -466,8 +466,9 @@ def generation_volume_targets(analysis, mode="full"):
         "manual_cases_not_counted": True,
         "guidance": (
             "按需求点、正常/异常/边界/状态/空态覆盖扩容；不要为了数量重复同一路径。"
-            "冒烟候选池按需求规模保留 3/5/8 条；Runner 首批自动下发最多 3 条，"
-            "通过率不低于 50% 再继续剩余可执行用例。"
+            "冒烟候选池按需求规模保留 3/5/8 条；Runner 首批自动下发最多 3 条。"
+            "首批冒烟用于证明 YAML 能下发、能执行、能产生日志；脚本/YAML/定位/超时类问题会暂停扩展，"
+            "产品断言失败会记录为测试结果，不等同于 YAML 不可执行。"
             "无法稳定自动化的场景进入 manual_cases，但不计入自动化 cases 数。"
         ),
         "missing_inputs": missing,

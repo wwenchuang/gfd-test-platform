@@ -1267,8 +1267,8 @@ def build_executable_smoke_yaml_policy_text():
     """Explicit generation policy for Runner-first executable YAML."""
     return "\n".join([
         "【Runner YAML 可执行优先规则】",
-        "1. 自动化 YAML 的第一目标是能在 Runner 上独立冒烟执行；完整覆盖留在 .mm、summary、manual_cases，不要把所有验收点都塞进一个脚本。",
-        "2. 每个 YAML 文件默认只覆盖一个清晰业务检查点；长流程必须拆成多个 YAML 文件，每个文件自己包含启动、到达入口、核心动作、终态等待/判断和清理。",
+        "1. 自动化 YAML 的目标是生成一组可分批全量执行的稳定用例，不是只生成冒烟；冒烟只是首批准入，用来证明 YAML 能下发、能运行、能产生日志。",
+        "2. 完整覆盖要拆成多个短 YAML 文件：每个文件只覆盖一个清晰业务检查点，并自己包含启动、到达入口、核心动作、终态等待/判断和清理。",
         "3. Figma 只作为 UI 参考，实际 App 可能有文案、顺序和样式差异；不要照抄 Figma 上的长文案、尺寸、坐标或全部元素。",
         "4. 只有真实点击目标才能用 aiTap；检查/验证/是否展示/是否存在/页面可见/状态一致这类语义必须用 aiWaitFor 或按基线习惯保留为轻量 ai，不要为了补断言强行生成 aiAssert。",
         "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
@@ -5322,7 +5322,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "enabled": True,
         "assertion_limit": YAML_GENERATED_ASSERTION_LIMIT,
         "reference_example_count": len(yaml_reference_examples),
-        "rule": "生成 YAML 时优先保证 Runner 冒烟可执行，完整覆盖保留在 mm/summary/manual_cases。",
+        "rule": "生成 YAML 时产出可分批全量执行的稳定用例；Runner 首批只跑冒烟准入，脚本/YAML/定位/超时类问题会阻断扩展，产品断言失败会记录为测试结果。",
     }
     review["yaml_smoke_stability"] = yaml_smoke_stability
     review["yaml_static_validation"] = yaml_static_validation

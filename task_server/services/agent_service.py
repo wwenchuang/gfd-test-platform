@@ -2331,6 +2331,75 @@ def _agent_smoke_failure_bucket(failure_reasons, dry_run_blocked=None):
     return "Runner 失败"
 
 
+def _agent_smoke_execution_blocker(failure_reasons, dry_run_blocked=None, smoke_total=0, smoke_failed=0, timeout_count=0):
+    """Return whether smoke execution proves the generated YAML is not runnable.
+
+    A smoke case does not have to pass as a product result. It must be able to
+    pass local/Runner dry-run, get dispatched, run on the device, and produce a
+    concrete result. Product assertions or page-state mismatches are execution
+    results, not automatic blockers for the rest of the generated suite.
+    """
+    dry_blocked = [item for item in (dry_run_blocked or []) if isinstance(item, dict)]
+    if dry_blocked:
+        return {
+            "block": True,
+            "reason": "YAML dry-run 未通过",
+            "bucket": "YAML 可执行性不足",
+            "rule": "冒烟必须先通过本地/Runner dry-run，静态不可执行 YAML 不下发。",
+        }
+    if timeout_count:
+        return {
+            "block": True,
+            "reason": f"首批冒烟有 {timeout_count} 个任务超时",
+            "bucket": "Runner 超时",
+            "rule": "冒烟必须能在等待窗口内产出明确结果，超时会暂停扩展避免批量卡死。",
+        }
+    if not smoke_total:
+        return {
+            "block": True,
+            "reason": "首批冒烟没有创建 Runner 任务",
+            "bucket": "Runner 未下发",
+            "rule": "冒烟必须真实创建 Runner 任务并进入执行链路。",
+        }
+    bucket = _agent_smoke_failure_bucket(failure_reasons, dry_blocked)
+    text = "\n".join(
+        f"{item.get('failureType') or ''} {item.get('reason') or ''}"
+        for item in (failure_reasons or [])
+        if isinstance(item, dict)
+    )
+    lowered = text.lower()
+    hard_failure = (
+        bucket in ("YAML 可执行性不足", "元素定位失败")
+        or "failed to locate element" in lowered
+        or "locate element" in lowered
+        or "未找到用例" in text
+        or "找不到" in text
+        or "工具调用失败" in text
+        or "yaml" in lowered
+        or "dry-run" in lowered
+    )
+    if smoke_failed and hard_failure:
+        return {
+            "block": True,
+            "reason": bucket,
+            "bucket": bucket,
+            "rule": "冒烟已下发但失败归因为脚本/YAML/元素定位问题，先修复生成脚本再扩展。",
+        }
+    if smoke_failed >= smoke_total and bucket == "Runner 失败":
+        return {
+            "block": True,
+            "reason": "首批冒烟均为 Runner 失败且未能归因",
+            "bucket": bucket,
+            "rule": "没有任何冒烟任务产出有效结果时暂停扩展，避免批量制造未知失败。",
+        }
+    return {
+        "block": False,
+        "reason": bucket if smoke_failed else "",
+        "bucket": bucket if smoke_failed else "",
+        "rule": "冒烟必须能执行；产品断言失败或页面状态不匹配会记录为结果，不等同于 YAML 不可执行。",
+    }
+
+
 def _ai_gateway_available():
     """检查 AI Gateway 是否可用。"""
     try:
@@ -4345,7 +4414,9 @@ def _select_agent_runner_refs(run, refs):
     """Gate Agent-generated YAML before Runner creation.
 
     Hand-maintained or user-selected baseline YAML is not limited here. Generated
-    YAML must prove it is executable and only the first smoke batch is sent.
+    YAML must prove it is executable. Only the first smoke batch is sent first;
+    the remaining executable YAML is preserved for full execution after smoke
+    proves it can be dispatched and run.
     """
     refs = [ref for ref in refs or [] if isinstance(ref, dict)]
     artifacts = (run or {}).setdefault("artifacts", {})
@@ -4392,7 +4463,7 @@ def _select_agent_runner_refs(run, refs):
         "blocking": blocking,
         "deferred": deferred,
         "autoRepairCount": len(repairs),
-        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有候选时按 executable 评分兜底选择首批。冒烟通过率不低于 50% 才自动扩展，扩展按小批次执行。",
+        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有候选时按 executable 评分兜底选择首批。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；只有脚本/YAML/定位/超时类问题会阻断扩展，产品结果失败会记录后继续按批执行。",
     }
     artifacts["runnerExecutionGate"] = gate
     return selected, gate
@@ -8918,8 +8989,20 @@ def _tool_run_sonic(run):
                     "smokeFailureRate": round(smoke_failure_rate, 4),
                     "smokePassRate": round(1 - smoke_failure_rate, 4) if smoke_total else 0,
                 })
-                if smoke_total and smoke_failure_rate > 0.5:
-                    stop_reason = _agent_smoke_failure_bucket(failure_reasons, locals().get("dry_run_blocked", []))
+                smoke_blocker = _agent_smoke_execution_blocker(
+                    failure_reasons,
+                    locals().get("dry_run_blocked", []),
+                    smoke_total=smoke_total,
+                    smoke_failed=smoke_failed,
+                    timeout_count=len(wait_result["timeout"]),
+                )
+                gate.update({
+                    "smokeExecutable": not smoke_blocker.get("block"),
+                    "smokeFailureBucket": smoke_blocker.get("bucket") or "",
+                    "smokeFailurePolicy": smoke_blocker.get("rule") or "",
+                })
+                if smoke_blocker.get("block"):
+                    stop_reason = smoke_blocker.get("reason") or _agent_smoke_failure_bucket(failure_reasons, locals().get("dry_run_blocked", []))
                     stop_info = {
                         "enabled": True,
                         "stopFurtherExecution": True,
@@ -8929,12 +9012,12 @@ def _tool_run_sonic(run):
                         "smokePassedCount": len(wait_result["completed"]),
                         "smokeFailureRate": round(smoke_failure_rate, 4),
                         "smokePassRate": round(1 - smoke_failure_rate, 4),
-                        "rule": "首批冒烟通过率低于 50% 时停止自动扩展；先修复入口、等待或定位问题，避免批量制造同类失败。",
+                        "rule": smoke_blocker.get("rule") or "首批冒烟不可执行时停止扩展，先修复 YAML 或 Runner 环境。",
                     }
                     gate.update(stop_info)
                     run_artifacts["runnerExecutionGate"] = gate
                     run_artifacts["runnerSmokeGate"] = stop_info
-                    summary_parts.append(f"首批冒烟通过率低于 50%（失败 {smoke_failed}/{smoke_total}），已停止后续批量执行：{stop_reason}")
+                    summary_parts.append(f"首批冒烟不可执行或不可稳定完成（失败 {smoke_failed}/{smoke_total}），已停止后续批量执行：{stop_reason}")
                 elif smoke_total and gate_deferred:
                     expand_batch_limit = max(1, min(AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT, AGENT_GENERATED_RUNNER_EXPAND_LIMIT))
                     pending_deferred = list(gate_deferred)[:AGENT_GENERATED_RUNNER_EXPAND_LIMIT]
@@ -8962,7 +9045,7 @@ def _tool_run_sonic(run):
                         pending_deferred = pending_deferred[expand_batch_limit:]
                         phase_name = f"expanded-{batch_index}"
                         summary_parts.append(
-                            f"首批冒烟通过率不低于 50%，继续第 {batch_index} 批剩余 executable {len(expand_refs)} 个"
+                            f"首批冒烟已完成执行准入，继续第 {batch_index} 批剩余 executable {len(expand_refs)} 个"
                         )
                         expanded_created = _agent_create_runner_jobs_for_refs(
                             run,
@@ -10378,7 +10461,7 @@ def _tool_rerun(run):
                 call["error"] = "重跑后仍有失败或超时任务"
                 attach_diagnosis(call, make_diagnosis(
                     "重跑后仍有任务失败或超时",
-                    "这次重跑已经实际下发 Runner，但结果未全部通过。",
+                    "这次重跑已经实际下发 Runner，但存在失败结果。",
                     ["查看重跑 job 报告", "根据失败日志判断脚本/产品/环境问题", "必要时生成修复草稿后再重跑"],
                     failedJobs=(failed + timeout_jobs)[:10],
                 ))

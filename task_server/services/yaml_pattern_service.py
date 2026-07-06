@@ -256,9 +256,9 @@ def build_yaml_pattern_contract_text(patterns: Iterable[dict], action_contract: 
         "硬性要求：",
         "1. 禁止生成白名单外 action，禁止把 check/verify/ensure/观察/检查 写成 flow 动作。",
         "2. 页面跳转、弹窗、上传、搜索、外部跳转后必须有 aiWaitFor 或明确状态等待。",
-        "3. 每个 YAML 文件只覆盖一个可冒烟业务检查点；是否使用 aiAssert 以相似基线写法和需求明确要求为准。",
+        "3. 每个 YAML 文件只覆盖一个可执行业务检查点；冒烟只是首批筛选标签，不等于自动化总量上限。",
         "4. 不确定或依赖人工判断的覆盖点进入 manual_cases/draft，不得标记为可执行 YAML。",
-        "5. 不要复制无关历史断言；只学习动作组织方式和稳定等待写法。",
+        "5. 生成完整可执行集时仍要按基线短路径组织：启动/到达入口/核心动作/等待终态/清理，不复制无关历史断言。",
     ]
     if patterns:
         lines.append("")

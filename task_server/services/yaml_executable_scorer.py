@@ -531,7 +531,7 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
         candidate_ids = {id(item) for item in candidates}
         for item in eligible:
             if id(item) not in candidate_ids:
-                reason = "异常/边界/权限类用例不进入首批冒烟，待首批通过后再扩展执行" if item.get("smokeExcluded") else "非首批冒烟候选，待首批通过后再扩展执行"
+                reason = "异常/边界/权限类用例不进入首批冒烟，待首批完成执行准入后再扩展执行" if item.get("smokeExcluded") else "非首批冒烟候选，待首批完成执行准入后再扩展执行"
                 blocked.append({**item, "gateReason": reason})
     else:
         fallback_pool = [item for item in eligible if not item.get("smokeExcluded")]
@@ -540,7 +540,7 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
             fallback_ids = {id(item) for item in fallback_pool}
             for item in eligible:
                 if id(item) not in fallback_ids:
-                    blocked.append({**item, "gateReason": "异常/边界/权限类用例不进入首批冒烟，待首批通过后再扩展执行"})
+                    blocked.append({**item, "gateReason": "异常/边界/权限类用例不进入首批冒烟，待首批完成执行准入后再扩展执行"})
         else:
             executable = [{**item, "fallbackSmokeSelection": True} for item in eligible]
 
@@ -568,5 +568,5 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
     limit = max(1, int(limit or 3))
     selected = ranked[:limit]
     overflow = ranked[limit:]
-    blocked.extend({**item, "gateReason": f"超过自动冒烟首批上限 {limit}，待首批通过后再扩展执行"} for item in overflow)
+    blocked.extend({**item, "gateReason": f"超过自动冒烟首批上限 {limit}，待首批完成执行准入后再扩展执行"} for item in overflow)
     return selected, blocked
