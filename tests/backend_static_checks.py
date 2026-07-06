@@ -313,6 +313,34 @@ def check_yaml_static_validation_and_patterns():
         baseline_generated_score.get("executionLevel") != "executable",
         "Generated YAML scorer should still flag baseline-style YAML when it is newly generated",
     )
+    long_generated_yaml = """android:
+  tasks:
+    - name: 文档打印百度网盘入口展示与点击验证
+      flow:
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 800
+        - launch: com.xbxxhz.box
+        - sleep: 1500
+        - aiWaitFor: 首页加载完成
+        - aiTap: 首页
+        - ai: 找到文档导入入口区域
+        - ai: 向右翻看入口列表查找百度网盘入口
+        - aiWaitFor: 百度网盘入口稳定显示
+        - aiTap: 百度网盘入口
+        - aiWaitFor: 百度网盘授权或文件选择页面打开
+        - aiWaitFor: 文档打印首页的百度网盘入口可见并进入后续流程
+        - aiAssert: 文档打印首页的百度网盘入口可见并进入后续流程
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 1000
+        - aiWaitFor: App 已关闭或回到桌面
+        - sleep: 500
+"""
+    long_generated_score = score_midscene_yaml_executable(long_generated_yaml)
+    require(
+        long_generated_score.get("executionLevel") != "executable"
+        and any("重规划" in reason or "动作" in reason for reason in long_generated_score.get("reasons", [])),
+        "Generated long no-baseline YAML must be downgraded before Runner to avoid Midscene replanning/timeouts",
+    )
     baseline_run = {
         "runId": "agent-baseline-regression",
         "artifacts": {
@@ -457,6 +485,12 @@ def check_yaml_static_validation_and_patterns():
         "只有真实点击目标才能用 aiTap" in generation_policy
         and "检查/验证/是否展示/是否存在/页面可见/状态一致" in generation_policy,
         "YAML generation policy must forbid assertion-like aiTap prompts before model generation",
+    )
+    require(
+        "10~12 个动作" in generation_policy
+        and "新增入口类需求" in generation_policy
+        and "第三方授权页" in generation_policy,
+        "YAML generation policy must keep first-smoke entry checks short and defer unstable external flows",
     )
     service_repaired_assertion_tap = repair_generated_yaml_executable_gate_issues(assertion_tap_yaml)
     service_repaired_content = service_repaired_assertion_tap.get("content", "")

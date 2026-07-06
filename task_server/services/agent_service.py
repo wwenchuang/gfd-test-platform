@@ -2176,20 +2176,44 @@ def _runner_precheck_should_warn_risk(run, hit_kw):
     return True
 
 
-def _agent_job_log_tail(value, limit=420):
+def _agent_compact_runner_text(text, limit=180):
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if "replanned" in lowered and "exceed" in lowered:
+        text = "Midscene 重规划超限：replanningCycleLimit 已达到上限"
+    elif "timeout after 300s" in lowered:
+        text = "Runner 单任务超时：Midscene 300s 内未完成"
+    elif "failed to locate element" in lowered:
+        text = "元素定位失败：" + text[text.lower().find("failed to locate element"):]
+    elif "waitfor timeout" in lowered:
+        text = "等待目标超时：" + text[text.lower().find("waitfor timeout"):]
+    elif "assertion failed" in lowered:
+        text = "断言不通过：" + text[text.lower().find("assertion failed"):]
+    elif "report finalized" in lowered:
+        text = "报告已生成，但任务结果失败"
+    elif "adb " in lowered or "screencap" in lowered or "pull " in lowered:
+        text = "ADB 截图/拉取中，Runner 尚未回传最终结果"
+
+    text = re.sub(r"[A-Za-z]:\\[^ ]+", lambda m: os.path.basename(m.group(0).replace("\\", "/")), text)
+    text = re.sub(r"/[^ ]{20,}", lambda m: os.path.basename(m.group(0)), text)
+    if len(text) > limit:
+        text = text[: max(0, limit - 1)].rstrip() + "…"
+    return text
+
+
+def _agent_job_log_tail(value, limit=180):
     text = str(value or "").replace("\r\n", "\n").strip()
     if not text:
         return ""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if lines:
         text = " / ".join(lines[-6:])
-    text = re.sub(r"\s+", " ", text).strip()
-    if len(text) > limit:
-        return "..." + text[-limit:]
-    return text
+    return _agent_compact_runner_text(text, limit=limit)
 
 
-def _agent_job_error_excerpt(value, limit=420):
+def _agent_job_error_excerpt(value, limit=180):
     text = str(value or "").replace("\r\n", "\n").strip()
     if not text:
         return ""
@@ -2208,8 +2232,7 @@ def _agent_job_error_excerpt(value, limit=420):
         if idx < 0:
             continue
         snippet = text[idx:idx + limit]
-        snippet = re.sub(r"\s+", " ", snippet).strip()
-        return snippet[:limit]
+        return _agent_compact_runner_text(snippet, limit=limit)
     return _agent_job_log_tail(text, limit=limit)
 
 
@@ -4608,15 +4631,25 @@ def _agent_create_runner_jobs_for_refs(
                 if dry_job_id:
                     runner_dry_run_jobs.append(dry_job_id)
                     dry_row["runnerDryRunJobId"] = dry_job_id
-                    wait_dry = job_service.wait_jobs_finished([dry_job_id], run, timeout=dry_run_timeout, interval=3)
+                    wait_dry = job_service.wait_jobs_finished(
+                        [dry_job_id],
+                        run,
+                        timeout=dry_run_timeout,
+                        interval=3,
+                        phase=f"{phase}-dry-run",
+                    )
+                    dry_completed = list(wait_dry.get("completed") or [])
+                    dry_failed = list(wait_dry.get("failed") or [])
+                    dry_timeout = list(wait_dry.get("timeout") or [])
                     dry_row["runnerDryRun"] = {
-                        "completed": len(wait_dry.get("completed") or []),
-                        "failed": len(wait_dry.get("failed") or []),
-                        "timeout": len(wait_dry.get("timeout") or []),
+                        "completed": len(dry_completed),
+                        "failed": len(dry_failed),
+                        "timeout": len(dry_timeout),
+                        "waitTimedOut": bool(dry_timeout),
+                        "inconclusive": bool(dry_timeout and not dry_failed),
                         "jobId": dry_job_id,
                     }
-                    if not wait_dry.get("completed"):
-                        failed_rows = list(wait_dry.get("failed") or []) + list(wait_dry.get("timeout") or [])
+                    if dry_failed:
                         dry_run_blocked.append({
                             "module": mod,
                             "file": fn,
@@ -4626,10 +4659,14 @@ def _agent_create_runner_jobs_for_refs(
                             "job_id": dry_job_id,
                             "errors": [
                                 str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
-                                for item in failed_rows[:5]
+                                for item in dry_failed[:5]
                             ],
                         })
                         continue
+                    if dry_timeout and not dry_completed:
+                        dry_row.setdefault("warnings", []).append(
+                            "Runner 真实 dry-run 等待超时，未判定 YAML 失败；继续按本地 dry-run 下发正式任务"
+                        )
             task_names = _agent_yaml_task_names_for_runner(full_path)
             target_task_name = task_names[0] if len(task_names) == 1 else ""
             job = job_service.create_job({
@@ -9002,7 +9039,13 @@ def _tool_run_sonic(run):
                 pass
 
             wait_timeout = job_service.runner_job_wait_timeout_seconds(len(job_ids))
-            wait_result = job_service.wait_jobs_finished(job_ids, run, timeout=wait_timeout, interval=5)
+            wait_result = job_service.wait_jobs_finished(
+                job_ids,
+                run,
+                timeout=wait_timeout,
+                interval=5,
+                phase="首批冒烟",
+            )
             run_artifacts["jobResult"] = {
                 "completedCount": len(wait_result["completed"]),
                 "failedCount": len(wait_result["failed"]),
@@ -9157,7 +9200,13 @@ def _tool_run_sonic(run):
                             run_artifacts["jobIds"] = list(run_artifacts.get("jobIds") or []) + expanded_job_ids
                             _persist_agent_run_snapshot(run)
                             expanded_timeout = job_service.runner_job_wait_timeout_seconds(len(expanded_job_ids))
-                            expanded_wait = job_service.wait_jobs_finished(expanded_job_ids, run, timeout=expanded_timeout, interval=5)
+                            expanded_wait = job_service.wait_jobs_finished(
+                                expanded_job_ids,
+                                run,
+                                timeout=expanded_timeout,
+                                interval=5,
+                                phase=f"扩展第{batch_index}批",
+                            )
                             wait_result = _agent_merge_runner_wait_results(wait_result, expanded_wait)
                             run_artifacts["jobResult"].update({
                                 "completedCount": len(wait_result["completed"]),
@@ -9562,11 +9611,15 @@ def _tool_collect_report(run):
                 pass
 
         # 3. 也从 jobResult（wait_jobs_finished的结果）补充
+        success_job_ids = {item.get("jobId") for item in success_jobs if item.get("jobId")}
         if job_result:
             for fj in (job_result.get("failed") or []):
-                if not any(f.get("jobId") == fj.get("job_id") for f in failed_jobs):
+                fj_id = fj.get("job_id") or fj.get("jobId")
+                if fj_id in success_job_ids:
+                    continue
+                if not any(f.get("jobId") == fj_id for f in failed_jobs):
                     failed_jobs.append({
-                        "jobId": fj.get("job_id", ""),
+                        "jobId": fj_id or "",
                         "status": fj.get("status", "failed"),
                         "module": fj.get("module", ""),
                         "file": fj.get("file", ""),
@@ -9586,6 +9639,8 @@ def _tool_collect_report(run):
                         errors.append(fj.get("error"))
             for tj in (job_result.get("timeout") or []):
                 tj_id = tj.get("job_id") or tj.get("jobId")
+                if tj_id in success_job_ids:
+                    continue
                 if not any(f.get("jobId") == tj_id for f in failed_jobs):
                     timeout_entry = {
                         "jobId": tj_id or "",
@@ -9607,16 +9662,19 @@ def _tool_collect_report(run):
                     failed_jobs.append(timeout_entry)
                     timeout_jobs.append(timeout_entry)
                     errors.append(timeout_entry["error"])
+        if success_job_ids:
+            failed_jobs = [item for item in failed_jobs if item.get("jobId") not in success_job_ids]
+            timeout_jobs = [item for item in timeout_jobs if item.get("jobId") not in success_job_ids]
         for sf in ((artifacts.get("sonicSync") or {}).get("failed") or []):
             errors.append(sf.get("error") or "")
 
         # 终态优先：旧快照里可能同时存在 running + timeout/failed。
         # 这里按 jobId 归一，避免最终产物出现“失败、超时、仍在运行”的矛盾状态。
         terminal_by_id = {}
-        for item in success_jobs:
+        for item in failed_jobs:
             if item.get("jobId"):
                 terminal_by_id[item.get("jobId")] = item
-        for item in failed_jobs:
+        for item in success_jobs:
             if item.get("jobId"):
                 terminal_by_id[item.get("jobId")] = item
         if terminal_by_id:
@@ -10503,7 +10561,13 @@ def _tool_rerun(run):
             ))
         else:
             wait_timeout = job_service.runner_job_wait_timeout_seconds(len(retried))
-            wait_result = job_service.wait_jobs_finished(retried, run, timeout=wait_timeout, interval=5)
+            wait_result = job_service.wait_jobs_finished(
+                retried,
+                run,
+                timeout=wait_timeout,
+                interval=5,
+                phase="安全重跑",
+            )
             completed = wait_result.get("completed") or []
             failed = wait_result.get("failed") or []
             timeout_jobs = wait_result.get("timeout") or []

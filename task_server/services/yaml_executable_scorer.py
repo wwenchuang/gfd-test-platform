@@ -370,6 +370,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         generic_queries = 0
         non_tap_intents = 0
         nested_action_prefixes = 0
+        replan_risk = "low"
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
         if flow and not start_guard:
@@ -452,6 +453,23 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if len(flow) > 36:
             warnings.append("单条用例步骤过长，建议拆分后执行")
             score -= 15
+        if generated and not baseline_evidence:
+            if action_count > 12:
+                replan_risk = "high"
+                warnings.append(
+                    f"生成用例动作 {action_count} 个且无成功基线依据，容易触发 Midscene 重规划超限或 Runner 超时，建议拆成短链路"
+                )
+                score -= min(30, 18 + 2 * (action_count - 12))
+            if wait_count >= 7 and assert_count <= 1:
+                replan_risk = "high"
+                warnings.append(
+                    f"等待链路 {wait_count} 个但终态断言不足，容易长时间识别/等待后失败，建议只保留当前检查点"
+                )
+                score -= 10
+            if transition_count >= 3 and wait_count >= 7:
+                replan_risk = "high"
+                warnings.append("交互和等待组合偏长，首批冒烟应只验证稳定入口/核心一步，不应串联外部授权或文件选择")
+                score -= 5
 
         score = max(0, min(100, score))
         level = "draft" if errors or score < 55 else ("needs_review" if score < 78 else "executable")
@@ -470,6 +488,7 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             "transitionCount": transition_count,
             "waitCount": wait_count,
             "assertCount": assert_count,
+            "replanRisk": replan_risk,
             "startGuard": start_guard,
             "baselineEvidence": baseline_evidence,
             "priority": _task_priority(task, task_text) if isinstance(task, dict) else "",
@@ -559,11 +578,17 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
         main_chain = bool(any(task.get("mainBusinessChain") for task in task_scores) or any(word in label for word in MAIN_CHAIN_WORDS))
         baseline = bool(score.get("baselineEvidence") or any(task.get("baselineEvidence") for task in task_scores))
         smoke_excluded = bool(item.get("smokeExcluded") or _has_smoke_exclusion(label))
+        max_action_count = max([int(task.get("actionCount") or 0) for task in task_scores] or [0])
+        max_wait_count = max([int(task.get("waitCount") or 0) for task in task_scores] or [0])
+        high_replan_risk = any(str(task.get("replanRisk") or "") == "high" for task in task_scores)
         return (
             1 if smoke_excluded else 0,
             priority_rank,
             0 if main_chain else 1,
             0 if baseline else 1,
+            1 if high_replan_risk else 0,
+            max_action_count,
+            max_wait_count,
             -int(score.get("score") or 0),
             str(item.get("file") or ""),
         )

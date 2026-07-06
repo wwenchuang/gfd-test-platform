@@ -945,6 +945,40 @@ def _job_tail_line(text: str, limit: int = 160) -> str:
     return (lines[-1] if lines else "")[-limit:]
 
 
+def _compact_job_text(text: Any, limit: int = 72) -> str:
+    """Compress noisy Runner/Midscene progress into a readable one-line reason."""
+    raw = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not raw:
+        return ""
+    low = raw.lower()
+    if "replanned" in low and "exceed" in low:
+        raw = "Midscene 重规划超限"
+    elif "timeout after" in low:
+        match = re.search(r"timeout after\s+(\d+)s", raw, re.I)
+        raw = f"Runner 单任务超时 {match.group(1)}s" if match else "Runner 单任务超时"
+    elif "report finalized" in low:
+        raw = "报告已生成"
+    elif "failed files" in low:
+        raw = "Midscene 报告存在失败文件"
+    elif "adb " in low or "screencap" in low or "pull " in low:
+        raw = "ADB 截图/拉取中"
+    elif "agent 等待 runner 报告超时" in raw.lower():
+        raw = "等待 Runner 报告回传"
+
+    raw = re.sub(r"[A-Za-z]:\\[^ ]+", lambda m: os.path.basename(m.group(0).replace("\\", "/")), raw)
+    raw = re.sub(r"/[^ ]{20,}", lambda m: os.path.basename(m.group(0)), raw)
+    if len(raw) > limit:
+        raw = raw[: max(0, limit - 1)].rstrip() + "…"
+    return raw
+
+
+def _short_job_label(text: Any, limit: int = 26) -> str:
+    label = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(label) > limit:
+        return label[: max(0, limit - 1)].rstrip() + "…"
+    return label
+
+
 def _job_entry_from_record(job: Dict[str, Any], jid: str, status: str) -> Dict[str, Any]:
     return {
         "job_id": jid,
@@ -981,15 +1015,15 @@ def _job_progress_detail(job: Dict[str, Any]) -> str:
     total = _job_int(job, "total_task_count", 0)
     if total:
         parts.append(f"{completed}/{total}")
-    current = _job_label(job)
+    current = _short_job_label(_job_label(job))
     if current:
         parts.append(f"当前 {current}")
     message = str(job.get("progress_message") or "").strip()
     tail = _job_tail_line(job.get("stdout_tail") or job.get("stderr_tail") or "")
     if message:
-        parts.append(message[-120:])
+        parts.append(_compact_job_text(message))
     elif tail:
-        parts.append(tail)
+        parts.append(_compact_job_text(tail))
     updated_at = str(job.get("updated_at") or "").strip()
     if updated_at:
         parts.append(f"更新 {updated_at}")
@@ -997,7 +1031,7 @@ def _job_progress_detail(job: Dict[str, Any]) -> str:
         if updated_ts:
             stale_seconds = int(time.time() - updated_ts)
             if stale_seconds >= 90:
-                parts.append(f"进度停滞 {stale_seconds}s，请检查 Runner 控制台或本机网络")
+                parts.append(f"进度停滞 {stale_seconds}s")
     return " · ".join(parts)
 
 
@@ -1007,24 +1041,35 @@ def _update_agent_job_progress_trace(
     completed: List[Dict[str, Any]],
     failed: List[Dict[str, Any]],
     running: List[Dict[str, Any]],
+    wait_timeout_jobs: Optional[List[Dict[str, Any]]] = None,
     elapsed: int,
     timeout: int,
+    phase: str = "",
     force: bool = False,
     status: str = "RUNNING",
 ) -> None:
     """Write visible Runner progress onto the current Agent timeline step."""
     artifacts = run.setdefault("artifacts", {})
-    last_trace_at = int(artifacts.get("jobProgressLastTraceAt") or -999)
+    phase_key = str(phase or "runner").strip() or "runner"
+    last_trace_map = artifacts.setdefault("jobProgressLastTraceAtByPhase", {})
+    last_trace_at = int(last_trace_map.get(phase_key, -999) or -999)
     should_trace = force or elapsed <= 1 or (elapsed - last_trace_at) >= 15 or not running
-    running_names = [_job_label(item) for item in running[:3]]
-    state_label = "Runner 执行中" if running else "Runner 执行结束"
+    running_names = [_short_job_label(_job_label(item)) for item in running[:3]]
+    wait_timeout_jobs = wait_timeout_jobs or []
+    if wait_timeout_jobs:
+        state_label = "Runner 等待报告超时"
+    else:
+        state_label = "Runner 执行中" if running else "Runner 执行结束"
+    phase_prefix = f"{phase_key}：" if phase_key != "runner" else ""
     summary = (
-        f"{state_label}：{len(completed)} 成功 / {len(failed)} 失败 / "
+        f"{phase_prefix}{state_label}：{len(completed)} 成功 / {len(failed)} 失败 / "
         f"{len(running)} 运行中，已等待 {elapsed}s / 上限 {timeout}s"
     )
+    if wait_timeout_jobs:
+        summary += f"；{len(wait_timeout_jobs)} 个任务仍在等待 Runner 报告回传"
     if running_names:
         summary += "；当前：" + "、".join(name for name in running_names if name)
-    details = [_job_progress_detail(item) for item in (running[:3] + failed[:2])]
+    details = [_job_progress_detail(item) for item in (running[:3] + wait_timeout_jobs[:2] + failed[:2])]
     details = [item for item in details if item]
     if details:
         summary += "；" + "；".join(details)
@@ -1039,6 +1084,7 @@ def _update_agent_job_progress_trace(
                 "status": status,
             })
             del step["liveTrace"][:-50]
+            last_trace_map[phase_key] = elapsed
             artifacts["jobProgressLastTraceAt"] = elapsed
     trace = run.setdefault("trace", [])
     if should_trace:
@@ -1058,6 +1104,7 @@ def wait_jobs_finished(
     run: Dict[str, Any],
     timeout: int = 600,
     interval: int = 5,
+    phase: str = "",
 ) -> Dict[str, List[Dict[str, Any]]]:
     """等待 job 列表全部进入终态，期间更新 Agent Run 进度。
 
@@ -1107,6 +1154,7 @@ def wait_jobs_finished(
         # 更新 Agent Run 的执行进度
         artifacts = run.setdefault("artifacts", {})
         artifacts["jobProgress"] = {
+            "phase": phase or "runner",
             "total": len(job_ids),
             "completed": len(completed),
             "failed": len(failed),
@@ -1115,6 +1163,7 @@ def wait_jobs_finished(
             "timeout": timeout,
             "jobs": completed + failed + running,
         }
+        artifacts.setdefault("jobProgressByPhase", {})[phase or "runner"] = artifacts["jobProgress"]
         run["progress"] = _agent_run_progress_from_steps(run)
         run["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         _update_agent_job_progress_trace(
@@ -1124,6 +1173,7 @@ def wait_jobs_finished(
             running=running,
             elapsed=int(elapsed),
             timeout=timeout,
+            phase=phase,
             force=not running,
             status="SUCCESS" if not running and not failed else ("PARTIAL_FAILED" if not running else "RUNNING"),
         )
@@ -1136,27 +1186,26 @@ def wait_jobs_finished(
 
         time.sleep(interval)
 
-    # 超时：仍在运行的标记为 timeout
+    # Agent 等待超时只表示报告尚未回传，不能改写 Runner job 终态。
+    # Runner 之后仍可能回传 success/failed；这里保留原 job 状态，避免前端出现
+    # “先失败、后成功”的假性翻转。
     with JOB_LOCK:
         jobs = _read_jobs_raw()
 
     timeout_jobs: List[Dict[str, Any]] = []
-    changed = False
     for jid in job_ids:
         job = next((j for j in jobs if j.get("job_id") == jid), None)
         if job and (job.get("status") or "").lower() not in TERMINAL_JOB_STATUSES:
-            error = job.get("error") or "Runner 执行等待超时，报告尚未回传"
-            job["status"] = JOB_STATUS_TIMEOUT
-            job["finished_at"] = _now_str()
-            job["error"] = error
-            job["stderr_tail"] = job.get("stderr_tail") or error
-            changed = True
-            timeout_jobs.append({
-                **_job_entry_from_record(job, jid, JOB_STATUS_TIMEOUT),
+            error = job.get("error") or "Agent 等待 Runner 报告超时，任务可能仍在执行或报告尚未回传"
+            entry = _job_entry_from_record(job, jid, (job.get("status") or JOB_STATUS_RUNNING).lower())
+            entry.update({
+                "agent_wait_timeout": True,
                 "error": error,
+                "report_missing_reason": error,
             })
-    if changed:
-        save_jobs(jobs)
+            timeout_jobs.append({
+                **entry,
+            })
 
     # 重新统计最终状态
     completed = []
@@ -1174,30 +1223,35 @@ def wait_jobs_finished(
 
     artifacts = run.setdefault("artifacts", {})
     artifacts["jobProgress"] = {
+        "phase": phase or "runner",
         "total": len(job_ids),
         "completed": len(completed),
         "failed": len(failed),
-        "running": 0,
+        "running": len(timeout_jobs),
         "timeout": len(timeout_jobs),
         "elapsed": int(time.time() - start_time),
         "timeoutSeconds": timeout,
-        "jobs": completed + failed,
+        "jobs": completed + failed + timeout_jobs,
+        "agentWaitTimeout": True,
     }
+    artifacts.setdefault("jobProgressByPhase", {})[phase or "runner"] = artifacts["jobProgress"]
     run["progress"] = _agent_run_progress_from_steps(run)
     run["updatedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     _update_agent_job_progress_trace(
         run,
         completed=completed,
         failed=failed,
-        running=[],
+        running=timeout_jobs,
+        wait_timeout_jobs=timeout_jobs,
         elapsed=int(time.time() - start_time),
         timeout=timeout,
+        phase=phase,
         force=True,
         status="WARNING",
     )
     _persist_agent_run(run)
 
-    return {"completed": completed, "failed": failed, "running": [], "timeout": timeout_jobs}
+    return {"completed": completed, "failed": failed, "running": timeout_jobs, "timeout": timeout_jobs}
 
 
 
