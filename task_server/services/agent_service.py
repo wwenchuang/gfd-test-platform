@@ -3893,9 +3893,20 @@ def _looks_like_yaml_text(value):
 
 def normalize_yaml_refs(run):
     artifacts = run.setdefault("artifacts", {})
+    quarantined_paths = {
+        os.path.normpath(str(item.get("path") or ""))
+        for item in artifacts.get("quarantinedYamlRefs") or []
+        if isinstance(item, dict) and str(item.get("path") or "").strip()
+    }
+
+    def is_quarantined_path(path):
+        return bool(path and os.path.normpath(str(path)) in quarantined_paths)
+
     refs = []
     for item in artifacts.get("yamlRefs") or []:
         if isinstance(item, dict):
+            if is_quarantined_path(item.get("path") or ""):
+                continue
             ref = {
                 "type": item.get("type") or "file",
                 "module": item.get("module") or "",
@@ -3926,13 +3937,18 @@ def normalize_yaml_refs(run):
         known_paths.add(path)
 
     draft_path = artifacts.get("draftPath") or ""
-    if draft_path and draft_path not in known_paths:
+    if draft_path and draft_path not in known_paths and not is_quarantined_path(draft_path):
         module, file = _task_dir_for_path(draft_path)
         refs.append({"type": "draft", "module": module, "file": file, "path": draft_path, "content": "", "confirmed": False})
         known_paths.add(draft_path)
 
     generated_path = artifacts.get("generatedYamlPath") or ""
-    if generated_path and generated_path not in known_paths and not _looks_like_yaml_text(generated_path):
+    if (
+        generated_path
+        and generated_path not in known_paths
+        and not is_quarantined_path(generated_path)
+        and not _looks_like_yaml_text(generated_path)
+    ):
         module, file = _task_dir_for_path(generated_path)
         refs.append({"type": "file", "module": module, "file": file, "path": generated_path, "content": "", "confirmed": True})
         known_paths.add(generated_path)
@@ -4041,6 +4057,16 @@ def _agent_followup_wait_text(step):
     return "当前操作后的页面状态已稳定，可继续下一步"
 
 
+def _agent_assertion_tap_to_wait_prompt(prompt):
+    text = str(prompt or "").strip()
+    text = re.sub(r"^(请)?(检查|验证|确认)\s*", "", text)
+    text = text.replace("是否展示", "展示").replace("是否显示", "显示").replace("是否存在", "存在")
+    text = text.replace("是否可见", "可见").replace("是否正确", "正确")
+    if text and not text.startswith(("页面", "当前页面", "目标页面", "App", "文档打印", "百度网盘")):
+        text = "页面" + text
+    return text or str(prompt or "").strip()
+
+
 def _agent_repair_missing_interaction_followups(yaml_text):
     """Locally repair generated YAML executable-gate issues.
 
@@ -4080,14 +4106,16 @@ def _agent_repair_missing_interaction_followups(yaml_text):
             if "aiTap" in action_keys and tap_prompt_looks_assertion(_agent_step_prompt_text(step)):
                 prompt = str(step.get("aiTap") or "").strip()
                 if prompt:
+                    wait_prompt = _agent_assertion_tap_to_wait_prompt(prompt)
                     step.pop("aiTap", None)
-                    step["aiWaitFor"] = prompt
+                    step["aiWaitFor"] = wait_prompt
                     step.setdefault("timeout", 60000)
                     changes.append({
                         "task": task.get("name") or f"tasks[{task_index}]",
                         "flowIndex": index,
                         "changed": "aiTap -> aiWaitFor",
                         "prompt": prompt[:180],
+                        "waitFor": wait_prompt[:180],
                     })
                     action_keys = [key for key in step.keys() if key in MIDSCENE_FLOW_ACTIONS]
             if (
@@ -4453,11 +4481,14 @@ def _agent_yaml_dry_run_rows(run, refs):
         dry = _agent_yaml_dry_run_for_ref(run, ref)
         dry_compact = _compact_yaml_dry_run_result(dry)
         auto_repair = None
+        executable_reason_text = "；".join(str(item) for item in (executable_score.get("reasons") or []))
         needs_repair = (
             bool(content)
             and (
                 not dry_compact.get("ok")
-                or "交互动作后缺少等待或终态判断" in "；".join(str(item) for item in (executable_score.get("reasons") or []))
+                or "交互动作后缺少等待或终态判断" in executable_reason_text
+                or "aiTap 描述像检查/断言" in executable_reason_text
+                or "动作前缀" in executable_reason_text
             )
         )
         if needs_repair:
@@ -7679,8 +7710,16 @@ def _tool_validate_yaml(run):
         ]
         if passed_refs and (failed_results or repaired_results):
             artifacts["yamlRefs"] = passed_refs
+            passed_paths = [ref.get("path") for ref in passed_refs if ref.get("path")]
+            if passed_paths:
+                artifacts["generatedYamlPath"] = passed_paths[0]
+                artifacts["generatedYamlPaths"] = passed_paths
             artifacts["quarantinedYamlRefs"] = quarantined_refs
         elif not failed_results:
+            passed_paths = [ref.get("path") for ref in passed_refs if ref.get("path")]
+            if passed_paths:
+                artifacts["generatedYamlPath"] = passed_paths[0]
+                artifacts["generatedYamlPaths"] = passed_paths
             artifacts["quarantinedYamlRefs"] = []
         artifacts["yamlValidation"] = {
             "ok": bool(passed_refs) and not failed_results,
@@ -7840,28 +7879,35 @@ def _tool_execution_precheck(run):
                 severity,
             )
 
-        dry_results, validation_issues, yaml_ok_count = _agent_yaml_dry_run_rows(run, refs)
-        yaml_dry_ok = not validation_issues and bool(refs)
+        dry_run_refs = selected_refs if execution_gate.get("enabled") and selected_refs else refs
+        dry_run_scope = "首批即将下发 Runner 的 YAML" if execution_gate.get("enabled") and selected_refs else "全部 YAML 引用"
+        dry_results, validation_issues, yaml_ok_count = _agent_yaml_dry_run_rows(run, dry_run_refs)
+        yaml_dry_ok = not validation_issues and bool(dry_run_refs)
         previous_validation = artifacts.get("yamlValidation") if isinstance(artifacts.get("yamlValidation"), dict) else {}
         artifacts["yamlValidation"] = {
-            "ok": yaml_dry_ok,
-            "issues": validation_issues,
-            "results": dry_results,
+            **previous_validation,
+            "executionPrecheckOk": yaml_dry_ok,
+            "executionPrecheckIssues": validation_issues,
+            "executionPrecheckResults": dry_results,
+            "executionPrecheckScope": dry_run_scope,
             "executionGroups": previous_validation.get("executionGroups") or artifacts.get("generatedCaseGroups") or {},
         }
         if _agent_is_generated_yaml_run(run):
-            _sync_agent_generated_case_groups(artifacts, dry_results)
+            group_results = previous_validation.get("results") if isinstance(previous_validation.get("results"), list) else dry_results
+            _sync_agent_generated_case_groups(artifacts, group_results)
         artifacts["yamlDryRun"] = {
             "ok": yaml_dry_ok,
-            "checked": len(refs),
+            "checked": len(dry_run_refs),
+            "totalRefs": len(refs),
+            "scope": dry_run_scope,
             "passed": yaml_ok_count,
-            "failed": len(refs) - yaml_ok_count,
+            "failed": len(dry_run_refs) - yaml_ok_count,
             "results": dry_results,
         }
         add(
             "yaml_dry_run",
             yaml_dry_ok,
-            f"{yaml_ok_count}/{len(refs)} 个 YAML 通过 dry-run" if yaml_dry_ok else "；".join(validation_issues[:3]),
+            f"{dry_run_scope}：{yaml_ok_count}/{len(dry_run_refs)} 个通过 dry-run" if yaml_dry_ok else "；".join(validation_issues[:3]),
         )
         quarantined_refs = artifacts.get("quarantinedYamlRefs") if isinstance(artifacts.get("quarantinedYamlRefs"), list) else []
         if quarantined_refs:

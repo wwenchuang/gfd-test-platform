@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover - PyYAML optional
 
 import threading
 
-from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable, tap_prompt_looks_assertion
 
 from ..config import (
     ASSET_DIR,
@@ -1241,7 +1241,7 @@ def build_yaml_reference_examples_text(examples):
         "下面片段来自平台已维护的 YAML 用例库。请学习其可执行步骤组织方式、等待策略、入口清理、外部跳转、弹窗处理和断言写法；",
         "只能复用与当前需求相关的动作结构，不要复制无关业务断言，不要把历史模块当成本次需求。",
         "强约束：生成 YAML 时必须优先仿写这些样例中的动作序列和等待方式；不要自由创造平台未支持 action。",
-        "平台约束：过程检查优先写成 aiWaitFor 或普通 ai 步骤；相似基线没有 aiAssert 时不要强行补断言，完整覆盖点放到脑图、summary 或 manual_cases。",
+        "平台约束：检查/展示/存在/可见/状态类步骤必须写成 aiWaitFor 或普通 ai 步骤，禁止写成 aiTap；相似基线没有 aiAssert 时不要强行补断言，完整覆盖点放到脑图、summary 或 manual_cases。",
         "",
     ]
     for idx, item in enumerate(examples[:YAML_REFERENCE_MAX_EXAMPLES], start=1):
@@ -1266,7 +1266,7 @@ def build_executable_smoke_yaml_policy_text():
         "1. 自动化 YAML 的第一目标是能在 Runner 上独立冒烟执行；完整覆盖留在 .mm、summary、manual_cases，不要把所有验收点都塞进一个脚本。",
         "2. 每个 YAML 文件默认只覆盖一个清晰业务检查点；长流程必须拆成多个 YAML 文件，每个文件自己包含启动、到达入口、核心动作、终态等待/判断和清理。",
         "3. Figma 只作为 UI 参考，实际 App 可能有文案、顺序和样式差异；不要照抄 Figma 上的长文案、尺寸、坐标或全部元素。",
-        "4. 过程检查优先用 aiWaitFor / aiTap / aiInput / aiAction；是否使用 aiAssert 以相似基线写法和需求明确要求为准，不要为了补断言强行生成。",
+        "4. 只有真实点击目标才能用 aiTap；检查/验证/是否展示/是否存在/页面可见/状态一致这类语义必须用 aiWaitFor 或按基线习惯保留为轻量 ai，不要为了补断言强行生成 aiAssert。",
         "5. 遇到相册、拍照、微信、外部跳转、搜索、列表、弹窗、登录、上传、模型生成等动作时，必须优先学习【现有 YAML 步骤经验库】里的稳定写法。",
         "6. 不确定页面入口时，先写稳定到达路径和等待条件，不要生成必须精确命中特定视觉细节才可通过的脚本。",
         "7. 智小白 3D AI建模链路必须按当前真机入口写：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的“文字输入”；标牌/印章入口需要先横向滑动功能入口区域。",
@@ -4122,6 +4122,7 @@ def _yaml_static_repair_prompt(yaml_text, dry_run, *, title="", module="", file=
 1. 保持原有 task 数量、task 名称、业务路径和页面语义。
 2. 只修复会导致解析/Runner 加载失败的问题，例如 YAML 顶层结构、android.tasks/ios.tasks、flow 数组、动作字段为空、不支持动作、同一步多个动作、明显缺失包名启动保护。
 3. 不要引入现有 YAML 中没有的复杂动作；优先保持 aiWaitFor、aiTap、aiInput、aiAssert、runAdbShell、sleep、launch 等常见写法。
+3.1 只有真实点击目标才能用 aiTap；检查/验证/是否展示/是否存在/页面可见/状态一致这类语义必须改成 aiWaitFor，不要用 aiTap。
 4. 输出必须是 JSON 对象，字段为 analysis、changes、content；content 必须是完整 YAML 字符串。
 
 上下文：
@@ -4137,6 +4138,67 @@ def _yaml_static_repair_prompt(yaml_text, dry_run, *, title="", module="", file=
 {str(yaml_text or "")[:24000]}
 ```
 """
+
+
+def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
+    """Repair local executable-gate issues before generated YAML is persisted.
+
+    This is deliberately narrow. It does not add cases, assertions, or business
+    coverage. It only fixes action semantics that are known to make generated
+    YAML fail before Runner execution, such as using aiTap for a page-state check.
+    """
+    original = str(yaml_text or "")
+    if _pyyaml is None or not original.strip():
+        return {"changed": False, "content": original, "changes": []}
+    try:
+        parsed = _pyyaml.safe_load(original)
+    except Exception:
+        return {"changed": False, "content": original, "changes": []}
+    _, tasks = extract_midscene_tasks(parsed)
+    if not tasks:
+        return {"changed": False, "content": original, "changes": []}
+
+    def wait_prompt_from_assertion_tap(prompt: str) -> str:
+        text = str(prompt or "").strip()
+        text = re.sub(r"^(请)?(检查|验证|确认)\s*", "", text)
+        text = text.replace("是否展示", "展示").replace("是否显示", "显示").replace("是否存在", "存在")
+        text = text.replace("是否可见", "可见").replace("是否正确", "正确")
+        if text and not text.startswith(("页面", "当前页面", "目标页面", "App", "文档打印", "百度网盘")):
+            text = "页面" + text
+        return text or str(prompt or "").strip()
+
+    changes = []
+    for task_index, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            continue
+        flow = task.get("flow")
+        if not isinstance(flow, list):
+            continue
+        for step_index, step in enumerate(flow, start=1):
+            if not isinstance(step, dict) or "aiTap" not in step:
+                continue
+            prompt = str(step.get("aiTap") or "").strip()
+            if not prompt or not tap_prompt_looks_assertion(prompt):
+                continue
+            wait_prompt = wait_prompt_from_assertion_tap(prompt)
+            step.pop("aiTap", None)
+            step["aiWaitFor"] = wait_prompt
+            step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+            changes.append({
+                "task": task.get("name") or f"tasks[{task_index}]",
+                "flowIndex": step_index,
+                "changed": "aiTap -> aiWaitFor",
+                "prompt": prompt[:180],
+                "waitFor": wait_prompt[:180],
+            })
+
+    if not changes:
+        return {"changed": False, "content": original, "changes": []}
+    try:
+        content = _pyyaml.safe_dump(parsed, allow_unicode=True, sort_keys=False, width=100000)
+    except Exception:
+        return {"changed": False, "content": original, "changes": []}
+    return {"changed": True, "content": content, "changes": changes}
 
 
 def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file="", app_package="", max_attempts=None):
@@ -4155,6 +4217,15 @@ def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file=
             "type": "runtime_guard_normalize",
             "ok": True,
             "changes": guard_changes[:12],
+        })
+    executable_gate_repair = repair_generated_yaml_executable_gate_issues(current)
+    if executable_gate_repair.get("changed"):
+        current = executable_gate_repair.get("content") or current
+        attempts.append({
+            "attempt": 0,
+            "type": "local_executable_gate_repair",
+            "ok": True,
+            "changes": list(executable_gate_repair.get("changes") or [])[:12],
         })
     dry = dry_run_midscene_yaml(current, module=module, file=file, app_package=app_package)
     if dry.get("ok"):

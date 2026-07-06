@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import base64
+import json
 import os
 import sys
 import tempfile
@@ -238,8 +239,10 @@ def check_yaml_static_validation_and_patterns():
     )
     from task_server.services.yaml_service import (
         apply_generated_case_scope_gate,
+        build_executable_smoke_yaml_policy_text,
         build_requirement_semantic_constraints_text,
         dry_run_midscene_yaml,
+        repair_generated_yaml_executable_gate_issues,
         repair_generated_yaml_static_errors,
     )
 
@@ -344,6 +347,28 @@ def check_yaml_static_validation_and_patterns():
         and "aiWaitFor" in repaired_assertion_tap.get("content", "")
         and score_midscene_yaml_executable(repaired_assertion_tap.get("content", "")).get("executionLevel") == "executable",
         "Agent validation must locally repair assertion-like aiTap prompts before failing the whole run",
+    )
+    generation_policy = build_executable_smoke_yaml_policy_text()
+    require(
+        "只有真实点击目标才能用 aiTap" in generation_policy
+        and "检查/验证/是否展示/是否存在/页面可见/状态一致" in generation_policy,
+        "YAML generation policy must forbid assertion-like aiTap prompts before model generation",
+    )
+    service_repaired_assertion_tap = repair_generated_yaml_executable_gate_issues(assertion_tap_yaml)
+    service_repaired_content = service_repaired_assertion_tap.get("content", "")
+    require(
+        service_repaired_assertion_tap.get("changed")
+        and "aiTap: 检查页面是否展示" not in service_repaired_content
+        and "aiWaitFor: 页面展示" in service_repaired_content
+        and dry_run_midscene_yaml(service_repaired_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated YAML service must repair assertion-like aiTap prompts before persisting files",
+    )
+    service_static_repair = repair_generated_yaml_static_errors(assertion_tap_yaml, app_package="com.xbxxhz.box", max_attempts=0)
+    require(
+        service_static_repair.get("ok")
+        and service_static_repair.get("changed")
+        and "local_executable_gate_repair" in json.dumps(service_static_repair.get("attempts") or [], ensure_ascii=False),
+        "YAML static repair must include local executable-gate repair, not only parser repair",
     )
     prefixed_action_yaml = """android:
   tasks:
@@ -1754,6 +1779,36 @@ android:
 def check_agent_yaml_validate_auto_repairs_missing_wait():
     from task_server.services import agent_service
 
+    assertion_tap_yaml = """
+android:
+  tasks:
+    - name: "文档打印首页展示百度网盘入口"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "App 首页加载完成"
+        - aiTap: "点击「文档打印」icon"
+        - aiWaitFor: "文档打印首页加载完成"
+        - aiTap: "检查页面是否展示「百度网盘」入口按钮"
+        - aiWaitFor: "页面稳定展示「百度网盘」入口按钮，文案清晰可点击"
+        - aiAssert: "页面稳定展示「百度网盘」入口按钮，文案清晰可点击"
+"""
+    run = {
+        "runId": "agent-static-auto-repair-assertion-tap",
+        "target": "学习打印基础打印增加百度网盘入口",
+        "artifacts": {
+            "generationPipeline": {"source": "agent_generate_yaml"},
+            "yamlRefs": [
+                {"type": "file", "file": "assertion-tap.yaml", "content": assertion_tap_yaml, "confirmed": True},
+            ],
+        },
+    }
+    call = agent_service._tool_validate_yaml(run)
+    validation = (run.get("artifacts") or {}).get("yamlValidation") or {}
+    fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
+    require(call.get("status") == "SUCCESS", "Agent YAML validation must repair assertion-like aiTap prompts before quarantine/precheck")
+    require(validation.get("autoRepairedCount") == 1, "Assertion-like aiTap repair must be counted")
+    require("aiTap: 检查页面是否展示" not in fixed_content and "aiWaitFor: 页面展示" in fixed_content, "Assertion-like aiTap must become a concrete aiWaitFor page-state prompt")
+
     missing_wait_yaml = """
 android:
   tasks:
@@ -1812,6 +1867,40 @@ android:
     require(call.get("status") == "SUCCESS", "Agent YAML validation must auto-repair nested action prefixes instead of failing the whole run")
     require(validation.get("autoRepairedCount") == 1 and "${size" not in fixed_content and "cut -d x -f 1" in fixed_content, "Agent YAML validation must expose auto repair and remove unsafe shell expansion")
     require("aiTap: aiWaitFor" not in fixed_content and "aiTap: aiAssert" not in fixed_content, "Agent YAML validation must not keep action prefixes inside action values")
+
+
+def check_agent_quarantine_refs_do_not_reenter_precheck():
+    from task_server.services import agent_service
+
+    good_yaml = """
+android:
+  tasks:
+    - name: "文档打印首页展示百度网盘入口"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "App 首页加载完成"
+        - aiTap: "点击「文档打印」icon"
+        - aiWaitFor: "文档打印首页加载完成，百度网盘入口可见"
+        - aiAssert: "百度网盘入口展示正常"
+"""
+    run = {
+        "runId": "agent-static-quarantine-normalize",
+        "target": "基础打印新增百度网盘入口",
+        "artifacts": {
+            "generationPipeline": {"source": "agent_generate_yaml"},
+            "yamlRefs": [
+                {"type": "file", "file": "01-bad.yaml", "content": "", "path": "/tmp/01-bad.yaml", "confirmed": True},
+                {"type": "file", "file": "02-good.yaml", "content": good_yaml, "path": "/tmp/02-good.yaml", "confirmed": True},
+            ],
+            "generatedYamlPath": "/tmp/01-bad.yaml",
+            "generatedYamlPaths": ["/tmp/01-bad.yaml", "/tmp/02-good.yaml"],
+            "quarantinedYamlRefs": [
+                {"type": "file", "file": "01-bad.yaml", "path": "/tmp/01-bad.yaml", "executionLevel": "needs_review"},
+            ],
+        },
+    }
+    refs = agent_service.normalize_yaml_refs(run)
+    require(len(refs) == 1 and refs[0].get("file") == "02-good.yaml", "Quarantined generatedYamlPath must not be re-added to executable YAML refs")
 
 
 def main():
@@ -2056,6 +2145,7 @@ def main():
     check_yaml_runner_eligibility_filter()
     check_agent_yaml_validate_partial_quarantine()
     check_agent_yaml_validate_auto_repairs_missing_wait()
+    check_agent_quarantine_refs_do_not_reenter_precheck()
     check_agent_runner_failure_reason_summary()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
