@@ -992,6 +992,23 @@ def reset_foreground_app(adb_bin, device_id, app_package):
     time.sleep(2)
 
 
+def teardown_after_job(adb_bin, device_id, app_package):
+    """Force cleanup after a job, independent of YAML tail steps."""
+    foreground_pkg = current_foreground_package(adb_bin, device_id)
+    commands = []
+    if should_force_stop_foreground(foreground_pkg, app_package):
+        commands.append(["shell", "am", "force-stop", foreground_pkg])
+    if app_package:
+        commands.append(["shell", "am", "force-stop", app_package])
+    commands.append(["shell", "input", "keyevent", "3"])
+    for args in commands:
+        try:
+            run_cmd([adb_bin, "-s", device_id] + args, timeout=20)
+            time.sleep(0.3)
+        except Exception as e:
+            print(f"ADB teardown warning: {' '.join(args)} -> {e}")
+
+
 def latest_file(root, pattern):
     files = list(root.rglob(pattern))
     if not files:
@@ -1208,6 +1225,30 @@ def run_job(job):
             "message": "准备执行"
         })
         result = execute_midscene(job_id, attempt_dir, yaml_path, task_names, device_id)
+        post_job_progress(job_id, {
+            "progress": 99 if result.get("status") == "passed" else 95,
+            "current_task_name": task_names[-1] if task_names else "",
+            "current_task_index": len(task_names),
+            "completed_task_count": len(task_names) if result.get("status") == "passed" else 0,
+            "total_task_count": len(task_names),
+            "device_id": device_id,
+            "message": "执行结束，正在清理 App 状态"
+        })
+        teardown_status = {"ok": False, "message": "not_run"}
+        try:
+            adb_bin = resolve_command(ADB_BIN, "ADB")
+            teardown_after_job(adb_bin, device_id, app_package)
+            teardown_status = {"ok": True, "message": f"force-stopped {app_package or 'foreground app'}"}
+            print(f"Post-run app teardown: {teardown_status['message']}")
+        except Exception as e:
+            teardown_status = {"ok": False, "message": str(e)}
+            print(f"Post-run app teardown warning: {e}")
+        write_text(attempt_dir / "teardown.json", json.dumps({
+            "job_id": job_id,
+            "device_id": device_id,
+            "app_package": app_package,
+            **teardown_status,
+        }, ensure_ascii=False, indent=2))
         write_text(attempt_dir / "stdout.log", result["stdout"])
         write_text(attempt_dir / "stderr.log", result["stderr"])
         write_text(attempt_dir / "result.json", json.dumps({
@@ -1217,7 +1258,8 @@ def run_job(job):
             "device_id": device_id,
             "status": result["status"],
             "returncode": result["returncode"],
-            "duration": result["duration"]
+            "duration": result["duration"],
+            "teardown": teardown_status,
         }, ensure_ascii=False, indent=2))
 
         attempt_report = latest_file(attempt_dir, "*.html")
@@ -1233,6 +1275,7 @@ def run_job(job):
             "status": result["status"],
             "returncode": result["returncode"],
             "duration": result["duration"],
+            "teardown": teardown_status,
             "attempt_dir": str(attempt_dir),
             "report_path": str(attempt_report) if attempt_report else "",
             "summary_path": str(attempt_summary) if attempt_summary else "",
