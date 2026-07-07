@@ -333,6 +333,10 @@ function allRunnerDeviceRowsForDisplay() {
         ...device,
         runner_id: runnerId,
         runner_online: !!runner.online,
+        runner_version: runner.runner_version || runner.version || device.runner_version || '',
+        runner_capabilities: runner.capabilities || device.runner_capabilities || {},
+        last_seen_age_seconds: runner.last_seen_age_seconds ?? device.last_seen_age_seconds,
+        online_timeout_seconds: runner.online_timeout_seconds || device.online_timeout_seconds || 60,
         last_seen: runner.last_seen || device.last_seen || '',
         workspace: runner.workspace || '',
         hostname: runner.hostname || '',
@@ -353,6 +357,8 @@ function renderRunnerDevicePreflightCards(devices = [], appPackage = '') {
         const appText = typeof runnerDeviceVersionLabel === 'function' ? runnerDeviceVersionLabel(device, appPackage) : '';
         const ready = device.runner_online && device.status === 'online';
         const appReady = !appPackage || (app && app.installed);
+        const heartbeatText = typeof runnerHeartbeatLabel === 'function' ? runnerHeartbeatLabel(device) : (device.last_seen || '未上报');
+        const capabilityText = typeof runnerCapabilityLabel === 'function' ? runnerCapabilityLabel(device.runner_capabilities) : '';
         return `
           <div class="runner-preflight-card ${ready && appReady ? 'ready' : 'warn'}">
             <div class="runner-preflight-head">
@@ -361,6 +367,9 @@ function renderRunnerDevicePreflightCards(devices = [], appPackage = '') {
             </div>
             <dl>
               <div><dt>Runner</dt><dd>${escapeHtml(device.runner_id || '-')}</dd></div>
+              <div><dt>Runner 版本</dt><dd>${escapeHtml(device.runner_version || '未上报')}</dd></div>
+              <div><dt>Runner 能力</dt><dd>${escapeHtml(capabilityText || '未上报')}</dd></div>
+              <div><dt>最近心跳</dt><dd>${escapeHtml(heartbeatText)}</dd></div>
               <div><dt>设备号</dt><dd>${escapeHtml(device.device_id || '-')}</dd></div>
               <div><dt>系统</dt><dd>${escapeHtml(device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '未上报')}</dd></div>
               <div><dt>分辨率</dt><dd>${escapeHtml(device.resolution || '未上报')}</dd></div>
@@ -687,19 +696,22 @@ function renderExecutionTabRunners() {
       </div>
       ${renderRunnerDevicePreflightCards(online, '')}
       ${all.length ? `<table class="report-table" style="margin-top:12px;">
-        <thead><tr><th>设备</th><th>Runner</th><th>状态</th><th>系统/分辨率</th><th>App 版本</th><th>最近心跳</th></tr></thead>
+        <thead><tr><th>设备</th><th>Runner</th><th>状态</th><th>版本/能力</th><th>系统/分辨率</th><th>App 版本</th><th>最近心跳</th></tr></thead>
         <tbody>${all.map(d => {
           const isOnline = d.runner_online && d.status === 'online';
           const hb = d.last_heartbeat || d.heartbeat_at || d.updated_at || '';
           const appLabel = typeof runnerDeviceVersionLabel === 'function' ? runnerDeviceVersionLabel(d) : '';
+          const heartbeatText = typeof runnerHeartbeatLabel === 'function' ? runnerHeartbeatLabel(d) : String(hb || d.last_seen || '').replace('T',' ').slice(0,19);
+          const capabilityText = typeof runnerCapabilityLabel === 'function' ? runnerCapabilityLabel(d.runner_capabilities) : '';
           return `
             <tr class="report-row ${isOnline ? 'success' : ''}">
               <td><strong>${escapeHtml(typeof runnerDeviceDisplayName === 'function' ? runnerDeviceDisplayName(d) : (d.label || d.device_id || '-'))}</strong><div class="report-muted">${escapeHtml(d.device_id || '')}</div></td>
               <td>${escapeHtml(d.runner_id || '-')}</td>
               <td><span class="status-pill ${isOnline ? 'success' : 'warn'}">${isOnline ? '在线' : (d.status || '离线')}</span></td>
+              <td>${escapeHtml(d.runner_version || '未上报')}<div class="report-muted">${escapeHtml(capabilityText || '未上报')}</div></td>
               <td>${escapeHtml(d.android_version || d.androidVersion ? `Android ${d.android_version || d.androidVersion}` : '-')}${d.resolution ? `<div class="report-muted">${escapeHtml(d.resolution)}</div>` : ''}</td>
               <td>${escapeHtml(appLabel || '未上报')}</td>
-              <td class="report-cell-time">${escapeHtml(String(hb || d.last_seen || '').replace('T',' ').slice(0,19) || '-')}</td>
+              <td class="report-cell-time">${escapeHtml(heartbeatText || '-')}</td>
             </tr>
           `;
         }).join('')}</tbody>

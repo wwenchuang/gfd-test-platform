@@ -194,6 +194,57 @@ sudo journalctl -u midscene-task -f
 }
 ```
 
+## Windows Runner Service
+
+Use NSSM to run `windows-midscene-runner.py` as an auto-starting Windows
+service. Directly wrapping Python with `sc.exe` is not recommended because the
+process does not implement the Windows service protocol.
+
+On the server, check the runner token:
+
+```bash
+grep '^export MIDSCENE_RUNNER_TOKEN=' /opt/midscene.env
+```
+
+On the Windows runner machine, copy these files into `D:\sonic\midscene_run`:
+
+```text
+windows-midscene-runner.py
+install-windows-runner-service.ps1
+nssm.exe
+```
+
+Then open PowerShell as Administrator:
+
+```powershell
+cd D:\sonic\midscene_run
+Set-ExecutionPolicy -Scope Process Bypass
+.\install-windows-runner-service.ps1 `
+  -RunnerToken "replace-with-/opt/midscene.env-token" `
+  -Workspace "D:\sonic\midscene_run" `
+  -TaskServer "http://101.34.197.12:8088" `
+  -RunnerId "win-runner-01" `
+  -AdbBin "C:\Program Files\platform-tools\adb.exe" `
+  -MidsceneBin "C:\Users\gfd\AppData\Roaming\npm\midscene.cmd"
+```
+
+Common operations:
+
+```powershell
+.\install-windows-runner-service.ps1 -Action status
+.\install-windows-runner-service.ps1 -Action restart
+.\install-windows-runner-service.ps1 -Action remove
+Get-Content D:\sonic\midscene_run\logs\windows-runner.out.log -Wait
+Get-Content D:\sonic\midscene_run\logs\windows-runner.err.log -Wait
+```
+
+After the service starts, the Task page Runner status should show:
+
+- `last_seen` updated within 60 seconds.
+- `runner_version`.
+- `yaml_dry_run` and `apk_install` capabilities.
+- device market name, Android version, resolution, and installed app version.
+
 ## Nginx
 
 Optional static web + API reverse proxy:

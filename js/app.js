@@ -525,6 +525,31 @@ function runnerDeviceVersionLabel(device = {}, packageName = '') {
   return `${app.package || packageName} ${version || '已安装'}`.trim();
 }
 
+function runnerHeartbeatLabel(row = {}) {
+  const age = Number(row.last_seen_age_seconds);
+  if (Number.isFinite(age)) {
+    if (age < 5) return '刚刚';
+    if (age < 60) return `${age} 秒前`;
+    const minutes = Math.floor(age / 60);
+    const seconds = age % 60;
+    return `${minutes}分${seconds}秒前`;
+  }
+  const lastSeen = row.last_seen || row.lastSeen || '';
+  return lastSeen ? String(lastSeen).replace('T', ' ').slice(0, 19) : '未上报';
+}
+
+function runnerCapabilityLabel(capabilities = {}) {
+  if (!capabilities || typeof capabilities !== 'object') return '未上报';
+  const names = [];
+  if (capabilities.yaml_dry_run) names.push('YAML dry-run');
+  if (capabilities.apk_install) names.push('安装包更新');
+  Object.keys(capabilities).forEach(key => {
+    if (!capabilities[key] || key === 'yaml_dry_run' || key === 'apk_install') return;
+    names.push(key);
+  });
+  return names.length ? names.join(' / ') : '未上报';
+}
+
 function normalizeAppLookupText(value = '') {
   return String(value || '')
     .replace(/\s+/g, '')
@@ -575,6 +600,7 @@ function runnerDeviceOptionLabel(device = {}, packageName = '') {
     device.android_version || device.androidVersion ? `Android ${device.android_version || device.androidVersion}` : '',
     device.resolution || '',
     device.runner_id || '',
+    device.runner_version ? `Runner ${device.runner_version}` : '',
   ].filter(Boolean);
   const appVersion = packageName ? runnerDeviceVersionLabel(device, packageName) : '';
   if (appVersion) bits.push(appVersion);

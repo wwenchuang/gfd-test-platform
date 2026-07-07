@@ -39,8 +39,8 @@ from .job_service import job_allows_auto_device, load_task_meta, normalize_devic
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-# 与 midscene-upload.py 中 ``all_online_devices`` 保持一致：45s 内有心跳视为在线。
-ONLINE_TIMEOUT_SECONDS = 45
+# 60 秒内有心跳视为在线；前端也按该阈值提示离线。
+ONLINE_TIMEOUT_SECONDS = 60
 DEVICE_MARKET_NAME_BY_MODEL = {
     "ELS-AN00": "HUAWEI P40 Pro",
     "PHM110": "OPPO Reno9",
@@ -160,12 +160,16 @@ def _build_runner_record(runner_id: str, payload: Dict[str, Any]) -> Dict[str, A
     """根据上报 payload 构造一条标准 runner 记录。"""
     devices = normalize_device_list(payload.get("devices") or [])
     now = time.time()
+    runner_version = payload.get("runner_version") or payload.get("runnerVersion") or payload.get("version") or ""
     return {
         "runner_id": runner_id,
         "devices": devices,
         "workspace": payload.get("workspace", ""),
         "hostname": payload.get("hostname", ""),
         "capabilities": payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {},
+        "runner_version": runner_version,
+        "version": runner_version,
+        "started_at": payload.get("started_at") or payload.get("startedAt") or "",
         "last_seen": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
         "last_seen_ts": now,
     }
@@ -221,6 +225,11 @@ def list_runners(include_online_flag: bool = True) -> Dict[str, Dict[str, Any]]:
     for runner_id, runner in runners.items():
         row = dict(runner)
         row["online"] = _is_runner_online(runner, now=now)
+        try:
+            row["last_seen_age_seconds"] = max(0, int(now - float(runner.get("last_seen_ts") or 0)))
+        except (TypeError, ValueError):
+            row["last_seen_age_seconds"] = None
+        row["online_timeout_seconds"] = ONLINE_TIMEOUT_SECONDS
         snapshot[runner_id] = row
     return snapshot
 
@@ -245,11 +254,22 @@ def all_online_devices() -> List[Dict[str, Any]]:
     now = time.time()
     for runner_id, runner in runners.items():
         online = _is_runner_online(runner, now=now)
+        try:
+            last_seen_age = max(0, int(now - float(runner.get("last_seen_ts") or 0)))
+        except (TypeError, ValueError):
+            last_seen_age = None
         for dev in runner.get("devices", []):
             row = dict(dev)
             row["runner_id"] = runner_id
             row["runner_online"] = online
+            row["runner_status"] = "online" if online else "offline"
             row["last_seen"] = runner.get("last_seen", "")
+            row["last_seen_age_seconds"] = last_seen_age
+            row["online_timeout_seconds"] = ONLINE_TIMEOUT_SECONDS
+            row["runner_version"] = runner.get("runner_version") or runner.get("version") or ""
+            row["runner_capabilities"] = runner.get("capabilities") or {}
+            row["workspace"] = runner.get("workspace", "")
+            row["hostname"] = runner.get("hostname", "")
             devices.append(row)
     return devices
 

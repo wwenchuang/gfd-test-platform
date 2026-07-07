@@ -19,6 +19,8 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.07-stability")
+RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
 ADB_BIN = os.getenv("ADB_BIN", "adb")
@@ -50,6 +52,59 @@ def validate_runner_config():
         raise RuntimeError("TASK_SERVER 未配置，请设置为 Task 平台地址，例如 http://101.34.197.12:8088")
     if TOKEN in WEAK_RUNNER_TOKENS:
         raise RuntimeError("MIDSCENE_RUNNER_TOKEN 未配置或仍使用弱默认值，请与服务端 /opt/midscene.env 保持一致")
+
+
+def classify_runner_error(exc):
+    """Return a Chinese, operator-facing connectivity/auth category."""
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code in (401, 403):
+            return "token 错误或权限不足"
+        if exc.code == 404:
+            return "服务端接口不存在或版本不匹配"
+        if exc.code >= 500:
+            return "服务端异常"
+        return f"HTTP {exc.code}"
+
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    text = str(reason or exc)
+    winerror = getattr(reason, "winerror", None) or getattr(exc, "winerror", None)
+    errno = getattr(reason, "errno", None) or getattr(exc, "errno", None)
+    marker = f"{text} {winerror or ''} {errno or ''}".lower()
+
+    if winerror == 10060 or errno == 10060 or "10060" in marker or "timed out" in marker or "timeout" in marker:
+        return "网络超时或服务端不可达"
+    if winerror == 10061 or errno == 10061 or "10061" in marker or "connection refused" in marker:
+        return "服务端端口未监听或被拒绝"
+    if winerror == 10054 or errno == 10054 or "10054" in marker or "connection reset" in marker or "forcibly closed" in marker:
+        return "连接被服务端或网关中断"
+    if winerror == 10051 or errno == 10051 or "10051" in marker or "network is unreachable" in marker:
+        return "本机网络不可达"
+    if "name or service not known" in marker or "getaddrinfo" in marker or "nodename nor servname" in marker:
+        return "域名解析失败"
+    if isinstance(reason, socket.timeout):
+        return "网络超时或服务端不可达"
+    return "Runner 通信异常"
+
+
+def log_runner_error(kind, exc, state, every=3):
+    key = f"{kind}_count"
+    category_key = f"{kind}_category"
+    count = int(state.get(key) or 0) + 1
+    category = classify_runner_error(exc)
+    previous_category = state.get(category_key)
+    state[key] = count
+    state[category_key] = category
+    if count == 1 or count % every == 0 or previous_category != category:
+        print(f"{kind} error: {category}，连续 {count} 次：{exc}")
+
+
+def log_runner_recovered(kind, state):
+    key = f"{kind}_count"
+    count = int(state.get(key) or 0)
+    if count > 0:
+        print(f"{kind} recovered: 通信已恢复，之前连续失败 {count} 次")
+    state[key] = 0
+    state[f"{kind}_category"] = ""
 
 
 def normalize_device_model(value):
@@ -731,6 +786,9 @@ def heartbeat(devices):
         "runner_id": RUNNER_ID,
         "hostname": socket.gethostname(),
         "workspace": str(WORKSPACE),
+        "runner_version": RUNNER_VERSION,
+        "version": RUNNER_VERSION,
+        "started_at": RUNNER_STARTED_AT,
         "capabilities": RUNNER_CAPABILITIES,
         "devices": devices
     }
@@ -1261,6 +1319,7 @@ def print_startup():
     print(f"MidScene Windows Runner started")
     print(f"Server: {SERVER}")
     print(f"Runner: {RUNNER_ID}")
+    print(f"Runner version: {RUNNER_VERSION}")
     print(f"Workspace: {WORKSPACE}")
     print(f"MIDSCENE_BIN: {MIDSCENE_BIN}")
     print(f"ADB_BIN: {ADB_BIN}")
@@ -1282,10 +1341,32 @@ def print_startup():
         print(f"Command resolve error: {e}")
 
 
+def preflight_server():
+    print("Runner preflight: checking Task 服务端 /api/health ...")
+    try:
+        health = http_json("GET", "/api/health", timeout=8)
+        port = health.get("port") or "-"
+        print(f"Runner preflight ok: 服务端可访问，Task 端口 {port}")
+    except Exception as e:
+        print(f"Runner preflight failed: {classify_runner_error(e)}：{e}")
+        return False
+
+    print("Runner preflight: checking runner token / heartbeat ...")
+    try:
+        heartbeat([])
+        print("Runner preflight ok: token 有效，心跳接口可访问")
+        return True
+    except Exception as e:
+        print(f"Runner preflight failed: {classify_runner_error(e)}：{e}")
+        return False
+
+
 def main():
     validate_runner_config()
     WORKSPACE.mkdir(parents=True, exist_ok=True)
     print_startup()
+    preflight_server()
+    error_state = {}
 
     while True:
         try:
@@ -1295,13 +1376,15 @@ def main():
                 continue
             try:
                 heartbeat(devices)
+                log_runner_recovered("Heartbeat", error_state)
             except Exception as e:
-                print(f"Heartbeat error: {e}")
+                log_runner_error("Heartbeat", e, error_state)
             qs = urllib.parse.urlencode({
                 "runner_id": RUNNER_ID,
                 "devices": ",".join([dev["device_id"] for dev in devices])
             })
             resp = http_json("GET", f"/api/runner/jobs/next?{qs}")
+            log_runner_recovered("Runner", error_state)
             job = resp.get("job")
             if not job:
                 time.sleep(POLL_INTERVAL)
@@ -1315,10 +1398,11 @@ def main():
             post_job_result(job["job_id"], result)
             enqueue_report_upload(job["job_id"], pending_report_path, pending_report_name)
         except urllib.error.HTTPError as e:
-            print(f"HTTP error: {e.code} {http_error_text(e)}")
+            log_runner_error("Runner", e, error_state)
+            print(f"HTTP detail: {e.code} {http_error_text(e)}")
             time.sleep(POLL_INTERVAL)
         except Exception as e:
-            print(f"Runner error: {e}")
+            log_runner_error("Runner", e, error_state)
             time.sleep(POLL_INTERVAL)
 
 

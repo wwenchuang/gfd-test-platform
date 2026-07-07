@@ -3388,7 +3388,15 @@ def _post_runner_heartbeat(handler, qs):
         return
     d = handler._body()
     record = register_runner(d)
-    handler._json({"ok": True, "runner_id": record.get("runner_id"), "devices": record.get("devices") or [], "capabilities": record.get("capabilities") or {}})
+    handler._json({
+        "ok": True,
+        "runner_id": record.get("runner_id"),
+        "devices": record.get("devices") or [],
+        "capabilities": record.get("capabilities") or {},
+        "runner_version": record.get("runner_version") or record.get("version") or "",
+        "started_at": record.get("started_at") or "",
+        "last_seen": record.get("last_seen") or "",
+    })
 
 
 # ── 生成批次冒烟重跑 ───────────────────────────────────────────────
