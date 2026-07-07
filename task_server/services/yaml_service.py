@@ -1240,17 +1240,19 @@ def collect_yaml_baseline_library_examples(limit=None):
 
 def build_yaml_reference_examples_text(examples):
     examples = [item for item in (examples or []) if isinstance(item, dict)]
-    if not examples:
-        return ""
     lines = [
-        "【现有 YAML 步骤经验库】",
-        "下面片段来自平台已维护的 YAML 用例库。请学习其可执行步骤组织方式、等待策略、入口清理、外部跳转、弹窗处理和断言写法；",
-        "只能复用与当前需求相关的动作结构，不要复制无关业务断言，不要把历史模块当成本次需求。",
-        "强约束：生成 YAML 时必须优先仿写这些样例中的动作序列和等待方式；不要自由创造平台未支持 action。",
-        "平台约束：检查/展示/存在/可见/状态类步骤必须写成 aiWaitFor 或普通 ai 步骤，禁止写成 aiTap；相似基线没有 aiAssert 时不要强行补断言，完整覆盖点放到脑图、summary 或 manual_cases。",
+        "【相似成功基线写法参考】",
+        "你不是自由生成 YAML，而是按相似成功基线做仿写；平台会优先执行短链路、可复用、可稳定定位的 YAML。",
+        "必须复用相似基线的动作顺序、等待方式、点击前置、点击后等待和断言方式；只能替换业务对象、按钮文案、输入内容和断言目标。",
+        "禁止把检查/展示/存在/可见/状态类语义写成 aiTap；这类步骤必须写成 aiWaitFor、aiAssert 或基线中已有的轻量 ai。",
+        "没有相似基线时，不要强行生成高风险长链路 YAML；应输出短链路可执行用例，外部授权/系统选择器/长流程放入需确认或人工用例。",
+        "下面保留的是 YAML 原文片段，生成时按片段风格仿写，不要复制无关业务断言，不要把历史模块当成本次需求。",
         "",
     ]
-    for idx, item in enumerate(examples[:YAML_REFERENCE_MAX_EXAMPLES], start=1):
+    if not examples:
+        lines.append("本次未命中相似成功基线；只允许生成短链路 YAML，复杂链路必须降级为需确认或人工用例。")
+        return "\n".join(lines).strip()
+    for idx, item in enumerate(examples[:3], start=1):
         matched = "、".join(item.get("matched_terms") or []) or "模块/步骤结构相近"
         actions = " -> ".join(item.get("actions") or []) or "-"
         lines.extend([
@@ -3426,11 +3428,10 @@ def normalize_long_sleep_waits_in_task_block(block):
 # ---------------------------------------------------------------------------
 
 def normalize_waitfor_timeouts_in_task_block(block):
-    """修正 aiWaitFor timeout 过短/过长。"""
+    """修正 aiWaitFor timeout 过长。"""
     if not block:
         return block, []
     lines = block.splitlines()
-    raised = 0
     capped = 0
     for idx, line in enumerate(lines):
         m = re.match(r"^(\s*timeout\s*:\s*)(\d+)(\s*(?:#.*)?)$", line)
@@ -3443,12 +3444,7 @@ def normalize_waitfor_timeouts_in_task_block(block):
         if value > MAX_WAITFOR_TIMEOUT_MS:
             lines[idx] = f"{m.group(1)}{MAX_WAITFOR_TIMEOUT_MS}{m.group(3)}"
             capped += 1
-        elif value < 15000:
-            lines[idx] = f"{m.group(1)}30000{m.group(3)}"
-            raised += 1
     changes = []
-    if raised:
-        changes.append(f"将过短 aiWaitFor timeout 提升到 30000ms {raised} 处")
     if capped:
         changes.append(f"将过长 aiWaitFor timeout 压到 {MAX_WAITFOR_TIMEOUT_MS}ms {capped} 处")
     if not changes:
@@ -3464,14 +3460,16 @@ def loading_wait_timeout_for_context(text):
     """根据上下文推断加载等待超时。"""
     text = str(text or "")
     if any(word in text for word in ("保存成功", "已保存", "保存完成", "导出成功", "下载完成", "结果提示", "失败提示", "权限失败")):
-        return 30000
-    if any(word in text for word in ("进度", "100%", "100.0%", "模型处理", "切片", "生成", "上传", "导入", "加载到")):
-        return 240000
+        return 15000
+    if any(word in text for word in ("切片", "模型处理", "模型生成", "生成模型", "AI评估", "100%", "100.0%")):
+        return 180000
+    if any(word in text for word in ("上传", "导入", "文件选择", "相册导入", "微信导入", "百度网盘", "加载到")):
+        return 120000
     if any(word in text for word in ("下一步", "去打印", "确认打印", "检查无误", "可点击", "按钮变为可点击")):
-        return 60000
+        return 15000
     if any(word in text for word in ("列表", "结果", "空态", "详情页", "页面标题")):
-        return 60000
-    return 30000
+        return 12000
+    return 12000
 
 
 def model_processing_context_from_task_block(block):
@@ -5116,16 +5114,27 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="识别需求主链",
                 message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
             )
-    yaml_reference_examples = collect_yaml_reference_examples(
+    use_global_baseline_profile = safe_bool(
+        d.get("useGlobalBaselineProfile")
+        if d.get("useGlobalBaselineProfile") is not None
+        else d.get("use_global_baseline_profile"),
+        False,
+    )
+    yaml_reference_examples = search_baseline_examples(
         "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
         module=module,
-        limit=YAML_REFERENCE_MAX_EXAMPLES,
+        limit=3,
+        allow_fallback=False,
     )
     yaml_baseline_cache_status = get_yaml_baseline_cache_status()
     yaml_action_contract = load_yaml_action_contract()
-    yaml_baseline_library_examples = collect_yaml_baseline_library_examples()
-    yaml_library_patterns = extract_yaml_patterns_from_examples(yaml_baseline_library_examples, limit=12)
-    yaml_library_profile = summarize_yaml_patterns(yaml_library_patterns)
+    yaml_baseline_library_examples = []
+    yaml_library_patterns = []
+    yaml_library_profile = {}
+    if use_global_baseline_profile:
+        yaml_baseline_library_examples = collect_yaml_baseline_library_examples()
+        yaml_library_patterns = extract_yaml_patterns_from_examples(yaml_baseline_library_examples, limit=12)
+        yaml_library_profile = summarize_yaml_patterns(yaml_library_patterns)
     # 全量基线缓存只用于状态、评估和检索来源；模型 prompt 只接收本次需求 Top3
     # 相似基线片段，避免全局模式把无关历史用例带进当前需求。
     if yaml_library_patterns:
@@ -5141,22 +5150,27 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     "本次只把 Top3 相似基线片段送入模型"
                 ),
             )
-    yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=3)
+    yaml_baseline_patterns = []
     yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
     if yaml_reference_text:
         stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
         if job_id:
             names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_reference_examples[:3])
+            message = (
+                f"已从缓存检索 Top{len(yaml_reference_examples)} 相似成功基线，生成时仿写：{names}"
+                if yaml_reference_examples
+                else "未命中相似成功基线，本次只允许生成短链路 YAML，复杂链路进入需确认/人工"
+            )
             update_generate_job(
                 job_id,
                 progress=44,
                 step="检索用例库",
-                message=f"已检索现有 YAML 步骤经验 {len(yaml_reference_examples)} 条，生成时参考可执行写法：{names}",
+                message=message,
             )
     yaml_template_candidates = select_best_baseline_template(
         "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
         yaml_reference_examples,
-        limit=YAML_REFERENCE_MAX_EXAMPLES,
+        limit=3,
     )
     yaml_template_matcher_text = build_yaml_template_matcher_text(yaml_template_candidates)
     if yaml_template_matcher_text:
@@ -5169,7 +5183,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="匹配 YAML 模板",
                 message=f"已选择 {len(yaml_template_candidates)} 个相似基线模板，生成时按模板填槽：{template_names}",
             )
-    yaml_pattern_contract_text = build_yaml_pattern_contract_text(yaml_baseline_patterns, yaml_action_contract)
+    yaml_pattern_contract_text = ""
+    if use_global_baseline_profile:
+        yaml_baseline_patterns = extract_yaml_patterns_from_examples(yaml_reference_examples, limit=3)
+        yaml_pattern_contract_text = build_yaml_pattern_contract_text(yaml_baseline_patterns, yaml_action_contract)
     if yaml_pattern_contract_text:
         stage1_text_assets = list(stage1_text_assets) + [yaml_pattern_contract_text]
         if job_id:
@@ -5260,8 +5277,15 @@ def generate_ui_yaml_from_request(d, job_id=None):
     review["yaml_baseline_cache"] = {
         "enabled": True,
         **yaml_baseline_cache_status,
+        "baseline_cache_hit": bool(yaml_baseline_cache_status.get("cacheHit")),
+        "baseline_cache_source": yaml_baseline_cache_status.get("cacheSource") or "",
+        "baseline_matched_count": len(yaml_reference_examples),
+        "use_global_baseline_profile": bool(use_global_baseline_profile),
         "rule": "基线库先构建缓存，生成 YAML 时只从缓存中取 TopN 相似基线片段给模型仿写，避免每次现场全量读取 YAML。",
     }
+    review["baseline_cache_hit"] = bool(yaml_baseline_cache_status.get("cacheHit"))
+    review["baseline_cache_source"] = yaml_baseline_cache_status.get("cacheSource") or ""
+    review["baseline_matched_count"] = len(yaml_reference_examples)
     if yaml_template_candidates:
         template_quality = evaluate_baseline_template_matching(yaml_reference_examples, limit=3)
         review["yaml_template_matcher"] = {

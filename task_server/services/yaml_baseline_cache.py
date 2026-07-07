@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Any, Dict, Iterable, List, Tuple
 
-from task_server.config import LEARNING_DIR, TASK_DIR, TASK_META_FILE, env_int, safe_int
+from task_server.config import TASK_DIR, TASK_META_FILE, env_int, safe_int
 from task_server.schemas import MIDSCENE_FLOW_ACTIONS
 from task_server.storage import clean_filename, read_json_file, read_text_file, write_json_file
 
@@ -26,7 +26,7 @@ YAML_BASELINE_CACHE_MAX_FILES = max(50, env_int("MIDSCENE_YAML_BASELINE_CACHE_MA
 YAML_BASELINE_CACHE_SNIPPET_CHARS = max(600, env_int("MIDSCENE_YAML_BASELINE_CACHE_SNIPPET_CHARS", 2400))
 YAML_BASELINE_CACHE_PATH = os.getenv(
     "MIDSCENE_YAML_BASELINE_CACHE_PATH",
-    os.path.join(LEARNING_DIR, "cache", "yaml-baseline-cache.json"),
+    os.path.join(TASK_DIR, "cache", "yaml-baseline-cache.json"),
 )
 
 _CACHE_LOCK = threading.Lock()
@@ -375,17 +375,16 @@ def get_yaml_baseline_cache(force: bool = False) -> Dict[str, Any]:
     global _MEMORY_CACHE, _MEMORY_CACHE_AT, _LAST_STATUS
     started = time.time()
     with _CACHE_LOCK:
-        fingerprint_info = calc_baseline_fingerprint()
         now = time.time()
         if (
             not force
             and _MEMORY_CACHE
-            and _fingerprint_matches(_MEMORY_CACHE, fingerprint_info)
             and now - _MEMORY_CACHE_AT <= YAML_BASELINE_CACHE_TTL_SECONDS
         ):
             _set_status(cacheHit=True, cacheSource="memory", elapsedMs=int((time.time() - started) * 1000))
             return _MEMORY_CACHE
 
+        fingerprint_info = calc_baseline_fingerprint()
         disk_cache = None if force else load_yaml_baseline_cache()
         if disk_cache and _fingerprint_matches(disk_cache, fingerprint_info):
             _MEMORY_CACHE = disk_cache
@@ -433,6 +432,8 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
     if module_text and (module_text in item_module or module_text in file):
         score += 5
         matched.append(module_text)
+    if not matched:
+        return 0, []
     if item.get("baselineUsable") is True:
         score += 8
     if item.get("lastRunStatus") in ("passed", "success"):
@@ -453,7 +454,7 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
     return score, matched[:12]
 
 
-def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3) -> List[Dict[str, Any]]:
+def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3, allow_fallback: bool = False) -> List[Dict[str, Any]]:
     """Search cached baseline snippets and return prompt-ready Top-N examples."""
     limit = max(1, min(12, safe_int(limit, 3)))
     started = time.time()
@@ -464,7 +465,7 @@ def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3) 
         if not isinstance(item, dict):
             continue
         score, matched = _score_item(query_terms, module, item)
-        if score <= 0 and scored:
+        if score <= 0 and not allow_fallback:
             continue
         row = dict(item)
         row["score"] = score

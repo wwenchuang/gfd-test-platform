@@ -425,48 +425,41 @@ def generation_volume_targets(analysis, mode="full"):
     missing = normalize_text_list((analysis or {}).get("missing_inputs"))
     point_count = len(points)
     complexity = point_count + min(len(risks), 4) + min(len(visible), 3)
-    if point_count <= 1 and complexity <= 3:
-        min_cases, target_cases, max_cases = 6, 8, 12
-        min_scenarios, target_scenarios = 4, 6
-    elif point_count <= 2:
-        min_cases, target_cases, max_cases = 8, 12, 16
-        min_scenarios, target_scenarios = 6, 10
-    elif point_count <= 5:
-        min_cases, target_cases, max_cases = 16, 24, 36
-        min_scenarios, target_scenarios = 14, 24
-    else:
-        min_cases, target_cases, max_cases = 24, 38, 60
-        min_scenarios, target_scenarios = 24, 45
-    if blockers:
-        min_cases = max(4, min_cases - 4)
-        target_cases = max(min_cases, target_cases - 6)
-    if mode in {"mindmap", "compact_mindmap"}:
-        min_cases = 0
-        target_cases = max(0, min(12, point_count * 2 + min(len(visible), 4)))
-        max_cases = max(12, min(24, point_count * 3 + min(len(risks), 6) + min(len(visible), 6)))
-        min_scenarios = max(4, point_count * 2)
-        target_scenarios = max(min_scenarios, min(30, point_count * 4 + min(len(risks), 8) + min(len(visible), 6)))
     if point_count <= 2 and complexity <= 5:
-        smoke_cases = 3
-    elif point_count <= 5:
-        smoke_cases = 5
+        min_cases = target_cases = max_cases = 3
+        min_scenarios, target_scenarios = 3, 5
+        size = "small"
+    elif point_count <= 5 and complexity <= 9:
+        min_cases = target_cases = max_cases = 5
+        min_scenarios, target_scenarios = 5, 8
+        size = "medium"
     else:
-        smoke_cases = 8
+        min_cases = target_cases = max_cases = 8
+        min_scenarios, target_scenarios = 8, 12
+        size = "large"
+    if blockers:
+        target_cases = max(3, min(target_cases, max_cases))
+    if mode in {"mindmap", "compact_mindmap"}:
+        min_cases = target_cases = max_cases = min(max_cases, target_cases)
+        min_scenarios = max(min_scenarios, min(target_scenarios, point_count * 2 or 3))
+        target_scenarios = max(min_scenarios, target_scenarios)
+    smoke_cases = 3
     return {
         "mode": mode,
+        "size": size,
         "requirement_point_count": point_count,
         "min_automation_cases": min_cases,
         "target_automation_cases": target_cases,
         "max_automation_cases": max_cases,
         "smoke_cases": smoke_cases,
-        "smoke_max_cases": 8,
+        "smoke_max_cases": 3,
         "continue_threshold": 0.5,
         "min_scenarios": min_scenarios,
         "target_scenarios": target_scenarios,
         "manual_cases_not_counted": True,
         "guidance": (
-            "按需求点、正常/异常/边界/状态/空态覆盖扩容；不要为了数量重复同一路径。"
-            "冒烟候选池按需求规模保留 3/5/8 条；Runner 首批自动下发最多 3 条。"
+            "按需求规模控制自动化 YAML 数量：小需求 3 条，中需求 5 条，大需求最多 8 条；不要为了数量重复同一路径。"
+            "冒烟固定 3 条；Runner 首批自动下发最多 3 条。"
             "首批冒烟用于证明 YAML 能下发、能执行、能产生日志；脚本/YAML/定位/超时类问题会暂停扩展，"
             "产品断言失败会记录为测试结果，不等同于 YAML 不可执行。"
             "无法稳定自动化的场景进入 manual_cases，但不计入自动化 cases 数。"

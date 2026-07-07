@@ -1602,7 +1602,7 @@ def generation_current_executable_yaml_refs(summary, module, *, include_smoke=Tr
 
 
 def generation_smoke_rerun_default_limit(summary=None):
-    upper = max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 8)))
+    upper = max(1, min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)))
     first_upper = max(1, min(3, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT"), 3)))
     if not isinstance(summary, dict):
         return first_upper

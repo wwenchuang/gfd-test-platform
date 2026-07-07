@@ -339,7 +339,7 @@ upgrade_env_default_if_old() {
   local value="$2"
   local old_values_regex="$3"
   if grep -Eq "^export ${key}='?(${old_values_regex})'?$" "${ENV_FILE}"; then
-    sed -i.bak "s/^export ${key}=.*/export ${key}='${value}'/" "${ENV_FILE}" || true
+    sed -i.bak "s|^export ${key}=.*|export ${key}='${value}'|" "${ENV_FILE}" || true
     rm -f "${ENV_FILE}.bak"
   fi
 }
@@ -359,6 +359,10 @@ ensure_env_default "MIDSCENE_AI_VISION_IMAGE_LIMIT" "40"
 ensure_env_default "MIDSCENE_AI_CHAT_TIMEOUT_SECONDS" "480"
 ensure_env_default "MIDSCENE_AI_CHAT_RETRY_COUNT" "1"
 ensure_env_default "MIDSCENE_COVERAGE_MODEL_WHEN_LOCAL_OK" "0"
+ensure_env_default "MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS" "600"
+ensure_env_default "MIDSCENE_YAML_BASELINE_CACHE_MAX_FILES" "1200"
+ensure_env_default "MIDSCENE_YAML_BASELINE_CACHE_PATH" "/opt/midscene-tasks/cache/yaml-baseline-cache.json"
+upgrade_env_default_if_old "MIDSCENE_YAML_BASELINE_CACHE_PATH" "/opt/midscene-tasks/cache/yaml-baseline-cache.json" "/opt/midscene-learning/cache/yaml-baseline-cache.json"
 ensure_env_default "MIDSCENE_REPORT_RETENTION_DAYS" "14"
 ensure_env_default "MIDSCENE_REPORT_RETENTION_MIN_KEEP" "200"
 ensure_env_default "MIDSCENE_REPORT_CLEANUP_INTERVAL_SECONDS" "86400"
@@ -366,10 +370,13 @@ ensure_env_default "MIDSCENE_REPORT_CLEANUP_ON_STARTUP" "1"
 ensure_env_default "MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_SECONDS" "1800"
 ensure_env_default "MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_PER_JOB_SECONDS" "900"
 ensure_env_default "MIDSCENE_AGENT_RUNNER_JOB_WAIT_TIMEOUT_MAX_SECONDS" "7200"
-ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT" "8"
+ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT" "3"
 ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" "3"
-ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT" "30"
-ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" "16"
+ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT" "5"
+ensure_env_default "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" "5"
+upgrade_env_default_if_old "MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT" "3" "8"
+upgrade_env_default_if_old "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT" "5" "30"
+upgrade_env_default_if_old "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" "5" "16"
 ensure_env_default "SONIC_TASK_CALLBACK_GRACE_SECONDS" "180"
 
 upgrade_env_default_if_old "FIGMA_PARSE_LIMIT" "80" "20|40|60"
