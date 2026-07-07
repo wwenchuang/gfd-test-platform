@@ -769,6 +769,25 @@ def first_non_empty(*values):
     return ""
 
 
+def ai_model_config_from_request(data):
+    """Extract the user-selected AI model config from request payload."""
+    data = data if isinstance(data, dict) else {}
+    config = {
+        "providerId": first_non_empty(
+            data.get("modelProviderId"),
+            data.get("aiProviderId"),
+            data.get("providerId"),
+            data.get("provider"),
+        ),
+        "model": first_non_empty(
+            data.get("aiModel"),
+            data.get("model"),
+            data.get("modelName"),
+        ),
+    }
+    return {key: value for key, value in config.items() if value}
+
+
 def case_value(case, *keys):
     """从用例字典中按优先键序列取值。"""
     for key in keys:
@@ -4989,6 +5008,7 @@ def _save_prepared_figma_design_assets(case_set_id, prepared_figma_context, titl
 def generate_ui_yaml_from_request(d, job_id=None):
     title = d.get("title") or "UI自动化用例"
     module = d.get("module") or "AI测试"
+    model_config = ai_model_config_from_request(d)
     yaml_file = clean_filename(d.get("file") or f"task-{slug_for_file(title)}.yaml")
     case_set_id = d.get("case_set_id") or new_case_set_id()
     create_job = safe_bool(d.get("createJob", d.get("create_job")))
@@ -5204,7 +5224,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         try:
             if job_id:
                 update_generate_job(job_id, progress=45, step="需求解析", message="正在按 requirement_analyzer skill 做需求体检和测试点拆解")
-            payload = build_cases_payload_from_skills(title, module, stage1_text_assets)
+            payload = build_cases_payload_from_skills(title, module, stage1_text_assets, model_config=model_config)
         except Exception as e:
             skill_pipeline_error = str(e)
             if job_id:
@@ -5419,7 +5439,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
         ]
     payload = normalize_cases_payload(payload)
     try:
-        payload = select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context=yaml_reference_text)
+        payload = select_smoke_cases_for_payload(
+            title,
+            module,
+            payload,
+            mode="full",
+            yaml_reference_context=yaml_reference_text,
+            model_config=model_config,
+        )
     except Exception as smoke_error:
         review = payload.setdefault("review", {})
         review["smoke_selector_final_error"] = str(smoke_error)
@@ -6516,7 +6543,13 @@ def generate_mindmap_from_request(d, job_id=None):
         update_generate_job(job_id, progress=50, step="生成用例结构", message="正在生成场景、用例、边界和人工待准备事项")
     if USE_AI_SKILL_PIPELINE:
         try:
-            payload = build_cases_payload_from_skills(title, module, stage1_text_assets, mode="mindmap")
+            payload = build_cases_payload_from_skills(
+                title,
+                module,
+                stage1_text_assets,
+                mode="mindmap",
+                model_config=ai_model_config_from_request(d),
+            )
         except Exception as e:
             payload = call_dashscope_cases(title, module, stage1_text_assets, [])
             payload.setdefault("review", {})["skill_pipeline_error"] = str(e)

@@ -68,6 +68,15 @@ SECONDARY_EXPANSION_WORDS = (
 )
 EXTERNAL_ENTRY_WORDS = ("百度网盘", "微信", "相册", "相机", "拍照", "文件选择", "WebView")
 EXTERNAL_FLOW_WORDS = ("授权", "登录", "文件选择", "WebView", "外部", "第三方", "SDK", "点击后", "跳转", "打开")
+ENTRY_DISPLAY_WORDS = (
+    "入口展示", "入口可见", "入口可达", "入口存在", "入口位置", "入口布局",
+    "展示", "显示", "可见", "位置", "布局", "可见性", "页面展示",
+)
+EXTERNAL_FLOW_STRONG_WORDS = (
+    "授权页", "登录页", "文件选择页", "系统文件选择器", "外部App", "外部应用",
+    "第三方授权", "选择文件", "打开百度网盘", "跳转百度网盘", "百度网盘授权",
+    "百度网盘登录", "微信授权", "微信登录", "相册授权", "相机授权", "WebView",
+)
 # Generated baseline metadata comments are trace data, not proof that the case
 # matched a successful baseline. Treat only explicit template/reference wording
 # as baseline execution evidence.
@@ -156,20 +165,68 @@ def _has_external_flow_exclusion(text: str) -> bool:
     compact = _compact_text(str(text or ""))
     if not compact:
         return False
-    return any(word.lower() in compact for word in EXTERNAL_ENTRY_WORDS) and any(
-        word.lower() in compact for word in EXTERNAL_FLOW_WORDS
-    )
+    if not any(word.lower() in compact for word in EXTERNAL_ENTRY_WORDS):
+        return False
+    if any(word.lower() in compact for word in EXTERNAL_FLOW_STRONG_WORDS):
+        return True
+    if any(word.lower() in compact for word in ENTRY_DISPLAY_WORDS):
+        return False
+    return any(word.lower() in compact for word in EXTERNAL_FLOW_WORDS)
 
 
 def _ref_smoke_excluded(item: dict, score: dict, task_scores: List[dict]) -> bool:
+    # Only stable case metadata participates in first-smoke exclusion.  Scorer
+    # reasons/warnings often mention possible third-party or authorization risks;
+    # using those diagnostics here incorrectly excludes simple entry visibility
+    # cases such as "百度网盘入口展示".
     label = " ".join([
         str(item.get("file") or ""),
         str(item.get("module") or ""),
-        str(score.get("reason") or ""),
+        str(item.get("priority") or ""),
         " ".join(str(task.get("name") or "") for task in task_scores),
-        " ".join(" ".join(str(reason) for reason in (task.get("reasons") or [])) for task in task_scores),
+        " ".join(str(task.get("priority") or "") for task in task_scores),
     ])
     return _has_smoke_exclusion(label) or _has_external_flow_exclusion(label)
+
+
+def _ref_safe_short_chain(item: dict, score: dict, task_scores: List[dict]) -> bool:
+    """Executable short-chain fallback when no explicit smoke candidate survives.
+
+    This is intentionally narrower than the normal executable gate: it only
+    rescues simple, bounded cases from keyword over-blocking.  Long flows,
+    high replan risk, or cases without a final visible check still stay out of
+    the first Runner batch.
+    """
+    if not isinstance(score, dict) or score.get("executionLevel") != "executable":
+        return False
+    try:
+        total_score = int(score.get("score") or 0)
+    except Exception:
+        total_score = 0
+    if total_score < 78:
+        return False
+    task_scores = [task for task in (task_scores or []) if isinstance(task, dict)]
+    label = " ".join([
+        str(item.get("file") or ""),
+        str(item.get("module") or ""),
+        str(item.get("priority") or ""),
+        " ".join(str(task.get("name") or "") for task in task_scores),
+        " ".join(str(task.get("priority") or "") for task in task_scores),
+    ])
+    if _has_smoke_exclusion(label) or _has_external_flow_exclusion(label):
+        return False
+    max_action_count = max([int(task.get("actionCount") or 0) for task in task_scores] or [0])
+    max_transition_count = max([int(task.get("transitionCount") or 0) for task in task_scores] or [0])
+    max_wait_count = max([int(task.get("waitCount") or 0) for task in task_scores] or [0])
+    max_assert_count = max([int(task.get("assertCount") or 0) for task in task_scores] or [0])
+    high_replan = any(str(task.get("replanRisk") or "").strip().lower() == "high" for task in task_scores)
+    return (
+        max_action_count <= 10
+        and max_transition_count <= 3
+        and max_wait_count >= 1
+        and max_assert_count >= 1
+        and not high_replan
+    )
 
 
 def _ref_has_smoke_priority(item: dict, task_scores: List[dict]) -> bool:
@@ -683,10 +740,20 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
                 reason = "异常/边界/权限类用例不进入首批冒烟，待首批完成执行准入后再扩展执行" if item.get("smokeExcluded") else "非首批冒烟候选，待首批完成执行准入后再扩展执行"
                 blocked.append({**item, "gateReason": reason})
     else:
-        fallback_pool = [item for item in eligible if not item.get("smokeExcluded")]
+        fallback_pool = []
+        for item in eligible:
+            score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
+            task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+            if not item.get("smokeExcluded") or _ref_safe_short_chain(item, score, task_scores):
+                fallback_pool.append({
+                    **item,
+                    "_sourceRowId": id(item),
+                    "fallbackSmokeSelection": True,
+                    "fallbackSmokeReason": "没有明确冒烟候选，选择 executable 短链路用例作为首批冒烟",
+                })
         if fallback_pool:
-            executable = [{**item, "fallbackSmokeSelection": True} for item in fallback_pool]
-            fallback_ids = {id(item) for item in fallback_pool}
+            executable = fallback_pool
+            fallback_ids = {item.get("_sourceRowId") for item in fallback_pool}
             for item in eligible:
                 if id(item) not in fallback_ids:
                     blocked.append({**item, "gateReason": "异常/边界/权限类用例不进入首批冒烟，待首批完成执行准入后再扩展执行"})
@@ -729,4 +796,7 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
     selected = ranked[:limit]
     overflow = ranked[limit:]
     blocked.extend({**item, "gateReason": f"超过自动冒烟首批上限 {limit}，待首批完成执行准入后再扩展执行"} for item in overflow)
-    return selected, blocked
+    def strip_internal(row: dict) -> dict:
+        return {key: value for key, value in row.items() if not str(key).startswith("_")}
+
+    return [strip_internal(item) for item in selected], [strip_internal(item) for item in blocked]

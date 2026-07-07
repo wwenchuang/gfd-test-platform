@@ -473,14 +473,14 @@ def generation_volume_targets(analysis, mode="full"):
 # 用例生成 — build_cases_payload_from_skills（delegated to ai_skill_service）
 # ---------------------------------------------------------------------------
 
-def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
+def build_cases_payload_from_skills(title, module, text_assets, mode="full", model_config=None):
     """通过 AI skills pipeline 生成用例 payload。
 
     Source: midscene-upload.py 行 15852-15880。
     Delegated to ``ai_skill_service.build_cases_payload_from_skills``。
     """
     from task_server.services.ai_skill_service import build_cases_payload_from_skills as _build
-    return _build(title, module, text_assets, mode=mode)
+    return _build(title, module, text_assets, mode=mode, model_config=model_config)
 
 
 # ---------------------------------------------------------------------------

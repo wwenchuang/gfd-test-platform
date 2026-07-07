@@ -37,6 +37,19 @@ const ROUTER_ACTIONS = [
   'agent_plan',
   'generate_bug',
 ];
+const SKILL_ACTION_MAP = {
+  requirement_analyzer: 'generate_case',
+  scenario_designer: 'generate_case',
+  automation_filter: 'generate_case',
+  visual_grounder: 'generate_case',
+  smoke_selector: 'agent_plan',
+  baseline_reranker: 'agent_plan',
+  execution_scope_planner: 'agent_plan',
+  executable_yaml_planner: 'generate_yaml',
+  coverage_auditor: 'analyze_failure',
+  repair_patch_planner: 'optimize_yaml',
+  yaml_patch_repair: 'optimize_yaml',
+};
 
 function preview(value, limit = 500) {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
@@ -198,6 +211,55 @@ async function routeForProviderId(providerId) {
   };
 }
 
+function requestedProviderIdFromBody(body = {}, options = {}) {
+  const modelConfig = body?.modelConfig || body?.model_config || body?.payload?.modelConfig || body?.payload?.model_config || {};
+  return normalizeLegacyProviderId(
+    options.providerId ||
+    body?.providerId ||
+    body?.provider ||
+    body?.modelProviderId ||
+    body?.aiProviderId ||
+    modelConfig.providerId ||
+    modelConfig.provider ||
+    ''
+  );
+}
+
+function requestedModelFromBody(body = {}, options = {}) {
+  const modelConfig = body?.modelConfig || body?.model_config || body?.payload?.modelConfig || body?.payload?.model_config || {};
+  return (
+    options.model ||
+    body?.model ||
+    body?.modelName ||
+    body?.aiModel ||
+    modelConfig.model ||
+    modelConfig.modelName ||
+    ''
+  );
+}
+
+async function routeCandidatesForCall(action, body = {}, options = {}) {
+  const disableFallback = Boolean(options.disableFallback || body?.disableFallback);
+  const requestedProviderId = requestedProviderIdFromBody(body, options);
+  let routes = [];
+  if (requestedProviderId) {
+    routes = [{...(await routeForProviderId(requestedProviderId)), action}];
+    if (!disableFallback) {
+      const fallbackRoutes = await routeCandidatesFor(action);
+      const existing = new Set(routes.map((route) => route.providerId));
+      routes.push(...fallbackRoutes.filter((route) => !existing.has(route.providerId)));
+    }
+  } else {
+    routes = disableFallback ? [await routeFor(action)] : await routeCandidatesFor(action);
+  }
+  const requestedModel = requestedModelFromBody(body, options);
+  if (requestedModel) {
+    routes = routes.map((route) => ({...route, model: requestedModel}));
+  }
+  if (!routes.length) throw new Error(`能力 ${action} 没有可用 provider`);
+  return routes.map((route) => ({...route, action}));
+}
+
 function clientForRoute(route) {
   if (route.type !== 'openai_compatible') {
     throw new Error(`暂不支持 provider type：${route.type}`);
@@ -272,9 +334,7 @@ function isRetryableAiError(errorText) {
 async function callAi(action, body, options = {}) {
   const id = uuidv4();
   const prompt = options.promptOverride ?? await readPrompt(action);
-  const routes = options.disableFallback || body?.disableFallback
-    ? [await routeFor(action)]
-    : await routeCandidatesFor(action);
+  const routes = await routeCandidatesForCall(action, body, options);
   let output = '';
   let lastErrorText = null;
   for (let index = 0; index < routes.length; index += 1) {
@@ -592,8 +652,12 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
   const body = {
     skillName,
     payload: req.body?.payload || {},
+    modelConfig: req.body?.modelConfig || req.body?.model_config || {},
+    providerId: req.body?.providerId || req.body?.provider || '',
+    model: req.body?.model || req.body?.modelName || '',
   };
-  const {output, route} = await callAi('generate_case', body, {
+  const action = SKILL_ACTION_MAP[skillName] || 'generate_case';
+  const {output, route} = await callAi(action, body, {
     promptOverride: '你是移动端测试平台 AI Skill 执行器。必须严格遵守用户输入的 Skill Prompt，只输出合法 JSON。',
     userMessage: prompt,
     temperature: typeof req.body?.temperature === 'number' ? req.body.temperature : 0.1,
@@ -601,6 +665,8 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
   res.json({
     success: true,
     content: output,
+    action,
+    skillName,
     providerId: route.providerId,
     model: route.model,
   });

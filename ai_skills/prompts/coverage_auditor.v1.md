@@ -22,7 +22,7 @@
 6. 可维护性：是否存在坐标、XPath、CSS selector、固定长等待、控件层级描述。
 7. 需求点都被场景和用例覆盖：每个需求点必须能追溯到 scenarios，并且进入 cases 或 manual_cases。
 8. 对每个缺口给出明确修复建议：补充至少 1 条可执行 cases，或转入 manual_cases 并写清不能自动化的原因。
-9. 数量合理性：参考输入 payload.review.generation_targets 或 generation_targets。中等需求只生成 8 条左右通常属于覆盖偏薄，除非大量场景已明确进入 manual_cases。
+9. 数量合理性：参考输入 payload.review.generation_targets 或 generation_targets。平台当前自动化 YAML 按小需求 3 条、中需求 5 条、大需求最多 8 条收敛；超出稳定自动化范围的覆盖点应进入 manual_cases/脑图，不因自动化数量少于历史大套件而判薄。
 10. 可执行性：自动化用例必须具备稳定起点、清晰 UI 目标、可见断言、可清理收尾；如果缺少这些条件，应判为待修复或转人工清单。
 
 ## 脑图模式
@@ -79,7 +79,7 @@
 
 `coverage_matrix` 中必须体现每个需求点对应的自动化 cases 和 manual_cases；如果没有自动化用例，必须写明未覆盖原因或人工验证原因。
 
-`ok=true` 仅当没有缺失覆盖、没有泛化断言、没有明显重复用例，并且自动化用例数量与需求复杂度匹配时才允许。
+`ok=true` 仅当没有缺失覆盖、没有泛化断言、没有明显重复用例，并且自动化用例数量符合 generation_targets、非自动化覆盖点已由 manual_cases/脑图承接时才允许。
 
 输入：
 

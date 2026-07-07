@@ -672,6 +672,26 @@ def check_yaml_static_validation_and_patterns():
         and baidu_visibility_score.get("smokeCandidate") is True,
         "Baidu netdisk entry visibility-only YAML should be eligible for first smoke",
     )
+    baidu_visibility_with_diagnostic_score = {
+        **baidu_visibility_score,
+        "smokeCandidate": True,
+        "reason": "入口展示可执行；提醒：点击后可能涉及第三方授权。",
+        "taskScores": [{
+            **((baidu_visibility_score.get("taskScores") or [{}])[0]),
+            "name": "文档打印首页百度网盘入口展示",
+            "smokeCandidate": True,
+            "reasons": ["诊断说明：点击后可能进入第三方授权或外部 App。"],
+        }],
+    }
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "01-baidu-entry.yaml", "module": "AI_Agent草稿", "executableScore": baidu_visibility_with_diagnostic_score},
+    ], limit=3)
+    require(
+        len(selected) == 1
+        and selected[0]["file"] == "01-baidu-entry.yaml"
+        and len(blocked) == 0,
+        "Runner gate must not exclude entry-display smoke cases because of scorer diagnostic risk text",
+    )
     baidu_external_click_yaml = """android:
   tasks:
     - name: 文档打印百度网盘入口展示与点击验证
@@ -726,6 +746,21 @@ def check_yaml_static_validation_and_patterns():
         and selected[0]["file"] == "candidate.yaml"
         and any("非首批冒烟候选" in str(item.get("gateReason") or "") for item in blocked),
         "Runner gate must accept scorer smokeCandidate and defer non-candidates when candidates exist",
+    )
+    selected, blocked = rank_executable_yaml_refs([
+        {"file": "fallback-entry.yaml", "executableScore": {
+            **executable_score,
+            "smokeCandidate": False,
+            "taskScores": [{**(executable_score.get("taskScores") or [{}])[0], "name": "文档打印首页百度网盘入口可见", "smokeCandidate": False, "mainBusinessChain": True}],
+        }},
+    ], limit=3)
+    require(
+        len(selected) == 1
+        and selected[0]["file"] == "fallback-entry.yaml"
+        and selected[0].get("fallbackSmokeSelection") is True
+        and "_sourceRowId" not in selected[0]
+        and len(blocked) == 0,
+        "Runner gate must fall back to a safe executable short-chain case when no explicit smoke candidate exists",
     )
     normal_smoke_score = {
         **executable_score,
@@ -1271,7 +1306,7 @@ def check_ai_skills_receive_yaml_reference_context():
     original_run_ai_skill = ai_skill_service.run_ai_skill
 
     def fake_run_ai_skill(skill_name, payload=None, **_kwargs):
-        calls.append((skill_name, payload or {}))
+        calls.append((skill_name, payload or {}, _kwargs))
         if skill_name == "requirement_analyzer":
             return {
                 "business_goals": ["验证 AI 建模入口"],
@@ -1328,6 +1363,15 @@ def check_ai_skills_receive_yaml_reference_context():
                 "manual_cases": [],
                 "review": {},
             }
+        if skill_name == "smoke_selector":
+            return {
+                "smoke_case_ids": ["TC-001"],
+                "review": {
+                    "normal_chain_covered": True,
+                    "selection_reason": "AI 推荐首批冒烟覆盖正常主链，平台负责校验数量和 case id。",
+                    "rejected_case_ids": [],
+                },
+            }
         raise AssertionError(f"unexpected skill: {skill_name}")
 
     ai_skill_service.run_ai_skill = fake_run_ai_skill
@@ -1336,16 +1380,25 @@ def check_ai_skills_receive_yaml_reference_context():
             "AI建模测试",
             "AI测试",
             ["需求正文", "【现有 YAML 步骤经验库】\n```yaml\n- name: 入口\n  flow:\n    - aiTap: \"AI建模入口\"\n```"],
+            model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
         )
     finally:
         ai_skill_service.run_ai_skill = original_run_ai_skill
 
     scenario_payload = next(item[1] for item in calls if item[0] == "scenario_designer")
     automation_payload = next(item[1] for item in calls if item[0] == "automation_filter")
+    smoke_payload = next(item[1] for item in calls if item[0] == "smoke_selector")
+    for skill_name in ("requirement_analyzer", "scenario_designer", "automation_filter", "smoke_selector"):
+        kwargs = next(item[2] for item in calls if item[0] == skill_name)
+        require(
+            kwargs.get("model_config") == {"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+            f"{skill_name} must receive selected model config",
+        )
     require("现有 YAML 步骤经验库" in scenario_payload.get("yaml_reference_context", ""), "Scenario designer must receive YAML reference context")
     require("现有 YAML 步骤经验库" in automation_payload.get("yaml_reference_context", ""), "Automation filter must receive YAML reference context")
-    require("smoke_selector" not in [item[0] for item in calls], "Smoke selection must be local and must not add another model call")
-    require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "Local smoke gate must record normal-chain coverage")
+    require("现有 YAML 步骤经验库" in smoke_payload.get("yaml_reference_context", ""), "Smoke selector must receive YAML reference context")
+    require(payload["review"]["smoke_selection"]["selector_source"] == "smoke_selector.v1", "Smoke selection should use AI recommendation before platform validation")
+    require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "Smoke gate must record normal-chain coverage")
     require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
 
 

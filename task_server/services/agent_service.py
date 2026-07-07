@@ -8183,16 +8183,28 @@ def _tool_execution_precheck(run):
         selected_refs, execution_gate = _select_agent_runner_refs(run, file_refs)
         if execution_gate.get("enabled"):
             severity = "blocker" if not selected_refs else "warning"
+            blocked_reasons = []
+            for item in (execution_gate.get("blocking") or execution_gate.get("blocked") or []):
+                if not isinstance(item, dict):
+                    continue
+                reason = str(item.get("gateReason") or item.get("reason") or "").strip()
+                if reason and reason not in blocked_reasons:
+                    blocked_reasons.append(reason)
+                if len(blocked_reasons) >= 3:
+                    break
+            gate_detail = (
+                f"首批可执行 {execution_gate.get('selectedCount', 0)}/{execution_gate.get('totalCount', 0)}；"
+                f"executable {execution_gate.get('executableCount', 0)}，"
+                f"需复核 {execution_gate.get('needsReviewCount', 0)}，草稿 {execution_gate.get('draftCount', 0)}，"
+                f"人工 {execution_gate.get('manualCount', 0)}，"
+                f"延后 {execution_gate.get('deferredCount', 0)}"
+            )
+            if blocked_reasons:
+                gate_detail += "；拦截原因：" + "；".join(blocked_reasons)
             add(
                 "generated_yaml_executable_gate",
                 bool(selected_refs),
-                (
-                    f"首批可执行 {execution_gate.get('selectedCount', 0)}/{execution_gate.get('totalCount', 0)}；"
-                    f"executable {execution_gate.get('executableCount', 0)}，"
-                    f"需复核 {execution_gate.get('needsReviewCount', 0)}，草稿 {execution_gate.get('draftCount', 0)}，"
-                    f"人工 {execution_gate.get('manualCount', 0)}，"
-                    f"延后 {execution_gate.get('deferredCount', 0)}"
-                ),
+                gate_detail,
                 severity,
             )
 

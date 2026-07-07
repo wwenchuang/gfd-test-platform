@@ -81,6 +81,9 @@ from task_server.services.report_service import (
     report_text_context,
 )
 
+AI_SMOKE_SELECTOR_ENABLED = safe_bool(os.getenv("MIDSCENE_AI_SMOKE_SELECTOR_ENABLED", "1"), True)
+AI_SMOKE_SELECTOR_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_SMOKE_SELECTOR_TIMEOUT_SECONDS", "45"), 45))
+
 
 # ---------------------------------------------------------------------------
 # AI skill path & prompt / schema loading
@@ -161,7 +164,7 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
     return template.replace("{{payload}}", payload_text)
 
 
-def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temperature=0.1, timeout=180, fallback_prompt="", respect_global_timeout=True, retry_count=None):
+def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temperature=0.1, timeout=180, fallback_prompt="", respect_global_timeout=True, retry_count=None, model_config=None):
     """执行 AI skill：渲染 prompt → 调用 DashScope → 校验输出。"""
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
@@ -175,6 +178,7 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
                 timeout=timeout,
                 temperature=temperature,
                 json_response=True,
+                model_config=model_config,
             )
             result = normalize_model_json(raw)
             return validate_ai_skill_output(skill_name, result)
@@ -193,14 +197,18 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
     return validate_ai_skill_output(skill_name, result)
 
 
-def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temperature=0.1, json_response=True):
+def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temperature=0.1, json_response=True, model_config=None):
     """Call AI Gateway for text-only skills, with DashScope direct call as caller fallback."""
+    model_config = model_config if isinstance(model_config, dict) else {}
     body = json.dumps({
         "skillName": skill_name,
         "prompt": prompt,
         "payload": payload or {},
         "temperature": temperature,
         "jsonResponse": json_response,
+        "modelConfig": model_config,
+        "providerId": model_config.get("providerId") or model_config.get("provider") or "",
+        "model": model_config.get("model") or model_config.get("modelName") or "",
     }, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         f"{AI_GATEWAY_URL}/ai/skill",
@@ -1193,7 +1201,7 @@ def _fallback_requirement_analysis(title, module, text_assets, error=""):
     })
 
 
-def call_skill_requirement_analyzer(title, module, text_assets):
+def call_skill_requirement_analyzer(title, module, text_assets, model_config=None):
     """调用 AI skill: requirement_analyzer。"""
     payload = {
         "title": title,
@@ -1207,6 +1215,7 @@ def call_skill_requirement_analyzer(title, module, text_assets):
             timeout=AI_REQUIREMENT_ANALYZER_TIMEOUT_SECONDS,
             respect_global_timeout=False,
             retry_count=0,
+            model_config=model_config,
         )
         return normalize_requirement_analysis_result(result)
     except Exception as exc:
@@ -1520,7 +1529,7 @@ def _fallback_automation_filter_from_scenarios(title, module, analysis, scenario
     }
 
 
-def call_skill_scenario_designer(title, module, analysis, yaml_reference_context="", mode="full"):
+def call_skill_scenario_designer(title, module, analysis, yaml_reference_context="", mode="full", model_config=None):
     """调用 AI skill: scenario_designer。"""
     targets = generation_volume_targets(analysis, mode=mode)
     payload = {
@@ -1537,6 +1546,7 @@ def call_skill_scenario_designer(title, module, analysis, yaml_reference_context
             timeout=AI_SCENARIO_DESIGNER_TIMEOUT_SECONDS,
             respect_global_timeout=False,
             retry_count=0,
+            model_config=model_config,
         )
         scenarios = result.get("scenarios") or []
     except Exception as exc:
@@ -1546,7 +1556,7 @@ def call_skill_scenario_designer(title, module, analysis, yaml_reference_context
     return scenarios
 
 
-def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context="", mode="full"):
+def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context="", mode="full", model_config=None):
     """调用 AI skill: automation_filter。"""
     targets = generation_volume_targets(analysis, mode=mode)
     payload = {
@@ -1572,6 +1582,7 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
             timeout=AI_AUTOMATION_FILTER_TIMEOUT_SECONDS,
             respect_global_timeout=False,
             retry_count=0,
+            model_config=model_config,
         )
         cases = result.get("cases") or []
     except Exception as exc:
@@ -1721,7 +1732,7 @@ def _local_smoke_selector_result(title, module, analysis, cases, targets, yaml_r
         "smoke_case_ids": selected,
         "review": {
             "normal_chain_covered": bool(selected),
-            "selection_reason": "本地规则按主业务链、P0、基线依据、步骤稳定性和执行评分选择首批冒烟；不再额外调用 smoke_selector 模型。",
+            "selection_reason": "本地规则按主业务链、P0、基线依据、步骤稳定性和执行评分选择首批冒烟。",
             "missing_normal_chain_reason": "" if selected else "没有可用于首批执行的自动化用例。",
             "rejected_case_ids": [],
             "scored_candidates": [
@@ -1757,7 +1768,7 @@ def _normalize_smoke_selector_result(result, cases, targets, *, source):
         "target_smoke_cases": limit,
         "smoke_pool_limit": _smoke_selection_target_limit(targets),
         "invalid_case_ids": invalid,
-        "rule": "冒烟由本地准入规则选择；首批最多 3 条，不再额外调用 smoke_selector 模型。",
+        "rule": "冒烟可由 AI 推荐，但平台最终校验 case id、数量和首批上限；AI 不可用时回退本地规则。首批最多 3 条。",
     })
     return {
         "smoke_case_ids": selected,
@@ -1817,10 +1828,65 @@ def apply_smoke_selection_to_cases(cases, selection, targets):
     return cases, normalized.get("review") or {}
 
 
-def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_cases=None, yaml_reference_context="", mode="full"):
-    """本地冒烟门禁选择，保留函数名兼容旧调用。"""
+def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_cases=None, yaml_reference_context="", mode="full", model_config=None):
+    """AI 推荐冒烟 + 平台准入校验；失败时回退本地规则。"""
     targets = generation_volume_targets(analysis, mode=mode)
     cases = [case for case in (cases or []) if isinstance(case, dict)]
+    if AI_SMOKE_SELECTOR_ENABLED and cases:
+        compact_cases = [_compact_case_for_smoke_selector(case, index) for index, case in enumerate(cases, start=1)]
+        payload = {
+            "title": title,
+            "module": module,
+            "analysis": analysis if isinstance(analysis, dict) else {},
+            "scenarios": scenarios or [],
+            "cases": compact_cases,
+            "manual_cases": manual_cases or [],
+            "generation_targets": targets,
+            "yaml_reference_context": str(yaml_reference_context or "")[:4000],
+            "selection_rules": {
+                "first_batch_limit": _smoke_first_batch_limit(targets),
+                "must_cover_normal_chain": True,
+                "prefer": ["P0/P1", "主业务链", "基线依据", "短步骤", "可独立执行", "低外部依赖"],
+                "avoid": ["异常边界", "外部授权", "系统文件选择器", "真实支付/删除", "弱网/超时", "历史缓存", "强账号数据"],
+            },
+        }
+        try:
+            result = run_ai_skill(
+                "smoke_selector",
+                payload,
+                timeout=AI_SMOKE_SELECTOR_TIMEOUT_SECONDS,
+                respect_global_timeout=False,
+                retry_count=0,
+                model_config=model_config,
+            )
+            normalized = _normalize_smoke_selector_result(result, cases, targets, source="smoke_selector.v1")
+            if normalized.get("smoke_case_ids"):
+                return normalized
+            local = _local_smoke_selector_result(
+                title,
+                module,
+                analysis if isinstance(analysis, dict) else {},
+                cases,
+                targets,
+                yaml_reference_context=yaml_reference_context,
+            )
+            review = local.setdefault("review", {})
+            review["selector_source"] = "local_smoke_gate_after_empty_ai"
+            review["ai_smoke_selector_empty"] = True
+            return local
+        except Exception as exc:
+            local = _local_smoke_selector_result(
+                title,
+                module,
+                analysis if isinstance(analysis, dict) else {},
+                cases,
+                targets,
+                yaml_reference_context=yaml_reference_context,
+            )
+            review = local.setdefault("review", {})
+            review["selector_source"] = "local_smoke_gate_after_ai_error"
+            review["ai_smoke_selector_error"] = str(exc)
+            return local
     return _local_smoke_selector_result(
         title,
         module,
@@ -1831,7 +1897,7 @@ def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_
     )
 
 
-def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context=""):
+def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context="", model_config=None):
     """Run final smoke selection on a normalized cases payload."""
     normalized = normalize_cases_payload(payload)
     cases = normalized.get("cases") or []
@@ -1846,6 +1912,7 @@ def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_ref
             normalized.get("manual_cases") or [],
             yaml_reference_context=yaml_reference_context,
             mode=mode,
+            model_config=model_config,
         )
     except Exception as exc:
         selection = _fallback_smoke_selection_from_existing(cases, targets, error=str(exc))
@@ -1858,18 +1925,33 @@ def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_ref
     return normalized
 
 
-def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
+def build_cases_payload_from_skills(title, module, text_assets, mode="full", model_config=None):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
     yaml_reference_context = extract_yaml_reference_context(text_assets)
-    analysis = call_skill_requirement_analyzer(title, module, text_assets)
+    analysis = call_skill_requirement_analyzer(title, module, text_assets, model_config=model_config)
     if yaml_reference_context:
         analysis["yaml_reference_context_available"] = True
         analysis["yaml_reference_rule"] = (
             "后续场景设计和自动化筛选必须参考平台已有 YAML 步骤经验；只学习动作组织、等待策略和断言密度，不复制历史业务断言。"
         )
-    scenarios = call_skill_scenario_designer(title, module, analysis, yaml_reference_context=yaml_reference_context, mode=mode)
-    filtered = call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context=yaml_reference_context, mode=mode)
+    scenarios = call_skill_scenario_designer(
+        title,
+        module,
+        analysis,
+        yaml_reference_context=yaml_reference_context,
+        mode=mode,
+        model_config=model_config,
+    )
+    filtered = call_skill_automation_filter(
+        title,
+        module,
+        analysis,
+        scenarios,
+        yaml_reference_context=yaml_reference_context,
+        mode=mode,
+        model_config=model_config,
+    )
     cases = filtered.get("cases") or []
     manual_cases = filtered.get("manual_cases") or []
     analysis["coverage_matrix"] = build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases)
@@ -1897,9 +1979,16 @@ def build_cases_payload_from_skills(title, module, text_assets, mode="full"):
         "questions": analysis.get("questions") or [],
     }
     normalized = normalize_cases_payload(payload)
-    normalized = select_smoke_cases_for_payload(title, module, normalized, mode=mode, yaml_reference_context=yaml_reference_context)
+    normalized = select_smoke_cases_for_payload(
+        title,
+        module,
+        normalized,
+        mode=mode,
+        yaml_reference_context=yaml_reference_context,
+        model_config=model_config,
+    )
     review = normalized.setdefault("review", {})
-    review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> local_smoke_gate.v1"
+    review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> smoke_selector.v1/platform_gate"
     validate_ai_skill_output("cases_payload", normalized)
     return normalized
 
