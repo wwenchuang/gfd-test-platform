@@ -1462,6 +1462,33 @@ function renderAgentReportArtifact(run) {
   return renderReportDetail(null, artifacts);
 }
 
+function renderVisualReferenceReport(report) {
+  if (!report || typeof report !== 'object' || !Object.keys(report).length) return '';
+  const notes = Array.isArray(report.usageNotes) ? report.usageNotes : [];
+  const conflicts = Array.isArray(report.conflictNotes) ? report.conflictNotes : [];
+  const images = Array.isArray(report.uploadedImages) ? report.uploadedImages : [];
+  const sources = Array.isArray(report.referenceSources) ? report.referenceSources : [];
+  return `
+    <section class="agent-readable-panel">
+      <strong>图片参考</strong>
+      <p>${escapeHtml(report.rule || '上传截图作为辅助参考，不作为硬门禁。')}</p>
+      <div class="report-summary-grid final-report-metrics">
+        <div><span>上传截图</span><strong>${escapeHtml(report.uploadedImageCount ?? images.length)}</strong></div>
+        <div><span>Figma 页面</span><strong>${escapeHtml(report.figmaPageCount ?? 0)}</strong></div>
+        <div><span>Figma UI 图</span><strong>${escapeHtml(report.figmaImageCount ?? 0)}</strong></div>
+        <div><span>硬门禁</span><strong>${report.hardGate ? '是' : '否'}</strong></div>
+        <div><span>AI 判断</span><strong>${report.aiJudgementRequired ? (report.sentToAiForJudgement ? '已参与' : '待复核') : '无需'}</strong></div>
+      </div>
+      ${sources.length ? `<p>参考来源：${escapeHtml(sources.join(' / '))}</p>` : ''}
+      ${report.visualRefineSkipped ? `<p>视觉校准：${escapeHtml(report.visualRefineSkipped)}</p>` : ''}
+      ${notes.length ? `<div class="agent-quality-notes">${notes.map(item => `<div>${escapeHtml(item)}</div>`).join('')}</div>` : ''}
+      ${conflicts.length ? `<div class="agent-quality-notes">${conflicts.map(item => `<div class="warn">提醒：${escapeHtml(item)}</div>`).join('')}</div>` : ''}
+      ${images.length ? agentReadableList('上传截图文件', images.slice(0, 8), image => `<b>${escapeHtml(image.name || '未命名截图')}</b><span>${escapeHtml(image.type || image.kindLabel || '截图')}</span>`) : ''}
+      <p>${escapeHtml(report.conflictPolicy || '')}</p>
+    </section>
+  `;
+}
+
 function renderAgentQualityArtifact(run) {
   const artifacts = (run && run.artifacts) || {};
   const quality = artifacts.qualityReport || {};
@@ -1531,6 +1558,7 @@ function renderAgentQualityArtifact(run) {
       </div>
     `;
   }
+  html += renderVisualReferenceReport(quality.visualReferenceReport || artifacts.visualReferenceReport);
   const links = [
     mindmap.url ? { label: '下载完整 .mm 脑图', url: mindmap.url } : null,
     artifactFiles.markdown ? { label: '生成摘要文件', text: artifactFiles.markdown } : null,
@@ -2223,6 +2251,7 @@ function renderSourceContextDetail(step, artifacts) {
     { label: 'Figma', value: source.figmaUrl ? '已提供' : '无' },
   ]);
   html += `<section class="agent-readable-panel"><strong>输入摘要</strong><p>${escapeHtml(source.sourceSummary || impact.sourceSummary || '未上传额外资料')}</p></section>`;
+  html += renderVisualReferenceReport((artifacts || {}).visualReferenceReport || source.visualReferenceReport);
   if (source.figmaUrl) {
     const usedPages = source.figmaUsedPages || source.uiDesigns || [];
     const ignoredPages = source.figmaIgnoredPages || [];

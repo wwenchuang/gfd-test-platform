@@ -54,6 +54,8 @@ from task_server.storage import (
 from task_server.services.yaml_service import (
     ai_rewrite_yaml_for_executable_gate,
     extract_midscene_tasks,
+    loading_wait_timeout_for_context,
+    remove_empty_midscene_platform_roots,
     repair_generated_yaml_executable_gate_issues,
     should_ai_rewrite_for_executable_gate,
     slug_for_file,
@@ -4088,8 +4090,13 @@ def _agent_normalize_prefixed_action_step(step):
     action = action_keys[0]
     value = step.get(action)
     if action == "runAdbShell" and isinstance(value, str) and ("${size%x*}" in value or "${size#*x}" in value):
-        step[action] = _agent_dynamic_recent_tasks_cleanup_script()
-        return {"changed": "replace unsafe runAdbShell recent-task cleanup"}
+        step[action] = "input keyevent 3"
+        return {"changed": "replace unsafe runAdbShell recent-task cleanup with home key"}
+    if action == "runAdbShell" and isinstance(value, str):
+        compact = re.sub(r"\s+", "", value).lower()
+        if "inputkeyevent187" in compact or ("wmsize" in compact and "inputswipe" in compact) or value.count("input swipe") >= 2:
+            step[action] = "input keyevent 3"
+            return {"changed": "replace heavy runAdbShell recent-task cleanup with home key"}
     if not isinstance(value, str):
         return None
     match = AGENT_ACTION_PREFIX_RE.match(value)
@@ -4113,7 +4120,7 @@ def _agent_normalize_prefixed_action_step(step):
     if prefixed_action != "aiInput":
         step.pop("value", None)
     if prefixed_action == "aiWaitFor":
-        step.setdefault("timeout", 60000)
+        step.setdefault("timeout", loading_wait_timeout_for_context(payload))
     return {"changed": f"convert {action} value prefix to {prefixed_action}", "from": action, "to": prefixed_action}
 
 
@@ -4203,7 +4210,7 @@ def _agent_repair_missing_interaction_followups(yaml_text):
                     wait_prompt = _agent_assertion_tap_to_wait_prompt(prompt)
                     step.pop("aiTap", None)
                     step["aiWaitFor"] = wait_prompt
-                    step.setdefault("timeout", 60000)
+                    step.setdefault("timeout", loading_wait_timeout_for_context(wait_prompt))
                     changes.append({
                         "task": task.get("name") or f"tasks[{task_index}]",
                         "flowIndex": index,
@@ -4217,7 +4224,7 @@ def _agent_repair_missing_interaction_followups(yaml_text):
                 and not _agent_flow_has_followup_wait(flow, index)
             ):
                 wait_text = _agent_followup_wait_text(step)
-                wait_step = {"aiWaitFor": wait_text, "timeout": 60000}
+                wait_step = {"aiWaitFor": wait_text, "timeout": loading_wait_timeout_for_context(wait_text)}
                 flow.insert(index + 1, wait_step)
                 changes.append({
                     "task": task.get("name") or f"tasks[{task_index}]",
@@ -5114,6 +5121,79 @@ def _agent_figma_page_brief(page):
         "score": page.get("relevance_score", figma.get("relevance_score")),
         "reason": _agent_text_preview(page.get("relevance_reason") or figma.get("relevance_reason") or "", 160),
         "image": str(page.get("screenshot") or page.get("image_name") or figma.get("screenshot") or "").strip(),
+    }
+
+
+def _agent_visual_reference_report(run, generation_result=None):
+    """Explain how uploaded screenshots/Figma images were used as soft references."""
+    run = run if isinstance(run, dict) else {}
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    result = generation_result if isinstance(generation_result, dict) else {}
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    cases_payload = result.get("cases") if isinstance(result.get("cases"), dict) else {}
+    review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    case_review = cases_payload.get("review") if isinstance(cases_payload.get("review"), dict) else {}
+    uploaded_images = _agent_public_file_list(source_context.get("uploadedImages") or [], 40)
+    figma_pages = source_context.get("figmaUsedPages") or source_context.get("uiDesigns") or []
+    figma_assets = (
+        summary.get("ui_design_assets")
+        or source_context.get("uiDesignAssets")
+        or []
+    )
+    ignored_figma = source_context.get("figmaIgnoredPages") or summary.get("ignored_figma_pages") or []
+    reference_sources = []
+    if uploaded_images:
+        reference_sources.append("uploaded_screenshots")
+    if figma_pages or figma_assets:
+        reference_sources.append("figma")
+    if source_context.get("requirementText"):
+        reference_sources.append("requirement_text")
+    notes = []
+    if uploaded_images:
+        notes.append(f"已接收 {len(uploaded_images)} 张上传截图，要求进入 AI 视觉判断，用于辅助识别页面文案、入口位置和同级关系。")
+    if figma_pages or figma_assets:
+        notes.append(f"已解析 Figma 页面 {len(figma_pages)} 个、UI 图 {len(figma_assets) or int(source_context.get('figmaImageCount') or 0)} 张。")
+    if uploaded_images and (figma_pages or figma_assets):
+        notes.append("上传截图与 Figma 同时存在时，生成会综合参考；截图不会替代需求、Figma 和成功基线，也不会单独作为执行门禁。")
+    elif uploaded_images:
+        notes.append("未提供或未解析 Figma 图时，上传截图仍只作为辅助参考，不会强制阻断生成或执行。")
+    else:
+        notes.append("本次没有上传截图，视觉参考主要来自 Figma 或文本资料。")
+    conflict_notes = []
+    if uploaded_images and ignored_figma:
+        conflict_notes.append("部分 Figma 页面未进入本次参考；如截图与 Figma 页面不一致，请以质量检查中的页面证据为准人工复核。")
+    ai_visual_completed = bool(
+        review.get("yaml_visual_grounded")
+        or case_review.get("yaml_visual_grounded")
+        or review.get("visual_grounded")
+        or case_review.get("visual_grounded")
+    )
+    visual_skipped = (
+        review.get("visual_refine_skipped")
+        or case_review.get("visual_refine_skipped")
+        or review.get("visual_grounder_error")
+        or case_review.get("visual_grounder_error")
+    )
+    if uploaded_images and generation_result is not None and not ai_visual_completed:
+        conflict_notes.append("上传截图已进入本次资料，但未看到视觉校准完成标记；本次仍会保留生成结果并提示人工复核图片参考是否充分。")
+    return {
+        "mode": "soft_reference",
+        "hardGate": False,
+        "aiJudgementRequired": bool(uploaded_images),
+        "sentToAiForJudgement": ai_visual_completed,
+        "aiJudgementStatus": "completed" if ai_visual_completed else ("skipped_or_pending" if uploaded_images else "not_required"),
+        "visualRefineSkipped": str(visual_skipped or "").strip(),
+        "rule": "上传截图是辅助证据：帮助补充页面文案、入口位置、同级关系和设备形态；不因未完全引用截图而阻断生成或 Runner 执行。",
+        "referenceSources": reference_sources,
+        "uploadedImageCount": len(uploaded_images),
+        "uploadedImages": uploaded_images[:12],
+        "figmaPageCount": _agent_list_length(figma_pages),
+        "figmaImageCount": len(figma_assets) or int(source_context.get("figmaImageCount") or 0),
+        "ignoredFigmaCount": _agent_list_length(ignored_figma),
+        "usageNotes": notes,
+        "conflictPolicy": "如果截图、Figma、需求文档或历史基线存在冲突，只做显式提醒和人工复核提示，不静默把截图升级为硬门禁。",
+        "conflictNotes": conflict_notes,
     }
 
 
@@ -6898,7 +6978,9 @@ def _tool_prepare_source(run):
                 limit=8,
             )
         context["keywords"] = _source_keywords(context)
-        run.setdefault("artifacts", {})["sourceContext"] = context
+        artifacts = run.setdefault("artifacts", {})
+        artifacts["sourceContext"] = context
+        artifacts["visualReferenceReport"] = _agent_visual_reference_report(run)
         call["status"] = "SUCCESS" if not context["warnings"] else "PARTIAL_FAILED"
         warning_text = f"，提醒：{'；'.join(context['warnings'][:2])}" if context["warnings"] else ""
         call["sourceSummary"] = context["sourceSummary"]
@@ -7588,6 +7670,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             source_context["figmaIgnoredPages"] = summary.get("ignored_figma_pages") or source_context.get("figmaIgnoredPages") or []
         if summary.get("knowledge_pages") or summary.get("used_reference_pages"):
             source_context["generationReferencePages"] = summary.get("knowledge_pages") or summary.get("used_reference_pages") or []
+    artifacts["visualReferenceReport"] = _agent_visual_reference_report(run, result)
     artifacts["qualityReport"] = _build_agent_quality_report(run, result, yaml_file_items, yaml_executability)
     return yaml_file_items, result
 
@@ -7664,6 +7747,7 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         warnings.append("完整用例数量偏少，建议补齐边界、异常和人工验证场景。")
     if (summary.get("figma_url") or result.get("figma_url") or (artifacts.get("sourceContext") or {}).get("figmaUrl")) and not ui_assets:
         warnings.append("提供了 Figma 链接，但没有可展示的解析图片，请检查 Figma Token 或具体 Frame 链接。")
+    visual_reference = artifacts.get("visualReferenceReport") if isinstance(artifacts.get("visualReferenceReport"), dict) else _agent_visual_reference_report(run, result)
 
     status = "pass"
     if blockers:
@@ -7684,6 +7768,8 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         "yamlFileCount": yaml_file_count,
         "executableTaskCount": executable_task_count,
         "figmaImageCount": len(ui_assets),
+        "uploadedImageCount": int(visual_reference.get("uploadedImageCount") or 0),
+        "visualReferenceReport": visual_reference,
         "ignoredFigmaCount": len(ignored_figma),
         "coverageOk": bool(coverage.get("ok")) if coverage else not (missing_case_points or generic_assertions),
         "coverage": {
@@ -7704,6 +7790,7 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
             {"name": "可自动化 YAML", "count": yaml_file_count, "ready": yaml_file_count > 0 and executable_task_count > 0},
             {"name": "人工确认/人工用例", "count": manual_case_count + len(missing_case_points), "ready": True},
             {"name": "Figma 解析图片", "count": len(ui_assets), "ready": len(ui_assets) > 0},
+            {"name": "上传截图参考", "count": int(visual_reference.get("uploadedImageCount") or 0), "ready": int(visual_reference.get("uploadedImageCount") or 0) > 0},
         ],
     }
     return report
@@ -10336,8 +10423,18 @@ def _agent_repair_draft_fixed_yaml(draft):
     for key in ("fixedYaml", "fixed_yaml", "optimizedYaml", "optimized_yaml", "yaml", "content"):
         value = draft.get(key)
         if isinstance(value, str) and value.strip() and value.strip() != str(draft.get("originalYaml") or "").strip():
-            return value.strip()
+            return remove_empty_midscene_platform_roots(value).strip()
     return ""
+
+
+def _agent_rerun_requires_serial_device(run):
+    """Avoid concurrent rerun jobs fighting over one fixed Android device."""
+    if not isinstance(run, dict):
+        return False
+    device_id = str(run.get("deviceId") or run.get("device_id") or "").strip()
+    runner_id = str(run.get("runnerId") or run.get("runner_id") or "").strip()
+    strategy = str(run.get("deviceStrategy") or run.get("device_strategy") or "").strip().lower()
+    return bool(device_id or (runner_id and strategy in ("fixed", "指定设备")))
 
 
 def _agent_repair_draft_matches_failed_item(draft, item):
@@ -10524,6 +10621,8 @@ def _tool_rerun(run):
         jobs = job_service.load_jobs()
         repair_plan = _agent_prepare_repair_rerun_targets(run, failed_items, jobs)
         uses_repair_draft = bool(repair_plan.get("hasRepairDrafts"))
+        serial_same_device = _agent_rerun_requires_serial_device(run)
+        serial_wait_results = []
         if uses_repair_draft:
             for target in repair_plan.get("targets") or []:
                 j = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
@@ -10560,6 +10659,14 @@ def _tool_rerun(run):
                         "sourceStatus": j.get("status", ""),
                         "note": "使用 AI 修复草稿生成的临时 YAML 重跑，未覆盖原始 YAML",
                     })
+                    if serial_same_device:
+                        serial_wait_results.append(job_service.wait_jobs_finished(
+                            [new_job["job_id"]],
+                            run,
+                            timeout=job_service.runner_job_wait_timeout_seconds(1),
+                            interval=5,
+                            phase="安全重跑-同设备串行",
+                        ))
             skipped.extend(repair_plan.get("skipped") or [])
             covered_source_ids = {item.get("sourceJobId") for item in retry_sources if item.get("sourceJobId")}
             for item in failed_items:
@@ -10605,6 +10712,14 @@ def _tool_rerun(run):
                             "failureReason": source.get("failureReason") or source.get("error") or "",
                             "sourceStatus": j.get("status", ""),
                         })
+                        if serial_same_device:
+                            serial_wait_results.append(job_service.wait_jobs_finished(
+                                [new_job["job_id"]],
+                                run,
+                                timeout=job_service.runner_job_wait_timeout_seconds(1),
+                                interval=5,
+                                phase="安全重跑-同设备串行",
+                            ))
                 elif j:
                     skipped.append({
                         "jobId": jid,
@@ -10634,6 +10749,7 @@ def _tool_rerun(run):
             "createdCount": len(retried),
             "skippedCount": len(skipped),
             "createdJobIds": retried,
+            "serialSameDevice": serial_same_device,
             "sources": retry_sources,
             "skipped": skipped,
             "status": "CREATED" if retried else "SKIPPED",
@@ -10662,13 +10778,16 @@ def _tool_rerun(run):
             ))
         else:
             wait_timeout = job_service.runner_job_wait_timeout_seconds(len(retried))
-            wait_result = job_service.wait_jobs_finished(
-                retried,
-                run,
-                timeout=wait_timeout,
-                interval=5,
-                phase="安全重跑",
-            )
+            if serial_same_device and serial_wait_results:
+                wait_result = _agent_merge_runner_wait_results(*serial_wait_results)
+            else:
+                wait_result = job_service.wait_jobs_finished(
+                    retried,
+                    run,
+                    timeout=wait_timeout,
+                    interval=5,
+                    phase="安全重跑",
+                )
             completed = wait_result.get("completed") or []
             failed = wait_result.get("failed") or []
             timeout_jobs = wait_result.get("timeout") or []
@@ -10681,6 +10800,7 @@ def _tool_rerun(run):
                 "failed": failed,
                 "timeout": timeout_jobs,
                 "waitTimeoutSeconds": wait_timeout,
+                "serialSameDevice": serial_same_device,
             }
             progress = dict(artifacts.get("jobProgress") or {})
             progress.update({
@@ -10695,6 +10815,7 @@ def _tool_rerun(run):
                 "createdCount": len(retried),
                 "skippedCount": len(skipped),
                 "createdJobIds": retried,
+                "serialSameDevice": serial_same_device,
                 "sources": retry_sources,
                 "skipped": skipped,
             })

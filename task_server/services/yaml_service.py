@@ -2623,6 +2623,29 @@ def normalize_full_yaml_structure(text):
     return text.rstrip() + "\n"
 
 
+def remove_empty_midscene_platform_roots(text):
+    """Remove top-level ``android: null`` / ``ios: null`` stubs before dispatch."""
+    if _pyyaml is None:
+        return str(text or "")
+    raw = str(text or "")
+    if not raw.strip():
+        return raw
+    try:
+        parsed = _pyyaml.safe_load(raw)
+    except Exception:
+        return raw
+    if not isinstance(parsed, dict):
+        return raw
+    changed = False
+    for platform in ("android", "ios"):
+        if platform in parsed and parsed.get(platform) is None:
+            parsed.pop(platform, None)
+            changed = True
+    if not changed:
+        return raw
+    return _pyyaml.safe_dump(parsed, allow_unicode=True, sort_keys=False, width=100000)
+
+
 def normalize_model_json(text):
     """规范化模型 JSON 输出。"""
     text = (text or "").strip()
@@ -3871,7 +3894,7 @@ def normalize_task_block_runtime_guards(block, app_package=None, evidence_text="
 
 def normalize_yaml_runtime_guards(yaml_text, app_package=None, evidence_text=""):
     """对整个 YAML 文本应用运行时守卫规范化。"""
-    text = normalize_full_yaml_structure(yaml_text or "")
+    text = remove_empty_midscene_platform_roots(normalize_full_yaml_structure(yaml_text or ""))
     platform = detect_yaml_platform(text)
     names = yaml_task_names(text)
     changes = []
@@ -4063,6 +4086,15 @@ def validate_midscene_yaml_executability(text):
         return {"ok": False, "platform": "", "taskCount": 0, "issues": ["YAML 根节点必须是对象"], "riskHits": risk_hits}
 
     platform, tasks = extract_midscene_tasks(parsed)
+    empty_platforms = [name for name in ("android", "ios") if name in parsed and parsed.get(name) is None]
+    if empty_platforms:
+        return {
+            "ok": False,
+            "platform": platform,
+            "taskCount": len(tasks) if isinstance(tasks, list) else 0,
+            "issues": [f"顶层 {name}: null 会导致 Runner 注入设备后出现重复平台声明，请先移除" for name in empty_platforms],
+            "riskHits": risk_hits,
+        }
     if not platform:
         return {"ok": False, "platform": "", "taskCount": 0, "issues": ["必须包含 root.tasks、android.tasks 或 ios.tasks"], "riskHits": risk_hits}
     if not isinstance(tasks, list) or not tasks:
@@ -4175,6 +4207,34 @@ def _is_baidu_original_entry_prompt(text: str) -> bool:
     return original_state or mixed_post_click
 
 
+APP_BRAND_CONFLICT_RULES = {
+    "com.xbxxhz.box": {
+        "expected": ("小白学习打印", "小白学习"),
+        "blocked": ("小白扫描王", "智小白3D", "3D打印", "3D 打印"),
+        "label": "小白学习打印",
+    },
+    "com.kfb.model": {
+        "expected": ("智小白3D", "3D打印", "3D 打印"),
+        "blocked": ("小白学习打印", "小白扫描王"),
+        "label": "智小白3D/3D 打印",
+    },
+}
+
+
+def _app_brand_conflict_issues(app_package: str, compact_text: str, prefix: str) -> List[str]:
+    package = str(app_package or "").strip()
+    rule = APP_BRAND_CONFLICT_RULES.get(package)
+    if not rule:
+        return []
+    issues: List[str] = []
+    for blocked in rule.get("blocked") or ():
+        blocked_compact = _compact_text(blocked)
+        if blocked_compact and blocked_compact in compact_text:
+            expected = rule.get("label") or "当前 App"
+            issues.append(prefix + f"当前包名对应{expected}，首页等待/断言不能写成“{blocked}”")
+    return issues
+
+
 def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", module: str = "", file: str = "") -> List[str]:
     """Block YAML that is structurally valid but known to fail on the current App UI."""
     if _pyyaml is None:
@@ -4182,13 +4242,19 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
     raw = str(yaml_text or "")
     scope_text = f"{app_package} {module} {file} {raw}"
     scope_compact = re.sub(r"\s+", "", scope_text).lower()
+    effective_app_package = str(app_package or "").strip()
+    if effective_app_package not in APP_BRAND_CONFLICT_RULES:
+        if "com.xbxxhz.box" in scope_compact:
+            effective_app_package = "com.xbxxhz.box"
+        elif "com.kfb.model" in scope_compact:
+            effective_app_package = "com.kfb.model"
     is_xiaobai_ai_model = (
         "com.kfb.model" in scope_compact
         or any(term in scope_compact for term in ("智小白3d", "ai建模", "图片建模", "文字建模", "语音创作", "标牌", "趣味印章", "涂鸦建模"))
     )
     is_xiaobai_scan = (
         "com.xbxxhz.box" in scope_compact
-        or any(term in scope_compact for term in ("小白扫描王", "文档打印", "证件照", "照片打印", "扫描复印", "百度网盘"))
+        or any(term in scope_compact for term in ("小白学习打印", "小白学习", "文档打印", "证件照", "照片打印", "扫描复印", "百度网盘"))
     )
     if not (is_xiaobai_ai_model or is_xiaobai_scan):
         return []
@@ -4225,6 +4291,7 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
         task_text = "\n".join(fragments)
         compact = re.sub(r"\s+", "", task_text).lower()
         prefix = f"{name}: "
+        issues.extend(_app_brand_conflict_issues(effective_app_package, compact, prefix))
 
         if text_has(compact, "三种入口", "多入口") and text_has(compact, "开始创作", "跳转", "验证"):
             issues.append(prefix + "当前 App 入口已改版，旧版多入口验证不能直接下发 Runner")
@@ -5715,7 +5782,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
         try:
             if job_id:
                 update_generate_job(job_id, progress=45, step="需求解析", message="正在按 requirement_analyzer skill 做需求体检和测试点拆解")
-            payload = build_cases_payload_from_skills(title, module, stage1_text_assets, model_config=model_config)
+            payload = build_cases_payload_from_skills(
+                title,
+                module,
+                stage1_text_assets,
+                model_config=model_config,
+                app_package=app_package,
+            )
         except Exception as e:
             skill_pipeline_error = str(e)
             if job_id:

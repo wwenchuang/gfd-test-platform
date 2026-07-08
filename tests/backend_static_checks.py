@@ -3,6 +3,7 @@ import importlib.util
 import base64
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -779,7 +780,7 @@ def check_yaml_static_validation_and_patterns():
     - name: 文档打印首页百度网盘入口可见性验证
       flow:
         - launch: com.xbxxhz.box
-        - aiWaitFor: 小白扫描王首页已加载，底部首页导航可见
+        - aiWaitFor: 小白学习打印首页已加载，底部首页导航可见
         - aiWaitFor: 文档打印首页展示百度网盘入口
         - aiAssert: 文档打印首页百度网盘入口可见
 """
@@ -814,7 +815,7 @@ def check_yaml_static_validation_and_patterns():
     - name: 文档打印百度网盘入口展示与点击验证
       flow:
         - launch: com.xbxxhz.box
-        - aiWaitFor: 小白扫描王首页已加载，底部首页导航可见
+        - aiWaitFor: 小白学习打印首页已加载，底部首页导航可见
         - aiWaitFor: 文档打印首页展示百度网盘入口
         - aiTap: 百度网盘入口
         - aiWaitFor: 百度网盘授权、登录或文件选择页面已打开
@@ -1399,7 +1400,7 @@ def check_generated_yaml_uses_single_final_assertion():
         }],
     }, app_package="com.kfb.model")
     require(yaml_text.count("aiAssert:") == 1, "Generated YAML must keep one final business assertion by default")
-    require('aiAssert: "图片建模上传入口、提示文案或空态区域可见"' in yaml_text, "Generated YAML must keep the final expected business assertion")
+    require(re.search(r"aiAssert:\s*[\"']?图片建模上传入口、提示文案或空态区域可见[\"']?", yaml_text), "Generated YAML must keep the final expected business assertion")
     require('aiAssert: "首页 AI建模入口可见"' not in yaml_text, "Generated YAML must not turn every step expected value into aiAssert")
     require(yaml_service.validate_midscene_yaml(yaml_text).get("ok") is True, "Single-assertion generated YAML must remain executable")
     stability = yaml_service.review_generated_yaml_smoke_stability(yaml_text)
@@ -1582,11 +1583,68 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     for expected in ["本地导入", "相册导入", "微信导入", "5寸照片", "一寸照", "图片拼版", "扫描仪扫描"]:
         require(expected in step_blob, f"Fallback automation steps must use concrete screenshot/page wording: {expected}")
     require("对应打印/导入页面" not in step_blob, "Fallback automation steps must not use vague navigation like 对应打印/导入页面")
+    require(
+        "小白扫描王" not in step_blob
+        and "小白学习打印首页加载完成" in step_blob,
+        "Learning Print fallback steps must not use the unrelated 小白扫描王 app name",
+    )
     yaml_text = "\n".join(
         item.get("content", "")
         for item in yaml_service.cases_to_separate_midscene_yamls(filtered, app_package="com.xbxxhz.box", base_file="baidu.yaml")[1]
     )
+    require("小白扫描王" not in yaml_text, "Fallback YAML for com.xbxxhz.box must not contain the unrelated 小白扫描王 app name")
     require("aiTap: \"等待" not in yaml_text and "aiTap: '等待" not in yaml_text and "aiTap: 等待" not in yaml_text, "Fallback YAML must not turn wait-state checks into aiTap actions")
+    polluted_brand_yaml = """android:
+  tasks:
+    - name: 文档打印页百度网盘入口顺序校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白扫描王首页已加载完成，能看到文档打印入口
+        - aiTap: 文档打印入口
+        - aiWaitFor: 文档打印页展示百度网盘入口
+        - aiAssert: 百度网盘位于本地文档之后
+"""
+    polluted_brand_dry = yaml_service.dry_run_midscene_yaml(
+        polluted_brand_yaml,
+        app_package="com.xbxxhz.box",
+    )
+    require(
+        polluted_brand_dry.get("ok") is False
+        and any("小白扫描王" in err for err in polluted_brand_dry.get("errors", [])),
+        "Dry-run must block Learning Print YAML polluted with the unrelated 小白扫描王 app name",
+    )
+    mismatched_3d_brand_yaml = """android:
+  tasks:
+    - name: AI建模首页入口展示
+      flow:
+        - launch: com.kfb.model
+        - aiWaitFor: 小白学习打印首页已加载，底部首页导航可见
+        - aiTap: AI建模
+        - aiWaitFor: AI建模页面已打开
+        - aiAssert: AI建模入口可用
+"""
+    mismatched_3d_brand_dry = yaml_service.dry_run_midscene_yaml(mismatched_3d_brand_yaml)
+    require(
+        mismatched_3d_brand_dry.get("ok") is False
+        and any("小白学习打印" in err for err in mismatched_3d_brand_dry.get("errors", [])),
+        "Dry-run must block any generated YAML whose app brand text conflicts with its launch package",
+    )
+    generic_filtered = ai_skill_service._fallback_automation_filter_from_scenarios(
+        "AI建模入口展示",
+        "AI测试",
+        {"requirement_points": ["AI建模入口展示"]},
+        [{"feature": "AI建模", "scenario": "AI建模入口展示", "requirement_point": "AI建模入口展示"}],
+        targets={"target_automation_cases": 1, "max_cases": 1, "smoke_cases": 1},
+        error="timeout",
+        app_package="com.kfb.model",
+    )
+    generic_step_blob = "\n".join("\n".join(case.get("steps") or []) for case in generic_filtered.get("cases") or [])
+    require(
+        "小白学习打印" not in generic_step_blob
+        and "小白扫描王" not in generic_step_blob
+        and ("3D 打印首页加载完成" in generic_step_blob or "3D打印首页加载完成" in generic_step_blob),
+        "Fallback automation steps must use the selected app context for non-Baidu requirements too",
+    )
     visibility_payload = {
         "title": "百度网盘入口可见性",
         "module": "基础打印",
@@ -1799,7 +1857,7 @@ def check_yaml_runner_eligibility_filter():
     require(len(files) == 1, "Separate YAML generation must only emit runner-eligible cases")
     content = files[0]["content"]
     require("确认前置条件" not in content, "Preconditions must stay in comments, not become flaky ai steps")
-    require('- aiWaitFor: "等待 AI建模主页核心区域加载"' in content, "Natural wait steps must become aiWaitFor actions, not generic ai actions")
+    require(re.search(r"- aiWaitFor:\s*[\"']?等待 AI建模主页核心区域加载[\"']?", content), "Natural wait steps must become aiWaitFor actions, not generic ai actions")
     require("input keyevent 3" in content and "wm size" not in content and "input keyevent 187" not in content, "Balanced launch guard must use lightweight app reset instead of recent-task cleanup")
     require("${size" not in content, "Generated YAML must avoid Midscene `${...}` env interpolation in shell snippets")
     require("input swipe 540 1900 540 350" not in content and "am kill-all" not in content, "Generated YAML must not inject fixed-coordinate recent-app cleanup")
@@ -2697,6 +2755,8 @@ def main():
     require('"sourceType"' in agent_service_source and '"sourceRefs"' in agent_service_source and '"sourceContext"' in agent_service_source, "Agent runs must persist sourceType/sourceRefs/sourceContext")
     require("def _agent_source_material_context" in agent_service_source and '"uploadedFiles"' in agent_service_source and '"uploadedImages"' in agent_service_source and '"sourceSummary"' in agent_service_source, "Agent prepare_source must normalize uploaded files/images into sourceContext")
     require("Figma UI 图" in agent_service_source and "其中上传截图" in agent_service_source, "Agent source summary must distinguish Figma exported UI images from user-uploaded screenshots")
+    require("def _agent_visual_reference_report" in agent_service_source and '"visualReferenceReport"' in agent_service_source and '"soft_reference"' in agent_service_source and '"hardGate": False' in agent_service_source and '"aiJudgementRequired"' in agent_service_source and '"sentToAiForJudgement"' in agent_service_source, "Agent must expose uploaded screenshots as traceable AI visual soft references, not hard gates")
+    require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source and "refine_cases_with_yaml_visual_batches" in yaml_service_source and "uploaded_image_assets" in yaml_service_source, "Uploaded screenshots must be included in AI visual judgment for YAML generation")
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
@@ -2768,6 +2828,7 @@ def main():
     require("def apply_generated_case_scope_gate" in yaml_service_source and "需求范围不匹配的生成用例不再转换为自动化 YAML" in yaml_service_source, "Generated cases outside current requirement scope must be kept out of auto-run YAML")
     require("baseline.*" not in yaml_executable_scorer_source and "命中基线" in yaml_executable_scorer_source, "Generated baseline metadata comments must not be treated as successful baseline evidence")
     require("重跑来源" in agent_workbench_source and "修复文件" in agent_workbench_source and "progress.usesRepairDraft" in agent_workbench_source, "Agent UI must show whether rerun used repair drafts and which temporary YAML files were executed")
+    require("def _agent_rerun_requires_serial_device" in agent_service_source and "安全重跑-同设备串行" in agent_service_source and '"serialSameDevice"' in agent_service_source, "Agent rerun must serialize jobs on the same fixed Runner/device")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS" in env_example and "MIDSCENE_YAML_VISUAL_BATCH_SIZE" in env_example and "MIDSCENE_GENERATED_ASSERTION_LIMIT" in env_example, "Deployment env example must expose Agent YAML timeout, assertion density and visual batching knobs")
     require("MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in env_example and "MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in deploy_install and "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" in env_example and "MIDSCENE_AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT" in deploy_install and 'MIDSCENE_AGENT_GENERATED_RUNNER_EXPAND_LIMIT" "5"' in deploy_install, "Deployment scripts must expose generated YAML first smoke and expansion batch size")
@@ -2958,12 +3019,17 @@ def main():
         },
     ]
     from task_server.services import agent_service
-    from task_server.services.yaml_service import dry_run_midscene_yaml, split_automation_ready_cases, validate_midscene_yaml_executability
+    from task_server.services.yaml_service import dry_run_midscene_yaml, remove_empty_midscene_platform_roots, split_automation_ready_cases, validate_midscene_yaml_executability
     from task_server.services.yaml_static_validator import validate_yaml_static_executable
     empty_yaml = validate_midscene_yaml_executability("android:\n  tasks: []\n")
     require(not empty_yaml.get("ok") and "不能为空" in "；".join(empty_yaml.get("issues") or []), "Empty android.tasks must fail executable validation")
     valid_yaml = validate_midscene_yaml_executability("android:\n  tasks:\n    - name: demo\n      flow:\n        - aiTap: 首页搜索框\n")
     require(valid_yaml.get("ok") and valid_yaml.get("taskCount") == 1, "Valid android.tasks YAML must pass executable validation")
+    duplicate_platform_yaml = "android: null\ntasks:\n  - name: demo\n    flow:\n      - aiTap: 首页搜索框\n"
+    duplicate_platform_check = validate_midscene_yaml_executability(duplicate_platform_yaml)
+    require(not duplicate_platform_check.get("ok") and "android: null" in "；".join(duplicate_platform_check.get("issues") or []), "Executable validation must reject android:null plus root tasks before Runner device injection")
+    normalized_platform_yaml = remove_empty_midscene_platform_roots(duplicate_platform_yaml)
+    require("android: null" not in normalized_platform_yaml and validate_midscene_yaml_executability(normalized_platform_yaml).get("ok"), "YAML normalization must remove empty platform roots before dispatch")
     missing_input_value_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiInput: 当前页面输入框\n"
     missing_input_value = validate_midscene_yaml_executability(missing_input_value_yaml)
     require(not missing_input_value.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value.get("issues") or []), "Executable validation must reject aiInput without value before Runner")
