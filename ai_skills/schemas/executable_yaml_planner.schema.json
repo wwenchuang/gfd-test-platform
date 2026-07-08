@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["cases"],
+  "properties": {
+    "cases": {"type": "array"},
+    "needs_review_cases": {"type": "array"},
+    "draft_cases": {"type": "array"},
+    "manual_cases": {"type": "array"},
+    "review": {"type": "object"}
+  }
+}

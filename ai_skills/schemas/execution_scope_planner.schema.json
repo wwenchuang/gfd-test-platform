@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "required": ["size", "targetCaseCount", "smokeCount", "reason"],
+  "properties": {
+    "size": {"type": "string"},
+    "targetCaseCount": {"type": "integer"},
+    "smokeCount": {"type": "integer"},
+    "continueThreshold": {"type": "number"},
+    "reason": {"type": "string"},
+    "businessFlow": {"type": "array"},
+    "review": {"type": "object"}
+  }
+}

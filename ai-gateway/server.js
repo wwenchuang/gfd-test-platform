@@ -620,6 +620,9 @@ app.post('/ai/generate-yaml', asyncRoute(async (req, res) => {
     sourceContext: req.body?.sourceContext || {},
     businessContext: req.body?.businessContext || {},
     promptCenter: req.body?.promptCenter || {},
+    modelConfig: req.body?.modelConfig || req.body?.model_config || {},
+    providerId: req.body?.providerId || req.body?.provider || '',
+    model: req.body?.model || req.body?.modelName || '',
   };
   const {output} = await callAi('generate_yaml', body, {stripFence: true});
   const validation = validateMidsceneYaml(output);

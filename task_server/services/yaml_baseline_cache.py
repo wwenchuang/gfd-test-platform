@@ -24,6 +24,7 @@ CACHE_VERSION = 1
 YAML_BASELINE_CACHE_TTL_SECONDS = max(30, env_int("MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS", 600))
 YAML_BASELINE_CACHE_MAX_FILES = max(50, env_int("MIDSCENE_YAML_BASELINE_CACHE_MAX_FILES", 1200))
 YAML_BASELINE_CACHE_SNIPPET_CHARS = max(600, env_int("MIDSCENE_YAML_BASELINE_CACHE_SNIPPET_CHARS", 2400))
+YAML_BASELINE_SEARCH_MAX_LIMIT = max(3, env_int("MIDSCENE_YAML_BASELINE_SEARCH_MAX_LIMIT", 20))
 YAML_BASELINE_CACHE_PATH = os.getenv(
     "MIDSCENE_YAML_BASELINE_CACHE_PATH",
     os.path.join(TASK_DIR, "cache", "yaml-baseline-cache.json"),
@@ -456,7 +457,7 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
 
 def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3, allow_fallback: bool = False) -> List[Dict[str, Any]]:
     """Search cached baseline snippets and return prompt-ready Top-N examples."""
-    limit = max(1, min(12, safe_int(limit, 3)))
+    limit = max(1, min(YAML_BASELINE_SEARCH_MAX_LIMIT, safe_int(limit, 3)))
     started = time.time()
     cache = get_yaml_baseline_cache(force=False)
     query_terms = _terms(query_text, limit=120)

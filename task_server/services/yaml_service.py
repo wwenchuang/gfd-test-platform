@@ -221,6 +221,10 @@ improve_case_coverage = _lazy("improve_case_coverage", "task_server.services.ai_
 normalize_requirement_analysis_result = _lazy("normalize_requirement_analysis_result", "task_server.services.ai_skill_service")
 generation_volume_targets = _lazy("generation_volume_targets", "task_server.services.ai_skill_service")
 select_smoke_cases_for_payload = _lazy("select_smoke_cases_for_payload", "task_server.services.ai_skill_service")
+call_skill_baseline_reranker = _lazy("call_skill_baseline_reranker", "task_server.services.ai_skill_service")
+call_skill_execution_scope_planner = _lazy("call_skill_execution_scope_planner", "task_server.services.ai_skill_service")
+call_skill_executable_yaml_planner = _lazy("call_skill_executable_yaml_planner", "task_server.services.ai_skill_service")
+apply_executable_yaml_plan_to_payload = _lazy("apply_executable_yaml_plan_to_payload", "task_server.services.ai_skill_service")
 load_knowledge_context = _lazy("load_knowledge_context", "task_server.services.knowledge_service")
 load_figma_generation_context = _lazy("load_figma_generation_context", "task_server.services.knowledge_service")
 parse_figma_design = _lazy("parse_figma_design", "task_server.services.knowledge_service")
@@ -1288,6 +1292,49 @@ def build_yaml_reference_examples_text(examples):
     return "\n".join(lines).strip()
 
 
+def build_ai_generation_decision_context_text(selected_baselines, scope_plan, case_plan=None):
+    """Render AI decision outputs back into the generation prompt."""
+    selected_baselines = [item for item in (selected_baselines or []) if isinstance(item, dict)]
+    scope_plan = scope_plan if isinstance(scope_plan, dict) else {}
+    case_plan = case_plan if isinstance(case_plan, dict) else {}
+    lines = [
+        "【AI 生成决策计划】",
+        "下面是 AI 在生成前做出的基线选择、生成范围和执行计划。生成 YAML 时必须优先遵守该计划；不要绕开计划自由扩展长链路。",
+    ]
+    if scope_plan:
+        lines.extend([
+            f"- 需求规模: {scope_plan.get('size') or '-'}",
+            f"- 自动化目标数: {scope_plan.get('targetCaseCount') or scope_plan.get('target_case_count') or '-'}",
+            f"- 首批冒烟数: {scope_plan.get('smokeCount') or scope_plan.get('smoke_count') or '-'}",
+            f"- 继续执行阈值: {scope_plan.get('continueThreshold') or 0.5}",
+            f"- 规划原因: {scope_plan.get('reason') or '-'}",
+        ])
+        flow = scope_plan.get("businessFlow") or scope_plan.get("business_flow") or []
+        if flow:
+            lines.append("- 业务主链: " + " -> ".join(str(item) for item in flow if str(item or "").strip()))
+    if selected_baselines:
+        lines.append("【AI 选中的相似基线】")
+        for index, item in enumerate(selected_baselines[:3], start=1):
+            lines.append(
+                f"{index}. {item.get('title') or item.get('file') or '-'}"
+                f"；动作: {' -> '.join(item.get('actions') or []) or '-'}"
+                f"；原因: {item.get('ai_selected_reason') or item.get('selection_reason') or item.get('matched_terms') or '-'}"
+            )
+    plan_cases = [item for item in (case_plan.get("cases") or []) if isinstance(item, dict)]
+    if plan_cases:
+        lines.append("【AI 用例执行计划】")
+        for index, item in enumerate(plan_cases[:8], start=1):
+            lines.extend([
+                f"{index}. {item.get('title') or item.get('case_id') or '-'}",
+                f"   - 批次: {item.get('batch') or '-'}；优先级: {item.get('priority') or '-'}；基线: {item.get('baselineId') or '-'}",
+                f"   - 前置: {item.get('precondition') or '-'}",
+                f"   - 断言目标: {item.get('assertionTarget') or '-'}",
+                f"   - 可执行理由: {item.get('executableReason') or '-'}",
+            ])
+    lines.append("硬约束：没有相似基线、没有明确前置页、没有可见断言目标的用例，不要进入首批冒烟；复杂外部授权/文件选择/长等待只进入扩展或需确认。")
+    return "\n".join(lines).strip()
+
+
 def build_executable_smoke_yaml_policy_text():
     """Explicit generation policy for Runner-first executable YAML."""
     return "\n".join([
@@ -1460,13 +1507,46 @@ def is_smoke_case(case):
 # 动作/输入解析工具
 # ---------------------------------------------------------------------------
 
+PASSIVE_CHECK_PREFIXES = ("检查", "验证", "确认", "查看", "观察", "等待", "直到出现", "直到看到", "直到", "等到")
+PASSIVE_CHECK_WORDS = (
+    "是否", "可见", "存在", "展示", "显示", "出现", "加载完成", "加载完",
+    "文案", "布局", "位置", "同级", "顺序", "状态", "入口可见", "按钮可见",
+)
+EXPLICIT_TAP_WORDS = (
+    "点击", "点按", "轻触", "长按", "勾选", "取消勾选", "选择", "打开",
+    "进入", "切换", "返回", "关闭", "提交", "确认打印", "下一步", "上一步",
+    "开始", "重试", "刷新", "搜索", "保存", "下载",
+)
+TRANSITION_TAP_WORDS = (
+    "进入", "打开", "跳转", "返回", "提交", "确认", "下一步", "上一步",
+    "开始", "重试", "刷新", "搜索", "保存", "下载",
+)
+
+
+def step_looks_passive_check(text):
+    """判断自然语言步骤是否是页面状态检查，而不是点击目标。"""
+    raw = str(text or "").strip()
+    compact = re.sub(r"\s+", "", raw)
+    if not compact:
+        return False
+    explicit_tap = any(word in compact for word in EXPLICIT_TAP_WORDS)
+    passive_signal = any(word in compact for word in PASSIVE_CHECK_WORDS)
+    if compact.startswith(PASSIVE_CHECK_PREFIXES):
+        return passive_signal or not explicit_tap or compact.startswith(("等待", "直到", "等到"))
+    if passive_signal:
+        return not explicit_tap
+    return False
+
+
 def action_type(text):
     """根据文本判断动作类型。"""
     text = str(text or "")
     stripped = text.strip()
     if stripped.startswith(("等待", "直到出现", "直到看到", "直到", "等到")):
         return "aiWaitFor"
-    if any(key in text for key in ("点击", "按钮", "勾选", "长按", "选择")):
+    if step_looks_passive_check(text):
+        return "aiWaitFor"
+    if any(key in text for key in EXPLICIT_TAP_WORDS):
         return "aiTap"
     if any(key in text for key in ("等待", "直到出现", "直到看到", "加载完成", "加载完", "出现", "展示")):
         return "aiWaitFor"
@@ -1602,7 +1682,7 @@ def should_add_adb_input_fallback(value, context_text, evidence_text=""):
 
 def runtime_guard_mode():
     """返回运行时守卫模式。"""
-    return RUNTIME_GUARD_MODE if RUNTIME_GUARD_MODE in ("minimal", "balanced", "strict") else "balanced"
+    return RUNTIME_GUARD_MODE if RUNTIME_GUARD_MODE in ("minimal", "balanced", "strict") else "minimal"
 
 
 def evidence_needs_popup_guard(evidence_text=""):
@@ -2007,7 +2087,7 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
     if mode == "strict":
         flows.extend(dynamic_recent_tasks_cleanup_flow(indent))
     elif mode == "balanced":
-        flows.extend(dynamic_recent_tasks_cleanup_flow(indent))
+        flows.extend(external_activity_cleanup_flow(indent))
     flows.extend([
         indent + "- runAdbShell: " + yaml_text("am force-stop " + app_package),
         indent + "- sleep: 1500",
@@ -2094,7 +2174,22 @@ def flow_lines_for_step(indent, text):
             indent + "- runAdbShell: " + yaml_text("input swipe 950 1080 150 1080 500"),
             indent + "- sleep: 800",
         ]
-    return [f"{indent}- {action_type(text)}: {yaml_text(text)}"]
+    action = action_type(text)
+    if action == "aiTap":
+        lines = [f"{indent}- aiTap: {yaml_text(text)}", indent + "- sleep: 300"]
+        compact = re.sub(r"\s+", "", text)
+        if "百度网盘" in compact and any(word in compact for word in ("点击", "点按", "进入", "打开", "选择")):
+            lines.extend([
+                indent + "- aiWaitFor: " + yaml_text(BAIDU_NETDISK_POST_CLICK_WAIT),
+                indent + "  timeout: " + str(BAIDU_NETDISK_POST_CLICK_TIMEOUT_MS),
+            ])
+        elif any(word in compact for word in TRANSITION_TAP_WORDS):
+            lines.extend([
+                indent + "- aiWaitFor: " + yaml_text("点击后的目标页面、弹窗、列表、空态或提示已稳定显示"),
+                indent + "  timeout: " + str(min(loading_wait_timeout_for_context(text), MAX_WAITFOR_TIMEOUT_MS)),
+            ])
+        return lines
+    return [f"{indent}- {action}: {yaml_text(text)}"]
 
 
 # ---------------------------------------------------------------------------
@@ -3482,9 +3577,15 @@ def loading_wait_timeout_for_context(text):
     text = str(text or "")
     if any(word in text for word in ("保存成功", "已保存", "保存完成", "导出成功", "下载完成", "结果提示", "失败提示", "权限失败")):
         return 15000
+    if "百度网盘" in text and any(word in text for word in ("入口", "文案", "展示", "可见", "可点击", "按钮", "同级", "排序", "布局")):
+        return 15000
+    if any(word in text for word in ("入口", "文案", "展示", "可见", "可点击", "按钮", "同级", "排序", "布局")) and not any(word in text for word in ("上传中", "导入中", "生成中", "处理中", "下载中")):
+        return 15000
     if any(word in text for word in ("切片", "模型处理", "模型生成", "生成模型", "AI评估", "100%", "100.0%")):
         return 180000
-    if any(word in text for word in ("上传", "导入", "文件选择", "相册导入", "微信导入", "百度网盘", "加载到")):
+    if "百度网盘" in text and any(word in text for word in ("文件", "授权", "登录", "第三方", "跳转", "返回")):
+        return 60000
+    if any(word in text for word in ("上传中", "正在上传", "上传完成", "导入中", "正在导入", "导入完成", "文件选择", "选择文件", "加载到")):
         return 120000
     if any(word in text for word in ("下一步", "去打印", "确认打印", "检查无误", "可点击", "按钮变为可点击")):
         return 15000
@@ -3543,6 +3644,7 @@ def normalize_inappropriate_model_processing_waits_in_task_block(block):
         result.append(indent + "- aiWaitFor: " + yaml_text(new_condition))
         idx += 1
         timeout_seen = False
+        desired_timeout = loading_wait_timeout_for_context(new_condition)
         while idx < len(lines):
             child = lines[idx]
             if re.match(r"^\s*-\s+[A-Za-z][\w]*\s*:", child):
@@ -3550,13 +3652,12 @@ def normalize_inappropriate_model_processing_waits_in_task_block(block):
             tm = re.match(r"^(\s*timeout\s*:\s*)(\d+)(\s*(?:#.*)?)$", child)
             if tm:
                 timeout_seen = True
-                old_timeout = safe_int(tm.group(2), 0)
-                result.append(f"{tm.group(1)}{min(max(old_timeout, 30000), 60000)}{tm.group(3)}")
+                result.append(f"{tm.group(1)}{desired_timeout}{tm.group(3)}")
             else:
                 result.append(child)
             idx += 1
         if not timeout_seen:
-            result.append(indent + "  timeout: 60000")
+            result.append(indent + "  timeout: " + str(desired_timeout))
         changes.append('将非模型/2D打印链路中的“模型处理进度”等待改为按钮或确认弹窗等待')
     if not changes:
         return block, []
@@ -3618,7 +3719,10 @@ def normalize_business_loading_waits_in_task_block(block):
             if tm:
                 timeout_seen = True
                 old_timeout = safe_int(tm.group(2), 0)
-                normalized_timeout = min(max(old_timeout, desired_timeout), MAX_WAITFOR_TIMEOUT_MS)
+                if desired_timeout <= 15000:
+                    normalized_timeout = min(old_timeout or desired_timeout, desired_timeout)
+                else:
+                    normalized_timeout = min(max(old_timeout, desired_timeout), MAX_WAITFOR_TIMEOUT_MS)
                 if normalized_timeout != old_timeout:
                     result.append(f"{tm.group(1)}{normalized_timeout}{tm.group(3)}")
                     if old_timeout < desired_timeout:
@@ -3721,7 +3825,7 @@ def normalize_task_block_runtime_guards(block, app_package=None, evidence_text="
             changes.append("补充弹窗/浮层兜底处理")
     elif first_flow_key == "launch":
         launch_package = (app_package or extract_app_package_from_yaml(block) or "").strip()
-        insert = dynamic_recent_tasks_cleanup_flow(indent) if runtime_guard_mode() in ("balanced", "strict") else external_activity_cleanup_flow(indent)
+        insert = dynamic_recent_tasks_cleanup_flow(indent) if runtime_guard_mode() == "strict" else external_activity_cleanup_flow(indent)
         if launch_package:
             insert += [
                 indent + "- runAdbShell: " + yaml_text("am force-stop " + launch_package),
@@ -4027,6 +4131,18 @@ BAIDU_NETDISK_POST_CLICK_ASSERT = (
 BAIDU_NETDISK_POST_CLICK_TIMEOUT_MS = 60000
 
 
+def _is_heavy_recent_cleanup_shell(text: str) -> bool:
+    shell = str(text or "")
+    compact = re.sub(r"\s+", "", shell).lower()
+    if "inputkeyevent187" in compact:
+        return True
+    if "wmsize" in compact and "inputswipe" in compact:
+        return True
+    if shell.count("input swipe") >= 2:
+        return True
+    return any(word in shell for word in ("input keyevent 187", "wm size", "input swipe")) and len(shell) > 180
+
+
 def _compact_text(text: str) -> str:
     return re.sub(r"\s+", "", str(text or "")).lower()
 
@@ -4312,11 +4428,22 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
         if not isinstance(flow, list):
             continue
         after_baidu_tap = False
+        converted_wait_prompts = []
         for step_index, step in enumerate(flow, start=1):
             if not isinstance(step, dict):
                 continue
             if any(key in step for key in ("launch", "runAdbShell")):
                 after_baidu_tap = False
+            if isinstance(step.get("runAdbShell"), str) and _is_heavy_recent_cleanup_shell(step.get("runAdbShell")):
+                prompt = str(step.get("runAdbShell") or "")
+                step["runAdbShell"] = "input keyevent 3"
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    "changed": "heavy recent-task cleanup -> home key",
+                    "prompt": prompt[:180],
+                    "replacement": "input keyevent 3",
+                })
 
             broad_repair = _repair_generated_broad_ai_step(step)
             if broad_repair:
@@ -4373,12 +4500,60 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
             step.pop("aiTap", None)
             step["aiWaitFor"] = wait_prompt
             step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+            converted_wait_prompts.append(wait_prompt)
             changes.append({
                 "task": task.get("name") or f"tasks[{task_index}]",
                 "flowIndex": step_index,
                 "changed": "aiTap -> aiWaitFor",
                 "prompt": prompt[:180],
                 "waitFor": wait_prompt[:180],
+            })
+
+        task_name_compact = _compact_text(task.get("name") or "")
+        flow_text_compact = _compact_text(" ".join(
+            " ".join(str(value or "") for key, value in step.items() if key in MIDSCENE_FLOW_ACTIONS)
+            for step in flow
+            if isinstance(step, dict)
+        ))
+        if "百度网盘" in task_name_compact and "文档打印" in task_name_compact and "文档打印" not in flow_text_compact:
+            insert_at = next(
+                (
+                    idx for idx, step in enumerate(flow)
+                    if isinstance(step, dict)
+                    and any("百度网盘" in str(value or "") for key, value in step.items() if key in MIDSCENE_FLOW_ACTIONS)
+                ),
+                len(flow),
+            )
+            flow[insert_at:insert_at] = [
+                {"aiTap": "文档打印入口"},
+                {"sleep": 300},
+                {
+                    "aiWaitFor": "文档打印页或文档导入入口区域已稳定显示，本地导入、相册导入、微信导入或百度网盘入口可见",
+                    "timeout": 15000,
+                },
+            ]
+            changes.append({
+                "task": task.get("name") or f"tasks[{task_index}]",
+                "flowIndex": insert_at + 1,
+                "changed": "insert document print path before baidu visibility check",
+                "replacement": "文档打印入口 -> 文档打印页或文档导入入口区域已稳定显示",
+            })
+
+        if converted_wait_prompts and not any(isinstance(step, dict) and "aiAssert" in step for step in flow):
+            wait_prompt = converted_wait_prompts[-1]
+            insert_at = next(
+                (
+                    idx + 1 for idx, step in enumerate(flow)
+                    if isinstance(step, dict) and str(step.get("aiWaitFor") or "") == wait_prompt
+                ),
+                len(flow),
+            )
+            flow.insert(insert_at, {"aiAssert": wait_prompt})
+            changes.append({
+                "task": task.get("name") or f"tasks[{task_index}]",
+                "flowIndex": insert_at + 1,
+                "changed": "add aiAssert for repaired visibility wait",
+                "assert": wait_prompt[:180],
             })
 
     if not changes:
@@ -4405,6 +4580,19 @@ EXECUTABLE_GATE_AI_REWRITE_REASON_KEYWORDS = (
     "终态判断",
     "waitFor timeout",
     "Timeout after",
+    "入口展示/位置类用例点击了百度网盘",
+    "入口展示类用例",
+    "当前业务页入口",
+    "百度网盘点击后仍检查原业务页",
+    "缺少进入",
+    "缺少页面路径",
+    "缺少先进入",
+    "不能从首页直接点击",
+    "最近任务清理",
+    "多次滑动",
+    "ADB 超时",
+    "ADB timeout",
+    "runAdbShell",
 )
 
 
@@ -4512,9 +4700,17 @@ def _ai_executable_gate_rewrite_prompt(yaml_text, *, title="", module="", file="
 6. aiTap 只能写真实可点击目标；检查/展示/可见/布局/入口存在必须用 aiWaitFor 或 aiAssert。
 7. 页面跳转后必须有 aiWaitFor；关键点击前必须有稳定页面或入口等待。
 8. 入口可见性、布局、同级排列这类用例不要点击进入第三方授权、文件选择器、外部 App 或 WebView。
-9. 必须至少保留一个终态判断；不要堆大量 aiAssert，不要照抄 Figma 长文案。
-10. 只能使用 Midscene 官方动作：launch、runAdbShell、sleep、ai、aiTap、aiInput、aiWaitFor、aiAssert、aiScroll、aiKeyboardPress。
-11. 保留 YAML 顶层结构和 app 包名；不要输出 Markdown。
+9. 必须先到达目标业务页，再检查该页的百度网盘入口：
+   - 文档打印：从首页等待/点击「文档打印」，等待文档打印页或导入入口区域，再检查百度网盘。
+   - 扫描复印：从首页等待/点击「扫描复印/复印扫描」，等待扫描复印页，再检查百度网盘。
+   - 照片打印：从首页等待/点击「照片打印/图片打印」，等待照片导入页，再检查百度网盘。
+   - 证件照/一寸照：先进入照片打印或证件照页，再点击一寸照/证件照入口；不能从首页直接点一寸照。
+10. 入口展示/同级/位置校验只检查当前业务页；除非用例标题明确要求“点击百度网盘/授权/登录/文件列表”，否则不要 aiTap 百度网盘。
+11. 启动守卫只允许简单稳定动作：am force-stop、launch、必要 sleep。禁止最近任务列表、多次 swipe、wm size 计算。
+12. 埋点、曝光、eleTitle、后台统计类不要改写成 Runner 自动化；应保留为人工/待准备项。
+13. 必须至少保留一个终态判断；不要堆大量 aiAssert，不要照抄 Figma 长文案。
+14. 只能使用 Midscene 官方动作：launch、runAdbShell、sleep、ai、aiTap、aiInput、aiWaitFor、aiAssert、aiScroll、aiKeyboardPress。
+15. 保留 YAML 顶层结构和 app 包名；不要输出 Markdown。
 
 【当前 YAML】
 ```yaml
@@ -5370,13 +5566,78 @@ def generate_ui_yaml_from_request(d, job_id=None):
         else d.get("use_global_baseline_profile"),
         False,
     )
-    yaml_reference_examples = search_baseline_examples(
-        "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets),
+    baseline_query_text = "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets)
+    baseline_candidates = search_baseline_examples(
+        baseline_query_text,
         module=module,
-        limit=3,
+        limit=20,
         allow_fallback=False,
     )
     yaml_baseline_cache_status = get_yaml_baseline_cache_status()
+    ai_decision_trace = {
+        "enabled": True,
+        "baseline_candidate_count": len(baseline_candidates),
+    }
+    try:
+        baseline_rerank = call_skill_baseline_reranker(
+            title,
+            module,
+            baseline_query_text,
+            baseline_candidates,
+            model_config=model_config,
+            limit=3,
+        )
+        yaml_reference_examples = baseline_rerank.get("selected") or baseline_candidates[:3]
+        ai_decision_trace["baseline_reranker"] = baseline_rerank.get("trace") or {}
+        ai_decision_trace["baseline_reranker_review"] = baseline_rerank.get("review") or {}
+    except Exception as rerank_error:
+        yaml_reference_examples = baseline_candidates[:3]
+        ai_decision_trace["baseline_reranker"] = {
+            "enabled": True,
+            "fallback": True,
+            "error": str(rerank_error),
+            "selected_count": len(yaml_reference_examples),
+        }
+    try:
+        execution_scope_plan = call_skill_execution_scope_planner(
+            title,
+            module,
+            stage1_text_assets,
+            yaml_reference_examples,
+            model_config=model_config,
+        )
+    except Exception as scope_error:
+        local_targets = generation_volume_targets({"requirement_points": stage1_text_assets}, mode="full")
+        target_count = safe_int(local_targets.get("target_automation_cases"), 3)
+        target_count = 3 if target_count <= 3 else (5 if target_count <= 5 else 8)
+        execution_scope_plan = {
+            "size": "small" if target_count <= 3 else ("medium" if target_count <= 5 else "large"),
+            "targetCaseCount": target_count,
+            "smokeCount": min(3, target_count),
+            "continueThreshold": 0.5,
+            "reason": "AI 范围规划失败，回退平台 3/5/8 规则",
+            "businessFlow": [],
+            "trace": {"enabled": True, "fallback": True, "error": str(scope_error)},
+        }
+    ai_decision_trace["execution_scope_planner"] = execution_scope_plan.get("trace") or {}
+    decision_context_text = build_ai_generation_decision_context_text(
+        yaml_reference_examples,
+        execution_scope_plan,
+        {},
+    )
+    if decision_context_text:
+        stage1_text_assets = list(stage1_text_assets) + [decision_context_text]
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=43,
+                step="AI 生成决策",
+                message=(
+                    f"AI 已规划生成范围：目标 {execution_scope_plan.get('targetCaseCount')} 条，"
+                    f"首批冒烟 {execution_scope_plan.get('smokeCount')} 条；"
+                    f"相似基线候选 {len(baseline_candidates)} 个，采用 {len(yaml_reference_examples)} 个"
+                ),
+            )
     yaml_action_contract = load_yaml_action_contract()
     yaml_baseline_library_examples = []
     yaml_library_patterns = []
@@ -5504,6 +5765,15 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 update_generate_job(job_id, progress=67, step="视觉校准跳过", message=f"视觉校准失败但不阻塞生成：{str(e)[:100]}")
 
     review = payload.setdefault("review", {})
+    review["ai_decision_trace"] = ai_decision_trace
+    review["execution_scope_plan"] = {
+        "size": execution_scope_plan.get("size"),
+        "targetCaseCount": execution_scope_plan.get("targetCaseCount"),
+        "smokeCount": execution_scope_plan.get("smokeCount"),
+        "continueThreshold": execution_scope_plan.get("continueThreshold", 0.5),
+        "reason": execution_scope_plan.get("reason") or "",
+        "businessFlow": execution_scope_plan.get("businessFlow") or [],
+    }
     if yaml_reference_examples:
         memory_path = record_yaml_reference_examples(case_set_id, title, module, yaml_reference_examples)
         review["yaml_reference_examples"] = [
@@ -5650,6 +5920,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             max_rounds=coverage_rounds,
             progress_callback=coverage_progress,
             time_budget_seconds=AI_COVERAGE_TOTAL_BUDGET_SECONDS,
+            model_config=model_config,
         )
     except Exception as e:
         try:
@@ -5668,6 +5939,37 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "覆盖率补全模型调用失败，已保留当前用例并记录覆盖审查结果"
         ]
     payload = normalize_cases_payload(payload)
+    try:
+        executable_plan = call_skill_executable_yaml_planner(
+            title,
+            module,
+            payload,
+            yaml_reference_examples,
+            execution_scope_plan,
+            model_config=model_config,
+        )
+        executable_plan["scopePlan"] = execution_scope_plan
+        payload = apply_executable_yaml_plan_to_payload(payload, executable_plan)
+        review = payload.setdefault("review", {})
+        ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
+        ai_decision_trace["executable_yaml_planner"] = executable_plan.get("trace") or {}
+        review["ai_decision_trace"] = ai_decision_trace
+        review["executable_yaml_planner_review"] = executable_plan.get("review") or {}
+        review["needs_review_cases"] = executable_plan.get("needs_review_cases") or []
+        review["draft_cases"] = executable_plan.get("draft_cases") or []
+        if executable_plan.get("manual_cases"):
+            manual_cases = payload.get("manual_cases") if isinstance(payload.get("manual_cases"), list) else []
+            payload["manual_cases"] = manual_cases + executable_plan.get("manual_cases")
+    except Exception as plan_error:
+        review = payload.setdefault("review", {})
+        ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
+        ai_decision_trace["executable_yaml_planner"] = {
+            "enabled": True,
+            "fallback": True,
+            "error": str(plan_error),
+        }
+        review["ai_decision_trace"] = ai_decision_trace
+        review["executable_yaml_planner_error"] = str(plan_error)
     try:
         payload = select_smoke_cases_for_payload(
             title,

@@ -83,6 +83,10 @@ from task_server.services.report_service import (
 
 AI_SMOKE_SELECTOR_ENABLED = safe_bool(os.getenv("MIDSCENE_AI_SMOKE_SELECTOR_ENABLED", "1"), True)
 AI_SMOKE_SELECTOR_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_SMOKE_SELECTOR_TIMEOUT_SECONDS", "45"), 45))
+AI_BASELINE_RERANKER_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_BASELINE_RERANKER_TIMEOUT_SECONDS", "45"), 45))
+AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS", "45"), 45))
+AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS", "75"), 75))
+AI_SKILLS_STRICT_MODEL = safe_bool(os.getenv("MIDSCENE_AI_SKILLS_STRICT_MODEL", "0"), False)
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +186,9 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
             )
             result = normalize_model_json(raw)
             return validate_ai_skill_output(skill_name, result)
-        except Exception:
-            pass
+        except Exception as exc:
+            if model_config and AI_SKILLS_STRICT_MODEL:
+                raise RuntimeError(f"AI Gateway skill 调用失败且已启用 strict model：{exc}") from exc
     raw = dashscope_chat_content(
         prompt,
         image_assets=image_assets,
@@ -1147,22 +1152,27 @@ def _fallback_requirement_points_from_text(title, text_assets):
     """从原始需求文本中提取保守需求点，避免需求分析模型超时后中断。"""
     raw = "\n".join(normalize_text_list(text_assets))
     if "百度网盘" in raw:
+        click_flow = any(word in raw for word in (
+            "点击触发", "点击后", "跳转", "授权", "登录", "文件选择", "导入文件",
+            "进入百度网盘", "百度网盘导入", "WebView", "SDK", "埋点",
+        ))
+        suffix = "并校验入口位置及同级并列关系" if not click_flow else "并校验点击后进入百度网盘相关流程"
         points = []
         if "文档打印" in raw or "三方文档" in raw:
-            points.append("三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后")
+            points.append(f"三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后{suffix}")
         if "普通照片" in raw:
-            points.append("照片打印：普通照片打印导入时增加百度网盘导入选项")
+            points.append(f"照片打印：普通照片打印导入时增加百度网盘入口{suffix}")
         if "普通证件照" in raw:
-            points.append("照片打印：普通证件照导入时增加百度网盘导入选项")
+            points.append(f"照片打印：普通证件照导入时增加百度网盘入口{suffix}")
         if "智能证件照" in raw:
-            points.append("照片打印：智能证件照导入时增加百度网盘导入选项")
+            points.append(f"照片打印：智能证件照导入时增加百度网盘入口{suffix}")
         if "照片拼版" in raw:
-            points.append("照片打印：照片拼版导入时增加百度网盘导入选项")
+            points.append(f"照片打印：照片拼版导入时增加百度网盘入口{suffix}")
         if "扫描复印" in raw or "复印扫描" in raw:
-            points.append("扫描复印：复印扫描首页增加百度网盘导入入口")
+            points.append(f"扫描复印：复印扫描首页增加百度网盘入口{suffix}")
         if "埋点" in raw:
             points.append("埋点：百度网盘文档、照片、复印入口点击上报")
-        return points or ["新增百度网盘入口并验证入口展示和跳转"]
+        return points or [f"新增百度网盘入口{suffix}"]
 
     candidates = []
     for line in raw.splitlines():
@@ -1177,7 +1187,10 @@ def _fallback_requirement_analysis(title, module, text_assets, error=""):
     points = _fallback_requirement_points_from_text(title, text_assets)
     visible = []
     if any("百度网盘" in point for point in points):
-        visible = ["百度网盘入口可见", "点击入口后进入百度网盘导入、授权或登录提示流程"]
+        if any(any(word in point for word in ("点击后", "跳转", "授权", "登录", "文件选择", "导入文件", "埋点")) for point in points):
+            visible = ["百度网盘入口可见", "点击入口后进入百度网盘导入、授权或登录提示流程"]
+        else:
+            visible = ["百度网盘入口可见", "百度网盘入口与同级导入入口并列展示"]
     else:
         visible = [f"{_fallback_feature_from_point(point)}相关页面可见" for point in points[:6]]
     return normalize_requirement_analysis_result({
@@ -1331,6 +1344,23 @@ def _baidu_netdisk_requirement_points(analysis):
     blob = _analysis_text_blob(analysis)
     if "百度网盘" not in blob:
         return []
+    display_only = any(word in blob for word in (
+        "入口展示", "入口显示", "入口可见", "可见性", "入口位置", "位置校验",
+        "同级", "并列", "同级并列", "入口排序", "入口布局",
+    ))
+    click_flow = any(word in blob for word in (
+        "点击触发", "点击后", "跳转", "授权", "登录", "文件选择", "导入文件",
+        "进入百度网盘", "百度网盘导入", "WebView", "SDK",
+    ))
+    if display_only and not click_flow:
+        return [
+            ("文档打印", "文档打印首页展示百度网盘入口，并校验入口位于本地文档之后及同级并列关系。"),
+            ("普通照片打印", "普通照片打印导入方式中展示百度网盘入口，并校验入口位置及同级并列关系。"),
+            ("普通证件照", "普通证件照导入方式中展示百度网盘入口，并校验入口位置及同级并列关系。"),
+            ("智能证件照", "智能证件照导入方式中展示百度网盘入口，并校验入口位置及同级并列关系。"),
+            ("照片拼版", "照片拼版导入方式中展示百度网盘入口，并校验入口位置及同级并列关系。"),
+            ("扫描复印", "复印扫描首页展示百度网盘入口，并校验入口位置及同级并列关系。"),
+        ]
     return [
         ("文档打印", "文档打印首页展示百度网盘入口，入口位于本地文档之后，点击后进入百度网盘导入或授权流程。"),
         ("普通照片打印", "普通照片打印导入方式中展示百度网盘入口，点击后进入百度网盘导入或授权流程。"),
@@ -1339,6 +1369,15 @@ def _baidu_netdisk_requirement_points(analysis):
         ("照片拼版", "照片拼版导入方式中展示百度网盘入口，点击后进入百度网盘导入或授权流程。"),
         ("扫描复印", "复印扫描首页展示百度网盘入口，点击后进入百度网盘导入或授权流程。"),
     ]
+
+
+def _baidu_netdisk_point_is_display_only(point):
+    text = str(point or "")
+    if "百度网盘" not in text:
+        return False
+    display_terms = ("入口展示", "入口显示", "入口可见", "可见性", "入口位置", "位置", "同级", "并列", "排序", "布局")
+    external_terms = ("点击后", "跳转", "授权", "登录", "文件选择", "导入文件", "进入百度网盘", "WebView", "SDK")
+    return any(term in text for term in display_terms) and not any(term in text for term in external_terms)
 
 
 def _fallback_scenarios_from_analysis(title, module, analysis, targets=None, error=""):
@@ -1361,13 +1400,21 @@ def _fallback_scenarios_from_analysis(title, module, analysis, targets=None, err
     ))
     scenarios = []
     for index, (feature, point) in enumerate(explicit_points[:max_scenarios], start=1):
-        scenario_name = f"{feature}百度网盘入口展示与点击验证" if "百度网盘" in str(point) else f"{feature}主流程验证"
+        if _baidu_netdisk_point_is_display_only(point):
+            scenario_name = f"{feature}百度网盘入口可见性及同级并列校验"
+            business_path = f"进入{feature} -> 查看目标入口 -> 校验入口位置和同级并列关系"
+        elif "百度网盘" in str(point):
+            scenario_name = f"{feature}百度网盘入口展示与点击验证"
+            business_path = f"进入{feature} -> 查看目标入口 -> 点击入口 -> 校验进入后续流程"
+        else:
+            scenario_name = f"{feature}主流程验证"
+            business_path = f"进入{feature} -> 完成需求主流程"
         scenarios.append({
             "feature": feature,
             "scenario": scenario_name,
             "type": "正常流程",
             "requirement_point": point,
-            "business_path": f"进入{feature} -> 查看目标入口 -> 点击入口 -> 校验进入后续流程",
+            "business_path": business_path,
             "priority": "P0" if index <= 3 else "P1",
             "automation_feasible": True,
             "source": "local_fallback_after_ai_timeout",
@@ -1392,6 +1439,16 @@ def _fallback_steps_for_scenario(scenario):
     point = str((scenario or {}).get("requirement_point") or "")
     if "百度网盘" in point:
         feature_text = str(feature or "")
+        if _baidu_netdisk_point_is_display_only(point):
+            return [
+                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                "如当前不在首页，返回或点击底部「首页」回到首页",
+                f"进入「{feature_text or feature}」相关页面或入口区域",
+                "等待目标入口区域加载完成，页面展示同级导入入口",
+                "等待「百度网盘」入口可见，必要时横向滑动同级入口区域一次",
+            ], [
+                f"{feature_text or feature}页面展示「百度网盘」入口，且入口与同级导入方式并列显示"
+            ]
         if "文档打印" in feature_text:
             return [
                 "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
@@ -1994,6 +2051,293 @@ def build_cases_payload_from_skills(title, module, text_assets, mode="full", mod
 
 
 # ---------------------------------------------------------------------------
+# AI decision skills used before YAML generation
+# ---------------------------------------------------------------------------
+
+def _model_config_trace(model_config):
+    model_config = model_config if isinstance(model_config, dict) else {}
+    return {
+        "providerId": model_config.get("providerId") or model_config.get("provider") or "",
+        "model": model_config.get("model") or model_config.get("modelName") or "",
+        "strict": bool(AI_SKILLS_STRICT_MODEL),
+    }
+
+
+def _baseline_candidate_id(item, index=0):
+    if not isinstance(item, dict):
+        return f"base_{index + 1:03d}"
+    raw = first_non_empty(item.get("id"), item.get("case_id"), item.get("file"), item.get("path"), item.get("title"))
+    return clean_id(raw, f"base_{index + 1:03d}")
+
+
+def _compact_baseline_candidate(item, index=0):
+    item = item if isinstance(item, dict) else {}
+    snippet = str(item.get("snippet") or "")
+    return {
+        "id": _baseline_candidate_id(item, index),
+        "title": item.get("title") or item.get("file") or "",
+        "module": item.get("module") or "",
+        "file": item.get("file") or "",
+        "path": item.get("path") or item.get("baseline_path") or "",
+        "score": safe_int(item.get("score"), 0),
+        "matched_terms": item.get("matched_terms") or [],
+        "actions": item.get("actions") or [],
+        "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
+        "lastRunStatus": item.get("lastRunStatus") or "",
+        "failureRate": item.get("failureRate") or 0,
+        "snippet": snippet[:1600],
+    }
+
+
+def call_skill_baseline_reranker(title, module, query_text, candidates, model_config=None, limit=3):
+    """Use AI to choose the most relevant cached baseline examples, with local fallback."""
+    candidates = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(candidates or []) if isinstance(item, dict)]
+    limit = max(1, min(3, safe_int(limit, 3)))
+    local_selected_ids = {item["id"] for item in candidates[:limit]}
+    trace = {
+        "enabled": True,
+        "candidate_count": len(candidates),
+        "selected_count": min(limit, len(candidates)),
+        "fallback": False,
+        **_model_config_trace(model_config),
+    }
+    if not candidates:
+        trace.update({"selected_count": 0, "fallback": True, "error": "no_candidates"})
+        return {"selected": [], "trace": trace, "review": {"selection_reason": "没有相似基线候选"}}
+    request = {
+        "title": title,
+        "module": module,
+        "queryText": str(query_text or "")[:6000],
+        "limit": limit,
+        "candidates": candidates[:20],
+        "rules": {
+            "choose_from_candidates_only": True,
+            "max_selected": limit,
+            "avoid_unrelated_external_flow": True,
+            "fallback_when_irrelevant": True,
+        },
+    }
+    try:
+        result = run_ai_skill(
+            "baseline_reranker",
+            request,
+            timeout=AI_BASELINE_RERANKER_TIMEOUT_SECONDS,
+            temperature=0.0,
+            respect_global_timeout=False,
+            retry_count=0,
+            model_config=model_config,
+        )
+        selected_rows = []
+        id_to_candidate = {item["id"]: item for item in candidates}
+        for selected in result.get("selected") or []:
+            if not isinstance(selected, dict):
+                continue
+            selected_id = clean_id(selected.get("id") or selected.get("candidateId") or "", "")
+            if not selected_id or selected_id not in id_to_candidate:
+                continue
+            row = dict(id_to_candidate[selected_id])
+            row["ai_selected_reason"] = selected.get("reason") or ""
+            row["ai_confidence"] = selected.get("confidence")
+            selected_rows.append(row)
+            if len(selected_rows) >= limit:
+                break
+        if not selected_rows:
+            selected_rows = [dict(item) for item in candidates if item["id"] in local_selected_ids][:limit]
+            trace["fallback"] = True
+            trace["error"] = "ai_selected_none_or_invalid"
+        trace["selected_count"] = len(selected_rows)
+        return {"selected": selected_rows, "trace": trace, "review": result.get("review") or {}}
+    except Exception as exc:
+        selected_rows = [dict(item) for item in candidates[:limit]]
+        trace.update({"fallback": True, "selected_count": len(selected_rows), "error": str(exc)})
+        return {"selected": selected_rows, "trace": trace, "review": {"selection_reason": "AI 选择失败，回退本地 TopN"}}
+
+
+def _clamp_scope_size(value, fallback=3):
+    raw = safe_int(value, fallback)
+    if raw <= 3:
+        return 3, "small"
+    if raw <= 5:
+        return 5, "medium"
+    return 8, "large"
+
+
+def call_skill_execution_scope_planner(title, module, text_assets, selected_baselines, model_config=None):
+    """Let AI suggest generation scope, while platform clamps to 3/5/8 and smoke<=3."""
+    local_targets = generation_volume_targets({"requirement_points": normalize_text_list(text_assets)}, mode="full")
+    fallback_count = safe_int(local_targets.get("target_automation_cases"), 3)
+    target_count, size = _clamp_scope_size(fallback_count, 3)
+    trace = {
+        "enabled": True,
+        "fallback": False,
+        **_model_config_trace(model_config),
+    }
+    request = {
+        "title": title,
+        "module": module,
+        "requirementText": "\n\n".join(normalize_text_list(text_assets))[:8000],
+        "selectedBaselines": [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])],
+        "platformLimits": {
+            "caseCounts": [3, 5, 8],
+            "maxSmokeCount": 3,
+            "continueThreshold": 0.5,
+        },
+    }
+    try:
+        result = run_ai_skill(
+            "execution_scope_planner",
+            request,
+            timeout=AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS,
+            temperature=0.0,
+            respect_global_timeout=False,
+            retry_count=0,
+            model_config=model_config,
+        )
+        target_count, size = _clamp_scope_size(result.get("targetCaseCount"), target_count)
+        smoke_count = max(1, min(3, safe_int(result.get("smokeCount"), min(3, target_count))))
+        plan = {
+            "size": size if str(result.get("size") or "").lower() not in ("small", "medium", "large") else str(result.get("size")).lower(),
+            "targetCaseCount": target_count,
+            "smokeCount": smoke_count,
+            "continueThreshold": 0.5,
+            "reason": result.get("reason") or "AI 根据需求规模和相似基线规划生成范围",
+            "businessFlow": normalize_text_list(result.get("businessFlow") or result.get("business_flow"))[:8],
+            "trace": {**trace, "targetCaseCount": target_count, "smokeCount": smoke_count},
+        }
+        return plan
+    except Exception as exc:
+        trace.update({"fallback": True, "error": str(exc)})
+        return {
+            "size": size,
+            "targetCaseCount": target_count,
+            "smokeCount": min(3, target_count),
+            "continueThreshold": 0.5,
+            "reason": "AI 范围规划失败，回退平台 3/5/8 规则",
+            "businessFlow": [],
+            "trace": trace,
+        }
+
+
+def _compact_case_for_plan(case, index=0):
+    case = case if isinstance(case, dict) else {}
+    return {
+        "case_id": case.get("case_id") or case.get("id") or f"TC-{index + 1:03d}",
+        "title": case.get("title") or case.get("case_name") or "",
+        "priority": case_priority(case),
+        "smoke": bool(is_smoke_case(case)),
+        "scenario": case.get("scenario") or "",
+        "coverage": case.get("coverage") or case.get("requirement_point") or "",
+        "steps": normalize_text_list(case.get("steps"))[:8],
+        "assertions": normalize_text_list(case.get("assertions"))[:4],
+    }
+
+
+def call_skill_executable_yaml_planner(title, module, payload, selected_baselines, scope_plan, model_config=None):
+    """Plan executable cases before YAML conversion. Fallback preserves current payload."""
+    normalized = normalize_cases_payload(payload)
+    candidates = [_compact_case_for_plan(case, idx) for idx, case in enumerate(normalized.get("cases") or [])]
+    trace = {
+        "enabled": True,
+        "fallback": False,
+        "candidate_count": len(candidates),
+        **_model_config_trace(model_config),
+    }
+    if not candidates:
+        trace.update({"fallback": True, "error": "no_cases"})
+        return {"cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [], "trace": trace}
+    request = {
+        "title": title,
+        "module": module,
+        "analysis": normalized.get("analysis") or {},
+        "scenarios": normalized.get("scenarios") or [],
+        "cases": candidates,
+        "manual_cases": normalized.get("manual_cases") or [],
+        "selectedBaselines": [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])],
+        "scopePlan": scope_plan or {},
+    }
+    try:
+        result = run_ai_skill(
+            "executable_yaml_planner",
+            request,
+            timeout=AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS,
+            temperature=0.0,
+            respect_global_timeout=False,
+            retry_count=0,
+            model_config=model_config,
+        )
+        cases = [item for item in (result.get("cases") or []) if isinstance(item, dict)]
+        trace.update({
+            "case_count": len(cases),
+            "needs_review_count": len(result.get("needs_review_cases") or []),
+            "draft_count": len(result.get("draft_cases") or []),
+            "manual_count": len(result.get("manual_cases") or []),
+            "smoke_count": len([item for item in cases if str(item.get("batch") or "").lower() == "smoke"]),
+        })
+        return {
+            "cases": cases,
+            "needs_review_cases": result.get("needs_review_cases") or [],
+            "draft_cases": result.get("draft_cases") or [],
+            "manual_cases": result.get("manual_cases") or [],
+            "review": result.get("review") or {},
+            "trace": trace,
+        }
+    except Exception as exc:
+        trace.update({"fallback": True, "error": str(exc)})
+        return {"cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [], "trace": trace}
+
+
+def apply_executable_yaml_plan_to_payload(payload, plan):
+    """Attach AI planning metadata to cases without deleting existing generated content."""
+    normalized = normalize_cases_payload(payload)
+    plan_cases = [item for item in ((plan or {}).get("cases") or []) if isinstance(item, dict)]
+    if not plan_cases:
+        return normalized
+    by_title = {str(item.get("title") or "").strip(): item for item in plan_cases if str(item.get("title") or "").strip()}
+    by_case_id = {str(item.get("case_id") or item.get("caseId") or "").strip(): item for item in plan_cases if str(item.get("case_id") or item.get("caseId") or "").strip()}
+    targets = generation_volume_targets(normalized.get("analysis") or {}, mode="full")
+    smoke_limit = max(1, min(3, safe_int((plan or {}).get("scopePlan", {}).get("smokeCount"), safe_int(targets.get("smoke_cases"), 3))))
+    smoke_used = 0
+    for case in normalized.get("cases") or []:
+        case_id = str(case.get("case_id") or case.get("id") or "").strip()
+        title = str(case.get("title") or "").strip()
+        item = by_case_id.get(case_id) or by_title.get(title)
+        if not item:
+            continue
+        case["ai_case_plan"] = {
+            "baselineId": item.get("baselineId") or "",
+            "precondition": item.get("precondition") or "",
+            "flow": normalize_text_list(item.get("flow"))[:8],
+            "assertionTarget": item.get("assertionTarget") or "",
+            "executableReason": item.get("executableReason") or "",
+            "batch": item.get("batch") or "",
+        }
+        if item.get("precondition") and not case.get("preconditions"):
+            case["preconditions"] = [str(item.get("precondition"))]
+        if item.get("assertionTarget") and not normalize_text_list(case.get("assertions")):
+            case["assertions"] = [str(item.get("assertionTarget"))]
+        if item.get("executableReason") and not case.get("automation_reason"):
+            case["automation_reason"] = item.get("executableReason")
+        can_smoke = bool(item.get("baselineId") and item.get("precondition") and item.get("assertionTarget"))
+        if str(item.get("batch") or "").lower() == "smoke" and can_smoke and smoke_used < smoke_limit:
+            case["smoke"] = True
+            flags = normalize_text_list(case.get("flag") or case.get("flags"))
+            if "冒烟" not in flags:
+                flags.append("冒烟")
+            case["flag"] = flags
+            smoke_used += 1
+    review = normalized.setdefault("review", {})
+    review["executable_yaml_plan"] = {
+        "case_count": len(plan_cases),
+        "needs_review_count": len((plan or {}).get("needs_review_cases") or []),
+        "draft_count": len((plan or {}).get("draft_cases") or []),
+        "manual_count": len((plan or {}).get("manual_cases") or []),
+        "smoke_count": smoke_used,
+        "review": (plan or {}).get("review") or {},
+    }
+    return normalized
+
+
+# ---------------------------------------------------------------------------
 # AI Skill: visual_grounder
 # ---------------------------------------------------------------------------
 
@@ -2039,7 +2383,7 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
 # AI Skill: coverage_auditor
 # ---------------------------------------------------------------------------
 
-def call_coverage_auditor_skill(title, module, payload, local_audit=None):
+def call_coverage_auditor_skill(title, module, payload, local_audit=None, model_config=None):
     """调用 AI skill: coverage_auditor。"""
     normalized = normalize_cases_payload(payload)
     targets = generation_volume_targets(normalized.get("analysis") or {})
@@ -2064,6 +2408,7 @@ def call_coverage_auditor_skill(title, module, payload, local_audit=None):
         temperature=0.1,
         respect_global_timeout=False,
         retry_count=0,
+        model_config=model_config,
     )
     result.setdefault("missing_case_points", result.get("missing_requirement_points") or [])
     result.setdefault("missing_scenario_points", [])
@@ -2071,6 +2416,7 @@ def call_coverage_auditor_skill(title, module, payload, local_audit=None):
     result.setdefault("duplicate_cases", [])
     result.setdefault("questions", [])
     result["coverage_auditor_skill"] = "coverage_auditor.v1"
+    result["model_trace"] = _model_config_trace(model_config)
     result["ok"] = bool(result.get("ok")) or not (
         result.get("missing_requirement_points")
         or result.get("missing_case_points")
@@ -2132,7 +2478,7 @@ def enforce_min_case_count_audit(audit, targets):
     return audit
 
 
-def improve_case_coverage(title, module, payload, max_rounds=1, progress_callback=None, time_budget_seconds=None):
+def improve_case_coverage(title, module, payload, max_rounds=1, progress_callback=None, time_budget_seconds=None, model_config=None):
     """改善用例覆盖度。"""
     current = normalize_cases_payload(payload)
     started_at = time.time()
@@ -2170,7 +2516,7 @@ def improve_case_coverage(title, module, payload, max_rounds=1, progress_callbac
             return current, local_audit
         try:
             emit(f"覆盖率审查：调用 coverage_auditor，第 {round_index + 1}/{max_rounds} 轮，剩余预算约 {max(0, budget_left())} 秒", progress=73)
-            audit = call_coverage_auditor_skill(title, module, current, local_audit)
+            audit = call_coverage_auditor_skill(title, module, current, local_audit, model_config=model_config)
             audit = enforce_min_case_count_audit(audit, targets)
             review = current.setdefault("review", {})
             review["coverage_audit"] = audit
@@ -2200,6 +2546,7 @@ def improve_case_coverage(title, module, payload, max_rounds=1, progress_callbac
             retry_count=0,
         )
         current = normalize_case_json_from_model(content)
+        current.setdefault("review", {})["coverage_repair_model_source"] = "dashscope_direct"
         current["title"] = current.get("title") or title
         current["module"] = current.get("module") or module
         validate_ai_skill_output("cases_payload", current)
@@ -2246,7 +2593,7 @@ def build_case_generation_prompt(title, module, text_assets):
 10. assertions 必须表达"业务意图 + UI 可见信号"，避免抽象断言，也避免过严断言。除非需求明确要求完全一致，否则不要断言动态列表第几条、动态推荐内容、数量、时间、百分比、随机资源名，也不要写"与设计稿一致/模块排列顺序一致"这类 Runner 无法独立判断的断言。
 10.1 每条自动化 case 的 steps 建议 3-6 条，assertions 建议 1-3 条；不要把多个业务分支塞进同一条 YAML。
 10.2 智小白 3D AI建模当前入口以真机为准：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的"文字输入"入口；标牌/趣味印章等横向入口必须包含横向滑动步骤；"大家都在做"、骨架屏、缩放控件、固定推荐内容等动态或历史稿信号不得作为自动化必过断言。
-11. 覆盖主流程和当前状态下能自然到达的分支。不要只生成 1 条主流程；每个需求功能点通常至少生成 2-4 条自动化用例：入口可达、页面展示、关键交互、状态/空态/异常提示中可稳定执行的部分。
+11. 当前平台采用可执行优先策略：小需求自动化目标 3 条，中需求 5 条，大需求最多 8 条；不要为了数量重复路径或扩展无关页面。其他覆盖点进入 manual_cases 或 draft，不要强行自动化。
 12. 不要输出 YAML。
 
 输出格式：
@@ -2564,6 +2911,10 @@ __all__ = [
     "select_smoke_cases_for_payload",
     "apply_smoke_selection_to_cases",
     "build_cases_payload_from_skills",
+    "call_skill_baseline_reranker",
+    "call_skill_execution_scope_planner",
+    "call_skill_executable_yaml_planner",
+    "apply_executable_yaml_plan_to_payload",
     # Visual grounder
     "call_visual_grounder_skill",
     # Coverage auditor

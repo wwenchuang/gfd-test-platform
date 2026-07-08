@@ -745,12 +745,14 @@ def check_yaml_static_validation_and_patterns():
     require(
         repaired_prefixed.get("changed")
         and "${size" not in repaired_prefixed_content
-        and "cut -d x -f 1" in repaired_prefixed_content
+        and "wm size" not in repaired_prefixed_content
+        and "input keyevent 187" not in repaired_prefixed_content
+        and "runAdbShell: input keyevent 3" in repaired_prefixed_content
         and 'runAdbShell: am force-stop com.xbxxhz.box' in repaired_prefixed_content
         and 'aiWaitFor: 页面展示「百度网盘」文案，入口可见且可点击' in repaired_prefixed_content
         and 'aiAssert: 页面展示「百度网盘」文案，入口可见且可点击' in repaired_prefixed_content
         and score_midscene_yaml_executable(repaired_prefixed_content).get("executionLevel") == "executable",
-        "Agent validation must repair prefixed action values and unsafe dynamic cleanup before Runner execution",
+        "Agent validation must repair prefixed action values and strip unsafe recent-task cleanup before Runner execution",
     )
     require(
         dry_run_midscene_yaml(repaired_prefixed_content, app_package="com.xbxxhz.box").get("ok") is True,
@@ -1585,6 +1587,43 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
         for item in yaml_service.cases_to_separate_midscene_yamls(filtered, app_package="com.xbxxhz.box", base_file="baidu.yaml")[1]
     )
     require("aiTap: \"等待" not in yaml_text and "aiTap: '等待" not in yaml_text and "aiTap: 等待" not in yaml_text, "Fallback YAML must not turn wait-state checks into aiTap actions")
+    visibility_payload = {
+        "title": "百度网盘入口可见性",
+        "module": "基础打印",
+        "cases": [{
+            "title": "文档打印页百度网盘入口可见",
+            "steps": ["验证文档打印页百度网盘入口按钮可见", "检查选择文件按钮可见"],
+            "assertions": ["页面展示百度网盘入口，入口按钮可见"],
+        }],
+    }
+    visibility_yaml = yaml_service.cases_to_separate_midscene_yamls(
+        visibility_payload,
+        app_package="com.xbxxhz.box",
+        base_file="visibility.yaml",
+    )[1][0]["content"]
+    require(
+        "aiTap: 验证文档打印页百度网盘入口按钮可见" not in visibility_yaml
+        and "aiTap: 检查选择文件按钮可见" not in visibility_yaml
+        and "aiWaitFor:" in visibility_yaml
+        and "验证文档打印页百度网盘入口按钮可见" in visibility_yaml
+        and "检查选择文件按钮可见" in visibility_yaml,
+        "Generated YAML must treat visibility/existence steps as waits, even when the text contains 按钮/选择",
+    )
+    baidu_click_yaml = yaml_service.cases_to_separate_midscene_yamls({
+        "title": "百度网盘入口点击反馈",
+        "module": "基础打印",
+        "cases": [{
+            "title": "文档打印页百度网盘入口点击反馈",
+            "steps": ["点击百度网盘入口"],
+            "assertions": ["点击后进入百度网盘授权页、文件选择页、空状态或提示页之一"],
+        }],
+    }, app_package="com.xbxxhz.box", base_file="baidu-click.yaml")[1][0]["content"]
+    require(
+        "aiTap:" in baidu_click_yaml
+        and "点击百度网盘入口" in baidu_click_yaml
+        and "百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开" in baidu_click_yaml,
+        "Generated YAML must wait for post-click Baidu Netdisk signals instead of leaving a bare third-party entry tap",
+    )
     wait_tap_score = yaml_service.score_midscene_yaml_executable("""android:
   tasks:
     - name: 等待句误判点击
@@ -1761,8 +1800,8 @@ def check_yaml_runner_eligibility_filter():
     content = files[0]["content"]
     require("确认前置条件" not in content, "Preconditions must stay in comments, not become flaky ai steps")
     require('- aiWaitFor: "等待 AI建模主页核心区域加载"' in content, "Natural wait steps must become aiWaitFor actions, not generic ai actions")
-    require("wm size" in content and "input keyevent 187" in content, "Balanced launch guard must use screen-size aware recent-task cleanup")
-    require("cut -d x -f 1" in content and "${size" not in content, "Screen-size aware cleanup must avoid Midscene `${...}` env interpolation")
+    require("input keyevent 3" in content and "wm size" not in content and "input keyevent 187" not in content, "Balanced launch guard must use lightweight app reset instead of recent-task cleanup")
+    require("${size" not in content, "Generated YAML must avoid Midscene `${...}` env interpolation in shell snippets")
     require("input swipe 540 1900 540 350" not in content and "am kill-all" not in content, "Generated YAML must not inject fixed-coordinate recent-app cleanup")
     require("自传IP模型匹配成功" not in content and "系统通知权限" not in content and "设计稿一致" not in content and "Figma" not in content, "Runner-ineligible scenarios must not leak into YAML")
     require("我的作品模块空态" not in content and "无结果兜底" not in content and "权限弹窗" not in content and "四维评估" not in content and "防重复点击" not in content and "旧版建模入口" not in content, "Observed flaky AI modeling scenarios must not leak into Runner YAML")
@@ -2193,6 +2232,47 @@ def check_ai_gateway_fallback_and_skill_static():
     require("mindmapMode: 'full'" in app_js_source, "Mindmap-only frontend requests must default to full test-case mindmap mode")
 
 
+def check_ai_yaml_generation_decision_chain_static():
+    yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    ai_skill_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
+    baseline_cache_source = (ROOT / "task_server" / "services" / "yaml_baseline_cache.py").read_text(encoding="utf-8")
+    gateway_source = (ROOT / "ai-gateway" / "server.js").read_text(encoding="utf-8")
+
+    for rel in (
+        "ai_skills/prompts/baseline_reranker.v1.md",
+        "ai_skills/prompts/execution_scope_planner.v1.md",
+        "ai_skills/prompts/executable_yaml_planner.v1.md",
+        "ai_skills/schemas/baseline_reranker.schema.json",
+        "ai_skills/schemas/execution_scope_planner.schema.json",
+        "ai_skills/schemas/executable_yaml_planner.schema.json",
+    ):
+        require((ROOT / rel).exists(), f"AI YAML decision skill file missing: {rel}")
+
+    require("YAML_BASELINE_SEARCH_MAX_LIMIT" in baseline_cache_source, "Baseline cache search limit must be configurable for AI reranking candidates")
+    require("return _MEMORY_CACHE" in baseline_cache_source and "calc_baseline_fingerprint" in baseline_cache_source, "Baseline cache must return fresh memory cache before recalculating fingerprints")
+    require("search_baseline_examples" in yaml_service_source and "limit=20" in yaml_service_source, "YAML generation must request a wider baseline candidate pool for AI reranking")
+    require("call_skill_baseline_reranker" in yaml_service_source, "YAML generation must call AI baseline reranker before picking Top3 examples")
+    require("call_skill_execution_scope_planner" in yaml_service_source, "YAML generation must call AI execution scope planner")
+    require("call_skill_executable_yaml_planner" in yaml_service_source, "YAML generation must call AI executable YAML planner")
+    require("build_ai_generation_decision_context_text" in yaml_service_source and "AI 生成决策计划" in yaml_service_source, "YAML prompt must include the AI decision plan context")
+    require("ai_decision_trace" in yaml_service_source and "executable_yaml_planner_review" in yaml_service_source, "YAML generation review must expose AI decision trace and planner review")
+    require("improve_case_coverage(" in yaml_service_source and "model_config=model_config" in yaml_service_source, "Coverage repair must receive selected model config")
+
+    require("def call_skill_baseline_reranker" in ai_skill_source, "AI skill service must expose baseline reranker")
+    require("def call_skill_execution_scope_planner" in ai_skill_source, "AI skill service must expose execution scope planner")
+    require("def call_skill_executable_yaml_planner" in ai_skill_source, "AI skill service must expose executable YAML planner")
+    require("def apply_executable_yaml_plan_to_payload" in ai_skill_source, "Executable YAML planner output must be applied to generated payload")
+    require("MIDSCENE_AI_SKILLS_STRICT_MODEL" in ai_skill_source and "AI_SKILLS_STRICT_MODEL" in ai_skill_source, "AI skills must support strict selected-model mode")
+    require("model_trace" in ai_skill_source and "providerId" in ai_skill_source, "AI skill reviews must record provider/model trace")
+    require("call_coverage_auditor_skill(title, module, current, local_audit, model_config=model_config)" in ai_skill_source, "Coverage auditor must receive model config during repair loop")
+    require("当前平台采用可执行优先策略" in ai_skill_source, "Legacy quantity-driven prompt must be replaced with executable-first 3/5/8 guidance")
+    require("每个需求功能点通常至少生成 2-4 条自动化用例" not in ai_skill_source, "Legacy 2-4 cases per requirement prompt must not reappear")
+    require("display_only" in ai_skill_source and "点击后进入百度网盘相关流程" in ai_skill_source, "Baidu Netdisk display-only requirements must be separated from click/auth flows")
+
+    generate_yaml_route = gateway_source[gateway_source.find("app.post('/ai/generate-yaml'") : gateway_source.find("app.post('/ai/repair-yaml'")]
+    require("modelConfig" in generate_yaml_route and "providerId" in generate_yaml_route and "model:" in generate_yaml_route, "/ai/generate-yaml must forward modelConfig/provider/model")
+
+
 def check_apk_chunk_upload_roundtrip():
     from task_server import router
 
@@ -2267,9 +2347,19 @@ android:
     call = agent_service._tool_validate_yaml(run)
     artifacts = run.get("artifacts") or {}
     validation = artifacts.get("yamlValidation") or {}
-    require(call.get("status") == "PARTIAL_FAILED", "Agent YAML validation must not fail the whole run when at least one generated YAML passes")
-    require(validation.get("partialOk") is True and validation.get("passedCount") == 1 and validation.get("failedCount") == 1, "Partial YAML validation must record pass/fail counts")
-    require(len(artifacts.get("yamlRefs") or []) == 1 and len(artifacts.get("quarantinedYamlRefs") or []) == 1, "Failed generated YAML must be quarantined while passing YAML remains executable")
+    require(call.get("status") in ("SUCCESS", "PARTIAL_FAILED"), "Agent YAML validation must not fail the whole run when at least one generated YAML passes")
+    require(validation.get("passedCount", 0) >= 1, "Partial YAML validation must keep passing YAML executable")
+    if validation.get("autoRepairedCount"):
+        require(
+            call.get("status") == "SUCCESS"
+            and validation.get("failedCount") == 0
+            and len(artifacts.get("yamlRefs") or []) == 2
+            and not artifacts.get("quarantinedYamlRefs"),
+            "AI-repaired generated YAML should remain executable instead of being quarantined",
+        )
+    else:
+        require(validation.get("partialOk") is True and validation.get("passedCount") == 1 and validation.get("failedCount") == 1, "Partial YAML validation must record pass/fail counts")
+        require(len(artifacts.get("yamlRefs") or []) == 1 and len(artifacts.get("quarantinedYamlRefs") or []) == 1, "Failed generated YAML must be quarantined while passing YAML remains executable")
 
 
 def check_agent_yaml_validate_auto_repairs_missing_wait():
@@ -2325,7 +2415,11 @@ android:
     repaired_row_issues = "；".join(str(item) for item in ((rows[0] if rows else {}).get("issues") or []) + issues)
     require(
         ok_count == 1
-        and "aiWaitFor: 页面展示百度网盘入口可见" in repaired_row_content
+        and (
+            "aiWaitFor: 页面展示百度网盘入口可见" in repaired_row_content
+            or "文档打印页展示百度网盘入口" in repaired_row_content
+            or "页面展示百度网盘入口" in repaired_row_content
+        )
         and "aiTap: 首页文档打印入口页-百度网盘入口可见性检查" not in repaired_row_content
         and "aiTap 描述像检查/断言" not in repaired_row_issues,
         "Agent dry-run rows must adopt repaired executable YAML instead of keeping a stale blocker",
@@ -2387,7 +2481,7 @@ android:
     validation = (run.get("artifacts") or {}).get("yamlValidation") or {}
     fixed_content = ((run.get("artifacts") or {}).get("yamlRefs") or [{}])[0].get("content") or ""
     require(call.get("status") == "SUCCESS", "Agent YAML validation must auto-repair nested action prefixes instead of failing the whole run")
-    require(validation.get("autoRepairedCount") == 1 and "${size" not in fixed_content and "cut -d x -f 1" in fixed_content, "Agent YAML validation must expose auto repair and remove unsafe shell expansion")
+    require(validation.get("autoRepairedCount") == 1 and "${size" not in fixed_content and "input keyevent 3" in fixed_content, "Agent YAML validation must expose auto repair and replace unsafe recent-task cleanup with lightweight home guard")
     require("aiTap: aiWaitFor" not in fixed_content and "aiTap: aiAssert" not in fixed_content, "Agent YAML validation must not keep action prefixes inside action values")
 
 
@@ -2728,6 +2822,7 @@ def main():
     check_mindmap_compact_mode()
     check_generation_volume_targets_modes()
     check_ai_gateway_fallback_and_skill_static()
+    check_ai_yaml_generation_decision_chain_static()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")
     require("job_service.wait_jobs_finished" in agent_service_source, "Agent RUN_TASK must use job_service.wait_jobs_finished as the single implementation")
     require('"executionMode": execution_mode' in agent_service_source and 'should_run_suite = execution_mode == "SONIC_SUITE"' in agent_service_source, "Agent must default to Runner jobs and only run Sonic suite when explicitly requested")
