@@ -4361,6 +4361,28 @@ def _agent_ref_needs_local_execution_repair(scored_ref):
     ))
 
 
+def _agent_executable_gate_reason_lines(scored_ref, dry_compact=None, extra_reasons=None):
+    score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
+    lines = []
+    lines.extend(str(item) for item in (score.get("reasons") or []) if str(item or "").strip())
+    if isinstance(dry_compact, dict):
+        lines.extend(str(item) for item in (dry_compact.get("errors") or []) if str(item or "").strip())
+        lines.extend(str(item) for item in (dry_compact.get("warnings") or []) if str(item or "").strip())
+    lines.extend(str(item) for item in (extra_reasons or []) if str(item or "").strip())
+    return lines[:24]
+
+
+def _agent_ref_needs_ai_execution_rewrite(scored_ref, dry_compact=None, extra_reasons=None):
+    score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
+    level = score.get("executionLevel") or scored_ref.get("executionLevel") or ""
+    dry_ok = True if dry_compact is None else bool(dry_compact.get("ok"))
+    if level == "executable" and dry_ok:
+        return False
+    return should_ai_rewrite_for_executable_gate(
+        _agent_executable_gate_reason_lines(scored_ref, dry_compact, extra_reasons)
+    )
+
+
 def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
     """Apply deterministic generated-YAML repair before any execution gate.
 
@@ -4376,11 +4398,14 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
     scored_before = _score_agent_yaml_ref_for_execution(run, ref)
     if not _agent_yaml_ref_is_generated(run, ref):
         return scored_before, None
-    if not _agent_ref_needs_local_execution_repair(scored_before):
-        return scored_before, None
-
     before_score = scored_before.get("executableScore") if isinstance(scored_before.get("executableScore"), dict) else {}
     before_reasons = list(before_score.get("reasons") or [])[:12]
+    if (
+        not _agent_ref_needs_local_execution_repair(scored_before)
+        and not _agent_ref_needs_ai_execution_rewrite(scored_before)
+    ):
+        return scored_before, None
+
     repaired = _agent_repair_missing_interaction_followups(content)
     repaired_ref = {**ref}
     current_content = content
@@ -4418,7 +4443,7 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
     combined_reasons.extend(str(item) for item in (dry_compact.get("warnings") or [])[:6])
     should_ai_rewrite = (
         not auto_repair.get("ok")
-        and should_ai_rewrite_for_executable_gate(combined_reasons)
+        and _agent_ref_needs_ai_execution_rewrite(scored_after, dry_compact, combined_reasons)
     )
     if should_ai_rewrite:
         ai_repair = ai_rewrite_yaml_for_executable_gate(
@@ -4436,7 +4461,7 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
             "changes": list(ai_repair.get("changes") or [])[:12],
             "attempts": list(ai_repair.get("attempts") or [])[:2],
         }
-        if ai_repair.get("changed"):
+        if ai_repair.get("changed") and ai_repair.get("ok"):
             current_content = ai_repair.get("content") or current_content
             _agent_write_repaired_yaml_ref(repaired_ref, current_content)
             scored_after = _score_agent_yaml_ref_for_execution(run, repaired_ref)
@@ -4455,6 +4480,9 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
                 },
                 "dryRun": dry_compact,
             }
+        elif ai_repair.get("changed"):
+            auto_repair["aiRewrite"]["candidateKept"] = False
+            auto_repair["aiRewrite"]["reason"] = "AI 返回了改写内容，但仍未达到 executable，未覆盖当前 YAML。"
 
     if not auto_repair.get("changed") and not auto_repair.get("aiRewrite"):
         return scored_before, None
@@ -4811,55 +4839,6 @@ def _agent_yaml_dry_run_rows(run, refs):
         executable_score = scored_ref.get("executableScore") if isinstance(scored_ref.get("executableScore"), dict) else {}
         dry = _agent_yaml_dry_run_for_ref(run, ref)
         dry_compact = _compact_yaml_dry_run_result(dry)
-        executable_reason_text = "；".join(str(item) for item in (executable_score.get("reasons") or []))
-        needs_repair = (
-            generated_ref
-            and
-            bool(content)
-            and (
-                not dry_compact.get("ok")
-                or "交互动作后缺少等待或终态判断" in executable_reason_text
-                or "aiTap 描述像检查/断言" in executable_reason_text
-                or "条件式 aiTap" in executable_reason_text
-                or "复合 ai 动作" in executable_reason_text
-                or "百度网盘点击后仍" in executable_reason_text
-                or "生成用例动作" in executable_reason_text
-                or "等待链路" in executable_reason_text
-                or "交互和等待组合偏长" in executable_reason_text
-                or "重规划" in executable_reason_text
-                or "动作前缀" in executable_reason_text
-            )
-        )
-        if needs_repair:
-            repaired = _agent_repair_missing_interaction_followups(content)
-            if repaired.get("changed"):
-                repaired_ref = dict(ref)
-                _agent_write_repaired_yaml_ref(repaired_ref, repaired.get("content") or content)
-                strong_check_after = validate_agent_yaml_content(repaired.get("content") or "")
-                scored_ref_after = _score_agent_yaml_ref_for_execution(run, repaired_ref)
-                executable_score_after = scored_ref_after.get("executableScore") if isinstance(scored_ref_after.get("executableScore"), dict) else {}
-                dry_after = _agent_yaml_dry_run_for_ref(run, repaired_ref)
-                dry_compact_after = _compact_yaml_dry_run_result(dry_after)
-                auto_repair = {
-                    "type": "local_yaml_executable_gate_repair",
-                    "changed": True,
-                    "changes": list(repaired.get("changes") or [])[:12],
-                    "ok": bool(dry_compact_after.get("ok")) and executable_score_after.get("executionLevel") == "executable",
-                    "before": {
-                        "dryRunOk": bool(dry_compact.get("ok")),
-                        "executionLevel": executable_score.get("executionLevel"),
-                    },
-                    "after": {
-                        "dryRunOk": bool(dry_compact_after.get("ok")),
-                        "executionLevel": executable_score_after.get("executionLevel"),
-                    },
-                }
-                ref = repaired_ref
-                content = repaired.get("content") or content
-                strong_check = strong_check_after
-                scored_ref = scored_ref_after
-                executable_score = executable_score_after
-                dry_compact = dry_compact_after
         scope_review = scored_ref.get("scopeReview") if isinstance(scored_ref.get("scopeReview"), dict) else {}
         scope_issues = list(scope_review.get("reasons") or []) if scope_review.get("ok") is False else []
         if generated_ref:
@@ -4868,6 +4847,12 @@ def _agent_yaml_dry_run_rows(run, refs):
             ref_issues = scope_issues or dry_compact.get("errors") or strong_check.get("issues") or []
         if generated_ref and not ref_issues and executable_score.get("executionLevel") != "executable":
             ref_issues = list(executable_score.get("reasons") or [])[:5] or [f"执行等级为 {executable_score.get('executionLevel') or 'unknown'}"]
+        if generated_ref and auto_repair and isinstance(auto_repair.get("aiRewrite"), dict) and not auto_repair.get("ok"):
+            ai_rewrite = auto_repair.get("aiRewrite") or {}
+            attempts = ai_rewrite.get("attempts") if isinstance(ai_rewrite.get("attempts"), list) else []
+            last_attempt = attempts[-1] if attempts and isinstance(attempts[-1], dict) else {}
+            ai_error = last_attempt.get("error") or "AI 重写后仍未达到可执行"
+            ref_issues = [f"AI 修复已尝试但未通过：{str(ai_error)[:180]}"] + list(ref_issues or [])
         row_ok = bool(dry_compact.get("ok")) and bool(strong_check.get("ok"))
         if generated_ref:
             row_ok = row_ok and executable_score.get("executionLevel") == "executable"

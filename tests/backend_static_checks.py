@@ -192,6 +192,74 @@ def check_agent_generation_pipeline_normalizes_validation_state():
         agent_service._confirm_agent_yaml_files = original_confirm
 
 
+def check_agent_executable_gate_invokes_ai_rewrite():
+    from task_server.services import agent_service
+
+    original_ai_rewrite = agent_service.ai_rewrite_yaml_for_executable_gate
+    bad_yaml = """android:
+  tasks:
+    - name: 扫描复印首页百度网盘入口可见性及同级并列校验
+      flow:
+        - launch: com.xbxxhz.box
+        - ai: 查找并进入扫描复印首页，判断百度网盘入口是否展示，如果没找到就继续滑动并进入授权页
+"""
+    repaired_yaml = """android:
+  tasks:
+    - name: 扫描复印首页百度网盘入口可见
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，扫描复印入口可见
+        - aiTap: 扫描复印入口
+        - aiWaitFor: 扫描复印首页已打开，百度网盘入口可见
+        - aiAssert: 扫描复印首页展示百度网盘入口
+"""
+    calls = []
+
+    def fake_ai_rewrite(yaml_text, **kwargs):
+        calls.append({"yaml": yaml_text, **kwargs})
+        return {
+            "changed": True,
+            "ok": True,
+            "content": repaired_yaml,
+            "changes": ["拆分复合 ai 动作", "缩短为入口可见性短链路"],
+            "attempts": [{"attempt": 1, "ok": True, "executionLevel": "executable"}],
+        }
+
+    try:
+        agent_service.ai_rewrite_yaml_for_executable_gate = fake_ai_rewrite
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "bad.yaml")
+            Path(path).write_text(bad_yaml, encoding="utf-8")
+            ref = {
+                "type": "file",
+                "source": "generated",
+                "generated": True,
+                "module": "AI_Agent_草稿",
+                "file": "bad.yaml",
+                "path": path,
+                "confirmed": True,
+            }
+            run = {
+                "runId": "agent-ai-rewrite-static",
+                "target": "基础打印新增百度网盘入口",
+                "artifacts": {
+                    "generationPipeline": {"source": "ui_yaml_pipeline"},
+                    "generatedYamlPaths": [path],
+                    "yamlRefs": [dict(ref)],
+                },
+            }
+            repaired_ref, repair = agent_service._agent_repair_yaml_ref_for_execution(run, ref, reason="static_check")
+            written = Path(path).read_text(encoding="utf-8")
+            require(calls, "Generated YAML executable gate must invoke AI rewrite for semantic long-chain failures")
+            require(repair and repair.get("type") == "ai_yaml_executable_gate_rewrite" and repair.get("ok"), "AI rewrite repair must be recorded as successful")
+            require("查找并进入" not in written and "aiWaitFor: 扫描复印首页已打开" in written, "Successful AI rewrite must overwrite generated YAML with short executable flow")
+            repairs = run["artifacts"].get("yamlExecutionRepairs") or []
+            require(repairs and repairs[-1].get("aiRewrite", {}).get("ok"), "Agent artifacts must expose AI rewrite attempts for generated YAML repair")
+            require(repaired_ref.get("executableScore", {}).get("executionLevel") == "executable", "Repaired ref must be rescored as executable")
+    finally:
+        agent_service.ai_rewrite_yaml_for_executable_gate = original_ai_rewrite
+
+
 def check_midscene_yaml_validation_is_mapping():
     from task_server.services import yaml_service
 
@@ -2538,6 +2606,7 @@ def main():
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
+    check_agent_executable_gate_invokes_ai_rewrite()
     check_midscene_yaml_validation_is_mapping()
     check_yaml_static_validation_and_patterns()
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
