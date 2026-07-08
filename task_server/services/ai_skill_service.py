@@ -1432,16 +1432,69 @@ BAIDU_NETDISK_POST_CLICK_ASSERT = (
     "未白屏、未闪退、未停留在原入口页"
 )
 
+FALLBACK_APP_HOME_HINTS = {
+    "com.xbxxhz.box": "底部「首页」、基础打印、文档打印、照片打印或扫描复印等入口",
+    "com.kfb.model": "底部导航、AI建模、图片建模、模型库或课程等入口",
+}
 
-def _fallback_steps_for_scenario(scenario):
+
+def _known_task_apps():
+    try:
+        from task_server.services import sonic_service
+        return sonic_service.sonic_notify_known_apps()
+    except Exception:
+        return [
+            {"package": "com.xbxxhz.box", "name": "小白学习打印", "aliases": ["小白学习"]},
+            {"package": "com.kfb.model", "name": "3D 打印", "aliases": ["智小白3D"]},
+        ]
+
+
+def _fallback_app_context(title="", module="", app_package="", app_name=""):
+    """Resolve current app display context without hardcoding it in case steps."""
+    package = str(app_package or "").strip()
+    name = str(app_name or "").strip()
+    scope = " ".join(normalize_text_list([title, module])).lower()
+    apps = [item for item in _known_task_apps() if isinstance(item, dict)]
+    if not package:
+        for app in apps:
+            terms = normalize_text_list([app.get("name"), app.get("package"), app.get("aliases")])
+            if any(term and str(term).lower() in scope for term in terms):
+                package = str(app.get("package") or "").strip()
+                name = name or str(app.get("name") or "").strip()
+                break
+    if not package and any(term in scope for term in ("基础打印", "文档打印", "照片打印", "证件照", "扫描复印", "复印扫描", "百度网盘", "小白学习")):
+        package = "com.xbxxhz.box"
+    if not package and any(term in scope for term in ("3d", "ai建模", "图片建模", "文字建模", "语音创作", "标牌", "印章")):
+        package = "com.kfb.model"
+    if not name:
+        for app in apps:
+            if package and str(app.get("package") or "").strip() == package:
+                name = str(app.get("name") or "").strip()
+                break
+    return {
+        "app_package": package,
+        "app_name": name or "当前 App",
+        "home_hint": FALLBACK_APP_HOME_HINTS.get(package, "底部「首页」或当前 App 首页核心入口"),
+    }
+
+
+def _fallback_home_wait(app_context):
+    app_context = app_context if isinstance(app_context, dict) else {}
+    app_name = str(app_context.get("app_name") or "当前 App").strip()
+    home_hint = str(app_context.get("home_hint") or "底部「首页」或当前 App 首页核心入口").strip()
+    return f"启动 App，并等待{app_name}首页加载完成，能看到{home_hint}"
+
+
+def _fallback_steps_for_scenario(scenario, app_context=None):
     """生成保守、低断言密度的自动化步骤。"""
     feature = first_non_empty((scenario or {}).get("feature"), "目标功能")
     point = str((scenario or {}).get("requirement_point") or "")
+    home_wait = _fallback_home_wait(app_context)
     if "百度网盘" in point:
         feature_text = str(feature or "")
         if _baidu_netdisk_point_is_display_only(point):
             return [
-                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                home_wait,
                 "如当前不在首页，返回或点击底部「首页」回到首页",
                 f"进入「{feature_text or feature}」相关页面或入口区域",
                 "等待目标入口区域加载完成，页面展示同级导入入口",
@@ -1451,7 +1504,7 @@ def _fallback_steps_for_scenario(scenario):
             ]
         if "文档打印" in feature_text:
             return [
-                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                home_wait,
                 "如当前不在首页，返回或点击底部「首页」回到首页",
                 "等待首页文档打印入口区加载完成，并看到「本地导入」「相册导入」「微信导入」等入口",
                 "在文档打印入口区查找「百度网盘」入口，必要时横向滑动一次入口列表",
@@ -1462,7 +1515,7 @@ def _fallback_steps_for_scenario(scenario):
             ]
         if "普通照片" in feature_text:
             return [
-                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                home_wait,
                 "如当前不在首页，返回或点击底部「首页」回到首页",
                 "点击首页或基础打印入口中的「相册导入」进入普通照片打印",
                 "等待进入「5寸照片」或普通照片打印页面，并看到导入方式区域",
@@ -1474,7 +1527,7 @@ def _fallback_steps_for_scenario(scenario):
             ]
         if "证件照" in feature_text:
             return [
-                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                home_wait,
                 "如当前不在首页，返回或点击底部「首页」回到首页",
                 "进入「证件照」或「一寸照」入口",
                 "等待进入证件照页面，并看到照片预览或导入方式区域",
@@ -1486,7 +1539,7 @@ def _fallback_steps_for_scenario(scenario):
             ]
         if "照片拼版" in feature_text:
             return [
-                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                home_wait,
                 "如当前不在首页，返回或点击底部「首页」回到首页",
                 "点击首页功能入口中的「图片拼版」",
                 "等待进入照片拼版页面或拼版导入页面",
@@ -1498,7 +1551,7 @@ def _fallback_steps_for_scenario(scenario):
             ]
         if "扫描复印" in feature_text:
             return [
-                "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+                home_wait,
                 "如当前不在首页，返回或点击底部「首页」回到首页",
                 "点击首页的「扫描仪扫描」或复印扫描入口",
                 "等待进入扫描复印首页或复印扫描导入页面",
@@ -1509,7 +1562,7 @@ def _fallback_steps_for_scenario(scenario):
                 BAIDU_NETDISK_POST_CLICK_ASSERT
             ]
         return [
-            "启动 App，并等待首页显示「小白扫描王」或底部导航「首页」",
+            home_wait,
             "如当前不在首页，返回或点击底部「首页」回到首页",
             f"进入「{feature}」相关入口",
             f"等待{feature}页面加载完成",
@@ -1520,7 +1573,7 @@ def _fallback_steps_for_scenario(scenario):
             BAIDU_NETDISK_POST_CLICK_ASSERT
         ]
     return [
-        "启动 App 并进入首页",
+        home_wait,
         f"进入{feature}相关页面",
         f"等待{feature}页面加载完成",
         "执行当前需求主流程操作",
@@ -1529,10 +1582,11 @@ def _fallback_steps_for_scenario(scenario):
     ]
 
 
-def _fallback_automation_filter_from_scenarios(title, module, analysis, scenarios, targets=None, error=""):
+def _fallback_automation_filter_from_scenarios(title, module, analysis, scenarios, targets=None, error="", app_package="", app_name=""):
     """AI 自动化筛选超时/空结果时，生成可继续校验的保守用例。"""
     targets = targets or generation_volume_targets(analysis, mode="full")
     scenarios = [item for item in (scenarios or []) if isinstance(item, dict)]
+    app_context = _fallback_app_context(title, module, app_package=app_package, app_name=app_name)
     max_cases = max(1, min(
         safe_int(targets.get("target_automation_cases"), len(scenarios) or 1),
         safe_int(targets.get("max_cases"), len(scenarios) or 1),
@@ -1541,7 +1595,7 @@ def _fallback_automation_filter_from_scenarios(title, module, analysis, scenario
     smoke_limit = _smoke_first_batch_limit(targets)
     cases = []
     for index, scenario in enumerate(scenarios[:max_cases], start=1):
-        steps, assertions = _fallback_steps_for_scenario(scenario)
+        steps, assertions = _fallback_steps_for_scenario(scenario, app_context=app_context)
         feature = first_non_empty(scenario.get("feature"), f"需求{index}")
         cases.append({
             "case_id": f"TC-{index:03d}",
@@ -1553,7 +1607,7 @@ def _fallback_automation_filter_from_scenarios(title, module, analysis, scenario
             "coverage": scenario_requirement_point(scenario),
             "requirement_point": scenario_requirement_point(scenario),
             "business_path": first_non_empty(scenario.get("business_path"), f"进入{feature} -> 完成需求主流程"),
-            "preconditions": ["已安装并登录智小白 App", "网络正常"],
+            "preconditions": [f"已安装并登录{app_context.get('app_name') or '当前 App'}", "网络正常"],
             "steps": steps,
             "assertions": assertions,
             "expected_result": assertions[0] if assertions else "",
@@ -1613,7 +1667,7 @@ def call_skill_scenario_designer(title, module, analysis, yaml_reference_context
     return scenarios
 
 
-def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context="", mode="full", model_config=None):
+def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context="", mode="full", model_config=None, app_package="", app_name=""):
     """调用 AI skill: automation_filter。"""
     targets = generation_volume_targets(analysis, mode=mode)
     payload = {
@@ -1643,9 +1697,27 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
         )
         cases = result.get("cases") or []
     except Exception as exc:
-        return _fallback_automation_filter_from_scenarios(title, module, analysis, scenarios, targets=targets, error=str(exc))
+        return _fallback_automation_filter_from_scenarios(
+            title,
+            module,
+            analysis,
+            scenarios,
+            targets=targets,
+            error=str(exc),
+            app_package=app_package,
+            app_name=app_name,
+        )
     if not isinstance(cases, list) or not cases:
-        return _fallback_automation_filter_from_scenarios(title, module, analysis, scenarios, targets=targets, error="automation_filter 未产出自动化用例")
+        return _fallback_automation_filter_from_scenarios(
+            title,
+            module,
+            analysis,
+            scenarios,
+            targets=targets,
+            error="automation_filter 未产出自动化用例",
+            app_package=app_package,
+            app_name=app_name,
+        )
     review = result.get("review") or {}
     review["generation_targets"] = targets
     review["actual_case_count"] = len(cases)
@@ -1982,7 +2054,7 @@ def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_ref
     return normalized
 
 
-def build_cases_payload_from_skills(title, module, text_assets, mode="full", model_config=None):
+def build_cases_payload_from_skills(title, module, text_assets, mode="full", model_config=None, app_package="", app_name=""):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
     yaml_reference_context = extract_yaml_reference_context(text_assets)
@@ -2008,6 +2080,8 @@ def build_cases_payload_from_skills(title, module, text_assets, mode="full", mod
         yaml_reference_context=yaml_reference_context,
         mode=mode,
         model_config=model_config,
+        app_package=app_package,
+        app_name=app_name,
     )
     cases = filtered.get("cases") or []
     manual_cases = filtered.get("manual_cases") or []

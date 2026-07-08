@@ -28,6 +28,28 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-08 Skills 链路 app_package 参数漏提交修复
+
+问题定位：
+
+- 线上 Agent 在 `GENERATE_YAML` 阶段进入“兼容生成”。
+- 日志显示：`build_cases_payload_from_skills() got an unexpected keyword argument 'app_package'`。
+- 直接原因是 `yaml_service.py` 已经向 Skills 用例生成链路传入 `app_package`，但 `ai_skill_service.py` 的签名修复之前未随上次提交一起提交/部署，导致线上调用方和被调用方版本不一致。
+
+已修改：
+
+- `task_server/services/ai_skill_service.py`
+- `task_server/services/case_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- `build_cases_payload_from_skills(..., app_package="", app_name="")` 接收 App 上下文。
+- `call_skill_automation_filter` 和本地 fallback 自动化筛选继续透传 App 上下文，避免 fallback 步骤写错 App 品牌/首页。
+- `case_service.py` 的委托入口同步接收并转发 `app_package` / `app_name`，避免间接调用再触发同类错误。
+- 后端静态检查增加签名和透传覆盖，防止后续调用方/被调方参数再次不一致。
+
 ### 2026-07-08 上传截图作为 AI 视觉软参考可追踪
 
 本轮修改目标：
