@@ -193,6 +193,8 @@ __all__ = [
     "validate_yaml_static_executable",
     "dry_run_midscene_yaml",
     "repair_generated_yaml_static_errors",
+    "should_ai_rewrite_for_executable_gate",
+    "ai_rewrite_yaml_for_executable_gate",
     "case_to_task_yaml",
     "extract_midscene_tasks",
     "validate_midscene_yaml_executability",
@@ -4386,6 +4388,234 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
     except Exception:
         return {"changed": False, "content": original, "changes": []}
     return {"changed": True, "content": content, "changes": changes}
+
+
+EXECUTABLE_GATE_AI_REWRITE_REASON_KEYWORDS = (
+    "复合 ai 动作",
+    "生成用例动作",
+    "等待链路",
+    "交互和等待组合偏长",
+    "重规划",
+    "replanning",
+    "Replanned",
+    "exceeding the limit",
+    "单条用例步骤过长",
+    "缺少稳定起点",
+    "交互动作后缺少等待",
+    "终态判断",
+    "waitFor timeout",
+    "Timeout after",
+)
+
+
+def _executable_gate_reason_lines(reasons) -> List[str]:
+    if reasons is None:
+        return []
+    if isinstance(reasons, str):
+        raw_items = re.split(r"[\n；;]+", reasons)
+    elif isinstance(reasons, (list, tuple, set)):
+        raw_items = []
+        for item in reasons:
+            if isinstance(item, dict):
+                raw_items.append(json.dumps(item, ensure_ascii=False))
+            else:
+                raw_items.extend(re.split(r"[\n；;]+", str(item or "")))
+    else:
+        raw_items = [str(reasons or "")]
+    result = []
+    for item in raw_items:
+        text = re.sub(r"\s+", " ", str(item or "")).strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def _truncate_prompt_text(text, limit=6000):
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n...（已截断）"
+
+
+def _build_executable_gate_baseline_text(*, title="", module="", file="", reasons=None):
+    query = " ".join([
+        str(title or ""),
+        str(module or ""),
+        str(file or ""),
+        " ".join(_executable_gate_reason_lines(reasons)[:4]),
+    ]).strip()
+    if not query:
+        return ""
+    try:
+        examples = search_baseline_examples(query, module=module or "", limit=3, allow_fallback=False)
+    except Exception:
+        examples = []
+    blocks = []
+    for index, example in enumerate(examples or [], start=1):
+        if not isinstance(example, dict):
+            continue
+        snippet = str(example.get("snippet") or "").strip()
+        if not snippet:
+            continue
+        blocks.append("\n".join([
+            f"### 基线 {index}: {example.get('title') or example.get('file') or '未命名'}",
+            f"- 模块：{example.get('module') or '-'}",
+            f"- 文件：{example.get('file') or example.get('path') or '-'}",
+            "```yaml",
+            _truncate_prompt_text(snippet, 1200),
+            "```",
+        ]))
+    return "\n\n".join(blocks)
+
+
+def should_ai_rewrite_for_executable_gate(reasons) -> bool:
+    """Return whether generated YAML needs a constrained AI rewrite.
+
+    Deterministic repair handles small syntax/action mistakes. AI rewrite is
+    reserved for semantic executability problems: overly long flows, compound
+    actions, re-planning loops and weak terminal checks.
+    """
+    text = "；".join(_executable_gate_reason_lines(reasons))
+    if not text:
+        return False
+    return any(keyword.lower() in text.lower() for keyword in EXECUTABLE_GATE_AI_REWRITE_REASON_KEYWORDS)
+
+
+def _ai_executable_gate_rewrite_prompt(yaml_text, *, title="", module="", file="", reasons=None, baseline_text=""):
+    reason_text = "\n".join(f"- {item}" for item in _executable_gate_reason_lines(reasons)[:12]) or "- 未提供具体原因"
+    baseline_block = _truncate_prompt_text(baseline_text, 3500).strip()
+    if not baseline_block:
+        baseline_block = "无相似成功基线。只能保守缩短当前 YAML，不要扩展新场景。"
+    return f"""
+你是 Midscene YAML 可执行性修复器。当前 YAML 已经生成，但执行前 dry-run / 可执行性准入失败。
+
+【任务】
+只修复可执行性，不新增需求范围，不扩展新场景，不改成伪动作。
+
+【失败原因】
+{reason_text}
+
+【用例信息】
+- 标题：{title or "-"}
+- 模块：{module or "-"}
+- 文件：{file or "-"}
+
+【相似成功基线写法参考】
+{baseline_block}
+
+【必须遵守】
+1. 你不是自由生成 YAML，而是把当前 YAML 改写成短链路、可执行、可 dry-run 的 Midscene YAML。
+2. 复用参考基线的动作顺序、等待方式和断言/终态判断方式；只能替换业务对象、按钮文案、输入内容和检查目标。
+3. 如果当前任务过长，拆成 1～3 个短 task；每个 task 只验证一个检查点。
+4. 每个 task 建议 4～8 个 flow 步骤，最多 10 个动作；禁止 15+ 步长链路。
+5. 禁止把“查找/进入/判断/如果/直到/完成”揉在一个 ai 动作里；拆成 aiWaitFor、aiTap、aiWaitFor/aiAssert。
+6. aiTap 只能写真实可点击目标；检查/展示/可见/布局/入口存在必须用 aiWaitFor 或 aiAssert。
+7. 页面跳转后必须有 aiWaitFor；关键点击前必须有稳定页面或入口等待。
+8. 入口可见性、布局、同级排列这类用例不要点击进入第三方授权、文件选择器、外部 App 或 WebView。
+9. 必须至少保留一个终态判断；不要堆大量 aiAssert，不要照抄 Figma 长文案。
+10. 只能使用 Midscene 官方动作：launch、runAdbShell、sleep、ai、aiTap、aiInput、aiWaitFor、aiAssert、aiScroll、aiKeyboardPress。
+11. 保留 YAML 顶层结构和 app 包名；不要输出 Markdown。
+
+【当前 YAML】
+```yaml
+{_truncate_prompt_text(yaml_text, 9000)}
+```
+
+只返回 JSON：
+{{
+  "analysis": "为什么这样修",
+  "changes": ["改动1", "改动2"],
+  "content": "完整 YAML 字符串"
+}}
+""".strip()
+
+
+def ai_rewrite_yaml_for_executable_gate(
+    yaml_text,
+    *,
+    title="",
+    module="",
+    file="",
+    reasons=None,
+    baseline_text="",
+    max_attempts=1,
+):
+    """Use AI once to rewrite generated YAML that deterministic repair cannot fix."""
+    original = str(yaml_text or "")
+    if not original.strip() or not should_ai_rewrite_for_executable_gate(reasons):
+        return {"changed": False, "content": original, "changes": [], "skipped": True}
+    attempts = []
+    current = original
+    if not str(baseline_text or "").strip():
+        baseline_text = _build_executable_gate_baseline_text(
+            title=title,
+            module=module,
+            file=file,
+            reasons=reasons,
+        )
+    limit = max(1, min(2, safe_int(max_attempts, 1)))
+    for attempt in range(1, limit + 1):
+        try:
+            prompt = _ai_executable_gate_rewrite_prompt(
+                current,
+                title=title,
+                module=module,
+                file=file,
+                reasons=reasons,
+                baseline_text=baseline_text,
+            )
+            raw = dashscope_chat_content(
+                prompt,
+                image_assets=[],
+                temperature=0.05,
+                timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
+                json_response=True,
+                respect_global_timeout=False,
+                retry_count=0,
+            )
+            repaired = normalize_yaml_from_model(raw)
+            candidate = repaired.get("content") or ""
+            local = repair_generated_yaml_executable_gate_issues(candidate)
+            if local.get("changed"):
+                candidate = local.get("content") or candidate
+            dry = dry_run_midscene_yaml(candidate, module=module, file=file)
+            score = score_midscene_yaml_executable(candidate, generated=True)
+            ok = bool(dry.get("ok")) and score.get("executionLevel") == "executable"
+            attempt_row = {
+                "attempt": attempt,
+                "ok": ok,
+                "analysis": str(repaired.get("analysis") or "")[:500],
+                "changes": list(repaired.get("changes") or [])[:12],
+                "localChanges": list(local.get("changes") or [])[:8],
+                "dryRunOk": bool(dry.get("ok")),
+                "executionLevel": score.get("executionLevel"),
+                "reasons": list(score.get("reasons") or [])[:8],
+                "errors": list(dry.get("errors") or [])[:8],
+            }
+            attempts.append(attempt_row)
+            current = candidate
+            if ok:
+                break
+        except Exception as exc:
+            attempts.append({
+                "attempt": attempt,
+                "ok": False,
+                "error": str(exc)[:500],
+            })
+            break
+
+    changed = current.strip() != original.strip()
+    return {
+        "changed": changed,
+        "content": current if changed else original,
+        "changes": [
+            change
+            for attempt in attempts
+            for change in (attempt.get("changes") or [])
+        ][:12],
+        "attempts": attempts,
+        "ok": bool(attempts and attempts[-1].get("ok")),
+    }
 
 
 def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file="", app_package="", max_attempts=None):

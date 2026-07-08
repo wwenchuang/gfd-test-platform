@@ -52,8 +52,10 @@ from task_server.storage import (
     write_json_file,
 )
 from task_server.services.yaml_service import (
+    ai_rewrite_yaml_for_executable_gate,
     extract_midscene_tasks,
     repair_generated_yaml_executable_gate_issues,
+    should_ai_rewrite_for_executable_gate,
     slug_for_file,
     validate_midscene_yaml_executability,
 )
@@ -4376,25 +4378,30 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
         return scored_before, None
     if not _agent_ref_needs_local_execution_repair(scored_before):
         return scored_before, None
-    repaired = _agent_repair_missing_interaction_followups(content)
-    if not repaired.get("changed"):
-        return scored_before, None
 
+    before_score = scored_before.get("executableScore") if isinstance(scored_before.get("executableScore"), dict) else {}
+    before_reasons = list(before_score.get("reasons") or [])[:12]
+    repaired = _agent_repair_missing_interaction_followups(content)
     repaired_ref = {**ref}
-    _agent_write_repaired_yaml_ref(repaired_ref, repaired.get("content") or content)
+    current_content = content
+    local_changed = bool(repaired.get("changed"))
+    if local_changed:
+        current_content = repaired.get("content") or content
+        _agent_write_repaired_yaml_ref(repaired_ref, current_content)
     scored_after = _score_agent_yaml_ref_for_execution(run, repaired_ref)
     dry_after = _agent_yaml_dry_run_for_ref(run, repaired_ref)
     dry_compact = _compact_yaml_dry_run_result(dry_after)
     after_score = scored_after.get("executableScore") if isinstance(scored_after.get("executableScore"), dict) else {}
+    after_reasons = list(after_score.get("reasons") or [])[:12]
     auto_repair = {
         "type": "local_yaml_execution_repair",
         "reason": reason,
-        "changed": True,
+        "changed": local_changed,
         "changes": list(repaired.get("changes") or [])[:12],
         "ok": bool(dry_compact.get("ok")) and after_score.get("executionLevel") == "executable",
         "before": {
-            "executionLevel": (scored_before.get("executableScore") or {}).get("executionLevel"),
-            "reasons": list((scored_before.get("executableScore") or {}).get("reasons") or [])[:6],
+            "executionLevel": before_score.get("executionLevel"),
+            "reasons": before_reasons[:6],
         },
         "after": {
             "executionLevel": after_score.get("executionLevel"),
@@ -4403,6 +4410,55 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
         },
         "dryRun": dry_compact,
     }
+
+    combined_reasons = []
+    combined_reasons.extend(before_reasons)
+    combined_reasons.extend(after_reasons)
+    combined_reasons.extend(str(item) for item in (dry_compact.get("errors") or [])[:8])
+    combined_reasons.extend(str(item) for item in (dry_compact.get("warnings") or [])[:6])
+    should_ai_rewrite = (
+        not auto_repair.get("ok")
+        and should_ai_rewrite_for_executable_gate(combined_reasons)
+    )
+    if should_ai_rewrite:
+        ai_repair = ai_rewrite_yaml_for_executable_gate(
+            current_content,
+            title=ref.get("file") or ref.get("type") or "",
+            module=ref.get("module") or "",
+            file=ref.get("file") or "",
+            reasons=combined_reasons,
+            baseline_text="",
+            max_attempts=1,
+        )
+        auto_repair["aiRewrite"] = {
+            "changed": bool(ai_repair.get("changed")),
+            "ok": bool(ai_repair.get("ok")),
+            "changes": list(ai_repair.get("changes") or [])[:12],
+            "attempts": list(ai_repair.get("attempts") or [])[:2],
+        }
+        if ai_repair.get("changed"):
+            current_content = ai_repair.get("content") or current_content
+            _agent_write_repaired_yaml_ref(repaired_ref, current_content)
+            scored_after = _score_agent_yaml_ref_for_execution(run, repaired_ref)
+            dry_after = _agent_yaml_dry_run_for_ref(run, repaired_ref)
+            dry_compact = _compact_yaml_dry_run_result(dry_after)
+            after_score = scored_after.get("executableScore") if isinstance(scored_after.get("executableScore"), dict) else {}
+            auto_repair = {
+                **auto_repair,
+                "type": "ai_yaml_executable_gate_rewrite",
+                "changed": True,
+                "ok": bool(dry_compact.get("ok")) and after_score.get("executionLevel") == "executable",
+                "after": {
+                    "executionLevel": after_score.get("executionLevel"),
+                    "dryRunOk": bool(dry_compact.get("ok")),
+                    "reasons": list(after_score.get("reasons") or [])[:6],
+                },
+                "dryRun": dry_compact,
+            }
+
+    if not auto_repair.get("changed") and not auto_repair.get("aiRewrite"):
+        return scored_before, None
+
     scored_after["autoRepair"] = auto_repair
     _agent_update_yaml_ref_artifact(run, ref, scored_after)
     artifacts = (run or {}).setdefault("artifacts", {})

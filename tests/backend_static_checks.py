@@ -248,13 +248,16 @@ def check_yaml_static_validation_and_patterns():
         select_best_baseline_template,
     )
     from task_server.services import ai_skill_service
+    from task_server.services import yaml_service as yaml_service_module
     from task_server.services.yaml_service import (
+        ai_rewrite_yaml_for_executable_gate,
         apply_generated_case_scope_gate,
         build_executable_smoke_yaml_policy_text,
         build_requirement_semantic_constraints_text,
         dry_run_midscene_yaml,
         repair_generated_yaml_executable_gate_issues,
         repair_generated_yaml_static_errors,
+        should_ai_rewrite_for_executable_gate,
     )
 
     contract = load_yaml_action_contract()
@@ -433,6 +436,50 @@ def check_yaml_static_validation_and_patterns():
         and score_midscene_yaml_executable(repaired_assertion_tap.get("content", "")).get("executionLevel") == "executable",
         "Agent validation must locally repair assertion-like aiTap prompts before failing the whole run",
     )
+    require(
+        should_ai_rewrite_for_executable_gate(["复合 ai 动作包含查找/进入/判断", "等待链路 10 个但终态断言不足"])
+        and should_ai_rewrite_for_executable_gate(["Runner 日志: Replanned 5 times, exceeding the limit"])
+        and not should_ai_rewrite_for_executable_gate(["aiTap 描述像检查/断言"]),
+        "Executable gate AI rewrite must only trigger for semantic long-chain/replanning failures",
+    )
+    original_dashscope_chat = yaml_service_module.dashscope_chat_content
+    try:
+        yaml_service_module.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
+            "analysis": "将复合长链路拆成短入口检查",
+            "changes": ["保留入口可见性检查", "移除外部授权长链路"],
+            "content": """android:
+  tasks:
+    - name: 文档打印首页百度网盘入口可见
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，文档打印入口可见
+        - aiTap: 文档打印入口
+        - aiWaitFor: 文档打印首页已打开，百度网盘入口可见
+        - aiAssert: 文档打印首页展示百度网盘入口
+""",
+        }, ensure_ascii=False)
+        ai_rewrite = ai_rewrite_yaml_for_executable_gate(
+            """android:
+  tasks:
+    - name: 复合长链路示例
+      flow:
+        - launch: com.xbxxhz.box
+        - ai: 查找并进入文档打印首页，判断百度网盘入口是否展示，如果没找到就继续滑动并进入授权页
+""",
+            reasons=["复合 ai 动作包含查找/进入/判断", "等待链路 10 个但终态断言不足"],
+            title="百度网盘入口",
+            module="AI_Agent_草稿",
+            file="bad.yaml",
+            baseline_text="```yaml\n- aiWaitFor: 首页已加载\n- aiTap: 文档打印入口\n- aiWaitFor: 百度网盘入口可见\n```",
+        )
+        require(
+            ai_rewrite.get("changed")
+            and ai_rewrite.get("ok")
+            and dry_run_midscene_yaml(ai_rewrite.get("content", "")).get("ok"),
+            "AI executable-gate rewrite must produce dry-runable short-chain YAML when mocked model returns valid content",
+        )
+    finally:
+        yaml_service_module.dashscope_chat_content = original_dashscope_chat
     require(
         assertion_tap_to_wait_prompt("首页文档打印入口页-百度网盘入口可见性检查") == "页面展示百度网盘入口可见",
         "Assertion-like aiTap title prompts must be converted into concrete page-state waits",
