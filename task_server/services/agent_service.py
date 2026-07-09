@@ -1627,9 +1627,9 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
     return refs, "" if not issues else "；".join(issues)
 
 
-def _agent_needs_baidu_entry_smoke(run):
+def _agent_entry_visibility_intent(run):
     if not isinstance(run, dict):
-        return False
+        return None
     artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
     source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
     text = "\n".join([
@@ -1638,25 +1638,99 @@ def _agent_needs_baidu_entry_smoke(run):
         str(source_context.get("requirementText") or ""),
     ])
     compact = re.sub(r"\s+", "", text)
-    return "百度网盘" in compact and "入口" in compact and any(
-        term in compact for term in ("文档打印", "照片打印", "扫描复印", "基础打印")
+    if "入口" not in compact:
+        return None
+    external_flow_terms = (
+        "点击后", "跳转", "授权", "登录", "文件选择", "导入文件", "进入第三方",
+        "进入百度网盘", "WebView", "SDK", "支付", "删除",
     )
+    if any(term in compact for term in external_flow_terms):
+        return None
+    visibility_terms = (
+        "新增", "增加", "添加", "展示", "显示", "可见", "校验", "检查", "位置",
+        "同级", "并列", "排序", "布局", "入口在", "入口位于",
+    )
+    if not any(term in compact for term in visibility_terms):
+        return None
+
+    entry_label = ""
+    if "百度网盘" in compact:
+        entry_label = "百度网盘"
+    else:
+        matches = re.findall(r"([\u4e00-\u9fffA-Za-z0-9_-]{1,18})入口", compact)
+        for match in reversed(matches):
+            label = match
+            for _ in range(4):
+                label = re.sub(r"^(基础打印|文档打印页|文档打印|照片打印页|照片打印|扫描复印页|扫描复印|复印扫描页|复印扫描|个人中心页|个人中心|设置页|设置|我的页|我的|首页|目标页面|新增一个|增加一个|新增|增加|添加|展示|显示|校验|检查)", "", label)
+            if "入口" in label:
+                label = label.split("入口")[-1] or label.split("入口")[0]
+            label = re.sub(r"(新增|增加|添加|展示|显示|校验|检查)$", "", label)
+            if label and label not in ("目标", "业务", "页面", "入口", "功能"):
+                entry_label = label[-12:]
+                break
+    if not entry_label:
+        entry_label = "目标"
+
+    page_priority = ("文档打印", "照片打印", "扫描复印", "复印扫描", "个人中心", "我的", "设置", "首页")
+    target_page = next((label for label in page_priority if label in compact), "")
+    if target_page == "复印扫描":
+        target_page = "扫描复印"
+    if not target_page:
+        target_page = "目标页面"
+    return {
+        "entryLabel": entry_label,
+        "targetPage": target_page,
+        "isHomePage": target_page == "首页",
+    }
+
+
+def _agent_needs_entry_visibility_smoke(run):
+    return bool(_agent_entry_visibility_intent(run))
+
+
+def _agent_needs_baidu_entry_smoke(run):
+    return _agent_needs_entry_visibility_smoke(run)
 
 
 def _agent_entry_visibility_smoke_yaml(run):
+    intent = _agent_entry_visibility_intent(run) or {}
     app_package = _agent_app_package(run)
+    entry_label = str(intent.get("entryLabel") or "目标").strip() or "目标"
+    target_page = str(intent.get("targetPage") or "目标页面").strip() or "目标页面"
+    task_name = f"{target_page}{entry_label}入口可见性短链路冒烟"
+    home_wait = "小白学习打印首页已加载，首页主要业务入口可见"
+    flow = [
+        f"        - launch: {app_package}",
+        f"        - aiWaitFor: {home_wait}",
+        "          timeout: 15000",
+    ]
+    if target_page != "首页":
+        flow.extend([
+            f"        - aiTap: {target_page}入口",
+            f"        - aiWaitFor: {target_page}页面已加载，展示{entry_label}入口",
+            "          timeout: 15000",
+            f"        - aiAssert: {target_page}{entry_label}入口可见",
+        ])
+    else:
+        flow.extend([
+            f"        - aiWaitFor: 首页展示{entry_label}入口",
+            "          timeout: 15000",
+            f"        - aiAssert: 首页{entry_label}入口可见",
+        ])
+    flow_text = "\n".join(flow)
     return f"""android:
   tasks:
-    - name: 文档打印首页百度网盘入口可见性短链路冒烟
+    - name: {task_name}
       flow:
-        - launch: {app_package}
-        - aiWaitFor: 小白学习打印首页已加载，首页文档打印、照片打印或扫描复印入口可见
-          timeout: 15000
-        - aiTap: 文档打印入口
-        - aiWaitFor: 文档打印首页展示百度网盘入口
-          timeout: 15000
-        - aiAssert: 文档打印首页百度网盘入口可见
+{flow_text}
 """
+
+
+def _agent_entry_visibility_smoke_filename(run):
+    intent = _agent_entry_visibility_intent(run) or {}
+    entry_label = str(intent.get("entryLabel") or "目标").strip() or "目标"
+    target_page = str(intent.get("targetPage") or "目标页面").strip() or "目标页面"
+    return clean_filename(f"00-{target_page}{entry_label}入口可见性短链路冒烟.yaml")
 
 
 def _ensure_agent_entry_visibility_smoke_ref(run, refs, results):
@@ -1676,10 +1750,10 @@ def _ensure_agent_entry_visibility_smoke_ref(run, refs, results):
         if max_action_count <= 8 and max_wait_count <= 6 and not high_replan_risk:
             has_stable_smoke_candidate = True
             break
-    if has_stable_smoke_candidate or not _agent_needs_baidu_entry_smoke(run):
+    if has_stable_smoke_candidate or not _agent_needs_entry_visibility_smoke(run):
         return refs, results
     module = clean_agent_module_name(run)
-    file_name = "00-文档打印首页百度网盘入口可见性短链路冒烟.yaml"
+    file_name = _agent_entry_visibility_smoke_filename(run)
     path = safe_join(TASK_DIR, module, file_name)
     content = _agent_entry_visibility_smoke_yaml(run)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1709,7 +1783,7 @@ def _ensure_agent_entry_visibility_smoke_ref(run, refs, results):
         "smokeCandidate": True,
         "runnerCandidate": True,
         "autoGeneratedSmoke": True,
-        "reason": "生成结果缺少稳定首批冒烟候选，按需求硬约束补充百度网盘入口可见性短链路",
+        "reason": "生成结果缺少稳定首批冒烟候选，按需求硬约束补充入口可见性短链路",
     }
     result = {
         "module": module,
@@ -6112,16 +6186,27 @@ def _clean_business_flow_node(value):
 
 def _fallback_business_flow_from_text(value):
     compact = re.sub(r"\s+", "", _normalize_business_flow_text(value))
-    if "百度网盘" in compact and "入口" in compact and any(
-        term in compact for term in ("基础打印", "文档打印", "照片打印", "扫描复印")
-    ):
+    if "入口" in compact and any(term in compact for term in ("新增", "增加", "添加", "展示", "显示", "可见", "校验", "检查")):
+        entry_label = "目标"
+        if "百度网盘" in compact:
+            entry_label = "百度网盘"
+        else:
+            matches = re.findall(r"([\u4e00-\u9fffA-Za-z0-9_-]{1,18})入口", compact)
+            if matches:
+                entry_label = matches[-1]
+                for _ in range(4):
+                    entry_label = re.sub(r"^(基础打印|文档打印页|文档打印|照片打印页|照片打印|扫描复印页|扫描复印|复印扫描页|复印扫描|个人中心页|个人中心|设置页|设置|我的页|我的|首页|目标页面|新增一个|增加一个|新增|增加|添加|展示|显示|校验|检查)", "", entry_label)
+                if "入口" in entry_label:
+                    entry_label = entry_label.split("入口")[-1] or entry_label.split("入口")[0]
+                entry_label = entry_label or "目标"
         flow = []
         if "首页" in compact:
             flow.append("进入首页")
-        for label in ("文档打印", "照片打印", "扫描复印"):
+        for label in ("文档打印", "照片打印", "扫描复印", "复印扫描", "个人中心", "我的", "设置"):
             if label in compact:
-                flow.append(f"进入{label}")
-        flow.append("校验百度网盘入口可见")
+                flow.append(f"进入{'扫描复印' if label == '复印扫描' else label}")
+                break
+        flow.append(f"校验{entry_label}入口可见")
         return flow
     if any(term in compact for term in ("AI建模", "ai建模", "开始创作", "图片建模", "语音创作", "语音输入")):
         flow = ["进入 AI建模页"]
@@ -7696,7 +7781,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "app_package": _agent_app_package(run),
         "use_knowledge_context": False,
         "source": "agent",
-        "forceEntryVisibilityFastPath": _agent_needs_baidu_entry_smoke(run),
+        "forceEntryVisibilityFastPath": _agent_needs_entry_visibility_smoke(run),
     }
     progress_job_id = _agent_generate_progress_job_id(run)
     step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)
@@ -7722,14 +7807,22 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         case_set_id=case_set_id,
         timeout_seconds=900,
     )
-    direct_entry_visibility = _agent_needs_baidu_entry_smoke(run)
+    entry_visibility_intent = _agent_entry_visibility_intent(run)
+    direct_entry_visibility = bool(entry_visibility_intent)
     if direct_entry_visibility:
-        file_name = "00-文档打印首页百度网盘入口可见性短链路冒烟.yaml"
+        file_name = _agent_entry_visibility_smoke_filename(run)
         path = safe_join(TASK_DIR, module, file_name)
         content = _agent_entry_visibility_smoke_yaml(run)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         write_text_file(path, content)
         executable_score = score_midscene_yaml_executable(content, generated=True)
+        entry_label = str((entry_visibility_intent or {}).get("entryLabel") or "目标").strip() or "目标"
+        target_page = str((entry_visibility_intent or {}).get("targetPage") or "目标页面").strip() or "目标页面"
+        case_title = f"{target_page}{entry_label}入口可见性短链路冒烟"
+        steps = ["启动 App", "等待首页加载"]
+        if target_page != "首页":
+            steps.append(f"进入{target_page}")
+        steps.append(f"等待{entry_label}入口可见")
         result = {
             "case_set_id": case_set_id,
             "cases": {
@@ -7737,21 +7830,21 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
                 "module": module,
                 "analysis": {
                     "business_goals": [title],
-                    "requirement_points": ["文档打印首页百度网盘入口可见"],
-                    "visible_outcomes": ["百度网盘入口可见"],
+                    "requirement_points": [f"{target_page}{entry_label}入口可见"],
+                    "visible_outcomes": [f"{entry_label}入口可见"],
                 },
                 "cases": [{
                     "case_id": "TC-ENTRY-001",
-                    "title": "文档打印首页百度网盘入口可见性短链路冒烟",
+                    "title": case_title,
                     "smoke": True,
                     "priority": "P0",
-                    "steps": ["启动 App", "等待首页加载", "进入文档打印", "等待百度网盘入口可见"],
-                    "assertions": ["文档打印首页百度网盘入口可见"],
+                    "steps": steps,
+                    "assertions": [f"{target_page}{entry_label}入口可见"],
                 }],
                 "manual_cases": [],
                 "review": {
                     "skill_pipeline": "agent_direct_entry_visibility_smoke.v1",
-                    "fast_path_reason": "Agent 已识别百度网盘入口可见性需求，直接生成首批短链路冒烟 YAML",
+                    "fast_path_reason": "Agent 已识别入口可见性需求，直接生成首批短链路冒烟 YAML",
                 },
             },
             "yamlFiles": [file_name],
@@ -7766,7 +7859,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
                 "executable_cases": [{
                     "file": file_name,
                     "case_id": "TC-ENTRY-001",
-                    "title": "文档打印首页百度网盘入口可见性短链路冒烟",
+                    "title": case_title,
                     "executionLevel": executable_score.get("executionLevel") or "executable",
                     "level": executable_score.get("executionLevel") or "executable",
                     "score": executable_score.get("score") or 0,
@@ -7794,7 +7887,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             status="success",
             progress=100,
             step="生成完成",
-            message="已直接生成百度网盘入口可见性短链路冒烟 YAML",
+            message="已直接生成入口可见性短链路冒烟 YAML",
         )
     elif step:
         watcher = threading.Thread(
