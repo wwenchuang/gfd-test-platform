@@ -1701,8 +1701,10 @@ def _agent_entry_visibility_smoke_yaml(run):
     task_name = f"{target_page}{entry_label}入口可见性短链路冒烟"
     home_wait = "小白学习打印首页已加载，页面同时展示文档打印、照片打印、扫描复印入口；当前不是计算练习、题库、错题、资料库、教辅、模型页或三维创作页"
     flow = [
+        f"        - terminate: {app_package}",
         f"        - launch: {app_package}",
-        "        - ai: 如果当前在计算练习、题库、错题、资料库、教辅、模型页、三维创作页或其他非打印功能页，先点击返回或关闭直到回到应用首页",
+        "        - aiWaitFor: 应用首页或启动页已打开，可看到首页、打印、学习打印、小白打印或底部导航入口",
+        "          timeout: 15000",
         "        - aiTap: 应用首页或底部导航中的打印、学习打印、小白打印入口；不要点击资料库、题库、错题、教辅、模型页或我的",
         f"        - aiWaitFor: {home_wait}",
         "          timeout: 20000",

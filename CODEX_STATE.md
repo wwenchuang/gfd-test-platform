@@ -125,6 +125,18 @@
 - 修正 `_agent_entry_visibility_intent` 漏读 run 根字段 `requirementText` 的问题，避免线上 payload 只把需求文本放在根字段时目标页退化成“目标页面”；该样例现在会明确生成“首页的文档打印入口 -> 文档打印页面/导入入口区域 -> 百度网盘入口”。
 - 静态检查覆盖这条业务前置链路，防止后续只生成“启动 App -> 找百度网盘/文档打印”的松散脚本。
 
+部署后继续验证：
+
+- `agent-1783595698297-a75849a4`
+- 新任务固定 `win-runner-01 / ecbfd645`，在 `GENERATE_YAML` 阶段被平台门禁拦截，没有下发 Runner。
+- 拦截原因：短链路中的 `ai: 如果当前在计算练习...先点击返回或关闭...` 被评分器判为复合 AI 动作；首个 `aiTap` 前也缺少就近 `aiWaitFor/sleep`，执行等级降为 `needs_review`。
+
+追加修复：
+
+- 入口短链路改为官方动作的确定性冷启动：`terminate` -> `launch` -> `aiWaitFor` 应用首页/启动页 -> `aiTap` 打印入口 -> 等待打印首页 -> 进入目标业务页 -> 断言目标入口。
+- 移除复合 `ai` 恢复指令，避免让 AI 在一个步骤里同时判断页面、返回/关闭和导航。
+- 静态检查直接对该样例调用 `score_midscene_yaml_executable(..., generated=True)`，要求必须达到 `executable`，防止后续再次在生成阶段被 needs_review 门禁拦住。
+
 ### 2026-07-09 Runner Android SDK 环境注入与环境失败归因
 
 继续跟踪部署后的新任务：

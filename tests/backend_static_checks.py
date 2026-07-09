@@ -2825,6 +2825,7 @@ def main():
         "Agent must directly generate generic entry visibility smoke YAML instead of blocking in the generic YAML generator",
     )
     from task_server.services import agent_service as agent_runtime
+    from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable as score_entry_smoke_yaml
     entry_smoke_yaml = agent_runtime._agent_entry_visibility_smoke_yaml({
         "target": "基础打印新增百度网盘入口",
         "module": "基础打印",
@@ -2837,17 +2838,19 @@ def main():
         and "目标页面" not in entry_smoke_yaml,
         "Agent entry visibility smoke must infer 文档打印 from root requirementText and generate a concrete business page chain",
     )
+    entry_smoke_score = score_entry_smoke_yaml(entry_smoke_yaml, generated=True)
+    require(entry_smoke_score.get("ok") and entry_smoke_score.get("executionLevel") == "executable", "Agent entry visibility smoke must pass Runner executable gate without needs_review")
     require(
         "monkey -p {app_package} -c android.intent.category.LAUNCHER 1" not in agent_service_source
-        and "从非打印功能页恢复到应用首页" in agent_service_source
-        and "计算练习、题库、错题、资料库、教辅、模型页、三维创作页" in agent_service_source
-        and "返回或关闭直到回到应用首页" in agent_service_source
+        and "terminate: {app_package}" in agent_service_source
+        and "应用首页或启动页已打开" in agent_service_source
+        and all(term in agent_service_source for term in ("计算练习", "题库", "错题", "资料库", "教辅", "模型页", "三维创作页"))
         and "应用首页或底部导航中的打印、学习打印、小白打印入口" in agent_service_source
         and "页面同时展示文档打印、照片打印、扫描复印入口" in agent_service_source
         and "首页的{target_page}入口" in agent_service_source
         and "{target_page}页面或{target_page}导入入口区域已加载，展示{entry_label}入口" in agent_service_source
         and "不要点击资料库、教辅、模型页或三维创作页入口" in agent_service_source,
-        "Agent entry visibility smoke must avoid bare adb launch, recover from study/non-print pages, enter print home, then enter the target business page before asserting the entry",
+        "Agent entry visibility smoke must avoid bare adb launch, cold-start the app, enter print home, then enter the target business page before asserting the entry",
     )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
