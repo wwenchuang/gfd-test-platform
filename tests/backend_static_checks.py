@@ -1533,7 +1533,10 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
         fast_payload = ai_skill_service.build_cases_payload_from_skills(
             "基础打印新增百度网盘入口",
             "基础打印",
-            ["基础打印的入口在首页   文档打印 照片打印 扫描复印"],
+            [
+                "基础打印的入口在首页   文档打印 照片打印 扫描复印",
+                yaml_service.build_executable_smoke_yaml_policy_text(),
+            ],
             app_package="com.xbxxhz.box",
         )
     finally:
@@ -2781,6 +2784,13 @@ def main():
     require("def _agent_visual_reference_report" in agent_service_source and '"visualReferenceReport"' in agent_service_source and '"soft_reference"' in agent_service_source and '"hardGate": False' in agent_service_source and '"aiJudgementRequired"' in agent_service_source and '"sentToAiForJudgement"' in agent_service_source, "Agent must expose uploaded screenshots as traceable AI visual soft references, not hard gates")
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source and "refine_cases_with_yaml_visual_batches" in yaml_service_source and "uploaded_image_assets" in yaml_service_source, "Uploaded screenshots must be included in AI visual judgment for YAML generation")
     require("def build_cases_payload_from_skills(title, module, text_assets, mode=\"full\", model_config=None, app_package=\"\", app_name=\"\")" in ai_skill_service_source and "app_package=app_package" in ai_skill_service_source, "AI skill case payload builder must accept app context passed by YAML generation")
+    require(
+        "deterministic_entry_visibility_source = should_fast_path_baidu_entry_visibility" in yaml_service_source
+        and "入口可见性快路径使用本地短链路生成，跳过 AI 基线重排" in yaml_service_source
+        and "入口可见性快路径固定生成 3 条首批短链路冒烟" in yaml_service_source
+        and "入口可见性快路径：跳过重型 AI 需求解析" in yaml_service_source,
+        "Baidu entry visibility fast path must be decided before baseline reranker/scope planner and skip heavy AI generation decisions",
+    )
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()

@@ -1170,7 +1170,7 @@ def normalize_requirement_analysis_result(result):
 
 def _fallback_requirement_points_from_text(title, text_assets):
     """从原始需求文本中提取保守需求点，避免需求分析模型超时后中断。"""
-    raw = "\n".join(normalize_text_list(text_assets))
+    raw = _joined_requirement_source(title, "", text_assets)
     if "百度网盘" in raw:
         click_flow = any(word in raw for word in (
             "点击触发", "点击后", "跳转", "授权", "登录", "文件选择", "导入文件",
@@ -1361,7 +1361,24 @@ def _analysis_text_blob(analysis):
 
 def _joined_requirement_source(title="", module="", text_assets=None):
     parts = [str(title or ""), str(module or "")]
-    parts.extend(normalize_text_list(text_assets))
+    for item in normalize_text_list(text_assets):
+        text = str(item or "")
+        generated_context = any(marker in text for marker in (
+            "当前平台采用",
+            "YAML 生成",
+            "Midscene",
+            "现有 YAML",
+            "相似成功基线",
+            "生成策略",
+            "生成要求",
+            "selection_rules",
+            "不能继续等待原业务页",
+            "第三方授权页",
+            "点击百度网盘、微信、相册、相机",
+        ))
+        if generated_context:
+            continue
+        parts.append(text)
     return "\n".join(part for part in parts if part)
 
 
@@ -1373,6 +1390,10 @@ def _should_fast_path_baidu_entry_visibility(title, module, text_assets):
     if any(term in blob for term in ("点击后", "跳转", "授权", "登录", "文件选择", "导入文件", "进入百度网盘", "WebView", "SDK")):
         return False
     return any(term in blob for term in ("首页", "基础打印", "文档打印", "照片打印", "扫描复印", "复印扫描", "可见", "展示", "位置", "并列", "同级"))
+
+
+def should_fast_path_baidu_entry_visibility(title, module, text_assets):
+    return _should_fast_path_baidu_entry_visibility(title, module, text_assets)
 
 
 def _baidu_netdisk_requirement_points(analysis):
@@ -3090,6 +3111,7 @@ __all__ = [
     "select_smoke_cases_for_payload",
     "apply_smoke_selection_to_cases",
     "build_cases_payload_from_skills",
+    "should_fast_path_baidu_entry_visibility",
     "call_skill_baseline_reranker",
     "call_skill_execution_scope_planner",
     "call_skill_executable_yaml_planner",

@@ -214,6 +214,7 @@ def _lazy(name, module):
 
 automatic_baseline_repair_enabled = _lazy("automatic_baseline_repair_enabled", "task_server.services.case_service")
 build_cases_payload_from_skills = _lazy("build_cases_payload_from_skills", "task_server.services.ai_skill_service")
+should_fast_path_baidu_entry_visibility = _lazy("should_fast_path_baidu_entry_visibility", "task_server.services.ai_skill_service")
 call_dashscope_cases = _lazy("call_dashscope_cases", "task_server.services.ai_skill_service")
 call_dashscope_refine_cases = _lazy("call_dashscope_refine_cases", "task_server.services.ai_skill_service")
 dashscope_chat_content = _lazy("dashscope_chat_content", "task_server.services.ai_skill_service")
@@ -5648,6 +5649,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="识别需求主链",
                 message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
             )
+    deterministic_entry_visibility_source = should_fast_path_baidu_entry_visibility(title, module, stage1_text_assets)
     use_global_baseline_profile = safe_bool(
         d.get("useGlobalBaselineProfile")
         if d.get("useGlobalBaselineProfile") is not None
@@ -5666,49 +5668,71 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "enabled": True,
         "baseline_candidate_count": len(baseline_candidates),
     }
-    try:
-        baseline_rerank = call_skill_baseline_reranker(
-            title,
-            module,
-            baseline_query_text,
-            baseline_candidates,
-            model_config=model_config,
-            limit=3,
-        )
-        yaml_reference_examples = baseline_rerank.get("selected") or baseline_candidates[:3]
-        ai_decision_trace["baseline_reranker"] = baseline_rerank.get("trace") or {}
-        ai_decision_trace["baseline_reranker_review"] = baseline_rerank.get("review") or {}
-    except Exception as rerank_error:
+    if deterministic_entry_visibility_source:
         yaml_reference_examples = baseline_candidates[:3]
         ai_decision_trace["baseline_reranker"] = {
-            "enabled": True,
-            "fallback": True,
-            "error": str(rerank_error),
+            "enabled": False,
+            "skipped": True,
+            "reason": "入口可见性快路径使用本地短链路生成，跳过 AI 基线重排",
             "selected_count": len(yaml_reference_examples),
         }
-    try:
-        execution_scope_plan = call_skill_execution_scope_planner(
-            title,
-            module,
-            stage1_text_assets,
-            yaml_reference_examples,
-            model_config=model_config,
-        )
-    except Exception as scope_error:
+    else:
+        try:
+            baseline_rerank = call_skill_baseline_reranker(
+                title,
+                module,
+                baseline_query_text,
+                baseline_candidates,
+                model_config=model_config,
+                limit=3,
+            )
+            yaml_reference_examples = baseline_rerank.get("selected") or baseline_candidates[:3]
+            ai_decision_trace["baseline_reranker"] = baseline_rerank.get("trace") or {}
+            ai_decision_trace["baseline_reranker_review"] = baseline_rerank.get("review") or {}
+        except Exception as rerank_error:
+            yaml_reference_examples = baseline_candidates[:3]
+            ai_decision_trace["baseline_reranker"] = {
+                "enabled": True,
+                "fallback": True,
+                "error": str(rerank_error),
+                "selected_count": len(yaml_reference_examples),
+            }
+    if deterministic_entry_visibility_source:
         local_targets = generation_volume_targets({"requirement_points": stage1_text_assets}, mode="full")
-        target_count = safe_int(local_targets.get("target_automation_cases"), 3)
-        target_count = 3 if target_count <= 3 else (5 if target_count <= 5 else 8)
+        target_count = 3
         execution_scope_plan = {
-            "size": "small" if target_count <= 3 else ("medium" if target_count <= 5 else "large"),
+            "size": "small",
             "targetCaseCount": target_count,
-            "smokeCount": min(3, target_count),
+            "smokeCount": 3,
             "continueThreshold": 0.5,
-            "reason": "AI 范围规划失败，回退平台 3/5/8 规则",
-            "businessFlow": [],
-            "trace": {"enabled": True, "fallback": True, "error": str(scope_error)},
+            "reason": "入口可见性快路径固定生成 3 条首批短链路冒烟",
+            "businessFlow": ["进入首页", "进入文档打印", "校验百度网盘入口可见"],
+            "trace": {"enabled": False, "skipped": True, "reason": "deterministic_entry_visibility_source"},
         }
+    else:
+        try:
+            execution_scope_plan = call_skill_execution_scope_planner(
+                title,
+                module,
+                stage1_text_assets,
+                yaml_reference_examples,
+                model_config=model_config,
+            )
+        except Exception as scope_error:
+            local_targets = generation_volume_targets({"requirement_points": stage1_text_assets}, mode="full")
+            target_count = safe_int(local_targets.get("target_automation_cases"), 3)
+            target_count = 3 if target_count <= 3 else (5 if target_count <= 5 else 8)
+            execution_scope_plan = {
+                "size": "small" if target_count <= 3 else ("medium" if target_count <= 5 else "large"),
+                "targetCaseCount": target_count,
+                "smokeCount": min(3, target_count),
+                "continueThreshold": 0.5,
+                "reason": "AI 范围规划失败，回退平台 3/5/8 规则",
+                "businessFlow": [],
+                "trace": {"enabled": True, "fallback": True, "error": str(scope_error)},
+            }
     ai_decision_trace["execution_scope_planner"] = execution_scope_plan.get("trace") or {}
-    decision_context_text = build_ai_generation_decision_context_text(
+    decision_context_text = "" if deterministic_entry_visibility_source else build_ai_generation_decision_context_text(
         yaml_reference_examples,
         execution_scope_plan,
         {},
@@ -5802,7 +5826,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
     if USE_AI_SKILL_PIPELINE:
         try:
             if job_id:
-                update_generate_job(job_id, progress=45, step="需求解析", message="正在按 requirement_analyzer skill 做需求体检和测试点拆解")
+                if deterministic_entry_visibility_source:
+                    update_generate_job(job_id, progress=45, step="需求解析", message="入口可见性快路径：跳过重型 AI 需求解析，直接生成短链路冒烟用例")
+                else:
+                    update_generate_job(job_id, progress=45, step="需求解析", message="正在按 requirement_analyzer skill 做需求体检和测试点拆解")
             payload = build_cases_payload_from_skills(
                 title,
                 module,
