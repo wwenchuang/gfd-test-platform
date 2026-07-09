@@ -2785,11 +2785,14 @@ def main():
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source and "refine_cases_with_yaml_visual_batches" in yaml_service_source and "uploaded_image_assets" in yaml_service_source, "Uploaded screenshots must be included in AI visual judgment for YAML generation")
     require("def build_cases_payload_from_skills(title, module, text_assets, mode=\"full\", model_config=None, app_package=\"\", app_name=\"\")" in ai_skill_service_source and "app_package=app_package" in ai_skill_service_source, "AI skill case payload builder must accept app context passed by YAML generation")
     require(
-        "deterministic_entry_visibility_source = should_fast_path_baidu_entry_visibility" in yaml_service_source
+        "deterministic_entry_visibility_source = safe_bool" in yaml_service_source
+        and "should_fast_path_baidu_entry_visibility(title, module, stage1_text_assets)" in yaml_service_source
+        and "forceEntryVisibilityFastPath" in yaml_service_source
+        and 'title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"' in yaml_service_source
         and "入口可见性快路径使用本地短链路生成，跳过 AI 基线重排" in yaml_service_source
         and "入口可见性快路径固定生成 3 条首批短链路冒烟" in yaml_service_source
         and "入口可见性快路径：跳过重型 AI 需求解析" in yaml_service_source,
-        "Baidu entry visibility fast path must be decided before baseline reranker/scope planner and skip heavy AI generation decisions",
+        "Baidu entry visibility fast path must honor Agent force flag, use target fallback, and skip heavy AI generation decisions",
     )
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
@@ -2799,6 +2802,11 @@ def main():
     check_yaml_static_validation_and_patterns()
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
     require("def _agent_generate_yaml_from_ui_pipeline" in agent_service_source and "generate_ui_yaml_from_request" in agent_service_source and '"split_by_case"' in agent_service_source and "ui_yaml_pipeline" in agent_service_source, "Agent new-requirement YAML generation must reuse the full requirement/Figma/YAML pipeline before fallback")
+    require(
+        '"forceEntryVisibilityFastPath": _agent_needs_baidu_entry_smoke(run)' in agent_service_source
+        and '"target": title' in agent_service_source,
+        "Agent YAML generation must pass explicit Baidu entry visibility intent and target to the YAML pipeline",
+    )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
     require("def _agent_wants_all_existing_cases" in agent_service_source and "识别到全量执行意图，复用已有 YAML" in agent_service_source and "不生成 YAML 草稿" in agent_service_source, "Agent must route explicit all-case requests to existing YAML reuse instead of draft generation")

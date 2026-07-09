@@ -5521,7 +5521,7 @@ def _save_prepared_figma_design_assets(case_set_id, prepared_figma_context, titl
 
 
 def generate_ui_yaml_from_request(d, job_id=None):
-    title = d.get("title") or "UI自动化用例"
+    title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"
     module = d.get("module") or "AI测试"
     model_config = ai_model_config_from_request(d)
     yaml_file = clean_filename(d.get("file") or f"task-{slug_for_file(title)}.yaml")
@@ -5649,7 +5649,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="识别需求主链",
                 message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
             )
-    deterministic_entry_visibility_source = should_fast_path_baidu_entry_visibility(title, module, stage1_text_assets)
+    deterministic_entry_visibility_source = safe_bool(
+        d.get("forceEntryVisibilityFastPath")
+        or d.get("force_entry_visibility_fast_path")
+        or d.get("entryVisibilityFastPath"),
+        False,
+    ) or should_fast_path_baidu_entry_visibility(title, module, stage1_text_assets)
     use_global_baseline_profile = safe_bool(
         d.get("useGlobalBaselineProfile")
         if d.get("useGlobalBaselineProfile") is not None

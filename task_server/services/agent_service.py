@@ -7687,6 +7687,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
     request_data = {
         "case_set_id": case_set_id,
         "title": title,
+        "target": title,
         "module": module,
         "files": files,
         "figma_url": source_context.get("figmaUrl") or "",
@@ -7695,6 +7696,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "app_package": _agent_app_package(run),
         "use_knowledge_context": False,
         "source": "agent",
+        "forceEntryVisibilityFastPath": _agent_needs_baidu_entry_smoke(run),
     }
     progress_job_id = _agent_generate_progress_job_id(run)
     step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)
