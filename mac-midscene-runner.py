@@ -777,14 +777,28 @@ def yaml_has_root_tasks(yaml_text):
     return bool(re.search(r"^tasks\s*:", yaml_text or "", re.M))
 
 
+def yaml_has_interface_config(yaml_text):
+    return bool(re.search(r"^(android|ios|web|computer|interface)\s*:", yaml_text or "", re.M))
+
+
+def ensure_cli_interface_config(yaml_text, platform="android"):
+    text = (yaml_text or "").replace("\ufeff", "")
+    text = re.sub(r"^(android|ios|web|computer|interface)\s*:\s*$", r"\1: {}", text, count=1, flags=re.M)
+    if yaml_has_interface_config(text):
+        return text
+    platform = platform if platform in ("android", "ios", "web", "computer", "interface") else "android"
+    return f"{platform}: {{}}\n{text.lstrip()}"
+
+
 def midscene_cli_yaml_text(yaml_text):
-    """Convert server platform-root YAML to the root tasks layout Midscene CLI 1.7.10 loads."""
+    """Convert server platform-root YAML to the root tasks layout Midscene CLI loads."""
     text = (yaml_text or "").replace("\ufeff", "")
     if yaml_has_root_tasks(text):
-        return text
+        return ensure_cli_interface_config(text)
     lines = text.splitlines()
     for index, line in enumerate(lines):
-        if not re.match(r"^(android|ios)\s*:\s*$", line.strip()):
+        platform_match = re.match(r"^(android|ios)\s*:\s*$", line.strip())
+        if not platform_match:
             continue
         end = len(lines)
         for probe in range(index + 1, len(lines)):
@@ -804,7 +818,7 @@ def midscene_cli_yaml_text(yaml_text):
                 else:
                     converted.append(child)
             suffix = lines[end:]
-            result = "\n".join(converted + suffix).rstrip()
+            result = "\n".join([f"{platform_match.group(1)}: {{}}"] + converted + suffix).rstrip()
             return result + "\n" if result else text
     return text
 
@@ -843,6 +857,8 @@ def dry_run_yaml_issues(yaml_text):
     task_names = parse_yaml_task_names(text)
     if not text.strip():
         issues.append("YAML 内容为空")
+    if not yaml_has_interface_config(text):
+        issues.append('缺少 Midscene CLI 接口配置 android/web/ios/computer/interface')
     if not yaml_has_root_tasks(text):
         issues.append('缺少 Midscene CLI 可加载的顶层 tasks')
     if not task_names:

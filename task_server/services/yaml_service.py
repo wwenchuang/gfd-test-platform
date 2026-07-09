@@ -2667,6 +2667,42 @@ def ensure_midscene_platform_root(text, platform="android"):
     return _pyyaml.safe_dump(wrapped, allow_unicode=True, sort_keys=False, width=100000)
 
 
+def midscene_cli_dispatch_yaml_text(text, platform="android"):
+    """Build the temporary YAML layout expected by Midscene CLI: interface config + root tasks."""
+    if _pyyaml is None:
+        return str(text or "")
+    raw = str(text or "").replace("\ufeff", "")
+    if not raw.strip():
+        return raw
+    try:
+        parsed = _pyyaml.safe_load(raw)
+    except Exception:
+        return raw
+    if not isinstance(parsed, dict):
+        return raw
+    tasks = parsed.get("tasks")
+    interface_config = {}
+    interface_name = ""
+    for name in ("android", "ios", "web", "computer", "interface"):
+        node = parsed.get(name)
+        if isinstance(node, dict):
+            if isinstance(node.get("tasks"), list) and tasks is None:
+                tasks = node.get("tasks")
+            interface_name = name
+            interface_config = {k: v for k, v in node.items() if k != "tasks"}
+            break
+        if node is None and name in parsed and not interface_name:
+            interface_name = name
+    if not isinstance(tasks, list):
+        return raw
+    if not interface_name:
+        interface_name = str(platform or "android").strip().lower()
+    if interface_name not in ("android", "ios", "web", "computer", "interface"):
+        interface_name = "android"
+    cli = {interface_name: interface_config or {}, "tasks": tasks}
+    return _pyyaml.safe_dump(cli, allow_unicode=True, sort_keys=False, width=100000)
+
+
 def normalize_model_json(text):
     """规范化模型 JSON 输出。"""
     text = (text or "").strip()

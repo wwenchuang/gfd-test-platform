@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-09 Runner CLI YAML 接口配置保留修复
+
+真实跟踪部署后的新任务：
+
+- `agent-1783587131630-42b7fd26`
+- 目标：基础打印新增百度网盘入口
+
+结果：
+
+- `GENERATE_YAML` 2 秒内成功，生成 1 条入口可见性短链路。
+- `VALIDATE_YAML` / `EXECUTION_PRECHECK` 均通过，首批可执行 1/1。
+- Runner 正式执行 0 秒失败，重跑仍失败。
+- Midscene CLI 报错：`No valid interface configuration found in the yaml script, should be either "web", "android", "ios", "computer", or "interface"`。
+
+问题定位：
+
+- Runner 的 `midscene_cli_yaml_text` 把服务端 `android.tasks` 转成 CLI 根 `tasks` 时，丢掉了 `android` 接口配置。
+- Runner dry-run 只检查了根 `tasks` 和 action，没有检查 CLI 必需的 `android/web/ios/computer/interface` 接口配置，导致 dry-run 通过、正式 CLI 0 秒失败。
+- Agent 自动修复把结构性错误误修成加 `sleep`，因为失败分析材料虽包含 stdout evidence，但 AI 分析输入仍未稳定提取结构性错误字段。
+
+已修改：
+
+- `task_server/services/yaml_service.py`
+- `task_server/router.py`
+- `windows-midscene-runner.py`
+- `mac-midscene-runner.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 参考 Midscene 官方 YAML CLI 结构：环境配置段（如 `android`）与根级 `tasks` 同级。
+- 新增 `midscene_cli_dispatch_yaml_text`，只在 Runner 拉取任务时把服务端保存格式临时转换为官方 CLI 结构；不修改已保存 YAML，也不改历史脚本。
+- `yaml_with_single_task` 保持原有 `android.tasks` 提取语义，避免影响 UI、评分、修复等非 Runner 下发调用。
+- Windows/Mac Runner 的 `midscene_cli_yaml_text` 转换 `android.tasks` / `ios.tasks` 时保留 `android: {}` / `ios: {}` 接口配置。
+- Runner dry-run 新增接口配置检查：缺少 `android/web/ios/computer/interface` 时直接失败，不再放行到正式执行。
+- 静态检查覆盖：保存格式不变、Runner 临时下发格式符合官方 CLI、Runner CLI 接口配置检查必须存在。
+
 ### 2026-07-09 Agent 入口可见性快路径通用化
 
 用户明确指出“基础打印新增百度网盘入口”只是测试样例，平台不能只针对单个需求优化。

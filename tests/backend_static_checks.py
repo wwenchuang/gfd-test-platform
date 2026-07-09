@@ -3080,7 +3080,7 @@ def main():
         },
     ]
     from task_server.services import agent_service
-    from task_server.services.yaml_service import cases_to_midscene_yaml, dry_run_midscene_yaml, ensure_midscene_platform_root, remove_empty_midscene_platform_roots, split_automation_ready_cases, validate_midscene_yaml_executability
+    from task_server.services.yaml_service import cases_to_midscene_yaml, dry_run_midscene_yaml, ensure_midscene_platform_root, midscene_cli_dispatch_yaml_text, remove_empty_midscene_platform_roots, split_automation_ready_cases, validate_midscene_yaml_executability, yaml_with_single_task
     from task_server.services.yaml_static_validator import validate_yaml_static_executable
     empty_yaml = validate_midscene_yaml_executability("android:\n  tasks: []\n")
     require(not empty_yaml.get("ok") and "不能为空" in "；".join(empty_yaml.get("issues") or []), "Empty android.tasks must fail executable validation")
@@ -3098,6 +3098,10 @@ def main():
         "cases": [{"title": "入口可见", "steps": ["确认首页加载完成"], "assertions": ["百度网盘入口可见"]}],
     }, app_package="com.xbxxhz.box")
     require(generated_title and "\n  tasks:" in generated_yaml and "\ntasks:" not in generated_yaml, "Generated Midscene YAML must use android.tasks for Runner dry-run")
+    single_task_yaml = yaml_with_single_task(generated_yaml, "入口可见", app_package="com.xbxxhz.box")
+    single_task_dispatch_yaml = midscene_cli_dispatch_yaml_text(single_task_yaml)
+    require("android:\n  tasks:" in single_task_yaml and '- name: "入口可见"' in single_task_yaml and "# baseline.case_id" in single_task_yaml, "Single-task extraction must preserve existing saved android.tasks layout and comments")
+    require(single_task_dispatch_yaml.startswith("android: {}\ntasks:\n- name: 入口可见"), "Runner dispatch YAML must keep official Midscene CLI interface config plus root tasks")
     missing_input_value_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiInput: 当前页面输入框\n"
     missing_input_value = validate_midscene_yaml_executability(missing_input_value_yaml)
     require(not missing_input_value.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value.get("issues") or []), "Executable validation must reject aiInput without value before Runner")
@@ -3483,11 +3487,12 @@ def main():
     ])
     require("RUNNER_CAPABILITIES" in runner_sources and '"yaml_dry_run": True' in runner_sources, "Both runners must advertise yaml_dry_run capability")
     require("def run_yaml_dry_run_job" in runner_sources and "YAML dry-run 不生成 HTML 报告" in runner_sources, "Both runners must support local YAML dry-run jobs without Midscene execution")
-    require("def midscene_cli_yaml_text" in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks")
+    require("def midscene_cli_yaml_text" in runner_sources and "def ensure_cli_interface_config" in runner_sources and '缺少 Midscene CLI 接口配置 android/web/ios/computer/interface' in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks with interface config")
     require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env instead of writing deviceId into CLI YAML")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")
     require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")
+    require("midscene_cli_dispatch_yaml_text(yaml_content)" in router_source, "Runner job dispatch must convert YAML to official Midscene CLI layout without changing saved scripts")
     agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")
     require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")

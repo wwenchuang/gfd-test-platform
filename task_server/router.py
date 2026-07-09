@@ -209,6 +209,7 @@ from task_server.services.yaml_service import (
     load_generate_job,
     mark_generation_mindmap_deleted,
     mark_generation_mindmap_record_deleted,
+    midscene_cli_dispatch_yaml_text,
     new_case_set_id,
     normalize_cases_payload,
     remove_generation_mindmap_file,
@@ -2088,6 +2089,7 @@ def _get_runner_jobs_next(handler, qs):
         if target_task_name:
             app_package = resolve_app_package(selected["module"], selected["file"], yaml_content)
             yaml_content = yaml_with_single_task(yaml_content, target_task_name, app_package=app_package)
+        yaml_content = midscene_cli_dispatch_yaml_text(yaml_content)
     except Exception as e:
         with JOB_LOCK:
             jobs = load_jobs()
