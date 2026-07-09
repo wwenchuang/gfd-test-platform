@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-09 Runner dry-run 平台根节点修复
+
+本轮定位线上最新任务：
+
+- `agent-1783508474367-2fa0485c`
+- 目标：基础打印新增百度网盘入口
+- 状态：`FAILED`
+- 失败停在：`RUN_SONIC`
+
+问题定位：
+
+- Agent 生成、平台本地 dry-run 和静态校验均通过了部分 YAML。
+- Windows Runner 真实 dry-run 全部拒绝选中的 YAML，错误为：`缺少 android 或 ios 平台根节点`。
+- 直接原因是服务端生成/拆分链路会产出或保留根级 `tasks:`；平台本地校验允许 `root.tasks`，但 Runner 真实 dry-run 要求顶层必须是 `android.tasks` 或 `ios.tasks`。
+
+已修改：
+
+- `task_server/services/yaml_service.py`
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 新增 `ensure_midscene_platform_root`，在 Runner 相关链路把根级 `tasks:` 包装为 `android.tasks`。
+- `cases_to_midscene_yaml` / `cases_to_separate_midscene_yamls` 直接生成 `android.tasks`，不再生成 `android: null + root tasks`。
+- Agent 确认生成 YAML、拆分多任务文件、确认已有生成文件时都会写入平台根结构。
+- Runner 下发前的执行修复会兜底改写旧生成 YAML，并记录到 `yamlExecutionRepairs`。
+- AI 修复草稿和修复重跑写入前也会规范化平台根，避免修复链路再次触发 Runner dry-run 结构失败。
+- 后端静态检查覆盖根级 `tasks` 包装、生成器输出和 Agent 拆分文件输出。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+```
+
 ### 2026-07-08 Skills 链路 app_package 参数漏提交修复
 
 问题定位：

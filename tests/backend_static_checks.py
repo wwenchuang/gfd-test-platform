@@ -107,17 +107,16 @@ def check_agent_fallback_yaml_auto_confirm_split():
 
     old_task_dir = agent_service.TASK_DIR
     old_draft_dir = agent_service.AGENT_DRAFT_DIR
-    yaml_text = """android:
-  tasks:
-    - name: "AI建模入口验收"
-      flow:
-        - launch: com.kfb.model
-        - aiAssert: "AI建模入口可见"
-    - name: "AI建模语音输入验收"
-      flow:
-        - launch: com.kfb.model
-        - aiTap: "语音创作入口"
-        - aiAssert: "语音输入或长按说话提示可见"
+    yaml_text = """tasks:
+  - name: "AI建模入口验收"
+    flow:
+      - launch: com.kfb.model
+      - aiAssert: "AI建模入口可见"
+  - name: "AI建模语音输入验收"
+    flow:
+      - launch: com.kfb.model
+      - aiTap: "语音创作入口"
+      - aiAssert: "语音输入或长按说话提示可见"
 """
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -139,6 +138,8 @@ def check_agent_fallback_yaml_auto_confirm_split():
             require(not err, f"Fallback YAML split should not fail: {err}")
             require(len(refs) == 2, "Fallback multi-task YAML must split into separate files")
             require(all(ref.get("confirmed") and os.path.exists(ref.get("path", "")) for ref in refs), "Split fallback YAML files must be confirmed and written")
+            written = [Path(ref["path"]).read_text(encoding="utf-8") for ref in refs]
+            require(all("\n  tasks:" in text and "\ntasks:" not in text for text in written), "Split Agent YAML files must use android.tasks instead of root tasks before Runner")
             validation = artifacts.get("yamlValidation") or {}
             require(validation.get("ok") and validation.get("autoConfirmedFallback"), "Split fallback YAML must be marked as auto-confirmed fallback")
     finally:
@@ -3020,7 +3021,7 @@ def main():
         },
     ]
     from task_server.services import agent_service
-    from task_server.services.yaml_service import dry_run_midscene_yaml, remove_empty_midscene_platform_roots, split_automation_ready_cases, validate_midscene_yaml_executability
+    from task_server.services.yaml_service import cases_to_midscene_yaml, dry_run_midscene_yaml, ensure_midscene_platform_root, remove_empty_midscene_platform_roots, split_automation_ready_cases, validate_midscene_yaml_executability
     from task_server.services.yaml_static_validator import validate_yaml_static_executable
     empty_yaml = validate_midscene_yaml_executability("android:\n  tasks: []\n")
     require(not empty_yaml.get("ok") and "不能为空" in "；".join(empty_yaml.get("issues") or []), "Empty android.tasks must fail executable validation")
@@ -3031,6 +3032,13 @@ def main():
     require(not duplicate_platform_check.get("ok") and "android: null" in "；".join(duplicate_platform_check.get("issues") or []), "Executable validation must reject android:null plus root tasks before Runner device injection")
     normalized_platform_yaml = remove_empty_midscene_platform_roots(duplicate_platform_yaml)
     require("android: null" not in normalized_platform_yaml and validate_midscene_yaml_executability(normalized_platform_yaml).get("ok"), "YAML normalization must remove empty platform roots before dispatch")
+    runner_platform_yaml = ensure_midscene_platform_root(normalized_platform_yaml)
+    require("\n  tasks:" in runner_platform_yaml and "\ntasks:" not in runner_platform_yaml and validate_midscene_yaml_executability(runner_platform_yaml).get("platform") == "android", "Runner dispatch normalization must wrap root tasks into android.tasks")
+    generated_title, generated_yaml = cases_to_midscene_yaml({
+        "title": "百度网盘入口校验",
+        "cases": [{"title": "入口可见", "steps": ["确认首页加载完成"], "assertions": ["百度网盘入口可见"]}],
+    }, app_package="com.xbxxhz.box")
+    require(generated_title and "\n  tasks:" in generated_yaml and "\ntasks:" not in generated_yaml, "Generated Midscene YAML must use android.tasks for Runner dry-run")
     missing_input_value_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiInput: 当前页面输入框\n"
     missing_input_value = validate_midscene_yaml_executability(missing_input_value_yaml)
     require(not missing_input_value.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value.get("issues") or []), "Executable validation must reject aiInput without value before Runner")

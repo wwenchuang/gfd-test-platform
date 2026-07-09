@@ -53,6 +53,7 @@ from task_server.storage import (
 )
 from task_server.services.yaml_service import (
     ai_rewrite_yaml_for_executable_gate,
+    ensure_midscene_platform_root,
     extract_midscene_tasks,
     loading_wait_timeout_for_context,
     remove_empty_midscene_platform_roots,
@@ -1268,6 +1269,7 @@ def _yaml_refs_from_paths(paths):
 
 
 def _confirm_agent_yaml_content(run, artifacts, content, draft_path=""):
+    content = ensure_midscene_platform_root(content, platform=run.get("platform", "android"))
     check = validate_agent_yaml_content(content)
     if not check.get("ok"):
         return None, "YAML 草稿校验未通过：" + "；".join(check.get("issues") or [])
@@ -1437,6 +1439,7 @@ def _sync_agent_generated_case_groups(artifacts, validation_results=None):
 
 def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="", reason="auto_confirmed_yaml"):
     """Save an executable generated YAML as confirmed files, splitting multi-task drafts."""
+    content = ensure_midscene_platform_root(content, platform=run.get("platform", "android"))
     check = validate_agent_yaml_content(content)
     if not check.get("ok"):
         return [], "YAML 草稿校验未通过：" + "；".join(check.get("issues") or [])
@@ -1483,7 +1486,10 @@ def _confirm_agent_yaml_content_as_files(run, artifacts, content, draft_path="",
             stem, ext = os.path.splitext(file_name)
             file_name = clean_filename(f"{stem}-{index}{ext or '.yaml'}")
         used_files.add(file_name)
-        payload = {"tasks": [task]} if platform == "root" else {platform: {"tasks": [task]}}
+        target_platform = platform if platform in ("android", "ios") else str(run.get("platform") or "android").strip().lower()
+        if target_platform not in ("android", "ios"):
+            target_platform = "android"
+        payload = {target_platform: {"tasks": [task]}}
         yaml_text = pyyaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
         item_check = validate_agent_yaml_content(yaml_text)
         executable_score = score_midscene_yaml_executable(yaml_text, generated=True)
@@ -1562,6 +1568,10 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             issues.append(f"{file_name or path or '未命名 YAML'} 不存在")
             continue
         content = read_text_file(path, "")
+        normalized_content = ensure_midscene_platform_root(content, platform=run.get("platform", "android"))
+        if normalized_content != content:
+            write_text_file(path, normalized_content)
+            content = normalized_content
         check = validate_agent_yaml_content(content)
         executable_score = score_midscene_yaml_executable(content, generated=True)
         result = {
@@ -4405,12 +4415,46 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
     scored_before = _score_agent_yaml_ref_for_execution(run, ref)
     if not _agent_yaml_ref_is_generated(run, ref):
         return scored_before, None
+    normalized_content = ensure_midscene_platform_root(content, platform=run.get("platform", "android"))
+    platform_root_changed = normalized_content != content
+    if platform_root_changed:
+        repaired_ref = {**ref}
+        _agent_write_repaired_yaml_ref(repaired_ref, normalized_content)
+        ref = repaired_ref
+        content = normalized_content
+        scored_before = _score_agent_yaml_ref_for_execution(run, ref)
     before_score = scored_before.get("executableScore") if isinstance(scored_before.get("executableScore"), dict) else {}
     before_reasons = list(before_score.get("reasons") or [])[:12]
     if (
         not _agent_ref_needs_local_execution_repair(scored_before)
         and not _agent_ref_needs_ai_execution_rewrite(scored_before)
     ):
+        if platform_root_changed:
+            auto_repair = {
+                "type": "local_yaml_execution_repair",
+                "reason": reason,
+                "changed": True,
+                "changes": ["wrap root tasks into android.tasks for Runner dry-run"],
+                "ok": before_score.get("executionLevel") == "executable",
+                "before": {"executionLevel": "root_tasks", "reasons": ["Runner requires android or ios root"]},
+                "after": {
+                    "executionLevel": before_score.get("executionLevel"),
+                    "dryRunOk": True,
+                    "reasons": list(before_score.get("reasons") or [])[:6],
+                },
+            }
+            scored_before["autoRepair"] = auto_repair
+            _agent_update_yaml_ref_artifact(run, ref, scored_before)
+            artifacts = (run or {}).setdefault("artifacts", {})
+            repairs = artifacts.get("yamlExecutionRepairs") if isinstance(artifacts.get("yamlExecutionRepairs"), list) else []
+            repairs.append({
+                "module": scored_before.get("module") or "",
+                "file": scored_before.get("file") or "",
+                "path": scored_before.get("path") or "",
+                **auto_repair,
+            })
+            artifacts["yamlExecutionRepairs"] = repairs[-50:]
+            return scored_before, auto_repair
         return scored_before, None
 
     repaired = _agent_repair_missing_interaction_followups(content)
@@ -4428,8 +4472,11 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
     auto_repair = {
         "type": "local_yaml_execution_repair",
         "reason": reason,
-        "changed": local_changed,
-        "changes": list(repaired.get("changes") or [])[:12],
+        "changed": bool(local_changed or platform_root_changed),
+        "changes": (
+            (["wrap root tasks into android.tasks for Runner dry-run"] if platform_root_changed else [])
+            + list(repaired.get("changes") or [])
+        )[:12],
         "ok": bool(dry_compact.get("ok")) and after_score.get("executionLevel") == "executable",
         "before": {
             "executionLevel": before_score.get("executionLevel"),
@@ -10236,6 +10283,10 @@ def _tool_generate_repair(run):
                     if resp.get("diff") or resp.get("diff_summary"):
                         draft["diff"] = resp.get("diff") or resp.get("diff_summary")
                 if fixed_yaml:
+                    fixed_yaml = ensure_midscene_platform_root(
+                        remove_empty_midscene_platform_roots(fixed_yaml),
+                        platform=run.get("platform", "android"),
+                    ).strip()
                     validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
                     if not isinstance(validation, dict) or "ok" not in validation:
                         validation = validate_midscene_yaml_executability(fixed_yaml)
@@ -10423,7 +10474,7 @@ def _agent_repair_draft_fixed_yaml(draft):
     for key in ("fixedYaml", "fixed_yaml", "optimizedYaml", "optimized_yaml", "yaml", "content"):
         value = draft.get(key)
         if isinstance(value, str) and value.strip() and value.strip() != str(draft.get("originalYaml") or "").strip():
-            return remove_empty_midscene_platform_roots(value).strip()
+            return ensure_midscene_platform_root(remove_empty_midscene_platform_roots(value), platform="android").strip()
     return ""
 
 
