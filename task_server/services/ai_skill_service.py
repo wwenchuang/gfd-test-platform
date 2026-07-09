@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import json
 import os
 import re
@@ -159,6 +160,19 @@ def validate_ai_skill_output(skill_name, value):
 # AI skill prompt rendering & execution
 # ---------------------------------------------------------------------------
 
+def _run_ai_skill_call_with_hard_timeout(func, timeout, label):
+    timeout_seconds = max(30, safe_int(timeout, 180))
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"{label} 超过 {timeout_seconds}s 未返回，已中断并交给本地兜底") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prompt=""):
     """渲染 AI skill prompt 模板。"""
     template = load_ai_skill_prompt(skill_name, version)
@@ -175,17 +189,23 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
         raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
     if not image_assets and safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True):
         try:
-            raw = ai_gateway_skill_content(
-                skill_name,
-                prompt,
-                payload=payload,
-                timeout=timeout,
-                temperature=temperature,
-                json_response=True,
-                model_config=model_config,
+            raw = _run_ai_skill_call_with_hard_timeout(
+                lambda: ai_gateway_skill_content(
+                    skill_name,
+                    prompt,
+                    payload=payload,
+                    timeout=timeout,
+                    temperature=temperature,
+                    json_response=True,
+                    model_config=model_config,
+                ),
+                timeout,
+                f"AI Gateway skill {skill_name}",
             )
             result = normalize_model_json(raw)
             return validate_ai_skill_output(skill_name, result)
+        except TimeoutError:
+            raise
         except Exception as exc:
             if model_config and AI_SKILLS_STRICT_MODEL:
                 raise RuntimeError(f"AI Gateway skill 调用失败且已启用 strict model：{exc}") from exc

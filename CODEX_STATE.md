@@ -69,6 +69,53 @@ python3 tests/backend_static_checks.py
 git diff --check
 ```
 
+### 2026-07-09 AI Gateway skill 硬超时修复
+
+部署上一轮修复后重新验证：
+
+- `agent-1783570675172-67dc71dc`
+- 业务主链已正确变为：首页 -> 文档打印 -> 照片打印 -> 扫描复印 -> 校验百度网盘入口可见
+- 但任务仍在 `GENERATE_YAML` 的 `requirement_analyzer skill` 长时间无新 trace，说明单个文本 skill 的 AI Gateway 调用没有按 90 秒及时返回。
+
+已修改：
+
+- `task_server/services/ai_skill_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 文本 AI skill 的 AI Gateway 调用增加硬超时包装，超过传入 timeout 后直接抛 `TimeoutError`。
+- AI Gateway skill 超时后交给上层 requirement/scenario/automation fallback，不再继续进入另一条可能同样长等待的 provider 调用。
+- 静态检查覆盖硬超时包装、`future.result(timeout=...)` 和 timeout 向上层 fallback 暴露。
+
+### 2026-07-09 入口可见性首批冒烟兜底
+
+继续跟踪线上验证任务：
+
+- `agent-1783570675172-67dc71dc`
+- 状态：`FAILED`
+- 失败点：`EXECUTION_PRECHECK`
+
+问题定位：
+
+- 生成结果只保留了第 8 条“百度网盘入口点击后跳转终态”作为 executable。
+- 该用例不是稳定首批冒烟候选，precheck 正确拦截：`首批可执行 0/1`。
+- 前 7 条入口展示类用例没有形成短链路 executable，导致流程没有真正跑起来。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- Agent 生成确认阶段增加确定性入口可见性冒烟兜底。
+- 当需求明确包含“百度网盘入口”，且生成结果没有稳定 `smokeCandidate` 时，自动写入 `00-文档打印首页百度网盘入口可见性短链路冒烟.yaml`。
+- 兜底 YAML 只做：启动 App -> 等首页稳定 -> 进入文档打印 -> 等待/断言百度网盘入口可见，不点击第三方入口。
+- 静态检查覆盖该兜底必须带 `smokeCandidate` / `runnerCandidate`，用于首批 Runner 冒烟。
+
 ### 2026-07-09 Runner dry-run 与 Midscene CLI YAML 结构一致性修复
 
 本轮定位线上任务：
