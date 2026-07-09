@@ -2825,9 +2825,11 @@ def main():
         "Agent must directly generate generic entry visibility smoke YAML instead of blocking in the generic YAML generator",
     )
     require(
-        "三维创作、3D打印、模型推荐" in agent_service_source
-        and "切换到学习打印/基础打印首页" in agent_service_source,
-        "Agent entry visibility smoke must recover from non-print homepage states before locating business entries",
+        "monkey -p {app_package} -c android.intent.category.LAUNCHER 1" in agent_service_source
+        and "aiTap: 底部导航栏首页" in agent_service_source
+        and "页面同时展示文档打印、照片打印、扫描复印入口" in agent_service_source
+        and "不要点击资料库、教辅、模型或3D打印入口" in agent_service_source,
+        "Agent entry visibility smoke must deterministically launch the app and recover to the print home before locating business entries",
     )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")

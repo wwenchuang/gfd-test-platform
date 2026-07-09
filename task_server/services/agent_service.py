@@ -1698,19 +1698,20 @@ def _agent_entry_visibility_smoke_yaml(run):
     entry_label = str(intent.get("entryLabel") or "目标").strip() or "目标"
     target_page = str(intent.get("targetPage") or "目标页面").strip() or "目标页面"
     task_name = f"{target_page}{entry_label}入口可见性短链路冒烟"
-    home_wait = "小白学习打印首页已加载，首页主要业务入口可见"
+    home_wait = "小白学习打印首页已加载，页面同时展示文档打印、照片打印、扫描复印入口；当前不是资料库、教辅、模型或3D打印页面"
     flow = [
+        f"        - runAdbShell: monkey -p {app_package} -c android.intent.category.LAUNCHER 1",
         f"        - launch: {app_package}",
-        "        - ai: 如果当前停留在三维创作、3D打印、模型推荐或其他非打印首页，请通过底部导航或首页入口切换到学习打印/基础打印首页；如果已在打印首页则保持当前页面",
+        "        - aiTap: 底部导航栏首页",
         f"        - aiWaitFor: {home_wait}",
-        "          timeout: 15000",
+        "          timeout: 20000",
     ]
     if target_page != "首页":
         flow.extend([
-            f"        - aiTap: {target_page}入口",
-            f"        - aiWaitFor: {target_page}页面已加载，展示{entry_label}入口",
-            "          timeout: 15000",
-            f"        - aiAssert: {target_page}{entry_label}入口可见",
+            f"        - aiTap: 首页的{target_page}入口，不要点击资料库、教辅、模型或3D打印入口",
+            f"        - aiWaitFor: {target_page}页面或{target_page}导入入口区域已加载，展示{entry_label}入口",
+            "          timeout: 20000",
+            f"        - aiAssert: {target_page}页面展示{entry_label}入口",
         ])
     else:
         flow.extend([
