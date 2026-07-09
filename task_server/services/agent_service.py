@@ -9791,6 +9791,30 @@ def _normalize_failed_execution_item(item, fallback=None):
     }
 
 
+def _agent_runner_job_material(job_id):
+    job_id = str(job_id or "").strip()
+    if not job_id:
+        return {}
+    run_dir = safe_join(LEARNING_DIR, "runs", job_id)
+    if not os.path.isdir(run_dir):
+        return {}
+    stdout = read_text_file(safe_join(run_dir, "stdout.log"), "")
+    stderr = read_text_file(safe_join(run_dir, "stderr.log"), "")
+    summary = read_json_file(safe_join(run_dir, "summary.json"), default=None)
+    attempts = read_json_file(safe_join(run_dir, "attempts.json"), default=None)
+    material = {
+        "runDir": run_dir,
+        "stdoutTail": stdout[-2000:] if stdout else "",
+        "stderrTail": stderr[-2000:] if stderr else "",
+    }
+    if isinstance(summary, dict):
+        material["summary"] = summary
+        material["summaryText"] = json.dumps(summary, ensure_ascii=False)[:4000]
+    if isinstance(attempts, list):
+        material["attempts"] = attempts[-3:]
+    return {key: value for key, value in material.items() if value not in ("", None, [], {})}
+
+
 def _agent_failed_execution_items(run):
     """Return the single source of truth for failed Runner execution items."""
     artifacts = (run or {}).get("artifacts") or {}
@@ -9933,17 +9957,20 @@ def _tool_collect_report(run):
                     success_jobs.append(job_entry)
                 elif status in ("failed", "error", "timeout", "cancelled"):
                     # 收集失败信息
+                    material = _agent_runner_job_material(jid)
                     fail_entry = {
                         **job_entry,
+                        **material,
                         "error": job.get("error") or job.get("fail_reason", ""),
-                        "stderrTail": (job.get("stderr") or job.get("stderr_tail") or "")[-500:],
-                        "stdoutTail": (job.get("stdout") or job.get("stdout_tail") or "")[-300:],
+                        "stderrTail": (material.get("stderrTail") or job.get("stderr") or job.get("stderr_tail") or "")[-1600:],
+                        "stdoutTail": (material.get("stdoutTail") or job.get("stdout") or job.get("stdout_tail") or "")[-1200:],
                     }
                     fail_entry["failureReason"] = _agent_job_failure_reason(fail_entry)
                     fail_entry["failureType"] = _agent_job_failure_type("\n".join([
                         fail_entry.get("error", ""),
                         fail_entry.get("stderrTail", ""),
                         fail_entry.get("stdoutTail", ""),
+                        fail_entry.get("summaryText", ""),
                     ]))
                     failed_jobs.append(fail_entry)
                     if status == "timeout":
@@ -10215,6 +10242,9 @@ def _tool_analyze_failure(run):
                 stderr = fj.get("stderrTail") or fj.get("stderr_tail") or ""
                 if stderr:
                     failure_context += f"  stderr: {stderr[:200]}\n"
+                summary_text = fj.get("summaryText") or ""
+                if summary_text:
+                    failure_context += f"  summary: {summary_text[:600]}\n"
 
         # 构建本地分析结果
         analysis = {
@@ -10237,6 +10267,10 @@ def _tool_analyze_failure(run):
                             "file": fj.get("file", ""),
                             "error": fj.get("error", ""),
                             "failureReason": fj.get("failureReason", ""),
+                            "stdoutTail": fj.get("stdoutTail", ""),
+                            "stderrTail": fj.get("stderrTail", ""),
+                            "summary": fj.get("summary") if isinstance(fj.get("summary"), dict) else {},
+                            "summaryText": fj.get("summaryText", ""),
                         }
                         for fj in failed_jobs[:12]
                     ],
@@ -10347,6 +10381,7 @@ def _tool_generate_repair(run):
                 f"Runner 错误：{target_job.get('error') or ''}",
                 f"stderr：{target_job.get('stderrTail') or target_job.get('stderr_tail') or ''}",
                 f"stdout：{target_job.get('stdoutTail') or target_job.get('stdout_tail') or ''}",
+                f"summary：{target_job.get('summaryText') or ''}",
                 f"本次全部失败摘要：\n{all_failure_context}",
             ]
             evidence = "\n".join(part for part in evidence_parts if str(part).strip() and not str(part).endswith("："))
