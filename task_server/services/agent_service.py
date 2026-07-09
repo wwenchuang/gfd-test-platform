@@ -1555,6 +1555,7 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
     refs = []
     results = []
     issues = []
+    non_executable = []
     module_default = clean_agent_module_name(run)
     for item in file_items or []:
         if not isinstance(item, dict):
@@ -1586,6 +1587,11 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
         if not check.get("ok"):
             issues.extend([f"{result['file']}：{issue}" for issue in (check.get("issues") or ["校验未通过"])])
             continue
+        if executable_score.get("executionLevel") != "executable":
+            reasons = executable_score.get("reasons") or executable_score.get("warnings") or []
+            reason_text = "；".join(str(reason) for reason in list(reasons)[:3] if str(reason).strip())
+            non_executable.append(f"{result['file']}：{executable_score.get('executionLevel') or 'draft'}；{reason_text}".rstrip("；"))
+            continue
         refs.append({
             "type": "file",
             "module": module,
@@ -1597,7 +1603,8 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             "executableScore": executable_score,
         })
     if not refs:
-        return [], "YAML 文件校验未通过：" + "；".join(issues or ["没有可确认的 YAML 文件"])
+        detail = issues or non_executable or ["没有达到 executable 的 YAML 文件"]
+        return [], "YAML 文件未达到 Runner 自动执行门禁：" + "；".join(detail)
     artifacts["generatedYaml"] = ""
     artifacts["generatedYamlPath"] = refs[0]["path"]
     artifacts["generatedYamlPaths"] = [item["path"] for item in refs]
@@ -1607,6 +1614,7 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
         "ok": not issues,
         "results": results,
         "issues": issues,
+        "nonExecutable": non_executable,
         "executionGate": {
             "executableCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "executable"),
             "needsReviewCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "needs_review"),
@@ -5652,12 +5660,16 @@ def _watch_agent_generate_yaml_progress(run, step, job_id, stop_event):
     if not isinstance(step, dict):
         return
     try:
-        from task_server.services.yaml_service import generate_job_path
+        from task_server.services.yaml_service import expire_generate_job_if_stale, generate_job_path
     except Exception:
         return
     last_key = None
     while not stop_event.wait(2.0):
         job = read_json_file(generate_job_path(job_id), default={}) or {}
+        try:
+            job = expire_generate_job_if_stale(job, persist=True) or job
+        except Exception:
+            pass
         message = str(job.get("message") or "").strip()
         stage = str(job.get("step") or "").strip() or "生成进度"
         progress = job.get("progress")
@@ -6001,6 +6013,17 @@ def _clean_business_flow_node(value):
 
 def _fallback_business_flow_from_text(value):
     compact = re.sub(r"\s+", "", _normalize_business_flow_text(value))
+    if "百度网盘" in compact and "入口" in compact and any(
+        term in compact for term in ("基础打印", "文档打印", "照片打印", "扫描复印")
+    ):
+        flow = []
+        if "首页" in compact:
+            flow.append("进入首页")
+        for label in ("文档打印", "照片打印", "扫描复印"):
+            if label in compact:
+                flow.append(f"进入{label}")
+        flow.append("校验百度网盘入口可见")
+        return flow
     if any(term in compact for term in ("AI建模", "ai建模", "开始创作", "图片建模", "语音创作", "语音输入")):
         flow = ["进入 AI建模页"]
         if "开始创作" in compact:
@@ -6067,11 +6090,11 @@ def _ensure_business_flow_constraint(run):
             if part and part not in expanded_flow:
                 expanded_flow.append(part)
     business_flow = expanded_flow
-    fallback_flow = _fallback_business_flow_from_text("\n".join([
+    fallback_source_text = "\n".join([
         str(run.get("target") or ""),
         str(requirement_text or ""),
-        str(source_context.get("sourceSummary") or ""),
-    ]))
+    ])
+    fallback_flow = _fallback_business_flow_from_text(fallback_source_text)
     flow_joined = " ".join(business_flow)
     if fallback_flow and (not business_flow or len(business_flow) < 3 or "AI建模" not in flow_joined):
         merged_flow = []
@@ -6079,6 +6102,9 @@ def _ensure_business_flow_constraint(run):
             if item and item not in merged_flow:
                 merged_flow.append(item)
         business_flow = merged_flow
+        business_flow_source = "requirement_text"
+    else:
+        business_flow_source = str(business_ctx.get("business_flow_source") or current.get("source") or "default")
     if not business_flow:
         business_flow = list(AGENT_DEFAULT_BUSINESS_FLOW)
     business_flow_text = business_ctx.get("business_flow_text") or "\n".join(
@@ -6088,7 +6114,7 @@ def _ensure_business_flow_constraint(run):
     constraint = {
         "required": True,
         "strict": True,
-        "source": str(business_ctx.get("business_flow_source") or current.get("source") or "default"),
+        "source": business_flow_source,
         "businessFlow": business_flow[:12],
         "businessFlowText": business_flow_text,
         "guardrails": [
@@ -7593,6 +7619,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         message="Agent 已进入需求解析、脑图和 YAML 生成链路",
         run_id=run.get("runId", ""),
         case_set_id=case_set_id,
+        timeout_seconds=900,
     )
     if step:
         watcher = threading.Thread(
@@ -7679,11 +7706,16 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         for item in yaml_file_items
         if item.get("path")
     ]
+    executable_file_items = [
+        item for item in yaml_file_items
+        if str(item.get("executionLevel") or item.get("level") or "").strip().lower() == "executable"
+    ]
     yaml_executability = {
-        "ok": bool(yaml_file_items) and all(item.get("ok") for item in yaml_validation_results),
+        "ok": bool(executable_file_items) and all(item.get("ok") for item in yaml_validation_results),
         "mode": "split_by_case",
         "fileCount": len(yaml_file_items),
-        "taskCount": sum(int(item.get("taskCount") or 0) for item in yaml_validation_results),
+        "executableFileCount": len(executable_file_items),
+        "taskCount": len(executable_file_items),
     }
     artifacts = run.setdefault("artifacts", {})
     artifacts["generatedCases"] = cases_payload

@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-09 Agent 生成 YAML 长时间卡住与需求主链偏移修复
+
+本轮真实跟踪线上新任务：
+
+- `agent-1783567710600-f29a4658`
+- 目标：基础打印新增百度网盘入口
+- 输入：复用上一条任务的需求文字、Figma 链接、App、Runner 和设备
+
+问题定位：
+
+- 任务在 `GENERATE_YAML` 阶段长时间停留；trace 显示先进入 `requirement_analyzer skill`，随后进入 `视觉校准`，旧配置给 Agent YAML 生成预留了 7200 秒，视觉批次动态预算可到 3600 秒，导致界面长期显示执行中。
+- 业务主链抽取被 Figma 首页文案影响，出现“拍照扫描文件 / 智能图片矫正”，没有优先使用用户需求里的“首页、文档打印、照片打印、扫描复印、百度网盘入口”。
+- 生成 job 只有被外部读取时才会做 stale timeout 收敛，Agent watcher 本身没有主动触发 stale 检查，因此容易出现 Agent 状态长时间不刷新。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `task_server/services/yaml_service.py`
+- `deploy/install-server.sh`
+- `deploy/midscene.env.example`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- Agent YAML 生成默认超时从 7200 秒收敛为 900 秒，并在 Agent 生成 job 创建时显式写入 `timeout_seconds=900`。
+- Agent 生成进度 watcher 周期性调用 `expire_generate_job_if_stale`，让 stale job 自动进入 timeout 状态，不再让 Agent UI 长时间假运行。
+- 部署脚本新增 `MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS=900` 默认值，并把旧的 `7200/3600/1800` 自动迁移到 `900`。
+- 业务主链兜底优先识别“基础打印新增百度网盘入口”类需求，抽取为：首页 -> 文档打印 -> 照片打印 -> 扫描复印 -> 校验百度网盘入口可见。
+- 生成 YAML 自动确认门禁改为必须达到 `executionLevel=executable`；`draft/needs_review` 不再因为结构校验通过就进入 `VALIDATE_YAML` / Runner。
+- 质量报告中的可执行任务数改为只统计 executable 文件，避免 51 action / 33 wait 的长链路 draft 被误报为可执行。
+- 静态检查覆盖 Agent 生成超时、stale watcher、部署默认值迁移和需求主链优先级。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
 ### 2026-07-09 Runner dry-run 与 Midscene CLI YAML 结构一致性修复
 
 本轮定位线上任务：
