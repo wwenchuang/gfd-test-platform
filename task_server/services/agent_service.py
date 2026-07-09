@@ -1701,6 +1701,7 @@ def _agent_entry_visibility_smoke_yaml(run):
     home_wait = "小白学习打印首页已加载，首页主要业务入口可见"
     flow = [
         f"        - launch: {app_package}",
+        "        - ai: 如果当前停留在三维创作、3D打印、模型推荐或其他非打印首页，请通过底部导航或首页入口切换到学习打印/基础打印首页；如果已在打印首页则保持当前页面",
         f"        - aiWaitFor: {home_wait}",
         "          timeout: 15000",
     ]
@@ -2447,6 +2448,13 @@ def _agent_job_field(job, snake_key, camel_key=None):
 
 
 def _agent_job_failure_reason(job):
+    summary_excerpt = _agent_summary_error_excerpt(
+        _agent_job_field(job, "summary_text", "summaryText") or job.get("summary")
+    )
+    if summary_excerpt:
+        failure_type = _agent_job_failure_type(summary_excerpt)
+        prefix = f"{failure_type}：" if failure_type else ""
+        return f"{prefix}Midscene 摘要: {summary_excerpt}"
     candidates = [
         ("error", None, "错误"),
         ("report_upload_error", "reportUploadError", "报告上传"),
@@ -2474,6 +2482,30 @@ def _agent_job_failure_reason(job):
     if status:
         return f"Runner 回传状态：{status}"
     return "Runner 已回传失败，但未带具体错误；请打开报告或查看 Runner 控制台日志。"
+
+
+def _agent_summary_error_excerpt(summary):
+    if not summary:
+        return ""
+    data = summary
+    if isinstance(summary, str):
+        try:
+            data = json.loads(summary)
+        except Exception:
+            data = summary
+    if isinstance(data, dict):
+        results = data.get("results") or []
+        if isinstance(results, list):
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                error = str(result.get("error") or "").strip()
+                if error:
+                    return _agent_job_error_excerpt(error)
+        error = str(data.get("error") or data.get("message") or "").strip()
+        if error:
+            return _agent_job_error_excerpt(error)
+    return _agent_job_error_excerpt(str(summary or ""))
 
 
 def _agent_job_failure_type(text):
@@ -9941,6 +9973,8 @@ def _normalize_failed_execution_item(item, fallback=None):
     error = str(item.get("error") or item.get("fail_reason") or fallback.get("error") or "").strip()
     stdout_tail = str(item.get("stdoutTail") or item.get("stdout_tail") or fallback.get("stdoutTail") or fallback.get("stdout_tail") or "").strip()
     stderr_tail = str(item.get("stderrTail") or item.get("stderr_tail") or fallback.get("stderrTail") or fallback.get("stderr_tail") or "").strip()
+    summary = item.get("summary") if isinstance(item.get("summary"), dict) else fallback.get("summary") if isinstance(fallback.get("summary"), dict) else {}
+    summary_text = str(item.get("summaryText") or item.get("summary_text") or fallback.get("summaryText") or fallback.get("summary_text") or "").strip()
     reason = str(item.get("failureReason") or item.get("failure_reason") or "").strip()
     if not reason:
         reason = _agent_job_failure_reason({
@@ -9948,10 +9982,12 @@ def _normalize_failed_execution_item(item, fallback=None):
             "error": error,
             "stdout_tail": stdout_tail,
             "stderr_tail": stderr_tail,
+            "summary": summary,
+            "summaryText": summary_text,
         })
     failure_type = str(item.get("failureType") or item.get("failure_type") or "").strip()
     if not failure_type:
-        failure_type = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail]))
+        failure_type = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail, summary_text]))
     return {
         "jobId": job_id,
         "status": str(item.get("status") or fallback.get("status") or "failed").strip() or "failed",
@@ -9963,6 +9999,8 @@ def _normalize_failed_execution_item(item, fallback=None):
         "error": error,
         "stdoutTail": stdout_tail[-1200:],
         "stderrTail": stderr_tail[-1600:],
+        "summary": summary,
+        "summaryText": summary_text[:4000],
         "failureReason": reason,
         "failureType": failure_type,
     }

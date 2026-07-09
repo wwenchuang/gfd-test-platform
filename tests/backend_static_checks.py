@@ -2824,6 +2824,11 @@ def main():
         and "已直接生成入口可见性短链路冒烟 YAML" in agent_service_source,
         "Agent must directly generate generic entry visibility smoke YAML instead of blocking in the generic YAML generator",
     )
+    require(
+        "三维创作、3D打印、模型推荐" in agent_service_source
+        and "切换到学习打印/基础打印首页" in agent_service_source,
+        "Agent entry visibility smoke must recover from non-print homepage states before locating business entries",
+    )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
     require("def _agent_wants_all_existing_cases" in agent_service_source and "识别到全量执行意图，复用已有 YAML" in agent_service_source and "不生成 YAML 草稿" in agent_service_source, "Agent must route explicit all-case requests to existing YAML reuse instead of draft generation")
@@ -2842,6 +2847,12 @@ def main():
     require("has_stable_smoke_candidate" in agent_service_source and "max_action_count <= 8" in agent_service_source and "max_wait_count <= 6" in agent_service_source and 'replanRisk") or "") == "high"' in agent_service_source, "Agent must not treat long high-replan generated YAML as a stable first-smoke candidate")
     require("def _agent_runner_job_material" in agent_service_source and '"summaryText"' in agent_service_source and 'read_json_file(safe_join(run_dir, "summary.json")' in agent_service_source, "Agent report collection must read runner summary.json for failed jobs")
     require('"summaryText": fj.get("summaryText", "")' in agent_service_source and 'f"summary：{target_job.get(' in agent_service_source, "Agent failure analysis and repair evidence must include runner summary details")
+    require(
+        "def _agent_summary_error_excerpt" in agent_service_source
+        and '"summaryText": summary_text[:4000]' in agent_service_source
+        and "Midscene 摘要" in agent_service_source,
+        "Agent failed execution normalization must preserve Midscene summary errors for failure analysis and repair",
+    )
     require("def _confirm_agent_yaml_content_as_files" in agent_service_source and '"autoConfirmedFallback"' in agent_service_source and "已自动拆分并采用多任务兜底 YAML" in agent_service_source, "Agent fallback YAML must auto-confirm and split into files for Runner mode")
     require("def _save_agent_yaml_draft" in agent_service_source and '"WAIT_CONFIRM"' in agent_service_source and '"generated_yaml_draft"' in agent_service_source, "Agent fallback YAML drafts must still support manual confirmation")
     require('mark_step_success("GENERATE_YAML"' in agent_service_source and "已人工确认 YAML 草稿" in agent_service_source, "Confirming a YAML draft must mark GENERATE_YAML complete and resume validation/execution")

@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-09 Agent 入口短链路首页恢复与失败摘要归因修复
+
+继续跟踪部署后的新任务：
+
+- `agent-1783591410278-01390b35`
+- 目标：基础打印新增百度网盘入口
+
+结果：
+
+- `GENERATE_YAML` / `VALIDATE_YAML` / `EXECUTION_PRECHECK` 均通过，短链路 YAML 已下发 Runner。
+- Runner 正式执行 115 秒后失败，说明不再是 CLI 结构或 Android SDK 环境问题。
+- Midscene summary 真实错误：App 启动后停留在“三维创作 / 3D 打印 / 模型推荐”界面，脚本直接定位“文档打印入口”，因此找不到目标入口。
+- 自动失败分析仍没有使用 summary 中的真实错误，导致修复草稿只增加 `sleep`，没有解决“先回到基础打印首页”的问题。
+
+问题定位：
+
+- Agent 入口可见性短链路默认假设 `launch` 后已经在小白学习打印首页；但真实设备可能保留在 3D 打印 / 三维创作首页。
+- `_agent_runner_job_material` 已读取 `summary.json`，但 `_normalize_failed_execution_item` 没有保留 `summary/summaryText`，失败分析和修复证据会丢失 Midscene 的关键错误。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 入口可见性短链路在 `launch` 后增加非打印首页恢复步骤：如果当前在三维创作、3D 打印、模型推荐或其他非打印首页，先通过底部导航或首页入口切回学习打印 / 基础打印首页，再等待首页业务入口。
+- 失败项规范化保留 `summary` 和 `summaryText`，并优先从 Midscene summary 的 `results[].error` 提取失败摘要。
+- 后续 `ANALYZE_FAILURE` / `GENERATE_REPAIR` 能拿到真实错误，如“在三维创作界面找不到文档打印入口”，避免再生成只加 sleep 的无效修复。
+- 静态检查覆盖入口短链路必须具备非打印首页恢复，以及失败归因必须保留 Midscene summary。
+
 ### 2026-07-09 Runner Android SDK 环境注入与环境失败归因
 
 继续跟踪部署后的新任务：
