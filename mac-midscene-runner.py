@@ -82,7 +82,7 @@ def device_market_name(adb_bin, device_id, brand="", model=""):
     return " ".join([part for part in [brand, model] if part]).strip()
 
 
-def midscene_env():
+def midscene_env(device_id=""):
     env = os.environ.copy()
     runtime = task_runtime_env()
     for key in (
@@ -106,6 +106,9 @@ def midscene_env():
     env.setdefault("MIDSCENE_SKIP_CONFIG_CHECK", "1")
     env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
     env.setdefault("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+    if device_id:
+        env["ANDROID_SERIAL"] = str(device_id)
+        env["DEVICE_ID"] = str(device_id)
     return env
 
 
@@ -770,6 +773,42 @@ def ensure_android_device_id(yaml_text, device_id):
     return f"android:\n  deviceId: {device_id}\n\n{yaml_text or ''}"
 
 
+def yaml_has_root_tasks(yaml_text):
+    return bool(re.search(r"^tasks\s*:", yaml_text or "", re.M))
+
+
+def midscene_cli_yaml_text(yaml_text):
+    """Convert server platform-root YAML to the root tasks layout Midscene CLI 1.7.10 loads."""
+    text = (yaml_text or "").replace("\ufeff", "")
+    if yaml_has_root_tasks(text):
+        return text
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not re.match(r"^(android|ios)\s*:\s*$", line.strip()):
+            continue
+        end = len(lines)
+        for probe in range(index + 1, len(lines)):
+            if lines[probe].strip() and not lines[probe].startswith((" ", "\t")):
+                end = probe
+                break
+        for task_index in range(index + 1, end):
+            task_line = lines[task_index]
+            task_match = re.match(r"^(\s*)tasks\s*:\s*$", task_line)
+            if not task_match:
+                continue
+            indent = task_match.group(1)
+            converted = []
+            for child in lines[task_index:end]:
+                if indent and child.startswith(indent):
+                    converted.append(child[len(indent):])
+                else:
+                    converted.append(child)
+            suffix = lines[end:]
+            result = "\n".join(converted + suffix).rstrip()
+            return result + "\n" if result else text
+    return text
+
+
 def parse_yaml_task_names(yaml_text):
     names = []
     for line in (yaml_text or "").splitlines():
@@ -804,8 +843,8 @@ def dry_run_yaml_issues(yaml_text):
     task_names = parse_yaml_task_names(text)
     if not text.strip():
         issues.append("YAML 内容为空")
-    if "android:" not in text and "ios:" not in text:
-        issues.append("缺少 android 或 ios 平台根节点")
+    if not yaml_has_root_tasks(text):
+        issues.append('缺少 Midscene CLI 可加载的顶层 tasks')
     if not task_names:
         issues.append("未解析到 tasks.name")
     if not re.search(r"^\s*flow\s*:\s*$", text, re.M):
@@ -821,7 +860,7 @@ def run_yaml_dry_run_job(job):
     job_dir = WORKSPACE / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     yaml_name = safe_filename(job.get("file") or "dry-run.yaml")
-    yaml_text = job.get("yaml_content", "") or ""
+    yaml_text = midscene_cli_yaml_text(job.get("yaml_content", "") or "")
     yaml_path = job_dir / yaml_name
     write_text(yaml_path, yaml_text)
     task_names = parse_yaml_task_names(yaml_text)
@@ -1045,7 +1084,7 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            env=midscene_env()
+            env=midscene_env(device_id)
         )
         line_queue = queue.Queue()
 
@@ -1143,7 +1182,7 @@ def run_job(job):
         attempt_dir = job_dir / f"attempt-{index}-{safe_filename(device_id)}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
         yaml_path = attempt_dir / yaml_name
-        yaml_content = inject_external_page_escape(ensure_android_device_id(original_yaml, device_id))
+        yaml_content = inject_external_page_escape(midscene_cli_yaml_text(original_yaml))
         yaml_path.write_text(yaml_content, encoding="utf-8")
         task_names = [job.get("target_task_name")] if job.get("target_task_name") else parse_yaml_task_names(yaml_content)
         app_package = parse_app_package(yaml_content)

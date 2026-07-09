@@ -3424,6 +3424,8 @@ def main():
     ])
     require("RUNNER_CAPABILITIES" in runner_sources and '"yaml_dry_run": True' in runner_sources, "Both runners must advertise yaml_dry_run capability")
     require("def run_yaml_dry_run_job" in runner_sources and "YAML dry-run 不生成 HTML 报告" in runner_sources, "Both runners must support local YAML dry-run jobs without Midscene execution")
+    require("def midscene_cli_yaml_text" in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks")
+    require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env instead of writing deviceId into CLI YAML")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")
     require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")

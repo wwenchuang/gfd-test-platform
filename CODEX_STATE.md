@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-09 Runner dry-run 与 Midscene CLI YAML 结构一致性修复
+
+本轮定位线上任务：
+
+- `agent-1783565230180-da12543f`
+- 目标：基础打印新增百度网盘入口
+- 状态：`FAILED`
+- 失败停在：`RERUN`
+
+问题定位：
+
+- 服务端已生成 `android.tasks`，Runner 真实 dry-run 也通过，说明上一轮平台根修复生效。
+- 正式执行时 Midscene CLI 1.7.10 报错：`property "tasks" is required in yaml script`。
+- 直接原因是 Windows Runner 的 dry-run 规则检查 `android/ios` 平台根，但正式执行直接把同一份 `android.tasks` YAML 交给 Midscene CLI；当前 CLI 实际加载的是顶层 `tasks` 格式，导致 dry-run 与真实执行结构不一致。
+- 后续修复重跑仍使用同类平台根 YAML，因此重跑也同样失败。
+
+已修改：
+
+- `windows-midscene-runner.py`
+- `mac-midscene-runner.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- Runner 新增 `midscene_cli_yaml_text`，在交给 Midscene CLI 前把服务端平台根 `android.tasks` / `ios.tasks` 展开成 CLI 可加载的顶层 `tasks`。
+- Runner YAML dry-run 改为使用同一份 CLI 展开结果做结构检查，避免 dry-run 假通过、正式执行失败。
+- 固定设备不再写入 CLI YAML 的 `android.deviceId`，改为通过 `ANDROID_SERIAL` / `DEVICE_ID` 环境变量传给 Midscene 进程。
+- Windows / Mac Runner 保持一致行为。
+- 后端静态检查覆盖 Runner 必须做 CLI YAML 展开、dry-run 与真实执行一致、固定设备通过环境变量传递。
+
+已验证：
+
+```bash
+python3 -m py_compile windows-midscene-runner.py mac-midscene-runner.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+```
+
 ### 2026-07-09 Runner dry-run 平台根节点修复
 
 本轮定位线上最新任务：
