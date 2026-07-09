@@ -1662,12 +1662,21 @@ def _agent_entry_visibility_smoke_yaml(run):
 def _ensure_agent_entry_visibility_smoke_ref(run, refs, results):
     refs = list(refs or [])
     results = list(results or [])
-    has_smoke_candidate = any(
-        bool((ref.get("executableScore") or {}).get("smokeCandidate") or ref.get("smokeCandidate") or ref.get("runnerCandidate"))
-        for ref in refs
-        if isinstance(ref, dict)
-    )
-    if has_smoke_candidate or not _agent_needs_baidu_entry_smoke(run):
+    has_stable_smoke_candidate = False
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        score = ref.get("executableScore") if isinstance(ref.get("executableScore"), dict) else {}
+        if not bool(score.get("smokeCandidate") or ref.get("smokeCandidate") or ref.get("runnerCandidate")):
+            continue
+        task_scores = [item for item in (score.get("taskScores") or []) if isinstance(item, dict)]
+        max_action_count = max([int(item.get("actionCount") or 0) for item in task_scores] or [0])
+        max_wait_count = max([int(item.get("waitCount") or 0) for item in task_scores] or [0])
+        high_replan_risk = any(str(item.get("replanRisk") or "") == "high" for item in task_scores)
+        if max_action_count <= 8 and max_wait_count <= 6 and not high_replan_risk:
+            has_stable_smoke_candidate = True
+            break
+    if has_stable_smoke_candidate or not _agent_needs_baidu_entry_smoke(run):
         return refs, results
     module = clean_agent_module_name(run)
     file_name = "00-文档打印首页百度网盘入口可见性短链路冒烟.yaml"

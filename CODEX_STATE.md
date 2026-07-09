@@ -116,6 +116,16 @@ git diff --check
 - 兜底 YAML 只做：启动 App -> 等首页稳定 -> 进入文档打印 -> 等待/断言百度网盘入口可见，不点击第三方入口。
 - 静态检查覆盖该兜底必须带 `smokeCandidate` / `runnerCandidate`，用于首批 Runner 冒烟。
 
+后续验证发现：
+
+- 线上生成器会把 19 action / 13 wait 的照片打印入口长链路也标成 `smokeCandidate`。
+- 因此兜底触发条件不能只看 `smokeCandidate=true`，还必须要求首批候选是稳定短链路。
+
+追加修复：
+
+- 只有 `actionCount <= 8`、`waitCount <= 6` 且 `replanRisk != high` 的 smokeCandidate 才算稳定首批候选。
+- 长链路 smokeCandidate 不再阻止短链路兜底生成。
+
 ### 2026-07-09 Runner dry-run 与 Midscene CLI YAML 结构一致性修复
 
 本轮定位线上任务：
