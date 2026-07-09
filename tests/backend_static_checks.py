@@ -2824,12 +2824,30 @@ def main():
         and "已直接生成入口可见性短链路冒烟 YAML" in agent_service_source,
         "Agent must directly generate generic entry visibility smoke YAML instead of blocking in the generic YAML generator",
     )
+    from task_server.services import agent_service as agent_runtime
+    entry_smoke_yaml = agent_runtime._agent_entry_visibility_smoke_yaml({
+        "target": "基础打印新增百度网盘入口",
+        "module": "基础打印",
+        "requirementText": "基础打印的入口在首页   文档打印 照片打印 扫描复印",
+        "appPackage": "com.xbxxhz.box",
+    })
+    require(
+        "首页的文档打印入口" in entry_smoke_yaml
+        and "文档打印页面或文档打印导入入口区域已加载，展示百度网盘入口" in entry_smoke_yaml
+        and "目标页面" not in entry_smoke_yaml,
+        "Agent entry visibility smoke must infer 文档打印 from root requirementText and generate a concrete business page chain",
+    )
     require(
         "monkey -p {app_package} -c android.intent.category.LAUNCHER 1" not in agent_service_source
-        and "底部导航栏或首页中的打印、学习打印、小白打印入口" in agent_service_source
+        and "从非打印功能页恢复到应用首页" in agent_service_source
+        and "计算练习、题库、错题、资料库、教辅、模型页、三维创作页" in agent_service_source
+        and "返回或关闭直到回到应用首页" in agent_service_source
+        and "应用首页或底部导航中的打印、学习打印、小白打印入口" in agent_service_source
         and "页面同时展示文档打印、照片打印、扫描复印入口" in agent_service_source
+        and "首页的{target_page}入口" in agent_service_source
+        and "{target_page}页面或{target_page}导入入口区域已加载，展示{entry_label}入口" in agent_service_source
         and "不要点击资料库、教辅、模型页或三维创作页入口" in agent_service_source,
-        "Agent entry visibility smoke must avoid bare adb launch and recover to the print home before locating business entries",
+        "Agent entry visibility smoke must avoid bare adb launch, recover from study/non-print pages, enter print home, then enter the target business page before asserting the entry",
     )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
@@ -3123,8 +3141,10 @@ def main():
     require(generated_title and "\n  tasks:" in generated_yaml and "\ntasks:" not in generated_yaml, "Generated Midscene YAML must use android.tasks for Runner dry-run")
     single_task_yaml = yaml_with_single_task(generated_yaml, "入口可见", app_package="com.xbxxhz.box")
     single_task_dispatch_yaml = midscene_cli_dispatch_yaml_text(single_task_yaml)
+    single_task_device_dispatch_yaml = midscene_cli_dispatch_yaml_text(single_task_yaml, device_id="ecbfd645")
     require("android:\n  tasks:" in single_task_yaml and '- name: "入口可见"' in single_task_yaml and "# baseline.case_id" in single_task_yaml, "Single-task extraction must preserve existing saved android.tasks layout and comments")
     require(single_task_dispatch_yaml.startswith("android: {}\ntasks:\n- name: 入口可见"), "Runner dispatch YAML must keep official Midscene CLI interface config plus root tasks")
+    require("android:\n  deviceId: ecbfd645\ntasks:" in single_task_device_dispatch_yaml, "Runner dispatch YAML must inject selected android.deviceId into temporary CLI YAML only")
     missing_input_value_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiInput: 当前页面输入框\n"
     missing_input_value = validate_midscene_yaml_executability(missing_input_value_yaml)
     require(not missing_input_value.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value.get("issues") or []), "Executable validation must reject aiInput without value before Runner")
@@ -3511,13 +3531,14 @@ def main():
     require("RUNNER_CAPABILITIES" in runner_sources and '"yaml_dry_run": True' in runner_sources, "Both runners must advertise yaml_dry_run capability")
     require("def run_yaml_dry_run_job" in runner_sources and "YAML dry-run 不生成 HTML 报告" in runner_sources, "Both runners must support local YAML dry-run jobs without Midscene execution")
     require("def midscene_cli_yaml_text" in runner_sources and "def ensure_cli_interface_config" in runner_sources and '缺少 Midscene CLI 接口配置 android/web/ios/computer/interface' in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks with interface config")
-    require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env instead of writing deviceId into CLI YAML")
+    require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env")
     require("def ensure_android_sdk_env" in runner_sources and '"ANDROID_SDK_ROOT"' in runner_sources and '"ANDROID_HOME"' in runner_sources and '"platform-tools"' in runner_sources, "Runner must infer Android SDK env from adb path for Midscene CLI")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")
     require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")
-    require("midscene_cli_dispatch_yaml_text(yaml_content)" in router_source, "Runner job dispatch must convert YAML to official Midscene CLI layout without changing saved scripts")
+    require('midscene_cli_dispatch_yaml_text(yaml_content, device_id=selected.get("device_id", ""))' in router_source, "Runner job dispatch must convert YAML to official Midscene CLI layout and inject selected device without changing saved scripts")
     agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    require("selected_device_label" in agent_source and '"display_name", "brand", "model"' in agent_source, "Agent precheck must show physical device label/model for selected Runner device")
     require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")
     require('"neither android_home nor android_sdk_root" in lowered' in agent_source and 'failure_type != "ENV_ISSUE"' in agent_source, "Agent must classify Android SDK/ADB environment failures as ENV_ISSUE and prevent AI from downgrading them to SCRIPT_ISSUE")
     require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")

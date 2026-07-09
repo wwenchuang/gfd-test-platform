@@ -2667,7 +2667,7 @@ def ensure_midscene_platform_root(text, platform="android"):
     return _pyyaml.safe_dump(wrapped, allow_unicode=True, sort_keys=False, width=100000)
 
 
-def midscene_cli_dispatch_yaml_text(text, platform="android"):
+def midscene_cli_dispatch_yaml_text(text, platform="android", device_id=""):
     """Build the temporary YAML layout expected by Midscene CLI: interface config + root tasks."""
     if _pyyaml is None:
         return str(text or "")
@@ -2699,6 +2699,8 @@ def midscene_cli_dispatch_yaml_text(text, platform="android"):
         interface_name = str(platform or "android").strip().lower()
     if interface_name not in ("android", "ios", "web", "computer", "interface"):
         interface_name = "android"
+    if interface_name == "android" and str(device_id or "").strip():
+        interface_config["deviceId"] = str(device_id or "").strip()
     cli = {interface_name: interface_config or {}, "tasks": tasks}
     return _pyyaml.safe_dump(cli, allow_unicode=True, sort_keys=False, width=100000)
 

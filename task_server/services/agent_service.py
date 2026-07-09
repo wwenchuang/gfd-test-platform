@@ -1634,6 +1634,7 @@ def _agent_entry_visibility_intent(run):
     source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
     text = "\n".join([
         str(run.get("target") or ""),
+        str(run.get("requirementText") or run.get("requirement_text") or ""),
         str((run.get("normalizedInput") or {}).get("requirementText") if isinstance(run.get("normalizedInput"), dict) else ""),
         str(source_context.get("requirementText") or ""),
     ])
@@ -1698,10 +1699,11 @@ def _agent_entry_visibility_smoke_yaml(run):
     entry_label = str(intent.get("entryLabel") or "目标").strip() or "目标"
     target_page = str(intent.get("targetPage") or "目标页面").strip() or "目标页面"
     task_name = f"{target_page}{entry_label}入口可见性短链路冒烟"
-    home_wait = "小白学习打印首页已加载，页面同时展示文档打印、照片打印、扫描复印入口；当前不是资料库、教辅、模型页或三维创作页"
+    home_wait = "小白学习打印首页已加载，页面同时展示文档打印、照片打印、扫描复印入口；当前不是计算练习、题库、错题、资料库、教辅、模型页或三维创作页"
     flow = [
         f"        - launch: {app_package}",
-        "        - aiTap: 底部导航栏或首页中的打印、学习打印、小白打印入口；不要点击资料库、题库、教辅、模型页或我的",
+        "        - ai: 如果当前在计算练习、题库、错题、资料库、教辅、模型页、三维创作页或其他非打印功能页，先点击返回或关闭直到回到应用首页",
+        "        - aiTap: 应用首页或底部导航中的打印、学习打印、小白打印入口；不要点击资料库、题库、错题、教辅、模型页或我的",
         f"        - aiWaitFor: {home_wait}",
         "          timeout: 20000",
     ]
@@ -7858,7 +7860,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         entry_label = str((entry_visibility_intent or {}).get("entryLabel") or "目标").strip() or "目标"
         target_page = str((entry_visibility_intent or {}).get("targetPage") or "目标页面").strip() or "目标页面"
         case_title = f"{target_page}{entry_label}入口可见性短链路冒烟"
-        steps = ["启动 App", "等待首页加载"]
+        steps = ["启动 App", "从非打印功能页恢复到应用首页", "进入小白学习打印首页"]
         if target_page != "首页":
             steps.append(f"进入{target_page}")
         steps.append(f"等待{entry_label}入口可见")
@@ -8896,9 +8898,23 @@ def _tool_execution_precheck(run):
                 runner_ok = bool(runner.get("online"))
                 runner_devices = runner_service.runner_device_ids(runner)
                 device_ok = (not selected_device) or selected_device in runner_devices
+                selected_device_meta = next(
+                    (
+                        d for d in (runner.get("devices") or [])
+                        if str(d.get("device_id") or d.get("deviceId") or "") == selected_device
+                    ),
+                    {},
+                )
+                selected_device_label = " ".join(
+                    str(selected_device_meta.get(key) or "").strip()
+                    for key in ("label", "display_name", "brand", "model")
+                    if str(selected_device_meta.get(key) or "").strip()
+                )
                 detail = f"指定 Runner：{selected_runner}"
                 if selected_device:
                     detail += f"，设备：{selected_device}"
+                    if selected_device_label:
+                        detail += f"（{selected_device_label}）"
                 if not runner_ok:
                     detail += "；Runner 不在线"
                 elif selected_device and not device_ok:
