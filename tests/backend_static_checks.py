@@ -1524,6 +1524,28 @@ def check_ai_skills_receive_yaml_reference_context():
 def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     from task_server.services import ai_skill_service, yaml_service
 
+    original_run_ai_skill = ai_skill_service.run_ai_skill
+    def fail_if_ai_skill_called(*_args, **_kwargs):
+        raise AssertionError("entry visibility fast path must not block on AI skill calls")
+
+    ai_skill_service.run_ai_skill = fail_if_ai_skill_called
+    try:
+        fast_payload = ai_skill_service.build_cases_payload_from_skills(
+            "基础打印新增百度网盘入口",
+            "基础打印",
+            ["基础打印的入口在首页   文档打印 照片打印 扫描复印"],
+            app_package="com.xbxxhz.box",
+        )
+    finally:
+        ai_skill_service.run_ai_skill = original_run_ai_skill
+
+    fast_cases = fast_payload.get("cases") or []
+    fast_first_blob = "\n".join((fast_cases[0].get("steps") or []) + (fast_cases[0].get("assertions") or [])) if fast_cases else ""
+    require(fast_payload.get("review", {}).get("fast_path_reason"), "Baidu entry visibility requirements must use a non-blocking deterministic fast path before AI skill calls")
+    require(fast_cases and fast_cases[0].get("smoke") is True, "Baidu entry visibility fast path must produce a first smoke case")
+    require("小白学习打印首页加载完成" in fast_first_blob and "文档打印" in fast_first_blob, "Fast-path smoke case must start from the real homepage entry chain")
+    require("点击「百度网盘」入口" not in fast_first_blob and "授权页" not in fast_first_blob, "Display-only fast-path smoke must not click into third-party Baidu Netdisk flow")
+
     doc_text = "\n".join([
         "三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后",
         "照片打印：普通照片打印、普通证件照、智能证件照、照片拼版导入时增加百度网盘导入选项",

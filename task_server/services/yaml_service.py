@@ -5823,7 +5823,29 @@ def generate_ui_yaml_from_request(d, job_id=None):
         review = payload.setdefault("review", {})
         review["skill_pipeline_disabled"] = True
 
-    if visual_text_assets or visual_image_assets:
+    review = payload.setdefault("review", {})
+    deterministic_entry_visibility = str(review.get("skill_pipeline") or "").startswith("deterministic_baidu_entry_visibility")
+    if deterministic_entry_visibility and (visual_text_assets or visual_image_assets):
+        review["visual_refine_skipped"] = (
+            "确定性入口可见性短链路已覆盖首批冒烟，Figma/截图仅作为参考记录，不再阻塞 YAML 生成"
+        )
+        review["visual_reference_note"] = visual_reference_message(
+            "已记录视觉参考但跳过重型视觉校准",
+            figma_texts,
+            figma_images,
+            ignored_figma_pages,
+            knowledge_texts,
+            [],
+            uploaded_image_assets,
+        )
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=67,
+                step="视觉校准跳过",
+                message="入口可见性短链路已稳定生成，Figma/截图作为参考记录，不阻塞首批 YAML",
+            )
+    elif visual_text_assets or visual_image_assets:
         if job_id:
             update_generate_job(
                 job_id,
@@ -5993,90 +6015,113 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "rule": "Figma 只作为与需求匹配的 UI 参考；无关页面不会进入视觉校准"
         }
 
-    if job_id:
-        update_generate_job(job_id, progress=72, step="覆盖率审查", message="正在用 coverage_auditor 反查需求点、场景和用例覆盖，补齐遗漏场景")
-    try:
-        payload = _ensure_rich_generation_scope(payload, title, module, stage1_text_assets, used_figma_pages, figma_images)
-        rich_scope = ((payload.get("review") or {}).get("rich_generation_scope") or {}) if isinstance(payload, dict) else {}
-        coverage_rounds = 2 if rich_scope.get("enabled") else 1
-        def coverage_progress(message, progress=None):
-            if job_id:
-                update_generate_job(
-                    job_id,
-                    progress=safe_int(progress, 72),
-                    step="覆盖率审查",
-                    message=str(message or "正在检查需求点、场景和用例覆盖"),
-                )
-        payload, coverage_audit = improve_case_coverage(
-            title,
-            module,
-            payload,
-            max_rounds=coverage_rounds,
-            progress_callback=coverage_progress,
-            time_budget_seconds=AI_COVERAGE_TOTAL_BUDGET_SECONDS,
-            model_config=model_config,
-        )
-    except Exception as e:
+    if deterministic_entry_visibility:
+        if job_id:
+            update_generate_job(job_id, progress=72, step="覆盖率审查", message="入口可见性短链路使用本地覆盖审查，跳过额外 AI 补全")
+        payload, coverage_audit = audit_case_coverage(payload)
+        review = payload.setdefault("review", {})
+        review["coverage_auditor_skipped"] = "确定性入口可见性短链路已按 3 条首批冒烟覆盖，跳过额外 AI 覆盖补全"
+        review["coverage_audit"] = coverage_audit
+    else:
+        if job_id:
+            update_generate_job(job_id, progress=72, step="覆盖率审查", message="正在用 coverage_auditor 反查需求点、场景和用例覆盖，补齐遗漏场景")
         try:
-            payload, coverage_audit = audit_case_coverage(payload)
-        except Exception as audit_error:
-            payload = normalize_cases_payload(payload)
-            coverage_audit = {
-                "ok": False,
-                "coverage_auditor_skill": "fallback_normalized_payload",
-                "coverage_auditor_error": str(audit_error),
-                "case_count": len(payload.get("cases") or []),
-            }
-        review = payload.setdefault("review", {})
-        review["coverage_repair_error"] = str(e)
-        review["remaining_risks"] = normalize_text_list(review.get("remaining_risks") or []) + [
-            "覆盖率补全模型调用失败，已保留当前用例并记录覆盖审查结果"
-        ]
+            payload = _ensure_rich_generation_scope(payload, title, module, stage1_text_assets, used_figma_pages, figma_images)
+            rich_scope = ((payload.get("review") or {}).get("rich_generation_scope") or {}) if isinstance(payload, dict) else {}
+            coverage_rounds = 2 if rich_scope.get("enabled") else 1
+            def coverage_progress(message, progress=None):
+                if job_id:
+                    update_generate_job(
+                        job_id,
+                        progress=safe_int(progress, 72),
+                        step="覆盖率审查",
+                        message=str(message or "正在检查需求点、场景和用例覆盖"),
+                    )
+            payload, coverage_audit = improve_case_coverage(
+                title,
+                module,
+                payload,
+                max_rounds=coverage_rounds,
+                progress_callback=coverage_progress,
+                time_budget_seconds=AI_COVERAGE_TOTAL_BUDGET_SECONDS,
+                model_config=model_config,
+            )
+        except Exception as e:
+            try:
+                payload, coverage_audit = audit_case_coverage(payload)
+            except Exception as audit_error:
+                payload = normalize_cases_payload(payload)
+                coverage_audit = {
+                    "ok": False,
+                    "coverage_auditor_skill": "fallback_normalized_payload",
+                    "coverage_auditor_error": str(audit_error),
+                    "case_count": len(payload.get("cases") or []),
+                }
+            review = payload.setdefault("review", {})
+            review["coverage_repair_error"] = str(e)
+            review["remaining_risks"] = normalize_text_list(review.get("remaining_risks") or []) + [
+                "覆盖率补全模型调用失败，已保留当前用例并记录覆盖审查结果"
+            ]
     payload = normalize_cases_payload(payload)
-    try:
-        executable_plan = call_skill_executable_yaml_planner(
-            title,
-            module,
-            payload,
-            yaml_reference_examples,
-            execution_scope_plan,
-            model_config=model_config,
-        )
-        executable_plan["scopePlan"] = execution_scope_plan
-        payload = apply_executable_yaml_plan_to_payload(payload, executable_plan)
-        review = payload.setdefault("review", {})
-        ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
-        ai_decision_trace["executable_yaml_planner"] = executable_plan.get("trace") or {}
-        review["ai_decision_trace"] = ai_decision_trace
-        review["executable_yaml_planner_review"] = executable_plan.get("review") or {}
-        review["needs_review_cases"] = executable_plan.get("needs_review_cases") or []
-        review["draft_cases"] = executable_plan.get("draft_cases") or []
-        if executable_plan.get("manual_cases"):
-            manual_cases = payload.get("manual_cases") if isinstance(payload.get("manual_cases"), list) else []
-            payload["manual_cases"] = manual_cases + executable_plan.get("manual_cases")
-    except Exception as plan_error:
+    if deterministic_entry_visibility:
         review = payload.setdefault("review", {})
         ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
         ai_decision_trace["executable_yaml_planner"] = {
-            "enabled": True,
-            "fallback": True,
-            "error": str(plan_error),
+            "enabled": False,
+            "skipped": True,
+            "reason": "确定性入口可见性短链路已通过本地覆盖审查，直接转换 YAML",
         }
         review["ai_decision_trace"] = ai_decision_trace
-        review["executable_yaml_planner_error"] = str(plan_error)
-    try:
-        payload = select_smoke_cases_for_payload(
-            title,
-            module,
-            payload,
-            mode="full",
-            yaml_reference_context=yaml_reference_text,
-            model_config=model_config,
-        )
-    except Exception as smoke_error:
+        review["executable_yaml_planner_skipped"] = ai_decision_trace["executable_yaml_planner"]["reason"]
+    else:
+        try:
+            executable_plan = call_skill_executable_yaml_planner(
+                title,
+                module,
+                payload,
+                yaml_reference_examples,
+                execution_scope_plan,
+                model_config=model_config,
+            )
+            executable_plan["scopePlan"] = execution_scope_plan
+            payload = apply_executable_yaml_plan_to_payload(payload, executable_plan)
+            review = payload.setdefault("review", {})
+            ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
+            ai_decision_trace["executable_yaml_planner"] = executable_plan.get("trace") or {}
+            review["ai_decision_trace"] = ai_decision_trace
+            review["executable_yaml_planner_review"] = executable_plan.get("review") or {}
+            review["needs_review_cases"] = executable_plan.get("needs_review_cases") or []
+            review["draft_cases"] = executable_plan.get("draft_cases") or []
+            if executable_plan.get("manual_cases"):
+                manual_cases = payload.get("manual_cases") if isinstance(payload.get("manual_cases"), list) else []
+                payload["manual_cases"] = manual_cases + executable_plan.get("manual_cases")
+        except Exception as plan_error:
+            review = payload.setdefault("review", {})
+            ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
+            ai_decision_trace["executable_yaml_planner"] = {
+                "enabled": True,
+                "fallback": True,
+                "error": str(plan_error),
+            }
+            review["ai_decision_trace"] = ai_decision_trace
+            review["executable_yaml_planner_error"] = str(plan_error)
+    if deterministic_entry_visibility:
         review = payload.setdefault("review", {})
-        review["smoke_selector_final_error"] = str(smoke_error)
-        review["smoke_selector_final_policy"] = "最终冒烟筛选失败时不使用 P0/P1 或关键词兜底，保留现有显式 smoke 标记。"
+        review["smoke_selector_final_skipped"] = "确定性入口可见性短链路已完成本地首批冒烟选择"
+    else:
+        try:
+            payload = select_smoke_cases_for_payload(
+                title,
+                module,
+                payload,
+                mode="full",
+                yaml_reference_context=yaml_reference_text,
+                model_config=model_config,
+            )
+        except Exception as smoke_error:
+            review = payload.setdefault("review", {})
+            review["smoke_selector_final_error"] = str(smoke_error)
+            review["smoke_selector_final_policy"] = "最终冒烟筛选失败时不使用 P0/P1 或关键词兜底，保留现有显式 smoke 标记。"
     payload = apply_generated_case_scope_gate(payload)
     payload["id"] = case_set_id
     payload["module"] = module

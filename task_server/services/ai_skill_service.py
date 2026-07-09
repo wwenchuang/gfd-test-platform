@@ -1359,6 +1359,22 @@ def _analysis_text_blob(analysis):
     return "\n".join(parts)
 
 
+def _joined_requirement_source(title="", module="", text_assets=None):
+    parts = [str(title or ""), str(module or "")]
+    parts.extend(normalize_text_list(text_assets))
+    return "\n".join(part for part in parts if part)
+
+
+def _should_fast_path_baidu_entry_visibility(title, module, text_assets):
+    """入口可见性需求先生成稳定短链路，避免等待完整 AI skill 后才兜底。"""
+    blob = _joined_requirement_source(title, module, text_assets)
+    if "百度网盘" not in blob or "入口" not in blob:
+        return False
+    if any(term in blob for term in ("点击后", "跳转", "授权", "登录", "文件选择", "导入文件", "进入百度网盘", "WebView", "SDK")):
+        return False
+    return any(term in blob for term in ("首页", "基础打印", "文档打印", "照片打印", "扫描复印", "复印扫描", "可见", "展示", "位置", "并列", "同级"))
+
+
 def _baidu_netdisk_requirement_points(analysis):
     """百度网盘入口需求使用确定性拆分，避免历史页面名污染用例。"""
     blob = _analysis_text_blob(analysis)
@@ -1372,7 +1388,7 @@ def _baidu_netdisk_requirement_points(analysis):
         "点击触发", "点击后", "跳转", "授权", "登录", "文件选择", "导入文件",
         "进入百度网盘", "百度网盘导入", "WebView", "SDK",
     ))
-    if display_only and not click_flow:
+    if not click_flow:
         return [
             ("文档打印", "文档打印首页展示百度网盘入口，并校验入口位于本地文档之后及同级并列关系。"),
             ("普通照片打印", "普通照片打印导入方式中展示百度网盘入口，并校验入口位置及同级并列关系。"),
@@ -2078,6 +2094,75 @@ def build_cases_payload_from_skills(title, module, text_assets, mode="full", mod
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
     yaml_reference_context = extract_yaml_reference_context(text_assets)
+    if _should_fast_path_baidu_entry_visibility(title, module, text_assets):
+        analysis = _fallback_requirement_analysis(
+            title,
+            module,
+            text_assets,
+            error="deterministic_baidu_entry_visibility_fast_path",
+        )
+        targets = generation_volume_targets(analysis, mode=mode)
+        scenarios = _fallback_scenarios_from_analysis(
+            title,
+            module,
+            analysis,
+            targets=targets,
+            error="deterministic_baidu_entry_visibility_fast_path",
+        )
+        filtered = _fallback_automation_filter_from_scenarios(
+            title,
+            module,
+            analysis,
+            scenarios,
+            targets=targets,
+            error="",
+            app_package=app_package,
+            app_name=app_name,
+        )
+        payload = {
+            "title": title,
+            "module": module,
+            "analysis": analysis,
+            "scenarios": scenarios,
+            "cases": filtered.get("cases") or [],
+            "manual_cases": filtered.get("manual_cases") or [],
+            "review": filtered.get("review") or {},
+        }
+        review = payload.setdefault("review", {})
+        review["generation_mode"] = mode
+        review["skill_pipeline"] = "deterministic_baidu_entry_visibility.v1 -> smoke_selector.v1/platform_gate"
+        review["fast_path_reason"] = "入口展示类需求先生成稳定短链路，AI/Figma 视觉校准作为后续补充，不阻塞首批冒烟"
+        review["yaml_reference_context_used_by_skills"] = bool(yaml_reference_context)
+        review["requirement_readiness"] = {
+            "score": analysis.get("readiness_score"),
+            "level": analysis.get("readiness_level"),
+            "confidence": analysis.get("confidence"),
+            "missing_inputs": analysis.get("missing_inputs") or [],
+            "blockers": analysis.get("blockers") or [],
+            "questions": analysis.get("questions") or [],
+        }
+        normalized = normalize_cases_payload(payload)
+        local_selection = _local_smoke_selector_result(
+            title,
+            module,
+            normalized.get("analysis") or {},
+            normalized.get("cases") or [],
+            generation_volume_targets(normalized.get("analysis") or {}, mode=mode),
+            yaml_reference_context=yaml_reference_context,
+        )
+        selected_cases, smoke_review = apply_smoke_selection_to_cases(
+            normalized.get("cases") or [],
+            local_selection,
+            generation_volume_targets(normalized.get("analysis") or {}, mode=mode),
+        )
+        normalized["cases"] = selected_cases
+        review = normalized.setdefault("review", {})
+        review["smoke_selector_skill"] = "local_smoke_gate.v1"
+        review["smoke_selection"] = smoke_review
+        review["smoke_case_ids"] = smoke_review.get("selected_case_ids") or []
+        review["skill_pipeline"] = "deterministic_baidu_entry_visibility.v1 -> local_smoke_gate.v1"
+        validate_ai_skill_output("cases_payload", normalized)
+        return normalized
     analysis = call_skill_requirement_analyzer(title, module, text_assets, model_config=model_config)
     if yaml_reference_context:
         analysis["yaml_reference_context_available"] = True
