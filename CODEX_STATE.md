@@ -88,6 +88,17 @@ python3 tests/backend_static_checks.py
 - YAML 生成器支持 `target/goal` 作为 `title` 兜底，并优先尊重 `forceEntryVisibilityFastPath` / `force_entry_visibility_fast_path` / `entryVisibilityFastPath`。
 - 静态检查覆盖 Agent 必须传强制快路径标记，YAML 生成器必须支持目标兜底和强制标记。
 
+再次线上验证：
+
+- `agent-1783584291715-7c800514` 已命中 trace：`入口可见性快路径：跳过重型 AI 需求解析，直接生成短链路冒烟用例`。
+- 但 generate job 仍停在 45%，说明即使 YAML 生成器命中快路径，通用生成链路内部仍可能在当前线上环境卡住。
+
+再次追加修复：
+
+- Agent 对 `_agent_needs_baidu_entry_smoke(run)` 命中的任务直接写入 `00-文档打印首页百度网盘入口可见性短链路冒烟.yaml`。
+- 该路径不再调用通用 `generate_ui_yaml_from_request`，直接返回 `agent_direct_entry_visibility_smoke.v1` 生成结果并进入现有 YAML 校验 / Runner 流程。
+- 静态检查覆盖 Agent 必须直接生成百度网盘入口可见性短链路 YAML，不能再阻塞在通用生成器。
+
 追加验证：
 
 ```bash

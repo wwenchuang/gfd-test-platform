@@ -2807,6 +2807,12 @@ def main():
         and '"target": title' in agent_service_source,
         "Agent YAML generation must pass explicit Baidu entry visibility intent and target to the YAML pipeline",
     )
+    require(
+        "direct_entry_visibility = _agent_needs_baidu_entry_smoke(run)" in agent_service_source
+        and "agent_direct_entry_visibility_smoke.v1" in agent_service_source
+        and "已直接生成百度网盘入口可见性短链路冒烟 YAML" in agent_service_source,
+        "Agent must directly generate Baidu entry visibility smoke YAML instead of blocking in the generic YAML generator",
+    )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
     require("def _agent_wants_all_existing_cases" in agent_service_source and "识别到全量执行意图，复用已有 YAML" in agent_service_source and "不生成 YAML 草稿" in agent_service_source, "Agent must route explicit all-case requests to existing YAML reuse instead of draft generation")

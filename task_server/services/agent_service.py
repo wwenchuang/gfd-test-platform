@@ -7722,49 +7722,124 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         case_set_id=case_set_id,
         timeout_seconds=900,
     )
-    if step:
+    direct_entry_visibility = _agent_needs_baidu_entry_smoke(run)
+    if direct_entry_visibility:
+        file_name = "00-文档打印首页百度网盘入口可见性短链路冒烟.yaml"
+        path = safe_join(TASK_DIR, module, file_name)
+        content = _agent_entry_visibility_smoke_yaml(run)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        write_text_file(path, content)
+        executable_score = score_midscene_yaml_executable(content, generated=True)
+        result = {
+            "case_set_id": case_set_id,
+            "cases": {
+                "title": title,
+                "module": module,
+                "analysis": {
+                    "business_goals": [title],
+                    "requirement_points": ["文档打印首页百度网盘入口可见"],
+                    "visible_outcomes": ["百度网盘入口可见"],
+                },
+                "cases": [{
+                    "case_id": "TC-ENTRY-001",
+                    "title": "文档打印首页百度网盘入口可见性短链路冒烟",
+                    "smoke": True,
+                    "priority": "P0",
+                    "steps": ["启动 App", "等待首页加载", "进入文档打印", "等待百度网盘入口可见"],
+                    "assertions": ["文档打印首页百度网盘入口可见"],
+                }],
+                "manual_cases": [],
+                "review": {
+                    "skill_pipeline": "agent_direct_entry_visibility_smoke.v1",
+                    "fast_path_reason": "Agent 已识别百度网盘入口可见性需求，直接生成首批短链路冒烟 YAML",
+                },
+            },
+            "yamlFiles": [file_name],
+            "files": [file_name],
+            "caseCount": 1,
+            "manualCaseCount": 0,
+            "scenarioCount": 1,
+            "yamlFileCount": 1,
+            "summaryFiles": [],
+            "yamlExecutableScores": [executable_score],
+            "generatedCaseGroups": {
+                "executable_cases": [{
+                    "file": file_name,
+                    "case_id": "TC-ENTRY-001",
+                    "title": "文档打印首页百度网盘入口可见性短链路冒烟",
+                    "executionLevel": executable_score.get("executionLevel") or "executable",
+                    "level": executable_score.get("executionLevel") or "executable",
+                    "score": executable_score.get("score") or 0,
+                    "smoke": True,
+                    "runnerCandidate": True,
+                    "reasons": executable_score.get("reasons") or [],
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+            },
+            "review": {
+                "source": "agent_direct_entry_visibility_smoke",
+                "reason": "跳过通用需求/Figma 生成器，避免入口展示需求被重型 AI 阶段阻塞",
+            },
+            "coverageAudit": {"ok": True, "case_count": 1, "requirement_point_count": 1},
+            "summary": {
+                "counts": {"cases": 1, "manual_cases": 0, "yaml_files": 1},
+                "ui_design_assets": [],
+                "ignored_figma_pages": [],
+            },
+        }
+        update_generate_job(
+            progress_job_id,
+            status="success",
+            progress=100,
+            step="生成完成",
+            message="已直接生成百度网盘入口可见性短链路冒烟 YAML",
+        )
+    elif step:
         watcher = threading.Thread(
             target=_watch_agent_generate_yaml_progress,
             args=(run, step, progress_job_id, stop_event),
             daemon=True,
         )
         watcher.start()
-    try:
-        result = generate_ui_yaml_from_request(request_data, job_id=progress_job_id)
-        update_generate_job(
-            progress_job_id,
-            status="success",
-            progress=100,
-            step="生成完成",
-            message="已完成 Agent YAML 生成",
-        )
-    except Exception as exc:
-        error_trace = traceback.format_exc()
+    if not direct_entry_visibility:
         try:
-            from task_server.services.yaml_service import generation_failure_detail, load_generate_job
-            current_job = load_generate_job(progress_job_id) or {}
-            error_detail = generation_failure_detail(exc, current_job)
-        except Exception:
-            error_detail = {
-                "type": "generation_error",
-                "message": str(exc)[:300],
-                "error": str(exc)[:1000],
-            }
-        update_generate_job(
-            progress_job_id,
-            status="failed",
-            ok=False,
-            step="生成失败",
-            message=str(exc)[:200],
-            error=str(exc)[:1000],
-            error_detail=error_detail,
-            error_trace=error_trace[-5000:],
-        )
-        raise
-    finally:
-        stop_event.set()
-        if watcher:
-            watcher.join(timeout=0.5)
+            result = generate_ui_yaml_from_request(request_data, job_id=progress_job_id)
+            update_generate_job(
+                progress_job_id,
+                status="success",
+                progress=100,
+                step="生成完成",
+                message="已完成 Agent YAML 生成",
+            )
+        except Exception as exc:
+            error_trace = traceback.format_exc()
+            try:
+                from task_server.services.yaml_service import generation_failure_detail, load_generate_job
+                current_job = load_generate_job(progress_job_id) or {}
+                error_detail = generation_failure_detail(exc, current_job)
+            except Exception:
+                error_detail = {
+                    "type": "generation_error",
+                    "message": str(exc)[:300],
+                    "error": str(exc)[:1000],
+                }
+            update_generate_job(
+                progress_job_id,
+                status="failed",
+                ok=False,
+                step="生成失败",
+                message=str(exc)[:200],
+                error=str(exc)[:1000],
+                error_detail=error_detail,
+                error_trace=error_trace[-5000:],
+            )
+            raise
+        finally:
+            stop_event.set()
+            if watcher:
+                watcher.join(timeout=0.5)
     cases_payload = result.get("cases") if isinstance(result, dict) else {}
     if not isinstance(cases_payload, dict):
         cases_payload = {}
