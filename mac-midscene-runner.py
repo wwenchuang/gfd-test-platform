@@ -82,6 +82,38 @@ def device_market_name(adb_bin, device_id, brand="", model=""):
     return " ".join([part for part in [brand, model] if part]).strip()
 
 
+def android_sdk_root_from_adb(adb_path=""):
+    candidates = []
+    for raw in (adb_path, _ADB_BIN_CACHE, ADB_BIN):
+        raw = str(raw or "").strip()
+        if raw:
+            candidates.append(raw)
+    for raw in candidates:
+        try:
+            path = Path(raw).expanduser()
+            if not path.exists():
+                continue
+            resolved = path.resolve()
+            if resolved.parent.name == "platform-tools":
+                return str(resolved.parent.parent)
+        except Exception:
+            continue
+    return ""
+
+
+def ensure_android_sdk_env(env):
+    sdk_root = env.get("ANDROID_SDK_ROOT") or env.get("ANDROID_HOME") or android_sdk_root_from_adb()
+    if not sdk_root:
+        return env
+    env.setdefault("ANDROID_SDK_ROOT", sdk_root)
+    env.setdefault("ANDROID_HOME", sdk_root)
+    platform_tools = str(Path(sdk_root).expanduser() / "platform-tools")
+    path_value = env.get("PATH") or ""
+    if platform_tools and platform_tools not in path_value.split(os.pathsep):
+        env["PATH"] = platform_tools + os.pathsep + path_value
+    return env
+
+
 def midscene_env(device_id=""):
     env = os.environ.copy()
     runtime = task_runtime_env()
@@ -106,6 +138,7 @@ def midscene_env(device_id=""):
     env.setdefault("MIDSCENE_SKIP_CONFIG_CHECK", "1")
     env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
     env.setdefault("NODE_TLS_REJECT_UNAUTHORIZED", "0")
+    ensure_android_sdk_env(env)
     if device_id:
         env["ANDROID_SERIAL"] = str(device_id)
         env["DEVICE_ID"] = str(device_id)

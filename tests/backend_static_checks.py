@@ -1910,6 +1910,16 @@ def check_agent_runner_failure_reason_summary():
     require("Midscene 重规划超限" in reasons[0]["reason"] and "failed to locate element" in reasons[0]["reason"], "Runner failure summary must classify and use stdout/stderr tails when error is empty")
     require(reasons[0]["failureType"] == "Midscene 重规划超限", "Runner failure summary must expose a concrete failure type")
     require(reasons[0]["runnerId"] == "win-runner-01" and reasons[0]["deviceId"] == "ecbfd645", "Runner failure summary must keep runner/device")
+    sdk_env_failed = [{
+        "job_id": "job-sdk-env",
+        "status": "failed",
+        "module": "AI_Agent_草稿",
+        "file": "case.yaml",
+        "target_task_name": "入口可见",
+        "stdout_tail": "Unable to get connected Android device list: Neither ANDROID_HOME nor ANDROID_SDK_ROOT environment variable was exported",
+    }]
+    sdk_reasons = agent_service._agent_job_failure_reasons(sdk_env_failed, limit=1)
+    require(sdk_reasons and sdk_reasons[0]["failureType"] == "ENV_ISSUE", "Android SDK/ADB environment failures must be classified as ENV_ISSUE, not YAML script issues")
 
 
 def check_agent_figma_context_defaults():
@@ -3489,12 +3499,14 @@ def main():
     require("def run_yaml_dry_run_job" in runner_sources and "YAML dry-run 不生成 HTML 报告" in runner_sources, "Both runners must support local YAML dry-run jobs without Midscene execution")
     require("def midscene_cli_yaml_text" in runner_sources and "def ensure_cli_interface_config" in runner_sources and '缺少 Midscene CLI 接口配置 android/web/ios/computer/interface' in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks with interface config")
     require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env instead of writing deviceId into CLI YAML")
+    require("def ensure_android_sdk_env" in runner_sources and '"ANDROID_SDK_ROOT"' in runner_sources and '"ANDROID_HOME"' in runner_sources and '"platform-tools"' in runner_sources, "Runner must infer Android SDK env from adb path for Midscene CLI")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")
     require('"job_type": selected.get("job_type")' in router_source and 'selected_is_yaml_dry_run' in router_source, "Runner job dispatch must pass job_type and exclude yaml_dry_run from task meta")
     require("midscene_cli_dispatch_yaml_text(yaml_content)" in router_source, "Runner job dispatch must convert YAML to official Midscene CLI layout without changing saved scripts")
     agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")
+    require('"neither android_home nor android_sdk_root" in lowered' in agent_source and 'failure_type != "ENV_ISSUE"' in agent_source, "Agent must classify Android SDK/ADB environment failures as ENV_ISSUE and prevent AI from downgrading them to SCRIPT_ISSUE")
     require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")
     yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     require("quality_eval" in yaml_source and "evaluate_baseline_template_matching" in yaml_source, "YAML generation review must include template matcher quality eval")

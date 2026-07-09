@@ -2479,6 +2479,13 @@ def _agent_job_failure_reason(job):
 def _agent_job_failure_type(text):
     blob = str(text or "")
     lowered = blob.lower()
+    if (
+        "neither android_home nor android_sdk_root" in lowered
+        or "unable to get connected android device list" in lowered
+        or "android_sdk_root environment variable" in lowered
+        or "android_home" in lowered and "environment variable" in lowered
+    ):
+        return "ENV_ISSUE"
     if "replanned 5 times" in lowered or "replanningcyclelimit" in lowered:
         return "Midscene 重规划超限"
     if "timeout after 300s" in lowered:
@@ -2490,7 +2497,7 @@ def _agent_job_failure_type(text):
             return "断言/页面状态不匹配"
         return "等待目标超时"
     if "adb" in lowered and ("device" in lowered or "offline" in lowered):
-        return "ADB/设备异常"
+        return "ENV_ISSUE"
     return ""
 
 
@@ -10405,10 +10412,18 @@ def _tool_analyze_failure(run):
             )
         elif has_job_failures:
             # 有执行失败
-            failure_type = "SCRIPT_ISSUE"
+            job_failure_types = {
+                str(item.get("failureType") or "").strip().upper()
+                for item in failed_jobs
+                if isinstance(item, dict)
+            }
+            failure_type = "ENV_ISSUE" if "ENV_ISSUE" in job_failure_types else "SCRIPT_ISSUE"
             failure_context = f"执行失败 {len(failed_jobs)} 个任务:\n"
             for fj in failed_jobs[:12]:
-                failure_context += f"- {fj.get('module', '')}/{fj.get('file', '')} ({fj.get('status', '')})：{fj.get('error', '')}\n"
+                failure_context += (
+                    f"- {fj.get('module', '')}/{fj.get('file', '')} ({fj.get('status', '')})"
+                    f"[{fj.get('failureType') or ''}]：{fj.get('error', '')}\n"
+                )
                 stderr = fj.get("stderrTail") or fj.get("stderr_tail") or ""
                 if stderr:
                     failure_context += f"  stderr: {stderr[:200]}\n"
@@ -10449,7 +10464,7 @@ def _tool_analyze_failure(run):
                     analysis["conclusion"] = result.get("conclusion") or result.get("analysis", "")
                     analysis["recommendation"] = result.get("recommendation") or result.get("suggestion", "")
                     # AI 可能返回更准确的失败类型
-                    if result.get("failureType"):
+                    if result.get("failureType") and failure_type != "ENV_ISSUE":
                         analysis["failureType"] = result["failureType"]
             except Exception:
                 analysis["conclusion"] = f"AI分析超时，失败类型: {failure_type}"

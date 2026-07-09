@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-09 Runner Android SDK 环境注入与环境失败归因
+
+继续跟踪部署后的新任务：
+
+- `agent-1783589092511-a0a8be01`
+- 目标：基础打印新增百度网盘入口
+
+结果：
+
+- `GENERATE_YAML` / `VALIDATE_YAML` / `EXECUTION_PRECHECK` 继续通过。
+- Runner 真实 dry-run 通过，说明上一轮 Midscene CLI YAML 结构问题已修复。
+- 正式执行失败从 0 秒结构错误变成 Android SDK 环境错误：
+  `Neither ANDROID_HOME nor ANDROID_SDK_ROOT environment variable was exported`。
+
+问题定位：
+
+- 用户确认未替换 Windows runner，线上 Runner 仍使用旧脚本/旧服务环境。
+- Midscene CLI 的 Android 集成要求 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT`；Runner 虽能找到 `ADB_BIN` 并上报设备，但没有把 adb 所在 SDK 根目录注入给 Midscene 子进程。
+- Agent 失败分析把环境错误继续交给 AI，AI 又误判为 `SCRIPT_ISSUE` 并生成 `runAdbShell: adb devices` 这种无效 YAML 修复。
+
+已修改：
+
+- `windows-midscene-runner.py`
+- `mac-midscene-runner.py`
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- Runner `midscene_env` 会从 `ADB_BIN` / 已解析 adb 路径反推 SDK 根目录，自动注入 `ANDROID_HOME`、`ANDROID_SDK_ROOT`，并把 `platform-tools` 加入 PATH。
+- `_agent_job_failure_type` 将 `ANDROID_HOME/ANDROID_SDK_ROOT` 缺失、无法获取 Android 设备列表、ADB 设备异常归为 `ENV_ISSUE`。
+- `ANALYZE_FAILURE` 遇到环境类 Runner 失败时保持 `ENV_ISSUE`，不允许 AI Gateway 覆盖成 `SCRIPT_ISSUE`。
+- `GENERATE_REPAIR` 对 `ENV_ISSUE` 跳过 YAML 修复，避免无意义地改脚本和重跑。
+- 静态检查覆盖 Android SDK 环境补齐和环境失败归因。
+
 ### 2026-07-09 Runner CLI YAML 接口配置保留修复
 
 真实跟踪部署后的新任务：
