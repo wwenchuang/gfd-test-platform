@@ -19,7 +19,7 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.10-device-id-yaml-v2")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.10-cli-interface-v3")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -862,9 +862,24 @@ def yaml_has_interface_config(yaml_text):
     return bool(re.search(r"^(android|ios|web|computer|interface)\s*:", yaml_text or "", re.M))
 
 
+def normalize_empty_cli_interface_config(yaml_text):
+    text = yaml_text or ""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        match = re.match(r"^(android|ios|web|computer|interface)\s*:\s*$", line)
+        if not match:
+            continue
+        next_content = next((item for item in lines[i + 1:] if item.strip()), "")
+        if not next_content.startswith((" ", "\t")):
+            lines[i] = f"{match.group(1)}: {{}}"
+        suffix = "\n" if text.endswith(("\n", "\r")) else ""
+        return "\n".join(lines) + suffix
+    return text
+
+
 def ensure_cli_interface_config(yaml_text, platform="android"):
     text = (yaml_text or "").replace("\ufeff", "")
-    text = re.sub(r"^(android|ios|web|computer|interface)\s*:\s*$", r"\1: {}", text, count=1, flags=re.M)
+    text = normalize_empty_cli_interface_config(text)
     if yaml_has_interface_config(text):
         return text
     platform = platform if platform in ("android", "ios", "web", "computer", "interface") else "android"
@@ -1191,8 +1206,11 @@ def execute_midscene(job_id, job_dir, yaml_path, task_names, device_id):
     try:
         midscene_bin = resolve_command(MIDSCENE_BIN, "Midscene")
         emit_progress(True, "Midscene 已启动")
+        midscene_command = [midscene_bin, str(yaml_path)]
+        if device_id:
+            midscene_command.extend(["--android.deviceId", device_id])
         proc = subprocess.Popen(
-            [midscene_bin, str(yaml_path)],
+            midscene_command,
             cwd=str(job_dir),
             text=True,
             stdout=subprocess.PIPE,

@@ -28,17 +28,23 @@ def load_backend():
 
 def check_runner_inline_android_device_injection():
     import yaml
+    from task_server.services.yaml_service import midscene_cli_dispatch_yaml_text
 
-    source = "android: {}\ntasks:\n- name: smoke\n  flow:\n  - launch: com.xbxxhz.box\n"
+    source = "android:\n  tasks:\n  - name: smoke\n    flow:\n    - terminate: com.xbxxhz.box\n    - launch: com.xbxxhz.box\n"
+    dispatched = midscene_cli_dispatch_yaml_text(source, device_id="ecbfd645")
     for filename in ("windows-midscene-runner.py", "mac-midscene-runner.py"):
         module_name = filename.replace("-", "_").replace(".py", "")
         spec = importlib.util.spec_from_file_location(module_name, ROOT / filename)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        rendered = module.ensure_android_device_id(source, "ecbfd645")
+        rendered = module.inject_external_page_escape(module.midscene_cli_yaml_text(dispatched))
         parsed = yaml.safe_load(rendered)
-        require(parsed.get("android") == {"deviceId": "ecbfd645"}, f"{filename} must expand android: {{}} before injecting deviceId")
+        require(parsed.get("android") == {"deviceId": "ecbfd645"}, f"{filename} must preserve the server-dispatched Android deviceId block")
+        require(isinstance(parsed.get("tasks"), list) and len(parsed["tasks"]) == 1, f"{filename} must keep root tasks executable")
         require(rendered.count("android:") == 1, f"{filename} must keep one Android interface root")
+
+        inline = module.ensure_android_device_id("android: {}\ntasks: []\n", "ecbfd645")
+        require(yaml.safe_load(inline).get("android") == {"deviceId": "ecbfd645"}, f"{filename} must expand inline empty Android config before injecting deviceId")
 
 
 def require(condition, message):
@@ -3552,7 +3558,9 @@ def main():
     require("def midscene_cli_yaml_text" in runner_sources and "def ensure_cli_interface_config" in runner_sources and '缺少 Midscene CLI 接口配置 android/web/ios/computer/interface' in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks with interface config")
     require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env")
     require('line.strip() == "android: {}"' in runner_sources and 'lines[i] = "android:"' in runner_sources and 'lines.insert(i + 1, f"  deviceId: {device_id}")' in runner_sources, "Runner device injection must expand android: {} before adding deviceId to keep CLI YAML valid")
-    require('"2026.07.10-device-id-yaml-v2"' in runner_sources, "Windows Runner heartbeat must expose the deviceId YAML fix version for deployment verification")
+    require("def normalize_empty_cli_interface_config" in runner_sources and "text = normalize_empty_cli_interface_config(text)" in runner_sources, "Runner CLI normalization must preserve non-empty interface blocks")
+    require('midscene_command.extend(["--android.deviceId", device_id])' in runner_sources, "Runner must apply the selected Android device through the official Midscene CLI override")
+    require('"2026.07.10-cli-interface-v3"' in runner_sources, "Windows Runner heartbeat must expose the CLI interface fix version for deployment verification")
     require("def ensure_android_sdk_env" in runner_sources and '"ANDROID_SDK_ROOT"' in runner_sources and '"ANDROID_HOME"' in runner_sources and '"platform-tools"' in runner_sources, "Runner must infer Android SDK env from adb path for Midscene CLI")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")

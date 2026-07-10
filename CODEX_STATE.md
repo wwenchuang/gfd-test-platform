@@ -28,7 +28,7 @@
 
 ## 最近完成的关键修复
 
-### 2026-07-10 Runner 内联 Android 配置设备注入修复
+### 2026-07-10 Runner CLI Android 设备配置修复
 
 部署后真实验证：
 
@@ -37,6 +37,13 @@
 - 生成 YAML 达到 `executable / 100`，共 8 个动作、2 次业务跳转，链路为冷启动 App -> 进入打印首页 -> 进入文档打印 -> 断言百度网盘入口可见，业务方向符合当前需求。
 - Runner dry-run 通过，但真实执行和同设备安全重跑均在 Midscene 加载前失败；临时 YAML 被旧 Runner 拼成 `android: {}` 后跟缩进的 `deviceId: ecbfd645`，PyYAML 报 `bad indentation of a mapping entry`。
 - 线上心跳仍报告 `runner_version=2026.07.07-stability`，说明 Windows 服务实际运行的脚本没有包含本轮设备注入修复。
+
+`v2` 部署后继续验证：
+
+- `agent-1783647477107-2c4ebefc` 完整通过 YAML 生成、校验和执行前体检，Runner 心跳已确认 `2026.07.10-device-id-yaml-v2`，设备仍固定为 `ecbfd645 / OPPO Reno9 / PHM110`。
+- 生成结果为 1 条 P0 可执行冒烟、0 条人工项，评分 `100`；业务步骤是启动 App -> 恢复应用首页 -> 进入小白学习打印首页 -> 进入文档打印 -> 校验百度网盘入口，符合当前需求。
+- 真实执行和同设备串行重跑仍在 Midscene 解析前失败，错误 YAML 与上一轮一致，说明已排除“Runner 没替换”，`v2` 修复没有覆盖真实调用路径。
+- 准确根因是 `run_job` 调用 `midscene_cli_yaml_text`，其中 `ensure_cli_interface_config` 用正则把合法的块配置 `android:\n  deviceId: ecbfd645` 强制改成 `android: {}`，导致 `deviceId` 变成非法悬空缩进；`ensure_android_device_id` 在真实执行路径中没有被调用。
 
 已修改：
 
@@ -47,9 +54,11 @@
 
 修复点：
 
-- `ensure_android_device_id` 遇到 Midscene CLI 规范化产生的 `android: {}` 时，先展开为块结构 `android:`，再写入 `deviceId`，避免生成非法 YAML。
-- Windows Runner 默认版本更新为 `2026.07.10-device-id-yaml-v2`，后续可直接通过平台心跳确认 Windows 服务是否加载了正确脚本。
-- 后端检查实际加载 Windows/Mac Runner、执行设备注入，并用 PyYAML 解析结果；同时校验只保留一个 Android 顶层配置。
+- `ensure_android_device_id` 遇到 Midscene CLI 规范化产生的 `android: {}` 时，先展开为块结构 `android:`，再写入 `deviceId`，作为兼容保护。
+- `ensure_cli_interface_config` 改为只把真正没有子配置的空接口头转换为 `{}`；已有 `deviceId` 等缩进字段时原样保留，不再用正则破坏合法 YAML。
+- 按 Midscene 官方 YAML/CLI 约定，在临时 YAML 保留 `android.deviceId` 的同时，执行命令增加 `--android.deviceId <selected device>`，形成第二层固定设备绑定，不修改保存的历史脚本。
+- Windows Runner 默认版本更新为 `2026.07.10-cli-interface-v3`，后续可直接通过平台心跳确认 Windows 服务是否加载了真实调用路径修复。
+- 后端检查实际串联服务端 CLI 下发、Windows/Mac Runner 规范化和执行前守卫，再用 PyYAML 解析最终临时 YAML；同时校验设备配置、root tasks 和唯一 Android 顶层配置。
 
 已验证：
 
