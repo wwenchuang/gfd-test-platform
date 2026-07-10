@@ -10412,6 +10412,50 @@ def _tool_collect_report(run):
     return call
 
 
+def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
+    primary_failure = next((item for item in failed_jobs if isinstance(item, dict)), {})
+    primary_yaml = ""
+    module = str(primary_failure.get("module") or "").strip()
+    file_name = clean_filename(primary_failure.get("file") or "")
+    if module and file_name:
+        try:
+            primary_yaml = read_text_file(safe_join(TASK_DIR, module, file_name), default="")
+        except Exception:
+            primary_yaml = ""
+    primary_log = "\n".join(filter(None, [
+        str(failure_context or "").strip(),
+        str(primary_failure.get("failureReason") or "").strip(),
+        str(primary_failure.get("error") or "").strip(),
+        str(primary_failure.get("stdoutTail") or "").strip(),
+        str(primary_failure.get("stderrTail") or "").strip(),
+        str(primary_failure.get("summaryText") or "").strip(),
+    ]))
+    failed_job_payloads = [
+        {
+            "jobId": fj.get("jobId", ""),
+            "taskName": fj.get("taskName", ""),
+            "file": fj.get("file", ""),
+            "error": fj.get("error", ""),
+            "failureReason": fj.get("failureReason", ""),
+            "stdoutTail": fj.get("stdoutTail", ""),
+            "stderrTail": fj.get("stderrTail", ""),
+            "summary": fj.get("summary") if isinstance(fj.get("summary"), dict) else {},
+            "summaryText": fj.get("summaryText", ""),
+        }
+        for fj in failed_jobs[:12]
+        if isinstance(fj, dict)
+    ]
+    return {
+        "taskName": primary_failure.get("taskName") or run.get("target", ""),
+        "yaml": primary_yaml[:20000],
+        "log": primary_log[:12000],
+        "screenshotDesc": str(primary_failure.get("failureReason") or primary_failure.get("error") or failure_context or "")[:4000],
+        "failureType": failure_type,
+        "context": str(failure_context or "")[:2000],
+        "failedJobs": failed_job_payloads,
+    }
+
+
 def _tool_analyze_failure(run):
     """分析失败原因（基于 artifacts.report.failedJobs 和 sonicSync.failed）。"""
     call = {
@@ -10498,24 +10542,11 @@ def _tool_analyze_failure(run):
         # 尝试调用 AI Gateway 分析
         if _ai_gateway_available():
             try:
-                result = _ai_gateway_post("/ai/analyze-failure", {
-                    "failureType": failure_type,
-                    "context": failure_context[:2000],
-                    "failedJobs": [
-                        {
-                            "jobId": fj.get("jobId", ""),
-                            "taskName": fj.get("taskName", ""),
-                            "file": fj.get("file", ""),
-                            "error": fj.get("error", ""),
-                            "failureReason": fj.get("failureReason", ""),
-                            "stdoutTail": fj.get("stdoutTail", ""),
-                            "stderrTail": fj.get("stderrTail", ""),
-                            "summary": fj.get("summary") if isinstance(fj.get("summary"), dict) else {},
-                            "summaryText": fj.get("summaryText", ""),
-                        }
-                        for fj in failed_jobs[:12]
-                    ],
-                }, timeout=30)
+                result = _ai_gateway_post(
+                    "/ai/analyze-failure",
+                    _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs),
+                    timeout=30,
+                )
                 if isinstance(result, dict):
                     analysis["conclusion"] = result.get("conclusion") or result.get("analysis", "")
                     analysis["recommendation"] = result.get("recommendation") or result.get("suggestion", "")

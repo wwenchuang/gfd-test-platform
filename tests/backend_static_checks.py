@@ -40,11 +40,46 @@ def check_runner_inline_android_device_injection():
         rendered = module.inject_external_page_escape(module.midscene_cli_yaml_text(dispatched))
         parsed = yaml.safe_load(rendered)
         require(parsed.get("android") == {"deviceId": "ecbfd645"}, f"{filename} must preserve the server-dispatched Android deviceId block")
+        require(parsed.get("agent", {}).get("screenshotShrinkFactor") == 2, f"{filename} must preserve the mobile screenshot shrink factor")
         require(isinstance(parsed.get("tasks"), list) and len(parsed["tasks"]) == 1, f"{filename} must keep root tasks executable")
         require(rendered.count("android:") == 1, f"{filename} must keep one Android interface root")
 
         inline = module.ensure_android_device_id("android: {}\ntasks: []\n", "ecbfd645")
         require(yaml.safe_load(inline).get("android") == {"deviceId": "ecbfd645"}, f"{filename} must expand inline empty Android config before injecting deviceId")
+
+
+def check_agent_failure_ai_payload_has_primary_evidence():
+    from task_server.services import agent_service
+
+    old_task_dir = agent_service.TASK_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            (module_dir / "case.yaml").write_text("android:\n  tasks: []\n", encoding="utf-8")
+            payload = agent_service._agent_failure_ai_payload(
+                {"target": "基础打印新增百度网盘入口"},
+                "SCRIPT_ISSUE",
+                "执行失败 1 个任务",
+                [{
+                    "jobId": "job-static-failure",
+                    "module": "AI_Agent_草稿",
+                    "file": "case.yaml",
+                    "taskName": "文档打印入口验证",
+                    "failureReason": "截图显示仍停留在首页，文档打印入口未被点击",
+                    "stdoutTail": "waitFor timeout",
+                    "stderrTail": "",
+                    "summaryText": "页面仍为首页",
+                }],
+            )
+        require(payload.get("taskName") == "文档打印入口验证", "Agent failure analysis must send the primary task name expected by AI Gateway")
+        require("android:" in payload.get("yaml", ""), "Agent failure analysis must send the failed YAML expected by AI Gateway")
+        require("waitFor timeout" in payload.get("log", "") and "页面仍为首页" in payload.get("log", ""), "Agent failure analysis must send Runner log and summary evidence")
+        require("仍停留在首页" in payload.get("screenshotDesc", ""), "Agent failure analysis must send screenshot-derived failure context")
+        require(payload.get("failedJobs") and payload["failedJobs"][0].get("jobId") == "job-static-failure", "Agent failure analysis must preserve aggregate failed jobs")
+    finally:
+        agent_service.TASK_DIR = old_task_dir
 
 
 def require(condition, message):
@@ -2892,6 +2927,7 @@ def main():
     require("has_stable_smoke_candidate" in agent_service_source and "max_action_count <= 8" in agent_service_source and "max_wait_count <= 6" in agent_service_source and 'replanRisk") or "") == "high"' in agent_service_source, "Agent must not treat long high-replan generated YAML as a stable first-smoke candidate")
     require("def _agent_runner_job_material" in agent_service_source and '"summaryText"' in agent_service_source and 'read_json_file(safe_join(run_dir, "summary.json")' in agent_service_source, "Agent report collection must read runner summary.json for failed jobs")
     require('"summaryText": fj.get("summaryText", "")' in agent_service_source and 'f"summary：{target_job.get(' in agent_service_source, "Agent failure analysis and repair evidence must include runner summary details")
+    require("def _agent_failure_ai_payload" in agent_service_source and '"screenshotDesc": str(primary_failure.get("failureReason")' in agent_service_source, "Agent failure analysis must populate the concrete AI Gateway task/yaml/log/screenshot contract")
     require(
         "def _agent_summary_error_excerpt" in agent_service_source
         and '"summaryText": summary_text[:4000]' in agent_service_source
@@ -2999,6 +3035,7 @@ def main():
     check_agent_quarantine_refs_do_not_reenter_precheck()
     check_agent_execution_gate_repairs_before_smoke_selection()
     check_agent_runner_failure_reason_summary()
+    check_agent_failure_ai_payload_has_primary_evidence()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
@@ -3169,7 +3206,10 @@ def main():
     single_task_device_dispatch_yaml = midscene_cli_dispatch_yaml_text(single_task_yaml, device_id="ecbfd645")
     require("android:\n  tasks:" in single_task_yaml and '- name: "入口可见"' in single_task_yaml and "# baseline.case_id" in single_task_yaml, "Single-task extraction must preserve existing saved android.tasks layout and comments")
     require(single_task_dispatch_yaml.startswith("android: {}\ntasks:\n- name: 入口可见"), "Runner dispatch YAML must keep official Midscene CLI interface config plus root tasks")
-    require("android:\n  deviceId: ecbfd645\ntasks:" in single_task_device_dispatch_yaml, "Runner dispatch YAML must inject selected android.deviceId into temporary CLI YAML only")
+    import yaml as yaml_parser
+    single_task_device_dispatch = yaml_parser.safe_load(single_task_device_dispatch_yaml)
+    require(single_task_device_dispatch.get("android", {}).get("deviceId") == "ecbfd645", "Runner dispatch YAML must inject selected android.deviceId into temporary CLI YAML only")
+    require(single_task_device_dispatch.get("agent", {}).get("screenshotShrinkFactor") == 2, "Android Runner dispatch must use Midscene's recommended mobile screenshot shrink factor for stable coordinate mapping")
     missing_input_value_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiInput: 当前页面输入框\n"
     missing_input_value = validate_midscene_yaml_executability(missing_input_value_yaml)
     require(not missing_input_value.get("ok") and "aiInput 必须包含 value" in "；".join(missing_input_value.get("issues") or []), "Executable validation must reject aiInput without value before Runner")
@@ -3572,6 +3612,7 @@ def main():
     require('"neither android_home nor android_sdk_root" in lowered' in agent_source and 'failure_type != "ENV_ISSUE"' in agent_source, "Agent must classify Android SDK/ADB environment failures as ENV_ISSUE and prevent AI from downgrading them to SCRIPT_ISSUE")
     require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")
     yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    require('agent_config.setdefault("screenshotShrinkFactor", 2)' in yaml_source, "Android Runner temporary YAML must pre-shrink mobile screenshots for stable Midscene coordinate mapping")
     require("quality_eval" in yaml_source and "evaluate_baseline_template_matching" in yaml_source, "YAML generation review must include template matcher quality eval")
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("TASK_APP_ENV='prod'" in env_example and "TASK_ALLOW_QUERY_TOKEN='0'" in env_example, "Env example must document production mode and disabled query token auth")

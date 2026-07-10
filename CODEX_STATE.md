@@ -45,10 +45,20 @@
 - 真实执行和同设备串行重跑仍在 Midscene 解析前失败，错误 YAML 与上一轮一致，说明已排除“Runner 没替换”，`v2` 修复没有覆盖真实调用路径。
 - 准确根因是 `run_job` 调用 `midscene_cli_yaml_text`，其中 `ensure_cli_interface_config` 用正则把合法的块配置 `android:\n  deviceId: ecbfd645` 强制改成 `android: {}`，导致 `deviceId` 变成非法悬空缩进；`ensure_android_device_id` 在真实执行路径中没有被调用。
 
+`v3` 部署后继续验证：
+
+- `agent-1783648885693-5c30d28e` 心跳确认 `2026.07.10-cli-interface-v3`，固定设备仍为 `ecbfd645 / OPPO Reno9 / PHM110`；Runner dry-run 和真实 YAML 解析均通过，日志中的全部 ADB 命令都带 `-s ecbfd645`，没有使用华为设备。
+- 首跑 `job_1783648969345_00002` 真正进入 Midscene 页面执行，215 秒后失败；报告截图显示 App 已在正确首页，蓝色“文档打印”卡片清晰可见，但 Midscene 定位返回中心约 `(121,135)`，ADB 实际也点击该位置，未命中文档打印卡片的真实纵向区域，随后等待百度网盘入口超时。
+- 自动修复重跑 `job_1783649230612_00004` 仍停在同一首页；修复 YAML 只改了等待/断言文案，没有修正点击根因，180 秒后再次失败。
+- Midscene 1.7.10 报告记录物理截图 `1080x2412`、设备 DPR `3`、`shrunkShotToLogicalRatio=3`；DashScope 返回的定位坐标明显对应约 1/2 尺寸。按 Midscene 官方移动端建议，在临时 Runner YAML 设置 `agent.screenshotShrinkFactor: 2`，使模型接收 `540x1206` 截图，再由 Midscene 按比例映射回物理坐标。
+- 同轮发现 Agent 调 `/ai/analyze-failure` 时发送的是聚合 `context/failedJobs`，而 AI Gateway 实际读取 `taskName/yaml/log/screenshotDesc`，导致分析结果误报四个字段均为空，降低自动修复质量。
+
 已修改：
 
 - `windows-midscene-runner.py`
 - `mac-midscene-runner.py`
+- `task_server/services/yaml_service.py`
+- `task_server/services/agent_service.py`
 - `tests/backend_static_checks.py`
 - `CODEX_STATE.md`
 
@@ -59,11 +69,13 @@
 - 按 Midscene 官方 YAML/CLI 约定，在临时 YAML 保留 `android.deviceId` 的同时，执行命令增加 `--android.deviceId <selected device>`，形成第二层固定设备绑定，不修改保存的历史脚本。
 - Windows Runner 默认版本更新为 `2026.07.10-cli-interface-v3`，后续可直接通过平台心跳确认 Windows 服务是否加载了真实调用路径修复。
 - 后端检查实际串联服务端 CLI 下发、Windows/Mac Runner 规范化和执行前守卫，再用 PyYAML 解析最终临时 YAML；同时校验设备配置、root tasks 和唯一 Android 顶层配置。
+- Android 固定设备任务的临时 CLI YAML 增加 `agent.screenshotShrinkFactor: 2`；已有显式 Agent 配置优先，保存的 YAML 和历史 YAML 不修改。
+- Agent 失败分析增加真实网关字段映射：主失败任务名、原始 YAML、Runner 日志/summary 和截图派生失败描述，同时保留聚合失败列表。
 
 已验证：
 
 ```bash
-python3 -m py_compile windows-midscene-runner.py mac-midscene-runner.py tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py windows-midscene-runner.py mac-midscene-runner.py tests/backend_static_checks.py
 python3 tests/backend_static_checks.py
 git diff --check
 ```

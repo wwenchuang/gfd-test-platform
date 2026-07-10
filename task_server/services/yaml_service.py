@@ -2701,7 +2701,13 @@ def midscene_cli_dispatch_yaml_text(text, platform="android", device_id=""):
         interface_name = "android"
     if interface_name == "android" and str(device_id or "").strip():
         interface_config["deviceId"] = str(device_id or "").strip()
-    cli = {interface_name: interface_config or {}, "tasks": tasks}
+    agent_config = dict(parsed.get("agent") or {}) if isinstance(parsed.get("agent"), dict) else {}
+    if interface_name == "android" and str(device_id or "").strip():
+        agent_config.setdefault("screenshotShrinkFactor", 2)
+    cli = {interface_name: interface_config or {}}
+    if agent_config:
+        cli["agent"] = agent_config
+    cli["tasks"] = tasks
     return _pyyaml.safe_dump(cli, allow_unicode=True, sort_keys=False, width=100000)
 
 
