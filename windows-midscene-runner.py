@@ -19,7 +19,7 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.07-stability")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.10-device-id-yaml-v2")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -834,6 +834,10 @@ def heartbeat(devices):
 def ensure_android_device_id(yaml_text, device_id):
     lines = yaml_text.splitlines()
     for i, line in enumerate(lines):
+        if line.strip() == "android: {}":
+            lines[i] = "android:"
+            lines.insert(i + 1, f"  deviceId: {device_id}")
+            return "\n".join(lines) + "\n"
         if line.strip() == "android:":
             j = i + 1
             while j < len(lines):

@@ -790,6 +790,10 @@ def heartbeat(devices):
 def ensure_android_device_id(yaml_text, device_id):
     lines = (yaml_text or "").splitlines()
     for i, line in enumerate(lines):
+        if line.strip() == "android: {}":
+            lines[i] = "android:"
+            lines.insert(i + 1, f"  deviceId: {device_id}")
+            return "\n".join(lines) + "\n"
         if line.strip() == "android:":
             j = i + 1
             while j < len(lines):

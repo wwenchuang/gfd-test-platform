@@ -26,6 +26,21 @@ def load_backend():
     return module
 
 
+def check_runner_inline_android_device_injection():
+    import yaml
+
+    source = "android: {}\ntasks:\n- name: smoke\n  flow:\n  - launch: com.xbxxhz.box\n"
+    for filename in ("windows-midscene-runner.py", "mac-midscene-runner.py"):
+        module_name = filename.replace("-", "_").replace(".py", "")
+        spec = importlib.util.spec_from_file_location(module_name, ROOT / filename)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        rendered = module.ensure_android_device_id(source, "ecbfd645")
+        parsed = yaml.safe_load(rendered)
+        require(parsed.get("android") == {"deviceId": "ecbfd645"}, f"{filename} must expand android: {{}} before injecting deviceId")
+        require(rendered.count("android:") == 1, f"{filename} must keep one Android interface root")
+
+
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -2650,6 +2665,7 @@ android:
 
 
 def main():
+    check_runner_inline_android_device_injection()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
     source_paths = [
@@ -3535,6 +3551,8 @@ def main():
     require("def run_yaml_dry_run_job" in runner_sources and "YAML dry-run 不生成 HTML 报告" in runner_sources, "Both runners must support local YAML dry-run jobs without Midscene execution")
     require("def midscene_cli_yaml_text" in runner_sources and "def ensure_cli_interface_config" in runner_sources and '缺少 Midscene CLI 接口配置 android/web/ios/computer/interface' in runner_sources and '缺少 Midscene CLI 可加载的顶层 tasks' in runner_sources, "Runner dry-run and real execution must normalize platform-root YAML to Midscene CLI root tasks with interface config")
     require("env=midscene_env(device_id)" in runner_sources and '"ANDROID_SERIAL"' in runner_sources, "Runner must pass the selected device through env")
+    require('line.strip() == "android: {}"' in runner_sources and 'lines[i] = "android:"' in runner_sources and 'lines.insert(i + 1, f"  deviceId: {device_id}")' in runner_sources, "Runner device injection must expand android: {} before adding deviceId to keep CLI YAML valid")
+    require('"2026.07.10-device-id-yaml-v2"' in runner_sources, "Windows Runner heartbeat must expose the deviceId YAML fix version for deployment verification")
     require("def ensure_android_sdk_env" in runner_sources and '"ANDROID_SDK_ROOT"' in runner_sources and '"ANDROID_HOME"' in runner_sources and '"platform-tools"' in runner_sources, "Runner must infer Android SDK env from adb path for Midscene CLI")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")

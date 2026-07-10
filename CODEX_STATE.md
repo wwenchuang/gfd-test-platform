@@ -28,6 +28,39 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-10 Runner 内联 Android 配置设备注入修复
+
+部署后真实验证：
+
+- `agent-1783645927510-396f4a20` 在 `IMPACT_ANALYSIS` 中断；任务启动后 Task Server 被重启，后台线程丢失，因此已取消该轮并重新发起，不作为 Runner 验收结论。
+- `agent-1783646228653-affd528c` 完整通过 `GENERATE_YAML`、`VALIDATE_YAML` 和 `EXECUTION_PRECHECK`，固定使用 `win-runner-01 / ecbfd645`；预检确认物理设备为 `OPPO Reno9 / PHM110`，没有向华为设备下发。
+- 生成 YAML 达到 `executable / 100`，共 8 个动作、2 次业务跳转，链路为冷启动 App -> 进入打印首页 -> 进入文档打印 -> 断言百度网盘入口可见，业务方向符合当前需求。
+- Runner dry-run 通过，但真实执行和同设备安全重跑均在 Midscene 加载前失败；临时 YAML 被旧 Runner 拼成 `android: {}` 后跟缩进的 `deviceId: ecbfd645`，PyYAML 报 `bad indentation of a mapping entry`。
+- 线上心跳仍报告 `runner_version=2026.07.07-stability`，说明 Windows 服务实际运行的脚本没有包含本轮设备注入修复。
+
+已修改：
+
+- `windows-midscene-runner.py`
+- `mac-midscene-runner.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- `ensure_android_device_id` 遇到 Midscene CLI 规范化产生的 `android: {}` 时，先展开为块结构 `android:`，再写入 `deviceId`，避免生成非法 YAML。
+- Windows Runner 默认版本更新为 `2026.07.10-device-id-yaml-v2`，后续可直接通过平台心跳确认 Windows 服务是否加载了正确脚本。
+- 后端检查实际加载 Windows/Mac Runner、执行设备注入，并用 PyYAML 解析结果；同时校验只保留一个 Android 顶层配置。
+
+已验证：
+
+```bash
+python3 -m py_compile windows-midscene-runner.py mac-midscene-runner.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：全部通过，后端检查 `61` 项通过。
+
 ### 2026-07-09 Agent 入口短链路首页恢复与失败摘要归因修复
 
 继续跟踪部署后的新任务：
