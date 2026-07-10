@@ -19,7 +19,7 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.10-cli-interface-v3")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.10-model-family-v4")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -166,9 +166,31 @@ def ensure_android_sdk_env(env):
     return env
 
 
+def infer_midscene_model_family(model_name, configured_family=""):
+    name = str(model_name or "").strip().lower()
+    if "qwen3.6" in name:
+        return "qwen3.6"
+    if "qwen3.5" in name:
+        return "qwen3.5"
+    if "qwen3-vl" in name:
+        return "qwen3-vl"
+    if "qwen2.5-vl" in name or name.startswith("qwen-vl"):
+        return "qwen2.5-vl"
+    return str(configured_family or "").strip()
+
+
 def midscene_env(device_id=""):
     env = os.environ.copy()
     runtime = task_runtime_env()
+    server_model_keys = {
+        "MIDSCENE_MODEL_API_KEY",
+        "MIDSCENE_MODEL_BASE_URL",
+        "MIDSCENE_MODEL_NAME",
+        "MIDSCENE_MODEL_FAMILY",
+        "MIDSCENE_MODEL_TIMEOUT",
+        "MIDSCENE_MODEL_RETRY_COUNT",
+        "MIDSCENE_MODEL_RETRY_INTERVAL",
+    }
     for key in (
         "DASHSCOPE_API_KEY",
         "DASHSCOPE_BASE_URL",
@@ -176,17 +198,40 @@ def midscene_env(device_id=""):
         "DASHSCOPE_VL_MODEL",
         "OPENAI_API_KEY",
         "OPENAI_BASE_URL",
+        "MIDSCENE_MODEL_API_KEY",
+        "MIDSCENE_MODEL_BASE_URL",
         "MIDSCENE_MODEL_NAME",
+        "MIDSCENE_MODEL_FAMILY",
+        "MIDSCENE_MODEL_TIMEOUT",
+        "MIDSCENE_MODEL_RETRY_COUNT",
+        "MIDSCENE_MODEL_RETRY_INTERVAL",
         "MIDSCENE_USE_QWEN_VL",
+        "MIDSCENE_USE_QWEN3_VL",
+        "MIDSCENE_USE_DOUBAO_VISION",
+        "MIDSCENE_USE_GEMINI",
+        "MIDSCENE_USE_VLM_UI_TARS",
         "MIDSCENE_SKIP_CONFIG_CHECK",
         "MIDSCENE_REPLANNING_CYCLE_LIMIT",
     ):
-        if runtime.get(key) and not env.get(key):
+        if runtime.get(key) and (key in server_model_keys or not env.get(key)):
             env[key] = runtime[key]
     if env.get("DASHSCOPE_API_KEY") and not env.get("OPENAI_API_KEY"):
         env["OPENAI_API_KEY"] = env["DASHSCOPE_API_KEY"]
     env.setdefault("OPENAI_BASE_URL", env.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
+    env.setdefault("MIDSCENE_MODEL_API_KEY", env.get("DASHSCOPE_API_KEY") or env.get("OPENAI_API_KEY", ""))
+    env.setdefault("MIDSCENE_MODEL_BASE_URL", env.get("DASHSCOPE_BASE_URL") or env.get("OPENAI_BASE_URL", ""))
     env.setdefault("MIDSCENE_MODEL_NAME", env.get("DASHSCOPE_VL_MODEL", "qwen3.6-plus"))
+    model_family = infer_midscene_model_family(env.get("MIDSCENE_MODEL_NAME"), env.get("MIDSCENE_MODEL_FAMILY"))
+    if model_family:
+        env["MIDSCENE_MODEL_FAMILY"] = model_family
+        for legacy_key in (
+            "MIDSCENE_USE_QWEN_VL",
+            "MIDSCENE_USE_QWEN3_VL",
+            "MIDSCENE_USE_DOUBAO_VISION",
+            "MIDSCENE_USE_GEMINI",
+            "MIDSCENE_USE_VLM_UI_TARS",
+        ):
+            env.pop(legacy_key, None)
     env.setdefault("MIDSCENE_SKIP_CONFIG_CHECK", "1")
     env.setdefault("MIDSCENE_REPLANNING_CYCLE_LIMIT", "8")
     env.setdefault("NODE_TLS_REJECT_UNAUTHORIZED", "0")
@@ -818,6 +863,7 @@ def install_apk_job(job):
 
 
 def heartbeat(devices):
+    runtime = midscene_env()
     payload = {
         "runner_id": RUNNER_ID,
         "hostname": socket.gethostname(),
@@ -825,7 +871,11 @@ def heartbeat(devices):
         "runner_version": RUNNER_VERSION,
         "version": RUNNER_VERSION,
         "started_at": RUNNER_STARTED_AT,
-        "capabilities": RUNNER_CAPABILITIES,
+        "capabilities": {
+            **RUNNER_CAPABILITIES,
+            "midscene_model_name": runtime.get("MIDSCENE_MODEL_NAME", ""),
+            "midscene_model_family": runtime.get("MIDSCENE_MODEL_FAMILY", ""),
+        },
         "devices": devices
     }
     return http_json("POST", "/api/runner/heartbeat", payload)
@@ -1479,6 +1529,7 @@ def print_startup():
     env_preview = midscene_env()
     print(f"模型配置来源: {'Task 服务端' if _RUNTIME_ENV_CACHE else '本机环境'}{f'（服务端读取失败：{_RUNTIME_ENV_ERROR}）' if _RUNTIME_ENV_ERROR else ''}")
     print(f"MIDSCENE_MODEL_NAME: {env_preview.get('MIDSCENE_MODEL_NAME', '') or '未配置'}")
+    print(f"MIDSCENE_MODEL_FAMILY: {env_preview.get('MIDSCENE_MODEL_FAMILY', '') or '未配置'}")
     print(f"MIDSCENE_REPLANNING_CYCLE_LIMIT: {env_preview.get('MIDSCENE_REPLANNING_CYCLE_LIMIT', '') or '未配置'}")
     print(f"OPENAI_BASE_URL: {env_preview.get('OPENAI_BASE_URL', '') or '未配置'}")
     print(f"OPENAI_API_KEY: {'已配置' if env_preview.get('OPENAI_API_KEY') else '未配置'}")

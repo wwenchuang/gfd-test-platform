@@ -706,7 +706,7 @@ def platform_preflight_dashboard(include_sonic_scan=False):
 
 def runtime_env_preview(env):
     preview = dict(env or {})
-    for key in ("DASHSCOPE_API_KEY", "OPENAI_API_KEY"):
+    for key in ("DASHSCOPE_API_KEY", "OPENAI_API_KEY", "MIDSCENE_MODEL_API_KEY"):
         if preview.get(key):
             value = str(preview[key])
             preview[key] = f"{value[:6]}...{value[-4:]} len={len(value)}"
@@ -714,11 +714,26 @@ def runtime_env_preview(env):
 
 
 
+def infer_midscene_model_family(model_name: str, configured_family: str = "") -> str:
+    """Return the Midscene 1.7.10 coordinate protocol for a configured model."""
+    name = str(model_name or "").strip().lower()
+    if "qwen3.6" in name:
+        return "qwen3.6"
+    if "qwen3.5" in name:
+        return "qwen3.5"
+    if "qwen3-vl" in name:
+        return "qwen3-vl"
+    if "qwen2.5-vl" in name or name.startswith("qwen-vl"):
+        return "qwen2.5-vl"
+    return str(configured_family or "").strip()
+
+
 def midscene_runtime_env():
     api_key = dashscope_api_key(required=False)
     base_url = (os.getenv("DASHSCOPE_BASE_URL") or os.getenv("OPENAI_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).strip()
     text_model = (os.getenv("DASHSCOPE_MODEL") or DEFAULT_TEXT_MODEL).strip()
     vl_model = (os.getenv("DASHSCOPE_VL_MODEL") or os.getenv("MIDSCENE_MODEL_NAME") or DEFAULT_VL_MODEL).strip()
+    model_family = infer_midscene_model_family(vl_model, os.getenv("MIDSCENE_MODEL_FAMILY", ""))
     app_package = (os.getenv("APP_PACKAGE") or "").strip()
     env = {
         "DASHSCOPE_API_KEY": api_key,
@@ -727,8 +742,10 @@ def midscene_runtime_env():
         "OPENAI_BASE_URL": base_url,
         "DASHSCOPE_MODEL": text_model,
         "DASHSCOPE_VL_MODEL": vl_model,
+        "MIDSCENE_MODEL_API_KEY": api_key,
+        "MIDSCENE_MODEL_BASE_URL": base_url,
         "MIDSCENE_MODEL_NAME": vl_model,
-        "MIDSCENE_USE_QWEN_VL": "1",
+        "MIDSCENE_MODEL_FAMILY": model_family,
         "MIDSCENE_SKIP_CONFIG_CHECK": "1",
         "MIDSCENE_REPLANNING_CYCLE_LIMIT": DEFAULT_REPLANNING_CYCLE_LIMIT,
         "NODE_TLS_REJECT_UNAUTHORIZED": "0",

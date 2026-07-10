@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-10 Qwen3 坐标协议与 Agent 无效修复拦截
+
+部署前真实验证：
+
+- Agent：`agent-1783651627927-666f33ac`，固定使用 `win-runner-01 / ecbfd645`（OPPO），没有向另一台设备下发。
+- 需求与 Figma 均被平台读取；Figma 共使用 4 个页面、4 张 UI 图。生成的首批 YAML 为单条 `executable / 100` 短链路，业务步骤为进入打印首页 -> 文档打印 -> 校验百度网盘入口。
+- 首跑 `job_1783651720495_00002` 在 300 秒 Runner 上限后失败；重跑 `job_1783652091030_00004` 在 191 秒后明确失败，页面仍停留在首页，未进入文档打印页。
+- 两份 Midscene 报告中，模型都正确理解了文字目标并返回约 `[48,122,194,145]` 的框；这不是 YAML 固定坐标，`aiTap` 最终仍需由 Android ADB 执行物理点击。
+- 准确根因是服务端配置的模型名为 `qwen3.6-plus`，Runner 却继续下发旧变量 `MIDSCENE_USE_QWEN_VL=1`。Midscene 1.7.10 因而把模型声明成 `qwen2.5-vl mode`，将 Qwen3 的 0-1000 归一化框误当成像素框，最终点击约 `(240,267)`；按 Qwen3.6 协议映射到 `1080x2412` 物理屏后应约为 `(130,321)`。
+- 首跑的 Runner `failure_review` 已判定为 `env_issue / model_service`，但 Agent 丢失该字段后误归类为 `SCRIPT_ISSUE`；AI 修复只增加 `sleep` 就重跑，既没有改变定位语义，也浪费了一轮执行。
+
+已修改：
+
+- `task_server/services/runner_service.py`
+- `windows-midscene-runner.py`
+- `mac-midscene-runner.py`
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 服务端按模型名显式下发 Midscene 现代配置：`MIDSCENE_MODEL_NAME=qwen3.6-plus`、`MIDSCENE_MODEL_FAMILY=qwen3.6` 及对应 API key/base URL，不再把 Qwen3 声明成旧 `qwen2.5-vl`。
+- Windows/Mac Runner 以服务端现代模型配置为准；即使服务进程环境残留旧模型族或 `MIDSCENE_USE_QWEN_VL`，执行前也会清除全部旧模型选择开关。
+- Runner 版本更新为 `2026.07.10-model-family-v4`，心跳增加 `midscene_model_name`、`midscene_model_family`，部署后可直接确认真实进程使用的坐标协议。
+- Agent 报告收集、失败项归一和 AI 分析全程保留 Runner `failure_review`；环境、模型服务、产品和脚本问题不再统一误判为脚本问题。
+- AI 修复候选会做解析后的执行语义比较；只增加 `sleep`、只改用例名/说明或返回等价 YAML 时保存为 `REJECTED` 诊断证据，不允许自动重跑旧脚本。
+- 没有修改 `router.py`、没有新增执行模式、没有修改历史 YAML。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/runner_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py windows-midscene-runner.py mac-midscene-runner.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：全部通过，后端检查 `61` 项通过。部署后仍需确认 Windows Runner 心跳为 `2026.07.10-model-family-v4 / qwen3.6-plus / qwen3.6`，再用同一需求和 OPPO 单设备完整跑到终态。
+
 ### 2026-07-10 Runner CLI Android 设备配置修复
 
 部署后真实验证：
@@ -759,7 +798,9 @@ git diff --check
 - `server-tasks-all/3D打印基线/十二生肖印章打印.yaml`
 - `server-tasks/3D打印基线/十二生肖印章打印.yaml`
 - `task_server/services/sonic_service.py`
+- `task_server/services/yaml_executable_scorer.py`
 - `deploy/install-windows-runner-service.local.ps1`
+- `server-tasks/AI_Agent_草稿/`
 
 提交时不要直接 `git add .`，按任务文件精确添加。
 

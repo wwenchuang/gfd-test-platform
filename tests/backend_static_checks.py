@@ -48,6 +48,60 @@ def check_runner_inline_android_device_injection():
         require(yaml.safe_load(inline).get("android") == {"deviceId": "ecbfd645"}, f"{filename} must expand inline empty Android config before injecting deviceId")
 
 
+def check_midscene_model_family_protocol():
+    from task_server.services import runner_service
+
+    require(runner_service.infer_midscene_model_family("qwen3.6-plus") == "qwen3.6", "Server must map qwen3.6-plus to the Midscene 1.7.10 normalized-coordinate family")
+    require(runner_service.infer_midscene_model_family("qwen3.6-plus", "qwen2.5-vl") == "qwen3.6", "Known Qwen3.6 model names must override stale incompatible family settings")
+    require(runner_service.infer_midscene_model_family("qwen2.5-vl-72b") == "qwen2.5-vl", "Server must keep true Qwen2.5-VL models on the pixel-coordinate family")
+
+    env_keys = ("DASHSCOPE_API_KEY", "DASHSCOPE_VL_MODEL", "MIDSCENE_MODEL_FAMILY", "MIDSCENE_USE_QWEN_VL")
+    old_env = {key: os.environ.get(key) for key in env_keys}
+    try:
+        os.environ["DASHSCOPE_API_KEY"] = "static-check-model-key"
+        os.environ["DASHSCOPE_VL_MODEL"] = "qwen3.6-plus"
+        os.environ.pop("MIDSCENE_MODEL_FAMILY", None)
+        os.environ["MIDSCENE_USE_QWEN_VL"] = "1"
+        runtime = runner_service.midscene_runtime_env()
+        require(runtime.get("MIDSCENE_MODEL_NAME") == "qwen3.6-plus", "Server runtime env must expose the configured Midscene model name")
+        require(runtime.get("MIDSCENE_MODEL_FAMILY") == "qwen3.6", "Server runtime env must explicitly expose the Qwen3.6 model family")
+        require("MIDSCENE_USE_QWEN_VL" not in runtime, "Server must not declare Qwen3.6 as legacy qwen2.5-vl")
+    finally:
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    for filename in ("windows-midscene-runner.py", "mac-midscene-runner.py"):
+        module_name = f"model_family_{filename.replace('-', '_').replace('.py', '')}"
+        spec = importlib.util.spec_from_file_location(module_name, ROOT / filename)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        require(module.infer_midscene_model_family("qwen3.6-plus", "qwen2.5-vl") == "qwen3.6", f"{filename} must reject a stale qwen2.5-vl family for a known Qwen3.6 model")
+        original_runtime = module.task_runtime_env
+        old_legacy = os.environ.get("MIDSCENE_USE_QWEN_VL")
+        try:
+            os.environ["MIDSCENE_USE_QWEN_VL"] = "1"
+            module.task_runtime_env = lambda force=False: {
+                "MIDSCENE_MODEL_API_KEY": "static-check-model-key",
+                "MIDSCENE_MODEL_BASE_URL": "https://example.invalid/v1",
+                "MIDSCENE_MODEL_NAME": "qwen3.6-plus",
+                "MIDSCENE_MODEL_FAMILY": "qwen3.6",
+                "MIDSCENE_USE_QWEN_VL": "1",
+            }
+            runtime = module.midscene_env("ecbfd645")
+            require(runtime.get("MIDSCENE_MODEL_FAMILY") == "qwen3.6", f"{filename} must pass the explicit Qwen3.6 family to Midscene")
+            require("MIDSCENE_USE_QWEN_VL" not in runtime, f"{filename} must clear stale qwen2.5-vl switches when an explicit family is configured")
+            require(runtime.get("ANDROID_SERIAL") == "ecbfd645", f"{filename} must preserve the selected Android device while applying model config")
+        finally:
+            module.task_runtime_env = original_runtime
+            if old_legacy is None:
+                os.environ.pop("MIDSCENE_USE_QWEN_VL", None)
+            else:
+                os.environ["MIDSCENE_USE_QWEN_VL"] = old_legacy
+
+
 def check_agent_failure_ai_payload_has_primary_evidence():
     from task_server.services import agent_service
 
@@ -71,6 +125,7 @@ def check_agent_failure_ai_payload_has_primary_evidence():
                     "stdoutTail": "waitFor timeout",
                     "stderrTail": "",
                     "summaryText": "页面仍为首页",
+                    "failureReview": {"category": "env_issue", "confidence": 0.96, "reason": "模型服务请求被中止"},
                 }],
             )
         require(payload.get("taskName") == "文档打印入口验证", "Agent failure analysis must send the primary task name expected by AI Gateway")
@@ -78,8 +133,94 @@ def check_agent_failure_ai_payload_has_primary_evidence():
         require("waitFor timeout" in payload.get("log", "") and "页面仍为首页" in payload.get("log", ""), "Agent failure analysis must send Runner log and summary evidence")
         require("仍停留在首页" in payload.get("screenshotDesc", ""), "Agent failure analysis must send screenshot-derived failure context")
         require(payload.get("failedJobs") and payload["failedJobs"][0].get("jobId") == "job-static-failure", "Agent failure analysis must preserve aggregate failed jobs")
+        require(payload["failedJobs"][0].get("failureReview", {}).get("category") == "env_issue", "Agent failure analysis must preserve Runner failure review evidence")
     finally:
         agent_service.TASK_DIR = old_task_dir
+
+
+def check_agent_failure_review_and_repair_guard():
+    from task_server.services import agent_service
+    from task_server.services import repair_service
+
+    normalized = agent_service._normalize_failed_execution_item({
+        "jobId": "job-static-model-timeout",
+        "error": "waitFor timeout",
+        "failureReview": {
+            "category": "env_issue",
+            "confidence": 0.96,
+            "reason": "Midscene model request was aborted",
+        },
+    })
+    require(normalized.get("failureType") == "ENV_ISSUE", "Runner env_issue review must override misleading script-like timeout text")
+    require("model request" in normalized.get("failureReason", ""), "Normalized Agent failure must retain the Runner review reason")
+
+    original = """android:
+  tasks:
+    - name: smoke
+      flow:
+        - launch: com.xbxxhz.box
+        - aiTap: 文档打印
+        - aiAssert: 百度网盘入口可见
+"""
+    sleep_only = """android:
+  tasks:
+    - name: smoke repair
+      flow:
+        - launch: com.xbxxhz.box
+        - sleep: 3000
+        - aiTap: 文档打印
+        - sleep: 2000
+        - aiAssert: 百度网盘入口可见
+"""
+    semantic_fix = sleep_only.replace("aiTap: 文档打印", "aiTap: 首页中名称为文档打印的入口")
+    require(not agent_service._agent_repair_has_semantic_change(original, sleep_only), "Agent must reject sleep-only or task-name-only repair YAML")
+    require(agent_service._agent_repair_has_semantic_change(original, semantic_fix), "Agent must accept repair YAML that changes an executable action")
+
+    old_task_dir = agent_service.TASK_DIR
+    old_gateway_available = agent_service._ai_gateway_available
+    old_gateway_post = agent_service._ai_gateway_post
+    old_log_tool_call = agent_service._log_tool_call
+    old_upsert = repair_service.upsert_repair_draft
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            (module_dir / "case.yaml").write_text(original, encoding="utf-8")
+            agent_service._ai_gateway_available = lambda: True
+            agent_service._ai_gateway_post = lambda *args, **kwargs: {"fixedYaml": sleep_only}
+            agent_service._log_tool_call = lambda *args, **kwargs: None
+            repair_service.upsert_repair_draft = lambda draft: dict(draft)
+            run = {
+                "target": "基础打印新增百度网盘入口",
+                "platform": "android",
+                "artifacts": {
+                    "failureAnalysis": {"failureType": "SCRIPT_ISSUE", "summary": "点击后仍停留首页"},
+                    "report": {
+                        "failedJobs": [{
+                            "jobId": "job-static-noop-repair",
+                            "module": "AI_Agent_草稿",
+                            "file": "case.yaml",
+                            "taskName": "smoke",
+                            "status": "failed",
+                            "error": "waitFor timeout",
+                            "failureType": "SCRIPT_ISSUE",
+                        }],
+                    },
+                },
+            }
+            call = agent_service._tool_generate_repair(run)
+        draft = (run.get("artifacts", {}).get("repairDrafts") or [{}])[0]
+        summary = run.get("artifacts", {}).get("repairSummary") or {}
+        require(call.get("status") == "SKIPPED" and not call.get("aiUsed"), "Sleep-only AI repair must not be reported as usable")
+        require(draft.get("status") == "REJECTED" and not draft.get("fixedYaml") and draft.get("rejectedYaml"), "Sleep-only AI repair must be retained only as rejected evidence")
+        require(summary.get("blockedCount") == 1 and summary.get("items", [{}])[0].get("blockedReason") == "sleep_only_or_noop", "Repair summary must explain why a no-op candidate cannot rerun")
+    finally:
+        agent_service.TASK_DIR = old_task_dir
+        agent_service._ai_gateway_available = old_gateway_available
+        agent_service._ai_gateway_post = old_gateway_post
+        agent_service._log_tool_call = old_log_tool_call
+        repair_service.upsert_repair_draft = old_upsert
 
 
 def require(condition, message):
@@ -2707,6 +2848,7 @@ android:
 
 def main():
     check_runner_inline_android_device_injection()
+    check_midscene_model_family_protocol()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
     source_paths = [
@@ -2759,6 +2901,7 @@ def main():
     require("validate_runtime_secrets()" in source and "TASK_ADMIN_PASSWORD_HASH 未配置" in source, "Production startup must validate strong secrets and admin password hash")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     job_service_source = (ROOT / "task_server" / "services" / "job_service.py").read_text(encoding="utf-8")
+    runner_service_source = (ROOT / "task_server" / "services" / "runner_service.py").read_text(encoding="utf-8")
     sonic_service_source = (ROOT / "task_server" / "services" / "sonic_service.py").read_text(encoding="utf-8")
     yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     yaml_executable_scorer_source = (ROOT / "task_server" / "services" / "yaml_executable_scorer.py").read_text(encoding="utf-8")
@@ -2928,6 +3071,8 @@ def main():
     require("def _agent_runner_job_material" in agent_service_source and '"summaryText"' in agent_service_source and 'read_json_file(safe_join(run_dir, "summary.json")' in agent_service_source, "Agent report collection must read runner summary.json for failed jobs")
     require('"summaryText": fj.get("summaryText", "")' in agent_service_source and 'f"summary：{target_job.get(' in agent_service_source, "Agent failure analysis and repair evidence must include runner summary details")
     require("def _agent_failure_ai_payload" in agent_service_source and '"screenshotDesc": str(primary_failure.get("failureReason")' in agent_service_source, "Agent failure analysis must populate the concrete AI Gateway task/yaml/log/screenshot contract")
+    require("def _agent_failure_type_from_review" in agent_service_source and '"failureReview": failure_review' in agent_service_source and '"failureReview": fj.get("failureReview")' in agent_service_source, "Agent must preserve Runner failure reviews through report collection and AI analysis")
+    require("def _agent_repair_has_semantic_change" in agent_service_source and '"sleep_only_or_noop"' in agent_service_source and '"rejectedYaml"' in agent_service_source, "Agent must reject sleep-only and semantically equivalent AI repair candidates")
     require(
         "def _agent_summary_error_excerpt" in agent_service_source
         and '"summaryText": summary_text[:4000]' in agent_service_source
@@ -3036,6 +3181,7 @@ def main():
     check_agent_execution_gate_repairs_before_smoke_selection()
     check_agent_runner_failure_reason_summary()
     check_agent_failure_ai_payload_has_primary_evidence()
+    check_agent_failure_review_and_repair_guard()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
@@ -3600,7 +3746,10 @@ def main():
     require('line.strip() == "android: {}"' in runner_sources and 'lines[i] = "android:"' in runner_sources and 'lines.insert(i + 1, f"  deviceId: {device_id}")' in runner_sources, "Runner device injection must expand android: {} before adding deviceId to keep CLI YAML valid")
     require("def normalize_empty_cli_interface_config" in runner_sources and "text = normalize_empty_cli_interface_config(text)" in runner_sources, "Runner CLI normalization must preserve non-empty interface blocks")
     require('midscene_command.extend(["--android.deviceId", device_id])' in runner_sources, "Runner must apply the selected Android device through the official Midscene CLI override")
-    require('"2026.07.10-cli-interface-v3"' in runner_sources, "Windows Runner heartbeat must expose the CLI interface fix version for deployment verification")
+    require('"2026.07.10-model-family-v4"' in runner_sources, "Runner heartbeat must expose the explicit model-family fix version for deployment verification")
+    require('"MIDSCENE_MODEL_FAMILY"' in runner_service_source and '"MIDSCENE_MODEL_API_KEY"' in runner_service_source and '"MIDSCENE_MODEL_BASE_URL"' in runner_service_source, "Server must publish the modern Midscene model configuration contract")
+    require('"MIDSCENE_USE_QWEN_VL": "1"' not in runner_service_source, "Server must not declare a Qwen3 model through the legacy qwen2.5-vl switch")
+    require("def infer_midscene_model_family" in runner_sources and '"midscene_model_family"' in runner_sources and 'env.pop(legacy_key, None)' in runner_sources, "Runners must infer, report, and enforce the explicit Midscene model family")
     require("def ensure_android_sdk_env" in runner_sources and '"ANDROID_SDK_ROOT"' in runner_sources and '"ANDROID_HOME"' in runner_sources and '"platform-tools"' in runner_sources, "Runner must infer Android SDK env from adb path for Midscene CLI")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     require("register_runner(d)" in router_source and '"capabilities": record.get("capabilities")' in router_source, "Runner heartbeat route must preserve reported capabilities")

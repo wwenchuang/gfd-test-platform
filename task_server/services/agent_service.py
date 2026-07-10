@@ -9980,6 +9980,32 @@ def _failed_job_task_name(item):
     ).strip()
 
 
+def _agent_failure_review(item, fallback=None):
+    for source in (item, fallback):
+        if not isinstance(source, dict):
+            continue
+        review = source.get("failureReview") or source.get("failure_review")
+        if isinstance(review, dict):
+            return review
+    return {}
+
+
+def _agent_failure_type_from_review(review):
+    if not isinstance(review, dict):
+        return ""
+    category = str(review.get("category") or review.get("failureType") or review.get("failure_type") or "").strip().lower()
+    category = category.replace("-", "_").split("/", 1)[0]
+    return {
+        "env_issue": "ENV_ISSUE",
+        "environment_issue": "ENV_ISSUE",
+        "model_service": "ENV_ISSUE",
+        "script_issue": "SCRIPT_ISSUE",
+        "yaml_issue": "SCRIPT_ISSUE",
+        "product_bug": "PRODUCT_BUG",
+        "unknown": "UNKNOWN",
+    }.get(category, "")
+
+
 def _normalize_failed_execution_item(item, fallback=None):
     if not isinstance(item, dict):
         return None
@@ -9993,7 +10019,10 @@ def _normalize_failed_execution_item(item, fallback=None):
     stderr_tail = str(item.get("stderrTail") or item.get("stderr_tail") or fallback.get("stderrTail") or fallback.get("stderr_tail") or "").strip()
     summary = item.get("summary") if isinstance(item.get("summary"), dict) else fallback.get("summary") if isinstance(fallback.get("summary"), dict) else {}
     summary_text = str(item.get("summaryText") or item.get("summary_text") or fallback.get("summaryText") or fallback.get("summary_text") or "").strip()
+    failure_review = _agent_failure_review(item, fallback)
     reason = str(item.get("failureReason") or item.get("failure_reason") or "").strip()
+    if not reason:
+        reason = str(failure_review.get("reason") or "").strip()
     if not reason:
         reason = _agent_job_failure_reason({
             **item,
@@ -10003,8 +10032,13 @@ def _normalize_failed_execution_item(item, fallback=None):
             "summary": summary,
             "summaryText": summary_text,
         })
-    failure_type = str(item.get("failureType") or item.get("failure_type") or "").strip()
-    if not failure_type:
+    failure_type = str(item.get("failureType") or item.get("failure_type") or "").strip().upper()
+    review_failure_type = _agent_failure_type_from_review(failure_review)
+    if review_failure_type in ("ENV_ISSUE", "PRODUCT_BUG"):
+        failure_type = review_failure_type
+    elif not failure_type and review_failure_type:
+        failure_type = review_failure_type
+    if not failure_type or failure_type == "UNKNOWN":
         failure_type = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail, summary_text]))
     return {
         "jobId": job_id,
@@ -10021,6 +10055,7 @@ def _normalize_failed_execution_item(item, fallback=None):
         "summaryText": summary_text[:4000],
         "failureReason": reason,
         "failureType": failure_type,
+        "failureReview": failure_review,
     }
 
 
@@ -10162,6 +10197,7 @@ def _tool_collect_report(run):
                         "file": job.get("file", ""),
                         "taskName": job.get("target_task_name") or job.get("current_task_name", ""),
                         "reportUrl": job.get("report_url") or job.get("reportUrl", ""),
+                        "failureReview": job.get("failure_review") or job.get("failureReview") or {},
                     }
                 job_statuses.append(job_entry)
 
@@ -10194,17 +10230,12 @@ def _tool_collect_report(run):
                     fail_entry = {
                         **job_entry,
                         **material,
+                        "localPath": job.get("local_report_path") or job.get("localReportPath", ""),
                         "error": job.get("error") or job.get("fail_reason", ""),
                         "stderrTail": (material.get("stderrTail") or job.get("stderr") or job.get("stderr_tail") or "")[-1600:],
                         "stdoutTail": (material.get("stdoutTail") or job.get("stdout") or job.get("stdout_tail") or "")[-1200:],
                     }
-                    fail_entry["failureReason"] = _agent_job_failure_reason(fail_entry)
-                    fail_entry["failureType"] = _agent_job_failure_type("\n".join([
-                        fail_entry.get("error", ""),
-                        fail_entry.get("stderrTail", ""),
-                        fail_entry.get("stdoutTail", ""),
-                        fail_entry.get("summaryText", ""),
-                    ]))
+                    fail_entry = _normalize_failed_execution_item(fail_entry, job) or fail_entry
                     failed_jobs.append(fail_entry)
                     if status == "timeout":
                         timeout_jobs.append(fail_entry)
@@ -10244,7 +10275,8 @@ def _tool_collect_report(run):
                 if fj_id in success_job_ids:
                     continue
                 if not any(f.get("jobId") == fj_id for f in failed_jobs):
-                    failed_jobs.append({
+                    raw_fail_entry = {
+                        **fj,
                         "jobId": fj_id or "",
                         "status": fj.get("status", "failed"),
                         "module": fj.get("module", ""),
@@ -10254,13 +10286,8 @@ def _tool_collect_report(run):
                         "stdoutTail": fj.get("stdout_tail") or "",
                         "stderrTail": fj.get("stderr_tail") or "",
                         "error": fj.get("error", ""),
-                        "failureReason": _agent_job_failure_reason(fj),
-                        "failureType": _agent_job_failure_type("\n".join([
-                            str(fj.get("error") or ""),
-                            str(fj.get("stderr_tail") or ""),
-                            str(fj.get("stdout_tail") or ""),
-                        ])),
-                    })
+                    }
+                    failed_jobs.append(_normalize_failed_execution_item(raw_fail_entry, fj) or raw_fail_entry)
                     if fj.get("error"):
                         errors.append(fj.get("error"))
             for tj in (job_result.get("timeout") or []):
@@ -10268,7 +10295,8 @@ def _tool_collect_report(run):
                 if tj_id in success_job_ids:
                     continue
                 if not any(f.get("jobId") == tj_id for f in failed_jobs):
-                    timeout_entry = {
+                    raw_timeout_entry = {
+                        **tj,
                         "jobId": tj_id or "",
                         "status": "timeout",
                         "module": tj.get("module", ""),
@@ -10279,12 +10307,7 @@ def _tool_collect_report(run):
                         "stderrTail": tj.get("stderr_tail") or "",
                         "error": tj.get("error") or "Runner 执行等待超时，报告尚未回传",
                     }
-                    timeout_entry["failureReason"] = _agent_job_failure_reason(timeout_entry)
-                    timeout_entry["failureType"] = _agent_job_failure_type("\n".join([
-                        timeout_entry.get("error", ""),
-                        timeout_entry.get("stderrTail", ""),
-                        timeout_entry.get("stdoutTail", ""),
-                    ]))
+                    timeout_entry = _normalize_failed_execution_item(raw_timeout_entry, tj) or raw_timeout_entry
                     failed_jobs.append(timeout_entry)
                     timeout_jobs.append(timeout_entry)
                     errors.append(timeout_entry["error"])
@@ -10441,6 +10464,7 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
             "stderrTail": fj.get("stderrTail", ""),
             "summary": fj.get("summary") if isinstance(fj.get("summary"), dict) else {},
             "summaryText": fj.get("summaryText", ""),
+            "failureReview": fj.get("failureReview") if isinstance(fj.get("failureReview"), dict) else {},
         }
         for fj in failed_jobs[:12]
         if isinstance(fj, dict)
@@ -10454,6 +10478,58 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
         "context": str(failure_context or "")[:2000],
         "failedJobs": failed_job_payloads,
     }
+
+
+def _agent_repair_semantic_document(yaml_text):
+    if pyyaml is None or not str(yaml_text or "").strip():
+        return None
+    try:
+        parsed = pyyaml.safe_load(yaml_text)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    for platform_key in ("android", "web", "ios", "computer"):
+        platform_block = parsed.get(platform_key)
+        if not isinstance(platform_block, dict) or not isinstance(platform_block.get("tasks"), list):
+            continue
+        parsed = {key: value for key, value in parsed.items() if key != platform_key}
+        parsed["tasks"] = platform_block.get("tasks")
+        interface_config = {key: value for key, value in platform_block.items() if key != "tasks"}
+        if interface_config:
+            parsed["interfaceConfig"] = {platform_key: interface_config}
+        break
+
+    def normalize(value, parent_key=""):
+        if isinstance(value, dict):
+            result = {}
+            for key, child in value.items():
+                if parent_key == "tasks" and key in ("name", "description", "tags"):
+                    continue
+                if key == "flow" and isinstance(child, list):
+                    result[key] = [
+                        normalize(step, "flow")
+                        for step in child
+                        if not (
+                            isinstance(step, dict)
+                            and "sleep" in step
+                            and set(step).issubset({"sleep", "timeout"})
+                        )
+                    ]
+                else:
+                    result[key] = normalize(child, str(key))
+            return result
+        if isinstance(value, list):
+            return [normalize(item, parent_key) for item in value]
+        return value
+
+    return normalize(parsed)
+
+
+def _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
+    original = _agent_repair_semantic_document(original_yaml)
+    fixed = _agent_repair_semantic_document(fixed_yaml)
+    return original is not None and fixed is not None and original != fixed
 
 
 def _tool_analyze_failure(run):
@@ -10517,7 +10593,14 @@ def _tool_analyze_failure(run):
                 for item in failed_jobs
                 if isinstance(item, dict)
             }
-            failure_type = "ENV_ISSUE" if "ENV_ISSUE" in job_failure_types else "SCRIPT_ISSUE"
+            if "ENV_ISSUE" in job_failure_types:
+                failure_type = "ENV_ISSUE"
+            elif "PRODUCT_BUG" in job_failure_types:
+                failure_type = "PRODUCT_BUG"
+            elif "SCRIPT_ISSUE" in job_failure_types:
+                failure_type = "SCRIPT_ISSUE"
+            else:
+                failure_type = "UNKNOWN"
             failure_context = f"执行失败 {len(failed_jobs)} 个任务:\n"
             for fj in failed_jobs[:12]:
                 failure_context += (
@@ -10728,20 +10811,33 @@ def _tool_generate_repair(run):
                     validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
                     if not isinstance(validation, dict) or "ok" not in validation:
                         validation = validate_midscene_yaml_executability(fixed_yaml)
-                    draft["fixedYaml"] = fixed_yaml[:200000]
-                    draft["fixed_yaml"] = draft["fixedYaml"]
-                    draft["draftYaml"] = draft["fixedYaml"][:5000]
                     draft["validation"] = validation
-                    draft["repairSource"] = "ai_gateway"
-                    draft["status"] = "WAIT_CONFIRM"
-                    item_summary["aiUsed"] = True
                     item_summary["yamlValidation"] = validation
                     item_summary["taskCount"] = validation.get("taskCount")
-                    ai_used_count += 1
-                    if validation.get("ok"):
-                        validation_passed_count += 1
+                    if not _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
+                        blocked_count += 1
+                        item_summary["blockedReason"] = "sleep_only_or_noop"
+                        draft["blockedReason"] = "sleep_only_or_noop"
+                        draft["rejectedYaml"] = fixed_yaml[:200000]
+                        draft["repairSource"] = "diagnosis_only"
+                        draft["status"] = "REJECTED"
+                        draft["analysis"] = (
+                            f"{draft.get('analysis') or ''}\n"
+                            "AI 候选只增加 sleep、只修改用例说明或与原 YAML 等价，未改变实际执行语义，禁止自动重跑。"
+                        ).strip()
                     else:
-                        item_summary["blockedReason"] = "yaml_validation_failed"
+                        draft["fixedYaml"] = fixed_yaml[:200000]
+                        draft["fixed_yaml"] = draft["fixedYaml"]
+                        draft["draftYaml"] = draft["fixedYaml"][:5000]
+                        draft["repairSource"] = "ai_gateway"
+                        draft["status"] = "WAIT_CONFIRM"
+                        item_summary["aiUsed"] = True
+                        ai_used_count += 1
+                        if validation.get("ok"):
+                            validation_passed_count += 1
+                        else:
+                            blocked_count += 1
+                            item_summary["blockedReason"] = "yaml_validation_failed"
                 else:
                     blocked_count += 1
                     item_summary["blockedReason"] = "ai_no_yaml"
