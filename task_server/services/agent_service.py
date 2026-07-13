@@ -8320,6 +8320,8 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         blockers.append("没有可自动化用例，不能生成可执行 YAML。")
     if yaml_file_count <= 0 or executable_task_count <= 0:
         blockers.append("没有可执行 YAML 文件或 android/ios tasks 为空。")
+    if auto_case_count > yaml_file_count:
+        blockers.append(f"自动化用例 {auto_case_count} 条，但只生成 {yaml_file_count} 个 YAML 文件，完整回归覆盖不完整。")
     missing_case_points = [str(item) for item in _as_list(coverage.get("missing_case_points")) if str(item).strip()]
     missing_scenario_points = [str(item) for item in _as_list(coverage.get("missing_scenario_points")) if str(item).strip()]
     generic_assertions = [str(item) for item in _as_list(coverage.get("generic_assertion_cases")) if str(item).strip()]
@@ -8380,6 +8382,54 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         ],
     }
     return report
+
+
+def _agent_generated_yaml_coverage_gap(run, refs=None):
+    artifacts = (run or {}).get("artifacts") if isinstance(run, dict) else {}
+    if not isinstance(artifacts, dict):
+        return {}
+    pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    generated = artifacts.get("generatedCases") if isinstance(artifacts.get("generatedCases"), dict) else {}
+    coverage = pipeline.get("coverageAudit") if isinstance(pipeline.get("coverageAudit"), dict) else {}
+    case_count = _safe_int_local(pipeline.get("caseCount"), len(_as_list(generated.get("cases"))))
+    yaml_count = len(refs) if refs is not None else _safe_int_local(pipeline.get("yamlFileCount"), 0)
+    requirement_count = _safe_int_local(coverage.get("requirement_point_count"), 0)
+    groups = pipeline.get("generatedCaseGroups") if isinstance(pipeline.get("generatedCaseGroups"), dict) else {}
+    counts = groups.get("counts") if isinstance(groups.get("counts"), dict) else {}
+    needs_review_count = _safe_int_local(counts.get("needs_review"), 0)
+    missing_titles = []
+    for item in _as_list(groups.get("needs_review_cases")):
+        if not isinstance(item, dict):
+            continue
+        reasons = "；".join(str(reason) for reason in _as_list(item.get("reasons")))
+        scope_reasons = "；".join(str(reason) for reason in _as_list((item.get("scopeReview") or {}).get("reasons") if isinstance(item.get("scopeReview"), dict) else []))
+        if "未生成对应 YAML" in reasons or "缺少该用例的 YAML" in reasons or "未生成对应 YAML" in scope_reasons:
+            title = str(item.get("name") or item.get("title") or item.get("case_id") or "").strip()
+            if title:
+                missing_titles.append(title)
+    full_scope = str((run or {}).get("scope") or "").strip().lower() in ("regression", "full", "all", "complete", "完整", "回归")
+    if not full_scope and case_count <= 1:
+        return {}
+    reasons = []
+    if case_count > 0 and yaml_count < case_count:
+        reasons.append(f"生成自动化用例 {case_count} 条，但只生成/确认 YAML {yaml_count} 个")
+    if requirement_count >= 3 and yaml_count < min(case_count or requirement_count, requirement_count):
+        reasons.append(f"需求点 {requirement_count} 个，YAML 覆盖不足 {yaml_count} 个")
+    if missing_titles:
+        reasons.append("缺少 YAML 的用例：" + "、".join(missing_titles[:5]))
+    if not reasons and needs_review_count:
+        reasons.append(f"仍有 {needs_review_count} 条生成用例停留在需复核，不能视为完整回归可执行")
+    if not reasons:
+        return {}
+    return {
+        "ok": False,
+        "caseCount": case_count,
+        "yamlCount": yaml_count,
+        "requirementPointCount": requirement_count,
+        "needsReviewCount": needs_review_count,
+        "missingYamlCases": missing_titles[:20],
+        "reasons": reasons,
+    }
 
 
 def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
@@ -8494,6 +8544,15 @@ def _tool_generate_yaml(run):
                 yaml_file_items, pipeline_result = _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text)
                 refs, err = _confirm_agent_yaml_files(run, artifacts, yaml_file_items)
                 if refs and not err:
+                    coverage_gap = _agent_generated_yaml_coverage_gap(run, refs)
+                    if coverage_gap:
+                        artifacts.setdefault("generationPipeline", {})["coverageGap"] = coverage_gap
+                        quality = artifacts.setdefault("qualityReport", {})
+                        blockers = [str(item).strip() for item in _as_list(quality.get("blockers")) if str(item).strip()]
+                        quality["status"] = "blocked"
+                        quality["statusText"] = "阻断"
+                        quality["blockers"] = (blockers + coverage_gap.get("reasons", []))[:20]
+                        raise ValueError("完整回归生成结果覆盖不完整：" + "；".join(coverage_gap.get("reasons") or []))
                     check = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
                     if err:
                         raise ValueError(err)
@@ -8930,6 +8989,15 @@ def _tool_execution_precheck(run):
                 bool(selected_refs),
                 gate_detail,
                 severity,
+            )
+        coverage_gap = _agent_generated_yaml_coverage_gap(run, refs)
+        if coverage_gap:
+            artifacts.setdefault("generationPipeline", {})["coverageGap"] = coverage_gap
+            add(
+                "generated_yaml_coverage_gate",
+                False,
+                "；".join(coverage_gap.get("reasons") or [])[:500],
+                "blocker",
             )
 
         dry_run_refs = selected_refs if execution_gate.get("enabled") and selected_refs else refs

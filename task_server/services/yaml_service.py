@@ -6719,6 +6719,40 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "manual": "manual_cases",
         }.get(level, "draft_cases")
         generated_case_groups[bucket].append(row)
+    mapped_case_keys = set()
+    for item in yaml_items:
+        if not isinstance(item, dict):
+            continue
+        case_id = str(item.get("case_id") or "").strip()
+        title_text = str(item.get("title") or "").strip()
+        if case_id:
+            mapped_case_keys.add(("id", case_id))
+        if title_text:
+            mapped_case_keys.add(("title", title_text))
+    for index, case in enumerate(converted_payload.get("cases") or []):
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("case_id") or case.get("caseId") or case.get("id") or "").strip()
+        title_text = str(case.get("title") or case.get("name") or f"未命名用例-{index + 1}").strip()
+        if (case_id and ("id", case_id) in mapped_case_keys) or (title_text and ("title", title_text) in mapped_case_keys):
+            continue
+        generated_case_groups["needs_review_cases"].append({
+            "name": title_text,
+            "module": module,
+            "file": "",
+            "case_id": case_id,
+            "score": 0,
+            "level": "needs_review",
+            "executionLevel": "needs_review",
+            "priority": case_priority(case),
+            "smoke": bool(is_smoke_case(case)),
+            "smokeCandidate": False,
+            "runnerCandidate": False,
+            "mainBusinessChain": False,
+            "baselineEvidence": False,
+            "scopeReview": {"ok": False, "reasons": ["该自动化用例未生成对应 YAML 文件"]},
+            "reasons": ["生成结果缺少该用例的 YAML 文件，需补齐后才能自动下发 Runner"],
+        })
     generated_case_groups["counts"] = {
         "executable": len(generated_case_groups["executable_cases"]),
         "needs_review": len(generated_case_groups["needs_review_cases"]),

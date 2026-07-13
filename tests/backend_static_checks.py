@@ -629,6 +629,77 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     require('ensure_env_default "MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS" "150"' in install_source, "Installer must configure the automation filter timeout")
     require('upgrade_env_default_if_old "MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS" "150" "90"' in install_source, "Installer must migrate the old 90-second automation filter timeout")
     require("MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS='150'" in env_source, "Environment example must document the new automation filter timeout")
+    planner_source = (ROOT / "ai_skills" / "prompts" / "executable_yaml_planner.v1.md").read_text(encoding="utf-8")
+    filter_source = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
+    require(
+        "同一条 case 的当前页面路径" in planner_source
+        and "同一页面路径和同一业务检查点" in filter_source
+        and "证据不足时进入 `needs_review_cases` 或 `manual_cases`" in filter_source,
+        "AI planning/filtering must use same-page evidence for relative-position assertions instead of hardcoded business terms",
+    )
+
+
+def check_agent_blocks_incomplete_generated_yaml_coverage():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-coverage-gap",
+        "scope": "regression",
+        "artifacts": {
+            "generationPipeline": {
+                "source": "ui_yaml_pipeline",
+                "caseCount": 5,
+                "yamlFileCount": 2,
+                "coverageAudit": {"requirement_point_count": 5},
+                "generatedCaseGroups": {
+                    "counts": {"executable": 2, "needs_review": 3, "draft": 0, "manual": 0},
+                    "needs_review_cases": [
+                        {"name": "业务入口 B 可见性", "reasons": ["生成结果缺少该用例的 YAML 文件，需补齐后才能自动下发 Runner"]},
+                    ],
+                },
+            },
+            "generatedCases": {"cases": [{"case_id": f"TC-{idx:03d}", "title": f"用例{idx}"} for idx in range(1, 6)]},
+        },
+    }
+    gap = agent_service._agent_generated_yaml_coverage_gap(run, refs=[{"file": "a.yaml"}, {"file": "b.yaml"}])
+    require(
+        gap and gap.get("caseCount") == 5 and gap.get("yamlCount") == 2 and gap.get("ok") is False,
+        "Agent must detect generated case/YAML coverage gaps before Runner execution",
+    )
+    quality = agent_service._build_agent_quality_report(
+        {"scope": "regression", "artifacts": {}},
+        {
+            "caseCount": 5,
+            "yamlFileCount": 2,
+            "scenarioCount": 8,
+            "coverageAudit": {"requirement_point_count": 5, "ok": True},
+            "cases": {"analysis": {"requirement_points": [f"REQ-{idx:03d}" for idx in range(1, 6)]}, "cases": [{}, {}, {}, {}, {}]},
+            "summary": {"counts": {}},
+        },
+        [{"file": "a.yaml"}, {"file": "b.yaml"}],
+        {"taskCount": 2},
+    )
+    require(quality.get("status") == "blocked" and any("只生成 2 个 YAML" in item for item in quality.get("blockers", [])), "Quality report must block incomplete generated YAML coverage")
+
+    converted = {
+        "analysis": {"requirement_points": ["REQ-001", "REQ-002", "REQ-003"]},
+        "cases": [
+            {"case_id": "TC-001", "title": "业务入口 A 可见性"},
+            {"case_id": "TC-002", "title": "业务入口 B 可见性"},
+            {"case_id": "TC-003", "title": "业务入口 C 可见性"},
+        ],
+        "manual_cases": [],
+    }
+    yaml_groups = {
+        "executable_cases": [{"case_id": "TC-001", "file": "01.yaml"}, {"case_id": "TC-002", "file": "02.yaml"}],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+    }
+    # Static source check ensures yaml_service records cases that did not produce YAML.
+    yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    require("该自动化用例未生成对应 YAML 文件" in yaml_source and "生成结果缺少该用例的 YAML 文件" in yaml_source, "YAML generation must surface automatic cases that failed to produce YAML")
+    require(converted and yaml_groups, "Fixture sanity check")
 
 
 def require(condition, message):
@@ -3508,6 +3579,7 @@ def main():
     check_agent_regression_scope_preserves_new_requirement_generation()
     check_generated_yaml_short_guards_and_execution_level_floor()
     check_generated_yaml_semantic_scope_and_visual_trace()
+    check_agent_blocks_incomplete_generated_yaml_coverage()
     check_agent_executable_gate_invokes_ai_rewrite()
     check_midscene_yaml_validation_is_mapping()
     check_yaml_static_validation_and_patterns()

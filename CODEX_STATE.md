@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归真实验证后的覆盖门禁修复
+
+部署后真实验证任务：
+
+- Agent `agent-1783922695359-39c38f0c`，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 线上 `8088 -> 8091` 健康，Task Server、AI Gateway、Sonic 均健康；模型为 `qwen3.6-plus`；平台状态显示 1 个 Runner 在线、2 台设备记录。预检真实识别指定 Runner 和固定 OPPO `ecbfd645 / OPPO Reno9 / PHM110` 在线，没有选择第二台设备。
+- 路由正确进入 `new_requirement_source / generate_draft`，未复用历史 YAML；Figma 4 页/4 图解析成功，视觉校准批次 `1/1` 已送 AI 并继续进入 coverage auditor。
+- 生成阶段显示“用例 5 条，场景 8 个”，但最终只确认 2 个 YAML：入口短链路冒烟和 `REQ-001` 文档打印用例；照片打印、扫描复印、多端/文案要求没有对应可执行 YAML，也没有 remaining 扩展任务。
+- 首批真实 Runner 只在固定 OPPO 上执行。第一条入口短链路成功；第二条文档打印用例失败，失败原因是断言把其他页面/相邻业务分支的同级控件混入文档打印页同级关系，真实截图显示目标入口可见但同级控件集合与断言不一致。安全重跑也在同一 OPPO 上执行，最终 Agent `FAILED / COLLECT_REPORT`。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `task_server/services/yaml_service.py`
+- `ai_skills/prompts/automation_filter.v1.md`
+- `ai_skills/prompts/executable_yaml_planner.v1.md`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 新增通用 Agent 覆盖缺口门禁：完整回归中，生成自动化用例数、需求点数、最终确认 YAML refs 数和生成分组不一致时，`qualityReport` 标为 blocked，生成阶段不再自动确认进入 Runner；执行前体检也会用 `generated_yaml_coverage_gate` 阻断。
+- YAML 生成分组现在会把“已进入自动化 cases 但未生成对应 YAML 文件”的用例记录为 `needs_review_cases`，保留缺口证据，不再只展示已生成的 YAML 文件。
+- `automation_filter` 和 `executable_yaml_planner` prompt 增加通用 AI 证据约束：位置、顺序、同级、文案一致性断言必须来自同一页面路径、同一业务检查点以及当前需求/页面知识/Figma/截图同页证据；证据不足进入 `needs_review_cases` 或 `manual_cases`。未写针对单一需求的业务词硬编码。
+- 没有修改 `router.py`，没有新增执行模式，没有修改历史 YAML。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+from tests.backend_static_checks import check_agent_blocks_incomplete_generated_yaml_coverage, check_generated_yaml_semantic_scope_and_visual_trace
+check_agent_blocks_incomplete_generated_yaml_coverage()
+check_generated_yaml_semantic_scope_and_visual_trace()
+PY
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：新增定向检查通过，后端静态检查 `61` 项通过。部署后需要再次用同一需求/Figma和固定 OPPO `ecbfd645` 跑完整回归；预期如果仍只生成 2 个 YAML，会在生成/预检阶段阻断而不会下发 Runner；如果生成 5 条完整可执行 YAML，再继续验证首批和 remaining 终态。
+
 ### 2026-07-13 完整回归视觉输出、需求映射与取消生命周期修复
 
 部署 `8809f73` 后真实验证任务：
