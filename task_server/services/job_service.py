@@ -689,6 +689,7 @@ def create_pending_job(
     device_strategy: str = "",
     run_mode: str = "test",
     target_task_name: str = "",
+    parent_run_id: str = "",
 ) -> Dict[str, Any]:
     """创建一个 pending 状态的 Job，并读取 YAML 解析 task_names。
 
@@ -707,6 +708,7 @@ def create_pending_job(
         device_strategy: 设备选择策略；auto 表示用户明确允许平台选择在线设备。
         run_mode: 运行模式（test / real）。
         target_task_name: 指定执行的单个 task 名称。
+        parent_run_id: 创建该任务的 Agent Run ID，用于生命周期级联管理。
 
     Returns:
         新创建的 job 字典。
@@ -732,6 +734,7 @@ def create_pending_job(
         "run_mode": run_mode or "test",
         "max_attempt": max_attempt,
         "parent_job_id": parent_job_id,
+        "parent_run_id": parent_run_id,
         "device_id": device_id,
         "target_runner_id": runner_id,
         "device_strategy": normalize_device_strategy(device_strategy, device_id=device_id, runner_id=runner_id),

@@ -849,6 +849,38 @@ def _agent_cancel_progress_job(run_id, reason="用户取消"):
         pass
 
 
+def _agent_cancel_runner_jobs(run_id, reason="用户取消"):
+    """Cancel every non-terminal Runner job created by this Agent run."""
+    run_id = str(run_id or "").strip()
+    if not run_id:
+        return []
+    try:
+        from task_server.services import job_service
+
+        terminal_statuses = {"success", "failed", "cancelled", "timeout"}
+        cancelled = []
+        for job in job_service.load_jobs(limit=None):
+            parent_run_id = str(job.get("parent_run_id") or job.get("parentRunId") or "").strip()
+            if parent_run_id != run_id:
+                continue
+            status = job_service.normalize_job_status(job.get("status"))
+            if status in terminal_statuses:
+                continue
+            job_id = str(job.get("job_id") or job.get("jobId") or "").strip()
+            if not job_id:
+                continue
+            updated = job_service.update_job(job_id, {
+                "status": "cancelled",
+                "cancel_reason": str(reason or "用户取消"),
+                "cancelled_by": "agent_run",
+            })
+            if updated:
+                cancelled.append(job_id)
+        return cancelled
+    except Exception:
+        return []
+
+
 def _apply_agent_cancel_state(run, reason="用户取消"):
     if not isinstance(run, dict):
         return run
@@ -1059,17 +1091,31 @@ def preview_agent_plan(payload):
 
 def cancel_agent_run(run_id, reason="用户取消"):
     """取消 Agent 运行。"""
-    _mark_agent_run_cancel_requested(run_id, reason or "用户取消")
+    cancel_reason = reason or "用户取消"
+    _mark_agent_run_cancel_requested(run_id, cancel_reason)
     with AGENT_RUN_LOCK:
         runs = load_agent_runs()
         run = next((r for r in runs if r.get("runId") == run_id), None)
         if not run:
             return None
-        if run.get("status") in ("DONE", "FAILED", "CANCELLED"):
+        if run.get("status") in ("DONE", "FAILED"):
             return run
-        _apply_agent_cancel_state(run, reason or "用户取消")
+        if run.get("status") != "CANCELLED":
+            _apply_agent_cancel_state(run, cancel_reason)
+            save_agent_runs(runs)
+    _agent_cancel_progress_job(run_id, cancel_reason)
+    cancelled_job_ids = _agent_cancel_runner_jobs(run_id, cancel_reason)
+    with AGENT_RUN_LOCK:
+        runs = load_agent_runs()
+        run = next((r for r in runs if r.get("runId") == run_id), run)
+        artifacts = run.setdefault("artifacts", {})
+        artifacts["runnerCancellation"] = {
+            "requestedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "reason": str(cancel_reason),
+            "cancelledCount": len(cancelled_job_ids),
+            "jobIds": cancelled_job_ids,
+        }
         save_agent_runs(runs)
-    _agent_cancel_progress_job(run_id, reason or "用户取消")
     return run
 
 
@@ -3448,6 +3494,7 @@ def tool_create_runner_job(run, inp):
             "module": module,
             "file": file,
             "target_task_name": inp.get("taskName") or inp.get("task_name") or "",
+            "parent_run_id": run.get("runId", ""),
         })
         return {
             "ok": True,
@@ -3478,6 +3525,7 @@ def tool_run_midscene_task(run, inp):
             "module": module,
             "file": file,
             "target_task_name": inp.get("taskName") or file.replace(".yaml", "").replace(".yml", ""),
+            "parent_run_id": run.get("runId", ""),
         })
         return {
             "ok": True,
@@ -3519,6 +3567,7 @@ def tool_retry_failed_job(run, inp):
             device_strategy=old_job.get("device_strategy") or old_job.get("deviceStrategy") or "",
             run_mode=old_job.get("run_mode", "test"),
             target_task_name=old_job.get("target_task_name") or old_job.get("current_task_name") or "",
+            parent_run_id=run.get("runId", ""),
         )
         return {
             "ok": True,
@@ -5032,6 +5081,12 @@ def _agent_create_runner_jobs_for_refs(
     dry_run_blocked = list(initial_blocked or [])
     runner_dry_run_jobs = []
     for ref in refs or []:
+        if _agent_run_cancel_requested(run):
+            dry_run_blocked.append({
+                "phase": phase,
+                "reason": "Agent 已取消，停止创建后续 Runner 任务",
+            })
+            break
         try:
             ref, pre_dispatch_repair = _agent_repair_yaml_ref_for_execution(run, ref, reason=f"runner_dispatch:{phase}")
             full_path = str(ref.get("path") or "")
@@ -5063,6 +5118,15 @@ def _agent_create_runner_jobs_for_refs(
                 })
                 continue
             if runner_dry_run_enabled:
+                if _agent_run_cancel_requested(run):
+                    dry_run_blocked.append({
+                        "module": mod,
+                        "file": fn,
+                        "path": full_path,
+                        "phase": phase,
+                        "reason": "Agent 已取消，未创建 Runner dry-run 任务",
+                    })
+                    break
                 dry_task_names = _agent_yaml_task_names_for_runner(full_path)
                 dry_job = job_service.create_job({
                     "module": mod,
@@ -5140,6 +5204,15 @@ def _agent_create_runner_jobs_for_refs(
                             "errors": [message],
                         })
                         continue
+            if _agent_run_cancel_requested(run):
+                dry_run_blocked.append({
+                    "module": mod,
+                    "file": fn,
+                    "path": full_path,
+                    "phase": phase,
+                    "reason": "Agent 已取消，未创建正式 Runner 任务",
+                })
+                break
             task_names = _agent_yaml_task_names_for_runner(full_path)
             target_task_name = task_names[0] if len(task_names) == 1 else ""
             job = job_service.create_job({
@@ -11375,6 +11448,8 @@ def _tool_rerun(run):
         serial_wait_results = []
         if uses_repair_draft:
             for target in repair_plan.get("targets") or []:
+                if _agent_run_cancel_requested(run):
+                    break
                 j = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
                 source = target.get("sourceItem") if isinstance(target.get("sourceItem"), dict) else {}
                 source_job_id = target.get("sourceJobId") or source.get("jobId") or j.get("job_id") or ""
@@ -11390,6 +11465,7 @@ def _tool_rerun(run):
                     device_strategy=j.get("device_strategy") or j.get("deviceStrategy") or "",
                     run_mode=j.get("run_mode", "test"),
                     target_task_name="",
+                    parent_run_id=run.get("runId", ""),
                 )
                 if new_job and new_job.get("job_id"):
                     retried.append(new_job["job_id"])
@@ -11433,6 +11509,8 @@ def _tool_rerun(run):
                 })
         else:
             for jid in job_ids:
+                if _agent_run_cancel_requested(run):
+                    break
                 j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
                 source = source_by_id.get(jid) or {}
                 if j and str(j.get("status", "")).lower() in ("failed", "error", "timeout"):
@@ -11449,6 +11527,7 @@ def _tool_rerun(run):
                         device_strategy=j.get("device_strategy") or j.get("deviceStrategy") or "",
                         run_mode=j.get("run_mode", "test"),
                         target_task_name=target_task_name,
+                        parent_run_id=run.get("runId", ""),
                     )
                     if new_job and new_job.get("job_id"):
                         retried.append(new_job["job_id"])

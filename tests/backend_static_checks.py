@@ -455,6 +455,40 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     )
     require(concrete_review.get("ok"), "Structural timeout fields must not be treated as an unrequested timeout scenario")
 
+    multi_point_analysis = {
+        "requirement_points": [
+            "REQ-001 文档打印页面展示百度网盘入口",
+            "REQ-002 照片打印导入方式展示百度网盘入口",
+            "REQ-003 扫描复印页面展示百度网盘入口",
+            "REQ-004 宽屏端展示三个基础打印入口",
+            "REQ-005 移动端展示文档打印、照片打印、扫描复印三个入口及对应文案",
+        ],
+    }
+    scan_review = yaml_service.generated_case_requirement_scope_review({
+        "case_id": "TC-003",
+        "title": "扫描复印百度网盘入口可见性",
+        "coverage": "REQ-003",
+        "steps": ["点击扫描复印", "等待扫描复印页面展示百度网盘入口"],
+        "assertions": ["扫描复印页面可见百度网盘入口"],
+    }, multi_point_analysis)
+    require(
+        scan_review.get("ok")
+        and scan_review.get("matchedRequirementIds") == ["REQ-003"]
+        and scan_review.get("matchedRequirementPointCount") == 1,
+        "Scope review must compare a case with its mapped REQ point instead of the first global requirement tokens",
+    )
+    mobile_copy_review = yaml_service.generated_case_requirement_scope_review({
+        "case_id": "TC-005",
+        "title": "移动端三个基础打印入口文案一致性",
+        "coverage": "REQ-005",
+        "steps": ["进入首页并查看文档打印、照片打印、扫描复印入口"],
+        "assertions": ["三个入口展示需求指定的业务文案"],
+    }, multi_point_analysis)
+    require(
+        mobile_copy_review.get("ok"),
+        "Business copy consistency mapped to an explicit requirement must not be treated as an unrequested robustness scenario",
+    )
+
     abstract_case = {
         **concrete_case,
         "steps": ["进入「基础打印-入口一致性」相关页面或入口区域"],
@@ -502,7 +536,7 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         ai_skill_service.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
             "title": "基础打印新增百度网盘入口",
             "module": "基础打印",
-            "cases": [concrete_case],
+            "review": {"visual_grounding_check": "已结合截图核对入口文案"},
         }, ensure_ascii=False)
         grounded = ai_skill_service.call_visual_grounder_skill(
             base_payload["title"],
@@ -521,6 +555,11 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     require(
         grounded.get("review", {}).get("visual_grounder_skill") == "visual_grounder.v1",
         "Visual grounding must retain a completed AI judgment marker",
+    )
+    require(
+        grounded.get("cases") == [concrete_case]
+        and grounded.get("review", {}).get("visual_case_preservation", {}).get("base_case_count") == 1,
+        "Visual grounding must preserve base cases when the AI returns only its visual judgment",
     )
 
     visual_payload = {
@@ -2759,6 +2798,44 @@ def check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads():
     require("重新排队" in stalled_step.get("summary", ""), "Requeued stalled tool dispatch must explain the recovery")
 
 
+def check_agent_cancel_cascades_runner_jobs():
+    from task_server.services import agent_service, job_service
+
+    jobs = [
+        {"job_id": "job-pending", "parent_run_id": "agent-cancel", "status": "pending"},
+        {"job_id": "job-dispatched", "parent_run_id": "agent-cancel", "status": "dispatched"},
+        {"job_id": "job-running", "parent_run_id": "agent-cancel", "status": "running"},
+        {"job_id": "job-success", "parent_run_id": "agent-cancel", "status": "success"},
+        {"job_id": "job-other", "parent_run_id": "agent-other", "status": "running"},
+    ]
+    updates = []
+    original_load = job_service.load_jobs
+    original_update = job_service.update_job
+
+    def fake_update(job_id, patch):
+        updates.append((job_id, dict(patch)))
+        source = next(item for item in jobs if item.get("job_id") == job_id)
+        return {**source, **patch}
+
+    job_service.load_jobs = lambda limit=None: [dict(item) for item in jobs]
+    job_service.update_job = fake_update
+    try:
+        cancelled = agent_service._agent_cancel_runner_jobs("agent-cancel", "parent cancelled")
+    finally:
+        job_service.load_jobs = original_load
+        job_service.update_job = original_update
+
+    require(
+        cancelled == ["job-pending", "job-dispatched", "job-running"]
+        and [item[0] for item in updates] == cancelled,
+        "Agent cancellation must cancel every active child Runner job and leave terminal or unrelated jobs untouched",
+    )
+    require(
+        all(patch.get("status") == "cancelled" and patch.get("cancelled_by") == "agent_run" for _, patch in updates),
+        "Cascaded Runner cancellation must persist a real cancelled status and source",
+    )
+
+
 def check_agent_history_compacts_uploaded_blobs_after_prepare():
     from task_server.services import agent_service
 
@@ -3631,6 +3708,7 @@ def main():
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
+    check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()
     check_snapshot_store_concurrent_save()
@@ -3656,7 +3734,7 @@ def main():
     require('"runner_id": selected_runner_id' in agent_service_source and '"device_id": selected_device_id' in agent_service_source and '"device_strategy": selected_device_strategy' in agent_service_source, "Agent Runner jobs must use the selected Runner/device strategy")
     require('case.get("device_strategy") or "auto"' in execution_adapter_source, "ExecutionAdapter local Runner jobs must default to automatic online-device assignment")
     require("def _append_step_trace" in agent_service_source and "_persist_agent_run_snapshot" in agent_service_source, "Agent timeline steps must persist live trace for running tools")
-    require("def cancel_agent_run(run_id, reason=" in agent_service_source and 'run["currentStep"] = "CANCELLED"' in agent_service_source and "_agent_cancel_progress_job" in agent_service_source, "Agent cancellation must mark a real cancelled state and cancel internal generation progress jobs")
+    require("def cancel_agent_run(run_id, reason=" in agent_service_source and 'run["currentStep"] = "CANCELLED"' in agent_service_source and "_agent_cancel_progress_job" in agent_service_source and "_agent_cancel_runner_jobs" in agent_service_source, "Agent cancellation must mark a real cancelled state and cancel internal generation and Runner jobs")
     require("cancel_agent_run(run_id" in router_source and "^/api/agent-runs/([^/]+)/cancel" in router_source, "Agent cancel route must use the unified cancellation service")
     require("def delete_agent_run(run_id)" in agent_service_source and '"FAILED", "CANCELLED"' in agent_service_source and "不能直接删除" in agent_service_source, "Agent history deletion must remove terminal records and protect running runs")
     require('route_delete_regex(r"^/api/agent-runs/([^/]+)$")' in router_source and "delete_agent_run(run_id)" in router_source, "Backend must expose DELETE /api/agent-runs/{runId}")

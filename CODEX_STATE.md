@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归视觉输出、需求映射与取消生命周期修复
+
+部署 `8809f73` 后真实验证任务：
+
+- Agent `agent-1783919922418-a1cbde3c`，继续使用原需求和 Figma，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。
+- 新需求路由正确，`automation_filter.v1` 在 150 秒预算内成功完成；统一数量计划为 `min/target/max=5/5/5`、首批 3 条，未再回退到 8 条，也未把 Figma 内部页名追加为需求点。
+- 视觉资料确实送入 AI，但视觉模型只返回了判断上下文、遗漏 schema 必填的 `cases`，导致第 1 批报 `$.cases 为必填字段`，整批视觉校准被记为失败。
+- AI 原始结果含文档、照片、扫描和多端文案需求；范围校验却用全量需求点开头的文档打印关键词审查 `REQ-003` 扫描用例，把扫描用例错误降级。移动端文案校验又因标题含“一致性”被当成需求外鲁棒性场景，最终只生成 3 份 YAML，未完整覆盖 5 个需求点。
+- Agent 进入固定 OPPO `ecbfd645` 的首批 Runner：第一条文档打印用例真实执行成功；发现生成范围不完整后主动取消 Agent，第二条 Runner 任务随后手工取消。没有向另一台设备下发本轮任务。
+- 取消过程暴露生命周期缺口：Agent 原有取消逻辑只处理生成进度任务，不会级联取消已经创建的 Runner 子任务。
+
+已修改：
+
+- `task_server/services/ai_skill_service.py`
+- `task_server/services/yaml_service.py`
+- `task_server/services/agent_service.py`
+- `task_server/services/job_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- `visual_grounder` 继续真实调用视觉 AI；如果模型只返回视觉判断而遗漏 `cases`，schema 校验前保留原始自动化用例。截图/Figma 仍为软参考，不会因视觉输出字段缺失而删除业务用例或把整批判失败。
+- 视觉 review 记录保留策略、输入用例数和输出用例数，后续可以区分“AI 没有重写用例”和“视觉调用没有执行”。
+- 生成范围校验先读取用例的 `REQ-xxx` 映射；有明确映射时只使用对应需求点做强关键词追溯，未带编号时再按业务主题映射，不再默认受首个需求点支配。
+- 取消对所有“一致性”用例的泛化拦截，只继续拦截返回状态一致性、缓存、超时、干扰等需求未声明的鲁棒性扩展；明确映射到需求的多端/文案一致性可以进入后续 YAML 准入。
+- Agent 取消会按 `parent_run_id` 级联标记所有非终态 Runner job 为 `cancelled`，并把取消数量和 job ID 写入 Agent artifacts；首批、扩展、通用工具和安全重跑创建的 Runner job 都写入父 Agent ID。
+- Runner 下发和安全重跑循环在创建每个 dry-run/正式任务前检查 Agent 取消标记，取消后不再继续创建后续任务。
+- 没有修改 `router.py`、没有新增执行模式、没有修改历史 YAML，也不需要替换 Windows Runner。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/job_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 -c 'from tests import backend_static_checks as checks; checks.check_generated_yaml_semantic_scope_and_visual_trace(); checks.check_agent_cancel_cascades_runner_jobs()'
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+定向检查通过；后端静态检查 `61` 项通过。部署后仍需使用同一需求/Figma和固定 OPPO `ecbfd645` 再跑一次完整回归，重点核对视觉批次完成、扫描/照片/文档需求均有对应 YAML、首批冒烟成功后 remaining 扩展全部执行到终态，并人工复核最终 YAML 是否符合业务需求。
+
 ### 2026-07-13 完整回归筛选超时与数量决策冲突修复
 
 部署后真实验证任务：

@@ -831,7 +831,7 @@ SCOPE_GUARD_UNREQUESTED_PATTERNS = (
     "历史", "打印记录", "记录干扰", "干扰", "慢加载", "超时", "防抖", "重复进入",
     "返回重进", "状态保持", "渲染残留", "清理缓存", "缓存", "空态", "无结果",
     "规格切换", "分页", "旧入口", "骨架屏", "弹窗遮挡", "连续", "多次刷新",
-    "加载过程", "未完全加载", "宽屏", "一致性", "返回后",
+    "加载过程", "未完全加载", "宽屏", "返回状态一致性", "返回后",
 )
 SCOPE_GUARD_CHANGE_KEYWORDS = (
     "百度网盘", "网盘入口", "网盘导入", "百度导入", "新增入口", "导入入口",
@@ -1017,6 +1017,46 @@ def _scope_guard_topic_terms(requirement_blob: str) -> List[str]:
     return list(dict.fromkeys(terms))
 
 
+def _scope_guard_requirement_ids(value) -> List[str]:
+    ids = []
+    for match in re.finditer(r"REQ[-_ ]?0*(\d+)", _scope_guard_join_values(value), flags=re.I):
+        requirement_id = f"REQ-{int(match.group(1)):03d}"
+        if requirement_id not in ids:
+            ids.append(requirement_id)
+    return ids
+
+
+def _scope_guard_requirement_point_texts(analysis: dict) -> List[str]:
+    points: List[str] = []
+    for key in ("requirement_points", "requirementPoints", "test_points", "testPoints"):
+        for item in normalize_text_list((analysis or {}).get(key)):
+            text = str(item or "").strip()
+            if text and text not in points:
+                points.append(text)
+    return points
+
+
+def _scope_guard_mapped_requirement_points(analysis: dict, case_blob: str) -> tuple:
+    """Map a generated case to its own requirement points before token review."""
+    points = _scope_guard_requirement_point_texts(analysis)
+    case_ids = _scope_guard_requirement_ids(case_blob)
+    if case_ids:
+        wanted = set(case_ids)
+        matched = [point for point in points if wanted.intersection(_scope_guard_requirement_ids(point))]
+        if matched:
+            return matched, case_ids
+
+    case_topics = set(_scope_guard_topic_terms(case_blob)) - {"百度网盘"}
+    if case_topics:
+        matched = [
+            point for point in points
+            if case_topics.intersection(set(_scope_guard_topic_terms(point)) - {"百度网盘"})
+        ]
+        if matched:
+            return matched, case_ids
+    return [], case_ids
+
+
 def build_requirement_semantic_constraints_text(text_assets: List[str], title: str = "") -> str:
     """Build deterministic requirement constraints before asking AI to compose YAML.
 
@@ -1094,6 +1134,8 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     compact_requirement = re.sub(r"\s+", "", requirement_blob)
     compact_case = re.sub(r"\s+", "", case_blob)
     compact_case_lower = compact_case.lower()
+    mapped_requirement_points, mapped_requirement_ids = _scope_guard_mapped_requirement_points(analysis, case_blob)
+    trace_requirement_blob = _scope_guard_join_values(mapped_requirement_points) or requirement_blob
     reasons: List[str] = []
     title_blob = _scope_guard_join_values(case.get("title"), case.get("name"))
     if FIGMA_INTERNAL_CASE_NAME_RE.search(title_blob):
@@ -1122,7 +1164,7 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
             if len(reasons) >= 3:
                 break
 
-    requirement_tokens = _scope_guard_tokens(requirement_blob)
+    requirement_tokens = _scope_guard_tokens(trace_requirement_blob)
     case_tokens = set(_scope_guard_tokens(case_blob))
     strong_tokens = [
         token for token in requirement_tokens
@@ -1136,6 +1178,8 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     return {
         "ok": not reasons,
         "reasons": reasons,
+        "matchedRequirementIds": mapped_requirement_ids,
+        "matchedRequirementPointCount": len(mapped_requirement_points),
         "rule": "生成用例必须能追溯到当前需求点；需求未提到的历史记录、缓存、超时、干扰等扩展场景不自动执行。",
     }
 

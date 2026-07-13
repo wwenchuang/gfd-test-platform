@@ -2720,6 +2720,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
 def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None):
     """调用 AI skill: visual_grounder。"""
     base_payload = normalize_cases_payload(base_payload)
+    base_cases = copy.deepcopy(base_payload.get("cases") or [])
     payload = {
         "title": title,
         "module": module,
@@ -2728,6 +2729,8 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         "image_count": len(image_assets or []),
         "rules": {
             "do_not_delete_requirements": True,
+            "return_complete_payload": True,
+            "visual_reference_is_soft": True,
             "no_coordinates_or_selectors": True,
             "assertions_must_be_ui_visible": True
         }
@@ -2745,6 +2748,7 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
             "module": module,
             "analysis": base_payload.get("analysis") or {"requirement_points": []},
             "scenarios": base_payload.get("scenarios") or [],
+            "cases": base_cases,
             "manual_cases": base_payload.get("manual_cases") or [],
             "review": base_payload.get("review") or {},
         },
@@ -2757,8 +2761,18 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         analysis = grounded.setdefault("analysis", {})
         if not analysis.get("requirement_points"):
             analysis["requirement_points"] = base_points
+    restored_empty_cases = False
+    if base_cases and not grounded.get("cases"):
+        grounded["cases"] = copy.deepcopy(base_cases)
+        restored_empty_cases = True
     review = grounded.setdefault("review", {})
     review["visual_grounder_skill"] = "visual_grounder.v1"
+    review["visual_case_preservation"] = {
+        "policy": "preserve_base_cases_when_model_omits_cases",
+        "base_case_count": len(base_cases),
+        "result_case_count": len(grounded.get("cases") or []),
+        "restored_empty_cases": restored_empty_cases,
+    }
     validate_ai_skill_output("cases_payload", grounded)
     return grounded
 
