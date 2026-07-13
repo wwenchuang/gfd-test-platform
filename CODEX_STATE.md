@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归误复用历史 YAML 修复
+
+真实验证任务：
+
+- Agent `agent-1783911422395-136ac783`，参数为 `scope=regression / qwen3.6-plus / win-runner-01 / ecbfd645 / fixed`，Figma 4 页、4 张 UI 图解析成功。
+- 平台错误地把 UI 选择的 `regression` 范围当成“明确复用历史用例”，先匹配了 `小白学习基线用例-基础打印/百度网盘打印.yaml`，没有进入完整需求/Figma生成主链。
+- 拒绝复用后又落到通用 AI Gateway 草稿；草稿虽有 5 个 tasks，但包含 Figma 画板名、固定时间 `9:41`、过多 60 秒等待，且没有结构化用例和正式拆分 YAML，不符合执行准入。
+- 本轮在 `WAIT_CONFIRM` 主动取消，未创建 Runner job，没有影响 OPPO 或另一台设备。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- `regression` 只表示完整执行范围，不再单独触发历史 YAML 复用；需求/Figma输入仍进入新需求主链。
+- 只有目标文字明确要求回归/基线/复用/已有用例，或来源为失败任务、范围为失败重跑时，才判定为复用意图。
+- Figma 页面/图片和上传截图统一作为需要 AI 视觉判断的软参考；保持 `hardGate=false`，但视觉校准未完成时明确显示待复核。
+- YAML 草稿质量报告也回退使用 `visualReferenceReport` 的 Figma 数量，不再把已解析的 4 张图显示为 0。
+- 增加行为测试，覆盖完整回归新需求、明确复用、失败任务、Figma AI 判断和草稿 Figma 计数。
+
+部署后必须重新发起同一 `regression` 任务，确认 Case Retrieval 直接显示“新需求输入，跳过旧基线复用”，再检查完整用例、拆分 YAML、首批冒烟和 remaining 全部终态。
+
 ### 2026-07-13 完整需求回归范围分流
 
 问题定位：

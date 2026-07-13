@@ -273,7 +273,72 @@ def check_agent_quality_report_uses_figma_visual_reference():
     figma_layer = next((item for item in report.get("layers", []) if item.get("name") == "Figma 解析图片"), {})
     require(report.get("figmaImageCount") == 4, "Quality report must reuse parsed Figma image count from visual reference evidence")
     require(figma_layer.get("count") == 4 and figma_layer.get("ready") is True, "Quality report Figma layer must reflect parsed visual references")
+
+    visual_run = {
+        "artifacts": {
+            "sourceContext": {
+                "figmaUrl": "https://www.figma.com/design/static/check",
+                "figmaUsedPages": [{"page_name": "文档打印"}],
+                "figmaImageCount": 4,
+            }
+        }
+    }
+    visual_report = agent_service._agent_visual_reference_report(
+        visual_run,
+        {"review": {"yaml_visual_grounded": True}},
+    )
+    require(visual_report.get("aiJudgementRequired") is True, "Parsed Figma pages must require AI visual judgement even without uploaded screenshots")
+    require(visual_report.get("sentToAiForJudgement") is True and visual_report.get("aiJudgementStatus") == "completed", "Figma visual grounding completion must be traceable")
+
+    old_draft_dir = agent_service.AGENT_DRAFT_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.AGENT_DRAFT_DIR = temp_dir
+            draft_run = {
+                "runId": "agent-static-figma-draft",
+                "artifacts": {
+                    "sourceContext": visual_run["artifacts"]["sourceContext"],
+                    "visualReferenceReport": {"figmaImageCount": 4, "ignoredFigmaCount": 0},
+                },
+                "pendingConfirmations": [],
+            }
+            agent_service._save_agent_yaml_draft(
+                draft_run,
+                draft_run["artifacts"],
+                "android:\n  tasks:\n    - name: static\n      flow:\n        - launch: com.xbxxhz.box\n        - aiAssert: 百度网盘入口可见\n",
+            )
+            draft_quality = draft_run["artifacts"].get("qualityReport") or {}
+            draft_figma_layer = next((item for item in draft_quality.get("layers", []) if item.get("name") == "Figma 解析图片"), {})
+            require(draft_quality.get("figmaImageCount") == 4 and draft_figma_layer.get("ready") is True, "Draft quality report must not lose parsed Figma image counts")
+    finally:
+        agent_service.AGENT_DRAFT_DIR = old_draft_dir
     require(not any("没有可展示的解析图片" in item for item in report.get("warnings", [])), "Parsed Figma images must not produce a false missing-image warning")
+
+
+def check_agent_regression_scope_preserves_new_requirement_generation():
+    from task_server.services import agent_service
+
+    source_context = {
+        "sourceType": "requirement",
+        "requirementText": "基础打印新增百度网盘入口",
+        "figmaUrl": "https://www.figma.com/design/static/new-feature",
+    }
+    regression_run = {
+        "target": "基础打印新增百度网盘入口",
+        "scope": "regression",
+        "sourceType": "requirement",
+        "sourceRefs": {"figmaUrl": source_context["figmaUrl"]},
+    }
+    require(not agent_service._agent_explicit_reuse_requested(regression_run, "requirement"), "Regression execution scope alone must not mean reuse historical YAML")
+    require(agent_service._agent_is_new_requirement_run(regression_run, source_context), "Regression scope with requirement/Figma input must enter the complete new-requirement pipeline")
+    require(
+        not agent_service._agent_is_new_requirement_run({**regression_run, "target": "回归已有百度网盘基线用例"}, source_context),
+        "Explicit reuse/baseline wording must continue to select historical YAML",
+    )
+    require(
+        not agent_service._agent_is_new_requirement_run({**regression_run, "sourceType": "failed_job", "sourceRefs": {"failedJobId": "job-static"}}, source_context),
+        "Failed-job runs must continue to reuse the exact failed YAML",
+    )
 
 
 def require(condition, message):
@@ -3085,6 +3150,7 @@ def main():
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
+    check_agent_regression_scope_preserves_new_requirement_generation()
     check_agent_executable_gate_invokes_ai_rewrite()
     check_midscene_yaml_validation_is_mapping()
     check_yaml_static_validation_and_patterns()

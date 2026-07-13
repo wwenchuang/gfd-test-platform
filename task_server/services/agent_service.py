@@ -5447,16 +5447,17 @@ def _agent_visual_reference_report(run, generation_result=None):
         or review.get("visual_grounder_error")
         or case_review.get("visual_grounder_error")
     )
-    if uploaded_images and generation_result is not None and not ai_visual_completed:
-        conflict_notes.append("上传截图已进入本次资料，但未看到视觉校准完成标记；本次仍会保留生成结果并提示人工复核图片参考是否充分。")
+    visual_inputs_present = bool(uploaded_images or figma_pages or figma_assets)
+    if visual_inputs_present and generation_result is not None and not ai_visual_completed:
+        conflict_notes.append("视觉资料已进入本次输入，但未看到 AI 视觉校准完成标记；本次仍会保留生成结果并提示人工复核图片参考是否充分。")
     return {
         "mode": "soft_reference",
         "hardGate": False,
-        "aiJudgementRequired": bool(uploaded_images),
+        "aiJudgementRequired": visual_inputs_present,
         "sentToAiForJudgement": ai_visual_completed,
-        "aiJudgementStatus": "completed" if ai_visual_completed else ("skipped_or_pending" if uploaded_images else "not_required"),
+        "aiJudgementStatus": "completed" if ai_visual_completed else ("skipped_or_pending" if visual_inputs_present else "not_required"),
         "visualRefineSkipped": str(visual_skipped or "").strip(),
-        "rule": "上传截图是辅助证据：帮助补充页面文案、入口位置、同级关系和设备形态；不因未完全引用截图而阻断生成或 Runner 执行。",
+        "rule": "上传截图和 Figma 是视觉辅助证据：帮助补充页面文案、入口位置、同级关系和设备形态；不因未完全引用视觉资料而阻断生成或 Runner 执行。",
         "referenceSources": reference_sources,
         "uploadedImageCount": len(uploaded_images),
         "uploadedImages": uploaded_images[:12],
@@ -5666,12 +5667,15 @@ def _infer_agent_source_type(source_type, material, refs=None):
 
 
 def _agent_explicit_reuse_requested(run, source_type=""):
-    text = " ".join([
-        str(run.get("target") or ""),
-        str(run.get("scope") or ""),
-        str(source_type or run.get("sourceType") or ""),
-    ])
-    return bool(re.search(r"(回归|基线|复用|已有用例|旧用例|失败任务|failed[_ -]?job|regression|reuse|baseline)", text, re.I))
+    source_type = str(source_type or run.get("sourceType") or "").strip().lower()
+    refs = run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {}
+    if source_type == "failed_job" or _source_ref_value(refs, "failedJobId", "failed_job_id"):
+        return True
+    scope = str(run.get("scope") or "").strip().lower()
+    if scope in ("failed_rerun", "失败重跑"):
+        return True
+    target = str(run.get("target") or "").strip()
+    return bool(re.search(r"(回归|基线|复用|已有用例|旧用例|失败任务|failed[_ -]?job|\bregression\b|\breuse\b|\bbaseline\b)", target, re.I))
 
 
 def _agent_is_new_requirement_run(run, source_context=None):
@@ -8212,6 +8216,16 @@ def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
         "confirmed": False,
         "reason": draft_reason,
     }]
+    visual_reference = artifacts.get("visualReferenceReport") if isinstance(artifacts.get("visualReferenceReport"), dict) else _agent_visual_reference_report(run)
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    figma_image_count = max(
+        len(source_context.get("uiDesignAssets") or []),
+        _safe_int_local(visual_reference.get("figmaImageCount"), 0),
+    )
+    ignored_figma_count = max(
+        len(source_context.get("figmaIgnoredPages") or []),
+        _safe_int_local(visual_reference.get("ignoredFigmaCount"), 0),
+    )
     artifacts["qualityReport"] = {
         "status": "warn" if check.get("ok") else "blocked",
         "statusText": "草稿待确认" if check.get("ok") else "草稿不可执行",
@@ -8222,8 +8236,8 @@ def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
         "totalCaseCount": 0,
         "yamlFileCount": 0,
         "executableTaskCount": int(check.get("taskCount") or 0),
-        "figmaImageCount": len(((artifacts.get("sourceContext") or {}).get("uiDesignAssets") or [])),
-        "ignoredFigmaCount": len(((artifacts.get("sourceContext") or {}).get("figmaIgnoredPages") or [])),
+        "figmaImageCount": figma_image_count,
+        "ignoredFigmaCount": ignored_figma_count,
         "coverageOk": False,
         "coverage": {
             "missingCasePoints": [],
@@ -8237,7 +8251,7 @@ def _save_agent_yaml_draft(run, artifacts, yaml_text, draft_reason="generated"):
             {"name": "完整测试用例 .mm", "count": 0, "ready": False},
             {"name": "可自动化 YAML", "count": 0, "ready": False},
             {"name": "人工确认/人工用例", "count": 1, "ready": True},
-            {"name": "Figma 解析图片", "count": len(((artifacts.get("sourceContext") or {}).get("uiDesignAssets") or [])), "ready": bool(((artifacts.get("sourceContext") or {}).get("uiDesignAssets") or []))},
+            {"name": "Figma 解析图片", "count": figma_image_count, "ready": figma_image_count > 0},
         ],
     }
     artifacts["requiresConfirm"] = True
