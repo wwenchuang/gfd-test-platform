@@ -28,6 +28,50 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归生成误判与视觉追踪修复
+
+真实验证任务：
+
+- Agent `agent-1783914434480-a93177cf`，固定参数为 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，使用原需求文档和 Figma 4 页、4 张 UI 图。
+- 路由已正确进入 `new_requirement_source / generate_draft`，没有复用历史 YAML；预检只识别并绑定 OPPO `ecbfd645 / Reno9 / PHM110`。
+- `automation_filter` 在 90 秒后超时，本地兜底生成 8 条用例；其中出现“进入基础打印-入口一致性相关页面或入口区域”等不存在的抽象 UI 目标，并无需求依据地增加横向滑动。
+- 生成范围审查直接扫描 YAML 原文，把每个合法 `aiWaitFor.timeout` 结构字段误判为需求未说明的“超时场景”，导致正常文档/照片/扫描用例被降级。
+- Figma/UI 图实际已送入视觉模型，但模型漏返回必填 `analysis`；失败标记又被覆盖率补全和规划阶段覆盖，Agent 页面错误显示为 `skipped_or_pending`。
+- 任务仅进入 Windows Runner 的 `yaml_dry_run`，在真实 UI 操作前主动取消；OPPO 没有执行这些错误脚本，另一台设备也未下发。
+
+已修改：
+
+- `task_server/services/ai_skill_service.py`
+- `task_server/services/yaml_service.py`
+- `task_server/services/agent_service.py`
+- `deploy/install-server.sh`
+- `deploy/midscene.env.example`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 视觉 skill 在 schema 校验前只补回模型遗漏的原始 `title/module/analysis/scenarios/manual_cases/review`，不伪造 `cases`；Figma 判断缺少 `analysis` 时不再整批失败。
+- 视觉调用完成、失败和分批错误信息在覆盖率补全/执行规划后继续保留；Agent 明确区分 `completed / failed / pending / skipped`，并分别显示“已送 AI”和“AI 已完成”。
+- 需求范围审查改为解析 YAML 结构，只读取 task 名和 Midscene 动作语义，排除 `timeout` 等结构键；真实动作中的超时场景仍可被识别。
+- 新增抽象 UI 目标门禁：把“相关页面或入口区域、入口一致性、跨设备适配、权限与状态”等测试分组当成 `aiTap` 目标时降级，不允许下发 Runner。
+- `automation_filter` 超时兜底改为按需求点识别文档打印、照片打印、证件照、照片拼版和扫描复印，通过真实可见入口文字导航，不再默认横向滑动。
+- 超时兜底来源在后续 AI 重写后仍强制保持 `needs_review`；静态评分只能保持或降级，不能重新提升为 `executable`。
+- `automation_filter` 默认超时由 90 秒调整为 150 秒，部署脚本会把线上仍为 90 秒的旧默认值迁移到 150 秒。
+- 依据 Midscene 官方语义动作约束继续使用自然语言 `aiTap / aiWaitFor / aiAssert`，没有引入坐标定位、selector 或新执行模式。
+- 没有修改 `router.py`，没有修改历史 YAML，也不需要替换 Windows Runner。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+bash -n deploy/install-server.sh
+git diff --check
+```
+
+后端静态检查 `61` 项通过。部署后必须用同一需求/Figma、`scope=regression`、固定 OPPO `ecbfd645` 重新执行，并继续监督正式 YAML、首批冒烟和 remaining 全部到终态。
+
 ### 2026-07-13 完整回归误复用历史 YAML 修复
 
 真实验证任务：

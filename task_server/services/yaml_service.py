@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import difflib
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -844,6 +845,22 @@ SCOPE_GUARD_GENERIC_TOKENS = {
     "自动化", "生成", "入口", "新增", "调整", "支持", "正常", "展示", "首页",
 }
 FIGMA_INTERNAL_CASE_NAME_RE = re.compile(r"(备份\s*\d*|frame\s*\d*|节点|画板|画布|设计稿)", re.I)
+SCOPE_GUARD_ABSTRACT_UI_TARGET_PATTERNS = (
+    "相关页面或入口区域",
+    "相关页面或相关入口",
+    "相关页面或入口",
+    "目标入口区域",
+)
+SCOPE_GUARD_TEST_TAXONOMY_TERMS = (
+    "入口一致性",
+    "入口可达性",
+    "跨设备适配",
+    "权限与状态",
+    "测试分组",
+    "测试场景",
+    "校验场景",
+    "验证场景",
+)
 
 
 def _scope_guard_join_values(*values) -> str:
@@ -856,6 +873,95 @@ def _scope_guard_join_values(*values) -> str:
         elif value not in (None, ""):
             parts.append(str(value))
     return " ".join(part for part in parts if part).strip()
+
+
+def _scope_guard_action_value_texts(value) -> List[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, list):
+        result: List[str] = []
+        for item in value:
+            result.extend(_scope_guard_action_value_texts(item))
+        return result
+    if isinstance(value, dict):
+        result: List[str] = []
+        structural_keys = {
+            "timeout", "deepthink", "cacheable", "sleep", "duration", "distance",
+            "x", "y", "width", "height", "index", "repeat", "repeatcount",
+        }
+        for key, item in value.items():
+            if str(key or "").strip().lower() in structural_keys:
+                continue
+            result.extend(_scope_guard_action_value_texts(item))
+        return result
+    return []
+
+
+def _scope_guard_yaml_action_values(yaml_text: str) -> dict:
+    actions: dict = {}
+
+    def add(action, value):
+        texts = _scope_guard_action_value_texts(value)
+        if texts:
+            actions.setdefault(action, []).extend(texts)
+
+    def walk(value):
+        if isinstance(value, list):
+            for item in value:
+                walk(item)
+            return
+        if not isinstance(value, dict):
+            return
+        for key, item in value.items():
+            action = str(key or "").strip()
+            if action == "name" and isinstance(item, str):
+                add("name", item)
+            elif action in MIDSCENE_FLOW_ACTIONS:
+                add(action, item)
+            else:
+                walk(item)
+
+    parsed = None
+    if _pyyaml is not None and str(yaml_text or "").strip():
+        try:
+            parsed = _pyyaml.safe_load(yaml_text)
+        except Exception:
+            parsed = None
+    if parsed is not None:
+        walk(parsed)
+        return actions
+
+    for line in str(yaml_text or "").splitlines():
+        match = re.match(r"^\s*-?\s*(name|[A-Za-z][A-Za-z0-9_]*)\s*:\s*(.+?)\s*$", line)
+        if not match:
+            continue
+        action, value = match.groups()
+        if action == "name" or action in MIDSCENE_FLOW_ACTIONS:
+            add(action, strip_yaml_quotes(value))
+    return actions
+
+
+def _scope_guard_yaml_semantic_text(yaml_text: str) -> str:
+    """Extract task/action language while excluding structural YAML keys."""
+    actions = _scope_guard_yaml_action_values(yaml_text)
+    return _scope_guard_join_values(*actions.values())
+
+
+def _scope_guard_abstract_ui_targets(case: dict, yaml_text: str = "") -> List[str]:
+    candidates = normalize_text_list((case or {}).get("steps") or [])
+    candidates.extend(_scope_guard_yaml_action_values(yaml_text).get("aiTap") or [])
+    invalid = []
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if not text:
+            continue
+        navigates = any(term in text for term in ("点击", "进入", "打开", "aiTap"))
+        if any(term in text for term in SCOPE_GUARD_ABSTRACT_UI_TARGET_PATTERNS):
+            invalid.append(text)
+        elif navigates and any(term in text for term in SCOPE_GUARD_TEST_TAXONOMY_TERMS):
+            invalid.append(text)
+    return list(dict.fromkeys(invalid))
 
 
 def _scope_guard_tokens(text: str) -> List[str]:
@@ -962,6 +1068,7 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
         analysis.get("risks"),
         analysis.get("assumptions"),
     )
+    yaml_semantic_text = _scope_guard_yaml_semantic_text(yaml_text)
     case_blob = _scope_guard_join_values(
         case.get("title"),
         case.get("name"),
@@ -981,7 +1088,7 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
         case.get("steps"),
         case.get("assertions"),
         case.get("tags"),
-        yaml_text[:3000],
+        yaml_semantic_text,
     )
     compact_requirement = re.sub(r"\s+", "", requirement_blob)
     compact_case = re.sub(r"\s+", "", case_blob)
@@ -990,6 +1097,9 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     title_blob = _scope_guard_join_values(case.get("title"), case.get("name"))
     if FIGMA_INTERNAL_CASE_NAME_RE.search(title_blob):
         reasons.append("用例标题包含 Figma 内部页名/设计稿标识，应改为业务名称后再自动执行")
+    abstract_targets = _scope_guard_abstract_ui_targets(case, yaml_text)
+    if abstract_targets:
+        reasons.append("aiTap/导航步骤使用测试分组或抽象模块名作为界面目标，缺少真实可见入口文案")
 
     topic_terms = _scope_guard_topic_terms(requirement_blob)
     if topic_terms:
@@ -1067,6 +1177,114 @@ def apply_generated_case_scope_gate(payload: Any) -> dict:
             "rule": "需求范围不匹配的生成用例不再转换为自动化 YAML，避免无关历史/相邻场景进入 Runner。",
         }
     return normalized
+
+
+YAML_VISUAL_REVIEW_TRACE_KEYS = (
+    "yaml_visual_grounded",
+    "yaml_visual_completed_batches",
+    "yaml_visual_batches",
+    "visual_refine_error",
+    "visual_refine_errors",
+    "visual_refine_skipped",
+    "visual_grounder_error",
+    "visual_grounder_skill",
+    "visual_reference_note",
+)
+GENERATED_EXECUTION_LEVEL_ORDER = {
+    "manual": 0,
+    "draft": 1,
+    "needs_review": 2,
+    "executable": 3,
+}
+LOCAL_FALLBACK_SOURCE = "local_fallback_after_ai_timeout"
+
+
+def snapshot_yaml_visual_review(payload: Any) -> dict:
+    payload = payload if isinstance(payload, dict) else {}
+    review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+    return {
+        key: copy.deepcopy(review.get(key))
+        for key in YAML_VISUAL_REVIEW_TRACE_KEYS
+        if key in review
+    }
+
+
+def restore_yaml_visual_review(payload: Any, snapshot: dict) -> dict:
+    payload = payload if isinstance(payload, dict) else {}
+    if not isinstance(snapshot, dict) or not snapshot:
+        return payload
+    review = payload.setdefault("review", {})
+    if not isinstance(review, dict):
+        review = {}
+        payload["review"] = review
+    for key, value in snapshot.items():
+        if key in YAML_VISUAL_REVIEW_TRACE_KEYS:
+            review[key] = copy.deepcopy(value)
+    return payload
+
+
+def _generated_case_uses_local_fallback(case: dict) -> bool:
+    case = case if isinstance(case, dict) else {}
+    source = str(case.get("source") or "").strip()
+    reason = str(case.get("automation_reason") or case.get("automationReason") or "").strip()
+    return source == LOCAL_FALLBACK_SOURCE or "AI skill 超时后" in reason
+
+
+def generated_payload_uses_local_fallback(payload: Any) -> bool:
+    payload = payload if isinstance(payload, dict) else {}
+    review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+    if str(review.get("automation_filter_skill") or "").strip() == LOCAL_FALLBACK_SOURCE:
+        return True
+    return any(_generated_case_uses_local_fallback(case) for case in (payload.get("cases") or []))
+
+
+def _stricter_generated_execution_level(current: str, floor: str) -> str:
+    current = str(current or "").strip().lower()
+    floor = str(floor or "needs_review").strip().lower()
+    if current not in GENERATED_EXECUTION_LEVEL_ORDER:
+        return floor
+    if floor not in GENERATED_EXECUTION_LEVEL_ORDER:
+        return current
+    return min((current, floor), key=lambda level: GENERATED_EXECUTION_LEVEL_ORDER[level])
+
+
+def enforce_generated_fallback_execution_floor(payload: Any, force: bool = False) -> dict:
+    """Keep timeout fallbacks review-only even if later AI stages rewrite cases."""
+    fallback_active = bool(force or generated_payload_uses_local_fallback(payload))
+    if not fallback_active:
+        return payload if isinstance(payload, dict) else normalize_cases_payload(payload)
+    normalized = normalize_cases_payload(payload)
+    for case in normalized.get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        case["source"] = LOCAL_FALLBACK_SOURCE
+        case["executionLevel"] = _stricter_generated_execution_level(
+            case.get("executionLevel"),
+            "needs_review",
+        )
+    review = normalized.setdefault("review", {})
+    review["local_fallback_execution_floor"] = {
+        "enabled": True,
+        "executionLevel": "needs_review",
+        "rule": "automation_filter 超时后的本地兜底只供评审，不自动下发 Runner。",
+    }
+    return normalized
+
+
+def generated_yaml_effective_level(score_level: str, source_case: dict, scope_review: dict) -> str:
+    """Combine static score with stricter generation provenance and scope gates."""
+    level = str(score_level or "draft").strip().lower()
+    if level not in GENERATED_EXECUTION_LEVEL_ORDER:
+        level = "draft"
+    source_case = source_case if isinstance(source_case, dict) else {}
+    declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
+    if _generated_case_uses_local_fallback(source_case):
+        declared_level = _stricter_generated_execution_level(declared_level, "needs_review")
+    if declared_level in GENERATED_EXECUTION_LEVEL_ORDER:
+        level = _stricter_generated_execution_level(level, declared_level)
+    if isinstance(scope_review, dict) and not scope_review.get("ok", True):
+        level = _stricter_generated_execution_level(level, "needs_review")
+    return level
 
 
 YAML_REFERENCE_MAX_FILES = env_int("YAML_REFERENCE_MAX_FILES", 800)
@@ -5951,6 +6169,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         review = payload.setdefault("review", {})
         review["skill_pipeline_disabled"] = True
 
+    local_fallback_execution_floor = generated_payload_uses_local_fallback(payload)
     review = payload.setdefault("review", {})
     deterministic_entry_visibility = str(review.get("skill_pipeline") or "").startswith("deterministic_baidu_entry_visibility")
     if deterministic_entry_visibility and (visual_text_assets or visual_image_assets):
@@ -6008,6 +6227,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             if job_id:
                 update_generate_job(job_id, progress=67, step="视觉校准跳过", message=f"视觉校准失败但不阻塞生成：{str(e)[:100]}")
 
+    yaml_visual_review_trace = snapshot_yaml_visual_review(payload)
     review = payload.setdefault("review", {})
     review["ai_decision_trace"] = ai_decision_trace
     review["execution_scope_plan"] = {
@@ -6250,6 +6470,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
             review = payload.setdefault("review", {})
             review["smoke_selector_final_error"] = str(smoke_error)
             review["smoke_selector_final_policy"] = "最终冒烟筛选失败时不使用 P0/P1 或关键词兜底，保留现有显式 smoke 标记。"
+    payload = restore_yaml_visual_review(payload, yaml_visual_review_trace)
+    payload = enforce_generated_fallback_execution_floor(payload, force=local_fallback_execution_floor)
     payload = apply_generated_case_scope_gate(payload)
     payload["id"] = case_set_id
     payload["module"] = module
@@ -6409,7 +6631,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         score = score_midscene_yaml_executable(item.get("content") or "", generated=True)
         task_scores = [row for row in (score.get("taskScores") or []) if isinstance(row, dict)]
         first_task = task_scores[0] if task_scores else {}
-        level = str(score.get("level") or score.get("executionLevel") or "draft")
+        scored_level = str(score.get("level") or score.get("executionLevel") or "draft")
         source_case = (
             item.get("case")
             or generated_cases_by_id.get(str(item.get("case_id") or "").strip())
@@ -6417,17 +6639,20 @@ def generate_ui_yaml_from_request(d, job_id=None):
             or {}
         )
         scope_review = generated_case_requirement_scope_review(source_case, requirement_analysis, item.get("content") or "")
+        level = generated_yaml_effective_level(scored_level, source_case, scope_review)
         reasons = list(score.get("reasons") or [])[:8]
-        if not scope_review.get("ok"):
-            level = "needs_review" if level == "executable" else level
+        scope_reasons = list(scope_review.get("reasons") or [])
+        provenance_reasons = []
+        if _generated_case_uses_local_fallback(source_case):
+            provenance_reasons.append("automation_filter 超时后的本地兜底仅供评审，不自动下发 Runner")
+        if level != scored_level or scope_reasons:
             score = dict(score)
-            scope_reasons = list(scope_review.get("reasons") or [])
             score["score"] = min(safe_int(score.get("score"), 0), 74)
             score["executionLevel"] = level
             score["level"] = level
             score["ok"] = level == "executable"
             score["scopeReview"] = scope_review
-            score["reasons"] = (scope_reasons + reasons)[:8]
+            score["reasons"] = (scope_reasons + provenance_reasons + reasons)[:8]
             reasons = list(score.get("reasons") or [])[:8]
         explicit_smoke = bool(item.get("smoke"))
         row = {

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import concurrent.futures
 import json
 import os
@@ -182,7 +183,32 @@ def render_ai_skill_prompt(skill_name, payload=None, version="v1", fallback_prom
     return template.replace("{{payload}}", payload_text)
 
 
-def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temperature=0.1, timeout=180, fallback_prompt="", respect_global_timeout=True, retry_count=None, model_config=None):
+def _merge_missing_output_defaults(value, defaults):
+    """Fill required context omitted by a model without replacing model output."""
+    if not isinstance(value, dict) or not isinstance(defaults, dict):
+        return value
+    merged = copy.deepcopy(value)
+    for key, default_value in defaults.items():
+        if key not in merged or merged.get(key) is None:
+            merged[key] = copy.deepcopy(default_value)
+        elif isinstance(merged.get(key), dict) and isinstance(default_value, dict):
+            merged[key] = _merge_missing_output_defaults(merged[key], default_value)
+    return merged
+
+
+def run_ai_skill(
+    skill_name,
+    payload=None,
+    image_assets=None,
+    version="v1",
+    temperature=0.1,
+    timeout=180,
+    fallback_prompt="",
+    respect_global_timeout=True,
+    retry_count=None,
+    model_config=None,
+    output_defaults=None,
+):
     """执行 AI skill：渲染 prompt → 调用 DashScope → 校验输出。"""
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
@@ -203,6 +229,7 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
                 f"AI Gateway skill {skill_name}",
             )
             result = normalize_model_json(raw)
+            result = _merge_missing_output_defaults(result, output_defaults)
             return validate_ai_skill_output(skill_name, result)
         except TimeoutError:
             raise
@@ -219,6 +246,7 @@ def run_ai_skill(skill_name, payload=None, image_assets=None, version="v1", temp
         retry_count=retry_count,
     )
     result = normalize_model_json(raw)
+    result = _merge_missing_output_defaults(result, output_defaults)
     return validate_ai_skill_output(skill_name, result)
 
 
@@ -1266,7 +1294,7 @@ def generation_volume_targets(analysis, mode="full"):
 
 
 AI_SCENARIO_DESIGNER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_SCENARIO_DESIGNER_TIMEOUT_SECONDS", "90"), 90))
-AI_AUTOMATION_FILTER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS", "90"), 90))
+AI_AUTOMATION_FILTER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS", "150"), 150))
 
 
 def scenario_requirement_point(scenario):
@@ -1542,6 +1570,29 @@ def _fallback_home_wait(app_context):
     return f"启动 App，并等待{app_name}首页加载完成，能看到{home_hint}"
 
 
+def _fallback_baidu_feature_kind(scenario):
+    scenario = scenario if isinstance(scenario, dict) else {}
+    text = " ".join(normalize_text_list([
+        scenario.get("feature"),
+        scenario.get("scenario"),
+        scenario.get("requirement_point"),
+        scenario.get("business_path"),
+    ]))
+    if "文档打印" in text:
+        return "document"
+    if any(term in text for term in ("照片拼版", "图片拼版")):
+        return "photo_collage"
+    if "智能证件照" in text:
+        return "smart_id_photo"
+    if any(term in text for term in ("证件照", "一寸照", "1寸")):
+        return "id_photo"
+    if any(term in text for term in ("普通照片", "照片打印", "5寸照片")):
+        return "photo"
+    if any(term in text for term in ("扫描复印", "复印扫描", "扫描仪扫描")):
+        return "scan"
+    return ""
+
+
 def _fallback_steps_for_scenario(scenario, app_context=None):
     """生成保守、低断言密度的自动化步骤。"""
     feature = first_non_empty((scenario or {}).get("feature"), "目标功能")
@@ -1549,86 +1600,62 @@ def _fallback_steps_for_scenario(scenario, app_context=None):
     home_wait = _fallback_home_wait(app_context)
     if "百度网盘" in point:
         feature_text = str(feature or "")
-        if _baidu_netdisk_point_is_display_only(point):
-            return [
-                home_wait,
-                "如当前不在首页，返回或点击底部「首页」回到首页",
-                f"进入「{feature_text or feature}」相关页面或入口区域",
-                "等待目标入口区域加载完成，页面展示同级导入入口",
-                "等待「百度网盘」入口可见，必要时横向滑动同级入口区域一次",
-            ], [
-                f"{feature_text or feature}页面展示「百度网盘」入口，且入口与同级导入方式并列显示"
-            ]
-        if "文档打印" in feature_text:
-            return [
-                home_wait,
-                "如当前不在首页，返回或点击底部「首页」回到首页",
-                "等待首页文档打印入口区加载完成，并看到「本地导入」「相册导入」「微信导入」等入口",
-                "在文档打印入口区查找「百度网盘」入口，必要时横向滑动一次入口列表",
-                "点击「百度网盘」入口",
-                BAIDU_NETDISK_POST_CLICK_WAIT,
-            ], [
-                BAIDU_NETDISK_POST_CLICK_ASSERT
-            ]
-        if "普通照片" in feature_text:
-            return [
-                home_wait,
-                "如当前不在首页，返回或点击底部「首页」回到首页",
-                "点击首页或基础打印入口中的「相册导入」进入普通照片打印",
-                "等待进入「5寸照片」或普通照片打印页面，并看到导入方式区域",
-                "等待「百度网盘」入口稳定显示，必要时横向滑动导入方式区域",
-                "点击「百度网盘」入口",
-                BAIDU_NETDISK_POST_CLICK_WAIT,
-            ], [
-                BAIDU_NETDISK_POST_CLICK_ASSERT
-            ]
-        if "证件照" in feature_text:
-            return [
-                home_wait,
-                "如当前不在首页，返回或点击底部「首页」回到首页",
-                "进入「证件照」或「一寸照」入口",
-                "等待进入证件照页面，并看到照片预览或导入方式区域",
-                "等待底部导入方式区域出现「百度网盘」入口",
-                "点击「百度网盘」入口",
-                BAIDU_NETDISK_POST_CLICK_WAIT,
-            ], [
-                BAIDU_NETDISK_POST_CLICK_ASSERT
-            ]
-        if "照片拼版" in feature_text:
-            return [
-                home_wait,
-                "如当前不在首页，返回或点击底部「首页」回到首页",
-                "点击首页功能入口中的「图片拼版」",
-                "等待进入照片拼版页面或拼版导入页面",
-                "等待「百度网盘」入口稳定显示，必要时横向滑动导入方式区域",
-                "点击「百度网盘」入口",
-                BAIDU_NETDISK_POST_CLICK_WAIT,
-            ], [
-                BAIDU_NETDISK_POST_CLICK_ASSERT
-            ]
-        if "扫描复印" in feature_text:
-            return [
-                home_wait,
-                "如当前不在首页，返回或点击底部「首页」回到首页",
-                "点击首页的「扫描仪扫描」或复印扫描入口",
-                "等待进入扫描复印首页或复印扫描导入页面",
-                "等待「百度网盘」入口稳定显示",
-                "点击「百度网盘」入口",
-                BAIDU_NETDISK_POST_CLICK_WAIT,
-            ], [
-                BAIDU_NETDISK_POST_CLICK_ASSERT
-            ]
-        return [
+        feature_kind = _fallback_baidu_feature_kind(scenario)
+        display_only = _baidu_netdisk_point_is_display_only(point)
+        steps = [
             home_wait,
             "如当前不在首页，返回或点击底部「首页」回到首页",
-            f"进入「{feature}」相关入口",
-            f"等待{feature}页面加载完成",
-            "等待「百度网盘」入口稳定显示",
+        ]
+        assertion = f"{feature_text or feature}页面展示「百度网盘」入口，且入口与同级导入方式并列显示"
+        if feature_kind == "document":
+            steps.extend([
+                "点击首页或底部导航中名称为「文档打印」的入口",
+                "等待文档打印页面或文档导入入口区域加载完成，并看到「本地导入」「相册导入」「微信导入」或「本地文档」入口",
+                "等待「百度网盘」入口可见",
+            ])
+            assertion = "文档打印页面展示「百度网盘」入口，入口与「本地文档」同级且位于其后"
+        elif feature_kind in ("photo", "id_photo", "smart_id_photo", "photo_collage"):
+            steps.extend([
+                "点击首页或底部导航中名称为「照片打印」的入口",
+                "等待照片打印页面加载完成，并看到普通照片、证件照或照片拼版入口",
+            ])
+            if feature_kind == "photo":
+                steps.append("点击名称为「5寸照片」的普通照片打印入口")
+                target_page = "普通照片打印"
+            elif feature_kind == "smart_id_photo":
+                steps.append("点击名称为「智能证件照」的入口")
+                target_page = "智能证件照"
+            elif feature_kind == "id_photo":
+                steps.append("点击名称包含「证件照」或「一寸照」文字的入口")
+                target_page = "证件照"
+            else:
+                steps.append("点击名称为「照片拼版」或「图片拼版」的入口")
+                target_page = "照片拼版"
+            steps.extend([
+                f"等待{target_page}导入页面加载完成，并看到导入方式区域",
+                "等待「百度网盘」入口可见",
+            ])
+            assertion = f"{target_page}导入页面展示「百度网盘」入口，且与其他导入方式同级显示"
+        elif feature_kind == "scan":
+            steps.extend([
+                "点击首页中名称为「扫描复印」或「扫描仪扫描」的入口",
+                "等待扫描复印页面或复印扫描导入页面加载完成",
+                "等待「百度网盘」入口可见",
+            ])
+            assertion = "扫描复印页面展示「百度网盘」入口，且与其他导入方式同级显示"
+        else:
+            steps.extend([
+                f"点击首页中名称为「{feature_text or feature}」的入口",
+                f"等待{feature_text or feature}页面加载完成",
+                "等待「百度网盘」入口可见",
+            ])
+        if display_only:
+            return steps, [assertion]
+        steps.extend([
             "点击「百度网盘」入口",
             BAIDU_NETDISK_POST_CLICK_WAIT,
-        ], [
-            BAIDU_NETDISK_POST_CLICK_ASSERT
-        ]
+        ])
+        return steps, [BAIDU_NETDISK_POST_CLICK_ASSERT]
     return [
         home_wait,
         f"进入{feature}相关页面",
@@ -2572,7 +2599,15 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         timeout=int(timeout_seconds or 360),
         respect_global_timeout=timeout_seconds is None,
         retry_count=None if timeout_seconds is None else 0,
-        temperature=0.1
+        temperature=0.1,
+        output_defaults={
+            "title": title,
+            "module": module,
+            "analysis": base_payload.get("analysis") or {"requirement_points": []},
+            "scenarios": base_payload.get("scenarios") or [],
+            "manual_cases": base_payload.get("manual_cases") or [],
+            "review": base_payload.get("review") or {},
+        },
     )
     grounded = normalize_cases_payload(grounded)
     grounded["title"] = grounded.get("title") or title

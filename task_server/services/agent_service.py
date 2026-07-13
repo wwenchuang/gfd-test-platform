@@ -5510,22 +5510,64 @@ def _agent_visual_reference_report(run, generation_result=None):
         or review.get("visual_grounded")
         or case_review.get("visual_grounded")
     )
+    visual_batches = (
+        review.get("yaml_visual_batches")
+        or case_review.get("yaml_visual_batches")
+        or {}
+    )
+    visual_batches = visual_batches if isinstance(visual_batches, dict) else {}
     visual_skipped = (
         review.get("visual_refine_skipped")
         or case_review.get("visual_refine_skipped")
-        or review.get("visual_grounder_error")
-        or case_review.get("visual_grounder_error")
     )
+    visual_errors = []
+    for value in (
+        review.get("visual_refine_error"),
+        case_review.get("visual_refine_error"),
+        review.get("visual_refine_errors"),
+        case_review.get("visual_refine_errors"),
+        review.get("visual_grounder_error"),
+        case_review.get("visual_grounder_error"),
+        visual_batches.get("errors"),
+    ):
+        if isinstance(value, list):
+            visual_errors.extend(str(item).strip() for item in value if str(item or "").strip())
+        elif str(value or "").strip():
+            visual_errors.append(str(value).strip())
+    visual_errors = list(dict.fromkeys(visual_errors))
     visual_inputs_present = bool(uploaded_images or figma_pages or figma_assets)
-    if visual_inputs_present and generation_result is not None and not ai_visual_completed:
+    ai_visual_attempted = bool(
+        ai_visual_completed
+        or visual_batches.get("enabled")
+        or visual_errors
+        or review.get("visual_grounder_skill")
+        or case_review.get("visual_grounder_skill")
+    )
+    ai_visual_failed = bool(ai_visual_attempted and not ai_visual_completed and visual_errors)
+    if ai_visual_completed:
+        ai_visual_status = "completed"
+    elif ai_visual_failed:
+        ai_visual_status = "failed"
+    elif ai_visual_attempted:
+        ai_visual_status = "pending"
+    elif visual_inputs_present and generation_result is None:
+        ai_visual_status = "pending"
+    elif visual_inputs_present:
+        ai_visual_status = "skipped"
+    else:
+        ai_visual_status = "not_required"
+    if ai_visual_failed:
+        conflict_notes.append("视觉资料已送入 AI 判断，但视觉校准失败；失败原因已保留，生成结果需要重新校准或人工复核。")
+    elif visual_inputs_present and generation_result is not None and not ai_visual_completed:
         conflict_notes.append("视觉资料已进入本次输入，但未看到 AI 视觉校准完成标记；本次仍会保留生成结果并提示人工复核图片参考是否充分。")
     return {
         "mode": "soft_reference",
         "hardGate": False,
         "aiJudgementRequired": visual_inputs_present,
-        "sentToAiForJudgement": ai_visual_completed,
-        "aiJudgementStatus": "completed" if ai_visual_completed else ("skipped_or_pending" if visual_inputs_present else "not_required"),
-        "visualRefineSkipped": str(visual_skipped or "").strip(),
+        "sentToAiForJudgement": ai_visual_attempted,
+        "aiJudgementCompleted": ai_visual_completed,
+        "aiJudgementStatus": ai_visual_status,
+        "visualRefineSkipped": "；".join(visual_errors[:3]) or str(visual_skipped or "").strip(),
         "rule": "上传截图和 Figma 是视觉辅助证据：帮助补充页面文案、入口位置、同级关系和设备形态；不因未完全引用视觉资料而阻断生成或 Runner 执行。",
         "referenceSources": reference_sources,
         "uploadedImageCount": len(uploaded_images),

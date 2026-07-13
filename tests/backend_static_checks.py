@@ -421,6 +421,155 @@ def check_generated_yaml_short_guards_and_execution_level_floor():
         agent_service.TASK_DIR = old_task_dir
 
 
+def check_generated_yaml_semantic_scope_and_visual_trace():
+    from task_server.services import agent_service, ai_skill_service, yaml_service
+
+    analysis = {
+        "requirement_points": [
+            "文档打印页面新增百度网盘入口，入口位于本地文档之后并保持同级展示。",
+        ],
+    }
+    concrete_case = {
+        "title": "文档打印百度网盘入口可见性",
+        "steps": [
+            "点击首页或底部导航中名称为「文档打印」的入口",
+            "等待文档打印页面展示「百度网盘」入口",
+        ],
+        "assertions": ["百度网盘入口位于本地文档之后"],
+    }
+    concrete_yaml = """android:
+  tasks:
+    - name: 文档打印百度网盘入口可见性
+      flow:
+        - launch: com.xbxxhz.box
+        - aiTap: 文档打印入口
+        - aiWaitFor:
+            prompt: 文档打印页面展示百度网盘入口
+            timeout: 12000
+        - aiAssert: 百度网盘入口位于本地文档之后
+"""
+    concrete_review = yaml_service.generated_case_requirement_scope_review(
+        concrete_case,
+        analysis,
+        concrete_yaml,
+    )
+    require(concrete_review.get("ok"), "Structural timeout fields must not be treated as an unrequested timeout scenario")
+
+    abstract_case = {
+        **concrete_case,
+        "steps": ["进入「基础打印-入口一致性」相关页面或入口区域"],
+    }
+    abstract_yaml = concrete_yaml.replace(
+        "aiTap: 文档打印入口",
+        "aiTap: 进入「基础打印-入口一致性」相关页面或入口区域",
+    )
+    abstract_review = yaml_service.generated_case_requirement_scope_review(
+        abstract_case,
+        analysis,
+        abstract_yaml,
+    )
+    require(
+        not abstract_review.get("ok")
+        and any("抽象模块名" in reason for reason in abstract_review.get("reasons", [])),
+        "Generated YAML must reject test taxonomy and abstract page groups as aiTap targets",
+    )
+
+    for feature, scenario_name, point, expected_entry in (
+        ("基础打印-入口一致性", "文档打印百度网盘入口可见性", "文档打印页面展示百度网盘入口", "文档打印"),
+        ("普通照片打印", "普通照片打印百度网盘入口可见性", "普通照片打印导入方式展示百度网盘入口", "照片打印"),
+        ("扫描复印", "扫描复印百度网盘入口可见性", "扫描复印页面展示百度网盘入口", "扫描复印"),
+    ):
+        steps, _ = ai_skill_service._fallback_steps_for_scenario({
+            "feature": feature,
+            "scenario": scenario_name,
+            "requirement_point": point,
+        }, app_context={"app_name": "小白学习打印", "home_hint": "文档打印、照片打印或扫描复印入口"})
+        step_text = "\n".join(steps)
+        require(expected_entry in step_text, f"Fallback must route through the concrete {expected_entry} entry")
+        require("相关页面或入口区域" not in step_text and "目标入口区域" not in step_text, "Fallback must not invent abstract UI pages")
+
+    base_payload = {
+        "title": "基础打印新增百度网盘入口",
+        "module": "基础打印",
+        "analysis": analysis,
+        "scenarios": [],
+        "cases": [concrete_case],
+        "manual_cases": [],
+        "review": {"automation_filter_skill": "automation_filter.v1"},
+    }
+    original_chat = ai_skill_service.dashscope_chat_content
+    try:
+        ai_skill_service.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
+            "title": "基础打印新增百度网盘入口",
+            "module": "基础打印",
+            "cases": [concrete_case],
+        }, ensure_ascii=False)
+        grounded = ai_skill_service.call_visual_grounder_skill(
+            base_payload["title"],
+            base_payload["module"],
+            base_payload,
+            ["Figma 文档打印页面"],
+            [{"mime": "image/png", "base64": "AA=="}],
+            timeout_seconds=60,
+        )
+    finally:
+        ai_skill_service.dashscope_chat_content = original_chat
+    require(
+        grounded.get("analysis", {}).get("requirement_points") == analysis["requirement_points"],
+        "Visual grounding must inherit required analysis context before schema validation",
+    )
+    require(
+        grounded.get("review", {}).get("visual_grounder_skill") == "visual_grounder.v1",
+        "Visual grounding must retain a completed AI judgment marker",
+    )
+
+    visual_payload = {
+        "review": {
+            "yaml_visual_batches": {"enabled": True, "total_batches": 1, "completed_batches": 0, "errors": ["schema failed"]},
+            "visual_refine_errors": ["schema failed"],
+        },
+    }
+    trace = yaml_service.snapshot_yaml_visual_review(visual_payload)
+    restored = yaml_service.restore_yaml_visual_review({"review": {"coverage_audit": {"ok": True}}}, trace)
+    require(
+        restored.get("review", {}).get("yaml_visual_batches", {}).get("errors") == ["schema failed"],
+        "Coverage/planner normalization must not erase visual AI attempt and failure details",
+    )
+    visual_report = agent_service._agent_visual_reference_report({
+        "artifacts": {
+            "sourceContext": {
+                "figmaUsedPages": [{"page_name": "文档打印"}],
+                "figmaImageCount": 1,
+            },
+        },
+    }, visual_payload)
+    require(
+        visual_report.get("sentToAiForJudgement") is True
+        and visual_report.get("aiJudgementCompleted") is False
+        and visual_report.get("aiJudgementStatus") == "failed",
+        "Agent visual report must distinguish attempted-and-failed from skipped or pending",
+    )
+
+    fallback_payload = yaml_service.enforce_generated_fallback_execution_floor({
+        **base_payload,
+        "review": {"automation_filter_skill": "local_fallback_after_ai_timeout"},
+    })
+    fallback_case = fallback_payload["cases"][0]
+    require(fallback_case.get("executionLevel") == "needs_review", "AI-timeout fallback cases must remain review-only")
+    require(
+        yaml_service.generated_yaml_effective_level("executable", fallback_case, {"ok": True}) == "needs_review",
+        "Static scoring must not promote an AI-timeout fallback back to executable",
+    )
+
+    ai_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
+    install_source = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+    env_source = (ROOT / "deploy" / "midscene.env.example").read_text(encoding="utf-8")
+    require('MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS", "150"' in ai_source, "Automation filter default timeout must allow the production model more than 90 seconds")
+    require('ensure_env_default "MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS" "150"' in install_source, "Installer must configure the automation filter timeout")
+    require('upgrade_env_default_if_old "MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS" "150" "90"' in install_source, "Installer must migrate the old 90-second automation filter timeout")
+    require("MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS='150'" in env_source, "Environment example must document the new automation filter timeout")
+
+
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -3232,6 +3381,7 @@ def main():
     check_agent_generation_pipeline_normalizes_validation_state()
     check_agent_regression_scope_preserves_new_requirement_generation()
     check_generated_yaml_short_guards_and_execution_level_floor()
+    check_generated_yaml_semantic_scope_and_visual_trace()
     check_agent_executable_gate_invokes_ai_rewrite()
     check_midscene_yaml_validation_is_mapping()
     check_yaml_static_validation_and_patterns()
