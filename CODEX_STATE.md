@@ -28,6 +28,51 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归 Runner dry-run 超时归因修复
+
+部署 `d0516f3` 后继续真实验证任务：
+
+- Agent `agent-1783934517395-33c20197`，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 公网 `8088 -> 8091` 健康，AI Gateway 正常；Task Server 模型为 `qwen3.6-plus`。
+- 生成阶段已通过：Figma 4 页/4 图解析成功，视觉 AI `sentToAiForJudgement=true / aiJudgementCompleted=true / aiJudgementStatus=completed`；6 个 YAML refs 均为 `executable`。
+- 执行预检通过：指定 Runner `win-runner-01` 和固定 OPPO `ecbfd645（OPPO Reno9 / PHM110）` 在线；首批 3/3 本地 dry-run 通过，未选择第二台设备。
+- Runner 阶段创建了 2 个正式本地任务，均在 `ecbfd645` 上成功：
+  - `job_1783934990328_00002`：`00-文档打印百度网盘入口可见性短链路冒烟.yaml`，报告 `http://101.34.197.12:8088/reports/00-%E6%96%87%E6%A1%A3%E6%89%93%E5%8D%B0%E7%99%BE%E5%BA%A6%E7%BD%91%E7%9B%98%E5%85%A5%E5%8F%A3%E5%8F%AF%E8%A7%81%E6%80%A7%E7%9F%AD%E9%93%BE%E8%B7%AF%E5%86%92%E7%83%9F-job_1783934990328_00002.html`
+  - `job_1783935088325_00004`：`01-文档打印页百度网盘入口可见性及相对位置校验（本地文档之后第2位）.yaml`，报告 `http://101.34.197.12:8088/reports/01-%E6%96%87%E6%A1%A3%E6%89%93%E5%8D%B0%E9%A1%B5%E7%99%BE%E5%BA%A6%E7%BD%91%E7%9B%98%E5%85%A5%E5%8F%A3%E5%8F%AF%E8%A7%81%E6%80%A7%E5%8F%8A%E7%9B%B8%E5%AF%B9%E4%BD%8D%E7%BD%AE%E6%A0%A1%E9%AA%8C%EF%BC%88%E6%9C%AC%E5%9C%B0%E6%96%87%E6%A1%A3%E4%B9%8B%E5%90%8E%E7%AC%AC2%E4%BD%8D%EF%BC%89-job_1783935088325_00004.html`
+- Agent 最终 `FAILED / RUN_SONIC`，原因是第 3 个首批 Runner dry-run（`5寸照片页百度网盘入口并列展示校验`）等待报告 120 秒超时，无失败结果但未及时回传；平台把它计为 `YAML dry-run 未通过`，并把 remaining 停止。
+
+根因：
+
+- Runner dry-run 等待报告超时且没有失败证据时，平台不应归因为 YAML 不可执行。更合理的分层与成熟 CI/Runner 系统一致：脚本断言失败、YAML 解析失败、定位失败、Runner/报告回传超时要分开归因。GitHub Actions/Jenkins 一类系统也会区分 test failure、runner lost、artifact upload timeout/report collection timeout，避免把基础设施不确定性污染为测试脚本失败。
+- 本轮两个正式 Runner 任务已成功，说明固定 OPPO、Runner 下发、报告回传主链整体可用；第 3 个 dry-run 是“无失败但报告等待超时”的不确定态，不应计入 `dryRunBlocked`，也不应显示为“3 个 YAML 未通过”。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- Runner 真实 dry-run 等待报告超时但没有 failed 结果时，标记为 `inconclusive / formalDispatchSkipped`，不创建该正式 Runner 任务，但也不加入 `dryRunBlocked`，不再归因为 `YAML dry-run 未通过`。
+- RUN_SONIC 汇总新增 `inconclusiveCount` 和 `inconclusive` 列表，分别展示真正拦截和 Runner dry-run 不确定结果。
+- 首批/remaining 门禁仍保留：真正 dry-run failed、YAML 静态失败、定位/脚本硬失败仍阻断扩展；不确定 dry-run 不会被误记为脚本质量失败。
+- 未修改 `router.py`，未新增执行模式，未修改历史 YAML，未触碰用户已有 dirty 的 `yaml_executable_scorer.py`、`sonic_service.py` 和历史任务文件。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_execution_plan.py tests/backend_static_checks.py
+python3 - <<'PY'
+from tests.backend_static_checks import check_generated_yaml_short_guards_and_execution_level_floor
+check_generated_yaml_short_guards_and_execution_level_floor()
+PY
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：定向检查通过，后端静态检查 `61` 项通过。部署后需要再次用同一需求/Figma和固定 OPPO `ecbfd645` 跑完整回归；重点确认 dry-run 不确定态不会被显示为 YAML 不通过，并继续观察 remaining 是否在首批成功后执行。
+
 ### 2026-07-13 完整回归确认门禁与多端展示映射修复
 
 部署 `d4a7b3e` 后继续真实验证任务：

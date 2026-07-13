@@ -459,6 +459,34 @@ def check_generated_yaml_short_guards_and_execution_level_floor():
                 "scopeReview": {"ok": False, "reasons": ["需求范围待确认"]},
             }])
             require(not blocked_refs and "完整回归生成结果未达到" in blocked_err, "Regression must not continue with only a synthetic smoke when all requirement YAML needs review")
+
+            from task_server.services import job_service
+            original_create_job = job_service.create_job
+            original_wait_jobs_finished = job_service.wait_jobs_finished
+            created_payloads = []
+            try:
+                job_service.create_job = lambda payload: created_payloads.append(payload) or {"job_id": f"job-static-{len(created_payloads)}"}
+                job_service.wait_jobs_finished = lambda *args, **kwargs: {"completed": [], "failed": [], "running": [], "timeout": [{"job_id": "job-static-1", "status": "timeout"}]}
+                created = agent_service._agent_create_runner_jobs_for_refs(
+                    {"runId": "agent-static", "platform": "android", "appPackage": "com.xbxxhz.box"},
+                    [{"module": "AI_Agent_草稿", "file": executable_path.name, "path": str(executable_path)}],
+                    "win-runner-01",
+                    "ecbfd645",
+                    "fixed",
+                    runner_dry_run_enabled=True,
+                    dry_run_timeout=1,
+                    phase="smoke",
+                )
+            finally:
+                job_service.create_job = original_create_job
+                job_service.wait_jobs_finished = original_wait_jobs_finished
+            require(
+                not created.get("dryRunBlocked")
+                and not created.get("jobIds")
+                and len(created.get("dryRunResults") or []) == 1
+                and (created["dryRunResults"][0].get("runnerDryRun") or {}).get("inconclusive") is True,
+                "Runner dry-run report timeout without a failure must be inconclusive, not a YAML dry-run blocker",
+            )
     finally:
         agent_service.TASK_DIR = old_task_dir
 

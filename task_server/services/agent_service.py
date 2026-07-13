@@ -5196,24 +5196,18 @@ def _agent_create_runner_jobs_for_refs(
                         })
                         continue
                     if dry_timeout and not dry_completed:
-                        message = "Runner 真实 dry-run 等待超时，未下发正式任务；请先查看 dry-run 报告、确认 Runner 网络/模型服务后重试"
-                        dry_row["ok"] = False
-                        dry_row.setdefault("errors", []).append(message)
+                        message = "Runner 真实 dry-run 等待报告超时，结果不确定；未下发该正式任务，请确认 Runner 回传、网络或模型服务后重试"
+                        dry_row["ok"] = True
                         dry_row.setdefault("warnings", []).append(message)
                         runner_meta = dry_row.setdefault("runnerDryRun", {})
                         if isinstance(runner_meta, dict):
                             runner_meta["inconclusive"] = True
                             runner_meta["blockedFormalDispatch"] = True
-                        dry_run_blocked.append({
-                            "module": mod,
-                            "file": fn,
-                            "path": full_path,
-                            "phase": phase,
-                            "reason": "Runner 真实 dry-run 未完成，已阻止正式下发",
-                            "job_id": dry_job_id,
-                            "errors": [message],
-                        })
+                        dry_row["formalDispatchSkipped"] = True
+                        dry_row["skipReason"] = message
                         continue
+                    if dry_timeout:
+                        dry_row.setdefault("warnings", []).append("Runner 真实 dry-run 报告等待超时但已有完成结果，按完成结果继续")
             if _agent_run_cancel_requested(run):
                 dry_run_blocked.append({
                     "module": mod,
@@ -9870,22 +9864,29 @@ def _tool_run_sonic(run):
             job_ids = created["jobIds"]
 
             dry_run_passed = sum(1 for item in dry_run_results if item.get("ok"))
+            dry_run_inconclusive = [
+                item for item in dry_run_results
+                if isinstance(item, dict)
+                and ((item.get("runnerDryRun") or {}).get("inconclusive") or item.get("formalDispatchSkipped"))
+            ]
             run_artifacts["runnerDryRun"] = {
                 "ok": not dry_run_blocked,
                 "checked": len(dry_run_results),
                 "blockedCount": len(dry_run_blocked),
+                "inconclusiveCount": len(dry_run_inconclusive),
                 "createdCount": len(job_ids),
                 "mode": "runner_yaml_dry_run" if runner_dry_run_enabled else "mock_dry_run",
                 "reason": runner_dry_run_reason,
                 "runnerJobIds": runner_dry_run_jobs,
                 "results": dry_run_results,
                 "blocked": dry_run_blocked,
+                "inconclusive": dry_run_inconclusive,
                 "deferred": gate_deferred,
                 "deferredCount": len(gate_deferred),
                 "executionGate": execution_gate,
             }
             summary_parts = [
-                f"Runner 调试模式：{run_artifacts['runnerDryRun']['mode']} 通过 {dry_run_passed} 个，拦截 {len(dry_run_blocked)} 个，创建 {len(job_ids)} 个本地任务"
+                f"Runner 调试模式：{run_artifacts['runnerDryRun']['mode']} 通过 {dry_run_passed} 个，拦截 {len(dry_run_blocked)} 个，不确定 {len(dry_run_inconclusive)} 个，创建 {len(job_ids)} 个本地任务"
             ]
             if (execution_gate or {}).get("enabled"):
                 summary_parts.append(
