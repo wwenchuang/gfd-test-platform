@@ -28,6 +28,69 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 Agent 业务计划、可信基线与失败证据闭环优化
+
+部署 `3f14956` 后继续真实验证任务：
+
+- Agent `agent-1783936219379-9a464b80`，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 2026-07-13 19:34 再次确认公网 `8088 -> 8091` 和直连 `8091` 的 `/api/health` 均为 `ok=true`，文本/视觉模型均为 `qwen3.6-plus`。本次 Agent 的执行前体检记录指定 `win-runner-01` 和 `ecbfd645（OPPO PHM110）` 在线；所有 dry-run、正式任务和安全重跑均只使用该 OPPO，没有选择第二台设备。
+- Figma 解析为 4 页/4 图，`sentToAiForJudgement=true / aiJudgementCompleted=true / aiJudgementStatus=completed`，视觉资料确实送入 AI；Figma/截图仍是软参考。
+- 生成 5 条自动化用例、8 个场景、5 份业务 YAML，并补充 1 份入口短链路；6 个 refs 均通过静态/可执行准入。旧 PLAN 仍只展示 8 个平台生命周期步骤，业务约束也只展开了文档打印，证明第一步并非真正的 AI 业务计划。
+- 首批固定 OPPO 执行事实：
+  - `job_1783936878166_00002`，文档打印页百度网盘入口校验成功；报告保留了 `本地文档 / 百度网盘 / QQ文档 / WPS文档` 的真机页面证据。
+  - `job_1783937019636_00005`，5 寸照片用例首轮在模型请求被中止后 300 秒超时；Runner `failureReview=env_issue / model_service / confidence=0.96`，这是环境故障，不应修改 YAML。
+  - 扫描复印 smoke dry-run `job_1783936878192_00003` 等待报告超时且无失败证据，被正确标为 `inconclusive / formalDispatchSkipped`，没有误记为 YAML 失败，证明 `3f14956` 的不确定态语义已在线生效。
+  - 安全重跑 `job_1783937374337_00006` 仍在同一 `ecbfd645` 串行执行，得到新的脚本证据：首个照片打印页面只看到“照片打印/热门素材”等内容，无法直接定位“5寸照片”。报告关键帧显示真实路径应继续点击页面内“照片打印”，再进入规格页选择“5寸照片”。
+- Agent 最终 `FAILED / RERUN`。remaining 没有执行，因为 smoke 未形成稳定通过结论。旧失败分析正确识别首轮模型环境故障，但没有消费安全重跑产生的新页面证据，也曾建议切换其他设备；平台实际未切换设备，但 AI 建议本身也必须受固定设备约束。
+
+根因不是“5寸照片”单点，而是 Agent 自主决策链存在通用断点：
+
+1. PLAN 调用了不匹配的旧接口并长期退化为平台生命周期，AI 没有真正输出分支、页面路径、验收点和 smoke/remaining 策略。
+2. 基线缓存把运行目录中的未验证 Agent 草稿和维护库样本同等使用；相同 YAML 按首次扫描去重时还可能保留弱来源、丢掉维护库来源。关键词相同的旧草稿会挤掉同业务分支的相邻规格路径基线。
+3. executable planner 的 AI 路径计划只记录元数据，不会覆盖后续用例步骤；模型即使识别出中间父页面，YAML 仍可能沿用错误短路径。
+4. 失败修复只发送文本日志，未把 Midscene 报告关键帧、Runner failureReview 和可信 Top3 基线一起交给 AI；安全重跑产生的新证据也不会再进入分析/修复。
+5. Runner failureReview 未完整保留到 Agent 等待结果；smoke 选择排除项与真实 dry-run 失败混在一起，影响失败归因和 remaining 门禁解释。
+
+本轮通用修改：
+
+- PLAN 改为真实调用所选模型的 `/ai/chat`，输出结构化 `businessFlows / checks / coverage / unknowns / executionStrategy`；平台生命周期单独展示。计划必须覆盖需求中的全部业务分支，失败后允许模型自我纠正一次，仍不合格才显式回退。快速预览通过通用“入口在某页：A、B、C”句式抽取任意同级分支，不硬编码当前产品分支。
+- 上游 AI 业务计划继续传入用例/YAML 生成链路，但原始需求仍是硬范围；计划中的 unknown/假设不会被确定性解析器升级为新需求。
+- 基线缓存增加来源信任：`verified_execution` 为真实执行成功，`maintained_library` 为维护库，显式审批运行副本为 `approved_runtime`，未验证工作副本不可教给生成/修复 AI。相同内容去重时保留信任更高的来源，并记录完整 `server-tasks-all/...` provenance。
+- 基线 AI 重排要求 Top3 角色互补：父页面导航路径、能力模式、稳定等待/断言；尺寸/模板/规格等叶子项可组合相邻规格路径基线。planner 只能引用本次候选真实 ID/路径；有来源的 AI flow 会真正替换原 case 路径，编造 ID 的计划不能改步骤或进入 smoke。
+- 失败分析与修复现在最多附带 6 张 Midscene 报告关键帧，并同时发送原 YAML、Runner 日志、failureReview、可信 Top3 基线和固定 Runner/设备约束。AI 只能生成最小语义修复；编造基线、只堆 sleep、等价/no-op 或 YAML 校验失败都不能自动重跑。
+- 安全重跑产生新失败后，Agent 只消费最新尝试证据；若最新归因明确为 `SCRIPT_ISSUE` 且 AI 返回 `canAutoRepair=true`，允许再进行一轮关键帧分析、可信基线修复和原设备串行验证。该闭环最多 1 轮、总尝试最多 3 次；环境、产品和未知问题不改 YAML，不会形成无限重试。
+- `executionConstraint` 明确传给失败分析/修复 AI。固定设备时 `allowOtherDevices=false`，禁止 AI 建议或 YAML 选择、切换、并发第二台手机。
+- Runner 高置信 failureReview 才能覆盖文本推断；模型请求中止/模型服务/设备离线单独归为环境。低置信 review 不能覆盖明确的定位失败。`selectionExcluded` 与 `dryRunBlocked` 分开记录，`failure_review` 保留到 wait 结果。
+- coverage 缺口会扣除已经由真实 refs 映射的过期 `REQ` 报告，但真实未覆盖需求仍阻断；达到 3/5/8 数量上限不代表覆盖完成，应合并重复 case。显式多端展示需求可生成设备无关、真实可见文字定位的复用 case，其他未执行形态进入 manual，不在 YAML 内选择设备或使用坐标。
+- Agent 页面展示 AI 计划来源/模型、业务分支、验收点、unknowns、平台门禁和“重跑后 AI 闭环”，不再把通用状态机冒充业务计划。
+
+设计取舍参考了成熟 Agent 的共同做法：AI 负责可变的推理与规划，确定性 guardrail 负责不可绕过的安全边界；全链路记录输入、决策、工具和结果；失败修复使用有终止条件的 evaluator loop。参考：[OpenAI Agents tracing](https://openai.github.io/openai-agents-python/tracing/)、[OpenAI Agents guardrails](https://openai.github.io/openai-agents-python/ref/guardrail/)、[AutoGen termination](https://microsoft.github.io/autogen/dev/user-guide/agentchat-user-guide/tutorial/termination.html)、[Anthropic agent evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents)。
+
+离线基线重放：
+
+- 缓存 66 条，可信 62 条；`AI_Agent_草稿` 4 条均为未验证来源，可信数为 0。
+- 查询“照片打印 5寸照片 百度网盘入口 同级展示 文案 可达页面”的 Top3 包含：
+  - `server-tasks-all/小白学习基线用例-基础打印/百度网盘打印.yaml`
+  - `server-tasks-all/小白学习基线用例-基础打印/6寸照片打印.yaml`
+  - `server-tasks-all/小白学习基线用例-基础打印/照片拼版.yaml`
+- 6 寸基线保留 `照片打印 icon -> 照片打印 -> 6寸照片` 的父级页面路径，能作为同分支相邻规格导航证据；平台没有写“5寸必须怎样走”的需求特判。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/job_service.py task_server/services/yaml_baseline_cache.py task_server/services/yaml_execution_plan.py task_server/services/yaml_service.py tests/backend_static_checks.py
+node --check ai-gateway/server.js
+node --check js/agent-workbench.js
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+python3 tests/ai_gateway_static_checks.py
+git diff --check
+```
+
+结果：后端 `61` 项、前端 `65` 项、AI Gateway `46` 项全部通过；离线真实 AI PLAN 模拟验证了 `/ai/chat`、三分支、模型 provenance 和计划门禁。未修改 `router.py`，未新增执行模式，未修改历史 YAML；用户已有 dirty 的历史 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、本地 Windows Runner 服务脚本和 `server-tasks/AI_Agent_草稿/` 均未纳入本轮改动。
+
+本轮新提交部署前不能宣称线上闭环已通过。部署后必须继续使用同一需求/Figma和固定 `win-runner-01 / ecbfd645` 发起完整 Agent 回归，人工复核业务 PLAN、最终 YAML、关键帧、首批与 remaining 的真实报告，持续轮询到 `DONE / FAILED / CANCELLED`。
+
 ### 2026-07-13 完整回归 Runner dry-run 超时归因修复
 
 部署 `d0516f3` 后继续真实验证任务：

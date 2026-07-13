@@ -106,14 +106,25 @@ def check_agent_failure_ai_payload_has_primary_evidence():
     from task_server.services import agent_service
 
     old_task_dir = agent_service.TASK_DIR
+    old_keyframes = agent_service._agent_failure_report_keyframes
     try:
+        agent_service._agent_failure_report_keyframes = lambda _job, limit=4: [{
+            "name": "failed-report-frame.png",
+            "mime": "image/png",
+            "base64": "a" * 1200,
+        }]
         with tempfile.TemporaryDirectory() as temp_dir:
             agent_service.TASK_DIR = temp_dir
             module_dir = Path(temp_dir) / "AI_Agent_草稿"
             module_dir.mkdir()
             (module_dir / "case.yaml").write_text("android:\n  tasks: []\n", encoding="utf-8")
             payload = agent_service._agent_failure_ai_payload(
-                {"target": "基础打印新增百度网盘入口"},
+                {
+                    "target": "基础打印新增百度网盘入口",
+                    "runnerId": "win-runner-01",
+                    "deviceId": "ecbfd645",
+                    "deviceStrategy": "fixed",
+                },
                 "SCRIPT_ISSUE",
                 "执行失败 1 个任务",
                 [{
@@ -134,8 +145,208 @@ def check_agent_failure_ai_payload_has_primary_evidence():
         require("仍停留在首页" in payload.get("screenshotDesc", ""), "Agent failure analysis must send screenshot-derived failure context")
         require(payload.get("failedJobs") and payload["failedJobs"][0].get("jobId") == "job-static-failure", "Agent failure analysis must preserve aggregate failed jobs")
         require(payload["failedJobs"][0].get("failureReview", {}).get("category") == "env_issue", "Agent failure analysis must preserve Runner failure review evidence")
+        require(payload.get("reportKeyframes") == ["failed-report-frame.png"] and len(payload.get("imageAssets") or []) == 1, "Agent failure analysis must attach bounded Midscene report keyframes")
+        require(payload.get("executionConstraint", {}).get("allowOtherDevices") is False and payload["executionConstraint"].get("deviceId") == "ecbfd645", "Agent failure AI must retain the fixed-device constraint and forbid a second phone")
     finally:
         agent_service.TASK_DIR = old_task_dir
+        agent_service._agent_failure_report_keyframes = old_keyframes
+
+
+def check_agent_ai_owned_plan_and_evidence_loop():
+    from task_server.services import agent_service, ai_skill_service, yaml_baseline_cache, yaml_service
+    from task_server.services.yaml_execution_plan import classify_generated_yaml_failure_bucket
+
+    preview = agent_service.preview_agent_plan({
+        "target": "基础打印新增百度网盘入口",
+        "requirementText": "基础打印入口在首页：文档打印、照片打印、扫描复印。覆盖展示、同级关系、文案和可达页面。",
+        "scope": "regression",
+    })
+    branches = [item.get("branch") for item in preview.get("businessFlows") or []]
+    require(branches == ["文档打印", "照片打印", "扫描复印"], "Agent plan preview must expand every requirement branch instead of showing a generic lifecycle")
+    generic_preview = agent_service.preview_agent_plan({
+        "target": "会员服务新增发票入口",
+        "requirementText": "会员服务入口在首页：订单管理、优惠券。发票入口是新增能力，需要校验展示和文案。",
+        "scope": "regression",
+    })
+    require(
+        [item.get("branch") for item in generic_preview.get("businessFlows") or []] == ["订单管理", "优惠券"],
+        "Agent requirement preview must extract arbitrary sibling entry lists without product-specific branch names",
+    )
+    require(
+        all("发票入口" in " ".join(item.get("checks") or []) for item in generic_preview.get("businessFlows") or []),
+        "Agent requirement preview must derive the new entry label from the requirement instead of a fixed product keyword",
+    )
+    require(preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate business flows from platform lifecycle")
+    plan_context = yaml_service.build_agent_business_plan_context_text({
+        "source": "ai_gateway",
+        "objective": "覆盖三个入口",
+        "businessFlows": preview.get("businessFlows"),
+    })
+    require("Agent 上游业务计划" in plan_context and "页面路径" in plan_context and "可见验收点" in plan_context, "Agent business plan must feed the downstream case/YAML generation context")
+
+    old_health = agent_service._probe_agent_ai_health
+    old_gateway_post = agent_service._ai_gateway_post
+    old_goal_analysis = agent_service._ensure_agent_goal_analysis
+    old_log_tool_call = agent_service._log_tool_call
+    gateway_calls = []
+    try:
+        agent_service._probe_agent_ai_health = lambda run=None: {"gatewayReachable": True, "ready": True}
+
+        def fake_gateway_post(path, payload, timeout=30):
+            gateway_calls.append({"path": path, "payload": payload, "timeout": timeout})
+            return {
+                "success": True,
+                "providerId": "qwen_plus",
+                "model": "qwen3.6-plus",
+                "content": json.dumps({
+                    "objective": "覆盖三个业务入口的展示、同级关系、文案和可达页面",
+                    "businessFlows": [
+                        {"id": "FLOW-001", "name": "文档打印", "branch": "文档打印", "steps": ["进入首页", "点击文档打印", "到达文档打印页"], "checks": ["检查新增入口可见和文案正确"]},
+                        {"id": "FLOW-002", "name": "照片打印", "branch": "照片打印", "steps": ["进入首页", "点击照片打印", "到达照片打印页"], "checks": ["检查新增入口同级展示并可达"]},
+                        {"id": "FLOW-003", "name": "扫描复印", "branch": "扫描复印", "steps": ["进入首页", "点击扫描复印", "到达扫描复印页"], "checks": ["检查新增入口文案和可达页面"]},
+                    ],
+                    "coverage": [],
+                    "assumptions": [],
+                    "unknowns": ["具体叶子页面层级由可信基线或真机证据消解"],
+                    "executionStrategy": {"smokeFlowIds": ["FLOW-001", "FLOW-002", "FLOW-003"], "remainingFlowIds": [], "reason": "三个入口分别走最短链路"},
+                }, ensure_ascii=False),
+            }
+
+        agent_service._ai_gateway_post = fake_gateway_post
+        agent_service._ensure_agent_goal_analysis = lambda run: {"keywords": ["入口"], "matchAll": False, "summary": "三入口覆盖", "aiSource": "static"}
+        agent_service._log_tool_call = lambda *args, **kwargs: None
+        live_plan_run = {
+            "runId": "agent-static-ai-plan",
+            "target": "基础打印新增百度网盘入口",
+            "scope": "regression",
+            "appName": "小白学习打印",
+            "appPackage": "com.xbxxhz.box",
+            "runnerId": "win-runner-01",
+            "deviceId": "ecbfd645",
+            "deviceStrategy": "fixed",
+            "aiModel": "qwen3.6-plus",
+            "normalizedInput": {"requirementText": "基础打印入口在首页：文档打印、照片打印、扫描复印。覆盖展示、同级关系、文案和可达页面。"},
+            "artifacts": {},
+        }
+        plan_call = agent_service._tool_agent_plan(live_plan_run)
+        live_plan = live_plan_run.get("artifacts", {}).get("plan", {})
+        require(plan_call.get("status") == "SUCCESS" and live_plan.get("aiGenerated"), "Agent PLAN must use the selected AI model instead of silently returning a generic local lifecycle")
+        require(gateway_calls and gateway_calls[0].get("path") == "/ai/chat", "Agent PLAN must call the AI Gateway chat route with the full business requirement")
+        require(len(live_plan.get("businessFlows") or []) == 3 and live_plan.get("qualityGate", {}).get("passed"), "AI PLAN must preserve every required business branch and pass deterministic grounding")
+        require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
+    finally:
+        agent_service._probe_agent_ai_health = old_health
+        agent_service._ai_gateway_post = old_gateway_post
+        agent_service._ensure_agent_goal_analysis = old_goal_analysis
+        agent_service._log_tool_call = old_log_tool_call
+
+    maintained = yaml_baseline_cache._baseline_source_info(
+        str(ROOT / "server-tasks-all"), "基础打印/6寸照片打印.yaml", {}, "unknown"
+    )
+    working = yaml_baseline_cache._baseline_source_info(
+        str(ROOT / "server-tasks"), "AI_Agent_草稿/5寸照片.yaml", {}, "unknown"
+    )
+    require(maintained.get("trusted") and maintained.get("baselineUsable"), "Maintained baseline library must stay eligible for AI grounding")
+    require(not working.get("trusted") and not working.get("baselineUsable"), "Unverified runtime drafts must not teach generation or repair AI")
+    require(maintained.get("provenancePath", "").startswith("server-tasks-all/"), "Trusted baseline provenance must identify the maintained source root")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        runtime_root = Path(temp_dir) / "server-tasks"
+        maintained_root = Path(temp_dir) / "server-tasks-all"
+        for root in (runtime_root, maintained_root):
+            yaml_path = root / "基础打印" / "同一基线.yaml"
+            yaml_path.parent.mkdir(parents=True, exist_ok=True)
+            yaml_path.write_text("android:\n  tasks:\n    - name: 同一基线\n      flow:\n        - aiWaitFor: 首页可见\n        - aiTap: 照片打印\n", encoding="utf-8")
+        old_roots = yaml_baseline_cache._baseline_roots
+        old_save_cache = yaml_baseline_cache.save_yaml_baseline_cache
+        try:
+            yaml_baseline_cache._baseline_roots = lambda: [str(runtime_root), str(maintained_root)]
+            yaml_baseline_cache.save_yaml_baseline_cache = lambda cache: None
+            deduped_cache = yaml_baseline_cache.build_yaml_baseline_cache()
+        finally:
+            yaml_baseline_cache._baseline_roots = old_roots
+            yaml_baseline_cache.save_yaml_baseline_cache = old_save_cache
+        require(len(deduped_cache.get("items") or []) == 1, "Identical baseline blocks should remain deduplicated")
+        require(deduped_cache["items"][0].get("sourceKind") == "maintained_library", "Baseline dedupe must retain the stronger maintained provenance instead of the first unverified working copy")
+
+    yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    require(
+        yaml_service_source.index("semantic_constraints_text = build_requirement_semantic_constraints_text")
+        < yaml_service_source.index("agent_business_plan_text = build_agent_business_plan_context_text"),
+        "AI business-plan guidance must not be parsed as a new deterministic hard requirement",
+    )
+    agent_service_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    require("artifacts = run.get(\"artifacts\") if isinstance(run.get(\"artifacts\"), dict) else {}\n    files = _agent_source_files_for_generation(run)" in agent_service_source, "Agent generation must initialize artifacts before forwarding the AI business plan")
+
+    payload = {
+        "analysis": {"requirement_points": ["REQ-001 照片打印"]},
+        "cases": [{
+            "case_id": "TC-001",
+            "title": "5寸照片入口校验",
+            "steps": ["进入照片打印", "点击5寸照片"],
+            "assertions": ["百度网盘可见"],
+        }],
+    }
+    grounded_plan = {
+        "allowedBaselineIds": ["base-photo-6"],
+        "scopePlan": {"smokeCount": 1},
+        "cases": [{
+            "caseId": "TC-001",
+            "title": "5寸照片入口校验",
+            "baselineId": "base-photo-6",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": ["进入照片打印", "点击页面内照片打印", "点击5寸照片"],
+            "assertionTarget": "百度网盘可见",
+            "batch": "smoke",
+        }],
+    }
+    applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, grounded_plan)
+    require(applied["cases"][0]["steps"] == grounded_plan["cases"][0]["flow"], "Grounded AI path plan must replace the generated path and preserve intermediate parent pages")
+    require(applied["cases"][0]["ai_case_plan"].get("pathPlanApplied"), "Applied AI path plan must be observable")
+    ungrounded_plan = json.loads(json.dumps(grounded_plan, ensure_ascii=False))
+    ungrounded_plan["cases"][0]["baselineId"] = "invented-baseline"
+    ungrounded_plan["cases"][0]["baselineGrounded"] = False
+    not_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, ungrounded_plan)
+    require(not_applied["cases"][0]["steps"] == payload["cases"][0]["steps"], "Ungrounded AI baseline citations must not change case paths")
+
+    generated_yaml = """android:
+  tasks:
+    - name: 照片打印
+      flow:
+        - terminate: com.xbxxhz.box
+        - launch: com.xbxxhz.box
+        - ai: 终止并重启App
+        - aiWaitFor: 首页加载完成
+        - aiTap: 照片打印
+"""
+    repaired = yaml_service.repair_generated_yaml_executable_gate_issues(generated_yaml)
+    require(repaired.get("changed") and "终止并重启App" not in repaired.get("content", ""), "Generated YAML must remove redundant AI restart after deterministic launch")
+    require("被测 App 已按前置 launch 启动" in repaired.get("content", ""), "Redundant restart must become a visible stable-state wait")
+
+    run = {
+        "scope": "regression",
+        "artifacts": {
+            "generationPipeline": {
+                "caseCount": 2,
+                "yamlFileCount": 2,
+                "coverageAudit": {
+                    "requirement_point_count": 2,
+                    "missing_case_points": ["REQ-004 多端展示", "REQ-005 点击可达"],
+                },
+                "generatedCaseGroups": {"counts": {}},
+            },
+        },
+    }
+    refs = [{"scopeReview": {"matchedRequirementIds": ["REQ-005"]}}, {}]
+    gap = agent_service._agent_generated_yaml_coverage_gap(run, refs)
+    require(gap.get("missingRequirementPoints") == ["REQ-004 多端展示"], "Coverage gate must remove stale missing IDs already mapped by confirmed YAML")
+    require(classify_generated_yaml_failure_bucket([{"failureType": "ENV_ISSUE", "reason": "model request was aborted"}]) == "模型/环境失败", "Model service failures must not be classified as YAML failures")
+
+    separated = agent_service._agent_create_runner_jobs_for_refs(
+        {}, [], "runner", "device", "fixed", initial_blocked=[{"reason": "smoke selection excluded"}]
+    )
+    require(not separated.get("dryRunBlocked") and separated.get("selectionExcluded"), "Smoke selection exclusions must stay separate from actual dry-run failures")
 
 
 def check_agent_failure_review_and_repair_guard():
@@ -153,6 +364,56 @@ def check_agent_failure_review_and_repair_guard():
     })
     require(normalized.get("failureType") == "ENV_ISSUE", "Runner env_issue review must override misleading script-like timeout text")
     require("model request" in normalized.get("failureReason", ""), "Normalized Agent failure must retain the Runner review reason")
+    low_confidence_review = agent_service._normalize_failed_execution_item({
+        "jobId": "job-static-low-confidence-review",
+        "stderrTail": "failed to locate element: 照片打印",
+        "failureReview": {
+            "category": "env_issue",
+            "confidence": 0.32,
+            "reason": "可能是模型服务波动",
+        },
+    })
+    require(low_confidence_review.get("failureType") == "SCRIPT_ISSUE", "Low-confidence failure review must not override concrete Runner script evidence")
+    require(
+        agent_service._normalize_agent_failed_items([
+            {"jobId": "job-a", "stderrTail": "failed to locate element: 照片打印"},
+            {"jobId": "job-a", "stderrTail": "duplicate"},
+        ])[0].get("failureType") == "SCRIPT_ISSUE",
+        "Latest rerun evidence must be normalized and deduplicated before bounded AI repair",
+    )
+    bounded = agent_service._agent_post_rerun_autonomy(
+        {"artifacts": {}},
+        [{"jobId": "job-b", "stderrTail": "failed to locate element: 照片打印"}],
+        repair_depth=1,
+    )
+    require(not bounded.get("analyzed") and "上限" in bounded.get("reason", ""), "Post-rerun AI repair must stop after one bounded cycle")
+    old_analyze_failure = agent_service._tool_analyze_failure
+    old_generate_repair = agent_service._tool_generate_repair
+    try:
+        def fake_analyze_failure(run, failed_jobs_override=None):
+            run.setdefault("artifacts", {})["failureAnalysis"] = {
+                "failureType": "SCRIPT_ISSUE",
+                "canAutoRepair": True,
+                "evidence": {"reportKeyframes": ["latest-failure.png"]},
+            }
+            return {"status": "SUCCESS"}
+
+        agent_service._tool_analyze_failure = fake_analyze_failure
+        agent_service._tool_generate_repair = lambda run, failed_jobs_override=None: {
+            "status": "SUCCESS",
+            "aiUsed": True,
+            "repairDraftIds": ["repair-latest"],
+        }
+        autonomy = agent_service._agent_post_rerun_autonomy(
+            {"artifacts": {}},
+            [{"jobId": "job-c", "stderrTail": "failed to locate element: 5寸照片"}],
+            repair_depth=0,
+        )
+        require(autonomy.get("repairGenerated") and autonomy.get("repairDraftIds") == ["repair-latest"], "Latest script evidence must trigger one AI repair draft before same-device verification")
+        require(autonomy.get("reportKeyframes") == ["latest-failure.png"], "Post-rerun repair must retain the latest report keyframe provenance")
+    finally:
+        agent_service._tool_analyze_failure = old_analyze_failure
+        agent_service._tool_generate_repair = old_generate_repair
     script_timeout = agent_service._normalize_failed_execution_item({
         "jobId": "job-static-page-timeout",
         "failureType": "等待目标超时",
@@ -2193,7 +2454,7 @@ def check_yaml_reference_examples_are_general_step_library():
     )
     require("aiTap" in all_text and "aiWaitFor" in all_text, "YAML reference examples must expose executable Midscene step actions")
     prompt_text = yaml_service.build_yaml_reference_examples_text(examples)
-    require("相似成功基线写法参考" in prompt_text and "你不是自由生成 YAML" in prompt_text, "YAML reference prompt must force baseline imitation")
+    require("可信相似基线写法参考" in prompt_text and "你不是自由生成 YAML" in prompt_text, "YAML reference prompt must force provenance-grounded baseline imitation")
     require("只能替换业务对象、按钮文案、输入内容和断言目标" in prompt_text, "YAML reference prompt must constrain AI to business-variable replacement")
 
 
@@ -3692,6 +3953,7 @@ def main():
     require('"sourceFailedCount"' in agent_service_source and '"targetCount"' in agent_service_source and '"rerunSources"' in agent_service_source, "Agent rerun must expose source failed count, target count, and rerun mappings")
     require('"rerunProgress"' in agent_service_source and '"learningSummary"' in agent_service_source, "Agent rerun and learning steps must persist readable timeline summaries")
     require("def _agent_prepare_repair_rerun_targets" in agent_service_source and '"usesRepairDraft"' in agent_service_source and '"notRerunOriginalYaml"' in agent_service_source, "Agent safe rerun must materialize repair drafts and avoid silently rerunning old YAML")
+    require("def _agent_post_rerun_autonomy" in agent_service_source and '"maxRepairCycles": 1' in agent_service_source and "repair_depth < 1" in agent_service_source, "Agent must use latest rerun evidence for one bounded AI repair cycle without an unbounded retry loop")
     require("已有修复草稿但没有可执行 YAML" in agent_service_source and "没有可用修复草稿，未重跑旧 YAML" in agent_service_source, "Agent safe rerun must explain missing or invalid repair drafts instead of reporting false success")
     require(
         '"PLAN", "PREPARE_SOURCE", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,
@@ -3835,7 +4097,14 @@ def main():
     require("respect_global_timeout=timeout_seconds is None" in ai_skill_service_source and "retry_count=None if timeout_seconds is None else 0" in ai_skill_service_source, "Short visual grounding timeouts must bypass the global long AI timeout")
     require("AGENT_GENERATE_YAML_TIMEOUT_SECONDS = max(300, env_int(\"MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS\", 900))" in yaml_service_source and 'job_type == "agent_generate_yaml"' in yaml_service_source, "Agent YAML generation must use a bounded Agent-specific timeout")
     require("expire_generate_job_if_stale" in agent_service_source and "timeout_seconds=900" in agent_service_source, "Agent YAML generation watcher must expire stale generation jobs instead of leaving Agent stuck")
-    require('flow.append(f"校验{entry_label}入口可见")' in agent_service_source and 'flow.append(f"进入{\'扫描复印\' if label == \'复印扫描\' else label}")' in agent_service_source and 'business_flow_source = "requirement_text"' in agent_service_source, "Agent business flow must prefer explicit requirement entry chains over incidental Figma page text")
+    require(
+        "def _fallback_business_flows_from_text" in agent_service_source
+        and 'checks = [f"校验{entry_label}入口可见"]' in agent_service_source
+        and 'steps.append(f"进入{branch}")' in agent_service_source
+        and '"checks": list(checks)' in agent_service_source
+        and 'business_flow_source = "requirement_text"' in agent_service_source,
+        "Agent business plan must prefer explicit requirement branches and keep navigation steps separate from visible checks",
+    )
     require("def refine_cases_with_yaml_visual_batches" in yaml_service_source and "YAML_VISUAL_BATCH_SIZE" in yaml_service_source and "legacy_fallback=False" in yaml_service_source, "YAML visual grounding must run in bounded batches without doubling timeout via legacy fallback")
     require("def build_executable_smoke_yaml_policy_text" in yaml_service_source and "def review_generated_yaml_smoke_stability" in yaml_service_source and '"yamlSmokeStability"' in yaml_service_source, "YAML generation must enforce and report Runner smoke-execution stability")
     require("yaml_static_validator.py" in "\n".join(str(path) for path in (ROOT / "task_server" / "services").glob("*.py")) and (ROOT / "task_server" / "config_data" / "yaml_actions.json").exists(), "YAML generation must have a static action contract and validator")
@@ -3918,6 +4187,7 @@ def main():
     check_agent_execution_gate_repairs_before_smoke_selection()
     check_agent_runner_failure_reason_summary()
     check_agent_failure_ai_payload_has_primary_evidence()
+    check_agent_ai_owned_plan_and_evidence_loop()
     check_agent_failure_review_and_repair_guard()
     check_agent_quality_report_uses_figma_visual_reference()
     check_agent_figma_context_defaults()

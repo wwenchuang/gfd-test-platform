@@ -1578,12 +1578,14 @@ def collect_yaml_reference_examples(query_text, module="", limit=None):
 
 
 def collect_yaml_baseline_library_examples(limit=None):
-    """Collect a broad baseline profile from the persisted YAML baseline cache."""
+    """Collect a broad trusted baseline profile from the persisted cache."""
     limit = safe_int(limit, env_int("YAML_BASELINE_PROFILE_MAX_EXAMPLES", 120))
     cache = get_yaml_baseline_cache(force=False)
     rows = []
     for item in cache.get("items") or []:
         if not isinstance(item, dict):
+            continue
+        if item.get("baselineUsable") is not True or item.get("trusted") is not True:
             continue
         row = dict(item)
         row.setdefault("score", 0)
@@ -1597,8 +1599,8 @@ def collect_yaml_baseline_library_examples(limit=None):
 def build_yaml_reference_examples_text(examples):
     examples = [item for item in (examples or []) if isinstance(item, dict)]
     lines = [
-        "【相似成功基线写法参考】",
-        "你不是自由生成 YAML，而是按相似成功基线做仿写；平台会优先执行短链路、可复用、可稳定定位的 YAML。",
+        "【可信相似基线写法参考】",
+        "你不是自由生成 YAML，而是按有明确来源的可信相似基线做仿写；优先采用真实执行成功样本，其次采用维护库样本。",
         "必须复用相似基线的动作顺序、等待方式、点击前置、点击后等待和断言方式；只能替换业务对象、按钮文案、输入内容和断言目标。",
         "禁止把检查/展示/存在/可见/状态类语义写成 aiTap；这类步骤必须写成 aiWaitFor、aiAssert 或基线中已有的轻量 ai。",
         "没有相似基线时，不要强行生成高风险长链路 YAML；应输出短链路可执行用例，外部授权/系统选择器/长流程放入需确认或人工用例。",
@@ -1606,20 +1608,52 @@ def build_yaml_reference_examples_text(examples):
         "",
     ]
     if not examples:
-        lines.append("本次未命中相似成功基线；只允许生成短链路 YAML，复杂链路必须降级为需确认或人工用例。")
+        lines.append("本次未命中可信相似基线；只允许生成短链路 YAML，复杂链路必须降级为需确认或人工用例。")
         return "\n".join(lines).strip()
     for idx, item in enumerate(examples[:3], start=1):
         matched = "、".join(item.get("matched_terms") or []) or "模块/步骤结构相近"
         actions = " -> ".join(item.get("actions") or []) or "-"
         lines.extend([
             f"### 参考样例 {idx}: {item.get('title') or item.get('file')}",
-            f"- 来源: {item.get('file')}",
+            f"- 来源: {item.get('provenancePath') or item.get('file')}",
+            f"- 来源类型/验证: {item.get('sourceKind') or '-'} / {item.get('verificationStatus') or '-'}",
+            f"- AI 使用角色: {item.get('ai_selected_role') or '-'}",
             f"- 匹配: {matched}",
             f"- 动作类型: {actions}",
         ])
-        if item.get("baseline_path"):
-            lines.append(f"- 业务路径: {item.get('baseline_path')}")
+        if item.get("businessPath") or item.get("baseline_path"):
+            lines.append(f"- 业务路径: {item.get('businessPath') or item.get('baseline_path')}")
         lines.extend(["```yaml", item.get("snippet") or "", "```", ""])
+    return "\n".join(lines).strip()
+
+
+def build_agent_business_plan_context_text(plan):
+    """Render the upstream Agent business plan as guidance, not new requirements."""
+    plan = plan if isinstance(plan, dict) else {}
+    flows = [item for item in (plan.get("businessFlows") or []) if isinstance(item, dict)]
+    if not flows:
+        return ""
+    lines = [
+        "【Agent 上游业务计划】",
+        "这是 AI 基于原始需求形成的业务分支与执行优先级，用于保持生成链路一致；原始需求仍是硬范围，Figma/截图仍是软参考。",
+        "不得把计划中的假设或 unknowns 直接升级为硬断言；应由可信基线、设计资料或真机证据消解。",
+    ]
+    if plan.get("objective"):
+        lines.append(f"- 验收目标: {plan.get('objective')}")
+    for index, item in enumerate(flows[:8], start=1):
+        lines.append(f"{index}. {item.get('name') or item.get('branch') or item.get('id') or '业务分支'}")
+        steps = normalize_text_list(item.get("steps"))[:10]
+        checks = normalize_text_list(item.get("checks"))[:8]
+        if steps:
+            lines.append("   - 页面路径: " + " -> ".join(steps))
+        if checks:
+            lines.append("   - 可见验收点: " + "；".join(checks))
+    strategy = plan.get("executionStrategy") if isinstance(plan.get("executionStrategy"), dict) else {}
+    if strategy:
+        lines.append("- AI 冒烟/remaining 建议: " + json.dumps(strategy, ensure_ascii=False)[:1200])
+    unknowns = normalize_text_list(plan.get("unknowns"))[:8]
+    if unknowns:
+        lines.append("- 待证据消解: " + "；".join(unknowns))
     return "\n".join(lines).strip()
 
 
@@ -1648,6 +1682,8 @@ def build_ai_generation_decision_context_text(selected_baselines, scope_plan, ca
         for index, item in enumerate(selected_baselines[:3], start=1):
             lines.append(
                 f"{index}. {item.get('title') or item.get('file') or '-'}"
+                f"；角色: {item.get('ai_selected_role') or '-'}"
+                f"；来源: {item.get('provenancePath') or item.get('file') or '-'}"
                 f"；动作: {' -> '.join(item.get('actions') or []) or '-'}"
                 f"；原因: {item.get('ai_selected_reason') or item.get('selection_reason') or item.get('matched_terms') or '-'}"
             )
@@ -1789,6 +1825,11 @@ def record_yaml_reference_examples(case_set_id, title, module, examples):
                 "matched_terms": item.get("matched_terms") or [],
                 "actions": item.get("actions") or [],
                 "hash": item.get("hash"),
+                "provenancePath": item.get("provenancePath") or item.get("file") or "",
+                "sourceKind": item.get("sourceKind") or "",
+                "verificationStatus": item.get("verificationStatus") or "",
+                "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
+                "aiSelectedRole": item.get("ai_selected_role") or "",
             }
             for item in examples[:YAML_REFERENCE_MAX_EXAMPLES]
         ],
@@ -4932,6 +4973,35 @@ def _repair_generated_home_ai_step(step: dict, next_step: dict = None) -> dict:
     }
 
 
+def _repair_generated_post_launch_restart_ai_step(step: dict, next_step: dict = None) -> dict:
+    """Remove redundant AI app restarts after deterministic launch guards."""
+    if not isinstance(step, dict):
+        return {}
+    action_key = next((key for key in ("ai", "aiAction", "aiAct") if key in step), "")
+    if not action_key:
+        return {}
+    prompt = str(step.get(action_key) or "").strip()
+    compact = _compact_text(prompt).lower()
+    restart_terms = (
+        "终止并重启app", "终止并重启应用", "关闭并重启app", "关闭并重启应用",
+        "重启app", "重启应用", "重新启动app", "重新启动应用", "杀掉并重启",
+    )
+    if not compact or not any(term in compact for term in restart_terms):
+        return {}
+    target_hint = ""
+    if isinstance(next_step, dict) and "aiWaitFor" in next_step:
+        next_prompt = str(next_step.get("aiWaitFor") or "").strip()
+        if next_prompt:
+            target_hint = f"；随后应满足：{next_prompt[:100]}"
+    replacement_prompt = f"被测 App 已按前置 launch 启动并进入稳定可见首屏{target_hint}"
+    _replace_step_action(step, action_key, "aiWaitFor", replacement_prompt, timeout=DEFAULT_WAITFOR_TIMEOUT_MS)
+    return {
+        "changed": f"redundant post-launch {action_key} -> aiWaitFor",
+        "prompt": prompt[:180],
+        "replacement": replacement_prompt[:180],
+    }
+
+
 def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
     """Repair local executable-gate issues before generated YAML is persisted.
 
@@ -4958,12 +5028,15 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
         if not isinstance(flow, list):
             continue
         after_baidu_tap = False
+        deterministic_launch_seen = False
         converted_wait_prompts = []
         for step_index, step in enumerate(flow, start=1):
             if not isinstance(step, dict):
                 continue
             if any(key in step for key in ("launch", "runAdbShell")):
                 after_baidu_tap = False
+            if "launch" in step:
+                deterministic_launch_seen = True
             if isinstance(step.get("runAdbShell"), str) and _is_heavy_recent_cleanup_shell(step.get("runAdbShell")):
                 prompt = str(step.get("runAdbShell") or "")
                 step["runAdbShell"] = "input keyevent 3"
@@ -4976,6 +5049,13 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                 })
 
             next_step = flow[step_index] if step_index < len(flow) and isinstance(flow[step_index], dict) else None
+            restart_repair = _repair_generated_post_launch_restart_ai_step(step, next_step) if deterministic_launch_seen else {}
+            if restart_repair:
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    **restart_repair,
+                })
             home_repair = _repair_generated_home_ai_step(step, next_step)
             if home_repair:
                 changes.append({
@@ -5212,7 +5292,7 @@ def _ai_executable_gate_rewrite_prompt(yaml_text, *, title="", module="", file="
     reason_text = "\n".join(f"- {item}" for item in _executable_gate_reason_lines(reasons)[:12]) or "- 未提供具体原因"
     baseline_block = _truncate_prompt_text(baseline_text, 3500).strip()
     if not baseline_block:
-        baseline_block = "无相似成功基线。只能保守缩短当前 YAML，不要扩展新场景。"
+        baseline_block = "无可信相似基线。只能保守缩短当前 YAML，不要扩展新场景。"
     return f"""
 你是 Midscene YAML 可执行性修复器。当前 YAML 已经生成，但执行前 dry-run / 可执行性准入失败。
 
@@ -5227,7 +5307,7 @@ def _ai_executable_gate_rewrite_prompt(yaml_text, *, title="", module="", file="
 - 模块：{module or "-"}
 - 文件：{file or "-"}
 
-【相似成功基线写法参考】
+【可信相似基线写法参考】
 {baseline_block}
 
 【必须遵守】
@@ -6101,6 +6181,11 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="识别需求主链",
                 message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
             )
+    agent_business_plan_text = build_agent_business_plan_context_text(
+        d.get("agent_business_plan") or d.get("agentBusinessPlan")
+    )
+    if agent_business_plan_text:
+        stage1_text_assets = list(stage1_text_assets) + [agent_business_plan_text]
     deterministic_entry_visibility_source = entry_visibility_fast_path_enabled(
         d,
         title,
@@ -6237,9 +6322,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
         if job_id:
             names = "、".join((item.get("title") or item.get("file") or "") for item in yaml_reference_examples[:3])
             message = (
-                f"已从缓存检索 Top{len(yaml_reference_examples)} 相似成功基线，生成时仿写：{names}"
+                f"已从缓存检索 Top{len(yaml_reference_examples)} 可信相似基线（优先执行成功），生成时仿写：{names}"
                 if yaml_reference_examples
-                else "未命中相似成功基线，本次只允许生成短链路 YAML，复杂链路进入需确认/人工"
+                else "未命中可信相似基线，本次只允许生成短链路 YAML，复杂链路进入需确认/人工"
             )
             update_generate_job(
                 job_id,
@@ -6384,6 +6469,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "reason": execution_scope_plan.get("reason") or "",
         "businessFlow": execution_scope_plan.get("businessFlow") or [],
     }
+    if agent_business_plan_text:
+        review["agent_business_plan"] = {
+            "used": True,
+            "source": (d.get("agent_business_plan") or d.get("agentBusinessPlan") or {}).get("source") or "",
+            "businessFlowCount": len((d.get("agent_business_plan") or d.get("agentBusinessPlan") or {}).get("businessFlows") or []),
+            "rule": "上游 Agent 业务计划参与需求拆解和路径规划，但不能覆盖原始需求或把软参考升级为硬门禁。",
+        }
     if yaml_reference_examples:
         memory_path = record_yaml_reference_examples(case_set_id, title, module, yaml_reference_examples)
         review["yaml_reference_examples"] = [
@@ -6395,6 +6487,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 "matched_terms": item.get("matched_terms") or [],
                 "actions": item.get("actions") or [],
                 "baseline_path": item.get("baseline_path") or "",
+                "businessPath": item.get("businessPath") or "",
+                "sourceKind": item.get("sourceKind") or "",
+                "verificationStatus": item.get("verificationStatus") or "",
+                "provenancePath": item.get("provenancePath") or item.get("file") or "",
+                "sourceTrust": item.get("sourceTrust") or 0,
+                "aiSelectedRole": item.get("ai_selected_role") or "",
+                "aiSelectedReason": item.get("ai_selected_reason") or "",
             }
             for item in yaml_reference_examples
         ]

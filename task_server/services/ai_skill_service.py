@@ -1433,6 +1433,7 @@ def _joined_requirement_source(title="", module="", text_assets=None):
             "Midscene",
             "现有 YAML",
             "相似成功基线",
+            "可信相似基线",
             "生成策略",
             "生成要求",
             "selection_rules",
@@ -2461,13 +2462,23 @@ def _compact_baseline_candidate(item, index=0):
         "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
         "lastRunStatus": item.get("lastRunStatus") or "",
         "failureRate": item.get("failureRate") or 0,
+        "baselineUsable": item.get("baselineUsable") is True,
+        "trusted": item.get("trusted") is True,
+        "sourceKind": item.get("sourceKind") or "",
+        "sourceTrust": safe_int(item.get("sourceTrust"), 0),
+        "verificationStatus": item.get("verificationStatus") or "",
+        "provenancePath": item.get("provenancePath") or item.get("file") or "",
         "snippet": snippet[:1600],
     }
 
 
 def call_skill_baseline_reranker(title, module, query_text, candidates, model_config=None, limit=3):
     """Use AI to choose the most relevant cached baseline examples, with local fallback."""
-    candidates = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(candidates or []) if isinstance(item, dict)]
+    candidates = [
+        _compact_baseline_candidate(item, idx)
+        for idx, item in enumerate(candidates or [])
+        if isinstance(item, dict) and item.get("baselineUsable") is True and item.get("trusted") is True
+    ]
     limit = max(1, min(3, safe_int(limit, 3)))
     local_selected_ids = {item["id"] for item in candidates[:limit]}
     trace = {
@@ -2491,6 +2502,8 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
             "max_selected": limit,
             "avoid_unrelated_external_flow": True,
             "fallback_when_irrelevant": True,
+            "prefer_complementary_roles": ["navigation_path", "capability_pattern", "assertion_pattern"],
+            "cite_candidate_provenance_exactly": True,
         },
     }
     try:
@@ -2505,15 +2518,27 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
         )
         selected_rows = []
         id_to_candidate = {item["id"]: item for item in candidates}
+        invalid_citation_count = 0
         for selected in result.get("selected") or []:
             if not isinstance(selected, dict):
                 continue
             selected_id = clean_id(selected.get("id") or selected.get("candidateId") or "", "")
             if not selected_id or selected_id not in id_to_candidate:
                 continue
-            row = dict(id_to_candidate[selected_id])
+            candidate = id_to_candidate[selected_id]
+            cited_path = str(selected.get("candidatePath") or selected.get("provenancePath") or "").replace("\\", "/").strip()
+            expected_paths = {
+                str(candidate.get("file") or "").replace("\\", "/").strip(),
+                str(candidate.get("provenancePath") or "").replace("\\", "/").strip(),
+            }
+            if cited_path and cited_path not in expected_paths:
+                invalid_citation_count += 1
+                continue
+            row = dict(candidate)
             row["ai_selected_reason"] = selected.get("reason") or ""
             row["ai_confidence"] = selected.get("confidence")
+            row["ai_selected_role"] = selected.get("role") or ""
+            row["ai_cited_path"] = cited_path or candidate.get("provenancePath") or candidate.get("file") or ""
             selected_rows.append(row)
             if len(selected_rows) >= limit:
                 break
@@ -2522,6 +2547,8 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
             trace["fallback"] = True
             trace["error"] = "ai_selected_none_or_invalid"
         trace["selected_count"] = len(selected_rows)
+        trace["invalid_citation_count"] = invalid_citation_count
+        trace["selection_roles"] = [item.get("ai_selected_role") for item in selected_rows if item.get("ai_selected_role")]
         return {"selected": selected_rows, "trace": trace, "review": result.get("review") or {}}
     except Exception as exc:
         selected_rows = [dict(item) for item in candidates[:limit]]
@@ -2621,6 +2648,8 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
     if not candidates:
         trace.update({"fallback": True, "error": "no_cases"})
         return {"cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [], "trace": trace}
+    compact_baselines = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])]
+    allowed_baseline_ids = {str(item.get("id") or "").strip() for item in compact_baselines if str(item.get("id") or "").strip()}
     request = {
         "title": title,
         "module": module,
@@ -2628,7 +2657,7 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
         "scenarios": normalized.get("scenarios") or [],
         "cases": candidates,
         "manual_cases": normalized.get("manual_cases") or [],
-        "selectedBaselines": [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])],
+        "selectedBaselines": compact_baselines,
         "scopePlan": scope_plan or {},
     }
     try:
@@ -2641,13 +2670,38 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
             retry_count=0,
             model_config=model_config,
         )
-        cases = [item for item in (result.get("cases") or []) if isinstance(item, dict)]
+        candidate_by_id = {str(item.get("case_id") or "").strip(): item for item in candidates if str(item.get("case_id") or "").strip()}
+        candidate_by_title = {str(item.get("title") or "").strip(): item for item in candidates if str(item.get("title") or "").strip()}
+        cases = []
+        rejected_case_count = 0
+        ungrounded_baseline_count = 0
+        for item in (result.get("cases") or []):
+            if not isinstance(item, dict):
+                continue
+            requested_case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
+            requested_title = str(item.get("title") or "").strip()
+            source_case = candidate_by_id.get(requested_case_id) or candidate_by_title.get(requested_title)
+            if not source_case:
+                rejected_case_count += 1
+                continue
+            baseline_id = str(item.get("baselineId") or item.get("baseline_id") or "").strip()
+            baseline_grounded = bool(baseline_id and baseline_id in allowed_baseline_ids)
+            if not baseline_grounded:
+                ungrounded_baseline_count += 1
+            normalized_item = dict(item)
+            normalized_item["caseId"] = source_case.get("case_id")
+            normalized_item["title"] = source_case.get("title")
+            normalized_item["baselineId"] = baseline_id
+            normalized_item["baselineGrounded"] = baseline_grounded
+            cases.append(normalized_item)
         trace.update({
             "case_count": len(cases),
             "needs_review_count": len(result.get("needs_review_cases") or []),
             "draft_count": len(result.get("draft_cases") or []),
             "manual_count": len(result.get("manual_cases") or []),
             "smoke_count": len([item for item in cases if str(item.get("batch") or "").lower() == "smoke"]),
+            "rejected_case_count": rejected_case_count,
+            "ungrounded_baseline_count": ungrounded_baseline_count,
         })
         return {
             "cases": cases,
@@ -2656,6 +2710,7 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
             "manual_cases": result.get("manual_cases") or [],
             "review": result.get("review") or {},
             "trace": trace,
+            "allowedBaselineIds": sorted(allowed_baseline_ids),
         }
     except Exception as exc:
         trace.update({"fallback": True, "error": str(exc)})
@@ -2663,7 +2718,7 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
 
 
 def apply_executable_yaml_plan_to_payload(payload, plan):
-    """Attach AI planning metadata to cases without deleting existing generated content."""
+    """Apply an input-grounded AI path plan while preserving an audit copy."""
     normalized = normalize_cases_payload(payload)
     plan_cases = [item for item in ((plan or {}).get("cases") or []) if isinstance(item, dict)]
     if not plan_cases:
@@ -2673,16 +2728,31 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     targets = generation_volume_targets(normalized.get("analysis") or {}, mode="full")
     smoke_limit = max(1, min(3, safe_int((plan or {}).get("scopePlan", {}).get("smokeCount"), safe_int(targets.get("smoke_cases"), 3))))
     smoke_used = 0
+    allowed_baseline_ids = {
+        str(item).strip() for item in ((plan or {}).get("allowedBaselineIds") or []) if str(item or "").strip()
+    }
     for case in normalized.get("cases") or []:
         case_id = str(case.get("case_id") or case.get("id") or "").strip()
         title = str(case.get("title") or "").strip()
         item = by_case_id.get(case_id) or by_title.get(title)
         if not item:
             continue
+        baseline_id = str(item.get("baselineId") or "").strip()
+        baseline_grounded = bool(
+            item.get("baselineGrounded") is True
+            and baseline_id
+            and baseline_id in allowed_baseline_ids
+        )
+        planned_flow = normalize_text_list(item.get("flow"))[:8]
+        original_flow = normalize_text_list(case.get("steps"))[:8]
+        path_plan_applied = bool(baseline_grounded and len(planned_flow) >= 2)
         case["ai_case_plan"] = {
-            "baselineId": item.get("baselineId") or "",
+            "baselineId": baseline_id,
+            "baselineGrounded": baseline_grounded,
             "precondition": item.get("precondition") or "",
-            "flow": normalize_text_list(item.get("flow"))[:8],
+            "flow": planned_flow,
+            "originalFlow": original_flow,
+            "pathPlanApplied": path_plan_applied,
             "assertionTarget": item.get("assertionTarget") or "",
             "executableReason": item.get("executableReason") or "",
             "batch": item.get("batch") or "",
@@ -2691,9 +2761,15 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             case["preconditions"] = [str(item.get("precondition"))]
         if item.get("assertionTarget") and not normalize_text_list(case.get("assertions")):
             case["assertions"] = [str(item.get("assertionTarget"))]
+        if path_plan_applied:
+            case["steps"] = planned_flow
         if item.get("executableReason") and not case.get("automation_reason"):
             case["automation_reason"] = item.get("executableReason")
-        can_smoke = bool(item.get("baselineId") and item.get("precondition") and item.get("assertionTarget"))
+        can_smoke = bool(
+            path_plan_applied
+            and item.get("precondition")
+            and item.get("assertionTarget")
+        )
         if str(item.get("batch") or "").lower() == "smoke" and can_smoke and smoke_used < smoke_limit:
             case["smoke"] = True
             flags = normalize_text_list(case.get("flag") or case.get("flags"))
@@ -2708,6 +2784,10 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "draft_count": len((plan or {}).get("draft_cases") or []),
         "manual_count": len((plan or {}).get("manual_cases") or []),
         "smoke_count": smoke_used,
+        "path_plan_applied_count": sum(
+            1 for case in (normalized.get("cases") or [])
+            if isinstance(case.get("ai_case_plan"), dict) and case["ai_case_plan"].get("pathPlanApplied")
+        ),
         "review": (plan or {}).get("review") or {},
     }
     return normalized
@@ -2852,6 +2932,8 @@ def build_case_coverage_repair_prompt(title, module, payload, audit):
 8. 输出只允许合法 JSON，结构仍为 title、module、analysis、scenarios、cases、manual_cases、review。
 9. 必须补齐 analysis.coverage_matrix：每个 requirement_point 都要说明正常/异常/边界场景，以及进入 cases 还是 manual_cases；不能只补 cases 不补场景。
 10. 不得删除已有有效业务链路；如果合并重复用例，要在 review 中说明合并原因，并保留覆盖点。
+11. 自动化数量已经达到 generation_targets 上限时，不能因为“数量够了”而保留重复检查并遗漏显式需求点；应合并/替换低价值重复 case，确保每个显式 requirement_point 至少有一个可追溯 case 或完整 manual_case。
+12. 对多设备、屏幕形态、宽屏/手机布局等显式需求，若检查点是当前页面可见文案、入口、同级关系或滚动可达性，应生成不绑定机型、只用真实可见文字定位的可复用 case；当前运行只在平台指定设备执行，未执行的其他形态另列 manual_cases，不得在 YAML 内选择第二台设备或写坐标。
 
 当前标题：{title}
 当前模块：{module}

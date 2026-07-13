@@ -20,7 +20,7 @@ from task_server.schemas import MIDSCENE_FLOW_ACTIONS
 from task_server.storage import clean_filename, read_json_file, read_text_file, write_json_file
 
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 YAML_BASELINE_CACHE_TTL_SECONDS = max(30, env_int("MIDSCENE_YAML_BASELINE_CACHE_TTL_SECONDS", 600))
 YAML_BASELINE_CACHE_MAX_FILES = max(50, env_int("MIDSCENE_YAML_BASELINE_CACHE_MAX_FILES", 1200))
 YAML_BASELINE_CACHE_SNIPPET_CHARS = max(600, env_int("MIDSCENE_YAML_BASELINE_CACHE_SNIPPET_CHARS", 2400))
@@ -271,6 +271,56 @@ def _failure_rate(row: Dict[str, Any], last_status: str) -> float:
     return 0.0
 
 
+def _meta_truthy(row: Dict[str, Any], *keys: str) -> bool:
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, bool):
+            if value:
+                return True
+            continue
+        if str(value or "").strip().lower() in ("1", "true", "yes", "approved", "verified", "baseline"):
+            return True
+    return False
+
+
+def _baseline_source_info(root: str, rel_path: str, meta_row: Dict[str, Any], last_status: str) -> Dict[str, Any]:
+    """Classify provenance before a YAML block is allowed to teach the model."""
+    normalized_root = os.path.abspath(str(root or "")).replace("\\", "/").rstrip("/")
+    root_name = os.path.basename(normalized_root).lower()
+    maintained_library = root_name == "server-tasks-all" or normalized_root.endswith("/server-tasks-all")
+    execution_verified = last_status == "success"
+    metadata_verified = _meta_truthy(
+        meta_row,
+        "baselineUsable", "baseline_usable", "approved", "verified", "isBaseline", "is_baseline",
+    )
+    if execution_verified:
+        source_kind = "verified_execution"
+        verification_status = "execution_success"
+        trust_score = 100
+    elif maintained_library:
+        source_kind = "maintained_library"
+        verification_status = "maintained"
+        trust_score = 80
+    elif metadata_verified:
+        source_kind = "approved_runtime"
+        verification_status = "metadata_verified"
+        trust_score = 70
+    else:
+        source_kind = "working_copy"
+        verification_status = "unverified"
+        trust_score = 10
+    usable = bool(execution_verified or maintained_library or metadata_verified)
+    return {
+        "sourceKind": source_kind,
+        "sourceRoot": root_name or normalized_root,
+        "provenancePath": "/".join(filter(None, [root_name, str(rel_path or "").replace("\\", "/")])),
+        "verificationStatus": verification_status,
+        "sourceTrust": trust_score,
+        "trusted": usable,
+        "baselineUsable": usable,
+    }
+
+
 def _cache_item(root: str, rel_path: str, path: str, stat: os.stat_result, block: str, task_meta: Dict[str, Any]) -> Dict[str, Any] | None:
     actions = _block_actions(block)
     if not actions:
@@ -281,6 +331,7 @@ def _cache_item(root: str, rel_path: str, path: str, stat: os.stat_result, block
     title = _block_title(block, os.path.splitext(os.path.basename(path))[0])
     business_path = _business_path(block)
     snippet = _snippet(block)
+    source_info = _baseline_source_info(root, rel_path, meta_row, last_status)
     item_id = hashlib.sha1(f"{root}|{rel_path}|{block}".encode("utf-8", "ignore")).hexdigest()[:16]
     keyword_text = "\n".join([title, module, rel_path, business_path, snippet[:1000]])
     return {
@@ -296,7 +347,7 @@ def _cache_item(root: str, rel_path: str, path: str, stat: os.stat_result, block
         "businessPath": business_path,
         "baseline_path": _baseline_path(block),
         "snippet": snippet,
-        "baselineUsable": True,
+        **source_info,
         "lastRunStatus": last_status,
         "failureRate": _failure_rate(meta_row, last_status),
         "hash": item_id,
@@ -308,7 +359,7 @@ def build_yaml_baseline_cache() -> Dict[str, Any]:
     started = time.time()
     fingerprint_info = calc_baseline_fingerprint()
     items: List[Dict[str, Any]] = []
-    seen = set()
+    seen: Dict[str, int] = {}
     task_meta = _load_task_meta()
     for root, rel_path, path, stat in _iter_yaml_files():
         text = read_text_file(path, default="")
@@ -316,12 +367,16 @@ def build_yaml_baseline_cache() -> Dict[str, Any]:
             continue
         for block in _yaml_blocks(text):
             block_hash = hashlib.sha1(block.encode("utf-8", "ignore")).hexdigest()
-            if block_hash in seen:
-                continue
             item = _cache_item(root, rel_path, path, stat, block, task_meta)
             if not item:
                 continue
-            seen.add(block_hash)
+            existing_index = seen.get(block_hash)
+            if existing_index is not None:
+                existing = items[existing_index]
+                if safe_int(item.get("sourceTrust"), 0) > safe_int(existing.get("sourceTrust"), 0):
+                    items[existing_index] = item
+                continue
+            seen[block_hash] = len(items)
             items.append(item)
     cache = {
         "version": CACHE_VERSION,
@@ -439,6 +494,7 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
         score += 8
     if item.get("lastRunStatus") in ("passed", "success"):
         score += 10
+    score += max(0, min(10, safe_int(item.get("sourceTrust"), 0) // 10))
     try:
         failure_rate = float(item.get("failureRate") or 0)
     except Exception:
@@ -455,7 +511,13 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
     return score, matched[:12]
 
 
-def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3, allow_fallback: bool = False) -> List[Dict[str, Any]]:
+def search_baseline_examples(
+    query_text: Any,
+    module: str = "",
+    limit: int = 3,
+    allow_fallback: bool = False,
+    trusted_only: bool = True,
+) -> List[Dict[str, Any]]:
     """Search cached baseline snippets and return prompt-ready Top-N examples."""
     limit = max(1, min(YAML_BASELINE_SEARCH_MAX_LIMIT, safe_int(limit, 3)))
     started = time.time()
@@ -464,6 +526,8 @@ def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3, 
     scored = []
     for item in cache.get("items") or []:
         if not isinstance(item, dict):
+            continue
+        if trusted_only and (item.get("baselineUsable") is not True or item.get("trusted") is not True):
             continue
         score, matched = _score_item(query_terms, module, item)
         if score <= 0 and not allow_fallback:
@@ -483,12 +547,16 @@ def search_baseline_examples(query_text: Any, module: str = "", limit: int = 3, 
 
 def get_yaml_baseline_cache_status(force: bool = False) -> Dict[str, Any]:
     cache = get_yaml_baseline_cache(force=force)
+    items = [item for item in (cache.get("items") or []) if isinstance(item, dict)]
+    trusted_count = sum(1 for item in items if item.get("baselineUsable") is True and item.get("trusted") is True)
     status = {
         "ok": True,
         "cacheHit": bool(_LAST_STATUS.get("cacheHit")),
         "cacheSource": _LAST_STATUS.get("cacheSource"),
         "fileCount": cache.get("fileCount", 0),
         "caseCount": cache.get("caseCount", 0),
+        "trustedCaseCount": trusted_count,
+        "excludedUnverifiedCount": max(0, len(items) - trusted_count),
         "generatedAt": cache.get("generatedAt"),
         "generatedAtText": cache.get("generatedAtText"),
         "fingerprint": cache.get("fingerprint"),

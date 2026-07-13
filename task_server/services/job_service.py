@@ -1006,6 +1006,7 @@ def _job_entry_from_record(job: Dict[str, Any], jid: str, status: str) -> Dict[s
         "report_upload_pending": safe_bool(job.get("report_upload_pending")),
         "report_upload_error": job.get("report_upload_error", ""),
         "error": job.get("error", ""),
+        "failure_review": job.get("failure_review") or job.get("failureReview") or {},
     }
 
 

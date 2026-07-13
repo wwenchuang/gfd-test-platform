@@ -99,6 +99,17 @@ AGENT_SERVICE_STARTED_TS = time.time()
 
 AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
 
+AGENT_PLATFORM_LIFECYCLE_STEPS = [
+    "整理输入来源与软参考",
+    "检索并由 AI 重排可信基线（优先真实执行成功）",
+    "生成用例、YAML 与覆盖审查",
+    "执行平台静态校验和风险门禁",
+    "在指定 Runner/设备上先冒烟后扩展",
+    "收集报告、关键帧和 Runner 日志",
+    "由 AI 诊断失败并生成受约束修复草稿",
+    "校验后只重跑失败用例并生成总结",
+]
+
 AGENT_GENERATED_RUNNER_SMOKE_LIMIT = max(
     1,
     min(10, safe_int(os.getenv("MIDSCENE_AGENT_GENERATED_RUNNER_SMOKE_LIMIT"), 3)),
@@ -1069,23 +1080,31 @@ def preview_agent_plan(payload):
     scope = str(payload.get("scope") or "smoke").strip()
     mode = str(payload.get("mode") or "AUTO_SAFE").upper()
     risk_hits = [kw for kw in AGENT_RISK_KEYWORDS if kw in goal]
+    normalized_input = normalize_agent_input(payload)
+    preview_run = {
+        "target": goal,
+        "scope": scope,
+        "normalizedInput": normalized_input,
+        "artifacts": {},
+    }
+    constraint = _ensure_business_flow_constraint(preview_run)
+    business_flows = _agent_plan_constraint_flows(constraint)
     return {
         "mode": mode,
         "appName": app_name,
         "platform": platform,
         "scope": scope,
         "riskHits": risk_hits,
+        "version": "agent-business-plan-preview-v2",
+        "source": "requirement_preview",
+        "aiGenerated": False,
+        "businessFlows": business_flows,
         "steps": [
-            "1. 分析测试目标",
-            "2. 整理输入来源",
-            "3. 匹配已有用例或生成新用例",
-            "4. 生成并校验 Midscene YAML",
-            "5. 通过 Windows/Mac Runner 执行已确认 YAML",
-            "6. 收集报告并分析失败",
-            "7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿",
-            "8. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
-            "9. 生成总结报告",
+            f"{item.get('name') or item.get('branch') or item.get('id')}：{' -> '.join(_agent_plan_text_list(item.get('steps'), limit=10))}"
+            for item in business_flows
         ],
+        "platformLifecycle": list(AGENT_PLATFORM_LIFECYCLE_STEPS),
+        "note": "这是需求分支快速预览；任务启动后由所选模型补全页面层级、检查点和冒烟优先级，平台再做覆盖与安全门禁。",
     }
 
 
@@ -2577,7 +2596,23 @@ def _agent_job_field(job, snake_key, camel_key=None):
     return ""
 
 
+def _agent_high_confidence_failure_review(review, threshold=0.8):
+    if not isinstance(review, dict):
+        return False
+    try:
+        return float(review.get("confidence") or 0) >= float(threshold)
+    except Exception:
+        return False
+
+
 def _agent_job_failure_reason(job):
+    failure_review = job.get("failure_review") or job.get("failureReview") or {}
+    if isinstance(failure_review, dict):
+        review_reason = str(failure_review.get("reason") or "").strip()
+        review_type = _agent_failure_type_from_review(failure_review)
+        if review_reason and review_type and _agent_high_confidence_failure_review(failure_review):
+            prefix = f"{review_type}：" if review_type else "Runner 复核："
+            return f"{prefix}{_agent_job_log_tail(review_reason)}"
     summary_excerpt = _agent_summary_error_excerpt(
         _agent_job_field(job, "summary_text", "summaryText") or job.get("summary")
     )
@@ -2648,6 +2683,11 @@ def _agent_job_failure_type(text):
         or "android_home" in lowered and "environment variable" in lowered
     ):
         return "ENV_ISSUE"
+    if any(term in lowered for term in (
+        "model request was aborted", "model request aborted", "模型服务", "model service",
+        "service unavailable", "gateway timeout", "econnreset", "etimedout",
+    )):
+        return "ENV_ISSUE"
     if "replanned 5 times" in lowered or "replanningcyclelimit" in lowered:
         return "Midscene 重规划超限"
     if "timeout after 300s" in lowered:
@@ -2690,11 +2730,17 @@ def _agent_job_failure_reasons(jobs, limit=5):
                 ("report_upload_error", "reportUploadError"),
             )
         )
+        failure_review = job.get("failure_review") or job.get("failureReview") or {}
+        review_failure_type = _agent_failure_type_from_review(failure_review)
+        inferred_failure_type = _agent_job_failure_type(raw_text)
+        trusted_review_type = review_failure_type if _agent_high_confidence_failure_review(failure_review) else ""
+        failure_type = trusted_review_type or inferred_failure_type
         reasons.append({
             "jobId": _agent_job_field(job, "job_id", "jobId"),
             "target": _agent_job_failure_target(job),
             "reason": reason,
-            "failureType": _agent_job_failure_type(raw_text),
+            "failureType": failure_type,
+            "failureReview": failure_review if isinstance(failure_review, dict) else {},
             "status": _agent_job_field(job, "status"),
             "runnerId": _agent_job_field(job, "runner_id", "runnerId"),
             "deviceId": _agent_job_field(job, "device_id", "deviceId"),
@@ -2839,14 +2885,35 @@ def _evaluate_agent_quality_gate(run, stage, payload):
     flow_keywords = _business_flow_keywords(constraint)
     if stage == "plan":
         steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
-        passed = bool(steps) and bool(constraint.get("businessFlow"))
-        reason = "计划包含步骤且已绑定业务主链" if passed else "计划缺少步骤或业务主链"
+        business_flows = [item for item in (payload.get("businessFlows") or []) if isinstance(item, dict)]
+        required_flows = _agent_plan_constraint_flows(constraint)
+        plan_text = _normalize_business_flow_text(json.dumps(business_flows, ensure_ascii=False))
+        missing_branches = []
+        for item in required_flows:
+            branch = str(item.get("branch") or item.get("name") or "").strip()
+            if branch and not _agent_plan_branch_present(branch, plan_text):
+                missing_branches.append(branch)
+        generic_only = bool(business_flows) and all(
+            set(_agent_plan_text_list(item.get("steps"))).issubset(set(AGENT_DEFAULT_BUSINESS_FLOW))
+            for item in business_flows
+        )
+        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only
+        if missing_branches:
+            reason = "AI 计划缺少需求业务分支：" + "、".join(missing_branches)
+        elif generic_only:
+            reason = "计划只有平台通用生命周期，未展开业务步骤"
+        else:
+            reason = "计划已展开业务分支并覆盖需求主链" if passed else "计划缺少业务分支或业务步骤"
         return _record_agent_quality_gate(
             run,
             "plan_grounding",
             passed,
             reason,
             stepCount=len(steps),
+            businessFlowCount=len(business_flows),
+            missingBranches=missing_branches,
+            aiGenerated=bool(payload.get("aiGenerated")),
+            fallbackUsed=bool(payload.get("fallbackUsed")),
             businessFlowKeywords=flow_keywords,
         )
     if stage == "case_retrieval":
@@ -3722,14 +3789,224 @@ AGENT_TOOL_HANDLERS = {
 # Agent Step Tool Functions (real service integration)
 # ---------------------------------------------------------------------------
 
+def _agent_plan_text_list(value, limit=12):
+    values = value if isinstance(value, list) else ([value] if value not in (None, "") else [])
+    result = []
+    for item in values:
+        text = re.sub(r"^\s*\d+[.、)）]\s*", "", str(item or "")).strip()
+        if not text or text in result:
+            continue
+        result.append(text[:180])
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _agent_plan_requirement_text(run):
+    run = run if isinstance(run, dict) else {}
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    source = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    normalized = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
+    source_inputs = normalized.get("sourceInputs") if isinstance(normalized.get("sourceInputs"), dict) else {}
+    return str(
+        source.get("requirementText")
+        or normalized.get("requirementText")
+        or source_inputs.get("requirementText")
+        or normalized.get("text")
+        or run.get("target")
+        or ""
+    ).strip()
+
+
+def _agent_plan_constraint_flows(constraint):
+    constraint = constraint if isinstance(constraint, dict) else {}
+    flows = [item for item in (constraint.get("businessFlows") or []) if isinstance(item, dict)]
+    if flows:
+        return flows[:8]
+    flat = _agent_plan_text_list(constraint.get("businessFlow"), limit=12)
+    if not flat:
+        return []
+    return [{"id": "FLOW-001", "name": "业务主链", "branch": "", "steps": flat}]
+
+
+def _agent_plan_branch_present(branch, text):
+    branch = str(branch or "").strip()
+    text = str(text or "")
+    aliases = {
+        "扫描复印": ("扫描复印", "复印扫描"),
+        "复印扫描": ("扫描复印", "复印扫描"),
+        "个人中心": ("个人中心", "我的"),
+        "我的": ("我的", "个人中心"),
+    }
+    return bool(branch and any(alias in text for alias in aliases.get(branch, (branch,))))
+
+
+def _fallback_agent_business_plan(run, constraint, reason=""):
+    flows = []
+    for index, item in enumerate(_agent_plan_constraint_flows(constraint), start=1):
+        steps = _agent_plan_text_list(item.get("steps") or item.get("businessFlow"), limit=10)
+        checks = _agent_plan_text_list(item.get("checks"), limit=8)
+        if not checks:
+            checks = [step for step in steps if any(word in step for word in ("校验", "检查", "确认", "验证"))]
+        business_steps = [step for step in steps if step not in checks]
+        flows.append({
+            "id": str(item.get("id") or f"FLOW-{index:03d}"),
+            "name": str(item.get("name") or item.get("branch") or f"业务分支 {index}"),
+            "branch": str(item.get("branch") or ""),
+            "preconditions": ["App 已安装并可启动", "使用当前指定 Runner 与设备"],
+            "steps": business_steps or steps or list(AGENT_DEFAULT_BUSINESS_FLOW),
+            "checks": checks or ["校验当前业务分支达到需求描述的可见终态"],
+            "requirementRefs": [],
+            "evidence": ["requirement"],
+        })
+    if not flows:
+        flows = [{
+            "id": "FLOW-001",
+            "name": "业务主链",
+            "branch": "",
+            "preconditions": ["App 已安装并可启动", "使用当前指定 Runner 与设备"],
+            "steps": list(AGENT_DEFAULT_BUSINESS_FLOW),
+            "checks": ["校验业务结果"],
+            "requirementRefs": [],
+            "evidence": ["requirement"],
+        }]
+    return {
+        "version": "agent-business-plan-v2",
+        "source": "rule_fallback",
+        "aiGenerated": False,
+        "fallbackUsed": True,
+        "fallbackReason": str(reason or "AI 计划不可用，按需求主链生成可执行兜底计划")[:500],
+        "objective": str(run.get("target") or "执行测试目标"),
+        "businessFlows": flows,
+        "coverage": [
+            {"flowId": item.get("id"), "branch": item.get("branch") or item.get("name"), "status": "planned"}
+            for item in flows
+        ],
+        "assumptions": ["Figma 和上传截图仅作为 AI 软参考，不替代需求与真机结果"],
+        "unknowns": [],
+        "executionStrategy": {
+            "smokeFlowIds": [item.get("id") for item in flows[:3]],
+            "remainingFlowIds": [item.get("id") for item in flows[3:]],
+            "reason": "每个业务分支先执行一个最短稳定检查点，再扩展剩余可执行用例",
+        },
+    }
+
+
+def _normalize_agent_business_plan(value, run, constraint):
+    if not isinstance(value, dict):
+        return None, ["AI 计划不是 JSON 对象"]
+    raw_flows = value.get("businessFlows") or value.get("business_flows") or value.get("flows") or []
+    if not isinstance(raw_flows, list):
+        return None, ["businessFlows 必须是数组"]
+    flows = []
+    issues = []
+    for index, item in enumerate(raw_flows[:8], start=1):
+        if not isinstance(item, dict):
+            continue
+        steps = _agent_plan_text_list(item.get("steps") or item.get("flow"), limit=10)
+        checks = _agent_plan_text_list(item.get("checks") or item.get("assertions"), limit=6)
+        name = str(item.get("name") or item.get("branch") or f"业务分支 {index}").strip()
+        if len(steps) < 2:
+            issues.append(f"{name} 缺少完整业务步骤")
+        if not checks:
+            issues.append(f"{name} 缺少用户可见验收点")
+        flows.append({
+            "id": str(item.get("id") or f"FLOW-{index:03d}")[:40],
+            "name": name[:100],
+            "branch": str(item.get("branch") or name)[:80],
+            "preconditions": _agent_plan_text_list(item.get("preconditions"), limit=6),
+            "steps": steps,
+            "checks": checks,
+            "requirementRefs": _agent_plan_text_list(item.get("requirementRefs") or item.get("requirement_refs"), limit=8),
+            "evidence": _agent_plan_text_list(item.get("evidence"), limit=6),
+        })
+    if not flows:
+        issues.append("AI 计划没有业务分支")
+
+    combined = _normalize_business_flow_text(json.dumps(flows, ensure_ascii=False))
+    required_flows = _agent_plan_constraint_flows(constraint)
+    missing_branches = []
+    for item in required_flows:
+        branch = str(item.get("branch") or item.get("name") or "").strip()
+        if branch and not _agent_plan_branch_present(branch, combined):
+            missing_branches.append(branch)
+    if missing_branches:
+        issues.append("缺少需求业务分支：" + "、".join(missing_branches))
+    if flows and all(set(item.get("steps") or []).issubset(set(AGENT_DEFAULT_BUSINESS_FLOW)) for item in flows):
+        issues.append("计划仍是平台通用生命周期，没有展开真实业务步骤")
+    if issues:
+        return None, issues
+
+    plan = {
+        "version": "agent-business-plan-v2",
+        "source": "ai_gateway",
+        "aiGenerated": True,
+        "fallbackUsed": False,
+        "objective": str(value.get("objective") or value.get("goal") or run.get("target") or "")[:300],
+        "businessFlows": flows,
+        "coverage": [item for item in (value.get("coverage") or []) if isinstance(item, dict)][:20],
+        "assumptions": _agent_plan_text_list(value.get("assumptions"), limit=10),
+        "unknowns": _agent_plan_text_list(value.get("unknowns"), limit=10),
+        "executionStrategy": value.get("executionStrategy") if isinstance(value.get("executionStrategy"), dict) else {},
+    }
+    return plan, []
+
+
+def _agent_business_plan_prompt(run, constraint, validation_issues=None, previous_output=""):
+    normalized = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
+    requirement = _agent_plan_requirement_text(run)
+    correction = ""
+    if validation_issues:
+        correction = (
+            "\n上一版计划未通过平台校验，请自主修正后重新输出。\n"
+            f"校验问题：{json.dumps(validation_issues, ensure_ascii=False)}\n"
+            f"上一版输出：{str(previous_output or '')[:6000]}\n"
+        )
+    return f"""你是移动端测试 Agent 的业务计划器。请自主理解需求并设计可执行的业务测试计划；不要复述平台状态机。\n
+目标：{run.get('target', '')}\n
+完整需求：{requirement}\n
+应用：{run.get('appName', '')} ({run.get('appPackage', '')})\n
+平台/范围：{run.get('platform', 'android')} / {run.get('scope', 'regression')}\n
+Figma：{normalized.get('figmaUrl') or '无'}（只作软参考，不得据此删除需求或制造硬门禁）\n
+固定执行约束：runner={run.get('runnerId') or '未指定'}，device={run.get('deviceId') or '未指定'}，strategy={run.get('deviceStrategy') or 'auto'}。不得建议或选择第二台设备。\n
+平台从需求抽取的业务主链：\n{json.dumps(_compact_business_flow_constraint(constraint), ensure_ascii=False, indent=2)}\n
+只输出严格 JSON，不要 Markdown。结构：\n
+{{\n
+  "objective": "本次可验收目标",\n
+  "businessFlows": [{{\n
+    "id": "FLOW-001",\n
+    "name": "业务分支名称",\n
+    "branch": "需求中的业务入口/分支",\n
+    "preconditions": ["真实前置条件"],\n
+    "steps": ["按页面层级排列的真实业务步骤"],\n
+    "checks": ["展示/同级关系/文案/可达终态等检查点"],\n
+    "requirementRefs": ["对应需求点"],\n
+    "evidence": ["requirement", "figma_soft_reference", "successful_baseline_pending"]\n
+  }}],\n
+  "coverage": [{{"requirement": "需求点", "flowIds": ["FLOW-001"]}}],\n
+  "assumptions": [],\n
+  "unknowns": [],\n
+  "executionStrategy": {{"smokeFlowIds": ["FLOW-001"], "remainingFlowIds": [], "reason": "选择依据"}}\n
+}}\n
+要求：\n
+1. 每个需求业务入口单独形成 flow，不得只规划第一个分支。\n
+2. steps 必须是业务页面层级与动作，checks 必须是用户可见验收点；不要写“生成 YAML、调用 Runner、收集报告”等平台动作。\n
+3. 对页面层级不确定的地方写入 unknowns，后续由成功基线/Figma/真机证据消解；不要臆造坐标、包名或控件。\n
+4. AI 可以决定冒烟优先级和剩余批次，但固定 Runner/设备、YAML 合法性、风险和覆盖门禁不可绕过。\n{correction}"""
+
+
 def _tool_agent_plan(run):
-    """调用 AI Gateway 生成计划；不可用则本地生成。"""
+    """Generate an AI-owned business plan while keeping platform gates explicit."""
     call = {
         "callId": str(uuid.uuid4())[:8],
         "toolName": "analyze_goal",
         "category": "AI",
         "startedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "input": {"target": run.get("target", ""), "scope": run.get("scope", "smoke")},
+        "input": {
+            "target": run.get("target", ""),
+            "requirement": _agent_plan_requirement_text(run),
+            "scope": run.get("scope", "smoke"),
+        },
     }
     try:
         ai_health = _probe_agent_ai_health(run)
@@ -3738,92 +4015,86 @@ def _tool_agent_plan(run):
             prompt_ctx = get_prompt_center().enrich(run if isinstance(run, dict) else {})
         except Exception:
             prompt_ctx = {}
+        plan = None
+        plan_issues = []
+        plan_source = "rule_fallback"
         if ai_health.get("gatewayReachable"):
-            try:
-                resp = _ai_gateway_post("/ai/generate-case", {
-                    "target": run.get("target", ""),
-                    "scope": run.get("scope", "smoke"),
-                    "mode": run.get("mode", "AUTO_SAFE"),
-                    "appName": run.get("appName", ""),
-                    "platform": run.get("platform", "android"),
-                    "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
-                    "businessFlowConstraint": business_constraint,
-                    "businessContext": prompt_ctx.get("businessContext"),
-                    "promptCenter": prompt_ctx.get("promptCenter"),
-                })
-                plan_steps = resp.get("steps", []) if isinstance(resp, dict) else []
-                if not plan_steps:
-                    plan_steps = [
-                        "1. 分析测试目标",
-                        "2. 匹配已有用例或生成新用例",
-                        "3. 生成并校验 Midscene YAML",
-                        "4. 通过 Windows/Mac Runner 执行已确认 YAML",
-                        "5. 收集报告并分析失败",
-                        "6. 生成修复草稿或缺陷草稿",
-                        "7. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
-                        "8. 生成总结报告",
-                    ]
-                plan = {
-                    "steps": plan_steps,
-                    "mode": run.get("mode", "AUTO_SAFE"),
-                    "target": run.get("target", ""),
-                    "riskLevel": run.get("riskLevel", "low"),
-                    "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
-                    "businessContext": prompt_ctx.get("businessContext"),
-                    "aiHealth": ai_health,
-                }
-                call["status"] = "SUCCESS"
-                call["outputSummary"] = "AI Gateway 生成计划完成"
-                _record_agent_ai_decision(run, "plan", "ai_gateway", True, call["outputSummary"], stepCount=len(plan_steps))
-            except Exception as e:
-                call["status"] = "SKIPPED"
-                call["outputSummary"] = f"AI Gateway 调用失败：{str(e)[:200]}"
-                _record_agent_ai_decision(run, "plan", "ai_gateway", False, call["outputSummary"])
-                plan = {
-                    "steps": [
-                        "1. 分析测试目标",
-                        "2. 匹配已有用例或生成新用例",
-                        "3. 生成并校验 Midscene YAML",
-                        "4. 通过 Windows/Mac Runner 执行已确认 YAML",
-                        "5. 收集报告并分析失败",
-                        "6. 生成修复草稿或缺陷草稿",
-                        "7. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
-                        "8. 生成总结报告",
-                    ],
-                    "mode": run.get("mode", "AUTO_SAFE"),
-                    "target": run.get("target", ""),
-                    "riskLevel": run.get("riskLevel", "low"),
-                    "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
-                    "aiHealth": ai_health,
-                }
-        else:
-            call["status"] = "SKIPPED"
-            call["outputSummary"] = "AI Gateway 不可用，使用本地默认计划"
-            _record_agent_ai_decision(run, "plan", "local_default", True, call["outputSummary"], aiHealth=ai_health)
-            plan = {
-                "steps": [
-                    "1. 分析测试目标",
-                    "2. 匹配已有用例或生成新用例",
-                    "3. 生成并校验 Midscene YAML",
-                    "4. 通过 Windows/Mac Runner 执行已确认 YAML",
-                    "5. 收集报告并分析失败",
-                    "6. 生成修复草稿或缺陷草稿",
-                    "7. Runner 测试动作风险仅提醒；平台级写操作进入 WAIT_CONFIRM",
-                    "8. 生成总结报告",
-                ],
-                "mode": run.get("mode", "AUTO_SAFE"),
-                "target": run.get("target", ""),
-                "riskLevel": run.get("riskLevel", "low"),
-                "businessFlowConstraint": _compact_business_flow_constraint(business_constraint),
-                "aiHealth": ai_health,
-            }
+            previous_output = ""
+            plan_timeout = max(20, safe_int(os.getenv("MIDSCENE_AGENT_PLAN_TIMEOUT_SECONDS"), 45))
+            for attempt in range(2):
+                try:
+                    response = _ai_gateway_post("/ai/chat", {
+                        "messages": [{
+                            "role": "user",
+                            "content": _agent_business_plan_prompt(
+                                run,
+                                business_constraint,
+                                validation_issues=plan_issues if attempt else None,
+                                previous_output=previous_output,
+                            ),
+                        }],
+                        "temperature": 0.1,
+                        "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+                        "model": run.get("aiModel") or run.get("model") or "",
+                    }, timeout=plan_timeout)
+                    previous_output = str((response or {}).get("content") or "")
+                    parsed = json.loads(_strip_ai_json_content(previous_output))
+                    plan, plan_issues = _normalize_agent_business_plan(parsed, run, business_constraint)
+                    if plan:
+                        plan_source = "ai_gateway"
+                        plan["providerId"] = (response or {}).get("providerId") or run.get("modelProviderId") or ""
+                        plan["model"] = (response or {}).get("model") or run.get("aiModel") or run.get("model") or ""
+                        break
+                except Exception as exc:
+                    plan_issues = [str(exc)[:300]]
+            if plan:
+                _record_agent_ai_decision(
+                    run,
+                    "plan",
+                    "ai_gateway",
+                    True,
+                    f"AI 生成 {len(plan.get('businessFlows') or [])} 条业务分支计划",
+                    flowCount=len(plan.get("businessFlows") or []),
+                    model=plan.get("model") or "",
+                )
+            else:
+                _record_agent_ai_decision(run, "plan", "ai_gateway", False, "；".join(plan_issues)[:500])
+        if not plan:
+            plan = _fallback_agent_business_plan(run, business_constraint, reason="；".join(plan_issues))
+            _record_agent_ai_decision(
+                run,
+                "plan",
+                "rule_fallback",
+                True,
+                plan.get("fallbackReason") or "使用需求主链兜底",
+                aiHealth=ai_health,
+            )
+
+        plan["steps"] = [
+            f"{item.get('name') or item.get('branch') or item.get('id')}：{' -> '.join(item.get('steps') or [])}"
+            for item in (plan.get("businessFlows") or [])
+        ]
+        plan["platformLifecycle"] = list(AGENT_PLATFORM_LIFECYCLE_STEPS)
+        plan["mode"] = run.get("mode", "AUTO_SAFE")
+        plan["target"] = run.get("target", "")
+        plan["riskLevel"] = run.get("riskLevel", "low")
+        plan["businessFlowConstraint"] = _compact_business_flow_constraint(business_constraint)
+        plan["businessContext"] = prompt_ctx.get("businessContext")
+        plan["aiHealth"] = ai_health
+        call["status"] = "SUCCESS"
+        call["outputSummary"] = (
+            f"AI 已生成 {len(plan.get('businessFlows') or [])} 条业务分支计划"
+            if plan_source == "ai_gateway"
+            else f"AI 计划不可用，已按需求主链生成 {len(plan.get('businessFlows') or [])} 条显式兜底计划"
+        )
         plan.setdefault("dispatchPolicy", {
             "decisionOwner": "AI",
             "aiDecisions": [
                 "需求/目标理解",
-                "已有用例语义检索与置信度判断",
+                "可信相似基线语义检索与路径判断（优先真实执行成功）",
                 "复用/待确认/生成 YAML 草稿分流",
-                "失败类型分析与修复/缺陷草稿建议",
+                "冒烟优先级和剩余批次规划",
+                "失败关键帧分析与最小修复建议",
             ],
             "safetyGates": [
                 "YAML 强校验",
@@ -5088,7 +5359,8 @@ def _agent_create_runner_jobs_for_refs(
 
     job_ids = []
     dry_run_results = []
-    dry_run_blocked = list(initial_blocked or [])
+    selection_excluded = list(initial_blocked or [])
+    dry_run_blocked = []
     runner_dry_run_jobs = []
     for ref in refs or []:
         if _agent_run_cancel_requested(run):
@@ -5246,6 +5518,7 @@ def _agent_create_runner_jobs_for_refs(
         "dryRunResults": dry_run_results,
         "dryRunBlocked": dry_run_blocked,
         "runnerDryRunJobs": runner_dry_run_jobs,
+        "selectionExcluded": selection_excluded,
     }
 
 
@@ -6423,30 +6696,72 @@ def _clean_business_flow_node(value):
     return text[:40]
 
 
-def _fallback_business_flow_from_text(value):
+def _requirement_new_entry_label(value):
+    text = _normalize_business_flow_text(value)
+    patterns = (
+        r"([\u4e00-\u9fffA-Za-z0-9_-]{1,18})入口(?:是|为)(?:本次)?(?:新增|增加|添加)",
+        r"(?:新增|增加|添加)(?:一个|的)?([\u4e00-\u9fffA-Za-z0-9_-]{1,18})入口",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        label = str(match.group(1) or "").strip()
+        label = re.sub(r"^(?:本次|需要|要求|能力|功能)", "", label)
+        if label:
+            return label[:18]
+    return "目标"
+
+
+def _requirement_entry_branches(value, target_label=""):
+    """Extract sibling business branches from explicit requirement lists."""
+    text = _normalize_business_flow_text(value)
+    branches = []
+    for match in re.finditer(r"(?:业务)?入口[^：:。；\n]{0,24}[：:]\s*([^。；\n]{2,160})", text):
+        section = str(match.group(1) or "")
+        for raw in re.split(r"\s*(?:、|，|,|；|;|以及|和|及|与)\s*", section):
+            candidate = str(raw or "").strip(" -:：()（）[]【】")
+            candidate = re.sub(r"^(?:包括|包含|分别为|分别是|有|为|是|以下)", "", candidate)
+            candidate = re.sub(r"(?:等|这些业务|以上业务)$", "", candidate).strip()
+            if not candidate or candidate == target_label or len(candidate) > 20:
+                continue
+            if any(term in candidate for term in ("展示", "同级", "文案", "要求", "新增", "能力", "结合", "完整覆盖")):
+                continue
+            if candidate not in branches:
+                branches.append(candidate)
+        if branches:
+            break
+    return branches[:8]
+
+
+def _fallback_business_flows_from_text(value):
     compact = re.sub(r"\s+", "", _normalize_business_flow_text(value))
     if "入口" in compact and any(term in compact for term in ("新增", "增加", "添加", "展示", "显示", "可见", "校验", "检查")):
-        entry_label = "目标"
-        if "百度网盘" in compact:
-            entry_label = "百度网盘"
-        else:
-            matches = re.findall(r"([\u4e00-\u9fffA-Za-z0-9_-]{1,18})入口", compact)
-            if matches:
-                entry_label = matches[-1]
-                for _ in range(4):
-                    entry_label = re.sub(r"^(基础打印|文档打印页|文档打印|照片打印页|照片打印|扫描复印页|扫描复印|复印扫描页|复印扫描|个人中心页|个人中心|设置页|设置|我的页|我的|首页|目标页面|新增一个|增加一个|新增|增加|添加|展示|显示|校验|检查)", "", entry_label)
-                if "入口" in entry_label:
-                    entry_label = entry_label.split("入口")[-1] or entry_label.split("入口")[0]
-                entry_label = entry_label or "目标"
-        flow = []
-        if "首页" in compact:
-            flow.append("进入首页")
-        for label in ("文档打印", "照片打印", "扫描复印", "复印扫描", "个人中心", "我的", "设置"):
-            if label in compact:
-                flow.append(f"进入{'扫描复印' if label == '复印扫描' else label}")
-                break
-        flow.append(f"校验{entry_label}入口可见")
-        return flow
+        entry_label = _requirement_new_entry_label(value)
+        branches = _requirement_entry_branches(value, entry_label)
+        if not branches:
+            branches = ["目标业务页"]
+        checks = [f"校验{entry_label}入口可见"]
+        if any(term in compact for term in ("同级", "并列", "层级", "关系", "位置")):
+            checks.append(f"校验{entry_label}入口与当前页面同级入口的层级和位置关系")
+        if any(term in compact for term in ("文案", "文字", "标题", "命名")):
+            checks.append(f"校验{entry_label}入口使用需求约定的可见文案")
+        if any(term in compact for term in ("可达", "跳转", "点击后", "授权页", "文件选择页")):
+            checks.append(f"点击{entry_label}入口并校验目标页面稳定可达")
+        flows = []
+        for index, branch in enumerate(branches, start=1):
+            steps = []
+            if "首页" in compact:
+                steps.append("进入首页")
+            steps.append(f"进入{branch}")
+            flows.append({
+                "id": f"FLOW-{index:03d}",
+                "name": f"{branch}-{entry_label}入口验收",
+                "branch": branch,
+                "steps": steps,
+                "checks": list(checks),
+            })
+        return flows
     if any(term in compact for term in ("AI建模", "ai建模", "开始创作", "图片建模", "语音创作", "语音输入")):
         flow = ["进入 AI建模页"]
         if "开始创作" in compact:
@@ -6456,18 +6771,39 @@ def _fallback_business_flow_from_text(value):
         if "语音创作" in compact or "语音输入" in compact or "长按" in compact:
             flow.append("选择语音创作并长按输入")
         flow.append("生成模型并查看结果")
-        return flow
+        return [{"id": "FLOW-001", "name": "AI建模业务验收", "branch": "AI建模", "steps": flow}]
     return []
+
+
+def _fallback_business_flow_from_text(value):
+    """Backward-compatible flat view of the branch-aware requirement flow."""
+    flattened = []
+    for item in _fallback_business_flows_from_text(value):
+        for step in item.get("steps") or []:
+            if step and step not in flattened:
+                flattened.append(step)
+    return flattened
 
 
 def _compact_business_flow_constraint(constraint):
     constraint = constraint if isinstance(constraint, dict) else {}
     flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
+    flows = [item for item in (constraint.get("businessFlows") or []) if isinstance(item, dict)]
     return {
         "required": bool(constraint.get("required", True)),
         "strict": bool(constraint.get("strict", True)),
         "source": str(constraint.get("source") or "default"),
         "businessFlow": [str(item) for item in flow[:8] if str(item or "").strip()],
+        "businessFlows": [
+            {
+                "id": str(item.get("id") or f"FLOW-{index:03d}"),
+                "name": str(item.get("name") or item.get("branch") or f"业务分支 {index}"),
+                "branch": str(item.get("branch") or ""),
+                "steps": _agent_plan_text_list(item.get("steps"), limit=10),
+                "checks": _agent_plan_text_list(item.get("checks"), limit=8),
+            }
+            for index, item in enumerate(flows[:8], start=1)
+        ],
     }
 
 
@@ -6479,6 +6815,12 @@ def _ensure_business_flow_constraint(run):
             "strict": True,
             "source": "default",
             "businessFlow": list(AGENT_DEFAULT_BUSINESS_FLOW),
+            "businessFlows": [{
+                "id": "FLOW-001",
+                "name": "业务主链",
+                "branch": "",
+                "steps": list(AGENT_DEFAULT_BUSINESS_FLOW),
+            }],
             "businessFlowText": "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(AGENT_DEFAULT_BUSINESS_FLOW)),
         }
     artifacts = run.setdefault("artifacts", {})
@@ -6503,6 +6845,7 @@ def _ensure_business_flow_constraint(run):
     except Exception:
         business_ctx = business_ctx if isinstance(business_ctx, dict) else {}
 
+    business_flows = [item for item in (current.get("businessFlows") or []) if isinstance(item, dict)]
     business_flow = business_ctx.get("business_flow") if isinstance(business_ctx.get("business_flow"), list) else []
     if not business_flow:
         business_flow = current.get("businessFlow") if isinstance(current.get("businessFlow"), list) else []
@@ -6513,13 +6856,16 @@ def _ensure_business_flow_constraint(run):
             if part and part not in expanded_flow:
                 expanded_flow.append(part)
     business_flow = expanded_flow
+    if business_flow == AGENT_DEFAULT_BUSINESS_FLOW:
+        business_flow = []
     fallback_source_text = "\n".join([
         str(run.get("target") or ""),
         str(requirement_text or ""),
     ])
+    fallback_flows = _fallback_business_flows_from_text(fallback_source_text)
     fallback_flow = _fallback_business_flow_from_text(fallback_source_text)
-    flow_joined = " ".join(business_flow)
-    if fallback_flow and (not business_flow or len(business_flow) < 3 or "AI建模" not in flow_joined):
+    if fallback_flows:
+        business_flows = fallback_flows
         merged_flow = []
         for item in fallback_flow + business_flow:
             if item and item not in merged_flow:
@@ -6530,6 +6876,13 @@ def _ensure_business_flow_constraint(run):
         business_flow_source = str(business_ctx.get("business_flow_source") or current.get("source") or "default")
     if not business_flow:
         business_flow = list(AGENT_DEFAULT_BUSINESS_FLOW)
+    if not business_flows:
+        business_flows = [{
+            "id": "FLOW-001",
+            "name": "业务主链",
+            "branch": "",
+            "steps": list(business_flow),
+        }]
     business_flow_text = business_ctx.get("business_flow_text") or "\n".join(
         f"{idx + 1}. {item}" for idx, item in enumerate(business_flow)
     )
@@ -6539,6 +6892,7 @@ def _ensure_business_flow_constraint(run):
         "strict": True,
         "source": business_flow_source,
         "businessFlow": business_flow[:12],
+        "businessFlows": business_flows[:8],
         "businessFlowText": business_flow_text,
         "guardrails": [
             "工具选择必须服务于业务主链",
@@ -6550,6 +6904,9 @@ def _ensure_business_flow_constraint(run):
     if prompt_ctx.get("promptCenter"):
         artifacts["promptCenter"] = prompt_ctx.get("promptCenter")
     if business_ctx:
+        business_ctx["business_flow"] = business_flow[:12]
+        business_ctx["business_flow_text"] = business_flow_text
+        business_ctx["business_flow_source"] = business_flow_source
         run["businessContext"] = business_ctx
     return constraint
 
@@ -7998,6 +8355,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
     case_set_id = f"agent-{run.get('runId') or unique_millis_id('agent')}"
     title = str(run.get("target") or source_context.get("target") or "AI Agent 新需求").strip()
     module = clean_agent_module_name(run)
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
     files = _agent_source_files_for_generation(run)
     if source_text and not files:
         files = [{
@@ -8008,6 +8366,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             "source": "agent-source-context",
         }]
     prepared_figma_context = _agent_prepared_figma_context_from_source(source_context)
+    agent_plan = artifacts.get("plan") if isinstance(artifacts.get("plan"), dict) else {}
     direct_entry_visibility = _agent_use_direct_entry_visibility_smoke(run)
     has_entry_visibility_intent = _agent_needs_entry_visibility_smoke(run)
     request_data = {
@@ -8025,6 +8384,11 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "scope": str(run.get("scope") or "smoke").strip(),
         "forceEntryVisibilityFastPath": direct_entry_visibility,
         "disableEntryVisibilityFastPath": has_entry_visibility_intent and not direct_entry_visibility,
+        "agent_business_plan": {
+            key: agent_plan.get(key)
+            for key in ("version", "source", "objective", "businessFlows", "coverage", "assumptions", "unknowns", "executionStrategy")
+            if agent_plan.get(key) not in (None, "", [], {})
+        },
     }
     progress_job_id = _agent_generate_progress_job_id(run)
     step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)
@@ -8289,6 +8653,54 @@ def _quality_points_from_payload(cases_payload):
     return [str(item).strip() for item in _as_list(candidates) if str(item).strip()]
 
 
+def _agent_requirement_ids(value):
+    text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    ids = []
+    for match in re.finditer(r"\bREQ[-_ ]?0*(\d+)\b", str(text or ""), flags=re.I):
+        requirement_id = f"REQ-{int(match.group(1)):03d}"
+        if requirement_id not in ids:
+            ids.append(requirement_id)
+    return ids
+
+
+def _agent_mapped_requirement_ids(refs=None, groups=None):
+    mapped = []
+    candidates = list(refs or [])
+    groups = groups if isinstance(groups, dict) else {}
+    for key in ("executable_cases", "needs_review_cases", "draft_cases", "manual_cases"):
+        candidates.extend(item for item in _as_list(groups.get(key)) if isinstance(item, dict))
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
+        scope_review = item.get("scopeReview") if isinstance(item.get("scopeReview"), dict) else {}
+        if not scope_review and isinstance(score.get("scopeReview"), dict):
+            scope_review = score.get("scopeReview") or {}
+        values = [
+            scope_review.get("matchedRequirementIds"),
+            item.get("requirementRefs"),
+            item.get("requirement_ids"),
+            item.get("requirementIds"),
+        ]
+        for requirement_id in _agent_requirement_ids(values):
+            if requirement_id not in mapped:
+                mapped.append(requirement_id)
+    return mapped
+
+
+def _agent_unresolved_coverage_points(coverage, refs=None, groups=None):
+    coverage = coverage if isinstance(coverage, dict) else {}
+    missing = [str(item) for item in _as_list(coverage.get("missing_case_points")) if str(item).strip()]
+    mapped = set(_agent_mapped_requirement_ids(refs, groups))
+    unresolved = []
+    for item in missing:
+        item_ids = set(_agent_requirement_ids(item))
+        if item_ids and item_ids.issubset(mapped):
+            continue
+        unresolved.append(item)
+    return unresolved, sorted(mapped)
+
+
 def _build_agent_quality_report(run, generation_result, yaml_file_items=None, yaml_executability=None):
     """Summarise generated artifacts into a reviewer-friendly quality report."""
     result = generation_result if isinstance(generation_result, dict) else {}
@@ -8329,7 +8741,9 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         blockers.append("没有可执行 YAML 文件或 android/ios tasks 为空。")
     if auto_case_count > yaml_file_count:
         blockers.append(f"自动化用例 {auto_case_count} 条，但只生成 {yaml_file_count} 个 YAML 文件，完整回归覆盖不完整。")
-    missing_case_points = [str(item) for item in _as_list(coverage.get("missing_case_points")) if str(item).strip()]
+    groups = (artifacts.get("generationPipeline") or {}).get("generatedCaseGroups") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    reported_missing_case_points = [str(item) for item in _as_list(coverage.get("missing_case_points")) if str(item).strip()]
+    missing_case_points, mapped_requirement_ids = _agent_unresolved_coverage_points(coverage, yaml_items, groups)
     missing_scenario_points = [str(item) for item in _as_list(coverage.get("missing_scenario_points")) if str(item).strip()]
     generic_assertions = [str(item) for item in _as_list(coverage.get("generic_assertion_cases")) if str(item).strip()]
     if missing_case_points:
@@ -8369,6 +8783,8 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         "coverageOk": bool(coverage.get("ok")) if coverage else not (missing_case_points or generic_assertions),
         "coverage": {
             "missingCasePoints": missing_case_points[:20],
+            "reportedMissingCasePoints": reported_missing_case_points[:20],
+            "mappedRequirementIds": mapped_requirement_ids[:20],
             "missingScenarioPoints": missing_scenario_points[:20],
             "genericAssertionCases": generic_assertions[:20],
         },
@@ -8402,6 +8818,8 @@ def _agent_generated_yaml_coverage_gap(run, refs=None):
     yaml_count = len(refs) if refs is not None else _safe_int_local(pipeline.get("yamlFileCount"), 0)
     requirement_count = _safe_int_local(coverage.get("requirement_point_count"), 0)
     groups = pipeline.get("generatedCaseGroups") if isinstance(pipeline.get("generatedCaseGroups"), dict) else {}
+    effective_refs = refs if refs is not None else _as_list(artifacts.get("yamlRefs"))
+    unresolved_case_points, mapped_requirement_ids = _agent_unresolved_coverage_points(coverage, effective_refs, groups)
     counts = groups.get("counts") if isinstance(groups.get("counts"), dict) else {}
     needs_review_count = _safe_int_local(counts.get("needs_review"), 0)
     missing_titles = []
@@ -8424,6 +8842,8 @@ def _agent_generated_yaml_coverage_gap(run, refs=None):
         reasons.append(f"需求点 {requirement_count} 个，YAML 覆盖不足 {yaml_count} 个")
     if missing_titles:
         reasons.append("缺少 YAML 的用例：" + "、".join(missing_titles[:5]))
+    if unresolved_case_points:
+        reasons.append("仍未覆盖的需求点：" + "、".join(unresolved_case_points[:5]))
     if not reasons and needs_review_count:
         reasons.append(f"仍有 {needs_review_count} 条生成用例停留在需复核，不能视为完整回归可执行")
     if not reasons:
@@ -8435,6 +8855,8 @@ def _agent_generated_yaml_coverage_gap(run, refs=None):
         "requirementPointCount": requirement_count,
         "needsReviewCount": needs_review_count,
         "missingYamlCases": missing_titles[:20],
+        "missingRequirementPoints": unresolved_case_points[:20],
+        "mappedRequirementIds": mapped_requirement_ids[:20],
         "reasons": reasons,
     }
 
@@ -9861,6 +10283,7 @@ def _tool_run_sonic(run):
             dry_run_results = created["dryRunResults"]
             dry_run_blocked = created["dryRunBlocked"]
             runner_dry_run_jobs = created["runnerDryRunJobs"]
+            selection_excluded = created.get("selectionExcluded") or []
             job_ids = created["jobIds"]
 
             dry_run_passed = sum(1 for item in dry_run_results if item.get("ok"))
@@ -9880,6 +10303,8 @@ def _tool_run_sonic(run):
                 "runnerJobIds": runner_dry_run_jobs,
                 "results": dry_run_results,
                 "blocked": dry_run_blocked,
+                "selectionExcluded": selection_excluded,
+                "selectionExcludedCount": len(selection_excluded),
                 "inconclusive": dry_run_inconclusive,
                 "deferred": gate_deferred,
                 "deferredCount": len(gate_deferred),
@@ -10346,10 +10771,11 @@ def _normalize_failed_execution_item(item, fallback=None):
     failure_kind = raw_failure_type
     failure_type = _agent_canonical_failure_type(raw_failure_type)
     review_failure_type = _agent_failure_type_from_review(failure_review)
-    if review_failure_type in ("ENV_ISSUE", "PRODUCT_BUG"):
+    trusted_review_type = review_failure_type if _agent_high_confidence_failure_review(failure_review) else ""
+    if trusted_review_type in ("ENV_ISSUE", "PRODUCT_BUG"):
         failure_type = review_failure_type
-    elif failure_type in ("", "UNKNOWN") and review_failure_type:
-        failure_type = review_failure_type
+    elif failure_type in ("", "UNKNOWN") and trusted_review_type:
+        failure_type = trusted_review_type
     if failure_type in ("", "UNKNOWN"):
         inferred_kind = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail, summary_text]))
         inferred_type = _agent_canonical_failure_type(inferred_kind)
@@ -10788,6 +11214,21 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
         for fj in failed_jobs[:12]
         if isinstance(fj, dict)
     ]
+    image_assets = []
+    frame_names = []
+    seen_frames = set()
+    for failed_job in failed_jobs[:3]:
+        for frame in _agent_failure_report_keyframes(failed_job, limit=3):
+            frame_key = str(frame.get("base64") or "")[:80]
+            if not frame_key or frame_key in seen_frames:
+                continue
+            seen_frames.add(frame_key)
+            image_assets.append(frame)
+            frame_names.append(frame.get("name") or "report-keyframe")
+            if len(image_assets) >= 6:
+                break
+        if len(image_assets) >= 6:
+            break
     return {
         "taskName": primary_failure.get("taskName") or run.get("target", ""),
         "yaml": primary_yaml[:20000],
@@ -10796,7 +11237,79 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
         "failureType": failure_type,
         "context": str(failure_context or "")[:2000],
         "failedJobs": failed_job_payloads,
+        "imageAssets": image_assets,
+        "reportKeyframes": frame_names,
+        "evidenceSources": ["原始 YAML", "Runner 日志", "Runner failureReview", "Midscene 报告视觉时间线关键帧"],
+        "executionConstraint": {
+            "runnerId": run.get("runnerId") or "",
+            "deviceId": run.get("deviceId") or "",
+            "deviceStrategy": run.get("deviceStrategy") or "",
+            "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
+        },
     }
+
+
+def _agent_failure_report_keyframes(failed_job, limit=4):
+    """Extract bounded Midscene report frames for multimodal failure review."""
+    if not isinstance(failed_job, dict):
+        return []
+    try:
+        from task_server.services.report_service import report_image_context
+    except Exception:
+        return []
+    job_id = _failed_job_id(failed_job)
+    material = _agent_runner_job_material(job_id) if job_id else {}
+    report_job = {
+        "job_id": job_id,
+        "report_url": failed_job.get("reportUrl") or failed_job.get("report_url") or "",
+        "local_report_path": failed_job.get("localPath") or failed_job.get("local_report_path") or "",
+        "run_dir": material.get("runDir") or failed_job.get("runDir") or failed_job.get("run_dir") or "",
+    }
+    try:
+        return [
+            item for item in report_image_context(report_job, limit=max(1, min(6, safe_int(limit, 4))))
+            if isinstance(item, dict) and item.get("base64") and item.get("mime")
+        ]
+    except Exception:
+        return []
+
+
+def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
+    """Retrieve trustworthy, requirement-related examples for one failed path."""
+    try:
+        from task_server.services.yaml_baseline_cache import search_baseline_examples
+    except Exception:
+        return []
+    query = "\n".join(filter(None, [
+        _agent_plan_requirement_text(run),
+        str(run.get("target") or ""),
+        str(target_job.get("taskName") or target_job.get("file") or ""),
+        str(target_job.get("failureReason") or target_job.get("error") or ""),
+        str(original_yaml or "")[:6000],
+    ]))
+    try:
+        rows = search_baseline_examples(
+            query,
+            module=str(target_job.get("module") or ""),
+            limit=limit,
+            allow_fallback=False,
+        )
+    except Exception:
+        rows = []
+    return [
+        {
+            "id": item.get("id") or "",
+            "title": item.get("title") or item.get("file") or "",
+            "file": item.get("file") or "",
+            "provenancePath": item.get("provenancePath") or item.get("file") or "",
+            "sourceKind": item.get("sourceKind") or "",
+            "verificationStatus": item.get("verificationStatus") or "",
+            "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
+            "actions": item.get("actions") or [],
+            "snippet": str(item.get("snippet") or "")[:2400],
+        }
+        for item in rows[:limit]
+    ]
 
 
 def _agent_repair_semantic_document(yaml_text):
@@ -10851,7 +11364,22 @@ def _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
     return original is not None and fixed is not None and original != fixed
 
 
-def _tool_analyze_failure(run):
+def _normalize_agent_failed_items(items):
+    normalized = []
+    seen = set()
+    for item in items or []:
+        row = _normalize_failed_execution_item(item)
+        if not row:
+            continue
+        key = row.get("jobId") or f"{row.get('module')}::{row.get('file')}::{row.get('taskName')}"
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        normalized.append(row)
+    return normalized
+
+
+def _tool_analyze_failure(run, failed_jobs_override=None):
     """分析失败原因（基于 artifacts.report.failedJobs 和 sonicSync.failed）。"""
     call = {
         "callId": str(uuid.uuid4())[:8],
@@ -10862,7 +11390,11 @@ def _tool_analyze_failure(run):
     }
     try:
         artifacts = run.get("artifacts") or {}
-        failed_jobs = _agent_persist_failed_execution_items(run)
+        if failed_jobs_override is None:
+            failed_jobs = _agent_persist_failed_execution_items(run)
+        else:
+            failed_jobs = _normalize_agent_failed_items(failed_jobs_override)
+            artifacts["failedExecutionItems"] = failed_jobs
         sonic_sync = artifacts.get("sonicSync") or {}
         sonic_failed = sonic_sync.get("failed") or []
         precheck_diagnosis = ((artifacts.get("executionPrecheck") or {}).get("diagnosis")
@@ -10944,14 +11476,23 @@ def _tool_analyze_failure(run):
         # 尝试调用 AI Gateway 分析
         if _ai_gateway_available():
             try:
+                failure_payload = _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs)
                 result = _ai_gateway_post(
                     "/ai/analyze-failure",
-                    _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs),
-                    timeout=30,
+                    failure_payload,
+                    timeout=max(30, safe_int(os.getenv("MIDSCENE_AGENT_FAILURE_ANALYSIS_TIMEOUT_SECONDS"), 90)),
                 )
+                analysis["evidence"] = {
+                    "reportKeyframes": failure_payload.get("reportKeyframes") or [],
+                    "reportKeyframeCount": len(failure_payload.get("reportKeyframes") or []),
+                    "sources": failure_payload.get("evidenceSources") or [],
+                }
                 if isinstance(result, dict):
                     analysis["conclusion"] = result.get("conclusion") or result.get("analysis", "")
                     analysis["recommendation"] = result.get("recommendation") or result.get("suggestion", "")
+                    analysis["aiEvidence"] = result.get("evidence") if isinstance(result.get("evidence"), list) else []
+                    if "canAutoRepair" in result:
+                        analysis["canAutoRepair"] = bool(result.get("canAutoRepair"))
                     # AI 可能返回更准确的失败类型
                     ai_failure_type = _agent_canonical_failure_type(result.get("failureType"))
                     if ai_failure_type and ai_failure_type != "UNKNOWN" and failure_type != "ENV_ISSUE":
@@ -10985,7 +11526,7 @@ def _tool_analyze_failure(run):
     return call
 
 
-def _tool_generate_repair(run):
+def _tool_generate_repair(run, failed_jobs_override=None):
     """只对 SCRIPT_ISSUE 类型生成可追溯的 YAML 修复草稿。"""
     call = {
         "callId": str(uuid.uuid4())[:8],
@@ -11009,8 +11550,16 @@ def _tool_generate_repair(run):
             call["status"] = "SKIPPED"
             call["outputSummary"] = "未知失败类型，进入人工复核"
             return call
+        if ft == "SCRIPT_ISSUE" and fa.get("canAutoRepair") is False:
+            call["status"] = "SKIPPED"
+            call["outputSummary"] = "AI 证据不足以安全修改 YAML，保留失败分析并停止自动修复"
+            return call
         artifacts = run.setdefault("artifacts", {})
-        failed_jobs = _agent_persist_failed_execution_items(run)
+        if failed_jobs_override is None:
+            failed_jobs = _agent_persist_failed_execution_items(run)
+        else:
+            failed_jobs = _normalize_agent_failed_items(failed_jobs_override)
+            artifacts["failedExecutionItems"] = failed_jobs
         if not failed_jobs:
             call["status"] = "SKIPPED"
             call["outputSummary"] = "没有失败任务，跳过修复草稿"
@@ -11047,6 +11596,9 @@ def _tool_generate_repair(run):
                     original_yaml = read_text_file(safe_join(TASK_DIR, module, file_name), default="")
                 except Exception:
                     original_yaml = ""
+            report_keyframes = _agent_failure_report_keyframes(target_job, limit=4)
+            report_keyframe_names = [item.get("name") or "report-keyframe" for item in report_keyframes]
+            baseline_examples = _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3)
             evidence_parts = [
                 f"失败类型：{ft}",
                 f"失败序号：{index}/{len(failed_jobs)}",
@@ -11079,6 +11631,11 @@ def _tool_generate_repair(run):
                 "repairSource": "not_started",
                 "batchIndex": index,
                 "batchTotal": len(failed_jobs),
+                "reportKeyframes": report_keyframe_names,
+                "baselineExamples": [
+                    {key: item.get(key) for key in ("id", "title", "file", "provenancePath", "sourceKind", "verificationStatus", "businessPath")}
+                    for item in baseline_examples
+                ],
             }
             item_summary = {
                 "draftId": draft_id,
@@ -11092,6 +11649,9 @@ def _tool_generate_repair(run):
                 "yamlValidation": {},
                 "changes": [],
                 "repairSource": "not_started",
+                "reportKeyframes": report_keyframe_names,
+                "reportKeyframeCount": len(report_keyframe_names),
+                "selectedBaselines": [item.get("provenancePath") or item.get("file") for item in baseline_examples],
             }
 
             if not original_yaml.strip():
@@ -11107,11 +11667,21 @@ def _tool_generate_repair(run):
                     resp = _ai_gateway_post("/ai/optimize-yaml", {
                         "yaml": original_yaml,
                         "target": run.get("target", ""),
-                        "requirement": run.get("target", ""),
+                        "requirement": _agent_plan_requirement_text(run),
                         "taskName": task_name,
                         "failureAnalysis": evidence,
                         "issues": evidence,
                         "allFailedJobs": failed_jobs[:30],
+                        "imageAssets": report_keyframes,
+                        "reportKeyframes": report_keyframe_names,
+                        "baselineExamples": baseline_examples,
+                        "evidenceSources": ["原始 YAML", "Runner 日志", "failureReview", "Midscene 报告关键帧", "可信 Top3 基线"],
+                        "executionConstraint": {
+                            "runnerId": run.get("runnerId") or "",
+                            "deviceId": run.get("deviceId") or "",
+                            "deviceStrategy": run.get("deviceStrategy") or "",
+                            "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
+                        },
                     }, timeout=ai_timeout)
                 except Exception as e:
                     resp = {"error": str(e)[:300]}
@@ -11121,6 +11691,16 @@ def _tool_generate_repair(run):
                     if resp.get("changes"):
                         changes = resp.get("changes")
                         item_summary["changes"] = changes if isinstance(changes, list) else [str(changes)]
+                    if resp.get("analysis"):
+                        draft["aiAnalysis"] = str(resp.get("analysis"))[:4000]
+                    used_baseline_ids = [str(item) for item in (resp.get("usedBaselineIds") or []) if str(item or "").strip()]
+                    known_baseline_ids = {str(item.get("id") or "") for item in baseline_examples if item.get("id")}
+                    invalid_baseline_ids = [item for item in used_baseline_ids if item not in known_baseline_ids]
+                    item_summary["usedBaselineIds"] = used_baseline_ids
+                    if invalid_baseline_ids:
+                        item_summary["invalidBaselineIds"] = invalid_baseline_ids
+                        fixed_yaml = ""
+                        resp["error"] = "AI 引用了本次候选之外的基线：" + "、".join(invalid_baseline_ids[:3])
                     if resp.get("diff") or resp.get("diff_summary"):
                         draft["diff"] = resp.get("diff") or resp.get("diff_summary")
                 if fixed_yaml:
@@ -11203,7 +11783,7 @@ def _tool_generate_repair(run):
             "aiUsedCount": ai_used_count,
             "validationPassedCount": validation_passed_count,
             "failureType": ft,
-            "evidenceSources": ["失败类型", "Agent 目标", "Runner 错误", "stdout/stderr 尾部", "原始 YAML", "整批失败摘要"],
+            "evidenceSources": ["失败类型", "Agent 目标", "Runner 错误", "stdout/stderr 尾部", "原始 YAML", "Midscene 报告关键帧", "可信 Top3 基线", "整批失败摘要"],
             "items": summary_items,
             "targetTasks": [
                 item.get("targetTaskName") or item.get("file") or item.get("targetJobId")
@@ -11501,7 +12081,60 @@ def _agent_prepare_repair_rerun_targets(run, failed_items, jobs):
     }
 
 
-def _tool_rerun(run):
+def _agent_post_rerun_autonomy(run, latest_failed, repair_depth=0):
+    """Use the latest rerun evidence for one bounded AI repair cycle."""
+    artifacts = run.setdefault("artifacts", {})
+    latest_failed = _normalize_agent_failed_items(latest_failed)
+    result = {
+        "enabled": True,
+        "maxRepairCycles": 1,
+        "repairDepth": repair_depth,
+        "latestFailureCount": len(latest_failed),
+        "analyzed": False,
+        "repairGenerated": False,
+        "followupExecuted": False,
+        "reason": "",
+    }
+    if repair_depth >= 1 or not latest_failed:
+        result["reason"] = "已达到重跑后 AI 修复上限" if repair_depth >= 1 else "没有最新失败证据"
+        artifacts["postRerunAutonomy"] = result
+        return result
+
+    analysis_call = _tool_analyze_failure(run, failed_jobs_override=latest_failed)
+    failure_analysis = artifacts.get("failureAnalysis") if isinstance(artifacts.get("failureAnalysis"), dict) else {}
+    failure_type = _agent_canonical_failure_type(failure_analysis.get("failureType")) or "UNKNOWN"
+    result.update({
+        "analyzed": True,
+        "analysisStatus": analysis_call.get("status") if isinstance(analysis_call, dict) else "",
+        "failureType": failure_type,
+        "latestJobIds": [_failed_job_id(item) for item in latest_failed if _failed_job_id(item)],
+        "reportKeyframes": ((failure_analysis.get("evidence") or {}).get("reportKeyframes") or [])[:12]
+        if isinstance(failure_analysis.get("evidence"), dict) else [],
+    })
+    if failure_type != "SCRIPT_ISSUE":
+        result["reason"] = f"最新证据归因为 {failure_type}，不自动修改 YAML"
+        artifacts["postRerunAutonomy"] = result
+        return result
+    if failure_analysis.get("canAutoRepair") is False:
+        result["reason"] = "AI 判断证据不足以安全修复"
+        artifacts["postRerunAutonomy"] = result
+        return result
+
+    repair_call = _tool_generate_repair(run, failed_jobs_override=latest_failed)
+    result.update({
+        "repairStatus": repair_call.get("status") if isinstance(repair_call, dict) else "",
+        "repairGenerated": bool(isinstance(repair_call, dict) and repair_call.get("aiUsed")),
+        "repairDraftIds": list((repair_call or {}).get("repairDraftIds") or [])[:20] if isinstance(repair_call, dict) else [],
+    })
+    if not result["repairGenerated"]:
+        result["reason"] = (repair_call or {}).get("outputSummary") if isinstance(repair_call, dict) else "AI 未生成可用修复草稿"
+    else:
+        result["reason"] = "已基于最新报告关键帧和可信基线生成修复草稿，准备在原设备验证"
+    artifacts["postRerunAutonomy"] = result
+    return result
+
+
+def _tool_rerun(run, failed_items_override=None, repair_depth=0):
     """对失败任务重新创建 Runner job，并等待实际执行结果。"""
     call = {
         "callId": str(uuid.uuid4())[:8],
@@ -11513,7 +12146,11 @@ def _tool_rerun(run):
     try:
         from task_server.services import job_service
         artifacts = run.setdefault("artifacts", {})
-        failed_items = _agent_persist_failed_execution_items(run)
+        if failed_items_override is None:
+            failed_items = _agent_persist_failed_execution_items(run)
+        else:
+            failed_items = _normalize_agent_failed_items(failed_items_override)
+            artifacts["failedExecutionItems"] = failed_items
         failed_ids = [_failed_job_id(item) for item in failed_items if _failed_job_id(item)]
         if failed_ids:
             job_ids = failed_ids
@@ -11539,7 +12176,7 @@ def _tool_rerun(run):
                     target.get("module", ""),
                     target.get("file", ""),
                     auto_optimize=False,
-                    max_attempt=safe_int(j.get("max_attempt"), 2),
+                    max_attempt=max(safe_int(j.get("max_attempt"), 2), safe_int(j.get("attempt"), 1) + 1),
                     attempt=safe_int(j.get("attempt"), 1) + 1,
                     parent_job_id=source_job_id,
                     device_id=j.get("device_id") or run.get("deviceId") or run.get("device_id") or "",
@@ -11601,7 +12238,7 @@ def _tool_rerun(run):
                         j.get("module", ""),
                         j.get("file", ""),
                         auto_optimize=False,
-                        max_attempt=safe_int(j.get("max_attempt"), 2),
+                        max_attempt=max(safe_int(j.get("max_attempt"), 2), safe_int(j.get("attempt"), 1) + 1),
                         attempt=safe_int(j.get("attempt"), 1) + 1,
                         parent_job_id=jid,
                         device_id=j.get("device_id", ""),
@@ -11713,6 +12350,16 @@ def _tool_rerun(run):
                 "waitTimeoutSeconds": wait_timeout,
                 "serialSameDevice": serial_same_device,
             }
+            artifacts.setdefault("rerunAttempts", []).append({
+                "repairDepth": repair_depth,
+                "source": "repair_draft" if uses_repair_draft else "original_yaml",
+                "createdJobIds": list(retried),
+                "completedCount": len(completed),
+                "failedCount": len(failed),
+                "timeoutCount": len(timeout_jobs),
+                "serialSameDevice": serial_same_device,
+            })
+            del artifacts["rerunAttempts"][:-3]
             progress = dict(artifacts.get("jobProgress") or {})
             progress.update({
                 "scope": "failed_tasks",
@@ -11757,6 +12404,28 @@ def _tool_rerun(run):
                 ))
             else:
                 call["status"] = "SUCCESS"
+            if (failed or timeout_jobs) and repair_depth < 1:
+                latest_failed = _normalize_agent_failed_items(list(failed) + list(timeout_jobs))
+                followup = _agent_post_rerun_autonomy(run, latest_failed, repair_depth=repair_depth)
+                call["postRerunAutonomy"] = followup
+                if followup.get("repairGenerated"):
+                    followup["followupExecuted"] = True
+                    followup_call = _tool_rerun(
+                        run,
+                        failed_items_override=latest_failed,
+                        repair_depth=repair_depth + 1,
+                    )
+                    followup["followupStatus"] = followup_call.get("status") if isinstance(followup_call, dict) else ""
+                    followup["followupSummary"] = followup_call.get("outputSummary") if isinstance(followup_call, dict) else ""
+                    artifacts["postRerunAutonomy"] = followup
+                    call["rerunResult"] = artifacts.get("rerunResult") or call.get("rerunResult")
+                    call["rerunProgress"] = artifacts.get("rerunProgress") or call.get("rerunProgress")
+                    if followup.get("followupStatus") == "SUCCESS":
+                        call["status"] = "SUCCESS"
+                        call.pop("error", None)
+                        call["outputSummary"] = f"{summary}；AI 根据最新失败证据修复后在原设备验证成功"
+                    else:
+                        call["outputSummary"] = f"{summary}；AI 已进行一次受限修复重跑，结果仍未通过"
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)

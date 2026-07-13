@@ -52,7 +52,12 @@ const SKILL_ACTION_MAP = {
 };
 
 function preview(value, limit = 500) {
-  const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? '', (key, item) => {
+    if ((key === 'base64' || key === 'dataUrl') && typeof item === 'string') {
+      return `[inline image omitted, ${item.length} chars]`;
+    }
+    return item;
+  });
   return text.replace(/\s+/g, ' ').slice(0, limit);
 }
 
@@ -275,11 +280,13 @@ function clientForRoute(route) {
 }
 
 function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
+  const userText = callOptions.userMessage || buildUserMessage(route.action || 'chat', body);
+  const imageParts = imagePartsFromBody(body);
   const completionOptions = {
     model: route.model,
     messages: [
       {role: 'system', content: prompt},
-      {role: 'user', content: callOptions.userMessage || buildUserMessage(route.action || 'chat', body)},
+      {role: 'user', content: imageParts.length ? [{type: 'text', text: userText}, ...imageParts] : userText},
     ],
   };
   if (route.temperatureLocked) {
@@ -299,17 +306,37 @@ async function appendAiLog(entry) {
 
 function stripMarkdownFence(text) {
   return String(text || '')
-    .replace(/^\s*```(?:yaml|yml|text)?\s*/i, '')
+    .replace(/^\s*```(?:yaml|yml|json|text)?\s*/i, '')
     .replace(/\s*```\s*$/i, '')
     .trim();
 }
 
 function buildUserMessage(action, body) {
+  const promptBody = {...(body || {})};
+  if (Array.isArray(promptBody.imageAssets)) {
+    promptBody.imageAssets = promptBody.imageAssets.map((item) => ({
+      name: item?.name || '',
+      mime: item?.mime || '',
+      attached: Boolean(item?.base64 || item?.dataUrl),
+    }));
+  }
   const context = {
     action,
-    input: body,
+    input: promptBody,
   };
   return `请根据以下 JSON 输入完成任务：\n${JSON.stringify(context, null, 2)}`;
+}
+
+function imagePartsFromBody(body = {}) {
+  const assets = Array.isArray(body?.imageAssets) ? body.imageAssets : [];
+  return assets.slice(0, 6).flatMap((item) => {
+    const mime = String(item?.mime || 'image/png').toLowerCase();
+    const base64 = String(item?.base64 || '').replace(/\s+/g, '');
+    const dataUrl = String(item?.dataUrl || '').trim();
+    const url = dataUrl.startsWith('data:image/') ? dataUrl : (base64 ? `data:${mime};base64,${base64}` : '');
+    if (!url || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(url)) return [];
+    return [{type: 'image_url', image_url: {url}}];
+  });
 }
 
 function isRetryableAiError(errorText) {
@@ -681,11 +708,29 @@ app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
     yaml: req.body?.yaml || '',
     log: req.body?.log || '',
     screenshotDesc: req.body?.screenshotDesc || '',
+    failureType: req.body?.failureType || '',
+    context: req.body?.context || '',
+    failedJobs: req.body?.failedJobs || [],
+    imageAssets: req.body?.imageAssets || [],
+    reportKeyframes: req.body?.reportKeyframes || [],
+    evidenceSources: req.body?.evidenceSources || [],
+    executionConstraint: req.body?.executionConstraint || {},
   };
   const {output} = await callAi('analyze_failure', body);
+  let structured = null;
+  try {
+    structured = JSON.parse(stripMarkdownFence(output));
+  } catch {
+    structured = null;
+  }
   res.json({
     success: true,
-    analysis: output,
+    analysis: structured?.conclusion || structured?.analysis || output,
+    conclusion: structured?.conclusion || structured?.analysis || '',
+    recommendation: structured?.recommendation || structured?.suggestion || '',
+    failureType: structured?.failureType || '',
+    evidence: Array.isArray(structured?.evidence) ? structured.evidence : [],
+    canAutoRepair: structured?.canAutoRepair === true,
   });
 }));
 
@@ -694,12 +739,30 @@ app.post('/ai/optimize-yaml', asyncRoute(async (req, res) => {
     yaml: req.body?.yaml || '',
     failureAnalysis: req.body?.failureAnalysis || '',
     requirement: req.body?.requirement || '',
+    taskName: req.body?.taskName || '',
+    target: req.body?.target || '',
+    allFailedJobs: req.body?.allFailedJobs || [],
+    imageAssets: req.body?.imageAssets || [],
+    reportKeyframes: req.body?.reportKeyframes || [],
+    baselineExamples: req.body?.baselineExamples || [],
+    evidenceSources: req.body?.evidenceSources || [],
+    executionConstraint: req.body?.executionConstraint || {},
   };
   const {output} = await callAi('optimize_yaml', body, {stripFence: true});
-  const validation = validateMidsceneYaml(output);
+  let structured = null;
+  try {
+    structured = JSON.parse(stripMarkdownFence(output));
+  } catch {
+    structured = null;
+  }
+  const yaml = String(structured?.yaml || structured?.fixedYaml || output || '').trim();
+  const validation = validateMidsceneYaml(yaml);
   res.json({
     success: true,
-    yaml: output,
+    yaml,
+    analysis: structured?.analysis || '',
+    changes: Array.isArray(structured?.changes) ? structured.changes : [],
+    usedBaselineIds: Array.isArray(structured?.usedBaselineIds) ? structured.usedBaselineIds : [],
     validation,
   });
 }));

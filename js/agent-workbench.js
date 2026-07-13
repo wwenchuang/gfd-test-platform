@@ -2097,6 +2097,7 @@ function renderRerunDetail(step, artifacts) {
   const sources = (artifacts || {}).rerunSources || [];
   const skipped = (artifacts || {}).rerunSkippedJobs || [];
   const progress = (artifacts || {}).rerunProgress || (artifacts || {}).jobProgress || {};
+  const autonomy = (artifacts || {}).postRerunAutonomy || {};
   const sourceText = progress.usesRepairDraft ? '修复草稿' : (progress.source === 'original_yaml' ? '原始 YAML' : '未记录');
   let html = '<div class="match-detail agent-readable-detail">';
   html += agentInfoGrid([
@@ -2125,6 +2126,9 @@ function renderRerunDetail(step, artifacts) {
   }
   if (skipped.length) {
     html += agentReadableList('跳过的任务', skipped.slice(0, 15), item => `<b>${escapeHtml(item.taskName || item.jobId || '')}</b><span>${escapeHtml(item.status || '')}${item.reason ? ' · ' + escapeHtml(item.reason) : ''}</span>`);
+  }
+  if (autonomy.analyzed) {
+    html += `<section class="agent-readable-panel"><strong>重跑后 AI 闭环</strong><p>${escapeHtml(autonomy.reason || '')}</p><p>最新归因：${escapeHtml(autonomy.failureType || 'UNKNOWN')} · 修复草稿：${autonomy.repairGenerated ? '已生成' : '未生成'} · 同设备验证：${autonomy.followupExecuted ? escapeHtml(autonomy.followupStatus || '已执行') : '未执行'}</p></section>`;
   }
   html += '</div>';
   return html;
@@ -2292,11 +2296,52 @@ function renderSourceContextDetail(step, artifacts) {
   return html;
 }
 
+function renderPlanDetail(step, artifacts) {
+  const plan = (artifacts || {}).plan || {};
+  const flows = Array.isArray(plan.businessFlows) ? plan.businessFlows : [];
+  const lifecycle = Array.isArray(plan.platformLifecycle) ? plan.platformLifecycle : [];
+  if (!flows.length && !plan.objective) return '';
+  const sourceLabel = plan.aiGenerated
+    ? `AI 生成${plan.model ? ` · ${plan.model}` : ''}`
+    : '需求主链兜底';
+  let html = '<div class="agent-readable-stack">';
+  html += agentInfoGrid([
+    { label: '计划来源', value: sourceLabel },
+    { label: '业务分支', value: flows.length },
+    { label: '覆盖门禁', value: plan.qualityGate?.passed === false ? '未通过' : '通过' },
+    { label: '执行设备', value: plan.businessFlowConstraint ? '沿用任务固定约束' : '-' },
+  ]);
+  if (plan.objective) {
+    html += `<section class="agent-readable-panel"><strong>验收目标</strong><p>${escapeHtml(plan.objective)}</p></section>`;
+  }
+  for (const flow of flows) {
+    const steps = Array.isArray(flow.steps) ? flow.steps : [];
+    const checks = Array.isArray(flow.checks) ? flow.checks : [];
+    html += `<section class="agent-readable-panel">
+      <strong>${escapeHtml(flow.name || flow.branch || flow.id || '业务分支')}</strong>
+      ${steps.length ? `<p>${steps.map((item, index) => `${index + 1}. ${escapeHtml(item)}`).join('<br>')}</p>` : ''}
+      ${checks.length ? `<div class="failure-title">可见验收点</div><p>${checks.map(item => escapeHtml(item)).join('<br>')}</p>` : ''}
+    </section>`;
+  }
+  if (Array.isArray(plan.unknowns) && plan.unknowns.length) {
+    html += `<section class="agent-readable-panel"><strong>待证据消解</strong><p>${plan.unknowns.map(item => escapeHtml(item)).join('<br>')}</p></section>`;
+  }
+  if (plan.fallbackReason) {
+    html += `<section class="agent-readable-panel"><strong>兜底原因</strong><p>${escapeHtml(plan.fallbackReason)}</p></section>`;
+  }
+  if (lifecycle.length) {
+    html += `<details class="agent-readable-panel"><summary>平台执行与门禁</summary><p>${lifecycle.map((item, index) => `${index + 1}. ${escapeHtml(item)}`).join('<br>')}</p></details>`;
+  }
+  html += '</div>';
+  return html;
+}
+
 // ===== Step 详情分发函数 =====
 function renderStepDetail(step, run) {
   const toolName = (step.toolCalls && step.toolCalls[0] && step.toolCalls[0].toolName) || step.toolName || '';
   const artifacts = (run && run.artifacts) || {};
   switch (toolName) {
+    case 'analyze_goal': return renderPlanDetail(step, artifacts);
     case 'prepare_source': return renderSourceContextDetail(step, artifacts);
     case 'impact_analysis': return renderSourceContextDetail(step, artifacts);
     case 'case_retrieval': return renderMatchDetail(step, artifacts);
@@ -2816,8 +2861,13 @@ async function previewAgentPlan() {
         : (payload.deviceStrategy === 'auto'
           ? `执行设备：自动选择在线设备（当前 ${runnerDevices.length} 台在线）`
           : '执行设备：暂无在线设备，执行前体检会阻断');
-  const lines = [
-        '全自动 Agent执行计划：',
+      const businessLines = (plan.businessFlows || []).flatMap((flow, index) => [
+        `${index + 1}. ${flow.name || flow.branch || flow.id || '业务分支'}`,
+        ...((flow.steps || []).map((item, stepIndex) => `   ${stepIndex + 1}) ${item}`))
+      ]);
+      const platformLines = (plan.platformLifecycle || []).map((item, index) => `${index + 1}. ${item}`);
+      const lines = [
+        'Agent 业务计划预览：',
         `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
         `范围：${plan.scope || payload.scope}`,
@@ -2826,17 +2876,13 @@ async function previewAgentPlan() {
         `输入资料：Figma ${payload.figmaUrl ? '1' : '0'} 个，文件 ${payload.files?.length || 0} 个，截图 ${payload.images?.length || 0} 张`,
         `风险：${hits.length ? hits.join('、') : '未命中高风险关键词'}`,
         '',
-        ...(plan.steps || [
-          '1. 分析测试目标',
-          '2. 整理输入来源',
-          '3. 匹配已有用例或生成新用例',
-          '4. 生成并校验 Midscene YAML',
-          '5. 通过 Windows/Mac Runner 执行已确认 YAML',
-          '6. 收集报告并分析失败',
-          '7. SCRIPT_ISSUE 生成修复草稿；PRODUCT_BUG 生成缺陷草稿',
-          '8. 测试机业务风险只提醒；平台级写操作进入待确认',
-          '9. 生成总结报告'
-        ])
+        '业务分支：',
+        ...(businessLines.length ? businessLines : (plan.steps || [])),
+        '',
+        '平台执行与门禁：',
+        ...platformLines,
+        '',
+        plan.note || '任务启动后由所选模型补全业务步骤并接受平台门禁。'
       ];
       alert(lines.join('\n'));
     } catch(e) {

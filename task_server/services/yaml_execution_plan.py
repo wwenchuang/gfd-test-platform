@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional
 
 
-BLOCKING_BUCKETS = {"YAML 可执行性不足", "元素定位失败", "Runner 超时", "Runner 未下发"}
+BLOCKING_BUCKETS = {"YAML 可执行性不足", "元素定位失败", "Runner 超时", "Runner 未下发", "模型/环境失败"}
 RESULT_FAILURE_BUCKETS = {"页面状态不匹配", "产品断言失败"}
 
 
@@ -105,7 +105,7 @@ def build_generated_yaml_execution_plan(
     return {
         "version": "generated-yaml-execution-plan-v1",
         "policy": {
-            "modelCalls": "只在 YAML 生成和失败定向修复时调用 AI；基线检索、评分、冒烟选择和通过率判断走本地规则。",
+            "modelCalls": "AI 参与需求规划、可信基线语义重排、YAML 路径规划、冒烟优先级和失败定向修复；平台以确定性规则执行静态校验、设备约束、dry-run 和继续阈值。",
             "smokePurpose": "首批冒烟用于证明 YAML 能下发、能运行、能产生日志；产品断言失败记录为测试结果，不等同于不可执行。",
             "expansion": "首批没有脚本/YAML/定位/超时类阻断后，按批继续执行剩余可执行用例。",
         },
@@ -172,6 +172,11 @@ def _failure_text(failure_reasons: Any, dry_run_blocked: Any) -> str:
 def classify_generated_yaml_failure_bucket(failure_reasons: Any, dry_run_blocked: Any = None) -> str:
     text = _failure_text(failure_reasons, dry_run_blocked)
     lowered = text.lower()
+    if "env_issue" in lowered or any(term in lowered for term in (
+        "model service", "model request", "模型服务", "device offline", "设备离线",
+        "econnreset", "etimedout", "gateway timeout",
+    )):
+        return "模型/环境失败"
     if "执行等级" in text or "executable" in lowered or "dry-run" in lowered or "yaml" in lowered:
         return "YAML 可执行性不足"
     if "failed to locate" in lowered or "元素定位" in text or "找不到" in text or "未找到" in text or "locate element" in lowered:

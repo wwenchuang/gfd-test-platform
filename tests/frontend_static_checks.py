@@ -201,6 +201,8 @@ def main():
     require("agent-source-file-input" in html and "handleAgentSourceFiles" in html and "handleAgentSourcePaste" in html, "Agent workbench must support requirement/screenshot upload and paste")
     require("sourceInputs: sourceMaterials" in html and "files: sourceMaterials.files" in html and "images: sourceMaterials.images" in html, "Agent payload must include uploaded source materials")
     require("renderSourceContextDetail" in html and "输入摘要" in html and "上传资料" in html and "Figma" in html and "agent-readable-panel" in html, "Agent timeline must show prepared source details and Figma extraction result")
+    require("renderPlanDetail" in html and "业务分支" in html and "平台执行与门禁" in html and "Agent 业务计划预览" in html, "Agent UI must show AI-owned business flows separately from platform lifecycle")
+    require("重跑后 AI 闭环" in html and "postRerunAutonomy" in html, "Agent rerun UI must expose the bounded latest-evidence repair cycle")
     require("agentFigmaPreviewItems" in html and "Figma 解析图片" in html and "agent-figma-grid" in html, "Agent Figma extraction must list parsed UI images for review")
     for source in ("manual", "requirement", "figma", "failed_job"):
         require(source in html, f"Agent source type missing: {source}")
