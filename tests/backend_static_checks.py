@@ -232,6 +232,50 @@ def check_agent_failure_review_and_repair_guard():
         repair_service.upsert_repair_draft = old_upsert
 
 
+def check_agent_quality_report_uses_figma_visual_reference():
+    from task_server.services import agent_service
+
+    run = {
+        "artifacts": {
+            "sourceContext": {"figmaUrl": "https://www.figma.com/design/static/check"},
+            "visualReferenceReport": {
+                "figmaPageCount": 4,
+                "figmaImageCount": 4,
+                "ignoredFigmaCount": 0,
+                "uploadedImageCount": 0,
+            },
+        },
+    }
+    result = {
+        "case_set_id": "agent-static-figma-quality",
+        "cases": {
+            "analysis": {"requirement_points": ["文档打印页面展示百度网盘入口"]},
+            "cases": [{"title": "百度网盘入口可见"}],
+            "manual_cases": [],
+        },
+        "summary": {
+            "counts": {"cases": 1, "manual_cases": 0, "yaml_files": 1},
+            "ui_design_assets": [],
+            "hidden_ui_design_assets": [],
+        },
+        "caseCount": 1,
+        "manualCaseCount": 0,
+        "scenarioCount": 1,
+        "yamlFileCount": 1,
+        "coverageAudit": {"ok": True, "requirement_point_count": 1},
+    }
+    report = agent_service._build_agent_quality_report(
+        run,
+        result,
+        yaml_file_items=[{"file": "00-smoke.yaml"}],
+        yaml_executability={"taskCount": 1},
+    )
+    figma_layer = next((item for item in report.get("layers", []) if item.get("name") == "Figma 解析图片"), {})
+    require(report.get("figmaImageCount") == 4, "Quality report must reuse parsed Figma image count from visual reference evidence")
+    require(figma_layer.get("count") == 4 and figma_layer.get("ready") is True, "Quality report Figma layer must reflect parsed visual references")
+    require(not any("没有可展示的解析图片" in item for item in report.get("warnings", [])), "Parsed Figma images must not produce a false missing-image warning")
+
+
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -3064,6 +3108,7 @@ def main():
         "Agent entry visibility smoke must cold-start the app and directly enter the inferred target page without an ambiguous intermediate print-home hop",
     )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
+    require("figma_image_count = max" in agent_service_source and '"figmaImageCount": figma_image_count' in agent_service_source and '"count": figma_image_count' in agent_service_source, "Agent quality report must reuse parsed Figma visual-reference counts")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
     require("def _agent_wants_all_existing_cases" in agent_service_source and "识别到全量执行意图，复用已有 YAML" in agent_service_source and "不生成 YAML 草稿" in agent_service_source, "Agent must route explicit all-case requests to existing YAML reuse instead of draft generation")
     require('"matchAll": _agent_wants_all_existing_cases(target)' in agent_service_source and "只有用户明确说" in agent_service_source, "Agent goal analysis must not treat generic regression/baseline wording as all-case intent")
@@ -3194,6 +3239,7 @@ def main():
     check_agent_runner_failure_reason_summary()
     check_agent_failure_ai_payload_has_primary_evidence()
     check_agent_failure_review_and_repair_guard()
+    check_agent_quality_report_uses_figma_visual_reference()
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()

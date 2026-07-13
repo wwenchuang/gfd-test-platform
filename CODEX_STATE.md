@@ -40,6 +40,14 @@
 - 本轮失败不是坐标或设备问题。旧模板先用宽泛“打印 / 学习打印 / 小白打印”点击，实际上已直接进入文档打印页，随后却继续等待“同时展示文档打印、照片打印、扫描复印的打印首页”，因此在正确目标页等待错误条件并超时。
 - 失败报告把具体类型写成展示标签“等待目标超时”；Agent 只识别 `ENV_ISSUE / SCRIPT_ISSUE / PRODUCT_BUG / UNKNOWN`，因此误判为 `UNKNOWN`。人工确认后后置逻辑又忽略 `unknownFailureConfirmed`，产生第二个相同确认项。本轮已主动取消，避免无效重跑，终态为 `CANCELLED`。
 
+再次部署后最终验证：
+
+- Agent：`agent-1783907519406-1cb3572a`，Runner job：`job_1783907577726_00002`；仍固定 `win-runner-01 / ecbfd645 / fixed`，发起前等待华为 Sonic 任务 `sonic_1783907264077` 成功结束，全程没有两台设备并行。
+- 线上实际 YAML 已变为 6 个动作、1 次 `aiTap` 的单跳版本，Runner 执行 93 秒后 `1 成功 / 0 失败`，Agent 最终 `DONE / 100%`，总结结论为“通过”。
+- HTML 报告记录 `qwen3.6-plus / qwen3.6 mode`，没有 `qwen2.5-vl mode`；全部 ADB 命令均带 `-s ecbfd645`，目标点击坐标为 `(135,279)`。
+- 最终截图标题为“文档打印”，页面入口依次包含“本地文档、百度网盘、QQ文档、WPS文档”；最终断言 `文档打印页面展示百度网盘入口` 返回 `StatementIsTruthy=true`。
+- 执行结果正确，但质量报告出现展示不一致：`visualReferenceReport` 已记录 Figma 4 页、4 图，顶层 `figmaImageCount` 和“Figma 解析图片”层却仍为 0，并产生错误缺图警告。
+
 已修改：
 
 - `task_server/services/agent_service.py`
@@ -53,6 +61,7 @@
 - “等待目标超时 / 元素定位失败 / 断言页面不匹配 / 重规划超限 / Runner 单任务超时”等具体展示标签统一归为 `SCRIPT_ISSUE`，并通过 `failureKind` 保留原始细分原因。
 - Runner `failure_review` 的 `ENV_ISSUE / PRODUCT_BUG` 仍保持优先；AI 不允许把已确定类型降级回 `UNKNOWN`。
 - `UNKNOWN` 人工确认增加一次性门禁；`unknownFailureConfirmed=True` 后不再重复创建确认项。
+- 质量报告在直接短链路没有复制 `summary.ui_design_assets` 时，回退使用 `visualReferenceReport.figmaImageCount / ignoredFigmaCount`，避免已解析 Figma 图片被显示为 0 或产生假警告。
 - 没有修改 `router.py`、没有新增执行模式、没有修改历史 YAML，也不需要再次替换 Windows Runner。
 
 已验证：
@@ -60,11 +69,12 @@
 ```bash
 python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
 python3 -c "from tests.backend_static_checks import check_agent_failure_review_and_repair_guard; check_agent_failure_review_and_repair_guard(); print('ok')"
+python3 -c "from tests.backend_static_checks import check_agent_quality_report_uses_figma_visual_reference; check_agent_quality_report_uses_figma_visual_reference(); print('ok')"
 python3 tests/backend_static_checks.py
 git diff --check
 ```
 
-结果：新单跳 YAML 为 `executable / 100`，定向行为检查通过，后端检查 `61` 项通过。部署本轮服务端提交后，需再次使用同一需求和 OPPO 单设备验证到 Runner/Agent 最终终态，并检查报告中的百度网盘入口断言。
+结果：新单跳 YAML 为 `executable / 100`；真实 Runner/Agent 全链路通过；百度网盘入口最终断言为真。质量报告 Figma 计数修复通过定向检查，部署该展示修复后不需要替换 Windows Runner。
 
 ### 2026-07-10 Qwen3 坐标协议与 Agent 无效修复拦截
 

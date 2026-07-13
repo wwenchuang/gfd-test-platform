@@ -8101,6 +8101,9 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
     yaml_items = yaml_file_items or []
     ui_assets = _as_list(summary.get("ui_design_assets")) + _as_list(summary.get("hidden_ui_design_assets"))
     ignored_figma = _as_list(summary.get("ignored_figma_pages")) + _as_list(summary.get("excluded_figma_nodes"))
+    visual_reference = artifacts.get("visualReferenceReport") if isinstance(artifacts.get("visualReferenceReport"), dict) else _agent_visual_reference_report(run, result)
+    figma_image_count = max(len(ui_assets), _safe_int_local(visual_reference.get("figmaImageCount"), 0))
+    ignored_figma_count = max(len(ignored_figma), _safe_int_local(visual_reference.get("ignoredFigmaCount"), 0))
     manual_cases = _as_list(result.get("manual_cases") or cases_payload.get("manual_cases"))
     auto_case_count = _safe_int_local(result.get("caseCount"), len(_as_list(cases_payload.get("cases"))))
     manual_case_count = _safe_int_local(result.get("manualCaseCount"), len(manual_cases))
@@ -8132,9 +8135,8 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
     total_designed = auto_case_count + manual_case_count
     if requirement_count >= 3 and total_designed < max(8, requirement_count * 2):
         warnings.append("完整用例数量偏少，建议补齐边界、异常和人工验证场景。")
-    if (summary.get("figma_url") or result.get("figma_url") or (artifacts.get("sourceContext") or {}).get("figmaUrl")) and not ui_assets:
+    if (summary.get("figma_url") or result.get("figma_url") or (artifacts.get("sourceContext") or {}).get("figmaUrl")) and figma_image_count <= 0:
         warnings.append("提供了 Figma 链接，但没有可展示的解析图片，请检查 Figma Token 或具体 Frame 链接。")
-    visual_reference = artifacts.get("visualReferenceReport") if isinstance(artifacts.get("visualReferenceReport"), dict) else _agent_visual_reference_report(run, result)
 
     status = "pass"
     if blockers:
@@ -8154,10 +8156,10 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
         "totalCaseCount": total_designed,
         "yamlFileCount": yaml_file_count,
         "executableTaskCount": executable_task_count,
-        "figmaImageCount": len(ui_assets),
+        "figmaImageCount": figma_image_count,
         "uploadedImageCount": int(visual_reference.get("uploadedImageCount") or 0),
         "visualReferenceReport": visual_reference,
-        "ignoredFigmaCount": len(ignored_figma),
+        "ignoredFigmaCount": ignored_figma_count,
         "coverageOk": bool(coverage.get("ok")) if coverage else not (missing_case_points or generic_assertions),
         "coverage": {
             "missingCasePoints": missing_case_points[:20],
@@ -8176,7 +8178,7 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
             {"name": "完整测试用例 .mm", "count": total_designed, "ready": bool(summary_files.get("mindmap") or summary_files.get("mm"))},
             {"name": "可自动化 YAML", "count": yaml_file_count, "ready": yaml_file_count > 0 and executable_task_count > 0},
             {"name": "人工确认/人工用例", "count": manual_case_count + len(missing_case_points), "ready": True},
-            {"name": "Figma 解析图片", "count": len(ui_assets), "ready": len(ui_assets) > 0},
+            {"name": "Figma 解析图片", "count": figma_image_count, "ready": figma_image_count > 0},
             {"name": "上传截图参考", "count": int(visual_reference.get("uploadedImageCount") or 0), "ready": int(visual_reference.get("uploadedImageCount") or 0) > 0},
         ],
     }
