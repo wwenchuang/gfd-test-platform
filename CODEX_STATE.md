@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归生成分级误判修复
+
+部署 `3ab39f3` 后继续真实验证任务：
+
+- Agent `agent-1783924700909-8f2ab6ba`，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 线上 `8088 -> 8091` 健康，Task Server、AI Gateway、Sonic 均健康；模型族为 `qwen3.6-plus`；平台状态显示 1 个 Runner 在线、2 台设备记录。本轮没有向第二台设备下发任务。
+- 路由继续正确进入 `new_requirement_source / generate_draft`，Figma 4 页/4 图解析成功；视觉校准已送 AI 判断并完成，截图/Figma 仍作为软参考。
+- 覆盖门禁生效：生成阶段产出 5 条自动化用例、8 个场景和 5 个 YAML 文件，但只确认 4 个可执行 YAML；需求点 5 个、可执行 YAML 覆盖不足，因此 Agent 在 `GENERATE_YAML` 阶段 `FAILED`，没有进入 Runner。
+- 根因定位：两条明确映射 `REQ-004` 的低风险可见文案/展示校验，被可执行性评分中的泛化诊断“异常/边界/鲁棒性扩展缺少成功基线依据”降为 `needs_review`。这不是百度网盘专用问题，而是“需求明确要求的 UI 文案/展示一致性”被误归为边界/鲁棒性扩展。
+
+已修改：
+
+- `task_server/services/yaml_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 在生成分级阶段新增通用纠偏：仅当用例明确映射当前 `REQ-xxx`/需求点、范围审查通过、非本地超时兜底、生成用例未声明 `needs_review/draft/manual`、且内容是低风险可见 UI 文案/展示/位置/同级/布局校验时，才允许纠正“缺少成功基线依据”的泛化 `needs_review` 诊断，交给 Runner 和视觉 AI 实际判断。
+- 本地兜底、范围不匹配、静态校验失败、固定坐标、抽象 UI 目标、高风险、缓存/断网/加载中点击/超时/重试等非展示类鲁棒性扩展仍保持 `needs_review`，不会自动下发 Runner。
+- 生成分组的 score/reasons 同步写入纠偏原因，避免 UI 上仍显示为降级；确认阶段“不能把生成阶段 `needs_review/draft` 提升为 executable”的保护不变。
+- 未修改 `router.py`，未新增执行模式，未修改历史 YAML，未触碰用户已有 dirty 文件。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+from tests.backend_static_checks import check_generated_yaml_semantic_scope_and_visual_trace
+check_generated_yaml_semantic_scope_and_visual_trace()
+PY
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：定向检查通过，后端静态检查 `61` 项通过。部署后需要再次用同一需求/Figma和固定 OPPO `ecbfd645` 跑完整回归；预期 5 条自动化用例应能完整确认为可执行 YAML，首批 3 条冒烟通过后继续执行 remaining，并人工复核最终 YAML 是否覆盖文档打印、照片打印、扫描复印以及多端/文案要求。
+
 ### 2026-07-13 完整回归真实验证后的覆盖门禁修复
 
 部署后真实验证任务：

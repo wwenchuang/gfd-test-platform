@@ -1293,6 +1293,64 @@ def _stricter_generated_execution_level(current: str, floor: str) -> str:
     return min((current, floor), key=lambda level: GENERATED_EXECUTION_LEVEL_ORDER[level])
 
 
+GENERATED_REQUIREMENT_MAPPED_DISPLAY_REASON = "明确映射到当前需求点的低风险可见 UI 文案/展示校验，可进入 Runner 由视觉 AI 判断"
+GENERATED_DISPLAY_ASSERTION_TERMS = (
+    "文案", "文字", "标题", "展示", "显示", "可见", "入口", "按钮", "标签", "位置", "顺序",
+    "同级", "一致", "一致性", "布局", "页面", "控件", "tab", "Tab", "导航",
+)
+GENERATED_NON_DISPLAY_EXPANSION_TERMS = (
+    "断网", "弱网", "网络异常", "服务端异常", "缓存", "历史记录", "连续进出", "加载中点击",
+    "过程中点击", "弹窗遮挡", "权限拒绝", "授权失败", "超时", "重试", "多次刷新",
+    "横竖屏切换", "后台恢复", "杀进程", "异常恢复", "错误提示",
+)
+
+
+def _generated_case_requirement_mapped_display_check(source_case: dict, scope_review: dict, score: dict) -> bool:
+    """Correct scorer downgrades for explicit requirement-mapped visible UI checks."""
+    source_case = source_case if isinstance(source_case, dict) else {}
+    scope_review = scope_review if isinstance(scope_review, dict) else {}
+    score = score if isinstance(score, dict) else {}
+    if not scope_review.get("ok", True):
+        return False
+    if _generated_case_uses_local_fallback(source_case):
+        return False
+    declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
+    if declared_level in {"needs_review", "draft", "manual"}:
+        return False
+    if not (
+        safe_int(scope_review.get("matchedRequirementPointCount"), 0) > 0
+        or scope_review.get("matchedRequirementIds")
+        or re.search(r"\bREQ-\d+\b", _scope_guard_join_values(source_case.get("coverage"), source_case.get("requirement_point"), source_case.get("requirementPoint")), re.I)
+    ):
+        return False
+    reasons = [str(item or "") for item in (score.get("reasons") or [])]
+    if not any("缺少成功基线依据" in item and any(word in item for word in ("异常", "边界", "鲁棒")) for item in reasons):
+        return False
+    hard_block_reasons = (
+        "静态校验", "解析失败", "固定坐标", "抽象模块名", "需求未说明", "高风险",
+        "本地兜底", "禁止", "不存在的", "无法追溯",
+    )
+    if any(any(blocker in item for blocker in hard_block_reasons) for item in reasons):
+        return False
+    case_blob = _scope_guard_join_values(
+        source_case.get("title"),
+        source_case.get("name"),
+        source_case.get("scenario"),
+        source_case.get("goal"),
+        source_case.get("coverage"),
+        source_case.get("expected_result"),
+        source_case.get("expectedResult"),
+        source_case.get("steps"),
+        source_case.get("assertions"),
+        source_case.get("risk"),
+        source_case.get("tags"),
+    )
+    compact_case = re.sub(r"\s+", "", case_blob)
+    if any(term in compact_case for term in GENERATED_NON_DISPLAY_EXPANSION_TERMS):
+        return False
+    return any(term in compact_case for term in GENERATED_DISPLAY_ASSERTION_TERMS)
+
+
 def enforce_generated_fallback_execution_floor(payload: Any, force: bool = False) -> dict:
     """Keep timeout fallbacks review-only even if later AI stages rewrite cases."""
     fallback_active = bool(force or generated_payload_uses_local_fallback(payload))
@@ -1316,12 +1374,14 @@ def enforce_generated_fallback_execution_floor(payload: Any, force: bool = False
     return normalized
 
 
-def generated_yaml_effective_level(score_level: str, source_case: dict, scope_review: dict) -> str:
+def generated_yaml_effective_level(score_level: str, source_case: dict, scope_review: dict, score: dict = None) -> str:
     """Combine static score with stricter generation provenance and scope gates."""
     level = str(score_level or "draft").strip().lower()
     if level not in GENERATED_EXECUTION_LEVEL_ORDER:
         level = "draft"
     source_case = source_case if isinstance(source_case, dict) else {}
+    if level == "needs_review" and _generated_case_requirement_mapped_display_check(source_case, scope_review, score or {}):
+        level = "executable"
     declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
     if _generated_case_uses_local_fallback(source_case):
         declared_level = _stricter_generated_execution_level(declared_level, "needs_review")
@@ -6679,7 +6739,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             or {}
         )
         scope_review = generated_case_requirement_scope_review(source_case, requirement_analysis, item.get("content") or "")
-        level = generated_yaml_effective_level(scored_level, source_case, scope_review)
+        level = generated_yaml_effective_level(scored_level, source_case, scope_review, score)
         reasons = list(score.get("reasons") or [])[:8]
         scope_reasons = list(scope_review.get("reasons") or [])
         provenance_reasons = []
@@ -6687,12 +6747,21 @@ def generate_ui_yaml_from_request(d, job_id=None):
             provenance_reasons.append("automation_filter 超时后的本地兜底仅供评审，不自动下发 Runner")
         if level != scored_level or scope_reasons:
             score = dict(score)
-            score["score"] = min(safe_int(score.get("score"), 0), 74)
+            corrected_display_downgrade = (
+                level == "executable"
+                and str(scored_level or "").strip().lower() == "needs_review"
+                and _generated_case_requirement_mapped_display_check(source_case, scope_review, score)
+            )
+            if corrected_display_downgrade:
+                score["score"] = max(safe_int(score.get("score"), 0), 85)
+            else:
+                score["score"] = min(safe_int(score.get("score"), 0), 74)
             score["executionLevel"] = level
             score["level"] = level
             score["ok"] = level == "executable"
             score["scopeReview"] = scope_review
-            score["reasons"] = (scope_reasons + provenance_reasons + reasons)[:8]
+            correction_reasons = [GENERATED_REQUIREMENT_MAPPED_DISPLAY_REASON] if corrected_display_downgrade else []
+            score["reasons"] = (scope_reasons + provenance_reasons + correction_reasons + reasons)[:8]
             reasons = list(score.get("reasons") or [])[:8]
         explicit_smoke = bool(item.get("smoke"))
         row = {

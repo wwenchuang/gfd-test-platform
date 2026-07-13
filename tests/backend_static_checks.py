@@ -621,6 +621,40 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         yaml_service.generated_yaml_effective_level("executable", fallback_case, {"ok": True}) == "needs_review",
         "Static scoring must not promote an AI-timeout fallback back to executable",
     )
+    display_case = {
+        "case_id": "TC-REQ-COPY",
+        "title": "移动端首页入口文案一致性校验",
+        "coverage": "REQ-004",
+        "executionLevel": "executable",
+        "risk": "low",
+        "steps": ["进入首页", "查看目标入口展示文案"],
+        "assertions": ["入口展示需求指定文案且与同级入口布局一致"],
+    }
+    display_scope_review = {
+        "ok": True,
+        "matchedRequirementIds": ["REQ-004"],
+        "matchedRequirementPointCount": 1,
+        "reasons": [],
+    }
+    display_score = {
+        "level": "needs_review",
+        "executionLevel": "needs_review",
+        "reasons": ["移动端首页入口文案一致性校验: 异常/边界/鲁棒性扩展缺少成功基线依据，默认需确认后执行"],
+    }
+    require(
+        yaml_service.generated_yaml_effective_level("needs_review", display_case, display_scope_review, display_score) == "executable",
+        "Requirement-mapped low-risk visible copy/display checks must not be blocked only by the generic robustness diagnostic",
+    )
+    non_display_case = {
+        **display_case,
+        "title": "移动端首页入口加载中点击重试校验",
+        "steps": ["进入首页", "在加载中连续点击目标入口"],
+        "assertions": ["加载中点击后页面无异常"],
+    }
+    require(
+        yaml_service.generated_yaml_effective_level("needs_review", non_display_case, display_scope_review, display_score) == "needs_review",
+        "Non-display robustness expansions must remain review-only even when they mention an explicit requirement id",
+    )
 
     ai_source = (ROOT / "task_server" / "services" / "ai_skill_service.py").read_text(encoding="utf-8")
     install_source = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
