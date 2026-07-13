@@ -419,6 +419,37 @@ def check_generated_yaml_short_guards_and_execution_level_floor():
             review_result = next(item for item in (artifacts.get("yamlValidation") or {}).get("results", []) if item.get("file") == "review.yaml")
             require(review_result.get("executionLevel") == "needs_review", "Confirmation must preserve the stricter generated execution level")
 
+            high_replan_yaml = """android:
+  tasks:
+    - name: 文档打印页百度网盘入口可见性与相对位置校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习首页加载完成，文档打印入口可见
+        - runAdbShell: am force-stop com.xbxxhz.box
+        - sleep: 1000
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习首页加载完成，文档打印入口可见
+        - aiTap: 文档打印入口
+        - aiWaitFor: 文档打印页面加载完成
+        - sleep: 500
+        - aiWaitFor: 本地文档入口可见
+        - aiScroll: 在横向入口列表向左滑动一次
+        - aiWaitFor: 百度网盘入口可见
+        - aiAssert: 百度网盘入口位于本地文档右侧且同级展示
+"""
+            high_replan_path = module_dir / "high-replan.yaml"
+            high_replan_path.write_text(high_replan_yaml, encoding="utf-8")
+            high_replan_run = {"target": "普通新需求", "scope": "regression", "module": "AI_Agent_草稿", "artifacts": {}}
+            high_replan_refs, high_replan_err = agent_service._confirm_agent_yaml_files(high_replan_run, high_replan_run["artifacts"], [{
+                "module": "AI_Agent_草稿",
+                "file": high_replan_path.name,
+                "path": str(high_replan_path),
+                "executionLevel": "executable",
+                "score": 89,
+                "scopeReview": {"ok": True, "reasons": [], "matchedRequirementIds": ["REQ-001"]},
+            }])
+            require(not high_replan_err and [ref.get("file") for ref in high_replan_refs] == ["high-replan.yaml"], "Confirmation must preserve generated executable classification for high-replan display YAML that already passed scope review")
+
             blocked_run = {"target": "普通新需求", "scope": "regression", "module": "AI_Agent_草稿", "artifacts": {}}
             blocked_refs, blocked_err = agent_service._confirm_agent_yaml_files(blocked_run, blocked_run["artifacts"], [{
                 "module": "AI_Agent_草稿",
@@ -498,6 +529,21 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     require(
         mobile_copy_review.get("ok"),
         "Business copy consistency mapped to an explicit requirement must not be treated as an unrequested robustness scenario",
+    )
+    wide_adaptation_review = yaml_service.generated_case_requirement_scope_review({
+        "case_id": "TC-006",
+        "title": "宽屏设备下百度网盘入口横向列表滑动可见性验证",
+        "coverage": "REQ-005",
+        "steps": ["进入首页", "进入文档打印页", "横向滑动入口列表直到百度网盘入口可见"],
+        "assertions": ["宽屏设备下百度网盘入口文案、位置、可见性与手机端保持一致"],
+    }, {
+        "requirement_points": [
+            "REQ-005 多设备形态适配验证：宽屏（375x1203）与手机（375x812）下入口文案、位置、可见性保持一致",
+        ],
+    })
+    require(
+        wide_adaptation_review.get("ok"),
+        "Explicitly mapped display/adaptation requirements must not be moved to manual only because wording differs between multi-device and wide-screen",
     )
 
     abstract_case = {

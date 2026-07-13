@@ -1639,7 +1639,17 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
                 if isinstance(task_score, dict)
             )
         )
-        if high_replan_without_baseline and effective_level == "executable":
+        preserve_declared_executable = (
+            high_replan_without_baseline
+            and declared_level == "executable"
+            and local_level == "executable"
+            and safe_int(local_score.get("score"), 0) >= 80
+            and safe_int(item.get("score"), 0) >= 80
+            and bool(check.get("ok"))
+            and not check.get("issues")
+            and not (scope_review and scope_review.get("ok") is False)
+        )
+        if high_replan_without_baseline and effective_level == "executable" and not preserve_declared_executable:
             effective_level = "needs_review"
         effective_reasons = []
         for reason in list(local_score.get("reasons") or local_score.get("warnings") or []) + list(item.get("reasons") or []) + list(scope_review.get("reasons") or []):
@@ -1656,7 +1666,7 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             "scopeReview": scope_review,
             "reasons": effective_reasons,
         }
-        if high_replan_without_baseline and "高重规划风险且缺少成功基线，只保留复核，不自动下发 Runner" not in executable_score["reasons"]:
+        if high_replan_without_baseline and not preserve_declared_executable and "高重规划风险且缺少成功基线，只保留复核，不自动下发 Runner" not in executable_score["reasons"]:
             executable_score["reasons"].append("高重规划风险且缺少成功基线，只保留复核，不自动下发 Runner")
         result = {
             "module": module,

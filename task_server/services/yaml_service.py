@@ -1170,9 +1170,15 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
         token for token in requirement_tokens
         if len(token) >= 3 and token not in SCOPE_GUARD_GENERIC_TOKENS
     ][:12]
+    compact_trace_requirement = re.sub(r"\s+", "", trace_requirement_blob)
+    mapped_display_adaptation = bool(
+        mapped_requirement_points
+        and any(term in compact_case for term in GENERATED_DISPLAY_ASSERTION_TERMS + GENERATED_DISPLAY_ADAPTATION_TERMS)
+        and any(term in compact_trace_requirement for term in GENERATED_DISPLAY_ASSERTION_TERMS + GENERATED_DISPLAY_ADAPTATION_TERMS)
+    )
     if strong_tokens and case_tokens:
         hit_count = sum(1 for token in strong_tokens if token in case_tokens or token in compact_case)
-        if hit_count == 0 and not reasons:
+        if hit_count == 0 and not reasons and not mapped_display_adaptation:
             reasons.append("用例标题/步骤无法追溯到当前需求关键词：" + "、".join(strong_tokens[:5]))
 
     return {
@@ -1297,6 +1303,10 @@ GENERATED_REQUIREMENT_MAPPED_DISPLAY_REASON = "明确映射到当前需求点的
 GENERATED_DISPLAY_ASSERTION_TERMS = (
     "文案", "文字", "标题", "展示", "显示", "可见", "入口", "按钮", "标签", "位置", "顺序",
     "同级", "一致", "一致性", "布局", "页面", "控件", "tab", "Tab", "导航",
+)
+GENERATED_DISPLAY_ADAPTATION_TERMS = (
+    "多端", "多设备", "设备形态", "形态适配", "适配", "宽屏", "手机", "移动端",
+    "尺寸", "横向", "滚动", "截断",
 )
 GENERATED_NON_DISPLAY_EXPANSION_TERMS = (
     "断网", "弱网", "网络异常", "服务端异常", "缓存", "历史记录", "连续进出", "加载中点击",

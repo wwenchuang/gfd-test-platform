@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归确认门禁与多端展示映射修复
+
+部署 `d4a7b3e` 后继续真实验证任务：
+
+- Agent `agent-1783933420084-86171325`，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 公网 `8088 -> 8091` 健康，Task Server、AI Gateway 正常；Task Server 模型为 `qwen3.6-plus`。本轮没有进入 Runner，没有向任何设备下发任务。
+- 路由继续正确进入 `new_requirement_source / generate_draft`；Figma 源解析为 4 页/4 图。
+- 视觉资料已送 AI 判断并完成：`sentToAiForJudgement=true / aiJudgementCompleted=true / aiJudgementStatus=completed`，Figma/截图仍作为软参考。
+- 生成阶段产出 5 个自动化候选、8 个场景，但 scope gate 把 `REQ-005 多设备形态适配` 对应的“宽屏设备下百度网盘入口横向列表滑动可见性验证”误移到 manual，最终只生成 4 个 YAML。
+- 4 个 YAML 在 `yaml_service` 生成分级中均为 `executable`，但 Agent 最终确认 `_confirm_agent_yaml_files` 重新本地评分后，对 `replanRisk=high / baselineEvidence=false` 的 generated YAML 再次降级为 `needs_review`，导致 `GENERATE_YAML` 阶段 `FAILED`。
+- 根因是两处通用规则不一致：生成分级已允许明确映射需求点的低风险展示/位置/同级校验进入 Runner，但确认门禁重复应用更保守降级；scope gate 对“多设备形态适配”与“宽屏/手机展示一致性”的显式 REQ 映射追溯过窄。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `task_server/services/yaml_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- Agent 确认阶段保留生成阶段已声明为 `executable`、本地评分仍为 `executable`、分数大于等于 80、静态校验通过、范围审查通过的 generated YAML，不再仅因“高重规划风险且缺少成功基线”重复降级；显式 `needs_review/draft/manual`、范围审查失败、静态校验失败仍不会被提升。
+- scope gate 增加通用展示适配词追溯：显式映射到当前 `REQ-xxx` 的文案/展示/可见性/位置/多端/多设备/宽屏/手机/横向滚动类需求，不因“多设备形态适配”和“宽屏设备”分词不完全一致而被移到 manual。
+- 未修改 `router.py`，未新增执行模式，未修改历史 YAML，未触碰用户已有 dirty 的 `yaml_executable_scorer.py`、`sonic_service.py` 和历史任务文件。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+from tests.backend_static_checks import check_generated_yaml_short_guards_and_execution_level_floor, check_generated_yaml_semantic_scope_and_visual_trace
+check_generated_yaml_short_guards_and_execution_level_floor()
+check_generated_yaml_semantic_scope_and_visual_trace()
+PY
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：定向检查通过，后端静态检查 `61` 项通过。部署后需要再次用同一需求/Figma和固定 OPPO `ecbfd645` 跑完整回归；预期 5 条自动化用例应能完整生成/确认 YAML，再进入首批 3 条 Runner 冒烟，冒烟通过率达标后继续 remaining。
+
 ### 2026-07-13 完整回归首页恢复动作与视觉计数修复
 
 部署 `8de0541` 后继续真实验证任务：
