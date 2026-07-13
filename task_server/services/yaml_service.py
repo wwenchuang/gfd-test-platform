@@ -2085,12 +2085,10 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
     if mode == "strict":
         flows.extend(dynamic_recent_tasks_cleanup_flow(indent))
     elif mode == "balanced":
-        flows.extend(external_activity_cleanup_flow(indent))
+        flows.append(indent + "- runAdbShell: " + yaml_text("input keyevent 3"))
     flows.extend([
         indent + "- runAdbShell: " + yaml_text("am force-stop " + app_package),
-        indent + "- sleep: 1500",
         indent + "- launch: " + app_package,
-        indent + "- sleep: 3000",
     ])
     if mode == "strict" or evidence_needs_popup_guard(evidence_text):
         flows.extend([
@@ -2127,7 +2125,7 @@ def cleanup_guard_flow(indent, app_package=None, evidence_text=""):
 # flow_lines_for_step — 自然语言步骤转 Midscene YAML 行
 # ---------------------------------------------------------------------------
 
-def flow_lines_for_step(indent, text):
+def flow_lines_for_step(indent, text, add_transition_wait=True):
     """将自然语言步骤转为 Midscene YAML 流程行。"""
     text = str(text or "").strip()
     if not text:
@@ -2163,18 +2161,13 @@ def flow_lines_for_step(indent, text):
             indent + "  scrollType: " + yaml_text("singleAction"),
             indent + "  direction: " + yaml_text("right"),
             indent + "  distance: 400",
-            indent + "- sleep: 300",
-            indent + "- aiScroll: " + yaml_text(target + "，只滚动该横向列表，不要滚动整个页面"),
-            indent + "  scrollType: " + yaml_text("singleAction"),
-            indent + "  direction: " + yaml_text("right"),
-            indent + "  distance: 400",
-            indent + "- sleep: 800",
-            indent + "- runAdbShell: " + yaml_text("input swipe 950 1080 150 1080 500"),
-            indent + "- sleep: 800",
+            indent + "- sleep: 500",
         ]
     action = action_type(text)
     if action == "aiTap":
         lines = [f"{indent}- aiTap: {yaml_text(text)}", indent + "- sleep: 300"]
+        if not add_transition_wait:
+            return lines
         compact = re.sub(r"\s+", "", text)
         if "百度网盘" in compact and any(word in compact for word in ("点击", "点按", "进入", "打开", "选择")):
             lines.extend([
@@ -2183,7 +2176,7 @@ def flow_lines_for_step(indent, text):
             ])
         elif any(word in compact for word in TRANSITION_TAP_WORDS):
             lines.extend([
-                indent + "- aiWaitFor: " + yaml_text("点击后的目标页面、弹窗、列表、空态或提示已稳定显示"),
+                indent + "- aiWaitFor: " + yaml_text("点击后的目标页面或提示已稳定显示"),
                 indent + "  timeout: " + str(min(loading_wait_timeout_for_context(text), MAX_WAITFOR_TIMEOUT_MS)),
             ])
         return lines
@@ -2397,6 +2390,46 @@ def resolve_app_package(module="", file="", yaml_text="", explicit="", allow_def
     return (os.getenv("APP_PACKAGE", DEFAULT_APP_PACKAGE).strip() if allow_default else "")
 
 
+def generated_step_handled_by_launch_guard(text):
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if re.match(r"^(启动|打开).*(App|APP|应用).*(首页|加载)", compact):
+        return "launch"
+    if re.match(r"^(如|如果|若).*不在首页.*(返回|首页)", compact):
+        return "home_recovery"
+    return ""
+
+
+def generated_launch_ready_prompt(text):
+    match = re.search(r"等待(.{2,40}?首页)(?:加载完成|稳定显示)", str(text or ""))
+    page = str(match.group(1) if match else "被测 App 首页").strip(" ，,。")
+    return f"{page}已加载完成，首页核心功能入口可见"
+
+
+def generated_step_explicitly_waits(text):
+    compact = re.sub(r"\s+", "", str(text or ""))
+    return bool(compact) and (
+        compact.startswith(("等待", "确认", "检查", "验证"))
+        or any(word in compact for word in ("可见后", "显示后", "加载完成后", "稳定显示后"))
+    )
+
+
+def generated_steps_cover_assertion_wait(steps, assertion):
+    quoted_targets = [
+        str(item).strip()
+        for item in re.findall(r"[「『\"']([^」』\"']{2,40})[」』\"']", str(assertion or ""))
+        if str(item).strip()
+    ]
+    if not quoted_targets:
+        return False
+    for step in steps or []:
+        text = str(step or "").strip()
+        if not generated_step_explicitly_waits(text):
+            continue
+        if any(target in text for target in quoted_targets):
+            return True
+    return False
+
+
 def case_to_task_yaml(case, indent="  ", case_index=1):
     """将单条用例转为 Midscene YAML task 块。"""
     case = ensure_case_trace(case, case_index) if isinstance(case, dict) else case
@@ -2442,21 +2475,35 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
     if app_package:
         flows.extend(launch_guard_flow(flow_indent + "  ", app_package))
 
-    for item in normalized_steps[:12]:
+    launch_ready_added = False
+    limited_steps = normalized_steps[:12]
+    for index, item in enumerate(limited_steps):
         text = str(item).strip()
-        if text and not text.startswith("确认前置条件"):
-            flows.extend(flow_lines_for_step(flow_indent + "  ", text))
+        if not text or text.startswith("确认前置条件"):
+            continue
+        guard_handled = generated_step_handled_by_launch_guard(text) if app_package else ""
+        if guard_handled == "launch":
+            if not launch_ready_added:
+                flows.append(flow_indent + "  - aiWaitFor: " + yaml_text(generated_launch_ready_prompt(text)))
+                flows.append(flow_indent + "    timeout: " + str(min(DEFAULT_WAITFOR_TIMEOUT_MS, 12000)))
+                launch_ready_added = True
+            continue
+        if guard_handled == "home_recovery":
+            continue
+        next_text = str(limited_steps[index + 1]).strip() if index + 1 < len(limited_steps) else ""
+        flows.extend(flow_lines_for_step(
+            flow_indent + "  ",
+            text,
+            add_transition_wait=not generated_step_explicitly_waits(next_text),
+        ))
 
     for item in assertions[:4]:
         text = str(item).strip()
         if text:
-            if ENABLE_ASSERT_WAITFOR:
+            if ENABLE_ASSERT_WAITFOR and not generated_steps_cover_assertion_wait(limited_steps, text):
                 flows.append(flow_indent + "  - aiWaitFor: " + yaml_text(text))
                 flows.append(flow_indent + "    timeout: " + str(DEFAULT_WAITFOR_TIMEOUT_MS))
             flows.append(flow_indent + "  - aiAssert: " + yaml_text(text))
-
-    if app_package:
-        flows.extend(cleanup_guard_flow(flow_indent + "  ", app_package))
 
     comment_block = "\n".join(baseline_comment_lines(indent, meta))
     return indent + "- name: " + yaml_text(title) + "\n" + comment_block + "\n" + indent + "  flow:\n" + "\n".join(flows)
@@ -3413,26 +3460,13 @@ def normalize_search_input_submit_in_task_block(block, evidence_text=""):
 # ---------------------------------------------------------------------------
 
 def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
-    """将横向 icon 区域自然语言滑动改为官方 aiScroll。"""
+    """将横向 icon 区域自然语言滑动幂等规范为一次官方 aiScroll。"""
     if not block:
         return block, []
     lines = block.splitlines()
     result = []
     changes = []
     idx = 0
-    evidence = str(evidence_text or "")
-    android_context = "android:" in evidence.lower() or "adb" in evidence.lower() or "runadbshell" in (block or "").lower()
-
-    def append_android_horizontal_fallback(out, indent, window_text=""):
-        if not android_context:
-            return False
-        if "input swipe 950 1080 150 1080 500" in window_text:
-            return False
-        out.append(indent + "- sleep: 500")
-        out.append(indent + "- runAdbShell: " + yaml_text("input swipe 950 1080 150 1080 500"))
-        out.append(indent + "- sleep: 800")
-        return True
-
     while idx < len(lines):
         line = lines[idx]
         m_ai = re.match(r"^(\s*)-\s+(ai|aiAction|aiAct)\s*:\s*(.+?)\s*$", line)
@@ -3449,15 +3483,8 @@ def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
                 result.append(indent + "  scrollType: " + yaml_text("singleAction"))
                 result.append(indent + "  direction: " + yaml_text("right"))
                 result.append(indent + "  distance: 400")
-                result.append(indent + "- sleep: 300")
-                result.append(indent + "- aiScroll: " + yaml_text(target + "，只滚动该横向列表，不要滚动整个页面"))
-                result.append(indent + "  scrollType: " + yaml_text("singleAction"))
-                result.append(indent + "  direction: " + yaml_text("right"))
-                result.append(indent + "  distance: 400")
-                result.append(indent + "- sleep: 800")
-                changes.append("将横向 icon 区域自然语言滑动改为两次官方 aiScroll singleAction + direction:right + distance:400")
-                if append_android_horizontal_fallback(result, indent, "\n".join(lines[idx + 1:idx + 6])):
-                    changes.append("横向 icon 区域增加 Android ADB 横滑兜底，避免 aiScroll 未触发真实滑动")
+                result.append(indent + "- sleep: 500")
+                changes.append("将横向 icon 区域自然语言滑动改为一次官方 aiScroll singleAction + direction:right + distance:400")
                 idx += 1
                 continue
         m_scroll = re.match(r"^(\s*)-\s+aiScroll\s*:\s*(.+?)\s*$", line)
@@ -3477,19 +3504,22 @@ def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
             j += 1
         target_hint = any(word in target for word in ("横向", "水平", "icon", "图标", "我的学习", "功能"))
         if target_hint:
+            child_text = "\n".join(children)
+            already_normalized = (
+                re.search(r"\bscrollType\s*:\s*['\"]?singleAction", child_text)
+                and re.search(r"\bdirection\s*:\s*['\"]?right", child_text)
+                and re.search(r"\bdistance\s*:\s*400\b", child_text)
+            )
+            if already_normalized:
+                result.append(line)
+                result.extend(children)
+                idx = j
+                continue
             result.append(indent + "- aiScroll: " + yaml_text(target or "当前页面中的横向功能 icon 列表区域"))
             result.append(indent + "  scrollType: " + yaml_text("singleAction"))
             result.append(indent + "  direction: " + yaml_text("right"))
             result.append(indent + "  distance: 400")
-            result.append(indent + "- sleep: 300")
-            result.append(indent + "- aiScroll: " + yaml_text(target or "当前页面中的横向功能 icon 列表区域"))
-            result.append(indent + "  scrollType: " + yaml_text("singleAction"))
-            result.append(indent + "  direction: " + yaml_text("right"))
-            result.append(indent + "  distance: 400")
-            result.append(indent + "- sleep: 800")
-            changes.append("将横向 icon/功能区滑动强制规范为两次 singleAction + direction:right + distance:400")
-            if append_android_horizontal_fallback(result, indent, "\n".join(lines[idx:min(len(lines), j + 6)])):
-                changes.append("横向 icon 区域增加 Android ADB 横滑兜底，避免 aiScroll 未触发真实滑动")
+            changes.append("将横向 icon/功能区滑动规范为一次 singleAction + direction:right + distance:400")
             idx = j
             continue
         result.append(line)
@@ -3933,9 +3963,13 @@ def normalize_task_block_runtime_guards(block, app_package=None, evidence_text="
         text = text + "\n" + indent + "- aiAssert: " + yaml_text("当前 App 页面已正常展示")
         text = text + "\n" + indent + "- sleep: 500"
         changes.append("补充空 flow 的基础页面验证步骤")
-    if not task_block_ends_with_key(text, "terminate") and not task_block_ends_with_force_stop(text):
+    if (
+        (runtime_guard_mode() == "strict" or evidence_needs_popup_guard(evidence_text))
+        and not task_block_ends_with_key(text, "terminate")
+        and not task_block_ends_with_force_stop(text)
+    ):
         text = text + "\n" + "\n".join(cleanup_guard_flow(indent, app_package, evidence_text))
-        changes.append("补充后置 force-stop App 和退出弹窗兜底")
+        changes.append("严格/弹窗场景补充后置 force-stop App 和退出弹窗兜底")
     text, sleep_changes = normalize_long_sleep_waits_in_task_block(text)
     changes.extend(sleep_changes)
     text, combined_action_changes = normalize_combined_wait_click_actions_in_task_block(text)

@@ -53,6 +53,33 @@
 
 部署后必须重新发起同一 `regression` 任务，确认 Case Retrieval 直接显示“新需求输入，跳过旧基线复用”，再检查完整用例、拆分 YAML、首批冒烟和 remaining 全部终态。
 
+再次真实验证：
+
+- Agent `agent-1783912200589-4309b260` 已确认路由修复生效：Case Retrieval 为 `new_requirement_source / generate_draft`，未再复用历史 YAML。
+- 完整主链产出 8 条自动化用例、1 条人工用例、12 个场景、8 份拆分 YAML；Figma 4 页/4 图已完成 AI 视觉校准，`aiJudgementStatus=completed`。
+- 生成结果暴露新的通用问题：横向滑动规范化非幂等，1 次自然语言滑动被多轮修复扩成 8 次 `aiScroll` 和 4 次固定坐标 ADB swipe；生成阶段的 `needs_review/draft` 又在确认阶段被重新评分升级为 executable。
+- 质量报告已显示 `blocked / executableTaskCount=0`，Agent 却继续进入 Runner dry-run。本轮在真实 Midscene 执行前取消，没有向 OPPO 下发真实 UI 操作。
+
+继续修复：
+
+- 按 Midscene 官方 `aiScroll(locate, {scrollType: singleAction, direction, distance})` 约束，横向滑动只生成一次语义 `aiScroll`，移除固定坐标 ADB 横滑；规范化改为幂等。
+- 启动守卫吸收“启动 App”和“如不在首页则返回”重复步骤；下一个自然语言步骤已有明确等待时，不再额外插入泛化跳转等待。
+- 去掉平衡模式下无必要的固定 sleep 和任务末尾 force-stop；下一任务仍在开始时 force-stop，最终报告可以保留业务断言页面。
+- 断言目标已有明确 `aiWaitFor` 时不再重复等待；真实 8 条用例重放后，主要自动化从 19-53 个动作降到 9-12 个动作，横向滑动从 8 次降为 1 次。
+- Agent 确认阶段以生成阶段级别为上限，只能保持或降级，不能把 `needs_review/draft` 提升为 executable；高重规划且无成功基线的 YAML 自动降为 `needs_review`。
+- 完整回归至少需要 1 条正式需求 YAML 达到 executable，不能仅补一条合成冒烟后继续。
+- 本轮真实用例本地重放结果：5 条正式需求 YAML executable，加 1 条入口冒烟；宽屏变体和高重规划扫描跳转为 needs_review，跨三页面长链路为 draft，不下发 Runner。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：后端静态检查 `61` 项通过；未修改 `router.py`、未新增执行模式、未修改历史 YAML。部署后需重新跑同一完整回归并持续跟踪全部 executable YAML 终态。
+
 ### 2026-07-13 完整需求回归范围分流
 
 问题定位：

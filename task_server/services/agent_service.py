@@ -1574,7 +1574,44 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             write_text_file(path, normalized_content)
             content = normalized_content
         check = validate_agent_yaml_content(content)
-        executable_score = score_midscene_yaml_executable(content, generated=True)
+        local_score = score_midscene_yaml_executable(content, generated=True)
+        declared_raw = item.get("executionLevel") or item.get("level")
+        declared_level = _agent_execution_level(declared_raw) if declared_raw else ""
+        local_level = _agent_execution_level(local_score.get("executionLevel") or local_score.get("level"))
+        level_rank = {"manual": 0, "draft": 1, "needs_review": 2, "executable": 3}
+        effective_level = local_level
+        if declared_level and level_rank.get(declared_level, 1) < level_rank.get(effective_level, 1):
+            effective_level = declared_level
+        scope_review = item.get("scopeReview") if isinstance(item.get("scopeReview"), dict) else {}
+        if scope_review and scope_review.get("ok") is False and effective_level == "executable":
+            effective_level = "needs_review"
+        high_replan_without_baseline = (
+            not bool(local_score.get("baselineEvidence"))
+            and any(
+                str(task_score.get("replanRisk") or "").strip().lower() == "high"
+                for task_score in (local_score.get("taskScores") or [])
+                if isinstance(task_score, dict)
+            )
+        )
+        if high_replan_without_baseline and effective_level == "executable":
+            effective_level = "needs_review"
+        effective_reasons = []
+        for reason in list(local_score.get("reasons") or local_score.get("warnings") or []) + list(item.get("reasons") or []) + list(scope_review.get("reasons") or []):
+            text = str(reason or "").strip()
+            if text and text not in effective_reasons:
+                effective_reasons.append(text)
+        executable_score = {
+            **local_score,
+            "rawExecutionLevel": local_level,
+            "declaredExecutionLevel": declared_level,
+            "executionLevel": effective_level,
+            "level": effective_level,
+            "ok": bool(local_score.get("ok")) and effective_level == "executable",
+            "scopeReview": scope_review,
+            "reasons": effective_reasons,
+        }
+        if high_replan_without_baseline and "高重规划风险且缺少成功基线，只保留复核，不自动下发 Runner" not in executable_score["reasons"]:
+            executable_score["reasons"].append("高重规划风险且缺少成功基线，只保留复核，不自动下发 Runner")
         result = {
             "module": module,
             "file": file_name or os.path.basename(path),
@@ -1582,6 +1619,7 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             **check,
             "executionLevel": executable_score.get("executionLevel"),
             "executableScore": executable_score,
+            "scopeReview": scope_review,
         }
         results.append(result)
         if not check.get("ok"):
@@ -1601,7 +1639,13 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             "confirmed": True,
             "executionLevel": executable_score.get("executionLevel"),
             "executableScore": executable_score,
+            "scopeReview": scope_review,
         })
+    generated_executable_count = len(refs)
+    scope = str(run.get("scope") or "").strip().lower()
+    if scope in ("regression", "回归", "full", "完整") and generated_executable_count <= 0:
+        detail = issues or non_executable or ["完整回归没有达到 executable 的正式需求 YAML"]
+        return [], "完整回归生成结果未达到 Runner 自动执行门禁：" + "；".join(detail)
     refs, results = _ensure_agent_entry_visibility_smoke_ref(run, refs, results)
     if not refs:
         detail = issues or non_executable or ["没有达到 executable 的 YAML 文件"]
@@ -1623,6 +1667,31 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             "manualCount": sum(1 for item in results if (item.get("executableScore") or {}).get("executionLevel") == "manual"),
         },
     }
+    generation_pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    if generation_pipeline:
+        pipeline_gate = generation_pipeline.get("yamlExecutability") if isinstance(generation_pipeline.get("yamlExecutability"), dict) else {}
+        generation_pipeline["yamlExecutability"] = {
+            **pipeline_gate,
+            "ok": bool(refs),
+            "executableFileCount": len(refs),
+            "generatedExecutableFileCount": generated_executable_count,
+            "taskCount": len(refs),
+        }
+    quality = artifacts.get("qualityReport") if isinstance(artifacts.get("qualityReport"), dict) else {}
+    if quality:
+        quality["executableTaskCount"] = len(refs)
+        quality["generatedExecutableTaskCount"] = generated_executable_count
+        blockers = [
+            str(item) for item in (quality.get("blockers") or [])
+            if "没有可执行 YAML 文件" not in str(item)
+        ]
+        quality["blockers"] = blockers
+        quality["status"] = "blocked" if blockers else ("warn" if quality.get("warnings") else "pass")
+        quality["statusText"] = {"blocked": "阻断", "warn": "需关注", "pass": "通过"}[quality["status"]]
+        for layer in quality.get("layers") or []:
+            if isinstance(layer, dict) and layer.get("name") == "可自动化 YAML":
+                layer["count"] = len(refs)
+                layer["ready"] = bool(refs)
     _sync_agent_generated_case_groups(artifacts, results)
     return refs, "" if not issues else "；".join(issues)
 

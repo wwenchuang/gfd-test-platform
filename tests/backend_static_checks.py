@@ -341,6 +341,86 @@ def check_agent_regression_scope_preserves_new_requirement_generation():
     )
 
 
+def check_generated_yaml_short_guards_and_execution_level_floor():
+    from task_server.services import agent_service, yaml_service
+
+    scan_case = {
+        "title": "扫描复印页百度网盘入口相对位置校验",
+        "app_package": "com.xbxxhz.box",
+        "steps": [
+            "启动 App，并等待小白学习首页加载完成",
+            "如当前不在首页，返回或点击底部「首页」回到首页",
+            "点击「扫描复印」入口，进入扫描复印页",
+            "等待扫描复印页加载完成，页面展示功能入口区域",
+            "横向滑动功能入口区域，等待「百度网盘」入口可见",
+        ],
+        "assertions": ["扫描复印页展示「百度网盘」入口"],
+    }
+    task_yaml = yaml_service.case_to_task_yaml(scan_case)
+    normalized_once, _ = yaml_service.normalize_horizontal_icon_scrolls_in_task_block(task_yaml, evidence_text="android:")
+    normalized_twice, _ = yaml_service.normalize_horizontal_icon_scrolls_in_task_block(normalized_once, evidence_text="android:")
+    flow_text = normalized_once.split("flow:", 1)[-1]
+    require(normalized_once == normalized_twice, "Horizontal aiScroll normalization must be idempotent")
+    require(flow_text.count("- aiScroll:") == 1, "One generated horizontal step must remain one semantic aiScroll")
+    require("input swipe 950 1080 150 1080 500" not in flow_text, "Generated horizontal scrolling must not add fixed-coordinate ADB fallbacks")
+    require("如当前不在首页" not in flow_text, "Launch guard must absorb duplicate conditional home-recovery steps")
+    require("点击后的目标页面、弹窗、列表、空态" not in flow_text, "Generic transition waits must not inject out-of-scope empty-state semantics")
+    require(flow_text.count("- aiWaitFor:") <= 5, "Short generated entry checks must not accumulate duplicate waits")
+
+    yaml_text = """android:
+  tasks:
+    - name: 百度网盘入口可见
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习首页入口可见
+        - aiTap: 文档打印入口
+        - aiAssert: 百度网盘入口可见
+"""
+    old_task_dir = agent_service.TASK_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            review_path = module_dir / "review.yaml"
+            executable_path = module_dir / "executable.yaml"
+            review_path.write_text(yaml_text, encoding="utf-8")
+            executable_path.write_text(yaml_text, encoding="utf-8")
+            run = {"target": "普通新需求", "scope": "regression", "module": "AI_Agent_草稿", "artifacts": {}}
+            artifacts = run["artifacts"]
+            refs, err = agent_service._confirm_agent_yaml_files(run, artifacts, [
+                {
+                    "module": "AI_Agent_草稿",
+                    "file": review_path.name,
+                    "path": str(review_path),
+                    "executionLevel": "needs_review",
+                    "scopeReview": {"ok": False, "reasons": ["需求范围待确认"]},
+                },
+                {
+                    "module": "AI_Agent_草稿",
+                    "file": executable_path.name,
+                    "path": str(executable_path),
+                    "executionLevel": "executable",
+                    "scopeReview": {"ok": True, "reasons": []},
+                },
+            ])
+            require(not err and [ref.get("file") for ref in refs] == ["executable.yaml"], "Confirmation must not promote needs_review YAML into Runner refs")
+            review_result = next(item for item in (artifacts.get("yamlValidation") or {}).get("results", []) if item.get("file") == "review.yaml")
+            require(review_result.get("executionLevel") == "needs_review", "Confirmation must preserve the stricter generated execution level")
+
+            blocked_run = {"target": "普通新需求", "scope": "regression", "module": "AI_Agent_草稿", "artifacts": {}}
+            blocked_refs, blocked_err = agent_service._confirm_agent_yaml_files(blocked_run, blocked_run["artifacts"], [{
+                "module": "AI_Agent_草稿",
+                "file": review_path.name,
+                "path": str(review_path),
+                "executionLevel": "needs_review",
+                "scopeReview": {"ok": False, "reasons": ["需求范围待确认"]},
+            }])
+            require(not blocked_refs and "完整回归生成结果未达到" in blocked_err, "Regression must not continue with only a synthetic smoke when all requirement YAML needs review")
+    finally:
+        agent_service.TASK_DIR = old_task_dir
+
+
 def require(condition, message):
     if not condition:
         raise AssertionError(message)
@@ -3151,6 +3231,7 @@ def main():
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
     check_agent_regression_scope_preserves_new_requirement_generation()
+    check_generated_yaml_short_guards_and_execution_level_floor()
     check_agent_executable_gate_invokes_ai_rewrite()
     check_midscene_yaml_validation_is_mapping()
     check_yaml_static_validation_and_patterns()
