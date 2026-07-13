@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归筛选超时与数量决策冲突修复
+
+部署后真实验证任务：
+
+- Agent `agent-1783917542885-a2a4a781`，继续使用原需求、Figma 4 页/4 张 UI 图，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。
+- 新需求路由、Figma 解析和视觉判断均正常；视觉批次 `1/1` 完成，未向另一台设备下发任务。
+- 任务在 `GENERATE_YAML` 安全终止，没有创建真实 Runner 任务。直接原因是 `automation_filter` 在 150 秒内未返回，8 条本地兜底 YAML 全部按门禁保持 `needs_review`。
+- 根因不是单一超时值：前置 `execution_scope_planner` 已规划 5 条，但 skills、coverage 和 smoke 又各自重新计算为 8 条；同时 `_ensure_rich_generation_scope` 因资料长度较大，把 Figma 内部页名“首页 / 文档打印首页备份 2 / 引导1”追加成硬验收点，触发额外 coverage repair，后者又超时 180 秒。
+
+已修改：
+
+- `task_server/services/ai_skill_service.py`
+- `task_server/services/yaml_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- `execution_scope_planner` 经平台收敛后的 3/5/8 结果成为场景设计、automation filter、coverage auditor 和最终 smoke selector 的统一数量约束；需求点数量仍提供最低档位保护，AI 不能把多需求点错误压缩成 3 条。
+- scope planner 的 `size` 由平台按最终数量统一计算，避免模型返回 `size=large / targetCaseCount=5` 这种自相矛盾状态。
+- automation filter 仍由 AI 执行，但只接收自动化适用性所需的需求点、业务入口、可见结果、风险、场景和最多 6000 字符 Top3 YAML 基线；最终 payload 继续保留完整需求分析。
+- automation filter 的输入规模、场景数、目标数和超时值写入 review，后续可直接判断是输入膨胀还是模型服务问题。
+- rich requirement/Figma 逻辑不再根据资料长度、Figma 页面名或占位文本伪造 requirement points，也不再因此默认增加第二轮 coverage repair；Figma 保持 AI 视觉软参考。
+- automation filter 真超时时，原有 `local_fallback_after_ai_timeout -> needs_review` 安全门禁保持不变，不允许静态评分把兜底用例重新提升为 executable。
+- 本轮没有修改 `router.py`、没有新增执行模式、没有修改历史 YAML，也不需要替换 Windows Runner。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+from tests.backend_static_checks import check_ai_skills_receive_yaml_reference_context, check_generated_yaml_semantic_scope_and_visual_trace
+check_ai_skills_receive_yaml_reference_context()
+check_generated_yaml_semantic_scope_and_visual_trace()
+PY
+python3 tests/backend_static_checks.py
+```
+
+结果：定向行为检查通过，后端静态检查 `61` 项通过。使用失败任务摘要离线重放后，保留 5 个真实需求点，统一目标为 5 条、首批 3 条；automation filter 输入收敛为分析约 1856 字符、场景约 4543 字符、基线最多 6000 字符。部署后必须再次用同一需求/Figma和固定 OPPO `ecbfd645` 跑完整回归，并监督生成 YAML、首批冒烟和 remaining 全部到终态。
+
 ### 2026-07-13 完整回归生成误判与视觉追踪修复
 
 真实验证任务：

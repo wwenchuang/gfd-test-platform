@@ -550,6 +550,28 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         "Agent visual report must distinguish attempted-and-failed from skipped or pending",
     )
 
+    rich_payload = {
+        "analysis": {"requirement_points": ["文档打印页面新增百度网盘入口"]},
+        "review": {},
+    }
+    rich_result = yaml_service._ensure_rich_generation_scope(
+        rich_payload,
+        "基础打印新增百度网盘入口",
+        "基础打印",
+        ["需求正文" * 500],
+        [{"page_name": "文档打印首页备份 2"}, {"page_name": "引导1"}],
+        [{"name": "figma-1.png"}, {"name": "figma-2.png"}],
+    )
+    require(
+        rich_result.get("analysis", {}).get("requirement_points") == ["文档打印页面新增百度网盘入口"],
+        "Rich requirement/Figma inputs must not turn Figma page names or filler text into requirement points",
+    )
+    require(
+        rich_result.get("review", {}).get("rich_generation_scope", {}).get("synthetic_requirement_points_added") == 0
+        and rich_result.get("review", {}).get("rich_generation_scope", {}).get("extra_coverage_round") is False,
+        "Rich input metadata must keep Figma as a soft reference and avoid redundant coverage repair rounds",
+    )
+
     fallback_payload = yaml_service.enforce_generated_fallback_execution_floor({
         **base_payload,
         "review": {"automation_filter_skill": "local_fallback_after_ai_timeout"},
@@ -2044,6 +2066,12 @@ def check_ai_skills_receive_yaml_reference_context():
             "AI测试",
             ["需求正文", "【现有 YAML 步骤经验库】\n```yaml\n- name: 入口\n  flow:\n    - aiTap: \"AI建模入口\"\n```"],
             model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+            generation_scope_plan={
+                "size": "large",
+                "targetCaseCount": 5,
+                "smokeCount": 3,
+                "reason": "当前需求规划 5 条",
+            },
         )
     finally:
         ai_skill_service.run_ai_skill = original_run_ai_skill
@@ -2060,6 +2088,22 @@ def check_ai_skills_receive_yaml_reference_context():
     require("现有 YAML 步骤经验库" in scenario_payload.get("yaml_reference_context", ""), "Scenario designer must receive YAML reference context")
     require("现有 YAML 步骤经验库" in automation_payload.get("yaml_reference_context", ""), "Automation filter must receive YAML reference context")
     require("现有 YAML 步骤经验库" in smoke_payload.get("yaml_reference_context", ""), "Smoke selector must receive YAML reference context")
+    for skill_payload in (scenario_payload, automation_payload, smoke_payload):
+        targets = skill_payload.get("generation_targets") or {}
+        require(
+            targets.get("target_automation_cases") == 5
+            and targets.get("min_automation_cases") == 5
+            and targets.get("size") == "medium",
+            "Scenario, automation and smoke skills must share the same platform-clamped scope plan",
+        )
+    require(
+        len(automation_payload.get("yaml_reference_context", "")) <= 6000,
+        "Automation filter must receive a bounded Top3 YAML reference instead of the full generation context",
+    )
+    require(
+        payload.get("review", {}).get("generation_targets", {}).get("target_automation_cases") == 5,
+        "Generated payload review must preserve the authoritative scope target",
+    )
     require(payload["review"]["smoke_selection"]["selector_source"] == "smoke_selector.v1", "Smoke selection should use AI recommendation before platform validation")
     require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "Smoke gate must record normal-chain coverage")
     require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
@@ -2924,7 +2968,12 @@ def check_ai_yaml_generation_decision_chain_static():
     require("def apply_executable_yaml_plan_to_payload" in ai_skill_source, "Executable YAML planner output must be applied to generated payload")
     require("MIDSCENE_AI_SKILLS_STRICT_MODEL" in ai_skill_source and "AI_SKILLS_STRICT_MODEL" in ai_skill_source, "AI skills must support strict selected-model mode")
     require("model_trace" in ai_skill_source and "providerId" in ai_skill_source, "AI skill reviews must record provider/model trace")
-    require("call_coverage_auditor_skill(title, module, current, local_audit, model_config=model_config)" in ai_skill_source, "Coverage auditor must receive model config during repair loop")
+    require(
+        "call_coverage_auditor_skill(" in ai_skill_source
+        and "model_config=model_config" in ai_skill_source
+        and "targets=current_targets" in ai_skill_source,
+        "Coverage auditor must receive model config and the authoritative scope targets during the repair loop",
+    )
     require("当前平台采用可执行优先策略" in ai_skill_source, "Legacy quantity-driven prompt must be replaced with executable-first 3/5/8 guidance")
     require("每个需求功能点通常至少生成 2-4 条自动化用例" not in ai_skill_source, "Legacy 2-4 cases per requirement prompt must not reappear")
     require("display_only" in ai_skill_source and "点击后进入百度网盘相关流程" in ai_skill_source, "Baidu Netdisk display-only requirements must be separated from click/auth flows")
@@ -3476,7 +3525,18 @@ def main():
     require("def _prepared_figma_context_from_request" in yaml_service_source and "复用 Figma 解析" in yaml_service_source, "YAML generation must support prepared Figma context reuse")
     require("def extract_pdf_text" in yaml_service_source and "pypdf.PdfReader" in yaml_service_source, "YAML generation must extract PDF requirement text without relying only on pdftotext")
     require("raw_review_type" in yaml_service_source and "if not isinstance(analysis, dict)" in yaml_service_source, "Generated case payload normalization must coerce malformed analysis/review containers")
-    require("def _ensure_rich_generation_scope" in yaml_service_source and "coverage_rounds = 2 if rich_scope.get(\"enabled\") else 1" in yaml_service_source, "Rich requirement/Figma inputs must raise generation scope and allow extra coverage repair")
+    require(
+        "def _ensure_rich_generation_scope" in yaml_service_source
+        and '"synthetic_requirement_points_added": 0' in yaml_service_source
+        and 'coverage_rounds = 2 if rich_scope.get("extra_coverage_round") else 1' in yaml_service_source,
+        "Rich requirement/Figma inputs must stay soft references and must not synthesize coverage requirements",
+    )
+    require(
+        "generation_targets_for_scope" in ai_skill_service_source
+        and "generation_scope_plan=execution_scope_plan" in yaml_service_source
+        and "targets=planned_generation_targets" in yaml_service_source,
+        "The platform-clamped 3/5/8 scope plan must govern generation, coverage audit and final smoke selection",
+    )
     require("base_payload = normalize_cases_payload(base_payload)" in ai_skill_service_source and "grounded = normalize_cases_payload(grounded)" in ai_skill_service_source, "Visual grounding must normalize payload containers before merging review/analysis")
     require("def _run_ai_skill_call_with_hard_timeout" in ai_skill_service_source and "future.result(timeout=timeout_seconds)" in ai_skill_service_source and "executor.shutdown(wait=False, cancel_futures=True)" in ai_skill_service_source, "Text AI skills must have a hard timeout around AI Gateway calls")
     require("except TimeoutError:" in ai_skill_service_source and 'f"AI Gateway skill {skill_name}"' in ai_skill_service_source, "AI Gateway skill timeout must surface to requirement/scenario fallbacks instead of falling into another long provider call")

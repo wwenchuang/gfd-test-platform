@@ -222,6 +222,7 @@ dashscope_chat_content = _lazy("dashscope_chat_content", "task_server.services.a
 improve_case_coverage = _lazy("improve_case_coverage", "task_server.services.ai_skill_service")
 normalize_requirement_analysis_result = _lazy("normalize_requirement_analysis_result", "task_server.services.ai_skill_service")
 generation_volume_targets = _lazy("generation_volume_targets", "task_server.services.ai_skill_service")
+generation_targets_for_scope = _lazy("generation_targets_for_scope", "task_server.services.ai_skill_service")
 select_smoke_cases_for_payload = _lazy("select_smoke_cases_for_payload", "task_server.services.ai_skill_service")
 call_skill_baseline_reranker = _lazy("call_skill_baseline_reranker", "task_server.services.ai_skill_service")
 call_skill_execution_scope_planner = _lazy("call_skill_execution_scope_planner", "task_server.services.ai_skill_service")
@@ -5616,12 +5617,7 @@ def _generation_scope_terms_from_rich_context(title, module, requirement_text_as
 
 
 def _ensure_rich_generation_scope(payload, title, module, requirement_text_assets, used_figma_pages, figma_images):
-    """Raise generation targets for rich requirement+Figma inputs.
-
-    A large Figma scope plus a requirement document should not be treated as a
-    tiny one-path request just because the first analysis pass extracted too few
-    requirement points.
-    """
+    """Record rich input metadata without turning Figma pages into requirements."""
     if not isinstance(payload, dict):
         return payload
     requirement_size = sum(len(str(item or "")) for item in (requirement_text_assets or []))
@@ -5640,18 +5636,6 @@ def _ensure_rich_generation_scope(payload, title, module, requirement_text_asset
         or analysis.get("test_points")
         or analysis.get("testPoints")
     )
-    min_points = 8 if figma_page_count >= 20 or requirement_size >= 2500 else 6
-    for term in _generation_scope_terms_from_rich_context(title, module, requirement_text_assets, used_figma_pages):
-        point = term if re.search(r"验收|覆盖|验证|测试", term) else f"{term}验收"
-        if any(point in old or old in point for old in points):
-            continue
-        points.append(point)
-        if len(points) >= min_points:
-            break
-    if len(points) < min_points:
-        for idx in range(len(points) + 1, min_points + 1):
-            points.append(f"需求文档核心场景{idx}覆盖")
-    analysis["requirement_points"] = points
     review = payload.setdefault("review", {})
     if isinstance(review, dict):
         review["rich_generation_scope"] = {
@@ -5660,7 +5644,9 @@ def _ensure_rich_generation_scope(payload, title, module, requirement_text_asset
             "figma_page_count": figma_page_count,
             "figma_image_count": figma_image_count,
             "requirement_point_count": len(points),
-            "reason": "需求文档或 Figma 范围较大，已提高用例生成目标，避免只生成兜底级少量用例。",
+            "synthetic_requirement_points_added": 0,
+            "extra_coverage_round": False,
+            "reason": "需求范围只采用需求分析明确提取的验收点；Figma 页面名和资料长度仅作参考，不再伪造验收点或抬高用例数量。",
         }
     return payload
 
@@ -6155,6 +6141,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 model_config=model_config,
                 app_package=app_package,
                 allow_entry_visibility_fast_path=deterministic_entry_visibility_source,
+                generation_scope_plan=execution_scope_plan,
             )
         except Exception as e:
             skill_pipeline_error = str(e)
@@ -6169,6 +6156,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
         review = payload.setdefault("review", {})
         review["skill_pipeline_disabled"] = True
 
+    planned_generation_targets = generation_targets_for_scope(
+        payload.get("analysis") or {},
+        mode="full",
+        scope_plan=execution_scope_plan,
+    )
+    payload.setdefault("review", {})["generation_targets"] = planned_generation_targets
     local_fallback_execution_floor = generated_payload_uses_local_fallback(payload)
     review = payload.setdefault("review", {})
     deterministic_entry_visibility = str(review.get("skill_pipeline") or "").startswith("deterministic_baidu_entry_visibility")
@@ -6328,7 +6321,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             ],
             "rule": "从 YAML 基线缓存提炼平台通用写法；相似 Top3 只用于当前需求的局部仿写。",
         }
-    review["generation_targets"] = generation_volume_targets(payload.get("analysis") or {})
+    review["generation_targets"] = planned_generation_targets
     if prepared_figma_context:
         review["prepared_figma_context_reused"] = {
             "enabled": True,
@@ -6376,7 +6369,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         try:
             payload = _ensure_rich_generation_scope(payload, title, module, stage1_text_assets, used_figma_pages, figma_images)
             rich_scope = ((payload.get("review") or {}).get("rich_generation_scope") or {}) if isinstance(payload, dict) else {}
-            coverage_rounds = 2 if rich_scope.get("enabled") else 1
+            coverage_rounds = 2 if rich_scope.get("extra_coverage_round") else 1
             def coverage_progress(message, progress=None):
                 if job_id:
                     update_generate_job(
@@ -6393,6 +6386,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 progress_callback=coverage_progress,
                 time_budget_seconds=AI_COVERAGE_TOTAL_BUDGET_SECONDS,
                 model_config=model_config,
+                targets=planned_generation_targets,
             )
         except Exception as e:
             try:
@@ -6411,6 +6405,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 "覆盖率补全模型调用失败，已保留当前用例并记录覆盖审查结果"
             ]
     payload = normalize_cases_payload(payload)
+    payload.setdefault("review", {})["generation_targets"] = planned_generation_targets
     if deterministic_entry_visibility:
         review = payload.setdefault("review", {})
         ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
@@ -6465,6 +6460,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 mode="full",
                 yaml_reference_context=yaml_reference_text,
                 model_config=model_config,
+                targets=planned_generation_targets,
             )
         except Exception as smoke_error:
             review = payload.setdefault("review", {})

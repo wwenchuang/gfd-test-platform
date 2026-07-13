@@ -1293,6 +1293,42 @@ def generation_volume_targets(analysis, mode="full"):
     return _gvt(analysis, mode=mode)
 
 
+def generation_targets_for_scope(analysis, mode="full", scope_plan=None):
+    """Use one platform-clamped 3/5/8 plan across the generation pipeline."""
+    targets = dict(generation_volume_targets(analysis, mode=mode))
+    scope_plan = scope_plan if isinstance(scope_plan, dict) else {}
+    if not scope_plan or not scope_plan.get("targetCaseCount"):
+        return targets
+    target_count, _ = _clamp_scope_size(
+        scope_plan.get("targetCaseCount"),
+        targets.get("target_automation_cases") or 3,
+    )
+    point_count = len(normalize_text_list((analysis or {}).get("requirement_points")))
+    requirement_floor = 3 if point_count <= 2 else (5 if point_count <= 5 else 8)
+    target_count, size = _clamp_scope_size(max(target_count, requirement_floor), target_count)
+    smoke_count = max(1, min(3, safe_int(scope_plan.get("smokeCount"), 3)))
+    scenario_counts = {
+        3: (3, 5),
+        5: (5, 8),
+        8: (8, 12),
+    }
+    min_scenarios, target_scenarios = scenario_counts[target_count]
+    targets.update({
+        "size": size,
+        "min_automation_cases": target_count,
+        "target_automation_cases": target_count,
+        "max_automation_cases": target_count,
+        "smoke_cases": smoke_count,
+        "smoke_max_cases": 3,
+        "min_scenarios": min_scenarios,
+        "target_scenarios": target_scenarios,
+        "scope_plan_applied": True,
+        "scope_requirement_floor": requirement_floor,
+        "scope_plan_reason": str(scope_plan.get("reason") or "AI 范围规划经平台 3/5/8 规则收敛"),
+    })
+    return targets
+
+
 AI_SCENARIO_DESIGNER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_SCENARIO_DESIGNER_TIMEOUT_SECONDS", "90"), 90))
 AI_AUTOMATION_FILTER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_AUTOMATION_FILTER_TIMEOUT_SECONDS", "150"), 150))
 
@@ -1724,9 +1760,61 @@ def _fallback_automation_filter_from_scenarios(title, module, analysis, scenario
     }
 
 
-def call_skill_scenario_designer(title, module, analysis, yaml_reference_context="", mode="full", model_config=None):
+def _compact_analysis_for_automation_filter(analysis):
+    """Keep only fields needed to decide UI automation suitability."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    result = {}
+    list_limits = {
+        "business_goals": 10,
+        "entry_points": 12,
+        "state_assumptions": 8,
+        "data_assumptions": 8,
+        "visible_outcomes": 12,
+        "risks": 10,
+        "requirement_points": 16,
+        "missing_inputs": 10,
+        "blockers": 8,
+        "assumptions": 10,
+    }
+    for key, limit in list_limits.items():
+        values = normalize_text_list(analysis.get(key))[:limit]
+        if values:
+            result[key] = values
+    for key in ("confidence", "readiness_score", "readiness_level", "source_quality"):
+        if key in analysis:
+            result[key] = copy.deepcopy(analysis.get(key))
+    return result
+
+
+def _compact_scenario_for_automation_filter(scenario):
+    scenario = scenario if isinstance(scenario, dict) else {}
+    result = {}
+    for key in (
+        "feature", "requirement_point", "requirementPoint", "scenario", "type",
+        "business_path", "businessPath", "expected", "expected_result",
+        "automation_suitable", "automationSuitable", "reason", "priority", "risk",
+    ):
+        value = scenario.get(key)
+        if value not in (None, "", []):
+            result[key] = copy.deepcopy(value)
+    for key in ("preconditions", "steps", "assertions", "data_requirements", "tags"):
+        values = normalize_text_list(scenario.get(key))[:8]
+        if values:
+            result[key] = values
+    return result
+
+
+def call_skill_scenario_designer(
+    title,
+    module,
+    analysis,
+    yaml_reference_context="",
+    mode="full",
+    model_config=None,
+    targets=None,
+):
     """调用 AI skill: scenario_designer。"""
-    targets = generation_volume_targets(analysis, mode=mode)
+    targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
     payload = {
         "title": title,
         "module": module,
@@ -1751,16 +1839,43 @@ def call_skill_scenario_designer(title, module, analysis, yaml_reference_context
     return scenarios
 
 
-def call_skill_automation_filter(title, module, analysis, scenarios, yaml_reference_context="", mode="full", model_config=None, app_package="", app_name=""):
+def call_skill_automation_filter(
+    title,
+    module,
+    analysis,
+    scenarios,
+    yaml_reference_context="",
+    mode="full",
+    model_config=None,
+    app_package="",
+    app_name="",
+    targets=None,
+):
     """调用 AI skill: automation_filter。"""
-    targets = generation_volume_targets(analysis, mode=mode)
+    targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
+    compact_analysis = _compact_analysis_for_automation_filter(analysis)
+    compact_scenarios = [
+        _compact_scenario_for_automation_filter(item)
+        for item in (scenarios or [])
+        if isinstance(item, dict)
+    ]
+    compact_yaml_reference = str(yaml_reference_context or "")[:6000]
+    input_review = {
+        "analysis_chars": len(json.dumps(compact_analysis, ensure_ascii=False)),
+        "scenario_count": len(compact_scenarios),
+        "scenario_chars": len(json.dumps(compact_scenarios, ensure_ascii=False)),
+        "yaml_reference_chars": len(compact_yaml_reference),
+        "target_automation_cases": safe_int(targets.get("target_automation_cases"), 0),
+        "timeout_seconds": AI_AUTOMATION_FILTER_TIMEOUT_SECONDS,
+        "rule": "automation_filter 只接收自动化适用性判断所需字段和短版 Top3 基线，完整需求分析仍保留在最终 payload。",
+    }
     payload = {
         "title": title,
         "module": module,
-        "analysis": analysis,
-        "scenarios": scenarios,
+        "analysis": compact_analysis,
+        "scenarios": compact_scenarios,
         "generation_targets": targets,
-        "yaml_reference_context": yaml_reference_context,
+        "yaml_reference_context": compact_yaml_reference,
         "automation_rules": {
             "allowed_actions": ["点击", "输入", "等待", "断言", "返回", "滚动", "处理弹窗", "回到首页"],
             "manual_by_default": ["真实支付", "删除", "切账号", "清数据", "后台造数", "接口 Mock", "系统权限预置", "断网/弱网", "排队/并发状态", "真实外设", "纯设计稿对比"],
@@ -1770,6 +1885,20 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
             "smoke_selection": "smoke=true 必须基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。冒烟候选池小需求通常 3 条以内，中大需求最多 5-8 条；Runner 首批自动下发最多 3 条。"
         }
     }
+    def fallback(error):
+        result = _fallback_automation_filter_from_scenarios(
+            title,
+            module,
+            analysis,
+            scenarios,
+            targets=targets,
+            error=str(error),
+            app_package=app_package,
+            app_name=app_name,
+        )
+        result.setdefault("review", {})["automation_filter_input"] = input_review
+        return result
+
     try:
         result = run_ai_skill(
             "automation_filter",
@@ -1781,28 +1910,12 @@ def call_skill_automation_filter(title, module, analysis, scenarios, yaml_refere
         )
         cases = result.get("cases") or []
     except Exception as exc:
-        return _fallback_automation_filter_from_scenarios(
-            title,
-            module,
-            analysis,
-            scenarios,
-            targets=targets,
-            error=str(exc),
-            app_package=app_package,
-            app_name=app_name,
-        )
+        return fallback(exc)
     if not isinstance(cases, list) or not cases:
-        return _fallback_automation_filter_from_scenarios(
-            title,
-            module,
-            analysis,
-            scenarios,
-            targets=targets,
-            error="automation_filter 未产出自动化用例",
-            app_package=app_package,
-            app_name=app_name,
-        )
+        return fallback("automation_filter 未产出自动化用例")
     review = result.get("review") or {}
+    review["automation_filter_skill"] = "automation_filter.v1"
+    review["automation_filter_input"] = input_review
     review["generation_targets"] = targets
     review["actual_case_count"] = len(cases)
     return {
@@ -2041,9 +2154,20 @@ def apply_smoke_selection_to_cases(cases, selection, targets):
     return cases, normalized.get("review") or {}
 
 
-def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_cases=None, yaml_reference_context="", mode="full", model_config=None):
+def call_skill_smoke_selector(
+    title,
+    module,
+    analysis,
+    scenarios,
+    cases,
+    manual_cases=None,
+    yaml_reference_context="",
+    mode="full",
+    model_config=None,
+    targets=None,
+):
     """AI 推荐冒烟 + 平台准入校验；失败时回退本地规则。"""
-    targets = generation_volume_targets(analysis, mode=mode)
+    targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
     cases = [case for case in (cases or []) if isinstance(case, dict)]
     if AI_SMOKE_SELECTOR_ENABLED and cases:
         compact_cases = [_compact_case_for_smoke_selector(case, index) for index, case in enumerate(cases, start=1)]
@@ -2110,11 +2234,19 @@ def call_skill_smoke_selector(title, module, analysis, scenarios, cases, manual_
     )
 
 
-def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_reference_context="", model_config=None):
+def select_smoke_cases_for_payload(
+    title,
+    module,
+    payload,
+    mode="full",
+    yaml_reference_context="",
+    model_config=None,
+    targets=None,
+):
     """Run final smoke selection on a normalized cases payload."""
     normalized = normalize_cases_payload(payload)
     cases = normalized.get("cases") or []
-    targets = generation_volume_targets(normalized.get("analysis") or {}, mode=mode)
+    targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(normalized.get("analysis") or {}, mode=mode)
     try:
         selection = call_skill_smoke_selector(
             title or normalized.get("title"),
@@ -2126,6 +2258,7 @@ def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_ref
             yaml_reference_context=yaml_reference_context,
             mode=mode,
             model_config=model_config,
+            targets=targets,
         )
     except Exception as exc:
         selection = _fallback_smoke_selection_from_existing(cases, targets, error=str(exc))
@@ -2147,6 +2280,7 @@ def build_cases_payload_from_skills(
     app_package="",
     app_name="",
     allow_entry_visibility_fast_path=True,
+    generation_scope_plan=None,
 ):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
@@ -2158,7 +2292,7 @@ def build_cases_payload_from_skills(
             text_assets,
             error="deterministic_baidu_entry_visibility_fast_path",
         )
-        targets = generation_volume_targets(analysis, mode=mode)
+        targets = generation_targets_for_scope(analysis, mode=mode, scope_plan=generation_scope_plan)
         scenarios = _fallback_scenarios_from_analysis(
             title,
             module,
@@ -2187,6 +2321,7 @@ def build_cases_payload_from_skills(
         }
         review = payload.setdefault("review", {})
         review["generation_mode"] = mode
+        review["generation_targets"] = targets
         review["skill_pipeline"] = "deterministic_baidu_entry_visibility.v1 -> smoke_selector.v1/platform_gate"
         review["fast_path_reason"] = "入口展示类需求先生成稳定短链路，AI/Figma 视觉校准作为后续补充，不阻塞首批冒烟"
         review["yaml_reference_context_used_by_skills"] = bool(yaml_reference_context)
@@ -2204,13 +2339,13 @@ def build_cases_payload_from_skills(
             module,
             normalized.get("analysis") or {},
             normalized.get("cases") or [],
-            generation_volume_targets(normalized.get("analysis") or {}, mode=mode),
+            targets,
             yaml_reference_context=yaml_reference_context,
         )
         selected_cases, smoke_review = apply_smoke_selection_to_cases(
             normalized.get("cases") or [],
             local_selection,
-            generation_volume_targets(normalized.get("analysis") or {}, mode=mode),
+            targets,
         )
         normalized["cases"] = selected_cases
         review = normalized.setdefault("review", {})
@@ -2221,6 +2356,7 @@ def build_cases_payload_from_skills(
         validate_ai_skill_output("cases_payload", normalized)
         return normalized
     analysis = call_skill_requirement_analyzer(title, module, text_assets, model_config=model_config)
+    targets = generation_targets_for_scope(analysis, mode=mode, scope_plan=generation_scope_plan)
     if yaml_reference_context:
         analysis["yaml_reference_context_available"] = True
         analysis["yaml_reference_rule"] = (
@@ -2233,6 +2369,7 @@ def build_cases_payload_from_skills(
         yaml_reference_context=yaml_reference_context,
         mode=mode,
         model_config=model_config,
+        targets=targets,
     )
     filtered = call_skill_automation_filter(
         title,
@@ -2244,6 +2381,7 @@ def build_cases_payload_from_skills(
         model_config=model_config,
         app_package=app_package,
         app_name=app_name,
+        targets=targets,
     )
     cases = filtered.get("cases") or []
     manual_cases = filtered.get("manual_cases") or []
@@ -2259,6 +2397,7 @@ def build_cases_payload_from_skills(
     }
     review = payload.setdefault("review", {})
     review["generation_mode"] = mode
+    review["generation_targets"] = targets
     review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1"
     review["yaml_reference_context_used_by_skills"] = bool(yaml_reference_context)
     if yaml_reference_context:
@@ -2279,6 +2418,7 @@ def build_cases_payload_from_skills(
         mode=mode,
         yaml_reference_context=yaml_reference_context,
         model_config=model_config,
+        targets=targets,
     )
     review = normalized.setdefault("review", {})
     review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> smoke_selector.v1/platform_gate"
@@ -2432,7 +2572,7 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         target_count, size = _clamp_scope_size(result.get("targetCaseCount"), target_count)
         smoke_count = max(1, min(3, safe_int(result.get("smokeCount"), min(3, target_count))))
         plan = {
-            "size": size if str(result.get("size") or "").lower() not in ("small", "medium", "large") else str(result.get("size")).lower(),
+            "size": size,
             "targetCaseCount": target_count,
             "smokeCount": smoke_count,
             "continueThreshold": 0.5,
@@ -2627,10 +2767,17 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
 # AI Skill: coverage_auditor
 # ---------------------------------------------------------------------------
 
-def call_coverage_auditor_skill(title, module, payload, local_audit=None, model_config=None):
+def call_coverage_auditor_skill(
+    title,
+    module,
+    payload,
+    local_audit=None,
+    model_config=None,
+    targets=None,
+):
     """调用 AI skill: coverage_auditor。"""
     normalized = normalize_cases_payload(payload)
-    targets = generation_volume_targets(normalized.get("analysis") or {})
+    targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(normalized.get("analysis") or {})
     request = {
         "title": title,
         "module": module,
@@ -2722,9 +2869,19 @@ def enforce_min_case_count_audit(audit, targets):
     return audit
 
 
-def improve_case_coverage(title, module, payload, max_rounds=1, progress_callback=None, time_budget_seconds=None, model_config=None):
+def improve_case_coverage(
+    title,
+    module,
+    payload,
+    max_rounds=1,
+    progress_callback=None,
+    time_budget_seconds=None,
+    model_config=None,
+    targets=None,
+):
     """改善用例覆盖度。"""
     current = normalize_cases_payload(payload)
+    planned_targets = dict(targets) if isinstance(targets, dict) else None
     started_at = time.time()
     budget = safe_int(time_budget_seconds, AI_COVERAGE_TOTAL_BUDGET_SECONDS) or AI_COVERAGE_TOTAL_BUDGET_SECONDS
 
@@ -2741,27 +2898,34 @@ def improve_case_coverage(title, module, payload, max_rounds=1, progress_callbac
     for round_index in range(max_rounds):
         emit(f"覆盖率审查：本地检查第 {round_index + 1}/{max_rounds} 轮", progress=72)
         current, local_audit = audit_case_coverage(current)
-        targets = generation_volume_targets(current.get("analysis") or {})
-        local_audit = enforce_min_case_count_audit(local_audit, targets)
-        enough_cases = safe_int(local_audit.get("case_count"), 0) >= safe_int(targets.get("min_automation_cases"), 0)
+        current_targets = planned_targets or generation_volume_targets(current.get("analysis") or {})
+        local_audit = enforce_min_case_count_audit(local_audit, current_targets)
+        enough_cases = safe_int(local_audit.get("case_count"), 0) >= safe_int(current_targets.get("min_automation_cases"), 0)
         if local_audit.get("ok") and enough_cases and not AI_COVERAGE_MODEL_WHEN_LOCAL_OK:
             review = current.setdefault("review", {})
             local_audit["coverage_auditor_skill"] = "skipped_local_audit_ok"
-            local_audit["generation_targets"] = targets
+            local_audit["generation_targets"] = current_targets
             review["coverage_audit"] = local_audit
             review["coverage_auditor_skipped"] = "本地覆盖审查已通过且用例数达到下限，跳过额外模型审查以降低超时风险"
             return current, local_audit
         if budget_left() <= 0:
             review = current.setdefault("review", {})
             local_audit["coverage_auditor_skill"] = "skipped_budget_exhausted"
-            local_audit["generation_targets"] = targets
+            local_audit["generation_targets"] = current_targets
             review["coverage_audit"] = local_audit
             review["coverage_auditor_skipped"] = f"覆盖审查已超过 {budget}s 总预算，保留本地覆盖结果继续生成 YAML"
             return current, local_audit
         try:
             emit(f"覆盖率审查：调用 coverage_auditor，第 {round_index + 1}/{max_rounds} 轮，剩余预算约 {max(0, budget_left())} 秒", progress=73)
-            audit = call_coverage_auditor_skill(title, module, current, local_audit, model_config=model_config)
-            audit = enforce_min_case_count_audit(audit, targets)
+            audit = call_coverage_auditor_skill(
+                title,
+                module,
+                current,
+                local_audit,
+                model_config=model_config,
+                targets=current_targets,
+            )
+            audit = enforce_min_case_count_audit(audit, current_targets)
             review = current.setdefault("review", {})
             review["coverage_audit"] = audit
         except Exception as exc:
@@ -2795,8 +2959,8 @@ def improve_case_coverage(title, module, payload, max_rounds=1, progress_callbac
         current["module"] = current.get("module") or module
         validate_ai_skill_output("cases_payload", current)
     current, audit = audit_case_coverage(current)
-    targets = generation_volume_targets(current.get("analysis") or {})
-    audit = enforce_min_case_count_audit(audit, targets)
+    current_targets = planned_targets or generation_volume_targets(current.get("analysis") or {})
+    audit = enforce_min_case_count_audit(audit, current_targets)
     current.setdefault("review", {})["coverage_audit"] = audit
     return current, audit
 
@@ -3146,6 +3310,7 @@ __all__ = [
     "call_skill_requirement_analyzer",
     # Scenario & automation
     "generation_volume_targets",
+    "generation_targets_for_scope",
     "scenario_requirement_point",
     "case_matches_requirement",
     "build_skill_coverage_matrix",
