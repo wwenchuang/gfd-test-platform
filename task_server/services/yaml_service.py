@@ -5564,6 +5564,23 @@ def _save_prepared_figma_design_assets(case_set_id, prepared_figma_context, titl
         return []
 
 
+def entry_visibility_fast_path_enabled(request, title, module, text_assets):
+    request = request if isinstance(request, dict) else {}
+    disabled = safe_bool(
+        request.get("disableEntryVisibilityFastPath")
+        or request.get("disable_entry_visibility_fast_path"),
+        False,
+    )
+    if disabled:
+        return False
+    return safe_bool(
+        request.get("forceEntryVisibilityFastPath")
+        or request.get("force_entry_visibility_fast_path")
+        or request.get("entryVisibilityFastPath"),
+        False,
+    ) or should_fast_path_baidu_entry_visibility(title, module, text_assets)
+
+
 def generate_ui_yaml_from_request(d, job_id=None):
     title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"
     module = d.get("module") or "AI测试"
@@ -5693,12 +5710,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="识别需求主链",
                 message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
             )
-    deterministic_entry_visibility_source = safe_bool(
-        d.get("forceEntryVisibilityFastPath")
-        or d.get("force_entry_visibility_fast_path")
-        or d.get("entryVisibilityFastPath"),
-        False,
-    ) or should_fast_path_baidu_entry_visibility(title, module, stage1_text_assets)
+    deterministic_entry_visibility_source = entry_visibility_fast_path_enabled(
+        d,
+        title,
+        module,
+        stage1_text_assets,
+    )
     use_global_baseline_profile = safe_bool(
         d.get("useGlobalBaselineProfile")
         if d.get("useGlobalBaselineProfile") is not None
@@ -5885,6 +5902,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 stage1_text_assets,
                 model_config=model_config,
                 app_package=app_package,
+                allow_entry_visibility_fast_path=deterministic_entry_visibility_source,
             )
         except Exception as e:
             skill_pipeline_error = str(e)

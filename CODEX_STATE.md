@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整需求回归范围分流
+
+问题定位：
+
+- 已成功的 Agent `agent-1783907519406-1cb3572a` 使用 `scope=smoke`，生成和执行计划均只有 1 条：`total=1 / selectedSmoke=1 / deferredExecutable=0 / remaining=0`。
+- 入口可见性需求在 Agent 层直接生成单条冒烟；即使跳过 Agent 直接生成，YAML 服务和 AI Skills 仍会根据“百度网盘入口可见”文本自动进入确定性快路径，因此只把 scope 改成 `regression` 仍不能生成完整需求用例。
+- 用户要求在已通过 1 条冒烟后继续执行完整需求，正确行为应是：`smoke` 保留稳定单条快路径；`regression/full` 进入完整需求分析、Figma 视觉校准、3/5/8 用例生成和 remaining 分批执行。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `task_server/services/yaml_service.py`
+- `task_server/services/ai_skill_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 新增 Agent 范围门禁：仅 `smoke / 冒烟 / single / 单条` 使用直接入口短链路；`regression` 不再提前返回单条 YAML。
+- Agent 向 YAML 生成链同时传递 `forceEntryVisibilityFastPath` 和 `disableEntryVisibilityFastPath`，避免完整范围被下游文本规则重新切回快路径。
+- YAML 服务新增统一快路径决策函数；显式 disable 时不执行本地入口快路径、不跳过 AI 基线重排和范围规划。
+- AI Skills 用例生成增加 `allow_entry_visibility_fast_path` 参数；完整范围会进入 requirement analyzer、scenario designer、automation filter、smoke selector 和 Figma 视觉校准。
+- 完整生成结果仍由现有执行计划控制：首批最多 3 条，达到门禁后分批执行 remaining，不新增执行模式。
+- 没有修改 `router.py`，没有修改历史 YAML；本轮只需部署服务端，不需要替换 Windows Runner。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 -c "from tests.backend_static_checks import check_ai_skill_timeout_fallbacks_are_requirement_scoped; check_ai_skill_timeout_fallbacks_are_requirement_scoped(); print('ok')"
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：范围分流定向检查通过，后端检查 `61` 项通过。部署后下一轮必须使用同一需求/Figma、`scope=regression`、固定 OPPO `ecbfd645`，并跟踪首批与 remaining 全部终态。
+
 ### 2026-07-13 Agent 目标页单跳短链路与失败类型归一
 
 部署后真实验证：

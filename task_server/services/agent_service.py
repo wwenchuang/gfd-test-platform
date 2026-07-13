@@ -1689,6 +1689,11 @@ def _agent_needs_entry_visibility_smoke(run):
     return bool(_agent_entry_visibility_intent(run))
 
 
+def _agent_use_direct_entry_visibility_smoke(run):
+    scope = str((run or {}).get("scope") or "smoke").strip().lower()
+    return _agent_needs_entry_visibility_smoke(run) and scope in ("smoke", "冒烟", "single", "单条")
+
+
 def _agent_needs_baidu_entry_smoke(run):
     return _agent_needs_entry_visibility_smoke(run)
 
@@ -7808,6 +7813,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             "source": "agent-source-context",
         }]
     prepared_figma_context = _agent_prepared_figma_context_from_source(source_context)
+    direct_entry_visibility = _agent_use_direct_entry_visibility_smoke(run)
+    has_entry_visibility_intent = _agent_needs_entry_visibility_smoke(run)
     request_data = {
         "case_set_id": case_set_id,
         "title": title,
@@ -7820,7 +7827,9 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         "app_package": _agent_app_package(run),
         "use_knowledge_context": False,
         "source": "agent",
-        "forceEntryVisibilityFastPath": _agent_needs_entry_visibility_smoke(run),
+        "scope": str(run.get("scope") or "smoke").strip(),
+        "forceEntryVisibilityFastPath": direct_entry_visibility,
+        "disableEntryVisibilityFastPath": has_entry_visibility_intent and not direct_entry_visibility,
     }
     progress_job_id = _agent_generate_progress_job_id(run)
     step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)
@@ -7847,7 +7856,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         timeout_seconds=900,
     )
     entry_visibility_intent = _agent_entry_visibility_intent(run)
-    direct_entry_visibility = bool(entry_visibility_intent)
+    direct_entry_visibility = bool(entry_visibility_intent) and direct_entry_visibility
     if direct_entry_visibility:
         file_name = _agent_entry_visibility_smoke_filename(run)
         path = safe_join(TASK_DIR, module, file_name)

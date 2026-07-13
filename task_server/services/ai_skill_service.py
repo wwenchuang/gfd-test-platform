@@ -2111,11 +2111,20 @@ def select_smoke_cases_for_payload(title, module, payload, mode="full", yaml_ref
     return normalized
 
 
-def build_cases_payload_from_skills(title, module, text_assets, mode="full", model_config=None, app_package="", app_name=""):
+def build_cases_payload_from_skills(
+    title,
+    module,
+    text_assets,
+    mode="full",
+    model_config=None,
+    app_package="",
+    app_name="",
+    allow_entry_visibility_fast_path=True,
+):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
     yaml_reference_context = extract_yaml_reference_context(text_assets)
-    if _should_fast_path_baidu_entry_visibility(title, module, text_assets):
+    if allow_entry_visibility_fast_path and _should_fast_path_baidu_entry_visibility(title, module, text_assets):
         analysis = _fallback_requirement_analysis(
             title,
             module,

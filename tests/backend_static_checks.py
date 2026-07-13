@@ -1798,6 +1798,28 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     require(fast_cases and fast_cases[0].get("smoke") is True, "Baidu entry visibility fast path must produce a first smoke case")
     require("小白学习打印首页加载完成" in fast_first_blob and "文档打印" in fast_first_blob, "Fast-path smoke case must start from the real homepage entry chain")
     require("点击「百度网盘」入口" not in fast_first_blob and "授权页" not in fast_first_blob, "Display-only fast-path smoke must not click into third-party Baidu Netdisk flow")
+    fast_path_text = ["基础打印的入口在首页 文档打印 照片打印 扫描复印"]
+    require(yaml_service.entry_visibility_fast_path_enabled({}, "基础打印新增百度网盘入口", "基础打印", fast_path_text), "Entry visibility smoke requests must retain the deterministic fast path by default")
+    require(not yaml_service.entry_visibility_fast_path_enabled({"disableEntryVisibilityFastPath": True}, "基础打印新增百度网盘入口", "基础打印", fast_path_text), "Complete requirement requests must be able to disable the deterministic entry fast path")
+
+    original_requirement_analyzer = ai_skill_service.call_skill_requirement_analyzer
+    try:
+        def full_pipeline_reached(*_args, **_kwargs):
+            raise RuntimeError("full_pipeline_reached")
+
+        ai_skill_service.call_skill_requirement_analyzer = full_pipeline_reached
+        try:
+            ai_skill_service.build_cases_payload_from_skills(
+                "基础打印新增百度网盘入口",
+                "基础打印",
+                ["基础打印的入口在首页 文档打印 照片打印 扫描复印"],
+                allow_entry_visibility_fast_path=False,
+            )
+            raise AssertionError("full requirement scope must bypass the deterministic entry fast path")
+        except RuntimeError as exc:
+            require(str(exc) == "full_pipeline_reached", "Disabling the entry fast path must enter the full AI requirement pipeline")
+    finally:
+        ai_skill_service.call_skill_requirement_analyzer = original_requirement_analyzer
 
     doc_text = "\n".join([
         "三方文档打印：百度网盘入口移至第 2 个，位于本地文档之后",
@@ -3046,16 +3068,19 @@ def main():
     require("Figma UI 图" in agent_service_source and "其中上传截图" in agent_service_source, "Agent source summary must distinguish Figma exported UI images from user-uploaded screenshots")
     require("def _agent_visual_reference_report" in agent_service_source and '"visualReferenceReport"' in agent_service_source and '"soft_reference"' in agent_service_source and '"hardGate": False' in agent_service_source and '"aiJudgementRequired"' in agent_service_source and '"sentToAiForJudgement"' in agent_service_source, "Agent must expose uploaded screenshots as traceable AI visual soft references, not hard gates")
     require("visual_image_assets = figma_images + uploaded_image_assets" in yaml_service_source and "refine_cases_with_yaml_visual_batches" in yaml_service_source and "uploaded_image_assets" in yaml_service_source, "Uploaded screenshots must be included in AI visual judgment for YAML generation")
-    require("def build_cases_payload_from_skills(title, module, text_assets, mode=\"full\", model_config=None, app_package=\"\", app_name=\"\")" in ai_skill_service_source and "app_package=app_package" in ai_skill_service_source, "AI skill case payload builder must accept app context passed by YAML generation")
+    require("def build_cases_payload_from_skills(" in ai_skill_service_source and "allow_entry_visibility_fast_path=True" in ai_skill_service_source and "app_package=app_package" in ai_skill_service_source, "AI skill case payload builder must accept app context and entry fast-path policy passed by YAML generation")
     require(
-        "deterministic_entry_visibility_source = safe_bool" in yaml_service_source
-        and "should_fast_path_baidu_entry_visibility(title, module, stage1_text_assets)" in yaml_service_source
+        "def entry_visibility_fast_path_enabled" in yaml_service_source
+        and "disableEntryVisibilityFastPath" in yaml_service_source
+        and "deterministic_entry_visibility_source = entry_visibility_fast_path_enabled" in yaml_service_source
+        and "should_fast_path_baidu_entry_visibility(title, module, text_assets)" in yaml_service_source
         and "forceEntryVisibilityFastPath" in yaml_service_source
+        and "allow_entry_visibility_fast_path=deterministic_entry_visibility_source" in yaml_service_source
         and 'title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"' in yaml_service_source
         and "入口可见性快路径使用本地短链路生成，跳过 AI 基线重排" in yaml_service_source
         and "入口可见性快路径固定生成 3 条首批短链路冒烟" in yaml_service_source
         and "入口可见性快路径：跳过重型 AI 需求解析" in yaml_service_source,
-        "Baidu entry visibility fast path must honor Agent force flag, use target fallback, and skip heavy AI generation decisions",
+        "Entry visibility generation must support smoke fast path and explicit complete-scope bypass into the full AI pipeline",
     )
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
@@ -3066,9 +3091,11 @@ def main():
     require("def _agent_fallback_yaml_draft" in agent_service_source and "fallback_after_empty_ai_yaml" in agent_service_source and "fallback_after_invalid_ai_yaml" in agent_service_source, "Agent YAML generation must create confirmable drafts when AI returns empty or invalid YAML")
     require("def _agent_generate_yaml_from_ui_pipeline" in agent_service_source and "generate_ui_yaml_from_request" in agent_service_source and '"split_by_case"' in agent_service_source and "ui_yaml_pipeline" in agent_service_source, "Agent new-requirement YAML generation must reuse the full requirement/Figma/YAML pipeline before fallback")
     require(
-        '"forceEntryVisibilityFastPath": _agent_needs_entry_visibility_smoke(run)' in agent_service_source
+        '"forceEntryVisibilityFastPath": direct_entry_visibility' in agent_service_source
+        and '"disableEntryVisibilityFastPath": has_entry_visibility_intent and not direct_entry_visibility' in agent_service_source
+        and "def _agent_use_direct_entry_visibility_smoke" in agent_service_source
         and '"target": title' in agent_service_source,
-        "Agent YAML generation must pass explicit generic entry visibility intent and target to the YAML pipeline",
+        "Agent YAML generation must reserve the direct entry fast path for smoke scope and disable it for complete requirement scope",
     )
     require(
         "def _agent_entry_visibility_intent(run)" in agent_service_source
@@ -3079,12 +3106,16 @@ def main():
     )
     from task_server.services import agent_service as agent_runtime
     from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable as score_entry_smoke_yaml
-    entry_smoke_yaml = agent_runtime._agent_entry_visibility_smoke_yaml({
+    entry_run = {
         "target": "基础打印新增百度网盘入口",
         "module": "基础打印",
         "requirementText": "基础打印的入口在首页   文档打印 照片打印 扫描复印",
         "appPackage": "com.xbxxhz.box",
-    })
+        "scope": "smoke",
+    }
+    entry_smoke_yaml = agent_runtime._agent_entry_visibility_smoke_yaml(entry_run)
+    require(agent_runtime._agent_use_direct_entry_visibility_smoke(entry_run), "Smoke scope must keep the proven direct entry-visibility path")
+    require(not agent_runtime._agent_use_direct_entry_visibility_smoke({**entry_run, "scope": "regression"}), "Regression scope must bypass the single-smoke shortcut and generate the complete requirement suite")
     require(
         "应用首页或底部导航中名称为文档打印的入口" in entry_smoke_yaml
         and "文档打印页面或文档打印导入入口区域已加载，并展示百度网盘入口" in entry_smoke_yaml
