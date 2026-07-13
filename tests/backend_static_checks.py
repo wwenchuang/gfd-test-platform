@@ -153,6 +153,15 @@ def check_agent_failure_review_and_repair_guard():
     })
     require(normalized.get("failureType") == "ENV_ISSUE", "Runner env_issue review must override misleading script-like timeout text")
     require("model request" in normalized.get("failureReason", ""), "Normalized Agent failure must retain the Runner review reason")
+    script_timeout = agent_service._normalize_failed_execution_item({
+        "jobId": "job-static-page-timeout",
+        "failureType": "等待目标超时",
+        "summaryText": "waitFor timeout: 当前已经进入文档打印页面，但脚本仍在等待打印首页",
+    })
+    require(script_timeout.get("failureType") == "SCRIPT_ISSUE", "Display labels such as 等待目标超时 must normalize to SCRIPT_ISSUE")
+    require(script_timeout.get("failureKind") == "等待目标超时", "Agent must retain the concrete failure kind for display and evidence")
+    require(agent_service._agent_should_confirm_unknown_failure({}, "UNKNOWN"), "Unreviewed UNKNOWN failures must request confirmation")
+    require(not agent_service._agent_should_confirm_unknown_failure({"unknownFailureConfirmed": True}, "UNKNOWN"), "Reviewed UNKNOWN failures must not enter a confirmation loop")
 
     original = """android:
   tasks:
@@ -3033,10 +3042,13 @@ def main():
         "appPackage": "com.xbxxhz.box",
     })
     require(
-        "首页的文档打印入口" in entry_smoke_yaml
-        and "文档打印页面或文档打印导入入口区域已加载，展示百度网盘入口" in entry_smoke_yaml
+        "应用首页或底部导航中名称为文档打印的入口" in entry_smoke_yaml
+        and "文档打印页面或文档打印导入入口区域已加载，并展示百度网盘入口" in entry_smoke_yaml
+        and entry_smoke_yaml.count("- aiTap:") == 1
+        and "应用首页或底部导航中的打印、学习打印、小白打印入口" not in entry_smoke_yaml
+        and "页面同时展示文档打印、照片打印、扫描复印入口" not in entry_smoke_yaml
         and "目标页面" not in entry_smoke_yaml,
-        "Agent entry visibility smoke must infer 文档打印 from root requirementText and generate a concrete business page chain",
+        "Agent entry visibility smoke must infer 文档打印 and use one direct semantic hop to the target page",
     )
     entry_smoke_score = score_entry_smoke_yaml(entry_smoke_yaml, generated=True)
     require(entry_smoke_score.get("ok") and entry_smoke_score.get("executionLevel") == "executable", "Agent entry visibility smoke must pass Runner executable gate without needs_review")
@@ -3044,13 +3056,12 @@ def main():
         "monkey -p {app_package} -c android.intent.category.LAUNCHER 1" not in agent_service_source
         and "terminate: {app_package}" in agent_service_source
         and "应用首页或启动页已打开" in agent_service_source
-        and all(term in agent_service_source for term in ("计算练习", "题库", "错题", "资料库", "教辅", "模型页", "三维创作页"))
-        and "应用首页或底部导航中的打印、学习打印、小白打印入口" in agent_service_source
-        and "页面同时展示文档打印、照片打印、扫描复印入口" in agent_service_source
-        and "首页的{target_page}入口" in agent_service_source
-        and "{target_page}页面或{target_page}导入入口区域已加载，展示{entry_label}入口" in agent_service_source
-        and "不要点击资料库、教辅、模型页或三维创作页入口" in agent_service_source,
-        "Agent entry visibility smoke must avoid bare adb launch, cold-start the app, enter print home, then enter the target business page before asserting the entry",
+        and "可看到{target_page}入口或底部导航" in agent_service_source
+        and "应用首页或底部导航中名称为{target_page}的入口" in agent_service_source
+        and "只点击与“{target_page}”文字对应的目标" in agent_service_source
+        and "{target_page}页面或{target_page}导入入口区域已加载，并展示{entry_label}入口" in agent_service_source
+        and "应用首页或底部导航中的打印、学习打印、小白打印入口" not in agent_service_source,
+        "Agent entry visibility smoke must cold-start the app and directly enter the inferred target page without an ambiguous intermediate print-home hop",
     )
     require("def _build_agent_quality_report" in agent_service_source and '"qualityReport"' in agent_service_source and '"完整测试用例 .mm"' in agent_service_source and '"可自动化 YAML"' in agent_service_source, "Agent generation must persist a reviewer-friendly quality report")
     require("def _agent_is_new_requirement_run" in agent_service_source and "new_requirement_source" in agent_service_source, "Agent must treat requirement/Figma inputs as new requirements unless reuse/regression is explicit")
@@ -3072,6 +3083,7 @@ def main():
     require('"summaryText": fj.get("summaryText", "")' in agent_service_source and 'f"summary：{target_job.get(' in agent_service_source, "Agent failure analysis and repair evidence must include runner summary details")
     require("def _agent_failure_ai_payload" in agent_service_source and '"screenshotDesc": str(primary_failure.get("failureReason")' in agent_service_source, "Agent failure analysis must populate the concrete AI Gateway task/yaml/log/screenshot contract")
     require("def _agent_failure_type_from_review" in agent_service_source and '"failureReview": failure_review' in agent_service_source and '"failureReview": fj.get("failureReview")' in agent_service_source, "Agent must preserve Runner failure reviews through report collection and AI analysis")
+    require("def _agent_canonical_failure_type" in agent_service_source and '"failureKind": failure_kind' in agent_service_source and "_agent_should_confirm_unknown_failure(run, ft)" in agent_service_source, "Agent must canonicalize concrete failure labels and avoid repeated UNKNOWN confirmation")
     require("def _agent_repair_has_semantic_change" in agent_service_source and '"sleep_only_or_noop"' in agent_service_source and '"rejectedYaml"' in agent_service_source, "Agent must reject sleep-only and semantically equivalent AI repair candidates")
     require(
         "def _agent_summary_error_excerpt" in agent_service_source

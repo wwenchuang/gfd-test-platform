@@ -1699,20 +1699,16 @@ def _agent_entry_visibility_smoke_yaml(run):
     entry_label = str(intent.get("entryLabel") or "目标").strip() or "目标"
     target_page = str(intent.get("targetPage") or "目标页面").strip() or "目标页面"
     task_name = f"{target_page}{entry_label}入口可见性短链路冒烟"
-    home_wait = "小白学习打印首页已加载，页面同时展示文档打印、照片打印、扫描复印入口；当前不是计算练习、题库、错题、资料库、教辅、模型页或三维创作页"
     flow = [
         f"        - terminate: {app_package}",
         f"        - launch: {app_package}",
-        "        - aiWaitFor: 应用首页或启动页已打开，可看到首页、打印、学习打印、小白打印或底部导航入口",
+        f"        - aiWaitFor: 应用首页或启动页已打开，可看到{target_page}入口或底部导航",
         "          timeout: 15000",
-        "        - aiTap: 应用首页或底部导航中的打印、学习打印、小白打印入口；不要点击资料库、题库、错题、教辅、模型页或我的",
-        f"        - aiWaitFor: {home_wait}",
-        "          timeout: 20000",
     ]
     if target_page != "首页":
         flow.extend([
-            f"        - aiTap: 首页的{target_page}入口，不要点击资料库、教辅、模型页或三维创作页入口",
-            f"        - aiWaitFor: {target_page}页面或{target_page}导入入口区域已加载，展示{entry_label}入口",
+            f"        - aiTap: 应用首页或底部导航中名称为{target_page}的入口；只点击与“{target_page}”文字对应的目标，不要先进入其他打印、资料库、题库、教辅、模型页或我的",
+            f"        - aiWaitFor: {target_page}页面或{target_page}导入入口区域已加载，并展示{entry_label}入口",
             "          timeout: 20000",
             f"        - aiAssert: {target_page}页面展示{entry_label}入口",
         ])
@@ -7862,7 +7858,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         entry_label = str((entry_visibility_intent or {}).get("entryLabel") or "目标").strip() or "目标"
         target_page = str((entry_visibility_intent or {}).get("targetPage") or "目标页面").strip() or "目标页面"
         case_title = f"{target_page}{entry_label}入口可见性短链路冒烟"
-        steps = ["启动 App", "从非打印功能页恢复到应用首页", "进入小白学习打印首页"]
+        steps = ["启动 App", "等待应用首页加载"]
         if target_page != "首页":
             steps.append(f"进入{target_page}")
         steps.append(f"等待{entry_label}入口可见")
@@ -10006,6 +10002,29 @@ def _agent_failure_type_from_review(review):
     }.get(category, "")
 
 
+def _agent_canonical_failure_type(value):
+    raw = str(value or "").strip()
+    normalized = raw.upper().replace("-", "_")
+    if normalized in ("ENV_ISSUE", "SCRIPT_ISSUE", "PRODUCT_BUG", "UNKNOWN", "NONE"):
+        return normalized
+    if raw in (
+        "Midscene 重规划超限",
+        "Runner 单任务超时",
+        "元素定位失败",
+        "等待目标超时",
+        "断言/页面状态不匹配",
+    ):
+        return "SCRIPT_ISSUE"
+    return ""
+
+
+def _agent_should_confirm_unknown_failure(run, failure_type):
+    return (
+        _agent_canonical_failure_type(failure_type) == "UNKNOWN"
+        and not bool((run or {}).get("unknownFailureConfirmed"))
+    )
+
+
 def _normalize_failed_execution_item(item, fallback=None):
     if not isinstance(item, dict):
         return None
@@ -10032,14 +10051,22 @@ def _normalize_failed_execution_item(item, fallback=None):
             "summary": summary,
             "summaryText": summary_text,
         })
-    failure_type = str(item.get("failureType") or item.get("failure_type") or "").strip().upper()
+    raw_failure_type = str(item.get("failureType") or item.get("failure_type") or "").strip()
+    failure_kind = raw_failure_type
+    failure_type = _agent_canonical_failure_type(raw_failure_type)
     review_failure_type = _agent_failure_type_from_review(failure_review)
     if review_failure_type in ("ENV_ISSUE", "PRODUCT_BUG"):
         failure_type = review_failure_type
-    elif not failure_type and review_failure_type:
+    elif failure_type in ("", "UNKNOWN") and review_failure_type:
         failure_type = review_failure_type
-    if not failure_type or failure_type == "UNKNOWN":
-        failure_type = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail, summary_text]))
+    if failure_type in ("", "UNKNOWN"):
+        inferred_kind = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail, summary_text]))
+        inferred_type = _agent_canonical_failure_type(inferred_kind)
+        if inferred_type:
+            failure_type = inferred_type
+            if not failure_kind or _agent_canonical_failure_type(failure_kind) == "UNKNOWN":
+                failure_kind = inferred_kind
+    failure_type = failure_type or "UNKNOWN"
     return {
         "jobId": job_id,
         "status": str(item.get("status") or fallback.get("status") or "failed").strip() or "failed",
@@ -10055,6 +10082,7 @@ def _normalize_failed_execution_item(item, fallback=None):
         "summaryText": summary_text[:4000],
         "failureReason": reason,
         "failureType": failure_type,
+        "failureKind": failure_kind,
         "failureReview": failure_review,
     }
 
@@ -10589,7 +10617,7 @@ def _tool_analyze_failure(run):
         elif has_job_failures:
             # 有执行失败
             job_failure_types = {
-                str(item.get("failureType") or "").strip().upper()
+                _agent_canonical_failure_type(item.get("failureType")) or "UNKNOWN"
                 for item in failed_jobs
                 if isinstance(item, dict)
             }
@@ -10634,8 +10662,9 @@ def _tool_analyze_failure(run):
                     analysis["conclusion"] = result.get("conclusion") or result.get("analysis", "")
                     analysis["recommendation"] = result.get("recommendation") or result.get("suggestion", "")
                     # AI 可能返回更准确的失败类型
-                    if result.get("failureType") and failure_type != "ENV_ISSUE":
-                        analysis["failureType"] = result["failureType"]
+                    ai_failure_type = _agent_canonical_failure_type(result.get("failureType"))
+                    if ai_failure_type and ai_failure_type != "UNKNOWN" and failure_type != "ENV_ISSUE":
+                        analysis["failureType"] = ai_failure_type
             except Exception:
                 analysis["conclusion"] = f"AI分析超时，失败类型: {failure_type}"
                 analysis["recommendation"] = "请检查失败日志手动分析"
@@ -12004,7 +12033,7 @@ def _execute_agent_steps(run_id):
             if step_name == "ANALYZE_FAILURE":
                 fa = (run.get("artifacts") or {}).get("failureAnalysis") or {}
                 ft = str(fa.get("failureType", "")).upper()
-                if ft == "UNKNOWN":
+                if _agent_should_confirm_unknown_failure(run, ft):
                     run["status"] = "WAIT_CONFIRM"
                     run["currentStep"] = "WAIT_CONFIRM"
                     now = time.strftime("%Y-%m-%dT%H:%M:%S")

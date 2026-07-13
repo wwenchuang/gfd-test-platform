@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 Agent 目标页单跳短链路与失败类型归一
+
+部署后真实验证：
+
+- 服务端 `8091 / 8088` 健康检查通过；Windows Runner 心跳确认 `2026.07.10-model-family-v4`，模型配置为 `qwen3.6-plus / qwen3.6`。
+- OPPO `ecbfd645 / Reno9 / PHM110` 在线，`com.xbxxhz.box` 为 `4.45.0`。发起 Agent 前先等待用户侧华为 Sonic 任务 `sonic_1783905114419` 成功结束，避免两台设备并行干扰。
+- Agent：`agent-1783905536792-3729b303`，固定 `win-runner-01 / ecbfd645 / fixed`；需求文本和 Figma 链接均复用上一轮，Figma 4 个页面、4 张 UI 图全部读取成功。
+- 生成 YAML 为单条 `executable / 100` 冒烟，Runner job 为 `job_1783905613659_00002`，只绑定 OPPO。
+- Qwen3 坐标协议修复已被真机验证：同一视觉框最终执行 `adb -s ecbfd645 input ... 138 318`，不再是旧错误坐标 `(240,267)`；点击后真实进入了标题为“文档打印”的目标页面。
+- 本轮失败不是坐标或设备问题。旧模板先用宽泛“打印 / 学习打印 / 小白打印”点击，实际上已直接进入文档打印页，随后却继续等待“同时展示文档打印、照片打印、扫描复印的打印首页”，因此在正确目标页等待错误条件并超时。
+- 失败报告把具体类型写成展示标签“等待目标超时”；Agent 只识别 `ENV_ISSUE / SCRIPT_ISSUE / PRODUCT_BUG / UNKNOWN`，因此误判为 `UNKNOWN`。人工确认后后置逻辑又忽略 `unknownFailureConfirmed`，产生第二个相同确认项。本轮已主动取消，避免无效重跑，终态为 `CANCELLED`。
+
+已修改：
+
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 入口可见性冒烟改为通用目标页单跳：冷启动 -> 等待首页 -> 按推断出的目标页面文字直接点击 -> 等待目标页展示需求入口 -> 断言。文档打印示例从 8 个动作、2 次跳转缩短为 6 个动作、1 次跳转，不使用固定坐标。
+- 移除“先进入打印聚合首页、再进入目标页”的模糊中间跳转，避免目标入口本身被第一次 `aiTap` 命中后又等待错误页面。
+- “等待目标超时 / 元素定位失败 / 断言页面不匹配 / 重规划超限 / Runner 单任务超时”等具体展示标签统一归为 `SCRIPT_ISSUE`，并通过 `failureKind` 保留原始细分原因。
+- Runner `failure_review` 的 `ENV_ISSUE / PRODUCT_BUG` 仍保持优先；AI 不允许把已确定类型降级回 `UNKNOWN`。
+- `UNKNOWN` 人工确认增加一次性门禁；`unknownFailureConfirmed=True` 后不再重复创建确认项。
+- 没有修改 `router.py`、没有新增执行模式、没有修改历史 YAML，也不需要再次替换 Windows Runner。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 -c "from tests.backend_static_checks import check_agent_failure_review_and_repair_guard; check_agent_failure_review_and_repair_guard(); print('ok')"
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：新单跳 YAML 为 `executable / 100`，定向行为检查通过，后端检查 `61` 项通过。部署本轮服务端提交后，需再次使用同一需求和 OPPO 单设备验证到 Runner/Agent 最终终态，并检查报告中的百度网盘入口断言。
+
 ### 2026-07-10 Qwen3 坐标协议与 Agent 无效修复拦截
 
 部署前真实验证：
