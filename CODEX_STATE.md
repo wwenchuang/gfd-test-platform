@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 完整回归首页恢复动作与视觉计数修复
+
+部署 `8de0541` 后继续真实验证任务：
+
+- Agent `agent-1783929144616-0db0f2ad`，固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 线上 `8088 -> 8091` 健康，Task Server、AI Gateway、Sonic 均健康；模型为 `qwen3.6-plus`；平台状态显示 1 个 Runner 在线、2 台设备记录。本轮没有进入 Runner，也没有向第二台设备下发任务。
+- 路由继续正确进入 `new_requirement_source / generate_draft`，未复用历史 YAML；Figma 源解析为 4 页/4 图。
+- 视觉校准已送 AI 判断，但第 1 批在 `qwen3.6-plus` 900 秒超时，状态为 `failed`。Figma/截图仍是软参考，失败原因被保留，没有作为硬门禁直接阻断 Runner。
+- 覆盖门禁继续生效：生成 5 条自动化用例、8 个场景、5 个 YAML，但最终只确认 3 个 YAML，Agent 在 `GENERATE_YAML` 阶段 `FAILED`，没有进入 Runner。
+- 根因定位后没有放宽评分门槛：5 份 YAML 静态校验均 executable，但 01/03/05 在可执行性评分中被降级。离线重放线上 YAML 发现 01/03 的真实问题是 `launch` 后使用 `ai: 回到首页` 这种 Midscene 自动规划动作，随后直接 `aiTap`，触发“aiTap 前缺少就近等待”和“复合 ai 动作”风险；这符合 Midscene 官方语义中 `ai()` 会自动规划、明确目标时应优先使用即时动作/等待的原则。05 是跨三页长链路，仍应保持 draft，不自动下发。
+
+已修改：
+
+- `task_server/services/yaml_service.py`
+- `task_server/services/agent_service.py`
+- `tests/backend_static_checks.py`
+- `CODEX_STATE.md`
+
+修复点：
+
+- 扩展已有 `repair_generated_yaml_executable_gate_issues`，把生成 YAML 中 `ai/aiAction/aiAct: 回到首页/返回首页/确保首页...` 规范为 `aiWaitFor: App 首页加载完成，主要入口或底部导航可见...`，并结合下一步 `aiTap` 提取可见入口名。该修复只改变动作语义，不新增用例、不补断言、不降低 scorer。
+- 线上失败 YAML 离线重放结果：01 从 `70 / needs_review` 修复为 `100 / executable`；03 从 `40 / draft` 修复为 `70 / needs_review`，随后由上一轮“明确需求映射的低风险可见 UI 文案/展示校验”通用纠偏进入 executable；05 修复后仍因 19 个动作、跨三页长链路保持 draft。
+- 视觉报告计数改为取 `sourceContext` 和生成 summary 的最大 Figma 图数。视觉批次失败只返回部分 asset 时，报告仍显示真实解析的 Figma 4 图，避免误导为“只送了 1 张图”。
+- 未修改 `router.py`，未新增执行模式，未修改历史 YAML，未触碰用户已有 dirty 文件，也未修改已有 dirty 的 `yaml_executable_scorer.py`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+from tests.backend_static_checks import check_agent_executable_gate_invokes_ai_rewrite, check_agent_quality_report_uses_figma_visual_reference
+check_agent_executable_gate_invokes_ai_rewrite()
+check_agent_quality_report_uses_figma_visual_reference()
+PY
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+结果：定向检查通过，后端静态检查 `61` 项通过。部署后需要再次用同一需求/Figma和固定 OPPO `ecbfd645` 跑完整回归；预期 01/02/03/04 加合成入口冒烟可以完整进入可执行 refs，05 跨页长链路继续保留 draft/人工复核，首批 3 条在固定 OPPO 执行后再检查 remaining 终态。
+
 ### 2026-07-13 完整回归生成分级误判修复
 
 部署 `3ab39f3` 后继续真实验证任务：

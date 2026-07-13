@@ -5550,24 +5550,27 @@ def _agent_visual_reference_report(run, generation_result=None):
     case_review = cases_payload.get("review") if isinstance(cases_payload.get("review"), dict) else {}
     uploaded_images = _agent_public_file_list(source_context.get("uploadedImages") or [], 40)
     figma_pages = source_context.get("figmaUsedPages") or source_context.get("uiDesigns") or []
-    figma_assets = (
-        summary.get("ui_design_assets")
-        or source_context.get("uiDesignAssets")
-        or []
+    summary_figma_assets = summary.get("ui_design_assets") or []
+    source_figma_assets = source_context.get("uiDesignAssets") or []
+    figma_assets = summary_figma_assets or source_figma_assets or []
+    figma_image_count = max(
+        _agent_list_length(summary_figma_assets),
+        _agent_list_length(source_figma_assets),
+        _safe_int_local(source_context.get("figmaImageCount"), 0),
     )
     ignored_figma = source_context.get("figmaIgnoredPages") or summary.get("ignored_figma_pages") or []
     reference_sources = []
     if uploaded_images:
         reference_sources.append("uploaded_screenshots")
-    if figma_pages or figma_assets:
+    if figma_pages or figma_assets or figma_image_count:
         reference_sources.append("figma")
     if source_context.get("requirementText"):
         reference_sources.append("requirement_text")
     notes = []
     if uploaded_images:
         notes.append(f"已接收 {len(uploaded_images)} 张上传截图，要求进入 AI 视觉判断，用于辅助识别页面文案、入口位置和同级关系。")
-    if figma_pages or figma_assets:
-        notes.append(f"已解析 Figma 页面 {len(figma_pages)} 个、UI 图 {len(figma_assets) or int(source_context.get('figmaImageCount') or 0)} 张。")
+    if figma_pages or figma_assets or figma_image_count:
+        notes.append(f"已解析 Figma 页面 {len(figma_pages)} 个、UI 图 {figma_image_count} 张。")
     if uploaded_images and (figma_pages or figma_assets):
         notes.append("上传截图与 Figma 同时存在时，生成会综合参考；截图不会替代需求、Figma 和成功基线，也不会单独作为执行门禁。")
     elif uploaded_images:
@@ -5608,7 +5611,7 @@ def _agent_visual_reference_report(run, generation_result=None):
         elif str(value or "").strip():
             visual_errors.append(str(value).strip())
     visual_errors = list(dict.fromkeys(visual_errors))
-    visual_inputs_present = bool(uploaded_images or figma_pages or figma_assets)
+    visual_inputs_present = bool(uploaded_images or figma_pages or figma_assets or figma_image_count)
     ai_visual_attempted = bool(
         ai_visual_completed
         or visual_batches.get("enabled")
@@ -5646,7 +5649,7 @@ def _agent_visual_reference_report(run, generation_result=None):
         "uploadedImageCount": len(uploaded_images),
         "uploadedImages": uploaded_images[:12],
         "figmaPageCount": _agent_list_length(figma_pages),
-        "figmaImageCount": len(figma_assets) or int(source_context.get("figmaImageCount") or 0),
+        "figmaImageCount": figma_image_count,
         "ignoredFigmaCount": _agent_list_length(ignored_figma),
         "usageNotes": notes,
         "conflictPolicy": "如果截图、Figma、需求文档或历史基线存在冲突，只做显式提醒和人工复核提示，不静默把截图升级为硬门禁。",

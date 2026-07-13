@@ -288,6 +288,17 @@ def check_agent_quality_report_uses_figma_visual_reference():
         {"review": {"yaml_visual_grounded": True}},
     )
     require(visual_report.get("aiJudgementRequired") is True, "Parsed Figma pages must require AI visual judgement even without uploaded screenshots")
+    partial_visual_report = agent_service._agent_visual_reference_report(
+        visual_run,
+        {
+            "summary": {"ui_design_assets": [{"name": "only-returned-image.png"}]},
+            "review": {"yaml_visual_batches": {"enabled": True, "completed_batches": 0, "errors": ["timeout"]}},
+        },
+    )
+    require(
+        partial_visual_report.get("figmaImageCount") == 4,
+        "Visual report must preserve source Figma image count when a failed visual batch returns only partial assets",
+    )
     require(visual_report.get("sentToAiForJudgement") is True and visual_report.get("aiJudgementStatus") == "completed", "Figma visual grounding completion must be traceable")
 
     old_draft_dir = agent_service.AGENT_DRAFT_DIR
@@ -906,6 +917,30 @@ def check_agent_generation_pipeline_normalizes_validation_state():
 
 def check_agent_executable_gate_invokes_ai_rewrite():
     from task_server.services import agent_service
+    from task_server.services import yaml_service
+    from task_server.services.yaml_executable_scorer import score_midscene_yaml_executable
+
+    home_ai_yaml = """android:
+  tasks:
+    - name: 首页入口文案展示校验
+      flow:
+        - runAdbShell: input keyevent 3
+        - runAdbShell: am force-stop com.example.app
+        - launch: com.example.app
+        - ai: 回到首页
+        - aiTap: 点击「目标入口」入口
+        - sleep: 300
+        - aiWaitFor: 目标业务页加载完成，展示目标文案
+        - aiAssert: 目标业务页展示目标文案
+"""
+    original_score = score_midscene_yaml_executable(home_ai_yaml, generated=True)
+    local_repair = yaml_service.repair_generated_yaml_executable_gate_issues(home_ai_yaml)
+    repaired_score = score_midscene_yaml_executable(local_repair.get("content", ""), generated=True)
+    require(local_repair.get("changed") and "aiWaitFor: App 首页加载完成" in local_repair.get("content", ""), "Home recovery ai planning must be normalized into an explicit aiWaitFor state")
+    require(
+        original_score.get("executionLevel") != "executable" and repaired_score.get("executionLevel") == "executable",
+        "Local executable-gate repair must improve generated home-entry flow without relaxing the scorer",
+    )
 
     original_ai_rewrite = agent_service.ai_rewrite_yaml_for_executable_gate
     bad_yaml = """android:

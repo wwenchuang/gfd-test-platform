@@ -4892,6 +4892,36 @@ def _repair_generated_broad_ai_step(step: dict) -> dict:
     }
 
 
+def _repair_generated_home_ai_step(step: dict, next_step: dict = None) -> dict:
+    """Convert generated home-recovery ai planning into an explicit wait state."""
+    if not isinstance(step, dict):
+        return {}
+    action_key = next((key for key in ("ai", "aiAction", "aiAct") if key in step), "")
+    if not action_key:
+        return {}
+    prompt = str(step.get(action_key) or "").strip()
+    compact = _compact_text(prompt)
+    if not compact or "首页" not in compact:
+        return {}
+    if not any(word in compact for word in ("回到", "返回", "确保", "停留", "首页加载", "进入首页")):
+        return {}
+    target_hint = ""
+    if isinstance(next_step, dict) and "aiTap" in next_step:
+        tap_prompt = str(next_step.get("aiTap") or "").strip()
+        quoted = re.search(r"[「“\"]([^」”\"]+)[」”\"]", tap_prompt)
+        target = quoted.group(1).strip() if quoted else re.sub(r"^(点击|点按|轻触|选择|进入|打开)", "", tap_prompt).strip(" 「」")
+        target = re.sub(r"(入口|按钮|控件)$", "", target).strip()
+        if target:
+            target_hint = f"，{target}可见"
+    replacement_prompt = f"App 首页加载完成，主要入口或底部导航可见{target_hint}"
+    _replace_step_action(step, action_key, "aiWaitFor", replacement_prompt, timeout=DEFAULT_WAITFOR_TIMEOUT_MS)
+    return {
+        "changed": f"{action_key} -> aiWaitFor",
+        "prompt": prompt[:180],
+        "replacement": replacement_prompt[:180],
+    }
+
+
 def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
     """Repair local executable-gate issues before generated YAML is persisted.
 
@@ -4933,6 +4963,15 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                     "changed": "heavy recent-task cleanup -> home key",
                     "prompt": prompt[:180],
                     "replacement": "input keyevent 3",
+                })
+
+            next_step = flow[step_index] if step_index < len(flow) and isinstance(flow[step_index], dict) else None
+            home_repair = _repair_generated_home_ai_step(step, next_step)
+            if home_repair:
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    **home_repair,
                 })
 
             broad_repair = _repair_generated_broad_ai_step(step)
