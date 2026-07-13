@@ -28,6 +28,57 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-13 Agent PLAN 改为复用平台 MM skills，规则候选不再冒充业务主链
+
+部署 `630489f` 后发起同一线上回归：
+
+- Agent `agent-1783943773146-d1db26ce`，参数仍固定为 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 公网 `8091 / 8088` 健康；AI Gateway、Sonic 健康；文本/视觉模型均为 `qwen3.6-plus`；平台状态为 1 个 Runner 在线。任务发起前没有其他 RUNNING Agent。
+- 线上新版本确实进入 `agent-business-plan-v2`，但真实 AI PLAN 连续耗时约 92 秒后没有得到可解析 JSON，最终产物为 `source=rule_fallback / aiGenerated=false / fallbackReason=Expecting value: line 1 column 1`。平台却把该步骤记成 `SUCCESS`。
+- 截图中“业务主链：进入首页 → 进入文档打印 → 进入照片打印 → 进入扫描复印”不是 AI、Figma 或基线结论，而是 `create_agent_run()` 在 PLAN 前调用 `_ensure_business_flow_constraint()`，把原始需求里的三个同级入口先做正则抽取，再通过兼容扁平字段串成了一条伪顺序链。
+- Figma 准备阶段本身正常：仍为 4 页/4 图、忽略 0 页，缓存中保留 4 份图片内容。本轮问题不在 Figma parser。
+- 发现规划语义不成立后，于 `20:01:01` 主动取消该任务。终态为 `CANCELLED`，停在 `GENERATE_YAML`；`executionPrecheck / sonicJob / report` 均不存在，没有向 OPPO 或第二台设备下发 Runner 任务。生成线程在取消前留下 3 个局部 refs，但没有进入执行门禁。
+
+根因与边界判断：
+
+1. Agent 的第一步重复实现了一条独立纯文本 `/ai/chat` 规划链，没有复用平台已有的 MM/脑图需求分析能力，也拿不到 PREPARE_SOURCE 整理后的 Figma 图片和可信基线。
+2. 状态机顺序是 `PLAN -> PREPARE_SOURCE`，因此 AI 规划先于资料整理；确定性正则候选又被标成 `strict=true`，反过来要求 AI “遵守主链”。规则从覆盖兜底越权成了业务路径决策者。
+3. `/ai/chat` 异常被 `_ai_gateway_post()` 吞成空对象；PLAN 两次失败后生成规则计划并返回 `SUCCESS`。这使“AI 不可用”和“AI 已规划”在状态、UI 和下游约束中无法区分。
+
+本轮通用修复：
+
+- 状态顺序改为 `PREPARE_SOURCE -> PLAN -> IMPACT_ANALYSIS`。先继续使用现有 Figma 解析流程生成 prepared context，再开始 AI 规划；没有修改 `load_figma_generation_context`、选页规则、图片格式或 4 页/4 图计数逻辑。
+- PLAN 直接复用平台已有 `generate_mindmap_from_request()`：`requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> visual_grounder.v1`。Agent 强制关闭入口类确定性 fast path，避免当前需求再次绕过 AI。
+- MM 规划复用 prepared Figma context，不重新解析 Figma；Figma/上传截图仍是 AI 软参考。PLAN 分开记录 `sentToAiForJudgement / aiJudgementCompleted / aiJudgementStatus`，视觉批次失败不会升级成硬门禁。
+- 视觉批次状态按 `done/total` 区分 `completed / partial / failed`；只有全部批次完成且无错误才标记 `aiJudgementCompleted=true`，部分成功仍可作为 AI 软参考，但不能伪报“已完成”。
+- MM 规划前使用现有可信基线缓存和 `baseline_reranker` 选择 Top3，并把完整 `provenancePath / sourceKind / verificationStatus / sourceTrust / role` 送入 scenario skills。未验证 `server-tasks/AI_Agent_草稿` 仍不能教给 AI。本地真实检索继续命中维护库 `百度网盘打印 / 6寸照片打印 / 证件扫描` 等，不含当前需求专用硬编码。
+- 正则抽取结果改为 `candidateOnly=true / strict=false / required=false / relationship=unknown`，`businessFlow=[]`。它只保存显式需求入口供 AI 输出后的覆盖审计，不再扁平为顺序路径，也不再显示“业务主链约束”。
+- 只有 MM 的 requirement/scenario AI 真正成功、业务场景包含完整路径与可见检查点、且覆盖原始候选后，PLAN 才升级为 `source=platform_mindmap_ai / agent-business-plan-v3 / strict=true`。同级入口以独立 `businessFlows` 保存。
+- MM 核心 skills 返回本地兜底时自动重试一次；两次仍失败则 PLAN 终态失败，后续 YAML/Runner 不执行。规则候选不会再生成一个看似成功的计划，也不会要求人工来判断是否继续。
+- PLAN 生成的结构化 cases/scenarios/视觉结果保存为 `mindmapPlan`，YAML 阶段通过 `preparedCasesPayload` 复用，不重复发送同一批 Figma/截图；后续 coverage auditor、executable planner、YAML 校验、风险和固定设备门禁继续执行。
+- UI 将启动前接口明确显示为“启动前预览”，没有真实 AI 结果时不再展示旧平台步骤为业务计划；运行详情显示 MM skills、Figma 页/图、视觉送 AI 状态和失败原因。
+- 启动前预览进一步把规则抽取结果放入 `requirementCandidates`，并固定返回空 `businessFlows / steps`；界面只显示“需求显式候选（非业务路径）”，真实业务分支必须等 MM AI 完成后才出现。
+
+设计上采用“模型负责可变业务推理，代码 guardrail 只验证输出并在失败时 tripwire”的边界，和 OpenAI Agents 的 output/tool guardrail、trace 分层一致；不再把 guardrail 的候选输入反向当成模型结论。参考：[OpenAI Agents guardrails](https://openai.github.io/openai-agents-python/guardrails/)、[OpenAI Agents tracing](https://openai.github.io/openai-agents-python/tracing/)。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/config.py task_server/schemas.py tests/backend_static_checks.py
+node --check js/state.js
+node --check js/agent-workbench.js
+python3 tests/undefined_name_checks.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+python3 tests/ai_gateway_static_checks.py
+python3 ai_skills/evals/run_skill_evals.py
+git diff --check
+```
+
+结果：后端 `61` 项、前端 `65` 项、AI Gateway `46` 项通过，undefined-name 通过，AI skill contract fixtures `3/3` 通过。定向行为检查覆盖：同级分支不扁平；真实 MM 计划升级 strict constraint；prepared Figma provenance 保留；可信 6 寸基线可进入 MM 上下文；核心 AI 两次兜底后显式失败。本轮未修改 `router.py`、未新增执行模式、未修改历史 YAML，也未触碰用户已有 dirty 文件。
+
+本提交部署后必须重新运行同一需求/Figma和固定 `win-runner-01 / ecbfd645`。首先人工核对 PLAN 是否为 `platform_mindmap_ai`、Figma 4 页/4 图是否送入并完成视觉批次、Top3 是否包含可信相邻路径基线；随后才继续检查 YAML、首批 smoke、remaining 和所有 Runner 报告终态。
+
 ### 2026-07-13 Agent 业务计划、可信基线与失败证据闭环优化
 
 部署 `3f14956` 后继续真实验证任务：

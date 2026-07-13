@@ -2300,19 +2300,26 @@ function renderPlanDetail(step, artifacts) {
   const plan = (artifacts || {}).plan || {};
   const flows = Array.isArray(plan.businessFlows) ? plan.businessFlows : [];
   const lifecycle = Array.isArray(plan.platformLifecycle) ? plan.platformLifecycle : [];
-  if (!flows.length && !plan.objective) return '';
+  if (!flows.length && !plan.objective && plan.status !== 'failed') return '';
   const sourceLabel = plan.aiGenerated
-    ? `AI 生成${plan.model ? ` · ${plan.model}` : ''}`
-    : '需求主链兜底';
+    ? `平台 MM AI${plan.model ? ` · ${plan.model}` : ''}`
+    : (plan.status === 'failed' ? 'AI 规划失败' : '未验证需求候选');
+  const mindmapTrace = plan.mindmapTrace || {};
+  const visualReference = plan.visualReference || {};
   let html = '<div class="agent-readable-stack">';
   html += agentInfoGrid([
     { label: '计划来源', value: sourceLabel },
     { label: '业务分支', value: flows.length },
-    { label: '覆盖门禁', value: plan.qualityGate?.passed === false ? '未通过' : '通过' },
-    { label: '执行设备', value: plan.businessFlowConstraint ? '沿用任务固定约束' : '-' },
+    { label: '覆盖门禁', value: plan.status === 'failed' || plan.qualityGate?.passed === false ? '未通过' : '通过' },
+    { label: 'MM Skills', value: mindmapTrace.skillPipeline || '-' },
+    { label: 'Figma 软参考', value: `${Number(visualReference.figmaPageCount || 0)} 页 / ${Number(visualReference.figmaImageCount || 0)} 图` },
+    { label: '视觉送 AI', value: visualReference.aiJudgementCompleted ? '已完成' : (visualReference.sentToAiForJudgement ? '已送入 / 未完成' : '未送入') },
   ]);
   if (plan.objective) {
     html += `<section class="agent-readable-panel"><strong>验收目标</strong><p>${escapeHtml(plan.objective)}</p></section>`;
+  }
+  if (Array.isArray(plan.issues) && plan.issues.length) {
+    html += `<section class="agent-readable-panel"><strong>规划失败原因</strong><p>${plan.issues.map(item => escapeHtml(item)).join('<br>')}</p></section>`;
   }
   for (const flow of flows) {
     const steps = Array.isArray(flow.steps) ? flow.steps : [];
@@ -2861,13 +2868,12 @@ async function previewAgentPlan() {
         : (payload.deviceStrategy === 'auto'
           ? `执行设备：自动选择在线设备（当前 ${runnerDevices.length} 台在线）`
           : '执行设备：暂无在线设备，执行前体检会阻断');
-      const businessLines = (plan.businessFlows || []).flatMap((flow, index) => [
-        `${index + 1}. ${flow.name || flow.branch || flow.id || '业务分支'}`,
-        ...((flow.steps || []).map((item, stepIndex) => `   ${stepIndex + 1}) ${item}`))
-      ]);
+      const candidateLines = (plan.requirementCandidates || []).map((candidate, index) =>
+        `${index + 1}. ${candidate.branch || candidate.name || candidate.id || '需求候选'}`
+      );
       const platformLines = (plan.platformLifecycle || []).map((item, index) => `${index + 1}. ${item}`);
       const lines = [
-        'Agent 业务计划预览：',
+        'Agent 启动前预览：',
         `模式：${agentModeText(plan.mode || payload.mode)}`,
         `应用：${plan.appName || payload.appName} / ${plan.platform || payload.platform}`,
         `范围：${plan.scope || payload.scope}`,
@@ -2876,8 +2882,9 @@ async function previewAgentPlan() {
         `输入资料：Figma ${payload.figmaUrl ? '1' : '0'} 个，文件 ${payload.files?.length || 0} 个，截图 ${payload.images?.length || 0} 张`,
         `风险：${hits.length ? hits.join('、') : '未命中高风险关键词'}`,
         '',
-        '业务分支：',
-        ...(businessLines.length ? businessLines : (plan.steps || [])),
+        '需求显式候选（非业务路径）：',
+        ...(candidateLines.length ? candidateLines : ['未从输入中提取到候选；这不会阻止 AI 读取完整需求。']),
+        'AI 业务计划：尚未执行；任务启动后会先整理资料，再由平台 MM skills 判断业务分支、层级和路径。',
         '',
         '平台执行与门禁：',
         ...platformLines,

@@ -1001,7 +1001,7 @@ def create_agent_run(payload):
         "aiProviderId": model_provider_id,
         "aiModel": selected_ai_model,
         "status": "RUNNING",
-        "currentStep": "PLAN",
+        "currentStep": "PREPARE_SOURCE",
         "progress": 0,
         "createdAt": now,
         "updatedAt": now,
@@ -1033,7 +1033,7 @@ def create_agent_run(payload):
     }
     run["inputSummary"] = _agent_input_summary(run, detailed=True)
     _ensure_business_flow_constraint(run)
-    _checkpoint_agent_state(run, "created", "PLAN", "RUNNING")
+    _checkpoint_agent_state(run, "created", "PREPARE_SOURCE", "RUNNING")
     # 如果指定了 failedJobId，附加到 run 上
     failed_job_id = payload.get("failedJobId") or payload.get("failed_job_id") or source_refs.get("failedJobId") or source_refs.get("jobId")
     if failed_job_id:
@@ -1061,7 +1061,7 @@ def advance_agent_run(run_id):
             return run
 
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        run["currentStep"] = "PLAN"
+        run["currentStep"] = "PREPARE_SOURCE"
         run["status"] = "RUNNING"
         run["progress"] = 0
         run["updatedAt"] = now
@@ -1073,7 +1073,7 @@ def advance_agent_run(run_id):
 
 
 def preview_agent_plan(payload):
-    """预览 Agent 执行计划。"""
+    """Preview inputs and platform gates without fabricating an AI business plan."""
     goal = str(payload.get("target") or payload.get("goal") or "").strip()
     app_name = str(payload.get("appName") or "").strip() or "智小白3D APP"
     platform = str(payload.get("platform") or "android").strip()
@@ -1088,7 +1088,7 @@ def preview_agent_plan(payload):
         "artifacts": {},
     }
     constraint = _ensure_business_flow_constraint(preview_run)
-    business_flows = _agent_plan_constraint_flows(constraint)
+    requirement_candidates = _agent_plan_constraint_flows(constraint)
     return {
         "mode": mode,
         "appName": app_name,
@@ -1098,13 +1098,19 @@ def preview_agent_plan(payload):
         "version": "agent-business-plan-preview-v2",
         "source": "requirement_preview",
         "aiGenerated": False,
-        "businessFlows": business_flows,
-        "steps": [
-            f"{item.get('name') or item.get('branch') or item.get('id')}：{' -> '.join(_agent_plan_text_list(item.get('steps'), limit=10))}"
-            for item in business_flows
+        "candidateOnly": True,
+        "businessFlows": [],
+        "requirementCandidates": [
+            {
+                "id": str(item.get("id") or f"CANDIDATE-{index:03d}"),
+                "name": str(item.get("name") or item.get("branch") or f"需求候选 {index}"),
+                "branch": str(item.get("branch") or ""),
+            }
+            for index, item in enumerate(requirement_candidates, start=1)
         ],
+        "steps": [],
         "platformLifecycle": list(AGENT_PLATFORM_LIFECYCLE_STEPS),
-        "note": "这是需求分支快速预览；任务启动后由所选模型补全页面层级、检查点和冒烟优先级，平台再做覆盖与安全门禁。",
+        "note": "这里只展示输入中显式出现的覆盖候选，不代表业务分支、层级或路径；任务启动后先准备资料，再由平台 MM skills 和所选模型生成真实业务计划。",
     }
 
 
@@ -2886,7 +2892,10 @@ def _evaluate_agent_quality_gate(run, stage, payload):
     if stage == "plan":
         steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
         business_flows = [item for item in (payload.get("businessFlows") or []) if isinstance(item, dict)]
-        required_flows = _agent_plan_constraint_flows(constraint)
+        candidate_constraint = artifacts.get("requirementCoverageCandidates")
+        if not isinstance(candidate_constraint, dict):
+            candidate_constraint = constraint
+        required_flows = _agent_plan_constraint_flows(candidate_constraint)
         plan_text = _normalize_business_flow_text(json.dumps(business_flows, ensure_ascii=False))
         missing_branches = []
         for item in required_flows:
@@ -2897,13 +2906,17 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             set(_agent_plan_text_list(item.get("steps"))).issubset(set(AGENT_DEFAULT_BUSINESS_FLOW))
             for item in business_flows
         )
-        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only
-        if missing_branches:
+        ai_generated = bool(payload.get("aiGenerated"))
+        trusted_source = str(payload.get("source") or "") == "platform_mindmap_ai"
+        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only and ai_generated and trusted_source
+        if not ai_generated or not trusted_source:
+            reason = "PLAN 必须来自平台 MM skills 的真实 AI 结果，规则兜底不能冒充成功"
+        elif missing_branches:
             reason = "AI 计划缺少需求业务分支：" + "、".join(missing_branches)
         elif generic_only:
             reason = "计划只有平台通用生命周期，未展开业务步骤"
         else:
-            reason = "计划已展开业务分支并覆盖需求主链" if passed else "计划缺少业务分支或业务步骤"
+            reason = "AI 计划已展开独立业务分支并覆盖原始需求候选" if passed else "计划缺少业务分支或业务步骤"
         return _record_agent_quality_gate(
             run,
             "plan_grounding",
@@ -2912,7 +2925,7 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             stepCount=len(steps),
             businessFlowCount=len(business_flows),
             missingBranches=missing_branches,
-            aiGenerated=bool(payload.get("aiGenerated")),
+            aiGenerated=ai_generated,
             fallbackUsed=bool(payload.get("fallbackUsed")),
             businessFlowKeywords=flow_keywords,
         )
@@ -2932,7 +2945,7 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             reasons.append("复用决策没有匹配 YAML")
         if decision == "reuse" and flow_keywords and not set(flow_keywords) & set(matched_keywords):
             passed = False
-            reasons.append("复用依据未命中业务主链关键词")
+            reasons.append("复用依据未命中 AI 业务计划关键词")
         if decision == "reuse" and not ai_used and confidence < 0.85:
             passed = False
             reasons.append("规则兜底复用需要更高置信度")
@@ -3258,7 +3271,7 @@ def tool_analyze_goal(run, inp):
 用户输入：{target}
 应用名称：{app_name}
 执行范围：{scope}
-业务主链（必须遵守）：{business_constraint.get("businessFlowText", "")}
+业务上下文（PLAN 前是未验证候选，PLAN 后是 AI 业务分支）：{business_constraint.get("businessFlowText", "")}
 
 可用模块目录：
 {modules_list_text}
@@ -3826,7 +3839,7 @@ def _agent_plan_constraint_flows(constraint):
     flat = _agent_plan_text_list(constraint.get("businessFlow"), limit=12)
     if not flat:
         return []
-    return [{"id": "FLOW-001", "name": "业务主链", "branch": "", "steps": flat}]
+    return [{"id": "FLOW-001", "name": "业务流程候选", "branch": "", "steps": flat}]
 
 
 def _agent_plan_branch_present(branch, text):
@@ -3839,57 +3852,6 @@ def _agent_plan_branch_present(branch, text):
         "我的": ("我的", "个人中心"),
     }
     return bool(branch and any(alias in text for alias in aliases.get(branch, (branch,))))
-
-
-def _fallback_agent_business_plan(run, constraint, reason=""):
-    flows = []
-    for index, item in enumerate(_agent_plan_constraint_flows(constraint), start=1):
-        steps = _agent_plan_text_list(item.get("steps") or item.get("businessFlow"), limit=10)
-        checks = _agent_plan_text_list(item.get("checks"), limit=8)
-        if not checks:
-            checks = [step for step in steps if any(word in step for word in ("校验", "检查", "确认", "验证"))]
-        business_steps = [step for step in steps if step not in checks]
-        flows.append({
-            "id": str(item.get("id") or f"FLOW-{index:03d}"),
-            "name": str(item.get("name") or item.get("branch") or f"业务分支 {index}"),
-            "branch": str(item.get("branch") or ""),
-            "preconditions": ["App 已安装并可启动", "使用当前指定 Runner 与设备"],
-            "steps": business_steps or steps or list(AGENT_DEFAULT_BUSINESS_FLOW),
-            "checks": checks or ["校验当前业务分支达到需求描述的可见终态"],
-            "requirementRefs": [],
-            "evidence": ["requirement"],
-        })
-    if not flows:
-        flows = [{
-            "id": "FLOW-001",
-            "name": "业务主链",
-            "branch": "",
-            "preconditions": ["App 已安装并可启动", "使用当前指定 Runner 与设备"],
-            "steps": list(AGENT_DEFAULT_BUSINESS_FLOW),
-            "checks": ["校验业务结果"],
-            "requirementRefs": [],
-            "evidence": ["requirement"],
-        }]
-    return {
-        "version": "agent-business-plan-v2",
-        "source": "rule_fallback",
-        "aiGenerated": False,
-        "fallbackUsed": True,
-        "fallbackReason": str(reason or "AI 计划不可用，按需求主链生成可执行兜底计划")[:500],
-        "objective": str(run.get("target") or "执行测试目标"),
-        "businessFlows": flows,
-        "coverage": [
-            {"flowId": item.get("id"), "branch": item.get("branch") or item.get("name"), "status": "planned"}
-            for item in flows
-        ],
-        "assumptions": ["Figma 和上传截图仅作为 AI 软参考，不替代需求与真机结果"],
-        "unknowns": [],
-        "executionStrategy": {
-            "smokeFlowIds": [item.get("id") for item in flows[:3]],
-            "remainingFlowIds": [item.get("id") for item in flows[3:]],
-            "reason": "每个业务分支先执行一个最短稳定检查点，再扩展剩余可执行用例",
-        },
-    }
 
 
 def _normalize_agent_business_plan(value, run, constraint):
@@ -3938,8 +3900,8 @@ def _normalize_agent_business_plan(value, run, constraint):
         return None, issues
 
     plan = {
-        "version": "agent-business-plan-v2",
-        "source": "ai_gateway",
+        "version": "agent-business-plan-v3",
+        "source": "platform_mindmap_ai",
         "aiGenerated": True,
         "fallbackUsed": False,
         "objective": str(value.get("objective") or value.get("goal") or run.get("target") or "")[:300],
@@ -3952,51 +3914,265 @@ def _normalize_agent_business_plan(value, run, constraint):
     return plan, []
 
 
-def _agent_business_plan_prompt(run, constraint, validation_issues=None, previous_output=""):
-    normalized = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
-    requirement = _agent_plan_requirement_text(run)
-    correction = ""
-    if validation_issues:
-        correction = (
-            "\n上一版计划未通过平台校验，请自主修正后重新输出。\n"
-            f"校验问题：{json.dumps(validation_issues, ensure_ascii=False)}\n"
-            f"上一版输出：{str(previous_output or '')[:6000]}\n"
+def _agent_plan_path_steps(value):
+    if isinstance(value, list):
+        values = value
+    else:
+        values = re.split(r"\s*(?:->|→|=>|＞|>)\s*", str(value or ""))
+    return _agent_plan_text_list(values, limit=10)
+
+
+def _agent_mm_plan_failure_reasons(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+    scenarios = [item for item in (payload.get("scenarios") or []) if isinstance(item, dict)]
+    reasons = []
+    if analysis.get("fallback_reason"):
+        reasons.append("requirement_analyzer 未产出 AI 结果：" + str(analysis.get("fallback_reason"))[:180])
+    if not scenarios:
+        reasons.append("scenario_designer 未产出业务场景")
+    elif any(str(item.get("source") or "").startswith("local_fallback") for item in scenarios):
+        reason = next((str(item.get("fallback_reason") or "") for item in scenarios if item.get("fallback_reason")), "")
+        reasons.append("scenario_designer 使用了本地规则兜底" + (f"：{reason[:180]}" if reason else ""))
+    skill_pipeline = str(review.get("skill_pipeline") or "")
+    if skill_pipeline.startswith("deterministic_"):
+        reasons.append("MM 规划错误进入确定性快路径")
+    elif not skill_pipeline.startswith("requirement_analyzer.v1 -> scenario_designer.v1"):
+        reasons.append("MM 规划未经过 requirement_analyzer 与 scenario_designer")
+    if review.get("skill_pipeline_error"):
+        reasons.append("MM skills 链路失败：" + str(review.get("skill_pipeline_error"))[:180])
+    return list(dict.fromkeys(item for item in reasons if item))
+
+
+def _agent_mm_case_for_scenario(cases, scenario):
+    feature = str(scenario.get("feature") or "").strip()
+    requirement_point = str(
+        scenario.get("requirement_point")
+        or scenario.get("requirementPoint")
+        or ""
+    ).strip()
+    for case in cases:
+        blob = _normalize_business_flow_text(json.dumps(case, ensure_ascii=False))
+        if requirement_point and requirement_point in blob:
+            return case
+        if feature and feature in blob:
+            return case
+    return {}
+
+
+def _agent_mm_visual_status(review):
+    review = review if isinstance(review, dict) else {}
+    batch_text = str(review.get("mindmap_visual_batches") or "").strip()
+    match = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", batch_text)
+    batches_done = safe_int(match.group(1), 0) if match else 0
+    batches_total = safe_int(match.group(2), 0) if match else 0
+    error = str(review.get("visual_refine_error") or "").strip()
+    grounded = bool(review.get("mindmap_visual_grounded") or batches_done > 0)
+    attempted = bool(batch_text or grounded or error)
+    if match and batches_total > 0:
+        completed = batches_done >= batches_total and not error
+    else:
+        completed = grounded and not error
+    if completed:
+        status = "completed"
+    elif grounded:
+        status = "partial"
+    elif attempted:
+        status = "failed"
+    else:
+        status = "not_requested"
+    return {
+        "attempted": attempted,
+        "grounded": grounded,
+        "completed": completed,
+        "status": status,
+        "batchesDone": batches_done,
+        "batchesTotal": batches_total,
+        "error": error,
+    }
+
+
+def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidates):
+    result = mindmap_result if isinstance(mindmap_result, dict) else {}
+    payload = result.get("cases") if isinstance(result.get("cases"), dict) else {}
+    failure_reasons = _agent_mm_plan_failure_reasons(payload)
+    if failure_reasons:
+        return None, failure_reasons
+    analysis = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+    review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+    scenarios = [item for item in (payload.get("scenarios") or []) if isinstance(item, dict)]
+    cases = [item for item in (payload.get("cases") or []) if isinstance(item, dict)]
+    source_context = (run.get("artifacts") or {}).get("sourceContext") or {}
+    visual_batches = str(review.get("mindmap_visual_batches") or "")
+    visual_status = _agent_mm_visual_status(review)
+    visual_attempted = visual_status["attempted"]
+    visual_grounded = visual_status["grounded"]
+    flows = []
+    for index, scenario in enumerate(scenarios[:8], start=1):
+        case = _agent_mm_case_for_scenario(cases, scenario)
+        branch = str(
+            scenario.get("feature")
+            or scenario.get("branch")
+            or scenario.get("requirement_point")
+            or scenario.get("requirementPoint")
+            or ""
+        ).strip()
+        steps = _agent_plan_text_list(scenario.get("steps"), limit=10)
+        if len(steps) < 2:
+            steps = _agent_plan_path_steps(
+                scenario.get("business_path")
+                or scenario.get("businessPath")
+                or case.get("business_path")
+                or case.get("businessPath")
+            )
+        if len(steps) < 2:
+            steps = _agent_plan_text_list(case.get("steps"), limit=10)
+        checks = _agent_plan_text_list(
+            scenario.get("assertions")
+            or scenario.get("expected")
+            or scenario.get("expected_result")
+            or case.get("assertions")
+            or case.get("expected_result"),
+            limit=8,
         )
-    return f"""你是移动端测试 Agent 的业务计划器。请自主理解需求并设计可执行的业务测试计划；不要复述平台状态机。\n
-目标：{run.get('target', '')}\n
-完整需求：{requirement}\n
-应用：{run.get('appName', '')} ({run.get('appPackage', '')})\n
-平台/范围：{run.get('platform', 'android')} / {run.get('scope', 'regression')}\n
-Figma：{normalized.get('figmaUrl') or '无'}（只作软参考，不得据此删除需求或制造硬门禁）\n
-固定执行约束：runner={run.get('runnerId') or '未指定'}，device={run.get('deviceId') or '未指定'}，strategy={run.get('deviceStrategy') or 'auto'}。不得建议或选择第二台设备。\n
-平台从需求抽取的业务主链：\n{json.dumps(_compact_business_flow_constraint(constraint), ensure_ascii=False, indent=2)}\n
-只输出严格 JSON，不要 Markdown。结构：\n
-{{\n
-  "objective": "本次可验收目标",\n
-  "businessFlows": [{{\n
-    "id": "FLOW-001",\n
-    "name": "业务分支名称",\n
-    "branch": "需求中的业务入口/分支",\n
-    "preconditions": ["真实前置条件"],\n
-    "steps": ["按页面层级排列的真实业务步骤"],\n
-    "checks": ["展示/同级关系/文案/可达终态等检查点"],\n
-    "requirementRefs": ["对应需求点"],\n
-    "evidence": ["requirement", "figma_soft_reference", "successful_baseline_pending"]\n
-  }}],\n
-  "coverage": [{{"requirement": "需求点", "flowIds": ["FLOW-001"]}}],\n
-  "assumptions": [],\n
-  "unknowns": [],\n
-  "executionStrategy": {{"smokeFlowIds": ["FLOW-001"], "remainingFlowIds": [], "reason": "选择依据"}}\n
-}}\n
-要求：\n
-1. 每个需求业务入口单独形成 flow，不得只规划第一个分支。\n
-2. steps 必须是业务页面层级与动作，checks 必须是用户可见验收点；不要写“生成 YAML、调用 Runner、收集报告”等平台动作。\n
-3. 对页面层级不确定的地方写入 unknowns，后续由成功基线/Figma/真机证据消解；不要臆造坐标、包名或控件。\n
-4. AI 可以决定冒烟优先级和剩余批次，但固定 Runner/设备、YAML 合法性、风险和覆盖门禁不可绕过。\n{correction}"""
+        requirement_refs = _agent_plan_text_list(
+            scenario.get("requirement_point")
+            or scenario.get("requirementPoint")
+            or case.get("requirement_point")
+            or case.get("coverage"),
+            limit=6,
+        )
+        evidence = ["requirement_analyzer", "scenario_designer"]
+        if review.get("yaml_reference_examples"):
+            evidence.append("trusted_baseline_reranker")
+        if visual_grounded:
+            evidence.append("figma_or_screenshot_soft_reference")
+        flows.append({
+            "id": str(scenario.get("id") or scenario.get("scenario_id") or f"FLOW-{index:03d}"),
+            "name": str(scenario.get("scenario") or scenario.get("name") or branch or f"业务分支 {index}"),
+            "branch": branch,
+            "preconditions": _agent_plan_text_list(
+                scenario.get("preconditions") or case.get("preconditions"),
+                limit=6,
+            ),
+            "steps": steps,
+            "checks": checks,
+            "requirementRefs": requirement_refs,
+            "evidence": evidence,
+        })
+    normalized_plan, issues = _normalize_agent_business_plan({
+        "objective": str(analysis.get("summary") or run.get("target") or ""),
+        "businessFlows": flows,
+        "coverage": analysis.get("coverage_matrix") or [],
+        "assumptions": analysis.get("assumptions") or [],
+        "unknowns": (
+            _agent_plan_text_list(analysis.get("questions"), limit=6)
+            + _agent_plan_text_list(analysis.get("missing_inputs"), limit=6)
+            + _agent_plan_text_list(analysis.get("blockers"), limit=6)
+        ),
+        "executionStrategy": {},
+    }, run, requirement_candidates)
+    if not normalized_plan:
+        return None, issues
+    smoke_flow_ids = []
+    for flow in normalized_plan.get("businessFlows") or []:
+        flow_blob = _normalize_business_flow_text(json.dumps(flow, ensure_ascii=False))
+        if any(case.get("smoke") and any(
+            token and token in flow_blob
+            for token in (
+                str(case.get("requirement_point") or "").strip(),
+                str(case.get("coverage") or "").strip(),
+                str(case.get("title") or "").strip(),
+            )
+        ) for case in cases):
+            smoke_flow_ids.append(flow.get("id"))
+    if not smoke_flow_ids:
+        smoke_flow_ids = [item.get("id") for item in (normalized_plan.get("businessFlows") or [])[:3]]
+    all_flow_ids = [item.get("id") for item in normalized_plan.get("businessFlows") or []]
+    normalized_plan.update({
+        "version": "agent-business-plan-v3",
+        "source": "platform_mindmap_ai",
+        "aiGenerated": True,
+        "fallbackUsed": False,
+        "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+        "model": run.get("aiModel") or run.get("model") or "",
+        "executionStrategy": {
+            "smokeFlowIds": smoke_flow_ids[:3],
+            "remainingFlowIds": [item for item in all_flow_ids if item not in smoke_flow_ids[:3]],
+            "reason": "沿用平台 MM skills 的显式 smoke 选择；平台只校验数量、覆盖和执行安全",
+        },
+        "mindmapTrace": {
+            "caseSetId": result.get("case_set_id") or "",
+            "skillPipeline": review.get("skill_pipeline") or "",
+            "scenarioCount": len(scenarios),
+            "caseCount": len(cases),
+            "visualBatches": visual_batches,
+            "visualBatchesDone": visual_status["batchesDone"],
+            "visualBatchesTotal": visual_status["batchesTotal"],
+            "visualImagesGrounded": review.get("mindmap_visual_images_grounded") or 0,
+            "visualAttempted": visual_attempted,
+            "visualCompleted": visual_status["completed"],
+            "visualStatus": visual_status["status"],
+            "visualSoftReference": True,
+            "preparedFigmaReused": bool(review.get("prepared_figma_context_reused")),
+            "trustedBaselines": review.get("yaml_reference_examples") or [],
+        },
+        "goalAnalysis": {
+            "businessGoals": analysis.get("business_goals") or [],
+            "entryPoints": analysis.get("entry_points") or [],
+            "requirementPoints": analysis.get("requirement_points") or [],
+            "confidence": analysis.get("confidence") or "",
+            "readiness": analysis.get("readiness_level") or "",
+            "aiSource": "requirement_analyzer.v1",
+        },
+        "visualReference": {
+            "figmaPageCount": len(source_context.get("figmaUsedPages") or []),
+            "figmaImageCount": int(source_context.get("figmaImageCount") or 0),
+            "sentToAiForJudgement": visual_attempted,
+            "aiJudgementCompleted": visual_status["completed"],
+            "aiJudgementStatus": visual_status["status"],
+            "hardGate": False,
+            "error": visual_status["error"],
+        },
+    })
+    return normalized_plan, []
+
+
+def _agent_mindmap_plan_request(run, source_context, attempt=1, validation_issues=None):
+    source_text = _agent_plan_requirement_text(run)
+    files = _agent_source_files_for_generation(run)
+    if source_text and not files:
+        files = [{
+            "name": "agent-requirement.md",
+            "type": "text/markdown",
+            "kind": "requirement_text",
+            "content": source_text,
+            "source": "agent-source-context",
+        }]
+    return {
+        "case_set_id": f"agent-plan-{_agent_safe_run_file_id(run)}-{attempt}",
+        "title": str(run.get("target") or source_context.get("target") or "AI Agent 业务计划"),
+        "module": clean_agent_module_name(run),
+        "files": files,
+        "figma_url": source_context.get("figmaUrl") or "",
+        "figmaUrl": source_context.get("figmaUrl") or "",
+        "prepared_figma_context": _agent_prepared_figma_context_from_source(source_context),
+        "app_package": _agent_app_package(run),
+        "appName": run.get("appName") or "",
+        "use_knowledge_context": False,
+        "mindmap_mode": "full",
+        "requireAiPlanning": True,
+        "useYamlBaselineContext": True,
+        "planValidationIssues": _agent_plan_text_list(validation_issues, limit=8),
+        "modelProviderId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+        "aiModel": run.get("aiModel") or run.get("model") or "",
+        "source": "agent_plan",
+    }
 
 
 def _tool_agent_plan(run):
-    """Generate an AI-owned business plan while keeping platform gates explicit."""
+    """Build the Agent plan from the platform MM skills after source preparation."""
     call = {
         "callId": str(uuid.uuid4())[:8],
         "toolName": "analyze_goal",
@@ -4006,69 +4182,99 @@ def _tool_agent_plan(run):
             "target": run.get("target", ""),
             "requirement": _agent_plan_requirement_text(run),
             "scope": run.get("scope", "smoke"),
+            "planner": "platform_mindmap_ai",
         },
     }
+    artifacts = run.setdefault("artifacts", {})
+    requirement_candidates = _ensure_business_flow_constraint(run)
+    ai_health = _probe_agent_ai_health(run)
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
     try:
-        ai_health = _probe_agent_ai_health(run)
-        business_constraint = _ensure_business_flow_constraint(run)
-        try:
-            prompt_ctx = get_prompt_center().enrich(run if isinstance(run, dict) else {})
-        except Exception:
-            prompt_ctx = {}
+        if not source_context:
+            raise RuntimeError("PREPARE_SOURCE 未产出资料上下文，不能开始 AI 业务规划")
+        if not ai_health.get("ready"):
+            raise RuntimeError("AI 服务未就绪，不能用规则计划冒充 AI 计划")
+        from task_server.services.yaml_service import generate_mindmap_from_request, update_generate_job
+
         plan = None
         plan_issues = []
-        plan_source = "rule_fallback"
-        if ai_health.get("gatewayReachable"):
-            previous_output = ""
-            plan_timeout = max(20, safe_int(os.getenv("MIDSCENE_AGENT_PLAN_TIMEOUT_SECONDS"), 45))
-            for attempt in range(2):
-                try:
-                    response = _ai_gateway_post("/ai/chat", {
-                        "messages": [{
-                            "role": "user",
-                            "content": _agent_business_plan_prompt(
-                                run,
-                                business_constraint,
-                                validation_issues=plan_issues if attempt else None,
-                                previous_output=previous_output,
-                            ),
-                        }],
-                        "temperature": 0.1,
-                        "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
-                        "model": run.get("aiModel") or run.get("model") or "",
-                    }, timeout=plan_timeout)
-                    previous_output = str((response or {}).get("content") or "")
-                    parsed = json.loads(_strip_ai_json_content(previous_output))
-                    plan, plan_issues = _normalize_agent_business_plan(parsed, run, business_constraint)
-                    if plan:
-                        plan_source = "ai_gateway"
-                        plan["providerId"] = (response or {}).get("providerId") or run.get("modelProviderId") or ""
-                        plan["model"] = (response or {}).get("model") or run.get("aiModel") or run.get("model") or ""
-                        break
-                except Exception as exc:
-                    plan_issues = [str(exc)[:300]]
-            if plan:
-                _record_agent_ai_decision(
-                    run,
-                    "plan",
-                    "ai_gateway",
-                    True,
-                    f"AI 生成 {len(plan.get('businessFlows') or [])} 条业务分支计划",
-                    flowCount=len(plan.get("businessFlows") or []),
-                    model=plan.get("model") or "",
-                )
-            else:
-                _record_agent_ai_decision(run, "plan", "ai_gateway", False, "；".join(plan_issues)[:500])
-        if not plan:
-            plan = _fallback_agent_business_plan(run, business_constraint, reason="；".join(plan_issues))
-            _record_agent_ai_decision(
-                run,
-                "plan",
-                "rule_fallback",
-                True,
-                plan.get("fallbackReason") or "使用需求主链兜底",
-                aiHealth=ai_health,
+        mindmap_result = {}
+        plan_step = next((item for item in (run.get("steps") or []) if item.get("step") == "PLAN"), None)
+        for attempt in range(1, 3):
+            progress_job_id = f"agent-plan-{_agent_safe_run_file_id(run)}-{attempt}"
+            update_generate_job(
+                progress_job_id,
+                status="running",
+                type="agent_mindmap_plan",
+                progress=5,
+                step="AI 业务规划",
+                message=f"正在复用平台 MM skills 生成业务计划（第 {attempt}/2 次）",
+                run_id=run.get("runId", ""),
+                timeout_seconds=900,
             )
+            stop_event = threading.Event()
+            watcher = None
+            if plan_step:
+                watcher = threading.Thread(
+                    target=_watch_agent_generation_progress,
+                    args=(run, plan_step, progress_job_id, stop_event),
+                    daemon=True,
+                )
+                watcher.start()
+            try:
+                mindmap_result = generate_mindmap_from_request(
+                    _agent_mindmap_plan_request(
+                        run,
+                        source_context,
+                        attempt=attempt,
+                        validation_issues=plan_issues if attempt > 1 else None,
+                    ),
+                    job_id=progress_job_id,
+                )
+            finally:
+                stop_event.set()
+                if watcher:
+                    watcher.join(timeout=0.5)
+            plan, plan_issues = _agent_business_plan_from_mindmap(
+                run,
+                mindmap_result,
+                requirement_candidates,
+            )
+            update_generate_job(
+                progress_job_id,
+                status="success" if plan else "failed",
+                ok=bool(plan),
+                progress=100 if plan else 99,
+                step="AI 业务规划完成" if plan else "AI 业务规划失败",
+                message=(
+                    f"MM skills 已生成 {len(plan.get('businessFlows') or [])} 条业务分支"
+                    if plan else "；".join(plan_issues)[:300]
+                ),
+            )
+            if plan or _agent_run_cancel_requested(run):
+                break
+        artifacts["mindmapPlan"] = {
+            "source": "platform_mindmap_ai",
+            "caseSetId": mindmap_result.get("case_set_id") or "",
+            "cases": mindmap_result.get("cases") or {},
+            "summary": mindmap_result.get("summary") or {},
+            "coverageAudit": mindmap_result.get("coverageAudit") or {},
+            "issues": plan_issues,
+        }
+        if not plan:
+            failure = {
+                "version": "agent-business-plan-v3",
+                "source": "platform_mindmap_ai",
+                "aiGenerated": False,
+                "fallbackUsed": False,
+                "status": "failed",
+                "issues": plan_issues or ["平台 MM skills 未产出可验证的 AI 业务计划"],
+                "aiHealth": ai_health,
+                "requirementCandidates": _compact_business_flow_constraint(requirement_candidates),
+            }
+            artifacts["plan"] = failure
+            _record_agent_ai_decision(run, "plan", "platform_mindmap_ai", False, "；".join(failure["issues"])[:500])
+            raise RuntimeError("AI 业务规划失败：" + "；".join(failure["issues"])[:400])
 
         plan["steps"] = [
             f"{item.get('name') or item.get('branch') or item.get('id')}：{' -> '.join(item.get('steps') or [])}"
@@ -4078,49 +4284,50 @@ def _tool_agent_plan(run):
         plan["mode"] = run.get("mode", "AUTO_SAFE")
         plan["target"] = run.get("target", "")
         plan["riskLevel"] = run.get("riskLevel", "low")
-        plan["businessFlowConstraint"] = _compact_business_flow_constraint(business_constraint)
-        plan["businessContext"] = prompt_ctx.get("businessContext")
         plan["aiHealth"] = ai_health
-        call["status"] = "SUCCESS"
-        call["outputSummary"] = (
-            f"AI 已生成 {len(plan.get('businessFlows') or [])} 条业务分支计划"
-            if plan_source == "ai_gateway"
-            else f"AI 计划不可用，已按需求主链生成 {len(plan.get('businessFlows') or [])} 条显式兜底计划"
-        )
-        plan.setdefault("dispatchPolicy", {
+        plan["requirementCandidates"] = _compact_business_flow_constraint(requirement_candidates)
+        plan["dispatchPolicy"] = {
             "decisionOwner": "AI",
             "aiDecisions": [
-                "需求/目标理解",
-                "可信相似基线语义检索与路径判断（优先真实执行成功）",
-                "复用/待确认/生成 YAML 草稿分流",
-                "冒烟优先级和剩余批次规划",
-                "失败关键帧分析与最小修复建议",
+                "MM requirement_analyzer 理解需求",
+                "MM scenario_designer 决定业务分支、层级和场景",
+                "可信相似基线由 AI 重排并作为路径经验",
+                "Figma/截图由 visual_grounder 作为软参考校准",
+                "冒烟优先级和剩余批次由 AI 推荐",
             ],
             "safetyGates": [
+                "原始需求覆盖审计",
                 "YAML 强校验",
+                "固定 Runner/设备约束",
                 "平台级高风险确认",
-                "Runner/Sonic/Bridge 执行前体检",
-                "草稿或未确认 YAML 禁止自动执行",
             ],
-            "note": "AI 负责调度决策，平台保留不可跳过的安全门禁。",
-        })
-        try:
-            goal_analysis = _ensure_agent_goal_analysis(run)
-            plan["goalAnalysis"] = {
-                "keywords": goal_analysis.get("keywords") or [],
-                "matchAll": bool(goal_analysis.get("matchAll")),
-                "summary": goal_analysis.get("summary") or "",
-                "aiSource": goal_analysis.get("aiSource") or "",
-            }
-        except Exception as exc:
-            _record_agent_ai_decision(run, "analyze_goal", "plan_hook", False, str(exc)[:160])
+            "note": "规则只校验 AI 是否漏覆盖和是否越过安全边界，不预先编排业务路径。",
+        }
         plan["qualityGate"] = _evaluate_agent_quality_gate(run, "plan", plan)
-        run.setdefault("artifacts", {})["plan"] = plan
-        if prompt_ctx.get("promptCenter"):
-            run.setdefault("artifacts", {})["promptCenter"] = prompt_ctx.get("promptCenter")
-    except Exception as e:
+        if not plan["qualityGate"].get("passed"):
+            artifacts["plan"] = plan
+            raise RuntimeError("AI 业务计划未通过覆盖门禁：" + str(plan["qualityGate"].get("reason") or ""))
+        artifacts["plan"] = plan
+        strict_constraint = _ensure_business_flow_constraint(run)
+        plan["businessFlowConstraint"] = _compact_business_flow_constraint(strict_constraint)
+        call["status"] = "SUCCESS"
+        call["outputSummary"] = (
+            f"平台 MM skills 已生成 {len(plan.get('businessFlows') or [])} 条 AI 业务分支计划；"
+            f"Figma {plan.get('visualReference', {}).get('figmaPageCount', 0)} 页/"
+            f"{plan.get('visualReference', {}).get('figmaImageCount', 0)} 图为软参考"
+        )
+        _record_agent_ai_decision(
+            run,
+            "plan",
+            "platform_mindmap_ai",
+            True,
+            call["outputSummary"],
+            flowCount=len(plan.get("businessFlows") or []),
+            model=plan.get("model") or "",
+        )
+    except Exception as exc:
         call["status"] = "FAILED"
-        call["error"] = str(e)
+        call["error"] = str(exc)[:1000]
     call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     call["durationMs"] = _compute_duration(call)
     _log_tool_call(call, run.get("runId", ""))
@@ -4421,12 +4628,12 @@ def _ai_rerank_case_candidates(target: str, source_text: str, scope: str, app_na
             "yamlExcerpt": str(item.get("yaml_text") or "")[:1200],
         })
     business_constraint = business_constraint if isinstance(business_constraint, dict) else {}
-    prompt = f"""你是自动化测试平台的 Case Retrieval 语义判定器。规则召回已经给出候选 YAML，但规则分可能不准；请你根据测试目标、业务主链、输入资料和 YAML 内容判断是否应该复用已有用例。
+    prompt = f"""你是自动化测试平台的 Case Retrieval 语义判定器。规则召回已经给出候选 YAML，但规则分可能不准；请你根据测试目标、AI 业务计划、输入资料和 YAML 内容判断是否应该复用已有用例。
 
 测试目标：{target}
 应用：{app_name}
 执行范围：{scope or "auto"}
-业务主链（必须优先覆盖，不能跳出主链）：
+AI 业务计划（必须优先覆盖；若仍是未验证候选，只能作为召回提示）：
 {business_constraint.get("businessFlowText") or "未提供"}
 输入资料摘要：
 {source_text[:2500] or "无"}
@@ -4440,7 +4647,7 @@ def _ai_rerank_case_candidates(target: str, source_text: str, scope: str, app_na
 3. 如果已有 YAML 能覆盖用户目标，decision=复用；如果相似但可能误跑，decision=待确认；如果没有合适用例，decision=生成草稿。
 4. confidence 是你对“复用已有用例是否正确”的把握，0 到 1；不是规则分。
 5. 若用户明确只说一个业务点，不要扩大成整套回归。
-6. 如果候选 YAML 没有覆盖业务主链中的核心节点，应返回 generate_draft 或 wait_confirm，不要强行复用。
+6. 如果候选 YAML 没有覆盖 AI 业务计划中的核心分支，应返回 generate_draft 或 wait_confirm，不要强行复用。
 
 请只输出严格 JSON：
 {{
@@ -6340,8 +6547,8 @@ def _agent_generate_progress_job_id(run):
     return f"agent-generate-{_agent_safe_run_file_id(run)}"
 
 
-def _watch_agent_generate_yaml_progress(run, step, job_id, stop_event):
-    """Mirror shared generation-job progress into the Agent timeline."""
+def _watch_agent_generation_progress(run, step, job_id, stop_event):
+    """Mirror shared MM/YAML generation progress into the Agent timeline."""
     if not isinstance(step, dict):
         return
     try:
@@ -6790,9 +6997,11 @@ def _compact_business_flow_constraint(constraint):
     flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
     flows = [item for item in (constraint.get("businessFlows") or []) if isinstance(item, dict)]
     return {
-        "required": bool(constraint.get("required", True)),
-        "strict": bool(constraint.get("strict", True)),
+        "required": bool(constraint.get("required", False)),
+        "strict": bool(constraint.get("strict", False)),
+        "candidateOnly": bool(constraint.get("candidateOnly", False)),
         "source": str(constraint.get("source") or "default"),
+        "relationship": str(constraint.get("relationship") or "unknown"),
         "businessFlow": [str(item) for item in flow[:8] if str(item or "").strip()],
         "businessFlows": [
             {
@@ -6808,25 +7017,21 @@ def _compact_business_flow_constraint(constraint):
 
 
 def _ensure_business_flow_constraint(run):
-    """Build and persist the business-flow backbone used by Agent decisions."""
+    """Persist requirement candidates before PLAN and the validated AI plan after it."""
     if not isinstance(run, dict):
         return {
-            "required": True,
-            "strict": True,
+            "required": False,
+            "strict": False,
+            "candidateOnly": True,
             "source": "default",
-            "businessFlow": list(AGENT_DEFAULT_BUSINESS_FLOW),
-            "businessFlows": [{
-                "id": "FLOW-001",
-                "name": "业务主链",
-                "branch": "",
-                "steps": list(AGENT_DEFAULT_BUSINESS_FLOW),
-            }],
-            "businessFlowText": "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(AGENT_DEFAULT_BUSINESS_FLOW)),
+            "relationship": "unknown",
+            "businessFlow": [],
+            "businessFlows": [],
+            "businessFlowText": "待 AI 在资料准备后规划",
         }
     artifacts = run.setdefault("artifacts", {})
     source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
     normalized_input = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
-    current = artifacts.get("businessFlowConstraint") if isinstance(artifacts.get("businessFlowConstraint"), dict) else {}
     prompt_ctx = {}
     business_ctx = run.get("businessContext") if isinstance(run.get("businessContext"), dict) else {}
     requirement_text = (
@@ -6844,79 +7049,84 @@ def _ensure_business_flow_constraint(run):
         business_ctx = prompt_ctx.get("businessContext") if isinstance(prompt_ctx.get("businessContext"), dict) else business_ctx
     except Exception:
         business_ctx = business_ctx if isinstance(business_ctx, dict) else {}
-
-    business_flows = [item for item in (current.get("businessFlows") or []) if isinstance(item, dict)]
-    business_flow = business_ctx.get("business_flow") if isinstance(business_ctx.get("business_flow"), list) else []
-    if not business_flow:
-        business_flow = current.get("businessFlow") if isinstance(current.get("businessFlow"), list) else []
-    expanded_flow = []
-    for item in business_flow:
-        for part in re.split(r"\s*(?:->|→|>|，|,|；|;|\n)\s*", str(item or "")):
-            part = _clean_business_flow_node(part)
-            if part and part not in expanded_flow:
-                expanded_flow.append(part)
-    business_flow = expanded_flow
-    if business_flow == AGENT_DEFAULT_BUSINESS_FLOW:
-        business_flow = []
+    plan = artifacts.get("plan") if isinstance(artifacts.get("plan"), dict) else {}
+    ai_plan_flows = [
+        item for item in (plan.get("businessFlows") or [])
+        if isinstance(item, dict)
+    ] if plan.get("aiGenerated") else []
     fallback_source_text = "\n".join([
         str(run.get("target") or ""),
         str(requirement_text or ""),
     ])
     fallback_flows = _fallback_business_flows_from_text(fallback_source_text)
-    fallback_flow = _fallback_business_flow_from_text(fallback_source_text)
-    if fallback_flows:
-        business_flows = fallback_flows
-        merged_flow = []
-        for item in fallback_flow + business_flow:
-            if item and item not in merged_flow:
-                merged_flow.append(item)
-        business_flow = merged_flow
-        business_flow_source = "requirement_text"
+    if ai_plan_flows:
+        business_flows = ai_plan_flows[:8]
+        business_flow = _agent_plan_text_list(business_flows[0].get("steps"), limit=12) if len(business_flows) == 1 else []
+        business_flow_text = "\n".join(
+            f"{index}. {item.get('name') or item.get('branch') or item.get('id')}："
+            f"{' -> '.join(_agent_plan_text_list(item.get('steps'), limit=10))}"
+            for index, item in enumerate(business_flows, start=1)
+        )
+        constraint = {
+            "required": True,
+            "strict": True,
+            "candidateOnly": False,
+            "source": str(plan.get("source") or "ai_plan"),
+            "relationship": "single" if len(business_flows) == 1 else "separate_branches",
+            "businessFlow": business_flow,
+            "businessFlows": business_flows,
+            "businessFlowText": business_flow_text,
+            "guardrails": [
+                "后续工具必须引用 AI 计划中的业务分支或明确说明新增依据",
+                "平台覆盖审计不得把同级分支扁平为顺序路径",
+                "异常和修复只能挂载到相关业务分支",
+            ],
+        }
     else:
-        business_flow_source = str(business_ctx.get("business_flow_source") or current.get("source") or "default")
-    if not business_flow:
-        business_flow = list(AGENT_DEFAULT_BUSINESS_FLOW)
-    if not business_flows:
-        business_flows = [{
-            "id": "FLOW-001",
-            "name": "业务主链",
-            "branch": "",
-            "steps": list(business_flow),
-        }]
-    business_flow_text = business_ctx.get("business_flow_text") or "\n".join(
-        f"{idx + 1}. {item}" for idx, item in enumerate(business_flow)
-    )
-    business_flow_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(business_flow))
-    constraint = {
-        "required": True,
-        "strict": True,
-        "source": business_flow_source,
-        "businessFlow": business_flow[:12],
-        "businessFlows": business_flows[:8],
-        "businessFlowText": business_flow_text,
-        "guardrails": [
-            "工具选择必须服务于业务主链",
-            "用例生成不得跳出业务主链节点",
-            "异常和修复只能挂载到主链相关节点",
-        ],
-    }
+        business_flows = fallback_flows[:8]
+        business_flow_text = (
+            "需求候选分支（待 AI 判断关系与路径）：" +
+            "、".join(str(item.get("branch") or item.get("name") or "") for item in business_flows)
+            if business_flows else "待 AI 在资料准备后规划"
+        )
+        constraint = {
+            "required": False,
+            "strict": False,
+            "candidateOnly": True,
+            "source": "requirement_candidates" if business_flows else "unverified_input",
+            "relationship": "unknown",
+            "businessFlow": [],
+            "businessFlows": business_flows,
+            "businessFlowText": business_flow_text,
+            "guardrails": [
+                "候选分支只用于 AI 输出后的覆盖审计，不能作为预先确定的业务路径",
+                "AI 可以重组层级和顺序，但必须解释原始需求中显式入口的去留",
+            ],
+        }
+        artifacts["requirementCoverageCandidates"] = _compact_business_flow_constraint(constraint)
     artifacts["businessFlowConstraint"] = constraint
     if prompt_ctx.get("promptCenter"):
         artifacts["promptCenter"] = prompt_ctx.get("promptCenter")
     if business_ctx:
-        business_ctx["business_flow"] = business_flow[:12]
-        business_ctx["business_flow_text"] = business_flow_text
-        business_ctx["business_flow_source"] = business_flow_source
+        business_ctx["business_flow"] = list(constraint.get("businessFlow") or [])[:12]
+        business_ctx["business_flow_text"] = constraint.get("businessFlowText") or ""
+        business_ctx["business_flow_source"] = constraint.get("source") or ""
         run["businessContext"] = business_ctx
     return constraint
 
 
 def _business_flow_keywords(constraint, limit=10):
     constraint = constraint if isinstance(constraint, dict) else {}
-    if str(constraint.get("source") or "") == "default":
+    if str(constraint.get("source") or "") in ("default", "unverified_input"):
         return []
     flow = constraint.get("businessFlow") if isinstance(constraint.get("businessFlow"), list) else []
-    return _dedupe_business_terms(flow, limit=limit)
+    values = list(flow)
+    for item in constraint.get("businessFlows") or []:
+        if not isinstance(item, dict):
+            continue
+        values.extend([item.get("branch"), item.get("name")])
+        values.extend(_agent_plan_text_list(item.get("steps"), limit=8))
+    return _dedupe_business_terms(values, limit=limit)
 
 
 def _record_tool_eligibility(run, tool_def):
@@ -6926,10 +7136,10 @@ def _record_tool_eligibility(run, tool_def):
     category = tool_def.get("category", "UNKNOWN")
     tool_name = tool_def.get("name", "")
     flow_keywords = _business_flow_keywords(constraint)
-    allowed = bool(constraint.get("businessFlow"))
-    reason = "业务主链已建立，允许工具围绕主链执行" if allowed else "缺少业务主链，暂停工具选择"
+    allowed = bool(constraint.get("businessFlow") or constraint.get("businessFlows"))
+    reason = "AI 业务计划已建立，允许工具围绕业务分支执行" if constraint.get("strict") else "需求候选已记录，允许读取资料供 AI 规划"
     if category in ("READ", "KNOWLEDGE"):
-        reason = "读取/知识工具允许用于补齐业务主链上下文"
+        reason = "读取/知识工具允许用于补齐 AI 业务计划上下文"
         allowed = True
     eligibility = {
         "toolName": tool_name,
@@ -8009,7 +8219,7 @@ def _tool_match_cases(run):
         run_provider_id = run.get("modelProviderId") or run.get("aiProviderId") or ""
         match_target = (
             f"{target}\n\n"
-            f"业务主链（必须优先匹配）：\n{business_constraint.get('businessFlowText', '')}\n\n"
+            f"AI 业务计划（PLAN 前仅为未验证候选）：\n{business_constraint.get('businessFlowText', '')}\n\n"
             f"输入来源上下文：\n{source_text[:6000]}"
         )
         ai_match_result = _ai_select_cases(match_target, scope, app_name, yaml_list_text, all_yamls, model=run_model, provider_id=run_provider_id)
@@ -8367,6 +8577,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         }]
     prepared_figma_context = _agent_prepared_figma_context_from_source(source_context)
     agent_plan = artifacts.get("plan") if isinstance(artifacts.get("plan"), dict) else {}
+    mindmap_plan = artifacts.get("mindmapPlan") if isinstance(artifacts.get("mindmapPlan"), dict) else {}
+    prepared_cases_payload = mindmap_plan.get("cases") if isinstance(mindmap_plan.get("cases"), dict) else {}
     direct_entry_visibility = _agent_use_direct_entry_visibility_smoke(run)
     has_entry_visibility_intent = _agent_needs_entry_visibility_smoke(run)
     request_data = {
@@ -8389,6 +8601,8 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             for key in ("version", "source", "objective", "businessFlows", "coverage", "assumptions", "unknowns", "executionStrategy")
             if agent_plan.get(key) not in (None, "", [], {})
         },
+        "preparedCasesPayload": prepared_cases_payload,
+        "preparedCasesSource": "platform_mindmap_ai" if prepared_cases_payload else "",
     }
     progress_job_id = _agent_generate_progress_job_id(run)
     step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)
@@ -8498,7 +8712,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         )
     elif step:
         watcher = threading.Thread(
-            target=_watch_agent_generate_yaml_progress,
+            target=_watch_agent_generation_progress,
             args=(run, step, progress_job_id, stop_event),
             daemon=True,
         )
@@ -12674,7 +12888,7 @@ _STEP_TOOL_MAP = {
 }
 
 _STEP_ORDER = [
-    "PLAN", "PREPARE_SOURCE", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES",
+    "PREPARE_SOURCE", "PLAN", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES",
     "GENERATE_YAML", "VALIDATE_YAML", "RISK_REVIEW", "EXECUTION_PRECHECK",
     "SYNC_SONIC", "RUN_SONIC", "COLLECT_REPORT", "ANALYZE_FAILURE",
     "DIAGNOSE_FAILURE", "GENERATE_REPAIR", "GENERATE_BUG_DRAFT",
@@ -12730,11 +12944,21 @@ def _execute_agent_step(run, step_name):
         "status": "RUNNING",
     }]
     business_constraint = _ensure_business_flow_constraint(run)
-    flow_brief = " → ".join((business_constraint.get("businessFlow") or [])[:4])
-    if flow_brief:
+    branch_names = [
+        str(item.get("branch") or item.get("name") or "").strip()
+        for item in (business_constraint.get("businessFlows") or [])[:6]
+        if isinstance(item, dict) and str(item.get("branch") or item.get("name") or "").strip()
+    ]
+    if business_constraint.get("strict") and branch_names:
         step["liveTrace"].append({
             "time": _trace_time_text(),
-            "message": f"业务主链约束：{flow_brief}",
+            "message": f"AI 业务计划分支：{'、'.join(branch_names)}",
+            "status": "RUNNING",
+        })
+    elif business_constraint.get("candidateOnly") and branch_names:
+        step["liveTrace"].append({
+            "time": _trace_time_text(),
+            "message": f"原始需求候选：{'、'.join(branch_names)}（仅供覆盖审计，待 AI 判断关系与路径）",
             "status": "RUNNING",
         })
     run["currentStep"] = step_name
@@ -12782,7 +13006,11 @@ def _execute_agent_step(run, step_name):
             result.setdefault("businessFlowConstraint", _compact_business_flow_constraint(business_constraint))
             result.setdefault("toolEligibility", {
                 "allowed": True,
-                "reason": "状态机步骤已绑定业务主链约束",
+                "reason": (
+                    "状态机步骤已绑定 AI 业务计划"
+                    if business_constraint.get("strict")
+                    else "当前仅绑定原始需求候选，不能视为已确认业务路径"
+                ),
                 "businessFlowSource": business_constraint.get("source", "default"),
                 "businessFlowKeywords": _business_flow_keywords(business_constraint),
             })

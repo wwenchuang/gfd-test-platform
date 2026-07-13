@@ -6073,6 +6073,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
     files = d.get("files") or []
     reuse_assets = safe_bool(d.get("reuse_assets") or d.get("reuseAssets") or d.get("regenerate"))
     prepared_figma_context = _prepared_figma_context_from_request(d)
+    prepared_cases_payload = d.get("preparedCasesPayload") or d.get("prepared_cases_payload") or {}
+    if not isinstance(prepared_cases_payload, dict):
+        prepared_cases_payload = {}
 
     if job_id:
         update_generate_job(job_id, progress=10, step="保存上传资产", message="正在保存上传文件")
@@ -6365,7 +6368,15 @@ def generate_ui_yaml_from_request(d, job_id=None):
     smoke_policy_text = build_executable_smoke_yaml_policy_text()
     stage1_text_assets = list(stage1_text_assets) + [smoke_policy_text]
     skill_pipeline_error = ""
-    if USE_AI_SKILL_PIPELINE:
+    if prepared_cases_payload:
+        payload = normalize_cases_payload(copy.deepcopy(prepared_cases_payload))
+        review = payload.setdefault("review", {})
+        review["agent_mindmap_plan_reused"] = {
+            "enabled": True,
+            "source": d.get("preparedCasesSource") or d.get("prepared_cases_source") or "platform_mindmap_ai",
+            "rule": "复用 PLAN 阶段 MM skills 的需求分析、场景和视觉校准结果；YAML 阶段继续执行覆盖、可执行性和安全门禁。",
+        }
+    elif USE_AI_SKILL_PIPELINE:
         try:
             if job_id:
                 if deterministic_entry_visibility_source:
@@ -6403,7 +6414,16 @@ def generate_ui_yaml_from_request(d, job_id=None):
     local_fallback_execution_floor = generated_payload_uses_local_fallback(payload)
     review = payload.setdefault("review", {})
     deterministic_entry_visibility = str(review.get("skill_pipeline") or "").startswith("deterministic_baidu_entry_visibility")
-    if deterministic_entry_visibility and (visual_text_assets or visual_image_assets):
+    if prepared_cases_payload:
+        review["visual_refine_reused"] = "已复用 PLAN 阶段 visual_grounder 结果，不重复发送同一批 Figma/截图"
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=67,
+                step="复用 AI 业务计划",
+                message="已复用 MM 需求分析、场景设计和视觉校准结果，继续覆盖与 YAML 可执行性规划",
+            )
+    elif deterministic_entry_visibility and (visual_text_assets or visual_image_assets):
         review["visual_refine_skipped"] = (
             "确定性入口可见性短链路已覆盖首批冒烟，Figma/截图仅作为参考记录，不再阻塞 YAML 生成"
         )
@@ -7784,8 +7804,16 @@ def generate_mindmap_from_request(d, job_id=None):
     module = d.get("module") or "AI测试"
     case_set_id = d.get("case_set_id") or new_case_set_id()
     files = d.get("files") or []
-    has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or "").strip())
+    prepared_figma_context = _prepared_figma_context_from_request(d)
+    has_prepared_figma = bool(prepared_figma_context)
+    has_figma = bool((d.get("figma_url") or d.get("figmaUrl") or "").strip() or has_prepared_figma)
     mindmap_mode = str(d.get("mindmap_mode") or d.get("mindmapMode") or "full").strip().lower() or "full"
+    require_ai_planning = safe_bool(d.get("requireAiPlanning") or d.get("require_ai_planning"), False)
+    use_yaml_baseline_context = safe_bool(
+        d.get("useYamlBaselineContext") or d.get("use_yaml_baseline_context"),
+        False,
+    )
+    model_config = ai_model_config_from_request(d)
 
     if job_id:
         update_generate_job(job_id, progress=10, step="保存资料", message="正在保存脑图资料")
@@ -7803,7 +7831,8 @@ def generate_mindmap_from_request(d, job_id=None):
     if has_figma:
         removed = clear_auto_figma_ui_design_assets(case_set_id)
         if job_id and removed:
-            update_generate_job(job_id, progress=12, step="刷新 Figma UI 稿", message=f"已清理 {removed} 份旧的自动 Figma UI 稿，将重新按需求筛选")
+            suffix = "，将复用 Agent 准备阶段结果" if has_prepared_figma else "，将重新按需求筛选"
+            update_generate_job(job_id, progress=12, step="刷新 Figma UI 稿", message=f"已清理 {removed} 份旧的自动 Figma UI 稿{suffix}")
 
     if job_id:
         update_generate_job(job_id, progress=25, step="解析资料", message="正在解析需求、截图和设计资料")
@@ -7827,7 +7856,9 @@ def generate_mindmap_from_request(d, job_id=None):
             executor.submit(load_knowledge_context, app_package, query_text, 6, selected_page_ids, knowledge_tier)
             if use_knowledge_context else None
         )
-        figma_future = executor.submit(load_figma_generation_context, d, app_package, job_id, query_text, case_set_id, title, module)
+        figma_future = None
+        if not has_prepared_figma:
+            figma_future = executor.submit(load_figma_generation_context, d, app_package, job_id, query_text, case_set_id, title, module)
         if knowledge_future:
             try:
                 knowledge_texts, knowledge_images, used_knowledge_pages = knowledge_future.result()
@@ -7835,10 +7866,29 @@ def generate_mindmap_from_request(d, job_id=None):
                 knowledge_texts, knowledge_images, used_knowledge_pages = [], [], []
         else:
             knowledge_texts, knowledge_images, used_knowledge_pages = [], [], []
-        try:
-            figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = figma_future.result()
-        except Exception:
-            figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = [], [], [], [], []
+        if has_prepared_figma:
+            figma_texts = prepared_figma_context.get("textAssets") or []
+            figma_images = prepared_figma_context.get("imageAssets") or []
+            used_figma_pages = prepared_figma_context.get("usedPages") or []
+            ignored_figma_pages = prepared_figma_context.get("ignoredPages") or []
+            saved_figma_designs = _save_prepared_figma_design_assets(
+                case_set_id,
+                prepared_figma_context,
+                title=title,
+                module=module,
+            )
+            if job_id:
+                update_generate_job(
+                    job_id,
+                    progress=38,
+                    step="复用 Figma 解析",
+                    message=f"已复用准备阶段解析结果：页面 {len(used_figma_pages)} 个，Figma UI 图 {len(figma_images)} 张",
+                )
+        else:
+            try:
+                figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = figma_future.result()
+            except Exception:
+                figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = [], [], [], [], []
 
     visual_text_assets = figma_texts + knowledge_texts
     # 脑图只让当前 Figma 和人工上传截图进入视觉模型；
@@ -7854,6 +7904,42 @@ def generate_mindmap_from_request(d, job_id=None):
     stage1_text_assets = (requirement_text_assets + visual_text_assets) or [
         "未提供独立需求文档，请根据标题、模块、当前 Figma/截图先归纳业务范围，再生成测试场景和用例脑图。"
     ]
+    plan_validation_issues = normalize_text_list(
+        d.get("planValidationIssues") or d.get("plan_validation_issues")
+    )
+    if require_ai_planning and plan_validation_issues:
+        stage1_text_assets = list(stage1_text_assets) + [
+            "【上一轮 AI 计划门禁反馈，不是新增需求】\n"
+            "请修正场景分支、页面层级或可见检查点，不得删除原始需求：\n- "
+            + "\n- ".join(plan_validation_issues[:8])
+        ]
+    yaml_reference_examples = []
+    baseline_rerank_trace = {}
+    if use_yaml_baseline_context:
+        baseline_query_text = "\n".join([title, module, query_text] + stage1_text_assets)
+        baseline_candidates = search_baseline_examples(
+            baseline_query_text,
+            module=module,
+            limit=20,
+            allow_fallback=False,
+        )
+        try:
+            baseline_rerank = call_skill_baseline_reranker(
+                title,
+                module,
+                baseline_query_text,
+                baseline_candidates,
+                model_config=model_config,
+                limit=3,
+            )
+            yaml_reference_examples = baseline_rerank.get("selected") or baseline_candidates[:3]
+            baseline_rerank_trace = baseline_rerank.get("trace") or {}
+        except Exception as exc:
+            yaml_reference_examples = baseline_candidates[:3]
+            baseline_rerank_trace = {"enabled": True, "fallback": True, "error": str(exc)}
+        yaml_reference_text = build_yaml_reference_examples_text(yaml_reference_examples)
+        if yaml_reference_text:
+            stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
     if job_id:
         update_generate_job(job_id, progress=50, step="生成用例结构", message="正在生成场景、用例、边界和人工待准备事项")
     if USE_AI_SKILL_PIPELINE:
@@ -7863,7 +7949,10 @@ def generate_mindmap_from_request(d, job_id=None):
                 module,
                 stage1_text_assets,
                 mode="mindmap",
-                model_config=ai_model_config_from_request(d),
+                model_config=model_config,
+                app_package=app_package,
+                app_name=d.get("appName") or d.get("app_name") or "",
+                allow_entry_visibility_fast_path=not require_ai_planning,
             )
         except Exception as e:
             payload = call_dashscope_cases(title, module, stage1_text_assets, [])
@@ -7886,6 +7975,33 @@ def generate_mindmap_from_request(d, job_id=None):
         "已按用户选择引用页面知识" if use_knowledge_context
         else "只生成脑图默认不引用已有页面知识，避免把历史无关页面混入当前需求"
     )
+    agent_plan_review = {"agent_ai_planning_required": require_ai_planning}
+    if has_prepared_figma:
+        agent_plan_review["prepared_figma_context_reused"] = {
+            "enabled": True,
+            "used_count": len(used_figma_pages),
+            "image_count": len(figma_images),
+            "saved_design_count": len(saved_figma_designs),
+            "source": prepared_figma_context.get("source") or "prepared_figma",
+        }
+    if use_yaml_baseline_context:
+        agent_plan_review["yaml_reference_examples"] = [
+            {
+                "title": item.get("title"),
+                "module": item.get("module"),
+                "file": item.get("file"),
+                "businessPath": item.get("businessPath") or "",
+                "sourceKind": item.get("sourceKind") or "",
+                "verificationStatus": item.get("verificationStatus") or "",
+                "provenancePath": item.get("provenancePath") or item.get("file") or "",
+                "sourceTrust": item.get("sourceTrust") or 0,
+                "aiSelectedRole": item.get("ai_selected_role") or "",
+                "aiSelectedReason": item.get("ai_selected_reason") or "",
+            }
+            for item in yaml_reference_examples
+        ]
+        agent_plan_review["baseline_reranker"] = baseline_rerank_trace
+    review.update(copy.deepcopy(agent_plan_review))
     if visual_text_assets or mindmap_visual_image_assets:
         if job_id:
             update_generate_job(
@@ -7953,6 +8069,11 @@ def generate_mindmap_from_request(d, job_id=None):
                 "视觉校准部分批次超时或失败，已保留需求、PDF 文本和 Figma 页面文本继续生成脑图；"
                 "未完成的图片批次不会阻塞脑图产出。"
             )
+
+    # visual_grounder may return a fresh review object; restore orchestration
+    # provenance so Agent PLAN can prove which prepared sources and baselines it used.
+    review = payload.setdefault("review", {})
+    review.update(copy.deepcopy(agent_plan_review))
 
     if job_id:
         update_generate_job(job_id, progress=78, step="本地覆盖检查", message="正在做本地覆盖检查并写入脑图")

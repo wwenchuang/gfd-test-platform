@@ -161,59 +161,78 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         "requirementText": "基础打印入口在首页：文档打印、照片打印、扫描复印。覆盖展示、同级关系、文案和可达页面。",
         "scope": "regression",
     })
-    branches = [item.get("branch") for item in preview.get("businessFlows") or []]
-    require(branches == ["文档打印", "照片打印", "扫描复印"], "Agent plan preview must expand every requirement branch instead of showing a generic lifecycle")
+    require(not preview.get("businessFlows") and not preview.get("steps"), "Agent startup preview must not expose rule candidates as an AI business plan")
+    branches = [item.get("branch") for item in preview.get("requirementCandidates") or []]
+    require(branches == ["文档打印", "照片打印", "扫描复印"], "Agent startup preview must retain explicit requirement candidates for later AI coverage auditing")
     generic_preview = agent_service.preview_agent_plan({
         "target": "会员服务新增发票入口",
         "requirementText": "会员服务入口在首页：订单管理、优惠券。发票入口是新增能力，需要校验展示和文案。",
         "scope": "regression",
     })
     require(
-        [item.get("branch") for item in generic_preview.get("businessFlows") or []] == ["订单管理", "优惠券"],
+        [item.get("branch") for item in generic_preview.get("requirementCandidates") or []] == ["订单管理", "优惠券"],
         "Agent requirement preview must extract arbitrary sibling entry lists without product-specific branch names",
     )
     require(
-        all("发票入口" in " ".join(item.get("checks") or []) for item in generic_preview.get("businessFlows") or []),
-        "Agent requirement preview must derive the new entry label from the requirement instead of a fixed product keyword",
+        not any(item.get("steps") or item.get("checks") for item in generic_preview.get("requirementCandidates") or []),
+        "Agent startup preview must not present deterministic steps or checks before MM AI planning",
     )
-    require(preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate business flows from platform lifecycle")
+    require(preview.get("candidateOnly") and preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate coverage candidates from the later AI business plan")
     plan_context = yaml_service.build_agent_business_plan_context_text({
-        "source": "ai_gateway",
+        "source": "platform_mindmap_ai",
         "objective": "覆盖三个入口",
-        "businessFlows": preview.get("businessFlows"),
+        "businessFlows": [{
+            "name": f"{branch}业务验收",
+            "branch": branch,
+            "steps": ["进入首页", f"进入{branch}"],
+            "checks": ["校验新增入口可见"],
+        } for branch in branches],
     })
     require("Agent 上游业务计划" in plan_context and "页面路径" in plan_context and "可见验收点" in plan_context, "Agent business plan must feed the downstream case/YAML generation context")
 
     old_health = agent_service._probe_agent_ai_health
-    old_gateway_post = agent_service._ai_gateway_post
-    old_goal_analysis = agent_service._ensure_agent_goal_analysis
+    old_mindmap = yaml_service.generate_mindmap_from_request
+    old_update_generate_job = yaml_service.update_generate_job
     old_log_tool_call = agent_service._log_tool_call
-    gateway_calls = []
+    mindmap_calls = []
     try:
         agent_service._probe_agent_ai_health = lambda run=None: {"gatewayReachable": True, "ready": True}
 
-        def fake_gateway_post(path, payload, timeout=30):
-            gateway_calls.append({"path": path, "payload": payload, "timeout": timeout})
+        def fake_mindmap(request, job_id=None):
+            mindmap_calls.append({"request": request, "jobId": job_id})
             return {
-                "success": True,
-                "providerId": "qwen_plus",
-                "model": "qwen3.6-plus",
-                "content": json.dumps({
-                    "objective": "覆盖三个业务入口的展示、同级关系、文案和可达页面",
-                    "businessFlows": [
-                        {"id": "FLOW-001", "name": "文档打印", "branch": "文档打印", "steps": ["进入首页", "点击文档打印", "到达文档打印页"], "checks": ["检查新增入口可见和文案正确"]},
-                        {"id": "FLOW-002", "name": "照片打印", "branch": "照片打印", "steps": ["进入首页", "点击照片打印", "到达照片打印页"], "checks": ["检查新增入口同级展示并可达"]},
-                        {"id": "FLOW-003", "name": "扫描复印", "branch": "扫描复印", "steps": ["进入首页", "点击扫描复印", "到达扫描复印页"], "checks": ["检查新增入口文案和可达页面"]},
+                "case_set_id": "agent-plan-static-1",
+                "cases": {
+                    "analysis": {
+                        "summary": "覆盖三个业务入口的展示、同级关系、文案和可达页面",
+                        "business_goals": ["三个入口完整验收"],
+                        "entry_points": ["文档打印", "照片打印", "扫描复印"],
+                        "requirement_points": ["文档打印入口", "照片打印入口", "扫描复印入口"],
+                        "confidence": "high",
+                        "readiness_level": "ready",
+                    },
+                    "scenarios": [
+                        {"scenario": "文档打印百度网盘入口", "feature": "文档打印", "requirement_point": "文档打印入口", "business_path": "进入首页 -> 点击文档打印 -> 到达文档打印页", "assertions": ["检查新增入口可见和文案正确"]},
+                        {"scenario": "照片打印百度网盘入口", "feature": "照片打印", "requirement_point": "照片打印入口", "business_path": "进入首页 -> 点击照片打印 -> 到达照片打印页", "assertions": ["检查新增入口同级展示并可达"]},
+                        {"scenario": "扫描复印百度网盘入口", "feature": "扫描复印", "requirement_point": "扫描复印入口", "business_path": "进入首页 -> 点击扫描复印 -> 到达扫描复印页", "assertions": ["检查新增入口文案和可达页面"]},
                     ],
-                    "coverage": [],
-                    "assumptions": [],
-                    "unknowns": ["具体叶子页面层级由可信基线或真机证据消解"],
-                    "executionStrategy": {"smokeFlowIds": ["FLOW-001", "FLOW-002", "FLOW-003"], "remainingFlowIds": [], "reason": "三个入口分别走最短链路"},
-                }, ensure_ascii=False),
+                    "cases": [
+                        {"case_id": "TC-001", "title": "文档打印入口", "requirement_point": "文档打印入口", "smoke": True},
+                        {"case_id": "TC-002", "title": "照片打印入口", "requirement_point": "照片打印入口", "smoke": True},
+                        {"case_id": "TC-003", "title": "扫描复印入口", "requirement_point": "扫描复印入口", "smoke": True},
+                    ],
+                    "review": {
+                        "skill_pipeline": "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> smoke_selector.v1/platform_gate",
+                        "mindmap_visual_batches": "1/1",
+                        "mindmap_visual_images_grounded": 4,
+                        "prepared_figma_context_reused": {"enabled": True, "used_count": 4, "image_count": 4},
+                        "yaml_reference_examples": [{"provenancePath": "server-tasks-all/基础打印/6寸照片打印.yaml", "sourceTrust": 80}],
+                    },
+                },
             }
 
-        agent_service._ai_gateway_post = fake_gateway_post
-        agent_service._ensure_agent_goal_analysis = lambda run: {"keywords": ["入口"], "matchAll": False, "summary": "三入口覆盖", "aiSource": "static"}
+        yaml_service.generate_mindmap_from_request = fake_mindmap
+        yaml_service.update_generate_job = lambda *args, **kwargs: None
         agent_service._log_tool_call = lambda *args, **kwargs: None
         live_plan_run = {
             "runId": "agent-static-ai-plan",
@@ -226,18 +245,71 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "deviceStrategy": "fixed",
             "aiModel": "qwen3.6-plus",
             "normalizedInput": {"requirementText": "基础打印入口在首页：文档打印、照片打印、扫描复印。覆盖展示、同级关系、文案和可达页面。"},
-            "artifacts": {},
+            "artifacts": {
+                "sourceContext": {
+                    "requirementText": "基础打印入口在首页：文档打印、照片打印、扫描复印。覆盖展示、同级关系、文案和可达页面。",
+                    "figmaUrl": "https://www.figma.com/design/test",
+                    "figmaUsedPages": [{"page_name": f"page-{index}"} for index in range(4)],
+                    "figmaImageCount": 4,
+                },
+            },
         }
+        candidate_constraint = agent_service._ensure_business_flow_constraint(live_plan_run)
+        require(candidate_constraint.get("candidateOnly") and not candidate_constraint.get("strict"), "Raw requirement extraction must stay an unverified coverage candidate before AI PLAN")
+        require(candidate_constraint.get("businessFlow") == [], "Sibling requirement candidates must not be flattened into a fake sequential main chain")
         plan_call = agent_service._tool_agent_plan(live_plan_run)
         live_plan = live_plan_run.get("artifacts", {}).get("plan", {})
-        require(plan_call.get("status") == "SUCCESS" and live_plan.get("aiGenerated"), "Agent PLAN must use the selected AI model instead of silently returning a generic local lifecycle")
-        require(gateway_calls and gateway_calls[0].get("path") == "/ai/chat", "Agent PLAN must call the AI Gateway chat route with the full business requirement")
+        require(plan_call.get("status") == "SUCCESS" and live_plan.get("aiGenerated"), "Agent PLAN must use the platform MM AI result instead of silently returning a generic local lifecycle")
+        require(mindmap_calls and mindmap_calls[0]["request"].get("requireAiPlanning"), "Agent PLAN must reuse platform mindmap skills with deterministic entry fast paths disabled")
+        require(mindmap_calls[0]["request"].get("useYamlBaselineContext"), "Agent MM planning must include trusted baseline reranking context")
         require(len(live_plan.get("businessFlows") or []) == 3 and live_plan.get("qualityGate", {}).get("passed"), "AI PLAN must preserve every required business branch and pass deterministic grounding")
         require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
+        require(live_plan.get("source") == "platform_mindmap_ai" and live_plan.get("mindmapTrace", {}).get("preparedFigmaReused"), "Agent PLAN must expose MM and prepared-Figma provenance")
+        require(live_plan.get("visualReference", {}).get("sentToAiForJudgement") and live_plan["visualReference"].get("aiJudgementCompleted"), "Agent PLAN must distinguish visual AI dispatch from completed MM grounding")
+        require(live_plan.get("businessFlowConstraint", {}).get("strict"), "Only a validated AI PLAN may become the strict downstream business constraint")
+
+        partial_result = fake_mindmap(mindmap_calls[0]["request"], job_id="partial-visual")
+        partial_result["cases"]["review"].update({
+            "mindmap_visual_batches": "1/2",
+            "mindmap_visual_grounded": True,
+            "visual_refine_error": "second batch timeout",
+        })
+        partial_plan, partial_issues = agent_service._agent_business_plan_from_mindmap(
+            live_plan_run,
+            partial_result,
+            candidate_constraint,
+        )
+        require(not partial_issues and partial_plan.get("visualReference", {}).get("aiJudgementStatus") == "partial" and not partial_plan["visualReference"].get("aiJudgementCompleted"), "Partial visual batches must remain a soft reference without being reported as fully completed")
+
+        fallback_requests = []
+
+        def fallback_mindmap(request, job_id=None):
+            fallback_requests.append(request)
+            return {
+                "case_set_id": "agent-plan-fallback",
+                "cases": {
+                    "analysis": {"fallback_reason": "model timeout", "requirement_points": ["文档打印入口"]},
+                    "scenarios": [{"feature": "文档打印", "source": "local_fallback_after_ai_timeout", "fallback_reason": "model timeout"}],
+                    "cases": [],
+                    "review": {"skill_pipeline": "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1"},
+                },
+            }
+
+        yaml_service.generate_mindmap_from_request = fallback_mindmap
+        failed_plan_run = {
+            **live_plan_run,
+            "runId": "agent-static-failed-plan",
+            "artifacts": {"sourceContext": dict(live_plan_run["artifacts"]["sourceContext"])},
+        }
+        failed_plan_call = agent_service._tool_agent_plan(failed_plan_run)
+        failed_plan = failed_plan_run.get("artifacts", {}).get("plan", {})
+        require(failed_plan_call.get("status") == "FAILED", "Agent PLAN must fail after bounded MM retries when core AI skills only return local fallbacks")
+        require(failed_plan.get("status") == "failed" and not failed_plan.get("fallbackUsed"), "Rule candidates must never be persisted as a successful AI plan")
+        require(len(fallback_requests) == 2 and fallback_requests[1].get("planValidationIssues"), "The bounded MM retry must receive the previous AI output-gate issues instead of blindly repeating the same call")
     finally:
         agent_service._probe_agent_ai_health = old_health
-        agent_service._ai_gateway_post = old_gateway_post
-        agent_service._ensure_agent_goal_analysis = old_goal_analysis
+        yaml_service.generate_mindmap_from_request = old_mindmap
+        yaml_service.update_generate_job = old_update_generate_job
         agent_service._log_tool_call = old_log_tool_call
 
     maintained = yaml_baseline_cache._baseline_source_info(
@@ -2198,9 +2270,10 @@ def check_business_flow_filters_product_metrics():
         "artifacts": {"sourceContext": {"requirementText": noisy_requirement}},
     }
     constraint = agent_service._ensure_business_flow_constraint(run)
-    flow_text = " ".join(constraint.get("businessFlow") or [])
+    flow_text = json.dumps(constraint.get("businessFlows") or [], ensure_ascii=False)
     require("token" not in flow_text.lower() and "一模一样" not in flow_text and "提高AI" not in flow_text, "Agent runtime business flow must filter product metrics and model goals")
-    require("AI建模" in flow_text and ("语音" in flow_text or "长按" in flow_text), "Agent runtime business flow must keep AI modeling user actions")
+    require("AI建模" in flow_text and ("语音" in flow_text or "长按" in flow_text), "Agent runtime requirement candidates must keep real AI modeling user actions")
+    require(constraint.get("candidateOnly") and constraint.get("businessFlow") == [], "Agent must not promote pre-PLAN requirement candidates into a strict sequential flow")
 
 
 def check_agent_prepared_figma_context_reuse():
@@ -3902,8 +3975,8 @@ def main():
     require('"sourceInputs": self.source_inputs' in agent_service_source and '"requirementText": self.requirement_text' in agent_service_source, "AgentContext must preserve uploaded source inputs and requirement text")
     require("def _agent_input_summary" in agent_service_source and '"inputSummary": _agent_input_summary' in agent_service_source and "def _agent_run_with_input_summary" in agent_service_source, "Agent run APIs must expose the original input summary for history/detail pages")
     require("def _ensure_business_flow_constraint" in agent_service_source and '"businessFlowConstraint"' in agent_service_source and '"toolEligibility"' in agent_service_source, "Agent service must persist a runtime Business Flow Constraint Layer")
-    require("def _business_flow_keywords" in agent_service_source and '"businessFlowKeywords"' in agent_service_source and "业务主链（必须优先匹配）" in agent_service_source, "Agent case matching must use business-flow keywords before widening retrieval")
-    require("def _keyword_source_text" in agent_service_source and "CASE_MATCH_META_KEYWORD_PARTS" in agent_service_source and 'constraint.get("source") or "") == "default"' in agent_service_source, "Agent keyword extraction must ignore platform metadata and default business-flow placeholders")
+    require("def _business_flow_keywords" in agent_service_source and '"businessFlowKeywords"' in agent_service_source and "AI 业务计划（PLAN 前仅为未验证候选）" in agent_service_source, "Agent case matching must use AI-plan keywords before widening retrieval")
+    require("def _keyword_source_text" in agent_service_source and "CASE_MATCH_META_KEYWORD_PARTS" in agent_service_source and 'constraint.get("source") or "") in ("default", "unverified_input")' in agent_service_source, "Agent keyword extraction must ignore platform metadata and unverified flow placeholders")
     require("def _probe_agent_ai_health" in agent_service_source and '"agentAiHealth"' in agent_service_source and "def _record_agent_ai_decision" in agent_service_source and '"agentAiDecisions"' in agent_service_source, "Agent service must expose AI health and decision observability")
     require("def _normalize_agent_goal_analysis" in agent_service_source and '"validated": True' in agent_service_source and "business_constraint=business_constraint" in agent_service_source, "Agent AI outputs must be validated and grounded to business flow during semantic retrieval")
     require("def _checkpoint_agent_state" in agent_service_source and '"agentCheckpoints"' in agent_service_source and '"step_started"' in agent_service_source and '"step_finished"' in agent_service_source, "Agent service must checkpoint state around each execution step")
@@ -3956,8 +4029,21 @@ def main():
     require("def _agent_post_rerun_autonomy" in agent_service_source and '"maxRepairCycles": 1' in agent_service_source and "repair_depth < 1" in agent_service_source, "Agent must use latest rerun evidence for one bounded AI repair cycle without an unbounded retry loop")
     require("已有修复草稿但没有可执行 YAML" in agent_service_source and "没有可用修复草稿，未重跑旧 YAML" in agent_service_source, "Agent safe rerun must explain missing or invalid repair drafts instead of reporting false success")
     require(
-        '"PLAN", "PREPARE_SOURCE", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,
-        "Agent step order must prepare source, analyze impact, retrieve cases, then match cases"
+        '"PREPARE_SOURCE", "PLAN", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,
+        "Agent step order must prepare source before AI planning, then analyze impact, retrieve cases, and match cases"
+    )
+    require(
+        "generate_mindmap_from_request" in agent_service_source
+        and '"requireAiPlanning": True' in agent_service_source
+        and '"useYamlBaselineContext": True' in agent_service_source
+        and '"source": "platform_mindmap_ai"' in agent_service_source,
+        "Agent PLAN must reuse the platform MM skill pipeline instead of a standalone chat fallback",
+    )
+    require(
+        "prepared_figma_context = _prepared_figma_context_from_request(d)" in yaml_service_source
+        and 'agent_plan_review = {"agent_ai_planning_required": require_ai_planning}' in yaml_service_source
+        and 'review["agent_mindmap_plan_reused"]' in yaml_service_source,
+        "Platform MM planning must reuse prepared Figma and pass its structured cases into YAML generation",
     )
     require('"sourceType"' in agent_service_source and '"sourceRefs"' in agent_service_source and '"sourceContext"' in agent_service_source, "Agent runs must persist sourceType/sourceRefs/sourceContext")
     require("def _agent_source_material_context" in agent_service_source and '"uploadedFiles"' in agent_service_source and '"uploadedImages"' in agent_service_source and '"sourceSummary"' in agent_service_source, "Agent prepare_source must normalize uploaded files/images into sourceContext")
@@ -4102,8 +4188,9 @@ def main():
         and 'checks = [f"校验{entry_label}入口可见"]' in agent_service_source
         and 'steps.append(f"进入{branch}")' in agent_service_source
         and '"checks": list(checks)' in agent_service_source
-        and 'business_flow_source = "requirement_text"' in agent_service_source,
-        "Agent business plan must prefer explicit requirement branches and keep navigation steps separate from visible checks",
+        and '"source": "requirement_candidates" if business_flows else "unverified_input"' in agent_service_source
+        and '"candidateOnly": True' in agent_service_source,
+        "Agent must preserve explicit requirement branches as unverified coverage candidates and keep navigation steps separate from visible checks",
     )
     require("def refine_cases_with_yaml_visual_batches" in yaml_service_source and "YAML_VISUAL_BATCH_SIZE" in yaml_service_source and "legacy_fallback=False" in yaml_service_source, "YAML visual grounding must run in bounded batches without doubling timeout via legacy fallback")
     require("def build_executable_smoke_yaml_policy_text" in yaml_service_source and "def review_generated_yaml_smoke_stability" in yaml_service_source and '"yamlSmokeStability"' in yaml_service_source, "YAML generation must enforce and report Runner smoke-execution stability")
