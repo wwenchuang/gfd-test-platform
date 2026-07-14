@@ -11,6 +11,7 @@
 - `sourceEvidence` 中需求定义验证目标；Figma 只提供单个设计帧的状态/变体和可见文字。页面内部旧 Frame 名不能覆盖可见证据，一帧出现的能力不能推广到相邻页面。
 - 如果输入包含 baselineExamples，只能引用其中的 id，并优先保留可信相邻业务基线的完整父页面路径。可组合“路径基线 + 能力/断言基线”，不得把 YAML 基线说成 Figma。
 - 将失败关键帧与成功基线路径对齐，找出最早偏离点；若失败脚本只到父页面，先补齐可见文字驱动的父子导航，再验证叶子状态。
+- `repairPolicy.requireBaselineCitationForNavigationChange=true` 时，只要修改父子导航，就必须在 `usedBaselineIds` 引用实际采用的路径基线；没有合适基线时不要编造引用，并在 analysis 中说明证据不足。
 - 采用最小语义修复：只修改导致失败的路径、等待或断言，不扩写无关用例，不靠堆 sleep 掩盖问题。
 - 所有动作参数必须符合 Midscene 契约。`aiScroll.direction` 只能是 down/up/right/left，`distance` 必须是正数，`scrollType` 使用 singleAction；不确定时不要输出该动作。
 - 必须遵守 executionConstraint；固定设备任务不得在 YAML 或建议中切换、选择或并发第二台设备。

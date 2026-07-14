@@ -1060,6 +1060,7 @@ def _update_agent_job_progress_trace(
     completed: List[Dict[str, Any]],
     failed: List[Dict[str, Any]],
     running: List[Dict[str, Any]],
+    queued: Optional[List[Dict[str, Any]]] = None,
     wait_timeout_jobs: Optional[List[Dict[str, Any]]] = None,
     elapsed: int,
     timeout: int,
@@ -1072,20 +1073,24 @@ def _update_agent_job_progress_trace(
     phase_key = str(phase or "runner").strip() or "runner"
     last_trace_map = artifacts.setdefault("jobProgressLastTraceAtByPhase", {})
     last_trace_at = int(last_trace_map.get(phase_key, -999) or -999)
-    should_trace = force or elapsed <= 1 or (elapsed - last_trace_at) >= 15 or not running
+    queued = queued or []
+    should_trace = force or elapsed <= 1 or (elapsed - last_trace_at) >= 15 or not (running or queued)
     running_names = [_short_job_label(_job_label(item)) for item in running[:3]]
+    queued_names = [_short_job_label(_job_label(item)) for item in queued[:3]]
     wait_timeout_jobs = wait_timeout_jobs or []
-    state_label = _agent_runner_phase_label(phase_key, running=bool(running), wait_timeout=bool(wait_timeout_jobs))
+    state_label = _agent_runner_phase_label(phase_key, running=bool(running or queued), wait_timeout=bool(wait_timeout_jobs))
     phase_prefix = f"{phase_key}：" if phase_key != "runner" else ""
     summary = (
         f"{phase_prefix}{state_label}：{len(completed)} 成功 / {len(failed)} 失败 / "
-        f"{len(running)} 运行中，已等待 {elapsed}s / 上限 {timeout}s"
+        f"{len(running)} 执行中 / {len(queued)} 排队中，已等待 {elapsed}s / 上限 {timeout}s"
     )
     if wait_timeout_jobs:
         summary += f"；{len(wait_timeout_jobs)} 个任务仍在等待 Runner 报告回传"
     if running_names:
         summary += "；当前：" + "、".join(name for name in running_names if name)
-    details = [_job_progress_detail(item) for item in (running[:3] + wait_timeout_jobs[:2] + failed[:2])]
+    if queued_names:
+        summary += "；排队：" + "、".join(name for name in queued_names if name)
+    details = [_job_progress_detail(item) for item in (running[:3] + queued[:2] + wait_timeout_jobs[:2] + failed[:2])]
     details = [item for item in details if item]
     if details:
         summary += "；" + "；".join(details)
@@ -1151,6 +1156,8 @@ def wait_jobs_finished(
         completed: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
         running: List[Dict[str, Any]] = []
+        queued: List[Dict[str, Any]] = []
+        in_flight: List[Dict[str, Any]] = []
 
         for jid in job_ids:
             job = next((j for j in jobs if j.get("job_id") == jid), None)
@@ -1165,7 +1172,12 @@ def wait_jobs_finished(
                 else:
                     failed.append(entry)
             else:
-                running.append(_job_entry_from_record(job, jid, status))
+                entry = _job_entry_from_record(job, jid, status)
+                in_flight.append(entry)
+                if status == JOB_STATUS_RUNNING:
+                    running.append(entry)
+                else:
+                    queued.append(entry)
 
         # 更新 Agent Run 的执行进度
         artifacts = run.setdefault("artifacts", {})
@@ -1175,9 +1187,12 @@ def wait_jobs_finished(
             "completed": len(completed),
             "failed": len(failed),
             "running": len(running),
+            "pending": len(queued),
+            "queued": len(queued),
+            "nonTerminal": len(in_flight),
             "elapsed": int(elapsed),
             "timeout": timeout,
-            "jobs": completed + failed + running,
+            "jobs": completed + failed + running + queued,
         }
         artifacts.setdefault("jobProgressByPhase", {})[phase or "runner"] = artifacts["jobProgress"]
         run["progress"] = _agent_run_progress_from_steps(run)
@@ -1187,17 +1202,18 @@ def wait_jobs_finished(
             completed=completed,
             failed=failed,
             running=running,
+            queued=queued,
             elapsed=int(elapsed),
             timeout=timeout,
             phase=phase,
-            force=not running,
-            status="SUCCESS" if not running and not failed else ("PARTIAL_FAILED" if not running else "RUNNING"),
+            force=not in_flight,
+            status="SUCCESS" if not in_flight and not failed else ("PARTIAL_FAILED" if not in_flight else "RUNNING"),
         )
         # 持久化进度（让前端能看到）
         _persist_agent_run(run)
 
         # 全部结束则退出
-        if not running:
+        if not in_flight:
             return {"completed": completed, "failed": failed, "running": [], "timeout": []}
 
         time.sleep(interval)
@@ -1238,12 +1254,17 @@ def wait_jobs_finished(
             failed.append(entry)
 
     artifacts = run.setdefault("artifacts", {})
+    timeout_running = [item for item in timeout_jobs if str(item.get("status") or "").lower() == JOB_STATUS_RUNNING]
+    timeout_queued = [item for item in timeout_jobs if str(item.get("status") or "").lower() != JOB_STATUS_RUNNING]
     artifacts["jobProgress"] = {
         "phase": phase or "runner",
         "total": len(job_ids),
         "completed": len(completed),
         "failed": len(failed),
-        "running": len(timeout_jobs),
+        "running": len(timeout_running),
+        "pending": len(timeout_queued),
+        "queued": len(timeout_queued),
+        "nonTerminal": len(timeout_jobs),
         "timeout": len(timeout_jobs),
         "elapsed": int(time.time() - start_time),
         "timeoutSeconds": timeout,
@@ -1257,7 +1278,8 @@ def wait_jobs_finished(
         run,
         completed=completed,
         failed=failed,
-        running=timeout_jobs,
+        running=timeout_running,
+        queued=timeout_queued,
         wait_timeout_jobs=timeout_jobs,
         elapsed=int(time.time() - start_time),
         timeout=timeout,

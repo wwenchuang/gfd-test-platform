@@ -2549,6 +2549,8 @@ def _compact_baseline_candidate(item, index=0):
         "path": item.get("path") or item.get("baseline_path") or "",
         "score": safe_int(item.get("score"), 0),
         "matched_terms": item.get("matched_terms") or [],
+        "retrievalQueries": item.get("retrievalQueries") or [],
+        "retrievalRoles": item.get("retrievalRoles") or [],
         "actions": item.get("actions") or [],
         "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
         "lastRunStatus": item.get("lastRunStatus") or "",
@@ -2594,6 +2596,7 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
             "avoid_unrelated_external_flow": True,
             "fallback_when_irrelevant": True,
             "prefer_complementary_roles": ["navigation_path", "capability_pattern", "assertion_pattern"],
+            "preserve_explicit_business_branches": True,
             "cite_candidate_provenance_exactly": True,
         },
     }

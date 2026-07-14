@@ -730,6 +730,7 @@ app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
     failedJobs: req.body?.failedJobs || [],
     imageAssets: req.body?.imageAssets || [],
     reportKeyframes: req.body?.reportKeyframes || [],
+    baselineExamples: req.body?.baselineExamples || [],
     evidenceSources: req.body?.evidenceSources || [],
     sourceEvidence: req.body?.sourceEvidence || {},
     executionConstraint: req.body?.executionConstraint || {},
@@ -766,6 +767,7 @@ app.post('/ai/optimize-yaml', asyncRoute(async (req, res) => {
     evidenceSources: req.body?.evidenceSources || [],
     sourceEvidence: req.body?.sourceEvidence || {},
     executionConstraint: req.body?.executionConstraint || {},
+    repairPolicy: req.body?.repairPolicy || {},
   };
   const {output} = await callAi('optimize_yaml', body, {stripFence: true});
   let structured = null;

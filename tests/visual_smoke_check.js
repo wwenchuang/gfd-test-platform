@@ -678,6 +678,8 @@ async function anyVisible(locator) {
     const aggregateChecks = await page.evaluate(() => {
       const current = agentCurrentRun.artifacts.rerunProgress;
       const history = JSON.parse(JSON.stringify(current));
+      history.source = 'original_yaml';
+      history.usesRepairDraft = false;
       const followup = {
         ...current,
         total: 1,
@@ -710,6 +712,35 @@ async function anyVisible(locator) {
         },
       });
       const activeMetrics = agentRunnerProgressMetrics({total: 1, completed: 0, failed: 1, running: 0, timeout: 1800, jobs: [{status: 'failed'}]});
+      const queuedMetrics = agentRunnerProgressMetrics({
+        total: 2,
+        running: 2,
+        jobs: [{status: 'running'}, {status: 'pending'}],
+      });
+      const timeoutAndRunningMetrics = agentRunnerProgressMetrics({
+        total: 2,
+        timeoutCount: 1,
+        jobs: [{status: 'timeout'}, {status: 'running'}],
+      });
+      const runningRerunHolder = document.createElement('div');
+      runningRerunHolder.innerHTML = renderStepDetail(
+        {step: 'RERUN', status: 'RUNNING', toolCalls: []},
+        {artifacts: {rerunProgress: {
+          source: 'original_yaml',
+          usesRepairDraft: false,
+          total: 2,
+          completedCount: 0,
+          runningCount: 2,
+          pendingCount: 0,
+          serialSameDevice: true,
+          runnerId: 'win-runner-01',
+          deviceId: 'ecbfd645',
+          items: [
+            {sourceJobId: 'job-running', targetTaskName: '照片入口证据重试', status: 'running', repairSource: 'original_yaml'},
+            {sourceJobId: 'job-queued', targetTaskName: '扫描入口证据重试', status: 'pending', repairSource: 'original_yaml'},
+          ],
+        }}},
+      );
       const summaryHolder = document.createElement('div');
       summaryHolder.innerHTML = renderAgentSummaryArtifact({
         status: 'FAILED',
@@ -727,11 +758,14 @@ async function anyVisible(locator) {
           },
         },
       });
-      return {rerunText: holder.innerText, runnerText: runnerHolder.innerText, summaryText: summaryHolder.innerText, activeMetrics};
+      return {rerunText: holder.innerText, runnerText: runnerHolder.innerText, runningRerunText: runningRerunHolder.innerText, summaryText: summaryHolder.innerText, activeMetrics, queuedMetrics, timeoutAndRunningMetrics};
     });
-    if (!/尝试 2 轮/.test(aggregateChecks.rerunText) || !/成功 2/.test(aggregateChecks.rerunText) || !/失败 2/.test(aggregateChecks.rerunText)) throw new Error('Bounded AI repair cycles must use cumulative attempt counts');
+    if (!/尝试 2 轮/.test(aggregateChecks.rerunText) || !/成功 2/.test(aggregateChecks.rerunText) || !/失败 2/.test(aggregateChecks.rerunText) || !/原脚本证据重试/.test(aggregateChecks.rerunText) || !/AI 修复脚本验证/.test(aggregateChecks.rerunText)) throw new Error('Bounded AI repair cycles must use a cumulative causal attempt chain');
     if (!/Runner 真实执行累计/.test(aggregateChecks.runnerText) || !/成功\s*3/.test(aggregateChecks.runnerText) || !/失败\s*1/.test(aggregateChecks.runnerText)) throw new Error('Runner phase history must keep earlier successful execution visible');
     if (aggregateChecks.activeMetrics.timeout !== 0 || aggregateChecks.activeMetrics.timeoutSeconds !== 1800) throw new Error('Runner timeout limit must not be rendered as 1800 timed-out jobs');
+    if (aggregateChecks.queuedMetrics.running !== 1 || aggregateChecks.queuedMetrics.pending !== 1) throw new Error(`Runner progress must split executing and queued jobs: ${JSON.stringify(aggregateChecks.queuedMetrics)}`);
+    if (aggregateChecks.timeoutAndRunningMetrics.running !== 1 || aggregateChecks.timeoutAndRunningMetrics.timeout !== 1) throw new Error(`A terminal timeout must not hide another executing job: ${JSON.stringify(aggregateChecks.timeoutAndRunningMetrics)}`);
+    if (!/1 执行中/.test(aggregateChecks.runningRerunText) || !/1 排队中/.test(aggregateChecks.runningRerunText) || !/原脚本证据重试/.test(aggregateChecks.runningRerunText)) throw new Error('A running RERUN step must render causal task progress before toolCalls finish');
     if (!/部分通过/.test(aggregateChecks.summaryText) || !/编排阻断/.test(aggregateChecks.summaryText) || !/Runner 通过\s*2/.test(aggregateChecks.summaryText) || !/脚本 \/ 环境 \/ 待归因\s*1/.test(aggregateChecks.summaryText)) throw new Error('Final summary must preserve successful smoke outcomes and keep unclassified test failures separate from product failures');
     await page.setViewportSize({width: 1440, height: 900});
     let dialogText = '';

@@ -2611,6 +2611,45 @@ def _agent_high_confidence_failure_review(review, threshold=0.8):
         return False
 
 
+def _agent_text_has_concrete_environment_evidence(value):
+    """Recognize infrastructure evidence without treating a wall-clock timeout as proof."""
+    text = str(value or "").lower()
+    concrete_terms = (
+        "neither android_home nor android_sdk_root", "android_sdk_root environment variable",
+        "unable to get connected android device list", "no devices/emulators found", "device unauthorized",
+        "device offline", "device disconnected", "adb offline", "adb disconnected",
+        "runner offline", "runner disconnected", "model service", "gateway unavailable", "gateway timeout",
+        "model request was aborted", "model request aborted", "connection refused", "network unreachable",
+        "dns resolution", "econnreset", "socket hang up", "http 502", "http 503", "http 504",
+        "安装失败", "设备离线", "设备断开", "设备未授权", "runner 离线", "runner 断开",
+        "模型服务", "模型请求中止", "网关不可用", "网关超时", "网络不可达", "连接拒绝",
+    )
+    return any(term in text for term in concrete_terms)
+
+
+def _agent_failure_review_has_concrete_environment_evidence(review):
+    """A bare task timeout is not enough to lock the failure as infrastructure."""
+    if not isinstance(review, dict) or not _agent_high_confidence_failure_review(review):
+        return False
+    if _agent_failure_type_from_review(review) != "ENV_ISSUE":
+        return False
+    text = " ".join(str(review.get(key) or "") for key in (
+        "reason", "evidence", "summary", "recommendation", "category", "subCategory", "sub_category",
+    ))
+    return _agent_text_has_concrete_environment_evidence(text)
+
+
+def _agent_failed_item_has_concrete_environment_evidence(item):
+    if not isinstance(item, dict):
+        return False
+    if _agent_failure_review_has_concrete_environment_evidence(item.get("failureReview") or item.get("failure_review") or {}):
+        return True
+    raw = "\n".join(str(item.get(key) or "") for key in (
+        "error", "failureReason", "stdoutTail", "stdout_tail", "stderrTail", "stderr_tail", "summaryText", "summary_text",
+    ))
+    return _agent_text_has_concrete_environment_evidence(raw)
+
+
 def _agent_job_failure_reason(job):
     failure_review = job.get("failure_review") or job.get("failureReview") or {}
     if isinstance(failure_review, dict):
@@ -11024,9 +11063,11 @@ def _normalize_failed_execution_item(item, fallback=None):
     failure_type = _agent_canonical_failure_type(raw_failure_type)
     review_failure_type = _agent_failure_type_from_review(failure_review)
     trusted_review_type = review_failure_type if _agent_high_confidence_failure_review(failure_review) else ""
-    if trusted_review_type in ("ENV_ISSUE", "PRODUCT_BUG"):
+    if trusted_review_type == "PRODUCT_BUG":
         failure_type = review_failure_type
-    elif failure_type in ("", "UNKNOWN") and trusted_review_type:
+    elif trusted_review_type == "ENV_ISSUE" and _agent_failure_review_has_concrete_environment_evidence(failure_review):
+        failure_type = review_failure_type
+    elif failure_type in ("", "UNKNOWN") and trusted_review_type and trusted_review_type != "ENV_ISSUE":
         failure_type = trusted_review_type
     if failure_type in ("", "UNKNOWN"):
         inferred_kind = _agent_job_failure_type("\n".join([error, stdout_tail, stderr_tail, summary_text]))
@@ -11481,6 +11522,7 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
                 break
         if len(image_assets) >= 6:
             break
+    baseline_examples = _agent_repair_baseline_examples(run, primary_failure, primary_yaml, limit=6)
     return {
         "target": run.get("target", ""),
         "requirement": _agent_plan_requirement_text(run),
@@ -11493,10 +11535,11 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
         "failedJobs": failed_job_payloads,
         "imageAssets": image_assets,
         "reportKeyframes": frame_names,
+        "baselineExamples": baseline_examples,
         "sourceEvidence": _agent_source_evidence(run),
         "evidenceSources": [
             "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
-            "Runner failureReview", "Midscene 报告视觉时间线关键帧",
+            "Runner failureReview", "Midscene 报告视觉时间线关键帧", "可信分支基线",
         ],
         "executionConstraint": {
             "runnerId": run.get("runnerId") or "",
@@ -11562,22 +11605,38 @@ def _agent_failure_report_keyframes(failed_job, limit=4):
 def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
     """Retrieve trustworthy, requirement-related examples for one failed path."""
     try:
-        from task_server.services.yaml_baseline_cache import search_baseline_examples
+        from task_server.services.yaml_baseline_cache import search_diverse_baseline_examples
     except Exception:
         return []
-    query = "\n".join(filter(None, [
-        _agent_plan_requirement_text(run),
-        str(run.get("target") or ""),
+    target_text = "\n".join(filter(None, [
         str(target_job.get("taskName") or target_job.get("file") or ""),
         str(target_job.get("failureReason") or target_job.get("error") or ""),
         str(original_yaml or "")[:6000],
     ]))
+    target_compact = re.sub(r"\s+", "", target_text).lower()
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    constraint = artifacts.get("businessFlowConstraint") if isinstance(artifacts.get("businessFlowConstraint"), dict) else {}
+    branch_queries = []
+    for flow in constraint.get("businessFlows") or []:
+        if not isinstance(flow, dict):
+            continue
+        labels = _agent_plan_text_list([flow.get("branch"), flow.get("name")])
+        label_compacts = [re.sub(r"\s+", "", str(item)).lower() for item in labels if len(str(item).strip()) >= 2]
+        if not any(label in target_compact or target_compact.find(label[:4]) >= 0 for label in label_compacts):
+            continue
+        branch_parts = []
+        for value in (flow.get("branch"), flow.get("name"), flow.get("steps"), flow.get("checks")):
+            branch_parts.extend(_agent_plan_text_list(value))
+        branch_query = "\n".join(dict.fromkeys(branch_parts)).strip()
+        if branch_query:
+            branch_queries.append(branch_query[:2000])
     try:
-        rows = search_baseline_examples(
-            query,
+        rows = search_diverse_baseline_examples(
+            target_text,
+            branch_queries=branch_queries,
             module=str(target_job.get("module") or ""),
             limit=limit,
-            allow_fallback=False,
+            per_branch=max(3, min(6, safe_int(limit, 3))),
         )
     except Exception:
         rows = []
@@ -11589,7 +11648,10 @@ def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
             "provenancePath": item.get("provenancePath") or item.get("file") or "",
             "sourceKind": item.get("sourceKind") or "",
             "verificationStatus": item.get("verificationStatus") or "",
+            "sourceTrust": item.get("sourceTrust") or 0,
             "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
+            "retrievalRoles": item.get("retrievalRoles") or [],
+            "retrievalQueries": item.get("retrievalQueries") or [],
             "actions": item.get("actions") or [],
             "snippet": str(item.get("snippet") or "")[:2400],
         }
@@ -11647,6 +11709,33 @@ def _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
     original = _agent_repair_semantic_document(original_yaml)
     fixed = _agent_repair_semantic_document(fixed_yaml)
     return original is not None and fixed is not None and original != fixed
+
+
+def _agent_repair_navigation_signature(yaml_text):
+    """Extract navigation-like actions so evidence gates do not depend on AI prose."""
+    if pyyaml is None:
+        return None
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return None
+    signature = []
+    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for step in task.get("flow") or []:
+            if not isinstance(step, dict):
+                continue
+            for action, value in step.items():
+                if action not in navigation_actions:
+                    continue
+                try:
+                    normalized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                except Exception:
+                    normalized = str(value or "")
+                signature.append((action, normalized))
+    return signature
 
 
 def _normalize_agent_failed_items(items):
@@ -11769,6 +11858,14 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
                 analysis["evidence"] = {
                     "reportKeyframes": failure_payload.get("reportKeyframes") or [],
                     "reportKeyframeCount": len(failure_payload.get("reportKeyframes") or []),
+                    "baselineExamples": [
+                        {
+                            "id": item.get("id"),
+                            "provenancePath": item.get("provenancePath"),
+                            "businessPath": item.get("businessPath"),
+                        }
+                        for item in (failure_payload.get("baselineExamples") or [])[:6]
+                    ],
                     "sources": failure_payload.get("evidenceSources") or [],
                 }
                 if isinstance(result, dict):
@@ -11779,7 +11876,11 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
                         analysis["canAutoRepair"] = bool(result.get("canAutoRepair"))
                     # AI 可能返回更准确的失败类型
                     ai_failure_type = _agent_canonical_failure_type(result.get("failureType"))
-                    if ai_failure_type and ai_failure_type != "UNKNOWN" and failure_type != "ENV_ISSUE":
+                    environment_locked = any(
+                        _agent_failed_item_has_concrete_environment_evidence(item)
+                        for item in failed_jobs
+                    )
+                    if ai_failure_type and ai_failure_type != "UNKNOWN" and not environment_locked:
                         analysis["failureType"] = ai_failure_type
             except Exception:
                 analysis["conclusion"] = f"AI分析超时，失败类型: {failure_type}"
@@ -11883,7 +11984,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     original_yaml = ""
             report_keyframes = _agent_failure_report_keyframes(target_job, limit=4)
             report_keyframe_names = [item.get("name") or "report-keyframe" for item in report_keyframes]
-            baseline_examples = _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3)
+            baseline_examples = _agent_repair_baseline_examples(run, target_job, original_yaml, limit=6)
             evidence_parts = [
                 f"失败类型：{ft}",
                 f"失败序号：{index}/{len(failed_jobs)}",
@@ -11961,9 +12062,15 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "reportKeyframes": report_keyframe_names,
                         "baselineExamples": baseline_examples,
                         "sourceEvidence": source_evidence,
+                        "repairPolicy": {
+                            "alignReportFramesWithBaselinePath": True,
+                            "requireBaselineCitationForNavigationChange": True,
+                            "visibleTextOnly": True,
+                            "preserveOriginalBusinessGoal": True,
+                        },
                         "evidenceSources": [
                             "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
-                            "failureReview", "Midscene 报告关键帧", "可信 Top3 基线",
+                            "failureReview", "Midscene 报告关键帧", "可信分支基线",
                         ],
                         "executionConstraint": {
                             "runnerId": run.get("runnerId") or "",
@@ -11990,6 +12097,24 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         item_summary["invalidBaselineIds"] = invalid_baseline_ids
                         fixed_yaml = ""
                         resp["error"] = "AI 引用了本次候选之外的基线：" + "、".join(invalid_baseline_ids[:3])
+                    change_text = " ".join(
+                        _agent_plan_text_list(resp.get("analysis"), limit=20)
+                        + _agent_plan_text_list(resp.get("changes"), limit=20)
+                    ).lower()
+                    original_navigation = _agent_repair_navigation_signature(original_yaml)
+                    fixed_navigation = _agent_repair_navigation_signature(fixed_yaml)
+                    navigation_changed = (
+                        original_navigation is not None
+                        and fixed_navigation is not None
+                        and original_navigation != fixed_navigation
+                    ) or any(term in change_text for term in (
+                        "navigation", "parent page", "intermediate page", "route", "path",
+                        "导航", "父页面", "中间页面", "页面层级", "路径", "补充点击", "新增点击",
+                    ))
+                    if fixed_yaml and baseline_examples and navigation_changed and not used_baseline_ids:
+                        item_summary["blockedReason"] = "navigation_change_without_baseline_citation"
+                        fixed_yaml = ""
+                        resp["error"] = "AI 修改了页面导航，但没有引用本次可信分支基线"
                     if resp.get("diff") or resp.get("diff_summary"):
                         draft["diff"] = resp.get("diff") or resp.get("diff_summary")
                 if fixed_yaml:
@@ -12077,7 +12202,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
             "failureType": ft,
             "evidenceSources": [
                 "失败类型", "Agent 目标", "原始需求", "Figma 同帧软证据", "Runner 错误",
-                "stdout/stderr 尾部", "原始 YAML", "Midscene 报告关键帧", "可信 Top3 基线", "整批失败摘要",
+                "stdout/stderr 尾部", "原始 YAML", "Midscene 报告关键帧", "可信分支基线", "整批失败摘要",
             ],
             "items": summary_items,
             "targetTasks": [
@@ -12544,7 +12669,8 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             failed_count = sum(1 for value in item_statuses if value in ("failed", "error", "cancelled"))
             timeout_count = sum(1 for value in item_statuses if value == "timeout")
             skipped_count = sum(1 for value in item_statuses if value == "skipped")
-            running_count = sum(1 for value in item_statuses if value in ("created", "queued", "running", "assigned", "waiting"))
+            running_count = sum(1 for value in item_statuses if value in ("running", "assigned"))
+            pending_count = sum(1 for value in item_statuses if value in ("pending", "created", "queued", "waiting", "creating"))
             terminal_count = success_count + failed_count + timeout_count + skipped_count
             total_count = max(len(progress_items), len(failed_items))
             rerun_progress.update({
@@ -12554,7 +12680,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 "failedCount": failed_count,
                 "timeoutCount": timeout_count,
                 "runningCount": running_count,
-                "pendingCount": max(0, total_count - terminal_count - running_count),
+                "pendingCount": max(pending_count, total_count - terminal_count - running_count),
                 "createdCount": sum(1 for item in progress_items if item.get("newJobId")),
                 "skippedCount": skipped_count,
                 "createdJobIds": [item.get("newJobId") for item in progress_items if item.get("newJobId")],

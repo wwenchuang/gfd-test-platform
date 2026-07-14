@@ -181,6 +181,7 @@ const AGENT_TOOL_LABELS = {
   analyze_failure: '分析失败原因',
   diagnose_failure: '失败诊断',
   generate_repair_draft: '生成修复草稿',
+  retry_failed_job: '验证失败任务',
   generate_bug_draft: '生成缺陷草稿',
   generate_summary: '生成总结报告',
   query_page_knowledge: '查询页面知识',
@@ -225,6 +226,11 @@ function agentJobStatusText(value) {
   const v = String(value || '').toLowerCase();
   const map = {
     pending: '等待中',
+    queued: '排队中',
+    waiting: '排队中',
+    created: '排队中',
+    creating: '准备中',
+    assigned: '执行中',
     running: '执行中',
     success: '成功',
     failed: '失败',

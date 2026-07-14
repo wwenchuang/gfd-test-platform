@@ -1149,11 +1149,19 @@ function timelineLiveTraceDetail(step) {
       ${rows.slice(-12).map(row => `
         <div class="step-live-trace-row status-${escapeHtml(String(row.status || '').toLowerCase())}">
           <span>${escapeHtml(formatDisplayTime(row.time))}</span>
-          <strong>${escapeHtml(row.message || '')}</strong>
+          <strong>${escapeHtml(agentTraceMessageText(row.message || ''))}</strong>
         </div>
       `).join('')}
     </div>
   `;
+}
+
+function agentTraceMessageText(value) {
+  const text = String(value || '');
+  return text
+    .replace(/准备调用工具[：:]\s*_tool_rerun/gi, '正在准备失败任务重跑')
+    .replace(/调用工具[：:]\s*_tool_rerun/gi, '已启动失败任务重跑')
+    .replace(/_tool_rerun/gi, '失败任务重跑');
 }
 
 function renderDiagnosisDetail(diagnosis) {
@@ -1209,20 +1217,25 @@ function renderSonicSyncDetail(step, artifacts) {
 // ===== RUN_TASK 执行进度详情 =====
 function agentRunnerProgressMetrics(progress = {}) {
   const jobs = Array.isArray(progress.jobs) ? progress.jobs : [];
+  const jobStatuses = jobs.map(job => String(job?.status || '').toLowerCase());
   const timeoutFromJobs = jobs.filter(job => (
     job && (job.agent_wait_timeout || String(job.status || '').toLowerCase() === 'timeout')
   )).length;
   const completed = Number(progress.completed ?? progress.successCount ?? progress.completedCount ?? jobs.filter(job => String(job.status || '').toLowerCase() === 'success').length ?? 0);
   const failed = Number(progress.failed ?? progress.failedCount ?? jobs.filter(job => ['failed', 'error', 'cancelled'].includes(String(job.status || '').toLowerCase())).length ?? 0);
   const timeout = Number(progress.timeoutCount ?? timeoutFromJobs ?? 0);
-  const runningRaw = Number(progress.running ?? progress.runningCount ?? jobs.filter(job => ['pending', 'queued', 'assigned', 'running'].includes(String(job.status || '').toLowerCase())).length ?? 0);
+  const runningFromJobs = jobStatuses.filter(value => ['running', 'assigned'].includes(value)).length;
+  const pendingFromJobs = jobStatuses.filter(value => ['pending', 'queued', 'waiting', 'created', 'creating'].includes(value)).length;
+  const runningRaw = Number(progress.executing ?? (jobs.length ? runningFromJobs : (progress.running ?? progress.runningCount)) ?? 0);
+  const pending = Number((jobs.length ? pendingFromJobs : (progress.pending ?? progress.pendingCount ?? progress.queuedCount ?? progress.queued)) ?? 0);
   const timeoutSeconds = Number(progress.timeoutSeconds ?? (!progress.agentWaitTimeout ? progress.timeout : 0) ?? 0);
   return {
     total: Number(progress.total ?? jobs.length ?? 0),
     completed,
     failed,
     timeout,
-    running: Math.max(0, runningRaw - timeout),
+    running: Math.max(0, jobs.length ? runningRaw : runningRaw - timeout),
+    pending: Math.max(0, pending),
     timeoutSeconds,
   };
 }
@@ -1246,7 +1259,8 @@ function renderRunTaskDetail(step, artifacts) {
     failed: sum.failed + item.metrics.failed,
     timeout: sum.timeout + item.metrics.timeout,
     running: sum.running + item.metrics.running,
-  }), {total: 0, completed: 0, failed: 0, timeout: 0, running: 0});
+    pending: sum.pending + item.metrics.pending,
+  }), {total: 0, completed: 0, failed: 0, timeout: 0, running: 0, pending: 0});
   const result = (artifacts || {}).jobResult || {};
   const runnerDryRun = (artifacts || {}).runnerDryRun || {};
   let html = '<div class="job-progress">';
@@ -1273,7 +1287,8 @@ function renderRunTaskDetail(step, artifacts) {
       {label: '失败', value: cumulative.failed},
       {label: '超时', value: cumulative.timeout},
       {label: '执行中', value: cumulative.running},
-    ])}${agentReadableList('执行阶段', actualPhaseRows, item => `<b>${escapeHtml(item.label)}</b><span>成功 ${escapeHtml(item.metrics.completed)} · 失败 ${escapeHtml(item.metrics.failed)} · 超时 ${escapeHtml(item.metrics.timeout)} · 执行中 ${escapeHtml(item.metrics.running)}</span>`)}</section>`;
+      {label: '排队中', value: cumulative.pending},
+    ])}${agentReadableList('执行阶段', actualPhaseRows, item => `<b>${escapeHtml(item.label)}</b><span>成功 ${escapeHtml(item.metrics.completed)} · 失败 ${escapeHtml(item.metrics.failed)} · 超时 ${escapeHtml(item.metrics.timeout)} · 执行中 ${escapeHtml(item.metrics.running)} · 排队中 ${escapeHtml(item.metrics.pending)}</span>`)}</section>`;
   }
   if (progressMetrics.total > 0) {
     const timeoutText = progressMetrics.timeoutSeconds
@@ -1283,7 +1298,8 @@ function renderRunTaskDetail(step, artifacts) {
       <span class="timeline-chip">当前阶段 ${escapeHtml(String(progressMetrics.total))} 个任务</span>
       <span class="timeline-chip text-success">✓ ${escapeHtml(String(progressMetrics.completed))} 成功</span>
       <span class="timeline-chip text-danger">✗ ${escapeHtml(String(progressMetrics.failed))} 失败</span>
-      <span class="timeline-chip text-info">⟳ ${escapeHtml(String(progressMetrics.running))} 运行中</span>
+      <span class="timeline-chip text-info">⟳ ${escapeHtml(String(progressMetrics.running))} 执行中</span>
+      <span class="timeline-chip">${escapeHtml(String(progressMetrics.pending))} 排队中</span>
       ${progressMetrics.timeout ? `<span class="timeline-chip text-warning">! ${escapeHtml(String(progressMetrics.timeout))} 超时</span>` : ''}
       ${progress.elapsed != null ? `<span class="timeline-chip">已等待 ${escapeHtml(String(progress.elapsed))}s${timeoutText}</span>` : ''}
     </div>`;
@@ -2541,21 +2557,32 @@ function agentRerunFallbackItems(progress, sources, result, repairSummary) {
 
 function agentRerunCycleMetrics(progress, items) {
   const statuses = (items || []).map(item => String(item.status || 'pending').toLowerCase());
+  const hasItemStatuses = statuses.some(Boolean);
   const success = Number(progress.successCount ?? statuses.filter(value => value === 'success').length);
   const failed = Number(progress.failedCount ?? statuses.filter(value => ['failed', 'error', 'cancelled'].includes(value)).length);
   const timeout = Number(progress.timeoutCount ?? statuses.filter(value => value === 'timeout').length);
   const skipped = Number(progress.skippedCount ?? statuses.filter(value => value === 'skipped').length);
-  const running = Number(progress.runningCount ?? statuses.filter(value => ['created', 'queued', 'assigned', 'waiting', 'running', 'creating'].includes(value)).length);
+  const running = Number(hasItemStatuses
+    ? statuses.filter(value => ['running', 'assigned'].includes(value)).length
+    : (progress.runningCount ?? 0));
+  const pending = Number(hasItemStatuses
+    ? statuses.filter(value => ['pending', 'created', 'queued', 'waiting', 'creating'].includes(value)).length
+    : (progress.pendingCount ?? 0));
   const total = Number(progress.total ?? progress.sourceFailedCount ?? items.length ?? 0);
   const completed = Number(progress.completedCount ?? (success + failed + timeout + skipped));
-  return {total, completed, success, failed, timeout, skipped, running};
+  return {total, completed, success, failed, timeout, skipped, running, pending};
+}
+
+function agentRerunCycleTitle(progress, cycleIndex) {
+  const attempt = cycleIndex + 1;
+  if (progress.usesRepairDraft || progress.source === 'repair_draft') return `第 ${attempt} 次：AI 修复脚本验证`;
+  if (progress.source === 'original_yaml') return `第 ${attempt} 次：原脚本证据重试`;
+  return `第 ${attempt} 次：失败任务重跑`;
 }
 
 function renderRerunCycle(progress, items, cycleIndex, cycleCount) {
   const metrics = agentRerunCycleMetrics(progress, items);
-  const cycleTitle = cycleCount > 1
-    ? `<div class="agent-rerun-cycle-title">${cycleIndex === 0 ? '首轮 AI 修复重跑' : `第 ${cycleIndex + 1} 轮 AI 纠偏重跑`}<span>${metrics.completed}/${metrics.total || items.length} 已结束</span></div>`
-    : '';
+  const cycleTitle = `<div class="agent-rerun-cycle-title">${escapeHtml(agentRerunCycleTitle(progress, cycleIndex))}<span>${metrics.completed}/${metrics.total || items.length} 已结束 · ${metrics.running} 执行中 · ${metrics.pending} 排队中</span></div>`;
   return `${cycleTitle}<div class="agent-rerun-list">${items.map((item, index) => {
     const meta = agentRerunStatusMeta(item.status);
     const changes = Array.isArray(item.repairChanges) ? item.repairChanges : [];
@@ -2576,8 +2603,8 @@ function renderRerunCycle(progress, items, cycleIndex, cycleCount) {
       </div>
       <div class="agent-rerun-job-chain"><span>原任务 ${escapeHtml(originalJob)}</span><b>→</b><span>重跑任务 ${escapeHtml(newJob)}</span></div>
       <div class="agent-rerun-evidence">
-        <div><small>原失败</small><p>${escapeHtml(item.failureReason || '未记录失败原因')}</p></div>
-        <div><small>AI 修复</small><p>${escapeHtml(repairText)}</p>${item.repairFile ? `<code>修复文件：${escapeHtml(item.repairFile)}</code>` : ''}</div>
+        <div><small>重跑触发</small><p>${escapeHtml(item.failureReason || '未记录失败原因')}</p></div>
+        <div><small>${progress.usesRepairDraft || progress.source === 'repair_draft' ? 'AI 修复' : '本轮策略'}</small><p>${escapeHtml(repairText)}</p>${item.repairFile ? `<code>修复文件：${escapeHtml(item.repairFile)}</code>` : ''}</div>
         <div><small>固定设备重跑</small><p>${escapeHtml(device)} · ${escapeHtml(meta.label)}</p>${item.resultReason ? `<p class="agent-rerun-result-reason">${escapeHtml(item.resultReason)}</p>` : ''}${reportLink}</div>
       </div>
     </div>`;
@@ -2610,12 +2637,13 @@ function renderRerunDetail(step, artifacts) {
     failed: sum.failed + row.metrics.failed,
     timeout: sum.timeout + row.metrics.timeout,
     running: sum.running + row.metrics.running,
-  }), {total: 0, completed: 0, success: 0, failed: 0, timeout: 0, running: 0});
+    pending: sum.pending + row.metrics.pending,
+  }), {total: 0, completed: 0, success: 0, failed: 0, timeout: 0, running: 0, pending: 0});
   const percent = cumulative.total > 0 ? Math.max(0, Math.min(100, Math.round(cumulative.completed / cumulative.total * 100))) : 0;
   const fixedSerial = cycleRows.length > 0 && cycleRows.every(row => row.cycle.serialSameDevice);
   let html = '<div class="match-detail agent-readable-detail">';
   html += `<section class="agent-rerun-overview">
-    <div class="agent-rerun-overview-head"><strong>${cycleRows.length > 1 ? 'AI 修复重跑累计' : `${escapeHtml(sourceText)}重跑`}</strong><span>${cumulative.completed}/${cumulative.total || 0} 已结束</span></div>
+    <div class="agent-rerun-overview-head"><strong>${cycleRows.length > 1 ? '失败恢复执行链' : `${escapeHtml(sourceText)}重跑`}</strong><span>${cumulative.completed}/${cumulative.total || 0} 已结束</span></div>
     <div class="agent-rerun-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
     <div class="agent-rerun-metrics">
       <span>重跑来源：${escapeHtml(sourceText)}</span>
@@ -2624,6 +2652,7 @@ function renderRerunDetail(step, artifacts) {
       <span class="text-danger">失败 ${cumulative.failed}</span>
       <span class="text-warning">超时 ${cumulative.timeout}</span>
       <span>执行中 ${cumulative.running}</span>
+      <span>排队中 ${cumulative.pending}</span>
       <span>${fixedSerial ? '固定设备串行' : '按执行策略下发'}</span>
       <span>${escapeHtml([progress.runnerId, progress.deviceId].filter(Boolean).join(' / ') || '设备待回传')}</span>
     </div>
@@ -2856,7 +2885,9 @@ function renderPlanDetail(step, artifacts) {
 // ===== Step 详情分发函数 =====
 function renderStepDetail(step, run) {
   const toolName = (step.toolCalls && step.toolCalls[0] && step.toolCalls[0].toolName) || step.toolName || '';
+  const stepName = String(step.step || step.state || '').toUpperCase();
   const artifacts = (run && run.artifacts) || {};
+  if (stepName === 'RERUN') return renderRerunDetail(step, artifacts);
   switch (toolName) {
     case 'analyze_goal': return renderPlanDetail(step, artifacts);
     case 'prepare_source': return renderSourceContextDetail(step, artifacts);

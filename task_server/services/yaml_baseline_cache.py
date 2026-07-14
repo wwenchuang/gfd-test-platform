@@ -545,6 +545,92 @@ def search_baseline_examples(
     return scored[:limit]
 
 
+def search_diverse_baseline_examples(
+    query_text: Any,
+    branch_queries: Iterable[Any] | None = None,
+    module: str = "",
+    limit: int = 20,
+    per_branch: int = 4,
+    trusted_only: bool = True,
+) -> List[Dict[str, Any]]:
+    """Return a bounded hybrid pool with representation from each business branch.
+
+    The global query preserves overall relevance. Narrow branch queries prevent a
+    repeated capability term from crowding out the navigation baseline for a
+    sibling branch. AI still chooses which candidates to use.
+    """
+    limit = max(1, min(YAML_BASELINE_SEARCH_MAX_LIMIT, safe_int(limit, 20)))
+    per_branch = max(1, min(8, safe_int(per_branch, 4)))
+    normalized_queries: List[str] = []
+    seen_queries = set()
+    for value in branch_queries or []:
+        text = str(value or "").strip()
+        key = re.sub(r"\s+", " ", text).lower()
+        if len(key) < 2 or key in seen_queries:
+            continue
+        seen_queries.add(key)
+        normalized_queries.append(text)
+        if len(normalized_queries) >= 8:
+            break
+
+    branch_pools = [
+        search_baseline_examples(
+            branch_query,
+            module=module,
+            limit=per_branch,
+            allow_fallback=False,
+            trusted_only=trusted_only,
+        )
+        for branch_query in normalized_queries
+    ]
+    global_rows = search_baseline_examples(
+        query_text,
+        module=module,
+        limit=limit,
+        allow_fallback=False,
+        trusted_only=trusted_only,
+    )
+    merged: List[Dict[str, Any]] = []
+    by_id: Dict[str, Dict[str, Any]] = {}
+
+    def add(row: Dict[str, Any], retrieval_query: str, role: str) -> None:
+        if not isinstance(row, dict):
+            return
+        key = str(row.get("id") or row.get("provenancePath") or row.get("file") or "").strip()
+        if not key:
+            return
+        existing = by_id.get(key)
+        if existing is not None:
+            queries = existing.setdefault("retrievalQueries", [])
+            if retrieval_query and retrieval_query not in queries:
+                queries.append(retrieval_query[:500])
+            roles = existing.setdefault("retrievalRoles", [])
+            if role and role not in roles:
+                roles.append(role)
+            existing["score"] = max(safe_int(existing.get("score"), 0), safe_int(row.get("score"), 0))
+            return
+        item = dict(row)
+        item["retrievalQueries"] = [retrieval_query[:500]] if retrieval_query else []
+        item["retrievalRoles"] = [role] if role else []
+        by_id[key] = item
+        merged.append(item)
+
+    # Round-robin gives each AI-planned branch a chance before global ranking
+    # fills the bounded prompt budget.
+    for rank in range(per_branch):
+        for index, pool in enumerate(branch_pools):
+            if rank < len(pool):
+                add(pool[rank], normalized_queries[index], "business_branch")
+                if len(merged) >= limit:
+                    return merged
+    for row in global_rows:
+        add(row, str(query_text or ""), "global_relevance")
+        if len(merged) >= limit:
+            break
+    _LAST_STATUS.update({"diverseBranchCount": len(normalized_queries), "diverseMatchedCount": len(merged)})
+    return merged
+
+
 def get_yaml_baseline_cache_status(force: bool = False) -> Dict[str, Any]:
     cache = get_yaml_baseline_cache(force=force)
     items = [item for item in (cache.get("items") or []) if isinstance(item, dict)]

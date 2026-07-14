@@ -135,6 +135,7 @@ from .yaml_pattern_service import (
 from .yaml_baseline_cache import (
     get_yaml_baseline_cache,
     get_yaml_baseline_cache_status,
+    search_diverse_baseline_examples,
     search_baseline_examples,
 )
 from .yaml_static_validator import (
@@ -1662,6 +1663,31 @@ def build_agent_business_plan_context_text(plan):
     if unknowns:
         lines.append("- 待证据消解: " + "；".join(unknowns))
     return "\n".join(lines).strip()
+
+
+def baseline_branch_queries_from_agent_plan(plan, limit=8):
+    """Build narrow retrieval queries from AI-planned branches without adding facts."""
+    plan = plan if isinstance(plan, dict) else {}
+    queries = []
+    seen = set()
+    for item in plan.get("businessFlows") or []:
+        if not isinstance(item, dict):
+            continue
+        parts = normalize_text_list([
+            item.get("branch"),
+            item.get("name"),
+            item.get("steps"),
+            item.get("checks"),
+        ])
+        text = "\n".join(parts).strip()
+        key = re.sub(r"\s+", " ", text).lower()
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        queries.append(text[:2000])
+        if len(queries) >= max(1, safe_int(limit, 8)):
+            break
+    return queries
 
 
 def build_ai_generation_decision_context_text(selected_baselines, scope_plan, case_plan=None):
@@ -6285,9 +6311,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 step="识别需求主链",
                 message="已识别需求文档硬约束，生成 YAML 时按业务功能点优先，不使用 Figma 内部页名做用例主题",
             )
-    agent_business_plan_text = build_agent_business_plan_context_text(
-        d.get("agent_business_plan") or d.get("agentBusinessPlan")
-    )
+    agent_business_plan = d.get("agent_business_plan") or d.get("agentBusinessPlan") or {}
+    agent_business_plan_text = build_agent_business_plan_context_text(agent_business_plan)
     if agent_business_plan_text:
         stage1_text_assets = list(stage1_text_assets) + [agent_business_plan_text]
     deterministic_entry_visibility_source = entry_visibility_fast_path_enabled(
@@ -6303,16 +6328,18 @@ def generate_ui_yaml_from_request(d, job_id=None):
         False,
     )
     baseline_query_text = "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets)
-    baseline_candidates = search_baseline_examples(
+    baseline_branch_queries = baseline_branch_queries_from_agent_plan(agent_business_plan)
+    baseline_candidates = search_diverse_baseline_examples(
         baseline_query_text,
+        branch_queries=baseline_branch_queries,
         module=module,
         limit=20,
-        allow_fallback=False,
     )
     yaml_baseline_cache_status = get_yaml_baseline_cache_status()
     ai_decision_trace = {
         "enabled": True,
         "baseline_candidate_count": len(baseline_candidates),
+        "baseline_branch_query_count": len(baseline_branch_queries),
     }
     if deterministic_entry_visibility_source:
         yaml_reference_examples = baseline_candidates[:3]
@@ -6416,7 +6443,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     f"基线缓存 cache_hit={str(yaml_baseline_cache_status.get('cacheHit')).lower()}，"
                     f"文件 {yaml_baseline_cache_status.get('fileCount', 0)} 个，"
                     f"样本 {yaml_baseline_cache_status.get('caseCount', 0)} 条；"
-                    "本次只把 Top3 相似基线片段送入模型"
+                    "本次只把 Top3 分支互补基线片段送入模型"
                 ),
             )
     yaml_baseline_patterns = []
@@ -6779,6 +6806,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             ]
     payload = normalize_cases_payload(payload)
     payload.setdefault("review", {})["generation_targets"] = planned_generation_targets
+    final_executable_portfolio = None
     if deterministic_entry_visibility:
         review = payload.setdefault("review", {})
         ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
@@ -6820,6 +6848,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             review["draft_cases"] = executable_plan.get("draft_cases") or []
 
             portfolio_before = executable_yaml_portfolio_audit(payload, planned_generation_targets)
+            final_executable_portfolio = portfolio_before
             review["executable_yaml_portfolio_initial"] = portfolio_before
             if not portfolio_before.get("ok") and executable_plan.get("authoritative") is True:
                 if job_id:
@@ -6861,6 +6890,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 if convergence_plan.get("authoritative") is True:
                     payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
                 portfolio_after = executable_yaml_portfolio_audit(payload, planned_generation_targets)
+                final_executable_portfolio = portfolio_after
                 review = payload.setdefault("review", {})
                 review["needs_review_cases"] = convergence_plan.get("needs_review_cases") or []
                 review["draft_cases"] = convergence_plan.get("draft_cases") or []
@@ -6890,6 +6920,38 @@ def generate_ui_yaml_from_request(d, job_id=None):
             }
             review["ai_decision_trace"] = ai_decision_trace
             review["executable_yaml_planner_error"] = str(plan_error)
+    if not deterministic_entry_visibility:
+        final_executable_portfolio = final_executable_portfolio or executable_yaml_portfolio_audit(
+            payload,
+            planned_generation_targets,
+        )
+        review = payload.setdefault("review", {})
+        review["executable_yaml_portfolio_final"] = final_executable_portfolio
+        review["executable_yaml_portfolio_gate"] = {
+            "passed": bool(final_executable_portfolio.get("ok")),
+            "rule": (
+                "AI 负责选择和补齐可执行组合；平台只在最终转换前检查显式需求映射、"
+                "3/5/8 数量和分类终态，缺口不得继续下发 Runner。"
+            ),
+            "reasons": final_executable_portfolio.get("reasons") or [],
+            "missingRequirementPoints": final_executable_portfolio.get("missingRequirementPoints") or [],
+        }
+        if not final_executable_portfolio.get("ok"):
+            payload["id"] = case_set_id
+            payload["module"] = module
+            write_json_file(cases_path(case_set_id), payload)
+            missing = final_executable_portfolio.get("missingRequirementPoints") or []
+            reason_text = "；".join(final_executable_portfolio.get("reasons") or []) or "最终可执行覆盖不完整"
+            if missing:
+                reason_text += "；缺失：" + "、".join(str(item) for item in missing[:5])
+            if job_id:
+                update_generate_job(
+                    job_id,
+                    progress=78,
+                    step="最终覆盖门禁",
+                    message=reason_text[:500],
+                )
+            raise ValueError(f"最终可执行 YAML 覆盖门禁未通过：{reason_text}")
     if deterministic_entry_visibility:
         review = payload.setdefault("review", {})
         review["smoke_selector_final_skipped"] = "确定性入口可见性短链路已完成本地首批冒烟选择"
