@@ -359,12 +359,31 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     )
     agent_service_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     require("artifacts = run.get(\"artifacts\") if isinstance(run.get(\"artifacts\"), dict) else {}\n    files = _agent_source_files_for_generation(run)" in agent_service_source, "Agent generation must initialize artifacts before forwarding the AI business plan")
+    require(
+        '"executionContext": {' in agent_service_source
+        and '"executionContext": execution_context' in yaml_service_source,
+        "Agent YAML planning must forward the fixed single-device execution context to AI without selecting another device",
+    )
     figma_soft_evidence = yaml_service.build_figma_soft_evidence_context_text([
         "[Figma设计稿页面]\n页面名称：内部备份名\n状态/变体：5寸照片\n可见文案：相册导入、百度网盘",
     ])
     require("Figma 同帧软证据规则" in figma_soft_evidence and "状态/变体：5寸照片" in figma_soft_evidence and "不得推广到相邻业务页" in figma_soft_evidence, "Existing Figma parser output must be reused under an explicit same-frame soft-evidence contract")
     planner_prompt = (ROOT / "ai_skills" / "prompts" / "executable_yaml_planner.v1.md").read_text(encoding="utf-8")
     require("每个候选 case 恰好放入" in planner_prompt and "sourceEvidence" in planner_prompt, "AI executable planner must classify every grounded candidate exactly once")
+    require(
+        "多个合法终态" in planner_prompt
+        and "originLevel=manual" in planner_prompt
+        and "requirementRefs" in planner_prompt
+        and "真实文案或明确页面区域" in planner_prompt,
+        "AI executable planner must re-evaluate prior manual candidates and support bounded state-variant outcomes with explicit requirement mapping",
+    )
+    automation_prompt = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
+    require(
+        "任一合法终态" in automation_prompt
+        and "第三方入口本身不是人工判定理由" in automation_prompt
+        and "不要把小屏和宽屏分别都放进 `cases`" in automation_prompt,
+        "Automation filtering must keep bounded reachability automatable and collapse multi-device execution to one current-device case",
+    )
 
     payload = {
         "analysis": {"requirement_points": ["REQ-001 照片打印"]},
@@ -424,6 +443,129 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(classified_by_id["TC-004"].get("executionLevel") == "needs_review", "Cases omitted by a successful AI planner must default to needs_review instead of being silently promoted")
     require(any(item.get("case_id") == "TC-003" and item.get("executionLevel") == "manual" for item in classified.get("manual_cases") or []), "AI manual classification must leave the Runner candidate pool")
     require(classified.get("review", {}).get("executable_yaml_plan", {}).get("classificationApplied") is True and classified["review"]["executable_yaml_plan"].get("unmentioned_count") == 1, "AI planner classification application must remain auditable")
+
+    replan_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-001 入口展示",
+                "REQ-002 点击后进入授权页或内容列表",
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-001",
+            "title": "入口展示",
+            "steps": ["进入资料页", "等待外部资料入口可见"],
+            "assertions": ["外部资料入口可见"],
+            "coverage": "REQ-001 入口展示",
+        }],
+        "manual_cases": [{
+            "title": "点击外部资料入口后的首个落地页",
+            "steps": ["进入资料页", "点击外部资料入口", "观察首个落地页"],
+            "expected_result": "授权页、登录页或内容列表任一合法页面可见，无白屏或崩溃",
+            "reason": "上游认为账号状态不确定",
+        }],
+    }
+    captured_planner_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_executable_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during executable planner replay")
+            captured_planner_requests.append(request)
+            automatic = next(item for item in request.get("cases") or [] if item.get("originLevel") == "automatic")
+            manual = next(item for item in request.get("cases") or [] if item.get("originLevel") == "manual")
+            return {
+                "cases": [{
+                    "caseId": manual["case_id"],
+                    "title": manual["title"],
+                    "baselineId": "base-nav",
+                    "precondition": "App 首页",
+                    "flow": [
+                        "等待首页",
+                        "进入资料页",
+                        "点击外部资料入口",
+                        "等待授权页、登录页或内容列表任一合法页面可见",
+                    ],
+                    "assertionTarget": "授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃",
+                    "requirementRefs": ["REQ-002 点击后进入授权页或内容列表"],
+                    "executableReason": "只验证首个可见落地页，不操作账号或第三方数据",
+                    "batch": "remaining",
+                }],
+                "needs_review_cases": [{
+                    "caseId": automatic["case_id"],
+                    "title": automatic["title"],
+                    "reason": "本次仅验证重分类",
+                    "requirementRefs": ["REQ-001 入口展示"],
+                }],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "状态无关首个落地页可自动化"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_executable_planner
+        replan = ai_skill_service.call_skill_executable_yaml_planner(
+            "外部资料入口可达性",
+            "资料导入",
+            replan_payload,
+            [{
+                "id": "base-nav",
+                "title": "资料页稳定导航",
+                "businessPath": "首页 -> 资料页",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "trusted": True,
+                "baselineUsable": True,
+            }],
+            {"smokeCount": 1},
+            source_evidence={
+                "executionContext": {
+                    "deviceStrategy": "fixed",
+                    "deviceId": "device-one",
+                    "singleDeviceOnly": True,
+                },
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    require(
+        captured_planner_requests
+        and {item.get("originLevel") for item in captured_planner_requests[0].get("cases") or []} == {"automatic", "manual"},
+        "Executable planner must receive both automatic and prior-manual candidates for one authoritative reclassification",
+    )
+    require(
+        "manual_cases" not in captured_planner_requests[0]
+        and captured_planner_requests[0].get("priorManualCandidateCount") == 1,
+        "Executable planner input must not duplicate prior-manual candidates and inflate AI latency",
+    )
+    require(replan.get("trace", {}).get("manual_candidate_count") == 1, "Executable planner trace must expose prior-manual candidate count")
+    replanned = ai_skill_service.apply_executable_yaml_plan_to_payload(replan_payload, replan)
+    promoted = next(item for item in replanned.get("cases") or [] if item.get("case_id") == "MC-001")
+    require(
+        promoted.get("executionLevel") == "executable"
+        and promoted.get("originExecutionLevel") == "manual"
+        and "REQ-002" in promoted.get("coverage", "")
+        and promoted.get("requirementRefs") == ["REQ-002 点击后进入授权页或内容列表"]
+        and promoted.get("ai_case_plan", {}).get("pathPlanApplied"),
+        "A prior-manual candidate may be promoted only through a grounded AI path with explicit requirement coverage",
+    )
+    require(not any(item.get("case_id") == "MC-001" for item in replanned.get("manual_cases") or []), "Promoted manual candidates must leave the manual-only pool")
+    promoted_yaml = yaml_service.case_to_task_yaml(promoted, indent="    ", case_index=1)
+    require(
+        "aiTap:" in promoted_yaml
+        and "aiWaitFor:" in promoted_yaml
+        and "任一合法页面可见" in promoted_yaml
+        and "coordinate" not in promoted_yaml.lower(),
+        "State-variant reachability must convert into visible-text Midscene actions without coordinates",
+    )
+
+    unsafe_replan = json.loads(json.dumps(replan, ensure_ascii=False))
+    unsafe_replan["cases"][0]["baselineGrounded"] = False
+    guarded = ai_skill_service.apply_executable_yaml_plan_to_payload(replan_payload, unsafe_replan)
+    guarded_manual_origin = next(item for item in guarded.get("cases") or [] if item.get("case_id") == "MC-001")
+    require(
+        guarded_manual_origin.get("executionLevel") == "needs_review"
+        and guarded.get("review", {}).get("executable_yaml_plan", {}).get("promotion_guard_failed_count") == 1,
+        "Prior-manual promotion without a grounded baseline must be downgraded before Runner eligibility",
+    )
     old_smoke_selector = ai_skill_service.call_skill_smoke_selector
     smoke_candidates = []
     try:
@@ -4591,6 +4733,12 @@ def main():
     require("MIDSCENE_REPLANNING_CYCLE_LIMIT\", 8" in config_source, "Default Midscene replanning limit should be high enough for normal complex UI flows")
     require("mindmap_visual_image_policy" in yaml_service_source, "Mindmap summary must document the visual image policy")
     require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")
+    require(
+        'MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE", min(2, AI_VISION_IMAGE_LIMIT)' in config_source
+        and 'MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE" "2"' in deploy_install
+        and "MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE='2'" in env_example,
+        "Mindmap visual grounding must default to two-image batches after repeated four-image model timeouts",
+    )
     require("refreshMindmapActiveTasks" in app_js_source and "{ refreshJobs: false }" in app_js_source, "Mindmap center must update active tasks without full-list refresh flicker")
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")
     require('"mindmap_sort_ts": sort_ts' in yaml_service_source and "def _mindmap_time_value" in yaml_service_source and 'item.get("mindmap_sort_ts")' in yaml_service_source, "Mindmap center must sort by robust numeric latest-update timestamp")

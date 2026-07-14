@@ -1121,6 +1121,8 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
         case.get("requirementPoint"),
         case.get("source_requirement_point"),
         case.get("sourceRequirementPoint"),
+        case.get("requirementRefs"),
+        case.get("requirement_refs"),
         case.get("scenario"),
         case.get("goal"),
         case.get("coverage"),
@@ -2309,6 +2311,7 @@ def _coverage_blob_for_item(item: Any) -> str:
         item.get("scenario"),
         item.get("feature"),
         item.get("goal"),
+        item.get("requirementRefs") or item.get("requirement_refs"),
         item.get("coverage"),
         item.get("expected_result") or item.get("expectedResult") or item.get("expected"),
         item.get("business_path") or item.get("businessPath") or item.get("path"),
@@ -6083,6 +6086,12 @@ def generate_ui_yaml_from_request(d, job_id=None):
     title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"
     module = d.get("module") or "AI测试"
     model_config = ai_model_config_from_request(d)
+    raw_execution_context = d.get("executionContext") or d.get("execution_context") or {}
+    execution_context = {
+        key: raw_execution_context.get(key)
+        for key in ("executionMode", "runnerId", "deviceId", "deviceStrategy", "singleDeviceOnly")
+        if isinstance(raw_execution_context, dict) and raw_execution_context.get(key) not in (None, "")
+    }
     yaml_file = clean_filename(d.get("file") or f"task-{slug_for_file(title)}.yaml")
     case_set_id = d.get("case_set_id") or new_case_set_id()
     create_job = safe_bool(d.get("createJob", d.get("create_job")))
@@ -6737,6 +6746,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     "figmaSoftEvidence": figma_soft_evidence_text,
                     "figmaPageCount": len(used_figma_pages),
                     "figmaImageCount": len(figma_images),
+                    "executionContext": execution_context,
                     "policy": list(FIGMA_SOFT_EVIDENCE_POLICY),
                 },
             )

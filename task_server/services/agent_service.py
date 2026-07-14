@@ -8616,6 +8616,16 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
             for key in ("version", "source", "objective", "businessFlows", "coverage", "assumptions", "unknowns", "executionStrategy")
             if agent_plan.get(key) not in (None, "", [], {})
         },
+        "executionContext": {
+            "executionMode": str(run.get("executionMode") or "RUNNER_JOB").strip().upper(),
+            "runnerId": str(run.get("runnerId") or "").strip(),
+            "deviceId": str(run.get("deviceId") or "").strip(),
+            "deviceStrategy": str(run.get("deviceStrategy") or "auto").strip().lower(),
+            "singleDeviceOnly": bool(
+                str(run.get("deviceId") or "").strip()
+                and str(run.get("deviceStrategy") or "auto").strip().lower() != "auto"
+            ),
+        },
         "preparedCasesPayload": prepared_cases_payload,
         "preparedCasesSource": "platform_mindmap_ai" if prepared_cases_payload else "",
     }

@@ -28,6 +28,57 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-14 Agent 人工初判可重评、状态无关可达性与视觉小批次修复
+
+部署 `cb36a17` 后，继续使用同一完整需求和固定设备做线上回归：
+
+- Agent：`agent-1784002894995-d3823074`，参数为 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 已确认本地/远端提交为 `cb36a17`，公网 `8091 / 8088` 健康，AI Gateway、Sonic 健康，文本/视觉模型均为 `qwen3.6-plus`；平台只有 1 个 Windows Runner 在线。
+- 终态为 `FAILED / GENERATE_YAML`，不是 Runner 失败。`executionPrecheck / sonicJob / report / jobProgressByPhase` 均为空，没有向 OPPO 或第二台设备下发任务。
+- Figma parser 保持原实现，解析为 4 页/4 图、忽略 0 页；4 张图确实进入 AI 视觉批次。qwen3.6-plus 在 120 秒内未返回，视觉状态为 `failed / 0/1`，继续按软参考处理，没有升级为硬门禁。
+- PLAN 来自平台 MM AI，共形成 8 个核心业务分支；可信基线重排选中 3 条 `verified_execution / execution_success` 记录。覆盖审查后设计为 5 条自动化、11 条人工、12 个场景，生成 5 个 YAML；其中生成结果只有 3 个达到 executable，加上平台补充的短冒烟共确认 4 个。
+- 覆盖门禁正确阻断：5 个需求点只映射 `REQ-001` 到 `REQ-004`，缺少 `REQ-005 百度网盘入口可达性`。因此首批冒烟和 remaining 均未执行，本轮没有新的 Runner 截图、报告或失败录屏可复核。
+
+根因与设计判断：
+
+1. 上游 automation filter 已生成“已授权进入文件列表”“未授权进入授权流程”等可达性场景，但先判为 `manual_cases` 后，最终 executable planner 只收到自动候选，不能基于成功基线、当前设备和需求重新判断。AI 的第一次分类被平台做成不可逆结论，导致明确需求点永久缺失。
+2. 本需求只要求点击后到达授权页或文件列表且无白屏/崩溃，不要求输入账号、验证码或选择网盘文件。授权页、登录页、文件列表、空态页可作为账号状态不同导致的多个合法首个终态；一条到首个稳定页面即停止的短链路可以自动化，深层第三方操作仍应保留人工。
+3. 多端文案要求在本次固定单设备执行约束下，只能生成一条当前设备可复用的文案/布局检查；不能把小屏和宽屏各生成一条 Runner 用例，更不能根据 `deviceId` 猜测屏幕形态或选择第二台手机。
+4. 连续两轮生产证据表明 4 张图单批调用在 120 秒超时。Figma 解析数量和文本仍正确，问题在视觉模型单批负载；减小图片批次比抬高超时更有利于完成率和总速度。
+
+本轮通用修复：
+
+- executable planner 现在一次接收自动候选和前序人工候选，并用 `originLevel` 保留来源。前序人工结论只是 AI 初判，可以重新分类；未被最终 AI 提及的人工候选仍保留 manual，未提及的自动候选仍降为 needs_review。
+- 原人工候选只有同时具备可信且在允许列表中的成功基线、明确前置、至少两步短 flow、可见终态和显式 `requirementRefs`，才能升级为 executable；任一条件缺失都会由代码门禁降回 needs_review。现有 scorer、静态校验、需求范围门禁和完整覆盖门禁均未降低。
+- 对需求明确要求的点击可达性，AI 可规划“多个合法首个终态任一出现”的状态无关短链路；到首个落地页即停止，不输入账号/验证码、不确认授权、不选文件。第三方深层状态、特定账号数据、断网和权限切换继续进入 manual。
+- Agent 的 `executionMode / runnerId / deviceId / deviceStrategy / singleDeviceOnly` 作为执行上下文传给最终 AI。固定单机时最多保留一条当前设备通用适配检查，其他设备形态进入 manual；YAML 仍只允许真实可见文字，不允许坐标。
+- AI 返回的 `requirementRefs` 进入 case、覆盖审计和需求范围审查，避免标题相似但需求映射丢失。人工候选只在统一 `cases` 数组出现一次，额外只传数量，避免重复上下文拖慢规划。
+- 脑图视觉默认批次从 8 张收敛为 2 张，4 张 Figma 图会拆成两批并受原 300 秒总预算约束；没有修改 Figma parser、选页、图片计数或软参考策略。
+
+线上原始 `generatedCases` 离线重放结果：
+
+- AI 协议可把文档打印、照片打印、扫描复印、当前固定设备文案检查和状态无关可达性规划为 5 条 YAML，逐条映射 `REQ-001` 到 `REQ-005`。
+- 5 条 YAML 经现有 `score_midscene_yaml_executable(..., generated=True)` 均为 `executable`，完整覆盖 gap 为 `{}`，没有坐标；宽屏、特定账号、数据选择、断网和权限分支仍保留 11 条人工用例。
+- 该结果是对同一线上产物执行新 AI 输出协议和原有门禁的重放，不是手改历史 YAML，也没有把单一“百度网盘”需求写入代码分支。
+
+方案依据：[AndroidWorld](https://google-research.github.io/android_world/) 使用独立初始化、成功判定和清理保证移动 Agent 任务可复现；[BrowserGym](https://arxiv.org/abs/2412.05467) 使用统一观测/动作空间和可审计评测；[Midscene Android API](https://midscenejs.com/android-api-reference) 同时提供 AI 全流程规划与原子交互能力。当前实现据此采用“AI 负责状态分支和路径计划，平台负责候选绑定、终态证据与安全门禁”的分层，而不是无约束执行长第三方流程。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/config.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+bash -n deploy/install-server.sh
+npm test
+git diff --check
+```
+
+结果：undefined-name 通过，后端 `61` 项、前端 `67` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3` 通过；Playwright 桌面/移动端 Agent 和重跑视觉烟测通过。
+
+未修改 `router.py`，未新增执行模式，未修改 Figma parser 或历史 YAML；用户已有 dirty 的历史 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、本地 Windows Runner 服务脚本和 `server-tasks/AI_Agent_草稿/` 不纳入本轮提交。
+
+本轮新提交尚未部署，不能宣称线上 Agent 已闭环成功。部署后必须再次使用同一需求/Figma和固定 `win-runner-01 / ecbfd645` 跑到 `DONE / FAILED / CANCELLED`，重点核对两批视觉 AI、5 个需求映射、首批 smoke、remaining、真实 Runner 报告/截图以及全程单 OPPO 串行约束。
+
 ### 2026-07-14 真实 Runner 结果闭环、AI 分层决策与累计可观测性修复
 
 部署 `e08ff7a` 后，使用同一完整需求继续线上验证：

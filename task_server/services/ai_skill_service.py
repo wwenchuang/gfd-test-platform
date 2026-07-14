@@ -2706,17 +2706,34 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         }
 
 
-def _compact_case_for_plan(case, index=0):
+def _planner_case_id(case, index=0, origin_level="automatic"):
     case = case if isinstance(case, dict) else {}
+    explicit = str(case.get("case_id") or case.get("id") or "").strip()
+    if explicit:
+        return explicit
+    prefix = "MC" if origin_level == "manual" else "TC"
+    return f"{prefix}-{index + 1:03d}"
+
+
+def _compact_case_for_plan(case, index=0, origin_level="automatic"):
+    case = case if isinstance(case, dict) else {}
+    assertions = normalize_text_list(
+        case.get("assertions")
+        or case.get("expected_result")
+        or case.get("expected")
+    )
     return {
-        "case_id": case.get("case_id") or case.get("id") or f"TC-{index + 1:03d}",
+        "case_id": _planner_case_id(case, index, origin_level=origin_level),
         "title": case.get("title") or case.get("case_name") or "",
         "priority": case_priority(case),
         "smoke": bool(is_smoke_case(case)),
         "scenario": case.get("scenario") or "",
         "coverage": case.get("coverage") or case.get("requirement_point") or "",
         "steps": normalize_text_list(case.get("steps"))[:8],
-        "assertions": normalize_text_list(case.get("assertions"))[:4],
+        "assertions": assertions[:4],
+        "originLevel": origin_level,
+        "previousReason": case.get("automation_reason") or case.get("reason") or "",
+        "suggestedSetup": case.get("suggested_setup") or "",
     }
 
 
@@ -2756,11 +2773,21 @@ def call_skill_executable_yaml_planner(
 ):
     """Plan executable cases before YAML conversion. Fallback preserves current payload."""
     normalized = normalize_cases_payload(payload)
-    candidates = [_compact_case_for_plan(case, idx) for idx, case in enumerate(normalized.get("cases") or [])]
+    automatic_candidates = [
+        _compact_case_for_plan(case, idx, origin_level="automatic")
+        for idx, case in enumerate(normalized.get("cases") or [])
+    ]
+    manual_candidates = [
+        _compact_case_for_plan(case, idx, origin_level="manual")
+        for idx, case in enumerate(normalized.get("manual_cases") or [])
+    ]
+    candidates = automatic_candidates + manual_candidates
     trace = {
         "enabled": True,
         "fallback": False,
         "candidate_count": len(candidates),
+        "automatic_candidate_count": len(automatic_candidates),
+        "manual_candidate_count": len(manual_candidates),
         **_model_config_trace(model_config),
     }
     if not candidates:
@@ -2777,7 +2804,7 @@ def call_skill_executable_yaml_planner(
         "analysis": normalized.get("analysis") or {},
         "scenarios": normalized.get("scenarios") or [],
         "cases": candidates,
-        "manual_cases": normalized.get("manual_cases") or [],
+        "priorManualCandidateCount": len(manual_candidates),
         "selectedBaselines": compact_baselines,
         "scopePlan": scope_plan or {},
         "sourceEvidence": source_evidence if isinstance(source_evidence, dict) else {},
@@ -2883,36 +2910,120 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         str(item).strip() for item in (plan.get("allowedBaselineIds") or []) if str(item or "").strip()
     }
     output_cases = []
-    manual_cases = [item for item in (normalized.get("manual_cases") or []) if isinstance(item, dict)]
+    manual_cases = []
+    candidate_records = [
+        {
+            "case": item,
+            "caseId": _planner_case_id(item, idx, origin_level="automatic"),
+            "originLevel": "automatic",
+        }
+        for idx, item in enumerate(normalized.get("cases") or [])
+        if isinstance(item, dict)
+    ] + [
+        {
+            "case": item,
+            "caseId": _planner_case_id(item, idx, origin_level="manual"),
+            "originLevel": "manual",
+        }
+        for idx, item in enumerate(normalized.get("manual_cases") or [])
+        if isinstance(item, dict)
+    ]
     unmentioned_count = 0
+    unmentioned_manual_count = 0
+    promoted_manual_count = 0
+    retained_manual_count = 0
+    promotion_guard_failed_count = 0
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
-    for case in normalized.get("cases") or []:
-        case_id = str(case.get("case_id") or case.get("id") or "").strip()
+    for record in candidate_records:
+        case = copy.deepcopy(record["case"])
+        origin_level = record["originLevel"]
+        case_id = record["caseId"]
         title = str(case.get("title") or "").strip()
         classification = classification_by_id.get(case_id) or classification_by_title.get(title)
         if classification:
             level, item = classification
         else:
-            level, item = ("needs_review", {
+            fallback_level = "manual" if origin_level == "manual" else "needs_review"
+            level, item = (fallback_level, {
                 "caseId": case_id,
                 "title": title,
-                "reason": "AI 可执行规划未覆盖该候选，按安全策略进入复核",
+                "reason": (
+                    "AI 可执行规划未覆盖原人工候选，保留人工级别"
+                    if origin_level == "manual"
+                    else "AI 可执行规划未覆盖该候选，按安全策略进入复核"
+                ),
             })
             unmentioned_count += 1
+            if origin_level == "manual":
+                unmentioned_manual_count += 1
+
+        baseline_id = str(item.get("baselineId") or "").strip()
+        baseline_grounded = bool(
+            item.get("baselineGrounded") is True
+            and baseline_id
+            and baseline_id in allowed_baseline_ids
+        )
+        planned_flow = normalize_text_list(item.get("flow"))[:8]
+        precondition = str(item.get("precondition") or "").strip()
+        assertion_target = str(item.get("assertionTarget") or "").strip()
+        path_plan_applied = bool(baseline_grounded and len(planned_flow) >= 2)
+        if origin_level == "manual" and level == "executable" and not (
+            path_plan_applied and precondition and assertion_target
+        ):
+            level = "needs_review"
+            item = {
+                **item,
+                "reason": (
+                    str(item.get("reason") or item.get("executableReason") or "").strip()
+                    + "；原人工候选升级缺少可信基线路径、明确前置或可见终态，已降为 needs_review"
+                ).strip("；"),
+            }
+            promotion_guard_failed_count += 1
+
         applied_counts[level] += 1
         reason = str(
             item.get("reason") or item.get("executableReason") or item.get("reviewReason")
             or item.get("manualReason") or ""
         ).strip()
+        case["case_id"] = case_id
+        case["originExecutionLevel"] = origin_level
+        requirement_refs = normalize_text_list(
+            item.get("requirementRefs")
+            or item.get("requirement_refs")
+            or item.get("coverage")
+        )[:8]
+        if requirement_refs:
+            case["requirement_refs"] = requirement_refs
+            case["requirementRefs"] = requirement_refs
+            if not str(case.get("coverage") or "").strip():
+                case["coverage"] = "; ".join(requirement_refs)
         if level == "manual":
-            manual_item = dict(case)
+            manual_item = case
             manual_item["executionLevel"] = "manual"
             manual_item["automation_reason"] = reason or "AI 规划判断当前条件不适合自动执行"
-            manual_item["ai_case_classification"] = {"level": "manual", "reason": manual_item["automation_reason"]}
+            manual_item["ai_case_classification"] = {
+                "level": "manual",
+                "reason": manual_item["automation_reason"],
+                "originLevel": origin_level,
+            }
             manual_cases.append(manual_item)
+            if origin_level == "manual":
+                retained_manual_count += 1
             continue
+        if origin_level == "manual":
+            previous_reason = str(case.get("automation_reason") or case.get("reason") or "").strip()
+            if previous_reason:
+                case["previous_manual_reason"] = previous_reason
+            for stale_key in ("reason", "reasons", "level", "score"):
+                case.pop(stale_key, None)
+            if level == "executable":
+                promoted_manual_count += 1
         case["executionLevel"] = level
-        case["ai_case_classification"] = {"level": level, "reason": reason}
+        case["ai_case_classification"] = {
+            "level": level,
+            "reason": reason,
+            "originLevel": origin_level,
+        }
         if reason:
             case["automation_reason"] = reason
         output_cases.append(case)
@@ -2921,32 +3032,30 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             flags = [flag for flag in normalize_text_list(case.get("flag") or case.get("flags")) if flag != "冒烟"]
             case["flag"] = flags
             continue
-        baseline_id = str(item.get("baselineId") or "").strip()
-        baseline_grounded = bool(
-            item.get("baselineGrounded") is True
-            and baseline_id
-            and baseline_id in allowed_baseline_ids
-        )
-        planned_flow = normalize_text_list(item.get("flow"))[:8]
         original_flow = normalize_text_list(case.get("steps"))[:8]
-        path_plan_applied = bool(baseline_grounded and len(planned_flow) >= 2)
         case["ai_case_plan"] = {
             "baselineId": baseline_id,
             "baselineGrounded": baseline_grounded,
-            "precondition": item.get("precondition") or "",
+            "precondition": precondition,
             "flow": planned_flow,
             "originalFlow": original_flow,
             "pathPlanApplied": path_plan_applied,
-            "assertionTarget": item.get("assertionTarget") or "",
+            "assertionTarget": assertion_target,
             "executableReason": item.get("executableReason") or "",
             "batch": item.get("batch") or "",
         }
-        if item.get("precondition") and not case.get("preconditions"):
-            case["preconditions"] = [str(item.get("precondition"))]
-        if item.get("assertionTarget") and not normalize_text_list(case.get("assertions")):
-            case["assertions"] = [str(item.get("assertionTarget"))]
+        if precondition and not case.get("preconditions"):
+            case["preconditions"] = [precondition]
+        if assertion_target and not normalize_text_list(case.get("assertions")):
+            case["assertions"] = [assertion_target]
+        if assertion_target and not str(case.get("expected_result") or "").strip():
+            case["expected_result"] = assertion_target
+        if assertion_target and not str(case.get("goal") or "").strip():
+            case["goal"] = assertion_target
         if path_plan_applied:
             case["steps"] = planned_flow
+            if not str(case.get("business_path") or "").strip():
+                case["business_path"] = " -> ".join(planned_flow)
         if item.get("executableReason") and not case.get("automation_reason"):
             case["automation_reason"] = item.get("executableReason")
         can_smoke = bool(
@@ -2981,6 +3090,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "manual_count": applied_counts["manual"],
         "executable_count": applied_counts["executable"],
         "unmentioned_count": unmentioned_count,
+        "unmentioned_manual_count": unmentioned_manual_count,
+        "candidate_count": len(candidate_records),
+        "manual_candidate_count": sum(1 for item in candidate_records if item["originLevel"] == "manual"),
+        "promoted_manual_count": promoted_manual_count,
+        "retained_manual_count": retained_manual_count,
+        "promotion_guard_failed_count": promotion_guard_failed_count,
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
         "path_plan_applied_count": sum(
