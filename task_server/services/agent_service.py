@@ -3928,6 +3928,11 @@ def _agent_mm_plan_failure_reasons(payload):
     review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
     scenarios = [item for item in (payload.get("scenarios") or []) if isinstance(item, dict)]
     reasons = []
+    core_ai_failure = review.get("core_ai_failure") if isinstance(review.get("core_ai_failure"), dict) else {}
+    if core_ai_failure:
+        stage = str(core_ai_failure.get("stage") or "core_ai").strip()
+        reason = str(core_ai_failure.get("reason") or "未产出 AI 结果").strip()
+        reasons.append(f"{stage} 核心 AI 节点失败：{reason[:180]}")
     if analysis.get("fallback_reason"):
         reasons.append("requirement_analyzer 未产出 AI 结果：" + str(analysis.get("fallback_reason"))[:180])
     if not scenarios:

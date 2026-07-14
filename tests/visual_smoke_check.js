@@ -548,7 +548,7 @@ async function anyVisible(locator) {
     });
     await page.click('button:has-text("预览计划")');
     await page.waitForTimeout(300);
-    if (!/全自动 Agent执行计划/.test(previewDialogText) || !/执行设备/.test(previewDialogText)) throw new Error(`Agent preview button did not return a readable plan: ${previewDialogText}`);
+    if (!/Agent 启动前预览/.test(previewDialogText) || !/执行设备/.test(previewDialogText) || !/需求显式候选（非业务路径）/.test(previewDialogText) || !/AI 业务计划：尚未执行/.test(previewDialogText)) throw new Error(`Agent preview button did not keep candidates separate from the later AI plan: ${previewDialogText}`);
     await page.click('button:has-text("安装/更新 App")');
     await page.waitForSelector('text=安装包更新');
     await page.waitForSelector('#apk-install-device');
@@ -558,10 +558,13 @@ async function anyVisible(locator) {
     const agentModelOptions = await page.locator('#agent-model').innerText();
     if (!/自动（按模型策略：千问 Qwen Plus）/.test(agentModelOptions)) throw new Error(`Agent model auto option did not use AI Gateway router: ${agentModelOptions}`);
     if (!await page.locator('text=还没有选择运行记录').isVisible()) throw new Error('Agent workbench should open in new-run mode');
-    if (await page.locator('text=Agent 步骤时间线').isVisible()) throw new Error('Agent workbench should not show the previous run timeline by default');
+    if (await page.locator('text=Agent 执行阶段').isVisible()) throw new Error('Agent workbench should not show the previous run phases by default');
     await page.fill('#agent-goal', '关节龙打印流程回归');
     await page.click('#agent-start-btn');
-    await page.waitForSelector('text=Agent 步骤时间线');
+    await page.waitForSelector('text=Agent 执行阶段');
+    await page.waitForSelector('.agent-phase-list');
+    if (await page.locator('.agent-phase-step').count() !== 5) throw new Error('The normal Agent path should show five phases; failure recovery must remain conditional');
+    if (await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints should be collapsed by default');
     await page.waitForSelector('text=人工复核');
     await page.screenshot({path: path.join(ARTIFACTS, 'agent.png'), fullPage: true});
     if (!await page.locator('text=Agent 状态').isVisible()) throw new Error('Agent status center is missing');

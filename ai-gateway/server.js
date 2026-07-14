@@ -279,6 +279,12 @@ function clientForRoute(route) {
   });
 }
 
+function routeSupportsQwenHybridThinking(route) {
+  const model = String(route?.model || '').toLowerCase();
+  const baseUrl = String(route?.baseUrl || '').toLowerCase();
+  return baseUrl.includes('dashscope.aliyuncs.com') && /^qwen3\.(?:5|6|7)(?:-|$)/.test(model);
+}
+
 function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   const userText = callOptions.userMessage || buildUserMessage(route.action || 'chat', body);
   const imageParts = imagePartsFromBody(body);
@@ -295,6 +301,14 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
     completionOptions.temperature = typeof callOptions.temperature === 'number' ? callOptions.temperature : route.temperature;
   }
   if (route.defaultMaxTokens) completionOptions.max_tokens = route.defaultMaxTokens;
+  if (body?.jsonResponse === true) {
+    completionOptions.response_format = {type: 'json_object'};
+    if (routeSupportsQwenHybridThinking(route)) {
+      // DashScope JSON Mode is incompatible with thinking=true. These skill
+      // calls already have explicit schemas and deterministic output gates.
+      completionOptions.enable_thinking = false;
+    }
+  }
   return completionOptions;
 }
 
@@ -682,6 +696,7 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
   const body = {
     skillName,
     payload: req.body?.payload || {},
+    jsonResponse: req.body?.jsonResponse !== false,
     modelConfig: req.body?.modelConfig || req.body?.model_config || {},
     providerId: req.body?.providerId || req.body?.provider || '',
     model: req.body?.model || req.body?.modelName || '',

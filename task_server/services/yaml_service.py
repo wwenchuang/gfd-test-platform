@@ -7953,10 +7953,32 @@ def generate_mindmap_from_request(d, job_id=None):
                 app_package=app_package,
                 app_name=d.get("appName") or d.get("app_name") or "",
                 allow_entry_visibility_fast_path=not require_ai_planning,
+                require_ai_core=require_ai_planning,
             )
         except Exception as e:
-            payload = call_dashscope_cases(title, module, stage1_text_assets, [])
-            payload.setdefault("review", {})["skill_pipeline_error"] = str(e)
+            if require_ai_planning:
+                payload = {
+                    "title": title,
+                    "module": module,
+                    "analysis": {},
+                    "scenarios": [],
+                    "cases": [],
+                    "manual_cases": [],
+                    "review": {
+                        "skill_pipeline": "requirement_analyzer.v1",
+                        "skill_pipeline_error": str(e),
+                        "core_ai_failure": {
+                            "stage": "skill_pipeline",
+                            "reason": str(e)[:500],
+                        },
+                        "downstream_skipped": [
+                            "scenario_designer", "automation_filter", "smoke_selector", "visual_grounder"
+                        ],
+                    },
+                }
+            else:
+                payload = call_dashscope_cases(title, module, stage1_text_assets, [])
+                payload.setdefault("review", {})["skill_pipeline_error"] = str(e)
     else:
         payload = call_dashscope_cases(title, module, stage1_text_assets, [])
 
@@ -8002,7 +8024,13 @@ def generate_mindmap_from_request(d, job_id=None):
         ]
         agent_plan_review["baseline_reranker"] = baseline_rerank_trace
     review.update(copy.deepcopy(agent_plan_review))
-    if visual_text_assets or mindmap_visual_image_assets:
+    core_ai_failure = review.get("core_ai_failure") if isinstance(review.get("core_ai_failure"), dict) else {}
+    if require_ai_planning and core_ai_failure:
+        review["visual_refine_skipped"] = (
+            f"核心 AI 阶段 {core_ai_failure.get('stage') or 'unknown'} 未成功，"
+            "本次尝试立即结束并交给 Agent 有界重试，不再调用视觉模型。"
+        )
+    elif visual_text_assets or mindmap_visual_image_assets:
         if job_id:
             update_generate_job(
                 job_id,
@@ -8074,6 +8102,32 @@ def generate_mindmap_from_request(d, job_id=None):
     # provenance so Agent PLAN can prove which prepared sources and baselines it used.
     review = payload.setdefault("review", {})
     review.update(copy.deepcopy(agent_plan_review))
+
+    if require_ai_planning and core_ai_failure:
+        coverage_audit = {
+            "ok": False,
+            "skipped": True,
+            "reason": "core_ai_failure",
+            "stage": core_ai_failure.get("stage") or "unknown",
+        }
+        return {
+            "ok": False,
+            "case_set_id": case_set_id,
+            "asset": meta,
+            "module": module,
+            "file": "",
+            "cases": payload,
+            "caseCount": 0,
+            "manualCaseCount": 0,
+            "scenarioCount": len(payload.get("scenarios") or []),
+            "summary": {
+                "title": title,
+                "module": module,
+                "review": copy.deepcopy(review),
+            },
+            "summaryFiles": [],
+            "coverageAudit": coverage_audit,
+        }
 
     if job_id:
         update_generate_job(job_id, progress=78, step="本地覆盖检查", message="正在做本地覆盖检查并写入脑图")

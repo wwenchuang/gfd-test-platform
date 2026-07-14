@@ -2695,6 +2695,69 @@ def check_ai_skills_receive_yaml_reference_context():
     require(payload["review"]["smoke_selection"]["normal_chain_covered"] is True, "Smoke gate must record normal-chain coverage")
     require(payload["review"]["yaml_reference_context_used_by_skills"] is True, "AI skill review must record that YAML reference context was used")
 
+    fail_fast_calls = []
+
+    def fake_fail_fast_skill(skill_name, payload=None, **_kwargs):
+        fail_fast_calls.append(skill_name)
+        if skill_name == "requirement_analyzer":
+            return {
+                "business_goals": ["验证入口"],
+                "roles": ["用户"],
+                "entry_points": ["首页"],
+                "state_assumptions": [],
+                "data_assumptions": [],
+                "visible_outcomes": ["入口可见"],
+                "risks": [],
+                "requirement_points": ["REQ-001 入口可见"],
+                "questions": [],
+                "confidence": "high",
+                "missing_inputs": [],
+                "blockers": [],
+                "assumptions": [],
+                "readiness_score": 90,
+                "readiness_level": "ready",
+                "source_quality": {"requirement": "sufficient", "ui": "partial", "knowledge": "partial"},
+            }
+        if skill_name == "scenario_designer":
+            raise TimeoutError("scenario timeout")
+        raise AssertionError(f"Agent PLAN core failure must skip downstream skill: {skill_name}")
+
+    ai_skill_service.run_ai_skill = fake_fail_fast_skill
+    try:
+        fail_fast_payload = ai_skill_service.build_cases_payload_from_skills(
+            "任意入口需求",
+            "任意模块",
+            ["首页新增入口并校验可见"],
+            allow_entry_visibility_fast_path=False,
+            require_ai_core=True,
+        )
+    finally:
+        ai_skill_service.run_ai_skill = original_run_ai_skill
+    require(fail_fast_calls == ["requirement_analyzer", "scenario_designer"], "Agent PLAN must stop after a core scenario fallback instead of invoking downstream AI skills")
+    require(fail_fast_payload.get("review", {}).get("core_ai_failure", {}).get("stage") == "scenario_designer", "Agent PLAN must preserve the core AI failure stage for bounded retry")
+    require("visual_grounder" in (fail_fast_payload.get("review", {}).get("downstream_skipped") or []), "Agent PLAN fail-fast trace must show that visual grounding was intentionally skipped for the failed attempt")
+
+
+def check_qwen_structured_skills_disable_thinking():
+    from task_server.services import ai_skill_service
+
+    original_model_for_images = ai_skill_service.dashscope_model_for_images
+    try:
+        ai_skill_service.dashscope_model_for_images = lambda _images=None: "qwen3.6-plus"
+        body = ai_skill_service.build_dashscope_chat_body("请输出 JSON", json_response=True)
+    finally:
+        ai_skill_service.dashscope_model_for_images = original_model_for_images
+    require(body.get("response_format") == {"type": "json_object"}, "DashScope structured skills must request JSON Mode")
+    require(body.get("enable_thinking") is False, "Qwen3.6 structured skills must disable default thinking mode for JSON compatibility and bounded latency")
+
+    yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
+    require(
+        'if require_ai_planning:' in yaml_service_source
+        and '"stage": "skill_pipeline"' in yaml_service_source
+        and '"core_ai_failure"' in yaml_service_source,
+        "Agent MM pipeline exceptions must become explicit core AI failures instead of invoking a legacy planning fallback",
+    )
+
 
 def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     from task_server.services import ai_skill_service, yaml_service
@@ -4265,6 +4328,7 @@ def main():
     check_yaml_reference_examples_are_general_step_library()
     check_generated_yaml_uses_single_final_assertion()
     check_ai_skills_receive_yaml_reference_context()
+    check_qwen_structured_skills_disable_thinking()
     check_ai_skill_timeout_fallbacks_are_requirement_scoped()
     check_smoke_selection_requires_explicit_ai_mark()
     check_yaml_runner_eligibility_filter()

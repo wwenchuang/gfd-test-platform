@@ -104,6 +104,7 @@ def main():
     )
     require("routeCandidatesFor" in server and "fallbackProviderIds" in server, "server must support provider fallback routing")
     require("app.post('/ai/skill'" in server, "server must expose AI Skill endpoint")
+    require("routeSupportsQwenHybridThinking" in server and "completionOptions.enable_thinking = false" in server and "completionOptions.response_format = {type: 'json_object'}" in server, "Structured Qwen skills must use non-thinking JSON Mode to avoid incompatible slow responses")
     for forbidden_param in ("top_p", "presence_penalty", "frequency_penalty"):
         require(forbidden_param not in server, f"server must not send {forbidden_param} to gpt-5")
     for endpoint in ("/agent/run", "/agent/runs/:runId/confirm", "/agent/runs/:runId/cancel"):

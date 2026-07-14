@@ -28,6 +28,52 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-14 Agent PLAN 结构化调用与动态阶段优化
+
+部署 `de2bf40` 后发起同一完整线上回归：
+
+- Agent `agent-1783990871168-817d049a`，继续固定 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 线上 `8091 / 8088` 健康，AI Gateway、Sonic 健康，文本/视觉模型为 `qwen3.6-plus`；只有 1 个 Runner 在线。任务前无其他 RUNNING Agent。
+- `PREPARE_SOURCE` 正常：Figma 保留 4 页/4 图，忽略 0 页，prepared context 被 PLAN 复用；没有修改 Figma parser、选页或计数逻辑。
+- PLAN 正确先显示“文档打印、照片打印、扫描复印”为原始需求候选，`candidateOnly=true / strict=false / businessFlow=[]`，没有再把三个同级入口串成伪业务主链。
+- PLAN 两次均复用平台 MM skills，但最终 `FAILED / PLAN`。`requirement_analyzer` 真实成功；`scenario_designer` 两次都在 90 秒超时并返回本地兜底，`baseline_reranker / smoke_selector` 也超时，视觉批次送入全部 4 张 Figma 图后在 120 秒超时。
+- 本轮真实 AI 参与度不能按架构预期计算：必需语义节点中只有需求理解成功，基线重排、场景设计、冒烟选择和视觉校准都没有形成可用 AI 结论。平台拒绝把兜底伪报为 AI 计划是正确行为。
+- 没有产生可执行 YAML，`executionPrecheck / sonicJob / report` 均不存在；未向 OPPO 或第二台设备下发任务。
+
+根因与设计判断：
+
+1. `/ai/skill` 的调用方明确要求 JSON，但 AI Gateway 丢掉了 `jsonResponse`，因此没有向模型传 `response_format=json_object`。
+2. 阿里云官方文档说明 Qwen3.6 默认开启 thinking，而 JSON Mode 与 `enable_thinking=true` 不兼容。结构化 skill 在深度思考模式下消耗预算，是 45/90/120 秒级联超时的共性原因，不应继续简单抬高超时。
+3. 核心 scenario AI 已经失败后，旧流程仍会继续调用 automation/smoke/visual，既不可能挽救当次 PLAN，也使一次有界重试变成长串行等待。
+4. 用户看到的 20 个检查点是状态机审计细节，不应冒充顶层业务计划。第一阶段必须是资料准备，第二阶段才能由 AI 基于完整证据规划。
+
+本轮通用修复：
+
+- AI Gateway 为结构化 skills 传递 JSON Mode；DashScope `qwen3.5/3.6/3.7` 同时设置 `enable_thinking=false`。直连 DashScope 的文本/视觉 JSON 调用使用同一规则。AI 仍负责语义决策，输出继续通过 schema、覆盖和平台门禁校验。
+- Agent MM 启用 `require_ai_core`：`requirement_analyzer` 或 `scenario_designer` 未产出真实 AI 结果时，返回显式 `core_ai_failure`，跳过不可能修复当次计划的下游 skills 和视觉批次，立即交给 Agent 现有的最多 2 次有界重试。普通非 Agent 生成仍可使用原本兜底。
+- 前端顶层改为 5 个正常阶段：资料准备、AI 计划、生成与门禁、固定设备执行、总结沉淀。只有真实进入失败处理时才出现第 6 个“诊断与恢复”条件阶段。
+- 原有 20 个内部检查点没有删除，改到默认收起、可展开的“内部执行轨迹”；保留每步时间、产物、错误、AI 调用和安全门禁，不降低可观测性。阶段顺序修正为 `PREPARE_SOURCE -> PLAN`。
+- 失败分析/修复已经使用 Midscene 报告的有界时序截图关键帧，并同时传入原 YAML、Runner 日志、`failureReview`、最新失败证据和可信 Top3 基线。当前 Runner/Midscene 没有上传独立 mp4 录屏产物，因此平台不伪报“已使用完整录屏”；现有关键帧已作为视觉失败轨迹交给 AI。
+
+设计依据：
+
+- Google ADK 2.0 建议用确定性 graph/workflow 管理外层编排，把概率性模型放在认知节点，并使用动态路由、有界循环和 eval：[Why we built ADK 2.0](https://developers.googleblog.com/why-we-built-adk-20/)。
+- OpenAI Agents 把 trace 与 guardrail 分层：内部检查点应完整可审计，但不应全部变成用户主流程；不可绕过的安全约束继续由 guardrail 负责：[tracing](https://openai.github.io/openai-agents-python/tracing/)、[guardrails](https://openai.github.io/openai-agents-python/guardrails/)。
+- Anthropic 的 evaluator-optimizer 模式要求修复循环有明确评估证据和终止条件，与当前“最新 Runner 证据 + 可信基线 + 最多 1 轮修复”一致：[Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)。
+- Qwen thinking/JSON 兼容性依据阿里云官方文档：[Deep thinking](https://help.aliyun.com/en/model-studio/deep-thinking)、[Structured output](https://help.aliyun.com/zh/model-studio/qwen-structured-output)。
+
+已验证：
+
+```bash
+npm run test:static
+npm run test:visual
+git diff --check
+```
+
+结果：u540e端 `61` 项、前端 `65` 项、AI Gateway `46` 项通过，undefined-name 通过，AI skill contract fixtures `3/3` 通过；Playwright 视觉烟测通过。额外检查了 1440px 桌面与 390px 移动端：正常链显示 5 个阶段，失败链动态显示第 6 阶段，无水平溢出。未修改 `router.py`，未新增执行模式，未修改 Figma parser 或历史 YAML，未纳入用户已有 dirty 文件。
+
+新提交部署后必须使用同一需求/Figma 和固定 `win-runner-01 / ecbfd645` 再跑到终态。重点核对各结构化 skill 的真实成功/耗时、Figma 4/4 视觉批次、三个业务入口 YAML 覆盖、首批 smoke 和 remaining 在同一 OPPO 上的报告终态。
+
 ### 2026-07-13 Agent PLAN 改为复用平台 MM skills，规则候选不再冒充业务主链
 
 部署 `630489f` 后发起同一线上回归：

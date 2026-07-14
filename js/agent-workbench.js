@@ -3,6 +3,7 @@
 
 // 记录用户手动展开的步骤索引，避免轮询刷新时收起
 const expandedStepIndexes = new Set();
+let agentCheckpointTraceOpen = false;
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
 
@@ -704,8 +705,8 @@ async function showAgentWorkbench() {
       <div class="agent-card">
         <div class="agent-timeline-head">
           <div>
-            <h3>Agent 步骤时间线</h3>
-            <p>${AGENT_TIMELINE_STEPS.length} 个处理步骤：展示每一步在做什么、是否成功、用了多久，以及生成了哪些产物；需要你确认的动作会同步到右侧。</p>
+            <h3>Agent 执行阶段</h3>
+            <p>先整理资料，再由 AI 形成业务计划；生成、执行和失败恢复按实际结果动态推进。</p>
           </div>
           <div class="agent-timeline-legend">
             <span class="legend-dot pending"></span>等待
@@ -896,8 +897,8 @@ function toggleStepExpanded(el, idx) {
 
 // ===== Round 5: Agent 时间线（renderAgentTimeline） =====
 const AGENT_TIMELINE_STEPS = [
-  ['PLAN', '理解目标'],
   ['PREPARE_SOURCE', '整理输入来源'],
+  ['PLAN', 'AI 理解与计划'],
   ['IMPACT_ANALYSIS', '影响分析'],
   ['CASE_RETRIEVAL', '检索用例'],
   ['MATCH_CASES', '匹配用例'],
@@ -911,11 +912,51 @@ const AGENT_TIMELINE_STEPS = [
   ['ANALYZE_FAILURE', '分析失败'],
   ['DIAGNOSE_FAILURE', '失败诊断'],
   ['GENERATE_REPAIR', '生成修复草稿'],
-  ['WAIT_CONFIRM', '等待确认'],
+  ['GENERATE_BUG_DRAFT', '生成缺陷草稿'],
   ['RERUN', '安全重跑'],
   ['LEARN_FROM_RESULT', '沉淀学习'],
   ['GENERATE_SUMMARY', '生成总结'],
   ['DONE', '完成']
+];
+
+const AGENT_EXECUTION_PHASES = [
+  {
+    key: 'SOURCE',
+    label: '资料准备',
+    description: '需求、Figma、截图与来源证据',
+    steps: ['PREPARE_SOURCE']
+  },
+  {
+    key: 'PLAN',
+    label: 'AI 计划',
+    description: '理解需求、重排可信基线、决定业务分支',
+    steps: ['PLAN', 'IMPACT_ANALYSIS', 'CASE_RETRIEVAL', 'MATCH_CASES']
+  },
+  {
+    key: 'BUILD',
+    label: '生成与门禁',
+    description: '生成 YAML，完成覆盖、静态与风险检查',
+    steps: ['GENERATE_YAML', 'VALIDATE_YAML', 'RISK_REVIEW']
+  },
+  {
+    key: 'EXECUTE',
+    label: '固定设备执行',
+    description: '执行前体检、首批冒烟与 remaining 扩展',
+    steps: ['EXECUTION_PRECHECK', 'SYNC_SONIC', 'RUN_SONIC', 'COLLECT_REPORT']
+  },
+  {
+    key: 'RECOVER',
+    label: '诊断与恢复',
+    description: '仅在失败时归因、参考证据修复并安全重跑',
+    conditional: true,
+    steps: ['ANALYZE_FAILURE', 'DIAGNOSE_FAILURE', 'GENERATE_REPAIR', 'GENERATE_BUG_DRAFT', 'RERUN']
+  },
+  {
+    key: 'LEARN',
+    label: '总结沉淀',
+    description: '保存结果、可复用经验与最终总结',
+    steps: ['LEARN_FROM_RESULT', 'GENERATE_SUMMARY']
+  }
 ];
 
 const TIMELINE_STATUS_META = {
@@ -937,6 +978,95 @@ function normalizeTimelineStatus(value) {
   if (v === 'WAIT_CONFIRM' || v === 'WAITING' || v.startsWith('WAIT_')) return 'waiting';
   if (v === 'SKIPPED') return 'skipped';
   return 'pending';
+}
+
+function resolvedTimelineStatus(stepKey, run, data = timelineStepData(stepKey, run) || {}) {
+  const runStatus = String(run?.status || '').toUpperCase();
+  const currentRaw = String(run?.currentStep || '').toUpperCase();
+  const runDone = ['DONE', 'FINISH'].includes(runStatus);
+  const runTerminal = runDone || ['FAILED', 'CANCELLED'].includes(runStatus);
+  let status = normalizeTimelineStatus(data.status || data.state);
+  if (stepKey === 'DONE' && runTerminal) {
+    return runDone ? 'success' : (runStatus === 'CANCELLED' ? 'skipped' : 'failed');
+  }
+  if (status === 'pending') {
+    const isCurrent = stepKey === currentRaw || (stepKey === 'RUN_SONIC' && currentRaw === 'RUN_TASK');
+    if (isCurrent) status = runDone && stepKey === 'DONE' ? 'success' : 'running';
+  }
+  if (data.success === true && status === 'pending') status = 'success';
+  if (data.success === false && status === 'pending') status = 'failed';
+  if (String(data.status || data.state || '').toUpperCase() === 'NOT_IMPLEMENTED') status = 'skipped';
+  return status;
+}
+
+function agentWaitPhaseKey(run) {
+  if (!/WAIT_CONFIRM/.test(String(run?.status || '').toUpperCase())) return '';
+  const confirmations = run?.pendingConfirmations || run?.confirmations || [];
+  const type = String(confirmations.find(item => !item?.decision)?.type || '').toLowerCase();
+  return /(failure|repair|bug)/.test(type) ? 'RECOVER' : 'EXECUTE';
+}
+
+function agentRecoveryPhaseUsed(run) {
+  const phase = AGENT_EXECUTION_PHASES.find(item => item.key === 'RECOVER');
+  const current = String(run?.currentStep || '').toUpperCase();
+  if (phase.steps.includes(current) || agentWaitPhaseKey(run) === 'RECOVER') return true;
+  return phase.steps.some(stepKey => {
+    const raw = String((timelineStepData(stepKey, run) || {}).status || '').toUpperCase();
+    return ['RUNNING', 'SUCCESS', 'FAILED', 'PARTIAL_FAILED', 'WAIT_CONFIRM'].includes(raw);
+  });
+}
+
+function agentPhaseStatus(phase, run) {
+  if (agentWaitPhaseKey(run) === phase.key) return 'waiting';
+  const statuses = phase.steps.map(stepKey => resolvedTimelineStatus(stepKey, run));
+  if (statuses.includes('running')) return 'running';
+  if (statuses.includes('waiting')) return 'waiting';
+  if (statuses.includes('failed')) return 'failed';
+  if (statuses.includes('partial')) return 'partial';
+  const settled = statuses.filter(status => status !== 'pending');
+  if (!settled.length) return 'pending';
+  if (settled.every(status => status === 'skipped')) return 'skipped';
+  if (statuses.every(status => ['success', 'skipped'].includes(status))) return 'success';
+  return 'running';
+}
+
+function agentPhaseSummary(phase, run, status) {
+  if (status === 'waiting') {
+    const confirmations = run?.pendingConfirmations || run?.confirmations || [];
+    return String(confirmations.find(item => !item?.decision)?.message || '等待风险或失败处理确认').slice(0, 100);
+  }
+  const active = phase.steps
+    .map(stepKey => [stepKey, timelineStepData(stepKey, run) || {}, resolvedTimelineStatus(stepKey, run)])
+    .find(([, , stepStatus]) => stepStatus === 'running');
+  if (active) return `当前：${agentStepLabel(active[0])}`;
+  if (status === 'failed') {
+    const failed = phase.steps
+      .map(stepKey => [stepKey, timelineStepData(stepKey, run) || {}, resolvedTimelineStatus(stepKey, run)])
+      .reverse()
+      .find(([, , stepStatus]) => stepStatus === 'failed');
+    if (failed) return `失败：${agentStepLabel(failed[0])}`;
+  }
+  if (status === 'skipped' && phase.conditional) return '本次未进入失败恢复';
+  if (status === 'success') return '已完成';
+  return phase.description;
+}
+
+function renderAgentPhaseOverview(run) {
+  const phases = AGENT_EXECUTION_PHASES.filter(phase => !phase.conditional || agentRecoveryPhaseUsed(run));
+  return `<ol class="agent-phase-list" aria-label="Agent 执行阶段">
+    ${phases.map((phase, index) => {
+      const status = agentPhaseStatus(phase, run);
+      const meta = TIMELINE_STATUS_META[status] || TIMELINE_STATUS_META.pending;
+      return `<li class="agent-phase-step status-${status}">
+        <div class="agent-phase-title-row">
+          <span class="agent-phase-order">${String(index + 1).padStart(2, '0')}</span>
+          <strong>${escapeHtml(phase.label)}</strong>
+          <span class="agent-phase-state">${escapeHtml(meta.label)}</span>
+        </div>
+        <p>${escapeHtml(agentPhaseSummary(phase, run, status))}</p>
+      </li>`;
+    }).join('')}
+  </ol>`;
 }
 
 function timelineStepData(stepKey, run) {
@@ -2372,33 +2502,12 @@ function renderAgentTimeline(run) {
   if (!run) {
     return renderEmptyState('agent_history');
   }
-  const currentRaw = String(run.currentStep || '').toUpperCase();
   const runStatus = String(run.status || '').toUpperCase();
   const runDone = ['DONE', 'FINISH'].includes(runStatus);
   const runTerminal = runDone || ['FAILED', 'CANCELLED'].includes(runStatus);
-  const pendingConfirmations = run.pendingConfirmations || run.confirmations || [];
   const items = AGENT_TIMELINE_STEPS.map(([key, label], idx) => {
     const data = timelineStepData(key, run) || {};
-    let status = normalizeTimelineStatus(data.status || data.state);
-    if (key === 'DONE' && runTerminal) {
-      status = runDone ? 'success' : (runStatus === 'CANCELLED' ? 'skipped' : 'failed');
-    }
-    if (runTerminal && key === 'WAIT_CONFIRM' && !pendingConfirmations.length && status === 'pending') {
-      status = 'skipped';
-    }
-    if (status === 'pending') {
-      const isCurrent = key === currentRaw
-        || (key === 'RUN_SONIC' && currentRaw === 'RUN_TASK')
-        || (key === 'WAIT_CONFIRM' && /WAIT_CONFIRM/.test(currentRaw));
-      if (isCurrent) {
-        status = runDone && key === 'DONE'
-          ? 'success'
-          : (/WAIT_CONFIRM/.test(currentRaw) ? 'waiting' : 'running');
-      }
-    }
-    if (run.status === 'WAIT_CONFIRM' && key === 'WAIT_CONFIRM') status = 'waiting';
-    if (data.success === true && status === 'pending') status = 'success';
-    if (data.success === false && status === 'pending') status = 'failed';
+    let status = resolvedTimelineStatus(key, run, data);
 
     // NOT_IMPLEMENTED / SKIPPED steps show grey badge
     const rawStatus = String(data.status || data.state || '').toUpperCase();
@@ -2469,34 +2578,23 @@ function renderAgentTimeline(run) {
       </li>
     `;
   }).join('');
-  return `<ol class="agent-timeline-list">${items}</ol>`;
+  const settledCount = AGENT_TIMELINE_STEPS.filter(([key]) => (
+    ['success', 'failed', 'partial', 'skipped'].includes(resolvedTimelineStatus(key, run))
+  )).length;
+  const currentLabel = agentStepLabel(run.currentStep || '');
+  return `
+    ${renderAgentPhaseOverview(run)}
+    <details class="agent-checkpoint-trace" ${agentCheckpointTraceOpen ? 'open' : ''} onchange="agentCheckpointTraceOpen=this.open">
+      <summary>
+        <span>内部执行轨迹</span>
+        <small>${settledCount}/${AGENT_TIMELINE_STEPS.length} 个检查点已结束${currentLabel && !runTerminal ? `，当前 ${escapeHtml(currentLabel)}` : ''}</small>
+      </summary>
+      <ol class="agent-timeline-list">${items}</ol>
+    </details>`;
 }
 
 function renderAgentStepsPlan(run) {
-  const steps = [
-    ['UNDERSTAND_GOAL', '理解测试目标'],
-    ['MATCH_CASES', '匹配已有用例'],
-    ['GENERATE_YAML', '生成或补全 YAML'],
-    ['VALIDATE_YAML', '校验 YAML'],
-    ['SYNC_SONIC', '同步至 Sonic 平台'],
-    ['RUN_TESTS', '执行测试'],
-    ['COLLECT_REPORT', '收集报告'],
-    ['ANALYZE_FAILURE', '分析失败'],
-    ['GENERATE_REPAIR', '生成修复草稿'],
-    ['SAFE_RERUN', '安全重跑'],
-    ['GENERATE_REPORT', '生成报告和缺陷草稿']
-  ];
-  return steps.map(([key, label]) => {
-    let state = 'pending';
-    if (run) {
-      const stepData = (run.steps || []).find(s => s.step === key);
-      if (stepData) state = stepData.status === 'SUCCESS' ? 'done' : (stepData.status === 'FAILED' ? 'failed' : (stepData.status === 'WAIT_CONFIRM' ? 'confirm' : 'running'));
-      else if (run.currentStep === key) state = 'running';
-    }
-    const icon = state === 'done' ? '✓' : (state === 'failed' ? '✗' : (state === 'running' ? '●' : (state === 'confirm' ? '⏸' : '○')));
-    const stateLabel = state === 'done' ? '成功' : (state === 'failed' ? '失败' : (state === 'running' ? '执行中' : (state === 'confirm' ? '待确认' : '等待中')));
-    return `<div class="agent-plan-step ${state}"><span class="step-icon">${icon}</span><span class="step-label">${label}</span><span class="step-state">${stateLabel}</span></div>`;
-  }).join('');
+  return renderAgentPhaseOverview(run);
 }
 
 function toggleFailedJobField() {
@@ -2907,6 +3005,7 @@ function previewDashboardAgentPlan() {
 async function startAgentRun(options={}) {
   if (agentBusy) return;
   expandedStepIndexes.clear();
+  agentCheckpointTraceOpen = false;
   const payload = agentPayloadFromForm(options);
   if (!payload.goal) {
     showToast('请先输入测试目标', 'error');

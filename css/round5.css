@@ -34,6 +34,96 @@
 .agent-timeline-legend i.waiting { background: var(--warn); }
 .agent-timeline-legend i.skipped { background: var(--text3); }
 
+.agent-phase-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.agent-phase-step {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  border-top: 3px solid var(--border);
+}
+.agent-phase-step + .agent-phase-step {
+  border-left: 1px solid var(--border);
+}
+.agent-phase-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-phase-title-row strong {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.agent-phase-order {
+  flex: none;
+  color: var(--text3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.agent-phase-state {
+  flex: none;
+  margin-left: auto;
+  color: var(--text3);
+  font-size: 10px;
+}
+.agent-phase-step p {
+  min-height: 34px;
+  margin: 7px 0 0;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-phase-step.status-running { border-top-color: var(--accent); }
+.agent-phase-step.status-running strong,
+.agent-phase-step.status-running .agent-phase-state { color: var(--accent); }
+.agent-phase-step.status-success { border-top-color: var(--success); }
+.agent-phase-step.status-success .agent-phase-state { color: var(--success); }
+.agent-phase-step.status-failed { border-top-color: var(--danger); }
+.agent-phase-step.status-failed strong,
+.agent-phase-step.status-failed .agent-phase-state,
+.agent-phase-step.status-failed p { color: var(--danger); }
+.agent-phase-step.status-waiting,
+.agent-phase-step.status-partial { border-top-color: var(--warn); }
+.agent-phase-step.status-waiting strong,
+.agent-phase-step.status-waiting .agent-phase-state,
+.agent-phase-step.status-partial .agent-phase-state { color: var(--warn); }
+.agent-phase-step.status-skipped { border-top-color: var(--text3); }
+
+.agent-checkpoint-trace {
+  margin-top: 10px;
+}
+.agent-checkpoint-trace > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 2px;
+  color: var(--text2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.agent-checkpoint-trace > summary small {
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 400;
+  text-align: right;
+}
+.agent-checkpoint-trace[open] > summary {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
 .agent-timeline-list {
   list-style: none;
   margin: 0;
@@ -198,6 +288,14 @@
 
 @keyframes timeline-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 @keyframes timeline-pulse { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.6); } 50% { transform: scale(1.15); box-shadow: 0 0 0 6px rgba(234, 179, 8, 0); } }
+
+@media (max-width: 700px) {
+  .agent-phase-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .agent-phase-step + .agent-phase-step { border-left: 0; }
+  .agent-phase-step:nth-child(even) { border-left: 1px solid var(--border); }
+  .agent-checkpoint-trace > summary { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .agent-checkpoint-trace > summary small { text-align: left; }
+}
 
 /* ============ 待我确认卡片 ============ */
 .confirm-badge {

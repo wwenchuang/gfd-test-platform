@@ -306,6 +306,11 @@ def build_dashscope_chat_body(prompt, image_assets=None, temperature=0.1, json_r
     }
     if json_response:
         body["response_format"] = {"type": "json_object"}
+        if re.match(r"^qwen3\.(?:5|6|7)(?:-|$)", str(model or "").strip().lower()):
+            # Qwen 3.5/3.6/3.7 defaults to thinking mode, while DashScope JSON
+            # Mode requires non-thinking output. Structured skills are still
+            # evaluated by their schema and the platform quality gates.
+            body["enable_thinking"] = False
     return body
 
 
@@ -2282,6 +2287,7 @@ def build_cases_payload_from_skills(
     app_name="",
     allow_entry_visibility_fast_path=True,
     generation_scope_plan=None,
+    require_ai_core=False,
 ):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
@@ -2358,6 +2364,25 @@ def build_cases_payload_from_skills(
         return normalized
     analysis = call_skill_requirement_analyzer(title, module, text_assets, model_config=model_config)
     targets = generation_targets_for_scope(analysis, mode=mode, scope_plan=generation_scope_plan)
+    if require_ai_core and analysis.get("fallback_reason"):
+        return {
+            "title": title,
+            "module": module,
+            "analysis": analysis,
+            "scenarios": [],
+            "cases": [],
+            "manual_cases": [],
+            "review": {
+                "generation_mode": mode,
+                "generation_targets": targets,
+                "skill_pipeline": "requirement_analyzer.v1",
+                "core_ai_failure": {
+                    "stage": "requirement_analyzer",
+                    "reason": str(analysis.get("fallback_reason") or "requirement_analyzer 未产出 AI 结果")[:500],
+                },
+                "downstream_skipped": ["scenario_designer", "automation_filter", "smoke_selector", "visual_grounder"],
+            },
+        }
     if yaml_reference_context:
         analysis["yaml_reference_context_available"] = True
         analysis["yaml_reference_rule"] = (
@@ -2372,6 +2397,31 @@ def build_cases_payload_from_skills(
         model_config=model_config,
         targets=targets,
     )
+    scenario_fallback = next((
+        item for item in scenarios
+        if isinstance(item, dict) and (
+            str(item.get("source") or "").startswith("local_fallback")
+            or item.get("fallback_reason")
+        )
+    ), None)
+    if require_ai_core and scenario_fallback:
+        reason = str(scenario_fallback.get("fallback_reason") or "scenario_designer 未产出 AI 结果")
+        return {
+            "title": title,
+            "module": module,
+            "analysis": analysis,
+            "scenarios": scenarios,
+            "cases": [],
+            "manual_cases": [],
+            "review": {
+                "generation_mode": mode,
+                "generation_targets": targets,
+                "skill_pipeline": "requirement_analyzer.v1 -> scenario_designer.v1",
+                "yaml_reference_context_used_by_skills": bool(yaml_reference_context),
+                "core_ai_failure": {"stage": "scenario_designer", "reason": reason[:500]},
+                "downstream_skipped": ["automation_filter", "smoke_selector", "visual_grounder"],
+            },
+        }
     filtered = call_skill_automation_filter(
         title,
         module,
