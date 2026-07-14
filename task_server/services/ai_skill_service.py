@@ -1381,6 +1381,8 @@ def case_matches_requirement(case, requirement_point):
         (case or {}).get("coverage"),
         (case or {}).get("requirement_point"),
         (case or {}).get("requirementPoint"),
+        (case or {}).get("requirementRefs"),
+        (case or {}).get("requirement_refs"),
         (case or {}).get("title"),
         (case or {}).get("scenario"),
     ]))
@@ -2732,8 +2734,120 @@ def _compact_case_for_plan(case, index=0, origin_level="automatic"):
         "steps": normalize_text_list(case.get("steps"))[:8],
         "assertions": assertions[:4],
         "originLevel": origin_level,
+        "currentLevel": str(case.get("executionLevel") or case.get("execution_level") or "").strip(),
+        "requirementRefs": normalize_text_list(
+            case.get("requirementRefs") or case.get("requirement_refs")
+        )[:8],
         "previousReason": case.get("automation_reason") or case.get("reason") or "",
         "suggestedSetup": case.get("suggested_setup") or "",
+    }
+
+
+def _planner_requirement_ids(value):
+    """Extract canonical REQ ids without trusting model-provided cross-case mappings."""
+    text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    result = []
+    for match in re.finditer(r"\bREQ[-_ ]?0*(\d+)\b", str(text or ""), flags=re.I):
+        requirement_id = f"REQ-{int(match.group(1)):03d}"
+        if requirement_id not in result:
+            result.append(requirement_id)
+    return result
+
+
+def _planner_requirement_point_map(points):
+    mapping = {}
+    for point in normalize_text_list(points):
+        for requirement_id in _planner_requirement_ids(point):
+            mapping.setdefault(requirement_id, point)
+    return mapping
+
+
+def _source_case_requirement_ids(case):
+    case = case if isinstance(case, dict) else {}
+    # coverage/requirement_point belong to the candidate before planner classification.
+    primary = [
+        case.get("coverage"),
+        case.get("requirement_point"),
+        case.get("requirementPoint"),
+        case.get("source_requirement_point"),
+        case.get("sourceRequirementPoint"),
+    ]
+    primary_ids = _planner_requirement_ids(primary)
+    if primary_ids:
+        return primary_ids
+    return _planner_requirement_ids([
+        case.get("requirementRefs"),
+        case.get("requirement_refs"),
+    ])
+
+
+def _ground_planner_requirement_refs(case, classification, requirement_points):
+    """Keep planner mappings on the candidate's original requirement boundary."""
+    case = case if isinstance(case, dict) else {}
+    classification = classification if isinstance(classification, dict) else {}
+    point_map = _planner_requirement_point_map(requirement_points)
+    source_ids = _source_case_requirement_ids(case)
+    proposed_refs = normalize_text_list(
+        classification.get("requirementRefs")
+        or classification.get("requirement_refs")
+        or classification.get("coverage")
+    )[:8]
+    proposed_ids = _planner_requirement_ids(proposed_refs)
+    guarded = bool(source_ids and proposed_ids and any(item not in source_ids for item in proposed_ids))
+
+    if source_ids:
+        grounded_ids = list(source_ids)
+    else:
+        grounded_ids = [item for item in proposed_ids if not point_map or item in point_map]
+    refs = [point_map.get(requirement_id, requirement_id) for requirement_id in grounded_ids]
+    if not refs and not source_ids:
+        refs = proposed_refs
+    return list(dict.fromkeys(ref for ref in refs if str(ref or "").strip())), guarded
+
+
+def executable_yaml_portfolio_audit(payload, targets=None):
+    """Audit the final AI-selected executable portfolio before YAML conversion."""
+    normalized = normalize_cases_payload(payload)
+    analysis = normalized.get("analysis") if isinstance(normalized.get("analysis"), dict) else {}
+    requirement_points = normalize_text_list(analysis.get("requirement_points"))
+    planned_targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode="full")
+    all_cases = [item for item in (normalized.get("cases") or []) if isinstance(item, dict)]
+    executable_cases = [
+        item for item in all_cases
+        if str(item.get("executionLevel") or item.get("execution_level") or "").strip().lower() == "executable"
+    ]
+    unresolved_cases = [item for item in all_cases if item not in executable_cases]
+    missing_points = [
+        point for point in requirement_points
+        if not any(case_matches_requirement(case, point) for case in executable_cases)
+    ]
+    target_min = max(0, safe_int(planned_targets.get("min_automation_cases"), 0))
+    executable_ids = [
+        _planner_case_id(case, idx, origin_level="automatic")
+        for idx, case in enumerate(executable_cases)
+    ]
+    unresolved_ids = [
+        _planner_case_id(case, idx, origin_level="automatic")
+        for idx, case in enumerate(unresolved_cases)
+    ]
+    reasons = []
+    if missing_points:
+        reasons.append("显式需求点尚未由 executable 候选覆盖")
+    if target_min and len(executable_cases) < target_min:
+        reasons.append(f"executable 候选 {len(executable_cases)} 条，低于平台目标 {target_min} 条")
+    if unresolved_cases:
+        reasons.append(f"仍有 {len(unresolved_cases)} 条自动候选停留在非终态分类")
+    return {
+        "ok": not reasons,
+        "requirementPointCount": len(requirement_points),
+        "requirementPoints": requirement_points[:12],
+        "missingRequirementPoints": missing_points[:12],
+        "targetExecutableCount": target_min,
+        "executableCount": len(executable_cases),
+        "executableCaseIds": executable_ids[:20],
+        "unresolvedAutomaticCount": len(unresolved_cases),
+        "unresolvedAutomaticCaseIds": unresolved_ids[:20],
+        "reasons": reasons,
     }
 
 
@@ -2770,6 +2884,7 @@ def call_skill_executable_yaml_planner(
     scope_plan,
     model_config=None,
     source_evidence=None,
+    planning_context=None,
 ):
     """Plan executable cases before YAML conversion. Fallback preserves current payload."""
     normalized = normalize_cases_payload(payload)
@@ -2785,6 +2900,7 @@ def call_skill_executable_yaml_planner(
     trace = {
         "enabled": True,
         "fallback": False,
+        "planning_pass": str((planning_context or {}).get("pass") or "initial"),
         "candidate_count": len(candidates),
         "automatic_candidate_count": len(automatic_candidates),
         "manual_candidate_count": len(manual_candidates),
@@ -2808,6 +2924,7 @@ def call_skill_executable_yaml_planner(
         "selectedBaselines": compact_baselines,
         "scopePlan": scope_plan or {},
         "sourceEvidence": source_evidence if isinstance(source_evidence, dict) else {},
+        "planningContext": planning_context if isinstance(planning_context, dict) else {},
     }
     try:
         result = run_ai_skill(
@@ -2859,6 +2976,10 @@ def call_skill_executable_yaml_planner(
             "authoritative": True,
             "trace": trace,
             "allowedBaselineIds": sorted(allowed_baseline_ids),
+            "requirementPoints": normalize_text_list(
+                (normalized.get("analysis") or {}).get("requirement_points")
+            )[:12],
+            "planningContext": planning_context if isinstance(planning_context, dict) else {},
         }
     except Exception as exc:
         trace.update({"fallback": True, "error": str(exc)})
@@ -2933,6 +3054,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     promoted_manual_count = 0
     retained_manual_count = 0
     promotion_guard_failed_count = 0
+    requirement_ref_guard_count = 0
+    path_mapping_guard_count = 0
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
         case = copy.deepcopy(record["case"])
@@ -2966,16 +3089,28 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         planned_flow = normalize_text_list(item.get("flow"))[:8]
         precondition = str(item.get("precondition") or "").strip()
         assertion_target = str(item.get("assertionTarget") or "").strip()
-        path_plan_applied = bool(baseline_grounded and len(planned_flow) >= 2)
+        requirement_refs, requirement_refs_guarded = _ground_planner_requirement_refs(
+            case,
+            item,
+            plan.get("requirementPoints") or (normalized.get("analysis") or {}).get("requirement_points"),
+        )
+        if requirement_refs_guarded:
+            requirement_ref_guard_count += 1
+            path_mapping_guard_count += 1
+        path_plan_applied = bool(
+            baseline_grounded
+            and len(planned_flow) >= 2
+            and not requirement_refs_guarded
+        )
         if origin_level == "manual" and level == "executable" and not (
-            path_plan_applied and precondition and assertion_target
+            path_plan_applied and precondition and assertion_target and requirement_refs
         ):
             level = "needs_review"
             item = {
                 **item,
                 "reason": (
                     str(item.get("reason") or item.get("executableReason") or "").strip()
-                    + "；原人工候选升级缺少可信基线路径、明确前置或可见终态，已降为 needs_review"
+                    + "；原人工候选升级缺少可信基线路径、明确前置、可见终态或需求映射，已降为 needs_review"
                 ).strip("；"),
             }
             promotion_guard_failed_count += 1
@@ -2987,11 +3122,6 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         ).strip()
         case["case_id"] = case_id
         case["originExecutionLevel"] = origin_level
-        requirement_refs = normalize_text_list(
-            item.get("requirementRefs")
-            or item.get("requirement_refs")
-            or item.get("coverage")
-        )[:8]
         if requirement_refs:
             case["requirement_refs"] = requirement_refs
             case["requirementRefs"] = requirement_refs
@@ -3040,6 +3170,10 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             "flow": planned_flow,
             "originalFlow": original_flow,
             "pathPlanApplied": path_plan_applied,
+            "pathMappingGuarded": requirement_refs_guarded,
+            "proposedRequirementRefs": normalize_text_list(
+                item.get("requirementRefs") or item.get("requirement_refs") or item.get("coverage")
+            )[:8],
             "assertionTarget": assertion_target,
             "executableReason": item.get("executableReason") or "",
             "batch": item.get("batch") or "",
@@ -3096,6 +3230,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "promoted_manual_count": promoted_manual_count,
         "retained_manual_count": retained_manual_count,
         "promotion_guard_failed_count": promotion_guard_failed_count,
+        "requirement_ref_guard_count": requirement_ref_guard_count,
+        "path_mapping_guard_count": path_mapping_guard_count,
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
         "path_plan_applied_count": sum(
@@ -3111,14 +3247,146 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
 # AI Skill: visual_grounder
 # ---------------------------------------------------------------------------
 
+
+_VISUAL_CASE_FIELDS = (
+    "case_id", "id", "title", "scenario", "coverage", "requirement_point",
+    "requirementRefs", "requirement_refs", "start_page", "business_path",
+    "preconditions", "steps", "assertions", "expected_result", "repair_hints",
+    "data_requirements", "risk", "priority", "smoke",
+)
+_VISUAL_SCENARIO_FIELDS = (
+    "id", "scenario_id", "feature", "requirement_point", "scenario", "type",
+    "business_path", "steps", "assertions", "expected", "expected_result",
+)
+_VISUAL_MANUAL_FIELDS = (
+    "case_id", "id", "title", "scenario", "coverage", "requirement_point",
+    "steps", "assertions", "expected_result", "reason", "suggested_setup",
+)
+_VISUAL_MUTABLE_FIELDS = {
+    "start_page", "business_path", "preconditions", "steps", "assertions",
+    "expected", "expected_result", "repair_hints", "data_requirements",
+}
+
+
+def _compact_visual_record(item, fields):
+    item = item if isinstance(item, dict) else {}
+    return {
+        key: copy.deepcopy(item.get(key))
+        for key in fields
+        if item.get(key) not in (None, "", [], {})
+    }
+
+
+def compact_visual_grounder_base_payload(base_payload):
+    """Keep requirement/case evidence while dropping bulky orchestration history."""
+    base = normalize_cases_payload(base_payload)
+    analysis = base.get("analysis") if isinstance(base.get("analysis"), dict) else {}
+    compact_analysis = {
+        key: copy.deepcopy(analysis.get(key))
+        for key in (
+            "requirement_points", "business_goals", "entry_points", "visible_outcomes",
+            "state_assumptions", "data_assumptions", "coverage_matrix", "questions",
+            "missing_inputs", "assumptions",
+        )
+        if analysis.get(key) not in (None, "", [], {})
+    }
+    compact = {
+        "title": base.get("title") or "",
+        "module": base.get("module") or "",
+        "analysis": compact_analysis,
+        "scenarios": [
+            _compact_visual_record(item, _VISUAL_SCENARIO_FIELDS)
+            for item in (base.get("scenarios") or [])
+            if isinstance(item, dict)
+        ],
+        "cases": [
+            _compact_visual_record(item, _VISUAL_CASE_FIELDS)
+            for item in (base.get("cases") or [])
+            if isinstance(item, dict)
+        ],
+        "manual_cases": [
+            _compact_visual_record(item, _VISUAL_MANUAL_FIELDS)
+            for item in (base.get("manual_cases") or [])
+            if isinstance(item, dict)
+        ],
+        "review": {},
+    }
+    for key in ("businessContext", "promptCenter"):
+        if isinstance(base_payload, dict) and base_payload.get(key) not in (None, "", [], {}):
+            compact[key] = copy.deepcopy(base_payload.get(key))
+    return compact
+
+
+def _visual_record_key(item, kind):
+    item = item if isinstance(item, dict) else {}
+    keys = ("case_id", "id", "title")
+    if kind == "scenario":
+        keys = ("scenario_id", "id", "scenario")
+    for key in keys:
+        value = str(item.get(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    return ""
+
+
+def _merge_visual_records(base_items, grounded_items, kind):
+    merged = [copy.deepcopy(item) for item in (base_items or []) if isinstance(item, dict)]
+    index_by_key = {
+        _visual_record_key(item, kind): index
+        for index, item in enumerate(merged)
+        if _visual_record_key(item, kind)
+    }
+    for grounded in (grounded_items or []):
+        if not isinstance(grounded, dict):
+            continue
+        key = _visual_record_key(grounded, kind)
+        if key and key in index_by_key:
+            target = merged[index_by_key[key]]
+            for field in _VISUAL_MUTABLE_FIELDS:
+                if grounded.get(field) not in (None, "", [], {}):
+                    target[field] = copy.deepcopy(grounded.get(field))
+            continue
+        # A genuinely new visual branch still needs an explicit source requirement.
+        if _source_case_requirement_ids(grounded):
+            merged.append(copy.deepcopy(grounded))
+    return merged
+
+
+def merge_visual_grounder_payload(base_payload, grounded_payload):
+    """Merge visual corrections without letting one batch erase full planning context."""
+    base = normalize_cases_payload(base_payload)
+    grounded = normalize_cases_payload(grounded_payload)
+    merged = copy.deepcopy(base)
+    merged["title"] = base.get("title") or grounded.get("title") or ""
+    merged["module"] = base.get("module") or grounded.get("module") or ""
+    base_analysis = merged.get("analysis") if isinstance(merged.get("analysis"), dict) else {}
+    grounded_analysis = grounded.get("analysis") if isinstance(grounded.get("analysis"), dict) else {}
+    for key in ("coverage_matrix", "visual_notes", "ui_notes"):
+        if grounded_analysis.get(key) not in (None, "", [], {}):
+            base_analysis[key] = copy.deepcopy(grounded_analysis.get(key))
+    if not base_analysis.get("requirement_points"):
+        base_analysis["requirement_points"] = copy.deepcopy(grounded_analysis.get("requirement_points") or [])
+    merged["analysis"] = base_analysis
+    merged["scenarios"] = _merge_visual_records(base.get("scenarios"), grounded.get("scenarios"), "scenario")
+    merged["cases"] = _merge_visual_records(base.get("cases"), grounded.get("cases"), "case")
+    merged["manual_cases"] = _merge_visual_records(base.get("manual_cases"), grounded.get("manual_cases"), "manual")
+    review = merged.setdefault("review", {})
+    grounded_review = grounded.get("review") if isinstance(grounded.get("review"), dict) else {}
+    for key, value in grounded_review.items():
+        if value not in (None, "", [], {}):
+            review[key] = copy.deepcopy(value)
+    return normalize_cases_payload(merged)
+
+
 def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None):
     """调用 AI skill: visual_grounder。"""
     base_payload = normalize_cases_payload(base_payload)
-    base_cases = copy.deepcopy(base_payload.get("cases") or [])
+    compact_base_payload = compact_visual_grounder_base_payload(base_payload)
+    base_cases = copy.deepcopy(compact_base_payload.get("cases") or [])
     payload = {
         "title": title,
         "module": module,
-        "base_payload": base_payload,
+        "base_payload": compact_base_payload,
         "visual_text_assets": compact_text_assets(visual_text_assets),
         "image_count": len(image_assets or []),
         "rules": {
@@ -3140,11 +3408,11 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         output_defaults={
             "title": title,
             "module": module,
-            "analysis": base_payload.get("analysis") or {"requirement_points": []},
-            "scenarios": base_payload.get("scenarios") or [],
+            "analysis": compact_base_payload.get("analysis") or {"requirement_points": []},
+            "scenarios": compact_base_payload.get("scenarios") or [],
             "cases": base_cases,
-            "manual_cases": base_payload.get("manual_cases") or [],
-            "review": base_payload.get("review") or {},
+            "manual_cases": compact_base_payload.get("manual_cases") or [],
+            "review": {},
         },
     )
     grounded = normalize_cases_payload(grounded)
@@ -3159,13 +3427,21 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
     if base_cases and not grounded.get("cases"):
         grounded["cases"] = copy.deepcopy(base_cases)
         restored_empty_cases = True
+    grounded = merge_visual_grounder_payload(base_payload, grounded)
     review = grounded.setdefault("review", {})
     review["visual_grounder_skill"] = "visual_grounder.v1"
     review["visual_case_preservation"] = {
-        "policy": "preserve_base_cases_when_model_omits_cases",
-        "base_case_count": len(base_cases),
+        "policy": "compact_input_merge_visual_fields_preserve_full_payload",
+        "base_case_count": len(base_payload.get("cases") or []),
         "result_case_count": len(grounded.get("cases") or []),
         "restored_empty_cases": restored_empty_cases,
+    }
+    review["visual_input_compaction"] = {
+        "full_chars": len(json.dumps(base_payload, ensure_ascii=False)),
+        "compact_chars": len(json.dumps(compact_base_payload, ensure_ascii=False)),
+        "image_count": len(image_assets or []),
+        "visual_text_chars": len(compact_text_assets(visual_text_assets)),
+        "rule": "只移除重复 review/编排历史，需求点、场景、用例步骤、断言、设计稿文本和原图仍进入视觉判断。",
     }
     validate_ai_skill_output("cases_payload", grounded)
     return grounded
@@ -3735,6 +4011,7 @@ __all__ = [
     "call_skill_execution_scope_planner",
     "call_skill_executable_yaml_planner",
     "apply_executable_yaml_plan_to_payload",
+    "executable_yaml_portfolio_audit",
     # Visual grounder
     "call_visual_grounder_skill",
     # Coverage auditor

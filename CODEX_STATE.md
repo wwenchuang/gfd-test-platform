@@ -1598,3 +1598,52 @@ git status
 5. 不要改本任务无关文件。
 6. 修改后跑相关检查，并更新 CODEX_STATE.md。
 ```
+
+### 2026-07-14 Agent 覆盖收敛、视觉批次与真实执行结果修复
+
+真实线上回归（修复前）：
+
+- 服务端当时部署提交 `0a99ccc`，8091 / 8088、AI Gateway、Sonic 健康，模型为 `qwen3.6-plus`，`win-runner-01` 在线；固定设备为 OPPO `ecbfd645`，未选择或下发第二台设备。
+- Agent：`agent-1784008419035-c7712069`。
+- 终态：`FAILED / GENERATE_YAML`，未创建 Runner 任务，因此没有手机实际执行结果。
+- Figma 正确解析 4 页 / 4 图；视觉资料确实进入 AI 批次。首批 2 图在 120 秒超时后，旧逻辑停止后续批次，最终为 0 / 2 完成。视觉判断仍是软参考，不是硬门禁。
+- AI 生成 8 条自动化用例，但最终只确认 4 个 YAML；5 个明确需求点只覆盖 4 个，`REQ-005` 缺失，覆盖门禁正确阻断。
+- 可执行规划器还把两个兄弟业务分支串线：照片打印候选被替换成扫描复印路径，扫描复印候选被替换成照片打印路径。
+
+本轮通用修复：
+
+- 增加 AI 最终覆盖收敛轮次。平台继续负责数量、静态校验和覆盖门禁；AI 在门禁前对全部候选做一次有界重分类，补齐遗漏的明确需求点，不靠单需求硬编码放宽门禁。
+- requirement refs 以原始候选来源为事实锚点。AI 可以优化步骤，但不能用兄弟分支的 requirement refs 和路径替换当前候选；跨分支替换会保留原路径并记录 guard 计数。
+- 视觉批次改为每批 1 图、逐批继续执行；单批失败不会取消剩余设计图。每批记录 attempted / completed / not_attempted、耗时、图片名和错误。重复大字段在调用前压缩，AI 返回后再合并完整上下文，Figma 解析代码未改。
+- 默认单批视觉超时调整为 90 秒，总预算 360 秒；部署脚本仅迁移旧默认值，保留显式自定义配置。
+- Agent 结果采用双状态：`orchestration` 表示完成 / 门禁阻断 / 取消，`execution` 表示未执行 / 通过 / 部分通过 / 失败。Runner 真实通过数不会再被后续门禁失败覆盖。
+- Runner 失败进一步拆分为产品断言失败（`PRODUCT_BUG`）、脚本或环境待修复（`SCRIPT_ISSUE` / `ENV_ISSUE`）和未归因失败；前端分别展示通过、产品失败、脚本环境失败和运行中数量。
+- 聚合时去重 progress / jobResult / report 多来源记录，并避免把 `timeout: 1800` 的等待上限误计成 1800 条超时任务。
+
+离线重放真实线上生成产物：
+
+- 文档打印、照片打印、扫描复印三条业务分支保持原始正确路径和 `REQ-001..003`。
+- 固定设备上的百度网盘可见性 / 文案 / 同级关系检查收敛为第 4 条可执行 YAML。
+- 点击入口后到首个真实可见落地页的有界检查收敛为第 5 条可执行 YAML；允许百度 App、Web 授权 / 登录、系统文件选择器等首屏状态，不深入第三方账号流程。
+- 最终覆盖审计为 5 / 5 requirement、5 条 executable、0 条未解决自动化候选；5 个 YAML 均通过静态校验和可执行性评分，得分均为 100，无坐标点击。
+- 未写入或修改任何历史 YAML。
+
+参考的成熟状态模型与移动 AI 自动化模式：
+
+- Playwright 保留 passed / flaky / failed；Allure 区分 Failed 与 Broken；GitHub Actions 区分原始 outcome 与编排 conclusion。平台据此保留执行事实与 Agent 编排结论两套状态。
+- AndroidWorld、Mobile-Agent-E、AppAgent、Mobile-Agent-V 的共同点是观察、计划、执行、反思和可复用经验分层；成功基线可用于规划和加速，失败录屏 / 截图用于归因和修复上下文，但不能直接沉淀为成功模板。
+- Midscene planning cache 只适合在成功执行后沉淀；本轮未在缺少真实 Runner 版本验证时直接开启缓存。
+
+已验证：
+
+```bash
+npm test
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py
+bash -n deploy/install-server.sh
+git diff --check
+```
+
+待完成：
+
+- 提交并部署本轮修复后，用同一需求、同一 Figma、`qwen3.6-plus`、固定 OPPO `ecbfd645` 发起完整 Agent 回归。
+- 必须轮询至 Agent 和所有 smoke / remaining Runner 任务终态，再人工复核 YAML、Runner 报告、截图和失败归因。

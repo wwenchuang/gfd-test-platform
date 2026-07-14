@@ -1946,7 +1946,46 @@ function renderAgentSummaryArtifact(run) {
   const nextActions = Array.isArray(summary.nextActions) ? summary.nextActions : [];
   const mindmap = agentMindmapInfo(artifacts);
   const referenceExamples = agentYamlReferenceExamples(artifacts);
-  const conclusionClass = summary.conclusion === '通过' ? 'success' : (summary.conclusion === '执行中' ? 'warn' : 'danger');
+  const execution = (summary.execution && typeof summary.execution === 'object') ? summary.execution : {};
+  const orchestration = (summary.orchestration && typeof summary.orchestration === 'object') ? summary.orchestration : {};
+  const gate = (artifacts.runnerExecutionGate && typeof artifacts.runnerExecutionGate === 'object') ? artifacts.runnerExecutionGate : {};
+  const timeoutIds = new Set(timeoutJobs.map(item => String(item.jobId || item.job_id || '')).filter(Boolean));
+  const reportFailedOnly = failedJobs.filter(item => {
+    const id = String(item.jobId || item.job_id || '');
+    const status = String(item.status || '').toLowerCase();
+    return status !== 'timeout' && (!id || !timeoutIds.has(id));
+  }).length;
+  const passedCount = Number(execution.passedCount ?? summary.passedJobCount ?? report.successJobs?.length ?? ((gate.smokePassedCount || 0) + (gate.expandedCompletedCount || 0))) || 0;
+  const failedCount = Number(execution.failedCount ?? (failedJobs.length ? reportFailedOnly : summary.failedJobCount) ?? 0) || 0;
+  const timeoutCount = Number(execution.timeoutCount ?? (timeoutJobs.length ? timeoutJobs.length : summary.timeoutJobCount) ?? 0) || 0;
+  const runningCount = Number(execution.runningCount ?? (report.runningJobs?.length || summary.runningJobCount) ?? 0) || 0;
+  const reportFailureTypes = failedJobs.reduce((counts, item) => {
+    const type = String(item.failureType || item.failure_type || '').toUpperCase();
+    if (type === 'PRODUCT_BUG') counts.product += 1;
+    else if (['SCRIPT_ISSUE', 'ENV_ISSUE'].includes(type)) counts.broken += 1;
+    else if (String(item.status || '').toLowerCase() !== 'timeout') counts.unknown += 1;
+    return counts;
+  }, {product: 0, broken: 0, unknown: 0});
+  const productFailedCount = Number(execution.productFailedCount ?? summary.productFailedJobCount ?? reportFailureTypes.product) || 0;
+  const brokenCount = Number(execution.brokenCount ?? summary.brokenJobCount ?? reportFailureTypes.broken) || 0;
+  const unknownFailedCount = Number(execution.unknownFailedCount ?? summary.unknownFailedJobCount ?? reportFailureTypes.unknown) || 0;
+  const attemptedCount = Number(execution.attemptedCount) || (passedCount + failedCount + timeoutCount + runningCount);
+  const failedStepCount = Number(orchestration.failedStepCount ?? steps.filter(step => ['FAILED', 'PARTIAL_FAILED'].includes(String(step.status || '').toUpperCase())).length) || 0;
+  const runStatus = String(run?.status || orchestration.runStatus || '').toUpperCase();
+  const orchestrationBlocked = orchestration.state === 'blocked' || orchestration.state === 'cancelled' || failedStepCount > 0 || ['FAILED', 'CANCELLED'].includes(runStatus);
+  const orchestrationLabel = orchestration.label || (runStatus === 'CANCELLED' ? '编排已取消' : (orchestrationBlocked ? '编排阻断' : '编排完成'));
+  let resultLabel = execution.label || summary.conclusion || '-';
+  if (!execution.label) {
+    if (!attemptedCount && orchestrationBlocked) resultLabel = '未执行';
+    else if (passedCount && (failedCount || timeoutCount || orchestrationBlocked)) resultLabel = '部分通过';
+    else if (passedCount && !failedCount && !timeoutCount) resultLabel = '通过';
+    else if (runningCount) resultLabel = '执行中';
+    else if (failedCount || timeoutCount) resultLabel = '未通过';
+  } else if (execution.outcome === 'passed' && orchestrationBlocked) {
+    resultLabel = '部分通过';
+  }
+  const conclusionClass = resultLabel === '通过' ? 'success' : (['部分通过', '执行中', '未执行', '报告缺失'].includes(resultLabel) ? 'warn' : 'danger');
+  const orchestrationClass = orchestrationBlocked ? 'danger' : 'success';
   const target = summary.target || run?.target || '-';
   const generatedAt = String(summary.generatedAt || run?.updatedAt || '').replace('T', ' ').slice(0, 19);
   return `
@@ -1957,7 +1996,10 @@ function renderAgentSummaryArtifact(run) {
           <h3>${escapeHtml(summary.title || 'Agent执行总结')}</h3>
           <p>${escapeHtml(target)}</p>
         </div>
-        <strong class="final-report-conclusion ${conclusionClass}">${escapeHtml(summary.conclusion || '-')}</strong>
+        <div class="final-report-outcomes">
+          <strong class="final-report-conclusion ${conclusionClass}">${escapeHtml(resultLabel)}</strong>
+          <span class="final-report-orchestration ${orchestrationClass}">${escapeHtml(orchestrationLabel)}</span>
+        </div>
       </div>
       <div class="final-report-meta">
         <span>${escapeHtml(agentModeText(summary.mode || run?.mode || '-'))}</span>
@@ -1965,10 +2007,10 @@ function renderAgentSummaryArtifact(run) {
         <span>${escapeHtml(generatedAt || '-')}</span>
       </div>
       <div class="report-summary-grid final-report-metrics">
-        <div><span>步骤成功</span><strong>${escapeHtml(summary.completed || 0)}/${escapeHtml(summary.totalSteps || 0)}</strong></div>
-        <div><span>匹配用例</span><strong>${escapeHtml(summary.matchedCount || 0)}</strong></div>
-        <div><span>HTML 报告</span><strong>${escapeHtml(reports.length || summary.reportCount || 0)}</strong></div>
-        <div><span>失败/超时</span><strong>${escapeHtml((failedJobs.length || summary.failedJobCount || 0) + (timeoutJobs.length || summary.timeoutJobCount || 0))}</strong></div>
+        <div><span>Runner 通过</span><strong>${escapeHtml(passedCount)}</strong></div>
+        <div><span>产品断言失败</span><strong>${escapeHtml(productFailedCount)}</strong></div>
+        <div><span>脚本 / 环境 / 待归因</span><strong>${escapeHtml(brokenCount + unknownFailedCount)}</strong></div>
+        <div><span>超时 / 运行中</span><strong>${escapeHtml(timeoutCount + runningCount)}</strong></div>
       </div>
       ${renderGeneratedExecutionLevelSummary(artifacts)}
       ${renderRunnerExecutionGateSummary(artifacts)}
@@ -1977,6 +2019,9 @@ function renderAgentSummaryArtifact(run) {
           <strong>执行概览</strong>
           <dl>
             <div><dt>报告状态</dt><dd>${escapeHtml(summary.reportStatus || report.status || '-')}</dd></div>
+            <div><dt>Runner 结果</dt><dd>${escapeHtml(`${resultLabel}（${attemptedCount} 次真实执行）`)}</dd></div>
+            <div><dt>Agent 编排</dt><dd>${escapeHtml(orchestrationLabel)}</dd></div>
+            <div><dt>Agent 步骤</dt><dd>${escapeHtml(`${summary.completed || 0}/${summary.totalSteps || 0}`)}</dd></div>
             <div><dt>执行 YAML</dt><dd>${escapeHtml(yamlRefs.length || 0)} 个</dd></div>
             <div><dt>任务状态</dt><dd>${escapeHtml(jobStatuses.length || 0)} 个</dd></div>
             <div><dt>失败类型</dt><dd>${escapeHtml(summary.failureType || failure.failureType || 'NONE')}</dd></div>
@@ -1984,7 +2029,7 @@ function renderAgentSummaryArtifact(run) {
         </section>
         <section class="final-report-panel">
           <strong>执行说明</strong>
-          <p>${escapeHtml(summary.aiSummary || failure.conclusion || summary.message || '暂无说明')}</p>
+          <p>${escapeHtml(summary.message || summary.aiSummary || failure.conclusion || '暂无说明')}</p>
         </section>
       </div>
       <div class="final-report-layout">

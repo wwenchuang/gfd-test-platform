@@ -5163,6 +5163,18 @@
   .final-report-conclusion.success { background: rgba(16, 185, 129, .16); color: #34d399; }
   .final-report-conclusion.warn { background: rgba(245, 158, 11, .16); color: #fbbf24; }
   .final-report-conclusion.danger { background: rgba(244, 63, 94, .16); color: #fb7185; }
+  .final-report-outcomes {
+    display: grid;
+    justify-items: end;
+    gap: 7px;
+    flex: 0 0 auto;
+  }
+  .final-report-orchestration {
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .final-report-orchestration.success { color: #34d399; }
+  .final-report-orchestration.danger { color: #fb7185; }
   .final-report-section {
     border-top: 1px solid var(--border2);
     padding-top: 10px;
@@ -5302,6 +5314,7 @@
     .final-report-layout,
     .agent-info-grid { grid-template-columns: 1fr; }
     .final-report-hero { display: grid; }
+    .final-report-outcomes { justify-items: start; }
   }
 
   ::-webkit-scrollbar { width: 5px; height: 5px; }

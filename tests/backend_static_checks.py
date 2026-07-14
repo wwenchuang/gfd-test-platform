@@ -557,6 +557,84 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         "State-variant reachability must convert into visible-text Midscene actions without coordinates",
     )
 
+    swapped_payload = {
+        "analysis": {"requirement_points": [
+            "REQ-002 照片打印入口可见",
+            "REQ-003 扫描复印入口可见",
+        ]},
+        "cases": [
+            {
+                "case_id": "TC-002",
+                "title": "照片打印入口可见",
+                "coverage": "REQ-002",
+                "steps": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                "assertions": ["百度网盘入口可见"],
+            },
+            {
+                "case_id": "TC-003",
+                "title": "扫描复印入口可见",
+                "coverage": "REQ-003",
+                "steps": ["等待首页", "点击扫描复印", "等待百度网盘入口可见"],
+                "assertions": ["百度网盘入口可见"],
+            },
+        ],
+    }
+    swapped_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-nav"],
+        "requirementPoints": swapped_payload["analysis"]["requirement_points"],
+        "cases": [
+            {
+                "caseId": "TC-002",
+                "baselineId": "base-nav",
+                "baselineGrounded": True,
+                "precondition": "首页",
+                "flow": ["等待首页", "点击扫描复印", "等待百度网盘入口可见"],
+                "assertionTarget": "百度网盘入口可见",
+                "requirementRefs": ["REQ-003 扫描复印入口可见"],
+                "batch": "smoke",
+            },
+            {
+                "caseId": "TC-003",
+                "baselineId": "base-nav",
+                "baselineGrounded": True,
+                "precondition": "首页",
+                "flow": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                "assertionTarget": "百度网盘入口可见",
+                "requirementRefs": ["REQ-002 照片打印入口可见"],
+                "batch": "smoke",
+            },
+        ],
+    }
+    guarded_mapping = ai_skill_service.apply_executable_yaml_plan_to_payload(swapped_payload, swapped_plan)
+    guarded_by_id = {item.get("case_id"): item for item in guarded_mapping.get("cases") or []}
+    require(
+        guarded_by_id["TC-002"].get("steps") == swapped_payload["cases"][0]["steps"]
+        and guarded_by_id["TC-003"].get("steps") == swapped_payload["cases"][1]["steps"],
+        "A planner requirement swap must not replace a candidate with a sibling business path",
+    )
+    require(
+        guarded_by_id["TC-002"].get("requirementRefs") == ["REQ-002 照片打印入口可见"]
+        and guarded_by_id["TC-003"].get("requirementRefs") == ["REQ-003 扫描复印入口可见"]
+        and guarded_mapping.get("review", {}).get("executable_yaml_plan", {}).get("path_mapping_guard_count") == 2,
+        "Requirement mapping guard must restore source refs and expose every rejected cross-branch path",
+    )
+    portfolio = ai_skill_service.executable_yaml_portfolio_audit(guarded_mapping, {
+        "min_automation_cases": 2,
+    })
+    require(portfolio.get("ok") and portfolio.get("executableCount") == 2, "Executable portfolio audit must accept complete grounded coverage")
+    incomplete_mapping = json.loads(json.dumps(guarded_mapping, ensure_ascii=False))
+    incomplete_mapping["cases"][1]["executionLevel"] = "needs_review"
+    incomplete_portfolio = ai_skill_service.executable_yaml_portfolio_audit(incomplete_mapping, {
+        "min_automation_cases": 2,
+    })
+    require(
+        not incomplete_portfolio.get("ok")
+        and incomplete_portfolio.get("unresolvedAutomaticCount") == 1
+        and any("REQ-003" in point for point in incomplete_portfolio.get("missingRequirementPoints") or []),
+        "Executable portfolio audit must trigger final AI convergence for unresolved requirement coverage",
+    )
+
     unsafe_replan = json.loads(json.dumps(replan, ensure_ascii=False))
     unsafe_replan["cases"][0]["baselineGrounded"] = False
     guarded = ai_skill_service.apply_executable_yaml_plan_to_payload(replan_payload, unsafe_replan)
@@ -1281,6 +1359,34 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         grounded.get("cases") == [concrete_case]
         and grounded.get("review", {}).get("visual_case_preservation", {}).get("base_case_count") == 1,
         "Visual grounding must preserve base cases when the AI returns only its visual judgment",
+    )
+    rich_visual_payload = json.loads(json.dumps(base_payload, ensure_ascii=False))
+    rich_visual_payload["cases"][0]["execution_trace"] = {"large": "x" * 2000}
+    rich_visual_payload["review"]["orchestration_history"] = ["y" * 2000]
+    compact_visual_payload = ai_skill_service.compact_visual_grounder_base_payload(rich_visual_payload)
+    require(
+        compact_visual_payload.get("analysis", {}).get("requirement_points") == analysis["requirement_points"]
+        and compact_visual_payload.get("cases", [{}])[0].get("steps") == concrete_case.get("steps")
+        and "execution_trace" not in compact_visual_payload.get("cases", [{}])[0]
+        and compact_visual_payload.get("review") == {},
+        "Visual grounding compaction must retain requirement/case evidence while dropping orchestration history",
+    )
+    merged_visual_payload = ai_skill_service.merge_visual_grounder_payload(rich_visual_payload, {
+        "title": base_payload["title"],
+        "module": base_payload["module"],
+        "analysis": {"requirement_points": analysis["requirement_points"], "visual_notes": ["Figma 文案已核对"]},
+        "cases": [{
+            "title": concrete_case["title"],
+            "assertions": ["设计稿中的百度网盘入口文案完整可见"],
+        }],
+        "review": {"visual_grounding_check": "completed"},
+    })
+    require(
+        merged_visual_payload.get("cases", [{}])[0].get("execution_trace") == {"large": "x" * 2000}
+        and merged_visual_payload.get("cases", [{}])[0].get("assertions") == ["设计稿中的百度网盘入口文案完整可见"]
+        and merged_visual_payload.get("review", {}).get("orchestration_history") == ["y" * 2000]
+        and merged_visual_payload.get("review", {}).get("visual_grounding_check") == "completed",
+        "Visual grounding merge must apply visual corrections without erasing full planning evidence",
     )
 
     visual_payload = {
@@ -3964,12 +4070,15 @@ def check_ai_yaml_generation_decision_chain_static():
     require("call_skill_executable_yaml_planner" in yaml_service_source, "YAML generation must call AI executable YAML planner")
     require("build_ai_generation_decision_context_text" in yaml_service_source and "AI 生成决策计划" in yaml_service_source, "YAML prompt must include the AI decision plan context")
     require("ai_decision_trace" in yaml_service_source and "executable_yaml_planner_review" in yaml_service_source, "YAML generation review must expose AI decision trace and planner review")
+    require("executable_yaml_portfolio_audit" in yaml_service_source and '"pass": "coverage_convergence"' in yaml_service_source and 'step="最终覆盖收敛"' in yaml_service_source, "YAML generation must run one evidence-gated final AI coverage convergence pass")
     require("improve_case_coverage(" in yaml_service_source and "model_config=model_config" in yaml_service_source, "Coverage repair must receive selected model config")
 
     require("def call_skill_baseline_reranker" in ai_skill_source, "AI skill service must expose baseline reranker")
     require("def call_skill_execution_scope_planner" in ai_skill_source, "AI skill service must expose execution scope planner")
     require("def call_skill_executable_yaml_planner" in ai_skill_source, "AI skill service must expose executable YAML planner")
     require("def apply_executable_yaml_plan_to_payload" in ai_skill_source, "Executable YAML planner output must be applied to generated payload")
+    require("path_mapping_guard_count" in ai_skill_source and "pathMappingGuarded" in ai_skill_source and "def executable_yaml_portfolio_audit" in ai_skill_source, "Executable planning must reject cross-requirement path swaps and audit the final portfolio")
+    require("def compact_visual_grounder_base_payload" in ai_skill_source and "def merge_visual_grounder_payload" in ai_skill_source and "visual_input_compaction" in ai_skill_source, "Visual grounding must compact repeated history while preserving and merging design evidence")
     require("MIDSCENE_AI_SKILLS_STRICT_MODEL" in ai_skill_source and "AI_SKILLS_STRICT_MODEL" in ai_skill_source, "AI skills must support strict selected-model mode")
     require("model_trace" in ai_skill_source and "providerId" in ai_skill_source, "AI skill reviews must record provider/model trace")
     require(
@@ -4268,9 +4377,90 @@ android:
     )
 
 
+def check_agent_summary_separates_runner_outcomes_from_orchestration():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-partial-outcome",
+        "status": "FAILED",
+        "target": "基础打印新增百度网盘入口",
+        "steps": [
+            {"step": "RUN_TASK", "status": "PARTIAL_FAILED", "summary": "扩展任务失败"},
+            {"step": "GENERATE_SUMMARY", "status": "RUNNING"},
+        ],
+        "artifacts": {
+            "jobProgressByPhase": {
+                "首批冒烟": {
+                    "phase": "首批冒烟",
+                    "total": 3,
+                    "completed": 2,
+                    "failed": 1,
+                    "running": 0,
+                    "timeout": 1800,
+                    "jobs": [
+                        {"job_id": "smoke-1", "status": "success"},
+                        {"job_id": "smoke-2", "status": "success"},
+                        {"job_id": "smoke-3", "status": "failed"},
+                    ],
+                },
+            },
+            "report": {
+                "status": "failed",
+                "jobStatuses": [
+                    {"jobId": "smoke-1", "status": "success"},
+                    {"jobId": "smoke-2", "status": "success"},
+                    {"jobId": "smoke-3", "status": "failed"},
+                ],
+                "successJobs": [
+                    {"jobId": "smoke-1", "status": "success"},
+                    {"jobId": "smoke-2", "status": "success"},
+                ],
+                "failedJobs": [{"jobId": "smoke-3", "status": "failed", "failureType": "SCRIPT_ISSUE", "error": "定位失败"}],
+                "timeoutJobs": [],
+                "runningJobs": [],
+            },
+        },
+    }
+    execution = agent_service._agent_runner_execution_summary(run)
+    require(execution.get("outcome") == "partial", "Runner results with passes and failures must be partial, not blanket failed")
+    require(execution.get("passedCount") == 2 and execution.get("failedCount") == 1, "Runner summary must preserve successful smoke counts")
+    require(execution.get("productFailedCount") == 0 and execution.get("brokenCount") == 1, "Script/environment failures must remain Broken instead of product failures")
+    require(execution.get("timeoutCount") == 0, "Runner wait limit seconds must not be counted as timed-out jobs")
+
+    old_health = agent_service._ai_gateway_available
+    old_log = agent_service._log_tool_call
+    try:
+        agent_service._ai_gateway_available = lambda: False
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._tool_generate_summary(run)
+    finally:
+        agent_service._ai_gateway_available = old_health
+        agent_service._log_tool_call = old_log
+    summary = (run.get("artifacts") or {}).get("summary") or {}
+    require(summary.get("conclusion") == "部分通过", "Final summary must expose partial Runner success")
+    require((summary.get("orchestration") or {}).get("label") == "编排阻断", "Final summary must separately expose Agent orchestration blocking")
+
+    blocked_without_runner = {
+        "status": "FAILED",
+        "steps": [{"step": "GENERATE_YAML", "status": "FAILED", "error": "覆盖门禁阻断"}],
+        "artifacts": {},
+    }
+    try:
+        agent_service._ai_gateway_available = lambda: False
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._tool_generate_summary(blocked_without_runner)
+    finally:
+        agent_service._ai_gateway_available = old_health
+        agent_service._log_tool_call = old_log
+    no_runner_summary = (blocked_without_runner.get("artifacts") or {}).get("summary") or {}
+    require(no_runner_summary.get("conclusion") == "未执行", "Coverage blocking before dispatch must be reported as not executed")
+    require((no_runner_summary.get("execution") or {}).get("attemptedCount") == 0, "A pre-dispatch failure must not invent Runner attempts")
+
+
 def main():
     check_runner_inline_android_device_injection()
     check_midscene_model_family_protocol()
+    check_agent_summary_separates_runner_outcomes_from_orchestration()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
     source_paths = [
@@ -4734,10 +4924,18 @@ def main():
     require("mindmap_visual_image_policy" in yaml_service_source, "Mindmap summary must document the visual image policy")
     require("MINDMAP_VISUAL_BATCH_SIZE" in config_source and "MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS" in config_source and "visual_batches" in yaml_service_source, "Mindmap visual grounding must be batched with an overall time budget, not hard-truncated")
     require(
-        'MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE", min(2, AI_VISION_IMAGE_LIMIT)' in config_source
-        and 'MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE" "2"' in deploy_install
-        and "MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE='2'" in env_example,
-        "Mindmap visual grounding must default to two-image batches after repeated four-image model timeouts",
+        'MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE", 1' in config_source
+        and 'MIDSCENE_MINDMAP_VISUAL_TIMEOUT_SECONDS", 90' in config_source
+        and 'MIDSCENE_MINDMAP_VISUAL_TOTAL_BUDGET_SECONDS", 360' in config_source
+        and 'MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE" "1"' in deploy_install
+        and "MIDSCENE_MINDMAP_VISUAL_BATCH_SIZE='1'" in env_example,
+        "Mindmap visual grounding must use short single-image calls after repeated multi-image timeouts",
+    )
+    require(
+        "mindmap_visual_batch_results" in yaml_service_source
+        and "mindmap_visual_batches_attempted" in yaml_service_source
+        and "已记录并继续下一批" in yaml_service_source,
+        "Mindmap visual grounding must preserve every batch outcome and continue after one soft-reference failure",
     )
     require("refreshMindmapActiveTasks" in app_js_source and "{ refreshJobs: false }" in app_js_source, "Mindmap center must update active tasks without full-list refresh flicker")
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")

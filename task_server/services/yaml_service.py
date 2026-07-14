@@ -232,6 +232,7 @@ call_skill_baseline_reranker = _lazy("call_skill_baseline_reranker", "task_serve
 call_skill_execution_scope_planner = _lazy("call_skill_execution_scope_planner", "task_server.services.ai_skill_service")
 call_skill_executable_yaml_planner = _lazy("call_skill_executable_yaml_planner", "task_server.services.ai_skill_service")
 apply_executable_yaml_plan_to_payload = _lazy("apply_executable_yaml_plan_to_payload", "task_server.services.ai_skill_service")
+executable_yaml_portfolio_audit = _lazy("executable_yaml_portfolio_audit", "task_server.services.ai_skill_service")
 load_knowledge_context = _lazy("load_knowledge_context", "task_server.services.knowledge_service")
 load_figma_generation_context = _lazy("load_figma_generation_context", "task_server.services.knowledge_service")
 parse_figma_design = _lazy("parse_figma_design", "task_server.services.knowledge_service")
@@ -6732,6 +6733,15 @@ def generate_ui_yaml_from_request(d, job_id=None):
         review["ai_decision_trace"] = ai_decision_trace
         review["executable_yaml_planner_skipped"] = ai_decision_trace["executable_yaml_planner"]["reason"]
     else:
+        executable_source_evidence = {
+            "mode": "soft_reference",
+            "requirementText": "\n\n".join(requirement_text_assets)[:12000],
+            "figmaSoftEvidence": figma_soft_evidence_text,
+            "figmaPageCount": len(used_figma_pages),
+            "figmaImageCount": len(figma_images),
+            "executionContext": execution_context,
+            "policy": list(FIGMA_SOFT_EVIDENCE_POLICY),
+        }
         try:
             executable_plan = call_skill_executable_yaml_planner(
                 title,
@@ -6740,15 +6750,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 yaml_reference_examples,
                 execution_scope_plan,
                 model_config=model_config,
-                source_evidence={
-                    "mode": "soft_reference",
-                    "requirementText": "\n\n".join(requirement_text_assets)[:12000],
-                    "figmaSoftEvidence": figma_soft_evidence_text,
-                    "figmaPageCount": len(used_figma_pages),
-                    "figmaImageCount": len(figma_images),
-                    "executionContext": execution_context,
-                    "policy": list(FIGMA_SOFT_EVIDENCE_POLICY),
-                },
+                source_evidence=executable_source_evidence,
             )
             executable_plan["scopePlan"] = execution_scope_plan
             payload = apply_executable_yaml_plan_to_payload(payload, executable_plan)
@@ -6759,6 +6761,66 @@ def generate_ui_yaml_from_request(d, job_id=None):
             review["executable_yaml_planner_review"] = executable_plan.get("review") or {}
             review["needs_review_cases"] = executable_plan.get("needs_review_cases") or []
             review["draft_cases"] = executable_plan.get("draft_cases") or []
+
+            portfolio_before = executable_yaml_portfolio_audit(payload, planned_generation_targets)
+            review["executable_yaml_portfolio_initial"] = portfolio_before
+            if not portfolio_before.get("ok") and executable_plan.get("authoritative") is True:
+                if job_id:
+                    update_generate_job(
+                        job_id,
+                        progress=76,
+                        step="最终覆盖收敛",
+                        message=(
+                            f"AI 正在收敛显式需求覆盖：缺口 {len(portfolio_before.get('missingRequirementPoints') or [])} 个，"
+                            f"未决自动候选 {portfolio_before.get('unresolvedAutomaticCount') or 0} 条"
+                        ),
+                    )
+                convergence_context = {
+                    "pass": "coverage_convergence",
+                    "portfolioAudit": portfolio_before,
+                    "rules": {
+                        "preserveCurrentExecutableCases": True,
+                        "coverEveryExplicitRequirementWhenBoundedUiEvidenceExists": True,
+                        "classifyEveryCandidateAsExecutableOrManual": True,
+                        "noNeedsReviewOrDraftInFinalPass": True,
+                        "doNotBypassStaticScorerOrRunnerGate": True,
+                    },
+                }
+                convergence_evidence = dict(executable_source_evidence)
+                convergence_evidence["planningPass"] = "coverage_convergence"
+                convergence_evidence["portfolioAudit"] = portfolio_before
+                convergence_plan = call_skill_executable_yaml_planner(
+                    title,
+                    module,
+                    payload,
+                    yaml_reference_examples,
+                    execution_scope_plan,
+                    model_config=model_config,
+                    source_evidence=convergence_evidence,
+                    planning_context=convergence_context,
+                )
+                convergence_plan["scopePlan"] = execution_scope_plan
+                initial_plan_review = copy.deepcopy(review.get("executable_yaml_plan") or {})
+                if convergence_plan.get("authoritative") is True:
+                    payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
+                portfolio_after = executable_yaml_portfolio_audit(payload, planned_generation_targets)
+                review = payload.setdefault("review", {})
+                review["executable_yaml_plan_initial"] = initial_plan_review
+                review["executable_yaml_convergence"] = {
+                    "attempted": True,
+                    "authoritative": convergence_plan.get("authoritative") is True,
+                    "before": portfolio_before,
+                    "after": portfolio_after,
+                    "trace": convergence_plan.get("trace") or {},
+                    "review": convergence_plan.get("review") or {},
+                    "rule": (
+                        "最终收敛仍由 AI 选择可执行组合；平台只验证显式需求覆盖、3/5/8 数量、"
+                        "可信基线路径和可见终态，不降低 scorer 或 Runner 门禁。"
+                    ),
+                }
+                ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
+                ai_decision_trace["executable_yaml_convergence"] = convergence_plan.get("trace") or {}
+                review["ai_decision_trace"] = ai_decision_trace
         except Exception as plan_error:
             review = payload.setdefault("review", {})
             ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
@@ -8108,8 +8170,10 @@ def generate_mindmap_from_request(d, job_id=None):
         ] or [[]]
         visual_start = time.time()
         visual_batches_done = 0
+        visual_batches_attempted = 0
         visual_images_done = 0
         visual_errors = []
+        visual_batch_results = []
         for batch_index, image_batch in enumerate(visual_batches, start=1):
             if job_id and generate_job_should_stop(job_id):
                 break
@@ -8118,6 +8182,23 @@ def generate_mindmap_from_request(d, job_id=None):
                 visual_errors.append("视觉校准总耗时预算已用完")
                 break
             timeout_seconds = max(30, min(int(MINDMAP_VISUAL_TIMEOUT_SECONDS), remaining_budget))
+            batch_offset = (batch_index - 1) * MINDMAP_VISUAL_BATCH_SIZE
+            batch_text_assets = []
+            for image_offset in range(len(image_batch)):
+                source_index = batch_offset + image_offset
+                if source_index < selected_figma_count and source_index < len(figma_texts):
+                    batch_text_assets.append(figma_texts[source_index])
+            if knowledge_texts:
+                batch_text_assets.extend(knowledge_texts[:2])
+            if not batch_text_assets:
+                batch_text_assets = [
+                    "当前批次为用户上传截图；请结合 base_payload 的需求点，只校准与截图同页的真实文案、入口和可见终态。"
+                ]
+            image_names = [
+                str((item or {}).get("name") or (item or {}).get("fileName") or f"image-{batch_offset + idx + 1}")
+                if isinstance(item, dict) else f"image-{batch_offset + idx + 1}"
+                for idx, item in enumerate(image_batch)
+            ]
             if job_id:
                 progress = min(74, 65 + int((batch_index - 1) / max(1, len(visual_batches)) * 9))
                 update_generate_job(
@@ -8126,12 +8207,14 @@ def generate_mindmap_from_request(d, job_id=None):
                     step="视觉校准",
                     message=f"正在分批校准 Figma/截图，第 {batch_index}/{len(visual_batches)} 批，图片 {len(image_batch)} 张"
                 )
+            visual_batches_attempted += 1
+            batch_started = time.time()
             try:
                 payload = call_dashscope_refine_cases(
                     title,
                     module,
                     payload,
-                    visual_text_assets,
+                    batch_text_assets,
                     image_batch,
                     timeout_seconds=timeout_seconds,
                     legacy_fallback=False,
@@ -8139,13 +8222,51 @@ def generate_mindmap_from_request(d, job_id=None):
                 visual_batches_done += 1
                 visual_images_done += len(image_batch)
                 payload.setdefault("review", {})["mindmap_visual_grounded"] = True
+                visual_batch_results.append({
+                    "batch": batch_index,
+                    "status": "completed",
+                    "imageCount": len(image_batch),
+                    "imageNames": image_names,
+                    "durationSeconds": max(0, int(time.time() - batch_started)),
+                })
             except Exception as e:
-                visual_errors.append(str(e))
+                error_text = str(e)
+                visual_errors.append(f"第 {batch_index} 批：{error_text}")
+                visual_batch_results.append({
+                    "batch": batch_index,
+                    "status": "failed",
+                    "imageCount": len(image_batch),
+                    "imageNames": image_names,
+                    "durationSeconds": max(0, int(time.time() - batch_started)),
+                    "error": error_text[:500],
+                })
                 if job_id:
-                    update_generate_job(job_id, progress=67, step="视觉校准跳过", message=f"第 {batch_index} 批视觉校准超时/失败，已降级继续：{str(e)[:100]}")
-                break
+                    update_generate_job(
+                        job_id,
+                        progress=67,
+                        step="视觉校准",
+                        message=f"第 {batch_index} 批视觉校准超时/失败，已记录并继续下一批：{error_text[:100]}",
+                    )
+        recorded_batches = {safe_int(item.get("batch"), 0) for item in visual_batch_results}
+        for batch_index, image_batch in enumerate(visual_batches, start=1):
+            if batch_index in recorded_batches:
+                continue
+            batch_offset = (batch_index - 1) * MINDMAP_VISUAL_BATCH_SIZE
+            visual_batch_results.append({
+                "batch": batch_index,
+                "status": "not_attempted",
+                "imageCount": len(image_batch),
+                "imageNames": [
+                    str((item or {}).get("name") or (item or {}).get("fileName") or f"image-{batch_offset + idx + 1}")
+                    if isinstance(item, dict) else f"image-{batch_offset + idx + 1}"
+                    for idx, item in enumerate(image_batch)
+                ],
+                "reason": "任务已取消或视觉总耗时预算已用完",
+            })
         review = payload.setdefault("review", {})
         review["mindmap_visual_batches"] = f"{visual_batches_done}/{len(visual_batches)}"
+        review["mindmap_visual_batches_attempted"] = visual_batches_attempted
+        review["mindmap_visual_batch_results"] = sorted(visual_batch_results, key=lambda item: safe_int(item.get("batch"), 0))
         review["mindmap_visual_images_grounded"] = visual_images_done
         if visual_errors:
             review["visual_refine_error"] = "；".join(visual_errors)[-1000:]

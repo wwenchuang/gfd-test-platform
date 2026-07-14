@@ -710,11 +710,29 @@ async function anyVisible(locator) {
         },
       });
       const activeMetrics = agentRunnerProgressMetrics({total: 1, completed: 0, failed: 1, running: 0, timeout: 1800, jobs: [{status: 'failed'}]});
-      return {rerunText: holder.innerText, runnerText: runnerHolder.innerText, activeMetrics};
+      const summaryHolder = document.createElement('div');
+      summaryHolder.innerHTML = renderAgentSummaryArtifact({
+        status: 'FAILED',
+        target: '基础打印新增百度网盘入口',
+        steps: [{step: 'RUN_TASK', status: 'PARTIAL_FAILED', summary: '扩展任务失败'}],
+        artifacts: {
+          summary: {title: '基础打印新增百度网盘入口 - 执行总结', conclusion: '未通过', completed: 12, totalSteps: 20},
+          report: {
+            status: 'failed',
+            successJobs: [{jobId: 'smoke-1'}, {jobId: 'smoke-2'}],
+            failedJobs: [{jobId: 'expanded-1', status: 'failed'}],
+            timeoutJobs: [],
+            runningJobs: [],
+            jobStatuses: [],
+          },
+        },
+      });
+      return {rerunText: holder.innerText, runnerText: runnerHolder.innerText, summaryText: summaryHolder.innerText, activeMetrics};
     });
     if (!/尝试 2 轮/.test(aggregateChecks.rerunText) || !/成功 2/.test(aggregateChecks.rerunText) || !/失败 2/.test(aggregateChecks.rerunText)) throw new Error('Bounded AI repair cycles must use cumulative attempt counts');
     if (!/Runner 真实执行累计/.test(aggregateChecks.runnerText) || !/成功\s*3/.test(aggregateChecks.runnerText) || !/失败\s*1/.test(aggregateChecks.runnerText)) throw new Error('Runner phase history must keep earlier successful execution visible');
     if (aggregateChecks.activeMetrics.timeout !== 0 || aggregateChecks.activeMetrics.timeoutSeconds !== 1800) throw new Error('Runner timeout limit must not be rendered as 1800 timed-out jobs');
+    if (!/部分通过/.test(aggregateChecks.summaryText) || !/编排阻断/.test(aggregateChecks.summaryText) || !/Runner 通过\s*2/.test(aggregateChecks.summaryText) || !/脚本 \/ 环境 \/ 待归因\s*1/.test(aggregateChecks.summaryText)) throw new Error('Final summary must preserve successful smoke outcomes and keep unclassified test failures separate from product failures');
     await page.setViewportSize({width: 1440, height: 900});
     let dialogText = '';
     page.once('dialog', async dialog => {

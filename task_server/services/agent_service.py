@@ -3983,8 +3983,16 @@ def _agent_mm_visual_status(review):
     batches_done = safe_int(match.group(1), 0) if match else 0
     batches_total = safe_int(match.group(2), 0) if match else 0
     error = str(review.get("visual_refine_error") or "").strip()
+    batch_results = [
+        item for item in (review.get("mindmap_visual_batch_results") or [])
+        if isinstance(item, dict)
+    ]
+    batches_attempted = safe_int(
+        review.get("mindmap_visual_batches_attempted"),
+        len([item for item in batch_results if str(item.get("status") or "") != "not_attempted"]),
+    )
     grounded = bool(review.get("mindmap_visual_grounded") or batches_done > 0)
-    attempted = bool(batch_text or grounded or error)
+    attempted = bool(batch_text or grounded or error or batches_attempted)
     if match and batches_total > 0:
         completed = batches_done >= batches_total and not error
     else:
@@ -4004,6 +4012,8 @@ def _agent_mm_visual_status(review):
         "status": status,
         "batchesDone": batches_done,
         "batchesTotal": batches_total,
+        "batchesAttempted": batches_attempted,
+        "batchResults": batch_results[:40],
         "error": error,
     }
 
@@ -4125,6 +4135,8 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
             "visualBatches": visual_batches,
             "visualBatchesDone": visual_status["batchesDone"],
             "visualBatchesTotal": visual_status["batchesTotal"],
+            "visualBatchesAttempted": visual_status["batchesAttempted"],
+            "visualBatchResults": visual_status["batchResults"],
             "visualImagesGrounded": review.get("mindmap_visual_images_grounded") or 0,
             "visualAttempted": visual_attempted,
             "visualCompleted": visual_status["completed"],
@@ -12879,6 +12891,185 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
     return call
 
 
+def _agent_runner_execution_summary(run):
+    """Summarize real Runner outcomes without folding them into Agent orchestration."""
+    artifacts = (run or {}).get("artifacts") or {}
+    report = artifacts.get("report") if isinstance(artifacts.get("report"), dict) else {}
+    job_result = artifacts.get("jobResult") if isinstance(artifacts.get("jobResult"), dict) else {}
+    progress_by_phase = (
+        artifacts.get("jobProgressByPhase")
+        if isinstance(artifacts.get("jobProgressByPhase"), dict)
+        else {}
+    )
+    records = {}
+    phase_fallback = []
+
+    def normalized_status(item, fallback=""):
+        item = item if isinstance(item, dict) else {}
+        status = str(item.get("status") or fallback or "").strip().lower()
+        if item.get("agent_wait_timeout") or status in ("timeout", "timed_out"):
+            return "timeout"
+        if status in ("success", "passed", "pass", "completed", "complete"):
+            return "passed"
+        if status in ("failed", "fail", "error", "not_found"):
+            return "failed"
+        if status in ("cancelled", "canceled"):
+            return "cancelled"
+        if status in ("running", "pending", "queued", "created", "waiting", "assigned"):
+            return "running"
+        return "unknown"
+
+    def add_items(items, fallback_status, source, priority, phase=""):
+        for index, item in enumerate(items or []):
+            if not isinstance(item, dict):
+                continue
+            job_id = str(
+                item.get("jobId")
+                or item.get("job_id")
+                or item.get("newJobId")
+                or ""
+            ).strip()
+            identity = job_id or "::".join(filter(None, [
+                str(item.get("module") or "").strip(),
+                str(item.get("file") or "").strip(),
+                str(item.get("taskName") or item.get("task_name") or "").strip(),
+            ]))
+            key = identity or f"{source}:{phase}:{index}"
+            current = records.get(key)
+            if current and current.get("priority", 0) > priority:
+                continue
+            failure_review = item.get("failureReview") or item.get("failure_review") or {}
+            failure_type = _agent_canonical_failure_type(
+                item.get("failureType") or item.get("failure_type")
+            )
+            if (not failure_type or failure_type == "UNKNOWN") and isinstance(failure_review, dict):
+                failure_type = _agent_failure_type_from_review(failure_review) or failure_type
+            current_failure_type = (current or {}).get("failureType") or ""
+            if failure_type in ("", "UNKNOWN") and current_failure_type not in ("", "UNKNOWN"):
+                failure_type = current_failure_type
+            records[key] = {
+                "jobId": job_id,
+                "status": normalized_status(item, fallback_status),
+                "phase": phase or str(item.get("phase") or "").strip() or (current or {}).get("phase", ""),
+                "failureType": failure_type or (current or {}).get("failureType") or "UNKNOWN",
+                "source": source,
+                "priority": priority,
+            }
+
+    for phase_name, progress in progress_by_phase.items():
+        if not isinstance(progress, dict):
+            continue
+        phase_text = str(progress.get("phase") or phase_name or "runner").strip()
+        if "dry-run" in phase_text.lower() or "dry run" in phase_text.lower():
+            continue
+        jobs = [item for item in (progress.get("jobs") or []) if isinstance(item, dict)]
+        if jobs:
+            add_items(jobs, "", "phase_progress", 10, phase_text)
+            continue
+        timeout_count = _safe_int_local(progress.get("timeoutCount"), 0)
+        if not timeout_count and progress.get("agentWaitTimeout"):
+            timeout_count = _safe_int_local(progress.get("timeout"), 0)
+        phase_fallback.append({
+            "phase": phase_text,
+            "passed": _safe_int_local(progress.get("completed"), 0),
+            "failed": _safe_int_local(progress.get("failed"), 0),
+            "timeout": timeout_count,
+            "running": _safe_int_local(progress.get("running"), 0),
+        })
+
+    add_items(job_result.get("completed"), "success", "job_result", 20)
+    add_items(job_result.get("failed"), "failed", "job_result", 20)
+    add_items(job_result.get("timeout"), "timeout", "job_result", 20)
+    add_items(report.get("jobStatuses"), "", "report", 30)
+    add_items(report.get("successJobs"), "success", "report", 31)
+    add_items(report.get("failedJobs"), "failed", "report", 31)
+    add_items(report.get("timeoutJobs"), "timeout", "report", 32)
+    add_items(report.get("runningJobs"), "running", "report", 31)
+
+    counts = {key: 0 for key in ("passed", "failed", "timeout", "running", "cancelled", "unknown")}
+    failure_counts = {key: 0 for key in ("product", "broken", "unknown")}
+    phase_counts = {}
+    for item in records.values():
+        status = item.get("status") or "unknown"
+        counts[status] = counts.get(status, 0) + 1
+        phase = item.get("phase") or "Runner"
+        phase_row = phase_counts.setdefault(
+            phase,
+            {"phase": phase, "passed": 0, "failed": 0, "timeout": 0, "running": 0, "cancelled": 0, "unknown": 0},
+        )
+        phase_row[status] = phase_row.get(status, 0) + 1
+        if status == "failed":
+            failure_type = item.get("failureType") or "UNKNOWN"
+            if failure_type == "PRODUCT_BUG":
+                failure_counts["product"] += 1
+            elif failure_type in ("SCRIPT_ISSUE", "ENV_ISSUE"):
+                failure_counts["broken"] += 1
+            else:
+                failure_counts["unknown"] += 1
+
+    for row in ([] if records else phase_fallback):
+        for status in ("passed", "failed", "timeout", "running"):
+            value = _safe_int_local(row.get(status), 0)
+            counts[status] += value
+        failure_counts["unknown"] += _safe_int_local(row.get("failed"), 0)
+        phase_counts[row["phase"]] = {
+            "phase": row["phase"],
+            "passed": row["passed"],
+            "failed": row["failed"],
+            "timeout": row["timeout"],
+            "running": row["running"],
+            "cancelled": 0,
+            "unknown": 0,
+        }
+
+    # Older runs may only have smoke/expanded gate totals. They are still real
+    # Runner outcomes and must remain visible in the final report.
+    if not records and not phase_fallback:
+        gate = artifacts.get("runnerExecutionGate") if isinstance(artifacts.get("runnerExecutionGate"), dict) else {}
+        counts["passed"] = (
+            _safe_int_local(gate.get("smokePassedCount"), 0)
+            + _safe_int_local(gate.get("expandedCompletedCount"), 0)
+        )
+        counts["failed"] = (
+            _safe_int_local(gate.get("smokeFailedCount"), 0)
+            + _safe_int_local(gate.get("expandedFailedCount"), 0)
+        )
+        counts["timeout"] = _safe_int_local(gate.get("expandedTimeoutCount"), 0)
+        failure_counts["unknown"] = counts["failed"]
+
+    attempted_count = sum(counts.values())
+    terminal_count = counts["passed"] + counts["failed"] + counts["timeout"] + counts["cancelled"]
+    adverse_count = counts["failed"] + counts["timeout"] + counts["cancelled"]
+    if counts["running"]:
+        outcome, label = "running", "执行中"
+    elif counts["passed"] and adverse_count:
+        outcome, label = "partial", "部分通过"
+    elif adverse_count:
+        outcome, label = "failed", "未通过"
+    elif counts["passed"]:
+        outcome, label = "passed", "通过"
+    else:
+        outcome, label = "not_executed", "未执行"
+    return {
+        "outcome": outcome,
+        "label": label,
+        "hasExecution": attempted_count > 0,
+        "attemptedCount": attempted_count,
+        "terminalCount": terminal_count,
+        "passedCount": counts["passed"],
+        "failedCount": counts["failed"],
+        "productFailedCount": failure_counts["product"],
+        "brokenCount": failure_counts["broken"],
+        "unknownFailedCount": failure_counts["unknown"],
+        "timeoutCount": counts["timeout"],
+        "runningCount": counts["running"],
+        "cancelledCount": counts["cancelled"],
+        "unknownCount": counts["unknown"],
+        "phases": list(phase_counts.values()),
+        "rule": "Runner 真实结果与 Agent 编排终态分别汇总；编排失败不会抹掉已通过的冒烟或扩展任务。",
+    }
+
+
 def _tool_generate_summary(run):
     """生成总结报告。"""
     call = {
@@ -12902,35 +13093,66 @@ def _tool_generate_summary(run):
         timeout_jobs = report.get("timeoutJobs") or []
         running_jobs = report.get("runningJobs") or []
         failed_execution_items = artifacts.get("failedExecutionItems") or _agent_failed_execution_items(run)
-        conclusion = "通过"
-        if failed or failed_jobs or timeout_jobs or failed_execution_items:
-            conclusion = "未通过"
-        elif running_jobs:
-            conclusion = "执行中"
-        elif report.get("status") == "missing":
+        execution = _agent_runner_execution_summary(run)
+        run_status = str(run.get("status") or "").strip().upper()
+        if run_status == "CANCELLED":
+            orchestration_state, orchestration_label = "cancelled", "编排已取消"
+        elif failed or run_status == "FAILED":
+            orchestration_state, orchestration_label = "blocked", "编排阻断"
+        else:
+            orchestration_state, orchestration_label = "completed", "编排完成"
+        orchestration = {
+            "state": orchestration_state,
+            "label": orchestration_label,
+            "runStatus": run_status,
+            "completedStepCount": completed,
+            "failedStepCount": failed,
+            "skippedStepCount": skipped,
+            "failedSteps": [
+                {
+                    "step": step.get("step") or step.get("title") or "",
+                    "status": step.get("status") or "",
+                    "reason": step.get("error") or step.get("summary") or "",
+                }
+                for step in steps
+                if str(step.get("status") or "").upper() in ("FAILED", "PARTIAL_FAILED")
+            ][:8],
+        }
+        conclusion = execution.get("label") or "未执行"
+        if execution.get("outcome") == "passed" and orchestration_state != "completed":
+            conclusion = "部分通过"
+        elif execution.get("outcome") == "not_executed" and report.get("status") == "missing":
             conclusion = "报告缺失"
         next_actions = []
         if failed_execution_items or failed_jobs or timeout_jobs:
             next_actions.extend(["打开失败任务报告或 Runner 日志", "确认是脚本问题后生成修复草稿", "修复后重跑失败用例"])
-        elif running_jobs:
+        elif execution.get("runningCount") or running_jobs:
             next_actions.extend(["等待 Runner 回传执行结果", "刷新 Agent 运行状态"])
         elif report.get("status") == "missing":
             next_actions.extend(["检查 Runner 报告上传", "查看执行中心 job 详情", "必要时重跑任务"])
+        elif orchestration_state == "blocked":
+            next_actions.extend(["查看编排阻断步骤和覆盖门禁", "保留已通过 Runner 结果", "修复生成资产后从阻断点重新验证"])
         else:
             next_actions.extend(["保留本次结果作为回归记录", "如需复盘可查看执行报告链接"])
         summary = {
             "title": f"{run.get('target', 'Agent 任务')} - 执行总结",
             "target": run.get("target", ""),
             "conclusion": conclusion,
+            "execution": execution,
+            "orchestration": orchestration,
             "totalSteps": len(steps),
             "completed": completed,
             "failed": failed,
             "skipped": skipped,
             "matchedCount": matched_count,
             "reportCount": report_count,
-            "failedJobCount": len(failed_execution_items) or len(failed_jobs),
-            "timeoutJobCount": len(timeout_jobs),
-            "runningJobCount": len(running_jobs),
+            "passedJobCount": execution.get("passedCount", 0),
+            "failedJobCount": execution.get("failedCount", 0),
+            "productFailedJobCount": execution.get("productFailedCount", 0),
+            "brokenJobCount": execution.get("brokenCount", 0),
+            "unknownFailedJobCount": execution.get("unknownFailedCount", 0),
+            "timeoutJobCount": execution.get("timeoutCount", 0),
+            "runningJobCount": execution.get("runningCount", 0),
             "failedTasks": [
                 {
                     "jobId": item.get("jobId"),
@@ -12946,7 +13168,11 @@ def _tool_generate_summary(run):
             "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "mode": run.get("mode", ""),
             "riskLevel": run.get("riskLevel", ""),
-            "message": f"Agent 执行完成：{completed}/{len(steps)} 步骤成功，{failed} 失败，{skipped} 跳过",
+            "message": (
+                f"Runner：{execution.get('label')}，通过 {execution.get('passedCount', 0)}，"
+                f"失败 {execution.get('failedCount', 0)}，超时 {execution.get('timeoutCount', 0)}；"
+                f"Agent：{orchestration_label}，{completed}/{len(steps)} 步骤成功"
+            ),
         }
         if _ai_gateway_available():
             try:
