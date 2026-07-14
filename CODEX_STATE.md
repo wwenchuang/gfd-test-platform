@@ -1647,3 +1647,51 @@ git diff --check
 
 - 提交并部署本轮修复后，用同一需求、同一 Figma、`qwen3.6-plus`、固定 OPPO `ecbfd645` 发起完整 Agent 回归。
 - 必须轮询至 Agent 和所有 smoke / remaining Runner 任务终态，再人工复核 YAML、Runner 报告、截图和失败归因。
+
+### 2026-07-14 部署后真实回归：聚焦覆盖收敛与有界第三方落地页
+
+部署 `b2f070f` 后真实验证：
+
+- 8091 / 8088 健康；AI Gateway、Sonic 健康；text / VL 模型均为 `qwen3.6-plus`。
+- `win-runner-01` 在线，能力族为 `qwen3.6`；固定 OPPO `ecbfd645` 在线。任务创建前队列为 0，未选择华为设备。
+- Agent：`agent-1784022300773-a3733e6d`。
+- Figma 仍正确解析 4 页 / 4 图、忽略 0 页。视觉校准按 1 图一批真实尝试 4 / 4 批，每批约 90 秒；4 批均因 qwen3.6-plus 超时失败，0 / 4 完成。批次结果、图片名、耗时和错误均被保留；视觉仍为软参考，没有阻断后续生成。
+- PLAN 由平台 MM skills 生成 8 个 AI 业务分支；路由仍为 `new_requirement_source / generate_draft`。
+- 终态：`FAILED / GENERATE_YAML`。没有创建 Runner 任务，OPPO 和华为均未下发。
+
+失败根因：
+
+- 初始可执行规划为 3 条 executable，缺 `REQ-002` 照片打印和 `REQ-003` 扫描复印，另有 3 条未决自动候选。
+- 最终覆盖收敛在线触发，但把 6 条自动候选和 13 条 manual 全部再次送给模型。模型只返回 3 条 executable + 2 条 manual，却在 review 中声称“所有输入候选均已终结”；平台正确识别遗漏并继续阻断。
+- 生成的文档、位置、照片、扫描 4 个 YAML 均通过静态校验，任务级 scorer 原始评分均为 100；照片 / 扫描需求映射分别正确命中 `REQ-002 / REQ-003`，不是 YAML 结构或需求串线问题。它们因 AI 未返回分类而保留为 `needs_review`。
+- `TC-005` 已被 AI 正确规划为“点击百度网盘后只等待授权页 / H5 / 文件列表任一首个可见终态”，但旧 `_case_manual_block_reason` 只要看见“授权弹窗”就再次降为 manual，和平台允许的有界第三方入口策略冲突。
+
+第二轮通用修复：
+
+- 最终收敛只发送当前 executable、未决自动候选，以及每个缺失需求点最多 1 个 manual 备选；本次真实结构从 19 条缩为 8 条（6 自动 + 2 缺口备选），其余 11 条人工项由平台原样保留。
+- AI 第二轮漏回既有 executable 时保留上一轮已通过的可信路径；漏回未决候选时仍保持 `needs_review`，不得自动升级。
+- requirement ID 使用规范化 `REQ-*` 精确匹配，候选只写 `coverage: REQ-002` 也能追溯到完整需求点，不要求重复中文全文。
+- requirement analyzer 不再把缺少 Figma 帧擅自追加到需求点正文，证据缺口放入 questions / missing_inputs。
+- executable planner 明确：需求是验收依据，Figma / 截图 / 页面知识是软参考。候选已有真实文字路径、可信兄弟基线且只做固定设备可见性检查时，应交给 Runner 验证；入口不存在属于产品断言失败，不能仅因缺对应设计帧提前转 manual。
+- 确定性人工闸门允许“可信基线路径 + 点击入口 + 只等待多个合法首个可见终态 + 不输入账号 / 验证码、不确认授权、不选择文件”的有界检查；深层授权、凭据和文件操作仍明确阻断。
+
+线上真实产物离线重放：
+
+- focus 为 8 / 19，最终 executable 为 `TC-001..TC-005`，需求覆盖 5 / 5，未决自动候选 0。
+- `TC-005` 通过自动化拆分闸门；深层授权 / 文件操作测试仍被单测阻断。
+- 照片和扫描 YAML 的“回到首页”动作由现有通用静态 repair 规范化；最终 5 个 YAML 均为 static executable、scorer 100、0 warning、0 坐标。
+- 未写入或修改历史 YAML。
+
+已验证：
+
+```bash
+npm test
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+待完成：
+
+- 提交并部署第二轮通用修复。
+- 用同一需求、同一 Figma、固定 OPPO `ecbfd645` 再跑完整 Agent；只有 Agent、smoke 和 remaining Runner 全部到终态，并人工检查真实报告 / 截图后才能给出最终结论。

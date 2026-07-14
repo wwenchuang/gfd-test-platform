@@ -377,6 +377,17 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "真实文案或明确页面区域" in planner_prompt,
         "AI executable planner must re-evaluate prior manual candidates and support bounded state-variant outcomes with explicit requirement mapping",
     )
+    require(
+        "Figma、截图和页面知识是软参考" in planner_prompt
+        and "运行时入口不存在属于产品断言失败" in planner_prompt
+        and "planningContext.focus" in planner_prompt,
+        "Final executable planning must test explicit visible requirements without turning missing sibling Figma frames into a hard gate",
+    )
+    requirement_prompt = (ROOT / "ai_skills" / "prompts" / "requirement_analyzer.v1.md").read_text(encoding="utf-8")
+    require(
+        "不要擅自在需求点正文后追加“待确认 / 需补充 UI 证据”" in requirement_prompt,
+        "Requirement analysis must keep missing visual evidence separate from the acceptance requirement itself",
+    )
     automation_prompt = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
     require(
         "任一合法终态" in automation_prompt
@@ -556,6 +567,32 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "coordinate" not in promoted_yaml.lower(),
         "State-variant reachability must convert into visible-text Midscene actions without coordinates",
     )
+    bounded_external = {
+        **promoted,
+        "steps": [
+            "等待首页",
+            "进入资料页",
+            "点击外部资料入口",
+            "等待授权页、登录页或文件选择页任一合法页面可见",
+        ],
+        "assertions": ["授权页、登录页或文件选择页之一可见，且无白屏或崩溃"],
+        "requirementRefs": ["REQ-002 点击后进入授权页或内容列表"],
+        "ai_case_plan": {
+            **(promoted.get("ai_case_plan") or {}),
+            "baselineGrounded": True,
+            "pathPlanApplied": True,
+        },
+    }
+    require(
+        yaml_service._case_manual_block_reason(bounded_external) == "",
+        "A grounded external-entry check that stops at the first observable state must not be reclassified as manual merely for mentioning authorization",
+    )
+    deep_external = json.loads(json.dumps(bounded_external, ensure_ascii=False))
+    deep_external["steps"].extend(["点击同意授权", "输入账号和验证码", "选择文件"])
+    require(
+        yaml_service._case_manual_block_reason(deep_external),
+        "Deep authorization, credential, or file operations must remain blocked from automatic Runner execution",
+    )
 
     swapped_payload = {
         "analysis": {"requirement_points": [
@@ -633,6 +670,132 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and incomplete_portfolio.get("unresolvedAutomaticCount") == 1
         and any("REQ-003" in point for point in incomplete_portfolio.get("missingRequirementPoints") or []),
         "Executable portfolio audit must trigger final AI convergence for unresolved requirement coverage",
+    )
+
+    convergence_payload = {
+        "analysis": {"requirement_points": ["REQ-001 文档入口可见", "REQ-002 照片入口可见"]},
+        "cases": [
+            {
+                "case_id": "TC-101",
+                "title": "文档入口可见",
+                "coverage": "REQ-001",
+                "requirementRefs": ["REQ-001 文档入口可见"],
+                "executionLevel": "executable",
+                "steps": ["等待首页", "点击文档打印", "等待百度网盘可见"],
+                "assertions": ["百度网盘可见"],
+                "ai_case_plan": {
+                    "baselineId": "base-nav",
+                    "baselineGrounded": True,
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击文档打印", "等待百度网盘可见"],
+                    "assertionTarget": "百度网盘可见",
+                    "batch": "smoke",
+                },
+            },
+            {
+                "case_id": "TC-102",
+                "title": "照片入口可见",
+                "coverage": "REQ-002",
+                "requirementRefs": ["REQ-002 照片入口可见"],
+                "executionLevel": "needs_review",
+                "steps": ["等待首页", "点击照片打印", "等待百度网盘可见"],
+                "assertions": ["百度网盘可见"],
+            },
+        ],
+        "manual_cases": [
+            {
+                "case_id": "MC-101",
+                "title": "照片入口人工备选",
+                "coverage": "REQ-002",
+                "steps": ["进入照片打印", "观察百度网盘入口"],
+                "assertions": ["百度网盘可见"],
+            },
+            {
+                "case_id": "MC-102",
+                "title": "文档深层人工项",
+                "coverage": "REQ-001",
+                "steps": ["进入第三方账号深层流程"],
+                "assertions": ["人工确认"],
+            },
+        ],
+    }
+    convergence_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        convergence_payload,
+        {"min_automation_cases": 2},
+    )
+    focused_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_convergence_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during convergence replay")
+            focused_requests.append(request)
+            return {
+                # Intentionally omit TC-101: the platform must preserve an already-approved executable.
+                "cases": [{
+                    "caseId": "TC-102",
+                    "baselineId": "base-nav",
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                    "assertionTarget": "百度网盘入口可见",
+                    "requirementRefs": ["REQ-002 照片入口可见"],
+                    "executableReason": "显式需求可由固定设备上的可见文字短链路验证",
+                    "batch": "remaining",
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [{"caseId": "MC-101", "reason": "保留人工备选"}],
+                "review": {"planning_reason": "只处理当前覆盖缺口"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_convergence_planner
+        focused_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "入口覆盖收敛",
+            "基础打印",
+            convergence_payload,
+            [{
+                "id": "base-nav",
+                "title": "可信兄弟入口导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "首页 -> 打印入口",
+            }],
+            {"smokeCount": 2},
+            planning_context={"pass": "coverage_convergence", "portfolioAudit": convergence_audit},
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    focused_ids = {item.get("case_id") for item in focused_requests[0].get("cases") or []}
+    require(
+        focused_ids == {"TC-101", "TC-102", "MC-101"}
+        and (focused_requests[0].get("planningContext") or {}).get("focus", {}).get("fullCandidateCount") == 4,
+        "Final convergence must send current automatic candidates plus one gap-matched manual alternate instead of the full manual backlog",
+    )
+    focused_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(convergence_payload, focused_plan)
+    focused_by_id = {item.get("case_id"): item for item in focused_applied.get("cases") or []}
+    require(
+        focused_by_id["TC-101"].get("executionLevel") == "executable"
+        and focused_by_id["TC-102"].get("executionLevel") == "executable"
+        and focused_applied.get("review", {}).get("executable_yaml_plan", {}).get("preserved_executable_count") == 1,
+        "A focused convergence omission must preserve a previously approved executable while allowing AI to close the real gap",
+    )
+    require(
+        any(item.get("case_id") == "MC-102" and item.get("executionLevel") == "manual" for item in focused_applied.get("manual_cases") or [])
+        and focused_applied.get("review", {}).get("executable_yaml_plan", {}).get("outside_focus_preserved_count") == 1,
+        "Unrelated manual candidates outside the convergence focus must remain manual without bloating the model request",
+    )
+    require(
+        ai_skill_service.executable_yaml_portfolio_audit(focused_applied, {"min_automation_cases": 2}).get("ok"),
+        "Focused AI convergence must be able to close explicit requirement coverage without weakening the portfolio gate",
+    )
+    omitted_gap_plan = json.loads(json.dumps(focused_plan, ensure_ascii=False))
+    omitted_gap_plan["cases"] = []
+    omitted_gap = ai_skill_service.apply_executable_yaml_plan_to_payload(convergence_payload, omitted_gap_plan)
+    omitted_by_id = {item.get("case_id"): item for item in omitted_gap.get("cases") or []}
+    require(
+        omitted_by_id["TC-101"].get("executionLevel") == "executable"
+        and omitted_by_id["TC-102"].get("executionLevel") == "needs_review"
+        and not ai_skill_service.executable_yaml_portfolio_audit(omitted_gap, {"min_automation_cases": 2}).get("ok"),
+        "Focused convergence must never promote an unresolved candidate that AI omitted",
     )
 
     unsafe_replan = json.loads(json.dumps(replan, ensure_ascii=False))

@@ -1389,6 +1389,10 @@ def case_matches_requirement(case, requirement_point):
     point = str(requirement_point or "").strip()
     if not point:
         return False
+    case_requirement_ids = set(_planner_requirement_ids(text))
+    point_requirement_ids = set(_planner_requirement_ids(point))
+    if case_requirement_ids and point_requirement_ids and case_requirement_ids.intersection(point_requirement_ids):
+        return True
     point_core = re.sub(r"^REQ[-_ ]?\d+\s*[:：.-]?\s*", "", point, flags=re.I).strip()
     return point in text or (point_core and point_core in text)
 
@@ -2851,6 +2855,118 @@ def executable_yaml_portfolio_audit(payload, targets=None):
     }
 
 
+def _focus_executable_convergence_candidates(
+    normalized,
+    automatic_records,
+    manual_records,
+    planning_context,
+):
+    """Limit the final AI pass to the current portfolio and one alternate per gap."""
+    context = copy.deepcopy(planning_context) if isinstance(planning_context, dict) else {}
+    audit = context.get("portfolioAudit") if isinstance(context.get("portfolioAudit"), dict) else {}
+    if str(context.get("pass") or "").strip() != "coverage_convergence":
+        automatic = [item["compact"] for item in automatic_records]
+        manual = [item["compact"] for item in manual_records]
+        return automatic, manual, context, {
+            "enabled": False,
+            "fullCandidateCount": len(automatic) + len(manual),
+            "focusedCandidateCount": len(automatic) + len(manual),
+            "focusedCandidateIds": [item.get("case_id") for item in automatic + manual],
+            "outsideFocusCandidateIds": [],
+        }
+
+    focus_ids = {
+        str(item or "").strip()
+        for item in (
+            list(audit.get("executableCaseIds") or [])
+            + list(audit.get("unresolvedAutomaticCaseIds") or [])
+        )
+        if str(item or "").strip()
+    }
+    focused_automatic = [
+        item for item in automatic_records
+        if not focus_ids or str(item["compact"].get("case_id") or "").strip() in focus_ids
+    ]
+    if not focused_automatic:
+        focused_automatic = list(automatic_records)
+
+    missing_points = normalize_text_list(audit.get("missingRequirementPoints"))
+    target_count = max(0, safe_int(audit.get("targetExecutableCount"), 0))
+    executable_count = max(0, safe_int(audit.get("executableCount"), 0))
+    gap_count = max(0, target_count - executable_count)
+    focused_manual = []
+    selected_manual_ids = set()
+
+    # One alternate per uncovered requirement keeps the final request bounded while
+    # still allowing AI to recover a better candidate than the unresolved automatic one.
+    focus_points = missing_points
+    if not focus_points and gap_count:
+        analysis = normalized.get("analysis") if isinstance(normalized.get("analysis"), dict) else {}
+        focus_points = normalize_text_list(analysis.get("requirement_points"))[:gap_count]
+    for point in focus_points:
+        for record in manual_records:
+            candidate_id = str(record["compact"].get("case_id") or "").strip()
+            if candidate_id in selected_manual_ids:
+                continue
+            if case_matches_requirement(record["raw"], point):
+                focused_manual.append(record)
+                selected_manual_ids.add(candidate_id)
+                break
+
+    automatic = [item["compact"] for item in focused_automatic]
+    manual = [item["compact"] for item in focused_manual]
+    full_ids = [
+        str(item["compact"].get("case_id") or "").strip()
+        for item in automatic_records + manual_records
+        if str(item["compact"].get("case_id") or "").strip()
+    ]
+    focused_ids = [
+        str(item.get("case_id") or "").strip()
+        for item in automatic + manual
+        if str(item.get("case_id") or "").strip()
+    ]
+    focus = {
+        "enabled": True,
+        "policy": "preserve_executable_resolve_gaps_one_manual_alternate_per_requirement",
+        "fullCandidateCount": len(automatic_records) + len(manual_records),
+        "focusedCandidateCount": len(automatic) + len(manual),
+        "focusedAutomaticCount": len(automatic),
+        "focusedManualCount": len(manual),
+        "focusedCandidateIds": focused_ids,
+        "outsideFocusCandidateIds": [item for item in full_ids if item not in set(focused_ids)],
+        "missingRequirementPoints": missing_points[:12],
+        "targetExecutableCount": target_count,
+        "currentExecutableCount": executable_count,
+    }
+    context["focus"] = focus
+    return automatic, manual, context, focus
+
+
+def _existing_executable_plan_item(case, case_id, title):
+    """Rehydrate a previously approved path when a focused convergence omits it."""
+    case = case if isinstance(case, dict) else {}
+    case_plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    assertions = normalize_text_list(case.get("assertions") or case.get("expected_result"))
+    preconditions = normalize_text_list(case.get("preconditions"))
+    return {
+        "caseId": case_id,
+        "title": title,
+        "baselineId": str(case_plan.get("baselineId") or "").strip(),
+        "baselineGrounded": case_plan.get("baselineGrounded") is True,
+        "precondition": str(case_plan.get("precondition") or (preconditions[0] if preconditions else "")).strip(),
+        "flow": normalize_text_list(case_plan.get("flow") or case.get("steps"))[:8],
+        "assertionTarget": str(case_plan.get("assertionTarget") or (assertions[0] if assertions else "")).strip(),
+        "requirementRefs": normalize_text_list(
+            case.get("requirementRefs") or case.get("requirement_refs") or case.get("coverage")
+        )[:8],
+        "executableReason": str(
+            case_plan.get("executableReason") or case.get("automation_reason") or "保留上一轮已通过门禁的可执行短链路"
+        ).strip(),
+        "batch": case_plan.get("batch") or ("smoke" if is_smoke_case(case) else "remaining"),
+        "preservedFromInitialPlan": True,
+    }
+
+
 def _ground_executable_plan_items(items, candidate_by_id, candidate_by_title):
     grounded = []
     rejected = 0
@@ -2888,20 +3004,31 @@ def call_skill_executable_yaml_planner(
 ):
     """Plan executable cases before YAML conversion. Fallback preserves current payload."""
     normalized = normalize_cases_payload(payload)
-    automatic_candidates = [
-        _compact_case_for_plan(case, idx, origin_level="automatic")
+    automatic_records = [
+        {"raw": case, "compact": _compact_case_for_plan(case, idx, origin_level="automatic")}
         for idx, case in enumerate(normalized.get("cases") or [])
     ]
-    manual_candidates = [
-        _compact_case_for_plan(case, idx, origin_level="manual")
+    manual_records = [
+        {"raw": case, "compact": _compact_case_for_plan(case, idx, origin_level="manual")}
         for idx, case in enumerate(normalized.get("manual_cases") or [])
     ]
+    automatic_candidates, manual_candidates, planning_context, convergence_focus = (
+        _focus_executable_convergence_candidates(
+            normalized,
+            automatic_records,
+            manual_records,
+            planning_context,
+        )
+    )
     candidates = automatic_candidates + manual_candidates
     trace = {
         "enabled": True,
         "fallback": False,
         "planning_pass": str((planning_context or {}).get("pass") or "initial"),
         "candidate_count": len(candidates),
+        "full_candidate_count": len(automatic_records) + len(manual_records),
+        "focused_candidate_count": len(candidates),
+        "convergence_focus": bool(convergence_focus.get("enabled")),
         "automatic_candidate_count": len(automatic_candidates),
         "manual_candidate_count": len(manual_candidates),
         **_model_config_trace(model_config),
@@ -2911,6 +3038,9 @@ def call_skill_executable_yaml_planner(
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "planningContext": planning_context if isinstance(planning_context, dict) else {},
+            "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
+            "convergenceFocus": convergence_focus,
         }
     compact_baselines = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])]
     allowed_baseline_ids = {str(item.get("id") or "").strip() for item in compact_baselines if str(item.get("id") or "").strip()}
@@ -2980,12 +3110,17 @@ def call_skill_executable_yaml_planner(
                 (normalized.get("analysis") or {}).get("requirement_points")
             )[:12],
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
+            "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
+            "convergenceFocus": convergence_focus,
         }
     except Exception as exc:
         trace.update({"fallback": True, "error": str(exc)})
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "planningContext": planning_context if isinstance(planning_context, dict) else {},
+            "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
+            "convergenceFocus": convergence_focus,
         }
 
 
@@ -3030,6 +3165,13 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     allowed_baseline_ids = {
         str(item).strip() for item in (plan.get("allowedBaselineIds") or []) if str(item or "").strip()
     }
+    planning_context = plan.get("planningContext") if isinstance(plan.get("planningContext"), dict) else {}
+    convergence_pass = str(planning_context.get("pass") or "").strip() == "coverage_convergence"
+    focused_candidate_ids = {
+        str(item or "").strip()
+        for item in (plan.get("focusedCandidateIds") or [])
+        if str(item or "").strip()
+    }
     output_cases = []
     manual_cases = []
     candidate_records = [
@@ -3056,6 +3198,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     promotion_guard_failed_count = 0
     requirement_ref_guard_count = 0
     path_mapping_guard_count = 0
+    preserved_executable_count = 0
+    outside_focus_preserved_count = 0
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
         case = copy.deepcopy(record["case"])
@@ -3066,19 +3210,35 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         if classification:
             level, item = classification
         else:
-            fallback_level = "manual" if origin_level == "manual" else "needs_review"
-            level, item = (fallback_level, {
-                "caseId": case_id,
-                "title": title,
-                "reason": (
-                    "AI 可执行规划未覆盖原人工候选，保留人工级别"
-                    if origin_level == "manual"
-                    else "AI 可执行规划未覆盖该候选，按安全策略进入复核"
-                ),
-            })
-            unmentioned_count += 1
-            if origin_level == "manual":
-                unmentioned_manual_count += 1
+            current_level = str(case.get("executionLevel") or case.get("execution_level") or "").strip().lower()
+            outside_focus = bool(convergence_pass and focused_candidate_ids and case_id not in focused_candidate_ids)
+            if convergence_pass and current_level == "executable":
+                level = "executable"
+                item = _existing_executable_plan_item(case, case_id, title)
+                preserved_executable_count += 1
+                if not outside_focus:
+                    unmentioned_count += 1
+            else:
+                fallback_level = "manual" if origin_level == "manual" else "needs_review"
+                level, item = (fallback_level, {
+                    "caseId": case_id,
+                    "title": title,
+                    "reason": (
+                        "最终收敛未选中该人工候选，保留人工级别"
+                        if outside_focus and origin_level == "manual"
+                        else (
+                            "AI 可执行规划未覆盖原人工候选，保留人工级别"
+                            if origin_level == "manual"
+                            else "AI 可执行规划未覆盖该候选，按安全策略进入复核"
+                        )
+                    ),
+                })
+                if outside_focus:
+                    outside_focus_preserved_count += 1
+                else:
+                    unmentioned_count += 1
+                    if origin_level == "manual":
+                        unmentioned_manual_count += 1
 
         baseline_id = str(item.get("baselineId") or "").strip()
         baseline_grounded = bool(
@@ -3232,6 +3392,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "promotion_guard_failed_count": promotion_guard_failed_count,
         "requirement_ref_guard_count": requirement_ref_guard_count,
         "path_mapping_guard_count": path_mapping_guard_count,
+        "preserved_executable_count": preserved_executable_count,
+        "outside_focus_preserved_count": outside_focus_preserved_count,
+        "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
         "path_plan_applied_count": sum(

@@ -2182,6 +2182,60 @@ def _case_execution_text(case: dict) -> str:
     return " ".join(str(value or "") for value in values)
 
 
+_EXTERNAL_DEEP_ACTION_TERMS = (
+    "输入账号", "输入密码", "输入验证码", "确认授权", "同意授权", "点击允许",
+    "选择文件", "选择照片", "下载文件", "上传文件", "删除文件",
+)
+
+
+def _case_has_deep_external_action(case: dict) -> bool:
+    context = _case_execution_text(case).lower()
+    if not any(term in context for term in ("授权", "第三方", "网盘", "外部", "h5")):
+        return False
+    for step in normalize_text_list((case or {}).get("steps")):
+        text = str(step or "").strip()
+        if text.startswith(("等待", "观察", "检查", "验证")):
+            continue
+        if any(term in text for term in _EXTERNAL_DEEP_ACTION_TERMS):
+            return True
+    return False
+
+
+def _case_is_bounded_external_landing_check(case: dict) -> bool:
+    """Allow a grounded click that stops at the first observable external state."""
+    case = case if isinstance(case, dict) else {}
+    case_plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    if not (case_plan.get("baselineGrounded") and case_plan.get("pathPlanApplied")):
+        return False
+    if not normalize_text_list(case.get("requirementRefs") or case.get("requirement_refs")):
+        return False
+    steps = normalize_text_list(case.get("steps"))
+    if len(steps) < 2:
+        return False
+    click_indexes = [
+        index for index, step in enumerate(steps)
+        if "点击" in step and any(term in step for term in ("入口", "按钮", "网盘", "第三方"))
+    ]
+    if not click_indexes:
+        return False
+    tail = steps[click_indexes[-1] + 1:]
+    if not tail or any(not str(step).strip().startswith(("等待", "观察", "检查")) for step in tail):
+        return False
+    if _case_has_deep_external_action(case):
+        return False
+    outcome_text = " ".join(normalize_text_list(
+        case.get("assertions") or case.get("expected_result") or case.get("expected")
+    ))
+    if not any(term in outcome_text for term in ("任一", "之一", "任意")):
+        return False
+    observable_states = (
+        "授权", "登录", "H5", "网页", "文件选择", "内容列表", "文件列表", "空态", "系统弹窗",
+    )
+    if sum(1 for term in observable_states if term in outcome_text) < 2:
+        return False
+    return any(term in outcome_text for term in ("无白屏", "不白屏", "无崩溃", "不崩溃", "无Crash", "不闪退"))
+
+
 def _case_manual_block_reason(case: dict) -> str:
     """判断用例是否不适合直接转成 Runner YAML。
 
@@ -2191,6 +2245,7 @@ def _case_manual_block_reason(case: dict) -> str:
     """
     text = _case_execution_text(case)
     compact = re.sub(r"\s+", "", text).lower()
+    bounded_external_landing = _case_is_bounded_external_landing_check(case)
     def has_any(*terms: str) -> bool:
         return any(str(term).lower() in compact for term in terms)
 
@@ -2198,7 +2253,9 @@ def _case_manual_block_reason(case: dict) -> str:
         return "依赖账号作品数据、空态或分页状态，当前 Runner 不能保证测试数据一致"
     if has_any("无结果", "空结果", "未找到相关模型", "兜底提示", "降级走搜索引擎", "冷门测试词", "无意义字符"):
         return "依赖搜索/推荐算法返回特定空结果或兜底状态，需要造数或 Mock 后再自动化"
-    if has_any("权限弹窗", "权限申请", "授权弹窗", "麦克风权限", "相册权限"):
+    if _case_has_deep_external_action(case):
+        return "包含第三方深层授权、凭据或文件操作，只允许人工准备和验证"
+    if has_any("权限弹窗", "权限申请", "授权弹窗", "麦克风权限", "相册权限") and not bounded_external_landing:
         return "依赖系统权限弹窗是否首次出现，Runner 当前环境无法保证可复现"
     if has_any("四维评估", "匹配度", "评估结果", "评估明细", "确认设计图页"):
         return "依赖模型评估结果或生成链路中间态，耗时和结果不稳定，建议作为人工/待准备用例"
@@ -6805,6 +6862,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
                 portfolio_after = executable_yaml_portfolio_audit(payload, planned_generation_targets)
                 review = payload.setdefault("review", {})
+                review["needs_review_cases"] = convergence_plan.get("needs_review_cases") or []
+                review["draft_cases"] = convergence_plan.get("draft_cases") or []
                 review["executable_yaml_plan_initial"] = initial_plan_review
                 review["executable_yaml_convergence"] = {
                     "attempted": True,

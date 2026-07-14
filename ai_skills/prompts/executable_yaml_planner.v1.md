@@ -30,17 +30,19 @@
 15. 每条分类都要返回 `requirementRefs`，逐字引用 `analysis.requirement_points` 中对应的需求 ID/文本。原 manual 候选升级后必须保留需求映射，不能只靠标题猜测覆盖。
 16. `sourceEvidence.executionContext` 只说明本次 Runner/设备约束。固定单设备时，只能规划当前设备可执行的一条通用文案/布局检查；其他屏幕形态进入 `manual_cases`。不得根据 deviceId 猜测屏幕尺寸，也不得规划第二台设备。
 17. `requirementRefs` 必须保留输入候选 `coverage / requirementRefs` 的原始 `REQ-*` 边界，不得把照片、扫描、文档等不同候选的需求 ID 互换。一个候选确实同时覆盖多个需求点时，必须能从它自己的步骤和断言中逐项找到证据。
+18. Figma、截图和页面知识是软参考，不是生成可执行测试的必备凭证。原始需求已明确可见文案/入口，输入候选已有当前业务分支的真实文字路径，并且 `selectedBaselines` 提供可信兄弟分支的导航/等待模式时，可以把“仅验证当前设备上入口或文案是否可见”的短链路放入 `cases`；运行时入口不存在属于产品断言失败，不能仅因缺少该兄弟页面的 Figma 帧就提前改成 manual。不得借此臆造候选中没有的父页面、坐标、深层第三方状态或同屏位置关系。
 
 ## 最终覆盖收敛
 
 当 `planningContext.pass=coverage_convergence` 时，这是完整回归进入 YAML 转换前唯一一次最终收敛：
 
-1. `planningContext.portfolioAudit` 会列出尚未被 executable 覆盖的显式需求点、当前 executable 和未决自动候选。优先保留已有 executable 短链路，并从同需求点候选中补足缺口。
-2. 本轮必须把每个输入候选恰好终结为 `cases` 或 `manual_cases`，不得遗漏，也不要继续返回 `needs_review_cases / draft_cases`。证据不足、重复、低价值或深层外部状态直接保留/转为 manual，并写明原因。
+1. `planningContext.portfolioAudit` 会列出尚未被 executable 覆盖的显式需求点、当前 executable 和未决自动候选。`planningContext.focus` 表示平台为本轮保留的聚焦候选；未进入 focus 的无关人工项由平台原样保留，不要求你重复处理。优先保留已有 executable 短链路，并从同需求点候选中补足缺口。
+2. 本轮必须把输入中的每个聚焦候选恰好终结为 `cases` 或 `manual_cases`，不得遗漏，也不要继续返回 `needs_review_cases / draft_cases`。证据不足、重复、低价值或深层外部状态直接保留/转为 manual，并写明原因；不得在 `review` 中声称“全部终结”却只返回部分 caseId。
 3. 不要因为已达到数量就遗漏显式需求点。`cases` 应在平台 3/5/8 上限内形成覆盖最完整的最小组合；可以用一个候选同时覆盖多个真实验收点，但不得伪造映射。
 4. 原人工候选如果把“首个可见落地页”与登录、授权确认、文件选择等深层步骤混在一起，可以重写为同一需求下的有界短链路：只点击入口，等待真实可见的任一合法首个终态，然后结束。深层步骤仍留在 manual。
 5. 多页面/多设备文案和布局要求可以在当前固定设备上收敛为一条不绑定机型的可复用可见文字检查；未执行的其他设备形态继续留在 manual。不得选择第二台设备。
 6. 收敛不是放宽门禁。原 manual 候选升级仍必须返回允许的 `baselineId`、明确 `precondition`、至少两步 `flow`、真实可见 `assertionTarget` 和原始 `requirementRefs`；否则平台会降级并阻断完整回归。
+7. 不要把“设计帧未覆盖该兄弟页面”本身当成 manual 理由。对于需求明确、候选路径完整、只检查真实可见文字且可复用可信兄弟基线的固定单设备短链路，应让 Runner 验证产品是否实现；只有路径/终态无法从候选与基线落地，或需要账号、网络控制、破坏性操作、第二台设备时才转 manual。
 
 ## 输出 JSON
 
