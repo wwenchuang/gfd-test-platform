@@ -28,6 +28,60 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-14 真实 Runner 结果闭环、AI 分层决策与累计可观测性修复
+
+部署 `e08ff7a` 后，使用同一完整需求继续线上验证：
+
+- Agent：`agent-1783996803174-72c6fae8`。
+- 参数固定为 `scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，App 为 `小白学习打印 / com.xbxxhz.box`。
+- 线上 `8091 / 8088` 健康，AI Gateway、Sonic 健康，文本/视觉模型为 `qwen3.6-plus`；只有 1 个 Windows Runner 在线。所有正式执行和修复重跑都在 `win-runner-01 / ecbfd645（OPPO PHM110）` 串行完成，没有选择或并发第二台手机。
+- Figma parser 保持原实现，解析为 4 页/4 图。全部 4 张图进入视觉 AI 批次，qwen3.6-plus 在 120 秒超时，状态为 failed；平台按软参考处理，没有作为硬门禁，也没有把部分返回的 asset 误计成 Figma 只有 1 张。
+- Agent 最终为 `FAILED / RERUN`，不是“全部没有成功”。真实结果如下：
+  - 首批冒烟 `3/3` 成功：`job_1783997814495_00002`、`job_1783997923650_00004`、`job_1783998016962_00006`。
+  - remaining 扩展 3 条均在同一 OPPO 执行后失败：`job_1783998179648_00008` 已到百度网盘文件列表但被冗余模糊等待拖死；`job_1783998349285_00011` 停在照片打印父页面，没有进入 `5寸照片/一寸照` 叶子页；`job_1783998492174_00014` 是跨三页长链路超时。
+  - AI 使用原 YAML、Runner 日志、Midscene 报告关键帧和可信 Top3 基线生成 3 条修复草稿，并继续固定 OPPO 串行验证：`job_1783998907297_00018` 文档链路修复成功；`job_1783999008879_00019` 仍停在错误的照片打印父页面；`job_1783999116965_00020` 因 AI 生成非法 `aiScroll(direction=horizontal, distance=medium)` 被 Midscene schema 拒绝。
+- 当前 Runner/Midscene 产物没有独立上传 mp4 录屏，因此平台没有伪报“使用了完整录屏”；失败报告的时序关键帧、截图、日志和终态页面已经实际送入 AI。后续若 Runner 提供视频产物，应从视频抽取关键帧并纳入同一有界证据包，而不是把整段视频无差别塞给模型。
+
+根因与设计判断：
+
+1. executable planner 已经把 7 条候选分成 3 条 executable、1 条 needs_review、3 条 manual，但旧应用逻辑只消费 executable 的路径计划，忽略另外三组；后续静态 scorer 又把未应用的候选提升，导致 AI 明明判断不应自动执行的长链路仍进入 Runner。
+2. Figma 叶子页面能证明目标控件同屏存在，但不能单独证明从父页面如何导航。照片链路需要由 AI 组合“需求范围 + Figma 同屏事实 + 已成功 6 寸照片基线 + 当前失败关键帧”，不能把 Figma frame 名直接当真实路径，也不能为 `5寸照片` 写单点硬编码。
+3. AI repair 输出只经过网关自报校验，服务端没有独立复核 Midscene 子参数，因而非法 `aiScroll` 浪费了一次约 118 秒的真实设备执行。
+4. 失败分类用简单关键词看到断言里的“无遮挡”就误判 popup/overlay；最终失败分析又优先读取过期 execution precheck，覆盖了最新 Runner 的明确脚本证据，错误得到 `ENV_ISSUE`，阻止了受限第二轮 AI 纠偏。
+5. 前端实时轨迹按每个串行 job/phase 重置 `0 成功 / 1 运行`，最终只剩最后一个失败 phase，淹没了首批 `3/3` 和修复 `1/3` 的成功事实；`timeout=1800` 还同时承担等待上限和超时数量语义。
+
+本轮通用修复：
+
+- AI executable planner 成功返回后，其四组分类成为候选执行分层的权威语义结果；同一候选冲突时采用 `manual > draft > needs_review > executable` 的保守优先级，未提及候选进入 needs_review。manual 从 Runner 候选池移出，最终 smoke selector 只接收 executable，平台 scorer 和覆盖门禁仍独立保留。
+- 需求分析、场景设计、executable planning、失败分析和修复统一接收有界 `sourceEvidence`。Figma 继续复用原 parser 的 4 页/4 图，只作为“同一 frame 内可见控件/文案/布局”的 AI 软证据；导航路径、入口归属和跨页关系必须结合需求或可信成功基线推断。
+- 修复策略优先从成功基线恢复父页面路径，再用当前失败关键帧定位分叉点；失败草稿不会进入成功基线。`5寸照片` 可参考同分支 `6寸照片` 的成功父级导航，但不复制无关叶子断言。
+- 新增 Midscene 子参数契约校验，生成 YAML、AI 修复草稿和服务端重跑前都独立检查 `aiScroll`：方向仅允许 `down/up/right/left`，distance 必须为正数，scrollType 仅支持 `singleAction`。动作 schema 失败统一归为 `SCRIPT_ISSUE / YAML 动作参数不兼容`，不会下发 Runner。
+- 失败归因只把明确的正向弹窗/遮挡证据视为 overlay；`无遮挡/未出现弹窗/no popup` 等否定文本不再误触发。最新 Runner 失败优先于过期 precheck，只有证据一致时才沿用旧诊断。
+- 安全重跑新增任务级 `rerunProgress.items`，逐条持久化“原失败 -> AI 修复 -> 固定设备新 job -> Runner 报告/结果”；受限第二轮修复保存 history，顶部按所有轮次累计成功/失败/超时，仍保持固定设备串行。
+- Runner 详情按 `jobProgressByPhase` 展示真实执行累计和各阶段结果，当前 phase 单独显示。`1800s` 只显示为等待上限，不再误报成 1800 个超时。主要结果先展示，内部 `_tool_rerun` 轨迹和工具调用默认收进“技术日志”。
+- 没有增加额外模型轮次：复用已解析的 Figma、已有 Top3 基线和当前报告关键帧；通过 AI 分层减少不可信 long-chain Runner 下发，并在服务端提前挡住非法动作，兼顾 Agent 自主性和执行速度。
+
+方案依据：
+
+- Midscene 推荐自然语言自动规划与 workflow/atomic steps 组合，复杂流程应拆分并通过报告回放定位失败：[Midscene introduction](https://midscenejs.com/introduction)。
+- BrowserStack Appium Self-Heal 从成功执行的元素上下文学习替代定位并记录 healing，说明成功基线应先于失败修复成为可信记忆：[Appium Self-Heal](https://www.browserstack.com/docs/app-automate/appium/self-healing?fw-lang=nodejs)。
+- mabl 只在已有足够成功历史时启用高级 GenAI auto-heal，低置信匹配继续失败而不是冒险点击；与“AI 自主决策 + 可信历史 + 平台门禁”边界一致：[How auto-heal works](https://help.mabl.com/hc/en-us/articles/19078583792404-How-auto-heal-works)。
+- UI-Mem 使用 workflow、subtask skill 和 failure pattern 的分层记忆，支持把成功路径与失败分叉分开沉淀，而不是保存单一需求补丁：[UI-Mem](https://arxiv.org/abs/2602.05832)。
+
+已验证：
+
+```bash
+npm test
+git diff --check
+```
+
+结果：undefined-name 通过，后端 `61` 项、前端 `67` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3` 通过；Playwright 桌面 1440px 和移动端 390px 视觉烟测通过，重跑成功项、累计统计、报告入口和折叠技术日志无水平溢出。完整测试还发现并修复了脑图分支中 Figma 软证据变量作用域错误，没有修改 Figma parser。
+
+未修改 `router.py`，未新增执行模式，未修改历史 YAML；用户已有 dirty 的历史 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、本地 Windows Runner 服务脚本和 `server-tasks/AI_Agent_草稿/` 不纳入本轮提交。
+
+本轮新提交尚未部署，不能宣称线上闭环已通过。部署后必须再次使用同一需求/Figma和固定 `win-runner-01 / ecbfd645` 发起完整 Agent，持续轮询到 `DONE / FAILED / CANCELLED`；人工复核四组 AI 分层、三个业务入口/文案/多端要求、最终 YAML 可见文字定位、首批与 remaining 的真实报告和截图。
+
+
 ### 2026-07-14 Agent PLAN 结构化调用与动态阶段优化
 
 部署 `de2bf40` 后发起同一完整线上回归：

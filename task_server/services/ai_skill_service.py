@@ -987,6 +987,35 @@ def build_failure_context(job, yaml_text, stdout="", stderr="", summary=None, ta
     }
 
 
+def positive_overlay_evidence(text):
+    """Return runtime overlay signals without treating negated assertions as evidence."""
+    result = []
+    positive_patterns = (
+        r"(?:权限|授权|系统|引导)?弹窗(?:出现|弹出|遮挡|挡住)",
+        r"(?:浮层|蒙层|引导层)(?:出现|遮挡|挡住)",
+        r"(?:按钮|入口|页面|控件)被(?:弹窗|浮层|蒙层|引导)遮挡",
+        r"(?:blocked by|covered by).*(?:dialog|modal|overlay)",
+        r"(?:permission|system) (?:dialog|popup).*(?:shown|visible|blocking)",
+    )
+    negated_terms = (
+        "无弹窗", "未出现弹窗", "没有弹窗", "不存在弹窗", "无遮挡", "无任何遮挡",
+        "未被遮挡", "没有遮挡", "无浮层", "未出现浮层", "弹窗未出现", "not blocked",
+        "no popup", "no dialog", "without overlay",
+    )
+    for line in str(text or "").splitlines():
+        compact = line.strip()
+        if not compact:
+            continue
+        lowered = compact.lower()
+        if any(term in lowered for term in negated_terms):
+            continue
+        if any(re.search(pattern, compact, re.I) for pattern in positive_patterns):
+            result.append(compact[:500])
+            if len(result) >= 8:
+                break
+    return result
+
+
 def classify_failure_by_context(ctx):
     """基于上下文对失败进行分类（确定性规则优先）。"""
     yaml_text = ctx.get("yaml_text", "")
@@ -1094,13 +1123,14 @@ def classify_failure_by_context(ctx):
             "suggested_action": "优先规则修复 YAML 语法、flowItem 名称和缩进结构",
             "can_auto_repair": True
         }
-    if any(word in evidence for word in ("弹窗", "权限", "遮挡", "浮层", "引导")):
+    overlay_evidence = positive_overlay_evidence(evidence)
+    if overlay_evidence:
         return {
             "category": "script_issue",
             "failure_type": "popup_overlay",
             "confidence": 0.82,
             "reason": "失败上下文出现弹窗/权限/浮层遮挡信号",
-            "evidence": brief.get("signals", [])[:8],
+            "evidence": overlay_evidence,
             "suggested_action": "只在关键路径前增加弹窗/权限处理，然后继续原业务目标",
             "can_auto_repair": True
         }
@@ -2252,6 +2282,10 @@ def select_smoke_cases_for_payload(
     """Run final smoke selection on a normalized cases payload."""
     normalized = normalize_cases_payload(payload)
     cases = normalized.get("cases") or []
+    eligible_cases = [
+        case for case in cases
+        if str(case.get("executionLevel") or case.get("level") or "executable").strip().lower() == "executable"
+    ]
     targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(normalized.get("analysis") or {}, mode=mode)
     try:
         selection = call_skill_smoke_selector(
@@ -2259,7 +2293,7 @@ def select_smoke_cases_for_payload(
             module or normalized.get("module"),
             normalized.get("analysis") or {},
             normalized.get("scenarios") or [],
-            cases,
+            eligible_cases,
             normalized.get("manual_cases") or [],
             yaml_reference_context=yaml_reference_context,
             mode=mode,
@@ -2267,13 +2301,14 @@ def select_smoke_cases_for_payload(
             targets=targets,
         )
     except Exception as exc:
-        selection = _fallback_smoke_selection_from_existing(cases, targets, error=str(exc))
+        selection = _fallback_smoke_selection_from_existing(eligible_cases, targets, error=str(exc))
     cases, smoke_review = apply_smoke_selection_to_cases(cases, selection, targets)
     normalized["cases"] = cases
     review = normalized.setdefault("review", {})
     review["smoke_selector_skill"] = smoke_review.get("selector_source") or "local_smoke_gate.v1"
     review["smoke_selection"] = smoke_review
     review["smoke_case_ids"] = smoke_review.get("selected_case_ids") or []
+    review["smoke_eligible_case_count"] = len(eligible_cases)
     return normalized
 
 
@@ -2685,7 +2720,40 @@ def _compact_case_for_plan(case, index=0):
     }
 
 
-def call_skill_executable_yaml_planner(title, module, payload, selected_baselines, scope_plan, model_config=None):
+def _ground_executable_plan_items(items, candidate_by_id, candidate_by_title):
+    grounded = []
+    rejected = 0
+    seen = set()
+    for raw_item in items or []:
+        item = raw_item if isinstance(raw_item, dict) else {"caseId": str(raw_item or "").strip()}
+        requested_case_id = str(item.get("caseId") or item.get("case_id") or item.get("id") or "").strip()
+        requested_title = str(item.get("title") or item.get("caseTitle") or "").strip()
+        source_case = candidate_by_id.get(requested_case_id) or candidate_by_title.get(requested_title)
+        if source_case is None and requested_case_id:
+            source_case = candidate_by_title.get(requested_case_id)
+        if source_case is None:
+            rejected += 1
+            continue
+        case_id = str(source_case.get("case_id") or "").strip()
+        if case_id in seen:
+            continue
+        seen.add(case_id)
+        normalized_item = dict(item)
+        normalized_item["caseId"] = case_id
+        normalized_item["title"] = source_case.get("title") or ""
+        grounded.append(normalized_item)
+    return grounded, rejected
+
+
+def call_skill_executable_yaml_planner(
+    title,
+    module,
+    payload,
+    selected_baselines,
+    scope_plan,
+    model_config=None,
+    source_evidence=None,
+):
     """Plan executable cases before YAML conversion. Fallback preserves current payload."""
     normalized = normalize_cases_payload(payload)
     candidates = [_compact_case_for_plan(case, idx) for idx, case in enumerate(normalized.get("cases") or [])]
@@ -2697,7 +2765,10 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
     }
     if not candidates:
         trace.update({"fallback": True, "error": "no_cases"})
-        return {"cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [], "trace": trace}
+        return {
+            "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
+            "authoritative": False, "trace": trace,
+        }
     compact_baselines = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])]
     allowed_baseline_ids = {str(item.get("id") or "").strip() for item in compact_baselines if str(item.get("id") or "").strip()}
     request = {
@@ -2709,6 +2780,7 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
         "manual_cases": normalized.get("manual_cases") or [],
         "selectedBaselines": compact_baselines,
         "scopePlan": scope_plan or {},
+        "sourceEvidence": source_evidence if isinstance(source_evidence, dict) else {},
     }
     try:
         result = run_ai_skill(
@@ -2722,70 +2794,132 @@ def call_skill_executable_yaml_planner(title, module, payload, selected_baseline
         )
         candidate_by_id = {str(item.get("case_id") or "").strip(): item for item in candidates if str(item.get("case_id") or "").strip()}
         candidate_by_title = {str(item.get("title") or "").strip(): item for item in candidates if str(item.get("title") or "").strip()}
-        cases = []
-        rejected_case_count = 0
+        cases, rejected_case_count = _ground_executable_plan_items(
+            result.get("cases") or [], candidate_by_id, candidate_by_title
+        )
         ungrounded_baseline_count = 0
-        for item in (result.get("cases") or []):
-            if not isinstance(item, dict):
-                continue
-            requested_case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
-            requested_title = str(item.get("title") or "").strip()
-            source_case = candidate_by_id.get(requested_case_id) or candidate_by_title.get(requested_title)
-            if not source_case:
-                rejected_case_count += 1
-                continue
+        for index, item in enumerate(cases):
             baseline_id = str(item.get("baselineId") or item.get("baseline_id") or "").strip()
             baseline_grounded = bool(baseline_id and baseline_id in allowed_baseline_ids)
             if not baseline_grounded:
                 ungrounded_baseline_count += 1
             normalized_item = dict(item)
-            normalized_item["caseId"] = source_case.get("case_id")
-            normalized_item["title"] = source_case.get("title")
             normalized_item["baselineId"] = baseline_id
             normalized_item["baselineGrounded"] = baseline_grounded
-            cases.append(normalized_item)
+            cases[index] = normalized_item
+        classification_groups = {}
+        rejected_classification_count = 0
+        for key in ("needs_review_cases", "draft_cases", "manual_cases"):
+            grounded, rejected = _ground_executable_plan_items(
+                result.get(key) or [], candidate_by_id, candidate_by_title
+            )
+            classification_groups[key] = grounded
+            rejected_classification_count += rejected
         trace.update({
             "case_count": len(cases),
-            "needs_review_count": len(result.get("needs_review_cases") or []),
-            "draft_count": len(result.get("draft_cases") or []),
-            "manual_count": len(result.get("manual_cases") or []),
+            "needs_review_count": len(classification_groups["needs_review_cases"]),
+            "draft_count": len(classification_groups["draft_cases"]),
+            "manual_count": len(classification_groups["manual_cases"]),
             "smoke_count": len([item for item in cases if str(item.get("batch") or "").lower() == "smoke"]),
             "rejected_case_count": rejected_case_count,
+            "rejected_classification_count": rejected_classification_count,
             "ungrounded_baseline_count": ungrounded_baseline_count,
         })
         return {
             "cases": cases,
-            "needs_review_cases": result.get("needs_review_cases") or [],
-            "draft_cases": result.get("draft_cases") or [],
-            "manual_cases": result.get("manual_cases") or [],
+            **classification_groups,
             "review": result.get("review") or {},
+            "authoritative": True,
             "trace": trace,
             "allowedBaselineIds": sorted(allowed_baseline_ids),
         }
     except Exception as exc:
         trace.update({"fallback": True, "error": str(exc)})
-        return {"cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [], "trace": trace}
+        return {
+            "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
+            "authoritative": False, "trace": trace,
+        }
 
 
 def apply_executable_yaml_plan_to_payload(payload, plan):
-    """Apply an input-grounded AI path plan while preserving an audit copy."""
+    """Apply the AI planner's grounded classification and path plan."""
     normalized = normalize_cases_payload(payload)
-    plan_cases = [item for item in ((plan or {}).get("cases") or []) if isinstance(item, dict)]
-    if not plan_cases:
+    plan = plan if isinstance(plan, dict) else {}
+    plan_cases = [item for item in (plan.get("cases") or []) if isinstance(item, dict)]
+    authoritative = plan.get("authoritative") is True
+    if not plan_cases and not authoritative:
         return normalized
-    by_title = {str(item.get("title") or "").strip(): item for item in plan_cases if str(item.get("title") or "").strip()}
-    by_case_id = {str(item.get("case_id") or item.get("caseId") or "").strip(): item for item in plan_cases if str(item.get("case_id") or item.get("caseId") or "").strip()}
+    classifications = (
+        ("executable", plan_cases),
+        ("needs_review", plan.get("needs_review_cases") or []),
+        ("draft", plan.get("draft_cases") or []),
+        ("manual", plan.get("manual_cases") or []),
+    )
+    level_rank = {"executable": 0, "needs_review": 1, "draft": 2, "manual": 3}
+    classification_by_id = {}
+    classification_by_title = {}
+    classification_hits = {}
+    for level, items in classifications:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            case_id = str(item.get("case_id") or item.get("caseId") or "").strip()
+            title = str(item.get("title") or "").strip()
+            hit_key = case_id or title
+            if hit_key:
+                classification_hits.setdefault(hit_key, set()).add(level)
+            current = classification_by_id.get(case_id) if case_id else classification_by_title.get(title)
+            if current is not None and level_rank[current[0]] >= level_rank[level]:
+                continue
+            entry = (level, item)
+            if case_id:
+                classification_by_id[case_id] = entry
+            if title:
+                classification_by_title[title] = entry
     targets = generation_volume_targets(normalized.get("analysis") or {}, mode="full")
-    smoke_limit = max(1, min(3, safe_int((plan or {}).get("scopePlan", {}).get("smokeCount"), safe_int(targets.get("smoke_cases"), 3))))
+    smoke_limit = max(1, min(3, safe_int(plan.get("scopePlan", {}).get("smokeCount"), safe_int(targets.get("smoke_cases"), 3))))
     smoke_used = 0
     allowed_baseline_ids = {
-        str(item).strip() for item in ((plan or {}).get("allowedBaselineIds") or []) if str(item or "").strip()
+        str(item).strip() for item in (plan.get("allowedBaselineIds") or []) if str(item or "").strip()
     }
+    output_cases = []
+    manual_cases = [item for item in (normalized.get("manual_cases") or []) if isinstance(item, dict)]
+    unmentioned_count = 0
+    applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for case in normalized.get("cases") or []:
         case_id = str(case.get("case_id") or case.get("id") or "").strip()
         title = str(case.get("title") or "").strip()
-        item = by_case_id.get(case_id) or by_title.get(title)
-        if not item:
+        classification = classification_by_id.get(case_id) or classification_by_title.get(title)
+        if classification:
+            level, item = classification
+        else:
+            level, item = ("needs_review", {
+                "caseId": case_id,
+                "title": title,
+                "reason": "AI 可执行规划未覆盖该候选，按安全策略进入复核",
+            })
+            unmentioned_count += 1
+        applied_counts[level] += 1
+        reason = str(
+            item.get("reason") or item.get("executableReason") or item.get("reviewReason")
+            or item.get("manualReason") or ""
+        ).strip()
+        if level == "manual":
+            manual_item = dict(case)
+            manual_item["executionLevel"] = "manual"
+            manual_item["automation_reason"] = reason or "AI 规划判断当前条件不适合自动执行"
+            manual_item["ai_case_classification"] = {"level": "manual", "reason": manual_item["automation_reason"]}
+            manual_cases.append(manual_item)
+            continue
+        case["executionLevel"] = level
+        case["ai_case_classification"] = {"level": level, "reason": reason}
+        if reason:
+            case["automation_reason"] = reason
+        output_cases.append(case)
+        if level != "executable":
+            case["smoke"] = False
+            flags = [flag for flag in normalize_text_list(case.get("flag") or case.get("flags")) if flag != "冒烟"]
+            case["flag"] = flags
             continue
         baseline_id = str(item.get("baselineId") or "").strip()
         baseline_grounded = bool(
@@ -2827,18 +2961,33 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 flags.append("冒烟")
             case["flag"] = flags
             smoke_used += 1
+    normalized["cases"] = output_cases
+    deduped_manual = []
+    seen_manual = set()
+    for item in manual_cases:
+        key = str(item.get("case_id") or item.get("id") or item.get("title") or item.get("case_name") or "").strip()
+        if key and key in seen_manual:
+            continue
+        if key:
+            seen_manual.add(key)
+        deduped_manual.append(item)
+    normalized["manual_cases"] = deduped_manual
     review = normalized.setdefault("review", {})
     review["executable_yaml_plan"] = {
+        "classificationApplied": authoritative,
         "case_count": len(plan_cases),
-        "needs_review_count": len((plan or {}).get("needs_review_cases") or []),
-        "draft_count": len((plan or {}).get("draft_cases") or []),
-        "manual_count": len((plan or {}).get("manual_cases") or []),
+        "needs_review_count": applied_counts["needs_review"],
+        "draft_count": applied_counts["draft"],
+        "manual_count": applied_counts["manual"],
+        "executable_count": applied_counts["executable"],
+        "unmentioned_count": unmentioned_count,
+        "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
         "path_plan_applied_count": sum(
             1 for case in (normalized.get("cases") or [])
             if isinstance(case.get("ai_case_plan"), dict) and case["ai_case_plan"].get("pathPlanApplied")
         ),
-        "review": (plan or {}).get("review") or {},
+        "review": plan.get("review") or {},
     }
     return normalized
 

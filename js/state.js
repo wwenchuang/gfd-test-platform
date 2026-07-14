@@ -90,7 +90,7 @@ let lastAssetFilterKey = '';
 let agentCurrentRun = null;
 let agentRuns = [];
 let agentBusy = false;
-let agentActiveTab = 'cases';
+let agentActiveTab = 'plan';
 let agentSourceFiles = [];
 let agentRefreshTimer = null;
 let aiFailureDraft = null;
@@ -281,16 +281,44 @@ const MODEL_ROUTER_FIELDS = [
   ['agent_plan', 'Agent 判断模型'],
   ['generate_bug', '飞书缺陷草稿模型']
 ];
-const AGENT_ARTIFACT_TABS = [
-  ['plan', '执行计划'],
-  ['cases', '测试用例'],
-  ['quality', '质量检查'],
-  ['yaml', 'Midscene YAML'],
-  ['validation', 'YAML 校验'],
-  ['logs', '执行日志'],
-  ['failure', '失败分析'],
-  ['repair', '修复草稿'],
-  ['bug', '缺陷草稿'],
-  ['summary', '总结报告'],
-  ['report', '最终报告']
+const AGENT_ARTIFACT_GROUPS = [
+  {
+    label: '规划',
+    items: [
+      { key: 'plan', label: '计划', title: 'AI 执行计划', description: '业务分支、可见验收点和资料使用情况' },
+      { key: 'cases', label: '用例', title: '测试用例', description: 'AI 生成与匹配的测试场景及用例' },
+      { key: 'quality', label: '质量', title: '质量检查', description: '需求覆盖、自动化分层和生成门禁' }
+    ]
+  },
+  {
+    label: '构建',
+    items: [
+      { key: 'yaml', label: 'YAML', title: 'Midscene YAML', description: '按用例拆分的可执行脚本与文件清单' },
+      { key: 'validation', label: '校验', title: 'YAML 校验', description: '语法、可执行性和 Runner 准入结果' }
+    ]
+  },
+  {
+    label: '执行',
+    items: [
+      { key: 'logs', label: '日志', title: '执行日志', description: 'Agent 各阶段的真实状态、耗时和摘要' },
+      { key: 'report', label: '报告', title: 'Runner 报告', description: '设备任务、HTML 报告、截图和失败结果' }
+    ]
+  },
+  {
+    label: '恢复',
+    items: [
+      { key: 'failure', label: '失败', title: '失败分析', description: 'Runner 证据、根因判断和影响范围' },
+      { key: 'repair', label: '修复', title: '修复草稿', description: '基线参考、AI 修复建议和安全重跑结果' },
+      { key: 'bug', label: '缺陷', title: '缺陷草稿', description: '确认产品问题后生成的结构化缺陷内容' }
+    ]
+  },
+  {
+    label: '结论',
+    items: [
+      { key: 'summary', label: '总结', title: 'Agent 总结', description: '覆盖结论、执行结果和后续建议' }
+    ]
+  }
 ];
+const AGENT_ARTIFACT_TABS = AGENT_ARTIFACT_GROUPS.flatMap(group => (
+  group.items.map(item => [item.key, item.title])
+));

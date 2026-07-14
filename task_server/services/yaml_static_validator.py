@@ -35,6 +35,8 @@ COMMON_STEP_ATTRS = {
     "enabled",
 }
 STEP_ATTR_KEYS: Set[str] = set(FLOW_CHILD_KEYS) | COMMON_STEP_ATTRS
+AI_SCROLL_DIRECTIONS = {"down", "up", "right", "left"}
+AI_SCROLL_TYPES = {"singleAction"}
 
 
 def load_yaml_action_contract(path: str = CONTRACT_PATH) -> dict:
@@ -89,6 +91,32 @@ def _step_text(step: dict) -> str:
         elif isinstance(value, (list, dict)):
             parts.append(json.dumps(value, ensure_ascii=False)[:500])
     return " ".join(parts)
+
+
+def validate_midscene_action_parameters(action: str, step: dict, path: str = "flow") -> List[str]:
+    """Validate child parameters that Midscene checks at runtime."""
+    if not isinstance(step, dict) or action != "aiScroll":
+        return []
+    issues: List[str] = []
+    if _value_blank(step.get("aiScroll")):
+        issues.append(f"{path} aiScroll 目标区域不能为空")
+    direction = step.get("direction")
+    if direction not in (None, "") and str(direction).strip() not in AI_SCROLL_DIRECTIONS:
+        issues.append(
+            f"{path} aiScroll.direction 必须是 down/up/right/left，当前为 {direction!r}"
+        )
+    distance = step.get("distance")
+    if distance not in (None, ""):
+        if isinstance(distance, bool) or not isinstance(distance, (int, float)):
+            issues.append(f"{path} aiScroll.distance 必须是正数，当前为 {distance!r}")
+        elif distance <= 0:
+            issues.append(f"{path} aiScroll.distance 必须大于 0，当前为 {distance!r}")
+    scroll_type = step.get("scrollType")
+    if scroll_type not in (None, "") and str(scroll_type).strip() not in AI_SCROLL_TYPES:
+        issues.append(
+            f"{path} aiScroll.scrollType 仅支持 singleAction，当前为 {scroll_type!r}"
+        )
+    return issues
 
 
 def _declared_variables(parsed: Any, tasks: List[Any]) -> Set[str]:
@@ -214,6 +242,11 @@ def validate_yaml_static_executable(yaml_text: str, *, strict: bool = False) -> 
             for action in actions:
                 action_counter[action] = action_counter.get(action, 0) + 1
                 value = step.get(action)
+                result["errors"].extend(validate_midscene_action_parameters(
+                    action,
+                    step,
+                    f"tasks[{task_index}].flow[{step_index}]",
+                ))
                 if action in ("ai", "aiAct", "aiAction", "aiTap", "aiAssert", "aiWaitFor") and _value_blank(value):
                     result["errors"].append(f"tasks[{task_index}].flow[{step_index}] {action} 内容不能为空")
                 if action == "aiInput":

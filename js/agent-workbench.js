@@ -525,7 +525,6 @@ async function showAgentWorkbench() {
     && (typeof AppState === 'undefined' || !AppState.loaded?.agentRuns);
 
   const run = currentAgentRun();
-  const mindmapUrl = agentMindmapDownloadUrl(run);
 
   // Preserve form values before innerHTML replacement (prevents textarea/input reset during polling)
   const savedFormState = {};
@@ -720,21 +719,8 @@ async function showAgentWorkbench() {
         </div>
         <div id="agent-progress">${renderAgentTimeline(run)}</div>
       </div>
-      <div class="agent-card">
-        <div class="agent-artifact-head">
-          <h3>Agent 产物</h3>
-          <div>
-            <button class="btn-sm" onclick="copyAgentArtifact()">复制当前产物</button>
-            <button class="btn-sm" onclick="downloadAgentYaml()">下载 YAML</button>
-            <button class="btn-sm" onclick="downloadAgentMindmap()" ${mindmapUrl ? '' : 'disabled'}>下载脑图</button>
-          </div>
-        </div>
-        <div class="agent-tabs">
-          ${AGENT_ARTIFACT_TABS.map(([key, label]) => `
-            <button class="agent-tab ${agentActiveTab === key ? 'active' : ''}" onclick="setAgentTab(${jsArg(key)})">${escapeHtml(label)}</button>
-          `).join('')}
-        </div>
-        <div class="agent-artifact-box ${['quality', 'report', 'summary'].includes(agentActiveTab) ? 'rich' : ''}" id="agent-artifact-box">${renderAgentArtifactContent(agentActiveTab, run)}</div>
+      <div class="agent-card agent-artifacts-card" id="agent-artifacts-card">
+        ${renderAgentArtifactPanel(run)}
       </div>
       ` : `
       <div class="agent-card agent-empty-run-card">
@@ -850,7 +836,7 @@ async function loadAppList(preferredValue) {
 function updateAgentWorkbenchDynamic() {
   const run = currentAgentRun();
   const progressEl = document.getElementById('agent-progress');
-  const artifactBox = document.getElementById('agent-artifact-box');
+  const artifactsCard = document.getElementById('agent-artifacts-card');
   const riskLevelEl = document.getElementById('agent-risk-level');
 
   if (progressEl) {
@@ -860,19 +846,13 @@ function updateAgentWorkbenchDynamic() {
     showAgentWorkbench();
     return;
   }
-  if (artifactBox && run) {
-    artifactBox.classList.toggle('rich', ['quality', 'report', 'summary'].includes(agentActiveTab));
-    artifactBox.innerHTML = renderAgentArtifactContent(agentActiveTab, run);
+  if (artifactsCard && run) {
+    artifactsCard.innerHTML = renderAgentArtifactPanel(run);
   }
   if (riskLevelEl) {
     const goal = document.getElementById('agent-goal')?.value || '';
     riskLevelEl.textContent = `当前风险：${agentRiskText(classifyRiskLevel(goal))}`;
   }
-  // Update tab active states
-  document.querySelectorAll('.agent-tab').forEach(tab => {
-    const tabKey = tab.getAttribute('data-tab') || tab.textContent.trim();
-    tab.classList.toggle('active', tabKey === agentActiveTab);
-  });
   renderAgentCenter();
 }
 
@@ -1227,8 +1207,46 @@ function renderSonicSyncDetail(step, artifacts) {
 }
 
 // ===== RUN_TASK 执行进度详情 =====
+function agentRunnerProgressMetrics(progress = {}) {
+  const jobs = Array.isArray(progress.jobs) ? progress.jobs : [];
+  const timeoutFromJobs = jobs.filter(job => (
+    job && (job.agent_wait_timeout || String(job.status || '').toLowerCase() === 'timeout')
+  )).length;
+  const completed = Number(progress.completed ?? progress.successCount ?? progress.completedCount ?? jobs.filter(job => String(job.status || '').toLowerCase() === 'success').length ?? 0);
+  const failed = Number(progress.failed ?? progress.failedCount ?? jobs.filter(job => ['failed', 'error', 'cancelled'].includes(String(job.status || '').toLowerCase())).length ?? 0);
+  const timeout = Number(progress.timeoutCount ?? timeoutFromJobs ?? 0);
+  const runningRaw = Number(progress.running ?? progress.runningCount ?? jobs.filter(job => ['pending', 'queued', 'assigned', 'running'].includes(String(job.status || '').toLowerCase())).length ?? 0);
+  const timeoutSeconds = Number(progress.timeoutSeconds ?? (!progress.agentWaitTimeout ? progress.timeout : 0) ?? 0);
+  return {
+    total: Number(progress.total ?? jobs.length ?? 0),
+    completed,
+    failed,
+    timeout,
+    running: Math.max(0, runningRaw - timeout),
+    timeoutSeconds,
+  };
+}
+
 function renderRunTaskDetail(step, artifacts) {
   const progress = (artifacts || {}).jobProgress || {};
+  const progressMetrics = agentRunnerProgressMetrics(progress);
+  const phaseRows = Object.entries((artifacts || {}).jobProgressByPhase || {}).map(([key, value]) => {
+    const phase = value && typeof value === 'object' ? value : {};
+    const label = phase.phase || key;
+    return {
+      label,
+      dryRun: /dry[-_\s]?run/i.test(String(label)),
+      metrics: agentRunnerProgressMetrics(phase),
+    };
+  });
+  const actualPhaseRows = phaseRows.filter(item => !item.dryRun);
+  const cumulative = actualPhaseRows.reduce((sum, item) => ({
+    total: sum.total + item.metrics.total,
+    completed: sum.completed + item.metrics.completed,
+    failed: sum.failed + item.metrics.failed,
+    timeout: sum.timeout + item.metrics.timeout,
+    running: sum.running + item.metrics.running,
+  }), {total: 0, completed: 0, failed: 0, timeout: 0, running: 0});
   const result = (artifacts || {}).jobResult || {};
   const runnerDryRun = (artifacts || {}).runnerDryRun || {};
   let html = '<div class="job-progress">';
@@ -1248,16 +1266,25 @@ function renderRunTaskDetail(step, artifacts) {
       ));
     }
   }
-  if (progress.total > 0) {
-    const timeoutText = progress.timeoutSeconds || progress.timeout
-      ? ` / 上限 ${escapeHtml(String(progress.timeoutSeconds || progress.timeout))}s`
+  if (actualPhaseRows.length) {
+    html += `<section class="agent-readable-panel"><strong>Runner 真实执行累计</strong>${agentInfoGrid([
+      {label: '执行尝试', value: cumulative.total},
+      {label: '成功', value: cumulative.completed},
+      {label: '失败', value: cumulative.failed},
+      {label: '超时', value: cumulative.timeout},
+      {label: '执行中', value: cumulative.running},
+    ])}${agentReadableList('执行阶段', actualPhaseRows, item => `<b>${escapeHtml(item.label)}</b><span>成功 ${escapeHtml(item.metrics.completed)} · 失败 ${escapeHtml(item.metrics.failed)} · 超时 ${escapeHtml(item.metrics.timeout)} · 执行中 ${escapeHtml(item.metrics.running)}</span>`)}</section>`;
+  }
+  if (progressMetrics.total > 0) {
+    const timeoutText = progressMetrics.timeoutSeconds
+      ? ` / 上限 ${escapeHtml(String(progressMetrics.timeoutSeconds))}s`
       : '';
     html += `<div class="job-progress-summary">
-      <span class="timeline-chip">总计 ${escapeHtml(String(progress.total))} 个任务</span>
-      <span class="timeline-chip text-success">✓ ${escapeHtml(String(progress.completed || 0))} 成功</span>
-      <span class="timeline-chip text-danger">✗ ${escapeHtml(String(progress.failed || 0))} 失败</span>
-      <span class="timeline-chip text-info">⟳ ${escapeHtml(String(progress.running || 0))} 运行中</span>
-      ${progress.timeout ? `<span class="timeline-chip text-warning">! ${escapeHtml(String(progress.timeout))} 超时</span>` : ''}
+      <span class="timeline-chip">当前阶段 ${escapeHtml(String(progressMetrics.total))} 个任务</span>
+      <span class="timeline-chip text-success">✓ ${escapeHtml(String(progressMetrics.completed))} 成功</span>
+      <span class="timeline-chip text-danger">✗ ${escapeHtml(String(progressMetrics.failed))} 失败</span>
+      <span class="timeline-chip text-info">⟳ ${escapeHtml(String(progressMetrics.running))} 运行中</span>
+      ${progressMetrics.timeout ? `<span class="timeline-chip text-warning">! ${escapeHtml(String(progressMetrics.timeout))} 超时</span>` : ''}
       ${progress.elapsed != null ? `<span class="timeline-chip">已等待 ${escapeHtml(String(progress.elapsed))}s${timeoutText}</span>` : ''}
     </div>`;
     const progressJobs = Array.isArray(progress.jobs) ? progress.jobs : [];
@@ -2022,12 +2049,222 @@ function renderAgentSummaryArtifact(run) {
   `;
 }
 
-function renderAgentArtifactContent(tab, run) {
+const AGENT_ARTIFACT_STEP_MAP = {
+  plan: ['PLAN'],
+  cases: ['IMPACT_ANALYSIS', 'CASE_RETRIEVAL', 'MATCH_CASES'],
+  quality: ['GENERATE_YAML', 'VALIDATE_YAML', 'RISK_REVIEW'],
+  yaml: ['GENERATE_YAML'],
+  validation: ['VALIDATE_YAML', 'RISK_REVIEW', 'EXECUTION_PRECHECK'],
+  logs: AUTO_AGENT_STEPS,
+  report: ['RUN_SONIC', 'COLLECT_REPORT'],
+  failure: ['ANALYZE_FAILURE', 'DIAGNOSE_FAILURE'],
+  repair: ['GENERATE_REPAIR', 'APPLY_SAFE_REPAIR', 'RERUN'],
+  bug: ['GENERATE_BUG_DRAFT'],
+  summary: ['LEARN_FROM_RESULT', 'GENERATE_SUMMARY', 'DONE']
+};
+const AGENT_RECOVERY_ARTIFACTS = new Set(['failure', 'repair', 'bug']);
+
+function agentArtifactDefinition(tab) {
+  for (const group of AGENT_ARTIFACT_GROUPS) {
+    const item = group.items.find(candidate => candidate.key === tab);
+    if (item) return item;
+  }
+  return { key: tab, label: tab, title: tab, description: '' };
+}
+
+function agentArtifactValuePresent(value) {
+  if (typeof artifactHasValue === 'function') return artifactHasValue(value);
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return Boolean(value.trim());
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function agentArtifactAvailable(tab, run) {
+  const artifacts = (run && run.artifacts) || {};
+  const any = (...values) => values.some(agentArtifactValuePresent);
+  if (tab === 'plan') return any(artifacts.plan);
+  if (tab === 'cases') return any(
+    artifacts.generatedCases,
+    artifacts.generatedCaseGroups,
+    artifacts.caseDraft,
+    artifacts.cases,
+    artifacts.matchedCases
+  );
+  if (tab === 'quality') return any(artifacts.qualityReport);
+  if (tab === 'yaml') return any(
+    artifacts.generatedYaml,
+    artifacts.yamlDraft,
+    artifacts.yaml,
+    artifacts.yamlRefs,
+    artifacts.generatedYamlPaths,
+    artifacts.generationPipeline?.yamlFiles
+  );
+  if (tab === 'validation') return any(
+    artifacts.yamlValidation,
+    artifacts.validation,
+    artifacts.runnerExecutionGate
+  );
+  if (tab === 'logs') return Array.isArray(run?.steps) && run.steps.length > 0;
+  if (tab === 'report') return any(
+    artifacts.report,
+    artifacts.sonicJob,
+    artifacts.jobProgress,
+    artifacts.jobResult
+  );
+  if (tab === 'failure') return any(
+    artifacts.failureAnalysis,
+    artifacts.failedExecutionItems,
+    artifacts.diagnosis,
+    run?.failureAnalysis,
+    run?.error
+  );
+  if (tab === 'repair') return any(
+    artifacts.repairSummary,
+    artifacts.repairDrafts,
+    artifacts.repairDraft,
+    artifacts.rerunProgress,
+    artifacts.rerunResult
+  );
+  if (tab === 'bug') return any(artifacts.bugDraft, artifacts.bug);
+  if (tab === 'summary') return any(artifacts.summary);
+  return false;
+}
+
+function agentArtifactState(tab, run) {
+  if (agentArtifactAvailable(tab, run)) return 'ready';
+  const relatedSteps = AGENT_ARTIFACT_STEP_MAP[tab] || [];
+  const currentStep = String(run?.currentStep || '').toUpperCase();
+  const stepRows = Array.isArray(run?.steps) ? run.steps : [];
+  const matchingRows = stepRows.filter(step => relatedSteps.includes(String(step?.state || step?.step || '').toUpperCase()));
+  const isRunning = relatedSteps.includes(currentStep) || matchingRows.some(step => (
+    String(step?.status || step?.stateStatus || '').toUpperCase() === 'RUNNING'
+  ));
+  if (isRunning) return 'running';
+
+  const runStatus = String(run?.status || '').toUpperCase();
+  const failureSeen = runStatus === 'FAILED' || matchingRows.some(step => (
+    step?.success === false || ['FAILED', 'PARTIAL_FAILED'].includes(String(step?.status || '').toUpperCase())
+  ));
+  if (AGENT_RECOVERY_ARTIFACTS.has(tab) && !failureSeen) return 'optional';
+  if (['DONE', 'FINISH', 'FAILED', 'CANCELLED'].includes(runStatus)) return 'missing';
+  if (matchingRows.some(step => step?.success === true || ['SUCCESS', 'SKIPPED'].includes(String(step?.status || '').toUpperCase()))) {
+    return 'missing';
+  }
+
+  const currentIndex = AUTO_AGENT_STEPS.indexOf(currentStep);
+  const lastRelatedIndex = Math.max(...relatedSteps.map(step => AUTO_AGENT_STEPS.indexOf(step)));
+  if (currentIndex >= 0 && lastRelatedIndex >= 0 && currentIndex > lastRelatedIndex) return 'missing';
+  return 'pending';
+}
+
+function agentArtifactStateLabel(state) {
+  return {
+    ready: '已产出',
+    running: '生成中',
+    pending: '等待',
+    optional: '按需',
+    missing: '未产出'
+  }[state] || state;
+}
+
+function renderAgentArtifactEmpty(tab, state) {
+  const meta = agentArtifactDefinition(tab);
+  const copy = {
+    running: [`正在生成${meta.title}`, 'Agent 完成当前阶段后会自动刷新，无需手动重载。'],
+    pending: ['等待前序阶段', `${meta.title}将在相关阶段开始后显示。`],
+    optional: [`当前无需${meta.title}`, '失败恢复类产物只在出现可分析的执行失败时生成。'],
+    missing: [`本次未生成${meta.title}`, '该阶段已结束或任务已终止，平台没有收到对应产物。']
+  }[state] || ['暂无产物', '当前没有可展示的内容。'];
+  return `
+    <div class="agent-artifact-empty" data-empty-state="${escapeHtml(state)}">
+      <span>${escapeHtml(agentArtifactStateLabel(state))}</span>
+      <strong>${escapeHtml(copy[0])}</strong>
+      <p>${escapeHtml(copy[1])}</p>
+    </div>
+  `;
+}
+
+function renderAgentArtifactContent(tab, run, state = agentArtifactState(tab, run)) {
+  if (state !== 'ready') return renderAgentArtifactEmpty(tab, state);
+  if (tab === 'plan') return renderPlanDetail({}, (run && run.artifacts) || {});
   if (tab === 'quality') return renderAgentQualityArtifact(run);
+  if (tab === 'validation') return renderValidateYamlDetail({}, (run && run.artifacts) || {});
   if (tab === 'report') return renderAgentReportArtifact(run);
   if (tab === 'summary') return renderAgentSummaryArtifact(run);
-  const text = typeof agentArtifactText === 'function' ? agentArtifactText(tab, run) : '';
-  return `<pre class="agent-artifact-pre">${escapeHtml(text)}</pre>`;
+  const artifactText = typeof agentArtifactText === 'function' ? agentArtifactText(tab, run) : '';
+  return `<pre class="agent-artifact-pre">${escapeHtml(artifactText)}</pre>`;
+}
+
+function renderAgentArtifactPanel(run) {
+  const allItems = AGENT_ARTIFACT_GROUPS.flatMap(group => group.items);
+  if (!allItems.some(item => item.key === agentActiveTab)) agentActiveTab = 'plan';
+  const activeMeta = agentArtifactDefinition(agentActiveTab);
+  const activeState = agentArtifactState(agentActiveTab, run);
+  const readyCount = allItems.filter(item => agentArtifactAvailable(item.key, run)).length;
+  const yamlReady = agentArtifactAvailable('yaml', run);
+  const mindmapReady = Boolean(agentMindmapDownloadUrl(run));
+  const actions = [
+    activeState === 'ready'
+      ? '<button class="btn-sm" type="button" onclick="copyAgentArtifact()">复制当前产物</button>'
+      : '',
+    yamlReady
+      ? '<button class="btn-sm" type="button" onclick="downloadAgentYaml()">下载 YAML</button>'
+      : '',
+    mindmapReady
+      ? '<button class="btn-sm" type="button" onclick="downloadAgentMindmap()">下载脑图</button>'
+      : ''
+  ].filter(Boolean);
+  const rich = ['plan', 'quality', 'validation', 'report', 'summary'].includes(agentActiveTab);
+  return `
+    <div class="agent-artifact-head">
+      <div>
+        <h3>Agent 产物</h3>
+        <p>已生成 ${escapeHtml(readyCount)}/${escapeHtml(allItems.length)} · 当前阶段 ${escapeHtml(agentStepLabel(run?.currentStep || run?.status || '-'))}</p>
+      </div>
+      ${actions.length ? `<div class="agent-artifact-actions">${actions.join('')}</div>` : ''}
+    </div>
+    <div class="agent-artifact-layout">
+      <nav class="agent-artifact-nav" aria-label="Agent 产物导航">
+        ${AGENT_ARTIFACT_GROUPS.map(group => `
+          <section class="agent-artifact-nav-group">
+            <strong>${escapeHtml(group.label)}</strong>
+            <div>
+              ${group.items.map(item => {
+                const state = agentArtifactState(item.key, run);
+                const label = agentArtifactStateLabel(state);
+                return `
+                  <button type="button"
+                          class="agent-artifact-nav-item ${agentActiveTab === item.key ? 'active' : ''} state-${escapeHtml(state)}"
+                          data-tab="${escapeHtml(item.key)}"
+                          onclick="setAgentTab(${jsArg(item.key)})"
+                          title="${escapeHtml(item.title)} · ${escapeHtml(label)}"
+                          aria-current="${agentActiveTab === item.key ? 'page' : 'false'}">
+                    <span class="agent-artifact-status-dot" aria-hidden="true"></span>
+                    <span class="agent-artifact-nav-label">${escapeHtml(item.label)}</span>
+                    <span class="agent-artifact-nav-state">${escapeHtml(label)}</span>
+                  </button>
+                `;
+              }).join('')}
+            </div>
+          </section>
+        `).join('')}
+      </nav>
+      <section class="agent-artifact-view">
+        <header class="agent-artifact-view-head">
+          <div>
+            <h4>${escapeHtml(activeMeta.title)}</h4>
+            <p>${escapeHtml(activeMeta.description)}</p>
+          </div>
+          <span class="agent-artifact-state state-${escapeHtml(activeState)}">${escapeHtml(agentArtifactStateLabel(activeState))}</span>
+        </header>
+        <div class="agent-artifact-box ${rich ? 'rich' : ''} ${activeState === 'ready' ? '' : 'is-empty'}" id="agent-artifact-box">
+          ${renderAgentArtifactContent(agentActiveTab, run, activeState)}
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderGenerateYamlDetail(step, artifacts) {
@@ -2222,39 +2459,137 @@ function renderRepairDraftDetail(step, artifacts) {
   return html;
 }
 
+function agentRerunStatusMeta(status) {
+  const value = String(status || 'pending').toLowerCase();
+  if (value === 'success') return {key: 'success', label: '成功'};
+  if (['failed', 'error'].includes(value)) return {key: 'failed', label: '失败'};
+  if (value === 'timeout') return {key: 'timeout', label: '超时'};
+  if (value === 'cancelled') return {key: 'cancelled', label: '已取消'};
+  if (value === 'skipped') return {key: 'skipped', label: '未重跑'};
+  if (['created', 'queued', 'assigned', 'waiting', 'running', 'creating'].includes(value)) {
+    return {key: 'running', label: value === 'creating' ? '正在创建' : '执行中'};
+  }
+  return {key: 'pending', label: '等待执行'};
+}
+
+function agentRerunFallbackItems(progress, sources, result, repairSummary) {
+  const completedIds = new Set((result.completed || []).map(item => item.job_id || item.jobId));
+  const failedById = new Map((result.failed || []).map(item => [item.job_id || item.jobId, item]));
+  const timeoutById = new Map((result.timeout || []).map(item => [item.job_id || item.jobId, item]));
+  const repairByDraft = new Map(((repairSummary || {}).items || []).map(item => [item.draftId || '', item]));
+  return (sources || []).map(item => {
+    const jobId = item.newJobId || '';
+    const failed = failedById.get(jobId) || timeoutById.get(jobId) || {};
+    const repair = repairByDraft.get(item.draftId || '') || {};
+    return {
+      ...item,
+      sourceFile: item.sourceFile || item.file || '',
+      repairFile: item.source === 'repair_draft' ? item.file : '',
+      repairChanges: repair.changes || [],
+      repairSource: item.source || '',
+      status: completedIds.has(jobId) ? 'success' : (timeoutById.has(jobId) ? 'timeout' : (failedById.has(jobId) ? 'failed' : 'running')),
+      reportUrl: failed.report_url || failed.reportUrl || '',
+      resultReason: failed.error || '',
+    };
+  });
+}
+
+function agentRerunCycleMetrics(progress, items) {
+  const statuses = (items || []).map(item => String(item.status || 'pending').toLowerCase());
+  const success = Number(progress.successCount ?? statuses.filter(value => value === 'success').length);
+  const failed = Number(progress.failedCount ?? statuses.filter(value => ['failed', 'error', 'cancelled'].includes(value)).length);
+  const timeout = Number(progress.timeoutCount ?? statuses.filter(value => value === 'timeout').length);
+  const skipped = Number(progress.skippedCount ?? statuses.filter(value => value === 'skipped').length);
+  const running = Number(progress.runningCount ?? statuses.filter(value => ['created', 'queued', 'assigned', 'waiting', 'running', 'creating'].includes(value)).length);
+  const total = Number(progress.total ?? progress.sourceFailedCount ?? items.length ?? 0);
+  const completed = Number(progress.completedCount ?? (success + failed + timeout + skipped));
+  return {total, completed, success, failed, timeout, skipped, running};
+}
+
+function renderRerunCycle(progress, items, cycleIndex, cycleCount) {
+  const metrics = agentRerunCycleMetrics(progress, items);
+  const cycleTitle = cycleCount > 1
+    ? `<div class="agent-rerun-cycle-title">${cycleIndex === 0 ? '首轮 AI 修复重跑' : `第 ${cycleIndex + 1} 轮 AI 纠偏重跑`}<span>${metrics.completed}/${metrics.total || items.length} 已结束</span></div>`
+    : '';
+  return `${cycleTitle}<div class="agent-rerun-list">${items.map((item, index) => {
+    const meta = agentRerunStatusMeta(item.status);
+    const changes = Array.isArray(item.repairChanges) ? item.repairChanges : [];
+    const repairText = changes.length
+      ? changes.map(change => typeof change === 'string' ? change : JSON.stringify(change)).join('；')
+      : (item.repairSource === 'original_yaml' ? '未使用 AI 修复，按原 YAML 重跑' : (item.repairSource === 'diagnosis_only' ? 'AI 未产出可执行修复' : '使用 AI 修复草稿'));
+    const device = [item.runnerId || progress.runnerId, item.deviceId || progress.deviceId].filter(Boolean).join(' / ') || '设备信息待回传';
+    const originalJob = item.sourceJobId || '未记录';
+    const newJob = item.newJobId || (meta.key === 'skipped' ? '未创建' : '待创建');
+    const reportLink = item.reportUrl
+      ? `<a class="agent-rerun-report" href="${escapeHtml(item.reportUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">查看 Runner 报告</a>`
+      : '';
+    return `<div class="agent-rerun-item status-${meta.key}">
+      <div class="agent-rerun-item-head">
+        <span class="agent-rerun-index">${String(index + 1).padStart(2, '0')}</span>
+        <strong>${escapeHtml(item.targetTaskName || item.sourceFile || item.sourceJobId || '重跑任务')}</strong>
+        <span class="agent-rerun-status status-${meta.key}">${escapeHtml(meta.label)}</span>
+      </div>
+      <div class="agent-rerun-job-chain"><span>原任务 ${escapeHtml(originalJob)}</span><b>→</b><span>重跑任务 ${escapeHtml(newJob)}</span></div>
+      <div class="agent-rerun-evidence">
+        <div><small>原失败</small><p>${escapeHtml(item.failureReason || '未记录失败原因')}</p></div>
+        <div><small>AI 修复</small><p>${escapeHtml(repairText)}</p>${item.repairFile ? `<code>修复文件：${escapeHtml(item.repairFile)}</code>` : ''}</div>
+        <div><small>固定设备重跑</small><p>${escapeHtml(device)} · ${escapeHtml(meta.label)}</p>${item.resultReason ? `<p class="agent-rerun-result-reason">${escapeHtml(item.resultReason)}</p>` : ''}${reportLink}</div>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
 function renderRerunDetail(step, artifacts) {
   const result = (artifacts || {}).rerunResult || {};
   const sources = (artifacts || {}).rerunSources || [];
   const skipped = (artifacts || {}).rerunSkippedJobs || [];
   const progress = (artifacts || {}).rerunProgress || (artifacts || {}).jobProgress || {};
+  const progressHistory = Array.isArray((artifacts || {}).rerunProgressHistory) ? (artifacts || {}).rerunProgressHistory : [];
+  const repairSummary = (artifacts || {}).repairSummary || {};
   const autonomy = (artifacts || {}).postRerunAutonomy || {};
   const sourceText = progress.usesRepairDraft ? '修复草稿' : (progress.source === 'original_yaml' ? '原始 YAML' : '未记录');
+  const currentItems = Array.isArray(progress.items) && progress.items.length
+    ? progress.items
+    : agentRerunFallbackItems(progress, sources, result, repairSummary);
+  const cycles = progressHistory.concat([progress]).filter(item => item && typeof item === 'object');
+  const cycleRows = cycles.map((cycle, index) => {
+    const items = Array.isArray(cycle.items) && cycle.items.length
+      ? cycle.items
+      : (index === cycles.length - 1 ? currentItems : []);
+    return {cycle, items, metrics: agentRerunCycleMetrics(cycle, items)};
+  });
+  const cumulative = cycleRows.reduce((sum, row) => ({
+    total: sum.total + row.metrics.total,
+    completed: sum.completed + row.metrics.completed,
+    success: sum.success + row.metrics.success,
+    failed: sum.failed + row.metrics.failed,
+    timeout: sum.timeout + row.metrics.timeout,
+    running: sum.running + row.metrics.running,
+  }), {total: 0, completed: 0, success: 0, failed: 0, timeout: 0, running: 0});
+  const percent = cumulative.total > 0 ? Math.max(0, Math.min(100, Math.round(cumulative.completed / cumulative.total * 100))) : 0;
+  const fixedSerial = cycleRows.length > 0 && cycleRows.every(row => row.cycle.serialSameDevice);
   let html = '<div class="match-detail agent-readable-detail">';
-  html += agentInfoGrid([
-    { label: '重跑来源', value: sourceText },
-    { label: '来源失败任务', value: progress.sourceFailedCount ?? sources.length ?? 0 },
-    { label: '计划重跑', value: progress.targetCount ?? sources.length ?? 0 },
-    { label: '创建重跑任务', value: result.createdCount ?? sources.length ?? 0 },
-    { label: '修复草稿', value: progress.usesRepairDraft ? `${progress.appliedRepairDraftCount || 0}/${progress.repairDraftCount || 0}` : '-' },
-    { label: '成功', value: result.completedCount ?? progress.completed ?? 0 },
-    { label: '失败', value: result.failedCount ?? progress.failed ?? 0 },
-    { label: '超时', value: result.timeoutCount ?? progress.timeout ?? 0 },
-  ]);
-  html += renderRunTaskDetail(step, {...artifacts, jobProgress: progress, jobResult: result});
-  if (sources.length) {
-    html += agentReadableList('重跑映射', sources.slice(0, 15), item => {
-      const repaired = item.source === 'repair_draft' ? ` · 修复文件：${item.module || ''}/${item.file || ''}` : '';
-      const original = item.sourceFile ? `原始：${item.sourceFile}` : (item.sourceJobId || '');
-      return `<b>${escapeHtml(item.targetTaskName || item.file || item.sourceJobId || '')}</b><span>${escapeHtml(original)} → ${escapeHtml(item.newJobId || '')}${escapeHtml(repaired)}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`;
-    });
+  html += `<section class="agent-rerun-overview">
+    <div class="agent-rerun-overview-head"><strong>${cycleRows.length > 1 ? 'AI 修复重跑累计' : `${escapeHtml(sourceText)}重跑`}</strong><span>${cumulative.completed}/${cumulative.total || 0} 已结束</span></div>
+    <div class="agent-rerun-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+    <div class="agent-rerun-metrics">
+      <span>重跑来源：${escapeHtml(sourceText)}</span>
+      <span>尝试 ${cycleRows.length} 轮</span>
+      <span class="text-success">成功 ${cumulative.success}</span>
+      <span class="text-danger">失败 ${cumulative.failed}</span>
+      <span class="text-warning">超时 ${cumulative.timeout}</span>
+      <span>执行中 ${cumulative.running}</span>
+      <span>${fixedSerial ? '固定设备串行' : '按执行策略下发'}</span>
+      <span>${escapeHtml([progress.runnerId, progress.deviceId].filter(Boolean).join(' / ') || '设备待回传')}</span>
+    </div>
+  </section>`;
+  cycleRows.forEach((row, index) => {
+    if (row.items.length) html += renderRerunCycle(row.cycle, row.items, index, cycleRows.length);
+  });
+  if (!currentItems.length) {
+    html += `<section class="agent-readable-panel"><strong>重跑任务</strong><p>尚未创建可执行重跑任务。</p></section>`;
   }
-  const created = Array.isArray(result.created) ? result.created : (Array.isArray(result.jobs) ? result.jobs : []);
-  if (created.length) {
-    html += agentReadableList('重跑任务清单', created.slice(0, 20), item => (
-      `<b>${escapeHtml(item.job_id || item.jobId || item.newJobId || item.file || '')}</b><span>${escapeHtml(item.module || '')}/${escapeHtml(item.file || '')}${item.target_task_name || item.targetTaskName ? ' · ' + escapeHtml(item.target_task_name || item.targetTaskName) : ''}</span>`
-    ));
-  }
-  if (skipped.length) {
+  if (skipped.length && !currentItems.some(item => String(item.status || '').toLowerCase() === 'skipped')) {
     html += agentReadableList('跳过的任务', skipped.slice(0, 15), item => `<b>${escapeHtml(item.taskName || item.jobId || '')}</b><span>${escapeHtml(item.status || '')}${item.reason ? ' · ' + escapeHtml(item.reason) : ''}</span>`);
   }
   if (autonomy.analyzed) {
@@ -2536,6 +2871,9 @@ function renderAgentTimeline(run) {
     const toolChips = timelineToolCallChips(data);
     const toolCallsDetail = timelineToolCallsDetail(data);
     const liveTraceDetail = timelineLiveTraceDetail(data);
+    const technicalTraceDetail = (liveTraceDetail || toolCallsDetail)
+      ? `<details class="agent-technical-trace" onclick="event.stopPropagation()"><summary>技术日志<span>${liveTraceDetail ? '执行轨迹' : ''}${liveTraceDetail && toolCallsDetail ? ' · ' : ''}${toolCallsDetail ? '工具调用' : ''}</span></summary>${liveTraceDetail || ''}${toolCallsDetail || ''}</details>`
+      : '';
     const stepDetailHtml = renderStepDetail(data, run);
     const diagnosisHtml = renderDiagnosisDetail(data.diagnosis);
     const isActive = (status === 'running' || status === 'waiting');
@@ -2571,9 +2909,8 @@ function renderAgentTimeline(run) {
           ${diagnosisHtml}
           ${toolChips}
           ${artifacts ? `<div class="agent-timeline-artifacts">${artifacts}</div>` : ''}
-          ${liveTraceDetail ? `<div class="step-tool-calls-wrap">${liveTraceDetail}</div>` : ''}
-          ${toolCallsDetail ? `<div class="step-tool-calls-wrap">${toolCallsDetail}</div>` : ''}
           ${stepDetailHtml ? `<div class="step-tool-calls-wrap">${stepDetailHtml}</div>` : ''}
+          ${technicalTraceDetail ? `<div class="step-tool-calls-wrap">${technicalTraceDetail}</div>` : ''}
         </div>
       </li>
     `;
@@ -2873,6 +3210,12 @@ function collectAgentSourceMaterials() {
 
 function setAgentTab(tab) {
   agentActiveTab = tab;
+  const run = currentAgentRun();
+  const card = document.getElementById('agent-artifacts-card');
+  if (card && run) {
+    card.innerHTML = renderAgentArtifactPanel(run);
+    return;
+  }
   showAgentWorkbench();
 }
 

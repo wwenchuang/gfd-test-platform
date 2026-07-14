@@ -89,6 +89,7 @@ def main():
     require("/ai/optimize-yaml" in server and "/ai/chat" in server, "server must expose AI Gateway integration endpoints")
     require("imagePartsFromBody" in server and "image_url" in server and "reportKeyframes" in server, "AI Gateway failure analysis and repair must accept multimodal report keyframes")
     require("usedBaselineIds" in server and "baselineExamples" in server, "AI Gateway YAML repair must return grounded baseline provenance")
+    require(server.count("sourceEvidence: req.body?.sourceEvidence || {}") >= 2 and "requirement: req.body?.requirement || ''" in server, "Failure analysis and YAML repair must forward original requirement and same-frame source evidence")
     require("executionConstraint" in server and "allowOtherDevices=false" in (GATEWAY / "prompts" / "analyze-failure-v1.txt").read_text(encoding="utf-8"), "Failure AI must preserve fixed Runner/device constraints")
     require("yaml|yml|json|text" in server and "structured?.canAutoRepair === true" in server, "AI Gateway must parse fenced JSON and only accept an explicit boolean auto-repair decision")
     require("PROVIDERS_FILE" in server and "apiKeyEnv" in server and "providerId" in server, "server must route by providers.json and apiKeyEnv")
@@ -180,7 +181,7 @@ def main():
     prompt = (GATEWAY / "prompts/generate-yaml-v1.txt").read_text(encoding="utf-8")
     require("禁止使用 repeat" in prompt and "只输出 YAML" in prompt, "generate YAML prompt must enforce Midscene constraints")
     repair_prompt = (GATEWAY / "prompts/optimize-yaml-v1.txt").read_text(encoding="utf-8")
-    require("报告关键帧" in repair_prompt and "baselineExamples" in repair_prompt and "最小语义修复" in repair_prompt, "AI repair prompt must combine execution evidence with trustworthy baselines")
+    require("报告关键帧" in repair_prompt and "baselineExamples" in repair_prompt and "最小语义修复" in repair_prompt and "aiScroll.direction" in repair_prompt, "AI repair prompt must combine execution evidence, trustworthy baselines, and Midscene action contracts")
 
     print({"ok": True, "dir": str(GATEWAY), "checks": 46})
 

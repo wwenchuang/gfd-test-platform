@@ -10,8 +10,9 @@
 
 如果输入 payload 中存在 `businessContext` 或 `promptCenter.businessContext`，
 必须优先参考其中的 `target`、`business_flow`、`risk_hits`、`ui_context` 和
-`source_summary`。`business_flow` 是强约束：分析出的需求点、风险和问题必须围绕
-当前业务主链展开；资料不足时写入 `questions` / `missing_inputs`，不得补成相邻功能。
+`source_summary`。`business_flow` 是 AI 基于当前输入提出的候选业务分支，不是需求开始前就已确认的
+“业务主链”，也不是已执行事实。分析出的需求点、风险和问题应逐条回查原始需求或来源证据；
+资料不足时写入 `questions` / `missing_inputs`，不得补成相邻功能。
 
 ## 输入来源
 
@@ -31,6 +32,8 @@
 5. 如果 UI 稿不全，不要删除需求点；把“入口待确认 / 文案待确认 / 数据态待确认”写入 `questions`。
 6. 给出需求体检结论：哪些输入缺失、哪些会阻断自动化、当前是否能继续生成可审查草稿。
 7. 每个需求点建议使用稳定编号前缀，例如 `REQ-001 首页进入打印记录`，便于后续场景、用例、YAML 和 Sonic 结果追踪。
+8. 如果输入含 `Figma 同帧软证据规则`，严格按设计帧分别判断：状态/变体与真实可见文字优先于内部 Frame 名；某一帧出现的能力不能推广到兄弟页面。
+9. 画布尺寸或“手机/宽屏”等设备形态只说明 UI 适配证据，不代表必须选择、并发或执行另一台真实设备。
 
 ## 输出 JSON
 

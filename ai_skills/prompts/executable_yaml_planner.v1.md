@@ -24,6 +24,9 @@
 9. `baselineId` 必须来自 `selectedBaselines`，并结合其 `sourceKind`、`verificationStatus`、`provenancePath` 和 `businessPath`。不得编造基线，也不得把 YAML 基线说成 Figma 证据。
 10. 允许组合多个互补基线：优先用 `navigation_path` 基线保留完整父页面层级，再用能力/断言基线替换目标叶子和检查点。不能因为目标文字相同就跳过中间页面。
 11. flow 会真正覆盖原始用例的路径计划，因此必须保留输入 case 的业务目标；只能使用用户可见文字，不得生成坐标、臆造包名或把平台生命周期写进 flow。
+12. 必须把输入中的每个候选 case 恰好放入 `cases`、`needs_review_cases`、`draft_cases`、`manual_cases` 之一。证据不足或无法确认路径时放入 `needs_review_cases`，不得遗漏后让静态规则替你升级。
+13. `sourceEvidence` 中需求定义“验证什么”，Figma 只证明单个设计帧的同屏状态和可见文案。Frame 名、画布设备标签不能覆盖可见证据，也不能推导第二台执行设备。
+14. 成功基线用于复用稳定父页面层级、子任务技能和等待策略；失败报告用于定位本次分叉点。不得因为目标叶子相似而跳过基线中的父页面路径。
 
 ## 输出 JSON
 

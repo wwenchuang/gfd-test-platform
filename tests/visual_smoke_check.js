@@ -339,6 +339,14 @@ function serve() {
             ],
             confirmations: [{type: 'confirm_before_run'}],
             artifacts: {
+              plan: {
+                aiGenerated: true,
+                model: 'qwen-plus',
+                objective: '验证关节龙打印主流程可达且关键文案可见',
+                businessFlows: [{name: '关节龙打印', steps: ['进入首页', '打开模型详情', '进入打印流程'], checks: ['打印入口可见', '确认页可达']}],
+                platformLifecycle: ['生成并校验 YAML', '固定 Runner 设备执行'],
+                visualReference: {figmaPageCount: 1, figmaImageCount: 1, sentToAiForJudgement: true, aiJudgementCompleted: true},
+              },
               caseDraft: '关节龙打印流程回归测试用例',
               yamlDraft: 'android:\\n  tasks:\\n    - name: 关节龙打印流程回归\\n      flow:\\n        - sleep: 1000',
               validation: {valid: true, errors: []},
@@ -380,6 +388,14 @@ function serve() {
           ],
           confirmations: [{type: 'confirm_before_run'}],
           artifacts: {
+            plan: {
+              aiGenerated: true,
+              model: 'qwen-plus',
+              objective: '验证关节龙打印主流程可达且关键文案可见',
+              businessFlows: [{name: '关节龙打印', steps: ['进入首页', '打开模型详情', '进入打印流程'], checks: ['打印入口可见', '确认页可达']}],
+              platformLifecycle: ['生成并校验 YAML', '固定 Runner 设备执行'],
+              visualReference: {figmaPageCount: 1, figmaImageCount: 1, sentToAiForJudgement: true, aiJudgementCompleted: true},
+            },
             yamlDraft: 'android:\\n  tasks:\\n    - name: 关节龙打印流程回归\\n      flow:\\n        - sleep: 1000',
             validation: {valid: true, errors: []},
           },
@@ -566,10 +582,140 @@ async function anyVisible(locator) {
     if (await page.locator('.agent-phase-step').count() !== 5) throw new Error('The normal Agent path should show five phases; failure recovery must remain conditional');
     if (await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints should be collapsed by default');
     await page.waitForSelector('text=人工复核');
+    await page.waitForSelector('.agent-artifact-layout');
+    if (await page.locator('.agent-artifact-nav-group').count() !== 5) throw new Error('Agent artifacts must be grouped into five readable sections');
+    if (await page.locator('.agent-artifact-nav-item').count() !== 11) throw new Error('Grouped Agent navigation must retain all eleven auditable artifacts');
+    if (!await page.locator('.agent-artifact-nav-item[data-tab="plan"]').evaluate(el => el.classList.contains('active'))) throw new Error('AI plan must be the default Agent artifact');
+    if (!/平台 MM AI/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('AI plan artifact is not rendered as readable content');
+    const artifactDesktop = await page.locator('.agent-artifact-layout').boundingBox();
+    const artifactNavDesktop = await page.locator('.agent-artifact-nav').boundingBox();
+    if (!artifactDesktop || !artifactNavDesktop || artifactNavDesktop.width < 150 || artifactNavDesktop.width > 210) throw new Error(`Agent artifact desktop navigation has suspicious dimensions: ${JSON.stringify({artifactDesktop, artifactNavDesktop})}`);
+    const artifactOverflow = await page.locator('#agent-artifacts-card').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (artifactOverflow) throw new Error('Agent artifact card overflows horizontally on desktop');
     await page.screenshot({path: path.join(ARTIFACTS, 'agent.png'), fullPage: true});
     if (!await page.locator('text=Agent 状态').isVisible()) throw new Error('Agent status center is missing');
     if (!await anyVisible(page.locator('text=确认执行'))) throw new Error('Agent wait-confirm action is missing');
     if (!await page.locator('button:has-text("下载 YAML")').isVisible()) throw new Error('Agent YAML download button is missing');
+    await page.locator('.agent-artifact-nav-item[data-tab="failure"]').click();
+    if (!/当前无需失败分析/.test(await visibleText(page, '#agent-artifact-box'))) throw new Error('Conditional failure artifact must explain why no content exists');
+    await page.locator('.agent-artifact-nav-item[data-tab="plan"]').click();
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const artifactMobileOverflow = await page.locator('#agent-artifacts-card').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (artifactMobileOverflow) throw new Error('Agent artifact card overflows horizontally on mobile');
+    const mobileNav = await page.locator('.agent-artifact-nav').boundingBox();
+    const mobileView = await page.locator('.agent-artifact-view').boundingBox();
+    if (!mobileNav || !mobileView || mobileView.y < mobileNav.y + mobileNav.height - 1) throw new Error('Agent artifact mobile navigation must sit above the detail view');
+    await page.screenshot({path: path.join(ARTIFACTS, 'agent-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
+    await page.evaluate(async () => {
+      agentCurrentRun = normalizeAgentRun({
+        runId: 'agent-rerun-visual-001',
+        target: '基础打印新增入口回归',
+        status: 'FAILED',
+        currentStep: 'RERUN',
+        runnerId: 'win-runner-01',
+        deviceId: 'ecbfd645',
+        deviceStrategy: 'fixed',
+        updatedAt: '2026-07-14T11:20:35',
+        steps: [{
+          state: 'RERUN',
+          status: 'PARTIAL_FAILED',
+          summary: '重跑执行完成：3 个修复任务，1 个成功，2 个失败',
+          toolCalls: [{toolName: 'retry_failed_job', status: 'PARTIAL_FAILED', outputSummary: '固定 OPPO 串行重跑完成'}],
+          liveTrace: [
+            {time: '2026-07-14T11:18:05', status: 'RUNNING', message: '准备调用工具：_tool_rerun'},
+            {time: '2026-07-14T11:20:35', status: 'FAILED', message: '调用工具：_tool_rerun'},
+          ],
+        }],
+        artifacts: {
+          rerunResult: {createdCount: 3, completedCount: 1, failedCount: 2, timeoutCount: 0},
+          rerunProgress: {
+            source: 'repair_draft',
+            usesRepairDraft: true,
+            sourceFailedCount: 3,
+            total: 3,
+            completedCount: 3,
+            successCount: 1,
+            failedCount: 2,
+            timeoutCount: 0,
+            runningCount: 0,
+            pendingCount: 0,
+            serialSameDevice: true,
+            runnerId: 'win-runner-01',
+            deviceId: 'ecbfd645',
+            items: [
+              {sourceJobId: 'job-source-document', newJobId: 'job-rerun-document', targetTaskName: '文档打印百度网盘入口', sourceFile: '01-document.yaml', repairFile: '01-document-repair.yaml', failureReason: '已经到达百度网盘文件列表，脚本仍等待模糊目标而超时', repairChanges: ['删除到达终态后的冗余等待，改为文件列表稳定态断言'], repairSource: 'ai_gateway', runnerId: 'win-runner-01', deviceId: 'ecbfd645', status: 'success', reportUrl: '/reports/job-rerun-document.html'},
+              {sourceJobId: 'job-source-photo', newJobId: 'job-rerun-photo', targetTaskName: '照片打印 5寸照片入口', sourceFile: '03-photo.yaml', repairFile: '03-photo-repair.yaml', failureReason: '只停在照片打印父页面，未进入 5寸照片叶子页', repairChanges: ['参考成功照片基线补充父页面到 5寸照片的可见文字导航'], repairSource: 'ai_gateway', runnerId: 'win-runner-01', deviceId: 'ecbfd645', status: 'failed', resultReason: '目标页面不匹配'},
+              {sourceJobId: 'job-source-chain', newJobId: 'job-rerun-chain', targetTaskName: '三业务入口跨页回归', sourceFile: '05-chain.yaml', repairFile: '05-chain-repair.yaml', failureReason: '长链路执行超时', repairChanges: ['拆分关键分叉点并修正滚动动作参数'], repairSource: 'ai_gateway', runnerId: 'win-runner-01', deviceId: 'ecbfd645', status: 'failed', resultReason: 'Midscene 动作参数校验失败'},
+            ],
+          },
+          postRerunAutonomy: {analyzed: true, failureType: 'SCRIPT_ISSUE', repairGenerated: false, followupExecuted: false, reason: '最新失败已分析，动作参数门禁阻止无效二次下发'},
+        },
+      });
+      expandedStepIndexes.clear();
+      expandedStepIndexes.add(16);
+      agentCheckpointTraceOpen = true;
+      agentActiveTab = 'final';
+      await showAgentWorkbench();
+    });
+    await page.waitForSelector('.agent-rerun-overview');
+    if (await page.locator('.agent-rerun-item').count() !== 3) throw new Error('Rerun detail must retain all three serial task outcomes');
+    if (!/成功 1/.test(await visibleText(page, '.agent-rerun-overview')) || !/失败 2/.test(await visibleText(page, '.agent-rerun-overview'))) throw new Error('Rerun aggregate must keep earlier successes visible');
+    if (!await page.locator('.agent-rerun-item.status-success', {hasText: '文档打印百度网盘入口'}).isVisible()) throw new Error('Successful repair rerun is missing from the task-level result list');
+    if (await page.locator('.agent-technical-trace').evaluate(el => el.open)) throw new Error('Technical rerun trace must be collapsed by default');
+    if (await anyVisible(page.locator('text=_tool_rerun'))) throw new Error('Internal rerun function names must not appear in the primary result view');
+    const rerunDesktopOverflow = await page.locator('.agent-rerun-overview').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (rerunDesktopOverflow) throw new Error('Rerun overview overflows horizontally on desktop');
+    await page.screenshot({path: path.join(ARTIFACTS, 'agent-rerun.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const rerunMobileOverflow = await page.locator('.agent-rerun-list').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (rerunMobileOverflow) throw new Error('Task-level rerun evidence overflows horizontally on mobile');
+    const mobileEvidenceColumns = await page.locator('.agent-rerun-evidence').first().evaluate(el => window.getComputedStyle(el).gridTemplateColumns.split(' ').length);
+    if (mobileEvidenceColumns !== 1) throw new Error(`Rerun evidence must stack on mobile, columns=${mobileEvidenceColumns}`);
+    await page.screenshot({path: path.join(ARTIFACTS, 'agent-rerun-mobile.png'), fullPage: true});
+    const aggregateChecks = await page.evaluate(() => {
+      const current = agentCurrentRun.artifacts.rerunProgress;
+      const history = JSON.parse(JSON.stringify(current));
+      const followup = {
+        ...current,
+        total: 1,
+        sourceFailedCount: 1,
+        completedCount: 1,
+        successCount: 1,
+        failedCount: 0,
+        items: [{
+          sourceJobId: 'job-rerun-photo',
+          newJobId: 'job-followup-photo',
+          targetTaskName: '照片打印 5寸照片入口二次纠偏',
+          repairSource: 'ai_gateway',
+          runnerId: 'win-runner-01',
+          deviceId: 'ecbfd645',
+          status: 'success',
+        }],
+      };
+      const holder = document.createElement('div');
+      holder.innerHTML = renderRerunDetail({}, {
+        ...agentCurrentRun.artifacts,
+        rerunProgressHistory: [history],
+        rerunProgress: followup,
+      });
+      const runnerHolder = document.createElement('div');
+      runnerHolder.innerHTML = renderRunTaskDetail({}, {
+        jobProgress: {phase: '扩展第1批', total: 1, completed: 0, failed: 1, running: 0, timeout: 1800, elapsed: 118, jobs: [{status: 'failed'}]},
+        jobProgressByPhase: {
+          '首批冒烟': {phase: '首批冒烟', total: 3, completed: 3, failed: 0, running: 0, timeout: 1800},
+          '扩展第1批': {phase: '扩展第1批', total: 1, completed: 0, failed: 1, running: 0, timeout: 1800},
+        },
+      });
+      const activeMetrics = agentRunnerProgressMetrics({total: 1, completed: 0, failed: 1, running: 0, timeout: 1800, jobs: [{status: 'failed'}]});
+      return {rerunText: holder.innerText, runnerText: runnerHolder.innerText, activeMetrics};
+    });
+    if (!/尝试 2 轮/.test(aggregateChecks.rerunText) || !/成功 2/.test(aggregateChecks.rerunText) || !/失败 2/.test(aggregateChecks.rerunText)) throw new Error('Bounded AI repair cycles must use cumulative attempt counts');
+    if (!/Runner 真实执行累计/.test(aggregateChecks.runnerText) || !/成功\s*3/.test(aggregateChecks.runnerText) || !/失败\s*1/.test(aggregateChecks.runnerText)) throw new Error('Runner phase history must keep earlier successful execution visible');
+    if (aggregateChecks.activeMetrics.timeout !== 0 || aggregateChecks.activeMetrics.timeoutSeconds !== 1800) throw new Error('Runner timeout limit must not be rendered as 1800 timed-out jobs');
+    await page.setViewportSize({width: 1440, height: 900});
     let dialogText = '';
     page.once('dialog', async dialog => {
       dialogText = dialog.message();
@@ -597,6 +743,9 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'dashboard.png'),
         path.join(ARTIFACTS, 'execution.png'),
         path.join(ARTIFACTS, 'agent.png'),
+        path.join(ARTIFACTS, 'agent-mobile.png'),
+        path.join(ARTIFACTS, 'agent-rerun.png'),
+        path.join(ARTIFACTS, 'agent-rerun-mobile.png'),
       ],
     }, null, 2));
   } finally {

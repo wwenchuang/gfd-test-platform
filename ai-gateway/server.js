@@ -719,6 +719,8 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
 
 app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
   const body = {
+    target: req.body?.target || '',
+    requirement: req.body?.requirement || '',
     taskName: req.body?.taskName || '',
     yaml: req.body?.yaml || '',
     log: req.body?.log || '',
@@ -729,6 +731,7 @@ app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
     imageAssets: req.body?.imageAssets || [],
     reportKeyframes: req.body?.reportKeyframes || [],
     evidenceSources: req.body?.evidenceSources || [],
+    sourceEvidence: req.body?.sourceEvidence || {},
     executionConstraint: req.body?.executionConstraint || {},
   };
   const {output} = await callAi('analyze_failure', body);
@@ -761,6 +764,7 @@ app.post('/ai/optimize-yaml', asyncRoute(async (req, res) => {
     reportKeyframes: req.body?.reportKeyframes || [],
     baselineExamples: req.body?.baselineExamples || [],
     evidenceSources: req.body?.evidenceSources || [],
+    sourceEvidence: req.body?.sourceEvidence || {},
     executionConstraint: req.body?.executionConstraint || {},
   };
   const {output} = await callAi('optimize_yaml', body, {stripFence: true});

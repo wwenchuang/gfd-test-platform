@@ -2696,6 +2696,16 @@ def _agent_job_failure_type(text):
         return "ENV_ISSUE"
     if "replanned 5 times" in lowered or "replanningcyclelimit" in lowered:
         return "Midscene 重规划超限"
+    if any(term in lowered for term in (
+        "invalid_enum_value",
+        "invalid_type",
+        "invalid parameters",
+        "invalid parameter",
+        "expected 'down' | 'up' | 'right' | 'left'",
+        "expected number, received string",
+        "expected number, received",
+    )):
+        return "YAML 动作参数不兼容"
     if "timeout after 300s" in lowered:
         return "Runner 单任务超时"
     if "failed to locate element" in lowered:
@@ -10944,6 +10954,7 @@ def _agent_canonical_failure_type(value):
         return normalized
     if raw in (
         "Midscene 重规划超限",
+        "YAML 动作参数不兼容",
         "Runner 单任务超时",
         "元素定位失败",
         "等待目标超时",
@@ -11449,6 +11460,8 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
         if len(image_assets) >= 6:
             break
     return {
+        "target": run.get("target", ""),
+        "requirement": _agent_plan_requirement_text(run),
         "taskName": primary_failure.get("taskName") or run.get("target", ""),
         "yaml": primary_yaml[:20000],
         "log": primary_log[:12000],
@@ -11458,13 +11471,44 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
         "failedJobs": failed_job_payloads,
         "imageAssets": image_assets,
         "reportKeyframes": frame_names,
-        "evidenceSources": ["原始 YAML", "Runner 日志", "Runner failureReview", "Midscene 报告视觉时间线关键帧"],
+        "sourceEvidence": _agent_source_evidence(run),
+        "evidenceSources": [
+            "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
+            "Runner failureReview", "Midscene 报告视觉时间线关键帧",
+        ],
         "executionConstraint": {
             "runnerId": run.get("runnerId") or "",
             "deviceId": run.get("deviceId") or "",
             "deviceStrategy": run.get("deviceStrategy") or "",
             "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
         },
+    }
+
+
+def _agent_source_evidence(run):
+    """Return bounded source facts for planning and failure-repair AI calls."""
+    artifacts = (run or {}).get("artifacts") if isinstance((run or {}).get("artifacts"), dict) else {}
+    source = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    used_pages = source.get("figmaUsedPages") or source.get("uiDesigns") or []
+    return {
+        "mode": "soft_reference",
+        "target": str((run or {}).get("target") or source.get("target") or "")[:1000],
+        "requirementText": str(source.get("requirementText") or _agent_plan_requirement_text(run) or "")[:12000],
+        "sourceSummary": str(source.get("sourceSummary") or "")[:2000],
+        "figmaText": str(source.get("figmaText") or "")[:12000],
+        "figmaPages": [
+            _agent_figma_page_brief(item)
+            for item in used_pages[:20]
+            if isinstance(item, dict)
+        ],
+        "figmaPageCount": len(used_pages),
+        "figmaImageCount": _safe_int_local(source.get("figmaImageCount"), 0),
+        "policy": [
+            "需求文本定义验证目标；Figma 只补充单个设计帧中的页面状态、层级和可见文字。",
+            "Frame 名可能是内部旧命名，状态/变体和可见文字优先；一帧能力不能推广到相邻页面。",
+            "失败关键帧证明实际到达状态；若只到父页面，应先修正导航，不能直接判产品缺陷。",
+            "画布设备形态不是第二台真实设备要求；执行设备仍由 executionConstraint 决定。",
+        ],
     }
 
 
@@ -11643,21 +11687,8 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
         failure_context = ""
         failure_type = "UNKNOWN"
 
-        if has_sonic_failures and not has_job_failures:
-            # Sonic同步失败但没有执行失败（说明是环境/配置问题）
-            failure_type = "ENV_ISSUE"
-            failure_context = f"Sonic 同步失败 {len(sonic_failed)} 条:\n"
-            for sf in sonic_failed[:5]:
-                failure_context += f"- {sf.get('module', '')}/{sf.get('file', '')}：{sf.get('error', '')}\n"
-        elif has_precheck_failure:
-            failure_type = "ENV_ISSUE"
-            failure_context = (
-                f"执行前体检失败：{precheck_diagnosis.get('rootCause', '')}\n"
-                f"影响：{precheck_diagnosis.get('impact', '')}\n"
-                f"建议：{'；'.join(precheck_diagnosis.get('nextActions') or [])}\n"
-            )
-        elif has_job_failures:
-            # 有执行失败
+        if has_job_failures:
+            # Runner 最新终态优先于准备阶段的旧体检诊断。
             job_failure_types = {
                 _agent_canonical_failure_type(item.get("failureType")) or "UNKNOWN"
                 for item in failed_jobs
@@ -11683,6 +11714,18 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
                 summary_text = fj.get("summaryText") or ""
                 if summary_text:
                     failure_context += f"  summary: {summary_text[:600]}\n"
+        elif has_sonic_failures:
+            failure_type = "ENV_ISSUE"
+            failure_context = f"Sonic 同步失败 {len(sonic_failed)} 条:\n"
+            for sf in sonic_failed[:5]:
+                failure_context += f"- {sf.get('module', '')}/{sf.get('file', '')}：{sf.get('error', '')}\n"
+        elif has_precheck_failure:
+            failure_type = "ENV_ISSUE"
+            failure_context = (
+                f"执行前体检失败：{precheck_diagnosis.get('rootCause', '')}\n"
+                f"影响：{precheck_diagnosis.get('impact', '')}\n"
+                f"建议：{'；'.join(precheck_diagnosis.get('nextActions') or [])}\n"
+            )
 
         # 构建本地分析结果
         analysis = {
@@ -11793,6 +11836,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         )
         ai_available = _ai_gateway_available()
         ai_timeout = max(20, safe_int(os.getenv("MIDSCENE_AGENT_REPAIR_TIMEOUT_SECONDS"), 90))
+        source_evidence = _agent_source_evidence(run)
         saved_drafts = []
         summary_items = []
         ai_attempted_count = 0
@@ -11894,7 +11938,11 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "imageAssets": report_keyframes,
                         "reportKeyframes": report_keyframe_names,
                         "baselineExamples": baseline_examples,
-                        "evidenceSources": ["原始 YAML", "Runner 日志", "failureReview", "Midscene 报告关键帧", "可信 Top3 基线"],
+                        "sourceEvidence": source_evidence,
+                        "evidenceSources": [
+                            "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
+                            "failureReview", "Midscene 报告关键帧", "可信 Top3 基线",
+                        ],
                         "executionConstraint": {
                             "runnerId": run.get("runnerId") or "",
                             "deviceId": run.get("deviceId") or "",
@@ -11927,9 +11975,12 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         remove_empty_midscene_platform_roots(fixed_yaml),
                         platform=run.get("platform", "android"),
                     ).strip()
-                    validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
-                    if not isinstance(validation, dict) or "ok" not in validation:
-                        validation = validate_midscene_yaml_executability(fixed_yaml)
+                    ai_validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
+                    if isinstance(ai_validation, dict) and ai_validation:
+                        draft["aiGatewayValidation"] = ai_validation
+                        item_summary["aiGatewayValidation"] = ai_validation
+                    validation = validate_midscene_yaml_executability(fixed_yaml)
+                    validation["validatedBy"] = "task_server"
                     draft["validation"] = validation
                     item_summary["yamlValidation"] = validation
                     item_summary["taskCount"] = validation.get("taskCount")
@@ -12002,7 +12053,10 @@ def _tool_generate_repair(run, failed_jobs_override=None):
             "aiUsedCount": ai_used_count,
             "validationPassedCount": validation_passed_count,
             "failureType": ft,
-            "evidenceSources": ["失败类型", "Agent 目标", "Runner 错误", "stdout/stderr 尾部", "原始 YAML", "Midscene 报告关键帧", "可信 Top3 基线", "整批失败摘要"],
+            "evidenceSources": [
+                "失败类型", "Agent 目标", "原始需求", "Figma 同帧软证据", "Runner 错误",
+                "stdout/stderr 尾部", "原始 YAML", "Midscene 报告关键帧", "可信 Top3 基线", "整批失败摘要",
+            ],
             "items": summary_items,
             "targetTasks": [
                 item.get("targetTaskName") or item.get("file") or item.get("targetJobId")
@@ -12239,9 +12293,8 @@ def _agent_prepare_repair_rerun_targets(run, failed_items, jobs):
                 "reason": "修复草稿没有可执行 YAML 内容，未重跑旧脚本",
             })
             continue
-        validation = draft.get("validation") or draft.get("yamlValidation") or {}
-        if not isinstance(validation, dict) or "ok" not in validation:
-            validation = validate_midscene_yaml_executability(fixed_yaml)
+        validation = validate_midscene_yaml_executability(fixed_yaml)
+        validation["validatedBy"] = "task_server"
         if not validation.get("ok"):
             skipped.append({
                 "draftId": draft_id,
@@ -12365,6 +12418,11 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
     try:
         from task_server.services import job_service
         artifacts = run.setdefault("artifacts", {})
+        previous_progress = artifacts.get("rerunProgress") if isinstance(artifacts.get("rerunProgress"), dict) else {}
+        if repair_depth > 0 and previous_progress:
+            history = artifacts.get("rerunProgressHistory") if isinstance(artifacts.get("rerunProgressHistory"), list) else []
+            history.append(json.loads(json.dumps(previous_progress, ensure_ascii=False)))
+            artifacts["rerunProgressHistory"] = history[-3:]
         if failed_items_override is None:
             failed_items = _agent_persist_failed_execution_items(run)
         else:
@@ -12384,6 +12442,130 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
         uses_repair_draft = bool(repair_plan.get("hasRepairDrafts"))
         serial_same_device = _agent_rerun_requires_serial_device(run)
         serial_wait_results = []
+        repair_summary = artifacts.get("repairSummary") if isinstance(artifacts.get("repairSummary"), dict) else {}
+        repair_summary_by_draft = {
+            str(item.get("draftId") or ""): item
+            for item in (repair_summary.get("items") or [])
+            if isinstance(item, dict) and str(item.get("draftId") or "").strip()
+        }
+        progress_items = []
+        progress_item_by_key = {}
+
+        def add_progress_item(item):
+            key = str(item.get("draftId") or item.get("sourceJobId") or item.get("newJobId") or "").strip()
+            if key and key in progress_item_by_key:
+                progress_item_by_key[key].update(item)
+                return progress_item_by_key[key]
+            progress_items.append(item)
+            if key:
+                progress_item_by_key[key] = item
+            return item
+
+        if uses_repair_draft:
+            for target in repair_plan.get("targets") or []:
+                repair_meta = repair_summary_by_draft.get(str(target.get("draftId") or ""), {})
+                source_job = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
+                add_progress_item({
+                    "draftId": target.get("draftId") or "",
+                    "sourceJobId": target.get("sourceJobId") or "",
+                    "sourceModule": target.get("sourceModule") or "",
+                    "sourceFile": target.get("sourceFile") or "",
+                    "targetTaskName": target.get("sourceTaskName") or (target.get("taskNames") or [""])[0],
+                    "repairModule": target.get("module") or "",
+                    "repairFile": target.get("file") or "",
+                    "failureReason": target.get("failureReason") or "",
+                    "repairChanges": repair_meta.get("changes") or [],
+                    "repairSource": repair_meta.get("repairSource") or "ai_gateway",
+                    "selectedBaselines": repair_meta.get("selectedBaselines") or [],
+                    "runnerId": source_job.get("target_runner_id") or source_job.get("runner_id") or run.get("runnerId") or "",
+                    "deviceId": source_job.get("device_id") or run.get("deviceId") or "",
+                    "status": "pending",
+                })
+        else:
+            for jid in job_ids:
+                source = source_by_id.get(jid) or {}
+                source_job = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), {})
+                add_progress_item({
+                    "sourceJobId": jid,
+                    "sourceModule": source_job.get("module") or source.get("module") or "",
+                    "sourceFile": source_job.get("file") or source.get("file") or "",
+                    "targetTaskName": _failed_job_task_name(source) or source_job.get("target_task_name") or "",
+                    "failureReason": source.get("failureReason") or source.get("error") or "",
+                    "repairChanges": [],
+                    "repairSource": "original_yaml",
+                    "runnerId": source_job.get("target_runner_id") or source_job.get("runner_id") or run.get("runnerId") or "",
+                    "deviceId": source_job.get("device_id") or run.get("deviceId") or "",
+                    "status": "pending",
+                })
+
+        rerun_progress = {
+            "scope": "failed_tasks",
+            "source": "repair_draft" if uses_repair_draft else "original_yaml",
+            "usesRepairDraft": uses_repair_draft,
+            "repairDraftCount": repair_plan.get("draftCount", 0) if uses_repair_draft else 0,
+            "appliedRepairDraftCount": len(repair_plan.get("targets") or []) if uses_repair_draft else 0,
+            "notRerunOriginalYaml": uses_repair_draft,
+            "sourceFailedCount": len(failed_items),
+            "targetCount": len(job_ids),
+            "serialSameDevice": serial_same_device,
+            "runnerId": run.get("runnerId") or "",
+            "deviceId": run.get("deviceId") or "",
+            "items": progress_items,
+            "skipped": [],
+            "status": "RUNNING",
+        }
+        artifacts["rerunProgress"] = rerun_progress
+
+        def persist_rerun_progress(status=None):
+            item_statuses = [str(item.get("status") or "pending").lower() for item in progress_items]
+            success_count = sum(1 for value in item_statuses if value == "success")
+            failed_count = sum(1 for value in item_statuses if value in ("failed", "error", "cancelled"))
+            timeout_count = sum(1 for value in item_statuses if value == "timeout")
+            skipped_count = sum(1 for value in item_statuses if value == "skipped")
+            running_count = sum(1 for value in item_statuses if value in ("created", "queued", "running", "assigned", "waiting"))
+            terminal_count = success_count + failed_count + timeout_count + skipped_count
+            total_count = max(len(progress_items), len(failed_items))
+            rerun_progress.update({
+                "total": total_count,
+                "completedCount": terminal_count,
+                "successCount": success_count,
+                "failedCount": failed_count,
+                "timeoutCount": timeout_count,
+                "runningCount": running_count,
+                "pendingCount": max(0, total_count - terminal_count - running_count),
+                "createdCount": sum(1 for item in progress_items if item.get("newJobId")),
+                "skippedCount": skipped_count,
+                "createdJobIds": [item.get("newJobId") for item in progress_items if item.get("newJobId")],
+                "sources": retry_sources,
+                "skipped": skipped,
+                "status": status or rerun_progress.get("status") or "RUNNING",
+                "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            artifacts["rerunProgress"] = rerun_progress
+            _persist_agent_run_snapshot(run)
+
+        def apply_wait_result(wait_result):
+            groups = (
+                ("success", wait_result.get("completed") or []),
+                ("failed", wait_result.get("failed") or []),
+                ("timeout", wait_result.get("timeout") or []),
+            )
+            for status_value, entries in groups:
+                for entry in entries:
+                    job_id = str(entry.get("job_id") or entry.get("jobId") or "").strip()
+                    item = next((row for row in progress_items if str(row.get("newJobId") or "") == job_id), None)
+                    if item is None:
+                        continue
+                    item.update({
+                        "status": status_value,
+                        "runnerId": entry.get("runner_id") or entry.get("runnerId") or item.get("runnerId") or "",
+                        "deviceId": entry.get("device_id") or entry.get("deviceId") or item.get("deviceId") or "",
+                        "reportUrl": entry.get("report_url") or entry.get("reportUrl") or "",
+                        "resultReason": entry.get("error") or entry.get("progress_message") or "",
+                        "finishedAt": entry.get("updated_at") or entry.get("updatedAt") or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    })
+
+        persist_rerun_progress("RUNNING")
         if uses_repair_draft:
             for target in repair_plan.get("targets") or []:
                 if _agent_run_cancel_requested(run):
@@ -12391,6 +12573,10 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 j = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
                 source = target.get("sourceItem") if isinstance(target.get("sourceItem"), dict) else {}
                 source_job_id = target.get("sourceJobId") or source.get("jobId") or j.get("job_id") or ""
+                progress_item = progress_item_by_key.get(str(target.get("draftId") or "")) or progress_item_by_key.get(str(source_job_id or ""))
+                if progress_item is not None:
+                    progress_item["status"] = "creating"
+                    persist_rerun_progress("RUNNING")
                 new_job = job_service.create_pending_job(
                     target.get("module", ""),
                     target.get("file", ""),
@@ -12407,6 +12593,12 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 )
                 if new_job and new_job.get("job_id"):
                     retried.append(new_job["job_id"])
+                    if progress_item is not None:
+                        progress_item.update({
+                            "newJobId": new_job["job_id"],
+                            "status": "running",
+                            "createdAt": new_job.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        })
                     retry_sources.append({
                         "source": "repair_draft",
                         "draftId": target.get("draftId") or "",
@@ -12423,14 +12615,21 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                         "sourceStatus": j.get("status", ""),
                         "note": "使用 AI 修复草稿生成的临时 YAML 重跑，未覆盖原始 YAML",
                     })
+                    persist_rerun_progress("RUNNING")
                     if serial_same_device:
-                        serial_wait_results.append(job_service.wait_jobs_finished(
+                        serial_result = job_service.wait_jobs_finished(
                             [new_job["job_id"]],
                             run,
                             timeout=job_service.runner_job_wait_timeout_seconds(1),
                             interval=5,
                             phase="安全重跑-同设备串行",
-                        ))
+                        )
+                        serial_wait_results.append(serial_result)
+                        apply_wait_result(serial_result)
+                        persist_rerun_progress("RUNNING")
+                elif progress_item is not None:
+                    progress_item.update({"status": "failed", "resultReason": "创建 Runner 重跑任务失败"})
+                    persist_rerun_progress("RUNNING")
             skipped.extend(repair_plan.get("skipped") or [])
             covered_source_ids = {item.get("sourceJobId") for item in retry_sources if item.get("sourceJobId")}
             for item in failed_items:
@@ -12445,14 +12644,42 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     "status": item.get("status") or "failed",
                     "reason": "没有可用修复草稿，未重跑旧 YAML",
                 })
+            for skipped_item in skipped:
+                source_job_id = str(skipped_item.get("jobId") or skipped_item.get("sourceJobId") or "").strip()
+                draft_id = str(skipped_item.get("draftId") or "").strip()
+                progress_item = progress_item_by_key.get(draft_id) or progress_item_by_key.get(source_job_id)
+                if progress_item is None:
+                    source_item = next((item for item in failed_items if _failed_job_id(item) == source_job_id), {})
+                    progress_item = add_progress_item({
+                        "draftId": draft_id,
+                        "sourceJobId": source_job_id,
+                        "sourceModule": source_item.get("module") or "",
+                        "sourceFile": source_item.get("file") or skipped_item.get("file") or "",
+                        "targetTaskName": skipped_item.get("taskName") or _failed_job_task_name(source_item),
+                        "failureReason": source_item.get("failureReason") or source_item.get("error") or "",
+                        "repairChanges": [],
+                        "repairSource": "diagnosis_only",
+                        "runnerId": run.get("runnerId") or "",
+                        "deviceId": run.get("deviceId") or "",
+                    })
+                if not progress_item.get("newJobId"):
+                    progress_item.update({
+                        "status": "skipped",
+                        "resultReason": skipped_item.get("reason") or "未创建重跑任务",
+                    })
+            persist_rerun_progress("RUNNING")
         else:
             for jid in job_ids:
                 if _agent_run_cancel_requested(run):
                     break
                 j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
                 source = source_by_id.get(jid) or {}
+                progress_item = progress_item_by_key.get(str(jid))
                 if j and str(j.get("status", "")).lower() in ("failed", "error", "timeout"):
                     target_task_name = j.get("target_task_name") or j.get("taskName") or j.get("current_task_name") or ""
+                    if progress_item is not None:
+                        progress_item["status"] = "creating"
+                        persist_rerun_progress("RUNNING")
                     new_job = job_service.create_pending_job(
                         j.get("module", ""),
                         j.get("file", ""),
@@ -12469,6 +12696,12 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     )
                     if new_job and new_job.get("job_id"):
                         retried.append(new_job["job_id"])
+                        if progress_item is not None:
+                            progress_item.update({
+                                "newJobId": new_job["job_id"],
+                                "status": "running",
+                                "createdAt": new_job.get("created_at") or time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            })
                         retry_sources.append({
                             "source": "original_yaml",
                             "sourceJobId": jid,
@@ -12479,14 +12712,21 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                             "failureReason": source.get("failureReason") or source.get("error") or "",
                             "sourceStatus": j.get("status", ""),
                         })
+                        persist_rerun_progress("RUNNING")
                         if serial_same_device:
-                            serial_wait_results.append(job_service.wait_jobs_finished(
+                            serial_result = job_service.wait_jobs_finished(
                                 [new_job["job_id"]],
                                 run,
                                 timeout=job_service.runner_job_wait_timeout_seconds(1),
                                 interval=5,
                                 phase="安全重跑-同设备串行",
-                            ))
+                            )
+                            serial_wait_results.append(serial_result)
+                            apply_wait_result(serial_result)
+                            persist_rerun_progress("RUNNING")
+                    elif progress_item is not None:
+                        progress_item.update({"status": "failed", "resultReason": "创建 Runner 重跑任务失败"})
+                        persist_rerun_progress("RUNNING")
                 elif j:
                     skipped.append({
                         "jobId": jid,
@@ -12494,6 +12734,8 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                         "taskName": source.get("taskName") or j.get("target_task_name") or j.get("current_task_name") or "",
                         "reason": "不是失败/超时终态，不创建重跑任务",
                     })
+                    if progress_item is not None:
+                        progress_item.update({"status": "skipped", "resultReason": "不是失败/超时终态，不创建重跑任务"})
                 else:
                     skipped.append({
                         "jobId": jid,
@@ -12501,26 +12743,13 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                         "taskName": source.get("taskName") or "",
                         "reason": "原始 job 已不存在",
                     })
+                    if progress_item is not None:
+                        progress_item.update({"status": "skipped", "resultReason": "原始 job 已不存在"})
+            persist_rerun_progress("RUNNING")
         artifacts["retriedJobs"] = retried
         artifacts["rerunSources"] = retry_sources
         artifacts["rerunSkippedJobs"] = skipped
-        artifacts["rerunProgress"] = {
-            "scope": "failed_tasks",
-            "source": "repair_draft" if uses_repair_draft else "original_yaml",
-            "usesRepairDraft": uses_repair_draft,
-            "repairDraftCount": repair_plan.get("draftCount", 0) if uses_repair_draft else 0,
-            "appliedRepairDraftCount": len(repair_plan.get("targets") or []) if uses_repair_draft else 0,
-            "notRerunOriginalYaml": uses_repair_draft,
-            "sourceFailedCount": len(failed_items),
-            "targetCount": len(job_ids),
-            "createdCount": len(retried),
-            "skippedCount": len(skipped),
-            "createdJobIds": retried,
-            "serialSameDevice": serial_same_device,
-            "sources": retry_sources,
-            "skipped": skipped,
-            "status": "CREATED" if retried else "SKIPPED",
-        }
+        persist_rerun_progress("CREATED" if retried else "SKIPPED")
         call["createdJobIds"] = retried
         call["sourceFailedCount"] = len(failed_items)
         call["targetCount"] = len(job_ids)
@@ -12531,6 +12760,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             f"{'使用修复草稿' if uses_repair_draft else '使用原始 YAML'}创建 {len(retried)} 个重跑任务"
         )
         if not retried:
+            persist_rerun_progress("SKIPPED")
             call["status"] = "FAILED" if uses_repair_draft else ("SKIPPED" if not retry_sources else "FAILED")
             call["outputSummary"] = (
                 "已有修复草稿但没有可执行 YAML，已阻止重跑原脚本"
@@ -12555,6 +12785,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     interval=5,
                     phase="安全重跑",
                 )
+                apply_wait_result(wait_result)
             completed = wait_result.get("completed") or []
             failed = wait_result.get("failed") or []
             timeout_jobs = wait_result.get("timeout") or []
@@ -12579,24 +12810,8 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 "serialSameDevice": serial_same_device,
             })
             del artifacts["rerunAttempts"][:-3]
-            progress = dict(artifacts.get("jobProgress") or {})
-            progress.update({
-                "scope": "failed_tasks",
-                "source": "repair_draft" if uses_repair_draft else "original_yaml",
-                "usesRepairDraft": uses_repair_draft,
-                "repairDraftCount": repair_plan.get("draftCount", 0) if uses_repair_draft else 0,
-                "appliedRepairDraftCount": len(repair_plan.get("targets") or []) if uses_repair_draft else 0,
-                "notRerunOriginalYaml": uses_repair_draft,
-                "sourceFailedCount": len(failed_items),
-                "targetCount": len(job_ids),
-                "createdCount": len(retried),
-                "skippedCount": len(skipped),
-                "createdJobIds": retried,
-                "serialSameDevice": serial_same_device,
-                "sources": retry_sources,
-                "skipped": skipped,
-            })
-            artifacts["rerunProgress"] = progress
+            final_progress_status = "FAILED" if failed or timeout_jobs else ("PARTIAL_FAILED" if skipped else "SUCCESS")
+            persist_rerun_progress(final_progress_status)
             summary = f"重跑执行完成：失败任务 {len(failed_items)} 个，创建 {len(retried)} 个，成功 {len(completed)} 个，失败 {len(failed)} 个，超时 {len(timeout_jobs)} 个"
             if uses_repair_draft:
                 summary += f"；使用修复草稿 {len(repair_plan.get('targets') or [])}/{repair_plan.get('draftCount', 0)} 条，未覆盖失败任务 {len(skipped)} 个"

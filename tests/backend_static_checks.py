@@ -124,6 +124,14 @@ def check_agent_failure_ai_payload_has_primary_evidence():
                     "runnerId": "win-runner-01",
                     "deviceId": "ecbfd645",
                     "deviceStrategy": "fixed",
+                    "artifacts": {
+                        "sourceContext": {
+                            "requirementText": "基础打印三个业务入口需要覆盖展示、同级关系、文案和可达页面",
+                            "figmaText": "[Figma设计稿页面]\n状态/变体：5寸照片\n可见文案：相册导入、百度网盘",
+                            "figmaUsedPages": [{"page_name": "内部备份名", "node_id": "1:70"}],
+                            "figmaImageCount": 4,
+                        },
+                    },
                 },
                 "SCRIPT_ISSUE",
                 "执行失败 1 个任务",
@@ -147,6 +155,8 @@ def check_agent_failure_ai_payload_has_primary_evidence():
         require(payload["failedJobs"][0].get("failureReview", {}).get("category") == "env_issue", "Agent failure analysis must preserve Runner failure review evidence")
         require(payload.get("reportKeyframes") == ["failed-report-frame.png"] and len(payload.get("imageAssets") or []) == 1, "Agent failure analysis must attach bounded Midscene report keyframes")
         require(payload.get("executionConstraint", {}).get("allowOtherDevices") is False and payload["executionConstraint"].get("deviceId") == "ecbfd645", "Agent failure AI must retain the fixed-device constraint and forbid a second phone")
+        require(payload.get("sourceEvidence", {}).get("figmaPageCount") == 1 and "5寸照片" in payload["sourceEvidence"].get("figmaText", ""), "Agent failure AI must receive bounded Figma same-frame evidence without reparsing it")
+        require("基础打印三个业务入口" in payload.get("requirement", "") and payload.get("target") == "基础打印新增百度网盘入口", "Agent failure AI must receive the original target and requirement")
     finally:
         agent_service.TASK_DIR = old_task_dir
         agent_service._agent_failure_report_keyframes = old_keyframes
@@ -349,6 +359,12 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     )
     agent_service_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     require("artifacts = run.get(\"artifacts\") if isinstance(run.get(\"artifacts\"), dict) else {}\n    files = _agent_source_files_for_generation(run)" in agent_service_source, "Agent generation must initialize artifacts before forwarding the AI business plan")
+    figma_soft_evidence = yaml_service.build_figma_soft_evidence_context_text([
+        "[Figma设计稿页面]\n页面名称：内部备份名\n状态/变体：5寸照片\n可见文案：相册导入、百度网盘",
+    ])
+    require("Figma 同帧软证据规则" in figma_soft_evidence and "状态/变体：5寸照片" in figma_soft_evidence and "不得推广到相邻业务页" in figma_soft_evidence, "Existing Figma parser output must be reused under an explicit same-frame soft-evidence contract")
+    planner_prompt = (ROOT / "ai_skills" / "prompts" / "executable_yaml_planner.v1.md").read_text(encoding="utf-8")
+    require("每个候选 case 恰好放入" in planner_prompt and "sourceEvidence" in planner_prompt, "AI executable planner must classify every grounded candidate exactly once")
 
     payload = {
         "analysis": {"requirement_points": ["REQ-001 照片打印"]},
@@ -381,6 +397,46 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     ungrounded_plan["cases"][0]["baselineGrounded"] = False
     not_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, ungrounded_plan)
     require(not_applied["cases"][0]["steps"] == payload["cases"][0]["steps"], "Ungrounded AI baseline citations must not change case paths")
+
+    classified_payload = {
+        "analysis": {"requirement_points": ["REQ-001 入口展示"]},
+        "cases": [
+            {"case_id": "TC-001", "title": "可信短链路", "steps": ["进入首页"]},
+            {"case_id": "TC-002", "title": "路径待确认", "steps": ["进入父页面"]},
+            {"case_id": "TC-003", "title": "只能人工", "steps": ["触发外部依赖"]},
+            {"case_id": "TC-004", "title": "AI 未提及", "steps": ["进入未知页面"]},
+        ],
+    }
+    authoritative_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-1"],
+        "cases": [
+            {"caseId": "TC-001", "title": "可信短链路", "baselineId": "base-1", "baselineGrounded": True, "precondition": "首页", "flow": ["进入首页", "点击入口"], "assertionTarget": "入口可见", "batch": "smoke"},
+            {"caseId": "TC-002", "title": "路径待确认", "baselineId": "base-1", "baselineGrounded": True, "precondition": "首页", "flow": ["进入首页", "进入父页面"], "assertionTarget": "目标可见"},
+        ],
+        "needs_review_cases": [{"caseId": "TC-002", "title": "路径待确认", "reason": "Figma 只有叶子状态，缺少父子导航"}],
+        "manual_cases": [{"caseId": "TC-003", "title": "只能人工", "reason": "依赖不可控外部账号"}],
+    }
+    classified = ai_skill_service.apply_executable_yaml_plan_to_payload(classified_payload, authoritative_plan)
+    classified_by_id = {item.get("case_id"): item for item in classified.get("cases") or []}
+    require(classified_by_id["TC-001"].get("executionLevel") == "executable", "AI executable classification must remain eligible for the static scorer")
+    require(classified_by_id["TC-002"].get("executionLevel") == "needs_review" and not classified_by_id["TC-002"].get("smoke"), "Overlapping AI classifications must resolve to the stricter review level")
+    require(classified_by_id["TC-004"].get("executionLevel") == "needs_review", "Cases omitted by a successful AI planner must default to needs_review instead of being silently promoted")
+    require(any(item.get("case_id") == "TC-003" and item.get("executionLevel") == "manual" for item in classified.get("manual_cases") or []), "AI manual classification must leave the Runner candidate pool")
+    require(classified.get("review", {}).get("executable_yaml_plan", {}).get("classificationApplied") is True and classified["review"]["executable_yaml_plan"].get("unmentioned_count") == 1, "AI planner classification application must remain auditable")
+    old_smoke_selector = ai_skill_service.call_skill_smoke_selector
+    smoke_candidates = []
+    try:
+        def fake_smoke_selector(_title, _module, _analysis, _scenarios, cases, *_args, **_kwargs):
+            smoke_candidates.extend(item.get("case_id") for item in cases)
+            return {"smoke_case_ids": [item.get("case_id") for item in cases], "review": {"selector_source": "static"}}
+
+        ai_skill_service.call_skill_smoke_selector = fake_smoke_selector
+        smoke_classified = ai_skill_service.select_smoke_cases_for_payload("入口", "AI测试", classified)
+    finally:
+        ai_skill_service.call_skill_smoke_selector = old_smoke_selector
+    require(smoke_candidates == ["TC-001"], "Final smoke selection must only spend AI effort on planner-approved executable candidates")
+    require(not any(item.get("smoke") for item in smoke_classified.get("cases") or [] if item.get("executionLevel") != "executable"), "Review/draft cases must not regain a smoke marker after AI classification")
 
     generated_yaml = """android:
   tasks:
@@ -423,6 +479,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
 
 def check_agent_failure_review_and_repair_guard():
     from task_server.services import agent_service
+    from task_server.services import ai_skill_service
     from task_server.services import repair_service
 
     normalized = agent_service._normalize_failed_execution_item({
@@ -446,6 +503,31 @@ def check_agent_failure_review_and_repair_guard():
         },
     })
     require(low_confidence_review.get("failureType") == "SCRIPT_ISSUE", "Low-confidence failure review must not override concrete Runner script evidence")
+    require(
+        agent_service._agent_job_failure_type("invalid_enum_value: expected 'down' | 'up' | 'right' | 'left', received horizontal") == "YAML 动作参数不兼容",
+        "Midscene parameter schema errors must be classified as script issues instead of unknown failures",
+    )
+    overlay_yaml = """android:
+  tasks:
+    - name: overlay check
+      flow:
+        - aiWaitFor: 页面加载完成
+        - aiAssert: 页面无遮挡
+"""
+    negated_overlay = ai_skill_service.classify_failure_by_context({
+        "yaml_text": overlay_yaml,
+        "task_block": overlay_yaml,
+        "evidence_text": "assertion failed: 页面无遮挡，未出现弹窗",
+        "failure_brief": {},
+    }) or {}
+    require(negated_overlay.get("failure_type") != "popup_overlay", "Negated no-overlay assertions must not be misclassified as an observed popup")
+    positive_overlay = ai_skill_service.classify_failure_by_context({
+        "yaml_text": overlay_yaml,
+        "task_block": overlay_yaml,
+        "evidence_text": "运行截图显示权限弹窗弹出并遮挡入口按钮",
+        "failure_brief": {},
+    }) or {}
+    require(positive_overlay.get("failure_type") == "popup_overlay", "Concrete runtime popup evidence must remain auto-repairable")
     require(
         agent_service._normalize_agent_failed_items([
             {"jobId": "job-a", "stderrTail": "failed to locate element: 照片打印"},
@@ -495,6 +577,29 @@ def check_agent_failure_review_and_repair_guard():
     require(script_timeout.get("failureKind") == "等待目标超时", "Agent must retain the concrete failure kind for display and evidence")
     require(agent_service._agent_should_confirm_unknown_failure({}, "UNKNOWN"), "Unreviewed UNKNOWN failures must request confirmation")
     require(not agent_service._agent_should_confirm_unknown_failure({"unknownFailureConfirmed": True}, "UNKNOWN"), "Reviewed UNKNOWN failures must not enter a confirmation loop")
+
+    old_gateway_available_for_analysis = agent_service._ai_gateway_available
+    old_log_for_analysis = agent_service._log_tool_call
+    try:
+        agent_service._ai_gateway_available = lambda: False
+        agent_service._log_tool_call = lambda *args, **kwargs: None
+        stale_precheck_run = {
+            "target": "任意入口验证",
+            "artifacts": {
+                "executionPrecheck": {
+                    "diagnosis": {"rootCause": "准备阶段曾出现环境提示", "impact": "旧快照", "nextActions": []},
+                },
+            },
+        }
+        agent_service._tool_analyze_failure(stale_precheck_run, failed_jobs_override=[{
+            "jobId": "job-latest-script",
+            "status": "failed",
+            "stderrTail": "failed to locate element: 目标入口",
+        }])
+        require(stale_precheck_run["artifacts"]["failureAnalysis"].get("failureType") == "SCRIPT_ISSUE", "Latest Runner terminal evidence must take precedence over stale execution-precheck diagnosis")
+    finally:
+        agent_service._ai_gateway_available = old_gateway_available_for_analysis
+        agent_service._log_tool_call = old_log_for_analysis
 
     original = """android:
   tasks:
@@ -563,6 +668,62 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._ai_gateway_post = old_gateway_post
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
+
+    from task_server.services import job_service
+    old_load_jobs = job_service.load_jobs
+    old_create_pending_job = job_service.create_pending_job
+    old_wait_jobs_finished = job_service.wait_jobs_finished
+    old_persist_snapshot = agent_service._persist_agent_run_snapshot
+    old_log_rerun = agent_service._log_tool_call
+    old_post_rerun = agent_service._agent_post_rerun_autonomy
+    snapshots = []
+    created_counter = {"value": 0}
+    try:
+        job_service.load_jobs = lambda: [
+            {"job_id": "job-source-1", "status": "failed", "module": "AI测试", "file": "one.yaml", "target_task_name": "文档入口", "runner_id": "win-runner-01", "target_runner_id": "win-runner-01", "device_id": "ecbfd645", "device_strategy": "fixed", "attempt": 1},
+            {"job_id": "job-source-2", "status": "failed", "module": "AI测试", "file": "two.yaml", "target_task_name": "照片入口", "runner_id": "win-runner-01", "target_runner_id": "win-runner-01", "device_id": "ecbfd645", "device_strategy": "fixed", "attempt": 1},
+        ]
+
+        def fake_create_pending_job(*args, **kwargs):
+            created_counter["value"] += 1
+            return {"job_id": f"job-rerun-{created_counter['value']}", "created_at": "2026-07-14T12:00:00"}
+
+        def fake_wait_jobs_finished(job_ids, run, **kwargs):
+            job_id = job_ids[0]
+            entry = {"job_id": job_id, "runner_id": "win-runner-01", "device_id": "ecbfd645", "report_url": f"/reports/{job_id}.html"}
+            if job_id.endswith("1"):
+                return {"completed": [{**entry, "status": "success"}], "failed": [], "running": [], "timeout": []}
+            return {"completed": [], "failed": [{**entry, "status": "failed", "error": "目标页面不匹配"}], "running": [], "timeout": []}
+
+        job_service.create_pending_job = fake_create_pending_job
+        job_service.wait_jobs_finished = fake_wait_jobs_finished
+        agent_service._persist_agent_run_snapshot = lambda run: snapshots.append(json.loads(json.dumps(run.get("artifacts", {}).get("rerunProgress") or {}, ensure_ascii=False)))
+        agent_service._log_tool_call = lambda *args, **kwargs: None
+        agent_service._agent_post_rerun_autonomy = lambda *args, **kwargs: {"analyzed": True, "repairGenerated": False, "reason": "static check"}
+        rerun_run = {
+            "runId": "agent-static-rerun-progress",
+            "target": "入口回归",
+            "runnerId": "win-runner-01",
+            "deviceId": "ecbfd645",
+            "deviceStrategy": "fixed",
+            "artifacts": {},
+        }
+        rerun_call = agent_service._tool_rerun(rerun_run, failed_items_override=[
+            {"jobId": "job-source-1", "status": "failed", "module": "AI测试", "file": "one.yaml", "taskName": "文档入口", "failureType": "SCRIPT_ISSUE", "failureReason": "原文档入口失败"},
+            {"jobId": "job-source-2", "status": "failed", "module": "AI测试", "file": "two.yaml", "taskName": "照片入口", "failureType": "SCRIPT_ISSUE", "failureReason": "原照片入口失败"},
+        ])
+        rerun_progress = rerun_run["artifacts"].get("rerunProgress") or {}
+        require(rerun_call.get("status") == "PARTIAL_FAILED" and rerun_progress.get("successCount") == 1 and rerun_progress.get("failedCount") == 1, "Serial fixed-device rerun progress must retain both earlier success and later failure")
+        require([item.get("status") for item in rerun_progress.get("items") or []] == ["success", "failed"], "Task-level rerun items must preserve terminal status in source order")
+        require(all(item.get("runnerId") == "win-runner-01" and item.get("deviceId") == "ecbfd645" for item in rerun_progress.get("items") or []), "Every rerun progress item must expose the actual fixed Runner/device")
+        require(any(snapshot.get("successCount") == 1 and snapshot.get("runningCount") == 1 for snapshot in snapshots), "Cumulative rerun snapshots must retain completed successes while the next serial task is running")
+    finally:
+        job_service.load_jobs = old_load_jobs
+        job_service.create_pending_job = old_create_pending_job
+        job_service.wait_jobs_finished = old_wait_jobs_finished
+        agent_service._persist_agent_run_snapshot = old_persist_snapshot
+        agent_service._log_tool_call = old_log_rerun
+        agent_service._agent_post_rerun_autonomy = old_post_rerun
 
 
 def check_agent_quality_report_uses_figma_visual_reference():
@@ -1512,6 +1673,19 @@ def check_yaml_static_validation_and_patterns():
     require(not invalid.get("ok") and "verify" in invalid.get("blockedActions", []), "Pseudo actions must be blocked before Runner execution")
     invalid_score = score_midscene_yaml_executable(invalid_yaml)
     require(invalid_score.get("level") == "draft" and invalid_score.get("reasons"), "Unsupported Midscene actions must be downgraded to draft with reasons")
+    invalid_scroll_yaml = """android:
+  tasks:
+    - name: invalid scroll params
+      flow:
+        - aiScroll: 页面内容区域
+          scrollType: singleAction
+          direction: horizontal
+          distance: medium
+"""
+    invalid_scroll_static = validate_yaml_static_executable(invalid_scroll_yaml)
+    invalid_scroll_strong = yaml_service_module.validate_midscene_yaml_executability(invalid_scroll_yaml)
+    require(not invalid_scroll_static.get("ok") and any("direction" in item for item in invalid_scroll_static.get("errors") or []) and any("distance" in item for item in invalid_scroll_static.get("errors") or []), "Static YAML validation must block invalid Midscene aiScroll enum and type values")
+    require(not invalid_scroll_strong.get("ok") and any("direction" in item for item in invalid_scroll_strong.get("issues") or []) and any("distance" in item for item in invalid_scroll_strong.get("issues") or []), "Strong Agent/repair validation must independently block invalid aiScroll parameters")
     unstable_yaml = """android:
   tasks:
     - name: unstable

@@ -137,7 +137,11 @@ from .yaml_baseline_cache import (
     get_yaml_baseline_cache_status,
     search_baseline_examples,
 )
-from .yaml_static_validator import load_yaml_action_contract, validate_yaml_static_executable
+from .yaml_static_validator import (
+    load_yaml_action_contract,
+    validate_midscene_action_parameters,
+    validate_yaml_static_executable,
+)
 from .yaml_template_matcher import (
     build_yaml_template_matcher_text,
     evaluate_baseline_template_matching,
@@ -4597,6 +4601,11 @@ def validate_midscene_yaml_executability(text):
                 issues.append(f"tasks[{idx}].flow[{fidx}] 同时声明多个动作：{action_keys}")
             for action in action_keys:
                 action_value = item.get(action)
+                issues.extend(validate_midscene_action_parameters(
+                    action,
+                    item,
+                    f"tasks[{idx}].flow[{fidx}]",
+                ))
                 if action == "runAdbShell" and isinstance(action_value, str) and re.search(r"\$\{[^}]+\}", action_value):
                     issues.append(
                         f"tasks[{idx}].flow[{fidx}] runAdbShell 包含 `${{...}}` shell 参数展开，"
@@ -6052,6 +6061,24 @@ def entry_visibility_fast_path_enabled(request, title, module, text_assets):
     ) or should_fast_path_baidu_entry_visibility(title, module, text_assets)
 
 
+FIGMA_SOFT_EVIDENCE_POLICY = (
+    "需求文本定义要验证什么；Figma 仅补充某一设计帧中真实同屏的页面层级、状态/变体和可见文案。",
+    "页面/Frame 名称可能是内部旧命名，不能覆盖状态/变体和可见文字，也不能单独推导业务入口。",
+    "某个能力只在一帧出现时，不得推广到相邻业务页；缺少到达路径时应进入复核，不能臆造导航。",
+    "画布或设备形态用于适配检查，不代表需要选择或并发执行另一台真实设备。",
+)
+
+
+def build_figma_soft_evidence_context_text(figma_texts, limit=16000):
+    """Wrap existing Figma parser output with a conservative evidence contract."""
+    blocks = [str(item or "").strip() for item in (figma_texts or []) if str(item or "").strip()]
+    if not blocks:
+        return ""
+    header = "【Figma 同帧软证据规则】\n- " + "\n- ".join(FIGMA_SOFT_EVIDENCE_POLICY)
+    body = "\n\n".join(blocks)
+    return f"{header}\n\n【Figma 解析结果】\n{body}"[:max(2000, safe_int(limit, 16000))]
+
+
 def generate_ui_yaml_from_request(d, job_id=None):
     title = d.get("title") or d.get("target") or d.get("goal") or "UI自动化用例"
     module = d.get("module") or "AI测试"
@@ -6165,16 +6192,23 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     update_generate_job(job_id, progress=38, step="解析 Figma", message=f"Figma 解析失败，已跳过：{str(e)[:80]}")
     used_reference_pages = used_figma_pages + used_knowledge_pages
     visual_text_assets = figma_texts + knowledge_texts
+    figma_soft_evidence_text = build_figma_soft_evidence_context_text(figma_texts)
     # 脑图/YAML 视觉校准只使用当前 Figma 和人工上传截图。
     # 页面知识库截图容易包含历史无关页面，保留为文本上下文即可，避免误导模型选图。
     visual_image_assets = figma_images + uploaded_image_assets
 
     if job_id:
         update_generate_job(job_id, progress=45, step="理解需求", message="正在先根据需求文档拆解测试点和测试用例")
-    stage1_text_assets = requirement_text_assets or visual_text_assets or [
-        "未提供独立需求文档，请根据标题、模块、Figma/截图和页面知识先归纳业务范围，再生成测试用例。"
-    ]
-    semantic_constraints_text = build_requirement_semantic_constraints_text(stage1_text_assets, title)
+    stage1_text_assets = list(requirement_text_assets or [])
+    if figma_soft_evidence_text:
+        stage1_text_assets.append(figma_soft_evidence_text)
+    if not stage1_text_assets and knowledge_texts:
+        stage1_text_assets.extend(knowledge_texts)
+    if not stage1_text_assets:
+        stage1_text_assets = [
+            "未提供独立需求文档，请根据标题、模块、Figma/截图和页面知识先归纳业务范围，再生成测试用例。"
+        ]
+    semantic_constraints_text = build_requirement_semantic_constraints_text(requirement_text_assets or [title], title)
     if semantic_constraints_text:
         stage1_text_assets = list(stage1_text_assets) + [semantic_constraints_text]
         if job_id:
@@ -6697,6 +6731,14 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 yaml_reference_examples,
                 execution_scope_plan,
                 model_config=model_config,
+                source_evidence={
+                    "mode": "soft_reference",
+                    "requirementText": "\n\n".join(requirement_text_assets)[:12000],
+                    "figmaSoftEvidence": figma_soft_evidence_text,
+                    "figmaPageCount": len(used_figma_pages),
+                    "figmaImageCount": len(figma_images),
+                    "policy": list(FIGMA_SOFT_EVIDENCE_POLICY),
+                },
             )
             executable_plan["scopePlan"] = execution_scope_plan
             payload = apply_executable_yaml_plan_to_payload(payload, executable_plan)
@@ -6707,9 +6749,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
             review["executable_yaml_planner_review"] = executable_plan.get("review") or {}
             review["needs_review_cases"] = executable_plan.get("needs_review_cases") or []
             review["draft_cases"] = executable_plan.get("draft_cases") or []
-            if executable_plan.get("manual_cases"):
-                manual_cases = payload.get("manual_cases") if isinstance(payload.get("manual_cases"), list) else []
-                payload["manual_cases"] = manual_cases + executable_plan.get("manual_cases")
         except Exception as plan_error:
             review = payload.setdefault("review", {})
             ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
@@ -7891,6 +7930,7 @@ def generate_mindmap_from_request(d, job_id=None):
                 figma_texts, figma_images, used_figma_pages, ignored_figma_pages, saved_figma_designs = [], [], [], [], []
 
     visual_text_assets = figma_texts + knowledge_texts
+    figma_soft_evidence_text = build_figma_soft_evidence_context_text(figma_texts)
     # 脑图只让当前 Figma 和人工上传截图进入视觉模型；
     # 页面知识库截图仅作为文本上下文，避免把历史无关 UI 图重新带回来。
     visual_image_assets = figma_images + uploaded_image_assets
@@ -7901,9 +7941,15 @@ def generate_mindmap_from_request(d, job_id=None):
     mindmap_uploaded_images = mindmap_visual_image_assets[selected_figma_count:]
     mindmap_visual_image_assets = mindmap_figma_images + mindmap_uploaded_images
     skipped_visual_image_count = max(0, len(visual_image_assets) - len(mindmap_visual_image_assets))
-    stage1_text_assets = (requirement_text_assets + visual_text_assets) or [
-        "未提供独立需求文档，请根据标题、模块、当前 Figma/截图先归纳业务范围，再生成测试场景和用例脑图。"
-    ]
+    stage1_text_assets = list(requirement_text_assets or [])
+    if figma_soft_evidence_text:
+        stage1_text_assets.append(figma_soft_evidence_text)
+    if knowledge_texts:
+        stage1_text_assets.extend(knowledge_texts)
+    if not stage1_text_assets:
+        stage1_text_assets = [
+            "未提供独立需求文档，请根据标题、模块、当前 Figma/截图先归纳业务范围，再生成测试场景和用例脑图。"
+        ]
     plan_validation_issues = normalize_text_list(
         d.get("planValidationIssues") or d.get("plan_validation_issues")
     )
