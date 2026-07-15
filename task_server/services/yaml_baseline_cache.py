@@ -511,24 +511,53 @@ def _score_item(query_terms: List[str], module: str, item: Dict[str, Any]) -> Tu
     return score, matched[:12]
 
 
+def _normalized_branch_evidence(value: Any) -> str:
+    return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "")).lower()
+
+
+def _baseline_item_branch_evidence(item: Dict[str, Any]) -> str:
+    values = [
+        item.get("title"),
+        item.get("module"),
+        item.get("file"),
+        item.get("path"),
+        item.get("businessPath"),
+        item.get("baseline_path"),
+        item.get("provenancePath"),
+        item.get("snippet"),
+        item.get("actions"),
+    ]
+    return _normalized_branch_evidence("\n".join(str(value or "") for value in values))
+
+
 def search_baseline_examples(
     query_text: Any,
     module: str = "",
     limit: int = 3,
     allow_fallback: bool = False,
     trusted_only: bool = True,
+    required_terms: Iterable[Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Search cached baseline snippets and return prompt-ready Top-N examples."""
     limit = max(1, min(YAML_BASELINE_SEARCH_MAX_LIMIT, safe_int(limit, 3)))
     started = time.time()
     cache = get_yaml_baseline_cache(force=False)
     query_terms = _terms(query_text, limit=120)
+    required_evidence_terms = list(dict.fromkeys(
+        _normalized_branch_evidence(value)
+        for value in (required_terms or [])
+        if len(_normalized_branch_evidence(value)) >= 2
+    ))
     scored = []
     for item in cache.get("items") or []:
         if not isinstance(item, dict):
             continue
         if trusted_only and (item.get("baselineUsable") is not True or item.get("trusted") is not True):
             continue
+        if required_evidence_terms:
+            evidence = _baseline_item_branch_evidence(item)
+            if not any(term in evidence for term in required_evidence_terms):
+                continue
         score, matched = _score_item(query_terms, module, item)
         if score <= 0 and not allow_fallback:
             continue
@@ -561,27 +590,40 @@ def search_diverse_baseline_examples(
     """
     limit = max(1, min(YAML_BASELINE_SEARCH_MAX_LIMIT, safe_int(limit, 20)))
     per_branch = max(1, min(8, safe_int(per_branch, 4)))
-    normalized_queries: List[str] = []
+    branch_specs: List[Dict[str, Any]] = []
     seen_queries = set()
     for value in branch_queries or []:
-        text = str(value or "").strip()
-        key = re.sub(r"\s+", " ", text).lower()
-        if len(key) < 2 or key in seen_queries:
+        if isinstance(value, dict):
+            text = str(value.get("query") or value.get("retrievalQuery") or value.get("name") or "").strip()
+            branch_id = str(value.get("id") or value.get("branchId") or "").strip()
+            anchors = list(dict.fromkeys(
+                _normalized_branch_evidence(anchor)
+                for anchor in (value.get("anchors") or value.get("anchorTerms") or [])
+                if len(_normalized_branch_evidence(anchor)) >= 2
+            ))[:4]
+        else:
+            text = str(value or "").strip()
+            branch_id = ""
+            anchors = []
+        normalized_query = re.sub(r"\s+", " ", text).lower()
+        key = f"{branch_id}|{normalized_query}"
+        if len(text) < 2 or key in seen_queries:
             continue
         seen_queries.add(key)
-        normalized_queries.append(text)
-        if len(normalized_queries) >= 8:
+        branch_specs.append({"id": branch_id, "query": text, "anchors": anchors})
+        if len(branch_specs) >= 8:
             break
 
     branch_pools = [
         search_baseline_examples(
-            branch_query,
+            spec["query"],
             module=module,
-            limit=per_branch,
+            limit=YAML_BASELINE_SEARCH_MAX_LIMIT if spec.get("anchors") else per_branch,
             allow_fallback=False,
             trusted_only=trusted_only,
-        )
-        for branch_query in normalized_queries
+            required_terms=spec.get("anchors"),
+        )[:per_branch]
+        for spec in branch_specs
     ]
     global_rows = search_baseline_examples(
         query_text,
@@ -593,7 +635,13 @@ def search_diverse_baseline_examples(
     merged: List[Dict[str, Any]] = []
     by_id: Dict[str, Dict[str, Any]] = {}
 
-    def add(row: Dict[str, Any], retrieval_query: str, role: str) -> None:
+    def add(
+        row: Dict[str, Any],
+        retrieval_query: str,
+        role: str,
+        branch_id: str = "",
+        anchors: Iterable[Any] | None = None,
+    ) -> None:
         if not isinstance(row, dict):
             return
         key = str(row.get("id") or row.get("provenancePath") or row.get("file") or "").strip()
@@ -607,11 +655,20 @@ def search_diverse_baseline_examples(
             roles = existing.setdefault("retrievalRoles", [])
             if role and role not in roles:
                 roles.append(role)
+            branch_ids = existing.setdefault("retrievalBranchIds", [])
+            if branch_id and branch_id not in branch_ids:
+                branch_ids.append(branch_id)
+            retrieval_anchors = existing.setdefault("retrievalAnchors", [])
+            for anchor in anchors or []:
+                if anchor and anchor not in retrieval_anchors:
+                    retrieval_anchors.append(anchor)
             existing["score"] = max(safe_int(existing.get("score"), 0), safe_int(row.get("score"), 0))
             return
         item = dict(row)
         item["retrievalQueries"] = [retrieval_query[:500]] if retrieval_query else []
         item["retrievalRoles"] = [role] if role else []
+        item["retrievalBranchIds"] = [branch_id] if branch_id else []
+        item["retrievalAnchors"] = list(anchors or [])[:4]
         by_id[key] = item
         merged.append(item)
 
@@ -620,14 +677,21 @@ def search_diverse_baseline_examples(
     for rank in range(per_branch):
         for index, pool in enumerate(branch_pools):
             if rank < len(pool):
-                add(pool[rank], normalized_queries[index], "business_branch")
+                spec = branch_specs[index]
+                add(
+                    pool[rank],
+                    spec["query"],
+                    "business_branch",
+                    branch_id=spec.get("id") or "",
+                    anchors=spec.get("anchors") or [],
+                )
                 if len(merged) >= limit:
                     return merged
     for row in global_rows:
         add(row, str(query_text or ""), "global_relevance")
         if len(merged) >= limit:
             break
-    _LAST_STATUS.update({"diverseBranchCount": len(normalized_queries), "diverseMatchedCount": len(merged)})
+    _LAST_STATUS.update({"diverseBranchCount": len(branch_specs), "diverseMatchedCount": len(merged)})
     return merged
 
 

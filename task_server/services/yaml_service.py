@@ -6320,6 +6320,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
     prepared_cases_payload = d.get("preparedCasesPayload") or d.get("prepared_cases_payload") or {}
     if not isinstance(prepared_cases_payload, dict):
         prepared_cases_payload = {}
+    requirement_contract = d.get("requirementCoverageContract") or d.get("requirement_coverage_contract") or {}
+    if not isinstance(requirement_contract, dict):
+        requirement_contract = {}
 
     if job_id:
         update_generate_job(job_id, progress=10, step="保存上传资产", message="正在保存上传文件")
@@ -6454,9 +6457,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
     baseline_query_text = "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets)
     baseline_branch_queries = baseline_branch_queries_from_agent_plan(agent_business_plan)
     baseline_required_branches = baseline_required_branches_from_agent_plan(agent_business_plan)
+    baseline_retrieval_branches = baseline_required_branches or baseline_branch_queries
     baseline_candidates = search_diverse_baseline_examples(
         baseline_query_text,
-        branch_queries=baseline_branch_queries,
+        branch_queries=baseline_retrieval_branches,
         module=module,
         limit=20,
     )
@@ -6464,7 +6468,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
     ai_decision_trace = {
         "enabled": True,
         "baseline_candidate_count": len(baseline_candidates),
-        "baseline_branch_query_count": len(baseline_branch_queries),
+        "baseline_branch_query_count": len(baseline_retrieval_branches),
+        "baseline_plan_branch_query_count": len(baseline_branch_queries),
         "baseline_required_branch_count": len(baseline_required_branches),
         "baseline_required_branches": [item.get("name") for item in baseline_required_branches],
     }
@@ -6649,6 +6654,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 app_package=app_package,
                 allow_entry_visibility_fast_path=deterministic_entry_visibility_source,
                 generation_scope_plan=execution_scope_plan,
+                requirement_contract=requirement_contract,
             )
         except Exception as e:
             skill_pipeline_error = str(e)
@@ -8181,6 +8187,9 @@ def generate_mindmap_from_request(d, job_id=None):
         d.get("useYamlBaselineContext") or d.get("use_yaml_baseline_context"),
         False,
     )
+    requirement_contract = d.get("requirementCoverageContract") or d.get("requirement_coverage_contract") or {}
+    if not isinstance(requirement_contract, dict):
+        requirement_contract = {}
     model_config = ai_model_config_from_request(d)
 
     if job_id:
@@ -8329,6 +8338,7 @@ def generate_mindmap_from_request(d, job_id=None):
                 app_name=d.get("appName") or d.get("app_name") or "",
                 allow_entry_visibility_fast_path=not require_ai_planning,
                 require_ai_core=require_ai_planning,
+                requirement_contract=requirement_contract,
             )
         except Exception as e:
             if require_ai_planning:

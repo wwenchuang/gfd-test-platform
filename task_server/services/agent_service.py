@@ -4220,6 +4220,10 @@ def _agent_mindmap_plan_request(run, source_context, attempt=1, validation_issue
             "content": source_text,
             "source": "agent-source-context",
         }]
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    requirement_contract = artifacts.get("requirementCoverageCandidates")
+    if not isinstance(requirement_contract, dict):
+        requirement_contract = {}
     return {
         "case_set_id": f"agent-plan-{_agent_safe_run_file_id(run)}-{attempt}",
         "title": str(run.get("target") or source_context.get("target") or "AI Agent 业务计划"),
@@ -4228,6 +4232,7 @@ def _agent_mindmap_plan_request(run, source_context, attempt=1, validation_issue
         "figma_url": source_context.get("figmaUrl") or "",
         "figmaUrl": source_context.get("figmaUrl") or "",
         "prepared_figma_context": _agent_prepared_figma_context_from_source(source_context),
+        "requirementCoverageContract": requirement_contract,
         "app_package": _agent_app_package(run),
         "appName": run.get("appName") or "",
         "use_knowledge_context": False,
@@ -8676,6 +8681,9 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
     agent_plan = artifacts.get("plan") if isinstance(artifacts.get("plan"), dict) else {}
     mindmap_plan = artifacts.get("mindmapPlan") if isinstance(artifacts.get("mindmapPlan"), dict) else {}
     prepared_cases_payload = mindmap_plan.get("cases") if isinstance(mindmap_plan.get("cases"), dict) else {}
+    requirement_contract = artifacts.get("requirementCoverageCandidates")
+    if not isinstance(requirement_contract, dict):
+        requirement_contract = {}
     direct_entry_visibility = _agent_use_direct_entry_visibility_smoke(run)
     has_entry_visibility_intent = _agent_needs_entry_visibility_smoke(run)
     request_data = {
@@ -8710,6 +8718,7 @@ def _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text):
         },
         "preparedCasesPayload": prepared_cases_payload,
         "preparedCasesSource": "platform_mindmap_ai" if prepared_cases_payload else "",
+        "requirementCoverageContract": requirement_contract,
     }
     progress_job_id = _agent_generate_progress_job_id(run)
     step = next((item for item in (run.get("steps") or []) if item.get("step") == "GENERATE_YAML"), None)

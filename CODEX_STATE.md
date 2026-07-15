@@ -1889,3 +1889,44 @@ git diff --check
 
 - 提交并部署本轮修复后，再用同一需求、同一 Figma、`qwen3.6-plus`、`win-runner-01`、固定 OPPO `ecbfd645` 发起完整 Agent 回归。
 - 必须等 Agent、首批冒烟、remaining 和有界 AI 修复全部到终态，再人工复核最终 YAML 的三个业务入口、文案 / 同级关系 / 可达页、真实报告、关键帧和失败归因。
+
+### 2026-07-15 部署后真实回归：原始需求契约与分支基线召回
+
+部署 `80a9b84` 后真实验证：
+
+- 本地、`origin/main` 和线上前端均为 `80a9b84`；8091 / 8088、AI Gateway、Sonic 健康，text / VL 模型为 `qwen3.6-plus`。
+- `win-runner-01` 在线，模型族为 `qwen3.6`；固定 OPPO `ecbfd645` 在线。任务开始前没有运行中的 Agent 或 Runner job，未选择或下发华为设备。
+- Agent：`agent-1784086634757-e7c92043`；终态 `FAILED / GENERATE_YAML`，进度 30。生成后台任务 `agent-generate-agent-1784086634757-e7c92043` 在最终覆盖门禁失败；没有创建 Runner job，因此不存在本次 smoke / remaining 真机结果。
+- PREPARE_SOURCE 正确解析 Figma 4 页 / 4 图、忽略 0 页。PLAN 将 4 张图按单图批次全部送入 `qwen3.6-plus`，4 / 4 批均在约 90 秒超时，`sent=true`、`attempted=4`、`done=0`、`status=failed`、`hardGate=false`；Figma 仍是软参考，页面/图片计数没有丢失。
+- 路由保持 `new_requirement_source / generate_draft`。AI PLAN 生成 8 个业务分支，冒烟建议仍是文档打印、照片打印、扫描复印。
+- 最终只确认 3 条 executable：文档展示、照片展示、文档排序；门禁缺失 `REQ-003..006` 后正确阻断，没有把不完整组合发给 Runner。
+
+失败根因：
+
+- 原始需求明确要求文档打印、照片打印、扫描复印三个兄弟入口都覆盖展示、同级关系、文案和可达页面。requirement analyzer 却把扫描复印弱化成“需确认是否需要新增”，又把模型推断出的未绑定授权、已绑定文件列表和手机/宽屏适配扩写成 3 个新的硬 requirement；最终门禁实际检查的是 AI 扩写后的 6 点，而不是原始验收契约。
+- 生成阶段已经识别三个必需首批分支，但旧多样化检索同时轮询全部 8 个 AI 场景。运行库中大量通用/文档类百度网盘成功样本挤占每分支 TopN 后，严格证据闸门得到文档 4 个、照片 0 个、扫描 0 个合格候选；AI 最终只收到文档基线，无法可靠升级扫描短链路。
+- 3 / 5 / 8 数量在本次只作为 advisory，没有因为目标 8 条而硬凑；失败不是数量下限，也不是 scorer、Runner、ADB 或设备问题。
+
+本轮通用修复：
+
+- Agent 在开始 PLAN 前已从原始需求抽取“业务分支 + 验收维度”候选。本轮把该候选作为 `requirementCoverageContract` 传给现有 MM skills：它不预设页面层级或路径，AI 仍负责需求理解、场景设计、最短导航、风险和人工项。
+- 对可审计的原始入口契约，硬 `requirement_points` 由原文分支及 checks 建立；AI 原始建议完整保留在 `ai_suggested_requirement_points`。授权态、账号数据、空态、弱网和额外设备形态若不是原文明确要求，只能进入 risks / questions / assumptions / manual，不能扩大硬门禁；缺 Figma 帧也不能把明确分支改成“待确认是否需要”。
+- 必需首批分支检索改为锚点约束：先要求候选自身 title / file / businessPath / snippet / actions 命中 AI 分支叶子，再记录 `retrievalBranchIds`，最后仍交给现有 AI reranker 从可信候选中选择 Top3。平台不替 AI 选具体脚本，也不允许兄弟分支互相冒充。
+- 本次线上 PLAN 原样离线重放后，文档、照片、扫描各得到 4 个可审计候选；代表候选分别为文档打印、`6寸照片打印`、`文件扫描`。没有修改 Figma 解析、历史 YAML、Runner、执行模式、`router.py`、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/yaml_baseline_cache.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name 通过，后端 61 项、前端 67 项、AI Gateway 46 项、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+- 回归测试覆盖两种真实失败形态：AI 返回 6 个含授权/账号/设备推断的硬点时，门禁恢复为原文 3 个兄弟分支且保留 AI 建议审计；24 个通用成功样本挤占全局相似度时，照片和扫描的同分支基线仍有来源地进入 AI 候选池。
+
+待完成：
+
+- 提交并部署本轮修复。
+- 部署后用完全相同输入再次发起 Agent，持续轮询 Agent、smoke、remaining 和可能的有界修复到终态；人工复核最终 YAML、真实 Runner 报告、截图和失败分类，且所有任务只能下发固定 OPPO `ecbfd645`。

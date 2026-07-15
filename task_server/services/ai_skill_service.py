@@ -1232,6 +1232,79 @@ def normalize_requirement_analysis_result(result):
     return result
 
 
+def normalize_source_requirement_contract(value):
+    """Normalize an explicit source-derived coverage contract for AI planning."""
+    value = value if isinstance(value, dict) else {}
+    source = str(value.get("source") or "").strip()
+    candidate_only = value.get("candidateOnly") is True or value.get("candidate_only") is True
+    if source != "requirement_candidates" or not candidate_only:
+        return {}
+    flows = []
+    seen = set()
+    for index, raw in enumerate(value.get("businessFlows") or value.get("business_flows") or []):
+        if not isinstance(raw, dict):
+            continue
+        branch = str(raw.get("branch") or raw.get("name") or "").strip()
+        checks = normalize_text_list(raw.get("checks"))[:8]
+        branch_key = re.sub(r"\s+", "", branch).lower()
+        if not branch_key or not checks or branch_key in seen:
+            continue
+        seen.add(branch_key)
+        flows.append({
+            "id": str(raw.get("id") or f"FLOW-{index + 1:03d}").strip()[:40],
+            "name": str(raw.get("name") or branch).strip()[:120],
+            "branch": branch[:80],
+            "steps": normalize_text_list(raw.get("steps"))[:10],
+            "checks": checks,
+        })
+        if len(flows) >= 8:
+            break
+    if not flows:
+        return {}
+    return {
+        "source": source,
+        "candidateOnly": True,
+        "relationship": str(value.get("relationship") or "unknown").strip(),
+        "businessFlows": flows,
+    }
+
+
+def source_requirement_contract_points(value):
+    """Build immutable hard-coverage points from explicit source branches/checks."""
+    contract = normalize_source_requirement_contract(value)
+    points = []
+    for index, flow in enumerate(contract.get("businessFlows") or [], start=1):
+        checks = "；".join(normalize_text_list(flow.get("checks"))[:8])
+        if not checks:
+            continue
+        points.append(f"REQ-{index:03d} {flow.get('branch') or flow.get('name')}：{checks}")
+    return points
+
+
+def apply_source_requirement_contract(analysis, value):
+    """Keep AI interpretation advisory while source facts own the hard gate."""
+    analysis = normalize_requirement_analysis_result(dict(analysis or {}))
+    contract = normalize_source_requirement_contract(value)
+    points = source_requirement_contract_points(contract)
+    if not points:
+        return analysis
+    ai_points = normalize_text_list(analysis.get("requirement_points"))
+    analysis["requirement_points"] = points
+    analysis["ai_suggested_requirement_points"] = ai_points
+    analysis["requirement_contract"] = {
+        "applied": True,
+        "source": contract.get("source"),
+        "branch_count": len(contract.get("businessFlows") or []),
+        "hard_point_count": len(points),
+        "ai_suggested_point_count": len(ai_points),
+        "rule": (
+            "原始需求分支与验收维度决定硬覆盖；AI 可补充风险、问题和人工场景，"
+            "但不能把推断状态升级为覆盖门禁或弱化明确分支。"
+        ),
+    }
+    return analysis
+
+
 def _fallback_requirement_points_from_text(title, text_assets):
     """从原始需求文本中提取保守需求点，避免需求分析模型超时后中断。"""
     raw = _joined_requirement_source(title, "", text_assets)
@@ -1298,13 +1371,22 @@ def _fallback_requirement_analysis(title, module, text_assets, error=""):
     })
 
 
-def call_skill_requirement_analyzer(title, module, text_assets, model_config=None):
+def call_skill_requirement_analyzer(
+    title,
+    module,
+    text_assets,
+    model_config=None,
+    requirement_contract=None,
+):
     """调用 AI skill: requirement_analyzer。"""
+    requirement_contract = normalize_source_requirement_contract(requirement_contract)
     payload = {
         "title": title,
         "module": module,
         "text_assets": compact_text_assets(text_assets)
     }
+    if requirement_contract:
+        payload["requirementContract"] = requirement_contract
     try:
         result = run_ai_skill(
             "requirement_analyzer",
@@ -1314,9 +1396,10 @@ def call_skill_requirement_analyzer(title, module, text_assets, model_config=Non
             retry_count=0,
             model_config=model_config,
         )
-        return normalize_requirement_analysis_result(result)
+        return apply_source_requirement_contract(result, requirement_contract)
     except Exception as exc:
-        return _fallback_requirement_analysis(title, module, text_assets, error=str(exc))
+        fallback = _fallback_requirement_analysis(title, module, text_assets, error=str(exc))
+        return apply_source_requirement_contract(fallback, requirement_contract)
 
 
 # ---------------------------------------------------------------------------
@@ -2330,6 +2413,7 @@ def build_cases_payload_from_skills(
     allow_entry_visibility_fast_path=True,
     generation_scope_plan=None,
     require_ai_core=False,
+    requirement_contract=None,
 ):
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
@@ -2404,7 +2488,13 @@ def build_cases_payload_from_skills(
         review["skill_pipeline"] = "deterministic_baidu_entry_visibility.v1 -> local_smoke_gate.v1"
         validate_ai_skill_output("cases_payload", normalized)
         return normalized
-    analysis = call_skill_requirement_analyzer(title, module, text_assets, model_config=model_config)
+    analysis = call_skill_requirement_analyzer(
+        title,
+        module,
+        text_assets,
+        model_config=model_config,
+        requirement_contract=requirement_contract,
+    )
     targets = generation_targets_for_scope(analysis, mode=mode, scope_plan=generation_scope_plan)
     if require_ai_core and analysis.get("fallback_reason"):
         return {
@@ -2552,6 +2642,8 @@ def _compact_baseline_candidate(item, index=0):
         "matched_terms": item.get("matched_terms") or [],
         "retrievalQueries": item.get("retrievalQueries") or [],
         "retrievalRoles": item.get("retrievalRoles") or [],
+        "retrievalBranchIds": item.get("retrievalBranchIds") or [],
+        "retrievalAnchors": item.get("retrievalAnchors") or [],
         "eligibleBranchIds": item.get("eligibleBranchIds") or [],
         "branchEvidence": item.get("branchEvidence") or [],
         "selectedBranchId": item.get("ai_selected_branch_id") or item.get("selectedBranchId") or "",
@@ -2625,6 +2717,11 @@ def _annotate_baseline_branch_eligibility(candidates, required_branches):
             for query in (candidate.get("retrievalQueries") or [])
             if str(query or "").strip()
         }
+        candidate_branch_ids = {
+            str(branch_id or "").strip()
+            for branch_id in (candidate.get("retrievalBranchIds") or [])
+            if str(branch_id or "").strip()
+        }
         evidence_text = _baseline_candidate_branch_evidence_text(candidate)
         eligible_ids = []
         evidence_rows = []
@@ -2634,7 +2731,8 @@ def _annotate_baseline_branch_eligibility(candidates, required_branches):
                 anchor for anchor in (branch.get("anchors") or [])
                 if anchor and anchor in evidence_text
             ]
-            if branch_query not in candidate_query_keys or not matched_anchors:
+            retrieved_for_branch = branch["id"] in candidate_branch_ids or branch_query in candidate_query_keys
+            if not retrieved_for_branch or not matched_anchors:
                 continue
             eligible_ids.append(branch["id"])
             counts[branch["id"]] += 1

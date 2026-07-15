@@ -195,6 +195,20 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         not any(item.get("steps") or item.get("checks") for item in generic_preview.get("requirementCandidates") or []),
         "Agent startup preview must not present deterministic steps or checks before MM AI planning",
     )
+    generic_contract_run = {
+        "target": "会员服务新增发票入口",
+        "normalizedInput": {
+            "requirementText": "会员服务入口在首页：订单管理、优惠券。发票入口是新增能力，需要校验展示、同级关系、文案和可达页面。",
+        },
+        "artifacts": {},
+    }
+    generic_contract = agent_service._ensure_business_flow_constraint(generic_contract_run)
+    generic_points = ai_skill_service.source_requirement_contract_points(generic_contract)
+    require(
+        len(generic_points) == 2
+        and all(term in " ".join(generic_points) for term in ("订单管理", "优惠券", "发票入口", "同级", "文案", "稳定可达")),
+        "Source requirement contracts must generalize to arbitrary entry labels and sibling branches without product-specific hardcoding",
+    )
     require(preview.get("candidateOnly") and preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate coverage candidates from the later AI business plan")
     plan_context = yaml_service.build_agent_business_plan_context_text({
         "source": "platform_mindmap_ai",
@@ -275,11 +289,40 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         candidate_constraint = agent_service._ensure_business_flow_constraint(live_plan_run)
         require(candidate_constraint.get("candidateOnly") and not candidate_constraint.get("strict"), "Raw requirement extraction must stay an unverified coverage candidate before AI PLAN")
         require(candidate_constraint.get("businessFlow") == [], "Sibling requirement candidates must not be flattened into a fake sequential main chain")
+        source_guarded_analysis = ai_skill_service.apply_source_requirement_contract({
+            "business_goals": ["新增云盘入口"],
+            "requirement_points": [
+                "REQ-001 文档打印入口展示",
+                "REQ-002 照片打印入口展示",
+                "REQ-003 扫描复印入口是否需要待确认",
+                "REQ-004 未绑定账号授权",
+                "REQ-005 已绑定账号文件列表",
+                "REQ-006 手机与宽屏适配",
+            ],
+            "questions": ["扫描复印缺少 Figma 帧"],
+            "missing_inputs": ["第三方账号"],
+            "source_quality": {"requirement": "sufficient", "ui": "partial", "knowledge": "missing"},
+        }, candidate_constraint)
+        guarded_points = source_guarded_analysis.get("requirement_points") or []
+        require(
+            len(guarded_points) == 3
+            and all(term in " ".join(guarded_points) for term in ("文档打印", "照片打印", "扫描复印", "入口可见", "同级", "文案", "稳定可达")),
+            "Source-derived entry branches/checks must own the hard coverage gate instead of AI-inferred auth, account, or device states",
+        )
+        require(
+            len(source_guarded_analysis.get("ai_suggested_requirement_points") or []) == 6
+            and source_guarded_analysis.get("requirement_contract", {}).get("applied"),
+            "AI requirement suggestions must remain observable after the source contract removes them from the hard gate",
+        )
         plan_call = agent_service._tool_agent_plan(live_plan_run)
         live_plan = live_plan_run.get("artifacts", {}).get("plan", {})
         require(plan_call.get("status") == "SUCCESS" and live_plan.get("aiGenerated"), "Agent PLAN must use the platform MM AI result instead of silently returning a generic local lifecycle")
         require(mindmap_calls and mindmap_calls[0]["request"].get("requireAiPlanning"), "Agent PLAN must reuse platform mindmap skills with deterministic entry fast paths disabled")
         require(mindmap_calls[0]["request"].get("useYamlBaselineContext"), "Agent MM planning must include trusted baseline reranking context")
+        require(
+            mindmap_calls[0]["request"].get("requirementCoverageContract", {}).get("businessFlows") == candidate_constraint.get("businessFlows"),
+            "Agent PLAN must pass the original source coverage contract into the MM requirement analyzer",
+        )
         require(len(live_plan.get("businessFlows") or []) == 3 and live_plan.get("qualityGate", {}).get("passed"), "AI PLAN must preserve every required business branch and pass deterministic grounding")
         require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
         require(live_plan.get("source") == "platform_mindmap_ai" and live_plan.get("mindmapTrace", {}).get("preparedFigmaReused"), "Agent PLAN must expose MM and prepared-Figma provenance")
@@ -346,6 +389,99 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         yaml_service.generate_mindmap_from_request = old_mindmap
         yaml_service.update_generate_job = old_update_generate_job
         agent_service._log_tool_call = old_log_tool_call
+
+    old_get_baseline_cache = yaml_baseline_cache.get_yaml_baseline_cache
+    try:
+        noisy_rows = [
+            {
+                "id": f"generic-{index}",
+                "title": f"云盘入口通用成功样本 {index}",
+                "module": "AI_Agent_草稿",
+                "file": f"AI_Agent_草稿/generic-{index}.yaml",
+                "businessPath": "首页 -> 文档打印 -> 百度网盘入口",
+                "snippet": "文档打印 百度网盘 入口 展示 同级 文案 可达",
+                "keywords": ["百度网盘", "入口", "文档打印"],
+                "actions": ["aiWaitFor", "aiTap", "aiAssert"],
+                "baselineUsable": True,
+                "trusted": True,
+                "sourceTrust": 100,
+                "lastRunStatus": "success",
+            }
+            for index in range(24)
+        ]
+        branch_rows = [
+            {
+                "id": "doc-grounded",
+                "title": "文档打印成功基线",
+                "module": "基础打印",
+                "file": "基础打印/文档打印.yaml",
+                "businessPath": "首页 -> 文档打印 -> 本地文档",
+                "snippet": "文档打印入口与本地文档页面",
+                "keywords": ["文档打印"],
+                "actions": ["aiWaitFor", "aiTap"],
+                "baselineUsable": True,
+                "trusted": True,
+                "sourceTrust": 80,
+            },
+            {
+                "id": "photo-grounded",
+                "title": "6寸照片打印",
+                "module": "基础打印",
+                "file": "基础打印/6寸照片打印.yaml",
+                "businessPath": "首页 -> 照片打印 -> 6寸照片 -> 相册导入",
+                "snippet": "照片打印页面等待后进入相册导入",
+                "keywords": ["照片打印", "照片"],
+                "actions": ["aiWaitFor", "aiTap"],
+                "baselineUsable": True,
+                "trusted": True,
+                "sourceTrust": 80,
+            },
+            {
+                "id": "scan-grounded",
+                "title": "文件扫描",
+                "module": "基础打印",
+                "file": "基础打印/文件扫描.yaml",
+                "businessPath": "首页 -> 扫描复印 -> 文件扫描",
+                "snippet": "扫描复印页面进入文件扫描",
+                "keywords": ["扫描复印", "扫描"],
+                "actions": ["aiWaitFor", "aiTap"],
+                "baselineUsable": True,
+                "trusted": True,
+                "sourceTrust": 80,
+            },
+        ]
+        yaml_baseline_cache.get_yaml_baseline_cache = lambda force=False: {"items": noisy_rows + branch_rows}
+        required_retrieval = [
+            {"id": "FLOW-001", "name": "基础打印-文档打印", "query": "百度网盘入口展示同级文案可达 文档打印", "anchors": ["文档打印", "文档"]},
+            {"id": "FLOW-002", "name": "基础打印-照片打印", "query": "百度网盘入口展示同级文案可达 照片打印", "anchors": ["照片打印", "照片"]},
+            {"id": "FLOW-003", "name": "基础打印-扫描复印", "query": "百度网盘入口展示同级文案可达 扫描复印", "anchors": ["扫描复印", "扫描"]},
+        ]
+        grounded_pool = yaml_baseline_cache.search_diverse_baseline_examples(
+            "百度网盘入口展示同级文案可达",
+            branch_queries=required_retrieval,
+            limit=20,
+            per_branch=4,
+        )
+        compact_grounded_pool = [
+            ai_skill_service._compact_baseline_candidate(item, index)
+            for index, item in enumerate(grounded_pool)
+        ]
+        grounded_counts = ai_skill_service._annotate_baseline_branch_eligibility(
+            compact_grounded_pool,
+            ai_skill_service._normalize_required_baseline_branches(required_retrieval),
+        )
+        require(
+            all(grounded_counts.get(branch_id, 0) >= 1 for branch_id in ("FLOW-001", "FLOW-002", "FLOW-003"))
+            and {"photo-grounded", "scan-grounded"}.issubset({item.get("id") for item in compact_grounded_pool}),
+            "Required branch retrieval must keep grounded photo/scan baselines even when generic successful samples dominate global similarity",
+        )
+        require(
+            next(item for item in compact_grounded_pool if item.get("id") == "photo-grounded").get("retrievalBranchIds") == ["FLOW-002"]
+            and next(item for item in compact_grounded_pool if item.get("id") == "scan-grounded").get("retrievalBranchIds") == ["FLOW-003"],
+            "Branch retrieval provenance must survive compaction for the AI reranker eligibility gate",
+        )
+    finally:
+        yaml_baseline_cache.get_yaml_baseline_cache = old_get_baseline_cache
 
     rerank_requests = []
     old_run_ai_skill = ai_skill_service.run_ai_skill
@@ -511,8 +647,10 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     )
     requirement_prompt = (ROOT / "ai_skills" / "prompts" / "requirement_analyzer.v1.md").read_text(encoding="utf-8")
     require(
-        "不要擅自在需求点正文后追加“待确认 / 需补充 UI 证据”" in requirement_prompt,
-        "Requirement analysis must keep missing visual evidence separate from the acceptance requirement itself",
+        "不要擅自在需求点正文后追加“待确认 / 需补充 UI 证据”" in requirement_prompt
+        and "requirementContract" in requirement_prompt
+        and "不能升级为硬覆盖点" in requirement_prompt,
+        "Requirement analysis must preserve the source contract and keep inferred states outside the hard acceptance gate",
     )
     automation_prompt = (ROOT / "ai_skills" / "prompts" / "automation_filter.v1.md").read_text(encoding="utf-8")
     require(
