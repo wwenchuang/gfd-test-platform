@@ -28,6 +28,13 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 Agent 内部执行轨迹轮询后自动收缩修复
+
+- 运行中的 Agent 每 3 秒调用 `updateAgentWorkbenchDynamic()` 重绘时间线。内部执行轨迹使用原生 `<details>`，但旧代码用 `onchange` 保存展开状态；`details` 的交互事件实际为 `toggle`，所以用户点开后 `agentCheckpointTraceOpen` 仍为 false，下一次轮询重绘就恢复成关闭。
+- 改为 `ontoggle="agentCheckpointTraceOpen=this.open"`，只保存用户对当前工作台轨迹总区的展开意图。启动新 Agent 时仍按原逻辑重置为默认关闭；手动展开和手动收起都会跨轮询重绘保持，不改变 Agent 状态、轮询周期或后端接口。
+- 更新 `agent-workbench.js` 资源版本，避免部署后浏览器继续命中旧缓存。Playwright 新增真实交互回归：默认关闭 -> 用户打开 -> 模拟轮询重绘后仍打开 -> 用户收起 -> 再次重绘后仍关闭。
+- 已通过前端静态检查 `67` 项和桌面 / 移动端视觉烟测；未修改 Agent 执行、Figma、YAML、Runner、设备或报告逻辑。
+
 ### 2026-07-15 Agent 分支证据误绑与运行历史并发清空修复
 
 部署 `f5c7dec` 后发起同一完整回归：

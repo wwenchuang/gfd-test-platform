@@ -2997,7 +2997,7 @@ function renderAgentTimeline(run) {
   const currentLabel = agentStepLabel(run.currentStep || '');
   return `
     ${renderAgentPhaseOverview(run)}
-    <details class="agent-checkpoint-trace" ${agentCheckpointTraceOpen ? 'open' : ''} onchange="agentCheckpointTraceOpen=this.open">
+    <details class="agent-checkpoint-trace" ${agentCheckpointTraceOpen ? 'open' : ''} ontoggle="agentCheckpointTraceOpen=this.open">
       <summary>
         <span>内部执行轨迹</span>
         <small>${settledCount}/${AGENT_TIMELINE_STEPS.length} 个检查点已结束${currentLabel && !runTerminal ? `，当前 ${escapeHtml(currentLabel)}` : ''}</small>

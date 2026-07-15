@@ -581,6 +581,15 @@ async function anyVisible(locator) {
     await page.waitForSelector('.agent-phase-list');
     if (await page.locator('.agent-phase-step').count() !== 5) throw new Error('The normal Agent path should show five phases; failure recovery must remain conditional');
     if (await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints should be collapsed by default');
+    await page.locator('.agent-checkpoint-trace > summary').click();
+    await page.waitForTimeout(50);
+    if (!await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints did not open after user interaction');
+    await page.evaluate(() => updateAgentWorkbenchDynamic());
+    if (!await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints collapsed after a polling-style render');
+    await page.locator('.agent-checkpoint-trace > summary').click();
+    await page.waitForTimeout(50);
+    await page.evaluate(() => updateAgentWorkbenchDynamic());
+    if (await page.locator('.agent-checkpoint-trace').evaluate(el => el.open)) throw new Error('Internal Agent checkpoints reopened after the user collapsed them');
     await page.waitForSelector('text=人工复核');
     await page.waitForSelector('.agent-artifact-layout');
     if (await page.locator('.agent-artifact-nav-group').count() !== 5) throw new Error('Agent artifacts must be grouped into five readable sections');
