@@ -135,8 +135,9 @@ def write_json_file(path, data):
     """Atomically write *data* as JSON and invalidate cache."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    bad = target.with_suffix(target.suffix + ".bad")
+    write_id = f"{os.getpid()}.{threading.get_ident()}.{time.time_ns()}"
+    tmp = target.with_name(f".{target.name}.tmp.{write_id}")
+    bad = target.with_name(f".{target.name}.bad.{write_id}")
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 Agent 分支证据误绑与运行历史并发清空修复
+
+部署 `f5c7dec` 后发起同一完整回归：
+
+- Agent `agent-1784084185210-75f905b6`，参数仍为“基础打印新增百度网盘入口”、同一 Figma、`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。线上 `8091 / 8088`、AI Gateway、Sonic 均健康，Runner 上报模型族 `qwen3.6`，固定 OPPO PHM110 在线；本轮没有向华为或第二台设备下发任务。
+- Figma parser 保持原实现，正确解析 4 页 / 4 图。PLAN 由 MM AI 生成 8 条业务分支，路由仍为 `new_requirement_source / generate_draft`。4 张图分成 4 个真实视觉批次送入 `qwen3.6-plus`，每批约 90 秒超时，结果为 `0/4 completed / 4 attempted / failed / hardGate=false`，顶层报告仍保留 sourceContext 的 4 图计数。
+- 任务在 `GENERATE_YAML` 阶段被覆盖门禁阻断，没有创建 Runner job。最终只有 `TC-001 / TC-002 / TC-003` 三条文档打印 executable，缺少照片打印 `REQ-002`、扫描复印 `REQ-003` 和点击可达 `REQ-004`；`5` 条数量目标只报告 shortfall，没有为了数量硬凑。
+- 本地候选池实际已有照片分支 `小白学习基线用例-基础打印/6寸照片打印.yaml`，扫描分支已有 `证件扫描.yaml / 文件扫描.yaml`。但候选去重合并后，一条文档百度网盘基线同时带上多个分支的 `retrievalQueries`；AI 随后把通用百度网盘候选分给照片，又把文档短链路分给扫描，并声称可从文档模式泛化。旧门禁只校验 retrieval query，没有校验候选自身页面路径，导致错误分支证据占据 Top3。
+
+同一轮还暴露了独立的数据完整性事故：
+
+- Agent 生成后台 job 已终态失败、cases 产物仍可读取时，`/api/agent-runs` 从约 48 条历史加当前运行瞬间变成 0，当前 Agent GET 返回 404；服务 uptime 持续增长，没有发生重启，也不是用户删除。
+- `_watch_agent_generation_progress` 与主 Agent worker 都会通过 `_append_step_trace` 保存同一个 run。旧 `_persist_agent_run_snapshot` 没有使用 `AGENT_RUN_LOCK` 包住读取、修改、写回；`write_json_file` 又让所有线程共用同一个 `agent-runs.json.tmp`。并发 rename / 写入可使目标 JSON 暂时损坏，`read_json_file` 随后回退为 `{"runs": []}`，未找到当前 run 的 snapshot 保存又把空列表原样写回，因而清空全部历史。
+
+本轮通用修复：
+
+- 从 AI PLAN 的层级分支名通用提取叶子锚点，不包含本需求产品词硬编码。候选只有同时具备“该分支 retrieval query 命中”和“候选自身 title / path / snippet / actions 路径锚点”时，才获得对应 `eligibleBranchIds`。
+- AI 仍负责 Top3 选择；平台只校验 AI 返回的 `branchId` 必须属于候选 `eligibleBranchIds`。非法跨分支分配不再占用 Top3 名额，只允许现有一次有界 AI 自纠，并且只有覆盖分支数实际增加时才采用纠正结果。有显式分支合同时，AI 失败或无有效选择不再回退无关全局 TopN，后续覆盖门禁继续阻断。
+- JSON 原子写入改用同目录、进程 / 线程 / 纳秒唯一的临时文件。Agent snapshot 的完整读改写由已有 `AGENT_RUN_LOCK` 串行化，先冻结 run 快照；记录意外缺失时 upsert 当前 run，而不是保存空列表。Runner job 进度回写同样补上缺失 run 的 upsert。
+- 未修改 Figma parser、图片选择 / 计数 / 软参考策略、`router.py`、历史 YAML、scorer、执行模式或设备选择；没有降低显式需求覆盖、静态校验、冒烟和 remaining 门禁。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/storage.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/agent_service.py task_server/services/job_service.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：线上同形测试确认“同时命中三个 retrievalQueries 的文档基线”只能绑定文档分支，6 寸照片和文件扫描分别只能绑定自己的分支；错误 AI 选择经过一次纠偏后仍错误时不会触发无关本地 fallback。16 个 Agent snapshot 并发 upsert 保留两条既有历史，24 个 200KB JSON 并发写入均完整可解析。undefined-name、后端 `61` 项、前端 `67` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3` 及 Playwright 桌面 / 移动端视觉烟测全部通过。
+
+历史恢复与待完成：
+
+- 本轮提交尚未部署，修复部署前禁止再发起真实 Agent。线上历史能否恢复取决于 `/opt/midscene-learning/` 中是否存在 `agent-runs.json.bad*`、旧 `.tmp`、磁盘快照或主机备份；先只列出并验证每个候选 JSON 的可解析记录数，不能直接覆盖当前文件。恢复时必须按 `runId` 合并 backup 和当前 runs，再原子替换。
+- 修复部署后先确认 `8091 / 8088` 健康、Runner 在线、模型族 `qwen3.6`、固定 OPPO 可用且没有活动任务；再发起同一完整 Agent，持续轮询到真实终态。人工复核 Top3 的分支证据、最终 YAML 的真实可见文字、文档 / 照片 / 扫描 / 文案 / 可达覆盖；若进入 Runner，smoke 和 remaining 的每个 job 都必须固定 `ecbfd645`，核对报告、截图、失败录屏和 AI 修复证据。
+
 ### 2026-07-15 完整 Agent 分支基线、横切覆盖与非凑数门禁修复
 
 部署 `8abf30e` 后发起同一完整回归：

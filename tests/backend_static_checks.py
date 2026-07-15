@@ -297,6 +297,11 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             [item.get("name") for item in required_branches] == ["文档打印", "照片打印", "扫描复印"],
             "Baseline Top3 branch targets must come from the AI-selected smoke flows instead of a product-specific list",
         )
+        require(
+            [item.get("anchors") for item in required_branches]
+            == [["文档打印", "文档"], ["照片打印", "照片"], ["扫描复印", "扫描"]],
+            "Required baseline branches must derive reusable leaf anchors from the AI-authored hierarchy",
+        )
 
         partial_result = fake_mindmap(mindmap_calls[0]["request"], job_id="partial-visual")
         partial_result["cases"]["review"].update({
@@ -351,7 +356,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             {"id": "FLOW-003", "name": "扫描复印", "query": "扫描复印分支"},
         ]
         candidates = [
-            {"id": "doc-a", "title": "文档路径A", "file": "doc-a.yaml", "provenancePath": "doc-a.yaml", "retrievalQueries": ["文档打印分支"], "baselineUsable": True, "trusted": True},
+            {"id": "doc-a", "title": "文档路径A", "file": "doc-a.yaml", "provenancePath": "doc-a.yaml", "retrievalQueries": ["文档打印分支", "照片打印分支", "扫描复印分支"], "baselineUsable": True, "trusted": True},
             {"id": "doc-b", "title": "文档路径B", "file": "doc-b.yaml", "provenancePath": "doc-b.yaml", "retrievalQueries": ["文档打印分支"], "baselineUsable": True, "trusted": True},
             {"id": "doc-c", "title": "文档断言", "file": "doc-c.yaml", "provenancePath": "doc-c.yaml", "retrievalQueries": ["文档打印分支"], "baselineUsable": True, "trusted": True},
             {"id": "photo-a", "title": "6寸照片打印", "file": "photo-a.yaml", "provenancePath": "photo-a.yaml", "retrievalQueries": ["照片打印分支"], "baselineUsable": True, "trusted": True},
@@ -390,6 +395,17 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     finally:
         ai_skill_service.run_ai_skill = old_run_ai_skill
     require(len(rerank_requests) == 2 and rerank_requests[1].get("selectionValidationIssues"), "AI baseline reranking must receive one bounded self-correction when Top3 misses an AI-selected branch")
+    first_request_candidates = {item["id"]: item for item in rerank_requests[0]["candidates"]}
+    require(
+        first_request_candidates["doc-a"].get("eligibleBranchIds") == ["FLOW-001"]
+        and first_request_candidates["photo-a"].get("eligibleBranchIds") == ["FLOW-002"]
+        and first_request_candidates["scan-a"].get("eligibleBranchIds") == ["FLOW-003"],
+        "Merged retrieval queries must not let a document baseline impersonate photo or scan branch evidence",
+    )
+    require(
+        all(item.get("eligibleBranchIds") for item in rerank_requests[1].get("candidates") or []),
+        "The bounded AI correction must receive only candidates with auditable branch evidence",
+    )
     require(
         reranked.get("trace", {}).get("branch_coverage_ok")
         and reranked.get("trace", {}).get("branch_repair_succeeded")
@@ -399,6 +415,37 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             for index, item in enumerate(reranked.get("selected") or [])
         } == {"文档打印", "照片打印", "扫描复印"},
         "Corrected Top3 baselines must cover distinct required business branches before role diversity",
+    )
+
+    rejected_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def always_cross_branch(skill_name, request, **_kwargs):
+            rejected_requests.append(request)
+            doc_candidate = next(item for item in request["candidates"] if item["id"] == "doc-a")
+            return {
+                "selected": [
+                    {"id": "doc-a", "candidatePath": doc_candidate["provenancePath"], "branchId": branch_id}
+                    for branch_id in ("FLOW-001", "FLOW-002", "FLOW-003")
+                ]
+            }
+
+        ai_skill_service.run_ai_skill = always_cross_branch
+        rejected = ai_skill_service.call_skill_baseline_reranker(
+            "多分支入口",
+            "基础打印",
+            "文档打印、照片打印、扫描复印",
+            candidates,
+            limit=3,
+            required_branches=required,
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    require(len(rejected_requests) == 2, "Invalid cross-branch AI selection must receive exactly one bounded correction")
+    require(
+        [item.get("ai_selected_branch_id") for item in rejected.get("selected") or []] == ["FLOW-001"]
+        and rejected.get("trace", {}).get("branch_coverage_ok") is False,
+        "Invalid branch assignments must not occupy Top3 slots or trigger an unrelated local fallback",
     )
 
     maintained = yaml_baseline_cache._baseline_source_info(
@@ -4450,6 +4497,57 @@ def check_snapshot_store_concurrent_save():
         snapshot_store.SNAPSHOT_FILE = old_snapshot_file
 
 
+def check_agent_run_snapshot_concurrent_persistence():
+    from concurrent.futures import ThreadPoolExecutor
+    from task_server import storage
+    from task_server.services import agent_service
+
+    old_agent_runs_file = agent_service.AGENT_RUNS_FILE
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_file = os.path.join(temp_dir, "agent-runs.json")
+            agent_service.AGENT_RUNS_FILE = run_file
+            storage.write_json_file(run_file, {
+                "runs": [
+                    {"runId": "agent-history-a", "status": "DONE"},
+                    {"runId": "agent-history-b", "status": "FAILED"},
+                ]
+            })
+            live_runs = [
+                {
+                    "runId": f"agent-live-{index:02d}",
+                    "status": "RUNNING",
+                    "steps": [{"step": "GENERATE_YAML", "liveTrace": [{"message": "x" * 2000}]}],
+                }
+                for index in range(16)
+            ]
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                list(executor.map(agent_service._persist_agent_run_snapshot, live_runs))
+            persisted = storage.read_json_file(run_file, default={}).get("runs") or []
+            persisted_ids = {item.get("runId") for item in persisted}
+            require(
+                {"agent-history-a", "agent-history-b"}.issubset(persisted_ids)
+                and {item["runId"] for item in live_runs}.issubset(persisted_ids),
+                "Concurrent Agent snapshots must preserve history and upsert every current run",
+            )
+
+            shared_file = os.path.join(temp_dir, "shared-state.json")
+
+            def write_shared(index):
+                storage.write_json_file(shared_file, {"writer": index, "payload": "y" * 200000})
+
+            with ThreadPoolExecutor(max_workers=12) as executor:
+                list(executor.map(write_shared, range(24)))
+            shared = storage.read_json_file(shared_file, default={})
+            require(shared.get("writer") in range(24), "Concurrent atomic JSON writes must leave a complete valid document")
+            require(
+                not list(Path(temp_dir).glob(".shared-state.json.tmp.*")),
+                "Unique JSON temporary files must be consumed after successful atomic writes",
+            )
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_agent_runs_file
+
+
 def check_production_debug_execution_guard_static():
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     config_source = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
@@ -5340,6 +5438,7 @@ def main():
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()
     check_snapshot_store_concurrent_save()
+    check_agent_run_snapshot_concurrent_persistence()
     check_production_debug_execution_guard_static()
     check_execution_adapter_prompt_center_delay()
     check_mindmap_compact_mode()

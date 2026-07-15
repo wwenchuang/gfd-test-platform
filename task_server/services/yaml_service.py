@@ -1679,6 +1679,62 @@ def _baseline_branch_query_from_flow(item):
     return "\n".join(parts).strip()[:2000]
 
 
+_BASELINE_BRANCH_HIERARCHY_RE = re.compile(r"\s*(?:->|=>|→|>|/|\\|\||｜|:|：|—|–|-)\s*")
+_BASELINE_BRANCH_STRUCTURAL_SUFFIXES = (
+    "入口可见性及布局校验",
+    "入口可见性校验",
+    "页面可见性校验",
+    "可见性及布局校验",
+    "可见性校验",
+    "布局校验",
+    "业务分支",
+    "业务流程",
+    "功能入口",
+    "页面入口",
+    "入口",
+    "页面",
+    "流程",
+    "分支",
+)
+
+
+def _baseline_branch_leaf(value):
+    raw = str(value or "").strip()
+    parts = [item.strip() for item in _BASELINE_BRANCH_HIERARCHY_RE.split(raw) if item.strip()]
+    leaf = parts[-1] if parts else raw
+    changed = True
+    while changed and leaf:
+        changed = False
+        for suffix in _BASELINE_BRANCH_STRUCTURAL_SUFFIXES:
+            if leaf.endswith(suffix) and len(leaf) - len(suffix) >= 2:
+                leaf = leaf[:-len(suffix)].strip()
+                changed = True
+                break
+    return leaf
+
+
+def baseline_branch_anchor_terms(branch_name, sibling_names=None):
+    """Derive branch-specific evidence anchors from an AI-authored hierarchy label."""
+    leaf = _baseline_branch_leaf(branch_name)
+    normalized = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", leaf).lower()
+    if len(normalized) < 2:
+        return []
+    sibling_values = {
+        re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", _baseline_branch_leaf(item)).lower()
+        for item in (sibling_names or [])
+        if str(item or "").strip() and str(item or "").strip() != str(branch_name or "").strip()
+    }
+    anchors = [normalized]
+    tokens = re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]+", leaf)
+    if tokens:
+        first = tokens[0].lower()
+        if re.fullmatch(r"[\u4e00-\u9fff]+", first):
+            first = first[:2] if len(first) > 2 else first
+        if len(first) >= 2 and not any(first in sibling for sibling in sibling_values):
+            anchors.append(first)
+    return list(dict.fromkeys(item for item in anchors if len(item) >= 2))[:4]
+
+
 def baseline_branch_queries_from_agent_plan(plan, limit=8):
     """Build narrow retrieval queries from AI-planned branches without adding facts."""
     plan = plan if isinstance(plan, dict) else {}
@@ -1709,6 +1765,11 @@ def baseline_required_branches_from_agent_plan(plan, limit=3):
     smoke_ids = normalize_text_list(strategy.get("smokeFlowIds") or strategy.get("smoke_flow_ids"))
     ordered = [flow_by_id[item] for item in smoke_ids if item in flow_by_id]
     ordered.extend(item for item in flows if item not in ordered)
+    sibling_names = [
+        str(item.get("branch") or item.get("name") or "").strip()
+        for item in ordered
+        if str(item.get("branch") or item.get("name") or "").strip()
+    ]
     required = []
     seen_branches = set()
     for index, item in enumerate(ordered):
@@ -1722,6 +1783,7 @@ def baseline_required_branches_from_agent_plan(plan, limit=3):
             "id": str(item.get("id") or f"FLOW-{index + 1:03d}").strip(),
             "name": branch_name,
             "query": query,
+            "anchors": baseline_branch_anchor_terms(branch_name, sibling_names),
             "source": "agent_smoke_flow" if str(item.get("id") or "").strip() in smoke_ids else "agent_business_flow",
         })
         if len(required) >= max(1, min(3, safe_int(limit, 3))):
@@ -6425,11 +6487,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 limit=3,
                 required_branches=baseline_required_branches,
             )
-            yaml_reference_examples = baseline_rerank.get("selected") or baseline_candidates[:3]
+            yaml_reference_examples = baseline_rerank.get("selected") or (
+                [] if baseline_required_branches else baseline_candidates[:3]
+            )
             ai_decision_trace["baseline_reranker"] = baseline_rerank.get("trace") or {}
             ai_decision_trace["baseline_reranker_review"] = baseline_rerank.get("review") or {}
         except Exception as rerank_error:
-            yaml_reference_examples = baseline_candidates[:3]
+            yaml_reference_examples = [] if baseline_required_branches else baseline_candidates[:3]
             ai_decision_trace["baseline_reranker"] = {
                 "enabled": True,
                 "fallback": True,

@@ -71,6 +71,7 @@ from task_server.services.yaml_service import (
     normalize_full_yaml_structure,
     normalize_yaml_from_model,
     normalize_yaml_task_block_from_model,
+    baseline_branch_anchor_terms,
     diff_yaml,
 )
 from task_server.services.knowledge_service import (
@@ -2551,6 +2552,8 @@ def _compact_baseline_candidate(item, index=0):
         "matched_terms": item.get("matched_terms") or [],
         "retrievalQueries": item.get("retrievalQueries") or [],
         "retrievalRoles": item.get("retrievalRoles") or [],
+        "eligibleBranchIds": item.get("eligibleBranchIds") or [],
+        "branchEvidence": item.get("branchEvidence") or [],
         "selectedBranchId": item.get("ai_selected_branch_id") or item.get("selectedBranchId") or "",
         "selectedBranchName": item.get("ai_selected_branch_name") or item.get("selectedBranchName") or "",
         "actions": item.get("actions") or [],
@@ -2582,11 +2585,66 @@ def _normalize_required_baseline_branches(required_branches, limit=3):
             "id": branch_id,
             "name": name,
             "query": query,
+            "anchors": normalize_text_list(item.get("anchors") or item.get("anchorTerms")),
             "source": str(item.get("source") or "agent_business_flow").strip(),
         })
         if len(normalized) >= max(1, min(3, safe_int(limit, 3))):
             break
+    sibling_names = [item["name"] for item in normalized]
+    for item in normalized:
+        anchors = item.get("anchors") or baseline_branch_anchor_terms(item["name"], sibling_names)
+        item["anchors"] = list(dict.fromkeys(
+            re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(anchor or "")).lower()
+            for anchor in anchors
+            if len(re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(anchor or ""))) >= 2
+        ))[:4]
     return normalized
+
+
+def _baseline_candidate_branch_evidence_text(candidate):
+    candidate = candidate if isinstance(candidate, dict) else {}
+    values = [
+        candidate.get("title"),
+        candidate.get("module"),
+        candidate.get("file"),
+        candidate.get("path"),
+        candidate.get("businessPath"),
+        candidate.get("provenancePath"),
+        candidate.get("snippet"),
+        candidate.get("actions"),
+    ]
+    text = "\n".join(normalize_text_list(values)).lower()
+    return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", text)
+
+
+def _annotate_baseline_branch_eligibility(candidates, required_branches):
+    counts = {item["id"]: 0 for item in required_branches}
+    for candidate in candidates:
+        candidate_query_keys = {
+            re.sub(r"\s+", " ", str(query or "")).strip().lower()
+            for query in (candidate.get("retrievalQueries") or [])
+            if str(query or "").strip()
+        }
+        evidence_text = _baseline_candidate_branch_evidence_text(candidate)
+        eligible_ids = []
+        evidence_rows = []
+        for branch in required_branches:
+            branch_query = re.sub(r"\s+", " ", branch["query"]).strip().lower()
+            matched_anchors = [
+                anchor for anchor in (branch.get("anchors") or [])
+                if anchor and anchor in evidence_text
+            ]
+            if branch_query not in candidate_query_keys or not matched_anchors:
+                continue
+            eligible_ids.append(branch["id"])
+            counts[branch["id"]] += 1
+            evidence_rows.append({
+                "branchId": branch["id"],
+                "matchedAnchors": matched_anchors[:3],
+            })
+        candidate["eligibleBranchIds"] = eligible_ids
+        candidate["branchEvidence"] = evidence_rows
+    return counts
 
 
 def call_skill_baseline_reranker(
@@ -2606,15 +2664,14 @@ def call_skill_baseline_reranker(
     ]
     limit = max(1, min(3, safe_int(limit, 3)))
     requested_required_branches = _normalize_required_baseline_branches(required_branches, limit=limit)
-    candidate_query_keys = {
-        re.sub(r"\s+", " ", str(query or "")).strip().lower()
-        for candidate in candidates
-        for query in (candidate.get("retrievalQueries") or [])
-        if str(query or "").strip()
-    }
+    has_required_branch_contract = bool(requested_required_branches)
+    eligible_branch_candidate_counts = _annotate_baseline_branch_eligibility(
+        candidates,
+        requested_required_branches,
+    )
     required_branches = [
         item for item in requested_required_branches
-        if re.sub(r"\s+", " ", item["query"]).strip().lower() in candidate_query_keys
+        if eligible_branch_candidate_counts.get(item["id"], 0) > 0
     ]
     unavailable_required_branches = [
         item for item in requested_required_branches if item not in required_branches
@@ -2630,6 +2687,7 @@ def call_skill_baseline_reranker(
         "required_branch_count": len(required_branches),
         "required_branch_ids": [item["id"] for item in required_branches],
         "unavailable_required_branch_ids": [item["id"] for item in unavailable_required_branches],
+        "eligible_branch_candidate_counts": eligible_branch_candidate_counts,
         **_model_config_trace(model_config),
     }
     if not candidates:
@@ -2651,6 +2709,7 @@ def call_skill_baseline_reranker(
             "preserve_explicit_business_branches": True,
             "cover_required_branches_before_role_diversity": True,
             "one_selected_candidate_per_required_branch": True,
+            "branch_id_must_be_in_candidate_eligible_branch_ids": True,
             "cite_candidate_provenance_exactly": True,
         },
     }
@@ -2661,12 +2720,13 @@ def call_skill_baseline_reranker(
         invalid_citation_count = 0
         invalid_branch_count = 0
         covered_branch_ids = []
+        selected_candidate_ids = set()
         used_local_fallback = False
         for selected in result.get("selected") or []:
             if not isinstance(selected, dict):
                 continue
             selected_id = clean_id(selected.get("id") or selected.get("candidateId") or "", "")
-            if not selected_id or selected_id not in id_to_candidate:
+            if not selected_id or selected_id not in id_to_candidate or selected_id in selected_candidate_ids:
                 continue
             candidate = id_to_candidate[selected_id]
             cited_path = str(selected.get("candidatePath") or selected.get("provenancePath") or "").replace("\\", "/").strip()
@@ -2679,16 +2739,13 @@ def call_skill_baseline_reranker(
                 continue
             branch_id = clean_id(selected.get("branchId") or selected.get("branch_id") or "", "")
             branch = required_branch_by_id.get(branch_id)
-            candidate_queries = {
-                re.sub(r"\s+", " ", str(item or "")).strip().lower()
-                for item in (candidate.get("retrievalQueries") or [])
-                if str(item or "").strip()
-            }
-            branch_query = re.sub(r"\s+", " ", str((branch or {}).get("query") or "")).strip().lower()
-            if required_branches and (not branch or branch_query not in candidate_queries or branch_id in covered_branch_ids):
+            if has_required_branch_contract and (
+                not branch
+                or branch_id not in (candidate.get("eligibleBranchIds") or [])
+                or branch_id in covered_branch_ids
+            ):
                 invalid_branch_count += 1
-                branch_id = ""
-                branch = None
+                continue
             row = dict(candidate)
             row["ai_selected_reason"] = selected.get("reason") or ""
             row["ai_confidence"] = selected.get("confidence")
@@ -2697,19 +2754,24 @@ def call_skill_baseline_reranker(
             row["ai_selected_branch_name"] = (branch or {}).get("name") or ""
             row["ai_cited_path"] = cited_path or candidate.get("provenancePath") or candidate.get("file") or ""
             selected_rows.append(row)
+            selected_candidate_ids.add(selected_id)
             if branch_id:
                 covered_branch_ids.append(branch_id)
             if len(selected_rows) >= limit:
                 break
-        if not selected_rows:
+        if not selected_rows and not has_required_branch_contract:
             selected_rows = [dict(item) for item in candidates if item["id"] in local_selected_ids][:limit]
             used_local_fallback = True
-        missing_branch_ids = [item["id"] for item in required_branches if item["id"] not in covered_branch_ids]
+        repairable_missing_branch_ids = [
+            item["id"] for item in required_branches if item["id"] not in covered_branch_ids
+        ]
+        missing_branch_ids = [item["id"] for item in unavailable_required_branches] + repairable_missing_branch_ids
         return selected_rows, {
             "invalid_citation_count": invalid_citation_count,
             "invalid_branch_count": invalid_branch_count,
             "covered_branch_ids": covered_branch_ids,
             "missing_branch_ids": missing_branch_ids,
+            "repairable_missing_branch_ids": repairable_missing_branch_ids,
             "branch_coverage_ok": not missing_branch_ids,
             "used_local_fallback": used_local_fallback,
         }
@@ -2726,15 +2788,20 @@ def call_skill_baseline_reranker(
         )
         selected_rows, selection_audit = parse_selection(result)
         trace["branch_repair_attempted"] = False
-        if required_branches and not selection_audit["branch_coverage_ok"]:
+        if selection_audit.get("repairable_missing_branch_ids"):
             trace["branch_repair_attempted"] = True
             repair_request = dict(request)
+            repair_request["candidates"] = [
+                item for item in request["candidates"]
+                if item.get("eligibleBranchIds")
+            ]
             repair_request["previousSelection"] = result.get("selected") or []
             repair_request["selectionValidationIssues"] = [
-                "Top3 未覆盖以下 AI 首批业务分支，每个分支必须选择一条自身 businessPath 与该分支一致的候选，并返回对应 branchId："
+                "Top3 未覆盖以下 AI 首批业务分支。仅可将 branchId 分配给 eligibleBranchIds 明确包含该分支的候选；"
+                "每个分支必须选择一条自身 title/businessPath/actions 与该分支一致的候选："
                 + "、".join(
                     required_branch_by_id[item].get("name") or item
-                    for item in selection_audit["missing_branch_ids"]
+                    for item in selection_audit["repairable_missing_branch_ids"]
                     if item in required_branch_by_id
                 )
             ]
@@ -2749,7 +2816,7 @@ def call_skill_baseline_reranker(
                     model_config=model_config,
                 )
                 repaired_rows, repaired_audit = parse_selection(repaired_result)
-                if repaired_rows:
+                if len(repaired_audit.get("covered_branch_ids") or []) > len(selection_audit.get("covered_branch_ids") or []):
                     result = repaired_result
                     selected_rows = repaired_rows
                     selection_audit = repaired_audit
@@ -2766,18 +2833,19 @@ def call_skill_baseline_reranker(
         trace["selection_roles"] = [item.get("ai_selected_role") for item in selected_rows if item.get("ai_selected_role")]
         return {"selected": selected_rows, "trace": trace, "review": result.get("review") or {}}
     except Exception as exc:
-        selected_rows = [dict(item) for item in candidates[:limit]]
+        selected_rows = [] if has_required_branch_contract else [dict(item) for item in candidates[:limit]]
         trace.update({
             "fallback": True,
             "selected_count": len(selected_rows),
             "error": str(exc),
             "covered_branch_ids": [],
-            "missing_branch_ids": [item["id"] for item in required_branches],
-            "branch_coverage_ok": not required_branches,
+            "missing_branch_ids": [item["id"] for item in requested_required_branches],
+            "branch_coverage_ok": not has_required_branch_contract,
             "branch_repair_attempted": False,
             "branch_repair_succeeded": False,
         })
-        return {"selected": selected_rows, "trace": trace, "review": {"selection_reason": "AI 选择失败，回退本地 TopN"}}
+        reason = "AI 选择失败，保留分支覆盖门禁" if has_required_branch_contract else "AI 选择失败，回退本地 TopN"
+        return {"selected": selected_rows, "trace": trace, "review": {"selection_reason": reason}}
 
 
 def _clamp_scope_size(value, fallback=3):

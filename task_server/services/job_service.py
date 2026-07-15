@@ -921,6 +921,8 @@ def _persist_agent_run(run: Dict[str, Any]) -> None:
                 if r.get("runId") == run.get("runId"):
                     run_list[i] = run
                     break
+            else:
+                run_list.insert(0, run)
             write_json_file(AGENT_RUNS_FILE, {"runs": run_list})
     except Exception:
         pass

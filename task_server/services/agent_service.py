@@ -2356,12 +2356,16 @@ def _persist_agent_run_snapshot(run):
     if not isinstance(run, dict) or not run.get("runId"):
         return
     try:
-        runs = load_agent_runs()
-        for i, item in enumerate(runs):
-            if item.get("runId") == run.get("runId"):
-                runs[i] = run
-                break
-        save_agent_runs(runs)
+        with AGENT_RUN_LOCK:
+            snapshot = json.loads(json.dumps(run, ensure_ascii=False))
+            runs = load_agent_runs()
+            for i, item in enumerate(runs):
+                if item.get("runId") == snapshot.get("runId"):
+                    runs[i] = snapshot
+                    break
+            else:
+                runs.insert(0, snapshot)
+            save_agent_runs(runs[:200])
     except Exception:
         pass
 
