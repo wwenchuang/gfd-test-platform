@@ -1281,6 +1281,56 @@ def source_requirement_contract_points(value):
     return points
 
 
+def classify_requirement_acceptance_check(value):
+    """Classify one explicit acceptance check without changing its source text."""
+    text = str(value or "").strip()
+    compact = re.sub(r"\s+", "", text).lower()
+    if any(term in compact for term in (
+        "点击", "点按", "轻触", "跳转", "打开", "进入", "唤起", "可达", "落地页",
+    )):
+        return "reachability"
+    if any(term in compact for term in (
+        "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序",
+    )):
+        return "relation"
+    if any(term in compact for term in (
+        "文案", "文字", "文本", "命名", "名称", "完整", "截断", "清晰", "显示为",
+    )):
+        return "copy"
+    if any(term in compact for term in ("可见", "展示", "显示", "存在", "出现")):
+        return "visibility"
+    return "general"
+
+
+def source_requirement_acceptance_checks(value):
+    """Expand branch-level requirement points into auditable acceptance dimensions."""
+    contract = normalize_source_requirement_contract(value)
+    checks = []
+    for requirement_index, flow in enumerate(contract.get("businessFlows") or [], start=1):
+        requirement_id = f"REQ-{requirement_index:03d}"
+        for check_index, text in enumerate(normalize_text_list(flow.get("checks"))[:8], start=1):
+            checks.append({
+                "id": f"{requirement_id}-CHECK-{check_index:02d}",
+                "requirementId": requirement_id,
+                "flowId": str(flow.get("id") or "").strip(),
+                "branch": str(flow.get("branch") or flow.get("name") or "").strip(),
+                "kind": classify_requirement_acceptance_check(text),
+                "text": text,
+            })
+    return checks
+
+
+def requirement_acceptance_descriptor(check):
+    """Return a stable internal descriptor that can focus the existing AI convergence pass."""
+    check = check if isinstance(check, dict) else {}
+    requirement_id = str(check.get("requirementId") or check.get("requirement_id") or "").strip()
+    kind = str(check.get("kind") or "general").strip().lower() or "general"
+    branch = str(check.get("branch") or "").strip()
+    text = str(check.get("text") or "").strip()
+    label = f"{branch}：{text}" if branch and text else (text or branch)
+    return f"{requirement_id} [acceptance:{kind}] {label}".strip()
+
+
 def apply_source_requirement_contract(analysis, value):
     """Keep AI interpretation advisory while source facts own the hard gate."""
     analysis = normalize_requirement_analysis_result(dict(analysis or {}))
@@ -1289,13 +1339,16 @@ def apply_source_requirement_contract(analysis, value):
     if not points:
         return analysis
     ai_points = normalize_text_list(analysis.get("requirement_points"))
+    acceptance_checks = source_requirement_acceptance_checks(contract)
     analysis["requirement_points"] = points
+    analysis["requirement_acceptance_checks"] = acceptance_checks
     analysis["ai_suggested_requirement_points"] = ai_points
     analysis["requirement_contract"] = {
         "applied": True,
         "source": contract.get("source"),
         "branch_count": len(contract.get("businessFlows") or []),
         "hard_point_count": len(points),
+        "acceptance_check_count": len(acceptance_checks),
         "ai_suggested_point_count": len(ai_points),
         "rule": (
             "原始需求分支与验收维度决定硬覆盖；AI 可补充风险、问题和人工场景，"
@@ -1459,8 +1512,155 @@ def scenario_requirement_point(scenario):
     return first_non_empty(scenario.get("requirement_point"), scenario.get("requirementPoint"), scenario.get("coverage"), scenario.get("point"))
 
 
+def _acceptance_requirement_ids(value):
+    text = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    result = []
+    for match in re.finditer(r"\bREQ[-_ ]?0*(\d+)\b", str(text or ""), flags=re.I):
+        requirement_id = f"REQ-{int(match.group(1)):03d}"
+        if requirement_id not in result:
+            result.append(requirement_id)
+    return result
+
+
+def _parse_requirement_acceptance_descriptor(value):
+    text = str(value or "").strip()
+    match = re.match(
+        r"^(REQ[-_ ]?0*\d+)\s+\[acceptance:([a-z_]+)\]\s*(.*)$",
+        text,
+        flags=re.I,
+    )
+    if not match:
+        return {}
+    requirement_ids = _acceptance_requirement_ids(match.group(1))
+    label = match.group(3).strip()
+    branch, separator, check_text = label.partition("：")
+    return {
+        "id": text,
+        "requirementId": requirement_ids[0] if requirement_ids else "",
+        "branch": branch.strip() if separator else "",
+        "kind": match.group(2).strip().lower(),
+        "text": check_text.strip() if separator else label,
+    }
+
+
+def _acceptance_target_terms(value):
+    text = str(value or "").strip()
+    terms = []
+    for item in re.findall(r"[「『“\"'‘]([^」』”\"'’]{1,32})[」』”\"'’]", text):
+        item = item.strip()
+        if item and item not in terms:
+            terms.append(item)
+    control_pattern = re.compile(
+        r"(?:点击|点按|轻触|校验|验证|检查|确认|等待|展示|显示)?"
+        r"[「『“\"'‘]?([\u4e00-\u9fffA-Za-z0-9_-]{2,24}?)[」』”\"'’]?"
+        r"(?:入口|按钮|控件|选项|卡片|标签)"
+    )
+    for match in control_pattern.finditer(text):
+        item = match.group(1).strip()
+        item = re.sub(r"^(?:点击|点按|轻触|校验|验证|检查|确认|等待|展示|显示)", "", item)
+        if item and item not in ("目标", "当前页面", "同级", "页面") and item not in terms:
+            terms.append(item)
+    if not terms:
+        match = re.search(r"(?:点击|点按|轻触|打开|选择)([^，。；：]{1,24})", text)
+        if match:
+            item = re.sub(r"(?:入口|按钮|控件|选项|卡片|标签)$", "", match.group(1).strip())
+            if item:
+                terms.append(item)
+    return terms[:4]
+
+
+def _case_acceptance_evidence_items(case):
+    case = case if isinstance(case, dict) else {}
+    items = []
+
+    def add(value):
+        if value in (None, "", [], {}):
+            return
+        if isinstance(value, (list, tuple)):
+            for child in value:
+                add(child)
+            return
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if child not in (None, "", [], {}):
+                    items.append(f"{key}: {child}")
+            return
+        text = str(value).strip()
+        if text:
+            items.append(text)
+
+    # Labels and requirement refs describe intent, not execution evidence. Only
+    # concrete flow/assertion material can satisfy a source acceptance check.
+    for key in (
+        "steps", "assertions", "expected", "expected_result", "expectedResult", "content", "yaml",
+    ):
+        add(case.get(key))
+    plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    for key in ("flow", "assertionTarget", "executableReason"):
+        add(plan.get(key))
+    return items
+
+
+def case_covers_requirement_acceptance(case, check):
+    """Require observable case evidence for one explicit acceptance dimension."""
+    case = case if isinstance(case, dict) else {}
+    check = check if isinstance(check, dict) else {}
+    requirement_id = str(check.get("requirementId") or check.get("requirement_id") or "").strip()
+    case_requirement_ids = _acceptance_requirement_ids([
+        case.get("coverage"),
+        case.get("requirement_point"),
+        case.get("requirementPoint"),
+        case.get("requirementRefs"),
+        case.get("requirement_refs"),
+    ])
+    if requirement_id and case_requirement_ids and requirement_id not in case_requirement_ids:
+        return False
+
+    evidence_items = _case_acceptance_evidence_items(case)
+    if not evidence_items:
+        return False
+    evidence = "\n".join(evidence_items)
+    branch = str(check.get("branch") or "").strip()
+    if requirement_id and not case_requirement_ids and branch and branch not in evidence:
+        return False
+
+    targets = _acceptance_target_terms(check.get("text"))
+    target_evidence = [item for item in evidence_items if not targets or any(term in item for term in targets)]
+    if targets and not target_evidence:
+        return False
+    kind = str(check.get("kind") or classify_requirement_acceptance_check(check.get("text"))).strip().lower()
+    compact_items = [re.sub(r"\s+", "", item).lower() for item in target_evidence]
+    compact_evidence = re.sub(r"\s+", "", evidence).lower()
+
+    if kind == "reachability":
+        action_terms = ("点击", "点按", "轻触", "打开", "选择", "aitap", "aiaction", "aiact")
+        terminal_terms = (
+            "授权页", "登录页", "列表页", "文件列表", "内容列表", "选择页", "详情页", "结果页",
+            "落地页", "提示页", "空态页", "弹窗", "已打开", "已进入", "成功唤起", "稳定可达",
+            "无白屏", "未白屏", "无崩溃", "未崩溃", "无crash", "未crash",
+        )
+        has_target_action = any(any(term in item for term in action_terms) for item in compact_items)
+        has_terminal = any(term in compact_evidence for term in terminal_terms)
+        return has_target_action and has_terminal
+    if kind == "relation":
+        return any(any(term in item for term in (
+            "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序", "左侧", "右侧",
+        )) for item in compact_items)
+    if kind == "copy":
+        return any(any(term in item for term in (
+            "文案", "文字", "文本", "命名", "名称", "完整", "截断", "清晰", "显示为",
+        )) for item in compact_items)
+    if kind == "visibility":
+        return any(any(term in item for term in ("可见", "展示", "显示", "存在", "出现", "看见")) for item in compact_items)
+    check_text = re.sub(r"\s+", "", str(check.get("text") or "")).lower()
+    return bool(check_text and check_text in compact_evidence)
+
+
 def case_matches_requirement(case, requirement_point):
     """判断用例是否匹配需求点。"""
+    acceptance = _parse_requirement_acceptance_descriptor(requirement_point)
+    if acceptance:
+        return case_covers_requirement_acceptance(case, acceptance)
     text = " ".join(normalize_text_list([
         (case or {}).get("coverage"),
         (case or {}).get("requirement_point"),
@@ -3117,10 +3317,26 @@ def executable_yaml_portfolio_audit(payload, targets=None):
         if str(item.get("executionLevel") or item.get("execution_level") or "").strip().lower() == "executable"
     ]
     unresolved_cases = [item for item in all_cases if item not in executable_cases]
-    missing_points = [
+    missing_requirement_points = [
         point for point in requirement_points
         if not any(case_matches_requirement(case, point) for case in executable_cases)
     ]
+    acceptance_checks = [
+        item for item in (analysis.get("requirement_acceptance_checks") or [])
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
+    covered_acceptance_checks = [
+        check for check in acceptance_checks
+        if any(case_covers_requirement_acceptance(case, check) for case in executable_cases)
+    ]
+    missing_acceptance_checks = [
+        check for check in acceptance_checks
+        if check not in covered_acceptance_checks
+    ]
+    missing_acceptance_descriptors = [
+        requirement_acceptance_descriptor(check) for check in missing_acceptance_checks
+    ]
+    missing_points = list(dict.fromkeys(missing_requirement_points + missing_acceptance_descriptors))
     target_min = max(0, safe_int(planned_targets.get("min_automation_cases"), 0))
     executable_ids = [
         _planner_case_id(case, idx, origin_level="automatic")
@@ -3135,8 +3351,10 @@ def executable_yaml_portfolio_audit(payload, targets=None):
     advisories = []
     if not executable_cases:
         reasons.append("没有 executable 候选")
-    if missing_points:
+    if missing_requirement_points:
         reasons.append("显式需求点尚未由 executable 候选覆盖")
+    if missing_acceptance_checks:
+        reasons.append("显式需求的验收维度尚未由 executable 步骤和断言覆盖")
     if target_shortfall:
         advisories.append(
             f"executable 候选 {len(executable_cases)} 条，低于 AI 规划目标 {target_min} 条；"
@@ -3149,6 +3367,21 @@ def executable_yaml_portfolio_audit(payload, targets=None):
         "requirementPointCount": len(requirement_points),
         "requirementPoints": requirement_points[:12],
         "missingRequirementPoints": missing_points[:12],
+        "acceptanceCheckCount": len(acceptance_checks),
+        "coveredAcceptanceCheckCount": len(covered_acceptance_checks),
+        "coveredAcceptanceCheckIds": [str(item.get("id") or "") for item in covered_acceptance_checks[:40]],
+        "missingAcceptanceCheckCount": len(missing_acceptance_checks),
+        "missingAcceptanceChecks": [
+            {
+                "id": item.get("id") or "",
+                "requirementId": item.get("requirementId") or "",
+                "branch": item.get("branch") or "",
+                "kind": item.get("kind") or "general",
+                "text": item.get("text") or "",
+                "descriptor": requirement_acceptance_descriptor(item),
+            }
+            for item in missing_acceptance_checks[:24]
+        ],
         "targetExecutableCount": target_min,
         "targetMet": target_shortfall == 0,
         "targetShortfall": target_shortfall,
@@ -3197,6 +3430,15 @@ def _focus_executable_convergence_candidates(
         focused_automatic = list(automatic_records)
 
     missing_points = normalize_text_list(audit.get("missingRequirementPoints"))
+    for missing_check in audit.get("missingAcceptanceChecks") or []:
+        if not isinstance(missing_check, dict):
+            continue
+        descriptor = str(
+            missing_check.get("descriptor")
+            or requirement_acceptance_descriptor(missing_check)
+        ).strip()
+        if descriptor and descriptor not in missing_points:
+            missing_points.append(descriptor)
     target_count = max(0, safe_int(audit.get("targetExecutableCount"), 0))
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
     focused_manual = []

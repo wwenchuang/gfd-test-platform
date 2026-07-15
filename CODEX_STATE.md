@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 Agent 验收维度、固定设备调度与 AI 修复闭环修复
+
+部署 `f0ce998` 后发起同一完整回归：
+
+- Agent `agent-1784094382180-7b373076`，参数仍为“基础打印新增百度网盘入口”、同一 Figma、`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。线上 `8091 / 8088`、AI Gateway 与 Sonic 健康，Runner 上报模型族 `qwen3.6`，OPPO PHM110 在线；所有正式与修复 job 均绑定 `ecbfd645`，没有向华为或第二台设备下发。
+- 任务路由仍为 `new_requirement_source / generate_draft`，Figma parser 正确保留 4 页 / 4 图。四个单图视觉批次都真实送入 `qwen3.6-plus`，每批约 90 秒超时，结果为 `0/4 completed / 4 attempted / failed / hardGate=false`；图像继续是软参考，顶层报告仍保留 4 图计数。
+- 原始需求契约正确保留文档打印、照片打印、扫描复印三个分支，每个分支都有展示 / 同级关系 / 文案 / 点击可达四个验收维度。AI 最终只生成三条展示类 executable case，平台又补了一条重复的文档冒烟；实际 YAML 都没有点击目标入口并断言首个稳定落地页。旧 portfolio gate 仅因 `requirementRefs` 挂了整条 REQ 就误判四个维度已全覆盖。
+- Runner 真实结果不是“全部失败”：两条文档打印正式冒烟在 OPPO 上通过，报告截图真实显示 `本地文档 / 百度网盘 / QQ文档 / WPS文档`。照片用例的 Runner dry-run 成功，但在旧调度中被前面长时间正式任务挡在同一队列，Agent 120 秒等待超时后没有创建它的正式 job。扫描复印正式 job 失败，报告到达“小白扫描王”并显示 `本地导入 / 相册导入 / 微信导入`，目标文案仍未可见。
+- 旧 `_agent_create_runner_jobs_for_refs` 按单条交错执行 `dry-run -> 正式 -> 下一条 dry-run`。固定单设备的长正式任务会让后续 dry-run 在队列中超过等待上限；超时又只标记为 inconclusive，不计入 blocker，导致冒烟实际执行数和计划数不一致。
+- 失败录屏 / 关键帧、Runner 日志和可信扫描分支基线都已送给 AI。AI 正确提出“以相册导入为锨点，横向滑动后断言目标入口”，但返回了非法 Midscene 结构 `aiScroll: {direction: right, distance: 1, scrollType: singleAction}`。AI Gateway 已返回 `success=true / valid=false`，旧 Task Server 却忽略该拒绝并宣称校验通过；Runner 因 `failed to locate element 'undefined'` 失败。后续修复周期又把新旧同名草稿同时取出，合计执行三次同类非法修复。
+- Agent 终态为 `FAILED / RERUN`。旧最终报告保留了部分通过概念，但只汇总逻辑用例，没有计入全部修复 job，并在 `GENERATE_SUMMARY` 时把当时的 `RUNNING` 存入 `orchestration.runStatus`。本轮真实正式尝试为 6 次：2 通过，扫描原始脚本失败 1 次，非法 AI 修复失败 3 次；照片正式任务未创建。
+
+本轮通用修复：
+
+- 将原始需求分支的 checks 结构化为独立 acceptance dimensions。portfolio audit 只从真实 `steps / flow / assertions / YAML actions` 判定展示、同级、文案和可达性；标题、`requirementRefs` 和 REQ 文案只表示归属，不再充当执行证据。缺失维度会送入现有一次收敛 AI，优先从同分支 manual / needs-review 短链路候选中补“点击 -> 首个有界可见终态 -> 断言”；仍然无法落地时保持人工并由门禁阻断。`3/5/8` 数量仍只是目标 / 上限，不为凑数补弱网或深层授权。
+- 最终确认 YAML 再次从实际 Midscene flow 审计验收维度，避免 case 计划完整但转换后 YAML 丢步骤。展示类需求不再触发一条重复的平台合成冒烟；已有低跳转、有断言、无高重规划风险的 12 动作以内短 case 可直接作为冒烟。
+- Runner 调度改为两阶段：先创建并等待整批真实 dry-run 终态，再进入正式执行。显式固定设备时，每条正式 job 必须到终态后才创建下一条；任何 dry-run 等待超时都是显式 blocker，不再被当作不影响统计的 inconclusive。这不增加设备实际执行时间，但避免同一手机的长任务挤占后续预检。
+- `aiScroll` 目标必须为非空字符串，`direction / distance / scrollType` 保持官方同级字段。AI Gateway 的 `valid=false` 和 Task Server 本地强校验任一失败，草稿都只作为 `REJECTED` 诊断证据，不得产生 `fixedYaml`、不得下发 Runner。重跑只读取当前 `repairSummary.draftIds`，不再混入旧周期草稿。
+- 最终执行汇总以原始正式 `jobIds` 和每轮 `rerunAttempts.createdJobIds` 建立尝试台账，再从 Runner job store 刷新真实终态。报告同时展示通过、产品失败、Broken（脚本 / 环境）、超时和原始 / 重跑尝试数；Agent 编排状态独立汇总。`GENERATE_SUMMARY` 期间会根据已失败步骤投影最终 `FAILED / DONE`，不再存储过期 `RUNNING`。
+- 未修改 Figma parser、图片选择 / 计数 / 软参考策略、`router.py`、执行模式、历史 YAML、Runner 脚本或设备选择；未暂存或回滚用户 dirty 文件。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/yaml_static_validator.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name 通过，后端 `61` 项、前端 `67` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3` 和 Playwright 桌面 / 移动端 Agent 及重跑视觉回归全部通过。定向行为测试覆盖通用发票入口样例，证明新验收门禁不是百度网盘或小白学习专用硬编码。
+
+待完成：
+
+- 本轮新修复尚未部署。部署后必须再发起同一完整 Agent，持续轮询到 `DONE / FAILED / CANCELLED`，不以进度条代替终态。
+- 新一轮必须确认 12 个原始验收维度的 AI 收敛结果，人工复核最终 YAML 的文档 / 照片 / 扫描分支、文案 / 同级 / 可达页、真实可见文字定位和无坐标。如进入 Runner，核对整批 dry-run 先完成、正式 job 只在 OPPO 上严格串行，并逐个检查报告、截图 / 失败录屏、AI 修复校验和最终原始 / 重跑尝试数。
+
 ### 2026-07-15 Agent 内部执行轨迹轮询后自动收缩修复
 
 - 运行中的 Agent 每 3 秒调用 `updateAgentWorkbenchDynamic()` 重绘时间线。内部执行轨迹使用原生 `<details>`，但旧代码用 `onchange` 保存展开状态；`details` 的交互事件实际为 `toggle`，所以用户点开后 `agentCheckpointTraceOpen` 仍为 false，下一次轮询重绘就恢复成关闭。

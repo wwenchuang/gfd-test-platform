@@ -209,6 +209,92 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and all(term in " ".join(generic_points) for term in ("订单管理", "优惠券", "发票入口", "同级", "文案", "稳定可达")),
         "Source requirement contracts must generalize to arbitrary entry labels and sibling branches without product-specific hardcoding",
     )
+    generic_analysis = ai_skill_service.apply_source_requirement_contract({
+        "business_goals": ["验收发票入口"],
+        "requirement_points": ["AI 候选需求点"],
+    }, generic_contract)
+    generic_acceptance_checks = generic_analysis.get("requirement_acceptance_checks") or []
+    require(
+        len(generic_acceptance_checks) == 8
+        and {item.get("kind") for item in generic_acceptance_checks} == {"visibility", "relation", "copy", "reachability"},
+        "Each source branch must retain independently auditable visibility, relation, copy and reachability dimensions",
+    )
+    generic_display_cases = []
+    generic_reachability_manual = []
+    for index, branch in enumerate(("订单管理", "优惠券"), start=1):
+        requirement_id = f"REQ-{index:03d}"
+        generic_display_cases.append({
+            "case_id": f"TC-G{index:02d}",
+            "title": f"{branch}发票入口展示验收",
+            "executionLevel": "executable",
+            "requirementRefs": [requirement_id],
+            "steps": [f"进入{branch}", "等待发票入口可见"],
+            "assertions": ["发票入口可见，和当前页面入口同级，显示文案为发票"],
+        })
+        generic_reachability_manual.append({
+            "case_id": f"MC-G{index:02d}",
+            "title": f"{branch}发票入口首个落地页",
+            "executionLevel": "manual",
+            "requirementRefs": [requirement_id],
+            "steps": [
+                f"进入{branch}",
+                "点击发票入口",
+                "等待授权页、登录页或内容列表任一合法页面可见",
+            ],
+            "assertions": ["授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃"],
+        })
+    generic_display_payload = {
+        "analysis": generic_analysis,
+        "cases": generic_display_cases,
+        "manual_cases": generic_reachability_manual,
+    }
+    generic_display_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        generic_display_payload,
+        {"min_automation_cases": 2},
+    )
+    require(
+        not generic_display_audit.get("ok")
+        and generic_display_audit.get("coveredAcceptanceCheckCount") == 6
+        and generic_display_audit.get("missingAcceptanceCheckCount") == 2
+        and all(item.get("kind") == "reachability" for item in generic_display_audit.get("missingAcceptanceChecks") or []),
+        "Requirement refs and display assertions must not falsely satisfy an unexecuted click-to-destination acceptance check",
+    )
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance(
+            {
+                "title": "点击发票入口后稳定可达",
+                "requirementRefs": ["REQ-001"],
+                "steps": ["等待发票入口可见"],
+                "assertions": ["发票入口可见"],
+            },
+            next(item for item in generic_acceptance_checks if item.get("id") == "REQ-001-CHECK-04"),
+        ),
+        "A reachability claim in the case title must not substitute for a real click and terminal assertion",
+    )
+    automatic_records = [{"raw": item, "compact": item} for item in generic_display_cases]
+    manual_records = [{"raw": item, "compact": item} for item in generic_reachability_manual]
+    _focused_auto, focused_manual, _focused_context, focus_meta = ai_skill_service._focus_executable_convergence_candidates(
+        generic_display_payload,
+        automatic_records,
+        manual_records,
+        {"pass": "coverage_convergence", "portfolioAudit": generic_display_audit},
+    )
+    require(
+        {item.get("case_id") for item in focused_manual} == {"MC-G01", "MC-G02"}
+        and focus_meta.get("candidateSelectionMode") == "missing_requirement_alternates",
+        "The existing convergence AI pass must receive the bounded reachability alternates that actually match each missing acceptance dimension",
+    )
+    generic_complete_payload = json.loads(json.dumps(generic_display_payload, ensure_ascii=False))
+    for case in generic_complete_payload.get("cases") or []:
+        case["steps"].extend([
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+        ])
+        case["assertions"].append("授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃")
+    require(
+        ai_skill_service.executable_yaml_portfolio_audit(generic_complete_payload, {"min_automation_cases": 2}).get("ok"),
+        "A visible-text bounded destination check must close the source acceptance contract without requiring deep account actions",
+    )
     require(preview.get("candidateOnly") and preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate coverage candidates from the later AI business plan")
     plan_context = yaml_service.build_agent_business_plan_context_text({
         "source": "platform_mindmap_ai",
@@ -313,6 +399,11 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             len(source_guarded_analysis.get("ai_suggested_requirement_points") or []) == 6
             and source_guarded_analysis.get("requirement_contract", {}).get("applied"),
             "AI requirement suggestions must remain observable after the source contract removes them from the hard gate",
+        )
+        require(
+            len(source_guarded_analysis.get("requirement_acceptance_checks") or []) == 12
+            and source_guarded_analysis.get("requirement_contract", {}).get("acceptance_check_count") == 12,
+            "Three explicit source branches with four checks each must preserve all twelve hard acceptance dimensions",
         )
         plan_call = agent_service._tool_agent_plan(live_plan_run)
         live_plan = live_plan_run.get("artifacts", {}).get("plan", {})
@@ -1206,6 +1297,53 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         == ["REQ-003 扫描复印入口展示", "REQ-004 点击入口后可达"],
         "Final Runner coverage must compare all requirement IDs with confirmed YAML; manual cases cannot mask missing executable branches",
     )
+
+    def generic_acceptance_yaml(branch, include_reachability=False):
+        reachability_flow = ""
+        if include_reachability:
+            reachability_flow = """
+        - aiTap: 发票入口
+        - aiWaitFor: 授权页、登录页或内容列表任一合法页面可见
+        - aiAssert: 授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃"""
+        return f"""android:
+  tasks:
+    - name: {branch}发票入口验收
+      flow:
+        - aiWaitFor: {branch}页面已打开
+        - aiWaitFor: 发票入口可见
+        - aiAssert: 发票入口可见，和当前页面入口同级，显示文案为发票{reachability_flow}
+"""
+
+    generic_yaml_refs = [
+        {
+            "file": f"generic-{index}.yaml",
+            "content": generic_acceptance_yaml(branch),
+            "confirmed": True,
+            "executionLevel": "executable",
+            "scopeReview": {"matchedRequirementIds": [f"REQ-{index:03d}"]},
+        }
+        for index, branch in enumerate(("订单管理", "优惠券"), start=1)
+    ]
+    final_yaml_gaps, _mapped_ids, _required_ids = agent_service._agent_final_yaml_coverage_points(
+        {"analysis": generic_analysis},
+        {},
+        generic_yaml_refs,
+    )
+    require(
+        len(final_yaml_gaps) == 2 and all("[acceptance:reachability]" in item for item in final_yaml_gaps),
+        "Confirmed YAML must be audited from executable flow actions; case metadata alone cannot hide missing destination checks",
+    )
+    for index, branch in enumerate(("订单管理", "优惠券")):
+        generic_yaml_refs[index]["content"] = generic_acceptance_yaml(branch, include_reachability=True)
+    final_yaml_gaps, _mapped_ids, _required_ids = agent_service._agent_final_yaml_coverage_points(
+        {"analysis": generic_analysis},
+        {},
+        generic_yaml_refs,
+    )
+    require(
+        not final_yaml_gaps,
+        "Visible-text click, bounded terminal wait and terminal assertion in confirmed YAML must satisfy reachability",
+    )
     require(classify_generated_yaml_failure_bucket([{"failureType": "ENV_ISSUE", "reason": "model request was aborted"}]) == "模型/环境失败", "Model service failures must not be classified as YAML failures")
 
     separated = agent_service._agent_create_runner_jobs_for_refs(
@@ -1456,6 +1594,134 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._ai_gateway_post = old_gateway_post
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
+
+    invalid_ai_scroll_repair = """android:
+  tasks:
+    - name: smoke repair
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 首页文档打印入口可见
+        - aiTap: 文档打印入口
+        - aiWaitFor: 文档打印页导入入口列表可见
+        - aiScroll:
+            direction: right
+            distance: 1
+            scrollType: singleAction
+        - aiAssert: 目标入口可见
+"""
+    old_task_dir = agent_service.TASK_DIR
+    old_gateway_available = agent_service._ai_gateway_available
+    old_gateway_post = agent_service._ai_gateway_post
+    old_log_tool_call = agent_service._log_tool_call
+    old_upsert = repair_service.upsert_repair_draft
+    old_report_keyframes = agent_service._agent_failure_report_keyframes
+    old_repair_baselines = agent_service._agent_repair_baseline_examples
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            (module_dir / "case.yaml").write_text(original, encoding="utf-8")
+            agent_service._ai_gateway_available = lambda: True
+            agent_service._ai_gateway_post = lambda *args, **kwargs: {
+                "fixedYaml": invalid_ai_scroll_repair,
+                "changes": ["在入口列表中横向滑动"],
+                "validation": {
+                    "success": True,
+                    "valid": False,
+                    "errors": ["aiScroll 描述必须是非空字符串"],
+                },
+            }
+            agent_service._log_tool_call = lambda *args, **kwargs: None
+            agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
+            agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: []
+            repair_service.upsert_repair_draft = lambda draft: dict(draft)
+            gateway_invalid_run = {
+                "runId": "agent-static-gateway-invalid-repair",
+                "target": "通用入口横向列表验收",
+                "platform": "android",
+                "artifacts": {
+                    "failureAnalysis": {"failureType": "SCRIPT_ISSUE", "summary": "目标入口不可见"},
+                    "report": {
+                        "failedJobs": [{
+                            "jobId": "job-static-invalid-scroll",
+                            "module": "AI_Agent_草稿",
+                            "file": "case.yaml",
+                            "taskName": "smoke",
+                            "status": "failed",
+                            "error": "failed to locate element",
+                            "failureType": "SCRIPT_ISSUE",
+                        }],
+                    },
+                },
+            }
+            gateway_invalid_call = agent_service._tool_generate_repair(gateway_invalid_run)
+            gateway_invalid_draft = (gateway_invalid_run["artifacts"].get("repairDrafts") or [{}])[0]
+            gateway_invalid_summary = gateway_invalid_run["artifacts"].get("repairSummary") or {}
+            require(
+                gateway_invalid_call.get("status") == "SKIPPED" and not gateway_invalid_call.get("aiUsed"),
+                "An AI Gateway valid=false repair must never be reported as usable even when success=true is also present",
+            )
+            require(
+                gateway_invalid_draft.get("status") == "REJECTED"
+                and not gateway_invalid_draft.get("fixedYaml")
+                and gateway_invalid_draft.get("rejectedYaml")
+                and (gateway_invalid_draft.get("aiGatewayValidation") or {}).get("valid") is False,
+                "Gateway-invalid repair YAML must be retained as rejected evidence and removed from the Runner payload surface",
+            )
+            require(
+                gateway_invalid_summary.get("validationPassedCount") == 0
+                and gateway_invalid_summary.get("blockedCount") == 1
+                and gateway_invalid_summary.get("items", [{}])[0].get("blockedReason") == "ai_gateway_validation_failed",
+                "Repair summary must expose the authoritative Gateway rejection instead of claiming validation passed",
+            )
+
+            legacy_invalid_draft = {
+                "draftId": "repair-legacy-invalid",
+                "jobId": "job-static-invalid-scroll",
+                "module": "AI_Agent_草稿",
+                "file": "case.yaml",
+                "taskName": "smoke",
+                "fixedYaml": invalid_ai_scroll_repair,
+                "aiGatewayValidation": {"success": True, "valid": False, "errors": ["invalid aiScroll"]},
+            }
+            legacy_run = {
+                "runId": "agent-static-legacy-invalid-repair",
+                "artifacts": {
+                    "repairDrafts": [legacy_invalid_draft],
+                    "repairSummary": {"draftCount": 1, "draftIds": ["repair-legacy-invalid"]},
+                },
+            }
+            legacy_plan = agent_service._agent_prepare_repair_rerun_targets(
+                legacy_run,
+                [{"jobId": "job-static-invalid-scroll", "module": "AI_Agent_草稿", "file": "case.yaml", "taskName": "smoke"}],
+                [{"job_id": "job-static-invalid-scroll", "module": "AI_Agent_草稿", "file": "case.yaml", "target_task_name": "smoke"}],
+            )
+            require(
+                not legacy_plan.get("targets")
+                and legacy_plan.get("skipped", [{}])[0].get("status") == "ai_gateway_invalid",
+                "Persisted invalid repairs from an older server version must still be blocked before any Runner rerun",
+            )
+
+            latest_draft = {"draftId": "repair-latest", "jobId": "job-latest", "fixedYaml": semantic_fix}
+            old_draft = {"draftId": "repair-old", "jobId": "job-old", "fixedYaml": semantic_fix}
+            latest_only = agent_service._agent_repair_drafts_for_rerun({
+                "repairDrafts": [latest_draft, old_draft],
+                "repairDraft": old_draft,
+                "repairSummary": {"draftIds": ["repair-latest"], "draftCount": 1},
+            })
+            require(
+                [item.get("draftId") for item in latest_only] == ["repair-latest"],
+                "A new AI repair cycle must not silently rerun stale drafts from an earlier failed attempt",
+            )
+    finally:
+        agent_service.TASK_DIR = old_task_dir
+        agent_service._ai_gateway_available = old_gateway_available
+        agent_service._ai_gateway_post = old_gateway_post
+        agent_service._log_tool_call = old_log_tool_call
+        repair_service.upsert_repair_draft = old_upsert
+        agent_service._agent_failure_report_keyframes = old_report_keyframes
+        agent_service._agent_repair_baseline_examples = old_repair_baselines
 
     from task_server.services import job_service
     old_load_jobs = job_service.load_jobs
@@ -1763,11 +2029,64 @@ def check_generated_yaml_short_guards_and_execution_level_floor():
                 job_service.create_job = original_create_job
                 job_service.wait_jobs_finished = original_wait_jobs_finished
             require(
-                not created.get("dryRunBlocked")
+                len(created.get("dryRunBlocked") or []) == 1
                 and not created.get("jobIds")
                 and len(created.get("dryRunResults") or []) == 1
+                and created["dryRunResults"][0].get("ok") is False
                 and (created["dryRunResults"][0].get("runnerDryRun") or {}).get("inconclusive") is True,
-                "Runner dry-run report timeout without a failure must be inconclusive, not a YAML dry-run blocker",
+                "An inconclusive Runner dry-run must explicitly block formal dispatch instead of disappearing from execution totals",
+            )
+
+            ordered_payloads = []
+            waited_batches = []
+            try:
+                def fake_create_ordered_job(payload):
+                    ordered_payloads.append(dict(payload))
+                    prefix = "dry" if payload.get("dry_run") else "formal"
+                    count = sum(1 for item in ordered_payloads if ("dry" if item.get("dry_run") else "formal") == prefix)
+                    return {"job_id": f"job-{prefix}-{count}"}
+
+                def fake_wait_ordered(job_ids, _run, **_kwargs):
+                    waited_batches.append(list(job_ids))
+                    return {
+                        "completed": [{"job_id": job_id, "status": "success"} for job_id in job_ids],
+                        "failed": [],
+                        "running": [],
+                        "timeout": [],
+                    }
+
+                job_service.create_job = fake_create_ordered_job
+                job_service.wait_jobs_finished = fake_wait_ordered
+                ordered = agent_service._agent_create_runner_jobs_for_refs(
+                    {"runId": "agent-static-serial", "platform": "android", "appPackage": "com.xbxxhz.box"},
+                    [
+                        {"module": "AI_Agent_草稿", "file": executable_path.name, "path": str(executable_path)},
+                        {"module": "AI_Agent_草稿", "file": review_path.name, "path": str(review_path)},
+                    ],
+                    "win-runner-01",
+                    "ecbfd645",
+                    "fixed",
+                    runner_dry_run_enabled=True,
+                    dry_run_timeout=10,
+                    phase="smoke",
+                )
+            finally:
+                job_service.create_job = original_create_job
+                job_service.wait_jobs_finished = original_wait_jobs_finished
+            require(
+                ["dry" if item.get("dry_run") else "formal" for item in ordered_payloads] == ["dry", "dry", "formal", "formal"],
+                "All Runner dry-runs must finish before the first formal fixed-device UI job is created",
+            )
+            require(
+                waited_batches == [["job-dry-1", "job-dry-2"], ["job-formal-1"], ["job-formal-2"]]
+                and ordered.get("jobIds") == ["job-formal-1", "job-formal-2"]
+                and ordered.get("serialSameDevice") is True,
+                "A fixed phone must receive one formal job at a time and each job must reach terminal state before the next is created",
+            )
+            require(
+                len((ordered.get("formalWaitResult") or {}).get("completed") or []) == 2
+                and not ordered.get("dryRunBlocked"),
+                "Serial formal waits must be returned for truthful aggregate reporting without losing either completion",
             )
     finally:
         agent_service.TASK_DIR = old_task_dir
@@ -2529,6 +2848,43 @@ def check_yaml_static_validation_and_patterns():
     invalid_scroll_strong = yaml_service_module.validate_midscene_yaml_executability(invalid_scroll_yaml)
     require(not invalid_scroll_static.get("ok") and any("direction" in item for item in invalid_scroll_static.get("errors") or []) and any("distance" in item for item in invalid_scroll_static.get("errors") or []), "Static YAML validation must block invalid Midscene aiScroll enum and type values")
     require(not invalid_scroll_strong.get("ok") and any("direction" in item for item in invalid_scroll_strong.get("issues") or []) and any("distance" in item for item in invalid_scroll_strong.get("issues") or []), "Strong Agent/repair validation must independently block invalid aiScroll parameters")
+    nested_scroll_yaml = """android:
+  tasks:
+    - name: invalid nested scroll
+      flow:
+        - aiScroll:
+            direction: right
+            distance: 1
+            scrollType: singleAction
+"""
+    nested_scroll_static = validate_yaml_static_executable(nested_scroll_yaml)
+    nested_scroll_strong = yaml_service_module.validate_midscene_yaml_executability(nested_scroll_yaml)
+    require(
+        not nested_scroll_static.get("ok")
+        and any("非空字符串" in item for item in nested_scroll_static.get("errors") or []),
+        "Static validation must reject the nested aiScroll object shape returned by the production repair model",
+    )
+    require(
+        not nested_scroll_strong.get("ok")
+        and any("非空字符串" in item for item in nested_scroll_strong.get("issues") or []),
+        "Repair validation must reject nested aiScroll even when the AI Gateway response also contains a success flag",
+    )
+    valid_scroll_yaml = """android:
+  tasks:
+    - name: valid horizontal scroll
+      flow:
+        - aiWaitFor: 横向入口列表可见
+        - aiScroll: 在横向入口列表向右滑动一次
+          direction: right
+          distance: 400
+          scrollType: singleAction
+        - aiAssert: 目标入口可见
+"""
+    require(
+        validate_yaml_static_executable(valid_scroll_yaml).get("ok")
+        and yaml_service_module.validate_midscene_yaml_executability(valid_scroll_yaml).get("ok"),
+        "The official aiScroll string target with sibling direction/distance options must remain executable",
+    )
     unstable_yaml = """android:
   tasks:
     - name: unstable
@@ -5162,6 +5518,78 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
     require(summary.get("conclusion") == "部分通过", "Final summary must expose partial Runner success")
     require((summary.get("orchestration") or {}).get("label") == "编排阻断", "Final summary must separately expose Agent orchestration blocking")
 
+    from task_server.services import job_service
+    old_load_jobs = job_service.load_jobs
+    try:
+        job_service.load_jobs = lambda: [
+            {"job_id": "original-pass-1", "status": "success", "phase": "smoke"},
+            {"job_id": "original-pass-2", "status": "success", "phase": "smoke"},
+            {"job_id": "original-fail", "status": "failed", "phase": "expanded-1", "failure_type": "SCRIPT_ISSUE"},
+            {"job_id": "repair-fail-1", "status": "failed", "error": "failed to locate element 'undefined'"},
+            {"job_id": "repair-fail-2", "status": "failed", "error": "failed to locate element 'undefined'"},
+            {"job_id": "repair-fail-3", "status": "failed", "error": "failed to locate element 'undefined'"},
+        ]
+        retry_run = {
+            "runId": "agent-static-attempt-ledger",
+            "status": "RUNNING",
+            "target": "通用入口回归",
+            "steps": [
+                {"step": "RUN_SONIC", "status": "PARTIAL_FAILED", "summary": "部分失败"},
+                {"step": "RERUN", "status": "FAILED", "summary": "AI 修复重跑未通过"},
+                {"step": "GENERATE_SUMMARY", "status": "RUNNING"},
+            ],
+            "artifacts": {
+                "jobIds": ["original-pass-1", "original-pass-2", "original-fail"],
+                "rerunAttempts": [
+                    {"createdJobIds": ["repair-fail-1", "repair-fail-2"], "completedCount": 0, "failedCount": 2},
+                    {"createdJobIds": ["repair-fail-3"], "completedCount": 0, "failedCount": 1},
+                ],
+                "report": {
+                    "successJobs": [
+                        {"jobId": "original-pass-1", "status": "success"},
+                        {"jobId": "original-pass-2", "status": "success"},
+                    ],
+                    "failedJobs": [{"jobId": "original-fail", "status": "failed", "failureType": "SCRIPT_ISSUE"}],
+                },
+            },
+        }
+        retry_execution = agent_service._agent_runner_execution_summary(retry_run)
+        require(
+            retry_execution.get("attemptedCount") == 6
+            and retry_execution.get("originalAttemptCount") == 3
+            and retry_execution.get("rerunAttemptCount") == 3,
+            "Final Runner totals must include every original formal job and every bounded AI repair rerun attempt",
+        )
+        require(
+            retry_execution.get("passedCount") == 2
+            and retry_execution.get("failedCount") == 4
+            and retry_execution.get("brokenCount") == 4,
+            "Successful smoke attempts must remain visible while script failures and repair failures stay classified as Broken",
+        )
+        try:
+            agent_service._ai_gateway_available = lambda: False
+            agent_service._log_tool_call = lambda *_args, **_kwargs: None
+            agent_service._tool_generate_summary(retry_run)
+        finally:
+            agent_service._ai_gateway_available = old_health
+            agent_service._log_tool_call = old_log
+        retry_summary = retry_run["artifacts"].get("summary") or {}
+        retry_orchestration = retry_summary.get("orchestration") or {}
+        require(
+            retry_summary.get("runnerAttemptCount") == 6
+            and retry_summary.get("passedJobCount") == 2
+            and retry_summary.get("brokenJobCount") == 4,
+            "Final report must expose both actual attempt count and preserved pass/broken counts",
+        )
+        require(
+            retry_orchestration.get("runStatus") == "FAILED"
+            and retry_orchestration.get("observedRunStatus") == "RUNNING"
+            and retry_orchestration.get("statusProjectedAtSummary") is True,
+            "Summary generation must project the deterministic final Agent state instead of persisting a stale RUNNING status",
+        )
+    finally:
+        job_service.load_jobs = old_load_jobs
+
     blocked_without_runner = {
         "status": "FAILED",
         "steps": [{"step": "GENERATE_YAML", "status": "FAILED", "error": "覆盖门禁阻断"}],
@@ -5431,7 +5859,15 @@ def main():
     require('"executableFileCount"' in agent_service_source and 'str(item.get("executionLevel") or item.get("level") or "").strip().lower() == "executable"' in agent_service_source, "Agent quality report must count only executable generated YAML as executable tasks")
     require("def _ensure_agent_entry_visibility_smoke_ref" in agent_service_source and "_agent_entry_visibility_smoke_filename(run)" in agent_service_source and '"autoGeneratedSmoke": True' in agent_service_source, "Agent must add a deterministic entry-visibility smoke YAML when generated cases lack a stable first-smoke candidate")
     require("生成结果缺少稳定首批冒烟候选" in agent_service_source and "smokeCandidate" in agent_service_source and "runnerCandidate" in agent_service_source, "Agent fallback entry-visibility smoke must be eligible for first Runner smoke")
-    require("has_stable_smoke_candidate" in agent_service_source and "max_action_count <= 8" in agent_service_source and "max_wait_count <= 6" in agent_service_source and 'replanRisk") or "") == "high"' in agent_service_source, "Agent must not treat long high-replan generated YAML as a stable first-smoke candidate")
+    require(
+        "has_stable_smoke_candidate" in agent_service_source
+        and "max_action_count <= 12" in agent_service_source
+        and "max_wait_count <= 6" in agent_service_source
+        and "max_transition_count <= 2" in agent_service_source
+        and "min_assert_count >= 1" in agent_service_source
+        and 'replanRisk") or "") == "high"' in agent_service_source,
+        "Agent must reuse a bounded asserted short case as smoke while still rejecting long or high-replan YAML",
+    )
     require("def _agent_runner_job_material" in agent_service_source and '"summaryText"' in agent_service_source and 'read_json_file(safe_join(run_dir, "summary.json")' in agent_service_source, "Agent report collection must read runner summary.json for failed jobs")
     require('"summaryText": fj.get("summaryText", "")' in agent_service_source and 'f"summary：{target_job.get(' in agent_service_source, "Agent failure analysis and repair evidence must include runner summary details")
     require("def _agent_failure_ai_payload" in agent_service_source and '"screenshotDesc": str(primary_failure.get("failureReason")' in agent_service_source, "Agent failure analysis must populate the concrete AI Gateway task/yaml/log/screenshot contract")

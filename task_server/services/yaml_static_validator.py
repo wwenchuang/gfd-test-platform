@@ -98,8 +98,9 @@ def validate_midscene_action_parameters(action: str, step: dict, path: str = "fl
     if not isinstance(step, dict) or action != "aiScroll":
         return []
     issues: List[str] = []
-    if _value_blank(step.get("aiScroll")):
-        issues.append(f"{path} aiScroll 目标区域不能为空")
+    scroll_target = step.get("aiScroll")
+    if not isinstance(scroll_target, str) or not scroll_target.strip():
+        issues.append(f"{path} aiScroll 描述必须是非空字符串")
     direction = step.get("direction")
     if direction not in (None, "") and str(direction).strip() not in AI_SCROLL_DIRECTIONS:
         issues.append(

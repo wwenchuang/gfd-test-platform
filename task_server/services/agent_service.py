@@ -1793,7 +1793,7 @@ def _agent_entry_visibility_intent(run):
         return None
     external_flow_terms = (
         "点击后", "跳转", "授权", "登录", "文件选择", "导入文件", "进入第三方",
-        "进入百度网盘", "WebView", "SDK", "支付", "删除",
+        "进入百度网盘", "可达", "落地页", "WebView", "SDK", "支付", "删除",
     )
     if any(term in compact for term in external_flow_terms):
         return None
@@ -1902,8 +1902,17 @@ def _ensure_agent_entry_visibility_smoke_ref(run, refs, results):
         task_scores = [item for item in (score.get("taskScores") or []) if isinstance(item, dict)]
         max_action_count = max([int(item.get("actionCount") or 0) for item in task_scores] or [0])
         max_wait_count = max([int(item.get("waitCount") or 0) for item in task_scores] or [0])
+        max_transition_count = max([int(item.get("transitionCount") or 0) for item in task_scores] or [0])
+        min_assert_count = min([int(item.get("assertCount") or 0) for item in task_scores] or [0])
         high_replan_risk = any(str(item.get("replanRisk") or "") == "high" for item in task_scores)
-        if max_action_count <= 8 and max_wait_count <= 6 and not high_replan_risk:
+        if (
+            task_scores
+            and max_action_count <= 12
+            and max_wait_count <= 6
+            and max_transition_count <= 2
+            and min_assert_count >= 1
+            and not high_replan_risk
+        ):
             has_stable_smoke_candidate = True
             break
     if has_stable_smoke_candidate or not _agent_needs_entry_visibility_smoke(run):
@@ -5647,6 +5656,18 @@ def _agent_create_runner_jobs_for_refs(
     selection_excluded = list(initial_blocked or [])
     dry_run_blocked = []
     runner_dry_run_jobs = []
+    prepared = []
+    serial_same_device = bool(
+        str(selected_device_id or "").strip()
+        or (
+            str(selected_runner_id or "").strip()
+            and str(selected_device_strategy or "").strip().lower() in ("fixed", "指定设备")
+        )
+    )
+
+    # Phase 1: finish the entire preflight batch before any formal job can occupy
+    # the fixed-device queue. This keeps later dry-runs from timing out behind an
+    # earlier long-running UI task.
     for ref in refs or []:
         if _agent_run_cancel_requested(run):
             dry_run_blocked.append({
@@ -5684,6 +5705,14 @@ def _agent_create_runner_jobs_for_refs(
                     "errors": list(dry_compact.get("errors") or [])[:8],
                 })
                 continue
+            prepared_item = {
+                "ref": ref,
+                "module": mod,
+                "file": fn,
+                "path": full_path,
+                "dryRow": dry_row,
+                "runnerDryRunJobId": "",
+            }
             if runner_dry_run_enabled:
                 if _agent_run_cancel_requested(run):
                     dry_run_blocked.append({
@@ -5715,70 +5744,117 @@ def _agent_create_runner_jobs_for_refs(
                 if dry_job_id:
                     runner_dry_run_jobs.append(dry_job_id)
                     dry_row["runnerDryRunJobId"] = dry_job_id
-                    wait_dry = job_service.wait_jobs_finished(
-                        [dry_job_id],
-                        run,
-                        timeout=dry_run_timeout,
-                        interval=3,
-                        phase=f"{phase}-dry-run",
-                    )
-                    dry_completed = list(wait_dry.get("completed") or [])
-                    dry_failed = list(wait_dry.get("failed") or [])
-                    dry_timeout = list(wait_dry.get("timeout") or [])
-                    dry_row["runnerDryRun"] = {
-                        "completed": len(dry_completed),
-                        "failed": len(dry_failed),
-                        "timeout": len(dry_timeout),
-                        "waitTimedOut": bool(dry_timeout),
-                        "inconclusive": bool(dry_timeout and not dry_failed),
-                        "jobId": dry_job_id,
-                    }
-                    if dry_failed:
-                        dry_row["ok"] = False
-                        dry_row.setdefault("errors", []).extend([
-                            str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
-                            for item in dry_failed[:5]
-                        ])
-                        dry_run_blocked.append({
-                            "module": mod,
-                            "file": fn,
-                            "path": full_path,
-                            "phase": phase,
-                            "reason": "Runner 真实 dry-run 未通过",
-                            "job_id": dry_job_id,
-                            "errors": [
-                                str(item.get("error") or item.get("stderr_tail") or item.get("status") or "dry-run 失败")[:220]
-                                for item in dry_failed[:5]
-                            ],
-                        })
-                        continue
-                    if dry_timeout and not dry_completed:
-                        message = "Runner 真实 dry-run 等待报告超时，结果不确定；未下发该正式任务，请确认 Runner 回传、网络或模型服务后重试"
-                        dry_row["ok"] = True
-                        dry_row.setdefault("warnings", []).append(message)
-                        runner_meta = dry_row.setdefault("runnerDryRun", {})
-                        if isinstance(runner_meta, dict):
-                            runner_meta["inconclusive"] = True
-                            runner_meta["blockedFormalDispatch"] = True
-                        dry_row["formalDispatchSkipped"] = True
-                        dry_row["skipReason"] = message
-                        continue
-                    if dry_timeout:
-                        dry_row.setdefault("warnings", []).append("Runner 真实 dry-run 报告等待超时但已有完成结果，按完成结果继续")
-            if _agent_run_cancel_requested(run):
-                dry_run_blocked.append({
-                    "module": mod,
-                    "file": fn,
-                    "path": full_path,
-                    "phase": phase,
-                    "reason": "Agent 已取消，未创建正式 Runner 任务",
-                })
-                break
-            task_names = _agent_yaml_task_names_for_runner(full_path)
+                    prepared_item["runnerDryRunJobId"] = dry_job_id
+                else:
+                    dry_row["ok"] = False
+                    message = "Runner dry-run 任务创建失败，未下发正式任务"
+                    dry_row.setdefault("errors", []).append(message)
+                    dry_run_blocked.append({
+                        "module": mod,
+                        "file": fn,
+                        "path": full_path,
+                        "phase": phase,
+                        "reason": message,
+                    })
+                    continue
+            prepared.append(prepared_item)
+        except Exception as exc:
+            dry_run_blocked.append({
+                "module": ref.get("module") or "",
+                "file": ref.get("file") or os.path.basename(str(ref.get("path") or "")),
+                "path": str(ref.get("path") or ""),
+                "phase": phase,
+                "reason": f"创建 Runner 任务前异常：{str(exc)[:180]}",
+            })
+
+    dispatch_ready = []
+    if runner_dry_run_jobs:
+        wait_dry = job_service.wait_jobs_finished(
+            runner_dry_run_jobs,
+            run,
+            timeout=dry_run_timeout,
+            interval=3,
+            phase=f"{phase}-dry-run",
+        )
+        completed_by_id = {
+            str(item.get("job_id") or item.get("jobId") or ""): item
+            for item in (wait_dry.get("completed") or [])
+            if isinstance(item, dict)
+        }
+        failed_by_id = {
+            str(item.get("job_id") or item.get("jobId") or ""): item
+            for item in (wait_dry.get("failed") or [])
+            if isinstance(item, dict)
+        }
+        timeout_by_id = {
+            str(item.get("job_id") or item.get("jobId") or ""): item
+            for item in (wait_dry.get("timeout") or [])
+            if isinstance(item, dict)
+        }
+        for item in prepared:
+            dry_job_id = item.get("runnerDryRunJobId") or ""
+            dry_row = item["dryRow"]
+            if not dry_job_id:
+                dispatch_ready.append(item)
+                continue
+            dry_failed = failed_by_id.get(dry_job_id)
+            dry_timed_out = timeout_by_id.get(dry_job_id)
+            dry_completed = completed_by_id.get(dry_job_id)
+            dry_row["runnerDryRun"] = {
+                "completed": 1 if dry_completed else 0,
+                "failed": 1 if dry_failed else 0,
+                "timeout": 1 if dry_timed_out else 0,
+                "waitTimedOut": bool(dry_timed_out),
+                "inconclusive": bool(dry_timed_out and not dry_failed),
+                "jobId": dry_job_id,
+            }
+            if dry_completed:
+                dispatch_ready.append(item)
+                continue
+            if dry_failed:
+                errors = [
+                    str(dry_failed.get("error") or dry_failed.get("stderr_tail") or dry_failed.get("status") or "dry-run 失败")[:220]
+                ]
+                message = "Runner 真实 dry-run 未通过"
+            else:
+                errors = []
+                message = "Runner 真实 dry-run 等待报告超时，结果不确定；未下发正式任务"
+                dry_row["formalDispatchSkipped"] = True
+                dry_row["skipReason"] = message
+                dry_row["runnerDryRun"]["blockedFormalDispatch"] = True
+            dry_row["ok"] = False
+            dry_row.setdefault("errors", []).extend(errors or [message])
+            dry_run_blocked.append({
+                "module": item["module"],
+                "file": item["file"],
+                "path": item["path"],
+                "phase": phase,
+                "reason": message,
+                "job_id": dry_job_id,
+                "errors": errors,
+            })
+    else:
+        dispatch_ready = list(prepared)
+
+    # Phase 2: formal UI execution. A fixed device receives only one live job at
+    # a time; each job must reach a terminal state before the next is created.
+    formal_wait_results = []
+    for ready_index, item in enumerate(dispatch_ready):
+        if _agent_run_cancel_requested(run):
+            dry_run_blocked.append({
+                "module": item["module"],
+                "file": item["file"],
+                "path": item["path"],
+                "phase": phase,
+                "reason": "Agent 已取消，未创建正式 Runner 任务",
+            })
+            break
+        try:
+            task_names = _agent_yaml_task_names_for_runner(item["path"])
             target_task_name = task_names[0] if len(task_names) == 1 else ""
             job = job_service.create_job({
-                "module": mod,
-                "file": fn,
+                "module": item["module"],
+                "file": item["file"],
                 "target_task_name": target_task_name,
                 "task_names": task_names,
                 "current_task_name": target_task_name or (task_names[0] if task_names else ""),
@@ -5788,15 +5864,43 @@ def _agent_create_runner_jobs_for_refs(
                 "parent_run_id": run.get("runId", ""),
                 "phase": phase,
             })
-            if job and job.get("job_id"):
-                job_ids.append(job["job_id"])
+            job_id = job.get("job_id") if job else ""
+            if not job_id:
+                dry_run_blocked.append({
+                    "module": item["module"],
+                    "file": item["file"],
+                    "path": item["path"],
+                    "phase": phase,
+                    "reason": "正式 Runner 任务创建失败",
+                })
+                continue
+            job_ids.append(job_id)
+            if serial_same_device:
+                formal_wait = job_service.wait_jobs_finished(
+                    [job_id],
+                    run,
+                    timeout=job_service.runner_job_wait_timeout_seconds(1),
+                    interval=5,
+                    phase=phase,
+                )
+                formal_wait_results.append(formal_wait)
+                if formal_wait.get("timeout"):
+                    for remaining in dispatch_ready[ready_index + 1:]:
+                        dry_run_blocked.append({
+                            "module": remaining["module"],
+                            "file": remaining["file"],
+                            "path": remaining["path"],
+                            "phase": phase,
+                            "reason": "上一条固定设备任务等待超时，为避免并发占用同一设备，未创建后续正式任务",
+                        })
+                    break
         except Exception as exc:
             dry_run_blocked.append({
-                "module": ref.get("module") or "",
-                "file": ref.get("file") or os.path.basename(str(ref.get("path") or "")),
-                "path": str(ref.get("path") or ""),
+                "module": item.get("module") or "",
+                "file": item.get("file") or "",
+                "path": item.get("path") or "",
                 "phase": phase,
-                "reason": f"创建 Runner 任务前异常：{str(exc)[:180]}",
+                "reason": f"创建正式 Runner 任务异常：{str(exc)[:180]}",
             })
     return {
         "jobIds": job_ids,
@@ -5804,6 +5908,11 @@ def _agent_create_runner_jobs_for_refs(
         "dryRunBlocked": dry_run_blocked,
         "runnerDryRunJobs": runner_dry_run_jobs,
         "selectionExcluded": selection_excluded,
+        "serialSameDevice": serial_same_device,
+        "formalWaitResult": (
+            _agent_merge_runner_wait_results(*formal_wait_results)
+            if formal_wait_results else None
+        ),
     }
 
 
@@ -9047,6 +9156,61 @@ def _agent_final_executable_yaml_refs(refs):
     return result
 
 
+def _agent_yaml_flow_evidence(yaml_text):
+    evidence = []
+    if pyyaml is None:
+        return evidence
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return evidence
+    for task in tasks or []:
+        if not isinstance(task, dict):
+            continue
+        task_name = str(task.get("name") or "").strip()
+        if task_name:
+            evidence.append(task_name)
+        for step in task.get("flow") or []:
+            if not isinstance(step, dict):
+                continue
+            for key, value in step.items():
+                if value in (None, "", [], {}):
+                    continue
+                if isinstance(value, (dict, list)):
+                    value = json.dumps(value, ensure_ascii=False)
+                evidence.append(f"{key}: {value}")
+    return evidence
+
+
+def _agent_final_yaml_acceptance_gaps(generated, refs):
+    generated = generated if isinstance(generated, dict) else {}
+    analysis = generated.get("analysis") if isinstance(generated.get("analysis"), dict) else {}
+    checks = [
+        item for item in (analysis.get("requirement_acceptance_checks") or [])
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
+    if not checks:
+        return []
+    from task_server.services.ai_skill_service import (
+        case_covers_requirement_acceptance,
+        requirement_acceptance_descriptor,
+    )
+
+    yaml_cases = []
+    for ref in _agent_final_executable_yaml_refs(refs):
+        requirement_ids = _agent_mapped_requirement_ids([ref], groups={})
+        yaml_cases.append({
+            "title": ref.get("file") or ref.get("path") or "",
+            "requirementRefs": requirement_ids,
+            "steps": _agent_yaml_flow_evidence(_yaml_ref_content(ref)),
+        })
+    return [
+        requirement_acceptance_descriptor(check)
+        for check in checks
+        if not any(case_covers_requirement_acceptance(case, check) for case in yaml_cases)
+    ]
+
+
 def _agent_final_yaml_coverage_points(generated, coverage, refs=None):
     """Compare the full requirement list with confirmed executable YAML refs.
 
@@ -9069,6 +9233,10 @@ def _agent_final_yaml_coverage_points(generated, coverage, refs=None):
                 required_ids.append(requirement_id)
         if not set(point_ids).issubset(mapped):
             unresolved.append(point)
+    unresolved.extend(
+        point for point in _agent_final_yaml_acceptance_gaps(generated, refs)
+        if point not in unresolved
+    )
     if required_ids:
         return unresolved, sorted(mapped), required_ids
     fallback_unresolved, fallback_mapped = _agent_unresolved_coverage_points(
@@ -12244,10 +12412,46 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         item_summary["aiGatewayValidation"] = ai_validation
                     validation = validate_midscene_yaml_executability(fixed_yaml)
                     validation["validatedBy"] = "task_server"
+                    gateway_validation_failed = bool(
+                        isinstance(ai_validation, dict)
+                        and ai_validation
+                        and (
+                            ai_validation.get("valid") is False
+                            or (
+                                "valid" not in ai_validation
+                                and ai_validation.get("success") is False
+                            )
+                        )
+                    )
+                    if gateway_validation_failed:
+                        gateway_issues = [
+                            str(item).strip()
+                            for item in (ai_validation.get("errors") or ai_validation.get("issues") or [])
+                            if str(item or "").strip()
+                        ]
+                        validation["ok"] = False
+                        validation["issues"] = list(dict.fromkeys(
+                            gateway_issues + list(validation.get("issues") or [])
+                        ))
+                        validation["gatewayRejected"] = True
                     draft["validation"] = validation
                     item_summary["yamlValidation"] = validation
                     item_summary["taskCount"] = validation.get("taskCount")
-                    if not _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
+                    if not validation.get("ok"):
+                        blocked_count += 1
+                        item_summary["blockedReason"] = (
+                            "ai_gateway_validation_failed"
+                            if gateway_validation_failed else "yaml_validation_failed"
+                        )
+                        draft["blockedReason"] = item_summary["blockedReason"]
+                        draft["rejectedYaml"] = fixed_yaml[:200000]
+                        draft["repairSource"] = "diagnosis_only"
+                        draft["status"] = "REJECTED"
+                        draft["analysis"] = (
+                            f"{draft.get('analysis') or ''}\n"
+                            "AI 修复候选未通过 Midscene 可执行校验，已保留诊断证据但禁止下发 Runner。"
+                        ).strip()
+                    elif not _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
                         blocked_count += 1
                         item_summary["blockedReason"] = "sleep_only_or_noop"
                         draft["blockedReason"] = "sleep_only_or_noop"
@@ -12266,11 +12470,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         draft["status"] = "WAIT_CONFIRM"
                         item_summary["aiUsed"] = True
                         ai_used_count += 1
-                        if validation.get("ok"):
-                            validation_passed_count += 1
-                        else:
-                            blocked_count += 1
-                            item_summary["blockedReason"] = "yaml_validation_failed"
+                        validation_passed_count += 1
                 else:
                     blocked_count += 1
                     item_summary["blockedReason"] = "ai_no_yaml"
@@ -12415,8 +12615,14 @@ def _tool_generate_bug_draft(run):
 
 
 def _agent_repair_drafts_for_rerun(artifacts):
-    """Return de-duplicated repair drafts attached to the current Agent run."""
+    """Return only the latest repair cycle's de-duplicated drafts."""
     artifacts = artifacts if isinstance(artifacts, dict) else {}
+    repair_summary = artifacts.get("repairSummary") if isinstance(artifacts.get("repairSummary"), dict) else {}
+    current_draft_ids = {
+        str(item or "").strip()
+        for item in (repair_summary.get("draftIds") or [])
+        if str(item or "").strip()
+    }
     candidates = []
     if isinstance(artifacts.get("repairDrafts"), list):
         candidates.extend(item for item in artifacts.get("repairDrafts") if isinstance(item, dict))
@@ -12425,6 +12631,9 @@ def _agent_repair_drafts_for_rerun(artifacts):
     result = []
     seen = set()
     for item in candidates:
+        item_draft_id = str(item.get("draftId") or item.get("draft_id") or "").strip()
+        if current_draft_ids and item_draft_id not in current_draft_ids:
+            continue
         key = (
             item.get("draftId") or item.get("draft_id") or
             item.get("jobId") or item.get("job_id") or
@@ -12554,6 +12763,21 @@ def _agent_prepare_repair_rerun_targets(run, failed_items, jobs):
                 "taskName": draft.get("taskName") or source_item.get("taskName") or draft.get("file") or "",
                 "status": "missing_yaml",
                 "reason": "修复草稿没有可执行 YAML 内容，未重跑旧脚本",
+            })
+            continue
+        ai_gateway_validation = (
+            draft.get("aiGatewayValidation")
+            if isinstance(draft.get("aiGatewayValidation"), dict)
+            else {}
+        )
+        if ai_gateway_validation.get("valid") is False:
+            skipped.append({
+                "draftId": draft_id,
+                "jobId": source_job_id,
+                "taskName": draft.get("taskName") or source_item.get("taskName") or draft.get("file") or "",
+                "status": "ai_gateway_invalid",
+                "reason": "AI Gateway 已判定修复 YAML 无效，禁止下发 Runner",
+                "issues": list(ai_gateway_validation.get("errors") or ai_gateway_validation.get("issues") or [])[:12],
             })
             continue
         validation = validate_midscene_yaml_executability(fixed_yaml)
@@ -13146,6 +13370,14 @@ def _agent_runner_execution_summary(run):
     records = {}
     phase_fallback = []
 
+    def unique_job_ids(values):
+        result = []
+        for value in values or []:
+            job_id = str(value or "").strip()
+            if job_id and job_id not in result:
+                result.append(job_id)
+        return result
+
     def normalized_status(item, fallback=""):
         item = item if isinstance(item, dict) else {}
         status = str(item.get("status") or fallback or "").strip().lower()
@@ -13186,6 +13418,15 @@ def _agent_runner_execution_summary(run):
             )
             if (not failure_type or failure_type == "UNKNOWN") and isinstance(failure_review, dict):
                 failure_type = _agent_failure_type_from_review(failure_review) or failure_type
+            if not failure_type or failure_type == "UNKNOWN":
+                failure_text = "\n".join(str(item.get(key) or "") for key in (
+                    "error", "stderrTail", "stderr_tail", "stdoutTail", "stdout_tail", "summaryText", "summary_text",
+                ))
+                inferred_failure_type = _agent_canonical_failure_type(
+                    _agent_job_failure_type(failure_text)
+                )
+                if inferred_failure_type:
+                    failure_type = inferred_failure_type
             current_failure_type = (current or {}).get("failureType") or ""
             if failure_type in ("", "UNKNOWN") and current_failure_type not in ("", "UNKNOWN"):
                 failure_type = current_failure_type
@@ -13197,6 +13438,45 @@ def _agent_runner_execution_summary(run):
                 "source": source,
                 "priority": priority,
             }
+
+    original_job_ids = unique_job_ids(artifacts.get("jobIds") or [])
+    rerun_job_ids = []
+    for attempt in artifacts.get("rerunAttempts") or []:
+        if not isinstance(attempt, dict):
+            continue
+        rerun_job_ids.extend(attempt.get("createdJobIds") or [])
+    rerun_job_ids.extend(artifacts.get("retriedJobs") or [])
+    rerun_progress_rows = []
+    for progress in list(artifacts.get("rerunProgressHistory") or []) + [artifacts.get("rerunProgress")]:
+        if not isinstance(progress, dict):
+            continue
+        for item in progress.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            new_job_id = str(item.get("newJobId") or item.get("new_job_id") or "").strip()
+            if not new_job_id:
+                continue
+            rerun_job_ids.append(new_job_id)
+            rerun_progress_rows.append({**item, "jobId": new_job_id})
+    rerun_job_ids = unique_job_ids(rerun_job_ids)
+
+    # Formal job ids are the attempt ledger. Register them before richer report
+    # sources so an unavailable/pruned job remains visible as an unknown attempt.
+    add_items(
+        [{"jobId": job_id, "status": "unknown"} for job_id in original_job_ids],
+        "unknown",
+        "formal_job_ledger",
+        5,
+        "Runner",
+    )
+    add_items(
+        [{"jobId": job_id, "status": "unknown"} for job_id in rerun_job_ids],
+        "unknown",
+        "rerun_job_ledger",
+        5,
+        "安全重跑",
+    )
+    add_items(rerun_progress_rows, "", "rerun_progress", 25, "安全重跑")
 
     for phase_name, progress in progress_by_phase.items():
         if not isinstance(progress, dict):
@@ -13227,6 +13507,34 @@ def _agent_runner_execution_summary(run):
     add_items(report.get("failedJobs"), "failed", "report", 31)
     add_items(report.get("timeoutJobs"), "timeout", "report", 32)
     add_items(report.get("runningJobs"), "running", "report", 31)
+
+    # Report collection can precede the bounded repair reruns. Refresh every
+    # known formal attempt from the persisted Runner job store so those retries
+    # cannot disappear from the final totals.
+    attempt_job_ids = unique_job_ids(original_job_ids + rerun_job_ids)
+    if attempt_job_ids:
+        try:
+            from task_server.services import job_service
+
+            jobs_by_id = {
+                str(item.get("job_id") or item.get("jobId") or "").strip(): item
+                for item in (job_service.load_jobs() or [])
+                if isinstance(item, dict)
+            }
+            persisted_attempts = []
+            for job_id in attempt_job_ids:
+                job = jobs_by_id.get(job_id)
+                if not job:
+                    continue
+                persisted_attempts.append({
+                    **job,
+                    "jobId": job_id,
+                    "failureReview": job.get("failureReview") or job.get("failure_review") or {},
+                    "failureType": job.get("failureType") or job.get("failure_type") or "",
+                })
+            add_items(persisted_attempts, "", "runner_job_store", 40)
+        except Exception:
+            pass
 
     counts = {key: 0 for key in ("passed", "failed", "timeout", "running", "cancelled", "unknown")}
     failure_counts = {key: 0 for key in ("product", "broken", "unknown")}
@@ -13297,6 +13605,10 @@ def _agent_runner_execution_summary(run):
         "label": label,
         "hasExecution": attempted_count > 0,
         "attemptedCount": attempted_count,
+        "originalAttemptCount": len(original_job_ids),
+        "rerunAttemptCount": len(rerun_job_ids),
+        "untrackedAttemptCount": max(0, attempted_count - len(set(original_job_ids + rerun_job_ids))),
+        "attemptJobIds": [item.get("jobId") for item in records.values() if item.get("jobId")][:100],
         "terminalCount": terminal_count,
         "passedCount": counts["passed"],
         "failedCount": counts["failed"],
@@ -13308,7 +13620,10 @@ def _agent_runner_execution_summary(run):
         "cancelledCount": counts["cancelled"],
         "unknownCount": counts["unknown"],
         "phases": list(phase_counts.values()),
-        "rule": "Runner 真实结果与 Agent 编排终态分别汇总；编排失败不会抹掉已通过的冒烟或扩展任务。",
+        "rule": (
+            "Runner 真实结果与 Agent 编排终态分别汇总；原始正式任务和每次修复重跑均按 job ID 计入尝试，"
+            "编排失败不会抹掉已通过的冒烟或扩展任务。"
+        ),
     }
 
 
@@ -13336,17 +13651,25 @@ def _tool_generate_summary(run):
         running_jobs = report.get("runningJobs") or []
         failed_execution_items = artifacts.get("failedExecutionItems") or _agent_failed_execution_items(run)
         execution = _agent_runner_execution_summary(run)
-        run_status = str(run.get("status") or "").strip().upper()
-        if run_status == "CANCELLED":
+        observed_run_status = str(run.get("status") or "").strip().upper()
+        if observed_run_status == "CANCELLED":
+            run_status = "CANCELLED"
             orchestration_state, orchestration_label = "cancelled", "编排已取消"
-        elif failed or run_status == "FAILED":
+        elif failed or observed_run_status == "FAILED":
+            run_status = "FAILED"
             orchestration_state, orchestration_label = "blocked", "编排阻断"
         else:
+            # GENERATE_SUMMARY runs before the worker writes its terminal state.
+            # A summary with no failed steps will therefore finish as DONE even
+            # when the observed in-memory status is still RUNNING.
+            run_status = "DONE"
             orchestration_state, orchestration_label = "completed", "编排完成"
         orchestration = {
             "state": orchestration_state,
             "label": orchestration_label,
             "runStatus": run_status,
+            "observedRunStatus": observed_run_status,
+            "statusProjectedAtSummary": observed_run_status != run_status,
             "completedStepCount": completed,
             "failedStepCount": failed,
             "skippedStepCount": skipped,
@@ -13395,6 +13718,9 @@ def _tool_generate_summary(run):
             "unknownFailedJobCount": execution.get("unknownFailedCount", 0),
             "timeoutJobCount": execution.get("timeoutCount", 0),
             "runningJobCount": execution.get("runningCount", 0),
+            "runnerAttemptCount": execution.get("attemptedCount", 0),
+            "runnerOriginalAttemptCount": execution.get("originalAttemptCount", 0),
+            "runnerRerunAttemptCount": execution.get("rerunAttemptCount", 0),
             "failedTasks": [
                 {
                     "jobId": item.get("jobId"),
