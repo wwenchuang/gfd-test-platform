@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 Figma 多 Frame 负向软证据作用域保护
+
+部署 `f344dd4` 后发起同一完整回归：
+
+- Agent `agent-1784114477002-86b168da`，参数仍为“基础打印新增百度网盘入口”、同一 Figma、`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。`8088` 健康，Windows Runner 在线并上报 `qwen3.6` 模型族；固定 OPPO PHM110 在线且 App 预检 ready。华为上同时存在用户允许继续的“十二生肖印章打印”，本 Agent 没有选择或下发华为。
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`。PLAN 复用这 4 张原图并逐张送入 `qwen3.6-plus`，4 个批次分别约 `15 / 15 / 20 / 17s` 完成，均有独立 judgement，结果为 `4/4 completed / 4 attempted / retry=false / hardGate=false`。
+- AI 生成 8 条业务分支，明确覆盖文档打印、照片打印、扫描复印的展示、同级关系、文案和点击可达；第 2 批正确识别“5寸照片”属于照片打印，并识别相册导入、相机拍照、微信导入、百度网盘入口。路由仍为 `new_requirement_source / generate_draft`。
+- 终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job。最终组合已有 4 条 executable，覆盖 12 个显式验收维度中的 11 个；`f344dd4` 的有界证据正确补齐扫描复印 4 个维度，唯一缺口是 `REQ-002 [relation]` 照片打印同级关系。
+
+根因与本轮通用修复：
+
+- 第 2 张“5寸照片导入页”提供了明确正向证据；第 4 张是“一寸照参数配置页”，当前可视区域没有导入入口。旧视觉增量按 case ID 逐批覆盖字段，导致后一个局部页把 `TC-002` 从“照片打印页百度网盘位于相机拍照下方”改成“当前参数页无文件导入入口”。这违反 Figma 软参考和页面状态作用域，不是需求解析、基线召回、scorer 或 Runner 失败。
+- `visual_grounder` 提示现明确：每批只证明当前 Frame / 页面 / 状态；局部缺失不能否定另一页的正向证据；无法证明同页时返回空增量，只在 judgement / repair hints 记录冲突。
+- 增量合并增加通用语义反转保护：正向需求用例不能被软参考改写成“入口不存在”。AI 的 `repair_hints`、批次 judgement 和冲突审计继续保留；原本就验证“入口应隐藏”的真正负向用例仍允许正常校准。
+- 作用域只在视觉增量合并处，不改 Figma parser、需求契约、场景生成、最终覆盖门禁、YAML scorer、Runner 调度或设备策略，也没有增加 AI 调用和执行步骤。
+
+使用本次线上 `TC-002` 产物离线重放：
+
+- 后一张参数页的负向 patch 被记录并阻止反转，原断言“照片打印页面底部展示百度网盘、位于相机拍照下方、文案和布局正确”得到保留，AI 冲突提示仍存在。
+- 把该受保护候选放回线上最终组合后得到 5 条 executable，覆盖 `12/12` 个验收维度，`missing=[]`；没有通过数量下限硬凑用例。
+- 通用“发票入口”夹具同时验证：无关参数页不能覆盖正向入口用例，而真实的入口隐藏负向用例仍可被视觉 AI 修改。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端 Agent、失败报告和重跑视觉烟测全部通过。
+
+待完成：
+
+- 提交并部署本轮修复；部署后再次使用同一需求 / Figma / `win-runner-01 / ecbfd645 / fixed / qwen3.6-plus` 发起完整 Agent。
+- 必须持续轮询到 Agent、smoke、remaining 与可能的 AI 修复全部终态，人工复核最终 YAML、真实 Runner 报告、截图 / 录屏和失败归因；本轮线上 Agent 尚未进入 Runner，不能称为完整成功。
+
 ### 2026-07-15 Agent 同分支 AI 首屏证据组合与收敛超时降级
 
 部署 `cf85317` 后发起同一完整回归：

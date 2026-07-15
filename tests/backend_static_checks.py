@@ -2867,6 +2867,52 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         and merged_visual_payload.get("review", {}).get("visual_grounding_check") == "completed",
         "Visual grounding merge must apply visual corrections without erasing full planning evidence",
     )
+    scoped_visual_base = {
+        "title": "新增发票入口",
+        "module": "会员服务",
+        "analysis": {"requirement_points": ["订单页展示发票入口"]},
+        "cases": [{
+            "case_id": "TC-VIS-001",
+            "title": "订单页发票入口展示与同级关系校验",
+            "scenario": "订单页入口展示",
+            "steps": ["进入订单页", "等待发票入口与订单筛选入口同屏可见"],
+            "assertions": ["发票入口与订单筛选入口同级展示，文案完整可见"],
+            "expected_result": "订单页展示发票入口",
+        }, {
+            "case_id": "TC-VIS-002",
+            "title": "禁用状态不展示发票入口",
+            "scenario": "入口隐藏状态",
+            "steps": ["进入禁用状态订单页"],
+            "assertions": ["发票入口不可见"],
+        }],
+        "manual_cases": [],
+        "review": {},
+    }
+    scoped_visual_merge = ai_skill_service.merge_visual_grounder_payload(scoped_visual_base, {
+        "cases": [{
+            "case_id": "TC-VIS-001",
+            "steps": ["进入参数配置页", "检查当前页未发现任何文件导入入口"],
+            "assertions": ["当前参数配置页未出现发票入口"],
+            "expected_result": "当前页无文件导入入口",
+            "repair_hints": "当前图片是参数配置状态，无法证明订单页入口布局",
+        }, {
+            "case_id": "TC-VIS-002",
+            "assertions": ["禁用状态下未展示发票入口"],
+        }],
+        "review": {"visual_grounding_check": "参数配置页没有文件导入入口"},
+    })
+    scoped_visual_by_id = {
+        item.get("case_id"): item for item in scoped_visual_merge.get("cases") or []
+    }
+    require(
+        scoped_visual_by_id["TC-VIS-001"].get("steps") == scoped_visual_base["cases"][0]["steps"]
+        and scoped_visual_by_id["TC-VIS-001"].get("assertions") == scoped_visual_base["cases"][0]["assertions"]
+        and scoped_visual_by_id["TC-VIS-001"].get("expected_result") == scoped_visual_base["cases"][0]["expected_result"]
+        and "参数配置状态" in scoped_visual_by_id["TC-VIS-001"].get("repair_hints", "")
+        and scoped_visual_by_id["TC-VIS-002"].get("assertions") == ["禁用状态下未展示发票入口"]
+        and scoped_visual_merge.get("review", {}).get("visual_scope_guard", {}).get("blockedPatchCount") == 1,
+        "A later unrelated frame may record a conflict but must not invert a positive requirement case; true negative cases remain calibratable",
+    )
 
     visual_payload = {
         "review": {

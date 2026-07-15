@@ -4633,6 +4633,16 @@ _VISUAL_MUTABLE_FIELDS = {
     "start_page", "business_path", "preconditions", "steps", "assertions",
     "expected", "expected_result", "repair_hints", "data_requirements",
 }
+_VISUAL_EXECUTION_FIELDS = {
+    "start_page", "business_path", "preconditions", "steps", "assertions",
+    "expected", "expected_result",
+}
+_VISUAL_TARGET_ABSENCE_RE = re.compile(
+    r"(?:未(?:出现|发现|展示|显示)|不(?:存在|展示|显示)|缺(?:少|失)|没有(?:任何|相关|可见)?|无(?:任何|相关|可见)?)"
+    r".{0,30}(?:入口|按钮|文案|导入(?:方式|区域)?|控件)"
+    r"|(?:入口|按钮|文案|导入(?:方式|区域)?|控件).{0,30}"
+    r"(?:未(?:出现|发现|展示|显示)|不(?:存在|展示|显示)|不可见|缺(?:少|失))"
+)
 
 
 def _compact_visual_record(item, fields):
@@ -4695,7 +4705,33 @@ def _visual_record_key(item, kind):
     return ""
 
 
-def _merge_visual_records(base_items, grounded_items, kind):
+def _visual_patch_inverts_positive_case(base_item, grounded_item):
+    """Keep a soft-reference frame from turning a positive requirement into absence."""
+    base_item = base_item if isinstance(base_item, dict) else {}
+    grounded_item = grounded_item if isinstance(grounded_item, dict) else {}
+    grounded_text = "\n".join(normalize_text_list([
+        grounded_item.get("start_page"),
+        grounded_item.get("business_path"),
+        grounded_item.get("steps"),
+        grounded_item.get("assertions"),
+        grounded_item.get("expected"),
+        grounded_item.get("expected_result"),
+    ]))
+    if not _VISUAL_TARGET_ABSENCE_RE.search(grounded_text):
+        return False
+    base_text = "\n".join(normalize_text_list([
+        base_item.get("title"),
+        base_item.get("scenario"),
+        base_item.get("goal"),
+        base_item.get("steps"),
+        base_item.get("assertions"),
+        base_item.get("expected"),
+        base_item.get("expected_result"),
+    ]))
+    return not bool(_VISUAL_TARGET_ABSENCE_RE.search(base_text))
+
+
+def _merge_visual_records(base_items, grounded_items, kind, blocked_patches=None):
     merged = [copy.deepcopy(item) for item in (base_items or []) if isinstance(item, dict)]
     index_by_key = {
         _visual_record_key(item, kind): index
@@ -4708,7 +4744,21 @@ def _merge_visual_records(base_items, grounded_items, kind):
         key = _visual_record_key(grounded, kind)
         if key and key in index_by_key:
             target = merged[index_by_key[key]]
+            blocked_fields = set()
+            if kind in ("case", "manual") and _visual_patch_inverts_positive_case(target, grounded):
+                blocked_fields = _VISUAL_EXECUTION_FIELDS
+                if isinstance(blocked_patches, list):
+                    blocked_patches.append({
+                        "kind": kind,
+                        "key": key,
+                        "fields": sorted(
+                            field for field in blocked_fields
+                            if grounded.get(field) not in (None, "", [], {})
+                        ),
+                    })
             for field in _VISUAL_MUTABLE_FIELDS:
+                if field in blocked_fields:
+                    continue
                 if grounded.get(field) not in (None, "", [], {}):
                     target[field] = copy.deepcopy(grounded.get(field))
             continue
@@ -4733,14 +4783,36 @@ def merge_visual_grounder_payload(base_payload, grounded_payload):
     if not base_analysis.get("requirement_points"):
         base_analysis["requirement_points"] = copy.deepcopy(grounded_analysis.get("requirement_points") or [])
     merged["analysis"] = base_analysis
-    merged["scenarios"] = _merge_visual_records(base.get("scenarios"), grounded.get("scenarios"), "scenario")
-    merged["cases"] = _merge_visual_records(base.get("cases"), grounded.get("cases"), "case")
-    merged["manual_cases"] = _merge_visual_records(base.get("manual_cases"), grounded.get("manual_cases"), "manual")
+    blocked_patches = []
+    merged["scenarios"] = _merge_visual_records(
+        base.get("scenarios"), grounded.get("scenarios"), "scenario", blocked_patches
+    )
+    merged["cases"] = _merge_visual_records(
+        base.get("cases"), grounded.get("cases"), "case", blocked_patches
+    )
+    merged["manual_cases"] = _merge_visual_records(
+        base.get("manual_cases"), grounded.get("manual_cases"), "manual", blocked_patches
+    )
     review = merged.setdefault("review", {})
     grounded_review = grounded.get("review") if isinstance(grounded.get("review"), dict) else {}
     for key, value in grounded_review.items():
         if value not in (None, "", [], {}):
             review[key] = copy.deepcopy(value)
+    if blocked_patches:
+        previous_guard = review.get("visual_scope_guard") if isinstance(review.get("visual_scope_guard"), dict) else {}
+        previous_records = [
+            item for item in (previous_guard.get("blockedRecords") or [])
+            if isinstance(item, dict)
+        ]
+        combined_records = previous_records + blocked_patches
+        review["visual_scope_guard"] = {
+            "blockedPatchCount": len(combined_records),
+            "blockedRecords": combined_records[-20:],
+            "rule": (
+                "Figma/截图是当前 Frame/状态的软参考；局部页面未出现目标入口时，"
+                "只保留 AI 冲突说明，不得把正向需求用例改写为入口不存在。"
+            ),
+        }
     return normalize_cases_payload(merged)
 
 
@@ -4760,6 +4832,8 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
             "return_complete_payload": False,
             "return_visual_delta_only": True,
             "visual_reference_is_soft": True,
+            "negative_evidence_is_current_frame_only": True,
+            "do_not_invert_positive_requirement_case": True,
             "no_coordinates_or_selectors": True,
             "assertions_must_be_ui_visible": True
         }
