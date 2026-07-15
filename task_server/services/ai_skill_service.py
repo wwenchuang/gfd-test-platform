@@ -2551,6 +2551,8 @@ def _compact_baseline_candidate(item, index=0):
         "matched_terms": item.get("matched_terms") or [],
         "retrievalQueries": item.get("retrievalQueries") or [],
         "retrievalRoles": item.get("retrievalRoles") or [],
+        "selectedBranchId": item.get("ai_selected_branch_id") or item.get("selectedBranchId") or "",
+        "selectedBranchName": item.get("ai_selected_branch_name") or item.get("selectedBranchName") or "",
         "actions": item.get("actions") or [],
         "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
         "lastRunStatus": item.get("lastRunStatus") or "",
@@ -2565,7 +2567,37 @@ def _compact_baseline_candidate(item, index=0):
     }
 
 
-def call_skill_baseline_reranker(title, module, query_text, candidates, model_config=None, limit=3):
+def _normalize_required_baseline_branches(required_branches, limit=3):
+    normalized = []
+    seen = set()
+    for index, raw in enumerate(required_branches or []):
+        item = raw if isinstance(raw, dict) else {"name": str(raw or ""), "query": str(raw or "")}
+        branch_id = clean_id(item.get("id") or item.get("branchId") or f"branch_{index + 1:03d}", f"branch_{index + 1:03d}")
+        name = str(item.get("name") or item.get("branch") or branch_id).strip()
+        query = str(item.get("query") or item.get("retrievalQuery") or name).strip()[:2000]
+        if not query or branch_id in seen:
+            continue
+        seen.add(branch_id)
+        normalized.append({
+            "id": branch_id,
+            "name": name,
+            "query": query,
+            "source": str(item.get("source") or "agent_business_flow").strip(),
+        })
+        if len(normalized) >= max(1, min(3, safe_int(limit, 3))):
+            break
+    return normalized
+
+
+def call_skill_baseline_reranker(
+    title,
+    module,
+    query_text,
+    candidates,
+    model_config=None,
+    limit=3,
+    required_branches=None,
+):
     """Use AI to choose the most relevant cached baseline examples, with local fallback."""
     candidates = [
         _compact_baseline_candidate(item, idx)
@@ -2573,12 +2605,31 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
         if isinstance(item, dict) and item.get("baselineUsable") is True and item.get("trusted") is True
     ]
     limit = max(1, min(3, safe_int(limit, 3)))
+    requested_required_branches = _normalize_required_baseline_branches(required_branches, limit=limit)
+    candidate_query_keys = {
+        re.sub(r"\s+", " ", str(query or "")).strip().lower()
+        for candidate in candidates
+        for query in (candidate.get("retrievalQueries") or [])
+        if str(query or "").strip()
+    }
+    required_branches = [
+        item for item in requested_required_branches
+        if re.sub(r"\s+", " ", item["query"]).strip().lower() in candidate_query_keys
+    ]
+    unavailable_required_branches = [
+        item for item in requested_required_branches if item not in required_branches
+    ]
+    required_branch_by_id = {item["id"]: item for item in required_branches}
     local_selected_ids = {item["id"] for item in candidates[:limit]}
     trace = {
         "enabled": True,
         "candidate_count": len(candidates),
         "selected_count": min(limit, len(candidates)),
         "fallback": False,
+        "requested_required_branch_count": len(requested_required_branches),
+        "required_branch_count": len(required_branches),
+        "required_branch_ids": [item["id"] for item in required_branches],
+        "unavailable_required_branch_ids": [item["id"] for item in unavailable_required_branches],
         **_model_config_trace(model_config),
     }
     if not candidates:
@@ -2589,6 +2640,7 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
         "module": module,
         "queryText": str(query_text or "")[:6000],
         "limit": limit,
+        "requiredBranches": required_branches,
         "candidates": candidates[:20],
         "rules": {
             "choose_from_candidates_only": True,
@@ -2597,22 +2649,19 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
             "fallback_when_irrelevant": True,
             "prefer_complementary_roles": ["navigation_path", "capability_pattern", "assertion_pattern"],
             "preserve_explicit_business_branches": True,
+            "cover_required_branches_before_role_diversity": True,
+            "one_selected_candidate_per_required_branch": True,
             "cite_candidate_provenance_exactly": True,
         },
     }
-    try:
-        result = run_ai_skill(
-            "baseline_reranker",
-            request,
-            timeout=AI_BASELINE_RERANKER_TIMEOUT_SECONDS,
-            temperature=0.0,
-            respect_global_timeout=False,
-            retry_count=0,
-            model_config=model_config,
-        )
+
+    def parse_selection(result):
         selected_rows = []
         id_to_candidate = {item["id"]: item for item in candidates}
         invalid_citation_count = 0
+        invalid_branch_count = 0
+        covered_branch_ids = []
+        used_local_fallback = False
         for selected in result.get("selected") or []:
             if not isinstance(selected, dict):
                 continue
@@ -2628,25 +2677,106 @@ def call_skill_baseline_reranker(title, module, query_text, candidates, model_co
             if cited_path and cited_path not in expected_paths:
                 invalid_citation_count += 1
                 continue
+            branch_id = clean_id(selected.get("branchId") or selected.get("branch_id") or "", "")
+            branch = required_branch_by_id.get(branch_id)
+            candidate_queries = {
+                re.sub(r"\s+", " ", str(item or "")).strip().lower()
+                for item in (candidate.get("retrievalQueries") or [])
+                if str(item or "").strip()
+            }
+            branch_query = re.sub(r"\s+", " ", str((branch or {}).get("query") or "")).strip().lower()
+            if required_branches and (not branch or branch_query not in candidate_queries or branch_id in covered_branch_ids):
+                invalid_branch_count += 1
+                branch_id = ""
+                branch = None
             row = dict(candidate)
             row["ai_selected_reason"] = selected.get("reason") or ""
             row["ai_confidence"] = selected.get("confidence")
             row["ai_selected_role"] = selected.get("role") or ""
+            row["ai_selected_branch_id"] = branch_id
+            row["ai_selected_branch_name"] = (branch or {}).get("name") or ""
             row["ai_cited_path"] = cited_path or candidate.get("provenancePath") or candidate.get("file") or ""
             selected_rows.append(row)
+            if branch_id:
+                covered_branch_ids.append(branch_id)
             if len(selected_rows) >= limit:
                 break
         if not selected_rows:
             selected_rows = [dict(item) for item in candidates if item["id"] in local_selected_ids][:limit]
+            used_local_fallback = True
+        missing_branch_ids = [item["id"] for item in required_branches if item["id"] not in covered_branch_ids]
+        return selected_rows, {
+            "invalid_citation_count": invalid_citation_count,
+            "invalid_branch_count": invalid_branch_count,
+            "covered_branch_ids": covered_branch_ids,
+            "missing_branch_ids": missing_branch_ids,
+            "branch_coverage_ok": not missing_branch_ids,
+            "used_local_fallback": used_local_fallback,
+        }
+
+    try:
+        result = run_ai_skill(
+            "baseline_reranker",
+            request,
+            timeout=AI_BASELINE_RERANKER_TIMEOUT_SECONDS,
+            temperature=0.0,
+            respect_global_timeout=False,
+            retry_count=0,
+            model_config=model_config,
+        )
+        selected_rows, selection_audit = parse_selection(result)
+        trace["branch_repair_attempted"] = False
+        if required_branches and not selection_audit["branch_coverage_ok"]:
+            trace["branch_repair_attempted"] = True
+            repair_request = dict(request)
+            repair_request["previousSelection"] = result.get("selected") or []
+            repair_request["selectionValidationIssues"] = [
+                "Top3 未覆盖以下 AI 首批业务分支，每个分支必须选择一条自身 businessPath 与该分支一致的候选，并返回对应 branchId："
+                + "、".join(
+                    required_branch_by_id[item].get("name") or item
+                    for item in selection_audit["missing_branch_ids"]
+                    if item in required_branch_by_id
+                )
+            ]
+            try:
+                repaired_result = run_ai_skill(
+                    "baseline_reranker",
+                    repair_request,
+                    timeout=AI_BASELINE_RERANKER_TIMEOUT_SECONDS,
+                    temperature=0.0,
+                    respect_global_timeout=False,
+                    retry_count=0,
+                    model_config=model_config,
+                )
+                repaired_rows, repaired_audit = parse_selection(repaired_result)
+                if repaired_rows:
+                    result = repaired_result
+                    selected_rows = repaired_rows
+                    selection_audit = repaired_audit
+            except Exception as repair_exc:
+                trace["branch_repair_error"] = str(repair_exc)
+        if selection_audit.get("used_local_fallback"):
             trace["fallback"] = True
             trace["error"] = "ai_selected_none_or_invalid"
         trace["selected_count"] = len(selected_rows)
-        trace["invalid_citation_count"] = invalid_citation_count
+        trace.update(selection_audit)
+        trace["branch_repair_succeeded"] = bool(
+            trace.get("branch_repair_attempted") and selection_audit.get("branch_coverage_ok")
+        )
         trace["selection_roles"] = [item.get("ai_selected_role") for item in selected_rows if item.get("ai_selected_role")]
         return {"selected": selected_rows, "trace": trace, "review": result.get("review") or {}}
     except Exception as exc:
         selected_rows = [dict(item) for item in candidates[:limit]]
-        trace.update({"fallback": True, "selected_count": len(selected_rows), "error": str(exc)})
+        trace.update({
+            "fallback": True,
+            "selected_count": len(selected_rows),
+            "error": str(exc),
+            "covered_branch_ids": [],
+            "missing_branch_ids": [item["id"] for item in required_branches],
+            "branch_coverage_ok": not required_branches,
+            "branch_repair_attempted": False,
+            "branch_repair_succeeded": False,
+        })
         return {"selected": selected_rows, "trace": trace, "review": {"selection_reason": "AI 选择失败，回退本地 TopN"}}
 
 
@@ -2771,18 +2901,15 @@ def _planner_requirement_point_map(points):
 
 def _source_case_requirement_ids(case):
     case = case if isinstance(case, dict) else {}
-    # coverage/requirement_point belong to the candidate before planner classification.
-    primary = [
+    # Every field here belongs to the candidate before planner classification.
+    # Keep their union so AI-authored cross-cutting mappings survive, while the
+    # downstream guard still rejects requirement IDs invented by the planner.
+    return _planner_requirement_ids([
         case.get("coverage"),
         case.get("requirement_point"),
         case.get("requirementPoint"),
         case.get("source_requirement_point"),
         case.get("sourceRequirementPoint"),
-    ]
-    primary_ids = _planner_requirement_ids(primary)
-    if primary_ids:
-        return primary_ids
-    return _planner_requirement_ids([
         case.get("requirementRefs"),
         case.get("requirement_refs"),
     ])
@@ -2837,11 +2964,18 @@ def executable_yaml_portfolio_audit(payload, targets=None):
         _planner_case_id(case, idx, origin_level="automatic")
         for idx, case in enumerate(unresolved_cases)
     ]
+    target_shortfall = max(0, target_min - len(executable_cases))
     reasons = []
+    advisories = []
+    if not executable_cases:
+        reasons.append("没有 executable 候选")
     if missing_points:
         reasons.append("显式需求点尚未由 executable 候选覆盖")
-    if target_min and len(executable_cases) < target_min:
-        reasons.append(f"executable 候选 {len(executable_cases)} 条，低于平台目标 {target_min} 条")
+    if target_shortfall:
+        advisories.append(
+            f"executable 候选 {len(executable_cases)} 条，低于 AI 规划目标 {target_min} 条；"
+            "数量目标不作为硬门禁，不为凑数引入低价值或不稳定用例"
+        )
     if unresolved_cases:
         reasons.append(f"仍有 {len(unresolved_cases)} 条自动候选停留在非终态分类")
     return {
@@ -2850,6 +2984,9 @@ def executable_yaml_portfolio_audit(payload, targets=None):
         "requirementPoints": requirement_points[:12],
         "missingRequirementPoints": missing_points[:12],
         "targetExecutableCount": target_min,
+        "targetMet": target_shortfall == 0,
+        "targetShortfall": target_shortfall,
+        "advisories": advisories,
         "executableCount": len(executable_cases),
         "executableCaseIds": executable_ids[:20],
         "unresolvedAutomaticCount": len(unresolved_cases),
@@ -2896,16 +3033,12 @@ def _focus_executable_convergence_candidates(
     missing_points = normalize_text_list(audit.get("missingRequirementPoints"))
     target_count = max(0, safe_int(audit.get("targetExecutableCount"), 0))
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
-    gap_count = max(0, target_count - executable_count)
     focused_manual = []
     selected_manual_ids = set()
 
     # One alternate per uncovered requirement keeps the final request bounded while
     # still allowing AI to recover a better candidate than the unresolved automatic one.
     focus_points = missing_points
-    if not focus_points and gap_count:
-        analysis = normalized.get("analysis") if isinstance(normalized.get("analysis"), dict) else {}
-        focus_points = normalize_text_list(analysis.get("requirement_points"))[:gap_count]
     for point in focus_points:
         for record in manual_records:
             candidate_id = str(record["compact"].get("case_id") or "").strip()
@@ -2915,6 +3048,8 @@ def _focus_executable_convergence_candidates(
                 focused_manual.append(record)
                 selected_manual_ids.add(candidate_id)
                 break
+
+    candidate_selection_mode = "missing_requirement_alternates" if focus_points else "none"
 
     automatic = [item["compact"] for item in focused_automatic]
     manual = [item["compact"] for item in focused_manual]
@@ -2940,6 +3075,7 @@ def _focus_executable_convergence_candidates(
         "missingRequirementPoints": missing_points[:12],
         "targetExecutableCount": target_count,
         "currentExecutableCount": executable_count,
+        "candidateSelectionMode": candidate_selection_mode,
     }
     context["focus"] = focus
     return automatic, manual, context, focus

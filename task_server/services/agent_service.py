@@ -4327,6 +4327,9 @@ def _tool_agent_plan(run):
             "coverageAudit": mindmap_result.get("coverageAudit") or {},
             "issues": plan_issues,
         }
+        # PLAN owns the first visual-AI attempt. Persist its real batch outcome
+        # immediately so a later generation failure cannot leave the report pending.
+        artifacts["visualReferenceReport"] = _agent_visual_reference_report(run, mindmap_result)
         if not plan:
             failure = {
                 "version": "agent-business-plan-v3",
@@ -6098,6 +6101,7 @@ def _agent_visual_reference_report(run, generation_result=None):
     cases_payload = result.get("cases") if isinstance(result.get("cases"), dict) else {}
     review = result.get("review") if isinstance(result.get("review"), dict) else {}
     case_review = cases_payload.get("review") if isinstance(cases_payload.get("review"), dict) else {}
+    mindmap_visual = _agent_mm_visual_status(case_review)
     uploaded_images = _agent_public_file_list(source_context.get("uploadedImages") or [], 40)
     figma_pages = source_context.get("figmaUsedPages") or source_context.get("uiDesigns") or []
     summary_figma_assets = summary.get("ui_design_assets") or []
@@ -6135,6 +6139,7 @@ def _agent_visual_reference_report(run, generation_result=None):
         or case_review.get("yaml_visual_grounded")
         or review.get("visual_grounded")
         or case_review.get("visual_grounded")
+        or mindmap_visual.get("completed")
     )
     visual_batches = (
         review.get("yaml_visual_batches")
@@ -6142,6 +6147,15 @@ def _agent_visual_reference_report(run, generation_result=None):
         or {}
     )
     visual_batches = visual_batches if isinstance(visual_batches, dict) else {}
+    if not visual_batches and mindmap_visual.get("attempted"):
+        visual_batches = {
+            "enabled": True,
+            "completed_batches": mindmap_visual.get("batchesDone") or 0,
+            "total_batches": mindmap_visual.get("batchesTotal") or 0,
+            "attempted_batches": mindmap_visual.get("batchesAttempted") or 0,
+            "batch_results": mindmap_visual.get("batchResults") or [],
+            "errors": [mindmap_visual.get("error")] if mindmap_visual.get("error") else [],
+        }
     visual_skipped = (
         review.get("visual_refine_skipped")
         or case_review.get("visual_refine_skipped")
@@ -6164,14 +6178,18 @@ def _agent_visual_reference_report(run, generation_result=None):
     visual_inputs_present = bool(uploaded_images or figma_pages or figma_assets or figma_image_count)
     ai_visual_attempted = bool(
         ai_visual_completed
+        or mindmap_visual.get("attempted")
         or visual_batches.get("enabled")
         or visual_errors
         or review.get("visual_grounder_skill")
         or case_review.get("visual_grounder_skill")
     )
     ai_visual_failed = bool(ai_visual_attempted and not ai_visual_completed and visual_errors)
+    ai_visual_partial = bool(mindmap_visual.get("status") == "partial")
     if ai_visual_completed:
         ai_visual_status = "completed"
+    elif ai_visual_partial:
+        ai_visual_status = "partial"
     elif ai_visual_failed:
         ai_visual_status = "failed"
     elif ai_visual_attempted:
@@ -6182,7 +6200,9 @@ def _agent_visual_reference_report(run, generation_result=None):
         ai_visual_status = "skipped"
     else:
         ai_visual_status = "not_required"
-    if ai_visual_failed:
+    if ai_visual_partial:
+        conflict_notes.append("视觉资料已送入 AI 判断，部分批次完成、部分批次失败；已保留批次实绩，生成继续按软参考处理。")
+    elif ai_visual_failed:
         conflict_notes.append("视觉资料已送入 AI 判断，但视觉校准失败；失败原因已保留，生成结果需要重新校准或人工复核。")
     elif visual_inputs_present and generation_result is not None and not ai_visual_completed:
         conflict_notes.append("视觉资料已进入本次输入，但未看到 AI 视觉校准完成标记；本次仍会保留生成结果并提示人工复核图片参考是否充分。")
@@ -6201,6 +6221,13 @@ def _agent_visual_reference_report(run, generation_result=None):
         "figmaPageCount": _agent_list_length(figma_pages),
         "figmaImageCount": figma_image_count,
         "ignoredFigmaCount": _agent_list_length(ignored_figma),
+        "visualBatchesDone": _safe_int_local(visual_batches.get("completed_batches"), 0),
+        "visualBatchesTotal": _safe_int_local(visual_batches.get("total_batches"), 0),
+        "visualBatchesAttempted": _safe_int_local(
+            visual_batches.get("attempted_batches"),
+            len(visual_batches.get("batch_results") or []),
+        ),
+        "visualBatchResults": (visual_batches.get("batch_results") or [])[:40],
         "usageNotes": notes,
         "conflictPolicy": "如果截图、Figma、需求文档或历史基线存在冲突，只做显式提醒和人工复核提示，不静默把截图升级为硬门禁。",
         "conflictNotes": conflict_notes,

@@ -28,6 +28,48 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 完整 Agent 分支基线、横切覆盖与非凑数门禁修复
+
+部署 `8abf30e` 后发起同一完整回归：
+
+- Agent `agent-1784080784835-7ceb6d1f`，输入仍为“基础打印新增百度网盘入口”、同一 Figma、`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。线上 `8091 / 8088` 健康，Runner 在线并上报 `qwen3.6` 模型族，OPPO PHM110 `ecbfd645` 在线；本 Agent 没有向华为或第二台设备下发任务。
+- `PREPARE_SOURCE` 正常保留 Figma 4 页 / 4 图。PLAN 由平台 MM skills 生成 8 条 AI 业务分支，没有预设伪主链；4 个视觉批次均真实送入 `qwen3.6-plus`，每批约 90 秒超时，视觉资料继续作为软参考。
+- 任务终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job。覆盖门禁正确阻断：最终只有 `TC-001 / TC-002 / TC-004` 三条 executable，缺少 `REQ-003` 扫描复印和 `REQ-005` 入口 UI 一致性。
+- 根因一是 Top3 重排虽然收到 20 个分支多样候选，却把 `navigation_path / capability_pattern / assertion_pattern` 三个角色全部分配给文档打印旧成功稿，并明确拒绝照片、扫描分支；因此 planner 看不到本地可信的 `6寸照片打印.yaml` 与 `文件扫描.yaml` 路径证据。
+- 根因二是 automation_filter 把横跨三个页面的文案 / 图标 / 同级要求替换成深色模式用例，随后归为 manual；文档、照片、扫描三个分支 case 自身已有同页可见断言，却没有保留 `REQ-005` 映射。
+- 报告还有一个独立问题：PLAN 内已准确记录视觉 `0/4 completed、4 attempted、failed`，但顶层 `visualReferenceReport` 只在 YAML 成功返回后刷新，因此生成失败时仍错误显示 `pending / sent=false`。
+
+本轮通用修复：
+
+- Top3 数量保持不变，不扩成 Top6。平台从 AI PLAN 的 `smokeFlowIds` 提取最多三个必需业务分支，要求 AI 重排先做到“一分支一条可信路径基线”，再考虑角色互补；结果会校验 `branchId + retrievalQuery`。只有首轮遗漏分支时才进行一次有界 AI 自纠，正常路径不增加模型轮次，第二次仍不合格则由后续覆盖门禁阻断。
+- AI 选中的分支 ID / 名称会继续传给 executable planner、生成上下文和报告，便于确认照片分支确实使用 6 寸照片成功路径、扫描分支确实使用文件扫描 / 证件扫描路径，而不是只看模糊的 Top3 标题。
+- automation_filter 现在要求每条 case 输出 `requirementRefs`。横跨多个兄弟页面的可见 UI 要求由各分支独立短 case 共同证明：case 保留自己的主分支 `coverage`，并在自身步骤 / 断言确有证据时附加横切 REQ；禁止把横切要求擅自替换成深色模式、多语言、横竖屏或跨页面长链路。
+- planner 的需求边界改为候选原始 `coverage + requirementRefs` 并集。这样 AI 原先建立的横切映射不会被 coverage 单值覆盖，同时 planner 后加的跨分支 REQ 仍会触发 path mapping guard，不能把照片路径偷换成扫描需求。
+- `3/5/8` 明确改为 AI 规划目标和规模上限，不是最终 executable 数量硬下限。最终门禁仍阻断零 executable、显式 REQ 缺失和自动候选分类未终结；如果更少的独立短 case 已完整覆盖需求，则返回 `ok=true`，通过 `targetMet / targetShortfall / advisories` 如实报告数量差额，不允许用弱网、深色模式、系统设置、重复路径或深层授权项凑数。单条 YAML scorer、静态校验、dry-run、冒烟和 remaining 门禁均未降低。
+- PLAN 结束后立即用真实 mindmap 视觉批次刷新顶层报告；即使 GENERATE_YAML 随后失败，也会保留 sent / completed / attempted / failed 计数和逐批错误。未修改 Figma parser、选页、图片计数或软参考策略。
+
+使用线上保存产物离线重放：
+
+- AI 首批分支目标精确为文档打印、照片打印、扫描复印；本地候选池分别包含 `百度网盘打印.yaml`、`6寸照片打印.yaml`、`文件扫描.yaml / 证件扫描.yaml`。
+- 在原线上三条 executable 基础上，把扫描展示按可信扫描路径升级，并由文档 / 照片 / 扫描三个同页 case 保留 `REQ-005` 后，结果为 4 条 executable 覆盖全部 5 个 REQ：`ok=true / targetExecutableCount=5 / targetMet=false / targetShortfall=1`。不需要再升级照片深层授权或其他低价值项。
+- 原线上未修形态仍因缺少 `REQ-003 / REQ-005` 被阻断；多目标点击、跨分支需求偷换和原人工候选无可信基线升级仍被原门禁拒绝。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name 通过，后端 `61` 项、前端 `67` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3` 通过；Playwright 桌面 / 移动端 Agent 与重跑视觉烟测通过。
+
+待完成：
+
+- 本轮提交尚未部署。部署后再次使用同一需求 / Figma 和固定 `win-runner-01 / ecbfd645` 发起完整 Agent，并持续轮询到 `DONE / FAILED / CANCELLED`。
+- 人工复核 Top3 分支归属、最终 YAML 的真实可见文字定位、文档 / 照片 / 扫描及横切文案要求；如果进入 Runner，首批与 remaining 的每个 job 必须都固定 OPPO，核对真实报告、截图、失败分类和 AI 修复，不以进度条或 Agent 总状态替代执行事实。
+
 ### 2026-07-15 智小白 Sonic 基线失败突增定位与失败状态隔离
 
 线上核查最近 10 次 `智小白3D / 3D测试自动` Sonic 套件：

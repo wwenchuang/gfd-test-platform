@@ -1625,6 +1625,7 @@ def build_yaml_reference_examples_text(examples):
             f"### 参考样例 {idx}: {item.get('title') or item.get('file')}",
             f"- 来源: {item.get('provenancePath') or item.get('file')}",
             f"- 来源类型/验证: {item.get('sourceKind') or '-'} / {item.get('verificationStatus') or '-'}",
+            f"- AI 对应业务分支: {item.get('ai_selected_branch_name') or '-'}",
             f"- AI 使用角色: {item.get('ai_selected_role') or '-'}",
             f"- 匹配: {matched}",
             f"- 动作类型: {actions}",
@@ -1665,21 +1666,26 @@ def build_agent_business_plan_context_text(plan):
     return "\n".join(lines).strip()
 
 
+def _baseline_branch_query_from_flow(item):
+    """Render one AI-planned flow as a retrieval query without adding facts."""
+    if not isinstance(item, dict):
+        return ""
+    parts = normalize_text_list([
+        item.get("branch"),
+        item.get("name"),
+        item.get("steps"),
+        item.get("checks"),
+    ])
+    return "\n".join(parts).strip()[:2000]
+
+
 def baseline_branch_queries_from_agent_plan(plan, limit=8):
     """Build narrow retrieval queries from AI-planned branches without adding facts."""
     plan = plan if isinstance(plan, dict) else {}
     queries = []
     seen = set()
     for item in plan.get("businessFlows") or []:
-        if not isinstance(item, dict):
-            continue
-        parts = normalize_text_list([
-            item.get("branch"),
-            item.get("name"),
-            item.get("steps"),
-            item.get("checks"),
-        ])
-        text = "\n".join(parts).strip()
+        text = _baseline_branch_query_from_flow(item)
         key = re.sub(r"\s+", " ", text).lower()
         if len(key) < 2 or key in seen:
             continue
@@ -1688,6 +1694,39 @@ def baseline_branch_queries_from_agent_plan(plan, limit=8):
         if len(queries) >= max(1, safe_int(limit, 8)):
             break
     return queries
+
+
+def baseline_required_branches_from_agent_plan(plan, limit=3):
+    """Use the AI-selected smoke flows as the branch coverage target for Top3 reranking."""
+    plan = plan if isinstance(plan, dict) else {}
+    flows = [item for item in (plan.get("businessFlows") or []) if isinstance(item, dict)]
+    flow_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in flows
+        if str(item.get("id") or "").strip()
+    }
+    strategy = plan.get("executionStrategy") if isinstance(plan.get("executionStrategy"), dict) else {}
+    smoke_ids = normalize_text_list(strategy.get("smokeFlowIds") or strategy.get("smoke_flow_ids"))
+    ordered = [flow_by_id[item] for item in smoke_ids if item in flow_by_id]
+    ordered.extend(item for item in flows if item not in ordered)
+    required = []
+    seen_branches = set()
+    for index, item in enumerate(ordered):
+        query = _baseline_branch_query_from_flow(item)
+        branch_name = str(item.get("branch") or item.get("name") or "").strip()
+        branch_key = re.sub(r"\s+", " ", branch_name).lower()
+        if not query or len(branch_key) < 2 or branch_key in seen_branches:
+            continue
+        seen_branches.add(branch_key)
+        required.append({
+            "id": str(item.get("id") or f"FLOW-{index + 1:03d}").strip(),
+            "name": branch_name,
+            "query": query,
+            "source": "agent_smoke_flow" if str(item.get("id") or "").strip() in smoke_ids else "agent_business_flow",
+        })
+        if len(required) >= max(1, min(3, safe_int(limit, 3))):
+            break
+    return required
 
 
 def build_ai_generation_decision_context_text(selected_baselines, scope_plan, case_plan=None):
@@ -1715,6 +1754,7 @@ def build_ai_generation_decision_context_text(selected_baselines, scope_plan, ca
         for index, item in enumerate(selected_baselines[:3], start=1):
             lines.append(
                 f"{index}. {item.get('title') or item.get('file') or '-'}"
+                f"；分支: {item.get('ai_selected_branch_name') or '-'}"
                 f"；角色: {item.get('ai_selected_role') or '-'}"
                 f"；来源: {item.get('provenancePath') or item.get('file') or '-'}"
                 f"；动作: {' -> '.join(item.get('actions') or []) or '-'}"
@@ -6351,6 +6391,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
     )
     baseline_query_text = "\n".join([title, module, query_text] + stage1_text_assets + visual_text_assets)
     baseline_branch_queries = baseline_branch_queries_from_agent_plan(agent_business_plan)
+    baseline_required_branches = baseline_required_branches_from_agent_plan(agent_business_plan)
     baseline_candidates = search_diverse_baseline_examples(
         baseline_query_text,
         branch_queries=baseline_branch_queries,
@@ -6362,6 +6403,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "enabled": True,
         "baseline_candidate_count": len(baseline_candidates),
         "baseline_branch_query_count": len(baseline_branch_queries),
+        "baseline_required_branch_count": len(baseline_required_branches),
+        "baseline_required_branches": [item.get("name") for item in baseline_required_branches],
     }
     if deterministic_entry_visibility_source:
         yaml_reference_examples = baseline_candidates[:3]
@@ -6380,6 +6423,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 baseline_candidates,
                 model_config=model_config,
                 limit=3,
+                required_branches=baseline_required_branches,
             )
             yaml_reference_examples = baseline_rerank.get("selected") or baseline_candidates[:3]
             ai_decision_trace["baseline_reranker"] = baseline_rerank.get("trace") or {}
@@ -6664,6 +6708,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 "sourceTrust": item.get("sourceTrust") or 0,
                 "aiSelectedRole": item.get("ai_selected_role") or "",
                 "aiSelectedReason": item.get("ai_selected_reason") or "",
+                "aiSelectedBranchId": item.get("ai_selected_branch_id") or "",
+                "aiSelectedBranchName": item.get("ai_selected_branch_name") or "",
             }
             for item in yaml_reference_examples
         ]
@@ -6925,7 +6971,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     "trace": convergence_plan.get("trace") or {},
                     "review": convergence_plan.get("review") or {},
                     "rule": (
-                        "最终收敛仍由 AI 选择可执行组合；平台只验证显式需求覆盖、3/5/8 数量、"
+                        "最终收敛仍由 AI 选择可执行组合；平台只验证显式需求覆盖、分类终态、"
                         "可信基线路径和可见终态，不降低 scorer 或 Runner 门禁。"
                     ),
                 }
@@ -6953,9 +6999,13 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "passed": bool(final_executable_portfolio.get("ok")),
             "rule": (
                 "AI 负责选择和补齐可执行组合；平台只在最终转换前检查显式需求映射、"
-                "3/5/8 数量和分类终态，缺口不得继续下发 Runner。"
+                "至少一条 executable 和分类终态；3/5/8 仅作为规划目标，不为凑数放宽可执行性。"
             ),
             "reasons": final_executable_portfolio.get("reasons") or [],
+            "advisories": final_executable_portfolio.get("advisories") or [],
+            "targetExecutableCount": final_executable_portfolio.get("targetExecutableCount") or 0,
+            "targetMet": final_executable_portfolio.get("targetMet") is True,
+            "targetShortfall": final_executable_portfolio.get("targetShortfall") or 0,
             "missingRequirementPoints": final_executable_portfolio.get("missingRequirementPoints") or [],
         }
         if not final_executable_portfolio.get("ok"):

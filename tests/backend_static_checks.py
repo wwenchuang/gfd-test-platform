@@ -284,7 +284,19 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
         require(live_plan.get("source") == "platform_mindmap_ai" and live_plan.get("mindmapTrace", {}).get("preparedFigmaReused"), "Agent PLAN must expose MM and prepared-Figma provenance")
         require(live_plan.get("visualReference", {}).get("sentToAiForJudgement") and live_plan["visualReference"].get("aiJudgementCompleted"), "Agent PLAN must distinguish visual AI dispatch from completed MM grounding")
+        live_visual_report = live_plan_run.get("artifacts", {}).get("visualReferenceReport", {})
+        require(
+            live_visual_report.get("sentToAiForJudgement")
+            and live_visual_report.get("aiJudgementStatus") == "completed"
+            and live_visual_report.get("visualBatchesDone") == 1,
+            "PLAN must immediately refresh the top-level visual report from the real mindmap batch outcome",
+        )
         require(live_plan.get("businessFlowConstraint", {}).get("strict"), "Only a validated AI PLAN may become the strict downstream business constraint")
+        required_branches = yaml_service.baseline_required_branches_from_agent_plan(live_plan)
+        require(
+            [item.get("name") for item in required_branches] == ["文档打印", "照片打印", "扫描复印"],
+            "Baseline Top3 branch targets must come from the AI-selected smoke flows instead of a product-specific list",
+        )
 
         partial_result = fake_mindmap(mindmap_calls[0]["request"], job_id="partial-visual")
         partial_result["cases"]["review"].update({
@@ -329,6 +341,65 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         yaml_service.generate_mindmap_from_request = old_mindmap
         yaml_service.update_generate_job = old_update_generate_job
         agent_service._log_tool_call = old_log_tool_call
+
+    rerank_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        required = [
+            {"id": "FLOW-001", "name": "文档打印", "query": "文档打印分支"},
+            {"id": "FLOW-002", "name": "照片打印", "query": "照片打印分支"},
+            {"id": "FLOW-003", "name": "扫描复印", "query": "扫描复印分支"},
+        ]
+        candidates = [
+            {"id": "doc-a", "title": "文档路径A", "file": "doc-a.yaml", "provenancePath": "doc-a.yaml", "retrievalQueries": ["文档打印分支"], "baselineUsable": True, "trusted": True},
+            {"id": "doc-b", "title": "文档路径B", "file": "doc-b.yaml", "provenancePath": "doc-b.yaml", "retrievalQueries": ["文档打印分支"], "baselineUsable": True, "trusted": True},
+            {"id": "doc-c", "title": "文档断言", "file": "doc-c.yaml", "provenancePath": "doc-c.yaml", "retrievalQueries": ["文档打印分支"], "baselineUsable": True, "trusted": True},
+            {"id": "photo-a", "title": "6寸照片打印", "file": "photo-a.yaml", "provenancePath": "photo-a.yaml", "retrievalQueries": ["照片打印分支"], "baselineUsable": True, "trusted": True},
+            {"id": "scan-a", "title": "文件扫描", "file": "scan-a.yaml", "provenancePath": "scan-a.yaml", "retrievalQueries": ["扫描复印分支"], "baselineUsable": True, "trusted": True},
+        ]
+
+        def fake_branch_reranker(skill_name, request, **_kwargs):
+            require(skill_name == "baseline_reranker", "Unexpected skill in branch reranker replay")
+            rerank_requests.append(request)
+            if len(rerank_requests) == 1:
+                return {
+                    "selected": [
+                        {"id": item["id"], "candidatePath": item["provenancePath"], "branchId": "FLOW-001", "role": role}
+                        for item, role in zip(request["candidates"][:3], ("navigation_path", "capability_pattern", "assertion_pattern"))
+                    ],
+                    "review": {"selection_reason": "错误地把三个角色都给了文档分支"},
+                }
+            by_id = {item["id"]: item for item in request["candidates"]}
+            return {
+                "selected": [
+                    {"id": candidate_id, "candidatePath": by_id[candidate_id]["provenancePath"], "branchId": branch_id, "role": "navigation_path"}
+                    for candidate_id, branch_id in (("doc-a", "FLOW-001"), ("photo-a", "FLOW-002"), ("scan-a", "FLOW-003"))
+                ],
+                "review": {"selection_reason": "按三个 AI 首批业务分支纠正 Top3"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_branch_reranker
+        reranked = ai_skill_service.call_skill_baseline_reranker(
+            "多分支入口",
+            "基础打印",
+            "文档打印、照片打印、扫描复印",
+            candidates,
+            limit=3,
+            required_branches=required,
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    require(len(rerank_requests) == 2 and rerank_requests[1].get("selectionValidationIssues"), "AI baseline reranking must receive one bounded self-correction when Top3 misses an AI-selected branch")
+    require(
+        reranked.get("trace", {}).get("branch_coverage_ok")
+        and reranked.get("trace", {}).get("branch_repair_succeeded")
+        and {item.get("ai_selected_branch_name") for item in reranked.get("selected") or []} == {"文档打印", "照片打印", "扫描复印"}
+        and {
+            ai_skill_service._compact_baseline_candidate(item, index).get("selectedBranchName")
+            for index, item in enumerate(reranked.get("selected") or [])
+        } == {"文档打印", "照片打印", "扫描复印"},
+        "Corrected Top3 baselines must cover distinct required business branches before role diversity",
+    )
 
     maintained = yaml_baseline_cache._baseline_source_info(
         str(ROOT / "server-tasks-all"), "基础打印/6寸照片打印.yaml", {}, "unknown"
@@ -400,7 +471,9 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(
         "任一合法终态" in automation_prompt
         and "第三方入口本身不是人工判定理由" in automation_prompt
-        and "不要把小屏和宽屏分别都放进 `cases`" in automation_prompt,
+        and "不要把小屏和宽屏分别都放进 `cases`" in automation_prompt
+        and "横切需求 ID" in automation_prompt
+        and "不得擅自把横切需求替换成" in automation_prompt,
         "Automation filtering must keep bounded reachability automatable and collapse multi-device execution to one current-device case",
     )
 
@@ -435,6 +508,49 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     ungrounded_plan["cases"][0]["baselineGrounded"] = False
     not_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, ungrounded_plan)
     require(not_applied["cases"][0]["steps"] == payload["cases"][0]["steps"], "Ungrounded AI baseline citations must not change case paths")
+
+    cross_cutting_case = {
+        "case_id": "TC-UI-001",
+        "title": "照片打印入口可见文案与同级关系",
+        "coverage": "REQ-001 照片打印入口展示",
+        "requirementRefs": [
+            "REQ-001 照片打印入口展示",
+            "REQ-005 多个业务页入口文案与布局一致",
+        ],
+        "steps": ["进入照片打印", "等待百度网盘入口可见"],
+        "assertions": ["百度网盘文案完整，与相册导入在同一入口区域，无遮挡"],
+        "executionLevel": "executable",
+    }
+    source_requirement_ids = ai_skill_service._source_case_requirement_ids(cross_cutting_case)
+    require(source_requirement_ids == ["REQ-001", "REQ-005"], "Planner grounding must preserve the union of a branch requirement and its AI-authored cross-cutting requirementRefs")
+    cross_refs, cross_guarded = ai_skill_service._ground_planner_requirement_refs(
+        cross_cutting_case,
+        {"requirementRefs": ["REQ-001 照片打印入口展示", "REQ-005 多个业务页入口文案与布局一致"]},
+        ["REQ-001 照片打印入口展示", "REQ-005 多个业务页入口文案与布局一致"],
+    )
+    require(not cross_guarded and {item.split()[0] for item in cross_refs} == {"REQ-001", "REQ-005"}, "A visible branch case must be allowed to carry its original cross-cutting acceptance mapping")
+    _, invented_guarded = ai_skill_service._ground_planner_requirement_refs(
+        cross_cutting_case,
+        {"requirementRefs": ["REQ-003 扫描复印入口展示"]},
+        ["REQ-001 照片打印入口展示", "REQ-003 扫描复印入口展示", "REQ-005 多个业务页入口文案与布局一致"],
+    )
+    require(invented_guarded, "Cross-cutting support must not weaken the guard against planner-invented cross-branch mappings")
+    cross_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        {"analysis": {"requirement_points": ["REQ-001 照片打印入口展示", "REQ-005 多个业务页入口文案与布局一致"]}, "cases": [cross_cutting_case]},
+        {"min_automation_cases": 1},
+    )
+    require(cross_audit.get("ok"), "One grounded visible case may satisfy both its branch requirement and an original cross-cutting UI requirement")
+    target_shortfall_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        {"analysis": {"requirement_points": ["REQ-001 照片打印入口展示", "REQ-005 多个业务页入口文案与布局一致"]}, "cases": [cross_cutting_case]},
+        {"min_automation_cases": 5},
+    )
+    require(
+        target_shortfall_audit.get("ok")
+        and target_shortfall_audit.get("targetMet") is False
+        and target_shortfall_audit.get("targetShortfall") == 4
+        and target_shortfall_audit.get("advisories"),
+        "A complete executable portfolio must report a 3/5/8 target shortfall without manufacturing low-value cases or failing the gate",
+    )
 
     classified_payload = {
         "analysis": {"requirement_points": ["REQ-001 入口展示"]},
@@ -1681,6 +1797,33 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         and visual_report.get("aiJudgementCompleted") is False
         and visual_report.get("aiJudgementStatus") == "failed",
         "Agent visual report must distinguish attempted-and-failed from skipped or pending",
+    )
+    mindmap_failed_visual = agent_service._agent_visual_reference_report({
+        "artifacts": {
+            "sourceContext": {
+                "figmaUsedPages": [{"page_name": f"page-{index}"} for index in range(4)],
+                "figmaImageCount": 4,
+            },
+        },
+    }, {
+        "cases": {
+            "review": {
+                "mindmap_visual_batches": "0/4",
+                "mindmap_visual_batches_attempted": 4,
+                "mindmap_visual_batch_results": [
+                    {"batch": index, "status": "failed", "imageCount": 1, "error": "timeout"}
+                    for index in range(1, 5)
+                ],
+                "visual_refine_error": "4 visual batches timed out",
+            },
+        },
+    })
+    require(
+        mindmap_failed_visual.get("sentToAiForJudgement") is True
+        and mindmap_failed_visual.get("aiJudgementStatus") == "failed"
+        and mindmap_failed_visual.get("visualBatchesAttempted") == 4
+        and mindmap_failed_visual.get("visualBatchesTotal") == 4,
+        "Mindmap visual batch failures must remain truthful even when YAML generation never returns",
     )
 
     rich_payload = {
@@ -4406,6 +4549,7 @@ def check_ai_yaml_generation_decision_chain_static():
     require("return _MEMORY_CACHE" in baseline_cache_source and "calc_baseline_fingerprint" in baseline_cache_source, "Baseline cache must return fresh memory cache before recalculating fingerprints")
     require("search_diverse_baseline_examples" in yaml_service_source and "baseline_branch_queries" in yaml_service_source and "limit=20" in yaml_service_source, "YAML generation must build a bounded branch-diverse candidate pool for AI reranking")
     require("call_skill_baseline_reranker" in yaml_service_source and "limit=3" in yaml_service_source, "YAML generation must let AI select the Top3 complementary branch/path examples")
+    require("baseline_required_branches_from_agent_plan" in yaml_service_source and "required_branches=baseline_required_branches" in yaml_service_source, "Multi-branch generation must ground Top3 baseline coverage in AI-selected smoke flows")
     require("call_skill_execution_scope_planner" in yaml_service_source, "YAML generation must call AI execution scope planner")
     require("call_skill_executable_yaml_planner" in yaml_service_source, "YAML generation must call AI executable YAML planner")
     require("build_ai_generation_decision_context_text" in yaml_service_source and "AI 生成决策计划" in yaml_service_source, "YAML prompt must include the AI decision plan context")
@@ -4414,10 +4558,12 @@ def check_ai_yaml_generation_decision_chain_static():
     require("improve_case_coverage(" in yaml_service_source and "model_config=model_config" in yaml_service_source, "Coverage repair must receive selected model config")
 
     require("def call_skill_baseline_reranker" in ai_skill_source, "AI skill service must expose baseline reranker")
+    require("selectionValidationIssues" in ai_skill_source and "branch_repair_attempted" in ai_skill_source and "branch_coverage_ok" in ai_skill_source, "AI baseline reranking must self-correct one branch-incomplete Top3 result without expanding the prompt beyond three examples")
     require("def call_skill_execution_scope_planner" in ai_skill_source, "AI skill service must expose execution scope planner")
     require("def call_skill_executable_yaml_planner" in ai_skill_source, "AI skill service must expose executable YAML planner")
     require("def apply_executable_yaml_plan_to_payload" in ai_skill_source, "Executable YAML planner output must be applied to generated payload")
     require("path_mapping_guard_count" in ai_skill_source and "pathMappingGuarded" in ai_skill_source and "def executable_yaml_portfolio_audit" in ai_skill_source, "Executable planning must reject cross-requirement path swaps and audit the final portfolio")
+    require('"targetShortfall"' in ai_skill_source and "数量目标不作为硬门禁" in ai_skill_source, "Executable coverage must report 3/5/8 target shortfalls without forcing low-value Runner cases")
     require("def compact_visual_grounder_base_payload" in ai_skill_source and "def merge_visual_grounder_payload" in ai_skill_source and "visual_input_compaction" in ai_skill_source, "Visual grounding must compact repeated history while preserving and merging design evidence")
     require("MIDSCENE_AI_SKILLS_STRICT_MODEL" in ai_skill_source and "AI_SKILLS_STRICT_MODEL" in ai_skill_source, "AI skills must support strict selected-model mode")
     require("model_trace" in ai_skill_source and "providerId" in ai_skill_source, "AI skill reviews must record provider/model trace")

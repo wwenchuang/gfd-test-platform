@@ -13,10 +13,12 @@
 3. 如果候选和需求无关，可以少选或不选。
 4. 只能选择 `baselineUsable=true` 且 `trusted=true` 的候选；`verified_execution` 是真实执行成功样本，`maintained_library` 是维护库样本，两者必须如实区分。优先选择最近执行成功、来源可信、失败率低、动作短、等待/断言方式稳定的基线。
 5. 不要因为关键词相同就选择外部授权、文件选择、长链路基线。比如需求只是“入口展示/位置/同级并列”，不要选择“点击后进入授权/导入”的长链路作为首选。
-6. Top3 应尽量互补：`navigation_path` 负责同业务分支/相邻叶子节点的页面层级，`capability_pattern` 负责目标能力的写法，`assertion_pattern` 负责稳定等待和断言。输入候选的 `retrievalRoles=business_branch` 表示平台按 AI 业务分支召回，显式分支需要路径证据时应优先保留对应候选，不能让同名旧草稿挤掉真正的路径基线。
-7. 对尺寸、模板、规格等叶子项，必须优先寻找同分支的相邻规格可信基线来推断父页面层级。例如目标规格未直接出现在首屏时，不能跳过基线中重复出现的父级入口。
-8. `candidatePath` 必须逐字复制候选的 `provenancePath`；YAML 候选不是 Figma，不得声称候选来自设计稿、截图或其他未提供来源。
-9. 选择理由必须说明“为什么这条基线适合仿写”以及使用它的角色，而不是复述标题。
+6. 如果输入存在 `requiredBranches`，分支覆盖优先于角色互补：当 requiredBranches 数量不超过 `limit` 且每个分支都有可信候选时，必须为每个分支各选 1 条自身 `title/businessPath/snippet` 与该分支一致的候选，并在结果中逐字返回对应 `branchId`。不得让同一业务分支用多条基线占满名额、再以角色不同为由排挤需求明确的其他必需兄弟分支。
+7. 完成必需分支覆盖后，Top3 再尽量互补：`navigation_path` 负责当前业务分支/相邻叶子节点的页面层级，`capability_pattern` 负责目标能力的写法，`assertion_pattern` 负责稳定等待和断言。输入候选的 `retrievalRoles=business_branch` 和 `retrievalQueries` 表示平台按 AI 业务分支召回；选择的 candidate 必须包含对应 requiredBranch.query，不能让同名旧草稿挤掉真正的路径基线。
+8. 对尺寸、模板、规格等叶子项，必须优先寻找同分支的相邻规格可信基线来推断父页面层级。例如目标规格未直接出现在首屏时，不能跳过基线中重复出现的父级入口。
+9. `candidatePath` 必须逐字复制候选的 `provenancePath`；YAML 候选不是 Figma，不得声称候选来自设计稿、截图或其他未提供来源。
+10. 选择理由必须说明“为什么这条基线适合仿写”以及使用它的角色，而不是复述标题。
+11. 如果输入包含 `selectionValidationIssues`，说明上一轮选择未通过平台分支覆盖审计；必须针对缺失分支纠正选择，不能重复原结果。
 
 ## 输出 JSON
 
@@ -25,6 +27,7 @@
     {
       "id": "candidate id",
       "candidatePath": "候选 provenancePath 原文",
+      "branchId": "requiredBranches 中对应分支 id；没有 requiredBranches 时为空字符串",
       "role": "navigation_path",
       "reason": "选择原因",
       "confidence": 0.86
