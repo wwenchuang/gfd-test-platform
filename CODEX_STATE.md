@@ -60,6 +60,40 @@ python3 tests/backend_static_checks.py
 - 本轮提交部署后确认线上 Bridge 版本，再只在当前华为设备上复跑 `3D测试自动` 到终态；重点检查首个真实打印用例、失败后 AI 恢复日志、后续用例是否不再继承打印预览状态，以及 11 条真实报告 / 截图。
 - 用户已有 dirty 的两份十二生肖 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、本地 Windows Runner 服务脚本和 `server-tasks/AI_Agent_草稿/` 不纳入本轮提交。
 
+### 2026-07-15 完整 Agent 流程证据回放与最终执行门禁补强
+
+重新核对最近一次真正走完生成、冒烟、remaining、失败分析和 AI 修复的线上 Agent：
+
+- Agent `agent-1784024849032-89428fd5`，终态 `FAILED / RERUN`。Figma 仍正确解析为 4 页 / 4 图，4 个单图批次均真实送入 `qwen3.6-plus`，但每批约 90 秒超时；视觉资料保持软参考。PLAN 总耗时约 615 秒，其中视觉串行超时是主要性能成本之一。
+- 最终只有 4 个可执行引用：文档短冒烟、文档、照片、当前固定设备文案。映射只覆盖 `REQ-001 / REQ-002 / REQ-005`，缺少 `REQ-003` 扫描复印和 `REQ-004` 点击后可达；旧最终门禁却只读取设计期 `missing_case_points`，而设计期 audit 会把 manual 项也视为覆盖，因此错误放行 Runner。
+- 原始 Runner 事实是 3 成功 / 1 失败，不是全部失败。文档、文档短冒烟和手机文案成功；照片失败。4 个正式任务、1 次原 YAML 证据重试和 1 次 AI 修复重试均固定在 `win-runner-01 / ecbfd645` 串行执行，没有下发第二台设备。
+- 人工复核真实 Midscene 报告：照片失败停在展示“照片打印 / 智能证件照 / 普通证件照 / 照片拼版打印”等入口的父页面。首轮 Runner review 错判为 `PRODUCT_BUG`；后续关键帧 AI 正确改判 `SCRIPT_ISSUE`，原脚本缺少进入内层照片打印和照片规格页的导航。
+- 旧 AI 修复虽然提出进入 `5寸照片/一寸照`，但 Top3 全为文档分支基线，没有召回 `6寸照片打印.yaml`。修复 YAML 又生成 `aiTap: 点击「5寸照片」或「一寸照」等任一照片规格`：前一条宽泛 `aiWaitFor` 在父页面误判成功，随后多目标 Locate 一直无法完成，最终被 Windows Runner 的 300 秒单任务上限终止；可访问的是被强停前保存的部分报告，未形成完整 Midscene 终态报告。
+
+本轮通用修复：
+
+- 最终 Runner 覆盖门禁现在从完整 `generatedCases.analysis.requirement_points` 提取全部 `REQ-*`，只与已确认、可执行、Runner 可下发的 YAML 引用比较。manual / needs_review / draft 仍计入测试设计覆盖，但不能再掩盖最终 YAML 缺口。
+- 修复基线分支识别优先使用失败任务名、文件名和真实失败原因；原 YAML 仍参与全局相关性检索，但注释中的“复用文档策略”等旁支文字不能改变首个分支候选。用线上 Run 原对象离线重放后，首个候选为 `server-tasks-all/小白学习基线用例-基础打印/6寸照片打印.yaml`。
+- YAML 强校验新增多目标点击门禁：`aiTap` 只能指向当前页一个真实可见目标；包含“任一 / 任意 / 任选”或两个引号目标加“或”的点击会在生成或 AI 修复后直接阻断。多个合法结果仍可写入 `aiWaitFor / aiAssert`，没有降低 AI 对状态分支的判断能力。
+- 使用线上 Run 原始 artifacts 重放：新门禁精确返回缺少 `REQ-003 / REQ-004`，映射只包含 `REQ-001 / REQ-002 / REQ-005`；旧修复 YAML 被强校验识别为多目标点击，不会再消耗 300 秒真实设备执行。
+- 未修改 Figma parser、视觉资料软参考策略、`router.py`、历史 YAML、执行模式或设备选择；本轮没有为了缩短 PLAN 盲目减少设计图。视觉串行超时仍需在部署后的下一次完整回归中测量，再基于真实模型耗时决定是否做有界并发或自适应批次。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name 通过，后端 `61` 项、前端 `67` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3` 通过；Playwright 桌面 / 移动端 Agent 与重跑视觉烟测通过。
+
+待完成：
+
+- 本轮提交尚未部署。部署后先确认当前 Sonic 单设备套件已终态，避免两台手机并行；再用同一需求、同一 Figma、固定 OPPO `ecbfd645` 发起完整 Agent。
+- 新 Agent 必须轮询到 `DONE / FAILED / CANCELLED`，重点核对 5 个需求映射、照片分支是否召回并引用 6 寸成功基线、最终 YAML 是否只有单一可见目标点击、smoke / remaining / AI 修复报告和截图，以及全程单设备串行。
+
 ### 2026-07-14 Agent 人工初判可重评、状态无关可达性与视觉小批次修复
 
 部署 `cb36a17` 后，继续使用同一完整需求和固定设备做线上回归：

@@ -860,6 +860,51 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     refs = [{"scopeReview": {"matchedRequirementIds": ["REQ-005"]}}, {}]
     gap = agent_service._agent_generated_yaml_coverage_gap(run, refs)
     require(gap.get("missingRequirementPoints") == ["REQ-004 多端展示"], "Coverage gate must remove stale missing IDs already mapped by confirmed YAML")
+    online_shape_run = {
+        "scope": "regression",
+        "artifacts": {
+            "generatedCases": {
+                "analysis": {
+                    "requirement_points": [
+                        "REQ-001 文档打印入口展示",
+                        "REQ-002 照片打印入口展示",
+                        "REQ-003 扫描复印入口展示",
+                        "REQ-004 点击入口后可达",
+                        "REQ-005 当前固定设备文案完整",
+                    ],
+                },
+                "cases": [{"case_id": "TC-001"}, {"case_id": "TC-002"}, {"case_id": "TC-005"}],
+            },
+            "generationPipeline": {
+                "caseCount": 3,
+                "yamlFileCount": 3,
+                "coverageAudit": {
+                    "requirement_point_count": 5,
+                    "missing_case_points": ["REQ-005 当前固定设备文案完整"],
+                },
+                "generatedCaseGroups": {
+                    "counts": {"executable": 3, "needs_review": 0, "draft": 0, "manual": 2},
+                    "manual_cases": [
+                        {"requirementRefs": ["REQ-003 扫描复印入口展示"]},
+                        {"requirementRefs": ["REQ-004 点击入口后可达"]},
+                    ],
+                },
+            },
+        },
+    }
+    online_shape_refs = [
+        {"file": "doc.yaml", "confirmed": True, "runnerCandidate": False, "executionLevel": "executable", "scopeReview": {"matchedRequirementIds": ["REQ-001"]}},
+        {"file": "photo.yaml", "confirmed": True, "runnerCandidate": False, "executionLevel": "executable", "scopeReview": {"matchedRequirementIds": ["REQ-002"]}},
+        {"file": "copy-smoke.yaml", "scopeReview": {}},
+        {"file": "device-copy.yaml", "confirmed": True, "runnerCandidate": False, "executionLevel": "executable", "scopeReview": {"matchedRequirementIds": ["REQ-005"]}},
+        {"file": "manual-reachability.yaml", "executionLevel": "manual", "scopeReview": {"matchedRequirementIds": ["REQ-004"]}},
+    ]
+    online_shape_gap = agent_service._agent_generated_yaml_coverage_gap(online_shape_run, online_shape_refs)
+    require(
+        online_shape_gap.get("missingRequirementPoints")
+        == ["REQ-003 扫描复印入口展示", "REQ-004 点击入口后可达"],
+        "Final Runner coverage must compare all requirement IDs with confirmed YAML; manual cases cannot mask missing executable branches",
+    )
     require(classify_generated_yaml_failure_bucket([{"failureType": "ENV_ISSUE", "reason": "model request was aborted"}]) == "模型/环境失败", "Model service failures must not be classified as YAML failures")
 
     separated = agent_service._agent_create_runner_jobs_for_refs(
@@ -2417,7 +2462,7 @@ def check_yaml_static_validation_and_patterns():
       flow:
         - launch: com.xbxxhz.box
         - aiWaitFor: App 首页加载完成
-        - aiTap: 点击「证件照」或「一寸照」入口
+        - aiTap: 点击「普通证件照」入口
         - aiWaitFor: 证件照页面加载完成
         - aiTap: 百度网盘入口
         - aiWaitFor: 普通证件照页面展示百度网盘入口
@@ -3179,6 +3224,41 @@ def check_yaml_reference_examples_are_general_step_library():
     require(
         repair_examples and str(repair_examples[0].get("provenancePath") or "").endswith("/6寸照片打印.yaml"),
         "AI repair evidence must prioritize the sibling photo-size baseline for a failed photo branch",
+    )
+    mixed_flow_repair_examples = agent_service._agent_repair_baseline_examples(
+        {
+            "target": "新增第三方导入入口",
+            "artifacts": {"businessFlowConstraint": {"businessFlows": [
+                {
+                    "branch": "文档打印",
+                    "name": "文档打印导入页入口校验",
+                    "steps": ["首页", "点击文档打印", "进入文档导入页"],
+                },
+                {
+                    "branch": "照片打印",
+                    "name": "照片打印导入页入口校验",
+                    "steps": ["首页", "点击照片打印", "点击照片打印", "进入照片规格页"],
+                },
+                {
+                    "branch": "扫描复印",
+                    "name": "扫描复印导入页入口校验",
+                    "steps": ["首页", "点击扫描复印", "进入文件选择页"],
+                },
+            ]}},
+        },
+        {
+            "taskName": "照片打印页入口可见性校验",
+            "file": "02-照片打印页入口可见性校验.yaml",
+            "module": "AI_Agent_草稿",
+            "failureReason": "失败关键帧仍停在照片打印父页面",
+        },
+        "# automation: 复用文档打印等待策略\nandroid:\n  tasks:\n    - name: 照片入口\n      flow:\n        - aiTap: 照片打印\n",
+        limit=6,
+    )
+    require(
+        mixed_flow_repair_examples
+        and str(mixed_flow_repair_examples[0].get("provenancePath") or "").endswith("/6寸照片打印.yaml"),
+        "Failed-task identity must keep sibling branch navigation ahead of unrelated baseline names mentioned only in YAML comments",
     )
     require(
         str(cache_status.get("configuredPath") or "").endswith("/midscene-tasks/cache/yaml-baseline-cache.json"),
@@ -5275,6 +5355,12 @@ def main():
     require(not empty_yaml.get("ok") and "不能为空" in "；".join(empty_yaml.get("issues") or []), "Empty android.tasks must fail executable validation")
     valid_yaml = validate_midscene_yaml_executability("android:\n  tasks:\n    - name: demo\n      flow:\n        - aiTap: 首页搜索框\n")
     require(valid_yaml.get("ok") and valid_yaml.get("taskCount") == 1, "Valid android.tasks YAML must pass executable validation")
+    ambiguous_tap_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiTap: 点击「5寸照片」或「一寸照」等任一照片规格\n"
+    ambiguous_tap = validate_midscene_yaml_executability(ambiguous_tap_yaml)
+    require(
+        not ambiguous_tap.get("ok") and "多个备选目标" in "；".join(ambiguous_tap.get("issues") or []),
+        "One aiTap must name one visible target; alternative outcomes belong in waits or assertions",
+    )
     duplicate_platform_yaml = "android: null\ntasks:\n  - name: demo\n    flow:\n      - aiTap: 首页搜索框\n"
     duplicate_platform_check = validate_midscene_yaml_executability(duplicate_platform_yaml)
     require(not duplicate_platform_check.get("ok") and "android: null" in "；".join(duplicate_platform_check.get("issues") or []), "Executable validation must reject android:null plus root tasks before Runner device injection")

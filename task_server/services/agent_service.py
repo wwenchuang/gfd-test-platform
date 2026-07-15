@@ -8991,6 +8991,54 @@ def _agent_unresolved_coverage_points(coverage, refs=None, groups=None):
     return unresolved, sorted(mapped)
 
 
+def _agent_final_executable_yaml_refs(refs):
+    result = []
+    for item in _as_list(refs):
+        if not isinstance(item, dict):
+            continue
+        if item.get("confirmed") is False:
+            continue
+        if str(item.get("type") or "").strip().lower() == "draft":
+            continue
+        level = str(item.get("executionLevel") or item.get("level") or "").strip().lower()
+        if level and level != "executable":
+            continue
+        result.append(item)
+    return result
+
+
+def _agent_final_yaml_coverage_points(generated, coverage, refs=None):
+    """Compare the full requirement list with confirmed executable YAML refs.
+
+    The design-time coverage audit may consider manual and review cases covered.
+    That is useful for the test plan, but those cases cannot satisfy the final
+    Runner gate. At dispatch time, confirmed YAML refs are the source of truth.
+    """
+    generated = generated if isinstance(generated, dict) else {}
+    coverage = coverage if isinstance(coverage, dict) else {}
+    requirement_points = _quality_points_from_payload(generated)
+    mapped = set(_agent_mapped_requirement_ids(_agent_final_executable_yaml_refs(refs), groups={}))
+    required_ids = []
+    unresolved = []
+    for point in requirement_points:
+        point_ids = _agent_requirement_ids(point)
+        if not point_ids:
+            continue
+        for requirement_id in point_ids:
+            if requirement_id not in required_ids:
+                required_ids.append(requirement_id)
+        if not set(point_ids).issubset(mapped):
+            unresolved.append(point)
+    if required_ids:
+        return unresolved, sorted(mapped), required_ids
+    fallback_unresolved, fallback_mapped = _agent_unresolved_coverage_points(
+        coverage,
+        refs,
+        groups={},
+    )
+    return fallback_unresolved, fallback_mapped, []
+
+
 def _build_agent_quality_report(run, generation_result, yaml_file_items=None, yaml_executability=None):
     """Summarise generated artifacts into a reviewer-friendly quality report."""
     result = generation_result if isinstance(generation_result, dict) else {}
@@ -9105,11 +9153,21 @@ def _agent_generated_yaml_coverage_gap(run, refs=None):
     generated = artifacts.get("generatedCases") if isinstance(artifacts.get("generatedCases"), dict) else {}
     coverage = pipeline.get("coverageAudit") if isinstance(pipeline.get("coverageAudit"), dict) else {}
     case_count = _safe_int_local(pipeline.get("caseCount"), len(_as_list(generated.get("cases"))))
-    yaml_count = len(refs) if refs is not None else _safe_int_local(pipeline.get("yamlFileCount"), 0)
     requirement_count = _safe_int_local(coverage.get("requirement_point_count"), 0)
     groups = pipeline.get("generatedCaseGroups") if isinstance(pipeline.get("generatedCaseGroups"), dict) else {}
     effective_refs = refs if refs is not None else _as_list(artifacts.get("yamlRefs"))
-    unresolved_case_points, mapped_requirement_ids = _agent_unresolved_coverage_points(coverage, effective_refs, groups)
+    executable_refs = _agent_final_executable_yaml_refs(effective_refs)
+    yaml_count = (
+        len(executable_refs)
+        if refs is not None or effective_refs
+        else _safe_int_local(pipeline.get("yamlFileCount"), 0)
+    )
+    unresolved_case_points, mapped_requirement_ids, required_requirement_ids = _agent_final_yaml_coverage_points(
+        generated,
+        coverage,
+        executable_refs,
+    )
+    requirement_count = max(requirement_count, len(required_requirement_ids))
     counts = groups.get("counts") if isinstance(groups.get("counts"), dict) else {}
     needs_review_count = _safe_int_local(counts.get("needs_review"), 0)
     missing_titles = []
@@ -9147,6 +9205,7 @@ def _agent_generated_yaml_coverage_gap(run, refs=None):
         "missingYamlCases": missing_titles[:20],
         "missingRequirementPoints": unresolved_case_points[:20],
         "mappedRequirementIds": mapped_requirement_ids[:20],
+        "requiredRequirementIds": required_requirement_ids[:20],
         "reasons": reasons,
     }
 
@@ -11614,15 +11673,32 @@ def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
         str(original_yaml or "")[:6000],
     ]))
     target_compact = re.sub(r"\s+", "", target_text).lower()
+    identity_text = "\n".join(filter(None, [
+        str(target_job.get("taskName") or ""),
+        str(target_job.get("file") or ""),
+        str(target_job.get("failureReason") or target_job.get("error") or ""),
+    ]))
+    identity_compact = re.sub(r"\s+", "", identity_text).lower()
     artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
     constraint = artifacts.get("businessFlowConstraint") if isinstance(artifacts.get("businessFlowConstraint"), dict) else {}
-    branch_queries = []
-    for flow in constraint.get("businessFlows") or []:
-        if not isinstance(flow, dict):
-            continue
+    flows = [flow for flow in (constraint.get("businessFlows") or []) if isinstance(flow, dict)]
+
+    def flow_matches(flow, compact_target):
         labels = _agent_plan_text_list([flow.get("branch"), flow.get("name")])
-        label_compacts = [re.sub(r"\s+", "", str(item)).lower() for item in labels if len(str(item).strip()) >= 2]
-        if not any(label in target_compact or target_compact.find(label[:4]) >= 0 for label in label_compacts):
+        label_compacts = [
+            re.sub(r"\s+", "", str(item)).lower()
+            for item in labels
+            if len(str(item).strip()) >= 2
+        ]
+        return any(label in compact_target for label in label_compacts)
+
+    matched_flows = [flow for flow in flows if flow_matches(flow, identity_compact)]
+    if not matched_flows:
+        matched_flows = [flow for flow in flows if flow_matches(flow, target_compact)]
+
+    branch_queries = []
+    for flow in matched_flows:
+        if not isinstance(flow, dict):
             continue
         branch_parts = []
         for value in (flow.get("branch"), flow.get("name"), flow.get("steps"), flow.get("checks")):

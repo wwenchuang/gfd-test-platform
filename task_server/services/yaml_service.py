@@ -4629,6 +4629,23 @@ def _yaml_action_value_blank(value):
     return False
 
 
+def _yaml_ai_tap_has_ambiguous_target(value):
+    """Return true when one tap prompt asks Midscene to choose among targets."""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    compact = re.sub(r"\s+", "", text)
+    choice_markers = ("任一", "任意", "任选", "其中一个", "其中任意一个")
+    if any(marker in compact for marker in choice_markers):
+        return True
+    quoted_targets = {
+        item.strip()
+        for item in re.findall(r"[「“]([^」”]{1,80})[」”]", text)
+        if item.strip()
+    }
+    return len(quoted_targets) >= 2 and ("或" in compact or "/" in compact)
+
+
 def validate_midscene_yaml_executability(text):
     """Strong executable YAML validation shared by Agent, repair and Sonic."""
     yaml_text_value = str(text or "")
@@ -4711,6 +4728,11 @@ def validate_midscene_yaml_executability(text):
                             )
                 if action in ("ai", "aiAct", "aiAction", "aiTap", "aiAssert", "aiWaitFor", "aiInput") and _yaml_action_value_blank(item.get(action)):
                     issues.append(f"tasks[{idx}].flow[{fidx}] {action} 内容不能为空")
+                if action == "aiTap" and _yaml_ai_tap_has_ambiguous_target(action_value):
+                    issues.append(
+                        f"tasks[{idx}].flow[{fidx}] aiTap 包含多个备选目标；"
+                        "请根据当前页真实可见文字拆成单一点击，多合法终态只能用于 aiWaitFor/aiAssert"
+                    )
                 if action == "aiInput" and _yaml_action_value_blank(item.get("value")):
                     issues.append(f"tasks[{idx}].flow[{fidx}] aiInput 必须包含 value")
     return {
