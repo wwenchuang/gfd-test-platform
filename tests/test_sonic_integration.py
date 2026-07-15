@@ -7,6 +7,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -2157,6 +2159,46 @@ def test_groovy_case_handoff_avoids_duplicate_launch_and_fixed_waits():
     assert 'postResultToTaskManager("failed", 1, output, msg' in restore_section
 
 
+def test_groovy_ui_failure_recovery_is_bounded_ai_driven_and_generic():
+    bridge = (ROOT / "sonic-midscene-task-runner.groovy").read_text(encoding="utf-8")
+    recovery_section = bridge[bridge.index("def runFailureRecovery"):bridge.index("def preflightCheck")]
+    dispatch_pos = bridge.index("if (exitCode != 0 && currentAppPackage)")
+    restore_pos = bridge.index("def restoreStartedAt", dispatch_pos)
+
+    assert 'bridgeVersion = "2026.07.15-bounded-ai-recovery-v1"' in bridge
+    assert 'System.getenv("MIDSCENE_REPLANNING_CYCLE_LIMIT"),\n    "8"' in bridge
+    assert "Math.max(8, parsedMidsceneReplanningCycleLimit)" in bridge
+    assert "失败后仅做状态恢复" in recovery_section
+    assert "按页面真实可见文字安全取消或退出" in recovery_section
+    assert "不要提交、支付、打印或删除数据" in recovery_section
+    assert "没有可用的耗材" not in recovery_section
+    assert "Math.max(8, configuredLimit)" in recovery_section
+    assert "recoveryProcess.waitFor(180" in recovery_section
+    assert "recoveryProcess.destroyForcibly()" in recovery_section
+    assert "recoveryFile.delete()" in recovery_section
+    assert "new File(recoveryReportPath).delete()" in recovery_section
+    recovery_yaml_match = re.search(
+        r'recoveryFile\.setText\("""(.*?)""", "UTF-8"\)',
+        recovery_section,
+        flags=re.S,
+    )
+    assert recovery_yaml_match
+    recovery_yaml = (
+        recovery_yaml_match.group(1)
+        .replace("${deviceSerial}", "device-1")
+        .replace("${appPackage}", "com.example.app")
+    )
+    recovery_doc = yaml.safe_load(recovery_yaml)
+    recovery_flow = recovery_doc["tasks"][0]["flow"]
+    assert recovery_doc["android"]["deviceId"] == "device-1"
+    assert recovery_flow[0]["launch"] == "com.example.app"
+    assert "aiAction" in recovery_flow[1]
+    assert recovery_flow[-1]["runAdbShell"] == "am force-stop com.example.app"
+    assert '"replanned", "waitfor timeout", "failed to locate element"' in bridge
+    assert '"ai call error", "failed to call ai model service", "request was aborted"' in bridge
+    assert bridge.index("postResultToTaskManager(statusValue") < dispatch_pos < restore_pos
+
+
 def test_groovy_midscene_report_upload_runs_after_result_in_background():
     bridge = (ROOT / "sonic-midscene-task-runner.groovy").read_text(encoding="utf-8")
     result_pos = bridge.index("postResultToTaskManager(statusValue")
@@ -2210,8 +2252,9 @@ def test_desktop_runners_require_explicit_runner_token():
 def test_sonic_groovy_bridge_requires_explicit_runner_token():
     bridge = (ROOT / "sonic-midscene-task-runner.groovy").read_text(encoding="utf-8")
     token_block = bridge[bridge.index("def runnerToken = firstValue(["):bridge.index("def runtimeEnvFetch")]
-    assert '"midscene2026"' not in token_block
     assert "weakRunnerTokens" in token_block
+    assert '"midscene2026"' in token_block
+    assert "weakRunnerTokens.contains" in token_block
     assert "重新同步 Sonic 桥接脚本" in token_block
 
 

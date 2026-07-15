@@ -2,7 +2,7 @@ import org.cloud.sonic.agent.bridge.android.AndroidDeviceBridgeTool
 import groovy.json.JsonSlurper
 
 // ================== Sonic 接入配置 ==================
-def bridgeVersion = "2026.05.27-full-yaml-cst-v3"
+def bridgeVersion = "2026.07.15-bounded-ai-recovery-v1"
 def bridgeTimeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
 def formatBridgeTime = { String pattern ->
     def formatter = new java.text.SimpleDateFormat(pattern)
@@ -268,13 +268,20 @@ def midsceneModelName = firstValue([
     fallbackDashscopeVlModel,
     fallbackDashscopeModel
 ])
-def midsceneReplanningCycleLimit = firstValue([
+def configuredMidsceneReplanningCycleLimit = firstValue([
     runtimeEnv["MIDSCENE_REPLANNING_CYCLE_LIMIT"],
     readBindingVar("MIDSCENE_REPLANNING_CYCLE_LIMIT"),
     readGlobalParam("MIDSCENE_REPLANNING_CYCLE_LIMIT"),
     System.getenv("MIDSCENE_REPLANNING_CYCLE_LIMIT"),
-    "5"
+    "8"
 ])
+int parsedMidsceneReplanningCycleLimit = 8
+try {
+    parsedMidsceneReplanningCycleLimit = Integer.parseInt(configuredMidsceneReplanningCycleLimit)
+} catch (Exception ignored) {}
+// This is a capacity ceiling, not a fixed loop count. Normal actions still stop
+// immediately, while multi-dialog cleanup gets enough room to reach a stable page.
+def midsceneReplanningCycleLimit = String.valueOf(Math.max(8, parsedMidsceneReplanningCycleLimit))
 def deviceSerial = androidStepHandler.iDevice.getSerialNumber()
 def adbPath = "\"C:\\Program Files\\platform-tools\\adb.exe\""
 
@@ -396,6 +403,90 @@ def runCmd = { String cmd, int timeoutSeconds = 0 ->
     def stderrText = err.toString()
     if (!finished) stderrText = (stderrText ? stderrText + "\n" : "") + "command timeout after ${timeoutSeconds}s"
     return [code: code, stdout: out.toString(), stderr: stderrText]
+}
+
+def configureMidsceneProcess = { ProcessBuilder builder, String replanningLimit ->
+    builder.directory(new File("D:\\sonic"))
+    builder.environment().put("ANDROID_HOME", "C:\\Program Files")
+    builder.environment().put("OPENAI_API_KEY", dashscopeApiKey)
+    builder.environment().put("OPENAI_BASE_URL", dashscopeBaseUrl)
+    builder.environment().put("DASHSCOPE_API_KEY", dashscopeApiKey)
+    builder.environment().put("DASHSCOPE_BASE_URL", dashscopeBaseUrl)
+    builder.environment().put("DASHSCOPE_VL_MODEL", runtimeEnv["DASHSCOPE_VL_MODEL"] ?: midsceneModelName)
+    builder.environment().put("DASHSCOPE_MODEL", runtimeEnv["DASHSCOPE_MODEL"] ?: midsceneModelName)
+    builder.environment().put("MIDSCENE_MODEL_NAME", midsceneModelName)
+    builder.environment().put("MIDSCENE_USE_QWEN_VL", runtimeEnv["MIDSCENE_USE_QWEN_VL"] ?: "1")
+    builder.environment().put("MIDSCENE_SKIP_CONFIG_CHECK", runtimeEnv["MIDSCENE_SKIP_CONFIG_CHECK"] ?: "1")
+    builder.environment().put("MIDSCENE_REPLANNING_CYCLE_LIMIT", replanningLimit)
+    builder.environment().put("NODE_TLS_REJECT_UNAUTHORIZED", runtimeEnv["NODE_TLS_REJECT_UNAUTHORIZED"] ?: "0")
+    if (runtimeEnv["APP_PACKAGE"]) {
+        builder.environment().put("APP_PACKAGE", runtimeEnv["APP_PACKAGE"])
+    }
+    builder.redirectErrorStream(true)
+    return builder
+}
+
+def runFailureRecovery = { String appPackage ->
+    def recoveryFile = new File("D:\\sonic\\midscene-failure-recovery-${jobId}.yaml")
+    def result = [attempted: true, ok: false, detail: ""]
+    try {
+        recoveryFile.setText("""android:
+  deviceId: "${deviceSerial}"
+
+tasks:
+  - name: Sonic失败后状态恢复
+    flow:
+      - launch: ${appPackage}
+      - aiAction: >-
+          失败后仅做状态恢复：观察当前应用页面，关闭阻塞弹窗；若存在未完成的编辑、处理、预览、确认或取消流程，按页面真实可见文字安全取消或退出，并处理必要确认，直到回到应用首页或主导航稳定页面。不要开始新业务，不要提交、支付、打印或删除数据；如果已经在首页则不操作。
+      - runAdbShell: "am force-stop ${appPackage}"
+""", "UTF-8")
+
+        int configuredLimit = 8
+        try {
+            configuredLimit = Integer.parseInt(String.valueOf(midsceneReplanningCycleLimit ?: "8"))
+        } catch (Exception ignored) {}
+        def recoveryLimit = String.valueOf(Math.max(8, configuredLimit))
+        def recoveryBuilder = configureMidsceneProcess(
+            new ProcessBuilder("cmd", "/c", "midscene \"${recoveryFile.absolutePath}\""),
+            recoveryLimit
+        )
+        def recoveryProcess = recoveryBuilder.start()
+        def recoveryOutput = new StringBuffer()
+        def recoveryReader = readStreamUtf8(recoveryProcess.inputStream, recoveryOutput)
+        def finished = recoveryProcess.waitFor(180, java.util.concurrent.TimeUnit.SECONDS)
+        if (!finished) {
+            try {
+                recoveryProcess.destroyForcibly()
+            } catch (Exception ignored) {}
+        }
+        recoveryReader.join(5000)
+        def outputText = recoveryOutput.toString()
+        def exitCode = finished ? recoveryProcess.exitValue() : 124
+        result.ok = finished && exitCode == 0
+        result.detail = result.ok
+            ? "AI 已将应用恢复到稳定起点（重规划上限 ${recoveryLimit}）"
+            : "AI 状态恢复${finished ? '失败' : '超时'}（退出码 ${exitCode}）：${compactLog(outputText, 1200)}"
+
+        def recoveryReportLine = outputText.readLines().reverse().find {
+            it.contains("report finalized:") || it.contains("report generated:")
+        }
+        if (recoveryReportLine) {
+            def recoveryReportPath = recoveryReportLine.replaceAll(/.*report (?:finalized|generated):\s*/, "").trim()
+            if (recoveryReportPath) new File(recoveryReportPath).delete()
+        }
+    } catch (Exception e) {
+        result.detail = "AI 状态恢复异常：${e.message ?: String.valueOf(e)}"
+    } finally {
+        recoveryFile.delete()
+        def stopResult = runCmd("${adbPath} -s ${deviceSerial} shell am force-stop ${appPackage}", 8)
+        if (stopResult.code != 0) {
+            result.ok = false
+            def stopDetail = compactLog(stopResult.stderr ?: stopResult.stdout ?: "无返回内容", 300)
+            result.detail = "${result.detail}；恢复后强停应用失败：${stopDetail}"
+        }
+    }
+    return result
 }
 
 def preflightCheck = {
@@ -849,24 +940,10 @@ if (!preflight.ok) {
 }
 postProgressToTaskManager(3, currentTaskName, currentTaskIndex, completedTaskCount, totalTaskCount, "", "准备执行")
 
-def pb = new ProcessBuilder("cmd", "/c", "midscene \"${localTaskPath}\"")
-pb.directory(new File("D:\\sonic"))
-pb.environment().put("ANDROID_HOME", "C:\\Program Files")
-pb.environment().put("OPENAI_API_KEY", dashscopeApiKey)
-pb.environment().put("OPENAI_BASE_URL", dashscopeBaseUrl)
-pb.environment().put("DASHSCOPE_API_KEY", dashscopeApiKey)
-pb.environment().put("DASHSCOPE_BASE_URL", dashscopeBaseUrl)
-pb.environment().put("DASHSCOPE_VL_MODEL", runtimeEnv["DASHSCOPE_VL_MODEL"] ?: midsceneModelName)
-pb.environment().put("DASHSCOPE_MODEL", runtimeEnv["DASHSCOPE_MODEL"] ?: midsceneModelName)
-pb.environment().put("MIDSCENE_MODEL_NAME", midsceneModelName)
-pb.environment().put("MIDSCENE_USE_QWEN_VL", runtimeEnv["MIDSCENE_USE_QWEN_VL"] ?: "1")
-pb.environment().put("MIDSCENE_SKIP_CONFIG_CHECK", runtimeEnv["MIDSCENE_SKIP_CONFIG_CHECK"] ?: "1")
-pb.environment().put("MIDSCENE_REPLANNING_CYCLE_LIMIT", midsceneReplanningCycleLimit)
-pb.environment().put("NODE_TLS_REJECT_UNAUTHORIZED", runtimeEnv["NODE_TLS_REJECT_UNAUTHORIZED"] ?: "0")
-if (runtimeEnv["APP_PACKAGE"]) {
-    pb.environment().put("APP_PACKAGE", runtimeEnv["APP_PACKAGE"])
-}
-pb.redirectErrorStream(true)
+def pb = configureMidsceneProcess(
+    new ProcessBuilder("cmd", "/c", "midscene \"${localTaskPath}\""),
+    midsceneReplanningCycleLimit
+)
 def proc = pb.start()
 
 def outputBuffer = new StringBuilder()
@@ -1027,6 +1104,35 @@ if (reportFileForBackgroundUpload) {
     } as Runnable, "midscene-report-upload-${jobId}")
     uploadThread.setDaemon(true)
     uploadThread.start()
+}
+
+if (exitCode != 0 && currentAppPackage) {
+    def lowerOutput = output.toLowerCase()
+    def uiStateFailure = [
+        "replanned", "waitfor timeout", "failed to locate element",
+        "failed to continue", "assertion failed", "task failed"
+    ].any { lowerOutput.contains(it) }
+    def recoveryUnavailable = [
+        "ai call error", "failed to call ai model service", "request was aborted",
+        "request aborted", "request was cancelled", "request was canceled",
+        "request cancelled", "request canceled", "service unavailable",
+        "too many requests", "rate limit", "modelservingerror",
+        "unknown flowitem", "unknown flowitem in yaml", "failed to load",
+        "property \"tasks\" is required"
+    ].any { lowerOutput.contains(it) }
+    if (uiStateFailure && !recoveryUnavailable) {
+        androidStepHandler.log.sendStepLog(2, "失败后状态恢复中", "检测到 UI 状态型失败，调用有界 AI 恢复；仅清理当前状态，不修改基线 YAML，最长 180 秒")
+        def recoveryResult = runFailureRecovery(currentAppPackage)
+        androidStepHandler.log.sendStepLog(
+            recoveryResult.ok ? 2 : 1,
+            recoveryResult.ok ? "失败后状态已隔离" : "失败后状态恢复未完成",
+            recoveryResult.detail
+        )
+    } else {
+        def reason = recoveryUnavailable ? "模型/脚本环境当前不可用于 AI 恢复" : "失败不属于可确认的 UI 状态型故障"
+        androidStepHandler.log.sendStepLog(2, "跳过失败后 AI 恢复", "${reason}；仍会强停应用，避免继续占用前台")
+        runCmd("${adbPath} -s ${deviceSerial} shell am force-stop ${currentAppPackage}", 8)
+    }
 }
 
 try {
