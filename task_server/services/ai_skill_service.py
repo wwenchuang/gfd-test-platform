@@ -210,6 +210,7 @@ def run_ai_skill(
     retry_count=None,
     model_config=None,
     output_defaults=None,
+    max_tokens=None,
 ):
     """执行 AI skill：渲染 prompt → 调用 DashScope → 校验输出。"""
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
@@ -246,6 +247,7 @@ def run_ai_skill(
         json_response=True,
         respect_global_timeout=respect_global_timeout,
         retry_count=retry_count,
+        max_tokens=max_tokens,
     )
     result = normalize_model_json(raw)
     result = _merge_missing_output_defaults(result, output_defaults)
@@ -282,7 +284,14 @@ def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temp
 # DashScope chat API
 # ---------------------------------------------------------------------------
 
-def build_dashscope_chat_body(prompt, image_assets=None, temperature=0.1, json_response=True, image_limit=None):
+def build_dashscope_chat_body(
+    prompt,
+    image_assets=None,
+    temperature=0.1,
+    json_response=True,
+    image_limit=None,
+    max_tokens=None,
+):
     """构建 DashScope Chat API 请求体。"""
     image_assets = image_assets or []
     image_limit = max(1, int(image_limit or AI_VISION_IMAGE_LIMIT))
@@ -313,10 +322,22 @@ def build_dashscope_chat_body(prompt, image_assets=None, temperature=0.1, json_r
             # Mode requires non-thinking output. Structured skills are still
             # evaluated by their schema and the platform quality gates.
             body["enable_thinking"] = False
+    if safe_int(max_tokens, 0) > 0:
+        body["max_tokens"] = safe_int(max_tokens, 0)
     return body
 
 
-def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=180, json_response=True, image_limit=None, respect_global_timeout=True, retry_count=None):
+def dashscope_chat_content(
+    prompt,
+    image_assets=None,
+    temperature=0.1,
+    timeout=180,
+    json_response=True,
+    image_limit=None,
+    respect_global_timeout=True,
+    retry_count=None,
+    max_tokens=None,
+):
     """调用 DashScope Chat API 并返回 content 字符串。"""
     api_key = dashscope_api_key()
     base_url = dashscope_base_url()
@@ -332,7 +353,8 @@ def dashscope_chat_content(prompt, image_assets=None, temperature=0.1, timeout=1
         image_assets=image_assets,
         temperature=temperature,
         json_response=json_response,
-        image_limit=image_limit
+        image_limit=image_limit,
+        max_tokens=max_tokens,
     ), ensure_ascii=False).encode("utf-8")
     last_error = None
     for attempt in range(retries + 1):
@@ -1624,6 +1646,11 @@ def case_covers_requirement_acceptance(case, check):
     branch = str(check.get("branch") or "").strip()
     if requirement_id and not case_requirement_ids and branch and branch not in evidence:
         return False
+    if branch and len(set(case_requirement_ids)) > 1:
+        compact_branch = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", branch).lower()
+        compact_evidence = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", evidence).lower()
+        if compact_branch and compact_branch not in compact_evidence:
+            return False
 
     targets = _acceptance_target_terms(check.get("text"))
     target_evidence = [item for item in evidence_items if not targets or any(term in item for term in targets)]
@@ -2868,8 +2895,18 @@ def _compact_baseline_candidate(item, index=0):
         "retrievalAnchors": item.get("retrievalAnchors") or [],
         "eligibleBranchIds": item.get("eligibleBranchIds") or [],
         "branchEvidence": item.get("branchEvidence") or [],
-        "selectedBranchId": item.get("ai_selected_branch_id") or item.get("selectedBranchId") or "",
-        "selectedBranchName": item.get("ai_selected_branch_name") or item.get("selectedBranchName") or "",
+        "selectedBranchId": (
+            item.get("ai_selected_branch_id")
+            or item.get("aiSelectedBranchId")
+            or item.get("selectedBranchId")
+            or ""
+        ),
+        "selectedBranchName": (
+            item.get("ai_selected_branch_name")
+            or item.get("aiSelectedBranchName")
+            or item.get("selectedBranchName")
+            or ""
+        ),
         "actions": item.get("actions") or [],
         "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
         "lastRunStatus": item.get("lastRunStatus") or "",
@@ -3242,6 +3279,24 @@ def _planner_case_id(case, index=0, origin_level="automatic"):
     return f"{prefix}-{index + 1:03d}"
 
 
+def _planner_case_origin_level(case, default="automatic"):
+    """Preserve whether a candidate was AI-generated across planner passes."""
+    case = case if isinstance(case, dict) else {}
+    classification = (
+        case.get("ai_case_classification")
+        if isinstance(case.get("ai_case_classification"), dict)
+        else {}
+    )
+    value = str(
+        case.get("originExecutionLevel")
+        or case.get("origin_execution_level")
+        or classification.get("originLevel")
+        or classification.get("origin_level")
+        or default
+    ).strip().lower()
+    return "manual" if value == "manual" else "automatic"
+
+
 def _compact_case_for_plan(case, index=0, origin_level="automatic"):
     case = case if isinstance(case, dict) else {}
     assertions = normalize_text_list(
@@ -3416,7 +3471,46 @@ def executable_yaml_portfolio_audit(payload, targets=None):
     }
 
 
-def _bounded_convergence_evidence(normalized, automatic_records, audit):
+def _case_has_branch_execution_evidence(case, branch):
+    branch_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(branch or "")).lower()
+    if not branch_key:
+        return True
+    evidence = "\n".join(_case_acceptance_evidence_items(case))
+    evidence_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", evidence).lower()
+    return branch_key in evidence_key
+
+
+def _trusted_selected_baseline_for_branch(selected_baselines, branch):
+    branch_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(branch or "")).lower()
+    if not branch_key:
+        return None
+    for baseline in selected_baselines or []:
+        if not isinstance(baseline, dict):
+            continue
+        branch_name = (
+            baseline.get("selectedBranchName")
+            or baseline.get("ai_selected_branch_name")
+            or baseline.get("aiSelectedBranchName")
+            or ""
+        )
+        branch_name_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(branch_name)).lower()
+        trusted = bool(
+            baseline.get("baselineUsable") is True and baseline.get("trusted") is True
+        ) or (
+            str(baseline.get("sourceKind") or "").strip() == "verified_execution"
+            and str(baseline.get("verificationStatus") or "").strip() == "execution_success"
+        )
+        if trusted and branch_key in branch_name_key:
+            return baseline
+    return None
+
+
+def _bounded_convergence_evidence(
+    normalized,
+    automatic_records,
+    audit,
+    selected_baselines=None,
+):
     """Compose a trusted source-page path with an AI-authored bounded landing tail."""
     normalized = normalized if isinstance(normalized, dict) else {}
     audit = audit if isinstance(audit, dict) else {}
@@ -3437,19 +3531,16 @@ def _bounded_convergence_evidence(normalized, automatic_records, audit):
             for requirement_id in _acceptance_requirement_ids([
                 case.get("coverage"), case.get("requirementRefs"), case.get("requirement_refs"),
             ]):
-                sources.setdefault(requirement_id, case)
+                sources.setdefault(requirement_id, []).append(case)
     evidence_by_id = {}
     for check in missing_checks:
         requirement_id = str(check.get("requirementId") or "").strip()
-        source_case = sources.get(requirement_id)
-        if not source_case:
-            continue
-        source_plan = source_case.get("ai_case_plan") or {}
-        source_flow = normalize_text_list(source_plan.get("flow") or source_case.get("steps"))
-        baseline_id = str(source_plan.get("baselineId") or "").strip()
-        precondition = str(source_plan.get("precondition") or "").strip()
-        if not baseline_id or not precondition or len(source_flow) < 2:
-            continue
+        branch = str(check.get("branch") or "").strip()
+        source_case = next((
+            case for case in (sources.get(requirement_id) or [])
+            if _case_has_branch_execution_evidence(case, branch)
+        ), None)
+        branch_baseline = _trusted_selected_baseline_for_branch(selected_baselines, branch)
         for record in automatic_records:
             raw_case = (record or {}).get("raw") or {}
             case_id = str(((record or {}).get("compact") or {}).get("case_id") or "").strip()
@@ -3471,14 +3562,79 @@ def _bounded_convergence_evidence(normalized, automatic_records, audit):
                 ))
             ), -1)
             tail = steps[click_index:] if click_index >= 0 else []
-            navigation_flow = list(source_flow)
+            source_evidence_case = source_case
+            if source_case:
+                source_plan = source_case.get("ai_case_plan") or {}
+                navigation_flow = normalize_text_list(source_plan.get("flow") or source_case.get("steps"))
+                baseline_id = str(source_plan.get("baselineId") or "").strip()
+                precondition = str(source_plan.get("precondition") or "").strip()
+                source_case_id = str(source_case.get("case_id") or "").strip()
+                evidence_source = "executable_source_case"
+            else:
+                if not branch_baseline or not _case_has_branch_execution_evidence(raw_case, branch):
+                    continue
+                source_records = [
+                    item for item in automatic_records
+                    if requirement_id in _acceptance_requirement_ids([
+                        ((item or {}).get("raw") or {}).get("coverage"),
+                        ((item or {}).get("raw") or {}).get("requirementRefs"),
+                        ((item or {}).get("raw") or {}).get("requirement_refs"),
+                    ])
+                    and _case_has_branch_execution_evidence((item or {}).get("raw") or {}, branch)
+                ]
+                source_records.sort(key=lambda item: (
+                    any(
+                        "点击" in step and any(term in step for term in targets)
+                        for step in normalize_text_list(((item or {}).get("raw") or {}).get("steps"))
+                    ),
+                    len(normalize_text_list(((item or {}).get("raw") or {}).get("steps"))),
+                ))
+                source_record = source_records[0] if source_records else record
+                source_evidence_case = (source_record or {}).get("raw") or raw_case
+                navigation_flow = normalize_text_list(source_evidence_case.get("steps"))
+                source_click_index = next((
+                    index for index, step in enumerate(navigation_flow)
+                    if "点击" in step and any(term in step for term in targets)
+                ), -1)
+                if source_click_index >= 0:
+                    navigation_flow = navigation_flow[:source_click_index]
+                preconditions = normalize_text_list(
+                    source_evidence_case.get("preconditions")
+                    or source_evidence_case.get("precondition")
+                    or raw_case.get("preconditions")
+                    or raw_case.get("precondition")
+                )
+                precondition = preconditions[0] if preconditions else ""
+                baseline_id = str(branch_baseline.get("id") or "").strip()
+                source_case_id = str(
+                    ((source_record or {}).get("compact") or {}).get("case_id") or case_id
+                ).strip()
+                evidence_source = "selected_branch_baseline"
+            if not baseline_id or not precondition or len(navigation_flow) < 2:
+                continue
             if (
                 navigation_flow
                 and navigation_flow[-1].startswith(("校验", "验证", "检查"))
                 and any(term in navigation_flow[-1] for term in targets)
             ):
                 navigation_flow.pop()
-            flow = navigation_flow + tail
+            source_navigation_probe = {
+                "steps": navigation_flow,
+                "requirementRefs": requirement_refs,
+            }
+            supplemental_checks = [
+                item for item in (audit.get("missingAcceptanceChecks") or [])
+                if isinstance(item, dict)
+                and str(item.get("requirementId") or "").strip() == requirement_id
+                and str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+                and not case_covers_requirement_acceptance(source_navigation_probe, item)
+            ]
+            supplemental_steps = [
+                str(item.get("text") or "").strip()
+                for item in supplemental_checks
+                if str(item.get("text") or "").strip()
+            ]
+            flow = navigation_flow + supplemental_steps + tail
             outcomes = normalize_text_list(
                 raw_case.get("assertions") or raw_case.get("expected_result") or raw_case.get("expected")
             )
@@ -3497,13 +3653,18 @@ def _bounded_convergence_evidence(normalized, automatic_records, audit):
                 continue
             evidence_by_id[case_id] = {
                 "eligible": True,
-                "sourceCaseId": str(source_case.get("case_id") or "").strip(),
+                "sourceCaseId": source_case_id,
+                "source": evidence_source,
                 "baselineId": baseline_id,
                 "precondition": precondition,
                 "flow": flow,
                 "assertionTarget": assertion_target,
                 "requirementRefs": requirement_refs,
-                "acceptanceCheckIds": [str(check.get("id") or "").strip()],
+                "acceptanceCheckIds": [
+                    str(item.get("id") or "").strip()
+                    for item in [check] + supplemental_checks
+                    if str(item.get("id") or "").strip()
+                ],
             }
             break
     return evidence_by_id
@@ -3514,6 +3675,7 @@ def _focus_executable_convergence_candidates(
     automatic_records,
     manual_records,
     planning_context,
+    selected_baselines=None,
 ):
     """Limit the final AI pass to the current portfolio and one alternate per gap."""
     context = copy.deepcopy(planning_context) if isinstance(planning_context, dict) else {}
@@ -3537,13 +3699,6 @@ def _focus_executable_convergence_candidates(
         )
         if str(item or "").strip()
     }
-    focused_automatic = [
-        item for item in automatic_records
-        if not focus_ids or str(item["compact"].get("case_id") or "").strip() in focus_ids
-    ]
-    if not focused_automatic:
-        focused_automatic = list(automatic_records)
-
     missing_points = normalize_text_list(audit.get("missingRequirementPoints"))
     for missing_check in audit.get("missingAcceptanceChecks") or []:
         if not isinstance(missing_check, dict):
@@ -3554,6 +3709,20 @@ def _focus_executable_convergence_candidates(
         ).strip()
         if descriptor and descriptor not in missing_points:
             missing_points.append(descriptor)
+    for point in missing_points:
+        for record in automatic_records:
+            candidate_id = str(record["compact"].get("case_id") or "").strip()
+            if candidate_id in focus_ids:
+                continue
+            if case_matches_requirement(record["raw"], point):
+                focus_ids.add(candidate_id)
+                break
+    focused_automatic = [
+        item for item in automatic_records
+        if not focus_ids or str(item["compact"].get("case_id") or "").strip() in focus_ids
+    ]
+    if not focused_automatic:
+        focused_automatic = list(automatic_records)
     target_count = max(0, safe_int(audit.get("targetExecutableCount"), 0))
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
     focused_manual = []
@@ -3562,6 +3731,7 @@ def _focus_executable_convergence_candidates(
         normalized,
         automatic_records,
         audit,
+        selected_baselines=selected_baselines,
     )
     for record in focused_automatic:
         candidate_id = str(record["compact"].get("case_id") or "").strip()
@@ -3676,20 +3846,30 @@ def call_skill_executable_yaml_planner(
 ):
     """Plan executable cases before YAML conversion. Fallback preserves current payload."""
     normalized = normalize_cases_payload(payload)
-    automatic_records = [
-        {"raw": case, "compact": _compact_case_for_plan(case, idx, origin_level="automatic")}
-        for idx, case in enumerate(normalized.get("cases") or [])
+    compact_baselines = [
+        _compact_baseline_candidate(item, idx)
+        for idx, item in enumerate(selected_baselines or [])
     ]
-    manual_records = [
-        {"raw": case, "compact": _compact_case_for_plan(case, idx, origin_level="manual")}
-        for idx, case in enumerate(normalized.get("manual_cases") or [])
-    ]
+    automatic_records = []
+    manual_records = []
+    for default_origin, cases in (
+        ("automatic", normalized.get("cases") or []),
+        ("manual", normalized.get("manual_cases") or []),
+    ):
+        for idx, case in enumerate(cases):
+            origin_level = _planner_case_origin_level(case, default_origin)
+            record = {
+                "raw": case,
+                "compact": _compact_case_for_plan(case, idx, origin_level=origin_level),
+            }
+            (manual_records if origin_level == "manual" else automatic_records).append(record)
     automatic_candidates, manual_candidates, planning_context, convergence_focus = (
         _focus_executable_convergence_candidates(
             normalized,
             automatic_records,
             manual_records,
             planning_context,
+            selected_baselines=compact_baselines,
         )
     )
     candidates = automatic_candidates + manual_candidates
@@ -3722,7 +3902,6 @@ def call_skill_executable_yaml_planner(
             "convergenceFocus": convergence_focus,
             "candidateEligibilityById": candidate_eligibility_by_id,
         }
-    compact_baselines = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])]
     allowed_baseline_ids = {str(item.get("id") or "").strip() for item in compact_baselines if str(item.get("id") or "").strip()}
     request = {
         "title": title,
@@ -3856,23 +4035,21 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     }
     output_cases = []
     manual_cases = []
-    candidate_records = [
-        {
-            "case": item,
-            "caseId": _planner_case_id(item, idx, origin_level="automatic"),
-            "originLevel": "automatic",
-        }
-        for idx, item in enumerate(normalized.get("cases") or [])
-        if isinstance(item, dict)
-    ] + [
-        {
-            "case": item,
-            "caseId": _planner_case_id(item, idx, origin_level="manual"),
-            "originLevel": "manual",
-        }
-        for idx, item in enumerate(normalized.get("manual_cases") or [])
-        if isinstance(item, dict)
-    ]
+    candidate_records = []
+    for container_level, cases in (
+        ("automatic", normalized.get("cases") or []),
+        ("manual", normalized.get("manual_cases") or []),
+    ):
+        for idx, item in enumerate(cases):
+            if not isinstance(item, dict):
+                continue
+            origin_level = _planner_case_origin_level(item, container_level)
+            candidate_records.append({
+                "case": item,
+                "caseId": _planner_case_id(item, idx, origin_level=origin_level),
+                "originLevel": origin_level,
+                "containerLevel": container_level,
+            })
     bounded_evidence_by_id = plan.get("candidateEligibilityById")
     bounded_evidence_by_id = (
         bounded_evidence_by_id
@@ -3886,9 +4063,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     promotion_guard_failed_count = 0
     requirement_ref_guard_count = 0
     path_mapping_guard_count = 0
+    branch_scope_guard_count = 0
     preserved_executable_count = 0
     outside_focus_preserved_count = 0
     bounded_convergence_override_count = 0
+    redundant_unmentioned_manualized_count = 0
+    unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
         case = copy.deepcopy(record["case"])
@@ -3899,7 +4079,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         if classification:
             level, item = classification
         else:
-            current_level = str(case.get("executionLevel") or case.get("execution_level") or "").strip().lower()
+            current_level = str(
+                case.get("executionLevel") or case.get("execution_level") or record.get("containerLevel") or ""
+            ).strip().lower()
             outside_focus = bool(convergence_pass and focused_candidate_ids and case_id not in focused_candidate_ids)
             if convergence_pass and current_level == "executable":
                 level = "executable"
@@ -3908,16 +4090,16 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 if not outside_focus:
                     unmentioned_count += 1
             else:
-                fallback_level = "manual" if origin_level == "manual" else "needs_review"
+                fallback_level = "manual" if current_level == "manual" or origin_level == "manual" else "needs_review"
                 level, item = (fallback_level, {
                     "caseId": case_id,
                     "title": title,
                     "reason": (
                         "最终收敛未选中该人工候选，保留人工级别"
-                        if outside_focus and origin_level == "manual"
+                        if outside_focus and fallback_level == "manual"
                         else (
                             "AI 可执行规划未覆盖原人工候选，保留人工级别"
-                            if origin_level == "manual"
+                            if fallback_level == "manual"
                             else "AI 可执行规划未覆盖该候选，按安全策略进入复核"
                         )
                     ),
@@ -3928,6 +4110,13 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                     unmentioned_count += 1
                     if origin_level == "manual":
                         unmentioned_manual_count += 1
+                if (
+                    convergence_pass
+                    and origin_level == "automatic"
+                    and case_id in focused_candidate_ids
+                    and fallback_level != "manual"
+                ):
+                    unclassified_focused_automatic_ids.add(case_id)
 
         bounded_evidence = bounded_evidence_by_id.get(case_id)
         bounded_check_ids = {
@@ -4008,6 +4197,36 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 ).strip("；"),
             }
             promotion_guard_failed_count += 1
+        mapped_requirement_ids = _acceptance_requirement_ids(requirement_refs)
+        if level == "executable" and len(set(mapped_requirement_ids)) > 1:
+            acceptance_checks = [
+                check for check in ((normalized.get("analysis") or {}).get("requirement_acceptance_checks") or [])
+                if isinstance(check, dict)
+                and str(check.get("requirementId") or "").strip() in mapped_requirement_ids
+                and str(check.get("branch") or "").strip()
+            ]
+            planned_scope_case = {
+                "steps": planned_flow or case.get("steps") or [],
+                "assertions": [assertion_target] if assertion_target else case.get("assertions") or [],
+            }
+            missing_branches = list(dict.fromkeys(
+                str(check.get("branch") or "").strip()
+                for check in acceptance_checks
+                if not _case_has_branch_execution_evidence(
+                    planned_scope_case,
+                    check.get("branch"),
+                )
+            ))
+            if missing_branches:
+                level = "manual" if convergence_pass else "needs_review"
+                item = {
+                    **item,
+                    "reason": (
+                        "候选映射多个需求分支，但实际步骤缺少分支证据："
+                        + "、".join(missing_branches[:4])
+                    ),
+                }
+                branch_scope_guard_count += 1
 
         applied_counts[level] += 1
         reason = str(
@@ -4107,6 +4326,37 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             case["flag"] = flags
             smoke_used += 1
     normalized["cases"] = output_cases
+    if convergence_pass and unclassified_focused_automatic_ids:
+        provisional_audit = executable_yaml_portfolio_audit(normalized, targets)
+        if (
+            provisional_audit.get("executableCount")
+            and not provisional_audit.get("missingRequirementPoints")
+        ):
+            retained_output = []
+            for case in output_cases:
+                case_id = str(case.get("case_id") or "").strip()
+                level = str(case.get("executionLevel") or "").strip().lower()
+                if case_id not in unclassified_focused_automatic_ids or level == "executable":
+                    retained_output.append(case)
+                    continue
+                reason = (
+                    "最终 AI 收敛漏回该候选；显式需求与验收维度已由其他 executable 路径完整覆盖，"
+                    "因此保留为人工项，不自动升级也不因冗余候选阻断执行"
+                )
+                case["executionLevel"] = "manual"
+                case["automation_reason"] = reason
+                case["ai_case_classification"] = {
+                    "level": "manual",
+                    "reason": reason,
+                    "originLevel": "automatic",
+                }
+                manual_cases.append(case)
+                if level in applied_counts:
+                    applied_counts[level] = max(0, applied_counts[level] - 1)
+                applied_counts["manual"] += 1
+                redundant_unmentioned_manualized_count += 1
+            output_cases = retained_output
+            normalized["cases"] = output_cases
     deduped_manual = []
     seen_manual = set()
     for item in manual_cases:
@@ -4134,9 +4384,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "promotion_guard_failed_count": promotion_guard_failed_count,
         "requirement_ref_guard_count": requirement_ref_guard_count,
         "path_mapping_guard_count": path_mapping_guard_count,
+        "branch_scope_guard_count": branch_scope_guard_count,
         "preserved_executable_count": preserved_executable_count,
         "outside_focus_preserved_count": outside_focus_preserved_count,
         "bounded_convergence_override_count": bounded_convergence_override_count,
+        "redundant_unmentioned_manualized_count": redundant_unmentioned_manualized_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
@@ -4162,11 +4414,11 @@ _VISUAL_CASE_FIELDS = (
 )
 _VISUAL_SCENARIO_FIELDS = (
     "id", "scenario_id", "feature", "requirement_point", "scenario", "type",
-    "business_path", "steps", "assertions", "expected", "expected_result",
+    "business_path",
 )
 _VISUAL_MANUAL_FIELDS = (
     "case_id", "id", "title", "scenario", "coverage", "requirement_point",
-    "steps", "assertions", "expected_result", "reason", "suggested_setup",
+    "reason",
 )
 _VISUAL_MUTABLE_FIELDS = {
     "start_page", "business_path", "preconditions", "steps", "assertions",
@@ -4191,8 +4443,7 @@ def compact_visual_grounder_base_payload(base_payload):
         key: copy.deepcopy(analysis.get(key))
         for key in (
             "requirement_points", "business_goals", "entry_points", "visible_outcomes",
-            "state_assumptions", "data_assumptions", "coverage_matrix", "questions",
-            "missing_inputs", "assumptions",
+            "state_assumptions", "data_assumptions",
         )
         if analysis.get(key) not in (None, "", [], {})
     }
@@ -4261,7 +4512,7 @@ def _merge_visual_records(base_items, grounded_items, kind):
 def merge_visual_grounder_payload(base_payload, grounded_payload):
     """Merge visual corrections without letting one batch erase full planning context."""
     base = normalize_cases_payload(base_payload)
-    grounded = normalize_cases_payload(grounded_payload)
+    grounded = copy.deepcopy(grounded_payload) if isinstance(grounded_payload, dict) else {}
     merged = copy.deepcopy(base)
     merged["title"] = base.get("title") or grounded.get("title") or ""
     merged["module"] = base.get("module") or grounded.get("module") or ""
@@ -4288,16 +4539,17 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
     """调用 AI skill: visual_grounder。"""
     base_payload = normalize_cases_payload(base_payload)
     compact_base_payload = compact_visual_grounder_base_payload(base_payload)
-    base_cases = copy.deepcopy(compact_base_payload.get("cases") or [])
+    compact_visual_text = compact_text_assets(visual_text_assets, max_chars=8000)
     payload = {
         "title": title,
         "module": module,
         "base_payload": compact_base_payload,
-        "visual_text_assets": compact_text_assets(visual_text_assets),
+        "visual_text_assets": compact_visual_text,
         "image_count": len(image_assets or []),
         "rules": {
             "do_not_delete_requirements": True,
-            "return_complete_payload": True,
+            "return_complete_payload": False,
+            "return_visual_delta_only": True,
             "visual_reference_is_soft": True,
             "no_coordinates_or_selectors": True,
             "assertions_must_be_ui_visible": True
@@ -4311,17 +4563,24 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         respect_global_timeout=timeout_seconds is None,
         retry_count=None if timeout_seconds is None else 0,
         temperature=0.1,
+        max_tokens=2048,
         output_defaults={
             "title": title,
             "module": module,
-            "analysis": compact_base_payload.get("analysis") or {"requirement_points": []},
-            "scenarios": compact_base_payload.get("scenarios") or [],
-            "cases": base_cases,
-            "manual_cases": compact_base_payload.get("manual_cases") or [],
+            "analysis": {
+                "requirement_points": (compact_base_payload.get("analysis") or {}).get("requirement_points") or [],
+            },
+            "scenarios": [],
+            "cases": [],
+            "manual_cases": [],
             "review": {},
         },
     )
-    grounded = normalize_cases_payload(grounded)
+    grounded = copy.deepcopy(grounded) if isinstance(grounded, dict) else {}
+    grounded_review = grounded.get("review") if isinstance(grounded.get("review"), dict) else {}
+    visual_judgement = str(grounded_review.get("visual_grounding_check") or "").strip()
+    if not visual_judgement:
+        raise ValueError("视觉 AI 未返回当前图片批次的 visual_grounding_check，不能计为解析完成")
     grounded["title"] = grounded.get("title") or title
     grounded["module"] = grounded.get("module") or module
     base_points = ((base_payload.get("analysis") or {}).get("requirement_points") or [])
@@ -4329,25 +4588,27 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
         analysis = grounded.setdefault("analysis", {})
         if not analysis.get("requirement_points"):
             analysis["requirement_points"] = base_points
-    restored_empty_cases = False
-    if base_cases and not grounded.get("cases"):
-        grounded["cases"] = copy.deepcopy(base_cases)
-        restored_empty_cases = True
+    patch_counts = {
+        "scenarios": len(grounded.get("scenarios") or []),
+        "cases": len(grounded.get("cases") or []),
+        "manualCases": len(grounded.get("manual_cases") or []),
+    }
     grounded = merge_visual_grounder_payload(base_payload, grounded)
     review = grounded.setdefault("review", {})
     review["visual_grounder_skill"] = "visual_grounder.v1"
     review["visual_case_preservation"] = {
-        "policy": "compact_input_merge_visual_fields_preserve_full_payload",
+        "policy": "visual_delta_merge_by_id_preserve_full_payload",
         "base_case_count": len(base_payload.get("cases") or []),
         "result_case_count": len(grounded.get("cases") or []),
-        "restored_empty_cases": restored_empty_cases,
+        "returned_patch_counts": patch_counts,
     }
     review["visual_input_compaction"] = {
         "full_chars": len(json.dumps(base_payload, ensure_ascii=False)),
         "compact_chars": len(json.dumps(compact_base_payload, ensure_ascii=False)),
         "image_count": len(image_assets or []),
-        "visual_text_chars": len(compact_text_assets(visual_text_assets)),
-        "rule": "只移除重复 review/编排历史，需求点、场景、用例步骤、断言、设计稿文本和原图仍进入视觉判断。",
+        "visual_text_chars": len(compact_visual_text),
+        "response_max_tokens": 2048,
+        "rule": "输入保留需求点、场景索引、自动用例步骤/断言、当前批次设计稿文本和原图；模型只返回按 ID 关联的视觉增量，平台合并时保留完整规划。",
     }
     validate_ai_skill_output("cases_payload", grounded)
     return grounded
@@ -4751,16 +5012,72 @@ def call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_
     return payload
 
 
-def call_dashscope_refine_cases(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None, legacy_fallback=True):
+def call_dashscope_refine_cases(
+    title,
+    module,
+    base_payload,
+    visual_text_assets,
+    image_assets,
+    timeout_seconds=None,
+    legacy_fallback=True,
+    bounded_retry=False,
+):
     """精修用例：优先 visual_grounder skill，失败回退 legacy。"""
     if not visual_text_assets and not image_assets:
         return base_payload
+    started = time.time()
+    total_timeout = max(30, safe_int(timeout_seconds, 360)) if timeout_seconds is not None else None
+    first_timeout = total_timeout
+    if bounded_retry and total_timeout and total_timeout >= 60:
+        first_timeout = max(30, int(total_timeout / 2))
+    attempts = []
     try:
         if timeout_seconds is None:
-            return call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets)
-        return call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=timeout_seconds)
+            payload = call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets)
+        else:
+            payload = call_visual_grounder_skill(
+                title,
+                module,
+                base_payload,
+                visual_text_assets,
+                image_assets,
+                timeout_seconds=first_timeout,
+            )
+        payload.setdefault("review", {})["visual_grounder_attempts"] = {
+            "count": 1,
+            "boundedRetryEnabled": bool(bounded_retry),
+            "retryUsed": False,
+        }
+        return payload
     except Exception as exc:
+        attempts.append(str(exc)[:300])
+        if bounded_retry and total_timeout:
+            elapsed = max(0, int(time.time() - started))
+            remaining_timeout = total_timeout - elapsed
+            if remaining_timeout >= 30:
+                try:
+                    payload = call_visual_grounder_skill(
+                        title,
+                        module,
+                        base_payload,
+                        visual_text_assets,
+                        image_assets,
+                        timeout_seconds=remaining_timeout,
+                    )
+                    payload.setdefault("review", {})["visual_grounder_attempts"] = {
+                        "count": 2,
+                        "boundedRetryEnabled": True,
+                        "retryUsed": True,
+                        "firstError": attempts[0],
+                    }
+                    return payload
+                except Exception as retry_exc:
+                    attempts.append(str(retry_exc)[:300])
         if not legacy_fallback:
+            if len(attempts) > 1:
+                raise RuntimeError(
+                    "视觉 AI 增量校准在同一批次预算内两次失败：" + "；".join(attempts)
+                ) from exc
             raise
         if timeout_seconds is None:
             payload = call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets)

@@ -28,6 +28,51 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 Agent 收敛来源证据与 Figma 视觉增量校准修复
+
+部署 `4a911c9` 后发起同一完整回归：
+
+- Agent `agent-1784104032479-b3584431`，参数仍为“基础打印新增百度网盘入口”、同一 Figma、`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。线上 `8091 / 8088`、AI Gateway、Sonic 健康，Windows Runner 在线且只选择 OPPO PHM110 `ecbfd645`。
+- 路由为 `new_requirement_source / generate_draft`。Figma parser 正确解析 4 页 / 4 张原图、忽略 0 页；4 个单图批次均真实送入 `qwen3.6-plus`，但旧 `visual_grounder` 每批要求模型重写完整场景/用例 JSON，4 批均在约 90 秒超时，结果为 `0/4 completed / 4 attempted / failed / hardGate=false`。
+- 任务终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job，也没有向第二台手机下发。门禁报告缺文档/照片可达性和扫描同级关系/可达性，并有 1 条自动候选未终结。
+- 首轮 planner 已把自动生成的 `TC-003/004/005/006` 降入 `manual_cases`。旧二次收敛按当前容器推断来源，把这些候选误当成人工原生项，因此 `4a911c9` 的有界端点证据无法接管。
+- `TC-007` 声称覆盖文档、照片、扫描三个 REQ，但步骤只进入文档和照片；旧验收匹配只看 REQ 引用和“三个页面”文案，误报扫描展示/文案覆盖。扫描分支还没有首轮 executable 来源 case，但 Top3 中已有 AI 选择且历史执行成功的 `证件扫描` 同分支基线。
+- 收敛模型漏回冗余 `TC-008`，旧安全策略仍把它留为 `needs_review`，即使其他路径随后完整覆盖，也会继续阻断。
+
+本轮通用修复：
+
+- 每条候选持久保存 `originExecutionLevel`，二次收敛不再用 `cases/manual_cases` 容器覆盖 AI 原始自动化来源。多 REQ case 必须在真实步骤/断言中逐个出现对应业务分支，否则初轮降为 `needs_review`、终轮降为 manual，不能用跨页总结文案冒充执行证据。
+- 有界收敛优先组合“同 REQ 已验证来源页路径 + 上游 AI 生成的点击后首个稳定终态”。当某分支还没有 executable 来源 case 时，可使用 AI Top3 中明确绑定该分支、`verified_execution / execution_success` 的基线补来源导航，再补齐同页展示/同级/文案检查；只允许到授权页、登录页、文件列表或弹窗等首个可见终态，账号、验证码、确认授权、选文件等深层动作仍由原门禁阻断。
+- 最终 AI 漏回的自动候选只有在其他 executable 已覆盖全部显式验收维度时才转 manual；绝不自动升级，也不因冗余项继续阻断。`3/5/8` 仍只是规划目标，不为数量凑弱网、系统设置或重复链路。
+- `visual_grounder` 改为视觉增量协议：每张图只返回按 case/scenario ID 关联的 UI 文案、入口、同级关系和可见终态修正，平台合并回完整规划，不再让模型复述整包。线上同一失败 payload 的视觉结构文本由 `57,195` 字符压至 `8,564` 字符，保留全部需求点、12 个场景索引、4 条自动用例步骤/断言、10 条人工项索引和原图；响应上限为 2048 tokens。
+- 每个 90 秒视觉批次最多进行一次同预算有界重试，不增加总预算；首轮最多 45 秒，失败后把剩余批次预算交给第二次调用。模型原始响应必须为当前图片返回非空 `review.visual_grounding_check`，否则直接失败，不能从上一批 review 继承文案后误计 completed。逐批产物新增 `attemptCount / retryUsed / judgement`；解析成功、已发送、部分成功和模型失败继续分开统计。Figma parser、选页、原图、4 图来源计数和软参考策略均未修改。
+- 基线产物继续保存稳定 `id`、分支 ID/名称，并兼容 snake_case / camelCase，确保失败恢复和离线回放可以重新绑定同一成功基线。
+
+使用线上保存的原始 12 场景、8 条自动候选、6 条人工候选和 Top3 分支基线重放：
+
+- 最终 executable 为 `TC-001 / TC-002 / TC-004 / TC-005 / TC-006`，覆盖文档打印、照片打印、扫描复印的展示、同级关系、文案和点击可达共 `12/12` 个验收维度；`TC-007` 因缺扫描步骤、`TC-008` 因冗余均保留 manual。
+- 五份 YAML 经现有静态修复和 scorer 后分别为 `100 / 100 / 89 / 89 / 87`，全部为 executable、无坐标动作。扫描链路使用真实文字进入“扫描复印”，先检查“百度网盘”入口/同级关系/文案，再点击并等待首个合法落地页；没有输入账号、确认授权或选择文件。
+- 该结果是同一线上产物经过新通用逻辑的离线重放，不代表线上模型和 Runner 已成功；必须以部署后的新 Agent、4/4 视觉 judgement 和真实 Runner 报告为最终结论。
+
+设计依据不是照搬框架：Google [AndroidWorld](https://google-research.github.io/android_world/) 强调可复现初始化、系统状态成功判定和清理；[Mobile-Agent](https://arxiv.org/abs/2401.16158) 先把截图转为视觉/文本感知，再基于感知结果规划动作；[Mobile-Agent-v2](https://proceedings.neurips.cc/paper_files/paper/2024/file/0520537ba799d375b8ff5523295c337a-Paper-Conference.pdf) 将规划、决策、反思分开以减少长文本和图像历史的干扰。本平台据此采用“视觉 AI 返回小型可审计增量、规划持有完整需求和基线状态、平台执行确定性安全/覆盖门禁”，而不是让一次多模态调用重写全部事实或直接决定通过。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+MIDSCENE_AI_SKILLS_USE_GATEWAY=0 DASHSCOPE_API_KEY= OPENAI_API_KEY= MIDSCENE_API_KEY= FALLBACK_DASHSCOPE_API_KEY= python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3`，以及 Playwright 桌面/移动端 Agent、失败报告和重跑视觉烟测全部通过。本机通过同一 DashScope 通道强制 `qwen3.6-plus`、按新增量协议发送一张真实平台截图，`18.5s` 返回非空 judgement 和定向 case 增量；该探针只证明协议可完成，不替代部署后的 4 张 Figma 线上验收。`tests/test_sonic_integration.py -k 'visual_grounder or refine_cases_falls'` 的 2 条旧测试仍从已拆空的 `midscene-upload.py` 兼容壳取迁移后函数，均为既有 `AttributeError`，与本轮行为无关。
+
+待完成：
+
+- 本轮提交尚未部署。部署后必须再用同一需求/Figma、固定 `win-runner-01 / ecbfd645` 发起完整 Agent，持续轮询到 `DONE / FAILED / CANCELLED`。
+- 最终人工验收要求视觉批次真实 `4/4 completed` 且每批有 judgement；截图/Figma 对生成仍是软参考，但不能把“Figma 已提取”误写成“视觉 AI 已完成”。若仍失败，按视觉服务/模型调用失败单独归因。
+- 人工复核最终 YAML 的三个业务分支、5 寸照片归属照片打印、同级关系/文案/首个可达页和真实文字定位。若进入 Runner，首批与 remaining 每个 job 必须只在 OPPO 串行到终态，逐条核对报告、截图/录屏、失败分类和 AI 修复证据。
+
 ### 2026-07-15 Agent 验收维度、固定设备调度与 AI 修复闭环修复
 
 部署 `f0ce998` 后发起同一完整回归：

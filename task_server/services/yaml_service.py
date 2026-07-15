@@ -1953,6 +1953,7 @@ def record_yaml_reference_examples(case_set_id, title, module, examples):
         "used_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "examples": [
             {
+                "id": item.get("id") or item.get("case_id") or "",
                 "title": item.get("title"),
                 "module": item.get("module"),
                 "file": item.get("file"),
@@ -6768,6 +6769,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         memory_path = record_yaml_reference_examples(case_set_id, title, module, yaml_reference_examples)
         review["yaml_reference_examples"] = [
             {
+                "id": item.get("id") or item.get("case_id") or "",
                 "title": item.get("title"),
                 "module": item.get("module"),
                 "file": item.get("file"),
@@ -8398,6 +8400,7 @@ def generate_mindmap_from_request(d, job_id=None):
     if use_yaml_baseline_context:
         agent_plan_review["yaml_reference_examples"] = [
             {
+                "id": item.get("id") or item.get("case_id") or "",
                 "title": item.get("title"),
                 "module": item.get("module"),
                 "file": item.get("file"),
@@ -8408,6 +8411,8 @@ def generate_mindmap_from_request(d, job_id=None):
                 "sourceTrust": item.get("sourceTrust") or 0,
                 "aiSelectedRole": item.get("ai_selected_role") or "",
                 "aiSelectedReason": item.get("ai_selected_reason") or "",
+                "aiSelectedBranchId": item.get("ai_selected_branch_id") or "",
+                "aiSelectedBranchName": item.get("ai_selected_branch_name") or "",
             }
             for item in yaml_reference_examples
         ]
@@ -8489,19 +8494,27 @@ def generate_mindmap_from_request(d, job_id=None):
                     image_batch,
                     timeout_seconds=timeout_seconds,
                     legacy_fallback=False,
+                    bounded_retry=True,
                 )
                 visual_batches_done += 1
                 visual_images_done += len(image_batch)
-                payload.setdefault("review", {})["mindmap_visual_grounded"] = True
+                payload_review = payload.setdefault("review", {})
+                batch_attempt_meta = payload_review.get("visual_grounder_attempts")
+                batch_attempt_meta = batch_attempt_meta if isinstance(batch_attempt_meta, dict) else {}
+                payload_review["mindmap_visual_grounded"] = True
                 visual_batch_results.append({
                     "batch": batch_index,
                     "status": "completed",
                     "imageCount": len(image_batch),
                     "imageNames": image_names,
                     "durationSeconds": max(0, int(time.time() - batch_started)),
+                    "attemptCount": safe_int(batch_attempt_meta.get("count"), 1),
+                    "retryUsed": bool(batch_attempt_meta.get("retryUsed")),
+                    "judgement": str(payload_review.get("visual_grounding_check") or "").strip()[:500],
                 })
             except Exception as e:
                 error_text = str(e)
+                retry_used = "同一批次预算内两次失败" in error_text
                 visual_errors.append(f"第 {batch_index} 批：{error_text}")
                 visual_batch_results.append({
                     "batch": batch_index,
@@ -8509,6 +8522,8 @@ def generate_mindmap_from_request(d, job_id=None):
                     "imageCount": len(image_batch),
                     "imageNames": image_names,
                     "durationSeconds": max(0, int(time.time() - batch_started)),
+                    "attemptCount": 2 if retry_used else 1,
+                    "retryUsed": retry_used,
                     "error": error_text[:500],
                 })
                 if job_id:

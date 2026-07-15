@@ -321,6 +321,18 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         }, copy_check),
         "An icon-only assertion must not be misreported as target-copy coverage",
     )
+    coupon_visibility_check = next(
+        item for item in generic_acceptance_checks
+        if item.get("requirementId") == "REQ-002" and item.get("kind") == "visibility"
+    )
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance({
+            "requirementRefs": ["REQ-001", "REQ-002"],
+            "steps": ["进入订单管理", "等待发票入口可见"],
+            "assertions": ["两个业务页面都展示发票入口"],
+        }, coupon_visibility_check),
+        "A multi-requirement case must contain concrete steps for each branch it claims to cover",
+    )
 
     bounded_convergence_payload = json.loads(json.dumps(generic_display_payload, ensure_ascii=False))
     for case in bounded_convergence_payload.get("cases") or []:
@@ -334,10 +346,16 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "batch": "smoke",
         }
     for index, branch in enumerate(("订单管理", "优惠券"), start=1):
-        bounded_convergence_payload["cases"].append({
+        bounded_convergence_payload["manual_cases"].append({
             "case_id": f"TC-R{index:02d}",
             "title": f"{branch}发票入口首个落地页",
-            "executionLevel": "needs_review",
+            "executionLevel": "manual",
+            "originExecutionLevel": "automatic",
+            "ai_case_classification": {
+                "level": "manual",
+                "originLevel": "automatic",
+                "reason": "首轮 AI 对外部首屏过度保守",
+            },
             "requirementRefs": [f"REQ-{index:03d}"],
             "steps": [
                 f"进入{branch}",
@@ -465,6 +483,158 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(
         yaml_service._case_manual_block_reason(deep_bounded),
         "Bounded convergence must never admit credential, authorization-confirmation, or file-selection actions",
+    )
+
+    branch_fallback_payload = json.loads(json.dumps(bounded_applied, ensure_ascii=False))
+    branch_fallback_payload["analysis"]["requirement_points"].append(
+        "REQ-003 售后服务：校验发票入口可见；校验发票入口与当前页面同级入口的层级和位置关系；"
+        "校验发票入口使用需求约定的可见文案；点击发票入口并校验目标页面稳定可达"
+    )
+    third_branch_checks = [
+        {
+            "id": f"REQ-003-CHECK-{index:02d}",
+            "requirementId": "REQ-003",
+            "branch": "售后服务",
+            "kind": kind,
+            "text": text,
+        }
+        for index, (kind, text) in enumerate((
+            ("visibility", "校验发票入口可见"),
+            ("relation", "校验发票入口与当前页面同级入口的层级和位置关系"),
+            ("copy", "校验发票入口使用需求约定的可见文案"),
+            ("reachability", "点击发票入口并校验目标页面稳定可达"),
+        ), start=1)
+    ]
+    branch_fallback_payload["analysis"]["requirement_acceptance_checks"].extend(third_branch_checks)
+    branch_fallback_payload["cases"].append({
+        "case_id": "TC-DUP",
+        "title": "订单管理发票入口冗余同级检查",
+        "executionLevel": "needs_review",
+        "requirementRefs": ["REQ-001"],
+        "steps": ["进入订单管理", "等待发票入口和订单入口同时可见"],
+        "assertions": ["发票入口和订单入口同级展示"],
+    })
+    branch_fallback_payload["manual_cases"].extend([{
+        "case_id": "TC-S03",
+        "title": "售后服务发票入口展示",
+        "executionLevel": "manual",
+        "originExecutionLevel": "automatic",
+        "requirementRefs": ["REQ-003"],
+        "preconditions": "App 首页，用户已登录",
+        "steps": ["进入售后服务", "等待发票入口可见"],
+        "assertions": ["售后服务页面展示文案为发票的入口"],
+        "ai_case_classification": {"level": "manual", "originLevel": "automatic"},
+    }, {
+        "case_id": "TC-R03",
+        "title": "售后服务发票入口首个落地页",
+        "executionLevel": "manual",
+        "originExecutionLevel": "automatic",
+        "requirementRefs": ["REQ-003"],
+        "preconditions": "已进入售后服务页面，发票入口可见",
+        "steps": [
+            "进入售后服务",
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+        ],
+        "assertions": ["授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃"],
+        "ai_case_classification": {"level": "manual", "originLevel": "automatic"},
+    }])
+    branch_fallback_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        branch_fallback_payload,
+        {"min_automation_cases": 5},
+    )
+    fallback_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_branch_fallback_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in branch fallback replay")
+            fallback_requests.append(request)
+            executable = []
+            manual = []
+            for candidate in request.get("cases") or []:
+                case_id = candidate.get("case_id")
+                if case_id == "TC-DUP":
+                    continue
+                if candidate.get("currentLevel") == "executable":
+                    executable.append({
+                        "caseId": case_id,
+                        "baselineId": "base-entry-nav",
+                        "precondition": "App 首页",
+                        "flow": candidate.get("steps") or [],
+                        "assertionTarget": (candidate.get("assertions") or [""])[0],
+                        "requirementRefs": candidate.get("requirementRefs") or [],
+                        "executableReason": "保留已通过的可信来源页路径",
+                        "batch": "smoke",
+                    })
+                else:
+                    manual.append({
+                        "caseId": case_id,
+                        "reason": "目标页缺少历史执行结果，模型建议人工确认",
+                        "requirementRefs": candidate.get("requirementRefs") or [],
+                    })
+            return {
+                "cases": executable,
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": manual,
+                "review": {"planning_reason": "模拟线上先降级、再漏回一个冗余候选"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_branch_fallback_planner
+        branch_fallback_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "新增发票入口",
+            "会员服务",
+            branch_fallback_payload,
+            [{
+                "id": "base-entry-nav",
+                "title": "订单与优惠券入口导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+            }, {
+                "id": "base-service-nav",
+                "title": "售后服务入口导航",
+                "aiSelectedBranchName": "会员服务-售后服务",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "首页 -> 售后服务",
+            }],
+            {"smokeCount": 3},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": branch_fallback_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    fallback_request_by_id = {
+        item.get("case_id"): item for item in fallback_requests[0].get("cases") or []
+    }
+    require(
+        fallback_request_by_id["TC-R03"].get("originLevel") == "automatic"
+        and fallback_request_by_id["TC-R03"].get("currentLevel") == "manual"
+        and fallback_request_by_id["TC-R03"].get("convergenceEvidence", {}).get("sourceCaseId") == "TC-S03"
+        and fallback_request_by_id["TC-R03"].get("convergenceEvidence", {}).get("baselineId") == "base-service-nav"
+        and "REQ-003-CHECK-02" in fallback_request_by_id["TC-R03"].get("convergenceEvidence", {}).get("acceptanceCheckIds", []),
+        "A first-pass AI downgrade must retain automatic provenance and use the trusted same-branch baseline for missing source-page evidence",
+    )
+    branch_fallback_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        branch_fallback_payload,
+        branch_fallback_plan,
+    )
+    branch_fallback_by_id = {
+        item.get("case_id"): item for item in branch_fallback_applied.get("cases") or []
+    }
+    require(
+        branch_fallback_by_id["TC-R03"].get("executionLevel") == "executable"
+        and "同级入口" in " ".join(branch_fallback_by_id["TC-R03"].get("steps") or [])
+        and yaml_service._case_manual_block_reason(branch_fallback_by_id["TC-R03"]) == ""
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            branch_fallback_applied,
+            {"min_automation_cases": 5},
+        ).get("ok")
+        and any(item.get("case_id") == "TC-DUP" for item in branch_fallback_applied.get("manual_cases") or [])
+        and branch_fallback_applied.get("review", {}).get("executable_yaml_plan", {}).get("redundant_unmentioned_manualized_count") == 1,
+        "Same-branch bounded evidence must close every explicit dimension while an omitted redundant candidate is preserved as manual, never auto-promoted",
     )
     require(preview.get("candidateOnly") and preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate coverage candidates from the later AI business plan")
     plan_context = yaml_service.build_agent_business_plan_context_text({
@@ -2390,6 +2560,21 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         "manual_cases": [],
         "review": {"automation_filter_skill": "automation_filter.v1"},
     }
+    visual_prompt = ai_skill_service.load_ai_skill_prompt("visual_grounder")
+    require(
+        "只返回当前图片能直接支持的增量" in visual_prompt
+        and "不得复制 `base_payload`" in visual_prompt,
+        "Visual grounding must request a bounded delta instead of regenerating the complete case payload per image",
+    )
+    visual_body = ai_skill_service.build_dashscope_chat_body(
+        "视觉增量",
+        image_assets=[{"mime": "image/png", "base64": "AA=="}],
+        max_tokens=2048,
+    )
+    require(
+        visual_body.get("max_tokens") == 2048,
+        "Visual grounding must cap response generation independently of the configured vision model",
+    )
     original_chat = ai_skill_service.dashscope_chat_content
     try:
         ai_skill_service.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
@@ -2419,6 +2604,66 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         grounded.get("cases") == [concrete_case]
         and grounded.get("review", {}).get("visual_case_preservation", {}).get("base_case_count") == 1,
         "Visual grounding must preserve base cases when the AI returns only its visual judgment",
+    )
+    original_chat = ai_skill_service.dashscope_chat_content
+    try:
+        ai_skill_service.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
+            "title": base_payload["title"],
+            "module": base_payload["module"],
+            "analysis": {},
+            "scenarios": [],
+            "cases": [],
+            "manual_cases": [],
+            "review": {},
+        }, ensure_ascii=False)
+        missing_judgement_rejected = False
+        try:
+            ai_skill_service.call_visual_grounder_skill(
+                base_payload["title"],
+                base_payload["module"],
+                base_payload,
+                ["Figma 文档打印页面"],
+                [{"mime": "image/png", "base64": "AA=="}],
+                timeout_seconds=45,
+            )
+        except ValueError as exc:
+            missing_judgement_rejected = "visual_grounding_check" in str(exc)
+    finally:
+        ai_skill_service.dashscope_chat_content = original_chat
+    require(
+        missing_judgement_rejected,
+        "A visual batch without its own auditable judgment must never be counted as completed",
+    )
+    original_grounder = ai_skill_service.call_visual_grounder_skill
+    visual_attempt_timeouts = []
+    try:
+        def flaky_visual_grounder(title, module, payload, visual_text_assets, image_assets, timeout_seconds=None):
+            visual_attempt_timeouts.append(timeout_seconds)
+            if len(visual_attempt_timeouts) == 1:
+                raise TimeoutError("first visual attempt timed out")
+            result = json.loads(json.dumps(payload, ensure_ascii=False))
+            result.setdefault("review", {})["visual_grounding_check"] = "bounded retry completed"
+            return result
+
+        ai_skill_service.call_visual_grounder_skill = flaky_visual_grounder
+        retried_visual = ai_skill_service.call_dashscope_refine_cases(
+            base_payload["title"],
+            base_payload["module"],
+            base_payload,
+            ["Figma 文档打印页面"],
+            [{"mime": "image/png", "base64": "AA=="}],
+            timeout_seconds=90,
+            legacy_fallback=False,
+            bounded_retry=True,
+        )
+    finally:
+        ai_skill_service.call_visual_grounder_skill = original_grounder
+    require(
+        len(visual_attempt_timeouts) == 2
+        and visual_attempt_timeouts[0] == 45
+        and 45 <= visual_attempt_timeouts[1] <= 90
+        and retried_visual.get("review", {}).get("visual_grounder_attempts", {}).get("retryUsed") is True,
+        "Mindmap visual grounding must provide two useful attempts inside the original per-batch budget",
     )
     rich_visual_payload = json.loads(json.dumps(base_payload, ensure_ascii=False))
     rich_visual_payload["cases"][0]["execution_trace"] = {"large": "x" * 2000}
@@ -6077,7 +6322,12 @@ def main():
         and "targets=planned_generation_targets" in yaml_service_source,
         "The platform-clamped 3/5/8 scope plan must govern generation, coverage audit and final smoke selection",
     )
-    require("base_payload = normalize_cases_payload(base_payload)" in ai_skill_service_source and "grounded = normalize_cases_payload(grounded)" in ai_skill_service_source, "Visual grounding must normalize payload containers before merging review/analysis")
+    require(
+        "base_payload = normalize_cases_payload(base_payload)" in ai_skill_service_source
+        and "grounded = copy.deepcopy(grounded_payload)" in ai_skill_service_source
+        and "return normalize_cases_payload(merged)" in ai_skill_service_source,
+        "Visual grounding must accept sparse deltas while normalizing the final merged payload",
+    )
     require("def _run_ai_skill_call_with_hard_timeout" in ai_skill_service_source and "future.result(timeout=timeout_seconds)" in ai_skill_service_source and "executor.shutdown(wait=False, cancel_futures=True)" in ai_skill_service_source, "Text AI skills must have a hard timeout around AI Gateway calls")
     require("except TimeoutError:" in ai_skill_service_source and 'f"AI Gateway skill {skill_name}"' in ai_skill_service_source, "AI Gateway skill timeout must surface to requirement/scenario fallbacks instead of falling into another long provider call")
     require("respect_global_timeout=timeout_seconds is None" in ai_skill_service_source and "retry_count=None if timeout_seconds is None else 0" in ai_skill_service_source, "Short visual grounding timeouts must bypass the global long AI timeout")
@@ -6266,8 +6516,11 @@ def main():
     require(
         "mindmap_visual_batch_results" in yaml_service_source
         and "mindmap_visual_batches_attempted" in yaml_service_source
+        and "bounded_retry=True" in yaml_service_source
+        and '"attemptCount"' in yaml_service_source
+        and '"judgement"' in yaml_service_source
         and "已记录并继续下一批" in yaml_service_source,
-        "Mindmap visual grounding must preserve every batch outcome and continue after one soft-reference failure",
+        "Mindmap visual grounding must retry inside the batch budget, preserve every outcome and continue after one soft-reference failure",
     )
     require("refreshMindmapActiveTasks" in app_js_source and "{ refreshJobs: false }" in app_js_source, "Mindmap center must update active tasks without full-list refresh flicker")
     require("generation_mindmap_record_deleted_path" in yaml_service_source and '"/api/cases/mindmap-record"' in router_source, "Mindmap center must support deleting/hiding generation records")
