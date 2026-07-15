@@ -1999,3 +1999,49 @@ git diff --check
 待完成：
 
 - 推送并部署本轮前端修复后，在真实 Agent 失败记录上复核轮询期间的触控滚动、失败卡片字段和 Runner 报告链接。
+
+### 2026-07-15 部署后真实回归：新端点有界首屏收敛
+
+部署 `b1e3e96` 后真实验证：
+
+- 8091 / 8088、AI Gateway、Sonic 健康，text / VL 模型均为 `qwen3.6-plus`；线上静态资源为 `b1e3e96`。
+- Agent：`agent-1784099684235-43f82f1f`；终态 `FAILED / GENERATE_YAML`，没有创建 Runner job，因此本轮没有手机执行结果，也没有向第二台设备下发任务。
+- PREPARE_SOURCE 正确解析 Figma 4 页 / 4 图。PLAN 将 4 张图逐批真实送入视觉模型，4 批均约 90 秒超时，`attempted=4`、`done=0`、`status=failed`、`hardGate=false`；Figma 文本与页面计数仍作为软参考保留，没有改动 Figma 解析。
+- AI 生成 8 个业务分支，并把 5 寸照片放在照片打印分支。生成阶段保存 8 个场景、3 条 executable 展示检查和多条自动候选，但最终覆盖门禁仍缺文档 / 照片 / 扫描三条 reachability，并把扫描分支“展示百度网盘入口”误判为缺文案覆盖。
+
+失败根因：
+
+- 上游 `automation_filter` 已分别生成 `TC-004 / TC-005 / TC-008`：点击目标入口后只等待授权页或文件列表页等首个合法可见状态，不输入账号 / 验证码、不确认授权、不选择文件。
+- 初始 executable 已分别引用同需求分支的成功来源页基线并形成可信导航。最终收敛 AI 却把“新目标落地页没有历史成功基线”当成 manual 理由，忽略了新功能本来就不可能预先拥有目标页成功基线，导致同一次 Agent 内两次 AI 判断冲突。
+- `case_covers_requirement_acceptance(kind=copy)` 只识别“文案 / 文字 / 显示为”等术语，没有把断言中的“展示目标文字入口”计作文案证据；点击步骤本身仍不应计作文案覆盖。
+
+本轮通用修复：
+
+- 最终收敛仍只调用现有一次 AI。平台为缺失的 reachability 提供结构化 `convergenceEvidence`：同需求 executable 的成功来源页路径 + 上游 AI 候选的目标点击和有界首屏尾链。规划提示明确：来源页基线不需要证明新端点目标页已经成功执行，应让后续 YAML、评分、dry-run 和 Runner 验证真实首个终态。
+- 只有自动候选、显式缺失的 reachability、同需求成功来源页、至少两个可观察终态、真实文字点击、无坐标且无深层账号 / 授权确认 / 文件操作时才允许合并；统一进入 `remaining`，不挤占 smoke。AI 仍可决定其余候选，平台保留分类、静态 scorer、dry-run 和真实 Runner 门禁。
+- 若收敛 AI 明确降级上述已验证候选，平台记录原模型级别 / 原因并保留安全短链路，解决同一次流程内 AI 决策互相覆盖；AI 漏回的普通未决候选仍不会自动升级。
+- 文案审计接受断言中“展示 / 显示 / 可见 / 出现 + 目标文字”的具体证据；仅点击目标、仅图标或明确无文字仍不能满足 copy。
+- 没有新增执行模式，没有修改 `router.py`、Figma 解析、历史 YAML、设备策略、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+线上失败产物离线重放：
+
+- 修正文案审计后，初始覆盖从旧逻辑的 8 / 12 变为真实的 9 / 12，只剩三条 reachability。
+- 同一线上候选经新收敛得到 `TC-004 / TC-005 / TC-008` 三条 `remaining`，来源分别为 `TC-001 / TC-002 / TC-003`；最终覆盖 12 / 12、`afterOk=true`。
+- 合并时只移除来源展示 case 末尾与目标文字相同的重复校验，父页面层级和加载等待均保留；三条真实 YAML 均为 executable、scorer 100、0 warning、0 坐标。
+- 三条任务均通过 `_case_manual_block_reason`；加入“点击同意授权 + 输入账号验证码 + 选择文件”后仍被硬阻断。弱网、字体 / 系统设置、布局重复项没有因数量目标被升级。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交、推送并部署本轮修复。
+- 部署后使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询 Agent、smoke、remaining 与可能的 AI 修复到终态，并人工复核最终 YAML、真实 Runner 报告、截图和失败归因。

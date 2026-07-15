@@ -73,6 +73,7 @@ from task_server.services.yaml_service import (
     normalize_yaml_task_block_from_model,
     baseline_branch_anchor_terms,
     diff_yaml,
+    _case_is_bounded_external_landing_check,
 )
 from task_server.services.knowledge_service import (
     repair_knowledge_context,
@@ -1647,9 +1648,30 @@ def case_covers_requirement_acceptance(case, check):
             "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序", "左侧", "右侧",
         )) for item in compact_items)
     if kind == "copy":
-        return any(any(term in item for term in (
+        negative_copy_terms = (
+            "仅显示图标", "只有图标", "无文字", "无文案", "文字缺失", "文案缺失",
+            "不显示文字", "未显示文字", "不显示文案", "未显示文案",
+        )
+        explicit_copy_terms = (
             "文案", "文字", "文本", "命名", "名称", "完整", "截断", "清晰", "显示为",
-        )) for item in compact_items)
+        )
+        if any(
+            not any(negative in item for negative in negative_copy_terms)
+            and any(term in item for term in explicit_copy_terms)
+            for item in compact_items
+        ):
+            return True
+        assertion_items = []
+        for key in ("assertions", "expected", "expected_result", "expectedResult"):
+            assertion_items.extend(normalize_text_list(case.get(key)))
+        plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+        assertion_items.extend(normalize_text_list(plan.get("assertionTarget")))
+        return bool(targets) and any(
+            any(term in item for term in targets)
+            and any(verb in item for verb in ("展示", "显示", "可见", "出现"))
+            and not any(negative in item for negative in negative_copy_terms)
+            for item in assertion_items
+        )
     if kind == "visibility":
         return any(any(term in item for term in ("可见", "展示", "显示", "存在", "出现", "看见")) for item in compact_items)
     check_text = re.sub(r"\s+", "", str(check.get("text") or "")).lower()
@@ -3394,6 +3416,99 @@ def executable_yaml_portfolio_audit(payload, targets=None):
     }
 
 
+def _bounded_convergence_evidence(normalized, automatic_records, audit):
+    """Compose a trusted source-page path with an AI-authored bounded landing tail."""
+    normalized = normalized if isinstance(normalized, dict) else {}
+    audit = audit if isinstance(audit, dict) else {}
+    missing_checks = [
+        item for item in (audit.get("missingAcceptanceChecks") or [])
+        if isinstance(item, dict) and str(item.get("kind") or "").strip().lower() == "reachability"
+    ]
+    sources = {}
+    for case in normalized.get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+        if (
+            str(case.get("executionLevel") or case.get("execution_level") or "").strip().lower() == "executable"
+            and plan.get("baselineGrounded") is True
+            and plan.get("pathPlanApplied") is True
+        ):
+            for requirement_id in _acceptance_requirement_ids([
+                case.get("coverage"), case.get("requirementRefs"), case.get("requirement_refs"),
+            ]):
+                sources.setdefault(requirement_id, case)
+    evidence_by_id = {}
+    for check in missing_checks:
+        requirement_id = str(check.get("requirementId") or "").strip()
+        source_case = sources.get(requirement_id)
+        if not source_case:
+            continue
+        source_plan = source_case.get("ai_case_plan") or {}
+        source_flow = normalize_text_list(source_plan.get("flow") or source_case.get("steps"))
+        baseline_id = str(source_plan.get("baselineId") or "").strip()
+        precondition = str(source_plan.get("precondition") or "").strip()
+        if not baseline_id or not precondition or len(source_flow) < 2:
+            continue
+        for record in automatic_records:
+            raw_case = (record or {}).get("raw") or {}
+            case_id = str(((record or {}).get("compact") or {}).get("case_id") or "").strip()
+            requirement_refs = normalize_text_list(
+                raw_case.get("requirementRefs") or raw_case.get("requirement_refs") or raw_case.get("coverage")
+            )[:8]
+            if not case_id or not requirement_refs or requirement_id not in _acceptance_requirement_ids([
+                raw_case.get("coverage"), raw_case.get("requirementRefs"), raw_case.get("requirement_refs"),
+            ]):
+                continue
+            steps = normalize_text_list(raw_case.get("steps"))
+            targets = _acceptance_target_terms(check.get("text"))
+            click_index = next((
+                index for index in range(len(steps) - 1, -1, -1)
+                if "点击" in steps[index]
+                and "坐标" not in steps[index]
+                and (any(term in steps[index] for term in targets) or (
+                    not targets and any(term in steps[index] for term in ("入口", "按钮", "第三方"))
+                ))
+            ), -1)
+            tail = steps[click_index:] if click_index >= 0 else []
+            navigation_flow = list(source_flow)
+            if (
+                navigation_flow
+                and navigation_flow[-1].startswith(("校验", "验证", "检查"))
+                and any(term in navigation_flow[-1] for term in targets)
+            ):
+                navigation_flow.pop()
+            flow = navigation_flow + tail
+            outcomes = normalize_text_list(
+                raw_case.get("assertions") or raw_case.get("expected_result") or raw_case.get("expected")
+            )
+            terminal_assertions = []
+            for step in tail[1:]:
+                terminal = re.sub(r"^(?:等待|观察|检查|验证)", "", step).strip()
+                terminal_assertions.append(re.sub(r"(?:加载完成|加载)$", "可见", terminal))
+            assertion_target = "；".join((terminal_assertions + outcomes)[:4])
+            probe = {
+                "steps": flow,
+                "assertions": [assertion_target],
+                "requirementRefs": requirement_refs,
+                "ai_case_plan": {"baselineGrounded": True, "pathPlanApplied": True},
+            }
+            if len(flow) > 8 or not _case_is_bounded_external_landing_check(probe):
+                continue
+            evidence_by_id[case_id] = {
+                "eligible": True,
+                "sourceCaseId": str(source_case.get("case_id") or "").strip(),
+                "baselineId": baseline_id,
+                "precondition": precondition,
+                "flow": flow,
+                "assertionTarget": assertion_target,
+                "requirementRefs": requirement_refs,
+                "acceptanceCheckIds": [str(check.get("id") or "").strip()],
+            }
+            break
+    return evidence_by_id
+
+
 def _focus_executable_convergence_candidates(
     normalized,
     automatic_records,
@@ -3443,6 +3558,15 @@ def _focus_executable_convergence_candidates(
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
     focused_manual = []
     selected_manual_ids = set()
+    bounded_evidence_by_id = _bounded_convergence_evidence(
+        normalized,
+        automatic_records,
+        audit,
+    )
+    for record in focused_automatic:
+        candidate_id = str(record["compact"].get("case_id") or "").strip()
+        if candidate_id in bounded_evidence_by_id:
+            record["compact"]["convergenceEvidence"] = bounded_evidence_by_id[candidate_id]
 
     # One alternate per uncovered requirement keeps the final request bounded while
     # still allowing AI to recover a better candidate than the unresolved automatic one.
@@ -3484,6 +3608,7 @@ def _focus_executable_convergence_candidates(
         "targetExecutableCount": target_count,
         "currentExecutableCount": executable_count,
         "candidateSelectionMode": candidate_selection_mode,
+        "boundedLandingCandidateIds": sorted(bounded_evidence_by_id),
     }
     context["focus"] = focus
     return automatic, manual, context, focus
@@ -3568,6 +3693,13 @@ def call_skill_executable_yaml_planner(
         )
     )
     candidates = automatic_candidates + manual_candidates
+    candidate_eligibility_by_id = {
+        str(item.get("case_id") or "").strip(): copy.deepcopy(item.get("convergenceEvidence"))
+        for item in candidates
+        if str(item.get("case_id") or "").strip()
+        and isinstance(item.get("convergenceEvidence"), dict)
+        and item["convergenceEvidence"].get("eligible") is True
+    }
     trace = {
         "enabled": True,
         "fallback": False,
@@ -3588,6 +3720,7 @@ def call_skill_executable_yaml_planner(
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
+            "candidateEligibilityById": candidate_eligibility_by_id,
         }
     compact_baselines = [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])]
     allowed_baseline_ids = {str(item.get("id") or "").strip() for item in compact_baselines if str(item.get("id") or "").strip()}
@@ -3659,6 +3792,7 @@ def call_skill_executable_yaml_planner(
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
+            "candidateEligibilityById": candidate_eligibility_by_id,
         }
     except Exception as exc:
         trace.update({"fallback": True, "error": str(exc)})
@@ -3668,6 +3802,7 @@ def call_skill_executable_yaml_planner(
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
+            "candidateEligibilityById": candidate_eligibility_by_id,
         }
 
 
@@ -3738,6 +3873,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         for idx, item in enumerate(normalized.get("manual_cases") or [])
         if isinstance(item, dict)
     ]
+    bounded_evidence_by_id = plan.get("candidateEligibilityById")
+    bounded_evidence_by_id = (
+        bounded_evidence_by_id
+        if convergence_pass and isinstance(bounded_evidence_by_id, dict)
+        else {}
+    )
     unmentioned_count = 0
     unmentioned_manual_count = 0
     promoted_manual_count = 0
@@ -3747,6 +3888,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     path_mapping_guard_count = 0
     preserved_executable_count = 0
     outside_focus_preserved_count = 0
+    bounded_convergence_override_count = 0
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
         case = copy.deepcopy(record["case"])
@@ -3786,6 +3928,51 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                     unmentioned_count += 1
                     if origin_level == "manual":
                         unmentioned_manual_count += 1
+
+        bounded_evidence = bounded_evidence_by_id.get(case_id)
+        bounded_check_ids = {
+            str(value or "").strip()
+            for value in ((bounded_evidence or {}).get("acceptanceCheckIds") or [])
+            if str(value or "").strip()
+        }
+        if (
+            classification is not None
+            and convergence_pass
+            and origin_level == "automatic"
+            and level != "executable"
+            and case_id in focused_candidate_ids
+            and isinstance(bounded_evidence, dict)
+            and bounded_evidence.get("eligible") is True
+            and bounded_check_ids
+            and str(bounded_evidence.get("baselineId") or "").strip() in allowed_baseline_ids
+        ):
+            model_level = level
+            model_reason = str(
+                item.get("reason") or item.get("reviewReason") or item.get("manualReason") or ""
+            ).strip()
+            level = "executable"
+            item = {
+                "caseId": case_id,
+                "title": title,
+                "baselineId": bounded_evidence.get("baselineId") or "",
+                "baselineGrounded": True,
+                "precondition": bounded_evidence.get("precondition") or "",
+                "flow": bounded_evidence.get("flow") or [],
+                "assertionTarget": bounded_evidence.get("assertionTarget") or "",
+                "requirementRefs": bounded_evidence.get("requirementRefs") or [],
+                "executableReason": (
+                    "同需求分支的成功基线负责来源页导航，上游 AI 候选只验证目标入口后的首个可见终态；"
+                    "平台保留后续 YAML、评分、dry-run 与真实 Runner 门禁"
+                ),
+                "batch": "remaining",
+                "boundedConvergence": {
+                    "sourceCaseId": bounded_evidence.get("sourceCaseId") or "",
+                    "acceptanceCheckIds": sorted(bounded_check_ids),
+                    "modelLevel": model_level,
+                    "modelReason": model_reason,
+                },
+            }
+            bounded_convergence_override_count += 1
 
         baseline_id = str(item.get("baselineId") or "").strip()
         baseline_grounded = bool(
@@ -3884,12 +4071,20 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             "assertionTarget": assertion_target,
             "executableReason": item.get("executableReason") or "",
             "batch": item.get("batch") or "",
+            "boundedConvergence": copy.deepcopy(item.get("boundedConvergence") or {}),
         }
         if precondition and not case.get("preconditions"):
             case["preconditions"] = [precondition]
-        if assertion_target and not normalize_text_list(case.get("assertions")):
+        bounded_evidence_used = bool(item.get("boundedConvergence"))
+        if bounded_evidence_used:
+            _set_case_smoke(case, False)
+        if assertion_target and (
+            bounded_evidence_used or not normalize_text_list(case.get("assertions"))
+        ):
             case["assertions"] = [assertion_target]
-        if assertion_target and not str(case.get("expected_result") or "").strip():
+        if assertion_target and (
+            bounded_evidence_used or not str(case.get("expected_result") or "").strip()
+        ):
             case["expected_result"] = assertion_target
         if assertion_target and not str(case.get("goal") or "").strip():
             case["goal"] = assertion_target
@@ -3941,6 +4136,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "path_mapping_guard_count": path_mapping_guard_count,
         "preserved_executable_count": preserved_executable_count,
         "outside_focus_preserved_count": outside_focus_preserved_count,
+        "bounded_convergence_override_count": bounded_convergence_override_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,

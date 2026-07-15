@@ -295,6 +295,177 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ai_skill_service.executable_yaml_portfolio_audit(generic_complete_payload, {"min_automation_cases": 2}).get("ok"),
         "A visible-text bounded destination check must close the source acceptance contract without requiring deep account actions",
     )
+    copy_check = next(
+        item for item in generic_acceptance_checks
+        if item.get("requirementId") == "REQ-002" and item.get("kind") == "copy"
+    )
+    require(
+        ai_skill_service.case_covers_requirement_acceptance({
+            "requirementRefs": ["REQ-002"],
+            "steps": ["进入优惠券页面"],
+            "assertions": ["优惠券页面展示「发票」入口"],
+        }, copy_check),
+        "A concrete assertion that displays the expected target literal must satisfy copy acceptance",
+    )
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance({
+            "requirementRefs": ["REQ-002"],
+            "steps": ["点击「发票」入口"],
+        }, copy_check),
+        "A click-only target mention must not satisfy copy acceptance",
+    )
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance({
+            "requirementRefs": ["REQ-002"],
+            "assertions": ["「发票」入口仅显示图标、无文字"],
+        }, copy_check),
+        "An icon-only assertion must not be misreported as target-copy coverage",
+    )
+
+    bounded_convergence_payload = json.loads(json.dumps(generic_display_payload, ensure_ascii=False))
+    for case in bounded_convergence_payload.get("cases") or []:
+        case["ai_case_plan"] = {
+            "baselineId": "base-entry-nav",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": list(case.get("steps") or []) + ["校验「发票」入口可见"],
+            "assertionTarget": (case.get("assertions") or [""])[0],
+            "pathPlanApplied": True,
+            "batch": "smoke",
+        }
+    for index, branch in enumerate(("订单管理", "优惠券"), start=1):
+        bounded_convergence_payload["cases"].append({
+            "case_id": f"TC-R{index:02d}",
+            "title": f"{branch}发票入口首个落地页",
+            "executionLevel": "needs_review",
+            "requirementRefs": [f"REQ-{index:03d}"],
+            "steps": [
+                f"进入{branch}",
+                "点击发票入口",
+                "等待授权页、登录页或内容列表任一合法页面可见",
+            ],
+            "assertions": [
+                (
+                    "授权页、登录页或内容列表任一合法页面可见，且无长时间白屏或崩溃"
+                    if index == 1
+                    else f"页面已离开{branch}页并显示外部相关页面，无Crash或长时间白屏"
+                ),
+            ],
+        })
+    bounded_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        bounded_convergence_payload,
+        {"min_automation_cases": 2},
+    )
+    require(
+        not bounded_audit.get("ok")
+        and bounded_audit.get("missingAcceptanceCheckCount") == 2
+        and all(item.get("kind") == "reachability" for item in bounded_audit.get("missingAcceptanceChecks") or []),
+        "Bounded landing candidates must remain unresolved until the existing AI convergence pass classifies them",
+    )
+    bounded_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_bounded_convergence_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during bounded convergence replay")
+            bounded_requests.append(request)
+            executable = []
+            downgraded = []
+            for candidate in request.get("cases") or []:
+                if candidate.get("currentLevel") == "executable":
+                    executable.append({
+                        "caseId": candidate["case_id"],
+                        "baselineId": "base-entry-nav",
+                        "precondition": "App 首页",
+                        "flow": candidate.get("steps") or [],
+                        "assertionTarget": (candidate.get("assertions") or [""])[0],
+                        "requirementRefs": candidate.get("requirementRefs") or [],
+                        "executableReason": "成功基线已覆盖来源页导航",
+                        "batch": "smoke",
+                    })
+                else:
+                    downgraded.append({
+                        "caseId": candidate["case_id"],
+                        "reason": "新目标落地页没有历史成功执行基线，建议人工确认",
+                        "requirementRefs": candidate.get("requirementRefs") or [],
+                    })
+            return {
+                "cases": executable,
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": downgraded,
+                "review": {"planning_reason": "模拟 AI 对新端点过度保守"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_bounded_convergence_planner
+        bounded_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "新增发票入口",
+            "会员服务",
+            bounded_convergence_payload,
+            [{
+                "id": "base-entry-nav",
+                "title": "会员入口来源页稳定导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "首页 -> 会员服务入口",
+            }],
+            {"smokeCount": 2},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": bounded_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    bounded_request_candidates = {
+        item.get("case_id"): item for item in bounded_requests[0].get("cases") or []
+    }
+    require(
+        all(
+            bounded_request_candidates[f"TC-R{index:02d}"].get("convergenceEvidence", {}).get("eligible") is True
+            for index in (1, 2)
+        ),
+        "The one existing convergence AI call must receive platform-verified source-path plus bounded-tail evidence",
+    )
+    bounded_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        bounded_convergence_payload,
+        bounded_plan,
+    )
+    bounded_by_id = {item.get("case_id"): item for item in bounded_applied.get("cases") or []}
+    require(
+        all(
+            bounded_by_id[f"TC-R{index:02d}"].get("executionLevel") == "executable"
+            and bounded_by_id[f"TC-R{index:02d}"].get("ai_case_plan", {}).get("boundedConvergence", {}).get("sourceCaseId")
+            and bounded_by_id[f"TC-R{index:02d}"].get("ai_case_plan", {}).get("batch") == "remaining"
+            and not bounded_by_id[f"TC-R{index:02d}"].get("smoke")
+            and "校验「发票」入口可见" not in bounded_by_id[f"TC-R{index:02d}"].get("steps", [])
+            and "授权页" in (bounded_by_id[f"TC-R{index:02d}"].get("assertions") or [""])[0]
+            and any(
+                term in (bounded_by_id[f"TC-R{index:02d}"].get("assertions") or [""])[0]
+                for term in ("无Crash", "无长时间白屏")
+            )
+            for index in (1, 2)
+        )
+        and bounded_applied.get("review", {}).get("executable_yaml_plan", {}).get("bounded_convergence_override_count") == 2,
+        "A contradictory AI downgrade must retain the safe upstream AI landing candidates as auditable remaining cases",
+    )
+    require(
+        ai_skill_service.executable_yaml_portfolio_audit(
+            bounded_applied,
+            {"min_automation_cases": 2},
+        ).get("ok"),
+        "Grounded bounded landing cases must close the explicit reachability gaps without a synthetic case-count floor",
+    )
+    for index in (1, 2):
+        require(
+            yaml_service._case_manual_block_reason(bounded_by_id[f"TC-R{index:02d}"]) == "",
+            "A source-grounded bounded landing check must survive the deterministic Runner eligibility gate",
+        )
+    deep_bounded = json.loads(json.dumps(bounded_by_id["TC-R01"], ensure_ascii=False))
+    deep_bounded["steps"].extend(["点击同意授权", "输入账号和验证码", "选择文件"])
+    require(
+        yaml_service._case_manual_block_reason(deep_bounded),
+        "Bounded convergence must never admit credential, authorization-confirmation, or file-selection actions",
+    )
     require(preview.get("candidateOnly") and preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate coverage candidates from the later AI business plan")
     plan_context = yaml_service.build_agent_business_plan_context_text({
         "source": "platform_mindmap_ai",
@@ -733,7 +904,9 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(
         "Figma、截图和页面知识是软参考" in planner_prompt
         and "运行时入口不存在属于产品断言失败" in planner_prompt
-        and "planningContext.focus" in planner_prompt,
+        and "planningContext.focus" in planner_prompt
+        and "convergenceEvidence.eligible=true" in planner_prompt
+        and "不要求新能力的目标落地页已有历史成功基线" in planner_prompt,
         "Final executable planning must test explicit visible requirements without turning missing sibling Figma frames into a hard gate",
     )
     requirement_prompt = (ROOT / "ai_skills" / "prompts" / "requirement_analyzer.v1.md").read_text(encoding="utf-8")

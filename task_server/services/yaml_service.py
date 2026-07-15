@@ -2347,21 +2347,25 @@ def _case_is_bounded_external_landing_check(case: dict) -> bool:
     if not click_indexes:
         return False
     tail = steps[click_indexes[-1] + 1:]
-    if not tail or any(not str(step).strip().startswith(("等待", "观察", "检查")) for step in tail):
+    if not tail or any(not str(step).strip().startswith(("等待", "观察", "检查", "验证")) for step in tail):
         return False
     if _case_has_deep_external_action(case):
         return False
     outcome_text = " ".join(normalize_text_list(
         case.get("assertions") or case.get("expected_result") or case.get("expected")
     ))
-    if not any(term in outcome_text for term in ("任一", "之一", "任意")):
+    if not any(term in outcome_text for term in ("任一", "之一", "任意", "或")):
         return False
     observable_states = (
-        "授权", "登录", "H5", "网页", "文件选择", "内容列表", "文件列表", "空态", "系统弹窗",
+        "授权", "登录", "H5", "网页", "文件选择", "内容列表", "文件列表", "选择页",
+        "空态", "提示页", "系统弹窗",
     )
     if sum(1 for term in observable_states if term in outcome_text) < 2:
         return False
-    return any(term in outcome_text for term in ("无白屏", "不白屏", "无崩溃", "不崩溃", "无Crash", "不闪退"))
+    return any(term in outcome_text for term in (
+        "无白屏", "不白屏", "未白屏", "无长时间白屏", "没有长时间白屏",
+        "无崩溃", "不崩溃", "未崩溃", "无Crash", "未Crash", "不闪退",
+    ))
 
 
 def _case_manual_block_reason(case: dict) -> str:
