@@ -618,6 +618,119 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'agent-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
     await page.evaluate(async () => {
+      const branchNames = ['文档打印入口文案校验', '照片打印入口可达性校验', '扫描复印入口同级关系校验'];
+      const failedExecutionItems = Array.from({length: 12}, (_, index) => ({
+        jobId: `job-failure-${String(index + 1).padStart(2, '0')}`,
+        taskName: `${branchNames[index % branchNames.length]} ${index + 1}`,
+        file: `midscene-tasks/AI_Agent_草稿/${String(index + 1).padStart(2, '0')}-${branchNames[index % branchNames.length]}.yaml`,
+        status: 'failed',
+        failureType: index % 4 === 3 ? 'ENV_ISSUE' : 'SCRIPT_ISSUE',
+        failureReason: index === 0
+          ? '脚本停留在照片打印父页面，仍等待内层规格页的目标文案；Runner 关键帧显示当前页面存在可见的“照片打印”入口，应先完成父子页面导航。'
+          : '当前页面与脚本等待目标不一致，需要结合失败关键帧和同业务成功基线修正可见文字导航。',
+        reportUrl: `/reports/job-failure-${String(index + 1).padStart(2, '0')}.html`,
+      }));
+      agentCurrentRun = normalizeAgentRun({
+        runId: 'agent-failure-visual-001',
+        target: '基础打印新增百度网盘入口',
+        status: 'FAILED',
+        currentStep: 'ANALYZE_FAILURE',
+        updatedAt: '2026-07-15T14:05:14',
+        steps: [{state: 'ANALYZE_FAILURE', status: 'SUCCESS', summary: 'AI 已完成失败归因'}],
+        artifacts: {
+          failureAnalysis: {
+            failureType: 'SCRIPT_ISSUE',
+            conclusion: '失败主要来自脚本导航层级不足：Runner 已到达业务父页面，但 YAML 直接等待叶子页面目标，导致可见文字定位超时。',
+            recommendation: '优先参考同业务成功基线补齐父页面到叶子页的短链路，再使用当前关键帧中的真实可见文字完成稳定态断言。',
+            canAutoRepair: true,
+            summary: JSON.stringify({runnerReport: {failed: 12, logs: '完整 Runner 日志与内部字段仅在技术详情中展示。'.repeat(30)}}),
+            aiEvidence: [
+              '关键帧显示“照片打印”入口可见，但目标规格文案尚未出现。',
+              '同业务成功基线包含父页面到规格页的可见文字点击路径。',
+            ],
+            evidence: {
+              reportKeyframeCount: 3,
+              reportKeyframes: [{name: 'before-failure.png'}, {name: 'failure.png'}, {name: 'after-cleanup.png'}],
+              baselineExamples: [
+                {id: 'baseline-photo-6inch', provenancePath: 'server-tasks-all/小白学习基线用例-基础打印/6寸照片打印.yaml', businessPath: '首页 > 照片打印 > 照片打印 > 6寸照片'},
+                {id: 'baseline-scan', provenancePath: 'server-tasks-all/小白学习基线用例-基础打印/文件扫描.yaml', businessPath: '首页 > 扫描复印 > 文件扫描'},
+              ],
+              sources: ['runner_report', 'report_keyframes', 'successful_baselines'],
+            },
+          },
+          diagnosis: {
+            rootCause: 'YAML 缺少父页面到业务叶子页的可见文字导航。',
+            impact: '12 个 Runner 失败任务需要逐条归因；此前真实通过的任务不受影响。',
+            nextActions: ['生成有界修复草稿', '静态校验通过后在同一固定设备验证'],
+          },
+          failedExecutionItems,
+        },
+      });
+      agentActiveTab = 'failure';
+      await showAgentWorkbench();
+    });
+    await page.waitForSelector('.agent-failure-overview');
+    if (await page.locator('.agent-failure-card').count() !== 3) throw new Error('Failure analysis must use three concise summary cards');
+    if (await page.locator('.agent-failure-task').count() !== 12) throw new Error('Failure analysis lost task-level Runner outcomes');
+    const failureText = await visibleText(page, '#agent-artifact-box');
+    for (const label of ['根因判断', '影响范围', '建议动作', 'AI 判断依据']) {
+      if (!failureText.includes(label)) throw new Error(`Structured failure analysis is missing: ${label}`);
+    }
+    const runErrorFallbackText = await page.evaluate(() => {
+      const holder = document.createElement('div');
+      holder.innerHTML = renderAgentArtifactContent('failure', {
+        runId: 'agent-failure-before-analysis',
+        status: 'FAILED',
+        error: '最终覆盖门禁阻断：扫描复印入口尚未形成可执行 YAML',
+        artifacts: {},
+      }, 'ready');
+      return holder.innerText;
+    });
+    if (!/扫描复印入口尚未形成可执行 YAML/.test(runErrorFallbackText)) throw new Error('Structured failure analysis hid a top-level Agent error before AI RCA completed');
+    if (await page.locator('.agent-failure-technical > .agent-artifact-pre').isVisible()) throw new Error('Raw failure JSON must stay collapsed by default');
+    const artifactScrollBefore = await page.locator('#agent-artifact-box').evaluate(el => {
+      const max = el.scrollHeight - el.clientHeight;
+      el.scrollTop = Math.min(260, max);
+      return {top: el.scrollTop, max};
+    });
+    if (artifactScrollBefore.max < 200 || artifactScrollBefore.top <= 0) throw new Error(`Failure fixture is not scrollable: ${JSON.stringify(artifactScrollBefore)}`);
+    await page.evaluate(() => updateAgentWorkbenchDynamic());
+    const artifactScrollAfter = await page.locator('#agent-artifact-box').evaluate(el => el.scrollTop);
+    if (Math.abs(artifactScrollAfter - artifactScrollBefore.top) > 2) throw new Error(`Agent artifact polling reset scroll position: before=${artifactScrollBefore.top}, after=${artifactScrollAfter}`);
+    await page.locator('.agent-failure-technical > summary').click();
+    const openScrollBefore = await page.locator('#agent-artifact-box').evaluate(el => {
+      el.scrollTop = Math.min(420, el.scrollHeight - el.clientHeight);
+      return el.scrollTop;
+    });
+    await page.evaluate(() => updateAgentWorkbenchDynamic());
+    if (!await page.locator('.agent-failure-technical').evaluate(el => el.open)) throw new Error('Polling collapsed the user-opened technical failure detail');
+    const openScrollAfter = await page.locator('#agent-artifact-box').evaluate(el => el.scrollTop);
+    if (Math.abs(openScrollAfter - openScrollBefore) > 2) throw new Error(`Polling reset scroll after opening technical detail: before=${openScrollBefore}, after=${openScrollAfter}`);
+    await page.locator('.agent-failure-technical > summary').click();
+    await page.locator('#agent-artifact-box').evaluate(el => { el.scrollTop = 0; });
+    await page.locator('#agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-failure.png')});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const failureMobileOverflow = await page.locator('#agent-artifacts-card').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (failureMobileOverflow) throw new Error('Structured failure analysis overflows horizontally on mobile');
+    const failureTypeChipMobile = await page.locator('.agent-failure-overview .failure-type-chip').boundingBox();
+    if (!failureTypeChipMobile || failureTypeChipMobile.width < 54 || failureTypeChipMobile.height > 30) throw new Error(`Failure type chip must remain horizontal on mobile: ${JSON.stringify(failureTypeChipMobile)}`);
+    await page.locator('#agent-artifact-box').evaluate(el => { el.scrollTop = 0; });
+    await page.evaluate(() => {
+      const card = document.querySelector('#agent-artifacts-card');
+      const shell = document.createElement('div');
+      shell.id = 'agent-artifact-visual-shell';
+      shell.style.cssText = 'position:fixed;inset:0;z-index:99999;overflow:auto;padding:8px;background:#02060e;';
+      const clone = card.cloneNode(true);
+      clone.style.width = '100%';
+      clone.style.boxSizing = 'border-box';
+      shell.appendChild(clone);
+      document.body.appendChild(shell);
+    });
+    await page.locator('#agent-artifact-visual-shell > #agent-artifacts-card').screenshot({path: path.join(ARTIFACTS, 'agent-failure-mobile.png')});
+    await page.locator('#agent-artifact-visual-shell').evaluate(el => el.remove());
+    await page.setViewportSize({width: 1440, height: 900});
+    await page.evaluate(async () => {
       agentCurrentRun = normalizeAgentRun({
         runId: 'agent-rerun-visual-001',
         target: '基础打印新增入口回归',
@@ -805,6 +918,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'execution.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
+        path.join(ARTIFACTS, 'agent-failure.png'),
+        path.join(ARTIFACTS, 'agent-failure-mobile.png'),
         path.join(ARTIFACTS, 'agent-rerun.png'),
         path.join(ARTIFACTS, 'agent-rerun-mobile.png'),
       ],

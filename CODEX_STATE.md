@@ -1967,3 +1967,35 @@ git diff --check
 
 - 提交并部署本轮修复。
 - 部署后用完全相同输入再次发起 Agent，持续轮询 Agent、smoke、remaining 和可能的有界修复到终态；人工复核最终 YAML、真实 Runner 报告、截图和失败分类，且所有任务只能下发固定 OPPO `ecbfd645`。
+
+### 2026-07-15 Agent 失败产物可读性与轮询阅读位置修复
+
+问题与根因：
+
+- Agent 产物区的失败分析仍走通用 JSON `<pre>`，把根因、Runner 任务、证据、基线和内部字段压成一整段，无法快速区分“哪里失败、为何失败、影响什么、下一步做什么”。
+- Agent 轮询时 `updateAgentWorkbenchDynamic()` 每次都会替换整个 `agent-artifacts-card.innerHTML`；当前页签虽然由全局状态保留，但产物内容区的 `scrollTop`、移动端导航横向位置和 `<details>` 展开状态没有保存，因此阅读长产物时会周期性跳回顶部。
+- 参考 BrowserStack Test Failure Analysis 的 RCA summary / failure type / impact / fix / evidence 分层、Playwright Trace Viewer 的错误与动作证据下钻，以及 Allure 的步骤 / 附件 / 重试渐进披露方式；本轮只采用适合当前 Agent 的信息层级，不新增模型调用或执行步骤。
+
+本轮修复：
+
+- 失败产物首屏改为结构化信息：失败分类和关键计数、根因判断、影响范围、建议动作；Runner 失败按任务独立列出，展示短文件名、job、状态和报告入口。
+- 明确展示 AI 实际使用的 Runner 关键帧、成功基线和 AI 证据数量及摘要；完整路径、原始分析和 Runner 字段保留在默认折叠的“技术详情”中，“复制当前产物”仍复制完整原始数据。
+- 修复草稿产物复用已有结构化 renderer，不再默认展示原始 JSON。
+- 轮询重绘前捕获当前 run / tab、内容区纵横滚动位置、移动端导航横向位置和详情展开状态；仅在同一 run、同一 tab 重绘后恢复。用户主动切换任务或页签仍从顶部开始，避免错误继承旧位置。
+- 兼容尚未形成 `failureAnalysis`、只有顶层 `run.error` 的早期失败，不会因结构化视图而隐藏真实阻断原因。
+- 未修改 Agent 后端数据格式、AI 调用、Figma 解析、Runner、执行模式、历史 YAML、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+已验证：
+
+```bash
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、Skill 契约 3 个 fixture 及 Playwright 视觉回归全部通过。
+- Playwright 使用 12 条长失败任务、3 张 Runner 关键帧、2 条成功基线和长原始回包验证：失败首屏为三张摘要卡；原始 JSON 默认折叠；普通滚动和打开技术详情后的轮询均保持原位置与展开状态。
+- 桌面和 390px 移动端截图已人工复核；移动端状态标签保持横排，产物卡片无横向溢出。
+
+待完成：
+
+- 推送并部署本轮前端修复后，在真实 Agent 失败记录上复核轮询期间的触控滚动、失败卡片字段和 Runner 报告链接。

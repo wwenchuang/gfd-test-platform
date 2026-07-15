@@ -833,11 +833,49 @@ async function loadAppList(preferredValue) {
 
 // Update only the dynamic parts of the agent workbench (timeline, artifacts, center panel)
 // without replacing the form, so user input in textarea/inputs is not lost during polling.
+function captureAgentArtifactViewState(card) {
+  if (!card) return null;
+  const layout = card.querySelector('.agent-artifact-layout');
+  const box = card.querySelector('#agent-artifact-box');
+  const nav = card.querySelector('.agent-artifact-nav');
+  if (!layout || !box) return null;
+  const detailStates = Array.from(box.querySelectorAll('details')).map((detail, index) => ({
+    key: detail.dataset.agentDetailKey || `detail-${index}`,
+    open: detail.open,
+  }));
+  return {
+    runId: layout.dataset.agentRunId || '',
+    tab: layout.dataset.agentTab || '',
+    boxScrollTop: box.scrollTop,
+    boxScrollLeft: box.scrollLeft,
+    navScrollLeft: nav ? nav.scrollLeft : 0,
+    detailStates,
+  };
+}
+
+function restoreAgentArtifactViewState(card, run, state) {
+  if (!card || !run || !state) return;
+  const runId = String(run.runId || '');
+  if (state.runId !== runId || state.tab !== agentActiveTab) return;
+  const box = card.querySelector('#agent-artifact-box');
+  const nav = card.querySelector('.agent-artifact-nav');
+  if (!box) return;
+  const detailStateByKey = new Map((state.detailStates || []).map(item => [item.key, item.open]));
+  Array.from(box.querySelectorAll('details')).forEach((detail, index) => {
+    const key = detail.dataset.agentDetailKey || `detail-${index}`;
+    if (detailStateByKey.has(key)) detail.open = detailStateByKey.get(key);
+  });
+  box.scrollTop = Math.min(state.boxScrollTop || 0, Math.max(0, box.scrollHeight - box.clientHeight));
+  box.scrollLeft = state.boxScrollLeft || 0;
+  if (nav) nav.scrollLeft = state.navScrollLeft || 0;
+}
+
 function updateAgentWorkbenchDynamic() {
   const run = currentAgentRun();
   const progressEl = document.getElementById('agent-progress');
   const artifactsCard = document.getElementById('agent-artifacts-card');
   const riskLevelEl = document.getElementById('agent-risk-level');
+  const artifactViewState = captureAgentArtifactViewState(artifactsCard);
 
   if (progressEl) {
     progressEl.innerHTML = run ? renderAgentTimeline(run) : '';
@@ -848,6 +886,7 @@ function updateAgentWorkbenchDynamic() {
   }
   if (artifactsCard && run) {
     artifactsCard.innerHTML = renderAgentArtifactPanel(run);
+    restoreAgentArtifactViewState(artifactsCard, run, artifactViewState);
   }
   if (riskLevelEl) {
     const goal = document.getElementById('agent-goal')?.value || '';
@@ -2249,10 +2288,13 @@ function renderAgentArtifactEmpty(tab, state) {
 
 function renderAgentArtifactContent(tab, run, state = agentArtifactState(tab, run)) {
   if (state !== 'ready') return renderAgentArtifactEmpty(tab, state);
+  const artifacts = (run && run.artifacts) || {};
   if (tab === 'plan') return renderPlanDetail({}, (run && run.artifacts) || {});
   if (tab === 'quality') return renderAgentQualityArtifact(run);
   if (tab === 'validation') return renderValidateYamlDetail({}, (run && run.artifacts) || {});
   if (tab === 'report') return renderAgentReportArtifact(run);
+  if (tab === 'failure') return renderAnalysisDetail({}, artifacts, run);
+  if (tab === 'repair') return renderRepairDraftDetail({}, artifacts);
   if (tab === 'summary') return renderAgentSummaryArtifact(run);
   const artifactText = typeof agentArtifactText === 'function' ? agentArtifactText(tab, run) : '';
   return `<pre class="agent-artifact-pre">${escapeHtml(artifactText)}</pre>`;
@@ -2277,7 +2319,7 @@ function renderAgentArtifactPanel(run) {
       ? '<button class="btn-sm" type="button" onclick="downloadAgentMindmap()">下载脑图</button>'
       : ''
   ].filter(Boolean);
-  const rich = ['plan', 'quality', 'validation', 'report', 'summary'].includes(agentActiveTab);
+  const rich = ['plan', 'quality', 'validation', 'report', 'failure', 'repair', 'summary'].includes(agentActiveTab);
   return `
     <div class="agent-artifact-head">
       <div>
@@ -2286,7 +2328,9 @@ function renderAgentArtifactPanel(run) {
       </div>
       ${actions.length ? `<div class="agent-artifact-actions">${actions.join('')}</div>` : ''}
     </div>
-    <div class="agent-artifact-layout">
+    <div class="agent-artifact-layout"
+         data-agent-run-id="${escapeHtml(run?.runId || '')}"
+         data-agent-tab="${escapeHtml(agentActiveTab)}">
       <nav class="agent-artifact-nav" aria-label="Agent 产物导航">
         ${AGENT_ARTIFACT_GROUPS.map(group => `
           <section class="agent-artifact-nav-group">
@@ -2430,34 +2474,162 @@ function renderValidateYamlDetail(step, artifacts) {
 }
 
 // ===== ANALYZE_FAILURE 分析详情 =====
-function renderAnalysisDetail(step, artifacts) {
-  const analysis = (artifacts || {}).failureAnalysis || {};
+function agentCompactDisplayText(value, maxLength = 420) {
+  if (value == null) return '';
+  const source = typeof value === 'string' ? value : JSON.stringify(value);
+  const text = String(source || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trim()}...`;
+}
+
+function agentFailureTypeMeta(value) {
+  const key = String(value || 'UNKNOWN').toUpperCase();
+  const meta = {
+    NONE: {label: '无失败', className: 'failure-none'},
+    PRODUCT_BUG: {label: '产品问题', className: 'failure-product_bug'},
+    SCRIPT_ISSUE: {label: '脚本问题', className: 'failure-script_issue'},
+    ENV_ISSUE: {label: '环境问题', className: 'failure-env_issue'},
+    CONFIG_ISSUE: {label: '配置问题', className: 'failure-config_issue'},
+    UNKNOWN: {label: '待归因', className: 'failure-unknown'},
+  }[key] || {label: key, className: 'failure-unknown'};
+  return {...meta, key};
+}
+
+function renderAnalysisDetail(step, artifacts, run = null) {
+  const storedAnalysis = (artifacts || {}).failureAnalysis || (run && run.failureAnalysis) || null;
+  const analysis = storedAnalysis && typeof storedAnalysis === 'object'
+    ? storedAnalysis
+    : (storedAnalysis ? {conclusion: String(storedAnalysis)} : {});
   const failedItems = (artifacts || {}).failedExecutionItems || [];
-  let html = '<div class="analysis-detail agent-readable-detail">';
-  const typeLabel = {
-    'NONE': '无失败',
-    'ENV_ISSUE': '环境问题',
-    'CONFIG_ISSUE': '配置问题',
-    'SCRIPT_ISSUE': '脚本问题',
-  }[analysis.failureType] || analysis.failureType || '未分析';
-  html += agentInfoGrid([
-    { label: '失败类型', value: typeLabel },
-    { label: '失败任务数', value: failedItems.length || '-' },
-    { label: '结论', value: analysis.conclusion || '暂无' },
-    { label: '建议', value: analysis.recommendation || '暂无' },
-  ]);
+  const diagnosis = (artifacts || {}).diagnosis || (step && step.diagnosis) || {};
+  const runError = agentCompactDisplayText(run && run.error, 420);
+  const evidence = analysis.evidence && typeof analysis.evidence === 'object' ? analysis.evidence : {};
+  const keyframes = Array.isArray(evidence.reportKeyframes) ? evidence.reportKeyframes : [];
+  const keyframeCount = Number(evidence.reportKeyframeCount ?? keyframes.length) || 0;
+  const baselines = Array.isArray(evidence.baselineExamples) ? evidence.baselineExamples : [];
+  const aiEvidence = Array.isArray(analysis.aiEvidence) ? analysis.aiEvidence : [];
+  const nextActions = Array.isArray(diagnosis.nextActions) ? diagnosis.nextActions.filter(Boolean) : [];
+  const typeMeta = agentFailureTypeMeta(analysis.failureType);
+  const conclusion = agentCompactDisplayText(
+    analysis.conclusion || diagnosis.rootCause || runError || analysis.summary || '尚未形成明确根因。'
+  );
+  const impact = agentCompactDisplayText(
+    diagnosis.impact || (failedItems.length
+      ? `${failedItems.length} 个 Runner 任务未通过；其他已通过任务继续保留真实结果。`
+      : '当前 Agent 阶段受阻，尚无 Runner 失败任务明细。')
+  );
+  const recommendation = agentCompactDisplayText(
+    analysis.recommendation || (!nextActions.length ? '尚无可执行修复建议，需继续补充失败证据。' : '')
+  );
+  const repairLabel = Object.prototype.hasOwnProperty.call(analysis, 'canAutoRepair')
+    ? (analysis.canAutoRepair ? '可自动修复' : '不可直接修复')
+    : '待判断';
+  let html = '<div class="analysis-detail agent-readable-detail agent-failure-detail">';
+  html += `
+    <section class="agent-failure-overview" data-failure-type="${escapeHtml(typeMeta.key)}">
+      <div class="agent-failure-overview-copy">
+        <span class="failure-type-chip ${escapeHtml(typeMeta.className)}">${escapeHtml(typeMeta.label)}</span>
+        <div>
+          <strong>失败归因已生成</strong>
+          <span>执行结果与编排状态分开统计，当前仅解释未通过任务。</span>
+        </div>
+      </div>
+      <div class="agent-failure-metrics">
+        <div><span>失败任务</span><b>${escapeHtml(failedItems.length)}</b></div>
+        <div><span>Runner 关键帧</span><b>${escapeHtml(keyframeCount)}</b></div>
+        <div><span>成功基线</span><b>${escapeHtml(baselines.length)}</b></div>
+        <div><span>修复判断</span><b>${escapeHtml(repairLabel)}</b></div>
+      </div>
+    </section>
+    <div class="agent-failure-card-grid">
+      <article class="agent-failure-card is-cause">
+        <span>根因判断</span>
+        <p>${escapeHtml(conclusion)}</p>
+      </article>
+      <article class="agent-failure-card is-impact">
+        <span>影响范围</span>
+        <p>${escapeHtml(impact)}</p>
+      </article>
+      <article class="agent-failure-card is-action">
+        <span>建议动作</span>
+        ${recommendation ? `<p>${escapeHtml(recommendation)}</p>` : ''}
+        ${nextActions.length ? `<ul>${nextActions.slice(0, 5).map(item => `<li>${escapeHtml(agentCompactDisplayText(item, 180))}</li>`).join('')}</ul>` : ''}
+      </article>
+    </div>
+  `;
   if (failedItems.length) {
-    html += agentReadableList('失败任务明细', failedItems.slice(0, 15), item => (
-      `<b>${escapeHtml(item.taskName || item.file || item.jobId || '失败任务')}</b>` +
-      `<span>${escapeHtml(item.file || '')}${item.failureReason ? ' · ' + escapeHtml(item.failureReason) : ''}</span>`
-    ));
+    html += `
+      <section class="agent-failure-task-section">
+        <header class="agent-failure-section-head">
+          <strong>失败任务</strong>
+          <span>${escapeHtml(failedItems.length)} 项</span>
+        </header>
+        <div class="agent-failure-task-list">
+          ${failedItems.slice(0, 15).map((item, index) => {
+            const itemType = agentFailureTypeMeta(item.failureType || analysis.failureType);
+            const file = String(item.file || '');
+            const fileName = file.split(/[\\/]/).pop() || file;
+            const reason = agentCompactDisplayText(
+              item.failureReason || item.error || item.summaryText || 'Runner 未返回明确失败原因。',
+              320
+            );
+            return `
+              <article class="agent-failure-task">
+                <header>
+                  <div>
+                    <span class="agent-failure-task-index">${String(index + 1).padStart(2, '0')}</span>
+                    <strong>${escapeHtml(item.taskName || fileName || item.jobId || '失败任务')}</strong>
+                  </div>
+                  <span class="failure-type-chip ${escapeHtml(itemType.className)}">${escapeHtml(itemType.label)}</span>
+                </header>
+                <p>${escapeHtml(reason)}</p>
+                <div class="agent-failure-task-meta">
+                  ${fileName ? `<span><b>脚本</b><code title="${escapeHtml(file)}">${escapeHtml(fileName)}</code></span>` : ''}
+                  ${item.jobId ? `<span><b>任务</b><code>${escapeHtml(item.jobId)}</code></span>` : ''}
+                  ${item.status ? `<span><b>状态</b><em>${escapeHtml(item.status)}</em></span>` : ''}
+                  ${item.reportUrl ? `<a href="${escapeHtml(item.reportUrl)}" target="_blank" rel="noopener">查看 Runner 报告</a>` : ''}
+                </div>
+              </article>
+            `;
+          }).join('')}
+        </div>
+      </section>
+    `;
   }
-  if (analysis.conclusion) {
-    html += `<section class="agent-readable-panel"><strong>分析结论</strong><p>${escapeHtml(analysis.conclusion)}</p></section>`;
+  if (baselines.length || aiEvidence.length || keyframeCount) {
+    html += `
+      <section class="agent-failure-evidence-section">
+        <header class="agent-failure-section-head">
+          <strong>AI 判断依据</strong>
+          <span>${escapeHtml(keyframeCount + baselines.length + aiEvidence.length)} 条证据</span>
+        </header>
+        <div class="agent-failure-evidence-list">
+          ${keyframeCount ? `<div><b>Runner 关键帧</b><span>已提供 ${escapeHtml(keyframeCount)} 张失败现场图用于页面状态判断</span></div>` : ''}
+          ${baselines.slice(0, 6).map(item => {
+            const path = String(item.provenancePath || '');
+            const name = path.split(/[\\/]/).pop() || item.id || '成功基线';
+            return `<div><b>成功基线 · ${escapeHtml(name)}</b><span>${escapeHtml(agentCompactDisplayText(item.businessPath || path || item.id || '', 220))}</span></div>`;
+          }).join('')}
+          ${aiEvidence.slice(0, 5).map(item => `<div><b>AI 证据</b><span>${escapeHtml(agentCompactDisplayText(item, 260))}</span></div>`).join('')}
+        </div>
+      </section>
+    `;
   }
-  if (analysis.summary && analysis.failureType !== 'NONE') {
-    html += `<section class="agent-readable-panel"><strong>失败上下文</strong><pre class="agent-artifact-pre">${escapeHtml(typeof analysis.summary === 'string' ? analysis.summary : JSON.stringify(analysis.summary, null, 2))}</pre></section>`;
-  }
+  const rawPayload = {
+    analysis,
+    diagnosis: Object.keys(diagnosis).length ? diagnosis : null,
+    failedExecutionItems: failedItems,
+    runError: runError || null,
+  };
+  html += `
+    <details class="agent-failure-technical" data-agent-detail-key="failure-technical">
+      <summary>
+        <span>技术详情</span>
+        <small>原始分析数据、完整路径与 Runner 字段</small>
+      </summary>
+      <pre class="agent-artifact-pre">${escapeHtml(JSON.stringify(rawPayload, null, 2))}</pre>
+    </details>
+  `;
   html += '</div>';
   return html;
 }

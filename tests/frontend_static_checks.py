@@ -230,6 +230,8 @@ def main():
     require("AGENT_ARTIFACT_GROUPS" in html and "agent-artifact-layout" in html and "agent-artifact-nav-group" in html, "Agent artifacts must use grouped navigation instead of eleven flat tabs")
     require("agentArtifactState" in html and "等待前序阶段" in html and "失败恢复类产物只在出现可分析的执行失败时生成" in html, "Agent artifacts must explain pending and conditional states instead of showing a blank box")
     require("activeState === 'ready'" in html and "yamlReady" in html and "mindmapReady" in html, "Agent artifact actions must only appear after their real artifact exists")
+    require("if (tab === 'failure') return renderAnalysisDetail" in html and "agent-failure-card-grid" in html and "AI 判断依据" in html and "技术详情" in html, "Agent failure artifacts must use progressive structured cards instead of raw JSON")
+    require("captureAgentArtifactViewState" in html and "restoreAgentArtifactViewState" in html and "data-agent-run-id" in html and "boxScrollTop" in html, "Polling must preserve the active Agent artifact reading position")
     require("14 步全自动链路" not in html, "Agent timeline copy must not hard-code stale step count")
     require("timelineLiveTraceDetail" in html and "step-live-trace" in html, "Agent timeline must show live running trace when a step is expanded")
     require("agent-technical-trace" in html and "技术日志" in html and "stepDetailHtml" in html and html.index("stepDetailHtml ?") < html.index("technicalTraceDetail ?"), "Readable step results must appear before collapsed technical traces")
@@ -265,7 +267,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260714-agent-observability" in html and "js/agent-workbench.js?v=20260715-agent-trace-toggle" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260714-agent-observability" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache version must be bumped for install refresh, smoke rerun, Agent phases, artifacts, and result semantics")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260714-agent-observability" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260715-agent-failure-cards" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache version must be bumped for install refresh, smoke rerun, Agent phases, artifacts, and result semantics")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
@@ -275,7 +277,7 @@ def main():
     require("function mindmapRecordTimeValue" in html and "mindmap_sort_ts" in html and "mindmap-compact-list" in html and "function mindmapTaskRow" in html, "Mindmap center must sort latest first and use compact rows instead of oversized cards")
     require("activeWorkspaceMode === 'mindmap'" in html and "await showMindmapCenter();" in html, "Mindmap background actions must refresh the mindmap center after cancel/retry")
     require("mindmapCenterRefreshTimer" in html and "scheduleMindmapCenterRefresh(taskRows)" in html and "pending', 'running" in html, "Mindmap center must auto-refresh while mindmap jobs are active")
-    print({"ok": True, "file": str(HTML), "checks": 67})
+    print({"ok": True, "file": str(HTML), "checks": 69})
 
 
 if __name__ == "__main__":
