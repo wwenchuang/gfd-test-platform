@@ -478,6 +478,14 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             yaml_service._case_manual_block_reason(bounded_by_id[f"TC-R{index:02d}"]) == "",
             "A source-grounded bounded landing check must survive the deterministic Runner eligibility gate",
         )
+    slash_state_bounded = json.loads(json.dumps(bounded_by_id["TC-R01"], ensure_ascii=False))
+    slash_state_bounded["assertions"] = [
+        "已离开来源页，出现授权页/文件页/WebView，且无白屏或崩溃",
+    ]
+    require(
+        yaml_service._case_manual_block_reason(slash_state_bounded) == "",
+        "Equivalent slash-separated file-page and WebView terms must remain a bounded first-screen result",
+    )
     deep_bounded = json.loads(json.dumps(bounded_by_id["TC-R01"], ensure_ascii=False))
     deep_bounded["steps"].extend(["点击同意授权", "输入账号和验证码", "选择文件"])
     require(
@@ -635,6 +643,172 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and any(item.get("case_id") == "TC-DUP" for item in branch_fallback_applied.get("manual_cases") or [])
         and branch_fallback_applied.get("review", {}).get("executable_yaml_plan", {}).get("redundant_unmentioned_manualized_count") == 1,
         "Same-branch bounded evidence must close every explicit dimension while an omitted redundant candidate is preserved as manual, never auto-promoted",
+    )
+    manual_tail_payload = json.loads(json.dumps(branch_fallback_payload, ensure_ascii=False))
+    for item in manual_tail_payload.get("manual_cases") or []:
+        if item.get("case_id") != "TC-R03":
+            continue
+        item["case_id"] = "MC-R03"
+        item["originExecutionLevel"] = "manual"
+        item["ai_case_classification"] = {
+            "level": "manual",
+            "originLevel": "manual",
+            "reason": "上游 AI 将外部首屏观察设计为人工候选",
+        }
+        item["steps"] = [
+            "进入售后服务",
+            "点击发票入口",
+            "观察页面跳转情况",
+            "确认是否显示授权WebView、登录页或文件选择页",
+            "确认无白屏、无崩溃",
+        ]
+        item["assertions"] = []
+    manual_tail_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        manual_tail_payload,
+        {"min_automation_cases": 5},
+    )
+    manual_tail_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_manual_tail_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in manual-tail convergence replay")
+            manual_tail_requests.append(request)
+            executable = []
+            manual = []
+            for candidate in request.get("cases") or []:
+                case_id = candidate.get("case_id")
+                if candidate.get("currentLevel") == "executable":
+                    executable.append({
+                        "caseId": case_id,
+                        "baselineId": "base-entry-nav",
+                        "precondition": "App 首页",
+                        "flow": candidate.get("steps") or [],
+                        "assertionTarget": (candidate.get("assertions") or [""])[0],
+                        "requirementRefs": candidate.get("requirementRefs") or [],
+                        "executableReason": "保留已通过门禁的来源页路径",
+                        "batch": "smoke",
+                    })
+                elif case_id in ("TC-S03", "MC-R03"):
+                    manual.append({
+                        "caseId": case_id,
+                        "reason": "模拟模型仍因缺少新落地页历史执行而保守降级",
+                        "requirementRefs": candidate.get("requirementRefs") or [],
+                    })
+            return {
+                "cases": executable,
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": manual,
+                "review": {"planning_reason": "模拟同分支人工尾链场景"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_manual_tail_planner
+        manual_tail_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "新增发票入口",
+            "会员服务",
+            manual_tail_payload,
+            [{
+                "id": "base-entry-nav",
+                "title": "订单与优惠券入口导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+            }, {
+                "id": "base-service-nav",
+                "title": "售后服务入口导航",
+                "aiSelectedBranchName": "会员服务-售后服务",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "首页 -> 售后服务",
+            }],
+            {"smokeCount": 3},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": manual_tail_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    manual_tail_request_by_id = {
+        item.get("case_id"): item for item in manual_tail_requests[0].get("cases") or []
+    }
+    manual_tail_evidence = manual_tail_request_by_id["TC-S03"].get("convergenceEvidence") or {}
+    require(
+        manual_tail_evidence.get("eligible") is True
+        and manual_tail_evidence.get("sourceCaseId") == "TC-S03"
+        and manual_tail_evidence.get("tailSourceCaseId") == "MC-R03"
+        and set(manual_tail_evidence.get("acceptanceCheckIds") or []) == {
+            "REQ-003-CHECK-01", "REQ-003-CHECK-02", "REQ-003-CHECK-03", "REQ-003-CHECK-04",
+        }
+        and len(manual_tail_evidence.get("flow") or []) <= 8,
+        "A trusted automatic source-page candidate must be able to reuse only the bounded observation tail from a same-branch AI manual candidate",
+    )
+    manual_tail_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        manual_tail_payload,
+        manual_tail_plan,
+    )
+    manual_tail_by_id = {
+        item.get("case_id"): item for item in manual_tail_applied.get("cases") or []
+    }
+    require(
+        manual_tail_by_id["TC-S03"].get("executionLevel") == "executable"
+        and "点击后首个可见页" in str(manual_tail_by_id["TC-S03"].get("title") or "")
+        and manual_tail_by_id["TC-S03"].get("ai_case_plan", {}).get("boundedConvergence", {}).get("tailSourceCaseId") == "MC-R03"
+        and yaml_service._case_manual_block_reason(manual_tail_by_id["TC-S03"]) == ""
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            manual_tail_applied,
+            {"min_automation_cases": 5},
+        ).get("ok")
+        and any(item.get("case_id") == "MC-R03" for item in manual_tail_applied.get("manual_cases") or []),
+        "The model-authored manual tail must remain manual while its safe first-screen evidence closes the explicit Runner acceptance contract",
+    )
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def timeout_convergence_planner(*_args, **_kwargs):
+            raise TimeoutError("simulated final convergence timeout")
+
+        ai_skill_service.run_ai_skill = timeout_convergence_planner
+        timeout_evidence_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "新增发票入口",
+            "会员服务",
+            manual_tail_payload,
+            [{
+                "id": "base-entry-nav",
+                "title": "订单与优惠券入口导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+            }, {
+                "id": "base-service-nav",
+                "title": "售后服务入口导航",
+                "aiSelectedBranchName": "会员服务-售后服务",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+            }],
+            {"smokeCount": 3},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": manual_tail_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    timeout_evidence_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        manual_tail_payload,
+        timeout_evidence_plan,
+    )
+    require(
+        timeout_evidence_plan.get("authoritative") is False
+        and timeout_evidence_plan.get("evidenceFallback") is True
+        and timeout_evidence_plan.get("trace", {}).get("evidence_fallback") is True
+        and timeout_evidence_plan.get("trace", {}).get("timeout_seconds")
+        == ai_skill_service.AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS
+        and timeout_evidence_plan.get("trace", {}).get("timeout_seconds")
+        <= ai_skill_service.AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS
+        and timeout_evidence_applied.get("review", {}).get("executable_yaml_plan", {}).get("evidenceFallbackApplied") is True
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            timeout_evidence_applied,
+            {"min_automation_cases": 5},
+        ).get("ok"),
+        "A final convergence timeout must reuse only validated upstream AI evidence without adding a second model call",
     )
     require(preview.get("candidateOnly") and preview.get("platformLifecycle") and preview.get("source") == "requirement_preview", "Agent preview must separate coverage candidates from the later AI business plan")
     plan_context = yaml_service.build_agent_business_plan_context_text({
@@ -4913,7 +5087,12 @@ def check_smoke_selection_requires_explicit_ai_mark():
             },
         ],
     }
-    selected_payload = ai_skill_service.select_smoke_cases_for_payload("百度网盘入口", "文档打印", payload)
+    old_smoke_selector_enabled = ai_skill_service.AI_SMOKE_SELECTOR_ENABLED
+    try:
+        ai_skill_service.AI_SMOKE_SELECTOR_ENABLED = False
+        selected_payload = ai_skill_service.select_smoke_cases_for_payload("百度网盘入口", "文档打印", payload)
+    finally:
+        ai_skill_service.AI_SMOKE_SELECTOR_ENABLED = old_smoke_selector_enabled
     smoke_ids = selected_payload["review"]["smoke_case_ids"]
     require(len(smoke_ids) <= 3, "Local smoke gate must only select the first batch of at most 3 cases")
     require("TC-001" not in smoke_ids and "TC-005" not in smoke_ids, "Local smoke gate must not prefer history/interference cases over the current normal chain")
@@ -5564,7 +5743,7 @@ def check_ai_yaml_generation_decision_chain_static():
     require("call_skill_executable_yaml_planner" in yaml_service_source, "YAML generation must call AI executable YAML planner")
     require("build_ai_generation_decision_context_text" in yaml_service_source and "AI 生成决策计划" in yaml_service_source, "YAML prompt must include the AI decision plan context")
     require("ai_decision_trace" in yaml_service_source and "executable_yaml_planner_review" in yaml_service_source, "YAML generation review must expose AI decision trace and planner review")
-    require("executable_yaml_portfolio_audit" in yaml_service_source and '"pass": "coverage_convergence"' in yaml_service_source and 'step="最终覆盖收敛"' in yaml_service_source and 'step="最终覆盖门禁"' in yaml_service_source and "最终可执行 YAML 覆盖门禁未通过" in yaml_service_source, "YAML generation must run one AI convergence pass and hard-stop incomplete final coverage before conversion")
+    require("executable_yaml_portfolio_audit" in yaml_service_source and '"pass": "coverage_convergence"' in yaml_service_source and 'step="最终覆盖收敛"' in yaml_service_source and 'step="最终覆盖门禁"' in yaml_service_source and 'convergence_plan.get("evidenceFallback") is True' in yaml_service_source and "最终可执行 YAML 覆盖门禁未通过" in yaml_service_source, "YAML generation must run one AI convergence pass, apply only validated evidence fallback when that pass is unavailable, and hard-stop incomplete final coverage before conversion")
     require("improve_case_coverage(" in yaml_service_source and "model_config=model_config" in yaml_service_source, "Coverage repair must receive selected model config")
 
     require("def call_skill_baseline_reranker" in ai_skill_source, "AI skill service must expose baseline reranker")

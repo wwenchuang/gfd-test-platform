@@ -46,7 +46,7 @@
 8. 平台的 3/5/8 是规划目标和规模上限，不是最终可执行数量的硬下限。显式需求已由更少的独立、可执行短 case 完整覆盖时，不得为了凑数升级弱网、深色模式、系统设置、重复路径或深层授权项；在 `review` 中如实说明数量不足即可。
 9. `portfolioAudit.missingAcceptanceChecks` 是原始需求中尚未被真实步骤和断言证明的验收维度。`requirementRefs` 只表示归属，不能单独证明“可见 / 同级 / 文案 / 点击可达”全部完成；必须在返回的 `flow` 与 `assertionTarget` 中逐项找到对应证据。
 10. 对 `kind=reachability` 的缺口，优先在同一业务分支已有短 case 中补充“点击目标入口 -> 等待首个稳定可见终态 -> 断言终态”，避免重复生成仅展示入口的 case。终态仍遵守第 5 条的有界规则；如果可信路径或真实终态不足，则保留对应人工候选并让门禁如实阻断，不能用需求 ID 冒充覆盖。
-11. 候选携带 `convergenceEvidence.eligible=true` 时，平台已把同需求分支的成功基线来源页路径与上游 AI 生成的有界首屏尾链合并，并确认尾链不含账号/验证码、确认授权、文件选择或破坏性操作。此时 `baselineId` 只需证明到达目标入口所在来源页，不要求新能力的目标落地页已有历史成功基线；“目标页从未成功执行过”本身不能作为 manual 理由。应优先按证据中的 `baselineId / precondition / flow / assertionTarget / requirementRefs` 放入 `cases` 的 `remaining` 批次，让后续 YAML 门禁、评分、dry-run 和真实 Runner 发现并验证实际首个合法可见终态。只有证据与当前候选矛盾或仍包含深层外部动作时才保留为 manual，并明确指出具体冲突。
+11. 候选携带 `convergenceEvidence.eligible=true` 时，平台已把同需求分支的成功基线来源页路径与上游 AI 生成的有界首屏尾链合并，并确认尾链不含账号/验证码、确认授权、文件选择或破坏性操作。`sourceCaseId / tailSourceCaseId / acceptanceCheckIds` 分别记录来源页候选、首屏尾链候选和该组合真实覆盖的显式验收项；尾链可来自同分支的人工候选，但只有其中“点击入口 -> 观察首个合法终态”的 AI 内容被复用，原人工深层步骤不会进入执行。此时 `baselineId` 只需证明到达目标入口所在来源页，不要求新能力的目标落地页已有历史成功基线；“目标页从未成功执行过”本身不能作为 manual 理由。应优先按证据中的 `baselineId / precondition / flow / assertionTarget / requirementRefs` 放入 `cases` 的 `remaining` 批次，让后续 YAML 门禁、评分、dry-run 和真实 Runner 发现并验证实际首个合法可见终态。只有证据与当前候选矛盾或仍包含深层外部动作时才保留为 manual，并明确指出具体冲突。
 
 ## 输出 JSON
 

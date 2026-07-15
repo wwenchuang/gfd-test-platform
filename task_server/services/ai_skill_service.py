@@ -73,6 +73,7 @@ from task_server.services.yaml_service import (
     normalize_yaml_task_block_from_model,
     baseline_branch_anchor_terms,
     diff_yaml,
+    _case_has_deep_external_action,
     _case_is_bounded_external_landing_check,
 )
 from task_server.services.knowledge_service import (
@@ -90,6 +91,13 @@ AI_SMOKE_SELECTOR_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_SMOK
 AI_BASELINE_RERANKER_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_BASELINE_RERANKER_TIMEOUT_SECONDS", "45"), 45))
 AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS", "45"), 45))
 AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS", "75"), 75))
+AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS = max(
+    30,
+    min(
+        AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS,
+        safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS", "45"), 45),
+    ),
+)
 AI_SKILLS_STRICT_MODEL = safe_bool(os.getenv("MIDSCENE_AI_SKILLS_STRICT_MODEL", "0"), False)
 
 
@@ -3505,18 +3513,77 @@ def _trusted_selected_baseline_for_branch(selected_baselines, branch):
     return None
 
 
+def _bounded_landing_tail(case, target_terms):
+    """Reduce an AI-authored external transition to one click and one observation."""
+    case = case if isinstance(case, dict) else {}
+    if _case_has_deep_external_action(case):
+        return None
+    steps = normalize_text_list(case.get("steps"))
+    click_index = next((
+        index for index in range(len(steps) - 1, -1, -1)
+        if "点击" in steps[index]
+        and "坐标" not in steps[index]
+        and (
+            any(term in steps[index] for term in target_terms)
+            or (not target_terms and any(term in steps[index] for term in ("入口", "按钮", "第三方")))
+        )
+    ), -1)
+    if click_index < 0:
+        return None
+    observations = []
+    for raw_step in steps[click_index + 1:]:
+        step = str(raw_step or "").strip()
+        if not step:
+            continue
+        if step.startswith(("等待", "观察", "检查", "验证")):
+            observations.append(step)
+            continue
+        if step.startswith(("确认是否", "确认无", "确认未", "确认已", "确认页面")):
+            observations.append("检查" + step[2:])
+            continue
+        return None
+    outcomes = normalize_text_list(
+        case.get("assertions") or case.get("expected_result") or case.get("expected")
+    )
+    if not observations and outcomes:
+        observations = ["检查" + outcomes[0]]
+    if not observations:
+        return None
+    observation_text = "；".join(
+        re.sub(r"^(?:等待|观察|检查|验证)", "", item).strip("；， ")
+        for item in observations
+        if str(item or "").strip()
+    )
+    if not observation_text:
+        return None
+    assertion_target = "；".join(dict.fromkeys(
+        [item for item in outcomes + [observation_text] if str(item or "").strip()]
+    ))
+    return {
+        "flow": [steps[click_index], f"检查{observation_text}"],
+        "assertionTarget": assertion_target,
+    }
+
+
 def _bounded_convergence_evidence(
     normalized,
     automatic_records,
     audit,
     selected_baselines=None,
+    manual_records=None,
 ):
     """Compose a trusted source-page path with an AI-authored bounded landing tail."""
     normalized = normalized if isinstance(normalized, dict) else {}
     audit = audit if isinstance(audit, dict) else {}
+    automatic_records = [item for item in (automatic_records or []) if isinstance(item, dict)]
+    manual_records = [item for item in (manual_records or []) if isinstance(item, dict)]
     missing_checks = [
         item for item in (audit.get("missingAcceptanceChecks") or [])
-        if isinstance(item, dict) and str(item.get("kind") or "").strip().lower() == "reachability"
+        if isinstance(item, dict)
+    ]
+    reachability_checks = [
+        item for item in missing_checks
+        if str(item.get("kind") or "").strip().lower() == "reachability"
     ]
     sources = {}
     for case in normalized.get("cases") or []:
@@ -3533,7 +3600,8 @@ def _bounded_convergence_evidence(
             ]):
                 sources.setdefault(requirement_id, []).append(case)
     evidence_by_id = {}
-    for check in missing_checks:
+    donor_records = automatic_records + manual_records
+    for check in reachability_checks:
         requirement_id = str(check.get("requirementId") or "").strip()
         branch = str(check.get("branch") or "").strip()
         source_case = next((
@@ -3541,28 +3609,46 @@ def _bounded_convergence_evidence(
             if _case_has_branch_execution_evidence(case, branch)
         ), None)
         branch_baseline = _trusted_selected_baseline_for_branch(selected_baselines, branch)
-        for record in automatic_records:
-            raw_case = (record or {}).get("raw") or {}
-            case_id = str(((record or {}).get("compact") or {}).get("case_id") or "").strip()
+        requirement_missing_checks = [
+            item for item in missing_checks
+            if str(item.get("requirementId") or "").strip() == requirement_id
+        ]
+        matching_automatic_records = [
+            item for item in automatic_records
+            if requirement_id in _acceptance_requirement_ids([
+                ((item or {}).get("raw") or {}).get("coverage"),
+                ((item or {}).get("raw") or {}).get("requirementRefs"),
+                ((item or {}).get("raw") or {}).get("requirement_refs"),
+            ])
+            and _case_has_branch_execution_evidence((item or {}).get("raw") or {}, branch)
+        ]
+        source_only_checks = [
+            item for item in requirement_missing_checks
+            if str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+        ]
+        matching_automatic_records.sort(key=lambda item: (
+            -sum(
+                1 for source_check in source_only_checks
+                if case_covers_requirement_acceptance((item or {}).get("raw") or {}, source_check)
+            ),
+            str(((item or {}).get("compact") or {}).get("currentLevel") or "").strip().lower() == "executable",
+            len(normalize_text_list(((item or {}).get("raw") or {}).get("steps"))),
+        ))
+        for donor_record in donor_records:
+            raw_case = (donor_record or {}).get("raw") or {}
             requirement_refs = normalize_text_list(
                 raw_case.get("requirementRefs") or raw_case.get("requirement_refs") or raw_case.get("coverage")
             )[:8]
-            if not case_id or not requirement_refs or requirement_id not in _acceptance_requirement_ids([
+            if not requirement_refs or requirement_id not in _acceptance_requirement_ids([
                 raw_case.get("coverage"), raw_case.get("requirementRefs"), raw_case.get("requirement_refs"),
-            ]):
+            ]) or not _case_has_branch_execution_evidence(raw_case, branch):
                 continue
-            steps = normalize_text_list(raw_case.get("steps"))
             targets = _acceptance_target_terms(check.get("text"))
-            click_index = next((
-                index for index in range(len(steps) - 1, -1, -1)
-                if "点击" in steps[index]
-                and "坐标" not in steps[index]
-                and (any(term in steps[index] for term in targets) or (
-                    not targets and any(term in steps[index] for term in ("入口", "按钮", "第三方"))
-                ))
-            ), -1)
-            tail = steps[click_index:] if click_index >= 0 else []
+            landing_tail = _bounded_landing_tail(raw_case, targets)
+            if not landing_tail:
+                continue
             source_evidence_case = source_case
+            source_record = None
             if source_case:
                 source_plan = source_case.get("ai_case_plan") or {}
                 navigation_flow = normalize_text_list(source_plan.get("flow") or source_case.get("steps"))
@@ -3571,26 +3657,10 @@ def _bounded_convergence_evidence(
                 source_case_id = str(source_case.get("case_id") or "").strip()
                 evidence_source = "executable_source_case"
             else:
-                if not branch_baseline or not _case_has_branch_execution_evidence(raw_case, branch):
+                if not branch_baseline or not matching_automatic_records:
                     continue
-                source_records = [
-                    item for item in automatic_records
-                    if requirement_id in _acceptance_requirement_ids([
-                        ((item or {}).get("raw") or {}).get("coverage"),
-                        ((item or {}).get("raw") or {}).get("requirementRefs"),
-                        ((item or {}).get("raw") or {}).get("requirement_refs"),
-                    ])
-                    and _case_has_branch_execution_evidence((item or {}).get("raw") or {}, branch)
-                ]
-                source_records.sort(key=lambda item: (
-                    any(
-                        "点击" in step and any(term in step for term in targets)
-                        for step in normalize_text_list(((item or {}).get("raw") or {}).get("steps"))
-                    ),
-                    len(normalize_text_list(((item or {}).get("raw") or {}).get("steps"))),
-                ))
-                source_record = source_records[0] if source_records else record
-                source_evidence_case = (source_record or {}).get("raw") or raw_case
+                source_record = matching_automatic_records[0]
+                source_evidence_case = (source_record or {}).get("raw") or {}
                 navigation_flow = normalize_text_list(source_evidence_case.get("steps"))
                 source_click_index = next((
                     index for index, step in enumerate(navigation_flow)
@@ -3607,42 +3677,47 @@ def _bounded_convergence_evidence(
                 precondition = preconditions[0] if preconditions else ""
                 baseline_id = str(branch_baseline.get("id") or "").strip()
                 source_case_id = str(
-                    ((source_record or {}).get("compact") or {}).get("case_id") or case_id
+                    ((source_record or {}).get("compact") or {}).get("case_id") or ""
                 ).strip()
                 evidence_source = "selected_branch_baseline"
+            donor_case_id = str(((donor_record or {}).get("compact") or {}).get("case_id") or "").strip()
+            donor_is_automatic = any(donor_record is item for item in automatic_records)
+            target_record = donor_record if donor_is_automatic else source_record
+            case_id = str(((target_record or {}).get("compact") or {}).get("case_id") or "").strip()
+            if not case_id or (not donor_is_automatic and not source_record):
+                continue
             if not baseline_id or not precondition or len(navigation_flow) < 2:
                 continue
             if (
                 navigation_flow
-                and navigation_flow[-1].startswith(("校验", "验证", "检查"))
+                and navigation_flow[-1].startswith(("校验", "验证", "检查", "断言"))
                 and any(term in navigation_flow[-1] for term in targets)
             ):
                 navigation_flow.pop()
             source_navigation_probe = {
                 "steps": navigation_flow,
+                "assertions": normalize_text_list(source_evidence_case.get("assertions")),
                 "requirementRefs": requirement_refs,
             }
             supplemental_checks = [
-                item for item in (audit.get("missingAcceptanceChecks") or [])
-                if isinstance(item, dict)
-                and str(item.get("requirementId") or "").strip() == requirement_id
-                and str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+                item for item in requirement_missing_checks
+                if str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
                 and not case_covers_requirement_acceptance(source_navigation_probe, item)
             ]
-            supplemental_steps = [
+            supplemental_text = "；".join(
                 str(item.get("text") or "").strip()
                 for item in supplemental_checks
                 if str(item.get("text") or "").strip()
-            ]
-            flow = navigation_flow + supplemental_steps + tail
-            outcomes = normalize_text_list(
-                raw_case.get("assertions") or raw_case.get("expected_result") or raw_case.get("expected")
             )
-            terminal_assertions = []
-            for step in tail[1:]:
-                terminal = re.sub(r"^(?:等待|观察|检查|验证)", "", step).strip()
-                terminal_assertions.append(re.sub(r"(?:加载完成|加载)$", "可见", terminal))
-            assertion_target = "；".join((terminal_assertions + outcomes)[:4])
+            flow = navigation_flow + ([supplemental_text] if supplemental_text else []) + landing_tail["flow"]
+            source_outcomes = normalize_text_list(
+                source_evidence_case.get("assertions")
+                or source_evidence_case.get("expected_result")
+                or source_evidence_case.get("expected")
+            )
+            assertion_target = "；".join(dict.fromkeys(
+                [item for item in source_outcomes[:1] + [landing_tail["assertionTarget"]] if str(item or "").strip()]
+            ))
             probe = {
                 "steps": flow,
                 "assertions": [assertion_target],
@@ -3651,9 +3726,23 @@ def _bounded_convergence_evidence(
             }
             if len(flow) > 8 or not _case_is_bounded_external_landing_check(probe):
                 continue
+            covered_checks = [
+                item for item in requirement_missing_checks
+                if case_covers_requirement_acceptance(probe, item)
+            ]
+            if str(check.get("id") or "").strip() not in {
+                str(item.get("id") or "").strip() for item in covered_checks
+            }:
+                continue
             evidence_by_id[case_id] = {
                 "eligible": True,
+                "title": (
+                    f"{branch}{targets[0]}点击后首个可见页校验"
+                    if branch and targets
+                    else str(((target_record or {}).get("compact") or {}).get("title") or "").strip()
+                ),
                 "sourceCaseId": source_case_id,
+                "tailSourceCaseId": donor_case_id,
                 "source": evidence_source,
                 "baselineId": baseline_id,
                 "precondition": precondition,
@@ -3662,7 +3751,7 @@ def _bounded_convergence_evidence(
                 "requirementRefs": requirement_refs,
                 "acceptanceCheckIds": [
                     str(item.get("id") or "").strip()
-                    for item in [check] + supplemental_checks
+                    for item in covered_checks
                     if str(item.get("id") or "").strip()
                 ],
             }
@@ -3717,6 +3806,14 @@ def _focus_executable_convergence_candidates(
             if case_matches_requirement(record["raw"], point):
                 focus_ids.add(candidate_id)
                 break
+    bounded_evidence_by_id = _bounded_convergence_evidence(
+        normalized,
+        automatic_records,
+        audit,
+        selected_baselines=selected_baselines,
+        manual_records=manual_records,
+    )
+    focus_ids.update(bounded_evidence_by_id)
     focused_automatic = [
         item for item in automatic_records
         if not focus_ids or str(item["compact"].get("case_id") or "").strip() in focus_ids
@@ -3727,12 +3824,6 @@ def _focus_executable_convergence_candidates(
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
     focused_manual = []
     selected_manual_ids = set()
-    bounded_evidence_by_id = _bounded_convergence_evidence(
-        normalized,
-        automatic_records,
-        audit,
-        selected_baselines=selected_baselines,
-    )
     for record in focused_automatic:
         candidate_id = str(record["compact"].get("case_id") or "").strip()
         if candidate_id in bounded_evidence_by_id:
@@ -3834,6 +3925,99 @@ def _ground_executable_plan_items(items, candidate_by_id, candidate_by_title):
     return grounded, rejected
 
 
+def _convergence_evidence_fallback_plan(
+    normalized,
+    candidates,
+    candidate_eligibility_by_id,
+    allowed_baseline_ids,
+    planning_context,
+    convergence_focus,
+    trace,
+    error,
+):
+    """Keep validated upstream AI evidence usable when the final AI call is unavailable."""
+    if (
+        str((planning_context or {}).get("pass") or "").strip() != "coverage_convergence"
+        or not candidate_eligibility_by_id
+    ):
+        return None
+    candidate_by_id = {
+        str(item.get("case_id") or "").strip(): item
+        for item in candidates or []
+        if str(item.get("case_id") or "").strip()
+    }
+    eligible_ids = {
+        case_id for case_id, evidence in candidate_eligibility_by_id.items()
+        if case_id in candidate_by_id
+        and isinstance(evidence, dict)
+        and evidence.get("eligible") is True
+        and str(evidence.get("baselineId") or "").strip() in allowed_baseline_ids
+        and normalize_text_list(evidence.get("acceptanceCheckIds"))
+    }
+    if not eligible_ids:
+        return None
+    existing_cases = []
+    for case in normalized.get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("case_id") or "").strip()
+        if (
+            case_id
+            and case_id not in eligible_ids
+            and str(case.get("executionLevel") or "").strip().lower() == "executable"
+        ):
+            existing_cases.append(_existing_executable_plan_item(
+                case,
+                case_id,
+                str(case.get("title") or "").strip(),
+            ))
+    evidence_candidates = [
+        {
+            "caseId": case_id,
+            "title": candidate_by_id[case_id].get("title") or "",
+            "reason": (
+                "最终收敛 AI 不可用；保留为待复核分类，"
+                "仅由平台已验证的同分支基线与 AI 有界首屏证据决定是否接管"
+            ),
+            "requirementRefs": candidate_by_id[case_id].get("requirementRefs") or [],
+        }
+        for case_id in sorted(eligible_ids)
+    ]
+    fallback_trace = dict(trace or {})
+    fallback_trace.update({
+        "fallback": True,
+        "evidence_fallback": True,
+        "evidence_fallback_case_count": len(evidence_candidates),
+        "error": str(error or "final_convergence_unavailable"),
+    })
+    return {
+        "cases": existing_cases,
+        "needs_review_cases": evidence_candidates,
+        "draft_cases": [],
+        "manual_cases": [],
+        "review": {
+            "planning_reason": (
+                "最终收敛 AI 调用未完成；不增加模型重试，仅对已通过同分支成功基线、"
+                "显式验收映射和有界外部首屏检查的上游 AI 候选启用证据降级"
+            ),
+        },
+        "authoritative": False,
+        "evidenceFallback": True,
+        "trace": fallback_trace,
+        "allowedBaselineIds": sorted(allowed_baseline_ids),
+        "requirementPoints": normalize_text_list(
+            (normalized.get("analysis") or {}).get("requirement_points")
+        )[:12],
+        "planningContext": planning_context if isinstance(planning_context, dict) else {},
+        "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
+        "convergenceFocus": convergence_focus,
+        "candidateEligibilityById": {
+            case_id: copy.deepcopy(candidate_eligibility_by_id[case_id])
+            for case_id in sorted(eligible_ids)
+        },
+    }
+
+
 def call_skill_executable_yaml_planner(
     title,
     module,
@@ -3915,11 +4099,18 @@ def call_skill_executable_yaml_planner(
         "sourceEvidence": source_evidence if isinstance(source_evidence, dict) else {},
         "planningContext": planning_context if isinstance(planning_context, dict) else {},
     }
+    planner_timeout = (
+        AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS
+        if str((planning_context or {}).get("pass") or "").strip() == "coverage_convergence"
+        and candidate_eligibility_by_id
+        else AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS
+    )
+    trace["timeout_seconds"] = planner_timeout
     try:
         result = run_ai_skill(
             "executable_yaml_planner",
             request,
-            timeout=AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS,
+            timeout=planner_timeout,
             temperature=0.0,
             respect_global_timeout=False,
             retry_count=0,
@@ -3975,6 +4166,18 @@ def call_skill_executable_yaml_planner(
         }
     except Exception as exc:
         trace.update({"fallback": True, "error": str(exc)})
+        evidence_fallback = _convergence_evidence_fallback_plan(
+            normalized,
+            candidates,
+            candidate_eligibility_by_id,
+            allowed_baseline_ids,
+            planning_context,
+            convergence_focus,
+            trace,
+            exc,
+        )
+        if evidence_fallback:
+            return evidence_fallback
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
@@ -3991,7 +4194,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     plan = plan if isinstance(plan, dict) else {}
     plan_cases = [item for item in (plan.get("cases") or []) if isinstance(item, dict)]
     authoritative = plan.get("authoritative") is True
-    if not plan_cases and not authoritative:
+    evidence_fallback = plan.get("evidenceFallback") is True
+    if not plan_cases and not authoritative and not evidence_fallback:
         return normalized
     classifications = (
         ("executable", plan_cases),
@@ -4142,7 +4346,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             level = "executable"
             item = {
                 "caseId": case_id,
-                "title": title,
+                "title": bounded_evidence.get("title") or title,
                 "baselineId": bounded_evidence.get("baselineId") or "",
                 "baselineGrounded": True,
                 "precondition": bounded_evidence.get("precondition") or "",
@@ -4156,6 +4360,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "batch": "remaining",
                 "boundedConvergence": {
                     "sourceCaseId": bounded_evidence.get("sourceCaseId") or "",
+                    "tailSourceCaseId": bounded_evidence.get("tailSourceCaseId") or "",
+                    "source": bounded_evidence.get("source") or "",
                     "acceptanceCheckIds": sorted(bounded_check_ids),
                     "modelLevel": model_level,
                     "modelReason": model_reason,
@@ -4296,6 +4502,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             case["preconditions"] = [precondition]
         bounded_evidence_used = bool(item.get("boundedConvergence"))
         if bounded_evidence_used:
+            if str(item.get("title") or "").strip():
+                case["title"] = str(item.get("title") or "").strip()
             _set_case_smoke(case, False)
         if assertion_target and (
             bounded_evidence_used or not normalize_text_list(case.get("assertions"))
@@ -4370,6 +4578,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     review = normalized.setdefault("review", {})
     review["executable_yaml_plan"] = {
         "classificationApplied": authoritative,
+        "evidenceFallbackApplied": evidence_fallback,
         "case_count": len(plan_cases),
         "needs_review_count": applied_counts["needs_review"],
         "draft_count": applied_counts["draft"],

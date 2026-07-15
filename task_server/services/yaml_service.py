@@ -2355,13 +2355,20 @@ def _case_is_bounded_external_landing_check(case: dict) -> bool:
     outcome_text = " ".join(normalize_text_list(
         case.get("assertions") or case.get("expected_result") or case.get("expected")
     ))
-    if not any(term in outcome_text for term in ("任一", "之一", "任意", "或")):
+    if not (
+        any(term in outcome_text for term in ("任一", "之一", "任意", "或"))
+        or re.search(r"[/／、]", outcome_text)
+    ):
         return False
-    observable_states = (
-        "授权", "登录", "H5", "网页", "文件选择", "内容列表", "文件列表", "选择页",
-        "空态", "提示页", "系统弹窗",
+    observable_state_groups = (
+        ("授权",),
+        ("登录",),
+        ("H5", "h5", "WebView", "webview", "网页", "Web页", "浏览器"),
+        ("文件选择", "文件页", "文件列表", "内容列表", "选择页", "网盘文件"),
+        ("空态", "提示页"),
+        ("系统弹窗", "弹窗", "弹出层"),
     )
-    if sum(1 for term in observable_states if term in outcome_text) < 2:
+    if sum(1 for terms in observable_state_groups if any(term in outcome_text for term in terms)) < 2:
         return False
     return any(term in outcome_text for term in (
         "无白屏", "不白屏", "未白屏", "无长时间白屏", "没有长时间白屏",
@@ -7031,24 +7038,44 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 )
                 convergence_plan["scopePlan"] = execution_scope_plan
                 initial_plan_review = copy.deepcopy(review.get("executable_yaml_plan") or {})
-                if convergence_plan.get("authoritative") is True:
+                if (
+                    convergence_plan.get("authoritative") is True
+                    or convergence_plan.get("evidenceFallback") is True
+                ):
                     payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
                 portfolio_after = executable_yaml_portfolio_audit(payload, planned_generation_targets)
                 final_executable_portfolio = portfolio_after
                 review = payload.setdefault("review", {})
-                review["needs_review_cases"] = convergence_plan.get("needs_review_cases") or []
-                review["draft_cases"] = convergence_plan.get("draft_cases") or []
+                if convergence_plan.get("evidenceFallback") is True:
+                    review["needs_review_cases"] = [
+                        item for item in (payload.get("cases") or [])
+                        if isinstance(item, dict)
+                        and str(item.get("executionLevel") or "").strip().lower() == "needs_review"
+                    ]
+                    review["draft_cases"] = [
+                        item for item in (payload.get("cases") or [])
+                        if isinstance(item, dict)
+                        and str(item.get("executionLevel") or "").strip().lower() == "draft"
+                    ]
+                else:
+                    review["needs_review_cases"] = convergence_plan.get("needs_review_cases") or []
+                    review["draft_cases"] = convergence_plan.get("draft_cases") or []
                 review["executable_yaml_plan_initial"] = initial_plan_review
                 review["executable_yaml_convergence"] = {
                     "attempted": True,
                     "authoritative": convergence_plan.get("authoritative") is True,
+                    "evidenceFallback": convergence_plan.get("evidenceFallback") is True,
+                    "evidenceFallbackCandidateIds": sorted(
+                        (convergence_plan.get("candidateEligibilityById") or {}).keys()
+                    ),
                     "before": portfolio_before,
                     "after": portfolio_after,
                     "trace": convergence_plan.get("trace") or {},
                     "review": convergence_plan.get("review") or {},
                     "rule": (
-                        "最终收敛仍由 AI 选择可执行组合；平台只验证显式需求覆盖、分类终态、"
-                        "可信基线路径和可见终态，不降低 scorer 或 Runner 门禁。"
+                        "最终收敛优先由 AI 选择可执行组合；AI 不可用时只复用已验证的上游 AI 有界证据。"
+                        "平台仍验证显式需求覆盖、分类终态、可信基线路径和可见终态，"
+                        "不降低 scorer 或 Runner 门禁。"
                     ),
                 }
                 ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace

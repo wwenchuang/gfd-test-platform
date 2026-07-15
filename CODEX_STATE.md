@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-15 Agent 同分支 AI 首屏证据组合与收敛超时降级
+
+部署 `cf85317` 后发起同一完整回归：
+
+- Agent `agent-1784110642603-d250d9c2`，参数仍为“基础打印新增百度网盘入口”、同一 Figma、`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。线上 `8091 / 8088`、AI Gateway 与 Sonic 健康，Windows Runner 在线并上报 `qwen3.6` 模型族；本 Agent 固定 OPPO PHM110，没有创建 Runner job，也没有向华为或第二台设备下发。
+- Figma parser 保持原实现，正确解析 4 页 / 4 张原图 / 忽略 0 页。4 个单图批次全部真实送入 `qwen3.6-plus`，分别约 `20 / 16 / 15 / 16s`完成，每批均有独立非空 judgement，结果为 `4/4 completed / 4 attempted / retry=false / hardGate=false`。第 2 批明确识别“5寸照片”属于照片打印，并识别“相册导入 / 微信导入 / 相机拍照 / 百度网盘”同级入口；第 4 批正确指出一寸照拍摄页不是文件导入页。
+- Top3 基线重排已正确选中三条分支多样的历史成功路径：文档 `dec99a59a1c46ae8 / FLOW-001`、照片 `c582cd168dd13dcc / FLOW-002`、扫描 `d623c1e73180bfac / FLOW-003`，均为 `verified_execution / execution_success`。因此本轮不是 Figma、视觉模型或基线召回失败。
+- 任务终态为 `FAILED / GENERATE_YAML`。首轮只确认 `TC-001 / TC-002 / TC-007` 三条 executable，覆盖 12 个显式验收维度中的 7 个；缺照片可达性和扫描复印的展示 / 同级 / 文案 / 可达性，`TC-004 / 005 / 006` 仍为 needs_review，门禁正确阻断。
+
+根因与本轮通用修复：
+
+- 照片可达候选使用“授权页 / 文件页 / WebView”表达合法首个终态，旧安全检查只识别“文件列表 / H5 / 网页”等字面词，又不把 `/` 视为多终态枚举，因此误拒语义等价的 AI 候选。现按“授权 / 登录 / WebView-H5-网页 / 文件页-列表-选择页 / 空态-提示 / 弹窗”语义组归一，仍要求至少两类合法终态、明确枚举以及无白屏 / 崩溃断言。
+- 旧有界证据只能处理“自动候选自身已有点击尾链”。扫描分支实际已有上游 AI 生成的自动展示候选 `TC-003`、同分支人工候选 `MC-003` 中的“点击 -> 观察首个终态”以及成功扫描基线，但平台没有给它们组合的机会。现在只对 `portfolioAudit` 真实缺失的同一 REQ 进行组合：成功基线负责来源页导航，自动候选负责当前分支的真实文字检查，人工候选只捐赠有界首屏尾链。账号、验证码、确认授权、选文件、坐标和非观察动作仍直接拒绝。
+- 证据记录 `sourceCaseId / tailSourceCaseId / baselineId / acceptanceCheckIds`，并与现有一次最终 AI 收敛调用一起发送。模型仍先决策；模型过度保守时，只有来源、安全性和显式覆盖全部通过的原自动候选可被平台接管；原人工候选本身仍保留 manual。
+- 本机用线上原始 payload 真实调用同一 `qwen3.6-plus` 收敛模型，本次在旧 `75s` 预算内仍超时；线上上一次成功收敛约用 `33s`。现对已有 `eligible` 证据的最终收敛给 AI `45s` 决策窗口，初始规划和无证据收敛仍保留原 `75s`；不新增模型重试。仅当 `coverage_convergence` 调用不可用且已存在 `eligible=true` 证据时，使用上游 AI 候选的证据降级，并在 trace / report 明确记录 `evidenceFallback=true`，不伪称本轮模型成功。无可信证据时仍按原逻辑失败。
+- 有界组合用例标题改为“点击后首个可见页校验”，准确区分“当前页展示检查”和“点击后可达性检查”；这使现有 scorer 能按真实业务意图评分，没有修改或降低 scorer。
+
+使用线上原始 JSON 离线重放：
+
+- 正常 AI 过度保守模拟和 AI 超时模拟都得到 5 条 executable：`TC-001 / TC-002 / TC-007 / TC-003 / TC-008`，覆盖文档打印、照片打印、扫描复印的 `12/12` 个展示 / 同级 / 文案 / 可达验收维度。`TC-004 / 005 / 006` 在完整覆盖后作为重复候选转 manual，不为 5 条数量目标硬凑。
+- 5 份 YAML 经现有静态修复、动作白名单、Midscene 结构、可执行语法、启动守卫、需求 scope 和 scorer 检查，全部为 `100 / executable`，无坐标动作。扫描 YAML 使用真实可见文字进入“扫描复印”，先等待“百度网盘”与同级入口，再点击并检查授权 WebView / 登录页 / 文件选择页之一，不输入凭据、不确认授权、不选文件。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端 Agent、失败报告和重跑视觉烟测全部通过。用线上 payload 的真实本机收敛调用确认 `qwen3.6-plus` 超时事实，模拟超时重放确认证据降级无第二次模型调用。
+
+待完成：
+
+- 本轮新修复尚未部署。部署后必须继续使用同一需求 / Figma / `win-runner-01 / ecbfd645 / fixed / qwen3.6-plus` 发起完整 Agent，持续轮询到 `DONE / FAILED / CANCELLED`。
+- 新任务要再确认视觉 `4/4 completed` 且每批有 judgement，核对最终 YAML 的三个分支、5 寸照片归属照片打印、真实文字定位和无坐标。如进入 Runner，首批与 remaining 每个 job 必须只在 OPPO 串行到终态，逐个检查真实报告、截图 / 失败录屏、失败分类和 AI 修复证据。
+
 ### 2026-07-15 Agent 收敛来源证据与 Figma 视觉增量校准修复
 
 部署 `4a911c9` 后发起同一完整回归：
