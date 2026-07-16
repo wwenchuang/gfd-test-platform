@@ -925,6 +925,12 @@ SCOPE_GUARD_TEST_TAXONOMY_TERMS = (
     "校验场景",
     "验证场景",
 )
+SCOPE_GUARD_EXECUTION_DEADLINE_RE = re.compile(
+    r"(?:，|,)\s*(?:等待时限|等待时间|最长等待)?\s*"
+    r"(?:超时|timeout)(?:时间)?\s*(?:为|设置为|[:：=])?\s*"
+    r"\d+(?:\.\d+)?\s*(?:毫秒|ms|秒|s|分钟|min(?:ute)?s?)",
+    re.I,
+)
 
 
 def _scope_guard_join_values(*values) -> str:
@@ -1010,6 +1016,37 @@ def _scope_guard_yaml_semantic_text(yaml_text: str) -> str:
     """Extract task/action language while excluding structural YAML keys."""
     actions = _scope_guard_yaml_action_values(yaml_text)
     return _scope_guard_join_values(*actions.values())
+
+
+def _scope_guard_has_unrequested_pattern(word: str, compact_case: str, case: dict, yaml_semantic_text: str) -> bool:
+    """Keep execution deadlines distinct from timeout-behavior scenarios."""
+    if word != "超时":
+        return word in compact_case
+
+    intent_text = _scope_guard_join_values(
+        case.get("title"),
+        case.get("name"),
+        case.get("scenario"),
+        case.get("goal"),
+        case.get("coverage"),
+        case.get("risk"),
+        case.get("business_path"),
+        case.get("businessPath"),
+        case.get("expected_result"),
+        case.get("expectedResult"),
+        case.get("assertions"),
+        case.get("tags"),
+    )
+    if word in re.sub(r"\s+", "", intent_text):
+        return True
+
+    execution_text = _scope_guard_join_values(
+        case.get("preconditions"),
+        case.get("steps"),
+        yaml_semantic_text,
+    )
+    execution_text = SCOPE_GUARD_EXECUTION_DEADLINE_RE.sub("", execution_text)
+    return word in re.sub(r"\s+", "", execution_text)
 
 
 def _scope_guard_abstract_ui_targets(case: dict, yaml_text: str = "") -> List[str]:
@@ -1224,7 +1261,10 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
             reasons.append("未覆盖本需求新增/变更的入口、模块或导入选项")
 
     for word in SCOPE_GUARD_UNREQUESTED_PATTERNS:
-        if word in compact_case and word not in compact_requirement:
+        if (
+            _scope_guard_has_unrequested_pattern(word, compact_case, case, yaml_semantic_text)
+            and word not in compact_requirement
+        ):
             reasons.append(f"包含需求未说明的扩展场景：{word}")
             if len(reasons) >= 3:
                 break
@@ -2896,6 +2936,14 @@ def build_baseline_meta(case, normalized_steps, assertions):
     priority = case_priority(case)
     tags = "、".join(case_tags(case)[:8])
     smoke = "true" if is_smoke_case(case) else "false"
+    case_plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    matched_baseline = ""
+    if (
+        case_plan.get("baselineGrounded") is True
+        and case_plan.get("baselineVerified") is True
+        and case_plan.get("pathPlanApplied") is True
+    ):
+        matched_baseline = str(case_plan.get("baselineId") or "").strip()
     if preconditions:
         goal = f"{goal}；前置：{'；'.join(preconditions[:4])}"
     return {
@@ -2912,13 +2960,15 @@ def build_baseline_meta(case, normalized_steps, assertions):
         "risk": risk,
         "coverage": coverage,
         "data": data_requirements,
-        "automation": automation_reason
+        "automation": automation_reason,
+        "matched_baseline": matched_baseline,
     }
 
 
 def baseline_comment_lines(indent, meta):
     """生成基线描述注释行。"""
     labels = [
+        ("matched baseline", meta.get("matched_baseline")),
         ("baseline.case_id", meta.get("case_id")),
         ("baseline.priority", meta.get("priority")),
         ("baseline.smoke", meta.get("smoke")),
@@ -2939,6 +2989,29 @@ def baseline_comment_lines(indent, meta):
         for key, value in labels
         if yaml_comment_text(value)
     ]
+
+
+def attach_verified_baseline_evidence(yaml_text, case):
+    """Restore server-verified baseline provenance after YAML normalization."""
+    text = str(yaml_text or "")
+    sanitized = re.sub(
+        r"(?mi)^[ \t]*#\s*matched\s+baseline\s*:\s*[^\r\n]*(?:\r?\n|$)",
+        "",
+        text,
+    )
+    case = case if isinstance(case, dict) else {}
+    plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    baseline_id = str(plan.get("baselineId") or "").strip()
+    if not (
+        baseline_id
+        and plan.get("baselineGrounded") is True
+        and plan.get("baselineVerified") is True
+        and plan.get("pathPlanApplied") is True
+    ):
+        return sanitized, False
+    marker = f"# matched baseline: {baseline_id}"
+    updated = marker + "\n" + sanitized.lstrip("\n")
+    return updated, updated != text
 
 
 def normalize_assertion_for_yaml(assertion, case):
@@ -7279,6 +7352,10 @@ def generate_ui_yaml_from_request(d, job_id=None):
         next_item = dict(item)
         if repair.get("content"):
             next_item["content"] = repair.get("content")
+        next_item["content"], baseline_evidence_attached = attach_verified_baseline_evidence(
+            next_item.get("content") or "",
+            next_item.get("case") or item.get("case") or {},
+        )
         dry = repair.get("dryRun") or {}
         yaml_static_repair_results.append({
             "file": item.get("file") or "",
@@ -7289,6 +7366,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "warnings": list(dry.get("warnings") or [])[:8],
             "executionLevel": dry.get("executionLevel") or "draft",
             "taskCount": dry.get("taskCount") or 0,
+            "baselineEvidenceAttached": baseline_evidence_attached,
         })
         repaired_yaml_items.append(next_item)
     yaml_items = repaired_yaml_items

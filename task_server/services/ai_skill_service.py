@@ -4244,6 +4244,7 @@ def _convergence_evidence_fallback_plan(
     candidates,
     candidate_eligibility_by_id,
     allowed_baseline_ids,
+    verified_baseline_ids,
     planning_context,
     convergence_focus,
     trace,
@@ -4319,6 +4320,7 @@ def _convergence_evidence_fallback_plan(
         "evidenceFallback": True,
         "trace": fallback_trace,
         "allowedBaselineIds": sorted(allowed_baseline_ids),
+        "verifiedBaselineIds": sorted(verified_baseline_ids or []),
         "requirementPoints": normalize_text_list(
             (normalized.get("analysis") or {}).get("requirement_points")
         )[:12],
@@ -4348,6 +4350,13 @@ def call_skill_executable_yaml_planner(
         _compact_baseline_candidate(item, idx)
         for idx, item in enumerate(selected_baselines or [])
     ]
+    verified_baseline_ids = {
+        str(item.get("id") or "").strip()
+        for item in compact_baselines
+        if str(item.get("id") or "").strip()
+        and str(item.get("sourceKind") or "").strip() == "verified_execution"
+        and str(item.get("verificationStatus") or "").strip() == "execution_success"
+    }
     automatic_records = []
     manual_records = []
     for default_origin, cases in (
@@ -4395,6 +4404,7 @@ def call_skill_executable_yaml_planner(
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "verifiedBaselineIds": sorted(verified_baseline_ids),
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
@@ -4482,6 +4492,7 @@ def call_skill_executable_yaml_planner(
             "authoritative": True,
             "trace": trace,
             "allowedBaselineIds": sorted(allowed_baseline_ids),
+            "verifiedBaselineIds": sorted(verified_baseline_ids),
             "requirementPoints": normalize_text_list(
                 (normalized.get("analysis") or {}).get("requirement_points")
             )[:12],
@@ -4497,6 +4508,7 @@ def call_skill_executable_yaml_planner(
             candidates,
             candidate_eligibility_by_id,
             allowed_baseline_ids,
+            verified_baseline_ids,
             planning_context,
             convergence_focus,
             trace,
@@ -4507,6 +4519,7 @@ def call_skill_executable_yaml_planner(
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "verifiedBaselineIds": sorted(verified_baseline_ids),
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
@@ -4555,6 +4568,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     smoke_used = 0
     allowed_baseline_ids = {
         str(item).strip() for item in (plan.get("allowedBaselineIds") or []) if str(item or "").strip()
+    }
+    verified_baseline_ids = {
+        str(item).strip() for item in (plan.get("verifiedBaselineIds") or []) if str(item or "").strip()
     }
     planning_context = plan.get("planningContext") if isinstance(plan.get("planningContext"), dict) else {}
     convergence_pass = str(planning_context.get("pass") or "").strip() == "coverage_convergence"
@@ -4827,6 +4843,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         case["ai_case_plan"] = {
             "baselineId": baseline_id,
             "baselineGrounded": baseline_grounded,
+            "baselineVerified": bool(
+                baseline_grounded
+                and path_plan_applied
+                and baseline_id in verified_baseline_ids
+            ),
             "precondition": precondition,
             "flow": planned_flow,
             "originalFlow": original_flow,

@@ -684,6 +684,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     }
     require(
         branch_fallback_by_id["TC-R03"].get("executionLevel") == "executable"
+        and branch_fallback_plan.get("verifiedBaselineIds") == ["base-entry-nav", "base-service-nav"]
+        and branch_fallback_by_id["TC-R03"].get("ai_case_plan", {}).get("baselineVerified") is True
         and "同级入口" in " ".join(branch_fallback_by_id["TC-R03"].get("steps") or [])
         and yaml_service._case_manual_block_reason(branch_fallback_by_id["TC-R03"]) == ""
         and ai_skill_service.executable_yaml_portfolio_audit(
@@ -3069,6 +3071,85 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         concrete_yaml,
     )
     require(concrete_review.get("ok"), "Structural timeout fields must not be treated as an unrequested timeout scenario")
+    bounded_wait_review = yaml_service.generated_case_requirement_scope_review({
+        "case_id": "TC-BOUND-WAIT",
+        "title": "扫描复印页点击百度网盘入口唤起响应校验",
+        "coverage": "REQ-003",
+        "requirementRefs": ["REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达"],
+        "steps": [
+            "点击扫描复印入口",
+            "点击百度网盘入口",
+            "等待百度网盘授权页、文件列表页或H5登录页加载，超时15秒",
+        ],
+        "assertions": ["百度网盘相关页面稳定可达，无崩溃、无白屏"],
+    }, {
+        "requirement_points": [
+            "REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达",
+        ],
+    })
+    require(
+        bounded_wait_review.get("ok"),
+        "A numeric deadline on a normal wait must remain execution mechanics, not become an unrequested timeout scenario",
+    )
+    timeout_scenario_review = yaml_service.generated_case_requirement_scope_review({
+        "case_id": "TC-TIMEOUT-SCENARIO",
+        "title": "扫描复印页百度网盘网络超时处理校验",
+        "coverage": "REQ-003",
+        "steps": ["断开网络", "点击百度网盘入口", "等待网络超时提示"],
+        "assertions": ["页面展示网络超时提示并允许重试"],
+    }, {
+        "requirement_points": [
+            "REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达",
+        ],
+    })
+    require(
+        not timeout_scenario_review.get("ok")
+        and any("扩展场景：超时" in reason for reason in timeout_scenario_review.get("reasons") or []),
+        "A real timeout-behavior scenario must remain blocked when the requirement does not request it",
+    )
+    grounded_yaml = """android:
+  tasks:
+    - name: 扫描复印页点击入口唤起响应校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 首页展示扫描复印入口
+        - aiTap: 扫描复印
+        - sleep: 300
+        - aiTap: 证件扫描
+        - sleep: 300
+        - aiTap: 立即使用
+        - sleep: 300
+        - aiWaitFor: 扫描复印页面加载完成
+        - aiTap: 百度网盘
+        - sleep: 300
+        - aiWaitFor: 授权页、文件列表页或登录页任一稳定显示
+        - aiAssert: 页面无崩溃、无白屏
+"""
+    verified_case = {
+        "ai_case_plan": {
+            "baselineId": "verified-scan-baseline",
+            "baselineGrounded": True,
+            "baselineVerified": True,
+            "pathPlanApplied": True,
+        },
+    }
+    grounded_yaml, evidence_attached = yaml_service.attach_verified_baseline_evidence(
+        grounded_yaml,
+        verified_case,
+    )
+    grounded_score = yaml_service.score_midscene_yaml_executable(grounded_yaml, generated=True)
+    unverified_yaml, unverified_attached = yaml_service.attach_verified_baseline_evidence(
+        grounded_yaml,
+        {"ai_case_plan": {**verified_case["ai_case_plan"], "baselineVerified": False}},
+    )
+    require(
+        evidence_attached
+        and grounded_score.get("baselineEvidence") is True
+        and grounded_score.get("executionLevel") == "executable"
+        and not unverified_attached
+        and "matched baseline" not in unverified_yaml,
+        "Only a server-verified successful baseline path may survive YAML repair as scorer evidence",
+    )
 
     multi_point_analysis = {
         "requirement_points": [

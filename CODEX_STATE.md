@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 部署后 GPT Agent 验收：区分等待截止时间并贯通成功基线证据
+
+部署 `cb7f7ed` 后发起同一完整回归：
+
+- Agent `agent-1784182814050-d7b01959`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed`，文本规划和 YAML 收敛均为 `highway_gpt5_mini / gpt-5-mini`。8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `yaml_dry_run=true / qwen3.6`，固定 OPPO PHM110 在线。任务终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job，也没有向第二台设备下发。
+- Figma parser 保持原实现并解析 `4 页 / 4 图 / 忽略 0`。4 张图分 4 批真实送入视觉 AI，分别约 `22 / 18 / 18 / 13s` 完成，最终 `4/4 completed / hardGate=false`；设计稿继续作为 AI 软参考。
+- `cb7f7ed` 已在线生效：初始组合覆盖 `10/12`，缺扫描复印 relation / reachability；GPT 在一次既有收敛调用中选择 `TC-006` 补齐扫描可达，来源页补强补齐 relation，最终组合为 `12/12 / 6 executable / 0 unresolved`，且没有覆盖退化。
+- 扫描路径使用平台记录的成功执行基线 `d623c1e73180bfac / 证件扫描`，来源为 `verified_execution / execution_success`，实际可见文字路径为 `扫描复印 icon -> 证件扫描 -> 立即使用 -> ...`。这不是本地 `文件扫描.yaml`，也不是仅按标题相似推断。
+- 后置需求范围门禁把 `TC-006` 的普通步骤“等待授权页、文件列表页或 H5 登录页加载，超时15秒”误判为需求未声明的“超时异常场景”，将其转回 manual，最终只生成 5 份 YAML 并在覆盖门禁阻断。已生成的 5 份均通过 static / scorer；本轮失败不是 Figma、Runner、设备或这 5 份 YAML 执行失败。
+
+根因与通用修复：
+
+- 范围门禁现在区分用例意图与执行机制：标题、目标、断言或标签要求网络超时处理时仍会阻断；步骤中的数值等待截止时间（例如 `，超时15秒`）只作为执行参数，不再被提升为新测试场景。没有放宽弱网、断网、超时提示或重试场景门禁。
+- 成功基线身份此前只存在于 AI 收敛计划，确定性 YAML 转换 / 首页动作修复后没有传给 scorer；长链路因此被当作“无成功基线”降为 manual。现在仅当 baseline 同时满足服务端 `verified_execution / execution_success`、AI 已按该 ID 落地同分支路径、需求映射未被门禁拒绝时，才记录 `baselineVerified=true` 并在 YAML 评分前恢复显式来源证据。
+- 所有既有 `matched baseline` 注释会先被清除，再按服务端验证结果重写；未验证候选、只匹配标题的基线或 AI 自行写入的注释不能伪造 scorer 证据。scorer、静态白名单、需求范围、dry-run、Smoke 阈值和真实 Runner 门禁均未修改。
+- 没有产品词或单一 case ID 硬编码，没有新增模型调用、重试或执行模式，也没有修改 Figma parser、`router.py`、历史 YAML、scorer、Sonic / Runner 脚本或设备策略。
+
+使用本次线上失败 cases JSON 精确重放：
+
+- 从范围门禁前状态恢复 `TC-006`，按线上三条 `verified_execution / execution_success` 基线重放 `scope gate -> automation split -> YAML 转换 -> 本地静态修复 -> 可信证据恢复 -> syntax / executable / static / stability / requirement scope / scorer`。
+- 最终保留 6 条、转出 6 份 YAML，`TC-001..TC-006` 全部为 `100 / executable`，所有检查通过；`TC-006` 确实发生首页动作修复，并在修复后恢复 `d623c1e73180bfac` 来源证据。重放结果保存于 `/tmp/agent-cb7f7ed-complete-replay.json`。
+- 该结果只证明生成门禁可以放行，不代表 App 真实断言成功。必须部署本轮提交后再执行一次完整 Agent，并以 OPPO Runner 报告、截图 / 录屏和终态为准。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 推送并部署本轮修复。
+- 部署后只发起一次同输入真实验收，固定 `win-runner-01 / ecbfd645 / gpt-5-mini`。持续监督 Agent、首批 Smoke、remaining 和可能的一次有界 AI 修复到终态；人工复核三业务分支、真实可见文字、无坐标，以及 OPPO Runner 报告和截图 / 录屏，不能以离线重放替代 Runner 成功。
+
 ### 2026-07-16 部署后 GPT Agent 验收：来源页补强必须保留已有覆盖维度
 
 部署 `83c5f8f` 后发起同一完整回归：
