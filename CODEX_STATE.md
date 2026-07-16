@@ -28,6 +28,32 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 GPT 长 Skill 空内容不能冒充成功
+
+部署 `56001ae` 后发起同一完整回归：
+
+- 线上 `8091 / 8088` 健康；AI Gateway 为非 mock。`GET /ai/providers` 从 Highway 上游实时返回 `180` 个模型，`catalog.channels[0].source=live / errors=[]`，`highway_gpt5_mini / gpt-5-mini` 的真实 provider test 在约 `2.6s` 返回 `gateway ok`。
+- Windows Runner `win-runner-01` 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`。固定设备 `ecbfd645 / OPPO PHM110 / Android 15 / com.xbxxhz.box 4.45.0` 为 ready；Agent 请求明确为 `RUNNER_JOB / fixed / singleDeviceOnly`，未选择第二台设备。
+- Agent `agent-1784197491234-39e4098d` 在 `PLAN` 终态失败。`PREPARE_SOURCE` 保持原 Figma parser 并得到 `4 页 / 4 张 UI 图 / 忽略 0`；核心 `requirement_analyzer` 失败后，下游 scenario、视觉校准、YAML 和 Runner 全部未执行，因此没有创建 Runner job，也没有操作任何手机。
+- 同一 GPT 的短 `/ai/skill` 探针以 `HTTP 200 / 216 bytes / 3.29s` 返回合法 JSON。使用本轮真实需求、Figma 软证据和 Top3 成功基线上下文重建生产规模 `requirement_analyzer` 请求后，稳定复现 `HTTP 200 / 202 bytes / 47.09s`，正文为 `success=true` 但 `content="" / fallbackUsed=false`。
+
+根因与通用修复：
+
+- Gateway 旧实现直接将 `completion.choices[0].message.content || ""` 标为成功；空 assistant 内容既不会触发既有备用路由，也没有保存 `finish_reason / usage`。Task 随后对空字符串执行 JSON 解析，最终只显示失真的 `Expecting value: line 1 column 1`。
+- Gateway 现在兼容字符串和 text-part 数组输出，并把空白、缺失内容或去 fence 后的空内容视为可降级 provider failure。在同一总预算内最多尝试既有唯一备用模型；两个候选都空答时返回明确失败，不能冒充成功。
+- AI 调用日志及所有 Gateway AI 响应增加 `finishReason` 和汇总 token usage（prompt / completion / total / reasoning），空答原因包含首选模型的 finish/token 证据；不记录或使用模型 reasoning 正文。
+- Task AI Skill 客户端区分空 HTTP body、非 JSON/HTML body、非对象 JSON、HTTP 错误和 `success=true` 包裹中的空模型内容，并在拒绝前保存实际 provider/model/fallback/finish/usage trace。后续不再用 JSON parser 异常掩盖传输或模型空答。
+- OpenAI Chat Completions 官方文档说明 `max_completion_tokens` 同时包括可见输出和 reasoning tokens，且 GPT-5.1 之前默认使用 reasoning。当前旧响应没有 finish/token 证据，因此本轮没有凭推断修改 GPT reasoning 或 token 参数；部署后 trace 会直接证明是否为 `length / reasoning_tokens`：`https://platform.openai.com/docs/api-reference/chat/create`。
+- 没有修改 Figma parser、提示词业务规则、scorer、static gate、Runner、Sonic、执行模式、设备策略或历史 YAML。
+
+行为验证：
+
+- 假上游 `gpt-empty` 返回 `HTTP 200 + content="" + finish_reason=length + completion/reasoning_tokens=256` 时，真实路由为 `gpt-empty -> qwen-plus`，响应 `fallbackUsed=true / fallbackIndex=1` 并保留空答原因；两个候选都空答时 Gateway 返回 `HTTP 500`。
+- Task 客户端行为测试验证空 body、HTML body、数组 JSON 和成功包裹中的空模型内容分别得到准确诊断；空内容错误保留 `finish_reason=length / reasoning_tokens=4096`。
+- 完整 `npm test` 通过：undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时目录/普通错误/空答/图像/超时降级集成、Skill fixtures `3/3` 和 Playwright 桌面/移动端视觉回归。
+
+待完成：提交后由用户推送并部署；部署后先用同一生产规模 Skill 核对首选 GPT 的 `finishReason / usage` 和实际 fallback，再以完全相同输入重跑固定 `win-runner-01 / ecbfd645` Agent，持续监督生成、Smoke、remaining、报告和终态。不得选择第二台设备，也不得把本次本地测试当作真机成功。
+
 ### 2026-07-16 Agent 选定模型贯穿、可审计能力降级与有界超时
 
 本地代码已完成，尚未推送/部署，也未据此宣称 OPPO 真机回归成功。

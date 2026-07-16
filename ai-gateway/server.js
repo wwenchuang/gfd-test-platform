@@ -643,6 +643,45 @@ function imagePartsFromBody(body = {}) {
   });
 }
 
+function assistantOutputText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((part) => {
+    if (typeof part === 'string') return part;
+    if (typeof part?.text === 'string') return part.text;
+    if (typeof part?.content === 'string') return part.content;
+    return '';
+  }).join('');
+}
+
+function completionUsageSummary(usage = {}) {
+  const details = usage?.completion_tokens_details || usage?.completionTokensDetails || {};
+  return {
+    promptTokens: Number(usage?.prompt_tokens || usage?.promptTokens || 0),
+    completionTokens: Number(usage?.completion_tokens || usage?.completionTokens || 0),
+    totalTokens: Number(usage?.total_tokens || usage?.totalTokens || 0),
+    reasoningTokens: Number(details?.reasoning_tokens || details?.reasoningTokens || 0),
+  };
+}
+
+function completionAuditResponse(route = {}) {
+  return {
+    finishReason: String(route?.finishReason || ''),
+    usage: completionUsageSummary(route?.usage || {}),
+  };
+}
+
+function emptyAssistantOutputError(choice = {}, usage = {}) {
+  const finishReason = String(choice?.finish_reason || choice?.finishReason || 'unknown');
+  const tokenUsage = completionUsageSummary(usage);
+  const refused = Boolean(choice?.message?.refusal);
+  return (
+    `AI provider returned empty content (finish_reason=${finishReason}, `
+    + `completion_tokens=${tokenUsage.completionTokens}, reasoning_tokens=${tokenUsage.reasoningTokens}, `
+    + `refusal=${refused})`
+  );
+}
+
 function isFallbackEligibleAiError(errorText) {
   const text = String(errorText || '').toLowerCase();
   return (
@@ -665,6 +704,8 @@ function isFallbackEligibleAiError(errorText) {
     text.includes('model does not exist') ||
     text.includes('model is not available') ||
     text.includes('no access to model') ||
+    text.includes('empty content') ||
+    text.includes('empty response') ||
     text.includes('unsupported') ||
     text.includes('does not support image') ||
     text.includes('image input is not supported')
@@ -697,6 +738,8 @@ async function callAi(action, body, options = {}) {
     const startedAt = Date.now();
     let success = false;
     let errorText = null;
+    let finishReason = '';
+    let usage = {};
     try {
       if (MOCK_ENABLED) {
         output = mockAiOutput(action, body);
@@ -725,8 +768,14 @@ async function callAi(action, body, options = {}) {
         completionOptions.messages = options.messages;
       }
       const completion = await client.chat.completions.create(completionOptions);
-      output = completion.choices?.[0]?.message?.content || '';
+      const choice = completion.choices?.[0] || {};
+      finishReason = String(choice?.finish_reason || choice?.finishReason || '');
+      usage = completionUsageSummary(completion?.usage || {});
+      output = assistantOutputText(choice?.message?.content);
       if (options.stripFence) output = stripMarkdownFence(output);
+      if (!String(output || '').trim()) {
+        throw new Error(emptyAssistantOutputError(choice, completion?.usage || {}));
+      }
       success = true;
       return {
         id,
@@ -735,6 +784,8 @@ async function callAi(action, body, options = {}) {
           fallbackIndex: index,
           fallbackUsed: index > 0,
           fallbackReason: fallbackErrors[fallbackErrors.length - 1]?.error || '',
+          finishReason,
+          usage,
         },
         output,
       };
@@ -763,6 +814,8 @@ async function callAi(action, body, options = {}) {
         fallbackTotal: routes.length,
         routeTimeoutMs,
         totalTimeoutMs,
+        finishReason,
+        usage,
         inputPreview: preview(body),
         outputPreview: preview(output),
         error: errorText,
@@ -1027,6 +1080,7 @@ app.post('/ai/generate-yaml', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 
@@ -1048,6 +1102,7 @@ app.post('/ai/generate-case', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 
@@ -1085,6 +1140,7 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 
@@ -1131,6 +1187,7 @@ app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 
@@ -1176,6 +1233,7 @@ app.post('/ai/optimize-yaml', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 
@@ -1203,6 +1261,7 @@ app.post('/ai/chat', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 
@@ -1225,6 +1284,7 @@ app.post('/ai/generate-bug', asyncRoute(async (req, res) => {
     fallbackUsed: Boolean(route.fallbackUsed),
     fallbackIndex: Number(route.fallbackIndex || 0),
     fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
   });
 }));
 

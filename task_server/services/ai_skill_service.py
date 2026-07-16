@@ -285,6 +285,43 @@ def run_ai_skill(
     return validate_ai_skill_output(skill_name, result)
 
 
+def _decode_ai_gateway_json_response(raw, status=200, content_type="", endpoint="/ai/skill"):
+    """Decode a Gateway response without collapsing empty/HTML bodies into JSON errors."""
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        text = str(raw or "")
+    normalized_type = str(content_type or "").strip() or "unknown"
+    if not text.strip():
+        raise RuntimeError(
+            f"AI Gateway 返回空响应：endpoint={endpoint} status={status} content-type={normalized_type}"
+        )
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        preview = re.sub(r"\s+", " ", text).strip()[:240]
+        raise RuntimeError(
+            f"AI Gateway 返回非 JSON 响应：endpoint={endpoint} status={status} "
+            f"content-type={normalized_type} body={preview!r}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"AI Gateway 返回了非对象 JSON：endpoint={endpoint} status={status} "
+            f"content-type={normalized_type} type={type(data).__name__}"
+        )
+    return data
+
+
+def _ai_gateway_response_content_type(response):
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return ""
+    try:
+        return str(headers.get("Content-Type") or "")
+    except Exception:
+        return ""
+
+
 def ai_gateway_skill_content(
     skill_name,
     prompt,
@@ -338,12 +375,30 @@ def ai_gateway_skill_content(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=max(30, safe_int(timeout, 180))) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    if not data.get("success"):
-        raise RuntimeError(str(data.get("error") or "AI Gateway skill 调用失败"))
+    endpoint = "/ai/skill"
+    try:
+        with urllib.request.urlopen(req, timeout=max(30, safe_int(timeout, 180))) as resp:
+            data = _decode_ai_gateway_json_response(
+                resp.read(),
+                status=getattr(resp, "status", 200),
+                content_type=_ai_gateway_response_content_type(resp),
+                endpoint=endpoint,
+            )
+    except urllib.error.HTTPError as exc:
+        try:
+            error_data = _decode_ai_gateway_json_response(
+                exc.read(),
+                status=exc.code,
+                content_type=_ai_gateway_response_content_type(exc),
+                endpoint=endpoint,
+            )
+            error_text = str(error_data.get("error") or error_data.get("message") or "AI Gateway skill 调用失败")
+        except RuntimeError as decode_exc:
+            error_text = str(decode_exc)
+        raise RuntimeError(f"AI Gateway HTTP {exc.code}：{error_text}") from exc
     selected_provider_id = model_config.get("providerId") or model_config.get("provider") or ""
     selected_model = model_config.get("model") or model_config.get("modelName") or ""
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
     runtime_trace.update({
         "selectedProviderId": selected_provider_id,
         "selectedModel": selected_model,
@@ -354,8 +409,28 @@ def ai_gateway_skill_content(
         "fallbackReason": str(data.get("fallbackReason") or "")[:500],
         "source": "ai_gateway",
         "imageCount": len(normalized_images),
+        "finishReason": str(data.get("finishReason") or ""),
+        "usage": usage,
     })
-    return data.get("content") or data.get("data") or ""
+    if not data.get("success"):
+        raise RuntimeError(str(data.get("error") or "AI Gateway skill 调用失败"))
+    content = data.get("content")
+    if content is None:
+        content = data.get("data")
+    if isinstance(content, (dict, list)):
+        content = json.dumps(content, ensure_ascii=False)
+    else:
+        content = str(content or "")
+    if not content.strip():
+        raise RuntimeError(
+            "AI Gateway skill 返回空内容："
+            f"provider={data.get('providerId') or selected_provider_id} "
+            f"model={data.get('model') or selected_model} "
+            f"finish_reason={data.get('finishReason') or 'unknown'} "
+            f"completion_tokens={safe_int(usage.get('completionTokens'), 0)} "
+            f"reasoning_tokens={safe_int(usage.get('reasoningTokens'), 0)}"
+        )
+    return content
 
 
 # ---------------------------------------------------------------------------

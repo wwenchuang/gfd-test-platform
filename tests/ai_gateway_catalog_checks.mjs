@@ -90,6 +90,7 @@ const upstream = http.createServer(async (req, res) => {
         {id: 'gpt-static', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-new', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-down', object: 'model', owned_by: 'fixture'},
+        {id: 'gpt-empty', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-no-vision', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-hang', object: 'model', owned_by: 'fixture'},
       ],
@@ -115,13 +116,27 @@ const upstream = http.createServer(async (req, res) => {
       return;
     }
     const systemText = String(body.messages?.[0]?.content || '');
-    const content = systemText.includes('gateway ok') ? 'gateway ok' : JSON.stringify({accepted: true, model: body.model});
+    const userText = (body.messages || []).map((message) => (
+      typeof message?.content === 'string'
+        ? message.content
+        : (message?.content || []).map((part) => part?.text || '').join('')
+    )).join('\n');
+    const emptyOutput = body.model === 'gpt-empty' || userText.includes('ALL_EMPTY');
+    const content = emptyOutput
+      ? ''
+      : (systemText.includes('gateway ok') ? 'gateway ok' : JSON.stringify({accepted: true, model: body.model}));
     sendJson(res, 200, {
       id: 'chatcmpl-fixture',
       object: 'chat.completion',
       created: 1,
       model: body.model,
-      choices: [{index: 0, message: {role: 'assistant', content}, finish_reason: 'stop'}],
+      choices: [{index: 0, message: {role: 'assistant', content}, finish_reason: emptyOutput ? 'length' : 'stop'}],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: emptyOutput ? 256 : 8,
+        total_tokens: emptyOutput ? 266 : 18,
+        completion_tokens_details: {reasoning_tokens: emptyOutput ? 256 : 2},
+      },
     });
     return;
   }
@@ -193,10 +208,12 @@ try {
   assert.equal(first.providers.find((item) => item.model === 'gpt-static')?.id, 'highway_seed');
   const dynamicNew = first.providers.find((item) => item.model === 'gpt-new');
   const dynamicDown = first.providers.find((item) => item.model === 'gpt-down');
+  const dynamicEmpty = first.providers.find((item) => item.model === 'gpt-empty');
   const dynamicNoVision = first.providers.find((item) => item.model === 'gpt-no-vision');
   const dynamicHang = first.providers.find((item) => item.model === 'gpt-hang');
   assert.ok(dynamicNew?.id.startsWith('catalog_'));
   assert.ok(dynamicDown?.id.startsWith('catalog_'));
+  assert.ok(dynamicEmpty?.id.startsWith('catalog_'));
   assert.ok(dynamicNoVision?.id.startsWith('catalog_'));
   assert.ok(dynamicHang?.id.startsWith('catalog_'));
 
@@ -236,6 +253,42 @@ try {
   assert.equal(skillResult.fallbackUsed, true);
   assert.equal(skillResult.fallbackIndex, 1);
   assert.match(skillResult.fallbackReason, /temporarily unavailable/i);
+
+  const emptySkillResult = await requestJson(gatewayUrl, '/ai/skill', {
+    method: 'POST',
+    body: JSON.stringify({
+      skillName: 'requirement_analyzer',
+      prompt: 'Return JSON.',
+      jsonResponse: true,
+      providerId: dynamicEmpty.id,
+      model: 'gpt-empty',
+    }),
+  });
+  assert.equal(emptySkillResult.model, 'qwen-plus');
+  assert.equal(emptySkillResult.fallbackUsed, true);
+  assert.equal(emptySkillResult.fallbackIndex, 1);
+  assert.match(emptySkillResult.fallbackReason, /empty content.*finish_reason=length.*reasoning_tokens=256/i);
+  assert.equal(emptySkillResult.finishReason, 'stop');
+  assert.equal(emptySkillResult.usage.completionTokens, 8);
+  const emptyFallbackModels = completionModels.slice(-2);
+  assert.deepEqual(emptyFallbackModels, ['gpt-empty', 'qwen-plus']);
+
+  const allEmptyResponse = await fetch(`${gatewayUrl}/ai/skill`, {
+    method: 'POST',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({
+      skillName: 'requirement_analyzer',
+      prompt: 'ALL_EMPTY',
+      jsonResponse: true,
+      providerId: dynamicEmpty.id,
+      model: 'gpt-empty',
+    }),
+  });
+  const allEmptyData = await allEmptyResponse.json();
+  assert.equal(allEmptyResponse.status, 500);
+  assert.equal(allEmptyData.success, false);
+  assert.match(allEmptyData.error, /empty content.*finish_reason=length/i);
+  assert.deepEqual(completionModels.slice(-2), ['gpt-empty', 'qwen-plus']);
 
   const chatResult = await requestJson(gatewayUrl, '/ai/chat', {
     method: 'POST',
@@ -310,6 +363,7 @@ try {
     liveModels: first.providers.filter((item) => item.catalogSource === 'live').length,
     dynamicRoutePersisted: true,
     fallbackModels,
+    emptyFallbackModels,
     chatFallbackModels,
     visualFallbackModels,
     timeoutFallbackModels,

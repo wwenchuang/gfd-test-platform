@@ -111,6 +111,15 @@ def main():
     require("client.models.list()" in server and "buildProviderCatalog" in server and "configured_fallback" in server, "non-Qwen providers must be discovered from the upstream models API with an explicit static fallback")
     require("catalogProviderId" in server and "parseCatalogProviderId" in server and "resolveProviderConfig" in server, "live models must have stable routeable provider IDs")
     require("index === 0" in server and "isFallbackEligibleAiError" in server, "requested models must stay on the primary route while eligible fallback providers keep their own models")
+    require(
+        "assistantOutputText" in server
+        and "emptyAssistantOutputError" in server
+        and "text.includes('empty content')" in server
+        and "completionUsageSummary" in server
+        and "finishReason" in server
+        and "reasoningTokens" in server,
+        "Gateway must reject empty model output, allow one audited fallback, and retain finish/token metadata",
+    )
     require("app.post('/ai/skill'" in server, "server must expose AI Skill endpoint")
     require("routeSupportsQwenHybridThinking" in server and "completionOptions.enable_thinking = false" in server and "completionOptions.response_format = {type: 'json_object'}" in server, "Structured Qwen skills must use non-thinking JSON Mode to avoid incompatible slow responses")
     for forbidden_param in ("top_p", "presence_penalty", "frequency_penalty"):

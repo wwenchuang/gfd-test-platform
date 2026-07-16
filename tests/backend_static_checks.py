@@ -19,6 +19,82 @@ NGINX_CONF = ROOT / "deploy" / "nginx-midscene-task.conf"
 ENV_EXAMPLE = ROOT / "deploy" / "midscene.env.example"
 
 
+def check_ai_gateway_response_diagnostics():
+    from task_server.services import ai_skill_service
+
+    parsed = ai_skill_service._decode_ai_gateway_json_response(
+        b'{"success":true,"content":"ok"}',
+        status=200,
+        content_type="application/json",
+    )
+    require(parsed.get("content") == "ok", "Gateway response decoder must preserve valid JSON")
+
+    cases = [
+        (b"", "AI Gateway 返回空响应"),
+        (b"<html>gateway timeout</html>", "AI Gateway 返回非 JSON 响应"),
+        (b"[]", "AI Gateway 返回了非对象 JSON"),
+    ]
+    for raw, expected in cases:
+        rejected = False
+        try:
+            ai_skill_service._decode_ai_gateway_json_response(
+                raw,
+                status=504,
+                content_type="text/html",
+            )
+        except RuntimeError as exc:
+            rejected = expected in str(exc) and "status=504" in str(exc)
+        require(rejected, f"Gateway response decoder must diagnose {expected}")
+
+    class EmptySkillResponse:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "success": True,
+                "content": "",
+                "providerId": "highway_gpt5_mini",
+                "model": "gpt-5-mini",
+                "fallbackUsed": False,
+                "finishReason": "length",
+                "usage": {"completionTokens": 4096, "reasoningTokens": 4096},
+            }).encode("utf-8")
+
+    original_urlopen = ai_skill_service.urllib.request.urlopen
+    trace = {}
+    try:
+        ai_skill_service.urllib.request.urlopen = lambda *_args, **_kwargs: EmptySkillResponse()
+        rejected = False
+        try:
+            ai_skill_service.ai_gateway_skill_content(
+                "requirement_analyzer",
+                "Return JSON.",
+                model_config={"providerId": "highway_gpt5_mini", "model": "gpt-5-mini"},
+                runtime_trace=trace,
+            )
+        except RuntimeError as exc:
+            rejected = (
+                "AI Gateway skill 返回空内容" in str(exc)
+                and "finish_reason=length" in str(exc)
+                and "reasoning_tokens=4096" in str(exc)
+            )
+    finally:
+        ai_skill_service.urllib.request.urlopen = original_urlopen
+    require(rejected, "Task AI Skill client must reject a success wrapper with empty model content")
+    require(
+        trace.get("finishReason") == "length"
+        and trace.get("usage", {}).get("reasoningTokens") == 4096,
+        "Task AI Skill trace must retain finish and token evidence before rejecting empty content",
+    )
+
+
 def load_backend():
     spec = importlib.util.spec_from_file_location("midscene_upload_static_check", MODULE)
     module = importlib.util.module_from_spec(spec)
@@ -6919,6 +6995,7 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
 
 
 def main():
+    check_ai_gateway_response_diagnostics()
     check_runner_inline_android_device_injection()
     check_midscene_model_family_protocol()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
