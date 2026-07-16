@@ -240,6 +240,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 f"进入{branch}",
                 "点击发票入口",
                 "等待授权页、登录页或内容列表任一合法页面可见",
+                f"断言页面已离开{branch}并且无长时间白屏或崩溃",
             ],
             "assertions": ["授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃"],
         })
@@ -444,6 +445,42 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ),
         "The one existing convergence AI call must receive platform-verified source-path plus bounded-tail evidence",
     )
+    trusted_prefix = ai_skill_service._trusted_baseline_source_navigation_flow({
+        "baselineUsable": True,
+        "trusted": True,
+        "snippet": """
+          - aiTap: \"会员服务\"
+          - aiWaitFor: \"开票服务可见\"
+          - aiTap: \"开票服务\"
+          - aiTap: \"电子发票\"
+          - aiTap: \"本地导入\"
+          - aiTap: \"确认上传\"
+        """,
+    }, ["云端发票"], "会员服务")
+    require(
+        trusted_prefix == [
+            "点击「会员服务」",
+            "等待开票服务可见",
+            "点击「开票服务」",
+            "点击「电子发票」",
+        ],
+        "Trusted baseline navigation must stop before data import while preserving every visible parent-page action",
+    )
+    require(
+        ai_skill_service._source_navigation_has_alternative_destinations([
+            "点击「会员服务」",
+            "等待「电子发票」或「纸质发票」页面加载完成",
+        ]),
+        "A source path with alternative destination leaves must not be promoted as grounded Runner navigation",
+    )
+    require(
+        not ai_skill_service._baseline_navigation_matches_landing_source(
+            trusted_prefix,
+            {"assertionTarget": "页面已离开「纸质发票」页并出现云端发票授权页"},
+            "会员服务",
+        ),
+        "A sibling baseline must not be joined to an AI tail that explicitly names a different source leaf",
+    )
     bounded_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
         bounded_convergence_payload,
         bounded_plan,
@@ -485,6 +522,19 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(
         yaml_service._case_manual_block_reason(slash_state_bounded) == "",
         "Equivalent slash-separated file-page and WebView terms must remain a bounded first-screen result",
+    )
+    branded_state_bounded = json.loads(json.dumps(bounded_by_id["TC-R01"], ensure_ascii=False))
+    branded_state_bounded["steps"] = [
+        "等待会员服务页面稳定",
+        "点击「云端发票」入口",
+        "断言页面已离开会员服务，出现「云端发票」页面区域或授权页，且无白屏或崩溃",
+    ]
+    branded_state_bounded["assertions"] = [
+        "页面已离开会员服务，出现「云端发票」页面区域或授权页，且无白屏或崩溃",
+    ]
+    require(
+        yaml_service._case_manual_block_reason(branded_state_bounded) == "",
+        "A visible target-branded landing state plus one explicit alternate must remain Runner-verifiable",
     )
     deep_bounded = json.loads(json.dumps(bounded_by_id["TC-R01"], ensure_ascii=False))
     deep_bounded["steps"].extend(["点击同意授权", "输入账号和验证码", "选择文件"])

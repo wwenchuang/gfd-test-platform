@@ -1677,7 +1677,21 @@ def case_covers_requirement_acceptance(case, check):
         )
         has_target_action = any(any(term in item for term in action_terms) for item in compact_items)
         has_terminal = any(term in compact_evidence for term in terminal_terms)
-        return has_target_action and has_terminal
+        has_bounded_transition_terminal = bool(
+            "已离开" in compact_evidence
+            and any(term in compact_evidence for term in ("页面区域", "页面元素", "页面跳转"))
+            and (
+                any(term in compact_evidence for term in (
+                    "无白屏", "未白屏", "无崩溃", "未崩溃", "无crash", "未crash",
+                ))
+                or re.search(
+                    r"(?:未出现|没有出现|未发生|没有发生)[^；。]{0,20}(?:崩溃|crash|白屏|闪退)",
+                    compact_evidence,
+                    flags=re.I,
+                )
+            )
+        )
+        return has_target_action and (has_terminal or has_bounded_transition_terminal)
     if kind == "relation":
         return any(any(term in item for term in (
             "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序", "左侧", "右侧",
@@ -3568,8 +3582,8 @@ def _bounded_landing_tail(case, target_terms):
         step = str(raw_step or "").strip()
         if not step:
             continue
-        if step.startswith(("等待", "观察", "检查", "验证")):
-            observations.append(step)
+        if step.startswith(("等待", "观察", "检查", "验证", "校验", "断言")):
+            observations.append(re.sub(r"^(?:等待|观察|检查|验证|校验|断言)", "检查", step))
             continue
         if step.startswith(("确认是否", "确认无", "确认未", "确认已", "确认页面")):
             observations.append("检查" + step[2:])
@@ -3583,7 +3597,7 @@ def _bounded_landing_tail(case, target_terms):
     if not observations:
         return None
     observation_text = "；".join(
-        re.sub(r"^(?:等待|观察|检查|验证)", "", item).strip("；， ")
+        re.sub(r"^(?:等待|观察|检查|验证|校验|断言)", "", item).strip("；， ")
         for item in observations
         if str(item or "").strip()
     )
@@ -3596,6 +3610,93 @@ def _bounded_landing_tail(case, target_terms):
         "flow": [steps[click_index], f"检查{observation_text}"],
         "assertionTarget": assertion_target,
     }
+
+
+_BASELINE_DATA_ACTION_TERMS = (
+    "导入", "上传", "选择文件", "选择照片", "手机图库", "系统相册", "勾选",
+    "去打印", "立即打印", "确认打印", "开始打印", "下载", "保存", "发送",
+    "确认授权", "同意授权", "输入账号", "输入密码", "输入验证码",
+)
+
+
+def _trusted_baseline_source_navigation_flow(baseline, target_terms, branch):
+    """Extract the visible-text source-page prefix from one trusted selected baseline."""
+    baseline = baseline if isinstance(baseline, dict) else {}
+    trusted = bool(
+        baseline.get("baselineUsable") is True and baseline.get("trusted") is True
+    ) or (
+        str(baseline.get("sourceKind") or "").strip() == "verified_execution"
+        and str(baseline.get("verificationStatus") or "").strip() == "execution_success"
+    )
+    if not trusted:
+        return []
+    snippet = str(baseline.get("snippet") or "")
+    if not snippet:
+        return []
+    normalized_targets = {
+        re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(term or "")).lower()
+        for term in (target_terms or [])
+        if str(term or "").strip()
+    }
+    flow = []
+    for match in re.finditer(
+        r"^\s*-\s*(aiTap|aiWaitFor|aiScroll)\s*:\s*(.+?)\s*$",
+        snippet,
+        flags=re.M,
+    ):
+        action = str(match.group(1) or "").strip()
+        value = str(match.group(2) or "").strip().strip("\"'")
+        if not value:
+            continue
+        compact_value = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", value).lower()
+        if action == "aiTap":
+            if any(term and term in compact_value for term in normalized_targets):
+                break
+            if any(term in value for term in _BASELINE_DATA_ACTION_TERMS):
+                break
+            flow.append(f"点击「{value}」")
+        elif action == "aiWaitFor":
+            flow.append(value if value.startswith("等待") else f"等待{value}")
+        elif action == "aiScroll":
+            flow.append(f"滑动页面，直到{value}")
+        if len(flow) >= 6:
+            break
+    probe = {"steps": flow}
+    if len(flow) < 2 or not _case_has_branch_execution_evidence(probe, branch):
+        return []
+    return flow
+
+
+def _source_navigation_has_alternative_destinations(flow):
+    """Reject source paths that leave the concrete destination for Runner to guess."""
+    for step in normalize_text_list(flow):
+        if not str(step or "").startswith(("点击", "进入", "打开", "等待")):
+            continue
+        quoted = re.findall(r"[「『\"']([^」』\"']+)[」』\"']", str(step or ""))
+        if len(quoted) > 1 and any(term in str(step or "") for term in ("或", "/", "／")):
+            return True
+    return False
+
+
+def _baseline_navigation_matches_landing_source(flow, landing_tail, branch):
+    """Do not join a sibling baseline to a tail that names a different source leaf."""
+    flow_text = "\n".join(normalize_text_list(flow))
+    tail_text = str((landing_tail or {}).get("assertionTarget") or "")
+    source_pages = []
+    for match in re.finditer(r"已离开(?:[「『\"']([^」』\"']+)[」』\"']|([^，；。]{1,24}?))页", tail_text):
+        page = str(match.group(1) or match.group(2) or "").strip()
+        if page and page not in source_pages:
+            source_pages.append(page)
+    branch_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(branch or "")).lower()
+    flow_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", flow_text).lower()
+    for page in source_pages:
+        page_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", page).lower()
+        if not page_key:
+            continue
+        if page_key in flow_key or (branch_key and page_key in branch_key):
+            continue
+        return False
+    return True
 
 
 def _bounded_convergence_evidence(
@@ -3689,6 +3790,23 @@ def _bounded_convergence_evidence(
                 precondition = str(source_plan.get("precondition") or "").strip()
                 source_case_id = str(source_case.get("case_id") or "").strip()
                 evidence_source = "executable_source_case"
+                selected_baseline = next((
+                    item for item in (selected_baselines or [])
+                    if isinstance(item, dict)
+                    and str(item.get("id") or "").strip() == baseline_id
+                ), None)
+                baseline_navigation_flow = _trusted_baseline_source_navigation_flow(
+                    selected_baseline,
+                    targets,
+                    branch,
+                )
+                if baseline_navigation_flow and _baseline_navigation_matches_landing_source(
+                    baseline_navigation_flow,
+                    landing_tail,
+                    branch,
+                ):
+                    navigation_flow = baseline_navigation_flow
+                    evidence_source = "selected_baseline_actions"
             else:
                 if not branch_baseline or not matching_automatic_records:
                     continue
@@ -3713,6 +3831,8 @@ def _bounded_convergence_evidence(
                     ((source_record or {}).get("compact") or {}).get("case_id") or ""
                 ).strip()
                 evidence_source = "selected_branch_baseline"
+            if _source_navigation_has_alternative_destinations(navigation_flow):
+                continue
             donor_case_id = str(((donor_record or {}).get("compact") or {}).get("case_id") or "").strip()
             donor_is_automatic = any(donor_record is item for item in automatic_records)
             target_record = donor_record if donor_is_automatic else source_record

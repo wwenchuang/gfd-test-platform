@@ -2323,7 +2323,7 @@ def _case_has_deep_external_action(case: dict) -> bool:
         return False
     for step in normalize_text_list((case or {}).get("steps")):
         text = str(step or "").strip()
-        if text.startswith(("等待", "观察", "检查", "验证")):
+        if text.startswith(("等待", "观察", "检查", "验证", "校验", "断言")):
             continue
         if any(term in text for term in _EXTERNAL_DEEP_ACTION_TERMS):
             return True
@@ -2348,7 +2348,7 @@ def _case_is_bounded_external_landing_check(case: dict) -> bool:
     if not click_indexes:
         return False
     tail = steps[click_indexes[-1] + 1:]
-    if not tail or any(not str(step).strip().startswith(("等待", "观察", "检查", "验证")) for step in tail):
+    if not tail or any(not str(step).strip().startswith(("等待", "观察", "检查", "验证", "校验", "断言")) for step in tail):
         return False
     if _case_has_deep_external_action(case):
         return False
@@ -2368,12 +2368,37 @@ def _case_is_bounded_external_landing_check(case: dict) -> bool:
         ("空态", "提示页"),
         ("系统弹窗", "弹窗", "弹出层"),
     )
-    if sum(1 for terms in observable_state_groups if any(term in outcome_text for term in terms)) < 2:
+    target_terms = []
+    last_click = str(steps[click_indexes[-1]] or "")
+    quoted_targets = re.findall(r"[「『\"']([^」』\"']+)[」』\"']", last_click)
+    if quoted_targets:
+        target_terms.extend(quoted_targets)
+    else:
+        target = re.sub(r"^(?:点击|点按|轻触)", "", last_click).strip(" ：，,。")
+        target = re.sub(r"(?:入口|按钮|图标|icon)$", "", target, flags=re.I).strip()
+        if target:
+            target_terms.append(target)
+    branded_landing_visible = bool(
+        any(term and term in outcome_text for term in target_terms)
+        and any(term in outcome_text for term in (
+            "已离开", "离开来源页", "跳转后", "落地页", "页面区域", "页面元素",
+        ))
+    )
+    observable_state_count = sum(
+        1 for terms in observable_state_groups if any(term in outcome_text for term in terms)
+    ) + (1 if branded_landing_visible else 0)
+    if observable_state_count < 2:
         return False
-    return any(term in outcome_text for term in (
+    explicit_stability = any(term in outcome_text for term in (
         "无白屏", "不白屏", "未白屏", "无长时间白屏", "没有长时间白屏",
         "无崩溃", "不崩溃", "未崩溃", "无Crash", "未Crash", "不闪退",
     ))
+    negated_failure = bool(re.search(
+        r"(?:未出现|没有出现|未发生|没有发生)[^；。]{0,20}(?:崩溃|Crash|白屏|闪退)",
+        outcome_text,
+        flags=re.I,
+    ))
+    return explicit_stability or negated_failure
 
 
 def _case_manual_block_reason(case: dict) -> str:

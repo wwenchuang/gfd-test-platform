@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 部署后回归：有界终态语言归一与 GPT 下一轮准备
+
+部署 `545f132` 后发起同一完整回归：
+
+- Agent `agent-1784168045164-98ea26f8`，输入仍为“基础打印新增百度网盘入口”、同一需求 / Figma，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `qwen3.6`，固定 OPPO PHM110 在线且 App `4.45.0` ready。本轮在 `GENERATE_YAML` 阶段失败，没有创建任何 Runner job，也没有向华为或第二台设备下发任务。
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`。4 张图按 4 个独立批次真实送入视觉 AI，分别约 `13 / 18 / 16 / 18s` 完成，`4/4 completed / retry=false / hardGate=false`。视觉判断正确区分首页、5 寸照片导入页、一寸照引导页与一寸照编辑页，并明确局部页面缺失不能否定其他页面；Figma 继续是软参考，解析逻辑未改。
+- AI PLAN 生成 8 条业务流 / 12 个场景 / 8 条自动候选。最终基线选择已正确覆盖三个分支：文档 `1b4e6a94768902d3`、照片 `d8931c2dd082926e`（6 寸照片成功路径）、扫描 `d623c1e73180bfac`，均为可信成功导航证据；`545f132` 的分支动作校验已在线生效。
+- 初始 3 条 executable 分别覆盖文档、照片、扫描的展示 / 同级 / 文案，共覆盖 `9/12`；`TC-004 / TC-005 / TC-006` 已由上游 AI 生成为点击入口后只观察首个可见状态的自动候选，但最终收敛模型把三条全部降为 manual，任务正确在覆盖门禁阻断。最终错误只缺三条 reachability，不是数量 5 门槛、视觉门禁、scorer、Runner 或设备失败。
+
+失败根因与通用修复：
+
+- 线上候选在“等待首个可见页”后追加“断言当前页已离开来源页且未出现崩溃或白屏”。旧有界提取器只接受等待 / 观察 / 检查 / 验证，不接受语义等价的校验 / 断言；稳定性门禁也不识别“未出现崩溃或白屏”，导致三条 `convergenceEvidence` 全为空。现统一归一这些终态观察动词和否定失败表达，仍拒绝观察之后的账号、验证码、确认授权、文件选择及其他交互。
+- 新端点允许以“点击目标的真实可见品牌文字 + 明确已离开来源页 + 一个授权 / 登录 / 内容页等可观察备选 + 无白屏 / 崩溃”作为 Runner 可验证终态；抽象“跳转成功 / 页面正常”仍不能覆盖 reachability。
+- 有界组合优先从本轮 AI 已选中且可信的同分支基线提取真实 `aiTap / aiWaitFor / aiScroll` 导航前缀，并在导入、上传、文件选择、打印、授权等数据动作前截断，再拼接上游 AI 的目标点击尾链。没有写入百度网盘、5 寸或单需求特判。
+- 增加跨叶子一致性保护：来源导航含“点击 A 或 B / 等待 A 或 B”时不允许 Runner 猜路径；成功基线走到 6 寸照片而 AI 尾链声称离开一寸照时，不得为了覆盖率强行组合，必须由 AI 选择一个具体叶子并重写。规划提示同步要求保留基线父层级、按需求 / Figma 适配当前真实叶子。
+
+线上失败产物离线重放：
+
+- 原样重放时只得到 `TC-004 / TC-006` 两条一致证据，最终 `11/12`，照片 reachability 继续被门禁阻断，证明平台没有把红色改成绿色。
+- 将照片候选模拟为 AI 收敛后的单一路径“照片打印 icon -> 照片打印 -> 6 寸照片 -> 百度网盘 -> 首个可见页”后，三条 remaining 均获得证据，最终 `12/12 / ok=true`；三条 `_case_manual_block_reason` 均为空。加入深层授权 / 凭据 / 文件操作的既有测试仍被硬阻断。
+- 线上 AI Gateway 的 `highway_gpt5_mini / gpt-5-mini` provider 已配置并通过 `/ai/providers/test`，返回 `gateway ok`。下一次 Agent 将显式指定该 provider 运行文本 MM skills、规划和收敛；当前图片视觉 Skill 仍走已验证的 `qwen3.6-plus` VL，不伪称 GPT 已承担未验证的图片接口。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交并部署本轮修复。
+- 部署后用同一需求 / Figma、固定 `win-runner-01 / ecbfd645`，显式选择 `highway_gpt5_mini / gpt-5-mini` 再跑完整 Agent。必须持续监督 Agent、smoke、remaining 与可能的 AI 修复到终态，并人工复核最终 YAML、真实 Runner 报告、截图 / 录屏、失败分类和单设备约束。
+
 ### 2026-07-16 完整 Agent Runner 回归与 AI 路径修复证据闭环
 
 部署 `38f1e71` 后发起同一完整回归：
