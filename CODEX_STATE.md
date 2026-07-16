@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 GPT Agent 回归：恢复 PLAN 到 Top3 基线的业务分支身份
+
+部署 `f7c5a6c` 后发起同一完整回归：
+
+- Agent `agent-1784172504590-4322d988`，目标 / 需求 / Figma / App 与前轮一致，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed`，文本模型为 `highway_gpt5_mini / gpt-5-mini`。8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 心跳约 3 秒并上报 `yaml_dry_run=true / qwen3.6`，固定 OPPO PHM110 在线、App `4.45.0` ready。本轮在 `GENERATE_YAML` 阶段失败，没有创建 Runner job，也没有向华为或第二台设备下发。
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`。PLAN 一次通过，明确记录 `providerId=highway_gpt5_mini / model=gpt-5-mini / fallback=false`。图片视觉仍由 Qwen VL 完成，4 批分别约 `19 / 23 / 19 / 24s`，结果 `4/4 completed / retry=false / hardGate=false`；第 2、3 批正确识别 5 寸 / 一寸照属于照片打印及“相机拍照 / 百度网盘”的垂直同级关系。
+- `f7c5a6c` 的模型贯穿已在线生效：YAML 阶段 `baseline_reranker` 和 `execution_scope_planner` trace 均明确为 `highway_gpt5_mini / gpt-5-mini`，不再为空。GPT 不是因为模型选择丢失而失败。
+- 最终 8 条自动候选全部转为 manual，产物为 `0 executable / 14 manual / 0/12 acceptance checks`。GPT 的统一理由是 `selectedBaselines` 为空，无法提供硬规则要求的可信 `baselineId`；覆盖门禁正确阻断，没有为了 5 条目标硬凑。
+
+根因与通用修复：
+
+- `scenario_designer` schema 中 `feature` 表示功能域。本轮 AI 合理地给 8 条具体场景统一输出 `feature="打印-百度网盘入口"`，同时在 `requirement_point / scenario / business_path` 中分别明确文档打印、照片打印、扫描复印。旧 `_agent_business_plan_from_mindmap` 却优先把 `feature` 当具体 `branch`，导致 PLAN 的 8 条 flow 全部丢失真实分支身份。
+- YAML 阶段因此只构造一个错误 required branch：`FLOW-001 / 打印-百度网盘入口`，锚点退化为“百度网盘”；20 个成功候选对该分支的 eligible 数为 0。GPT 选出的 3 条候选被平台以 `invalid_branch_count=3` 全部拒绝，generation reranker trace 为 `selected_count=0 / unavailable_required_branch_ids=[FLOW-001]`。页面中仍能看到 PLAN 阶段旧参考基线，但 executable planner 的真实 `selectedBaselines` 为空，造成展示与执行上下文不一致。
+- 计划归一现使用原始需求契约恢复分支：按 flow 名称、需求引用、步骤、检查点依次匹配，只在唯一命中文档 / 照片 / 扫描之一时写入 `branch` 并记录 `branchSource=source_requirement_contract`；同时命中多个业务分支的全局 / 一致性场景保持 AI 原值，不强行归类。
+- 没有写入百度网盘、基础打印或三个固定产品分支。算法复用任意需求契约的 `businessFlows`，只修正“功能域标签覆盖具体来源分支”的通用数据问题；现有 Top3 仍必须满足成功基线、真实可见导航锚点、分支 eligibility 和精确 baselineId。
+
+线上产物离线重放：
+
+- 修复前同一 PLAN 只产生 `FLOW-001 / 打印-百度网盘入口 / anchors=[百度网盘, 百度]` 一条 required branch。
+- 修复后同一 8 条 GPT flow 归一为文档 3 条、照片 3 条、扫描 2 条，Top3 required branches 为 `FLOW-001 文档打印 / FLOW-004 照片打印 / FLOW-007 扫描复印`，anchors 分别为 `[文档打印, 文档] / [照片打印, 照片] / [扫描复印, 扫描]`。
+- 新测试使用与线上一致的“所有 scenario.feature 都是泛化功能域、scenario 名称和 requirement_point 保留具体分支”夹具，并验证跨文档 / 照片场景同时命中两个分支时返回空匹配，不能被平台擅自归到某一分支。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交并部署本轮分支身份修复。
+- 部署后再次使用同一需求 / Figma、固定 `win-runner-01 / ecbfd645` 和 `highway_gpt5_mini / gpt-5-mini` 跑完整 Agent。必须确认 YAML reranker 的 `required_branch_count=3`、三个分支各有 eligible 成功基线、`selectedBaselines` 非空，再人工审计 YAML 并监督 OPPO smoke / remaining / 一次有界修复到终态。
+
 ### 2026-07-16 GPT Agent 回归：修复 YAML 阶段模型选择丢失
 
 部署 `af2653c` 后发起同一完整回归：

@@ -3917,6 +3917,32 @@ def _agent_plan_branch_present(branch, text):
     return bool(branch and any(alias in text for alias in aliases.get(branch, (branch,))))
 
 
+def _agent_plan_constraint_branch_match(flow, constraint_flows):
+    """Recover one source-defined branch when an AI scenario uses a generic feature label."""
+    flow = flow if isinstance(flow, dict) else {}
+    candidates = []
+    for item in constraint_flows or []:
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("branch") or item.get("name") or "").strip()
+        if branch and branch not in candidates:
+            candidates.append(branch)
+    if not candidates:
+        return ""
+    evidence_groups = (
+        flow.get("name"),
+        flow.get("requirementRefs") or flow.get("requirement_refs"),
+        flow.get("steps"),
+        flow.get("checks") or flow.get("assertions"),
+    )
+    for evidence in evidence_groups:
+        text = _normalize_business_flow_text(json.dumps(evidence, ensure_ascii=False))
+        matches = [branch for branch in candidates if _agent_plan_branch_present(branch, text)]
+        if len(matches) == 1:
+            return matches[0]
+    return ""
+
+
 def _normalize_agent_business_plan(value, run, constraint):
     if not isinstance(value, dict):
         return None, ["AI 计划不是 JSON 对象"]
@@ -3925,6 +3951,7 @@ def _normalize_agent_business_plan(value, run, constraint):
         return None, ["businessFlows 必须是数组"]
     flows = []
     issues = []
+    required_flows = _agent_plan_constraint_flows(constraint)
     for index, item in enumerate(raw_flows[:8], start=1):
         if not isinstance(item, dict):
             continue
@@ -3935,7 +3962,7 @@ def _normalize_agent_business_plan(value, run, constraint):
             issues.append(f"{name} 缺少完整业务步骤")
         if not checks:
             issues.append(f"{name} 缺少用户可见验收点")
-        flows.append({
+        normalized_flow = {
             "id": str(item.get("id") or f"FLOW-{index:03d}")[:40],
             "name": name[:100],
             "branch": str(item.get("branch") or name)[:80],
@@ -3944,12 +3971,16 @@ def _normalize_agent_business_plan(value, run, constraint):
             "checks": checks,
             "requirementRefs": _agent_plan_text_list(item.get("requirementRefs") or item.get("requirement_refs"), limit=8),
             "evidence": _agent_plan_text_list(item.get("evidence"), limit=6),
-        })
+        }
+        matched_branch = _agent_plan_constraint_branch_match(normalized_flow, required_flows)
+        if matched_branch:
+            normalized_flow["branch"] = matched_branch[:80]
+            normalized_flow["branchSource"] = "source_requirement_contract"
+        flows.append(normalized_flow)
     if not flows:
         issues.append("AI 计划没有业务分支")
 
     combined = _normalize_business_flow_text(json.dumps(flows, ensure_ascii=False))
-    required_flows = _agent_plan_constraint_flows(constraint)
     missing_branches = []
     for item in required_flows:
         branch = str(item.get("branch") or item.get("name") or "").strip()

@@ -895,9 +895,9 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                         "readiness_level": "ready",
                     },
                     "scenarios": [
-                        {"scenario": "文档打印百度网盘入口", "feature": "文档打印", "requirement_point": "文档打印入口", "business_path": "进入首页 -> 点击文档打印 -> 到达文档打印页", "assertions": ["检查新增入口可见和文案正确"]},
-                        {"scenario": "照片打印百度网盘入口", "feature": "照片打印", "requirement_point": "照片打印入口", "business_path": "进入首页 -> 点击照片打印 -> 到达照片打印页", "assertions": ["检查新增入口同级展示并可达"]},
-                        {"scenario": "扫描复印百度网盘入口", "feature": "扫描复印", "requirement_point": "扫描复印入口", "business_path": "进入首页 -> 点击扫描复印 -> 到达扫描复印页", "assertions": ["检查新增入口文案和可达页面"]},
+                        {"scenario": "文档打印百度网盘入口", "feature": "打印-百度网盘入口", "requirement_point": "文档打印入口", "business_path": "进入首页 -> 点击文档打印 -> 到达文档打印页", "assertions": ["检查新增入口可见和文案正确"]},
+                        {"scenario": "照片打印百度网盘入口", "feature": "打印-百度网盘入口", "requirement_point": "照片打印入口", "business_path": "进入首页 -> 点击照片打印 -> 到达照片打印页", "assertions": ["检查新增入口同级展示并可达"]},
+                        {"scenario": "扫描复印百度网盘入口", "feature": "打印-百度网盘入口", "requirement_point": "扫描复印入口", "business_path": "进入首页 -> 点击扫描复印 -> 到达扫描复印页", "assertions": ["检查新增入口文案和可达页面"]},
                     ],
                     "cases": [
                         {"case_id": "TC-001", "title": "文档打印入口", "requirement_point": "文档打印入口", "smoke": True},
@@ -980,6 +980,18 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "Agent PLAN must pass the original source coverage contract into the MM requirement analyzer",
         )
         require(len(live_plan.get("businessFlows") or []) == 3 and live_plan.get("qualityGate", {}).get("passed"), "AI PLAN must preserve every required business branch and pass deterministic grounding")
+        require(
+            [item.get("branch") for item in live_plan.get("businessFlows") or []] == branches
+            and all(item.get("branchSource") == "source_requirement_contract" for item in live_plan.get("businessFlows") or []),
+            "Generic AI feature labels must recover the one matching source-defined business branch before baseline retrieval",
+        )
+        require(
+            agent_service._agent_plan_constraint_branch_match(
+                {"name": "文档与照片入口一致性", "steps": ["对比文档打印和照片打印"]},
+                candidate_constraint.get("businessFlows") or [],
+            ) == "",
+            "Cross-branch AI flows must not be forced into one source branch when multiple branches match",
+        )
         require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
         require(live_plan.get("source") == "platform_mindmap_ai" and live_plan.get("mindmapTrace", {}).get("preparedFigmaReused"), "Agent PLAN must expose MM and prepared-Figma provenance")
         require(live_plan.get("visualReference", {}).get("sentToAiForJudgement") and live_plan["visualReference"].get("aiJudgementCompleted"), "Agent PLAN must distinguish visual AI dispatch from completed MM grounding")
