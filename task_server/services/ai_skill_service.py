@@ -3799,11 +3799,44 @@ def _bounded_convergence_evidence(
         )[:8]
         case_id = str(((source_record or {}).get("compact") or {}).get("case_id") or "").strip()
         baseline_id = str(branch_baseline.get("id") or "").strip()
-        check_contract = "；".join(dict.fromkeys(
+        source_page_checks = [
+            item for item in ((normalized.get("analysis") or {}).get("requirement_acceptance_checks") or [])
+            if isinstance(item, dict)
+            and str(item.get("requirementId") or "").strip() == requirement_id
+            and str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+        ]
+        source_assertion_candidates = []
+        for value in (
+            source_case.get("assertions"),
+            source_case.get("expected"),
+            source_case.get("expected_result"),
+            source_case.get("expectedResult"),
+            (source_case.get("ai_case_plan") or {}).get("assertionTarget")
+            if isinstance(source_case.get("ai_case_plan"), dict) else None,
+        ):
+            source_assertion_candidates.extend(normalize_text_list(value))
+        preserved_assertions = []
+        preserved_check_indexes = set()
+        for assertion in dict.fromkeys(source_assertion_candidates):
+            assertion_probe = {
+                "assertions": [assertion],
+                "requirementRefs": requirement_refs,
+            }
+            covered_indexes = {
+                index for index, check in enumerate(source_page_checks)
+                if case_covers_requirement_acceptance(assertion_probe, check)
+            }
+            if not covered_indexes.difference(preserved_check_indexes):
+                continue
+            preserved_assertions.append(assertion)
+            preserved_check_indexes.update(covered_indexes)
+        contract_items = preserved_assertions[:4]
+        contract_items.extend(
             str(item.get("text") or "").strip()
             for item in source_checks
             if str(item.get("text") or "").strip()
-        ))
+        )
+        check_contract = "；".join(dict.fromkeys(contract_items))
         target_label = str((target_terms or [""])[0] or "").strip()
         assertion_target = (
             f"「{target_label}」满足以下要求：{check_contract}"

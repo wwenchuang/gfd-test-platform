@@ -764,6 +764,67 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and ai_skill_service.executable_yaml_portfolio_audit(source_ui_applied, {}).get("ok"),
         "A trusted same-branch action path plus the explicit UI contract must let Runner verify source-page visibility/copy/relation without requiring a sibling Figma frame",
     )
+    source_ui_merge_payload = json.loads(json.dumps(source_ui_payload, ensure_ascii=False))
+    source_ui_merge_case = source_ui_merge_payload["cases"][0]
+    source_ui_merge_case["executionLevel"] = "executable"
+    source_ui_merge_case["expected_result"] = "售后服务页面展示文案为‘发票’的入口，无缺失"
+    source_ui_merge_case["assertions"] = ["售后服务页面展示文案为‘发票’的入口，无缺失"]
+    source_ui_merge_payload["analysis"]["requirement_acceptance_checks"][1]["text"] = (
+        "校验发票入口与当前页面同级入口的层级和位置关系"
+    )
+    source_ui_merge_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        source_ui_merge_payload,
+        {},
+    )
+    require(
+        [
+            item.get("id")
+            for item in source_ui_merge_audit.get("missingAcceptanceChecks") or []
+        ] == ["REQ-009-CHECK-02"],
+        "The source candidate fixture must already cover visibility/copy and lack only the relation dimension",
+    )
+    source_ui_merge_record = {
+        "raw": source_ui_merge_case,
+        "compact": ai_skill_service._compact_case_for_plan(
+            source_ui_merge_case,
+            0,
+            origin_level="automatic",
+        ),
+    }
+    source_ui_merge_evidence = ai_skill_service._bounded_convergence_evidence(
+        source_ui_merge_payload,
+        [source_ui_merge_record],
+        source_ui_merge_audit,
+        selected_baselines=[{
+            "id": "base-source-ui",
+            "selectedBranchName": "售后服务",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "snippet": "- aiTap: 会员服务\n- aiWaitFor: 等待会员服务页面加载完成\n- aiTap: 售后服务\n- aiWaitFor: 等待售后服务页面加载完成\n- aiTap: 选择历史订单",
+        }],
+    )
+    source_ui_merge_plan = {
+        **source_ui_plan,
+        "candidateEligibilityById": source_ui_merge_evidence,
+    }
+    source_ui_merge_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        source_ui_merge_payload,
+        source_ui_merge_plan,
+    )
+    source_ui_merge_contract = source_ui_merge_evidence.get(
+        "TC-SOURCE-UI", {}
+    ).get("assertionTarget", "")
+    require(
+        source_ui_merge_evidence.get("TC-SOURCE-UI", {}).get("acceptanceCheckIds")
+        == ["REQ-009-CHECK-02"]
+        and "展示文案为‘发票’的入口" in source_ui_merge_contract
+        and "同级入口的层级和位置关系" in source_ui_merge_contract
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            source_ui_merge_applied,
+            {},
+        ).get("ok"),
+        "Adding trusted source-page evidence must merge with an executable candidate's existing visible-copy assertion instead of exchanging one covered dimension for another",
+    )
     manual_tail_payload = json.loads(json.dumps(branch_fallback_payload, ensure_ascii=False))
     for item in manual_tail_payload.get("manual_cases") or []:
         if item.get("case_id") != "TC-R03":

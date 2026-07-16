@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 部署后 GPT Agent 验收：来源页补强必须保留已有覆盖维度
+
+部署 `83c5f8f` 后发起同一完整回归：
+
+- Agent `agent-1784180626840-ca8eeade`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed`，文本模型为 `highway_gpt5_mini / gpt-5-mini`。8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `yaml_dry_run=true / qwen3.6`，固定 OPPO PHM110 在线。终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job，也没有向第二台设备下发。
+- PREPARE_SOURCE 保持原 Figma parser 并解析 `4 页 / 4 图 / 忽略 0`。视觉资料全部送入 AI，4 个批次分别约 `17 / 20 / 19 / 17s` 完成，最终 `4/4 completed / hardGate=false`；图片仍是软参考，不是失败门禁。
+- PLAN、baseline reranker、scope planner、initial planner 和 convergence 均记录 `highway_gpt5_mini / gpt-5-mini`。初始组合有 7 条 executable、1 条未收敛自动候选，已覆盖 `11/12`；唯一缺口为 `REQ-003-CHECK-02` 扫描复印页的同级层级和位置关系。
+- `83c5f8f` 已在线生效：最终收敛确实为 `TC-007` 构造并应用 `source_ui_assertion`，同时处理 `TC-008`，拟议组合的未收敛候选降为 0。但补强只使用当前缺失的 relation 文本，替换了 `TC-007` 原有“百度网盘入口展示、无缺失”断言，覆盖从缺 relation 交换成缺 copy。单调门禁正确记录 `added=REQ-003-CHECK-02 / regressed=REQ-003-CHECK-03` 并拒绝拟议组合，所以没有把退化 YAML 下发 Runner。
+
+根因与单点修复：
+
+- `source_ui_assertion` 现在先从原候选的 `assertions / expected / ai_case_plan.assertionTarget` 中挑选真正覆盖来源页 visibility / copy / relation 的最小断言集合，再追加当前缺失维度；每条旧断言必须新增一个已覆盖维度，避免重复文案和长提示。补强由“替换”改为“单调合并”，AI 仍负责规划和收敛，平台只保证证据组合不丢失已覆盖验收维度。
+- 新回归测试构造“已有可见 + 文案，只缺同级关系”的通用入口需求，验证补强后三个来源页维度同时存在且 portfolio audit 通过。没有产品词硬编码，没有新增模型调用或重试，没有修改 Figma parser、数量门槛、scorer、static、Runner、执行模式或历史 YAML。
+- 方案边界与成熟实践一致：[BrowserStack mobile automation](https://www.browserstack.com/docs/test-companion/mobile-testing/automate-tests) 使用真实设备、UI hierarchy、截图、显式等待和有意义断言；[BrowserStack self-heal](https://www.browserstack.com/docs/low-code-automation/test-recording/browserstack-ai/ai-self-heal) 只在规则定位失败后使用 AI 并记录原因，不能掩盖 App 崩溃或连接问题；[Mobile-Agent-v2](https://arxiv.org/abs/2406.01014) 采用规划、决策、反思和记忆分工。平台对应采用“成功基线路径 + 当前证据 + 一次有界 AI 反思 + 确定性门禁”，不会让 AI 把产品失败自动改成成功。
+
+使用本次线上失败 cases JSON 精确重放：
+
+- 修复前为 `11/12`、缺 `REQ-003-CHECK-02`、7 条 executable、1 条未收敛；修复后为 `12/12`、`missing=[]`、7 条 executable、0 条未收敛。`TC-007` 最终断言只保留一次“扫描复印页面展示百度网盘入口，无缺失”，并合并“同级入口的层级和位置关系”。
+- 转换层按既有安全规则把人工来源的“快速连续点击 3 次”候选 `TC-005` 归回 manual，实际生成 6 份 YAML，不为数量硬凑。6 份均通过语法、可执行、static 和稳定性检查，scorer 为 `100 / 89 / 89 / 89 / 100 / 88`，全部为 executable；步骤使用真实可见文字，没有坐标。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交、推送并部署本轮单点修复。
+- 部署后只发起一次同输入验收运行，固定 `win-runner-01 / ecbfd645 / gpt-5-mini`。必须确认生成覆盖门禁通过，再人工复核实际 YAML；持续监督 OPPO 首批 Smoke、remaining 和可能的一次有界修复到终态，核对 Runner 报告、截图 / 录屏和失败分类。真实 App 断言是否通过只能由这次 Runner 执行确认，不以离线重放冒充成功。
+
 ### 2026-07-16 部署后 GPT Agent 验收：闭合已有 executable 与人工观察尾链
 
 部署 `81cacbe` 后发起同一完整回归：
