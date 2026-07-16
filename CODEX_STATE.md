@@ -28,6 +28,37 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 GPT Agent 回归：修复 YAML 阶段模型选择丢失
+
+部署 `af2653c` 后发起同一完整回归：
+
+- Agent `agent-1784170705253-b23f6186`，目标 / 需求 / Figma / App 与前轮一致，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed`；文本模型显式选择 `highway_gpt5_mini / gpt-5-mini`。8091 / 8088、AI Gateway、Sonic 健康，Windows Runner 在线并上报 `qwen3.6`，固定 OPPO PHM110 在线且 App `4.45.0` ready。本轮在 `GENERATE_YAML` 阶段失败，没有创建 Runner job，也没有向华为或第二台设备下发任务。
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`。最终 PLAN 产物明确记录 `providerId=highway_gpt5_mini / model=gpt-5-mini / fallbackUsed=false`，生成 8 条业务分支并通过计划门禁；PLAN 的可信基线重排同样记录 `used_local_fallback=false`。这证明 GPT 实际承担了文本计划，不只是前端选择字段。
+- 图片视觉仍使用现有 `qwen3.6-plus` VL，不伪称 GPT 处理图片。最终 4 个单图批次分别约 `27 / 35 / 29 / 18s` 完成，均有非空 judgement，结果为 `4/4 completed / retry=false / hardGate=false`。第 2、3 批正确识别 5 寸 / 一寸照属于照片打印及底部“相册导入 / 相机拍照 / 百度网盘”垂直关系；局部上半页没有入口时只记录冲突，没有覆盖前序正向证据。
+- 最终生成组合只有 `TC-001 / TC-002 / TC-007` 三条 executable，11 条归入 manual，覆盖显式 12 个验收维度中的 8 个。缺文档 / 照片 reachability、扫描复印 relation / reachability；覆盖门禁正确阻断。数量目标 5 只产生 advisory，没有为了数量硬凑；失败不是 Figma、视觉门禁、scorer、Runner 或设备问题。
+
+根因与通用修复：
+
+- Agent PLAN 请求会传 `modelProviderId / aiModel`，但 `_agent_generate_yaml_from_ui_pipeline` 构造共享 YAML 请求时漏掉了这些字段。线上失败产物中 PLAN 明确为 GPT，而 YAML 阶段 `baseline_reranker / execution_scope_planner / executable_yaml_planner / executable_yaml_convergence` 的 trace 全部 `providerId="" / model=""`，因此网关使用默认模型完成生成与收敛；用户选择的 GPT 只在 PLAN 生效，没有贯穿完整 Agent。
+- 共享 YAML 请求现同时传递 `modelProviderId / aiProviderId / aiModel / model`，其中 `model` 使用真实模型名而不是 `provider:...` 选择令牌。该修复适用于所有 Agent provider，不包含百度网盘、照片打印或单需求硬编码。
+- 新运行级检查截获 `_agent_generate_yaml_from_ui_pipeline` 发给 `generate_ui_yaml_from_request` 的真实请求，验证 `highway_gpt5_mini / gpt-5-mini` 与 `win-runner-01 / ecbfd645 / fixed / singleDeviceOnly=true` 同时保留。没有修改覆盖门禁、scorer、Figma parser、视觉软参考、Runner 脚本、执行模式或历史 YAML。
+- 异常处理依据仍采用成熟方案的边界：BrowserStack self-heal 只在存在成功历史时修复定位漂移并保留修复原因，[Test Failure Analysis](https://www.browserstack.com/docs/test-reporting-and-analytics/agents/test-failure-analysis?fw-lang=nodejs) 用日志 / 截图 / 元数据给出证据化根因；[Maestro waits](https://docs.maestro.dev/maestro-flows/flow-control-and-logic/wait-commands) 用条件等待代替固定 sleep；[Mobile-Agent-v2](https://arxiv.org/abs/2406.01014) 用一次结果反思纠正无效动作。平台继续执行“稳定等待、成功基线路径、证据反思、仅失败项一次有界修复”，不把产品断言失败用重跑隐藏。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交并部署本轮模型贯穿修复。
+- 部署后使用同一需求 / Figma、固定 `win-runner-01 / ecbfd645` 和 `highway_gpt5_mini / gpt-5-mini` 重跑完整 Agent。必须核对 YAML 阶段各 AI trace 不再为空且均指向 GPT，再监督 smoke、remaining 和可能的一次 AI 修复到终态；图片视觉仍应为 4/4 Qwen VL 软参考。
+
 ### 2026-07-16 部署后回归：有界终态语言归一与 GPT 下一轮准备
 
 部署 `545f132` 后发起同一完整回归：

@@ -3472,6 +3472,66 @@ def check_agent_generation_pipeline_normalizes_validation_state():
         agent_service._confirm_agent_yaml_files = original_confirm
 
 
+def check_agent_generation_pipeline_preserves_selected_ai_model():
+    from task_server.services import agent_service
+    from task_server.services import yaml_service
+
+    original_generate = yaml_service.generate_ui_yaml_from_request
+    original_update = yaml_service.update_generate_job
+    captured = {}
+    try:
+        def fake_generate(request_data, job_id=None):
+            captured["request"] = request_data
+            captured["job_id"] = job_id
+            return {
+                "case_set_id": request_data.get("case_set_id"),
+                "cases": {"analysis": {}, "cases": [], "manual_cases": [], "review": {}},
+                "yamlFiles": [],
+                "files": [],
+                "caseCount": 0,
+                "manualCaseCount": 0,
+                "scenarioCount": 0,
+            }
+
+        yaml_service.generate_ui_yaml_from_request = fake_generate
+        yaml_service.update_generate_job = lambda *args, **kwargs: {}
+        run = {
+            "runId": "agent-static-selected-model",
+            "target": "通用页面回归",
+            "module": "AI测试",
+            "modelProviderId": "highway_gpt5_mini",
+            "aiProviderId": "highway_gpt5_mini",
+            "aiModel": "gpt-5-mini",
+            "model": "provider:highway_gpt5_mini",
+            "executionMode": "RUNNER_JOB",
+            "runnerId": "win-runner-01",
+            "deviceId": "ecbfd645",
+            "deviceStrategy": "fixed",
+            "artifacts": {},
+        }
+        agent_service._agent_generate_yaml_from_ui_pipeline(
+            run,
+            {"target": run["target"], "requirementText": "验证通用页面回归"},
+            "验证通用页面回归",
+        )
+        request = captured.get("request") or {}
+        require(request.get("modelProviderId") == "highway_gpt5_mini", "Agent YAML generation must preserve the selected provider id")
+        require(request.get("aiProviderId") == "highway_gpt5_mini", "Agent YAML generation must preserve the selected AI provider id")
+        require(request.get("aiModel") == "gpt-5-mini", "Agent YAML generation must preserve the selected AI model")
+        require(request.get("model") == "gpt-5-mini", "Agent YAML generation must not replace the selected model with the provider selector token")
+        execution = request.get("executionContext") or {}
+        require(
+            execution.get("runnerId") == "win-runner-01"
+            and execution.get("deviceId") == "ecbfd645"
+            and execution.get("deviceStrategy") == "fixed"
+            and execution.get("singleDeviceOnly") is True,
+            "Agent YAML generation must preserve the fixed single-device execution context with the selected model",
+        )
+    finally:
+        yaml_service.generate_ui_yaml_from_request = original_generate
+        yaml_service.update_generate_job = original_update
+
+
 def check_agent_executable_gate_invokes_ai_rewrite():
     from task_server.services import agent_service
     from task_server.services import yaml_service
@@ -6637,6 +6697,7 @@ def main():
     require("def _agent_pdf_text_from_base64" in agent_service_source and "pypdf.PdfReader" in agent_service_source, "Agent must extract PDF requirement text from uploaded source files")
     require("def _infer_agent_source_type" in agent_service_source and 'run["sourceType"] = source_type' in agent_service_source, "Agent must promote manual source type when requirement/Figma material is attached")
     check_agent_generation_pipeline_normalizes_validation_state()
+    check_agent_generation_pipeline_preserves_selected_ai_model()
     check_agent_regression_scope_preserves_new_requirement_generation()
     check_generated_yaml_short_guards_and_execution_level_floor()
     check_generated_yaml_semantic_scope_and_visual_trace()
