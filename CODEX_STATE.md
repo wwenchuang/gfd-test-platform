@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 完整 Agent Runner 回归与 AI 路径修复证据闭环
+
+部署 `38f1e71` 后发起同一完整回归：
+
+- Agent `agent-1784162808009-0ef740e0`，目标仍为“基础打印新增百度网盘入口”，使用同一需求 / Figma，`scope=regression / RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`。线上 `8091 / 8088`、AI Gateway 与 Sonic 健康；Windows Runner 在线并上报 `qwen3.6`，OPPO PHM110 `ecbfd645` 在线且 App `4.45.0` ready。所有正式和修复 job 都只绑定该 OPPO，没有选择或下发第二台设备。
+- 路由为 `new_requirement_source / generate_draft`。Figma parser 保持原实现，正确解析 `4 页 / 4 图 / 忽略 0`；4 张原图分 4 批真实送入 `qwen3.6-plus`，分别约 `19 / 26 / 19 / 21s` 完成，每批都有 judgement，结果为 `4/4 completed / retry=false / hardGate=false`。第 2 批明确识别“5寸照片”属于照片打印，并识别相册导入、相机拍照、微信导入、百度网盘的同级关系；视觉资料继续是软参考。
+- PLAN 产出 8 条 AI 业务流、12 个场景、8 条用例。最终确认 6 份 executable YAML：文档 / 照片 / 扫描三条展示校验评分均为 `100`，三条点击可达校验约为 `89 / 89 / 88`；全部通过 static / dry-run，使用真实可见文字，无坐标动作。
+- 首批真实 Runner 为 `job_1784163194371_00004` 文档展示成功、`job_1784163327947_00005` 照片展示失败、`job_1784163481978_00006` 扫描展示失败，即 `1 通过 / 2 失败 = 33.3%`。文档成功报告截图真实显示 `本地文档 / 百度网盘 / QQ文档 / WPS文档`；照片失败截图停在包含“照片打印 / 智能证件照”等卡片的父页面；扫描失败截图到达“小白扫描王”，横向入口只完整显示 `本地导入 / 相册导入 / 微信导入`，右侧目标入口被裁切，需要可见文字驱动的横向滚动。
+- 旧扩展策略只把 dry-run / 定位 / 超时视作 blocker，没有执行 `AGENTS.md` 的首批通过率 `>=50%` 规则，因此错误下发 remaining。后续 `job_1784163633641_00010` 文档可达成功，报告到达百度文件列表并显示 `百度文档测试.doc / 去打印`；`job_1784163834081_00011` 照片可达失败，仍停在父页面；`job_1784163983367_00012` 扫描可达失败，仍受横向入口裁切影响。初始六条真实结果为 `2 通过 / 4 失败`，不能被 Agent 总失败覆盖。
+- AI 首轮修复生成 4 条草稿：两条照片草稿可校验但没有真实补齐父子导航，`job_1784164240261_00017 / job_1784164344374_00018` 均失败；两条扫描草稿输出对象形式 `aiScroll`，被 Gateway / Task Server 正确拒绝，未下发 Runner。第二次有界修复只补了“5寸照片”点击，仍漏掉中间的第二次“照片打印”点击；`job_1784164513966_00021` 最终失败。修复真实结果为 `0 通过 / 3 失败`，Agent 终态为 `FAILED / RERUN`，不是视觉或 Figma 门禁失败。
+
+根因与本轮通用修复：
+
+- 冒烟继续条件恢复为确定性的 `>=50%`：每条 Runner 原始 passed / failed 继续保留；另行记录 `smokeExecutable` 和 `smokePassThresholdMet`。`0/1` 产品断言失败表示脚本真实执行但未达到扩展门槛，`1/2` 恰好 50% 可以继续；脚本 / YAML / 定位 / 超时硬阻断仍优先停止。Agent 总状态与任务真实统计保持双状态。
+- 生成时已召回三个分支，但 AI 把一条元数据写着“文档/照片”、实际动作只点击“文档打印”的候选分给照片，又拒绝 `6寸照片打印.yaml`，理由是长链路。候选分支资格现在优先检查 `snippet` 中真实 `aiTap / ai / aiAction / aiAct` 可见文字；宽泛标题和 `businessPath` 不能覆盖实际走向。可信长链路可以作为 `navigation_path`，但只复用到目标页之前的父子导航前缀，不复制选图、授权、支付或打印尾链。
+- 修复检索把 AI 规划的当前业务分支变成带兄弟分支排他锚点的查询。照片失败优先获得相邻 `6寸照片打印.yaml` 的 `照片打印 icon -> 照片打印 -> 6寸照片` 层级；扫描失败优先获得文件 / 证件扫描路径，不再被共同的“百度网盘 / 入口校验”关键词挤成文档 TopN。
+- AI 修复候选新增统一语义证据门禁：`analysis / changes` 声称新增点击或修正导航时，实际 YAML 的 `aiTap / ai / aiAction / aiAct` signature 必须变化；导航变化必须引用当前 `retrievalRoles=business_branch` 的可信路径基线，全局或兄弟分支引用不能授权。候选已返回但被该门禁或 YAML 契约拒绝时，最多把具体问题反馈给现有修复模型一次；合格候选不增加调用，网络失败不盲重试，第二次仍不合格则只保存 `REJECTED` 诊断草稿并禁止 Runner。
+- AI Gateway 和 repair skill 的 `aiScroll` 提示统一为当前 validator 接受的非空自然语言字符串，禁止模型继续生成 `direction / distance / scrollType` 对象。平台 validator / scorer 未放宽。
+- 未修改 Figma parser、图片选择 / 计数 / 软参考策略、`router.py`、执行模式、历史 YAML、scorer、Runner 脚本或设备策略；用户 dirty 文件未暂存、未回滚。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_execution_plan.py task_server/services/ai_skill_service.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端 Agent、失败报告和重跑视觉烟测全部通过。回归覆盖 `0% / 50%` 冒烟边界、元数据与真实动作冲突、照片 / 扫描分支基线检索、跨分支引用拒绝、修复说明与 YAML diff 不一致的一次有界 AI 自纠，以及对象形式 `aiScroll` 拒绝。
+
+待完成：
+
+- 本轮修复尚未部署。部署后必须再次使用同一需求 / Figma 和固定 `win-runner-01 / ecbfd645 / qwen3.6-plus` 发起完整 Agent，持续轮询到 `DONE / FAILED / CANCELLED`。
+- 新回归仍需人工复核视觉 `4/4` judgement、6 份以内 YAML 的三个业务分支 / 文案 / 同级 / 可达页 / 无坐标，以及首批通过率门禁。若进入修复，核对 AI 是否真实采用同分支基线前缀、`changes` 与 YAML diff 一致，并逐个检查只在 OPPO 上执行的 Runner 报告、截图 / 录屏和终态。
+
 ### 2026-07-15 Figma 多 Frame 负向软证据作用域保护
 
 部署 `f344dd4` 后发起同一完整回归：

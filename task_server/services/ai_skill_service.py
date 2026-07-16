@@ -2976,6 +2976,33 @@ def _baseline_candidate_branch_evidence_text(candidate):
     return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", text)
 
 
+def _baseline_candidate_direct_navigation_evidence_text(candidate):
+    """Prefer actual visible-text navigation over broad candidate metadata."""
+    candidate = candidate if isinstance(candidate, dict) else {}
+    snippet = str(candidate.get("snippet") or "")
+    action_values = []
+    for match in re.finditer(
+        r"^\s*-\s*(?:aiTap|ai|aiAction|aiAct)\s*:\s*(.+?)\s*$",
+        snippet,
+        flags=re.M,
+    ):
+        value = str(match.group(1) or "").strip().strip("\"'")
+        if value:
+            action_values.append(value)
+    if action_values:
+        text = "\n".join(action_values).lower()
+    else:
+        text = "\n".join(normalize_text_list([
+            candidate.get("title"),
+            candidate.get("file"),
+            candidate.get("path"),
+            candidate.get("provenancePath"),
+            candidate.get("businessPath"),
+            snippet,
+        ])).lower()
+    return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", text)
+
+
 def _annotate_baseline_branch_eligibility(candidates, required_branches):
     counts = {item["id"]: 0 for item in required_branches}
     for candidate in candidates:
@@ -2990,6 +3017,7 @@ def _annotate_baseline_branch_eligibility(candidates, required_branches):
             if str(branch_id or "").strip()
         }
         evidence_text = _baseline_candidate_branch_evidence_text(candidate)
+        direct_navigation_text = _baseline_candidate_direct_navigation_evidence_text(candidate)
         eligible_ids = []
         evidence_rows = []
         for branch in required_branches:
@@ -2998,14 +3026,19 @@ def _annotate_baseline_branch_eligibility(candidates, required_branches):
                 anchor for anchor in (branch.get("anchors") or [])
                 if anchor and anchor in evidence_text
             ]
+            direct_anchors = [
+                anchor for anchor in (branch.get("anchors") or [])
+                if anchor and anchor in direct_navigation_text
+            ]
             retrieved_for_branch = branch["id"] in candidate_branch_ids or branch_query in candidate_query_keys
-            if not retrieved_for_branch or not matched_anchors:
+            if not retrieved_for_branch or not matched_anchors or not direct_anchors:
                 continue
             eligible_ids.append(branch["id"])
             counts[branch["id"]] += 1
             evidence_rows.append({
                 "branchId": branch["id"],
                 "matchedAnchors": matched_anchors[:3],
+                "directNavigationAnchors": direct_anchors[:3],
             })
         candidate["eligibleBranchIds"] = eligible_ids
         candidate["branchEvidence"] = evidence_rows

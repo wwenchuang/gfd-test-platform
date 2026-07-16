@@ -181,7 +181,15 @@ def main():
     prompt = (GATEWAY / "prompts/generate-yaml-v1.txt").read_text(encoding="utf-8")
     require("禁止使用 repeat" in prompt and "只输出 YAML" in prompt, "generate YAML prompt must enforce Midscene constraints")
     repair_prompt = (GATEWAY / "prompts/optimize-yaml-v1.txt").read_text(encoding="utf-8")
-    require("报告关键帧" in repair_prompt and "baselineExamples" in repair_prompt and "requireBaselineCitationForNavigationChange" in repair_prompt and "最小语义修复" in repair_prompt and "aiScroll.direction" in repair_prompt, "AI repair prompt must combine execution evidence, cited branch baselines, and Midscene action contracts")
+    require(
+        "报告关键帧" in repair_prompt
+        and "baselineExamples" in repair_prompt
+        and "requireBaselineCitationForNavigationChange" in repair_prompt
+        and "最小语义修复" in repair_prompt
+        and "aiScroll` 的值必须是非空自然语言字符串" in repair_prompt
+        and "direction/distance/scrollType 对象" in repair_prompt,
+        "AI repair prompt must combine execution evidence, cited branch baselines, and the current Midscene action contract",
+    )
 
     print({"ok": True, "dir": str(GATEWAY), "checks": 46})
 

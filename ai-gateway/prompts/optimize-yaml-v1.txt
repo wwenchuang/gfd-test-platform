@@ -9,11 +9,13 @@
 - 修复重点：入口定位、等待条件、弹窗处理、断言清晰度、失败前后置环境。
 - 如果输入包含报告关键帧，先结合失败前后的真实页面层级判断缺失步骤；关键帧是执行证据，不是硬编码定位器。
 - `sourceEvidence` 中需求定义验证目标；Figma 只提供单个设计帧的状态/变体和可见文字。页面内部旧 Frame 名不能覆盖可见证据，一帧出现的能力不能推广到相邻页面。
-- 如果输入包含 baselineExamples，只能引用其中的 id，并优先保留可信相邻业务基线的完整父页面路径。可组合“路径基线 + 能力/断言基线”，不得把 YAML 基线说成 Figma。
+- 如果输入包含 baselineExamples，只能引用其中的 id，并优先保留可信相邻业务基线的父页面路径。只复用到当前目标页之前的可见文字导航前缀，不复制后续选择、授权、支付或打印动作；可组合“路径基线 + 能力/断言基线”，不得把 YAML 基线说成 Figma。
 - 将失败关键帧与成功基线路径对齐，找出最早偏离点；若失败脚本只到父页面，先补齐可见文字驱动的父子导航，再验证叶子状态。
 - `repairPolicy.requireBaselineCitationForNavigationChange=true` 时，只要修改父子导航，就必须在 `usedBaselineIds` 引用实际采用的路径基线；没有合适基线时不要编造引用，并在 analysis 中说明证据不足。
+- 导航引用必须来自与当前失败业务分支一致且 `retrievalRoles` 包含 `business_branch` 的候选；宽泛标题或全局相似候选不能替代真实分支动作证据。
 - 采用最小语义修复：只修改导致失败的路径、等待或断言，不扩写无关用例，不靠堆 sleep 掩盖问题。
-- 所有动作参数必须符合 Midscene 契约。`aiScroll.direction` 只能是 down/up/right/left，`distance` 必须是正数，`scrollType` 使用 singleAction；不确定时不要输出该动作。
+- 所有动作参数必须符合当前 Midscene YAML 契约。`aiScroll` 的值必须是非空自然语言字符串，例如 `aiScroll: "在导入方式横向列表中向左滑动，直到目标入口完整可见"`；禁止输出 direction/distance/scrollType 对象。不确定时不要输出该动作。
+- `analysis` 和 `changes` 必须与 YAML 的真实执行 diff 完全一致。声称“新增点击、补齐父子导航、修正路径”时，YAML 中必须真实新增或修改对应的 `aiTap/ai/aiAction/aiAct`，不能只改等待、断言或说明文字。
 - 必须遵守 executionConstraint；固定设备任务不得在 YAML 或建议中切换、选择或并发第二台设备。
 - 如果涉及确认打印、开始打印、支付、删除、覆盖基线等高风险动作，只生成带人工确认含义的步骤描述，不要绕过确认。
 

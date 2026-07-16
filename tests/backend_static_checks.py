@@ -1104,6 +1104,26 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             {"id": "photo-a", "title": "6寸照片打印", "file": "photo-a.yaml", "provenancePath": "photo-a.yaml", "retrievalQueries": ["照片打印分支"], "baselineUsable": True, "trusted": True},
             {"id": "scan-a", "title": "文件扫描", "file": "scan-a.yaml", "provenancePath": "scan-a.yaml", "retrievalQueries": ["扫描复印分支"], "baselineUsable": True, "trusted": True},
         ]
+        misleading_photo = ai_skill_service._compact_baseline_candidate({
+            "id": "broad-doc-photo",
+            "title": "小屏首页文档/照片入口",
+            "file": "broad-doc-photo.yaml",
+            "provenancePath": "broad-doc-photo.yaml",
+            "businessPath": "文档打印/照片打印",
+            "retrievalQueries": ["照片打印分支"],
+            "retrievalBranchIds": ["FLOW-002"],
+            "snippet": "- name: 小屏入口\n  flow:\n    - aiTap: 文档打印\n    - aiWaitFor: 本地文档入口可见",
+            "baselineUsable": True,
+            "trusted": True,
+        })
+        misleading_counts = ai_skill_service._annotate_baseline_branch_eligibility(
+            [misleading_photo],
+            ai_skill_service._normalize_required_baseline_branches([required[1]]),
+        )
+        require(
+            not misleading_photo.get("eligibleBranchIds") and misleading_counts.get("FLOW-002") == 0,
+            "Broad document/photo metadata must not impersonate photo navigation when actual actions enter only documents",
+        )
 
         def fake_branch_reranker(skill_name, request, **_kwargs):
             require(skill_name == "baseline_reranker", "Unexpected skill in branch reranker replay")
@@ -2111,6 +2131,125 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._ai_gateway_post = old_gateway_post
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
+
+    prose_only_fix = original.replace(
+        "aiAssert: 百度网盘入口可见",
+        "aiAssert: 百度网盘入口完整可见且文案正确",
+    )
+    grounded_navigation_fix = original.replace(
+        "        - aiAssert: 百度网盘入口可见",
+        "        - aiTap: 照片打印\n        - aiTap: 5寸照片\n        - aiAssert: 百度网盘入口可见",
+    )
+    branch_baseline = {
+        "id": "base-photo-path",
+        "provenancePath": "server-tasks-all/基础打印/6寸照片打印.yaml",
+        "retrievalRoles": ["business_branch"],
+        "retrievalBranchIds": ["FLOW-PHOTO"],
+        "retrievalAnchors": ["照片打印", "照片"],
+    }
+    global_baseline = {
+        "id": "base-global-doc",
+        "provenancePath": "server-tasks-all/基础打印/文档打印.yaml",
+        "retrievalRoles": ["global_relevance"],
+    }
+    cross_branch_gate = agent_service._agent_repair_candidate_gate(
+        original,
+        {
+            "fixedYaml": grounded_navigation_fix,
+            "analysis": "补齐父子导航路径",
+            "usedBaselineIds": ["base-global-doc"],
+        },
+        [branch_baseline, global_baseline],
+        platform="android",
+    )
+    require(
+        any(item.get("code") == "navigation_change_without_branch_baseline" for item in cross_branch_gate.get("issues") or []),
+        "A global or sibling baseline citation must not authorize a current-branch navigation change",
+    )
+
+    old_task_dir = agent_service.TASK_DIR
+    old_gateway_available = agent_service._ai_gateway_available
+    old_gateway_post = agent_service._ai_gateway_post
+    old_log_tool_call = agent_service._log_tool_call
+    old_upsert = repair_service.upsert_repair_draft
+    old_report_keyframes = agent_service._agent_failure_report_keyframes
+    old_repair_baselines = agent_service._agent_repair_baseline_examples
+    correction_requests = []
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            (module_dir / "case.yaml").write_text(original, encoding="utf-8")
+            agent_service._ai_gateway_available = lambda: True
+
+            def repair_with_bounded_correction(_path, payload, **_kwargs):
+                correction_requests.append(payload)
+                if len(correction_requests) == 1:
+                    return {
+                        "fixedYaml": prose_only_fix,
+                        "analysis": "已新增点击并补齐父子导航",
+                        "changes": ["新增点击照片打印子页"],
+                        "usedBaselineIds": ["base-photo-path"],
+                    }
+                return {
+                    "fixedYaml": grounded_navigation_fix,
+                    "analysis": "根据照片分支基线真实补齐父子导航",
+                    "changes": ["在原入口后新增照片打印和 5 寸照片两个可见文字点击"],
+                    "usedBaselineIds": ["base-photo-path"],
+                }
+
+            agent_service._ai_gateway_post = repair_with_bounded_correction
+            agent_service._log_tool_call = lambda *args, **kwargs: None
+            agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
+            agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: [branch_baseline]
+            repair_service.upsert_repair_draft = lambda draft: dict(draft)
+            correction_run = {
+                "runId": "agent-static-bounded-repair-correction",
+                "target": "通用父子页面导航修复",
+                "platform": "android",
+                "runnerId": "win-runner-01",
+                "deviceId": "ecbfd645",
+                "deviceStrategy": "fixed",
+                "artifacts": {
+                    "failureAnalysis": {"failureType": "SCRIPT_ISSUE", "summary": "仍停留在父页面"},
+                    "report": {"failedJobs": [{
+                        "jobId": "job-static-bounded-correction",
+                        "module": "AI_Agent_草稿",
+                        "file": "case.yaml",
+                        "taskName": "smoke",
+                        "status": "failed",
+                        "error": "failed to locate element",
+                        "failureType": "SCRIPT_ISSUE",
+                    }]},
+                },
+            }
+            correction_call = agent_service._tool_generate_repair(correction_run)
+        correction_summary = correction_run["artifacts"].get("repairSummary") or {}
+        correction_item = (correction_summary.get("items") or [{}])[0]
+        correction_draft = (correction_run["artifacts"].get("repairDrafts") or [{}])[0]
+        require(
+            len(correction_requests) == 2
+            and correction_item.get("aiCorrectionAttempted") is True
+            and correction_item.get("aiRequestCount") == 2
+            and "changes/analysis" in correction_requests[1].get("failureAnalysis", ""),
+            "A prose/YAML navigation mismatch must receive exactly one evidence-specific AI correction",
+        )
+        require(
+            correction_call.get("status") == "SUCCESS"
+            and correction_draft.get("status") == "WAIT_CONFIRM"
+            and correction_item.get("navigationChanged") is True
+            and correction_item.get("usedBaselineIds") == ["base-photo-path"],
+            "Only the corrected YAML with a real navigation diff and current-branch citation may become rerunnable",
+        )
+    finally:
+        agent_service.TASK_DIR = old_task_dir
+        agent_service._ai_gateway_available = old_gateway_available
+        agent_service._ai_gateway_post = old_gateway_post
+        agent_service._log_tool_call = old_log_tool_call
+        repair_service.upsert_repair_draft = old_upsert
+        agent_service._agent_failure_report_keyframes = old_report_keyframes
+        agent_service._agent_repair_baseline_examples = old_repair_baselines
 
     invalid_ai_scroll_repair = """android:
   tasks:
@@ -4111,6 +4250,13 @@ def check_yaml_static_validation_and_patterns():
         smoke_failed=1,
         timeout_count=0,
     )
+    threshold_smoke_blocker = classify_generated_yaml_smoke_blocker(
+        [{"failureType": "ASSERTION_FAILED", "reason": "1 条产品断言失败，另 1 条已通过"}],
+        [],
+        smoke_total=2,
+        smoke_failed=1,
+        timeout_count=0,
+    )
     dry_run_smoke_blocker = classify_generated_yaml_smoke_blocker(
         [],
         [{"file": "bad.yaml", "reason": "YAML dry-run 未通过", "errors": ["非官方 action"]}],
@@ -4119,9 +4265,14 @@ def check_yaml_static_validation_and_patterns():
         timeout_count=0,
     )
     require(
-        product_smoke_blocker.get("block") is False
+        product_smoke_blocker.get("block") is True
+        and product_smoke_blocker.get("executable") is True
+        and product_smoke_blocker.get("thresholdPassed") is False
+        and threshold_smoke_blocker.get("block") is False
+        and threshold_smoke_blocker.get("thresholdPassed") is True
+        and threshold_smoke_blocker.get("passRate") == 0.5
         and dry_run_smoke_blocker.get("block") is True,
-        "Smoke gate must distinguish product assertion failures from YAML/dry-run execution blockers",
+        "Smoke gate must preserve executable product failures while requiring at least 50% real passes before expansion",
     )
     scoped_payload = apply_generated_case_scope_gate({
         "analysis": {
@@ -6381,7 +6532,14 @@ def main():
     require('"/api/sonic/callback-diagnose"' in router_source and "healthReachableFromServer" in router_source, "Backend must expose callback diagnosis for HTTP 000")
     require("explainCallbackHttp000" in app_js_source and "/api/sonic/callback-diagnose" in app_js_source, "Frontend must show friendly HTTP 000 callback diagnosis")
     require("AI 分析并生成修复草稿" in task_page_source and "AI 修复当前文件" not in task_page_source, "Main repair button must say repair draft, not direct overwrite")
-    require('"yaml": original_yaml' in agent_service_source and 'resp.get("fixedYaml") or resp.get("fixed_yaml") or resp.get("optimizedYaml") or resp.get("yaml")' in agent_service_source, "Agent repair draft must send real YAML to AI Gateway and read all supported AI YAML response fields")
+    require(
+        '"yaml": original_yaml' in agent_service_source
+        and 'response.get("fixedYaml")' in agent_service_source
+        and 'response.get("fixed_yaml")' in agent_service_source
+        and 'response.get("optimizedYaml")' in agent_service_source
+        and 'response.get("yaml")' in agent_service_source,
+        "Agent repair draft must send real YAML to AI Gateway and read all supported AI YAML response fields",
+    )
     require('"repairSummary"' in agent_service_source and '"aiAttempted"' in agent_service_source and '"aiUsed"' in agent_service_source and '"evidenceSources"' in agent_service_source, "Agent repair draft must expose evidence, AI usage, and validation summary")
     require("def _agent_failed_execution_items" in agent_service_source and '"failedExecutionItems"' in agent_service_source, "Agent failure, repair, and rerun steps must share one failed-task source of truth")
     require('"failedTaskCount"' in agent_service_source and '"repairTargetCount"' in agent_service_source and '"draftCount"' in agent_service_source, "Agent repair summary must expose batch scope and draft counts")
@@ -6594,7 +6752,7 @@ def main():
     require(
         "AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT" in agent_service_source
         and "def _agent_smoke_execution_blocker" in agent_service_source
-        and "产品断言失败或页面状态不匹配会记录为测试结果" in yaml_execution_plan_source
+        and "产品断言失败或页面状态不匹配仍保留为真实测试结果" in yaml_execution_plan_source
         and "expandedBatchLimit" in agent_service_source
         and "expandedBatches" in agent_service_source
         and "第 {batch_index} 批扩展" in agent_service_source,

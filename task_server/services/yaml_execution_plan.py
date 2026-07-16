@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 BLOCKING_BUCKETS = {"YAML 可执行性不足", "元素定位失败", "Runner 超时", "Runner 未下发", "模型/环境失败"}
 RESULT_FAILURE_BUCKETS = {"页面状态不匹配", "产品断言失败"}
+SMOKE_MIN_PASS_RATE = 0.5
 
 
 def _safe_list(value: Any) -> List[Any]:
@@ -107,7 +108,7 @@ def build_generated_yaml_execution_plan(
         "policy": {
             "modelCalls": "AI 参与需求规划、可信基线语义重排、YAML 路径规划、冒烟优先级和失败定向修复；平台以确定性规则执行静态校验、设备约束、dry-run 和继续阈值。",
             "smokePurpose": "首批冒烟用于证明 YAML 能下发、能运行、能产生日志；产品断言失败记录为测试结果，不等同于不可执行。",
-            "expansion": "首批没有脚本/YAML/定位/超时类阻断后，按批继续执行剩余可执行用例。",
+            "expansion": "首批没有脚本/YAML/定位/超时类阻断且真实通过率不低于 50% 时，按批继续执行剩余可执行用例。",
         },
         "counts": {
             "total": len(scored_refs),
@@ -148,7 +149,7 @@ def build_generated_yaml_execution_plan(
                 "label": "剩余可执行用例",
                 "status": "pending" if deferred_refs else "empty",
                 "count": len(deferred_refs),
-                "summary": "首批没有执行阻断后分批继续，支持人工修改后继续执行。",
+                "summary": "首批真实通过率不低于 50% 且没有执行阻断后分批继续，支持人工修改后继续执行。",
             },
         ],
         "selected": [_compact_ref(item) for item in selected_refs[:20]],
@@ -200,9 +201,10 @@ def classify_generated_yaml_smoke_blocker(
 ) -> Dict[str, Any]:
     """Classify whether smoke results should block full execution.
 
-    Smoke cases do not have to pass the product assertion. They must execute.
-    Static YAML problems, dry-run blockers, locator failures, missing Runner
-    dispatch and timeouts block expansion; product/page result failures do not.
+    Smoke outcomes keep their real result bucket, but expansion is a separate
+    deterministic decision. Static execution blockers always stop expansion;
+    otherwise at least half of the smoke jobs must pass before remaining cases
+    can run.
     """
     dry_blocked = [item for item in _safe_list(dry_run_blocked) if isinstance(item, dict)]
     if dry_blocked:
@@ -254,11 +256,26 @@ def classify_generated_yaml_smoke_blocker(
             "bucket": bucket,
             "rule": "没有任何冒烟任务产出有效结果时暂停扩展，避免批量制造未知失败。",
         }
+    smoke_passed = max(0, smoke_total - smoke_failed)
+    smoke_pass_rate = smoke_passed / smoke_total
+    if smoke_pass_rate < SMOKE_MIN_PASS_RATE:
+        return {
+            "block": True,
+            "executable": True,
+            "thresholdPassed": False,
+            "passRate": round(smoke_pass_rate, 4),
+            "reason": f"首批冒烟通过率 {smoke_pass_rate:.1%} 低于 50%",
+            "bucket": bucket if smoke_failed else "冒烟通过率不足",
+            "rule": "保留每条冒烟的真实通过/失败结果；通过率低于 50% 时暂停 remaining，先进入失败诊断和修复。",
+        }
     return {
         "block": False,
+        "executable": True,
+        "thresholdPassed": True,
+        "passRate": round(smoke_pass_rate, 4),
         "reason": bucket if smoke_failed else "",
         "bucket": bucket if smoke_failed else "",
-        "rule": "冒烟必须能执行；产品断言失败或页面状态不匹配会记录为测试结果，不等同于 YAML 不可执行。",
+        "rule": "冒烟必须能执行且真实通过率不低于 50%；产品断言失败或页面状态不匹配仍保留为真实测试结果。",
     }
 
 
@@ -274,7 +291,9 @@ def update_execution_plan_after_smoke(
     plan = dict(plan or {})
     readiness = dict(plan.get("readiness") if isinstance(plan.get("readiness"), dict) else {})
     readiness.update({
-        "smokeExecutable": not bool((smoke_blocker or {}).get("block")),
+        "smokeExecutable": bool((smoke_blocker or {}).get("executable", not bool((smoke_blocker or {}).get("block")))),
+        "smokePassThresholdMet": bool((smoke_blocker or {}).get("thresholdPassed", not bool((smoke_blocker or {}).get("block")))),
+        "smokePassRate": round(smoke_passed / smoke_total, 4) if smoke_total else 0,
         "smokeFailureBucket": (smoke_blocker or {}).get("bucket") or "",
         "smokeFailurePolicy": (smoke_blocker or {}).get("rule") or "",
         "stopFurtherExecution": bool((smoke_blocker or {}).get("block")),
@@ -285,6 +304,10 @@ def update_execution_plan_after_smoke(
         "passed": smoke_passed,
         "failed": smoke_failed,
         "timeout": timeout_count,
+        "passRate": round(smoke_passed / smoke_total, 4) if smoke_total else 0,
+        "threshold": SMOKE_MIN_PASS_RATE,
+        "thresholdPassed": bool((smoke_blocker or {}).get("thresholdPassed", not bool((smoke_blocker or {}).get("block")))),
+        "executable": bool((smoke_blocker or {}).get("executable", not bool((smoke_blocker or {}).get("block")))),
         "block": bool((smoke_blocker or {}).get("block")),
         "reason": (smoke_blocker or {}).get("reason") or "",
         "bucket": (smoke_blocker or {}).get("bucket") or "",

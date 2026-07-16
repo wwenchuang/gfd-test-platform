@@ -53,6 +53,7 @@ from task_server.storage import (
 )
 from task_server.services.yaml_service import (
     ai_rewrite_yaml_for_executable_gate,
+    baseline_branch_anchor_terms,
     ensure_midscene_platform_root,
     extract_midscene_tasks,
     loading_wait_timeout_for_context,
@@ -5562,7 +5563,7 @@ def _select_agent_runner_refs(run, refs):
         "blocking": blocking,
         "deferred": deferred,
         "autoRepairCount": len(repairs),
-        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有稳定冒烟候选时不强行下发第三方授权、外部跳转或文件选择链路，需先生成或修正入口可见性短链路。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；只有脚本/YAML/定位/超时类问题会阻断扩展，产品结果失败会记录后继续按批执行。",
+        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有稳定冒烟候选时不强行下发第三方授权、外部跳转或文件选择链路，需先生成或修正入口可见性短链路。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；保留每条真实结果，通过率不低于 50% 且没有脚本/YAML/定位/超时阻断时才继续扩展。",
     }
     execution_plan = build_generated_yaml_execution_plan(
         scored,
@@ -10954,7 +10955,8 @@ def _tool_run_sonic(run):
                     timeout_count=len(wait_result["timeout"]),
                 )
                 gate.update({
-                    "smokeExecutable": not smoke_blocker.get("block"),
+                    "smokeExecutable": bool(smoke_blocker.get("executable", not smoke_blocker.get("block"))),
+                    "smokePassThresholdMet": bool(smoke_blocker.get("thresholdPassed", not smoke_blocker.get("block"))),
                     "smokeFailureBucket": smoke_blocker.get("bucket") or "",
                     "smokeFailurePolicy": smoke_blocker.get("rule") or "",
                 })
@@ -10980,12 +10982,14 @@ def _tool_run_sonic(run):
                         "smokePassedCount": len(wait_result["completed"]),
                         "smokeFailureRate": round(smoke_failure_rate, 4),
                         "smokePassRate": round(1 - smoke_failure_rate, 4),
+                        "smokeExecutable": bool(smoke_blocker.get("executable", not smoke_blocker.get("block"))),
+                        "smokePassThresholdMet": bool(smoke_blocker.get("thresholdPassed", not smoke_blocker.get("block"))),
                         "rule": smoke_blocker.get("rule") or "首批冒烟不可执行时停止扩展，先修复 YAML 或 Runner 环境。",
                     }
                     gate.update(stop_info)
                     run_artifacts["runnerExecutionGate"] = gate
                     run_artifacts["runnerSmokeGate"] = stop_info
-                    summary_parts.append(f"首批冒烟不可执行或不可稳定完成（失败 {smoke_failed}/{smoke_total}），已停止后续批量执行：{stop_reason}")
+                    summary_parts.append(f"首批冒烟未达到后续扩展门槛（通过 {smoke_total - smoke_failed}/{smoke_total}），已停止后续批量执行：{stop_reason}")
                 elif smoke_total and gate_deferred:
                     expand_batch_limit = max(1, min(AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT, AGENT_GENERATED_RUNNER_EXPAND_LIMIT))
                     pending_deferred = list(gate_deferred)[:AGENT_GENERATED_RUNNER_EXPAND_LIMIT]
@@ -11904,6 +11908,11 @@ def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
     if not matched_flows:
         matched_flows = [flow for flow in flows if flow_matches(flow, target_compact)]
 
+    sibling_names = list(dict.fromkeys(
+        str(flow.get("branch") or flow.get("name") or "").strip()
+        for flow in flows
+        if str(flow.get("branch") or flow.get("name") or "").strip()
+    ))
     branch_queries = []
     for flow in matched_flows:
         if not isinstance(flow, dict):
@@ -11913,7 +11922,13 @@ def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
             branch_parts.extend(_agent_plan_text_list(value))
         branch_query = "\n".join(dict.fromkeys(branch_parts)).strip()
         if branch_query:
-            branch_queries.append(branch_query[:2000])
+            branch_name = str(flow.get("branch") or flow.get("name") or "").strip()
+            branch_queries.append({
+                "id": str(flow.get("id") or clean_id(branch_name, f"repair_branch_{len(branch_queries) + 1}")),
+                "name": branch_name,
+                "query": branch_query[:2000],
+                "anchors": baseline_branch_anchor_terms(branch_name, sibling_names),
+            })
     try:
         rows = search_diverse_baseline_examples(
             target_text,
@@ -11936,6 +11951,8 @@ def _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3):
             "businessPath": item.get("businessPath") or item.get("baseline_path") or "",
             "retrievalRoles": item.get("retrievalRoles") or [],
             "retrievalQueries": item.get("retrievalQueries") or [],
+            "retrievalBranchIds": item.get("retrievalBranchIds") or [],
+            "retrievalAnchors": item.get("retrievalAnchors") or [],
             "actions": item.get("actions") or [],
             "snippet": str(item.get("snippet") or "")[:2400],
         }
@@ -12020,6 +12037,131 @@ def _agent_repair_navigation_signature(yaml_text):
                     normalized = str(value or "")
                 signature.append((action, normalized))
     return signature
+
+
+_AGENT_REPAIR_NAVIGATION_CLAIM_TERMS = (
+    "navigation", "parent page", "intermediate page", "navigation path", "route",
+    "导航", "父页面", "中间页面", "页面层级", "页面路径", "业务路径", "补充点击", "新增点击",
+    "增加点击", "修正点击", "父子页面", "新增 aitap", "增加 aitap", "补充 aitap",
+)
+
+
+def _agent_repair_candidate_gate(original_yaml, response, baseline_examples, platform="android"):
+    """Audit AI repair prose, baseline evidence and executable YAML as one candidate."""
+    response = response if isinstance(response, dict) else {}
+    baseline_examples = [item for item in (baseline_examples or []) if isinstance(item, dict)]
+    raw_fixed_yaml = str(
+        response.get("fixedYaml")
+        or response.get("fixed_yaml")
+        or response.get("optimizedYaml")
+        or response.get("yaml")
+        or ""
+    ).strip()
+    fixed_yaml = ""
+    if raw_fixed_yaml:
+        fixed_yaml = ensure_midscene_platform_root(
+            remove_empty_midscene_platform_roots(raw_fixed_yaml),
+            platform=platform,
+        ).strip()
+    used_baseline_ids = list(dict.fromkeys(
+        str(item).strip()
+        for item in (response.get("usedBaselineIds") or [])
+        if str(item or "").strip()
+    ))
+    known_baseline_ids = {
+        str(item.get("id") or "").strip()
+        for item in baseline_examples
+        if str(item.get("id") or "").strip()
+    }
+    branch_baseline_ids = {
+        str(item.get("id") or "").strip()
+        for item in baseline_examples
+        if str(item.get("id") or "").strip()
+        and "business_branch" in (item.get("retrievalRoles") or [])
+        and (item.get("retrievalBranchIds") or [])
+    }
+    invalid_baseline_ids = [item for item in used_baseline_ids if item not in known_baseline_ids]
+    change_text = " ".join(
+        _agent_plan_text_list(response.get("analysis"), limit=20)
+        + _agent_plan_text_list(response.get("changes"), limit=20)
+    ).lower()
+    navigation_claimed = any(term in change_text for term in _AGENT_REPAIR_NAVIGATION_CLAIM_TERMS)
+    original_navigation = _agent_repair_navigation_signature(original_yaml)
+    fixed_navigation = _agent_repair_navigation_signature(fixed_yaml)
+    navigation_changed = bool(
+        original_navigation is not None
+        and fixed_navigation is not None
+        and original_navigation != fixed_navigation
+    )
+    ai_validation = response.get("validation") if isinstance(response.get("validation"), dict) else {}
+    validation = {}
+    gateway_validation_failed = False
+    if fixed_yaml:
+        validation = validate_midscene_yaml_executability(fixed_yaml)
+        validation["validatedBy"] = "task_server"
+        gateway_validation_failed = bool(
+            ai_validation
+            and (
+                ai_validation.get("valid") is False
+                or ("valid" not in ai_validation and ai_validation.get("success") is False)
+            )
+        )
+        if gateway_validation_failed:
+            gateway_issues = [
+                str(item).strip()
+                for item in (ai_validation.get("errors") or ai_validation.get("issues") or [])
+                if str(item or "").strip()
+            ]
+            validation["ok"] = False
+            validation["issues"] = list(dict.fromkeys(
+                gateway_issues + list(validation.get("issues") or [])
+            ))
+            validation["gatewayRejected"] = True
+
+    issues = []
+
+    def add_issue(code, message):
+        if code not in {item.get("code") for item in issues}:
+            issues.append({"code": code, "message": message})
+
+    if not fixed_yaml:
+        add_issue("ai_no_yaml", "AI 未返回完整修复 YAML")
+    if invalid_baseline_ids:
+        add_issue("unknown_baseline_citation", "引用了本次候选之外的基线：" + "、".join(invalid_baseline_ids[:3]))
+    if fixed_yaml and navigation_claimed and not navigation_changed:
+        add_issue(
+            "navigation_claim_without_yaml_change",
+            "changes/analysis 声称修正导航，但 YAML 的 aiTap/ai/aiAction/aiAct 路径没有变化",
+        )
+    if fixed_yaml and navigation_changed and baseline_examples and not used_baseline_ids:
+        add_issue("navigation_change_without_baseline_citation", "导航发生变化，但没有引用本次可信路径基线")
+    if (
+        fixed_yaml
+        and navigation_changed
+        and branch_baseline_ids
+        and not branch_baseline_ids.intersection(used_baseline_ids)
+    ):
+        add_issue("navigation_change_without_branch_baseline", "导航修改没有引用当前业务分支召回的路径基线")
+    if fixed_yaml and gateway_validation_failed:
+        add_issue("ai_gateway_validation_failed", "AI Gateway 判定修复 YAML 不符合 Midscene 契约")
+    elif fixed_yaml and not validation.get("ok"):
+        add_issue("yaml_validation_failed", "修复 YAML 未通过 Task Server 可执行校验")
+    elif fixed_yaml and not _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
+        add_issue("sleep_only_or_noop", "候选只增加 sleep、修改说明或与原 YAML 执行语义等价")
+
+    return {
+        "rawFixedYaml": raw_fixed_yaml,
+        "fixedYaml": fixed_yaml,
+        "usedBaselineIds": used_baseline_ids,
+        "invalidBaselineIds": invalid_baseline_ids,
+        "branchBaselineIds": sorted(branch_baseline_ids),
+        "navigationClaimed": navigation_claimed,
+        "navigationChanged": navigation_changed,
+        "aiGatewayValidation": ai_validation,
+        "yamlValidation": validation,
+        "issues": issues,
+        "ok": not issues,
+    }
 
 
 def _normalize_agent_failed_items(items):
@@ -12247,6 +12389,8 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         saved_drafts = []
         summary_items = []
         ai_attempted_count = 0
+        ai_request_count = 0
+        ai_correction_attempted_count = 0
         ai_used_count = 0
         validation_passed_count = 0
         blocked_count = 0
@@ -12303,7 +12447,10 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 "batchTotal": len(failed_jobs),
                 "reportKeyframes": report_keyframe_names,
                 "baselineExamples": [
-                    {key: item.get(key) for key in ("id", "title", "file", "provenancePath", "sourceKind", "verificationStatus", "businessPath")}
+                    {key: item.get(key) for key in (
+                        "id", "title", "file", "provenancePath", "sourceKind", "verificationStatus",
+                        "businessPath", "retrievalRoles", "retrievalBranchIds", "retrievalAnchors",
+                    )}
                     for item in baseline_examples
                 ],
             }
@@ -12333,151 +12480,134 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 ai_attempted_count += 1
                 item_summary["aiAttempted"] = True
                 resp = None
-                try:
-                    resp = _ai_gateway_post("/ai/optimize-yaml", {
-                        "yaml": original_yaml,
-                        "target": run.get("target", ""),
-                        "requirement": _agent_plan_requirement_text(run),
-                        "taskName": task_name,
-                        "failureAnalysis": evidence,
-                        "issues": evidence,
-                        "allFailedJobs": failed_jobs[:30],
-                        "imageAssets": report_keyframes,
-                        "reportKeyframes": report_keyframe_names,
-                        "baselineExamples": baseline_examples,
-                        "sourceEvidence": source_evidence,
-                        "repairPolicy": {
-                            "alignReportFramesWithBaselinePath": True,
-                            "requireBaselineCitationForNavigationChange": True,
-                            "visibleTextOnly": True,
-                            "preserveOriginalBusinessGoal": True,
-                        },
-                        "evidenceSources": [
-                            "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
-                            "failureReview", "Midscene 报告关键帧", "可信分支基线",
-                        ],
-                        "executionConstraint": {
-                            "runnerId": run.get("runnerId") or "",
-                            "deviceId": run.get("deviceId") or "",
-                            "deviceStrategy": run.get("deviceStrategy") or "",
-                            "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
-                        },
-                    }, timeout=ai_timeout)
-                except Exception as e:
-                    resp = {"error": str(e)[:300]}
-                fixed_yaml = ""
+                request_payload = {
+                    "yaml": original_yaml,
+                    "target": run.get("target", ""),
+                    "requirement": _agent_plan_requirement_text(run),
+                    "taskName": task_name,
+                    "failureAnalysis": evidence,
+                    "issues": evidence,
+                    "allFailedJobs": failed_jobs[:30],
+                    "imageAssets": report_keyframes,
+                    "reportKeyframes": report_keyframe_names,
+                    "baselineExamples": baseline_examples,
+                    "sourceEvidence": source_evidence,
+                    "repairPolicy": {
+                        "alignReportFramesWithBaselinePath": True,
+                        "requireBaselineCitationForNavigationChange": True,
+                        "requireProseYamlDiffConsistency": True,
+                        "visibleTextOnly": True,
+                        "preserveOriginalBusinessGoal": True,
+                    },
+                    "evidenceSources": [
+                        "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
+                        "failureReview", "Midscene 报告关键帧", "可信分支基线",
+                    ],
+                    "executionConstraint": {
+                        "runnerId": run.get("runnerId") or "",
+                        "deviceId": run.get("deviceId") or "",
+                        "deviceStrategy": run.get("deviceStrategy") or "",
+                        "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
+                    },
+                }
+                candidate_gate = None
+                for repair_attempt in range(2):
+                    try:
+                        ai_request_count += 1
+                        resp = _ai_gateway_post(
+                            "/ai/optimize-yaml",
+                            request_payload,
+                            timeout=ai_timeout if repair_attempt == 0 else min(ai_timeout, 60),
+                        )
+                    except Exception as e:
+                        resp = {"error": str(e)[:300]}
+                    candidate_gate = _agent_repair_candidate_gate(
+                        original_yaml,
+                        resp,
+                        baseline_examples,
+                        platform=run.get("platform", "android"),
+                    )
+                    if candidate_gate.get("ok") or repair_attempt > 0 or not candidate_gate.get("rawFixedYaml"):
+                        break
+                    correction_issues = [
+                        str(item.get("message") or item.get("code") or "").strip()
+                        for item in (candidate_gate.get("issues") or [])
+                        if str(item.get("message") or item.get("code") or "").strip()
+                    ]
+                    item_summary["aiCorrectionAttempted"] = True
+                    item_summary["aiCorrectionIssues"] = correction_issues
+                    ai_correction_attempted_count += 1
+                    correction_text = (
+                        "\n\n上一次修复候选被平台语义门禁拒绝：\n- "
+                        + "\n- ".join(correction_issues)
+                        + "\n请只纠正上述问题。changes/analysis 必须与真实 YAML diff 一致；"
+                        "若补父子导航，必须真实修改可见文字驱动的 aiTap/ai/aiAction/aiAct，"
+                        "并引用当前业务分支的可信路径基线。"
+                    )
+                    request_payload = dict(request_payload)
+                    request_payload["failureAnalysis"] = evidence + correction_text
+                    request_payload["issues"] = evidence + correction_text
+                    request_payload["candidateValidationIssues"] = candidate_gate.get("issues") or []
+                    request_payload["repairPolicy"] = {
+                        **request_payload["repairPolicy"],
+                        "boundedCorrectionAttempt": 1,
+                    }
+
+                item_summary["aiRequestCount"] = 2 if item_summary.get("aiCorrectionAttempted") else 1
+                candidate_gate = candidate_gate or _agent_repair_candidate_gate(
+                    original_yaml, resp, baseline_examples, platform=run.get("platform", "android")
+                )
+                fixed_yaml = candidate_gate.get("fixedYaml") or ""
                 if isinstance(resp, dict):
-                    fixed_yaml = str(resp.get("fixedYaml") or resp.get("fixed_yaml") or resp.get("optimizedYaml") or resp.get("yaml") or "").strip()
                     if resp.get("changes"):
                         changes = resp.get("changes")
                         item_summary["changes"] = changes if isinstance(changes, list) else [str(changes)]
                     if resp.get("analysis"):
                         draft["aiAnalysis"] = str(resp.get("analysis"))[:4000]
-                    used_baseline_ids = [str(item) for item in (resp.get("usedBaselineIds") or []) if str(item or "").strip()]
-                    known_baseline_ids = {str(item.get("id") or "") for item in baseline_examples if item.get("id")}
-                    invalid_baseline_ids = [item for item in used_baseline_ids if item not in known_baseline_ids]
-                    item_summary["usedBaselineIds"] = used_baseline_ids
-                    if invalid_baseline_ids:
-                        item_summary["invalidBaselineIds"] = invalid_baseline_ids
-                        fixed_yaml = ""
-                        resp["error"] = "AI 引用了本次候选之外的基线：" + "、".join(invalid_baseline_ids[:3])
-                    change_text = " ".join(
-                        _agent_plan_text_list(resp.get("analysis"), limit=20)
-                        + _agent_plan_text_list(resp.get("changes"), limit=20)
-                    ).lower()
-                    original_navigation = _agent_repair_navigation_signature(original_yaml)
-                    fixed_navigation = _agent_repair_navigation_signature(fixed_yaml)
-                    navigation_changed = (
-                        original_navigation is not None
-                        and fixed_navigation is not None
-                        and original_navigation != fixed_navigation
-                    ) or any(term in change_text for term in (
-                        "navigation", "parent page", "intermediate page", "route", "path",
-                        "导航", "父页面", "中间页面", "页面层级", "路径", "补充点击", "新增点击",
-                    ))
-                    if fixed_yaml and baseline_examples and navigation_changed and not used_baseline_ids:
-                        item_summary["blockedReason"] = "navigation_change_without_baseline_citation"
-                        fixed_yaml = ""
-                        resp["error"] = "AI 修改了页面导航，但没有引用本次可信分支基线"
                     if resp.get("diff") or resp.get("diff_summary"):
                         draft["diff"] = resp.get("diff") or resp.get("diff_summary")
-                if fixed_yaml:
-                    fixed_yaml = ensure_midscene_platform_root(
-                        remove_empty_midscene_platform_roots(fixed_yaml),
-                        platform=run.get("platform", "android"),
-                    ).strip()
-                    ai_validation = (resp or {}).get("validation") if isinstance(resp, dict) else {}
-                    if isinstance(ai_validation, dict) and ai_validation:
-                        draft["aiGatewayValidation"] = ai_validation
-                        item_summary["aiGatewayValidation"] = ai_validation
-                    validation = validate_midscene_yaml_executability(fixed_yaml)
-                    validation["validatedBy"] = "task_server"
-                    gateway_validation_failed = bool(
-                        isinstance(ai_validation, dict)
-                        and ai_validation
-                        and (
-                            ai_validation.get("valid") is False
-                            or (
-                                "valid" not in ai_validation
-                                and ai_validation.get("success") is False
-                            )
-                        )
-                    )
-                    if gateway_validation_failed:
-                        gateway_issues = [
-                            str(item).strip()
-                            for item in (ai_validation.get("errors") or ai_validation.get("issues") or [])
-                            if str(item or "").strip()
-                        ]
-                        validation["ok"] = False
-                        validation["issues"] = list(dict.fromkeys(
-                            gateway_issues + list(validation.get("issues") or [])
-                        ))
-                        validation["gatewayRejected"] = True
+                    if resp.get("error"):
+                        item_summary["aiError"] = str(resp.get("error"))[:500]
+                        draft["aiError"] = str(resp.get("error"))[:500]
+                item_summary["usedBaselineIds"] = candidate_gate.get("usedBaselineIds") or []
+                item_summary["branchBaselineIds"] = candidate_gate.get("branchBaselineIds") or []
+                item_summary["navigationChanged"] = bool(candidate_gate.get("navigationChanged"))
+                item_summary["navigationClaimed"] = bool(candidate_gate.get("navigationClaimed"))
+                if candidate_gate.get("invalidBaselineIds"):
+                    item_summary["invalidBaselineIds"] = candidate_gate.get("invalidBaselineIds")
+                ai_validation = candidate_gate.get("aiGatewayValidation") or {}
+                validation = candidate_gate.get("yamlValidation") or {}
+                if ai_validation:
+                    draft["aiGatewayValidation"] = ai_validation
+                    item_summary["aiGatewayValidation"] = ai_validation
+                if validation:
                     draft["validation"] = validation
                     item_summary["yamlValidation"] = validation
                     item_summary["taskCount"] = validation.get("taskCount")
-                    if not validation.get("ok"):
-                        blocked_count += 1
-                        item_summary["blockedReason"] = (
-                            "ai_gateway_validation_failed"
-                            if gateway_validation_failed else "yaml_validation_failed"
-                        )
-                        draft["blockedReason"] = item_summary["blockedReason"]
-                        draft["rejectedYaml"] = fixed_yaml[:200000]
-                        draft["repairSource"] = "diagnosis_only"
-                        draft["status"] = "REJECTED"
-                        draft["analysis"] = (
-                            f"{draft.get('analysis') or ''}\n"
-                            "AI 修复候选未通过 Midscene 可执行校验，已保留诊断证据但禁止下发 Runner。"
-                        ).strip()
-                    elif not _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
-                        blocked_count += 1
-                        item_summary["blockedReason"] = "sleep_only_or_noop"
-                        draft["blockedReason"] = "sleep_only_or_noop"
-                        draft["rejectedYaml"] = fixed_yaml[:200000]
-                        draft["repairSource"] = "diagnosis_only"
-                        draft["status"] = "REJECTED"
-                        draft["analysis"] = (
-                            f"{draft.get('analysis') or ''}\n"
-                            "AI 候选只增加 sleep、只修改用例说明或与原 YAML 等价，未改变实际执行语义，禁止自动重跑。"
-                        ).strip()
-                    else:
-                        draft["fixedYaml"] = fixed_yaml[:200000]
-                        draft["fixed_yaml"] = draft["fixedYaml"]
-                        draft["draftYaml"] = draft["fixedYaml"][:5000]
-                        draft["repairSource"] = "ai_gateway"
-                        draft["status"] = "WAIT_CONFIRM"
-                        item_summary["aiUsed"] = True
-                        ai_used_count += 1
-                        validation_passed_count += 1
+                if candidate_gate.get("ok"):
+                    draft["fixedYaml"] = fixed_yaml[:200000]
+                    draft["fixed_yaml"] = draft["fixedYaml"]
+                    draft["draftYaml"] = draft["fixedYaml"][:5000]
+                    draft["repairSource"] = "ai_gateway"
+                    draft["status"] = "WAIT_CONFIRM"
+                    item_summary["aiUsed"] = True
+                    ai_used_count += 1
+                    validation_passed_count += 1
                 else:
                     blocked_count += 1
-                    item_summary["blockedReason"] = "ai_no_yaml"
-                    if isinstance(resp, dict) and resp.get("error"):
-                        item_summary["aiError"] = resp.get("error")
-                        draft["aiError"] = resp.get("error")
+                    candidate_issues = candidate_gate.get("issues") or []
+                    blocked_reason = str((candidate_issues[0] if candidate_issues else {}).get("code") or "ai_no_yaml")
+                    item_summary["blockedReason"] = blocked_reason
+                    item_summary["candidateValidationIssues"] = candidate_issues
+                    draft["blockedReason"] = blocked_reason
+                    if fixed_yaml:
+                        draft["rejectedYaml"] = fixed_yaml[:200000]
                     draft["repairSource"] = "diagnosis_only"
+                    draft["status"] = "REJECTED"
+                    draft["analysis"] = (
+                        f"{draft.get('analysis') or ''}\n"
+                        "AI 修复候选未通过平台语义/证据/可执行门禁，已保留诊断证据但禁止下发 Runner。"
+                    ).strip()
             else:
                 blocked_count += 1
                 item_summary["blockedReason"] = "ai_gateway_unavailable"
@@ -12512,6 +12642,8 @@ def _tool_generate_repair(run, failed_jobs_override=None):
             "blockedCount": blocked_count,
             "aiAttempted": ai_attempted_count > 0,
             "aiAttemptedCount": ai_attempted_count,
+            "aiRequestCount": ai_request_count,
+            "aiCorrectionAttemptedCount": ai_correction_attempted_count,
             "aiUsed": ai_used_count > 0,
             "aiUsedCount": ai_used_count,
             "validationPassedCount": validation_passed_count,
@@ -12537,6 +12669,8 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         call["aiAttempted"] = repair_summary.get("aiAttempted")
         call["aiUsed"] = repair_summary.get("aiUsed")
         call["aiAttemptedCount"] = ai_attempted_count
+        call["aiRequestCount"] = ai_request_count
+        call["aiCorrectionAttemptedCount"] = ai_correction_attempted_count
         call["aiUsedCount"] = ai_used_count
         call["yamlValidation"] = repair_summary.get("yamlValidation")
         call["targetTaskName"] = "、".join([str(x) for x in repair_summary["targetTasks"][:3] if x])
