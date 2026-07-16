@@ -694,6 +694,76 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and branch_fallback_applied.get("review", {}).get("executable_yaml_plan", {}).get("redundant_unmentioned_manualized_count") == 1,
         "Same-branch bounded evidence must close every explicit dimension while an omitted redundant candidate is preserved as manual, never auto-promoted",
     )
+    source_ui_payload = {
+        "analysis": {
+            "requirement_points": ["REQ-009 售后服务：展示发票入口、文案正确且与同页入口同级"],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-009-CHECK-01", "requirementId": "REQ-009", "branch": "售后服务", "kind": "visibility", "text": "校验发票入口可见"},
+                {"id": "REQ-009-CHECK-02", "requirementId": "REQ-009", "branch": "售后服务", "kind": "relation", "text": "校验发票入口与当前页面其它入口同级展示"},
+                {"id": "REQ-009-CHECK-03", "requirementId": "REQ-009", "branch": "售后服务", "kind": "copy", "text": "校验发票入口使用需求约定的可见文案"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-SOURCE-UI",
+            "title": "售后服务发票入口展示",
+            "executionLevel": "manual",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": ["REQ-009 售后服务：展示发票入口、文案正确且与同页入口同级"],
+            "preconditions": ["App 首页，用户已登录"],
+            "steps": ["进入售后服务", "等待发票入口可见"],
+            "assertions": ["发票入口可见"],
+        }],
+        "manual_cases": [],
+    }
+    source_ui_audit = ai_skill_service.executable_yaml_portfolio_audit(source_ui_payload, {})
+    source_ui_record = {
+        "raw": source_ui_payload["cases"][0],
+        "compact": ai_skill_service._compact_case_for_plan(
+            source_ui_payload["cases"][0],
+            0,
+            origin_level="automatic",
+        ),
+    }
+    source_ui_evidence = ai_skill_service._bounded_convergence_evidence(
+        source_ui_payload,
+        [source_ui_record],
+        source_ui_audit,
+        selected_baselines=[{
+            "id": "base-source-ui",
+            "selectedBranchName": "售后服务",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "snippet": "- aiTap: 会员服务\n- aiWaitFor: 等待会员服务页面加载完成\n- aiTap: 售后服务\n- aiWaitFor: 等待售后服务页面加载完成\n- aiTap: 选择历史订单",
+        }],
+    )
+    source_ui_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-source-ui"],
+        "requirementPoints": source_ui_payload["analysis"]["requirement_points"],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["TC-SOURCE-UI"],
+        "candidateEligibilityById": source_ui_evidence,
+        "cases": [],
+        "manual_cases": [{
+            "caseId": "TC-SOURCE-UI",
+            "reason": "缺少对应 Figma Frame，模型建议人工确认",
+        }],
+    }
+    source_ui_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        source_ui_payload,
+        source_ui_plan,
+    )
+    source_ui_case = source_ui_applied.get("cases", [{}])[0]
+    require(
+        source_ui_evidence.get("TC-SOURCE-UI", {}).get("kind") == "source_ui_assertion"
+        and set(source_ui_evidence["TC-SOURCE-UI"].get("acceptanceCheckIds") or []) == {
+            "REQ-009-CHECK-01", "REQ-009-CHECK-02", "REQ-009-CHECK-03",
+        }
+        and source_ui_case.get("executionLevel") == "executable"
+        and source_ui_case.get("ai_case_plan", {}).get("batch") == "remaining"
+        and ai_skill_service.executable_yaml_portfolio_audit(source_ui_applied, {}).get("ok"),
+        "A trusted same-branch action path plus the explicit UI contract must let Runner verify source-page visibility/copy/relation without requiring a sibling Figma frame",
+    )
     manual_tail_payload = json.loads(json.dumps(branch_fallback_payload, ensure_ascii=False))
     for item in manual_tail_payload.get("manual_cases") or []:
         if item.get("case_id") != "TC-R03":
@@ -1332,7 +1402,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "运行时入口不存在属于产品断言失败" in planner_prompt
         and "planningContext.focus" in planner_prompt
         and "convergenceEvidence.eligible=true" in planner_prompt
-        and "不要求新能力的目标落地页已有历史成功基线" in planner_prompt,
+        and "不要求新增入口或目标落地页已有历史成功结果" in planner_prompt
+        and "kind=source_ui_assertion" in planner_prompt,
         "Final executable planning must test explicit visible requirements without turning missing sibling Figma frames into a hard gate",
     )
     requirement_prompt = (ROOT / "ai_skills" / "prompts" / "requirement_analyzer.v1.md").read_text(encoding="utf-8")
@@ -1785,6 +1856,74 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(
         ai_skill_service.executable_yaml_portfolio_audit(focused_applied, {"min_automation_cases": 2}).get("ok"),
         "Focused AI convergence must be able to close explicit requirement coverage without weakening the portfolio gate",
+    )
+    explicit_demotion_plan = json.loads(json.dumps(focused_plan, ensure_ascii=False))
+    explicit_demotion_plan["manual_cases"].append({
+        "caseId": "TC-101",
+        "reason": "为保持首批 Smoke 精简，将已有可执行项转人工",
+    })
+    explicit_demotion = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        convergence_payload,
+        explicit_demotion_plan,
+    )
+    explicit_demotion_by_id = {
+        item.get("case_id"): item for item in explicit_demotion.get("cases") or []
+    }
+    require(
+        explicit_demotion_by_id["TC-101"].get("executionLevel") == "executable"
+        and explicit_demotion.get("review", {}).get("executable_yaml_plan", {}).get("convergence_demotion_blocked_count") == 1,
+        "Coverage convergence must keep an already-approved executable; Smoke overflow belongs to the remaining batch, not Manual",
+    )
+    manualized_smoke = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        {
+            "analysis": {"requirement_points": ["REQ-010 入口展示"]},
+            "cases": [{
+                "case_id": "TC-SMOKE-MANUAL",
+                "title": "入口冒烟候选",
+                "coverage": "REQ-010",
+                "smoke": True,
+                "flag": ["冒烟"],
+                "steps": ["进入页面", "等待入口可见"],
+                "assertions": ["入口可见"],
+            }],
+        },
+        {
+            "authoritative": True,
+            "cases": [],
+            "manual_cases": [{"caseId": "TC-SMOKE-MANUAL", "reason": "路径不确定"}],
+        },
+    )
+    manualized_smoke_case = manualized_smoke.get("manual_cases", [{}])[0]
+    require(
+        manualized_smoke_case.get("smoke") is False
+        and "冒烟" not in (manualized_smoke_case.get("flag") or []),
+        "A candidate classified as Manual must not retain stale Smoke metadata",
+    )
+    focused_portfolio = ai_skill_service.executable_yaml_portfolio_audit(
+        focused_applied,
+        {"min_automation_cases": 2},
+    )
+    accepted_convergence = yaml_service.executable_yaml_convergence_decision(
+        convergence_audit,
+        focused_portfolio,
+    )
+    regressed_convergence = yaml_service.executable_yaml_convergence_decision(
+        {
+            "ok": False,
+            "coveredAcceptanceCheckIds": ["REQ-001-CHECK-01", "REQ-003-CHECK-04"],
+            "missingRequirementPoints": ["REQ-002 visibility"],
+        },
+        {
+            "ok": False,
+            "coveredAcceptanceCheckIds": ["REQ-001-CHECK-01", "REQ-002-CHECK-04"],
+            "missingRequirementPoints": ["REQ-003 reachability"],
+        },
+    )
+    require(
+        accepted_convergence.get("accepted") is True
+        and regressed_convergence.get("accepted") is False
+        and regressed_convergence.get("regressedAcceptanceCheckIds") == ["REQ-003-CHECK-04"],
+        "Final convergence must be monotonic: adding one branch may not erase an already covered acceptance dimension",
     )
     omitted_gap_plan = json.loads(json.dumps(focused_plan, ensure_ascii=False))
     omitted_gap_plan["cases"] = []
@@ -3113,6 +3252,25 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         and scoped_visual_by_id["TC-VIS-002"].get("assertions") == ["禁用状态下未展示发票入口"]
         and scoped_visual_merge.get("review", {}).get("visual_scope_guard", {}).get("blockedPatchCount") == 1,
         "A later unrelated frame may record a conflict but must not invert a positive requirement case; true negative cases remain calibratable",
+    )
+    visual_reclassification_merge = ai_skill_service.merge_visual_grounder_payload(
+        scoped_visual_base,
+        {
+            "manual_cases": [{
+                "case_id": "TC-VIS-001",
+                "reason": "当前局部 Frame 没有展示目标入口，建议转人工",
+            }],
+            "review": {"visual_grounding_check": "局部 Frame 未展示目标入口"},
+        },
+    )
+    visual_reclassification_by_id = {
+        item.get("case_id"): item for item in visual_reclassification_merge.get("cases") or []
+    }
+    require(
+        "局部 Frame" in visual_reclassification_by_id["TC-VIS-001"].get("repair_hints", "")
+        and not visual_reclassification_merge.get("manual_cases")
+        and visual_reclassification_merge.get("review", {}).get("visual_classification_guard", {}).get("blockedReclassificationCount") == 1,
+        "A soft visual batch may record a conflict but must not move an automatic candidate into the manual pool",
     )
 
     visual_payload = {

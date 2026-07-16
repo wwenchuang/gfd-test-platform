@@ -249,6 +249,63 @@ create_pending_job = _lazy("create_pending_job", "task_server.services.job_servi
 normalize_device_strategy = _lazy("normalize_device_strategy", "task_server.services.job_service")
 
 
+def executable_yaml_convergence_decision(before, proposed):
+    """Accept final convergence only when explicit coverage improves monotonically."""
+    before = before if isinstance(before, dict) else {}
+    proposed = proposed if isinstance(proposed, dict) else {}
+    before_covered = {
+        str(item or "").strip()
+        for item in (before.get("coveredAcceptanceCheckIds") or [])
+        if str(item or "").strip()
+    }
+    proposed_covered = {
+        str(item or "").strip()
+        for item in (proposed.get("coveredAcceptanceCheckIds") or [])
+        if str(item or "").strip()
+    }
+    before_missing = {
+        str(item or "").strip()
+        for item in (before.get("missingRequirementPoints") or [])
+        if str(item or "").strip()
+    }
+    proposed_missing = {
+        str(item or "").strip()
+        for item in (proposed.get("missingRequirementPoints") or [])
+        if str(item or "").strip()
+    }
+    regressed_check_ids = sorted(before_covered - proposed_covered)
+    added_check_ids = sorted(proposed_covered - before_covered)
+    removed_missing_points = sorted(before_missing - proposed_missing)
+    unresolved_before = max(0, safe_int(before.get("unresolvedAutomaticCount"), 0))
+    unresolved_after = max(0, safe_int(proposed.get("unresolvedAutomaticCount"), 0))
+    improved = bool(
+        (proposed.get("ok") is True and before.get("ok") is not True)
+        or added_check_ids
+        or removed_missing_points
+        or unresolved_after < unresolved_before
+    )
+    accepted = bool(not regressed_check_ids and improved)
+    if regressed_check_ids:
+        reason = "收敛结果丢失上一轮已覆盖的显式验收维度，保留收敛前组合"
+    elif not improved:
+        reason = "收敛结果没有减少覆盖缺口，保留收敛前组合"
+    else:
+        reason = "收敛结果在不丢失既有验收维度的前提下补齐了覆盖"
+    return {
+        "accepted": accepted,
+        "reason": reason,
+        "regressedAcceptanceCheckIds": regressed_check_ids,
+        "addedAcceptanceCheckIds": added_check_ids,
+        "resolvedMissingRequirementPoints": removed_missing_points,
+        "unresolvedAutomaticBefore": unresolved_before,
+        "unresolvedAutomaticAfter": unresolved_after,
+        "rule": (
+            "最终覆盖收敛只能保留或增加已覆盖的显式验收维度；"
+            "Smoke 上限只控制首批批次，不能通过降级已有 executable 来换用另一条用例。"
+        ),
+    }
+
+
 def case_ui_design_meta_path(case_set_id):
     return safe_join(case_ui_design_dir(case_set_id), "meta.json")
 
@@ -7063,12 +7120,31 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 )
                 convergence_plan["scopePlan"] = execution_scope_plan
                 initial_plan_review = copy.deepcopy(review.get("executable_yaml_plan") or {})
+                proposed_portfolio_after = portfolio_before
+                convergence_application = {
+                    "accepted": False,
+                    "reason": "最终收敛未返回可应用的权威结果",
+                }
                 if (
                     convergence_plan.get("authoritative") is True
                     or convergence_plan.get("evidenceFallback") is True
                 ):
-                    payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
-                portfolio_after = executable_yaml_portfolio_audit(payload, planned_generation_targets)
+                    proposed_payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
+                    proposed_portfolio_after = executable_yaml_portfolio_audit(
+                        proposed_payload,
+                        planned_generation_targets,
+                    )
+                    convergence_application = executable_yaml_convergence_decision(
+                        portfolio_before,
+                        proposed_portfolio_after,
+                    )
+                    if convergence_application.get("accepted") is True:
+                        payload = proposed_payload
+                portfolio_after = (
+                    proposed_portfolio_after
+                    if convergence_application.get("accepted") is True
+                    else portfolio_before
+                )
                 final_executable_portfolio = portfolio_after
                 review = payload.setdefault("review", {})
                 if convergence_plan.get("evidenceFallback") is True:
@@ -7095,6 +7171,8 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     ),
                     "before": portfolio_before,
                     "after": portfolio_after,
+                    "proposedAfter": proposed_portfolio_after,
+                    "application": convergence_application,
                     "trace": convergence_plan.get("trace") or {},
                     "review": convergence_plan.get("review") or {},
                     "rule": (

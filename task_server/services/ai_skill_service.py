@@ -3734,6 +3734,116 @@ def _bounded_convergence_evidence(
             ]):
                 sources.setdefault(requirement_id, []).append(case)
     evidence_by_id = {}
+    requirement_ids = list(dict.fromkeys(
+        str(item.get("requirementId") or "").strip()
+        for item in missing_checks
+        if str(item.get("requirementId") or "").strip()
+    ))
+    for requirement_id in requirement_ids:
+        source_checks = [
+            item for item in missing_checks
+            if str(item.get("requirementId") or "").strip() == requirement_id
+            and str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+        ]
+        if not source_checks:
+            continue
+        branch = next((
+            str(item.get("branch") or "").strip()
+            for item in source_checks
+            if str(item.get("branch") or "").strip()
+        ), "")
+        branch_baseline = _trusted_selected_baseline_for_branch(selected_baselines, branch)
+        if not branch_baseline:
+            continue
+        target_terms = _acceptance_target_terms("；".join(
+            str(item.get("text") or "").strip() for item in source_checks
+        ))
+        navigation_flow = _trusted_baseline_source_navigation_flow(
+            branch_baseline,
+            target_terms,
+            branch,
+        )
+        if (
+            len(navigation_flow) < 2
+            or _source_navigation_has_alternative_destinations(navigation_flow)
+        ):
+            continue
+        matching_records = [
+            item for item in automatic_records
+            if requirement_id in _acceptance_requirement_ids([
+                ((item or {}).get("raw") or {}).get("coverage"),
+                ((item or {}).get("raw") or {}).get("requirementRefs"),
+                ((item or {}).get("raw") or {}).get("requirement_refs"),
+            ])
+            and _case_has_branch_execution_evidence((item or {}).get("raw") or {}, branch)
+            and not _case_has_deep_external_action((item or {}).get("raw") or {})
+        ]
+        matching_records.sort(key=lambda item: (
+            -sum(
+                1 for check in source_checks
+                if case_covers_requirement_acceptance((item or {}).get("raw") or {}, check)
+            ),
+            len(normalize_text_list(((item or {}).get("raw") or {}).get("steps"))),
+        ))
+        if not matching_records:
+            continue
+        source_record = matching_records[0]
+        source_case = (source_record or {}).get("raw") or {}
+        preconditions = normalize_text_list(
+            source_case.get("preconditions") or source_case.get("precondition")
+        )
+        requirement_refs = normalize_text_list(
+            source_case.get("requirementRefs")
+            or source_case.get("requirement_refs")
+            or source_case.get("coverage")
+        )[:8]
+        case_id = str(((source_record or {}).get("compact") or {}).get("case_id") or "").strip()
+        baseline_id = str(branch_baseline.get("id") or "").strip()
+        check_contract = "；".join(dict.fromkeys(
+            str(item.get("text") or "").strip()
+            for item in source_checks
+            if str(item.get("text") or "").strip()
+        ))
+        target_label = str((target_terms or [""])[0] or "").strip()
+        assertion_target = (
+            f"「{target_label}」满足以下要求：{check_contract}"
+            if target_label else check_contract
+        )
+        if not case_id or not baseline_id or not preconditions or not requirement_refs or not assertion_target:
+            continue
+        flow = navigation_flow + [f"等待并校验{assertion_target}"]
+        probe = {
+            "steps": flow,
+            "assertions": [assertion_target],
+            "requirementRefs": requirement_refs,
+            "ai_case_plan": {"baselineGrounded": True, "pathPlanApplied": True},
+        }
+        if len(flow) > 8:
+            continue
+        covered_checks = [
+            item for item in source_checks
+            if case_covers_requirement_acceptance(probe, item)
+        ]
+        if not covered_checks:
+            continue
+        evidence_by_id[case_id] = {
+            "eligible": True,
+            "kind": "source_ui_assertion",
+            "title": str(((source_record or {}).get("compact") or {}).get("title") or "").strip(),
+            "sourceCaseId": case_id,
+            "tailSourceCaseId": "",
+            "source": "selected_branch_baseline_ui_assertion",
+            "baselineId": baseline_id,
+            "precondition": preconditions[0],
+            "flow": flow,
+            "assertionTarget": assertion_target,
+            "requirementRefs": requirement_refs,
+            "acceptanceCheckIds": [
+                str(item.get("id") or "").strip()
+                for item in covered_checks
+                if str(item.get("id") or "").strip()
+            ],
+        }
     donor_records = automatic_records + manual_records
     for check in reachability_checks:
         requirement_id = str(check.get("requirementId") or "").strip()
@@ -3889,6 +3999,7 @@ def _bounded_convergence_evidence(
                 continue
             evidence_by_id[case_id] = {
                 "eligible": True,
+                "kind": "bounded_landing",
                 "title": (
                     f"{branch}{targets[0]}点击后首个可见页校验"
                     if branch and targets
@@ -4023,6 +4134,7 @@ def _focus_executable_convergence_candidates(
         "currentExecutableCount": executable_count,
         "candidateSelectionMode": candidate_selection_mode,
         "boundedLandingCandidateIds": sorted(bounded_evidence_by_id),
+        "boundedEvidenceCandidateIds": sorted(bounded_evidence_by_id),
     }
     context["focus"] = focus
     return automatic, manual, context, focus
@@ -4151,7 +4263,7 @@ def _convergence_evidence_fallback_plan(
         "review": {
             "planning_reason": (
                 "最终收敛 AI 调用未完成；不增加模型重试，仅对已通过同分支成功基线、"
-                "显式验收映射和有界外部首屏检查的上游 AI 候选启用证据降级"
+                "显式验收映射及来源页可见断言/有界外部首屏检查的上游 AI 候选启用证据降级"
             ),
         },
         "authoritative": False,
@@ -4251,6 +4363,18 @@ def call_skill_executable_yaml_planner(
         "scopePlan": scope_plan or {},
         "sourceEvidence": source_evidence if isinstance(source_evidence, dict) else {},
         "planningContext": planning_context if isinstance(planning_context, dict) else {},
+        "batchContract": {
+            "casesContainAllExecutableCandidates": True,
+            "smokeMaxCount": max(1, min(3, safe_int((scope_plan or {}).get("smokeCount"), 3))),
+            "remainingBatchRequiredBeyondSmoke": True,
+            "manualIsNotSmokeOverflow": True,
+        },
+        "evidenceContract": {
+            "figmaIsSoftReference": True,
+            "missingSiblingFrameIsNotManualReason": True,
+            "explicitRequirementMayDefineExpectedVisibleUi": True,
+            "runnerValidatesProductAssertion": True,
+        },
     }
     planner_timeout = (
         AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS
@@ -4424,6 +4548,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     preserved_executable_count = 0
     outside_focus_preserved_count = 0
     bounded_convergence_override_count = 0
+    convergence_demotion_blocked_count = 0
     redundant_unmentioned_manualized_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
@@ -4475,6 +4600,15 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 ):
                     unclassified_focused_automatic_ids.add(case_id)
 
+        current_level = str(
+            case.get("executionLevel") or case.get("execution_level") or record.get("containerLevel") or ""
+        ).strip().lower()
+        if convergence_pass and current_level == "executable" and level != "executable":
+            level = "executable"
+            item = _existing_executable_plan_item(case, case_id, title)
+            item["batch"] = "remaining" if smoke_used >= smoke_limit else item.get("batch")
+            convergence_demotion_blocked_count += 1
+
         bounded_evidence = bounded_evidence_by_id.get(case_id)
         bounded_check_ids = {
             str(value or "").strip()
@@ -4507,11 +4641,17 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "assertionTarget": bounded_evidence.get("assertionTarget") or "",
                 "requirementRefs": bounded_evidence.get("requirementRefs") or [],
                 "executableReason": (
-                    "同需求分支的成功基线负责来源页导航，上游 AI 候选只验证目标入口后的首个可见终态；"
+                    "同需求分支成功基线负责真实文字来源页导航，原始需求与上游 AI 候选定义当前页可见断言；"
                     "平台保留后续 YAML、评分、dry-run 与真实 Runner 门禁"
+                    if str(bounded_evidence.get("kind") or "") == "source_ui_assertion"
+                    else (
+                        "同需求分支的成功基线负责来源页导航，上游 AI 候选只验证目标入口后的首个可见终态；"
+                        "平台保留后续 YAML、评分、dry-run 与真实 Runner 门禁"
+                    )
                 ),
                 "batch": "remaining",
                 "boundedConvergence": {
+                    "kind": bounded_evidence.get("kind") or "",
                     "sourceCaseId": bounded_evidence.get("sourceCaseId") or "",
                     "tailSourceCaseId": bounded_evidence.get("tailSourceCaseId") or "",
                     "source": bounded_evidence.get("source") or "",
@@ -4602,6 +4742,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         if level == "manual":
             manual_item = case
             manual_item["executionLevel"] = "manual"
+            _set_case_smoke(manual_item, False)
             manual_item["automation_reason"] = reason or "AI 规划判断当前条件不适合自动执行"
             manual_item["ai_case_classification"] = {
                 "level": "manual",
@@ -4750,6 +4891,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "preserved_executable_count": preserved_executable_count,
         "outside_focus_preserved_count": outside_focus_preserved_count,
         "bounded_convergence_override_count": bounded_convergence_override_count,
+        "convergence_demotion_blocked_count": convergence_demotion_blocked_count,
         "redundant_unmentioned_manualized_count": redundant_unmentioned_manualized_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
@@ -4937,14 +5079,37 @@ def merge_visual_grounder_payload(base_payload, grounded_payload):
         base_analysis["requirement_points"] = copy.deepcopy(grounded_analysis.get("requirement_points") or [])
     merged["analysis"] = base_analysis
     blocked_patches = []
+    base_case_keys = {
+        _visual_record_key(item, "case")
+        for item in (base.get("cases") or [])
+        if isinstance(item, dict) and _visual_record_key(item, "case")
+    }
+    grounded_case_patches = [
+        copy.deepcopy(item) for item in (grounded.get("cases") or []) if isinstance(item, dict)
+    ]
+    grounded_manual_patches = []
+    blocked_reclassifications = []
+    for item in (grounded.get("manual_cases") or []):
+        if not isinstance(item, dict):
+            continue
+        key = _visual_record_key(item, "case")
+        if key and key in base_case_keys:
+            redirected = copy.deepcopy(item)
+            reason = str(redirected.get("reason") or "").strip()
+            if reason and not str(redirected.get("repair_hints") or "").strip():
+                redirected["repair_hints"] = reason
+            grounded_case_patches.append(redirected)
+            blocked_reclassifications.append({"key": key, "from": "cases", "to": "manual_cases"})
+            continue
+        grounded_manual_patches.append(copy.deepcopy(item))
     merged["scenarios"] = _merge_visual_records(
         base.get("scenarios"), grounded.get("scenarios"), "scenario", blocked_patches
     )
     merged["cases"] = _merge_visual_records(
-        base.get("cases"), grounded.get("cases"), "case", blocked_patches
+        base.get("cases"), grounded_case_patches, "case", blocked_patches
     )
     merged["manual_cases"] = _merge_visual_records(
-        base.get("manual_cases"), grounded.get("manual_cases"), "manual", blocked_patches
+        base.get("manual_cases"), grounded_manual_patches, "manual", blocked_patches
     )
     review = merged.setdefault("review", {})
     grounded_review = grounded.get("review") if isinstance(grounded.get("review"), dict) else {}
@@ -4964,6 +5129,15 @@ def merge_visual_grounder_payload(base_payload, grounded_payload):
             "rule": (
                 "Figma/截图是当前 Frame/状态的软参考；局部页面未出现目标入口时，"
                 "只保留 AI 冲突说明，不得把正向需求用例改写为入口不存在。"
+            ),
+        }
+    if blocked_reclassifications:
+        review["visual_classification_guard"] = {
+            "blockedReclassificationCount": len(blocked_reclassifications),
+            "blockedRecords": blocked_reclassifications[-20:],
+            "rule": (
+                "视觉批次是软证据，只能校准路径、文案、断言和冲突提示；"
+                "输入自动候选是否转人工由后续可执行规划统一判断。"
             ),
         }
     return normalize_cases_payload(merged)

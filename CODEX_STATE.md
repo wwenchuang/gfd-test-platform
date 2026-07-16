@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 GPT Agent 回归：区分完整可执行池与首批 Smoke，并用成功基线闭合来源页断言
+
+部署 `ae72da4` 后发起同一完整回归：
+
+- Agent `agent-1784173704570-40dc6cc9`，目标 / 需求 / Figma / App 与前轮一致，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed`，文本模型为 `highway_gpt5_mini / gpt-5-mini`。8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 心跳约 3 秒并上报 `yaml_dry_run=true / qwen3.6`，OPPO PHM110 在线、App `4.45.0` ready。任务终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job，也没有向华为或第二台设备下发。
+- `ae72da4` 已在线生效：PLAN 的 8 条 flow 分别恢复为文档打印、照片打印、扫描复印三个来源分支，全局场景没有被强行归类。YAML Top3 的 `required_branch_count=3`，三个分支 eligible 成功基线数为 `4 / 3 / 4`，GPT 选中 `1b4e6a94768902d3`（文档）、`d8931c2dd082926e`（6 寸照片）、`02b01e0cab690788`（文件扫描），没有无基线或跨分支引用问题。
+- Figma parser 保持原实现并解析 `4 页 / 4 图 / 忽略 0`。4 张图逐批送入 `qwen3.6-plus`，约 `40 / 19 / 19 / 17s` 全部完成，`retry=false / hardGate=false`；第 2、3 批正确识别照片打印页与百度网盘入口，第 4 批只说明当前一寸照配置 Frame 没有导入入口。视觉资料确实送 AI 且仍为软参考。
+- 初始 GPT 可执行组合为文档展示、照片可达、扫描可达，覆盖 `5/12`；最终收敛新增文档可达，却以“保持 Smoke 精简”为由把扫描可达转人工，仍为 `5/12` 且丢失整个扫描需求点。最终 3 条 executable、11 条 manual，覆盖门禁正确阻断。
+
+根因与通用修复：
+
+- GPT 把“首批 Smoke 最多 3 条”误解为“完整 executable 最多 3 条”，并继续把兄弟页面缺少 Figma Frame 当作展示断言的硬门禁。规划契约现明确：`cases` 是完整可执行池，前 3 条为 `batch=smoke`，其他合格项为 `batch=remaining`；`manual_cases` 不是 Smoke 溢出池。请求同时传入机器可读 `batchContract / evidenceContract`，不增加模型轮次。
+- 单个视觉批次只能修改路径、文案、断言和 `repair_hints`。视觉模型若试图把输入自动候选跨数组移动到 manual，平台保留候选身份并记录 `visual_classification_guard`；真正的负向需求用例仍可正常校准。未修改 Figma 解析、图片选择、批次或软参考策略。
+- 最终收敛增加单调门禁：已有 executable 不允许在覆盖收敛中降级；只有不丢失任何已覆盖 acceptance check 且确实减少缺口的组合才应用。拟议组合、应用决定和退化 check ID 全部进入审计，不能用另一个分支的通过覆盖原通过。
+- 对需求明确的来源页可见 / 文案 / 同级检查，平台只在“同分支 verified execution 基线含真实 action 导航 + 上游 AI 自动候选保留原 REQ 边界 + 无深层外部动作”同时成立时构造 `source_ui_assertion` 证据。基线动作在相册导入、选文件、授权、打印等数据动作前截断，需求原文定义 Runner 需要验证的断言；GPT 仍先决策，过度保守或 45 秒超时时才使用该可审计证据，后续 scorer、static、dry-run、Smoke 和真实 Runner 门禁全部保留。
+- manual 分类现在会清除旧 `smoke=true / 冒烟` 标记，避免人工项仍显示为冒烟。
+
+线上产物重放与检查：
+
+- 使用本轮初始组合重放，保留原 3 条 Smoke，并得到三条证据：文档可达 `TC-002 / bounded_landing`、照片展示 `TC-007 / source_ui_assertion`、扫描展示 `TC-008 / source_ui_assertion`。最终为 6 条 executable、`12/12` acceptance checks、`missing=[]`；照片路径复用 `照片打印 icon -> 照片打印 -> 6寸照片`，扫描路径复用 `扫描复印 icon -> 文件扫描`，均不使用坐标。
+- 使用已损耗的最终失败态调用真实 GPT：新契约已让模型把额外可达用例放入 remaining；带来源页证据的一轮在 45 秒超时，平台没有重试，并按证据从 `5/12` 提升到 `11/12`。该重放缺扫描可达是因为最终失败态已将其降级；按真实初始态重放时保留该已批准用例并闭合 `12/12`。
+- 照片 / 扫描来源页证据实际转换为 Midscene YAML 后，结构、动作白名单、mock dry-run、稳定性和 scorer 全部通过，分别为 `87 / 88 executable`；断言规范后只生成一个最终 `aiWaitFor`。未修改 scorer。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交并部署本轮修复。
+- 部署后再次使用同一需求 / Figma、固定 `win-runner-01 / ecbfd645` 和 `highway_gpt5_mini / gpt-5-mini` 跑完整 Agent。必须人工复核最终 YAML 的三个分支、真实可见文字、Smoke / remaining 分批，并持续监督所有 OPPO Runner job、报告、截图 / 录屏和可能的一次 AI 修复到终态。
+
 ### 2026-07-16 GPT Agent 回归：恢复 PLAN 到 Top3 基线的业务分支身份
 
 部署 `f7c5a6c` 后发起同一完整回归：

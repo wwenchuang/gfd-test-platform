@@ -9,14 +9,14 @@
 ## 硬规则
 
 1. 每条 `cases` 都必须贴合本次需求，不得扩展历史记录、旧入口、无关页面或 Figma 无关页面名。
-2. 每条进入 smoke 的用例必须具备：
+2. `cases` 表示完整可执行池，不等于首批冒烟池。每条进入 `cases` 的用例（包括 `batch=smoke` 与 `batch=remaining`）都必须具备：
    - caseId（逐字复制输入 cases 的 case_id）
    - baselineId
    - precondition
    - assertionTarget
    - 短链路 flow
 3. 如果缺少相似基线、前置页面或可验证终态，放入 `needs_review_cases` 或 `manual_cases`，不要伪装成可执行冒烟。输入 `originLevel=manual` 只是上游 AI 的初判，不是不可逆结论；你可以重新评估并升级，但升级到 `cases` 时仍必须满足可信基线路径、明确前置、短 flow 和可见终态四项条件。
-4. 首批 smoke 只放最核心正常链路，最多 3 条。
+4. 首批 smoke 只放最核心正常链路，最多 3 条；其余满足可执行条件且用于补齐显式需求覆盖的用例必须继续放在 `cases`，并标为 `batch=remaining`。不得为了控制 smoke 数量把可执行用例放入 `manual_cases`。
 5. 入口展示类需求只规划入口可见、入口位置、同级并列、必要时点击后轻量反馈；不要默认进入第三方授权、文件选择或外部 App。如果原始需求明确要求点击后可达，允许规划一条到首个稳定落地页即结束的短链路：授权页、登录页、内容列表、空态页等多个合法终态可使用“任一出现”的 UI 断言，不输入账号/验证码，不选择文件/内容，不继续驱动第三方深层流程。多个终态的 `flow / assertionTarget` 必须引用需求、可信基线或失败证据中可观察的真实文案或明确页面区域；只有“跳转成功、页面正常”这类抽象描述时进入 `needs_review_cases`。
 6. flow 应写人类可读步骤，不写 Midscene action；后续 YAML 生成器会按成功基线仿写。
 7. 不要把多个业务分支塞进一条 case。每条 case 只验证一个清晰检查点。
@@ -32,6 +32,7 @@
 16. `sourceEvidence.executionContext` 只说明本次 Runner/设备约束。固定单设备时，只能规划当前设备可执行的一条通用文案/布局检查；其他屏幕形态进入 `manual_cases`。不得根据 deviceId 猜测屏幕尺寸，也不得规划第二台设备。
 17. `requirementRefs` 必须保留输入候选 `coverage / requirementRefs` 的原始 `REQ-*` 边界，不得把照片、扫描、文档等不同候选的需求 ID 互换。一个候选确实同时覆盖多个需求点时，必须能从它自己的步骤和断言中逐项找到证据。
 18. Figma、截图和页面知识是软参考，不是生成可执行测试的必备凭证。原始需求已明确可见文案/入口，输入候选已有当前业务分支的真实文字路径，并且 `selectedBaselines` 提供可信兄弟分支的导航/等待模式时，可以把“仅验证当前设备上入口或文案是否可见”的短链路放入 `cases`；运行时入口不存在属于产品断言失败，不能仅因缺少该兄弟页面的 Figma 帧就提前改成 manual。不得借此臆造候选中没有的父页面、坐标、深层第三方状态或同屏位置关系。
+19. `scopePlan.smokeCount` 只限制 `batch=smoke` 的数量，不限制 `cases` 总数。`scopePlan.targetCaseCount` 是完整可执行池的规划目标；显式覆盖需要超过 smoke 上限时，使用 `batch=remaining`，不要减少覆盖。
 
 ## 最终覆盖收敛
 
@@ -47,7 +48,8 @@
 8. 平台的 3/5/8 是规划目标和规模上限，不是最终可执行数量的硬下限。显式需求已由更少的独立、可执行短 case 完整覆盖时，不得为了凑数升级弱网、深色模式、系统设置、重复路径或深层授权项；在 `review` 中如实说明数量不足即可。
 9. `portfolioAudit.missingAcceptanceChecks` 是原始需求中尚未被真实步骤和断言证明的验收维度。`requirementRefs` 只表示归属，不能单独证明“可见 / 同级 / 文案 / 点击可达”全部完成；必须在返回的 `flow` 与 `assertionTarget` 中逐项找到对应证据。
 10. 对 `kind=reachability` 的缺口，优先在同一业务分支已有短 case 中补充“点击目标入口 -> 等待首个稳定可见终态 -> 断言终态”，避免重复生成仅展示入口的 case。终态仍遵守第 5 条的有界规则；如果可信路径或真实终态不足，则保留对应人工候选并让门禁如实阻断，不能用需求 ID 冒充覆盖。
-11. 候选携带 `convergenceEvidence.eligible=true` 时，平台已把同需求分支的成功基线来源页路径与上游 AI 生成的有界首屏尾链合并，并确认尾链不含账号/验证码、确认授权、文件选择或破坏性操作。`sourceCaseId / tailSourceCaseId / acceptanceCheckIds` 分别记录来源页候选、首屏尾链候选和该组合真实覆盖的显式验收项；尾链可来自同分支的人工候选，但只有其中“点击入口 -> 观察首个合法终态”的 AI 内容被复用，原人工深层步骤不会进入执行。此时 `baselineId` 只需证明到达目标入口所在来源页，不要求新能力的目标落地页已有历史成功基线；“目标页从未成功执行过”本身不能作为 manual 理由。应优先按证据中的 `baselineId / precondition / flow / assertionTarget / requirementRefs` 放入 `cases` 的 `remaining` 批次，让后续 YAML 门禁、评分、dry-run 和真实 Runner 发现并验证实际首个合法可见终态。只有证据与当前候选矛盾或仍包含深层外部动作时才保留为 manual，并明确指出具体冲突。
+11. 候选携带 `convergenceEvidence.eligible=true` 时，平台已形成可审计的同需求证据。`kind=bounded_landing` 表示把同分支成功基线的来源页路径与上游 AI 生成的有界首屏尾链合并，并确认尾链不含账号/验证码、确认授权、文件选择或破坏性操作；`kind=source_ui_assertion` 表示成功基线的真实 action 已稳定到达目标来源页，原始需求和上游 AI 候选共同定义了该页需要由 Runner 验证的可见/文案/同级断言。`sourceCaseId / tailSourceCaseId / acceptanceCheckIds` 记录来源候选、可选尾链候选和真实覆盖项。此时 `baselineId` 只需证明到达目标入口所在来源页，不要求新增入口或目标落地页已有历史成功结果；运行时入口不存在属于产品断言失败。应优先按证据中的 `baselineId / precondition / flow / assertionTarget / requirementRefs` 放入 `cases` 的 `remaining` 批次。只有证据与当前候选矛盾、路径仍不唯一或包含深层外部动作时才保留为 manual，并指出具体冲突。
+12. 收敛只负责保留当前 executable 并补齐缺口，不能把上一轮 executable 降为 manual。尤其不能以“保持 Smoke 精简 / Smoke 最多 3 条”为理由降级；超过首批上限的合格项改为 `batch=remaining`。平台会拒绝任何减少既有验收覆盖的收敛结果。
 
 ## 输出 JSON
 
@@ -64,6 +66,18 @@
       "assertionTarget": "目标入口可见并与同级入口并列展示",
       "requirementRefs": ["REQ-001 目标入口展示"],
       "executableReason": "短链路且有可信相似基线"
+    },
+    {
+      "caseId": "TC-002",
+      "title": "补充业务分支入口校验",
+      "priority": "P1",
+      "batch": "remaining",
+      "baselineId": "base_002",
+      "precondition": "App 首页",
+      "flow": ["等待首页", "进入补充业务页面", "等待目标入口", "校验入口可见"],
+      "assertionTarget": "补充业务页面展示目标入口文案",
+      "requirementRefs": ["REQ-002 补充业务入口展示"],
+      "executableReason": "用于补齐显式覆盖，不占首批 smoke 名额"
     }
   ],
   "needs_review_cases": [],
