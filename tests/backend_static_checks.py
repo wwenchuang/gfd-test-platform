@@ -743,11 +743,11 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         "planningContext": {"pass": "coverage_convergence"},
         "focusedCandidateIds": ["TC-SOURCE-UI"],
         "candidateEligibilityById": source_ui_evidence,
-        "cases": [],
-        "manual_cases": [{
+        "cases": [{
             "caseId": "TC-SOURCE-UI",
-            "reason": "缺少对应 Figma Frame，模型建议人工确认",
+            "reason": "模型保留当前可执行分类，但没有主动补写缺失的同级与文案断言",
         }],
+        "manual_cases": [],
     }
     source_ui_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
         source_ui_payload,
@@ -780,9 +780,28 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "点击发票入口",
             "观察页面跳转情况",
             "确认是否显示授权WebView、登录页或文件选择页",
-            "确认无白屏、无崩溃",
+            "检查没有白屏/崩溃",
         ]
         item["assertions"] = []
+        item["expected_result"] = ""
+    manual_tail_source = next(
+        item for item in manual_tail_payload.get("manual_cases") or []
+        if item.get("case_id") == "TC-S03"
+    )
+    manual_tail_payload["manual_cases"].remove(manual_tail_source)
+    manual_tail_source["executionLevel"] = "executable"
+    manual_tail_source["originExecutionLevel"] = "automatic"
+    manual_tail_source.pop("ai_case_classification", None)
+    manual_tail_source["ai_case_plan"] = {
+        "baselineId": "base-service-nav",
+        "baselineGrounded": True,
+        "pathPlanApplied": True,
+        "precondition": "App 首页，用户已登录",
+        "flow": ["启动 App 并等待首页加载", "进入售后服务", "等待发票入口可见"],
+        "assertionTarget": "售后服务页面展示文案为发票的入口",
+        "batch": "smoke",
+    }
+    manual_tail_payload["cases"].append(manual_tail_source)
     manual_tail_audit = ai_skill_service.executable_yaml_portfolio_audit(
         manual_tail_payload,
         {"min_automation_cases": 5},
@@ -839,6 +858,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 "sourceKind": "verified_execution",
                 "verificationStatus": "execution_success",
                 "businessPath": "首页 -> 售后服务",
+                "snippet": "- aiTap: 售后服务\n- aiWaitFor: 等待售后服务页面加载完成",
             }],
             {"smokeCount": 3},
             planning_context={
@@ -852,14 +872,20 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         item.get("case_id"): item for item in manual_tail_requests[0].get("cases") or []
     }
     manual_tail_evidence = manual_tail_request_by_id["TC-S03"].get("convergenceEvidence") or {}
+    manual_tail_missing_check_ids = {
+        item.get("id") for item in manual_tail_audit.get("missingAcceptanceChecks") or []
+        if item.get("requirementId") == "REQ-003"
+    }
     require(
         manual_tail_evidence.get("eligible") is True
         and manual_tail_evidence.get("sourceCaseId") == "TC-S03"
         and manual_tail_evidence.get("tailSourceCaseId") == "MC-R03"
-        and set(manual_tail_evidence.get("acceptanceCheckIds") or []) == {
-            "REQ-003-CHECK-01", "REQ-003-CHECK-02", "REQ-003-CHECK-03", "REQ-003-CHECK-04",
-        }
-        and len(manual_tail_evidence.get("flow") or []) <= 8,
+        and set(manual_tail_evidence.get("acceptanceCheckIds") or []) == manual_tail_missing_check_ids
+        and "REQ-003-CHECK-04" in manual_tail_missing_check_ids
+        and len(manual_tail_evidence.get("flow") or []) <= 8
+        and manual_tail_evidence.get("flow", [""])[0] == "启动 App 并等待首页加载"
+        and "售后服务页面展示文案为发票的入口" in " ".join(manual_tail_evidence.get("flow") or [])
+        and "售后服务页面展示文案为发票的入口" not in str(manual_tail_evidence.get("assertionTarget") or ""),
         "A trusted automatic source-page candidate must be able to reuse only the bounded observation tail from a same-branch AI manual candidate",
     )
     manual_tail_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(

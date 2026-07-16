@@ -3895,10 +3895,16 @@ def _bounded_convergence_evidence(
             source_record = None
             if source_case:
                 source_plan = source_case.get("ai_case_plan") or {}
-                navigation_flow = normalize_text_list(source_plan.get("flow") or source_case.get("steps"))
+                source_navigation_flow = normalize_text_list(source_plan.get("flow") or source_case.get("steps"))
+                navigation_flow = list(source_navigation_flow)
                 baseline_id = str(source_plan.get("baselineId") or "").strip()
                 precondition = str(source_plan.get("precondition") or "").strip()
                 source_case_id = str(source_case.get("case_id") or "").strip()
+                source_record = next((
+                    item for item in automatic_records
+                    if (item or {}).get("raw") is source_case
+                    or str(((item or {}).get("compact") or {}).get("case_id") or "").strip() == source_case_id
+                ), None)
                 evidence_source = "executable_source_case"
                 selected_baseline = next((
                     item for item in (selected_baselines or [])
@@ -3915,7 +3921,11 @@ def _bounded_convergence_evidence(
                     landing_tail,
                     branch,
                 ):
-                    navigation_flow = baseline_navigation_flow
+                    start_guard = next((
+                        step for step in source_navigation_flow
+                        if "启动" in step and any(term in step for term in ("等待", "加载", "首页"))
+                    ), "")
+                    navigation_flow = ([start_guard] if start_guard else []) + baseline_navigation_flow
                     evidence_source = "selected_baseline_actions"
             else:
                 if not branch_baseline or not matching_automatic_records:
@@ -3972,15 +3982,21 @@ def _bounded_convergence_evidence(
                 for item in supplemental_checks
                 if str(item.get("text") or "").strip()
             )
-            flow = navigation_flow + ([supplemental_text] if supplemental_text else []) + landing_tail["flow"]
             source_outcomes = normalize_text_list(
                 source_evidence_case.get("assertions")
                 or source_evidence_case.get("expected_result")
                 or source_evidence_case.get("expected")
             )
-            assertion_target = "；".join(dict.fromkeys(
-                [item for item in source_outcomes[:1] + [landing_tail["assertionTarget"]] if str(item or "").strip()]
-            ))
+            source_assertion_steps = (
+                [f"校验{source_outcomes[0]}"] if source_outcomes else []
+            )
+            flow = (
+                navigation_flow
+                + ([supplemental_text] if supplemental_text else [])
+                + source_assertion_steps
+                + landing_tail["flow"]
+            )
+            assertion_target = landing_tail["assertionTarget"]
             probe = {
                 "steps": flow,
                 "assertions": [assertion_target],
@@ -4619,7 +4635,6 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             classification is not None
             and convergence_pass
             and origin_level == "automatic"
-            and level != "executable"
             and case_id in focused_candidate_ids
             and isinstance(bounded_evidence, dict)
             and bounded_evidence.get("eligible") is True

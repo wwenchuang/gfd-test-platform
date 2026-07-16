@@ -2448,7 +2448,8 @@ def _case_is_bounded_external_landing_check(case: dict) -> bool:
         return False
     explicit_stability = any(term in outcome_text for term in (
         "无白屏", "不白屏", "未白屏", "无长时间白屏", "没有长时间白屏",
-        "无崩溃", "不崩溃", "未崩溃", "无Crash", "未Crash", "不闪退",
+        "没有白屏", "无崩溃", "不崩溃", "未崩溃", "没有崩溃",
+        "无Crash", "未Crash", "没有Crash", "不闪退", "没有闪退",
     ))
     negated_failure = bool(re.search(
         r"(?:未出现|没有出现|未发生|没有发生)[^；。]{0,20}(?:崩溃|Crash|白屏|闪退)",

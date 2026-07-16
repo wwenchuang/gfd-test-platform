@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 部署后 GPT Agent 验收：闭合已有 executable 与人工观察尾链
+
+部署 `81cacbe` 后发起同一完整回归：
+
+- Agent `agent-1784176347317-b8789e86`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed`，文本模型明确为 `highway_gpt5_mini / gpt-5-mini`。8091 / 8088、AI Gateway、Sonic 健康；Runner 持续上报 `yaml_dry_run=true / qwen3.6`，OPPO PHM110 在线。终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job，也没有向华为或第二台设备下发。
+- PREPARE_SOURCE 保持原 Figma parser 并解析 `4 页 / 4 图 / 忽略 0`。PLAN 使用既有两次上限完成一次受控校正；每次都把 4 张图逐批送入视觉 AI，最终报告为 `4/4 completed / attempted=4 / hardGate=false`，单批约 `13-26s`。视觉资料确实参与判断且仍是软参考。
+- PLAN 生成 8 条 AI 业务分支；YAML 阶段的 baseline reranker、scope planner、initial planner 和 convergence trace 均为 `highway_gpt5_mini / gpt-5-mini`。三个必需分支各选中一条 `verified_execution / execution_success` 基线：文档、6 寸照片、文件扫描。
+- 初始组合已有 5 条 executable，覆盖 `9/12`；缺文档 reachability、扫描 relation / reachability。最终 GPT 收敛保持这 5 条，但没有补写 3 个缺口，单调门禁正确拒绝无改进结果。失败不是 5 条数量目标、Figma、scorer、Runner 或设备问题。
+
+根因与有界修复：
+
+- 平台已为扫描 relation 构造 `source_ui_assertion`，但旧应用条件只在模型把候选降级时采用可信证据；模型保持候选为 executable 时，缺失断言反而不会补强。现只要证据来自同分支成功基线、显式缺失 acceptance check 和上游自动候选，即使模型保持 executable，也会写回经过验证的补强路径。
+- 文档 / 扫描 reachability 的人工候选已经由 AI 写成“点击入口后只检查授权页、登录页或文件列表，并且没有白屏/崩溃”。旧稳定性词表漏掉“没有白屏 / 没有崩溃”等自然表达；同时已有 executable 来源 case 没有映射回 automatic record，导致安全尾链通过局部检查后仍被丢弃。现补齐等价稳定性表达和来源记录映射；账号、验证码、确认授权、选文件等深层动作仍由原门禁拒绝。
+- 组合时保留上游 AI 候选的启动稳定等待。来源页可见 / 文案 / 同级断言在点击目标入口前执行，点击后只断言首个合法落地状态，避免同一最终断言同时要求“已离开来源页”和“来源页入口仍可见”。不新增模型调用、重试或执行模式，不降低 scorer / static / Runner 门禁，也没有业务关键词特判。
+
+使用本次线上失败 cases JSON 精确重放：
+
+- 保留线上 GPT 的 5 条 executable 决策，可信证据只补强 `TC-001 / TC-005`；最终 `12/12`、`missing=[]`、5 条 executable。文档和扫描各复用同分支真实文字基线路径，再拼接 AI 已生成的有界首屏观察尾链。
+- 5 份 YAML 均通过语法、可执行、static 和稳定性检查；scorer 分别为 `88 / 100 / 100 / 100 / 82`，全部为 executable。来源页断言位于点击前，落地断言位于点击后；无坐标、无账号 / 授权确认 / 文件选择动作。
+- `bounded_landing` 统一进入 remaining；首批仍受最多 3 条 Smoke 控制。测试覆盖模型保持 executable、已有 executable 来源 + 人工观察尾链、`没有白屏/崩溃`、启动等待保留和前后断言时序。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、AI Skill contract fixtures `3/3`，以及 Playwright 桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交、推送并部署本轮有界修复。
+- 部署后只发起一次同输入验收运行，固定 `win-runner-01 / ecbfd645 / gpt-5-mini`。必须轮询 Agent、Smoke、remaining 和可能的一次 AI 修复到终态，并人工复核 YAML、OPPO Runner 报告、截图 / 录屏和真实失败分类；不把每次产品断言失败自动扩展成新规则。
+
 ### 2026-07-16 GPT Agent 回归：区分完整可执行池与首批 Smoke，并用成功基线闭合来源页断言
 
 部署 `ae72da4` 后发起同一完整回归：
