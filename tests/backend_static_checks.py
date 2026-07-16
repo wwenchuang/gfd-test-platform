@@ -127,6 +127,8 @@ def check_agent_failure_ai_payload_has_primary_evidence():
             payload = agent_service._agent_failure_ai_payload(
                 {
                     "target": "基础打印新增百度网盘入口",
+                    "modelProviderId": "highway_gpt5_mini",
+                    "aiModel": "gpt-5-mini",
                     "runnerId": "win-runner-01",
                     "deviceId": "ecbfd645",
                     "deviceStrategy": "fixed",
@@ -162,6 +164,11 @@ def check_agent_failure_ai_payload_has_primary_evidence():
         require(payload.get("reportKeyframes") == ["failed-report-frame.png"] and len(payload.get("imageAssets") or []) == 1, "Agent failure analysis must attach bounded Midscene report keyframes")
         require(payload.get("baselineExamples", [{}])[0].get("id") == "base-photo-sibling", "Agent failure analysis must align report keyframes with trustworthy sibling-branch baselines")
         require(payload.get("executionConstraint", {}).get("allowOtherDevices") is False and payload["executionConstraint"].get("deviceId") == "ecbfd645", "Agent failure AI must retain the fixed-device constraint and forbid a second phone")
+        require(
+            payload.get("modelConfig") == {"providerId": "highway_gpt5_mini", "model": "gpt-5-mini"}
+            and payload.get("fallbackModelConfig", {}).get("model") == agent_service.dashscope_vl_model(),
+            "Failure analysis with report frames must try the Agent-selected model first and declare its visual fallback explicitly",
+        )
         require(payload.get("sourceEvidence", {}).get("figmaPageCount") == 1 and "5寸照片" in payload["sourceEvidence"].get("figmaText", ""), "Agent failure AI must receive bounded Figma same-frame evidence without reparsing it")
         require("基础打印三个业务入口" in payload.get("requirement", "") and payload.get("target") == "基础打印新增百度网盘入口", "Agent failure AI must receive the original target and requirement")
     finally:
@@ -1919,15 +1926,39 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 "businessPath": "首页 -> 打印入口",
             }],
             {"smokeCount": 2},
+            source_evidence={
+                "mode": "soft_reference",
+                "requirementText": "入口覆盖需求" * 1200,
+                "figmaSoftEvidence": "设计稿软证据" * 1800,
+                "figmaPageCount": 4,
+                "figmaImageCount": 4,
+                "executionContext": {"runnerId": "runner-01", "deviceId": "device-01"},
+                "uiDesigns": [{"large": "unused" * 2000}],
+            },
             planning_context={"pass": "coverage_convergence", "portfolioAudit": convergence_audit},
         )
     finally:
         ai_skill_service.run_ai_skill = old_run_ai_skill
     focused_ids = {item.get("case_id") for item in focused_requests[0].get("cases") or []}
+    focused_request = focused_requests[0]
     require(
-        focused_ids == {"TC-101", "TC-102", "MC-101"}
-        and (focused_requests[0].get("planningContext") or {}).get("focus", {}).get("fullCandidateCount") == 4,
-        "Final convergence must send current automatic candidates plus one gap-matched manual alternate instead of the full manual backlog",
+        focused_ids == {"TC-102", "MC-101"}
+        and (focused_request.get("planningContext") or {}).get("focus", {}).get("fullCandidateCount") == 4
+        and (focused_request.get("planningContext") or {}).get("focus", {}).get("preservedExecutableCandidateIds") == ["TC-101"]
+        and focused_request.get("scenarios") == []
+        and set((focused_request.get("analysis") or {}).keys()).issubset({
+            "requirement_points", "requirement_acceptance_checks", "requirement_contract", "visible_outcomes",
+        })
+        and len((focused_request.get("sourceEvidence") or {}).get("requirementText") or "") <= 6000
+        and len((focused_request.get("sourceEvidence") or {}).get("figmaSoftEvidence") or "") <= 6000
+        and "uiDesigns" not in (focused_request.get("sourceEvidence") or {}),
+        "Final convergence must omit already-approved executable cases and compact soft context while keeping one gap-matched manual alternate",
+    )
+    require(
+        focused_plan.get("trace", {}).get("context_compacted") is True
+        and focused_plan.get("trace", {}).get("request_candidate_ids") == ["TC-102", "MC-101"]
+        and focused_plan.get("trace", {}).get("request_context_chars") < 20000,
+        "Convergence trace must expose the compact request size and exact focused candidate IDs",
     )
     focused_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(convergence_payload, focused_plan)
     focused_by_id = {item.get("case_id"): item for item in focused_applied.get("cases") or []}
@@ -3257,13 +3288,29 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         visual_body.get("max_tokens") == 2048,
         "Visual grounding must cap response generation independently of the configured vision model",
     )
-    original_chat = ai_skill_service.dashscope_chat_content
+    original_gateway_skill = ai_skill_service.ai_gateway_skill_content
+    visual_gateway_calls = []
     try:
-        ai_skill_service.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
-            "title": "基础打印新增百度网盘入口",
-            "module": "基础打印",
-            "review": {"visual_grounding_check": "已结合截图核对入口文案"},
-        }, ensure_ascii=False)
+        def fake_visual_gateway(*args, **kwargs):
+            visual_gateway_calls.append(kwargs)
+            kwargs.get("runtime_trace", {}).update({
+                "selectedProviderId": "highway_gpt5_mini",
+                "selectedModel": "gpt-5-mini",
+                "providerId": "qwen_plus",
+                "model": "qwen3.6-plus",
+                "fallbackUsed": True,
+                "fallbackIndex": 1,
+                "fallbackReason": "selected model does not support image input",
+                "source": "ai_gateway",
+                "imageCount": 1,
+            })
+            return json.dumps({
+                "title": "基础打印新增百度网盘入口",
+                "module": "基础打印",
+                "review": {"visual_grounding_check": "已结合截图核对入口文案"},
+            }, ensure_ascii=False)
+
+        ai_skill_service.ai_gateway_skill_content = fake_visual_gateway
         grounded = ai_skill_service.call_visual_grounder_skill(
             base_payload["title"],
             base_payload["module"],
@@ -3271,9 +3318,10 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
             ["Figma 文档打印页面"],
             [{"mime": "image/png", "base64": "AA=="}],
             timeout_seconds=60,
+            model_config={"providerId": "highway_gpt5_mini", "model": "gpt-5-mini"},
         )
     finally:
-        ai_skill_service.dashscope_chat_content = original_chat
+        ai_skill_service.ai_gateway_skill_content = original_gateway_skill
     require(
         grounded.get("analysis", {}).get("requirement_points") == analysis["requirement_points"],
         "Visual grounding must inherit required analysis context before schema validation",
@@ -3283,13 +3331,21 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         "Visual grounding must retain a completed AI judgment marker",
     )
     require(
+        visual_gateway_calls
+        and len(visual_gateway_calls[0].get("image_assets") or []) == 1
+        and grounded.get("review", {}).get("model_trace", {}).get("selectedModel") == "gpt-5-mini"
+        and grounded.get("review", {}).get("model_trace", {}).get("model") == "qwen3.6-plus"
+        and grounded.get("review", {}).get("model_trace", {}).get("fallbackUsed") is True,
+        "Visual grounding must send images through Gateway and record selected versus actual fallback model",
+    )
+    require(
         grounded.get("cases") == [concrete_case]
         and grounded.get("review", {}).get("visual_case_preservation", {}).get("base_case_count") == 1,
         "Visual grounding must preserve base cases when the AI returns only its visual judgment",
     )
-    original_chat = ai_skill_service.dashscope_chat_content
+    original_gateway_skill = ai_skill_service.ai_gateway_skill_content
     try:
-        ai_skill_service.dashscope_chat_content = lambda *args, **kwargs: json.dumps({
+        ai_skill_service.ai_gateway_skill_content = lambda *args, **kwargs: json.dumps({
             "title": base_payload["title"],
             "module": base_payload["module"],
             "analysis": {},
@@ -3311,7 +3367,7 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         except ValueError as exc:
             missing_judgement_rejected = "visual_grounding_check" in str(exc)
     finally:
-        ai_skill_service.dashscope_chat_content = original_chat
+        ai_skill_service.ai_gateway_skill_content = original_gateway_skill
     require(
         missing_judgement_rejected,
         "A visual batch without its own auditable judgment must never be counted as completed",
@@ -3319,7 +3375,7 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     original_grounder = ai_skill_service.call_visual_grounder_skill
     visual_attempt_timeouts = []
     try:
-        def flaky_visual_grounder(title, module, payload, visual_text_assets, image_assets, timeout_seconds=None):
+        def flaky_visual_grounder(title, module, payload, visual_text_assets, image_assets, timeout_seconds=None, model_config=None):
             visual_attempt_timeouts.append(timeout_seconds)
             if len(visual_attempt_timeouts) == 1:
                 raise TimeoutError("first visual attempt timed out")
@@ -3944,6 +4000,8 @@ def check_agent_executable_gate_invokes_ai_rewrite():
             run = {
                 "runId": "agent-ai-rewrite-static",
                 "target": "基础打印新增百度网盘入口",
+                "modelProviderId": "highway_gpt5_mini",
+                "aiModel": "gpt-5-mini",
                 "artifacts": {
                     "generationPipeline": {"source": "ui_yaml_pipeline"},
                     "generatedYamlPaths": [path],
@@ -3953,6 +4011,10 @@ def check_agent_executable_gate_invokes_ai_rewrite():
             repaired_ref, repair = agent_service._agent_repair_yaml_ref_for_execution(run, ref, reason="static_check")
             written = Path(path).read_text(encoding="utf-8")
             require(calls, "Generated YAML executable gate must invoke AI rewrite for semantic long-chain failures")
+            require(
+                calls[-1].get("model_config") == {"providerId": "highway_gpt5_mini", "model": "gpt-5-mini"},
+                "Generated YAML executable-gate rewrite must retain the Agent-selected model",
+            )
             require(repair and repair.get("type") == "ai_yaml_executable_gate_rewrite" and repair.get("ok"), "AI rewrite repair must be recorded as successful")
             require("查找并进入" not in written and "aiWaitFor: 扫描复印首页已打开" in written, "Successful AI rewrite must overwrite generated YAML with short executable flow")
             repairs = run["artifacts"].get("yamlExecutionRepairs") or []
@@ -6358,7 +6420,14 @@ def check_ai_gateway_fallback_and_skill_static():
     app_js_source = (ROOT / "js" / "app.js").read_text(encoding="utf-8")
     require("routeCandidatesFor" in gateway_source and "fallbackProviderIds" in gateway_source, "AI Gateway must support provider fallback routing")
     require("app.post('/ai/skill'" in gateway_source, "AI Gateway must expose a text AI Skill endpoint")
-    require("AI_GATEWAY_URL" in ai_skill_source and "ai_gateway_skill_content" in ai_skill_source and "if not image_assets" in ai_skill_source, "Text AI skills must try AI Gateway while image skills stay on DashScope VL")
+    require(
+        "AI_GATEWAY_URL" in ai_skill_source
+        and "ai_gateway_skill_content" in ai_skill_source
+        and "image_assets=image_assets" in ai_skill_source
+        and "fallbackModelConfig" in ai_skill_source
+        and "禁止静默切换到平台直连视觉模型" in ai_skill_source,
+        "Text and image AI skills must use Gateway, with an explicit audited vision fallback and no silent direct-model switch",
+    )
     require('"fallbackProviderIds"' in router_config and "highway_gpt5_mini" in router_config, "Model router config must include fallback providers")
     require("mindmapMode: 'full'" in app_js_source, "Mindmap-only frontend requests must default to full test-case mindmap mode")
 

@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-16 Agent 选定模型贯穿、可审计能力降级与有界超时
+
+本地代码已完成，尚未推送/部署，也未据此宣称 OPPO 真机回归成功。
+
+- Agent 创建时选择的 `providerId + model` 现在贯穿目标理解、用例召回、MM requirement/scenario/filter/smoke、Top3 基线重排、范围规划、视觉校准、覆盖补全、YAML 规划/收敛、静态 AI 修复、Runner 失败分析、修复草稿和缺陷草稿。显式选模时，Python 服务不再在 Gateway 失败后静默直连另一千问模型；无显式模型的旧入口仍保留兼容兜底。
+- 图片先送用户选定模型。仅当 Gateway 收到超时、限流、5xx、模型不可用或明确“不支持图像”时，才使用 `fallbackModelConfig` 指定的视觉模型；默认备用 provider 为 `qwen_plus`，模型沿用 `DASHSCOPE_VL_MODEL`。Figma parser、页面筛选、4 图分批和软参考门禁均未修改。
+- 每个 AI 产物记录 `selectedProviderId / selectedModel` 与实际 `providerId / model / fallbackUsed / fallbackIndex / fallbackReason`。PLAN 不再固定写 `fallbackUsed=false`，而是聚合 MM Skill 的真实 trace；视觉批次、失败分析和每条修复草稿也保留实际模型证据。
+- Gateway 的 `/ai/chat`、`/ai/skill`、生成、失败分析和修复接口共用同一降级实现。显式选模最多尝试“首选 + 当前能力路由的 1 个备用”；调用方传入 `timeoutMs` 总预算，Gateway 为备用保留有界窗口、关闭 SDK 隐式重试，避免 Python 已超时而 Gateway 仍后台占用连接。
+- 非千问模型继续通过上游 `/models` 实时发现；千问保持独立静态配置。上游目录只证明账号可见，不臆测图像能力，能力由真实请求验证。
+- 最终 YAML coverage convergence 只发送未收敛候选、验收缺口、可信证据和压缩后的来源上下文；已批准 executable 由平台保留。超时从 45 秒调整为 60 秒，没有增加模型轮次或放宽覆盖/scorer/static/Runner 门禁。
+
+行为验证：
+
+- 假上游目录返回 5 个实时模型，动态 provider ID 可保存并在目录 503 时继续解析。
+- 文本不可用：`gpt-down -> qwen-plus`；`/ai/chat` 按已保存 `agent_plan` 路由为 `gpt-down -> gpt-new`。
+- 图像能力不支持：`gpt-no-vision -> qwen-vision`，响应保留能力错误原因。
+- 首选模型故意挂起 4 秒、总预算 5 秒时：`gpt-hang -> qwen-plus`，约 `3.0s` 完成降级调用。
+- 显式 GPT 的用例直选/语义重排在 Gateway 候选耗尽后直连 DashScope 次数为 `0`。
+
+已验证：完整 `npm test` 通过，包括 undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时目录/文本/图像/超时集成测试、Skill fixtures `3/3` 和 Playwright 桌面/移动端视觉回归；`git diff --check` 通过。
+
+待完成：提交后由用户推送并部署；线上核对 `/ai/providers` 实时目录与实际模型 trace，再使用同一需求固定 `win-runner-01 / ecbfd645 / fixed` 发起一次完整 Agent，持续监督 Smoke、remaining、报告、截图/录屏和终态。不得选择第二台设备。
+
+### 2026-07-16 AI Gateway 非千问模型实时目录
+
+线上核对结果：`GET /ai/providers` 只返回 `gpt-5-mini`、`gpt-4.1-mini` 和 `qwen-plus`，直接来自 `config/providers.json`。前端 Agent 下拉已调用该接口，根因在 Gateway 目录源写死，不在前端。
+
+通用修复：
+
+- `providers.json` 只保留通道、Key 环境变量名、参数策略和兼容种子。千问保持 `catalogMode=static` 独立配置；非千问 OpenAI 兼容通道按 `baseUrl + apiKeyEnv + type` 去重，调用上游 `client.models.list()` 获取当前账号可见模型。旧线上配置即使没有 `catalogMode` 也能自动识别，部署不覆盖现有 Key 配置。
+- 目录请求最多 `5s`，成功结果缓存 `60s`，默认禁止匿名 `refresh=1` 绕过缓存。上游失败时返回 `catalog.errors`，并保留种子模型为 `configured_fallback / available=null`；目录故障不会让模型页整体不可用。
+- 新发现模型使用可逆 `catalog_*` provider ID，可用于 Agent、`/ai/providers/test` 和全局 router，保存后跨服务重启仍能解析。
+- 修正 fallback 串模型：用户模型只覆盖首选路由；超时、429 / 5xx、model 不可用或能力不支持时，备用 provider 使用自己的模型，不再把 `gpt-5-mini` 带到千问通道。
+- Agent 下拉标记“实时目录 / 目录降级”，并不再混入 Task `/api/models` 中旧静态 Gateway 重复项；DashScope 独立项仍保留。
+
+依据与验证：
+
+- OpenAI 官方 Models API 说明 `/v1/models` 只提供当前可用 ID 和 owner / created 等基本信息：`https://platform.openai.com/docs/api-reference/models/object?lang=curl`。因此平台分开“实时列举”和“真实能力测试”，不凭名称宣称支持图像。
+- 本地假上游行为测试验证实时 3 模型、动态 ID 调用 / 保存、目录 503 降级和已保存 ID 继续可用。首选 `gpt-down` 返回 503 后，实际请求序列为 `gpt-down -> qwen-plus`。
+- `npm test` 全部通过：u540e端 `61`、前端 `69`、Gateway `46`、目录集成、Skill fixtures `3/3` 和 Playwright 桌面 / 移动端回归；`git diff --check` 通过。
+
+待完成：部署后核对线上 `catalog.channels[].source=live`、实时数量和 `catalog.errors=[]`。“Agent 选中模型贯穿文本 / 视觉 / 失败分析 / 修复”仍是后续代码项，不把目录完成冒充为贯穿已完成。本轮未修改 Figma parser、YAML scorer / static、Runner / Sonic、设备策略、执行模式或历史 YAML。
+
 ### 2026-07-16 部署后 GPT Agent 验收：区分等待截止时间并贯通成功基线证据
 
 部署 `cb7f7ed` 后发起同一完整回归：

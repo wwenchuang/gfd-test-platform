@@ -51,6 +51,8 @@ def main():
     for removed in ("AI_PROVIDER=", "QWEN_MODEL=", "HIGHWAY_MODEL=", "QWEN_BASE_URL=", "HIGHWAY_BASE_URL="):
         require(removed not in env, f"env example must not hardcode single-model setting: {removed}")
     require("AI_GATEWAY_MOCK=0" in env, "mock mode must be disabled by default")
+    require("AI_PROVIDER_CATALOG_TIMEOUT_MS=5000" in env and "AI_PROVIDER_CATALOG_CACHE_MS=60000" in env and "AI_PROVIDER_CATALOG_ALLOW_REFRESH=0" in env, "env example must bound live provider catalog latency and disable anonymous cache bypass")
+    require((ROOT / "tests" / "ai_gateway_catalog_checks.mjs").exists(), "live provider catalog integration check is required")
 
     providers = json.loads((GATEWAY / "config/providers.json").read_text(encoding="utf-8")).get("providers", {})
     for provider_id in ("highway_gpt5_mini", "highway_gpt4_1_mini", "highway_deepseek", "qwen_plus"):
@@ -61,6 +63,8 @@ def main():
         require("apiKey" not in provider, f"{provider_id} must not store a real API key")
     require(providers["highway_gpt5_mini"].get("temperatureLocked") is True, "gpt-5-mini must lock temperature")
     require(providers["highway_gpt5_mini"].get("fixedTemperature") == 1, "gpt-5-mini must force temperature 1")
+    require(all(providers[item].get("catalogMode") == "live" for item in ("highway_gpt5_mini", "highway_gpt4_1_mini", "highway_deepseek")), "non-Qwen OpenAI-compatible channels must use live model discovery")
+    require(providers["qwen_plus"].get("catalogMode") == "static", "Qwen must remain separately configured")
 
     router = json.loads((GATEWAY / "config/model-router.json").read_text(encoding="utf-8"))
     expected_routes = {
@@ -104,6 +108,9 @@ def main():
         "locked-temperature providers must be enforced"
     )
     require("routeCandidatesFor" in server and "fallbackProviderIds" in server, "server must support provider fallback routing")
+    require("client.models.list()" in server and "buildProviderCatalog" in server and "configured_fallback" in server, "non-Qwen providers must be discovered from the upstream models API with an explicit static fallback")
+    require("catalogProviderId" in server and "parseCatalogProviderId" in server and "resolveProviderConfig" in server, "live models must have stable routeable provider IDs")
+    require("index === 0" in server and "isFallbackEligibleAiError" in server, "requested models must stay on the primary route while eligible fallback providers keep their own models")
     require("app.post('/ai/skill'" in server, "server must expose AI Skill endpoint")
     require("routeSupportsQwenHybridThinking" in server and "completionOptions.enable_thinking = false" in server and "completionOptions.response_format = {type: 'json_object'}" in server, "Structured Qwen skills must use non-thinking JSON Mode to avoid incompatible slow responses")
     for forbidden_param in ("top_p", "presence_penalty", "frequency_penalty"):

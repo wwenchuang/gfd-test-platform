@@ -243,7 +243,7 @@
 
 | 方法 | 路径 | 说明 | 认证 |
 |------|------|------|------|
-| GET | `/ai/providers` | 获取所有模型 Provider 列表（含配置状态） | 无 |
+| GET | `/ai/providers` | 获取模型 Provider 列表；非千问 OpenAI 兼容通道读取上游 `/models`，并返回目录来源、缓存和降级状态 | 无 |
 | POST | `/ai/providers/test` | 测试指定 Provider 连通性（`{providerId}`） | 无 |
 | GET | `/ai/model-router` | 获取 Action → Provider 路由策略 | 无 |
 | POST | `/ai/model-router` | 更新 Action → Provider 路由策略 | 无 |

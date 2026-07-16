@@ -95,10 +95,13 @@ AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS = max(
     30,
     min(
         AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS,
-        safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS", "45"), 45),
+        safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS", "60"), 60),
     ),
 )
 AI_SKILLS_STRICT_MODEL = safe_bool(os.getenv("MIDSCENE_AI_SKILLS_STRICT_MODEL", "0"), False)
+AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID = str(
+    os.getenv("MIDSCENE_AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID", "qwen_plus")
+).strip() or "qwen_plus"
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +222,16 @@ def run_ai_skill(
     model_config=None,
     output_defaults=None,
     max_tokens=None,
+    runtime_trace=None,
 ):
-    """执行 AI skill：渲染 prompt → 调用 DashScope → 校验输出。"""
+    """执行 AI skill：优先走统一 Gateway，平台直连仅用于无显式模型的最终兼容兜底。"""
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
     if not prompt:
         raise ValueError(f"AI skill prompt 不存在：{skill_name}.{version}")
-    if not image_assets and safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True):
+    runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
+    gateway_enabled = safe_bool(os.getenv("MIDSCENE_AI_SKILLS_USE_GATEWAY", "1"), True)
+    gateway_error = ""
+    if gateway_enabled:
         try:
             raw = _run_ai_skill_call_with_hard_timeout(
                 lambda: ai_gateway_skill_content(
@@ -235,6 +242,8 @@ def run_ai_skill(
                     temperature=temperature,
                     json_response=True,
                     model_config=model_config,
+                    image_assets=image_assets,
+                    runtime_trace=runtime_trace,
                 ),
                 timeout,
                 f"AI Gateway skill {skill_name}",
@@ -243,10 +252,15 @@ def run_ai_skill(
             result = _merge_missing_output_defaults(result, output_defaults)
             return validate_ai_skill_output(skill_name, result)
         except TimeoutError:
+            runtime_trace.update({"source": "ai_gateway", "error": f"AI Gateway skill {skill_name} timeout"})
             raise
         except Exception as exc:
-            if model_config and AI_SKILLS_STRICT_MODEL:
-                raise RuntimeError(f"AI Gateway skill 调用失败且已启用 strict model：{exc}") from exc
+            gateway_error = str(exc)
+            runtime_trace.update({"source": "ai_gateway", "error": gateway_error[:500]})
+            if model_config or AI_SKILLS_STRICT_MODEL:
+                raise RuntimeError(
+                    f"AI Gateway skill 调用失败；显式模型只允许由 Gateway 按可用性/能力策略回退：{exc}"
+                ) from exc
     raw = dashscope_chat_content(
         prompt,
         image_assets=image_assets,
@@ -257,14 +271,54 @@ def run_ai_skill(
         retry_count=retry_count,
         max_tokens=max_tokens,
     )
+    runtime_trace.update({
+        "selectedProviderId": (model_config or {}).get("providerId") if isinstance(model_config, dict) else "",
+        "selectedModel": (model_config or {}).get("model") if isinstance(model_config, dict) else "",
+        "providerId": "dashscope_direct",
+        "model": dashscope_model_for_images(image_assets),
+        "fallbackUsed": bool(gateway_enabled),
+        "fallbackReason": gateway_error[:500],
+        "source": "dashscope_direct",
+    })
     result = normalize_model_json(raw)
     result = _merge_missing_output_defaults(result, output_defaults)
     return validate_ai_skill_output(skill_name, result)
 
 
-def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temperature=0.1, json_response=True, model_config=None):
-    """Call AI Gateway for text-only skills, with DashScope direct call as caller fallback."""
+def ai_gateway_skill_content(
+    skill_name,
+    prompt,
+    payload=None,
+    timeout=180,
+    temperature=0.1,
+    json_response=True,
+    model_config=None,
+    image_assets=None,
+    runtime_trace=None,
+):
+    """Call the unified Gateway for text or image skills and expose the actual routed model."""
     model_config = model_config if isinstance(model_config, dict) else {}
+    runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
+    normalized_images = []
+    for index, asset in enumerate((image_assets or [])[:AI_VISION_IMAGE_LIMIT], start=1):
+        if not isinstance(asset, dict):
+            continue
+        base64_text = str(asset.get("base64") or asset.get("contentBase64") or "").strip()
+        data_url = str(asset.get("dataUrl") or "").strip()
+        if not base64_text and not data_url:
+            continue
+        normalized_images.append({
+            "name": str(asset.get("name") or asset.get("fileName") or f"image-{index}"),
+            "mime": str(asset.get("mime") or asset.get("contentType") or "image/png"),
+            "base64": base64_text,
+            "dataUrl": data_url,
+        })
+    fallback_model_config = {}
+    if normalized_images:
+        fallback_model_config = {
+            "providerId": AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID,
+            "model": dashscope_vl_model(),
+        }
     body = json.dumps({
         "skillName": skill_name,
         "prompt": prompt,
@@ -274,6 +328,9 @@ def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temp
         "modelConfig": model_config,
         "providerId": model_config.get("providerId") or model_config.get("provider") or "",
         "model": model_config.get("model") or model_config.get("modelName") or "",
+        "imageAssets": normalized_images,
+        "fallbackModelConfig": fallback_model_config,
+        "timeoutMs": max(5000, (safe_int(timeout, 180) - 2) * 1000),
     }, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         f"{AI_GATEWAY_URL}/ai/skill",
@@ -285,6 +342,19 @@ def ai_gateway_skill_content(skill_name, prompt, payload=None, timeout=180, temp
         data = json.loads(resp.read().decode("utf-8"))
     if not data.get("success"):
         raise RuntimeError(str(data.get("error") or "AI Gateway skill 调用失败"))
+    selected_provider_id = model_config.get("providerId") or model_config.get("provider") or ""
+    selected_model = model_config.get("model") or model_config.get("modelName") or ""
+    runtime_trace.update({
+        "selectedProviderId": selected_provider_id,
+        "selectedModel": selected_model,
+        "providerId": data.get("providerId") or selected_provider_id,
+        "model": data.get("model") or selected_model,
+        "fallbackUsed": bool(data.get("fallbackUsed")),
+        "fallbackIndex": safe_int(data.get("fallbackIndex"), 0),
+        "fallbackReason": str(data.get("fallbackReason") or "")[:500],
+        "source": "ai_gateway",
+        "imageCount": len(normalized_images),
+    })
     return data.get("content") or data.get("data") or ""
 
 
@@ -1461,6 +1531,7 @@ def call_skill_requirement_analyzer(
     text_assets,
     model_config=None,
     requirement_contract=None,
+    runtime_trace=None,
 ):
     """调用 AI skill: requirement_analyzer。"""
     requirement_contract = normalize_source_requirement_contract(requirement_contract)
@@ -1479,6 +1550,7 @@ def call_skill_requirement_analyzer(
             respect_global_timeout=False,
             retry_count=0,
             model_config=model_config,
+            runtime_trace=runtime_trace,
         )
         return apply_source_requirement_contract(result, requirement_contract)
     except Exception as exc:
@@ -2209,6 +2281,7 @@ def call_skill_scenario_designer(
     mode="full",
     model_config=None,
     targets=None,
+    runtime_trace=None,
 ):
     """调用 AI skill: scenario_designer。"""
     targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
@@ -2227,6 +2300,7 @@ def call_skill_scenario_designer(
             respect_global_timeout=False,
             retry_count=0,
             model_config=model_config,
+            runtime_trace=runtime_trace,
         )
         scenarios = result.get("scenarios") or []
     except Exception as exc:
@@ -2247,6 +2321,7 @@ def call_skill_automation_filter(
     app_package="",
     app_name="",
     targets=None,
+    runtime_trace=None,
 ):
     """调用 AI skill: automation_filter。"""
     targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
@@ -2304,6 +2379,7 @@ def call_skill_automation_filter(
             respect_global_timeout=False,
             retry_count=0,
             model_config=model_config,
+            runtime_trace=runtime_trace,
         )
         cases = result.get("cases") or []
     except Exception as exc:
@@ -2562,6 +2638,7 @@ def call_skill_smoke_selector(
     mode="full",
     model_config=None,
     targets=None,
+    runtime_trace=None,
 ):
     """AI 推荐冒烟 + 平台准入校验；失败时回退本地规则。"""
     targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(analysis, mode=mode)
@@ -2592,6 +2669,7 @@ def call_skill_smoke_selector(
                 respect_global_timeout=False,
                 retry_count=0,
                 model_config=model_config,
+                runtime_trace=runtime_trace,
             )
             normalized = _normalize_smoke_selector_result(result, cases, targets, source="smoke_selector.v1")
             if normalized.get("smoke_case_ids"):
@@ -2639,6 +2717,7 @@ def select_smoke_cases_for_payload(
     yaml_reference_context="",
     model_config=None,
     targets=None,
+    runtime_trace=None,
 ):
     """Run final smoke selection on a normalized cases payload."""
     normalized = normalize_cases_payload(payload)
@@ -2660,6 +2739,7 @@ def select_smoke_cases_for_payload(
             mode=mode,
             model_config=model_config,
             targets=targets,
+            runtime_trace=runtime_trace,
         )
     except Exception as exc:
         selection = _fallback_smoke_selection_from_existing(eligible_cases, targets, error=str(exc))
@@ -2670,6 +2750,11 @@ def select_smoke_cases_for_payload(
     review["smoke_selection"] = smoke_review
     review["smoke_case_ids"] = smoke_review.get("selected_case_ids") or []
     review["smoke_eligible_case_count"] = len(eligible_cases)
+    if isinstance(runtime_trace, dict):
+        review.setdefault("skill_model_traces", {})["smoke_selector"] = _model_config_trace(
+            model_config,
+            runtime_trace,
+        )
     return normalized
 
 
@@ -2689,6 +2774,7 @@ def build_cases_payload_from_skills(
     """通过 AI skills pipeline 生成用例 payload。"""
     mode = str(mode or "full").strip().lower()
     yaml_reference_context = extract_yaml_reference_context(text_assets)
+    skill_model_traces = {}
     if allow_entry_visibility_fast_path and _should_fast_path_baidu_entry_visibility(title, module, text_assets):
         analysis = _fallback_requirement_analysis(
             title,
@@ -2759,12 +2845,18 @@ def build_cases_payload_from_skills(
         review["skill_pipeline"] = "deterministic_baidu_entry_visibility.v1 -> local_smoke_gate.v1"
         validate_ai_skill_output("cases_payload", normalized)
         return normalized
+    requirement_runtime_trace = {}
     analysis = call_skill_requirement_analyzer(
         title,
         module,
         text_assets,
         model_config=model_config,
         requirement_contract=requirement_contract,
+        runtime_trace=requirement_runtime_trace,
+    )
+    skill_model_traces["requirement_analyzer"] = _model_config_trace(
+        model_config,
+        requirement_runtime_trace,
     )
     targets = generation_targets_for_scope(analysis, mode=mode, scope_plan=generation_scope_plan)
     if require_ai_core and analysis.get("fallback_reason"):
@@ -2779,6 +2871,7 @@ def build_cases_payload_from_skills(
                 "generation_mode": mode,
                 "generation_targets": targets,
                 "skill_pipeline": "requirement_analyzer.v1",
+                "skill_model_traces": skill_model_traces,
                 "core_ai_failure": {
                     "stage": "requirement_analyzer",
                     "reason": str(analysis.get("fallback_reason") or "requirement_analyzer 未产出 AI 结果")[:500],
@@ -2791,6 +2884,7 @@ def build_cases_payload_from_skills(
         analysis["yaml_reference_rule"] = (
             "后续场景设计和自动化筛选必须参考平台已有 YAML 步骤经验；只学习动作组织、等待策略和断言密度，不复制历史业务断言。"
         )
+    scenario_runtime_trace = {}
     scenarios = call_skill_scenario_designer(
         title,
         module,
@@ -2799,6 +2893,11 @@ def build_cases_payload_from_skills(
         mode=mode,
         model_config=model_config,
         targets=targets,
+        runtime_trace=scenario_runtime_trace,
+    )
+    skill_model_traces["scenario_designer"] = _model_config_trace(
+        model_config,
+        scenario_runtime_trace,
     )
     scenario_fallback = next((
         item for item in scenarios
@@ -2820,11 +2919,13 @@ def build_cases_payload_from_skills(
                 "generation_mode": mode,
                 "generation_targets": targets,
                 "skill_pipeline": "requirement_analyzer.v1 -> scenario_designer.v1",
+                "skill_model_traces": skill_model_traces,
                 "yaml_reference_context_used_by_skills": bool(yaml_reference_context),
                 "core_ai_failure": {"stage": "scenario_designer", "reason": reason[:500]},
                 "downstream_skipped": ["automation_filter", "smoke_selector", "visual_grounder"],
             },
         }
+    automation_runtime_trace = {}
     filtered = call_skill_automation_filter(
         title,
         module,
@@ -2836,6 +2937,11 @@ def build_cases_payload_from_skills(
         app_package=app_package,
         app_name=app_name,
         targets=targets,
+        runtime_trace=automation_runtime_trace,
+    )
+    skill_model_traces["automation_filter"] = _model_config_trace(
+        model_config,
+        automation_runtime_trace,
     )
     cases = filtered.get("cases") or []
     manual_cases = filtered.get("manual_cases") or []
@@ -2853,6 +2959,7 @@ def build_cases_payload_from_skills(
     review["generation_mode"] = mode
     review["generation_targets"] = targets
     review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1"
+    review["skill_model_traces"] = skill_model_traces
     review["yaml_reference_context_used_by_skills"] = bool(yaml_reference_context)
     if yaml_reference_context:
         review["yaml_reference_context_rule"] = "用例库参考已传入 scenario_designer 和 automation_filter，用于学习平台步骤组织和断言密度。"
@@ -2865,6 +2972,7 @@ def build_cases_payload_from_skills(
         "questions": analysis.get("questions") or [],
     }
     normalized = normalize_cases_payload(payload)
+    smoke_runtime_trace = {}
     normalized = select_smoke_cases_for_payload(
         title,
         module,
@@ -2873,6 +2981,7 @@ def build_cases_payload_from_skills(
         yaml_reference_context=yaml_reference_context,
         model_config=model_config,
         targets=targets,
+        runtime_trace=smoke_runtime_trace,
     )
     review = normalized.setdefault("review", {})
     review["skill_pipeline"] = "requirement_analyzer.v1 -> scenario_designer.v1 -> automation_filter.v1 -> smoke_selector.v1/platform_gate"
@@ -2884,13 +2993,28 @@ def build_cases_payload_from_skills(
 # AI decision skills used before YAML generation
 # ---------------------------------------------------------------------------
 
-def _model_config_trace(model_config):
+def _model_config_trace(model_config, runtime_trace=None):
     model_config = model_config if isinstance(model_config, dict) else {}
-    return {
-        "providerId": model_config.get("providerId") or model_config.get("provider") or "",
-        "model": model_config.get("model") or model_config.get("modelName") or "",
+    runtime_trace = runtime_trace if isinstance(runtime_trace, dict) else {}
+    selected_provider_id = model_config.get("providerId") or model_config.get("provider") or ""
+    selected_model = model_config.get("model") or model_config.get("modelName") or ""
+    trace = {
+        "selectedProviderId": selected_provider_id,
+        "selectedModel": selected_model,
+        "providerId": runtime_trace.get("providerId") or selected_provider_id,
+        "model": runtime_trace.get("model") or selected_model,
+        "fallbackUsed": bool(runtime_trace.get("fallbackUsed")),
+        "fallbackIndex": safe_int(runtime_trace.get("fallbackIndex"), 0),
+        "fallbackReason": str(runtime_trace.get("fallbackReason") or "")[:500],
+        "source": runtime_trace.get("source") or "configured",
+        "invoked": bool(runtime_trace),
         "strict": bool(AI_SKILLS_STRICT_MODEL),
     }
+    if runtime_trace.get("error"):
+        trace["error"] = str(runtime_trace.get("error"))[:500]
+    if runtime_trace.get("imageCount") is not None:
+        trace["imageCount"] = safe_int(runtime_trace.get("imageCount"), 0)
+    return trace
 
 
 def _baseline_candidate_id(item, index=0):
@@ -3090,6 +3214,7 @@ def call_skill_baseline_reranker(
     ]
     required_branch_by_id = {item["id"]: item for item in required_branches}
     local_selected_ids = {item["id"] for item in candidates[:limit]}
+    model_runtime_trace = {}
     trace = {
         "enabled": True,
         "candidate_count": len(candidates),
@@ -3100,7 +3225,7 @@ def call_skill_baseline_reranker(
         "required_branch_ids": [item["id"] for item in required_branches],
         "unavailable_required_branch_ids": [item["id"] for item in unavailable_required_branches],
         "eligible_branch_candidate_counts": eligible_branch_candidate_counts,
-        **_model_config_trace(model_config),
+        **_model_config_trace(model_config, model_runtime_trace),
     }
     if not candidates:
         trace.update({"selected_count": 0, "fallback": True, "error": "no_candidates"})
@@ -3197,6 +3322,7 @@ def call_skill_baseline_reranker(
             respect_global_timeout=False,
             retry_count=0,
             model_config=model_config,
+            runtime_trace=model_runtime_trace,
         )
         selected_rows, selection_audit = parse_selection(result)
         trace["branch_repair_attempted"] = False
@@ -3226,6 +3352,7 @@ def call_skill_baseline_reranker(
                     respect_global_timeout=False,
                     retry_count=0,
                     model_config=model_config,
+                    runtime_trace=model_runtime_trace,
                 )
                 repaired_rows, repaired_audit = parse_selection(repaired_result)
                 if len(repaired_audit.get("covered_branch_ids") or []) > len(selection_audit.get("covered_branch_ids") or []):
@@ -3238,6 +3365,7 @@ def call_skill_baseline_reranker(
             trace["fallback"] = True
             trace["error"] = "ai_selected_none_or_invalid"
         trace["selected_count"] = len(selected_rows)
+        trace.update(_model_config_trace(model_config, model_runtime_trace))
         trace.update(selection_audit)
         trace["branch_repair_succeeded"] = bool(
             trace.get("branch_repair_attempted") and selection_audit.get("branch_coverage_ok")
@@ -3246,6 +3374,7 @@ def call_skill_baseline_reranker(
         return {"selected": selected_rows, "trace": trace, "review": result.get("review") or {}}
     except Exception as exc:
         selected_rows = [] if has_required_branch_contract else [dict(item) for item in candidates[:limit]]
+        trace.update(_model_config_trace(model_config, model_runtime_trace))
         trace.update({
             "fallback": True,
             "selected_count": len(selected_rows),
@@ -3274,10 +3403,11 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
     local_targets = generation_volume_targets({"requirement_points": normalize_text_list(text_assets)}, mode="full")
     fallback_count = safe_int(local_targets.get("target_automation_cases"), 3)
     target_count, size = _clamp_scope_size(fallback_count, 3)
+    model_runtime_trace = {}
     trace = {
         "enabled": True,
         "fallback": False,
-        **_model_config_trace(model_config),
+        **_model_config_trace(model_config, model_runtime_trace),
     }
     request = {
         "title": title,
@@ -3299,7 +3429,9 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
             respect_global_timeout=False,
             retry_count=0,
             model_config=model_config,
+            runtime_trace=model_runtime_trace,
         )
+        trace.update(_model_config_trace(model_config, model_runtime_trace))
         target_count, size = _clamp_scope_size(result.get("targetCaseCount"), target_count)
         smoke_count = max(1, min(3, safe_int(result.get("smokeCount"), min(3, target_count))))
         plan = {
@@ -3313,6 +3445,7 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         }
         return plan
     except Exception as exc:
+        trace.update(_model_config_trace(model_config, model_runtime_trace))
         trace.update({"fallback": True, "error": str(exc)})
         return {
             "size": size,
@@ -4093,12 +4226,14 @@ def _focus_executable_convergence_candidates(
             "outsideFocusCandidateIds": [],
         }
 
+    preserved_executable_ids = {
+        str(item or "").strip()
+        for item in (audit.get("executableCaseIds") or [])
+        if str(item or "").strip()
+    }
     focus_ids = {
         str(item or "").strip()
-        for item in (
-            list(audit.get("executableCaseIds") or [])
-            + list(audit.get("unresolvedAutomaticCaseIds") or [])
-        )
+        for item in (audit.get("unresolvedAutomaticCaseIds") or [])
         if str(item or "").strip()
     }
     missing_points = normalize_text_list(audit.get("missingRequirementPoints"))
@@ -4171,12 +4306,13 @@ def _focus_executable_convergence_candidates(
     ]
     focus = {
         "enabled": True,
-        "policy": "preserve_executable_resolve_gaps_one_manual_alternate_per_requirement",
+        "policy": "platform_preserves_executable_ai_resolves_gaps_one_manual_alternate_per_requirement",
         "fullCandidateCount": len(automatic_records) + len(manual_records),
         "focusedCandidateCount": len(automatic) + len(manual),
         "focusedAutomaticCount": len(automatic),
         "focusedManualCount": len(manual),
         "focusedCandidateIds": focused_ids,
+        "preservedExecutableCandidateIds": sorted(preserved_executable_ids),
         "outsideFocusCandidateIds": [item for item in full_ids if item not in set(focused_ids)],
         "missingRequirementPoints": missing_points[:12],
         "targetExecutableCount": target_count,
@@ -4187,6 +4323,39 @@ def _focus_executable_convergence_candidates(
     }
     context["focus"] = focus
     return automatic, manual, context, focus
+
+
+def _compact_executable_convergence_context(analysis, source_evidence):
+    """Keep the final AI pass focused on acceptance gaps and usable evidence."""
+    analysis = analysis if isinstance(analysis, dict) else {}
+    source_evidence = source_evidence if isinstance(source_evidence, dict) else {}
+    compact_analysis = {
+        key: copy.deepcopy(analysis.get(key))
+        for key in (
+            "requirement_points",
+            "requirement_acceptance_checks",
+            "requirement_contract",
+            "visible_outcomes",
+        )
+        if analysis.get(key) not in (None, "", [], {})
+    }
+    compact_source = {
+        key: copy.deepcopy(source_evidence.get(key))
+        for key in (
+            "mode",
+            "requirementText",
+            "figmaSoftEvidence",
+            "figmaPageCount",
+            "figmaImageCount",
+            "executionContext",
+            "policy",
+        )
+        if source_evidence.get(key) not in (None, "", [], {})
+    }
+    for key in ("requirementText", "figmaSoftEvidence"):
+        if isinstance(compact_source.get(key), str):
+            compact_source[key] = compact_source[key][:6000]
+    return compact_analysis, compact_source
 
 
 def _existing_executable_plan_item(case, case_id, title):
@@ -4387,6 +4556,7 @@ def call_skill_executable_yaml_planner(
         and isinstance(item.get("convergenceEvidence"), dict)
         and item["convergenceEvidence"].get("eligible") is True
     }
+    model_runtime_trace = {}
     trace = {
         "enabled": True,
         "fallback": False,
@@ -4397,7 +4567,7 @@ def call_skill_executable_yaml_planner(
         "convergence_focus": bool(convergence_focus.get("enabled")),
         "automatic_candidate_count": len(automatic_candidates),
         "manual_candidate_count": len(manual_candidates),
-        **_model_config_trace(model_config),
+        **_model_config_trace(model_config, model_runtime_trace),
     }
     if not candidates:
         trace.update({"fallback": True, "error": "no_cases"})
@@ -4411,16 +4581,26 @@ def call_skill_executable_yaml_planner(
             "candidateEligibilityById": candidate_eligibility_by_id,
         }
     allowed_baseline_ids = {str(item.get("id") or "").strip() for item in compact_baselines if str(item.get("id") or "").strip()}
+    convergence_pass = str((planning_context or {}).get("pass") or "").strip() == "coverage_convergence"
+    request_analysis = normalized.get("analysis") or {}
+    request_scenarios = normalized.get("scenarios") or []
+    request_source_evidence = source_evidence if isinstance(source_evidence, dict) else {}
+    if convergence_pass:
+        request_analysis, request_source_evidence = _compact_executable_convergence_context(
+            request_analysis,
+            request_source_evidence,
+        )
+        request_scenarios = []
     request = {
         "title": title,
         "module": module,
-        "analysis": normalized.get("analysis") or {},
-        "scenarios": normalized.get("scenarios") or [],
+        "analysis": request_analysis,
+        "scenarios": request_scenarios,
         "cases": candidates,
         "priorManualCandidateCount": len(manual_candidates),
         "selectedBaselines": compact_baselines,
         "scopePlan": scope_plan or {},
-        "sourceEvidence": source_evidence if isinstance(source_evidence, dict) else {},
+        "sourceEvidence": request_source_evidence,
         "planningContext": planning_context if isinstance(planning_context, dict) else {},
         "batchContract": {
             "casesContainAllExecutableCandidates": True,
@@ -4435,6 +4615,13 @@ def call_skill_executable_yaml_planner(
             "runnerValidatesProductAssertion": True,
         },
     }
+    trace["context_compacted"] = convergence_pass
+    trace["request_context_chars"] = len(json.dumps(request, ensure_ascii=False))
+    trace["request_candidate_ids"] = [
+        str(item.get("case_id") or "").strip()
+        for item in candidates
+        if str(item.get("case_id") or "").strip()
+    ]
     planner_timeout = (
         AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS
         if str((planning_context or {}).get("pass") or "").strip() == "coverage_convergence"
@@ -4451,7 +4638,9 @@ def call_skill_executable_yaml_planner(
             respect_global_timeout=False,
             retry_count=0,
             model_config=model_config,
+            runtime_trace=model_runtime_trace,
         )
+        trace.update(_model_config_trace(model_config, model_runtime_trace))
         candidate_by_id = {str(item.get("case_id") or "").strip(): item for item in candidates if str(item.get("case_id") or "").strip()}
         candidate_by_title = {str(item.get("title") or "").strip(): item for item in candidates if str(item.get("title") or "").strip()}
         cases, rejected_case_count = _ground_executable_plan_items(
@@ -4502,6 +4691,7 @@ def call_skill_executable_yaml_planner(
             "candidateEligibilityById": candidate_eligibility_by_id,
         }
     except Exception as exc:
+        trace.update(_model_config_trace(model_config, model_runtime_trace))
         trace.update({"fallback": True, "error": str(exc)})
         evidence_fallback = _convergence_evidence_fallback_plan(
             normalized,
@@ -5212,7 +5402,15 @@ def merge_visual_grounder_payload(base_payload, grounded_payload):
     return normalize_cases_payload(merged)
 
 
-def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets, timeout_seconds=None):
+def call_visual_grounder_skill(
+    title,
+    module,
+    base_payload,
+    visual_text_assets,
+    image_assets,
+    timeout_seconds=None,
+    model_config=None,
+):
     """调用 AI skill: visual_grounder。"""
     base_payload = normalize_cases_payload(base_payload)
     compact_base_payload = compact_visual_grounder_base_payload(base_payload)
@@ -5234,6 +5432,7 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
             "assertions_must_be_ui_visible": True
         }
     }
+    model_runtime_trace = {}
     grounded = run_ai_skill(
         "visual_grounder",
         payload,
@@ -5254,6 +5453,8 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
             "manual_cases": [],
             "review": {},
         },
+        model_config=model_config,
+        runtime_trace=model_runtime_trace,
     )
     grounded = copy.deepcopy(grounded) if isinstance(grounded, dict) else {}
     grounded_review = grounded.get("review") if isinstance(grounded.get("review"), dict) else {}
@@ -5275,6 +5476,7 @@ def call_visual_grounder_skill(title, module, base_payload, visual_text_assets, 
     grounded = merge_visual_grounder_payload(base_payload, grounded)
     review = grounded.setdefault("review", {})
     review["visual_grounder_skill"] = "visual_grounder.v1"
+    review["model_trace"] = _model_config_trace(model_config, model_runtime_trace)
     review["visual_case_preservation"] = {
         "policy": "visual_delta_merge_by_id_preserve_full_payload",
         "base_case_count": len(base_payload.get("cases") or []),
@@ -5307,6 +5509,7 @@ def call_coverage_auditor_skill(
 ):
     """调用 AI skill: coverage_auditor。"""
     normalized = normalize_cases_payload(payload)
+    model_runtime_trace = {}
     targets = dict(targets) if isinstance(targets, dict) else generation_volume_targets(normalized.get("analysis") or {})
     request = {
         "title": title,
@@ -5330,6 +5533,7 @@ def call_coverage_auditor_skill(
         respect_global_timeout=False,
         retry_count=0,
         model_config=model_config,
+        runtime_trace=model_runtime_trace,
     )
     result.setdefault("missing_case_points", result.get("missing_requirement_points") or [])
     result.setdefault("missing_scenario_points", [])
@@ -5337,7 +5541,7 @@ def call_coverage_auditor_skill(
     result.setdefault("duplicate_cases", [])
     result.setdefault("questions", [])
     result["coverage_auditor_skill"] = "coverage_auditor.v1"
-    result["model_trace"] = _model_config_trace(model_config)
+    result["model_trace"] = _model_config_trace(model_config, model_runtime_trace)
     result["ok"] = bool(result.get("ok")) or not (
         result.get("missing_requirement_points")
         or result.get("missing_case_points")
@@ -5477,16 +5681,41 @@ def improve_case_coverage(
         emit(f"覆盖率审查：正在补齐遗漏场景，第 {round_index + 1}/{max_rounds} 轮，剩余预算约 {max(0, budget_left())} 秒", progress=74)
         prompt = build_case_coverage_repair_prompt(title, module, current, audit)
         repair_timeout = max(30, min(AI_COVERAGE_REPAIR_TIMEOUT_SECONDS, max(30, budget_left())))
-        content = dashscope_chat_content(
-            prompt,
-            image_assets=None,
-            temperature=0.1,
-            timeout=repair_timeout,
-            respect_global_timeout=False,
-            retry_count=0,
-        )
+        repair_model_trace = {}
+        if isinstance(model_config, dict) and any(
+            model_config.get(key)
+            for key in ("providerId", "provider", "model", "modelName")
+        ):
+            content = ai_gateway_skill_content(
+                "case_coverage_repair",
+                prompt,
+                payload={"title": title, "module": module, "audit": audit},
+                timeout=repair_timeout,
+                temperature=0.1,
+                json_response=True,
+                model_config=model_config,
+                runtime_trace=repair_model_trace,
+            )
+        else:
+            content = dashscope_chat_content(
+                prompt,
+                image_assets=None,
+                temperature=0.1,
+                timeout=repair_timeout,
+                respect_global_timeout=False,
+                retry_count=0,
+            )
+            repair_model_trace.update({
+                "providerId": "dashscope_direct",
+                "model": dashscope_text_model(),
+                "fallbackUsed": False,
+                "source": "dashscope_direct",
+            })
         current = normalize_case_json_from_model(content)
-        current.setdefault("review", {})["coverage_repair_model_source"] = "dashscope_direct"
+        current.setdefault("review", {})["coverage_repair_model_trace"] = _model_config_trace(
+            model_config,
+            repair_model_trace,
+        )
         current["title"] = current.get("title") or title
         current["module"] = current.get("module") or module
         validate_ai_skill_output("cases_payload", current)
@@ -5566,47 +5795,77 @@ def build_case_generation_prompt(title, module, text_assets):
 """
 
 
-def call_dashscope_cases_legacy(title, module, text_assets, image_assets):
+def call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_config=None):
     """Legacy 模式：直接调用 DashScope 生成用例。"""
-    api_key = dashscope_api_key()
-    base_url = dashscope_base_url()
     prompt = build_case_generation_prompt(title, module, text_assets)
-    body = json.dumps(build_dashscope_chat_body(
-        prompt,
-        image_assets=image_assets,
-        temperature=0.2,
-        json_response=True,
-        image_limit=8
-    ), ensure_ascii=False).encode("utf-8")
-
-    req = urllib.request.Request(
-        f"{base_url}/chat/completions",
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        },
-        method="POST"
+    model_runtime_trace = {}
+    explicit_model = isinstance(model_config, dict) and any(
+        model_config.get(key)
+        for key in ("providerId", "provider", "model", "modelName")
     )
-
-    with urllib.request.urlopen(req, timeout=360) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-
-    content = data["choices"][0]["message"]["content"]
+    if explicit_model:
+        content = ai_gateway_skill_content(
+            "legacy_case_generation",
+            prompt,
+            payload={"title": title, "module": module},
+            timeout=360,
+            temperature=0.2,
+            json_response=True,
+            model_config=model_config,
+            image_assets=image_assets,
+            runtime_trace=model_runtime_trace,
+        )
+    else:
+        api_key = dashscope_api_key()
+        base_url = dashscope_base_url()
+        body = json.dumps(build_dashscope_chat_body(
+            prompt,
+            image_assets=image_assets,
+            temperature=0.2,
+            json_response=True,
+            image_limit=8
+        ), ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/chat/completions",
+            data=body,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=360) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = data["choices"][0]["message"]["content"]
+        model_runtime_trace.update({
+            "providerId": "dashscope_direct",
+            "model": dashscope_model_for_images(image_assets),
+            "fallbackUsed": False,
+            "source": "dashscope_direct",
+        })
     payload = normalize_case_json_from_model(content)
     payload["title"] = payload.get("title") or title
     payload["module"] = payload.get("module") or module
+    payload.setdefault("review", {})["model_trace"] = _model_config_trace(
+        model_config,
+        model_runtime_trace,
+    )
     validate_ai_skill_output("cases_payload", payload)
     return payload
 
 
-def call_dashscope_cases(title, module, text_assets, image_assets):
+def call_dashscope_cases(title, module, text_assets, image_assets, model_config=None):
     """生成用例：优先 skill pipeline，有截图时走 legacy。"""
     if image_assets:
-        return call_dashscope_cases_legacy(title, module, text_assets, image_assets)
+        return call_dashscope_cases_legacy(title, module, text_assets, image_assets, model_config=model_config)
     try:
-        return build_cases_payload_from_skills(title, module, text_assets)
+        return build_cases_payload_from_skills(title, module, text_assets, model_config=model_config)
     except Exception as exc:
+        if isinstance(model_config, dict) and any(
+            model_config.get(key)
+            for key in ("providerId", "provider", "model", "modelName")
+        ):
+            raise
         payload = call_dashscope_cases_legacy(title, module, text_assets, image_assets)
         review = payload.setdefault("review", {})
         review["skill_pipeline"] = "fallback_legacy_prompt"
@@ -5700,6 +5959,7 @@ def call_dashscope_refine_cases(
     timeout_seconds=None,
     legacy_fallback=True,
     bounded_retry=False,
+    model_config=None,
 ):
     """精修用例：优先 visual_grounder skill，失败回退 legacy。"""
     if not visual_text_assets and not image_assets:
@@ -5712,7 +5972,14 @@ def call_dashscope_refine_cases(
     attempts = []
     try:
         if timeout_seconds is None:
-            payload = call_visual_grounder_skill(title, module, base_payload, visual_text_assets, image_assets)
+            payload = call_visual_grounder_skill(
+                title,
+                module,
+                base_payload,
+                visual_text_assets,
+                image_assets,
+                model_config=model_config,
+            )
         else:
             payload = call_visual_grounder_skill(
                 title,
@@ -5721,6 +5988,7 @@ def call_dashscope_refine_cases(
                 visual_text_assets,
                 image_assets,
                 timeout_seconds=first_timeout,
+                model_config=model_config,
             )
         payload.setdefault("review", {})["visual_grounder_attempts"] = {
             "count": 1,
@@ -5742,6 +6010,7 @@ def call_dashscope_refine_cases(
                         visual_text_assets,
                         image_assets,
                         timeout_seconds=remaining_timeout,
+                        model_config=model_config,
                     )
                     payload.setdefault("review", {})["visual_grounder_attempts"] = {
                         "count": 2,
@@ -5758,6 +6027,16 @@ def call_dashscope_refine_cases(
                     "视觉 AI 增量校准在同一批次预算内两次失败：" + "；".join(attempts)
                 ) from exc
             raise
+        if isinstance(model_config, dict) and (
+            model_config.get("providerId")
+            or model_config.get("provider")
+            or model_config.get("model")
+            or model_config.get("modelName")
+        ):
+            raise RuntimeError(
+                "显式选择的 Agent 模型及其 Gateway 能力降级均失败，禁止静默切换到平台直连视觉模型："
+                + "；".join(attempts)
+            ) from exc
         if timeout_seconds is None:
             payload = call_dashscope_refine_cases_legacy(title, module, base_payload, visual_text_assets, image_assets)
         else:

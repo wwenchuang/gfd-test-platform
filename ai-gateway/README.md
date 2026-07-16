@@ -12,7 +12,7 @@
 - `POST /ai/validate-yaml`：校验 Midscene YAML
 - `POST /ai/analyze-failure`：分析自动化失败原因
 - `POST /ai/generate-bug`：生成飞书缺陷单内容
-- `GET /ai/providers`：查看服务端可用模型 Provider（不返回 Key）
+- `GET /ai/providers`：查看服务端可用模型 Provider（非千问通道实时读取上游 `/models`，不返回 Key）
 - `POST /ai/providers/test`：测试 provider 是否可用
 - `GET /ai/model-router`：查看各能力当前使用哪个 Provider
 - `POST /ai/model-router`：保存各能力到 Provider 的路由
@@ -47,10 +47,18 @@ PORT=8090
 QWEN_API_KEY=你的 DashScope API Key
 HIGHWAY_API_KEY=你的 HighwayAPI Key
 LOG_ENABLED=true
+AI_PROVIDER_CATALOG_TIMEOUT_MS=5000
+AI_PROVIDER_CATALOG_CACHE_MS=60000
+AI_PROVIDER_CATALOG_ALLOW_REFRESH=0
+AI_GATEWAY_JSON_LIMIT=20mb
+AI_CALL_TIMEOUT_MS=90000
+AI_CALL_FALLBACK_RESERVE_MS=15000
 AI_GATEWAY_MOCK=0
 ```
 
-模型清单放在 `config/providers.json`，能力路由放在 `config/model-router.json`。`.env` 只放真实 Key，不要把 API Key 写入代码、前端、日志或提交文件。
+`config/providers.json` 保存通道、Key 环境变量名和兼容种子模型，不再作为非千问模型全集。`catalogMode=live` 的 OpenAI 兼容通道通过上游 `/models` 获取当前账号可见模型；千问保持 `catalogMode=static` 独立配置。能力路由放在 `config/model-router.json`。`.env` 只放真实 Key，不要把 API Key 写入代码、前端、日志或提交文件。
+
+实时目录默认缓存 60 秒，单次上游请求最多等待 5 秒。上游目录超时或失败时，接口返回 `catalog.errors`，同时保留已配置种子模型作为 `configured_fallback`；目录失败不会把整个模型页变成不可用。
 
 默认路由：
 
@@ -80,6 +88,12 @@ curl -X POST http://127.0.0.1:8090/ai/validate-yaml \
 curl http://127.0.0.1:8090/ai/providers
 curl http://127.0.0.1:8090/ai/model-router
 ```
+
+`/ai/providers` 中的 `catalogSource` 为 `live`、`static` 或 `configured_fallback`。新发现模型使用可逆的 `catalog_*` provider ID，可以像旧 provider ID 一样保存到模型路由并在服务重启后解析。上游 `/models` 只提供模型 ID 和基本可见性，具体模型是否支持当前 Chat Completions 请求仍需用 `/ai/providers/test` 真实验证。
+
+Agent 显式选择模型时，各文本阶段先使用该 `providerId + model`。只有超时、限流、服务端不可用、模型不可用或不支持当前图像输入时才尝试配置的备用路由；接口返回 `providerId`、`model`、`fallbackUsed`、`fallbackIndex` 和 `fallbackReason`。带图调用可传 `fallbackModelConfig` 指定已验证的视觉模型，Task Server 默认使用 `MIDSCENE_AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID=qwen_plus` 与当前 `DASHSCOPE_VL_MODEL`。Python 服务不会在显式选模失败后再静默直连另一模型。
+
+调用方通过 `timeoutMs` 传入阶段总预算。显式选模最多尝试首选模型和一个备用模型；Gateway 会为备用模型保留有界时间，且关闭 SDK 内部隐式重试，避免 Python/HTTP 先超时后 Gateway 仍在后台占用模型连接。未传 `timeoutMs` 时使用 `AI_CALL_TIMEOUT_MS`，备用保留上限由 `AI_CALL_FALLBACK_RESERVE_MS` 控制。
 
 测试指定 Provider：
 

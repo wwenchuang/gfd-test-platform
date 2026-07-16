@@ -19,9 +19,23 @@ const LOG_ENABLED = String(process.env.LOG_ENABLED || 'true').toLowerCase() !== 
 const MOCK_ENABLED = String(process.env.AI_GATEWAY_MOCK || '0').toLowerCase() === '1';
 const LOG_FILE = path.join(__dirname, 'logs', 'ai-calls.jsonl');
 
-const ROUTER_FILE = path.join(__dirname, 'config', 'model-router.json');
-const PROVIDERS_FILE = path.join(__dirname, 'config', 'providers.json');
+const ROUTER_FILE = process.env.AI_GATEWAY_ROUTER_FILE
+  ? path.resolve(process.env.AI_GATEWAY_ROUTER_FILE)
+  : path.join(__dirname, 'config', 'model-router.json');
+const PROVIDERS_FILE = process.env.AI_GATEWAY_PROVIDERS_FILE
+  ? path.resolve(process.env.AI_GATEWAY_PROVIDERS_FILE)
+  : path.join(__dirname, 'config', 'providers.json');
 const AGENT_WHITELIST_FILE = path.join(__dirname, 'config', 'agent-whitelist.json');
+const DYNAMIC_PROVIDER_PREFIX = 'catalog_';
+const MODEL_CATALOG_TIMEOUT_MS = boundedEnvNumber('AI_PROVIDER_CATALOG_TIMEOUT_MS', 5000, 1000, 15000);
+const MODEL_CATALOG_CACHE_MS = boundedEnvNumber('AI_PROVIDER_CATALOG_CACHE_MS', 60000, 0, 300000);
+const MODEL_CATALOG_ALLOW_REFRESH = String(process.env.AI_PROVIDER_CATALOG_ALLOW_REFRESH || '0').toLowerCase() === '1';
+const JSON_BODY_LIMIT = /^\d+(?:kb|mb)$/i.test(String(process.env.AI_GATEWAY_JSON_LIMIT || '').trim())
+  ? String(process.env.AI_GATEWAY_JSON_LIMIT).trim()
+  : '20mb';
+const AI_CALL_TIMEOUT_MS = boundedEnvNumber('AI_CALL_TIMEOUT_MS', 90000, 5000, 600000);
+const AI_CALL_FALLBACK_RESERVE_MS = boundedEnvNumber('AI_CALL_FALLBACK_RESERVE_MS', 15000, 3000, 60000);
+const providerCatalogCache = new Map();
 const PROMPTS = {
   generate_case: 'generate-case-v1.txt',
   generate_yaml: 'generate-yaml-v1.txt',
@@ -49,7 +63,16 @@ const SKILL_ACTION_MAP = {
   coverage_auditor: 'analyze_failure',
   repair_patch_planner: 'optimize_yaml',
   yaml_patch_repair: 'optimize_yaml',
+  yaml_static_repair: 'optimize_yaml',
+  case_coverage_repair: 'generate_case',
+  legacy_case_generation: 'generate_case',
 };
+
+function boundedEnvNumber(name, fallback, minimum, maximum) {
+  const value = Number(process.env[name]);
+  const normalized = Number.isFinite(value) ? value : fallback;
+  return Math.max(minimum, Math.min(maximum, normalized));
+}
 
 function preview(value, limit = 500) {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '', (key, item) => {
@@ -97,6 +120,7 @@ function defaultProviders() {
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         apiKeyEnv: 'QWEN_API_KEY',
         model: 'qwen-plus',
+        catalogMode: 'static',
         defaultMaxTokens: 4096,
         temperatureLocked: false,
       },
@@ -106,6 +130,8 @@ function defaultProviders() {
         baseUrl: 'https://api.highwayapi.ai/openai',
         apiKeyEnv: 'HIGHWAY_API_KEY',
         model: 'gpt-5-mini',
+        catalogMode: 'live',
+        catalogName: 'Highway',
         defaultMaxTokens: 4096,
         temperatureLocked: true,
         fixedTemperature: 1,
@@ -131,7 +157,72 @@ function providerConfigured(providerConfig) {
   return Boolean(value && !/^your_.*_api_key$/i.test(value) && value !== 'test-key');
 }
 
-function publicProvider(providerId, providerConfig) {
+function providerCatalogMode(providerId, providerConfig) {
+  const configuredMode = String(providerConfig?.catalogMode || '').trim().toLowerCase();
+  if (configuredMode === 'live' || configuredMode === 'static') return configuredMode;
+  const baseUrl = String(providerConfig?.baseUrl || '').toLowerCase();
+  const apiKeyEnv = String(providerConfig?.apiKeyEnv || '').toUpperCase();
+  const normalizedId = String(providerId || '').toLowerCase();
+  return apiKeyEnv === 'QWEN_API_KEY' || baseUrl.includes('dashscope.aliyuncs.com') || normalizedId.startsWith('qwen_')
+    ? 'static'
+    : 'live';
+}
+
+function providerChannelKey(providerConfig) {
+  return [
+    String(providerConfig?.type || 'openai_compatible').trim().toLowerCase(),
+    String(providerConfig?.baseUrl || '').trim().replace(/\/+$/, '').toLowerCase(),
+    String(providerConfig?.apiKeyEnv || '').trim(),
+  ].join('|');
+}
+
+function catalogProviderId(baseProviderId, model) {
+  const encoded = Buffer.from(JSON.stringify([String(baseProviderId || ''), String(model || '')]), 'utf8').toString('base64url');
+  return `${DYNAMIC_PROVIDER_PREFIX}${encoded}`;
+}
+
+function parseCatalogProviderId(providerId) {
+  const value = String(providerId || '').trim();
+  if (!value.startsWith(DYNAMIC_PROVIDER_PREFIX)) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(value.slice(DYNAMIC_PROVIDER_PREFIX.length), 'base64url').toString('utf8'));
+    if (!Array.isArray(decoded) || decoded.length !== 2) return null;
+    const baseProviderId = String(decoded[0] || '').trim();
+    const model = String(decoded[1] || '').trim();
+    if (!baseProviderId || !model || model.length > 300) return null;
+    return {baseProviderId, model};
+  } catch {
+    return null;
+  }
+}
+
+function catalogChannelName(providerConfig) {
+  const explicit = String(providerConfig?.catalogName || '').trim();
+  if (explicit) return explicit;
+  const firstNameToken = String(providerConfig?.name || providerConfig?.providerName || '').trim().split(/\s+/)[0];
+  return firstNameToken || String(providerConfig?.apiKeyEnv || 'OpenAI Compatible').replace(/_API_KEY$/i, '');
+}
+
+function providerConfigForModel(providerConfig, model, name = '') {
+  const targetModel = String(model || '').trim();
+  const configuredModel = String(providerConfig?.model || '').trim();
+  const sameModel = targetModel === configuredModel;
+  const gpt5TemperaturePolicy = /^gpt-5(?:[.\-_]|$)/i.test(targetModel);
+  const temperatureLocked = sameModel
+    ? Boolean(providerConfig?.temperatureLocked)
+    : gpt5TemperaturePolicy;
+  return {
+    ...providerConfig,
+    name: name || catalogChannelName(providerConfig),
+    model: targetModel,
+    temperatureLocked,
+    fixedTemperature: temperatureLocked
+      ? (sameModel && typeof providerConfig?.fixedTemperature === 'number' ? providerConfig.fixedTemperature : 1)
+      : undefined,
+  };
+}
+
+function publicProvider(providerId, providerConfig, catalog = {}) {
   return {
     id: providerId,
     name: providerConfig.name || providerId,
@@ -141,6 +232,148 @@ function publicProvider(providerId, providerConfig) {
     temperatureLocked: Boolean(providerConfig.temperatureLocked),
     fixedTemperature: providerConfig.fixedTemperature,
     defaultMaxTokens: providerConfig.defaultMaxTokens,
+    catalogSource: catalog.source || providerCatalogMode(providerId, providerConfig),
+    catalogLive: catalog.source === 'live',
+    available: Object.prototype.hasOwnProperty.call(catalog, 'available') ? catalog.available : true,
+    catalogHealthy: catalog.healthy !== false,
+    catalogError: catalog.error || '',
+    ownedBy: catalog.ownedBy || '',
+    created: Number(catalog.created || 0) || undefined,
+    baseProviderId: catalog.baseProviderId || providerId,
+  };
+}
+
+function resolveProviderConfig(providersData, providerId) {
+  const normalized = normalizeLegacyProviderId(providerId || 'qwen_plus');
+  const configured = providersData.providers?.[normalized];
+  if (configured) return {providerId: normalized, providerConfig: configured};
+  const dynamic = parseCatalogProviderId(normalized);
+  if (!dynamic) throw new Error(`未配置 providerId：${normalized}`);
+  const baseProviderConfig = providersData.providers?.[dynamic.baseProviderId];
+  if (!baseProviderConfig || providerCatalogMode(dynamic.baseProviderId, baseProviderConfig) !== 'live') {
+    throw new Error(`动态 providerId 的基础通道不存在：${dynamic.baseProviderId}`);
+  }
+  return {
+    providerId: normalized,
+    providerConfig: providerConfigForModel(baseProviderConfig, dynamic.model),
+  };
+}
+
+function liveProviderChannels(providersData) {
+  const channels = new Map();
+  for (const [providerId, providerConfig] of Object.entries(providersData.providers || {})) {
+    if (providerCatalogMode(providerId, providerConfig) !== 'live') continue;
+    const key = providerChannelKey(providerConfig);
+    if (!channels.has(key)) channels.set(key, {key, entries: []});
+    channels.get(key).entries.push({providerId, providerConfig});
+  }
+  return [...channels.values()];
+}
+
+async function discoverProviderChannel(channel, forceRefresh = false) {
+  const now = Date.now();
+  const cached = providerCatalogCache.get(channel.key);
+  if (!forceRefresh && cached && cached.expiresAt > now) {
+    return {...(await cached.promise), cached: true};
+  }
+  const base = channel.entries[0];
+  const promise = (async () => {
+    if (!providerConfigured(base.providerConfig)) {
+      throw new Error(`未配置 ${base.providerConfig.apiKeyEnv || '模型通道 Key'}`);
+    }
+    if (base.providerConfig.type !== 'openai_compatible') {
+      throw new Error(`实时模型发现暂不支持 provider type：${base.providerConfig.type}`);
+    }
+    const client = new OpenAI({
+      apiKey: process.env[base.providerConfig.apiKeyEnv],
+      baseURL: base.providerConfig.baseUrl,
+      timeout: MODEL_CATALOG_TIMEOUT_MS,
+      maxRetries: 0,
+    });
+    const page = await client.models.list();
+    const models = (Array.isArray(page?.data) ? page.data : [])
+      .map((item) => ({
+        id: String(item?.id || '').trim(),
+        ownedBy: String(item?.owned_by || '').trim(),
+        created: Number(item?.created || 0) || 0,
+      }))
+      .filter((item) => item.id && item.id.length <= 300)
+      .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    if (!models.length) throw new Error('上游 /models 未返回任何模型');
+    return {success: true, models, error: ''};
+  })().catch((error) => ({success: false, models: [], error: sanitizeError(error)}));
+  providerCatalogCache.set(channel.key, {promise, expiresAt: now + MODEL_CATALOG_TIMEOUT_MS});
+  const result = await promise;
+  const cacheForMs = result.success ? MODEL_CATALOG_CACHE_MS : Math.min(MODEL_CATALOG_CACHE_MS, 10000);
+  providerCatalogCache.set(channel.key, {promise: Promise.resolve(result), expiresAt: Date.now() + cacheForMs});
+  return {...result, cached: false};
+}
+
+async function buildProviderCatalog(providersData, forceRefresh = false) {
+  const providers = [];
+  for (const [providerId, providerConfig] of Object.entries(providersData.providers || {})) {
+    if (providerCatalogMode(providerId, providerConfig) === 'static') {
+      providers.push(publicProvider(providerId, providerConfig, {source: 'static', available: true}));
+    }
+  }
+  const channels = liveProviderChannels(providersData);
+  const discoveries = await Promise.all(channels.map((channel) => discoverProviderChannel(channel, forceRefresh)));
+  const channelResults = [];
+  channels.forEach((channel, index) => {
+    const result = discoveries[index];
+    const base = channel.entries[0];
+    channelResults.push({
+      baseProviderId: base.providerId,
+      name: catalogChannelName(base.providerConfig),
+      source: result.success ? 'live' : 'configured_fallback',
+      modelCount: result.success ? result.models.length : channel.entries.length,
+      cached: Boolean(result.cached),
+      error: result.error || '',
+    });
+    if (!result.success) {
+      for (const entry of channel.entries) {
+        providers.push(publicProvider(entry.providerId, entry.providerConfig, {
+          source: 'configured_fallback',
+          available: null,
+          healthy: false,
+          error: result.error,
+          baseProviderId: base.providerId,
+        }));
+      }
+      return;
+    }
+    for (const modelInfo of result.models) {
+      const matched = channel.entries.find((entry) => String(entry.providerConfig.model || '').trim() === modelInfo.id);
+      const routeBase = matched || base;
+      const providerId = matched?.providerId || catalogProviderId(base.providerId, modelInfo.id);
+      const providerConfig = providerConfigForModel(
+        routeBase.providerConfig,
+        modelInfo.id,
+        matched?.providerConfig?.name || catalogChannelName(base.providerConfig),
+      );
+      providers.push(publicProvider(providerId, providerConfig, {
+        source: 'live',
+        available: true,
+        ownedBy: modelInfo.ownedBy,
+        created: modelInfo.created,
+        baseProviderId: base.providerId,
+      }));
+    }
+  });
+  return {
+    providers,
+    catalog: {
+      generatedAt: new Date().toISOString(),
+      cacheMs: MODEL_CATALOG_CACHE_MS,
+      timeoutMs: MODEL_CATALOG_TIMEOUT_MS,
+      refreshAllowed: MODEL_CATALOG_ALLOW_REFRESH,
+      channels: channelResults,
+      errors: channelResults.filter((item) => item.error).map((item) => ({
+        baseProviderId: item.baseProviderId,
+        error: item.error,
+      })),
+    },
   };
 }
 
@@ -166,9 +399,8 @@ async function routeFor(action) {
   const configured = router[action] || {};
   const providersData = await readProviders();
   const providerId = normalizeLegacyProviderId(configured.providerId || configured.provider || 'qwen_plus');
-  const providerConfig = providersData.providers?.[providerId];
-  if (!providerConfig) throw new Error(`未配置 providerId：${providerId}`);
-  return routeFromProviderConfig(action, providerId, providerConfig, configured);
+  const resolved = resolveProviderConfig(providersData, providerId);
+  return routeFromProviderConfig(action, resolved.providerId, resolved.providerConfig, configured);
 }
 
 async function routeCandidatesFor(action) {
@@ -188,8 +420,12 @@ async function routeCandidatesFor(action) {
   const uniqueIds = [...new Set(ids.filter(Boolean))];
   const routes = [];
   for (const providerId of uniqueIds) {
-    const providerConfig = providersData.providers?.[providerId];
-    if (providerConfig) routes.push(routeFromProviderConfig(action, providerId, providerConfig, configured));
+    try {
+      const resolved = resolveProviderConfig(providersData, providerId);
+      routes.push(routeFromProviderConfig(action, resolved.providerId, resolved.providerConfig, configured));
+    } catch {
+      // Keep valid fallbacks usable when one persisted route was removed.
+    }
   }
   if (!routes.length) throw new Error(`能力 ${action} 没有可用 provider`);
   return routes;
@@ -197,9 +433,9 @@ async function routeCandidatesFor(action) {
 
 async function routeForProviderId(providerId) {
   const providersData = await readProviders();
-  const normalized = normalizeLegacyProviderId(providerId || 'qwen_plus');
-  const providerConfig = providersData.providers?.[normalized];
-  if (!providerConfig) throw new Error(`未配置 providerId：${normalized}`);
+  const resolved = resolveProviderConfig(providersData, providerId || 'qwen_plus');
+  const normalized = resolved.providerId;
+  const providerConfig = resolved.providerConfig;
   return {
     action: 'provider_test',
     providerId: normalized,
@@ -243,6 +479,23 @@ function requestedModelFromBody(body = {}, options = {}) {
   );
 }
 
+function fallbackModelConfigFromBody(body = {}) {
+  const raw = body?.fallbackModelConfig || body?.fallback_model_config || body?.payload?.fallbackModelConfig || {};
+  return {
+    providerId: normalizeLegacyProviderId(raw?.providerId || raw?.provider || ''),
+    model: String(raw?.model || raw?.modelName || '').trim(),
+  };
+}
+
+function routeWithModel(action, route, model) {
+  const providerConfig = providerConfigForModel(
+    {...route, name: route.providerName || route.name || route.providerId},
+    model,
+    route.providerName || route.name || '',
+  );
+  return routeFromProviderConfig(action, route.providerId, providerConfig, route);
+}
+
 async function routeCandidatesForCall(action, body = {}, options = {}) {
   const disableFallback = Boolean(options.disableFallback || body?.disableFallback);
   const requestedProviderId = requestedProviderIdFromBody(body, options);
@@ -251,21 +504,50 @@ async function routeCandidatesForCall(action, body = {}, options = {}) {
     routes = [{...(await routeForProviderId(requestedProviderId)), action}];
     if (!disableFallback) {
       const fallbackRoutes = await routeCandidatesFor(action);
-      const existing = new Set(routes.map((route) => route.providerId));
-      routes.push(...fallbackRoutes.filter((route) => !existing.has(route.providerId)));
+      const fallbackRoute = fallbackRoutes.find((route) => route.providerId !== requestedProviderId);
+      if (fallbackRoute) routes.push(fallbackRoute);
     }
   } else {
     routes = disableFallback ? [await routeFor(action)] : await routeCandidatesFor(action);
   }
   const requestedModel = requestedModelFromBody(body, options);
-  if (requestedModel) {
-    routes = routes.map((route) => ({...route, model: requestedModel}));
+  if (requestedModel && routes.length) {
+    routes = routes.map((route, index) => (
+      index === 0
+        ? routeWithModel(action, route, requestedModel)
+        : route
+    ));
+  }
+  const fallbackModelConfig = fallbackModelConfigFromBody(body);
+  const hasImageInput = imagePartsFromBody(body).length > 0;
+  if (hasImageInput && fallbackModelConfig.providerId && fallbackModelConfig.model) {
+    const explicitSelection = Boolean(requestedProviderId || requestedModel);
+    if (explicitSelection) {
+      if (!disableFallback) {
+        const fallbackBase = await routeForProviderId(fallbackModelConfig.providerId);
+        const fallbackRoute = routeWithModel(action, fallbackBase, fallbackModelConfig.model);
+        routes = (
+          routes[0].providerId === fallbackRoute.providerId
+          && routes[0].model === fallbackRoute.model
+        ) ? [routes[0]] : [routes[0], fallbackRoute];
+      }
+    } else {
+      let fallbackIndex = routes.findIndex((route) => route.providerId === fallbackModelConfig.providerId);
+      if (fallbackIndex < 0 && !disableFallback) {
+        routes.push({...await routeForProviderId(fallbackModelConfig.providerId), action});
+        fallbackIndex = routes.length - 1;
+      }
+      if (fallbackIndex >= 0) {
+        const fallbackRoute = routeWithModel(action, routes[fallbackIndex], fallbackModelConfig.model);
+        routes[fallbackIndex] = fallbackRoute;
+      }
+    }
   }
   if (!routes.length) throw new Error(`能力 ${action} 没有可用 provider`);
   return routes.map((route) => ({...route, action}));
 }
 
-function clientForRoute(route) {
+function clientForRoute(route, timeoutMs = AI_CALL_TIMEOUT_MS) {
   if (route.type !== 'openai_compatible') {
     throw new Error(`暂不支持 provider type：${route.type}`);
   }
@@ -276,7 +558,15 @@ function clientForRoute(route) {
   return new OpenAI({
     apiKey,
     baseURL: route.baseUrl,
+    timeout: timeoutMs,
+    maxRetries: 0,
   });
+}
+
+function requestedCallTimeoutMs(body = {}) {
+  const requested = Number(body?.timeoutMs || body?.timeout_ms);
+  if (!Number.isFinite(requested)) return AI_CALL_TIMEOUT_MS;
+  return Math.max(5000, Math.min(600000, requested));
 }
 
 function routeSupportsQwenHybridThinking(route) {
@@ -353,7 +643,7 @@ function imagePartsFromBody(body = {}) {
   });
 }
 
-function isRetryableAiError(errorText) {
+function isFallbackEligibleAiError(errorText) {
   const text = String(errorText || '').toLowerCase();
   return (
     text.includes('timeout') ||
@@ -368,7 +658,16 @@ function isRetryableAiError(errorText) {
     text.includes('503') ||
     text.includes('502') ||
     text.includes('504') ||
-    text.includes('500')
+    text.includes('500') ||
+    text.includes('404') ||
+    text.includes('model_not_found') ||
+    text.includes('model not found') ||
+    text.includes('model does not exist') ||
+    text.includes('model is not available') ||
+    text.includes('no access to model') ||
+    text.includes('unsupported') ||
+    text.includes('does not support image') ||
+    text.includes('image input is not supported')
   );
 }
 
@@ -376,10 +675,25 @@ async function callAi(action, body, options = {}) {
   const id = uuidv4();
   const prompt = options.promptOverride ?? await readPrompt(action);
   const routes = await routeCandidatesForCall(action, body, options);
+  const totalTimeoutMs = requestedCallTimeoutMs(body);
+  const deadline = Date.now() + totalTimeoutMs;
   let output = '';
   let lastErrorText = null;
+  const fallbackErrors = [];
   for (let index = 0; index < routes.length; index += 1) {
     const route = routes[index];
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error(`AI call timeout after ${totalTimeoutMs}ms`);
+    const remainingFallbacks = routes.length - index - 1;
+    const perFallbackReserveMs = Math.min(
+      AI_CALL_FALLBACK_RESERVE_MS,
+      Math.max(3000, Math.floor(totalTimeoutMs * 0.25)),
+    );
+    const reserveMs = Math.min(
+      Math.max(0, remainingMs - 3000),
+      perFallbackReserveMs * remainingFallbacks,
+    );
+    const routeTimeoutMs = Math.max(3000, remainingMs - reserveMs);
     const startedAt = Date.now();
     let success = false;
     let errorText = null;
@@ -388,23 +702,51 @@ async function callAi(action, body, options = {}) {
         output = mockAiOutput(action, body);
         if (options.stripFence) output = stripMarkdownFence(output);
         success = true;
-        return {id, route: {...route, mock: true}, output};
+        return {
+          id,
+          route: {
+            ...route,
+            mock: true,
+            fallbackIndex: index,
+            fallbackUsed: index > 0,
+            fallbackReason: fallbackErrors[fallbackErrors.length - 1]?.error || '',
+          },
+          output,
+        };
       }
-      const client = clientForRoute(route);
-      const completion = await client.chat.completions.create(completionOptionsForRoute(
+      const client = clientForRoute(route, routeTimeoutMs);
+      const completionOptions = completionOptionsForRoute(
         {...route, action},
         prompt,
         body,
         {userMessage: options.userMessage, temperature: options.temperature},
-      ));
+      );
+      if (Array.isArray(options.messages) && options.messages.length) {
+        completionOptions.messages = options.messages;
+      }
+      const completion = await client.chat.completions.create(completionOptions);
       output = completion.choices?.[0]?.message?.content || '';
       if (options.stripFence) output = stripMarkdownFence(output);
       success = true;
-      return {id, route, output};
+      return {
+        id,
+        route: {
+          ...route,
+          fallbackIndex: index,
+          fallbackUsed: index > 0,
+          fallbackReason: fallbackErrors[fallbackErrors.length - 1]?.error || '',
+        },
+        output,
+      };
     } catch (error) {
       errorText = sanitizeError(error);
       lastErrorText = errorText;
-      if (!isRetryableAiError(errorText) || index === routes.length - 1) {
+      fallbackErrors.push({
+        providerId: route.providerId,
+        model: route.model,
+        error: errorText,
+      });
+      if (!isFallbackEligibleAiError(errorText) || index === routes.length - 1) {
         throw new Error(errorText);
       }
     } finally {
@@ -419,6 +761,8 @@ async function callAi(action, body, options = {}) {
         durationMs: Date.now() - startedAt,
         fallbackIndex: index,
         fallbackTotal: routes.length,
+        routeTimeoutMs,
+        totalTimeoutMs,
         inputPreview: preview(body),
         outputPreview: preview(output),
         error: errorText,
@@ -492,7 +836,7 @@ function asyncRoute(handler) {
 
 const app = express();
 app.use(cors());
-app.use(express.json({limit: '2mb'}));
+app.use(express.json({limit: JSON_BODY_LIMIT}));
 
 app.get('/health', asyncRoute(async (_req, res) => {
   const route = await routeFor('generate_yaml');
@@ -553,13 +897,15 @@ app.post('/ai/validate-yaml', (req, res) => {
   res.json(validateMidsceneYaml(req.body?.yaml || ''));
 });
 
-app.get('/ai/providers', asyncRoute(async (_req, res) => {
+app.get('/ai/providers', asyncRoute(async (req, res) => {
   const providersData = await readProviders();
-  const providers = Object.entries(providersData.providers || {})
-    .map(([providerId, providerConfig]) => publicProvider(providerId, providerConfig));
+  const refreshRequested = ['1', 'true'].includes(String(req.query?.refresh || '').toLowerCase());
+  const forceRefresh = MODEL_CATALOG_ALLOW_REFRESH && refreshRequested;
+  const {providers, catalog} = await buildProviderCatalog(providersData, forceRefresh);
   res.json({
     success: true,
     providers,
+    catalog,
   });
 }));
 
@@ -630,12 +976,16 @@ app.post('/ai/model-router', asyncRoute(async (req, res) => {
         ? (raw.fallbackProviderIds || raw.fallbackProviders || [])
         : (current.fallbackProviderIds || current.fallbackProviders || [])
     ).map(normalizeLegacyProviderId).filter((id) => id && id !== providerId);
-    if (!providersData.providers?.[providerId]) {
+    try {
+      resolveProviderConfig(providersData, providerId);
+    } catch {
       res.status(400).json({success: false, error: `能力 ${action} 选择了不存在的 providerId：${providerId}`});
       return;
     }
     for (const fallbackId of fallbackProviderIds) {
-      if (!providersData.providers?.[fallbackId]) {
+      try {
+        resolveProviderConfig(providersData, fallbackId);
+      } catch {
         res.status(400).json({success: false, error: `能力 ${action} 选择了不存在的 fallback providerId：${fallbackId}`});
         return;
       }
@@ -664,13 +1014,19 @@ app.post('/ai/generate-yaml', asyncRoute(async (req, res) => {
     modelConfig: req.body?.modelConfig || req.body?.model_config || {},
     providerId: req.body?.providerId || req.body?.provider || '',
     model: req.body?.model || req.body?.modelName || '',
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
-  const {output} = await callAi('generate_yaml', body, {stripFence: true});
+  const {output, route} = await callAi('generate_yaml', body, {stripFence: true});
   const validation = validateMidsceneYaml(output);
   res.json({
     success: true,
     yaml: output,
     validation,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
   });
 }));
 
@@ -678,11 +1034,20 @@ app.post('/ai/generate-case', asyncRoute(async (req, res) => {
   const body = {
     moduleName: req.body?.moduleName || '',
     requirement: req.body?.requirement || '',
+    modelConfig: req.body?.modelConfig || req.body?.model_config || {},
+    providerId: req.body?.providerId || req.body?.provider || '',
+    model: req.body?.model || req.body?.modelName || '',
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
-  const {output} = await callAi('generate_case', body);
+  const {output, route} = await callAi('generate_case', body);
   res.json({
     success: true,
     data: output,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
   });
 }));
 
@@ -700,6 +1065,9 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     modelConfig: req.body?.modelConfig || req.body?.model_config || {},
     providerId: req.body?.providerId || req.body?.provider || '',
     model: req.body?.model || req.body?.modelName || '',
+    imageAssets: req.body?.imageAssets || [],
+    fallbackModelConfig: req.body?.fallbackModelConfig || req.body?.fallback_model_config || {},
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
   const action = SKILL_ACTION_MAP[skillName] || 'generate_case';
   const {output, route} = await callAi(action, body, {
@@ -714,6 +1082,9 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     skillName,
     providerId: route.providerId,
     model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
   });
 }));
 
@@ -734,8 +1105,13 @@ app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
     evidenceSources: req.body?.evidenceSources || [],
     sourceEvidence: req.body?.sourceEvidence || {},
     executionConstraint: req.body?.executionConstraint || {},
+    modelConfig: req.body?.modelConfig || req.body?.model_config || {},
+    providerId: req.body?.providerId || req.body?.provider || '',
+    model: req.body?.model || req.body?.modelName || '',
+    fallbackModelConfig: req.body?.fallbackModelConfig || req.body?.fallback_model_config || {},
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
-  const {output} = await callAi('analyze_failure', body);
+  const {output, route} = await callAi('analyze_failure', body);
   let structured = null;
   try {
     structured = JSON.parse(stripMarkdownFence(output));
@@ -750,6 +1126,11 @@ app.post('/ai/analyze-failure', asyncRoute(async (req, res) => {
     failureType: structured?.failureType || '',
     evidence: Array.isArray(structured?.evidence) ? structured.evidence : [],
     canAutoRepair: structured?.canAutoRepair === true,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
   });
 }));
 
@@ -768,8 +1149,13 @@ app.post('/ai/optimize-yaml', asyncRoute(async (req, res) => {
     sourceEvidence: req.body?.sourceEvidence || {},
     executionConstraint: req.body?.executionConstraint || {},
     repairPolicy: req.body?.repairPolicy || {},
+    modelConfig: req.body?.modelConfig || req.body?.model_config || {},
+    providerId: req.body?.providerId || req.body?.provider || '',
+    model: req.body?.model || req.body?.modelName || '',
+    fallbackModelConfig: req.body?.fallbackModelConfig || req.body?.fallback_model_config || {},
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
-  const {output} = await callAi('optimize_yaml', body, {stripFence: true});
+  const {output, route} = await callAi('optimize_yaml', body, {stripFence: true});
   let structured = null;
   try {
     structured = JSON.parse(stripMarkdownFence(output));
@@ -785,6 +1171,11 @@ app.post('/ai/optimize-yaml', asyncRoute(async (req, res) => {
     changes: Array.isArray(structured?.changes) ? structured.changes : [],
     usedBaselineIds: Array.isArray(structured?.usedBaselineIds) ? structured.usedBaselineIds : [],
     validation,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
   });
 }));
 
@@ -793,25 +1184,26 @@ app.post('/ai/chat', asyncRoute(async (req, res) => {
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({error: 'messages required'});
   }
-  const routes = providerId || provider ? [await routeForProviderId(providerId || provider)] : await routeCandidatesFor('agent_plan');
-  let lastError = null;
-  for (let index = 0; index < routes.length; index += 1) {
-    const route = {...routes[index], action: 'agent_plan'};
-    try {
-      const client = clientForRoute(route);
-      const completionOptions = completionOptionsForRoute(route, '', {messages}, {temperature});
-      completionOptions.messages = messages;
-      if (model && !route.temperatureLocked) completionOptions.model = model;
-      const completion = await client.chat.completions.create(completionOptions);
-      const content = completion.choices?.[0]?.message?.content || '';
-      res.json({success: true, content, providerId: route.providerId, model: completionOptions.model});
-      return;
-    } catch (error) {
-      lastError = sanitizeError(error);
-      if (!isRetryableAiError(lastError) || index === routes.length - 1) throw new Error(lastError);
-    }
-  }
-  throw new Error(lastError || 'chat failed');
+  const body = {
+    messages,
+    providerId: providerId || provider || '',
+    model: model || '',
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
+  };
+  const {output, route} = await callAi('agent_plan', body, {
+    promptOverride: '',
+    messages,
+    temperature,
+  });
+  res.json({
+    success: true,
+    content: output,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
+  });
 }));
 
 app.post('/ai/generate-bug', asyncRoute(async (req, res) => {
@@ -819,11 +1211,20 @@ app.post('/ai/generate-bug', asyncRoute(async (req, res) => {
     taskName: req.body?.taskName || '',
     envInfo: req.body?.envInfo || '',
     failureAnalysis: req.body?.failureAnalysis || '',
+    modelConfig: req.body?.modelConfig || req.body?.model_config || {},
+    providerId: req.body?.providerId || req.body?.provider || '',
+    model: req.body?.model || req.body?.modelName || '',
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
-  const {output} = await callAi('generate_bug', body);
+  const {output, route} = await callAi('generate_bug', body);
   res.json({
     success: true,
     bug: output,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
   });
 }));
 

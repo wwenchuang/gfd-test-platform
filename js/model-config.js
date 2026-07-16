@@ -9,7 +9,12 @@ function providerStatusText(provider) {
 function providerDisplayText(provider) {
   if (!provider) return '未选择模型';
   const tempLabel = provider.temperatureLocked ? ' · 参数策略：平台固定' : ' · 参数策略：可自定义';
-  return `${provider.name || provider.id} · ${provider.model || ''} · ${providerStatusText(provider)}${tempLabel}`;
+  const source = provider.catalogSource === 'live'
+    ? ' · 实时目录'
+    : provider.catalogSource === 'configured_fallback'
+      ? ' · 目录降级'
+      : ' · 独立配置';
+  return `${provider.name || provider.id} · ${provider.model || ''}${source} · ${providerStatusText(provider)}${tempLabel}`;
 }
 
 function modelProviderOptions(selectedId='') {
@@ -69,12 +74,18 @@ function renderModelConfigCenter(loading=false, errorText='') {
     const tempInfo = provider.temperatureLocked
       ? `<span class="status-pill warn" title="该模型由服务商固定参数，平台自动适配">参数策略：平台固定</span>`
       : `<span class="status-pill success" title="可按任务类型自定义参数策略">参数策略：可自定义</span>`;
+    const sourceInfo = provider.catalogSource === 'live'
+      ? '<span class="status-pill success">上游实时目录</span>'
+      : provider.catalogSource === 'configured_fallback'
+        ? '<span class="status-pill warn">目录降级</span>'
+        : '<span class="status-pill">独立配置</span>';
     return `
     <div class="workflow-card">
       <h3>${escapeHtml(provider.name || provider.id)}</h3>
       <p style="font-family:var(--mono);font-size:12px;color:var(--text2);margin:4px 0;">${escapeHtml(provider.model || '')}</p>
       <div class="card-tags" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
         <span class="status-pill ${provider.configured ? 'success' : 'warn'}">${escapeHtml(providerStatusText(provider))}</span>
+        ${sourceInfo}
         ${tempInfo}
       </div>
     </div>

@@ -223,6 +223,7 @@ build_cases_payload_from_skills = _lazy("build_cases_payload_from_skills", "task
 should_fast_path_baidu_entry_visibility = _lazy("should_fast_path_baidu_entry_visibility", "task_server.services.ai_skill_service")
 call_dashscope_cases = _lazy("call_dashscope_cases", "task_server.services.ai_skill_service")
 call_dashscope_refine_cases = _lazy("call_dashscope_refine_cases", "task_server.services.ai_skill_service")
+ai_gateway_skill_content = _lazy("ai_gateway_skill_content", "task_server.services.ai_skill_service")
 dashscope_chat_content = _lazy("dashscope_chat_content", "task_server.services.ai_skill_service")
 improve_case_coverage = _lazy("improve_case_coverage", "task_server.services.ai_skill_service")
 normalize_requirement_analysis_result = _lazy("normalize_requirement_analysis_result", "task_server.services.ai_skill_service")
@@ -5742,6 +5743,7 @@ def ai_rewrite_yaml_for_executable_gate(
     reasons=None,
     baseline_text="",
     max_attempts=1,
+    model_config=None,
 ):
     """Use AI once to rewrite generated YAML that deterministic repair cannot fix."""
     original = str(yaml_text or "")
@@ -5758,6 +5760,7 @@ def ai_rewrite_yaml_for_executable_gate(
         )
     limit = max(1, min(2, safe_int(max_attempts, 1)))
     for attempt in range(1, limit + 1):
+        model_runtime_trace = {}
         try:
             prompt = _ai_executable_gate_rewrite_prompt(
                 current,
@@ -5767,15 +5770,41 @@ def ai_rewrite_yaml_for_executable_gate(
                 reasons=reasons,
                 baseline_text=baseline_text,
             )
-            raw = dashscope_chat_content(
-                prompt,
-                image_assets=[],
-                temperature=0.05,
-                timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
-                json_response=True,
-                respect_global_timeout=False,
-                retry_count=0,
-            )
+            if isinstance(model_config, dict) and any(
+                model_config.get(key)
+                for key in ("providerId", "provider", "model", "modelName")
+            ):
+                raw = ai_gateway_skill_content(
+                    "yaml_patch_repair",
+                    prompt,
+                    payload={
+                        "title": title,
+                        "module": module,
+                        "file": file,
+                        "reasons": list(reasons or [])[:12],
+                    },
+                    timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
+                    temperature=0.05,
+                    json_response=True,
+                    model_config=model_config,
+                    runtime_trace=model_runtime_trace,
+                )
+            else:
+                raw = dashscope_chat_content(
+                    prompt,
+                    image_assets=[],
+                    temperature=0.05,
+                    timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
+                    json_response=True,
+                    respect_global_timeout=False,
+                    retry_count=0,
+                )
+                model_runtime_trace.update({
+                    "providerId": "dashscope_direct",
+                    "model": "",
+                    "fallbackUsed": False,
+                    "source": "dashscope_direct",
+                })
             repaired = normalize_yaml_from_model(raw)
             candidate = repaired.get("content") or ""
             local = repair_generated_yaml_executable_gate_issues(candidate)
@@ -5794,6 +5823,7 @@ def ai_rewrite_yaml_for_executable_gate(
                 "executionLevel": score.get("executionLevel"),
                 "reasons": list(score.get("reasons") or [])[:8],
                 "errors": list(dry.get("errors") or [])[:8],
+                "modelTrace": copy.deepcopy(model_runtime_trace),
             }
             attempts.append(attempt_row)
             current = candidate
@@ -5804,6 +5834,7 @@ def ai_rewrite_yaml_for_executable_gate(
                 "attempt": attempt,
                 "ok": False,
                 "error": str(exc)[:500],
+                "modelTrace": copy.deepcopy(model_runtime_trace),
             })
             break
 
@@ -5821,7 +5852,16 @@ def ai_rewrite_yaml_for_executable_gate(
     }
 
 
-def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file="", app_package="", max_attempts=None):
+def repair_generated_yaml_static_errors(
+    yaml_text,
+    *,
+    title="",
+    module="",
+    file="",
+    app_package="",
+    max_attempts=None,
+    model_config=None,
+):
     """Repair generated YAML only enough to pass static/dry-run checks.
 
     This is intentionally narrow: it is not a coverage optimizer and must not add
@@ -5875,6 +5915,7 @@ def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file=
         }
 
     for attempt in range(1, limit + 1):
+        model_runtime_trace = {}
         try:
             prompt = _yaml_static_repair_prompt(
                 current,
@@ -5884,15 +5925,42 @@ def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file=
                 file=file,
                 app_package=app_package,
             )
-            raw = dashscope_chat_content(
-                prompt,
-                image_assets=[],
-                temperature=0.05,
-                timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
-                json_response=True,
-                respect_global_timeout=False,
-                retry_count=0,
-            )
+            if isinstance(model_config, dict) and any(
+                model_config.get(key)
+                for key in ("providerId", "provider", "model", "modelName")
+            ):
+                raw = ai_gateway_skill_content(
+                    "yaml_static_repair",
+                    prompt,
+                    payload={
+                        "title": title,
+                        "module": module,
+                        "file": file,
+                        "appPackage": app_package,
+                        "dryRun": dry,
+                    },
+                    timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
+                    temperature=0.05,
+                    json_response=True,
+                    model_config=model_config,
+                    runtime_trace=model_runtime_trace,
+                )
+            else:
+                raw = dashscope_chat_content(
+                    prompt,
+                    image_assets=[],
+                    temperature=0.05,
+                    timeout=YAML_STATIC_REPAIR_TIMEOUT_SECONDS,
+                    json_response=True,
+                    respect_global_timeout=False,
+                    retry_count=0,
+                )
+                model_runtime_trace.update({
+                    "providerId": "dashscope_direct",
+                    "model": "",
+                    "fallbackUsed": False,
+                    "source": "dashscope_direct",
+                })
             repaired = normalize_yaml_from_model(raw)
             candidate, candidate_guard_changes = normalize_yaml_runtime_guards(repaired.get("content") or "", app_package=app_package)
             candidate_dry = dry_run_midscene_yaml(candidate, module=module, file=file, app_package=app_package)
@@ -5904,6 +5972,7 @@ def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file=
                 "changes": list(repaired.get("changes") or [])[:12],
                 "guardChanges": candidate_guard_changes[:12],
                 "errors": list(candidate_dry.get("errors") or [])[:12],
+                "modelTrace": copy.deepcopy(model_runtime_trace),
             })
             current = candidate
             dry = candidate_dry
@@ -5915,6 +5984,7 @@ def repair_generated_yaml_static_errors(yaml_text, *, title="", module="", file=
                 "type": "ai_static_repair",
                 "ok": False,
                 "error": str(exc)[:500],
+                "modelTrace": copy.deepcopy(model_runtime_trace),
             })
             break
 
@@ -6828,12 +6898,24 @@ def generate_ui_yaml_from_request(d, job_id=None):
             skill_pipeline_error = str(e)
             if job_id:
                 update_generate_job(job_id, progress=48, step="兼容生成", message=f"Skills 链路暂不可用，正在使用兼容生成兜底：{skill_pipeline_error[:80]}")
-            payload = call_dashscope_cases(title, module, stage1_text_assets, [])
+            payload = call_dashscope_cases(
+                title,
+                module,
+                stage1_text_assets,
+                [],
+                model_config=model_config,
+            )
             review = payload.setdefault("review", {})
             review["skill_pipeline_error"] = skill_pipeline_error
             review["skill_pipeline_fallback"] = "call_dashscope_cases"
     else:
-        payload = call_dashscope_cases(title, module, stage1_text_assets, [])
+        payload = call_dashscope_cases(
+            title,
+            module,
+            stage1_text_assets,
+            [],
+            model_config=model_config,
+        )
         review = payload.setdefault("review", {})
         review["skill_pipeline_disabled"] = True
 
@@ -6899,6 +6981,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 visual_text_assets,
                 visual_image_assets,
                 job_id=job_id,
+                model_config=model_config,
             )
         except Exception as e:
             review = payload.setdefault("review", {})
@@ -7348,6 +7431,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             module=module,
             file=item.get("file") or "",
             app_package=app_package,
+            model_config=model_config,
         )
         next_item = dict(item)
         if repair.get("content"):
@@ -8577,10 +8661,22 @@ def generate_mindmap_from_request(d, job_id=None):
                     },
                 }
             else:
-                payload = call_dashscope_cases(title, module, stage1_text_assets, [])
+                payload = call_dashscope_cases(
+                    title,
+                    module,
+                    stage1_text_assets,
+                    [],
+                    model_config=model_config,
+                )
                 payload.setdefault("review", {})["skill_pipeline_error"] = str(e)
     else:
-        payload = call_dashscope_cases(title, module, stage1_text_assets, [])
+        payload = call_dashscope_cases(
+            title,
+            module,
+            stage1_text_assets,
+            [],
+            model_config=model_config,
+        )
 
     review = payload.setdefault("review", {})
     review["mindmap_only"] = True
@@ -8704,6 +8800,7 @@ def generate_mindmap_from_request(d, job_id=None):
                     timeout_seconds=timeout_seconds,
                     legacy_fallback=False,
                     bounded_retry=True,
+                    model_config=model_config,
                 )
                 visual_batches_done += 1
                 visual_images_done += len(image_batch)
@@ -8720,6 +8817,7 @@ def generate_mindmap_from_request(d, job_id=None):
                     "attemptCount": safe_int(batch_attempt_meta.get("count"), 1),
                     "retryUsed": bool(batch_attempt_meta.get("retryUsed")),
                     "judgement": str(payload_review.get("visual_grounding_check") or "").strip()[:500],
+                    "modelTrace": copy.deepcopy(payload_review.get("model_trace") or {}),
                 })
             except Exception as e:
                 error_text = str(e)
@@ -9315,7 +9413,15 @@ def yaml_visual_total_budget_for_batches(total_batches, per_batch_timeout=None):
     return max(int(YAML_VISUAL_TOTAL_BUDGET_SECONDS), total_batches * per_batch_timeout)
 
 
-def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_assets, visual_image_assets, job_id=None):
+def refine_cases_with_yaml_visual_batches(
+    title,
+    module,
+    payload,
+    visual_text_assets,
+    visual_image_assets,
+    job_id=None,
+    model_config=None,
+):
     """Run visual grounding in bounded batches for Figma-heavy YAML generation."""
     image_assets = list(visual_image_assets or [])
     text_assets = list(visual_text_assets or [])
@@ -9344,6 +9450,7 @@ def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_as
                 [],
                 timeout_seconds=YAML_VISUAL_TIMEOUT_SECONDS,
                 legacy_fallback=False,
+                model_config=model_config,
             )
             refined.setdefault("review", {})["yaml_visual_grounded"] = True
             refined.setdefault("review", {})["yaml_visual_batches"] = {
@@ -9399,6 +9506,7 @@ def refine_cases_with_yaml_visual_batches(title, module, payload, visual_text_as
                 batch,
                 timeout_seconds=timeout_seconds,
                 legacy_fallback=False,
+                model_config=model_config,
             )
             completed_batches += 1
             review = refined_payload.setdefault("review", {})

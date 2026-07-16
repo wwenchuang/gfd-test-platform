@@ -60,7 +60,8 @@ function normalizeAgentProviderList(data) {
       configured: provider.configured !== false,
       type: provider.type || 'openai_compatible',
       temperatureLocked: Boolean(provider.temperatureLocked),
-      fixedTemperature: provider.fixedTemperature
+      fixedTemperature: provider.fixedTemperature,
+      catalogSource: String(provider.catalogSource || '').trim()
     })).filter(provider => provider.id);
   }
   if (source && typeof source === 'object') {
@@ -71,7 +72,8 @@ function normalizeAgentProviderList(data) {
       configured: provider?.configured !== false,
       type: provider?.type || 'openai_compatible',
       temperatureLocked: Boolean(provider?.temperatureLocked),
-      fixedTemperature: provider?.fixedTemperature
+      fixedTemperature: provider?.fixedTemperature,
+      catalogSource: String(provider?.catalogSource || '').trim()
     })).filter(provider => provider.id);
   }
   return [];
@@ -82,7 +84,12 @@ function agentProviderDisplayText(provider) {
   const model = provider.model ? ` · ${provider.model}` : '';
   const configured = provider.configured === false ? ' · 未配置 Key' : '';
   const locked = provider.temperatureLocked ? ' · 固定参数' : '';
-  return `${provider.name || provider.id}${model}${configured}${locked}`;
+  const source = provider.catalogSource === 'live'
+    ? ' · 实时目录'
+    : provider.catalogSource === 'configured_fallback'
+      ? ' · 目录降级'
+      : '';
+  return `${provider.name || provider.id}${model}${source}${configured}${locked}`;
 }
 
 function addAgentModelOption(parent, option) {
@@ -185,7 +192,8 @@ async function loadAgentModelOptions(preferredValue='') {
 
   try {
     const mData = await apiRequest('/models');
-    const models = Array.isArray(mData?.models) ? mData.models : [];
+    const models = (Array.isArray(mData?.models) ? mData.models : [])
+      .filter(model => !(gatewayProviders.length && model.group === 'AI Gateway'));
     if (!gatewayProviders.length) {
       const defaultModel = models.find(m => m.default);
       if (defaultModel) {

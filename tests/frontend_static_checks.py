@@ -57,6 +57,7 @@ def main():
     require("模型配置" in html and "/ai/providers" in html and "/ai/model-router" in html, "Config page must expose multi-provider model routing")
     require("loadAgentModelOptions" in html and "AI Gateway Provider" in html, "Agent model selector must load AI Gateway providers")
     require("modelProviderId" in html and "aiProviderId" in html and "selectedAgentModelInfo" in html, "Agent payload must keep provider id separate from raw model name")
+    require("catalogSource" in html and "实时目录" in html and "model.group === 'AI Gateway'" in html, "Agent model selector must label live catalog entries and suppress stale Task API Gateway duplicates")
     require("自动（按模型策略" in html, "Agent model selector must make the router-backed auto model visible")
     for label in ("生成测试用例模型", "生成 YAML 模型", "失败分析模型", "YAML 修复模型", "Agent 判断模型", "飞书缺陷草稿模型"):
         require(label in html, f"Model config label missing: {label}")

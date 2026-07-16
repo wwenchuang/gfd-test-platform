@@ -122,8 +122,10 @@ export HIGHWAY_API_KEY='your_highway_api_key'
 export QWEN_API_KEY='your_dashscope_api_key'
 ```
 
-AI Gateway models are configured in `/opt/ai-gateway/config/providers.json`;
-capability routing is configured in `/opt/ai-gateway/config/model-router.json`.
+AI Gateway channels and Qwen's separately managed model are configured in
+`/opt/ai-gateway/config/providers.json`. Non-Qwen OpenAI-compatible model IDs
+are discovered from each upstream `/models` API; capability routing is
+configured in `/opt/ai-gateway/config/model-router.json`.
 API keys stay in `.env` or systemd environment only.
 
 Report retention defaults are appended automatically during install when missing:

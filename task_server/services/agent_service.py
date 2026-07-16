@@ -4,6 +4,7 @@
 与 midscene-upload.py 中的 _execute_agent_step / _execute_agent_steps 保持一致。
 """
 
+import copy
 import json
 import os
 import re
@@ -37,6 +38,7 @@ from task_server.config import (
     dashscope_api_key,
     dashscope_base_url,
     dashscope_text_model,
+    dashscope_vl_model,
     safe_int,
 )
 from task_server.schemas import AGENT_STATE_STEPS, HIGH_RISK_KEYWORDS, MIDSCENE_FLOW_ACTIONS
@@ -2854,10 +2856,56 @@ def _ai_gateway_post(path, payload, timeout=30):
     """对 AI Gateway 发起 POST 请求（默认 30 秒超时）。"""
     url = AI_GATEWAY_URL.rstrip("/") + path
     try:
-        resp = http_client.post_json(url, payload if isinstance(payload, dict) else {}, timeout=timeout)
+        request_payload = dict(payload) if isinstance(payload, dict) else {}
+        request_payload.setdefault("timeoutMs", max(5000, (safe_int(timeout, 30) - 2) * 1000))
+        resp = http_client.post_json(url, request_payload, timeout=timeout)
         return resp.json(default={}) if resp.ok else None
     except Exception as e:
         return None
+
+
+def _agent_model_config(run):
+    """Return the model selected when this Agent run was created."""
+    run = run if isinstance(run, dict) else {}
+    provider_id = str(run.get("modelProviderId") or run.get("aiProviderId") or "").strip()
+    model = str(run.get("aiModel") or run.get("model") or "").strip()
+    return {
+        key: value
+        for key, value in {"providerId": provider_id, "model": model}.items()
+        if value
+    }
+
+
+def _agent_ai_route_payload(run, has_images=False):
+    model_config = _agent_model_config(run)
+    payload = {
+        "modelConfig": model_config,
+        "providerId": model_config.get("providerId") or "",
+        "model": model_config.get("model") or "",
+    }
+    if has_images:
+        payload["fallbackModelConfig"] = {
+            "providerId": str(
+                os.getenv("MIDSCENE_AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID", "qwen_plus")
+            ).strip() or "qwen_plus",
+            "model": dashscope_vl_model(),
+        }
+    return payload
+
+
+def _agent_ai_response_model_trace(run, response):
+    response = response if isinstance(response, dict) else {}
+    selected = _agent_model_config(run)
+    return {
+        "selectedProviderId": selected.get("providerId") or "",
+        "selectedModel": selected.get("model") or "",
+        "providerId": response.get("providerId") or selected.get("providerId") or "",
+        "model": response.get("model") or selected.get("model") or "",
+        "fallbackUsed": bool(response.get("fallbackUsed")),
+        "fallbackIndex": safe_int(response.get("fallbackIndex"), 0),
+        "fallbackReason": str(response.get("fallbackReason") or "")[:500],
+        "source": "ai_gateway",
+    }
 
 
 def _probe_agent_ai_health(run=None):
@@ -3366,6 +3414,7 @@ def tool_analyze_goal(run, inp):
                 "messages": messages,
                 "temperature": 0.1,
                 "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+                "model": run.get("aiModel") or run.get("model") or "",
             }, timeout=15)
         else:
             gw_result = None
@@ -3378,6 +3427,7 @@ def tool_analyze_goal(run, inp):
                 ai_result = json.loads(content)
                 normalized, issue = _normalize_agent_goal_analysis(ai_result, rule_result, "ai_gateway")
                 if normalized:
+                    normalized["modelTrace"] = _agent_ai_response_model_trace(run, gw_result)
                     artifacts["goalAnalysis"] = normalized
                     _record_agent_ai_decision(run, "analyze_goal", "ai_gateway", True, normalized.get("summary", ""), keywords=normalized.get("keywords"), businessFlow=business_constraint.get("businessFlow"))
                     return normalized
@@ -3389,7 +3439,8 @@ def tool_analyze_goal(run, inp):
 
     # === Strategy 2: Direct DashScope OpenAI-compatible API ===
     try:
-        api_key = dashscope_api_key(required=False)
+        explicit_model = bool(_agent_model_config(run))
+        api_key = "" if explicit_model else dashscope_api_key(required=False)
         if api_key:
             base_url = dashscope_base_url()
             model = dashscope_text_model()
@@ -3422,7 +3473,11 @@ def tool_analyze_goal(run, inp):
             else:
                 _record_agent_ai_decision(run, "analyze_goal", f"dashscope/{model}", False, f"HTTP {resp.status}")
         else:
-            _record_agent_ai_decision(run, "analyze_goal", "dashscope", False, "未配置 DASHSCOPE_API_KEY")
+            reason = (
+                "显式选定模型已由 Gateway 完成允许的降级，禁止再静默直连其他模型"
+                if explicit_model else "未配置 DASHSCOPE_API_KEY"
+            )
+            _record_agent_ai_decision(run, "analyze_goal", "dashscope", False, reason)
     except (json.JSONDecodeError, KeyError, TypeError, Exception) as exc:
         _record_agent_ai_decision(run, "analyze_goal", "dashscope", False, str(exc)[:200])
 
@@ -4199,11 +4254,16 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
     if not smoke_flow_ids:
         smoke_flow_ids = [item.get("id") for item in (normalized_plan.get("businessFlows") or [])[:3]]
     all_flow_ids = [item.get("id") for item in normalized_plan.get("businessFlows") or []]
+    skill_model_traces = review.get("skill_model_traces") if isinstance(review.get("skill_model_traces"), dict) else {}
+    plan_fallback_used = any(
+        isinstance(trace, dict) and trace.get("fallbackUsed") is True
+        for trace in skill_model_traces.values()
+    )
     normalized_plan.update({
         "version": "agent-business-plan-v3",
         "source": "platform_mindmap_ai",
         "aiGenerated": True,
-        "fallbackUsed": False,
+        "fallbackUsed": plan_fallback_used,
         "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
         "model": run.get("aiModel") or run.get("model") or "",
         "executionStrategy": {
@@ -4214,6 +4274,7 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
         "mindmapTrace": {
             "caseSetId": result.get("case_set_id") or "",
             "skillPipeline": review.get("skill_pipeline") or "",
+            "skillModelTraces": copy.deepcopy(skill_model_traces),
             "scenarioCount": len(scenarios),
             "caseCount": len(cases),
             "visualBatches": visual_batches,
@@ -4503,6 +4564,7 @@ def _ai_select_cases(target: str, scope: str, app_name: str, yaml_list_text: str
                 "messages": messages,
                 "temperature": 0.1,
                 "providerId": provider_id,
+                "model": model,
             }, timeout=20)
             if gw_result and isinstance(gw_result, dict):
                 content = gw_result.get("content", "")
@@ -4510,6 +4572,10 @@ def _ai_select_cases(target: str, scope: str, app_name: str, yaml_list_text: str
                     parsed = _parse_ai_match_response(content, all_yamls)
                     if parsed:
                         parsed["ai_source"] = "ai_gateway"
+                        parsed["modelTrace"] = _agent_ai_response_model_trace({
+                            "modelProviderId": provider_id,
+                            "aiModel": model,
+                        }, gw_result)
                         return parsed
                     else:
                         _ai_errors.append(f"AI Gateway 返回了内容但解析失败: {content[:200]}")
@@ -4523,6 +4589,9 @@ def _ai_select_cases(target: str, scope: str, app_name: str, yaml_list_text: str
         _ai_errors.append(f"AI Gateway 异常: {str(e)[:200]}")
 
     # 策略2: DashScope 直连
+    if provider_id or model:
+        _ai_errors.append("显式选定模型已由 Gateway 完成允许的降级，禁止再静默直连其他模型")
+        return {"_ai_errors": _ai_errors}
     try:
         api_key = dashscope_api_key(required=False)
         if api_key:
@@ -4789,11 +4858,16 @@ AI 业务计划（必须优先覆盖；若仍是未验证候选，只能作为�
                 "messages": messages,
                 "temperature": 0.1,
                 "providerId": provider_id,
+                "model": model,
             }, timeout=25)
             content = gw_result.get("content", "") if isinstance(gw_result, dict) else ""
             parsed = _parse_ai_case_retrieval_response(content, candidates)
             if parsed:
                 parsed["ai_source"] = "ai_gateway"
+                parsed["modelTrace"] = _agent_ai_response_model_trace({
+                    "modelProviderId": provider_id,
+                    "aiModel": model,
+                }, gw_result)
                 return parsed
             errors.append(f"AI Gateway 返回无法解析: {str(content)[:200]}")
         else:
@@ -4801,6 +4875,9 @@ AI 业务计划（必须优先覆盖；若仍是未验证候选，只能作为�
     except Exception as e:
         errors.append(f"AI Gateway 异常: {str(e)[:200]}")
 
+    if provider_id or model:
+        errors.append("显式选定模型已由 Gateway 完成允许的降级，禁止再静默直连其他模型")
+        return {"_ai_errors": errors}
     try:
         api_key = dashscope_api_key(required=False)
         if api_key:
@@ -5458,6 +5535,7 @@ def _agent_repair_yaml_ref_for_execution(run, ref, *, reason="execution_gate"):
             reasons=combined_reasons,
             baseline_text="",
             max_attempts=1,
+            model_config=_agent_model_config(run),
         )
         auto_repair["aiRewrite"] = {
             "changed": bool(ai_repair.get("changed")),
@@ -11853,6 +11931,7 @@ def _agent_failure_ai_payload(run, failure_type, failure_context, failed_jobs):
             "deviceStrategy": run.get("deviceStrategy") or "",
             "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
         },
+        **_agent_ai_route_payload(run, has_images=bool(image_assets)),
     }
 
 
@@ -12316,6 +12395,7 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
                     failure_payload,
                     timeout=max(30, safe_int(os.getenv("MIDSCENE_AGENT_FAILURE_ANALYSIS_TIMEOUT_SECONDS"), 90)),
                 )
+                analysis["modelTrace"] = _agent_ai_response_model_trace(run, result)
                 analysis["evidence"] = {
                     "reportKeyframes": failure_payload.get("reportKeyframes") or [],
                     "reportKeyframeCount": len(failure_payload.get("reportKeyframes") or []),
@@ -12544,6 +12624,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "deviceStrategy": run.get("deviceStrategy") or "",
                         "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
                     },
+                    **_agent_ai_route_payload(run, has_images=bool(report_keyframes)),
                 }
                 candidate_gate = None
                 for repair_attempt in range(2):
@@ -12593,6 +12674,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     original_yaml, resp, baseline_examples, platform=run.get("platform", "android")
                 )
                 fixed_yaml = candidate_gate.get("fixedYaml") or ""
+                model_trace = _agent_ai_response_model_trace(run, resp)
+                item_summary["modelTrace"] = model_trace
+                draft["modelTrace"] = model_trace
                 if isinstance(resp, dict):
                     if resp.get("changes"):
                         changes = resp.get("changes")
@@ -12760,11 +12844,13 @@ def _tool_generate_bug_draft(run):
                     "failureType": "PRODUCT_BUG",
                     "summary": fa.get("summary", ""),
                     "jobId": fa.get("jobId", ""),
+                    **_agent_ai_route_payload(run),
                 })
                 if isinstance(resp, dict):
                     draft["title"] = resp.get("title", draft["title"])
                     draft["description"] = resp.get("description", draft["description"])
                     draft["severity"] = resp.get("severity", "medium")
+                draft["modelTrace"] = _agent_ai_response_model_trace(run, resp)
                 call["status"] = "SUCCESS"
                 call["outputSummary"] = "缺陷草稿生成完成"
             except Exception as e:

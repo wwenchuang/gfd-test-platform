@@ -6,6 +6,8 @@
       "baseUrl": "https://api.highwayapi.ai/openai",
       "apiKeyEnv": "HIGHWAY_API_KEY",
       "model": "gpt-5-mini",
+      "catalogMode": "live",
+      "catalogName": "Highway",
       "defaultMaxTokens": 4096,
       "temperatureLocked": true,
       "fixedTemperature": 1
@@ -16,6 +18,8 @@
       "baseUrl": "https://api.highwayapi.ai/openai",
       "apiKeyEnv": "HIGHWAY_API_KEY",
       "model": "gpt-4.1-mini",
+      "catalogMode": "live",
+      "catalogName": "Highway",
       "defaultMaxTokens": 4096,
       "temperatureLocked": false
     },
@@ -25,6 +29,8 @@
       "baseUrl": "https://api.highwayapi.ai/openai",
       "apiKeyEnv": "HIGHWAY_API_KEY",
       "model": "deepseek-chat",
+      "catalogMode": "live",
+      "catalogName": "Highway",
       "defaultMaxTokens": 4096,
       "temperatureLocked": false
     },
@@ -34,6 +40,7 @@
       "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
       "apiKeyEnv": "QWEN_API_KEY",
       "model": "qwen-plus",
+      "catalogMode": "static",
       "defaultMaxTokens": 4096,
       "temperatureLocked": false
     }
