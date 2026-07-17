@@ -4708,7 +4708,33 @@ def _adapt_trusted_navigation_to_candidate(
 
     baseline_cut = baseline_actions[matched_baseline_position][0]
     candidate_cut = candidate_actions[matched_count - 1][0]
-    adapted = baseline_flow[:baseline_cut + 1] + candidate_flow[candidate_cut + 1:]
+    candidate_tail = candidate_flow[candidate_cut + 1:]
+    candidate_first_tail_action = next(
+        (index for index, step in enumerate(candidate_tail) if _navigation_action_target_key(step)),
+        len(candidate_tail),
+    )
+    candidate_has_transition_wait = any(
+        str(step or "").strip().startswith("等待")
+        for step in candidate_tail[:candidate_first_tail_action]
+    )
+    stable_transition = []
+    if not candidate_has_transition_wait:
+        next_baseline_action_index = (
+            baseline_actions[matched_baseline_position + 1][0]
+            if matched_baseline_position + 1 < len(baseline_actions)
+            else len(baseline_flow)
+        )
+        historical_leaf_key = (
+            baseline_actions[matched_baseline_position + 1][1]
+            if matched_baseline_position + 1 < len(baseline_actions)
+            else ""
+        )
+        for step in baseline_flow[baseline_cut + 1:next_baseline_action_index]:
+            compact_step = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(step or "")).lower()
+            if historical_leaf_key and historical_leaf_key in compact_step:
+                continue
+            stable_transition.append(step)
+    adapted = baseline_flow[:baseline_cut + 1] + stable_transition + candidate_tail
     if (
         len(adapted) < 2
         or len(adapted) > 7
@@ -5806,6 +5832,7 @@ def call_skill_executable_yaml_planner(
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "selectedBaselines": copy.deepcopy(compact_baselines),
             "verifiedBaselineIds": sorted(verified_baseline_ids),
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
@@ -5912,6 +5939,7 @@ def call_skill_executable_yaml_planner(
             "review": result.get("review") or {},
             "authoritative": True,
             "trace": trace,
+            "selectedBaselines": copy.deepcopy(compact_baselines),
             "allowedBaselineIds": sorted(allowed_baseline_ids),
             "verifiedBaselineIds": sorted(verified_baseline_ids),
             "requirementPoints": normalize_text_list(
@@ -5937,10 +5965,12 @@ def call_skill_executable_yaml_planner(
             exc,
         )
         if evidence_fallback:
+            evidence_fallback["selectedBaselines"] = copy.deepcopy(compact_baselines)
             return evidence_fallback
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "selectedBaselines": copy.deepcopy(compact_baselines),
             "verifiedBaselineIds": sorted(verified_baseline_ids),
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
@@ -6180,6 +6210,14 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     verified_baseline_ids = {
         str(item).strip() for item in (plan.get("verifiedBaselineIds") or []) if str(item or "").strip()
     }
+    selected_baselines_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in (plan.get("selectedBaselines") or [])
+        if isinstance(item, dict)
+        and str(item.get("id") or "").strip() in verified_baseline_ids
+        and str(item.get("sourceKind") or "").strip() == "verified_execution"
+        and str(item.get("verificationStatus") or "").strip() == "execution_success"
+    }
     planning_context = plan.get("planningContext") if isinstance(plan.get("planningContext"), dict) else {}
     convergence_pass = str(planning_context.get("pass") or "").strip() == "coverage_convergence"
     focused_candidate_ids = {
@@ -6227,6 +6265,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     convergence_demotion_blocked_count = 0
     redundant_unmentioned_manualized_count = 0
     current_visual_leaf_adapted_count = 0
+    trusted_baseline_navigation_adapted_count = 0
     dynamic_data_observation_grounded_count = 0
     dynamic_data_guard_count = 0
     unclassified_focused_automatic_ids = set()
@@ -6413,6 +6452,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         ))
         current_visual_evidence = {}
         visual_leaf_adapted = False
+        trusted_baseline_navigation_adapted = False
         if level == "executable" and baseline_grounded and planned_flow and visual_branch:
             current_visual_evidence = _current_visual_page_evidence_for_case(
                 normalized,
@@ -6421,6 +6461,28 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 visual_branch,
                 visual_target_terms,
             )
+            selected_baseline = selected_baselines_by_id.get(baseline_id) or {}
+            trusted_navigation = _trusted_baseline_source_navigation_flow(
+                selected_baseline,
+                visual_target_terms,
+                visual_branch,
+            )
+            if current_visual_evidence and trusted_navigation:
+                grounded_navigation, trusted_baseline_navigation_adapted = (
+                    _adapt_trusted_navigation_to_candidate(
+                        trusted_navigation,
+                        {"steps": planned_flow},
+                        visual_target_terms,
+                        visual_branch,
+                    )
+                )
+                if trusted_baseline_navigation_adapted:
+                    planned_flow = _ensure_trusted_home_start_guard(
+                        grounded_navigation,
+                        selected_baseline,
+                        precondition,
+                    )
+                    trusted_baseline_navigation_adapted_count += 1
             planned_flow, visual_leaf_adapted = _adapt_trusted_navigation_to_visual_evidence(
                 planned_flow,
                 current_visual_evidence,
@@ -6595,6 +6657,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             "executableReason": item.get("executableReason") or "",
             "batch": item.get("batch") or "",
             "boundedConvergence": copy.deepcopy(item.get("boundedConvergence") or {}),
+            "trustedBaselineNavigationAdapted": trusted_baseline_navigation_adapted,
             "currentVisualLeafAdapted": visual_leaf_adapted,
             "currentVisualLeafEvidence": copy.deepcopy(current_visual_evidence),
             "dynamicDataObservationGrounded": data_observation_grounded,
@@ -6710,6 +6773,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "bounded_convergence_ai_path_count": bounded_convergence_ai_path_count,
         "convergence_demotion_blocked_count": convergence_demotion_blocked_count,
         "redundant_unmentioned_manualized_count": redundant_unmentioned_manualized_count,
+        "trusted_baseline_navigation_adapted_count": trusted_baseline_navigation_adapted_count,
         "current_visual_leaf_adapted_count": current_visual_leaf_adapted_count,
         "dynamic_data_observation_grounded_count": dynamic_data_observation_grounded_count,
         "dynamic_data_guard_count": dynamic_data_guard_count,

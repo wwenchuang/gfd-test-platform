@@ -27,12 +27,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import os
 import re
 import shutil
 import threading
 import time
 import urllib.parse
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -450,6 +453,140 @@ def report_text_context(job: Dict[str, Any], max_chars: int = 12000) -> str:
     return joined
 
 
+class _MidsceneReportScriptParser(HTMLParser):
+    """Collect Midscene's typed image store and execution dump scripts."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.images: List[Tuple[str, str]] = []
+        self.dumps: List[str] = []
+        self._capture: Optional[Tuple[str, str]] = None
+        self._parts: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if tag.lower() != "script" or self._capture is not None:
+            return
+        attributes = {
+            str(key or "").strip().lower(): str(value or "").strip()
+            for key, value in attrs
+        }
+        script_type = attributes.get("type", "").lower()
+        if script_type == "midscene-image":
+            image_id = attributes.get("data-id", "")
+            if image_id:
+                self._capture = (script_type, image_id)
+                self._parts = []
+        elif script_type == "midscene_web_dump":
+            self._capture = (script_type, "")
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._capture is not None:
+            self._parts.append(data)
+
+    def handle_entityref(self, name: str) -> None:
+        if self._capture is not None:
+            self._parts.append(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        if self._capture is not None:
+            self._parts.append(f"&#{name};")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() != "script" or self._capture is None:
+            return
+        script_type, image_id = self._capture
+        body = "".join(self._parts).strip()
+        if script_type == "midscene-image":
+            self.images.append((image_id, body))
+        else:
+            self.dumps.append(body)
+        self._capture = None
+        self._parts = []
+
+
+def _midscene_screenshot_reference_ids(value: Any) -> List[str]:
+    references: List[str] = []
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            if item.get("type") == "midscene_screenshot_ref":
+                image_id = str(item.get("id") or "").strip()
+                if image_id:
+                    references.append(image_id)
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return references
+
+
+def _decode_report_image(data_url: str, name: str) -> Optional[Dict[str, Any]]:
+    match = re.fullmatch(
+        r"\s*data:(image/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=\r\n]+)\s*",
+        str(data_url or ""),
+        flags=re.I,
+    )
+    if not match:
+        return None
+    mime = match.group(1).lower().replace("image/jpg", "image/jpeg")
+    encoded = re.sub(r"\s+", "", match.group(2))
+    if len(encoded) < 1000:
+        return None
+    try:
+        data = base64.b64decode(encoded, validate=False)
+    except Exception:
+        return None
+    if not data or len(data) > 2 * 1024 * 1024:
+        return None
+    extension = "jpg" if mime == "image/jpeg" else mime.split("/", 1)[-1]
+    return {
+        "name": f"{name}.{extension}",
+        "mime": mime,
+        "base64": base64.b64encode(data).decode("ascii"),
+    }
+
+
+def _structured_midscene_report_images(text: str, report_name: str) -> Tuple[List[Dict[str, Any]], bool]:
+    parser = _MidsceneReportScriptParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception:
+        return [], bool(parser.images)
+    if not parser.images:
+        return [], False
+
+    image_store = {image_id: data_url for image_id, data_url in parser.images}
+    referenced_ids: List[str] = []
+    for raw_dump in parser.dumps:
+        try:
+            dump = json.loads(html_lib.unescape(raw_dump))
+        except Exception:
+            continue
+        referenced_ids.extend(_midscene_screenshot_reference_ids(dump))
+
+    ordered_ids: List[str] = []
+    for image_id in referenced_ids:
+        if image_id in image_store and image_id not in ordered_ids:
+            ordered_ids.append(image_id)
+    if not ordered_ids:
+        ordered_ids = list(dict.fromkeys(image_id for image_id, _data_url in parser.images))
+
+    images = []
+    for image_id in ordered_ids:
+        decoded = _decode_report_image(
+            image_store.get(image_id, ""),
+            f"{report_name}-midscene-{image_id}",
+        )
+        if decoded:
+            images.append(decoded)
+    return images, True
+
+
 def report_image_context(
     job: Dict[str, Any],
     limit: int = 4,
@@ -460,34 +597,37 @@ def report_image_context(
     """
     collected: List[Dict[str, Any]] = []
     seen: set = set()
-    data_url_re = re.compile(
-        r"data:(image/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=\\r\\n]+)",
+    legacy_data_url_re = re.compile(
+        r"data:(image/(?:png|jpe?g|webp));base64,([A-Za-z0-9+/=\r\n]+)",
         flags=re.I,
     )
     for path in report_html_candidates_for_job(job or {}):
         text = _read_text(path, "")
         if not text:
             continue
-        for idx, match in enumerate(data_url_re.finditer(text), start=1):
-            mime = match.group(1).lower().replace("image/jpg", "image/jpeg")
-            b64 = re.sub(r"\s+", "", match.group(2))
-            if len(b64) < 1000:
+        structured, has_midscene_image_store = _structured_midscene_report_images(
+            text,
+            Path(path).name,
+        )
+        candidates = structured
+        if not has_midscene_image_store:
+            candidates = []
+            for idx, match in enumerate(legacy_data_url_re.finditer(text), start=1):
+                decoded = _decode_report_image(
+                    match.group(0),
+                    f"{Path(path).name}-legacy-{idx}",
+                )
+                if decoded:
+                    candidates.append(decoded)
+        for image in candidates:
+            encoded = str(image.get("base64") or "")
+            if not encoded:
                 continue
-            key = b64[:80]
+            key = hashlib.sha256(encoded.encode("ascii", errors="ignore")).hexdigest()
             if key in seen:
                 continue
-            try:
-                data = base64.b64decode(b64, validate=False)
-            except Exception:
-                continue
-            if not data or len(data) > 2 * 1024 * 1024:
-                continue
             seen.add(key)
-            collected.append({
-                "name": f"{Path(path).name}-report-{idx}.png",
-                "mime": mime,
-                "base64": base64.b64encode(data).decode("ascii"),
-            })
+            collected.append(image)
     return collected[-limit:] if limit else collected
 
 
@@ -734,4 +874,3 @@ def build_report_checkpoints(summary: Dict[str, Any]) -> List[str]:
         f"人工确认项：对自动化不稳定或需要造数/环境/后台/真实设备状态的内容单独记录结论，重点跟进 {tail_note(manual_bits or risk_bits, '当前暂无明确人工项，执行前仍需确认测试数据和环境稳定性')}。",
     ]
     return [re.sub(r"\s+", " ", item).strip() for item in checkpoints[:5]]
-

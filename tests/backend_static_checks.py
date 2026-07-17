@@ -211,6 +211,55 @@ def check_automation_filter_invalid_json_self_repair():
     )
 
 
+def check_report_image_context_uses_midscene_execution_refs():
+    from task_server.services import report_service
+
+    fake_bundle = base64.b64encode(b"bundle-demo-screen" * 100).decode("ascii")
+    payloads = {
+        "real-a": b"real-execution-a" * 100,
+        "real-b": b"real-execution-b" * 100,
+        "real-c": b"real-execution-c" * 100,
+    }
+    encoded = {key: base64.b64encode(value).decode("ascii") for key, value in payloads.items()}
+    dump = {
+        "executions": [{
+            "tasks": [{
+                "snapshots": [
+                    {"type": "midscene_screenshot_ref", "id": "real-a"},
+                    {"type": "midscene_screenshot_ref", "id": "real-c"},
+                    {"type": "midscene_screenshot_ref", "id": "real-b"},
+                ],
+            }],
+        }],
+    }
+    old_candidates = report_service.report_html_candidates_for_job
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "execution.html"
+            report_path.write_text(
+                "<html><body>"
+                f"<script>window.demo='data:image/png;base64,{fake_bundle}'</script>"
+                f"<script data-id=\"real-a\" type=\"midscene-image\">data:image/jpeg;base64,{encoded['real-a']}</script>"
+                f"<script type=\"midscene-image\" data-id=\"real-b\">data:image/jpeg;base64,{encoded['real-b']}</script>"
+                f"<script type=\"midscene-image\" data-id=\"real-c\">data:image/jpeg;base64,{encoded['real-c']}</script>"
+                f"<script type=\"midscene_web_dump\">{json.dumps(dump)}</script>"
+                "</body></html>",
+                encoding="utf-8",
+            )
+            report_service.report_html_candidates_for_job = lambda _job: [report_path]
+            images = report_service.report_image_context({"job_id": "static-report"}, limit=2)
+    finally:
+        report_service.report_html_candidates_for_job = old_candidates
+    require(
+        [item.get("name", "").split("-midscene-")[-1].split(".")[0] for item in images]
+        == ["real-c", "real-b"]
+        and [base64.b64decode(item.get("base64") or "") for item in images]
+        == [payloads["real-c"], payloads["real-b"]]
+        and all(base64.b64decode(item.get("base64") or "") != base64.b64decode(fake_bundle) for item in images),
+        "Failure evidence must follow Midscene execution screenshot refs and exclude bundled demo assets",
+    )
+
+
 def load_backend():
     spec = importlib.util.spec_from_file_location("midscene_upload_static_check", MODULE)
     module = importlib.util.module_from_spec(spec)
@@ -1208,6 +1257,101 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             {"startPage": "App 首页"},
         ) == home_guarded_prefix,
         "A trusted home-start baseline must expose one stable launch checkpoint before its first visible-text tap",
+    )
+    repeated_parent_payload = {
+        "analysis": {
+            "requirement_points": ["REQ-052 媒体打印：云盘入口展示"],
+            "requirement_acceptance_checks": [
+                {
+                    "id": "REQ-052-CHECK-01",
+                    "requirementId": "REQ-052",
+                    "branch": "媒体打印",
+                    "kind": "visibility",
+                    "text": "校验云盘入口可见",
+                },
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-REPEATED-PARENT",
+            "title": "媒体打印云盘入口展示",
+            "executionLevel": "executable",
+            "requirementRefs": ["REQ-052 媒体打印"],
+            "start_page": "App首页",
+            "steps": ["等待 App首页稳定显示", "点击媒体打印入口", "点击当前规格", "等待云盘入口可见"],
+            "assertions": ["云盘入口可见"],
+        }],
+        "manual_cases": [],
+        "review": {
+            "current_page_evidence": [{
+                "caseId": "TC-REPEATED-PARENT",
+                "requirementId": "REQ-052",
+                "branch": "媒体打印",
+                "pageTitle": "当前规格",
+                "parentPath": ["App首页", "媒体打印"],
+                "navigationLeaf": "当前规格",
+                "targetText": "云盘",
+                "sameBranch": True,
+                "confidence": 0.99,
+                "source": "current_design_frame",
+            }],
+        },
+    }
+    repeated_parent_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-repeated-parent"],
+        "verifiedBaselineIds": ["base-repeated-parent"],
+        "selectedBaselines": [{
+            "id": "base-repeated-parent",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "startPage": "App 首页",
+            "snippet": (
+                "# baseline.start_page: App 首页\n"
+                "- aiTap: 媒体打印 icon\n"
+                "- aiWaitFor: 等待媒体打印主页加载完成\n"
+                "- aiTap: 媒体打印\n"
+                "- aiWaitFor: 等待规格入口可见\n"
+                "- aiTap: 历史规格\n"
+                "- aiWaitFor: 等待云盘入口可见"
+            ),
+        }],
+        "requirementPoints": ["REQ-052 媒体打印：云盘入口展示"],
+        "scopePlan": {"smokeCount": 1},
+        "cases": [{
+            "caseId": "TC-REPEATED-PARENT",
+            "baselineId": "base-repeated-parent",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": ["等待 App 首页稳定显示", "点击媒体打印入口", "点击当前规格"],
+            "assertionTarget": "云盘入口可见",
+            "requirementRefs": ["REQ-052 媒体打印"],
+            "executableReason": "成功基线提供父页面路径，当前设计提供具体规格",
+            "batch": "smoke",
+        }],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+    }
+    repeated_parent_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        repeated_parent_payload,
+        repeated_parent_plan,
+    )
+    repeated_parent_case = repeated_parent_applied["cases"][0]
+    repeated_parent_flow = repeated_parent_case.get("steps") or []
+    require(
+        repeated_parent_flow == [
+            "启动App并等待首页加载完成",
+            "点击「媒体打印 icon」",
+            "等待媒体打印主页加载完成",
+            "点击「媒体打印」",
+            "等待规格入口可见",
+            "点击当前规格",
+        ]
+        and repeated_parent_case.get("ai_case_plan", {}).get("trustedBaselineNavigationAdapted") is True
+        and repeated_parent_applied.get("review", {}).get("executable_yaml_plan", {}).get(
+            "trusted_baseline_navigation_adapted_count"
+        ) == 1,
+        "A selected successful baseline must preserve repeated same-label parent navigation before applying the current visual leaf",
     )
     require(
         ai_skill_service._source_navigation_has_alternative_destinations([
@@ -8752,6 +8896,7 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
 def main():
     check_ai_gateway_response_diagnostics()
     check_automation_filter_invalid_json_self_repair()
+    check_report_image_context_uses_midscene_execution_refs()
     check_runner_inline_android_device_injection()
     check_midscene_model_family_protocol()
     check_agent_summary_separates_runner_outcomes_from_orchestration()

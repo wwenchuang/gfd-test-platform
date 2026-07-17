@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-18 真实回归：失败 AI 必须读取 Midscene 真机帧，当前视觉叶子不能截断成功基线父路径
+
+用户部署 `bf879a2` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784328618231-f2042acf`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，创建时选择 `qwen3.6-plus`：
+
+- 8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0 (357)` ready。所有 Agent dry-run 和正式任务只下发固定 OPPO，没有选择或执行第二台设备。
+- Figma parser 保持原实现并解析 `4 页 / 4 张 UI 图 / 忽略 0`；4 个视觉批次全部送入 `qwen3.6-plus` 并完成。结构化视觉证据明确给出 `REQ-002 / 照片打印 / 5寸照片 / 百度网盘 / sameBranch=true / confidence=1.0`。
+- AI 生成 `12` 个场景、`6` 条 executable YAML 和 `8` 条人工项，显式需求覆盖完整；6 条 YAML 均通过 static、scorer 100 和 Runner dry-run，无坐标动作。首批仅选文档、照片、扫描 3 条展示 Smoke，并固定 OPPO 串行执行。
+- 文档 `job_1784329079617_00004` 首次成功；照片 `job_1784329188641_00005` 在 300 秒定位 `5寸照片` 超时；扫描 `job_1784329507846_00006` 在 128 秒定位 `立即使用` 失败。Smoke 为 `1 passed / 2 script failed`，低于 50% 后正确暂停 remaining；最终 `FAILED / COLLECT_REPORT / 95%`，报告继续保留真实通过数，没有覆盖成全部失败。
+- 照片真实末帧停在第一层“照片打印”页，页面中仍有第二个同名“照片打印”卡片；正确父路径是 `照片打印 icon -> 照片打印 -> 当前规格`。生成计划虽然引用了执行成功基线 `c29b5ecd70bbfe27`，却只保留模型的单次“照片打印”点击，再接 5 寸，因此跨层定位失败。
+- 扫描真实帧已到达“小白扫描王”首页，导入区域依次显示本地导入、相册导入、微信导入，百度网盘图标在右侧边缘可见；脚本继续复制深层历史动作 `证件扫描 -> 立即使用`，真机实际出现“取消 / 确定”相机权限说明弹窗。
+
+深层根因：
+
+- `report_image_context()` 旧实现扫描整份自包含 HTML 中的所有 `data:image`，并取最后若干张。Midscene 报告前端 bundle 内置了 Swag Labs 演示图片，这些图片被当作失败录屏关键帧送给 AI；失败分析因此虚构“执行到了 Swag Labs 登录页/环境混乱”，扫描任务还被错误描述成照片规格问题，最终未生成可执行修复。
+- Midscene 的真实执行帧有明确结构：`midscene_web_dump` 中按执行顺序保存 `midscene_screenshot_ref`，再通过 `script[type=midscene-image][data-id]` 解析图片。平台此前没有使用这条结构化引用链。
+- executable planner 能看到成功基线完整 snippet，但响应落地后只保留 baseline ID；应用阶段直接信任模型缩短后的 flow，再对该 flow 替换视觉叶子，无法恢复被模型省略的同名父页面动作。
+
+通用修复：
+
+- 报告关键帧改为解析 Midscene typed image store 和 execution dump，按真实 screenshot ref 顺序去重并只取最新执行帧；存在 Midscene image store 时禁止回退到 bundle 任意 data URL，旧报告没有 typed store 时才使用兼容提取。图片用完整内容 SHA-256 去重，避免相同 JPEG 头导致不同真机帧被误合并。
+- executable planner 返回本轮已提供给 AI 的 compact selected baselines。只有 baseline 确认为 `verified_execution / execution_success`，且当前视觉证据与 case、REQ、分支、目标文案一致时，应用阶段才复用成功基线的可见文字父路径；AI 当前 flow 负责新叶子，已有当前 Frame 规则继续负责历史叶子替换。
+- 同名入口在不同页面出现时不按文案机械去重：保留成功基线中两次动作之间的稳定等待，再接当前视觉叶子。没有加入“照片打印”“5寸”“百度网盘”等业务硬编码，也没有新增模型轮次或放宽 static/scorer/dry-run/Smoke 门禁。
+
+真实数据重放：
+
+- 照片报告从 `11` 个被 execution dump 引用的真机帧中返回最后 `4` 帧，末帧 screenshot id 为 `2e59aa7a-adc0-4a69-bb8f-eefbc87297a7`，真实显示第一层照片打印页；扫描报告从 `17` 个真机帧中返回最后 `4` 帧，末帧真实显示“取消 / 确定”权限提示。两者均不再包含 Swag Labs。
+- 使用线上 `TC-002`、Figma 结构化证据和成功基线 `c29b5ecd70bbfe27` 重放，最终 YAML 动作为 `首页稳定等待 -> 照片打印 icon -> 等待照片打印主页 -> 照片打印 -> 等待尺寸入口 -> 5寸照片 -> 百度网盘等待/断言`，完整保留父路径且不残留 6 寸。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/report_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py tests/ai_gateway_static_checks.py
+python3 tests/backend_static_checks.py
+python3 tests/ai_gateway_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及文本/空答/截断/图像/超时回退、Skill fixtures `3/3` 和 Playwright 桌面/移动视觉回归全部通过。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或任何历史 YAML。
+
+待完成：提交、推送并部署本轮修复；部署后用完全相同输入发起唯一一条完整 Agent，继续固定 OPPO `ecbfd645`。必须监督 4 个视觉批次、6 条左右最终 YAML、3 条首批 Smoke、AI 使用真实失败帧修复、remaining 以及最终报告到终态；离线重放不能替代真机成功。
+
 ### 2026-07-18 真实回归：保留视觉目标实体并前置新生成 YAML 启动稳定态
 
 用户部署 `4dee24e` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784321921903-4ebdca4b`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
