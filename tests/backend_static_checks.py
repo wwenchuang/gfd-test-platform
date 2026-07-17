@@ -1021,6 +1021,158 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ).get("ok"),
         "Adding trusted source-page evidence must merge with an executable candidate's existing visible-copy assertion instead of exchanging one covered dimension for another",
     )
+    manual_branch_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-021 资料归档：企业云盘入口可见、同级、文案正确且点击后首屏可达",
+            ],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-021-CHECK-01", "requirementId": "REQ-021", "branch": "资料归档", "kind": "visibility", "text": "校验企业云盘入口可见"},
+                {"id": "REQ-021-CHECK-02", "requirementId": "REQ-021", "branch": "资料归档", "kind": "relation", "text": "校验企业云盘入口与当前页面其它入口同级展示"},
+                {"id": "REQ-021-CHECK-03", "requirementId": "REQ-021", "branch": "资料归档", "kind": "copy", "text": "校验企业云盘入口使用需求约定的可见文案"},
+                {"id": "REQ-021-CHECK-04", "requirementId": "REQ-021", "branch": "资料归档", "kind": "reachability", "text": "点击企业云盘入口并校验目标页面稳定可达"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-SIBLING-LANDING",
+            "title": "文档中心企业云盘首屏",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": ["REQ-001 文档中心企业云盘入口点击可达"],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "进入文档中心",
+                "点击企业云盘入口",
+                "等待企业云盘内容列表页加载完成，显示文件名及继续按钮",
+            ],
+            "assertions": ["成功唤起企业云盘内容列表页，页面无崩溃、无白屏"],
+        }],
+        "manual_cases": [{
+            "case_id": "MC-BRANCH-SOURCE",
+            "title": "资料归档企业云盘入口展示",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "requirementRefs": ["REQ-021 资料归档：企业云盘入口可见、同级、文案正确且点击后首屏可达"],
+            "steps": [
+                "启动App并登录",
+                "进入首页 → 资料归档页",
+                "观察企业云盘入口是否可见",
+                "确认企业云盘入口文案及同级关系",
+                "记录入口展示结果",
+            ],
+            "expected_result": "企业云盘入口在资料归档页可见，文案正确且与其它入口同级并列",
+        }, {
+            "case_id": "MC-BRANCH-LANDING",
+            "title": "资料归档企业云盘入口点击",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "requirementRefs": ["REQ-021 资料归档：企业云盘入口可见、同级、文案正确且点击后首屏可达"],
+            "steps": [
+                "进入资料归档页",
+                "点击企业云盘入口",
+                "观察页面跳转或授权窗口弹出情况",
+                "确认无崩溃、无长时间白屏",
+                "记录跳转结果",
+            ],
+            "expected_result": "操作企业云盘入口后页面跳转或弹出授权窗口，无崩溃或长时间白屏",
+        }],
+    }
+    # Put the tail-only candidate first so convergence cannot pass by relying on
+    # the original manual-candidate order.
+    manual_branch_payload["manual_cases"].reverse()
+    manual_branch_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        manual_branch_payload,
+        {"min_automation_cases": 1},
+    )
+    manual_branch_automatic_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(manual_branch_payload["cases"])]
+    manual_branch_manual_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="manual"),
+    } for index, item in enumerate(manual_branch_payload["manual_cases"])]
+    manual_branch_baseline = ai_skill_service._compact_baseline_candidate({
+        "id": "base-archive-nav",
+        "title": "资料归档导入",
+        "aiSelectedBranchName": "资料归档",
+        "sourceKind": "verified_execution",
+        "verificationStatus": "execution_success",
+        "snippet": (
+            "# baseline.start_page: App 首页\n"
+            "- aiTap: 资料服务\n"
+            "- aiWaitFor: 等待资料服务页面加载完成\n"
+            "- aiTap: 资料归档\n"
+            "- aiWaitFor: 等待资料归档页面加载完成\n"
+            "- aiTap: 相册导入"
+        ),
+    })
+    manual_branch_evidence = ai_skill_service._bounded_convergence_evidence(
+        manual_branch_payload,
+        manual_branch_automatic_records,
+        manual_branch_audit,
+        selected_baselines=[manual_branch_baseline],
+        manual_records=manual_branch_manual_records,
+    )
+    manual_branch_source_evidence = manual_branch_evidence.get("MC-BRANCH-SOURCE") or {}
+    _, manual_branch_focused_manual, _, manual_branch_focus = (
+        ai_skill_service._focus_executable_convergence_candidates(
+            manual_branch_payload,
+            manual_branch_automatic_records,
+            manual_branch_manual_records,
+            {
+                "pass": "coverage_convergence",
+                "portfolioAudit": manual_branch_audit,
+            },
+            selected_baselines=[manual_branch_baseline],
+        )
+    )
+    manual_branch_focused_by_id = {
+        item.get("case_id"): item for item in manual_branch_focused_manual
+    }
+    manual_branch_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-archive-nav"],
+        "verifiedBaselineIds": ["base-archive-nav"],
+        "requirementPoints": manual_branch_payload["analysis"]["requirement_points"],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["MC-BRANCH-SOURCE"],
+        "candidateEligibilityById": manual_branch_evidence,
+        "cases": [],
+        "manual_cases": [{
+            "caseId": "MC-BRANCH-SOURCE",
+            "reason": "模型仍因缺少对应设计 Frame 建议人工确认",
+        }],
+    }
+    manual_branch_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        manual_branch_payload,
+        manual_branch_plan,
+    )
+    manual_branch_case = next(
+        item for item in manual_branch_applied.get("cases") or []
+        if item.get("case_id") == "MC-BRANCH-SOURCE"
+    )
+    require(
+        manual_branch_source_evidence.get("kind") == "bounded_landing"
+        and manual_branch_source_evidence.get("manualPromotionEligible") is True
+        and manual_branch_source_evidence.get("precondition") == "App 首页"
+        and manual_branch_focused_by_id["MC-BRANCH-SOURCE"].get("convergenceEvidence", {}).get("eligible") is True
+        and "MC-BRANCH-SOURCE" in manual_branch_focus.get("boundedEvidenceCandidateIds", [])
+        and set(manual_branch_source_evidence.get("acceptanceCheckIds") or []) == {
+            "REQ-021-CHECK-01", "REQ-021-CHECK-02", "REQ-021-CHECK-03", "REQ-021-CHECK-04",
+        }
+        and {"MC-BRANCH-LANDING", "TC-SIBLING-LANDING"}.issubset(
+            set(manual_branch_source_evidence.get("landingEvidenceCaseIds") or [])
+        )
+        and manual_branch_case.get("executionLevel") == "executable"
+        and manual_branch_case.get("ai_case_plan", {}).get("batch") == "remaining"
+        and yaml_service._case_manual_block_reason(manual_branch_case) == ""
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            manual_branch_applied,
+            {"min_automation_cases": 1},
+        ).get("ok"),
+        "A required branch that AI initially marked manual must reuse its verified navigation baseline and same-target AI first-screen evidence instead of claiming that no baseline exists",
+    )
     manual_tail_payload = json.loads(json.dumps(branch_fallback_payload, ensure_ascii=False))
     for item in manual_tail_payload.get("manual_cases") or []:
         if item.get("case_id") != "TC-R03":
@@ -3618,6 +3770,50 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         and merged_visual_payload.get("review", {}).get("visual_grounding_check") == "completed",
         "Visual grounding merge must apply visual corrections without erasing full planning evidence",
     )
+    acceptance_visual_base = {
+        "title": "新增企业云盘入口",
+        "module": "资料服务",
+        "analysis": {
+            "requirement_points": ["REQ-031 资料页企业云盘入口展示、文案及同级关系"],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-031-CHECK-01", "requirementId": "REQ-031", "branch": "资料页", "kind": "visibility", "text": "校验企业云盘入口可见"},
+                {"id": "REQ-031-CHECK-02", "requirementId": "REQ-031", "branch": "资料页", "kind": "relation", "text": "校验企业云盘入口与当前页面其它入口同级展示"},
+                {"id": "REQ-031-CHECK-03", "requirementId": "REQ-031", "branch": "资料页", "kind": "copy", "text": "校验企业云盘入口使用需求约定的可见文案"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-VIS-CONTRACT",
+            "title": "资料页企业云盘入口展示",
+            "coverage": "REQ-031",
+            "requirementRefs": ["REQ-031 资料页企业云盘入口展示、文案及同级关系"],
+            "steps": ["进入资料页", "等待企业云盘入口可见"],
+            "assertions": ["企业云盘入口可见，文案完整，并与本地文件入口同级展示"],
+        }],
+        "manual_cases": [],
+    }
+    acceptance_visual_merge = ai_skill_service.merge_visual_grounder_payload(
+        acceptance_visual_base,
+        {
+            "cases": [{
+                "case_id": "TC-VIS-CONTRACT",
+                "assertions": ["当前设计 Frame 展示资料详情标题", "页面底部展示温馨提示"],
+            }],
+            "review": {"visual_grounding_check": "当前 Frame 的标题与提示已核对"},
+        },
+    )
+    acceptance_visual_assertions = acceptance_visual_merge.get("cases", [{}])[0].get("assertions") or []
+    require(
+        acceptance_visual_assertions[0] == "企业云盘入口可见，文案完整，并与本地文件入口同级展示"
+        and "当前设计 Frame 展示资料详情标题" in acceptance_visual_assertions
+        and acceptance_visual_merge.get("review", {}).get("visual_acceptance_guard", {}).get("preservedPatchCount") == 1
+        and set(
+            acceptance_visual_merge.get("review", {})
+            .get("visual_acceptance_guard", {})
+            .get("preservedRecords", [{}])[0]
+            .get("acceptanceCheckIds", [])
+        ) == {"REQ-031-CHECK-01", "REQ-031-CHECK-02", "REQ-031-CHECK-03"},
+        "A soft visual delta may add current-frame assertions but must not replace requirement-mapped visibility, copy, or relation assertions with an adjacent page title",
+    )
     scoped_visual_base = {
         "title": "新增发票入口",
         "module": "会员服务",
@@ -5491,6 +5687,22 @@ def check_generated_yaml_uses_single_final_assertion():
     require(yaml_service.validate_midscene_yaml(yaml_text).get("ok") is True, "Single-assertion generated YAML must remain executable")
     stability = yaml_service.review_generated_yaml_smoke_stability(yaml_text)
     require(stability.get("ok") is True and stability.get("assertCount") == 1 and stability.get("launchGuard") is True, "Generated YAML smoke-stability review must inspect assertion density and launch guards")
+    bounded_terminal = "授权窗口或内容列表任一首个稳定状态可见，且无崩溃、无白屏"
+    _, bounded_yaml = yaml_service.cases_to_midscene_yaml({
+        "_automation_ready": True,
+        "title": "外部入口首屏",
+        "cases": [{
+            "title": "外部入口首屏可达",
+            "app_package": "com.example.app",
+            "steps": ["点击企业云盘入口", f"检查{bounded_terminal}"],
+            "assertions": [bounded_terminal],
+        }],
+    }, app_package="com.example.app")
+    require(
+        bounded_yaml.count("aiWaitFor:") == 1
+        and bounded_yaml.count("aiAssert:") == 1,
+        "An explicit wait step that contains the final assertion must not generate a duplicate assertion wait",
+    )
     _, no_assert_yaml = yaml_service.cases_to_midscene_yaml({
         "_automation_ready": True,
         "title": "AI建模入口",

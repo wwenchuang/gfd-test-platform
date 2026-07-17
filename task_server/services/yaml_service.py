@@ -3175,17 +3175,19 @@ def generated_step_explicitly_waits(text):
 
 
 def generated_steps_cover_assertion_wait(steps, assertion):
+    compact_assertion = re.sub(r"\s+", "", str(assertion or ""))
     quoted_targets = [
         str(item).strip()
         for item in re.findall(r"[「『\"']([^」』\"']{2,40})[」』\"']", str(assertion or ""))
         if str(item).strip()
     ]
-    if not quoted_targets:
-        return False
     for step in steps or []:
         text = str(step or "").strip()
         if not generated_step_explicitly_waits(text):
             continue
+        compact_step = re.sub(r"\s+", "", text)
+        if compact_assertion and compact_assertion in compact_step:
+            return True
         if any(target in text for target in quoted_targets):
             return True
     return False

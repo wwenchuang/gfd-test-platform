@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 已选成功基线必须绑定到对应 AI 候选，视觉软证据不得删除需求断言
+
+部署 `4df77a9` 后，以同一需求和 Figma 发起完整 Agent `agent-1784253374492-b0803487`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，模型为 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- `8091 / 8088` 健康，Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`；OPPO 上 `com.xbxxhz.box 4.45.0` ready。任务终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job，也没有向华为或第二台设备下发。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 张图分 4 批全部送入 `gpt-4.1-mini`，分别约 `4 / 7 / 7 / 4s` 完成，`4/4 completed / fallback=false / hardGate=false`；设计稿确实参与 AI 判断且仍是软参考。
+- Top3 基线已按三个分支各选中一条 `verified_execution / execution_success`：文档打印成功修复基线、`6寸照片打印.yaml`、`证件扫描.yaml`。但初始规划仍把扫描复印两条候选转为 manual，理由是缺少扫描 Frame 和可信路径；最终组合只有文档、照片 4 条 executable，覆盖 `8/12`，缺少扫描复印 visibility / relation / copy / reachability，覆盖门禁正确阻断。
+- 失败不是模型额度、视觉超时、Figma 门禁、Runner 或设备故障。收敛请求虽然携带全局扫描成功基线，但旧证据构造只给 automatic 候选绑定来源页证据，且压缩后的基线未携带 `baseline.start_page`；已被上游 AI 转 manual 的扫描候选看不到同分支基线，模型只能再次声称“没有可信基线”。
+- 同一轮还发现视觉增量把照片入口原有的“百度网盘可见 / 文案 / 同级”断言整体替换成相邻 Frame 的“一寸照标题 / 拍照建议 / 温馨提示”。覆盖门禁因此依赖后续补救，而不是从源头保持需求契约。
+
+通用修复：
+
+- 基线压缩时从缓存 snippet 的 `# baseline.start_page` 恢复明确前置。显式需求候选即使被上游 AI 保守转为 manual，只要同分支已选择执行成功基线、真实可见文字路径唯一、需求映射完整、且不包含账号、验证码、确认授权、选文件或破坏性动作，也会收到可审计的 `convergenceEvidence`。
+- 对同一目标入口，上游 AI 产生的多个“点击后首个稳定可见状态”可以合并为有界 alternatives，例如授权窗口或内容列表；只复用 AI 已生成的可见终态，不由平台编造产品页面。模型仍执行现有最终收敛；若模型继续判 manual，平台仅在上述证据全部成立时将该候选放入 `remaining`，随后仍必须通过需求范围、YAML static、scorer、dry-run 和真实 Runner。
+- 视觉校准改为单调合并：视觉 AI 可以补充或修正当前 Frame 实际覆盖的断言，但不能删除它没有处理的 requirement-mapped visibility / copy / relation。审计记录保留的 acceptance check IDs；Figma parser、图片分批和软参考策略均未修改。
+- 如果步骤已经包含完整最终断言的显式等待，YAML 转换不再生成重复 `aiWaitFor`，减少一次模型观察开销。没有新增模型轮次、执行模式、数量硬门槛或业务词硬编码，也没有修改 scorer、Sonic、Runner、`router.py` 或历史 YAML。
+
+使用本次线上失败 cases JSON 和本地真实 `证件扫描.yaml` 精确重放，即使模拟最终模型仍坚持把扫描候选判为 manual：
+
+- 组合从 `4 executable / 8 of 12 checks` 收敛为 `5 executable / 12 of 12 checks / missing=0`。新增项是补齐显式扫描分支的 remaining 用例，不是为了达到 5 条而凑数；首批仍为 3 条 Smoke。
+- 扫描路径为 `App 首页 -> 扫描复印 icon -> 证件扫描 -> 立即使用 -> 校验入口 -> 点击入口 -> 校验任一首个稳定状态`，全部使用真实可见文字，不使用坐标。
+- 5 份 YAML 逐条通过 `validate_midscene_yaml`，均为 `ok=true / warnings=[] / issues=[]`；scorer 全部为 `100 / executable / 0 warnings`，坐标动作数为 0。
+
+已验证：
+
+```bash
+PYTHONPYCACHEPREFIX=/private/tmp/midscene-pycache python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/yaml_executable_scorer.py
+PYTHONPYCACHEPREFIX=/private/tmp/midscene-pycache python3 tests/backend_static_checks.py
+PYTHONPYCACHEPREFIX=/private/tmp/midscene-pycache npm test
+git diff --check
+```
+
+结果：undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时模型目录和文本/空答/图像/超时降级集成、Skill fixtures `3/3`、Playwright 桌面/移动端视觉回归全部通过。
+
+待完成：本节修改尚待提交、用户推送和部署。部署后先真实探测 `gpt-4.1-mini`；有额度且返回有效内容则继续使用创建 Agent 时选定的 GPT，不可用、限流或超时才按既有能力路由降级到 `qwen3.6-plus`。随后用完全相同输入只发起一次完整 Agent，固定 `win-runner-01 / ecbfd645`，持续监督生成、首批 Smoke、remaining、Runner 报告、截图/录屏和最终终态；不得选择第二台设备，也不得用离线重放代替真机成功。
+
 ### 2026-07-17 automation_filter 畸形 JSON 使用选定模型做一次有界语法修复
 
 部署 `f8b8eeb` 后，先后用 GPT 与千问执行同一完整回归，均固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`：
