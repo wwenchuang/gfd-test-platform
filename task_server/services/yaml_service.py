@@ -4936,12 +4936,18 @@ def _yaml_ai_tap_has_ambiguous_target(value):
     choice_markers = ("任一", "任意", "任选", "其中一个", "其中任意一个")
     if any(marker in compact for marker in choice_markers):
         return True
+    if any(marker in compact for marker in ("依次", "分别", "逐一", "每个", "各个", "所有", "全部")) and any(
+        separator in compact for separator in ("、", "和", "及")
+    ):
+        return True
     quoted_targets = {
         item.strip()
         for item in re.findall(r"[「“]([^」”]{1,80})[」”]", text)
         if item.strip()
     }
-    return len(quoted_targets) >= 2 and ("或" in compact or "/" in compact)
+    if len(quoted_targets) >= 2 and any(marker in compact for marker in ("或", "/", "／", "和", "及", "、")):
+        return True
+    return False
 
 
 def validate_midscene_yaml_executability(text):
@@ -5931,6 +5937,28 @@ def repair_generated_yaml_static_errors(
         "errors": list(dry.get("errors") or [])[:12],
         "warnings": list(dry.get("warnings") or [])[:8],
     })
+    ambiguous_tap_errors = [
+        item for item in (dry.get("errors") or [])
+        if "aiTap 包含多个备选目标" in str(item or "")
+    ]
+    if ambiguous_tap_errors:
+        attempts.append({
+            "attempt": 0,
+            "type": "semantic_planning_guard",
+            "ok": False,
+            "errors": ambiguous_tap_errors[:8],
+            "reason": (
+                "静态修复不能替 AI 选择业务分支，也不能把一个备选点击拆成多个顺序点击；"
+                "该用例必须回到路径规划，生成单一真实可见目标"
+            ),
+        })
+        return {
+            "ok": False,
+            "content": current,
+            "changed": current.strip() != original.strip(),
+            "attempts": attempts,
+            "dryRun": dry,
+        }
     limit = YAML_STATIC_REPAIR_ATTEMPTS if max_attempts is None else max(0, safe_int(max_attempts, YAML_STATIC_REPAIR_ATTEMPTS))
     if limit <= 0 or not (dry.get("errors") or []):
         return {
@@ -7239,6 +7267,19 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "mode": "soft_reference",
             "requirementText": "\n\n".join(requirement_text_assets)[:12000],
             "figmaSoftEvidence": figma_soft_evidence_text,
+            "visualBatchJudgements": [
+                {
+                    "batch": safe_int(item.get("batch"), 0),
+                    "imageNames": normalize_text_list(item.get("imageNames"))[:4],
+                    "judgement": str(item.get("judgement") or "").strip()[:800],
+                }
+                for item in (
+                    (payload.get("review") or {}).get("mindmap_visual_batch_results") or []
+                )
+                if isinstance(item, dict)
+                and str(item.get("status") or "").strip() == "completed"
+                and str(item.get("judgement") or "").strip()
+            ][:12],
             "figmaPageCount": len(used_figma_pages),
             "figmaImageCount": len(figma_images),
             "executionContext": execution_context,

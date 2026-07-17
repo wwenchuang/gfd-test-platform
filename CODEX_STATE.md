@@ -28,6 +28,32 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 结构化输出截断、伪分支路径与历史叶子覆盖当前设计证据
+
+部署 `63ae3f1` 后，以同一需求和 Figma 发起完整 Agent `agent-1784257038297-b3c5e283`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- `8091 / 8088` 健康，AI Gateway 从 Highway 实时返回 `182` 个模型且无目录错误；Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0` ready。Agent 终态为 `FAILED / GENERATE_YAML`，没有创建 Runner job、没有操作手机，也没有向同 Runner 上在线的第二台设备下发。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 张图分 4 批全部送入创建时选择的 `gpt-4.1-mini`，约 `4 / 5 / 7 / 5s` 完成，`4/4 completed / fallback=false / hardGate=false`；第 2 批视觉 AI 明确识别“照片打印页 5 寸照片导入页面及百度网盘入口”。设计稿确实参与 AI 判断且仍为软参考。
+- 首个根因是 `automation_filter` 请求约 `9909` tokens，模型在默认 `4096` completion tokens 处以 `finishReason=length` 截断，返回非完整 JSON；同模型 45 秒纯语法修复随后超时。旧 Gateway 把非空但被截断的结构化内容当成功，导致 Task 只能在 JSON parser 层补救。
+- 第二个根因是候选中存在“扫描复印或扫描仪扫描”“依次进入三个页面”“进入任一业务入口”等伪执行路径；旧覆盖审计按需求映射文本把它们算作多个分支已覆盖，静态 AI 修复还可能把一个备选点击拆成多个顺序点击。
+- 第三个根因是最终收敛即使收到 4 批视觉判断，仍可能机械复制照片成功基线的历史“6 寸照片”叶子；旧证据选择又偏好步骤更短的已自动候选，忽略了上游 AI 已生成且路径更具体的“点击 5 寸照片”候选。这解释了“离线 static/scorer 通过，线上业务路径仍不对”的差异。
+
+通用修复：
+
+- `automation_filter` 使用可配置且有界的 `8192` 输出预算，并把预算透传到同模型语法修复。Gateway 对 JSON 请求收到 `finish_reason=length` 时明确判定为结构化输出截断，在原有同一总超时预算内最多使用既有一个能力备用模型；不会把半截 JSON 当成功，也没有新增循环重试。
+- 覆盖审计对映射多个需求分支的候选要求每个分支都有独立的具体导航片段和当前页证据；“任一 / 或 / 依次 / 分别”等点击路径不能计入分支覆盖。应用规划和 YAML 静态校验继续阻断多目标 `aiTap`，静态修复不得替 AI 选分支或拆成连续点击。
+- 成功基线只复用真实执行过的共同父页面层级和等待策略。若同分支 AI 候选具有更多明确、无歧义的可见文字点击，平台按共同动作锚点对齐并替换历史叶子，再把 `currentLeafAdapted` 证据交给现有唯一一次最终 AI 收敛；没有共同锚点、存在多目标、深层外部动作或超过短链上限时不适配。该逻辑不识别或硬编码 5 寸、6 寸等产品词。
+- 最终收敛保留全部已完成视觉批次判断以及累积的 `visual_notes / ui_notes`，不再只看到最后一个 Frame。AI 返回了完整、同需求、同基线且覆盖全部有界验收项的当前路径时保留 AI 路径；否则使用已验证证据并继续经过 YAML static、scorer、dry-run、Smoke 和真实 Runner 门禁。
+- 可信首页起点统一补一个可见首页稳定等待。重复的来源页加载等待和落地页观察由紧邻的入口断言及独立 `assertionTarget` 承担，维持最多 8 步的短链并减少重复模型观察。
+
+验证结果：
+
+- 使用本次线上完整 artifacts 精确重放，最终为 `4 executable / 12 of 12 checks / missing=0 / unresolved=0`；5 条数量目标仅保留 advisory，没有为凑数升级低价值用例。文档打印、照片打印、扫描复印均为独立路径。
+- 只读真实模型探针实际调用 `gpt-4.1-mini / fallback=false / finishReason=stop`，约 `26s`，`promptTokens=17698 / completionTokens=2755`。最终 4 份 YAML 全部 `validate ok / scorer 100 / executable / warnings=[] / coordinates=0`；照片可达路径明确为 `照片打印 -> 5寸照片 -> 百度网盘`，不含 `6寸照片`，相邻“一寸照”设计状态作为独立展示检查保留。
+- 完整 `npm test` 通过：undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时模型目录、普通错误/空答/结构化截断/图像/超时降级、Skill fixtures `3/3` 以及 Playwright 桌面/移动端视觉回归；Python 主链编译和 `git diff --check` 通过。
+
+待完成：本节代码待用户推送和部署。部署后使用完全相同输入只发起一次完整 Agent，模型仍按创建选择贯穿；首选 GPT 有效时使用 GPT，超时、不可用、限流或结构化截断时才按能力路由降级。固定 `win-runner-01 / ecbfd645`，持续监督到 Agent、首批 Smoke、remaining、Runner 报告、截图/录屏和最终终态；不得选择第二台设备，也不得用本地重放代替真机成功。
+
 ### 2026-07-17 已选成功基线必须绑定到对应 AI 候选，视觉软证据不得删除需求断言
 
 部署 `4df77a9` 后，以同一需求和 Figma 发起完整 Agent `agent-1784253374492-b0803487`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，模型为 `highway_gpt4_1_mini / gpt-4.1-mini`：

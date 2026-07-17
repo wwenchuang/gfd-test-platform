@@ -77,6 +77,7 @@ const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-gateway-catalog-'));
 let modelListCalls = 0;
 let failModelList = false;
 const completionModels = [];
+const completionRequests = [];
 const upstream = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/v1/models') {
     modelListCalls += 1;
@@ -91,6 +92,7 @@ const upstream = http.createServer(async (req, res) => {
         {id: 'gpt-new', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-down', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-empty', object: 'model', owned_by: 'fixture'},
+        {id: 'gpt-truncated', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-no-vision', object: 'model', owned_by: 'fixture'},
         {id: 'gpt-hang', object: 'model', owned_by: 'fixture'},
       ],
@@ -100,6 +102,7 @@ const upstream = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/v1/chat/completions') {
     const body = await readJsonBody(req);
     completionModels.push(body.model);
+    completionRequests.push({model: body.model, maxTokens: body.max_tokens});
     const hasImageInput = (body.messages || []).some((message) => (
       Array.isArray(message?.content)
       && message.content.some((part) => part?.type === 'image_url')
@@ -122,19 +125,24 @@ const upstream = http.createServer(async (req, res) => {
         : (message?.content || []).map((part) => part?.text || '').join('')
     )).join('\n');
     const emptyOutput = body.model === 'gpt-empty' || userText.includes('ALL_EMPTY');
+    const truncatedOutput = body.model === 'gpt-truncated';
     const content = emptyOutput
       ? ''
-      : (systemText.includes('gateway ok') ? 'gateway ok' : JSON.stringify({accepted: true, model: body.model}));
+      : (
+        truncatedOutput
+          ? '{"cases":['
+          : (systemText.includes('gateway ok') ? 'gateway ok' : JSON.stringify({accepted: true, model: body.model}))
+      );
     sendJson(res, 200, {
       id: 'chatcmpl-fixture',
       object: 'chat.completion',
       created: 1,
       model: body.model,
-      choices: [{index: 0, message: {role: 'assistant', content}, finish_reason: emptyOutput ? 'length' : 'stop'}],
+      choices: [{index: 0, message: {role: 'assistant', content}, finish_reason: (emptyOutput || truncatedOutput) ? 'length' : 'stop'}],
       usage: {
         prompt_tokens: 10,
-        completion_tokens: emptyOutput ? 256 : 8,
-        total_tokens: emptyOutput ? 266 : 18,
+        completion_tokens: (emptyOutput || truncatedOutput) ? 256 : 8,
+        total_tokens: (emptyOutput || truncatedOutput) ? 266 : 18,
         completion_tokens_details: {reasoning_tokens: emptyOutput ? 256 : 2},
       },
     });
@@ -209,11 +217,13 @@ try {
   const dynamicNew = first.providers.find((item) => item.model === 'gpt-new');
   const dynamicDown = first.providers.find((item) => item.model === 'gpt-down');
   const dynamicEmpty = first.providers.find((item) => item.model === 'gpt-empty');
+  const dynamicTruncated = first.providers.find((item) => item.model === 'gpt-truncated');
   const dynamicNoVision = first.providers.find((item) => item.model === 'gpt-no-vision');
   const dynamicHang = first.providers.find((item) => item.model === 'gpt-hang');
   assert.ok(dynamicNew?.id.startsWith('catalog_'));
   assert.ok(dynamicDown?.id.startsWith('catalog_'));
   assert.ok(dynamicEmpty?.id.startsWith('catalog_'));
+  assert.ok(dynamicTruncated?.id.startsWith('catalog_'));
   assert.ok(dynamicNoVision?.id.startsWith('catalog_'));
   assert.ok(dynamicHang?.id.startsWith('catalog_'));
 
@@ -272,6 +282,30 @@ try {
   assert.equal(emptySkillResult.usage.completionTokens, 8);
   const emptyFallbackModels = completionModels.slice(-2);
   assert.deepEqual(emptyFallbackModels, ['gpt-empty', 'qwen-plus']);
+
+  const truncatedSkillResult = await requestJson(gatewayUrl, '/ai/skill', {
+    method: 'POST',
+    body: JSON.stringify({
+      skillName: 'automation_filter',
+      prompt: 'Return the complete structured case portfolio.',
+      jsonResponse: true,
+      providerId: dynamicTruncated.id,
+      model: 'gpt-truncated',
+      maxTokens: 8192,
+    }),
+  });
+  assert.equal(truncatedSkillResult.model, 'qwen-plus');
+  assert.equal(truncatedSkillResult.fallbackUsed, true);
+  assert.equal(truncatedSkillResult.fallbackIndex, 1);
+  assert.match(truncatedSkillResult.fallbackReason, /structured output truncated.*finish_reason=length/i);
+  assert.equal(truncatedSkillResult.finishReason, 'stop');
+  const truncatedFallbackModels = completionModels.slice(-2);
+  assert.deepEqual(truncatedFallbackModels, ['gpt-truncated', 'qwen-plus']);
+  assert.deepEqual(
+    completionRequests.slice(-2).map((item) => item.maxTokens),
+    [8192, 8192],
+    'the requested structured-output budget must survive the fallback route',
+  );
 
   const allEmptyResponse = await fetch(`${gatewayUrl}/ai/skill`, {
     method: 'POST',
@@ -364,6 +398,7 @@ try {
     dynamicRoutePersisted: true,
     fallbackModels,
     emptyFallbackModels,
+    truncatedFallbackModels,
     chatFallbackModels,
     visualFallbackModels,
     timeoutFallbackModels,

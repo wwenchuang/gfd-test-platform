@@ -114,6 +114,7 @@ def check_automation_filter_invalid_json_self_repair():
             "skill": skill_name,
             "prompt": prompt,
             "modelConfig": dict(kwargs.get("model_config") or {}),
+            "maxTokens": kwargs.get("max_tokens"),
         })
         runtime_trace = kwargs.get("runtime_trace")
         if isinstance(runtime_trace, dict):
@@ -175,6 +176,10 @@ def check_automation_filter_invalid_json_self_repair():
         and invalid_case.get("executionLevel") == "needs_review"
         and failed.get("review", {}).get("fallback_failure_type") == "invalid_json",
         "A failed JSON repair must use an accurate review-only provenance instead of pretending to be a timeout",
+    )
+    require(
+        all(item.get("maxTokens") == ai_skill_service.AI_AUTOMATION_FILTER_MAX_TOKENS for item in calls[-2:]),
+        "The verbose automation filter and its bounded syntax repair must receive the expanded structured-output budget",
     )
     invalid_floor = yaml_service.enforce_generated_fallback_execution_floor(failed)
     require(
@@ -454,6 +459,69 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and all(item.get("kind") == "reachability" for item in generic_display_audit.get("missingAcceptanceChecks") or []),
         "Requirement refs and display assertions must not falsely satisfy an unexecuted click-to-destination acceptance check",
     )
+    shared_tail_payload = json.loads(json.dumps(generic_display_payload, ensure_ascii=False))
+    shared_tail_baselines = []
+    for index, case in enumerate(shared_tail_payload.get("cases") or [], start=1):
+        branch = ("订单管理", "优惠券")[index - 1]
+        baseline_id = f"base-branch-{index}"
+        case["ai_case_plan"] = {
+            "baselineId": baseline_id,
+            "baselineGrounded": True,
+            "pathPlanApplied": True,
+            "precondition": "App 首页",
+            "flow": list(case.get("steps") or []),
+            "assertionTarget": (case.get("assertions") or [""])[0],
+        }
+        shared_tail_baselines.append({
+            "id": baseline_id,
+            "title": f"{branch}成功导航",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "aiSelectedBranchName": branch,
+            "snippet": f'- aiTap: "{branch}"\n- aiWaitFor: "{branch}页面加载完成"\n- aiTap: "本地导入"',
+        })
+    shared_tail_case = {
+        "case_id": "TC-SHARED-TAIL",
+        "title": "任一业务页发票入口首屏校验",
+        "executionLevel": "needs_review",
+        "originExecutionLevel": "automatic",
+        "requirementRefs": ["REQ-001", "REQ-002"],
+        "steps": [
+            "进入任一业务页面（订单管理或优惠券）",
+            "等待发票入口可见",
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+        ],
+        "assertions": ["授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃"],
+    }
+    shared_tail_payload["cases"].append(shared_tail_case)
+    shared_tail_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        shared_tail_payload,
+        {"min_automation_cases": 2},
+    )
+    shared_tail_records = [
+        {
+            "raw": case,
+            "compact": ai_skill_service._compact_case_for_plan(case, index, origin_level="automatic"),
+        }
+        for index, case in enumerate(shared_tail_payload.get("cases") or [])
+    ]
+    shared_tail_evidence = ai_skill_service._bounded_convergence_evidence(
+        shared_tail_payload,
+        shared_tail_records,
+        shared_tail_audit,
+        selected_baselines=shared_tail_baselines,
+        manual_records=[],
+    )
+    require(
+        set(shared_tail_evidence) == {"TC-G01", "TC-G02"}
+        and all(item.get("sharedTailBoundToBranchSource") is True for item in shared_tail_evidence.values())
+        and {
+            tuple(item.get("requirementRefs") or [])
+            for item in shared_tail_evidence.values()
+        } == {("REQ-001",), ("REQ-002",)},
+        "One AI-authored state-independent landing tail must bind to separate verified branch cases instead of claiming one cross-branch execution",
+    )
     require(
         not ai_skill_service.case_covers_requirement_acceptance(
             {
@@ -527,6 +595,94 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "assertions": ["两个业务页面都展示发票入口"],
         }, coupon_visibility_check),
         "A multi-requirement case must contain concrete steps for each branch it claims to cover",
+    )
+    aggregate_cross_branch_case = {
+        "case_id": "TC-CROSS-001",
+        "title": "多个业务页发票入口统一校验",
+        "executionLevel": "executable",
+        "requirementRefs": ["REQ-001", "REQ-002"],
+        "steps": [
+            "依次进入订单管理、优惠券页面",
+            "在每个页面等待发票入口可见",
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+        ],
+        "assertions": ["所有业务页面均展示发票入口且与同级入口并列，点击后稳定可达"],
+    }
+    aggregate_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        {"analysis": generic_analysis, "cases": [aggregate_cross_branch_case]},
+        {"min_automation_cases": 1},
+    )
+    require(
+        aggregate_audit.get("coveredAcceptanceCheckCount") == 0
+        and aggregate_audit.get("missingAcceptanceCheckCount") == len(generic_acceptance_checks),
+        "Aggregate prose such as 'visit every branch' must not count as executed evidence for sibling business paths",
+    )
+    independently_executed_cross_case = {
+        **aggregate_cross_branch_case,
+        "case_id": "TC-CROSS-002",
+        "steps": [
+            "进入订单管理",
+            "等待发票入口可见",
+            "校验发票入口文案完整且与当前入口同级",
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+            "返回App首页",
+            "进入优惠券",
+            "等待发票入口可见",
+            "校验发票入口文案完整且与当前入口同级",
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+        ],
+        "assertions": [
+            "订单管理发票入口可见、文案完整、与同级入口并列且点击后稳定可达",
+            "优惠券发票入口可见、文案完整、与同级入口并列且点击后稳定可达",
+        ],
+    }
+    independently_executed_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        {"analysis": generic_analysis, "cases": [independently_executed_cross_case]},
+        {"min_automation_cases": 1},
+    )
+    require(
+        independently_executed_audit.get("coveredAcceptanceCheckCount") == len(generic_acceptance_checks),
+        "A multi-reference case may count coverage only when every branch has its own navigation, checks, target click and terminal evidence",
+    )
+    require(
+        ai_skill_service._source_navigation_has_alternative_destinations([
+            "点击首页中名称为「扫描复印」或「扫描仪扫描」的入口",
+        ])
+        and ai_skill_service._source_navigation_has_alternative_destinations([
+            "依次进入订单管理、优惠券页面",
+        ])
+        and not ai_skill_service._source_navigation_has_alternative_destinations(
+            ["等待授权页、登录页或内容列表任一合法页面可见"],
+            allow_terminal_wait_alternatives=True,
+        ),
+        "Navigation must name one concrete target while waits may retain multiple legitimate terminal states",
+    )
+    aggregate_plan = {
+        "allowedBaselineIds": ["base-entry-nav"],
+        "requirementPoints": generic_analysis.get("requirement_points") or [],
+        "cases": [{
+            "caseId": "TC-CROSS-001",
+            "baselineId": "base-entry-nav",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": list(aggregate_cross_branch_case["steps"]),
+            "assertionTarget": aggregate_cross_branch_case["assertions"][0],
+            "requirementRefs": ["REQ-001", "REQ-002"],
+            "batch": "remaining",
+        }],
+        "authoritative": True,
+    }
+    aggregate_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        {"analysis": generic_analysis, "cases": [aggregate_cross_branch_case]},
+        aggregate_plan,
+    )
+    require(
+        aggregate_applied.get("cases", [{}])[0].get("executionLevel") == "needs_review"
+        and aggregate_applied.get("review", {}).get("executable_yaml_plan", {}).get("ambiguous_navigation_guard_count") == 1,
+        "AI planning must downgrade aggregate or alternative navigation before YAML conversion",
     )
 
     bounded_convergence_payload = json.loads(json.dumps(generic_display_payload, ensure_ascii=False))
@@ -639,6 +795,52 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ),
         "The one existing convergence AI call must receive platform-verified source-path plus bounded-tail evidence",
     )
+    adapted_leaf_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-entry-nav"],
+        "verifiedBaselineIds": ["base-entry-nav"],
+        "requirementPoints": generic_analysis.get("requirement_points") or [],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["TC-R01"],
+        "candidateEligibilityById": {
+            "TC-R01": bounded_request_candidates["TC-R01"]["convergenceEvidence"],
+        },
+        "cases": [{
+            "caseId": "TC-R01",
+            "baselineId": "base-entry-nav",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": [
+                "启动App并等待首页加载完成",
+                "进入订单管理",
+                "点击「新版发票」",
+                "等待发票入口可见",
+                "点击发票入口",
+                "等待授权页、登录页或内容列表任一合法页面可见",
+            ],
+            "assertionTarget": "授权页、登录页或内容列表任一合法页面可见，且无白屏或崩溃",
+            "requirementRefs": ["REQ-001"],
+            "executableReason": "结合当前 UI 证据把成功基线的叶子适配为新版发票",
+            "batch": "remaining",
+        }],
+        "manual_cases": [],
+    }
+    adapted_leaf_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        bounded_convergence_payload,
+        adapted_leaf_plan,
+    )
+    adapted_leaf_case = next(
+        item for item in adapted_leaf_applied.get("cases") or []
+        if item.get("case_id") == "TC-R01"
+    )
+    adapted_leaf_review = adapted_leaf_applied.get("review", {}).get("executable_yaml_plan", {})
+    require(
+        "点击「新版发票」" in adapted_leaf_case.get("steps", [])
+        and adapted_leaf_case.get("ai_case_plan", {}).get("boundedConvergence", {}).get("modelPathPreserved") is True
+        and adapted_leaf_review.get("bounded_convergence_ai_path_count") == 1
+        and adapted_leaf_review.get("bounded_convergence_override_count") == 0,
+        "A complete AI-adapted current leaf must survive bounded evidence instead of being overwritten by the historical baseline leaf",
+    )
     trusted_prefix = ai_skill_service._trusted_baseline_source_navigation_flow({
         "baselineUsable": True,
         "trusted": True,
@@ -659,6 +861,181 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "点击「电子发票」",
         ],
         "Trusted baseline navigation must stop before data import while preserving every visible parent-page action",
+    )
+    adapted_current_leaf, current_leaf_adapted = ai_skill_service._adapt_trusted_navigation_to_candidate(
+        trusted_prefix,
+        {
+            "steps": [
+                "启动App并等待首页加载完成",
+                "点击名称为「会员服务」的入口",
+                "等待开票服务可见",
+                "点击「开票服务」",
+                "等待当前可选发票类型加载完成",
+                "点击名称为「新版发票」的入口",
+                "等待新版发票页面加载完成",
+                "等待「云端发票」入口可见",
+            ],
+        },
+        ["云端发票"],
+        "会员服务",
+    )
+    require(
+        current_leaf_adapted is True
+        and adapted_current_leaf == [
+            "点击「会员服务」",
+            "等待开票服务可见",
+            "点击「开票服务」",
+            "等待当前可选发票类型加载完成",
+            "点击名称为「新版发票」的入口",
+            "等待新版发票页面加载完成",
+        ]
+        and "电子发票" not in " ".join(adapted_current_leaf),
+        "A concrete AI candidate leaf must replace only the divergent historical leaf while retaining the verified parent path",
+    )
+    require(
+        ai_skill_service._candidate_navigation_specificity({
+            "steps": [
+                "进入会员服务",
+                "等待新版发票页面加载完成",
+                "等待云端发票入口可见",
+            ],
+        }, ["云端发票"], "会员服务")
+        < ai_skill_service._candidate_navigation_specificity({
+            "steps": [
+                "进入会员服务",
+                "点击新版发票",
+                "等待新版发票页面加载完成",
+                "等待云端发票入口可见",
+            ],
+        }, ["云端发票"], "会员服务"),
+        "A candidate with an explicit safe leaf action must outrank a shorter path that only assumes the landing state",
+    )
+    current_leaf_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-041 资料归档：企业云盘入口可见、同级、文案正确且点击后首屏可达",
+            ],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-041-CHECK-01", "requirementId": "REQ-041", "branch": "资料归档", "kind": "visibility", "text": "校验企业云盘入口可见"},
+                {"id": "REQ-041-CHECK-02", "requirementId": "REQ-041", "branch": "资料归档", "kind": "relation", "text": "校验企业云盘入口与其它入口同级"},
+                {"id": "REQ-041-CHECK-03", "requirementId": "REQ-041", "branch": "资料归档", "kind": "copy", "text": "校验企业云盘入口文案正确"},
+                {"id": "REQ-041-CHECK-04", "requirementId": "REQ-041", "branch": "资料归档", "kind": "reachability", "text": "点击企业云盘入口并校验首屏稳定可达"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-HISTORICAL-LEAF",
+            "title": "资料归档企业云盘入口展示",
+            "executionLevel": "executable",
+            "requirementRefs": ["REQ-041 资料归档企业云盘入口"],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "进入资料服务",
+                "进入资料归档",
+                "等待旧版归档页面加载完成",
+                "等待企业云盘入口可见",
+            ],
+            "assertions": ["企业云盘入口可见、文案正确且与其它入口同级"],
+            "ai_case_plan": {
+                "baselineId": "base-archive-current-leaf",
+                "baselineGrounded": True,
+                "pathPlanApplied": True,
+                "flow": ["进入资料服务", "进入资料归档", "等待旧版归档页面加载完成", "等待企业云盘入口可见"],
+                "precondition": "App 首页",
+            },
+        }, {
+            "case_id": "TC-CLOUD-LANDING",
+            "title": "企业云盘首屏反馈",
+            "executionLevel": "needs_review",
+            "requirementRefs": ["REQ-041 资料归档企业云盘入口"],
+            "steps": [
+                "进入资料归档",
+                "点击企业云盘入口",
+                "等待授权页、登录页或内容列表任一稳定状态可见",
+            ],
+            "assertions": ["点击企业云盘后首个稳定页面可见且无白屏或崩溃"],
+        }],
+        "manual_cases": [{
+            "case_id": "TC-CURRENT-LEAF",
+            "title": "新版归档企业云盘入口",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "requirementRefs": ["REQ-041 资料归档企业云盘入口"],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "启动App并等待首页加载完成",
+                "进入资料服务",
+                "等待资料服务页面加载完成",
+                "进入资料归档",
+                "等待当前归档类型可见",
+                "点击新版归档",
+                "等待企业云盘入口可见",
+            ],
+            "assertions": ["企业云盘入口可见、文案正确且与其它入口同级"],
+        }],
+    }
+    current_leaf_audit = ai_skill_service.executable_yaml_portfolio_audit(current_leaf_payload, {})
+    current_leaf_automatic_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(current_leaf_payload["cases"])]
+    current_leaf_manual_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="manual"),
+    } for index, item in enumerate(current_leaf_payload["manual_cases"])]
+    current_leaf_baseline = ai_skill_service._compact_baseline_candidate({
+        "id": "base-archive-current-leaf",
+        "title": "历史归档成功路径",
+        "aiSelectedBranchName": "资料归档",
+        "sourceKind": "verified_execution",
+        "verificationStatus": "execution_success",
+        "snippet": (
+            "# baseline.start_page: App 首页\n"
+            "- aiTap: 资料服务\n"
+            "- aiWaitFor: 等待资料服务页面加载完成\n"
+            "- aiTap: 资料归档\n"
+            "- aiWaitFor: 等待归档类型可见\n"
+            "- aiTap: 旧版归档\n"
+            "- aiTap: 本地导入"
+        ),
+    })
+    current_leaf_evidence_by_id = ai_skill_service._bounded_convergence_evidence(
+        current_leaf_payload,
+        current_leaf_automatic_records,
+        current_leaf_audit,
+        selected_baselines=[current_leaf_baseline],
+        manual_records=current_leaf_manual_records,
+    )
+    current_leaf_evidence = next((
+        item for item in current_leaf_evidence_by_id.values()
+        if item.get("currentLeafSourceCaseId") == "TC-CURRENT-LEAF"
+    ), {})
+    require(
+        current_leaf_evidence.get("eligible") is True
+        and current_leaf_evidence.get("currentLeafAdapted") is True
+        and current_leaf_evidence.get("currentLeafSourceCaseId") == "TC-CURRENT-LEAF"
+        and "点击新版归档" in current_leaf_evidence.get("flow", [])
+        and "旧版归档" not in " ".join(current_leaf_evidence.get("flow") or [])
+        and len(current_leaf_evidence.get("flow") or []) <= 8
+        and set(current_leaf_evidence.get("acceptanceCheckIds") or []) == {
+            "REQ-041-CHECK-04",
+        },
+        "Reachability convergence must prefer a concrete current AI leaf while using the verified baseline only for its common parent path",
+    )
+    home_guarded_prefix = ai_skill_service._ensure_trusted_home_start_guard(
+        ["点击「会员服务」", "等待开票服务可见"],
+        {"snippet": "# baseline.start_page: App 首页"},
+    )
+    require(
+        home_guarded_prefix == [
+            "启动App并等待首页加载完成",
+            "点击「会员服务」",
+            "等待开票服务可见",
+        ]
+        and ai_skill_service._ensure_trusted_home_start_guard(
+            home_guarded_prefix,
+            {"startPage": "App 首页"},
+        ) == home_guarded_prefix,
+        "A trusted home-start baseline must expose one stable launch checkpoint before its first visible-text tap",
     )
     require(
         ai_skill_service._source_navigation_has_alternative_destinations([
@@ -3745,6 +4122,7 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     rich_visual_payload = json.loads(json.dumps(base_payload, ensure_ascii=False))
     rich_visual_payload["cases"][0]["execution_trace"] = {"large": "x" * 2000}
     rich_visual_payload["review"]["orchestration_history"] = ["y" * 2000]
+    rich_visual_payload["analysis"]["visual_notes"] = ["前一批视觉状态已核对"]
     compact_visual_payload = ai_skill_service.compact_visual_grounder_base_payload(rich_visual_payload)
     require(
         compact_visual_payload.get("analysis", {}).get("requirement_points") == analysis["requirement_points"]
@@ -3756,7 +4134,7 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     merged_visual_payload = ai_skill_service.merge_visual_grounder_payload(rich_visual_payload, {
         "title": base_payload["title"],
         "module": base_payload["module"],
-        "analysis": {"requirement_points": analysis["requirement_points"], "visual_notes": ["Figma 文案已核对"]},
+        "analysis": {"requirement_points": analysis["requirement_points"], "visual_notes": ["后一批视觉状态已核对"]},
         "cases": [{
             "title": concrete_case["title"],
             "assertions": ["设计稿中的百度网盘入口文案完整可见"],
@@ -3766,9 +4144,31 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
     require(
         merged_visual_payload.get("cases", [{}])[0].get("execution_trace") == {"large": "x" * 2000}
         and merged_visual_payload.get("cases", [{}])[0].get("assertions") == ["设计稿中的百度网盘入口文案完整可见"]
+        and merged_visual_payload.get("analysis", {}).get("visual_notes") == [
+            "前一批视觉状态已核对",
+            "后一批视觉状态已核对",
+        ]
         and merged_visual_payload.get("review", {}).get("orchestration_history") == ["y" * 2000]
         and merged_visual_payload.get("review", {}).get("visual_grounding_check") == "completed",
         "Visual grounding merge must apply visual corrections without erasing full planning evidence",
+    )
+    compact_convergence_analysis, compact_convergence_source = ai_skill_service._compact_executable_convergence_context(
+        merged_visual_payload.get("analysis"),
+        {
+            "visualBatchJudgements": [{
+                "batch": 1,
+                "imageNames": ["current-variant.png"],
+                "judgement": "当前批次确认了新的可见叶子和入口文案",
+            }],
+        },
+    )
+    require(
+        compact_convergence_analysis.get("visual_notes") == [
+            "前一批视觉状态已核对",
+            "后一批视觉状态已核对",
+        ]
+        and compact_convergence_source.get("visualBatchJudgements", [{}])[0].get("batch") == 1,
+        "The final AI convergence pass must retain every completed visual batch note instead of seeing only the last frame",
     )
     acceptance_visual_base = {
         "title": "新增企业云盘入口",
@@ -7907,6 +8307,32 @@ def main():
     require(
         not ambiguous_tap.get("ok") and "多个备选目标" in "；".join(ambiguous_tap.get("issues") or []),
         "One aiTap must name one visible target; alternative outcomes belong in waits or assertions",
+    )
+    sequential_tap_yaml = "android:\n  tasks:\n    - name: demo\n      flow:\n        - aiTap: 依次进入文档打印、照片打印和扫描复印页面\n"
+    sequential_tap = validate_midscene_yaml_executability(sequential_tap_yaml)
+    require(
+        not sequential_tap.get("ok") and "多个备选目标" in "；".join(sequential_tap.get("issues") or []),
+        "One aiTap must not hide multiple sequential business branches",
+    )
+    from task_server.services import yaml_service as yaml_service_module
+    original_static_repair_gateway = yaml_service_module.ai_gateway_skill_content
+    static_repair_called = []
+    try:
+        yaml_service_module.ai_gateway_skill_content = lambda *_args, **_kwargs: static_repair_called.append(True) or "{}"
+        ambiguous_static_repair = yaml_service_module.repair_generated_yaml_static_errors(
+            ambiguous_tap_yaml,
+            module="AI测试",
+            file="ambiguous.yaml",
+            max_attempts=1,
+            model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+        )
+    finally:
+        yaml_service_module.ai_gateway_skill_content = original_static_repair_gateway
+    require(
+        not ambiguous_static_repair.get("ok")
+        and not static_repair_called
+        and any(item.get("type") == "semantic_planning_guard" for item in ambiguous_static_repair.get("attempts") or []),
+        "Static repair must not choose one alternative branch or split one ambiguous tap into sequential business actions",
     )
     duplicate_platform_yaml = "android: null\ntasks:\n  - name: demo\n    flow:\n      - aiTap: 首页搜索框\n"
     duplicate_platform_check = validate_midscene_yaml_executability(duplicate_platform_yaml)

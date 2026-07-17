@@ -569,6 +569,15 @@ function requestedCallTimeoutMs(body = {}) {
   return Math.max(5000, Math.min(600000, requested));
 }
 
+function requestedCompletionTokens(body = {}, route = {}) {
+  const raw = body?.maxTokens ?? body?.max_tokens;
+  const requested = Number(raw);
+  if (Number.isFinite(requested) && requested > 0) {
+    return Math.max(256, Math.min(32768, Math.floor(requested)));
+  }
+  return Number(route?.defaultMaxTokens || 0);
+}
+
 function routeSupportsQwenHybridThinking(route) {
   const model = String(route?.model || '').toLowerCase();
   const baseUrl = String(route?.baseUrl || '').toLowerCase();
@@ -590,7 +599,8 @@ function completionOptionsForRoute(route, prompt, body, callOptions = {}) {
   } else {
     completionOptions.temperature = typeof callOptions.temperature === 'number' ? callOptions.temperature : route.temperature;
   }
-  if (route.defaultMaxTokens) completionOptions.max_tokens = route.defaultMaxTokens;
+  const maxTokens = requestedCompletionTokens(body, route);
+  if (maxTokens) completionOptions.max_tokens = maxTokens;
   if (body?.jsonResponse === true) {
     completionOptions.response_format = {type: 'json_object'};
     if (routeSupportsQwenHybridThinking(route)) {
@@ -706,6 +716,8 @@ function isFallbackEligibleAiError(errorText) {
     text.includes('no access to model') ||
     text.includes('empty content') ||
     text.includes('empty response') ||
+    text.includes('structured output truncated') ||
+    text.includes('finish_reason=length') ||
     text.includes('unsupported') ||
     text.includes('does not support image') ||
     text.includes('image input is not supported')
@@ -775,6 +787,13 @@ async function callAi(action, body, options = {}) {
       if (options.stripFence) output = stripMarkdownFence(output);
       if (!String(output || '').trim()) {
         throw new Error(emptyAssistantOutputError(choice, completion?.usage || {}));
+      }
+      if (body?.jsonResponse === true && finishReason.toLowerCase() === 'length') {
+        throw new Error(
+          `Structured output truncated: finish_reason=length, `
+          + `completion_tokens=${usage.completionTokens || 0}, `
+          + `reasoning_tokens=${usage.reasoningTokens || 0}`
+        );
       }
       success = true;
       return {
@@ -1122,6 +1141,7 @@ app.post('/ai/skill', asyncRoute(async (req, res) => {
     model: req.body?.model || req.body?.modelName || '',
     imageAssets: req.body?.imageAssets || [],
     fallbackModelConfig: req.body?.fallbackModelConfig || req.body?.fallback_model_config || {},
+    maxTokens: req.body?.maxTokens ?? req.body?.max_tokens,
     timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
   };
   const action = SKILL_ACTION_MAP[skillName] || 'generate_case';
