@@ -1354,6 +1354,14 @@ GENERATED_EXECUTION_LEVEL_ORDER = {
     "executable": 3,
 }
 LOCAL_FALLBACK_SOURCE = "local_fallback_after_ai_timeout"
+LOCAL_FALLBACK_SOURCE_PREFIX = "local_fallback_after_ai_"
+
+
+def _generated_local_fallback_source(value: Any) -> str:
+    source = str(value or "").strip()
+    if source == LOCAL_FALLBACK_SOURCE or source.startswith(LOCAL_FALLBACK_SOURCE_PREFIX):
+        return source
+    return ""
 
 
 def snapshot_yaml_visual_review(payload: Any) -> dict:
@@ -1384,13 +1392,15 @@ def _generated_case_uses_local_fallback(case: dict) -> bool:
     case = case if isinstance(case, dict) else {}
     source = str(case.get("source") or "").strip()
     reason = str(case.get("automation_reason") or case.get("automationReason") or "").strip()
-    return source == LOCAL_FALLBACK_SOURCE or "AI skill 超时后" in reason
+    return bool(_generated_local_fallback_source(source)) or "AI skill 超时后" in reason
 
 
 def generated_payload_uses_local_fallback(payload: Any) -> bool:
     payload = payload if isinstance(payload, dict) else {}
     review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
-    if str(review.get("automation_filter_skill") or "").strip() == LOCAL_FALLBACK_SOURCE:
+    if _generated_local_fallback_source(review.get("automation_filter_skill")):
+        return True
+    if _generated_local_fallback_source(review.get("fallback_source")):
         return True
     return any(_generated_case_uses_local_fallback(case) for case in (payload.get("cases") or []))
 
@@ -1468,24 +1478,39 @@ def _generated_case_requirement_mapped_display_check(source_case: dict, scope_re
 
 
 def enforce_generated_fallback_execution_floor(payload: Any, force: bool = False) -> dict:
-    """Keep timeout fallbacks review-only even if later AI stages rewrite cases."""
+    """Keep every local AI fallback review-only even if later stages rewrite cases."""
     fallback_active = bool(force or generated_payload_uses_local_fallback(payload))
     if not fallback_active:
         return payload if isinstance(payload, dict) else normalize_cases_payload(payload)
     normalized = normalize_cases_payload(payload)
+    review = normalized.setdefault("review", {})
+    fallback_source = (
+        _generated_local_fallback_source(review.get("fallback_source"))
+        or _generated_local_fallback_source(review.get("automation_filter_skill"))
+        or next(
+            (
+                _generated_local_fallback_source(case.get("source"))
+                for case in (normalized.get("cases") or [])
+                if isinstance(case, dict) and _generated_local_fallback_source(case.get("source"))
+            ),
+            "",
+        )
+        or LOCAL_FALLBACK_SOURCE
+    )
     for case in normalized.get("cases") or []:
         if not isinstance(case, dict):
             continue
-        case["source"] = LOCAL_FALLBACK_SOURCE
+        case["source"] = fallback_source
         case["executionLevel"] = _stricter_generated_execution_level(
             case.get("executionLevel"),
             "needs_review",
         )
-    review = normalized.setdefault("review", {})
     review["local_fallback_execution_floor"] = {
         "enabled": True,
         "executionLevel": "needs_review",
-        "rule": "automation_filter 超时后的本地兜底只供评审，不自动下发 Runner。",
+        "source": fallback_source,
+        "failureType": str(review.get("fallback_failure_type") or ""),
+        "rule": "automation_filter AI 失败后的本地兜底只供评审，不自动下发 Runner。",
     }
     return normalized
 
@@ -7585,7 +7610,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         scope_reasons = list(scope_review.get("reasons") or [])
         provenance_reasons = []
         if _generated_case_uses_local_fallback(source_case):
-            provenance_reasons.append("automation_filter 超时后的本地兜底仅供评审，不自动下发 Runner")
+            provenance_reasons.append("automation_filter AI 失败后的本地兜底仅供评审，不自动下发 Runner")
         if level != scored_level or scope_reasons:
             score = dict(score)
             corrected_display_downgrade = (

@@ -102,6 +102,14 @@ AI_SKILLS_STRICT_MODEL = safe_bool(os.getenv("MIDSCENE_AI_SKILLS_STRICT_MODEL", 
 AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID = str(
     os.getenv("MIDSCENE_AI_GATEWAY_VISION_FALLBACK_PROVIDER_ID", "qwen_plus")
 ).strip() or "qwen_plus"
+AI_SKILL_JSON_REPAIR_TIMEOUT_SECONDS = max(
+    30,
+    min(60, safe_int(os.getenv("MIDSCENE_AI_SKILL_JSON_REPAIR_TIMEOUT_SECONDS", "45"), 45)),
+)
+AI_SKILL_JSON_REPAIR_MAX_CHARS = max(
+    8000,
+    min(60000, safe_int(os.getenv("MIDSCENE_AI_SKILL_JSON_REPAIR_MAX_CHARS", "30000"), 30000)),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +217,72 @@ def _merge_missing_output_defaults(value, defaults):
     return merged
 
 
+def _repair_ai_skill_json_output(skill_name, raw, parse_error, model_config, runtime_trace):
+    """Ask the selected model once to repair JSON syntax without regenerating business content."""
+    raw_text = str(raw or "")
+    parse_error_text = f"{type(parse_error).__name__}: {parse_error}"
+    repair_meta = {
+        "inputChars": len(raw_text),
+        "maxInputChars": AI_SKILL_JSON_REPAIR_MAX_CHARS,
+        "timeoutSeconds": AI_SKILL_JSON_REPAIR_TIMEOUT_SECONDS,
+        "parseError": parse_error_text[:500],
+        "sameSelectedModel": True,
+    }
+    runtime_trace["jsonRepairAttempted"] = False
+    runtime_trace["jsonRepairSucceeded"] = False
+    runtime_trace["jsonRepair"] = repair_meta
+    if len(raw_text) > AI_SKILL_JSON_REPAIR_MAX_CHARS:
+        repair_meta["skippedReason"] = "malformed_output_exceeds_repair_limit"
+        raise RuntimeError(
+            f"AI skill {skill_name} 返回 JSON 语法错误，且输出 {len(raw_text)} 字符超过 "
+            f"{AI_SKILL_JSON_REPAIR_MAX_CHARS} 字符修复上限"
+        ) from parse_error
+
+    schema = load_ai_skill_schema(skill_name)
+    repair_prompt = (
+        "你是严格的 JSON 语法修复器。只修复下方模型输出中的 JSON 语法错误，"
+        "不得新增、删除、改写、概括或重新排序任何业务字段、数组元素或字符串值。\n"
+        "要求：\n"
+        "1. 输出且只输出一个合法 JSON 对象，不要 Markdown 代码块或解释。\n"
+        "2. JSON 必须满足给定 schema；schema 只约束结构，不能作为补造业务内容的依据。\n"
+        "3. 如果字符串中包含引号、换行或反斜杠，只做 JSON 所需转义。\n\n"
+        f"skill: {skill_name}\n"
+        f"parse_error: {parse_error_text}\n"
+        f"schema: {json.dumps(schema, ensure_ascii=False, separators=(',', ':'))}\n"
+        "malformed_json:\n"
+        f"{raw_text}"
+    )
+    repair_trace = {}
+    runtime_trace["jsonRepairAttempted"] = True
+    try:
+        repaired_raw = _run_ai_skill_call_with_hard_timeout(
+            lambda: ai_gateway_skill_content(
+                skill_name,
+                repair_prompt,
+                payload={"jsonRepair": True, "sourceSkill": skill_name},
+                timeout=AI_SKILL_JSON_REPAIR_TIMEOUT_SECONDS,
+                temperature=0,
+                json_response=True,
+                model_config=model_config,
+                image_assets=None,
+                runtime_trace=repair_trace,
+            ),
+            AI_SKILL_JSON_REPAIR_TIMEOUT_SECONDS,
+            f"AI Gateway JSON repair {skill_name}",
+        )
+        result = normalize_model_json(repaired_raw)
+    except Exception as exc:
+        repair_meta["modelTrace"] = copy.deepcopy(repair_trace)
+        repair_meta["error"] = str(exc)[:500]
+        raise RuntimeError(
+            f"AI skill {skill_name} JSON 语法修复失败：原始错误={parse_error_text}；"
+            f"修复错误={type(exc).__name__}: {exc}"
+        ) from exc
+    repair_meta["modelTrace"] = copy.deepcopy(repair_trace)
+    repair_meta["syntaxValid"] = True
+    return result
+
+
 def run_ai_skill(
     skill_name,
     payload=None,
@@ -223,6 +297,7 @@ def run_ai_skill(
     output_defaults=None,
     max_tokens=None,
     runtime_trace=None,
+    repair_invalid_json=False,
 ):
     """执行 AI skill：优先走统一 Gateway，平台直连仅用于无显式模型的最终兼容兜底。"""
     prompt = render_ai_skill_prompt(skill_name, payload, version=version, fallback_prompt=fallback_prompt)
@@ -248,9 +323,36 @@ def run_ai_skill(
                 timeout,
                 f"AI Gateway skill {skill_name}",
             )
-            result = normalize_model_json(raw)
+            json_repaired = False
+            try:
+                result = normalize_model_json(raw)
+            except json.JSONDecodeError as exc:
+                if not repair_invalid_json:
+                    raise
+                result = _repair_ai_skill_json_output(
+                    skill_name,
+                    raw,
+                    exc,
+                    model_config if isinstance(model_config, dict) else {},
+                    runtime_trace,
+                )
+                json_repaired = True
             result = _merge_missing_output_defaults(result, output_defaults)
-            return validate_ai_skill_output(skill_name, result)
+            try:
+                validated = validate_ai_skill_output(skill_name, result)
+            except Exception as exc:
+                if json_repaired:
+                    runtime_trace["jsonRepairSucceeded"] = False
+                    repair_meta = runtime_trace.get("jsonRepair")
+                    if isinstance(repair_meta, dict):
+                        repair_meta["error"] = f"schema_validation: {exc}"[:500]
+                raise
+            if json_repaired:
+                runtime_trace["jsonRepairSucceeded"] = True
+                repair_meta = runtime_trace.get("jsonRepair")
+                if isinstance(repair_meta, dict):
+                    repair_meta["succeeded"] = True
+            return validated
         except TimeoutError:
             runtime_trace.update({"source": "ai_gateway", "error": f"AI Gateway skill {skill_name} timeout"})
             raise
@@ -2246,11 +2348,79 @@ def _fallback_steps_for_scenario(scenario, app_context=None):
     ]
 
 
-def _fallback_automation_filter_from_scenarios(title, module, analysis, scenarios, targets=None, error="", app_package="", app_name=""):
-    """AI 自动化筛选超时/空结果时，生成可继续校验的保守用例。"""
+def _classify_automation_filter_failure(error):
+    """Classify the failed AI boundary without treating every failure as a timeout."""
+    chain = []
+    current = error if isinstance(error, BaseException) else None
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    text = str(error or "")
+    lowered = text.lower()
+    if "json 语法修复" in lowered or "json syntax repair" in lowered:
+        return "invalid_json"
+    if any(isinstance(item, (TimeoutError, socket.timeout)) for item in chain) or any(
+        marker in lowered for marker in ("timeout", "timed out", "超时", "超过截止时间")
+    ):
+        return "timeout"
+    if "ai gateway 返回非 json 响应" in lowered:
+        return "failure"
+    if any(isinstance(item, json.JSONDecodeError) for item in chain) or any(
+        marker in lowered
+        for marker in (
+            "jsondecodeerror",
+            "expecting ',' delimiter",
+            "expecting ':' delimiter",
+            "expecting property name",
+            "expecting value",
+            "unterminated string",
+            "invalid control character",
+            "extra data",
+        )
+    ):
+        return "invalid_json"
+    return "failure"
+
+
+def _automation_filter_fallback_copy(failure_type):
+    failure_type = str(failure_type or "failure").strip().lower()
+    if failure_type == "timeout":
+        return (
+            "local_fallback_after_ai_timeout",
+            "AI skill 超时后按需求点生成的保守用例；仅保留主流程和低密度断言。",
+        )
+    if failure_type == "invalid_json":
+        return (
+            "local_fallback_after_ai_invalid_json",
+            "AI skill 返回的 JSON 语法无效且同模型有界修复失败后，按需求点生成保守用例；仅供评审。",
+        )
+    return (
+        "local_fallback_after_ai_failure",
+        "AI skill 调用失败后按需求点生成的保守用例；仅保留主流程和低密度断言。",
+    )
+
+
+def _fallback_automation_filter_from_scenarios(
+    title,
+    module,
+    analysis,
+    scenarios,
+    targets=None,
+    error="",
+    app_package="",
+    app_name="",
+    failure_type="",
+):
+    """AI 自动化筛选失败时，生成继续走静态检查但不能自动执行的保守用例。"""
     targets = targets or generation_volume_targets(analysis, mode="full")
     scenarios = [item for item in (scenarios or []) if isinstance(item, dict)]
     app_context = _fallback_app_context(title, module, app_package=app_package, app_name=app_name)
+    failure_type = str(failure_type or "").strip() or (
+        _classify_automation_filter_failure(error) if error else "timeout"
+    )
+    fallback_source, fallback_reason = _automation_filter_fallback_copy(failure_type)
     max_cases = max(1, min(
         safe_int(targets.get("target_automation_cases"), len(scenarios) or 1),
         safe_int(targets.get("max_cases"), len(scenarios) or 1),
@@ -2275,9 +2445,9 @@ def _fallback_automation_filter_from_scenarios(title, module, analysis, scenario
             "steps": steps,
             "assertions": assertions,
             "expected_result": assertions[0] if assertions else "",
-            "automation_reason": "AI skill 超时后按需求点生成的保守可执行用例；仅保留主流程和低密度断言。",
+            "automation_reason": fallback_reason,
             "executionLevel": "needs_review" if error else "executable",
-            "source": "local_fallback_after_ai_timeout",
+            "source": fallback_source,
         })
 
     manual_cases = []
@@ -2294,8 +2464,10 @@ def _fallback_automation_filter_from_scenarios(title, module, analysis, scenario
         "cases": cases,
         "manual_cases": manual_cases,
         "review": {
-            "automation_filter_skill": "local_fallback_after_ai_timeout",
-            "fallback_reason": error,
+            "automation_filter_skill": fallback_source,
+            "fallback_source": fallback_source,
+            "fallback_failure_type": failure_type,
+            "fallback_reason": str(error or ""),
             "generation_targets": targets,
             "actual_case_count": len(cases),
             "manual_case_count": len(manual_cases),
@@ -2433,6 +2605,7 @@ def call_skill_automation_filter(
         }
     }
     def fallback(error):
+        failure_type = _classify_automation_filter_failure(error)
         result = _fallback_automation_filter_from_scenarios(
             title,
             module,
@@ -2442,6 +2615,7 @@ def call_skill_automation_filter(
             error=str(error),
             app_package=app_package,
             app_name=app_name,
+            failure_type=failure_type,
         )
         result.setdefault("review", {})["automation_filter_input"] = input_review
         return result
@@ -2455,6 +2629,7 @@ def call_skill_automation_filter(
             retry_count=0,
             model_config=model_config,
             runtime_trace=runtime_trace,
+            repair_invalid_json=True,
         )
         cases = result.get("cases") or []
     except Exception as exc:
@@ -3089,6 +3264,15 @@ def _model_config_trace(model_config, runtime_trace=None):
         trace["error"] = str(runtime_trace.get("error"))[:500]
     if runtime_trace.get("imageCount") is not None:
         trace["imageCount"] = safe_int(runtime_trace.get("imageCount"), 0)
+    if runtime_trace.get("finishReason") is not None:
+        trace["finishReason"] = str(runtime_trace.get("finishReason") or "")
+    if isinstance(runtime_trace.get("usage"), dict):
+        trace["usage"] = copy.deepcopy(runtime_trace.get("usage"))
+    if runtime_trace.get("jsonRepairAttempted") is not None:
+        trace["jsonRepairAttempted"] = bool(runtime_trace.get("jsonRepairAttempted"))
+        trace["jsonRepairSucceeded"] = bool(runtime_trace.get("jsonRepairSucceeded"))
+    if isinstance(runtime_trace.get("jsonRepair"), dict):
+        trace["jsonRepair"] = copy.deepcopy(runtime_trace.get("jsonRepair"))
     return trace
 
 

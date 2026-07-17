@@ -28,6 +28,37 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 automation_filter 畸形 JSON 使用选定模型做一次有界语法修复
+
+部署 `f8b8eeb` 后，先后用 GPT 与千问执行同一完整回归，均固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`：
+
+- GPT Agent `agent-1784249816070-e454ec58` 与 Qwen Agent `agent-1784250515450-26a3a030` 均在 `GENERATE_YAML` 终态失败，没有创建 Runner job、没有操作固定 OPPO，也没有向第二台设备下发。
+- 两轮都保持原 Figma parser，解析为 `4 页 / 4 张 UI 图 / 忽略 0`。GPT 视觉 4/4 批完成；Qwen 视觉 4/4 批完成，实际模型均为 `qwen3.6-plus / qwen_plus / fallback=false`，约 `14-17s/批`。设计稿确实送 AI 判断，且继续是软参考而不是硬门禁。
+- Qwen 生成 6 份 YAML，覆盖收敛从缺 1 个 reachability 验收点推进到 `missing=[] / unresolved automatic candidates=0`；三类 Top3 参考分别来自文档打印成功修复基线、6 寸照片打印成功基线和证件扫描成功基线。6 份 YAML 的 static / task scorer 均为 `100 / executable`，但最终全被来源门禁降为 `needs_review`，因此没有把未确认来源的脚本冒险下发 Runner。
+- 实际失败不是视觉、覆盖、YAML 动作或 GPT 额度。Qwen `automation_filter` 返回了约 9KB 业务 JSON，但缺少 JSON 分隔符，原始错误为 `Expecting ',' delimiter: line 290 column 6 (char 8952)`。旧代码捕获所有异常后统一写成 `local_fallback_after_ai_timeout`，既误报“超时”，又让后续已收敛的 6 份 YAML 一直携带本地兜底来源。
+- GPT 证据也不支持“额度耗尽”：`gpt-5-mini` 的生产规模重放返回 `finish_reason=length / completion_tokens=4096 / reasoning_tokens=4096 / visible output=0`，Gateway 已正确降级；同一请求使用 `gpt-4.1-mini` 在约 11 秒返回有效 JSON。按用户最新决定，下一轮完整验收仍固定使用 `qwen3.6-plus`。
+
+通用修复：
+
+- 只有 `automation_filter` 已返回内容但 `json.loads` 发生语法错误时，才把“原始畸形 JSON + parse error + Skill schema”交给创建 Agent 时选择的同一模型做一次纯语法修复。禁止新增、删除、改写或重排业务内容；不重跑完整需求/Figma/基线分析，也不增加常规成功链路耗时。
+- 修复调用硬限制为一次、默认最多 `45s`、输入最多 `30000` 字符，不带图片。超限、修复再次失败、schema 不合法、网络错误或真实超时均进入原有保守兜底，不会循环修复。
+- trace 新增 `jsonRepairAttempted / jsonRepairSucceeded / jsonRepair`，并保留首轮与修复轮的实际 provider/model/fallback/finish/usage。失败来源准确区分 `local_fallback_after_ai_timeout / local_fallback_after_ai_invalid_json / local_fallback_after_ai_failure`。
+- 所有 `local_fallback_after_ai_*` 仍统一限制为 `needs_review`，static/scorer 不得提升为 executable。旧 `local_fallback_after_ai_timeout` 数据保持兼容；没有降低 coverage、scorer、static、dry-run、Smoke 或 Runner 门禁。
+- 没有修改 Figma parser、业务提示词、`router.py`、scorer、Sonic、Runner、执行模式、设备策略或历史 YAML。
+
+已验证：
+
+```bash
+PYTHONPYCACHEPREFIX=/private/tmp/midscene-pycache python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+PYTHONPYCACHEPREFIX=/private/tmp/midscene-pycache python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+结果：定向测试覆盖“同模型修复成功 / 修复再次失败仍阻断 / 真实超时单独分类”；完整 undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时目录与模型降级集成、Skill fixtures `3/3`、Playwright 桌面/移动端视觉回归全部通过。
+
+待完成：提交后由用户推送并部署；部署后使用同一需求、Figma 和 `qwen3.6-plus` 再发起一次完整 Agent，固定 `win-runner-01 / ecbfd645`，持续监督到 Agent、首批 Smoke、remaining 和报告全部终态。人工复核三个业务分支、真实可见文字、无坐标、Runner 报告、截图/录屏和失败分类；不得选择第二台设备，也不得把本地测试当作真机成功。
+
 ### 2026-07-16 GPT 长 Skill 空内容不能冒充成功
 
 部署 `56001ae` 后发起同一完整回归：

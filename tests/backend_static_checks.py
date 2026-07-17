@@ -95,6 +95,117 @@ def check_ai_gateway_response_diagnostics():
     )
 
 
+def check_automation_filter_invalid_json_self_repair():
+    from task_server.services import ai_skill_service, yaml_service
+
+    model_config = {"providerId": "qwen_plus", "model": "qwen3.6-plus"}
+    malformed = '{"cases":[{"case_id":"TC-001" "title":"入口可见"}],"manual_cases":[],"review":{}}'
+    repaired = json.dumps({
+        "cases": [{"case_id": "TC-001", "title": "入口可见"}],
+        "manual_cases": [],
+        "review": {},
+    }, ensure_ascii=False)
+    original_gateway = ai_skill_service.ai_gateway_skill_content
+    calls = []
+    responses = [malformed, repaired]
+
+    def fake_gateway(skill_name, prompt, **kwargs):
+        calls.append({
+            "skill": skill_name,
+            "prompt": prompt,
+            "modelConfig": dict(kwargs.get("model_config") or {}),
+        })
+        runtime_trace = kwargs.get("runtime_trace")
+        if isinstance(runtime_trace, dict):
+            runtime_trace.update({
+                "providerId": "qwen_plus",
+                "model": "qwen3.6-plus",
+                "fallbackUsed": False,
+                "finishReason": "stop",
+                "usage": {"totalTokens": 128},
+                "source": "ai_gateway",
+            })
+        return responses.pop(0)
+
+    success_trace = {}
+    try:
+        ai_skill_service.ai_gateway_skill_content = fake_gateway
+        result = ai_skill_service.run_ai_skill(
+            "automation_filter",
+            {"title": "入口可见"},
+            model_config=model_config,
+            runtime_trace=success_trace,
+            repair_invalid_json=True,
+        )
+    finally:
+        ai_skill_service.ai_gateway_skill_content = original_gateway
+    require(result.get("cases", [{}])[0].get("title") == "入口可见", "Malformed skill JSON must be repaired without losing business values")
+    require(len(calls) == 2 and all(item.get("modelConfig") == model_config for item in calls), "JSON syntax repair must make one bounded call with the selected model config")
+    require("只修复下方模型输出中的 JSON 语法错误" in calls[1].get("prompt", ""), "JSON repair must be syntax-only instead of regenerating the business plan")
+    require(
+        success_trace.get("jsonRepairAttempted") is True
+        and success_trace.get("jsonRepairSucceeded") is True
+        and success_trace.get("jsonRepair", {}).get("sameSelectedModel") is True,
+        "Successful JSON repair must remain observable in the AI model trace",
+    )
+
+    responses = [malformed, malformed]
+    failed_trace = {}
+    try:
+        ai_skill_service.ai_gateway_skill_content = fake_gateway
+        failed = ai_skill_service.call_skill_automation_filter(
+            "通用入口展示",
+            "AI测试",
+            {"requirement_points": ["REQ-001 通用入口展示"]},
+            [{
+                "feature": "通用入口",
+                "scenario": "入口展示",
+                "requirement_point": "REQ-001 通用入口展示",
+                "steps": ["进入首页", "查看通用入口"],
+                "assertions": ["通用入口可见"],
+            }],
+            model_config=model_config,
+            runtime_trace=failed_trace,
+        )
+    finally:
+        ai_skill_service.ai_gateway_skill_content = original_gateway
+    invalid_case = failed.get("cases", [{}])[0]
+    require(
+        invalid_case.get("source") == "local_fallback_after_ai_invalid_json"
+        and invalid_case.get("executionLevel") == "needs_review"
+        and failed.get("review", {}).get("fallback_failure_type") == "invalid_json",
+        "A failed JSON repair must use an accurate review-only provenance instead of pretending to be a timeout",
+    )
+    invalid_floor = yaml_service.enforce_generated_fallback_execution_floor(failed)
+    require(
+        invalid_floor.get("cases", [{}])[0].get("source") == "local_fallback_after_ai_invalid_json"
+        and yaml_service.generated_yaml_effective_level(
+            "executable",
+            invalid_floor.get("cases", [{}])[0],
+            {"ok": True},
+        ) == "needs_review",
+        "Static scoring must not promote a malformed-JSON local fallback to executable",
+    )
+
+    original_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        ai_skill_service.run_ai_skill = lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("model timeout"))
+        timed_out = ai_skill_service.call_skill_automation_filter(
+            "通用入口展示",
+            "AI测试",
+            {"requirement_points": ["REQ-001 通用入口展示"]},
+            [{"feature": "通用入口", "scenario": "入口展示"}],
+            model_config=model_config,
+        )
+    finally:
+        ai_skill_service.run_ai_skill = original_run_ai_skill
+    require(
+        timed_out.get("cases", [{}])[0].get("source") == "local_fallback_after_ai_timeout"
+        and timed_out.get("review", {}).get("fallback_failure_type") == "timeout",
+        "A real model timeout must remain separately classified and review-only",
+    )
+
+
 def load_backend():
     spec = importlib.util.spec_from_file_location("midscene_upload_static_check", MODULE)
     module = importlib.util.module_from_spec(spec)
@@ -6996,6 +7107,7 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
 
 def main():
     check_ai_gateway_response_diagnostics()
+    check_automation_filter_invalid_json_self_repair()
     check_runner_inline_android_device_injection()
     check_midscene_model_family_protocol()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
