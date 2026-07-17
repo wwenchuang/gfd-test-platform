@@ -6980,7 +6980,168 @@ def check_smoke_selection_requires_explicit_ai_mark():
 
 
 def check_yaml_runner_eligibility_filter():
-    from task_server.services import yaml_service
+    from task_server.services import ai_skill_service, yaml_service
+
+    requirement_point = (
+        "REQ-003 扫描复印：校验云盘入口可见、同级关系、文案及点击后的首个稳定页面"
+    )
+    source_candidate = {
+        "title": "扫描复印页云盘入口展示",
+        "scenario": "扫描复印页新增入口",
+        "coverage": "REQ-003",
+        "requirementRefs": [requirement_point],
+        "start_page": "App 首页",
+        "business_path": "App 首页 -> 扫描复印 -> 证件扫描",
+        "expected_result": "云盘入口可见且与同页导入入口同级展示",
+        "assertions": ["云盘入口文案准确且与同页导入入口同级展示"],
+        "repair_hints": "使用同分支成功基线补齐真实可见文字导航",
+        "steps": [],
+    }
+    evidence_payload = {
+        "title": "扫描复印新增入口",
+        "analysis": {"requirement_points": [requirement_point]},
+        "cases": [
+            {
+                "case_id": f"TC-{index:03d}",
+                "title": f"既有分支入口展示 {index}",
+                "requirementRefs": [f"REQ-{100 + index:03d} 既有分支入口展示"],
+                "steps": ["进入业务页面", "等待云盘入口可见"],
+                "assertions": ["云盘入口可见"],
+            }
+            for index in range(1, 5)
+        ] + [source_candidate],
+        "manual_cases": [],
+    }
+    evidence_filtered = yaml_service.split_automation_ready_cases(evidence_payload)
+    preserved = next(
+        item for item in evidence_filtered["manual_cases"]
+        if item.get("case_id") == "TC-005"
+    )
+    require(
+        preserved.get("originExecutionLevel") == "automatic"
+        and preserved.get("executionLevel") == "manual"
+        and preserved.get("requirementRefs") == [requirement_point]
+        and preserved.get("business_path") == source_candidate["business_path"]
+        and preserved.get("assertions") == source_candidate["assertions"]
+        and preserved.get("repair_hints") == source_candidate["repair_hints"],
+        "A blocked automatic candidate must retain its stable id, requirement mapping, path and assertions",
+    )
+    require(
+        "case_id" not in source_candidate
+        and "executionLevel" not in source_candidate
+        and "originExecutionLevel" not in source_candidate,
+        "Runner eligibility splitting must not mutate the AI source candidate",
+    )
+    automatic_records = []
+    manual_records = []
+    for default_origin, items in (
+        ("automatic", evidence_filtered.get("cases") or []),
+        ("manual", evidence_filtered.get("manual_cases") or []),
+    ):
+        for index, item in enumerate(items):
+            origin_level = ai_skill_service._planner_case_origin_level(item, default_origin)
+            record = {
+                "raw": item,
+                "compact": ai_skill_service._compact_case_for_plan(
+                    item,
+                    index,
+                    origin_level=origin_level,
+                ),
+            }
+            (manual_records if origin_level == "manual" else automatic_records).append(record)
+    focused_automatic, focused_manual, _context, focus = (
+        ai_skill_service._focus_executable_convergence_candidates(
+            evidence_filtered,
+            automatic_records,
+            manual_records,
+            {
+                "pass": "coverage_convergence",
+                "portfolioAudit": {
+                    "executableCaseIds": ["TC-001"],
+                    "unresolvedAutomaticCaseIds": [],
+                    "missingRequirementPoints": [requirement_point],
+                    "missingAcceptanceChecks": [],
+                    "targetExecutableCount": 3,
+                    "executableCount": 1,
+                },
+            },
+            selected_baselines=[],
+        )
+    )
+    require(
+        "TC-005" in [item.get("case_id") for item in focused_automatic]
+        and not focused_manual
+        and "TC-005" in focus.get("focusedCandidateIds", []),
+        "A downgraded automatic candidate must remain available to the existing AI convergence pass",
+    )
+    planner_requests = []
+    original_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in candidate identity replay")
+            planner_requests.append(request)
+            return {
+                "cases": [{
+                    "caseId": "TC-005",
+                    "baselineId": "scan-success-baseline",
+                    "precondition": "App 首页",
+                    "flow": [
+                        "等待 App 首页稳定显示扫描复印入口",
+                        "点击扫描复印入口",
+                        "点击证件扫描入口",
+                        "等待扫描复印页面展示云盘入口",
+                    ],
+                    "assertionTarget": "云盘入口文案准确且与同页导入入口同级展示",
+                    "requirementRefs": [requirement_point],
+                    "executableReason": "复用同分支成功路径补齐可见文字导航",
+                    "batch": "remaining",
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "候选身份保真重放"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_planner
+        identity_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "扫描复印新增入口",
+            "基础打印",
+            evidence_filtered,
+            [{
+                "id": "scan-success-baseline",
+                "title": "扫描复印稳定导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "App 首页 -> 扫描复印 -> 证件扫描",
+            }],
+            {"smokeCount": 3},
+        )
+    finally:
+        ai_skill_service.run_ai_skill = original_run_ai_skill
+    require(
+        planner_requests
+        and any(
+            item.get("case_id") == "TC-005"
+            for item in planner_requests[0].get("cases") or []
+        )
+        and identity_plan.get("trace", {}).get("rejected_case_count") == 0
+        and identity_plan.get("cases", [{}])[0].get("caseId") == "TC-005",
+        "The AI planner must ground its TC id back to the preserved source candidate instead of rejecting it",
+    )
+    identity_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        evidence_filtered,
+        identity_plan,
+    )
+    restored_candidate = next(
+        item for item in identity_applied.get("cases") or []
+        if item.get("case_id") == "TC-005"
+    )
+    require(
+        restored_candidate.get("executionLevel") == "executable"
+        and restored_candidate.get("originExecutionLevel") == "automatic"
+        and restored_candidate.get("ai_case_plan", {}).get("baselineVerified") is True,
+        "A grounded AI path may restore the original automatic candidate while all downstream gates remain active",
+    )
 
     payload = {
         "title": "AI建模需求",

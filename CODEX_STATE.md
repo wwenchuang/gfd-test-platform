@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 部署后真实回归：自动候选降级时保持身份与需求证据
+
+用户确认部署 `1464e77` 后，以完全相同需求和 Figma 发起 Agent `agent-1784275188111-cc3f2a2d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- `8091 / 8088`、AI Gateway、Sonic 健康；Gateway 实时目录包含 `gpt-4.1-mini`，模型探针成功。Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上的小白学习打印为 `4.45.0 (357)`。
+- Figma parser 保持原实现并解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 张图按 4 批全部送入创建时选定的 GPT，4 / 4 批完成，耗时约 `5s / 15s / 10s / 9s`，均为 `fallbackIndex=0 / finishReason=stop / hardGate=false`。第 2 批结构化证据正确识别 `REQ-002 / 照片打印 / 5寸照片 / 百度网盘 / sameBranch=true / confidence=0.9`。
+- requirement、scenario、automation filter、smoke、Top3 基线重排、范围规划和最终 YAML 规划均使用选定 GPT，没有切换千问。基线重排分别选中文档、照片和扫描三个执行成功分支；每个必需分支候选数均为 4，扫描成功基线并未缺失。
+- Agent 终态 `FAILED / GENERATE_YAML / 30%`。没有创建 Runner job，没有操作 OPPO，也没有向同 Runner 上的华为设备下发；同期华为上的 Sonic 基线任务属于外部任务，不是本 Agent 创建。
+- 最终 4 条 executable 覆盖文档和照片的 `8 / 12` 个验收维度；扫描复印 `REQ-003` 的 visibility / relation / copy / reachability 均缺失。数量 `4 < 5` 仍只是 advisory，失败由显式覆盖门禁触发，不是机械凑数、视觉门禁、模型额度、Runner 或设备问题。
+
+根因：
+
+- PLAN 的 `coverage_matrix` 和 smoke 记录仍引用扫描候选 `TC-005 / TC-006`，但保存后的人工区只剩两个无 ID、无需求映射、无业务路径、无断言的 `MC-004 / MC-005`。
+- `split_automation_ready_cases()` 对缺步骤的自动候选重新创建了只含标题、原因和准备建议的对象，丢失原 `case_id / requirementRefs / coverage / business_path / expected / assertions / repair_hints`，也把来源误记成原生 manual。
+- 初始 GPT planner 明确规划了 6 条 executable，却因响应中的 `TC-005 / TC-006` 已无法映射当前 `MC-*` 候选而拒绝 2 条分类；最终收敛请求因此只包含 `TC-001..TC-004`。模型没有扫描候选可选，即使全局已经有可信扫描基线也无法恢复。
+- 现有最终覆盖门禁正确阻断了不完整组合，不能降低或绕过。
+
+通用修复：
+
+- 自动候选进入 Runner 资格拆分前统一规范 `case_id / caseId / id`；缺 ID 时按原自动池顺序生成不冲突的稳定 `TC-*`。因此第 5、6 个候选不会在人工池被重新编号或与已有 ID 冲突。
+- 被确定性风险或缺步骤阻断时，深拷贝完整候选并标记 `executionLevel=manual / originExecutionLevel=automatic`，保留需求、路径、断言、视觉补充和修复提示。它仍不能直接生成 YAML，但现有初次 planner 和同一次覆盖收敛可以把它作为原自动候选交给 AI 判断。
+- AI 只有在返回可映射的原候选 ID、显式需求引用、可信基线路径、明确前置和可见终态后才可恢复 executable；static、scorer、dry-run、Smoke、Runner 和最终覆盖门禁均保持不变。没有新增模型轮次、业务词特判或数量硬门槛。
+- 没有修改 Figma parser、视觉分批、`router.py`、执行模式、Runner、Sonic、scorer、历史 YAML 或设备策略。
+
+行为验证：
+
+- 回归构造 4 个既有自动候选和第 5 个无 ID、无步骤但保留 `REQ-003` 证据的候选；拆分后稳定得到 `TC-005`，完整需求映射、业务路径、断言和 repair hint 均保留，原输入对象未被修改。
+- 模拟线上 GPT 再次返回 `TC-005` 和扫描成功基线路径，planner 请求真实包含该 ID，`rejected_case_count=0`；候选仅在 `baselineVerified=true` 后恢复 executable。覆盖收敛也能按缺失需求重新聚焦该候选。
+- `python3 -m py_compile ...`、`python3 tests/backend_static_checks.py`、完整 `npm test` 和 `git diff --check` 通过。完整检查包含 undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时模型目录与降级集成、Skill fixtures `3/3` 及 Playwright 桌面/移动端视觉回归。
+
+待完成：提交、推送并部署本轮修复后，只发起一次相同完整 Agent，继续使用创建时选定且探针可用的 `gpt-4.1-mini`，仅在超时、限流或不可用时走已有模型降级；固定 `win-runner-01 / ecbfd645`，监督生成、Smoke、remaining、真实报告、截图/录屏和最终终态。不得选择第二台设备，也不得用本地重放替代真机成功。
+
 ### 2026-07-17 显式需求溯源、当前 Frame 导航叶子与逐任务修复资格
 
 部署 `1057e04` 后，以相同需求和 Figma 发起完整 Agent `agent-1784267243585-95268e66`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：

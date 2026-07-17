@@ -2763,27 +2763,71 @@ def split_automation_ready_cases(payload: Any) -> dict:
     normalized = normalize_cases_payload(payload)
     if normalized.get("_automation_ready"):
         return normalized
+
+    def manualize_automatic_case(case: dict, reason: str, suggested_setup: str) -> dict:
+        """Keep candidate evidence intact while blocking immediate YAML conversion."""
+        item = copy.deepcopy(case)
+        origin_level = str(
+            item.get("originExecutionLevel")
+            or item.get("origin_execution_level")
+            or "automatic"
+        ).strip().lower()
+        item["originExecutionLevel"] = "manual" if origin_level == "manual" else "automatic"
+        item["executionLevel"] = "manual"
+        item["reason"] = reason
+        item["suggested_setup"] = (
+            item.get("suggested_setup")
+            or item.get("setup")
+            or suggested_setup
+        )
+        return item
+
     ready: List[Any] = []
     manual: List[Any] = list(normalized.get("manual_cases") or [])
-    for case in normalized["cases"]:
+    used_case_ids = {
+        str(first_non_empty(
+            case.get("case_id"),
+            case.get("caseId"),
+            case.get("id"),
+        ) or "").strip()
+        for case in normalized["cases"]
+        if isinstance(case, dict)
+    }
+    used_case_ids.discard("")
+    for case_index, case in enumerate(normalized["cases"], start=1):
         if not isinstance(case, dict):
             continue
-        manual_reason = _case_manual_block_reason(case)
+        source_case = copy.deepcopy(case)
+        case_id = str(first_non_empty(
+            source_case.get("case_id"),
+            source_case.get("caseId"),
+            source_case.get("id"),
+        ) or "").strip()
+        if not case_id:
+            candidate_index = case_index
+            case_id = f"TC-{candidate_index:03d}"
+            while case_id in used_case_ids:
+                candidate_index += 1
+                case_id = f"TC-{candidate_index:03d}"
+        source_case["case_id"] = case_id
+        used_case_ids.add(case_id)
+        manual_reason = _case_manual_block_reason(source_case)
         if manual_reason:
-            item = dict(case)
-            item["reason"] = manual_reason
-            item["suggested_setup"] = item.get("suggested_setup") or item.get("setup") or "保留到完整测试用例/脑图，准备好数据、Mock 或环境后再人工转自动化"
-            manual.append(item)
+            manual.append(manualize_automatic_case(
+                source_case,
+                manual_reason,
+                "保留到完整测试用例/脑图，准备好数据、Mock 或环境后再人工转自动化",
+            ))
             continue
-        steps = normalize_text_list(case.get("steps") or [])
+        steps = normalize_text_list(source_case.get("steps") or [])
         if not steps:
-            manual.append({
-                "title": case.get("title") or case.get("name") or "未命名用例",
-                "reason": "缺少可执行 UI 步骤，暂不生成自动化 YAML",
-                "suggested_setup": "补充业务路径和页面入口后再转自动化",
-            })
+            manual.append(manualize_automatic_case(
+                source_case,
+                "缺少可执行 UI 步骤，暂不生成自动化 YAML",
+                "补充业务路径和页面入口后再转自动化",
+            ))
             continue
-        ready.append(_normalize_runner_case_for_current_app(case))
+        ready.append(_normalize_runner_case_for_current_app(source_case))
     normalized["cases"] = ready
     normalized["manual_cases"] = manual
     normalized["_automation_ready"] = True
