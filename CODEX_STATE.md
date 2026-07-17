@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 真实回归：当前设计叶子、动态样例隔离与逐任务恢复
+
+部署 `de69242` 后，以相同需求和 Figma 发起完整 Agent `agent-1784279799286-3163a6e1`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 在线，上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`。Agent 规划、视觉判断和 YAML 生成持续使用创建时选择的 GPT；Runner 内 Midscene 视觉执行仍使用其已配置的 qwen3.6 模型族。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 张图按 4 批全部送入 GPT，约 `9s / 13s / 12s / 4s` 完成，均未降级。视觉证据明确包含 `REQ-002 / 照片打印 / 5寸照片 / 百度网盘 / confidence=0.9`。
+- AI 形成 `7` 条 executable、`2` 条 manual；7 个 YAML 均通过 static、scorer 和 Runner dry-run，评分 100、无 warning、无坐标。最终失败发生在真实 Smoke / RERUN，不是生成覆盖门禁、视觉超时或第二台设备。
+- 原始 Smoke 固定 OPPO 串行：文档 `job_1784280153426_00004` 成功，报告确认文档打印页显示本地文档、百度网盘、QQ、WPS；扫描 `job_1784280425103_00005` 失败，最后关键帧显示本地导入、相册导入、微信导入，右侧第四个同级图标被屏幕边缘裁切；照片 `job_1784280569718_00006` 因模型 `Request aborted` 失败。
+- 旧安全重跑仍机械执行原脚本：扫描 `job_1784280911400_00007` 再次在相同裁切位置失败；照片 `job_1784281030191_00008` 在同一 OPPO 恢复成功。Agent 终态 `FAILED / RERUN`；共 5 次真实尝试，原始/恢复后逻辑结果为文档通过、照片通过、扫描失败，原始通过 2、失败 3、恢复 1。首批逻辑门禁未恢复，因此 remaining 未下发。整个 Agent 未选择或执行同 Runner 上的第二台设备。
+
+根因：
+
+- 最终规划仍从照片成功基线复制 `6寸照片`。当前视觉证据的 `requirementId` 带描述文本，而旧匹配用完整字符串比较规范化 `REQ-002`；同时当前 Frame 叶子适配只用于有界收敛候选，没有覆盖所有已接受的 baseline-grounded planner flow。
+- 文档、照片、扫描三条可达性 YAML 都从历史成功样例复制了 `百度文档测试.doc` 和“去打印”终态。该文件名不在当前需求或当前 Figma 中，历史基线只能证明路径，不能成为新需求硬断言。
+- 扫描报告已给出同级横向入口被右边缘裁切的恢复证据，但旧分类器只在原 YAML 已含 `aiScroll` 时识别滑动脚本问题；因此 AI 没有得到补充屏外探索的机会。
+- 两个 Smoke 失败分别是扫描脚本问题和照片环境问题。旧聚合优先得到 `ENV_ISSUE`，跳过 `GENERATE_REPAIR`，随后 `_tool_rerun` 又把所有失败原 YAML 一起重跑。失败 HTML 也没有进入 `executionReports`，部分恢复后报告不刷新，导致最终产物漏掉真实失败报告和已恢复尝试。
+
+通用修复：
+
+- 当前视觉证据按规范化 `REQ-*`、同业务分支、目标文字和置信度匹配；同需求兄弟 case 可以提供当前 Frame 叶子。所有 baseline-grounded executable planner flow 都执行当前叶子适配，不再只处理覆盖收敛。明确叶子优先于仅由页面标题推导的叶子；同等级视觉变体保持 Figma 页面/视觉批次稳定顺序，不修改 Figma parser。
+- automation filter、executable planner 和平台写回共同禁止把历史文件名、账号、手机号、订单号、记录标题、时间戳复制为当前硬条件。平台检测只在历史出现的动态值：若它只位于最后的等待/观察步骤，改用 AI planner 为当前 case 给出的稳定终态；若出现在动作或 planner 断言中且无法安全落地，则降级复核，不能下发 Runner。
+- 失败关键帧/报告若明确显示同级入口行在屏幕边缘被裁切，即使原 YAML 没有滑动，也先归为一次可修 `SCRIPT_ISSUE`。修复 AI 可在失败等待前补最多两次官方 `aiScroll`，区域使用当前页真实可见文字、`direction=right / distance<=400`，滑动后重新等待目标；禁止坐标、ADB swipe 和整页盲滑。
+- 失败分析保留 `failureTypeCounts / mixedFailureTypes`，后续动作按每个 job 分流：可修脚本只下发通过语义/证据/YAML 门禁的 AI 临时修复稿；有明确模型中止、设备断开、网关等临时环境证据的任务只原样重试一次；产品失败只生成缺陷证据；未知或证据不足不盲重跑。固定设备仍严格串行，没有新增重试轮次或执行模式。
+- 重跑产物显式区分 `mixed / repair_draft / original_yaml / diagnosis_only`；界面按每个任务显示“AI 修复、原脚本重试、诊断处理”，不会再把混合恢复整批显示成 AI 修复。
+- 成功和失败的终态 HTML 都进入 `executionReports / yamlExecutionRefs` 并保留各自状态；每轮真实重跑后立即刷新报告，只有全部失败源由关联后代通过且 remaining 完成时才标记逻辑恢复。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/repair_service.py
+python3 tests/backend_static_checks.py
+python3 tests/ai_gateway_static_checks.py
+npm test
+git diff --check
+```
+
+- 后端 61 项、前端 69 项、Gateway 46 项、实时模型目录/降级集成、Skill fixtures `3/3` 和 Playwright 桌面/移动端视觉回归通过。
+- 直接重放线上 `agent-1784279799286-3163a6e1` 产物：TC-004 从 `6寸照片` 适配为 Figma 第一个明确叶子 `5寸照片`，证据来源和置信度保留；三条历史 `百度文档测试.doc` 终态改为授权页、登录页、内容列表或空态页任一稳定状态。
+- 回归模拟同一批包含 `SCRIPT_ISSUE + ENV_ISSUE + PRODUCT_BUG`：只创建 2 个任务，分别为 AI 修复稿和环境原脚本，均绑定 `win-runner-01 / ecbfd645`；产品任务不下发。报告聚合同时保留 passed / failed HTML。
+- 未修改 `router.py`、Figma parser、执行模式、Runner、历史 YAML、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+待完成：提交、推送并部署本轮修复后，再发起一次完全相同的完整 Agent。必须持续监督 Figma 4 批、最终 YAML、首批 Smoke、可能的 AI 修复、remaining、真实报告和关键帧到终态；只允许固定 OPPO `ecbfd645`，不得并发或选择第二台设备。
+
 ### 2026-07-17 部署后真实回归：自动候选降级时保持身份与需求证据
 
 用户确认部署 `1464e77` 后，以完全相同需求和 Figma 发起 Agent `agent-1784275188111-cc3f2a2d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：

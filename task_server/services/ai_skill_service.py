@@ -858,7 +858,7 @@ def detect_wait_strategy_issue(yaml_text, log_text):
 
 
 def detect_horizontal_scroll_script_issue(yaml_text, log_text):
-    """检测横向滑动未生效的脚本问题。"""
+    """Detect a missing or ineffective horizontal reveal before declaring a product bug."""
     text = str(yaml_text or "")
     log = str(log_text or "")
     combined = "\n".join([text, log])
@@ -866,19 +866,39 @@ def detect_horizontal_scroll_script_issue(yaml_text, log_text):
         "aiScroll" in text
         and any(word in text for word in ("横向", "icon", "图标", "我的学习", "功能", "列表"))
     )
-    missing_target = any(word in log for word in ("未出现", "没有出现", "找不到", "未找到", "failed to locate", "not found", "看不到"))
+    missing_target = any(word in log for word in (
+        "未出现", "没有出现", "没有发现", "找不到", "未找到", "不可见",
+        "failed to locate", "not found", "看不到",
+    ))
     target_is_icon = any(word in combined for word in ("试卷夹", "入口", "icon", "图标"))
-    if has_horizontal_scroll and missing_target and target_is_icon:
+    clipped_row_evidence = bool(
+        any(word in log for word in ("右侧", "左侧", "屏幕边缘", "可见区域", "当前界面区域"))
+        and any(word in log for word in ("被截断", "截断", "只显示", "仅显示", "露出一部分", "部分可见"))
+        and any(word in combined for word in ("入口", "icon", "图标", "列表", "同级", "导入"))
+    )
+    if missing_target and target_is_icon and (has_horizontal_scroll or clipped_row_evidence):
+        missing_scroll = clipped_row_evidence and not has_horizontal_scroll
         return {
             "category": "script_issue",
-            "confidence": 0.94,
-            "reason": "失败点前存在横向 icon 列表 aiScroll，但目标入口仍未出现，结合当前截图更像横向滑动未真正执行或滑动距离/方式不正确，不应判为产品缺陷",
+            "confidence": 0.93 if missing_scroll else 0.94,
+            "reason": (
+                "失败关键帧显示同级入口行在屏幕边缘被裁切，但 YAML 在断言前没有横向探索；"
+                "目标可能仍在同一列表的屏外区域，应先做一次有界可见文字滑动修复，再判断是否为产品缺陷"
+                if missing_scroll else
+                "失败点前存在横向 icon 列表 aiScroll，但目标入口仍未出现，结合当前截图更像横向滑动未真正执行或滑动距离/方式不正确，不应判为产品缺陷"
+            ),
             "evidence": [
-                "YAML 中存在横向 icon 列表 aiScroll",
+                (
+                    "报告文字明确描述同级入口行在屏幕边缘被截断，原 YAML 未包含横向 aiScroll"
+                    if missing_scroll else "YAML 中存在横向 icon 列表 aiScroll"
+                ),
                 "执行日志显示目标入口未出现或定位失败",
-                "当前页面仅显示横向列表前几个入口，符合未滑到目标入口的脚本问题"
+                "当前页面只完整显示列表前部入口，符合目标仍在屏外的可恢复脚本分叉"
             ],
-            "suggested_action": "将横向列表滑动修复为两次 aiScroll singleAction direction:right distance:400，并追加 Android ADB 横滑兜底后重跑",
+            "suggested_action": (
+                "让修复 AI 根据报告关键帧，在失败等待前为具体同级入口区域补充一次或两次官方 aiScroll，"
+                "使用可见文字描述区域并在滑动后重新等待目标；禁止坐标或 ADB swipe"
+            ),
             "can_auto_repair": True
         }
     return None
@@ -1093,7 +1113,7 @@ def repair_strategy_guide():
 7. 如果是弹窗/权限/升级/广告/引导遮挡，只在关键路径前补自然语言弹窗处理，不要每一步都加，避免拖慢。
 8. 如果是加载慢，使用 aiWaitFor + timeout 等目标 UI 条件，不要用固定长 sleep。Midscene 自身会重试/重规划，不要无限加长等待；任何新增或修改的 aiWaitFor timeout 都不得超过 300000ms。只有 3D/模型/建模/切片/STL/OBJ/模型导入这类链路才允许写"模型处理进度到 100%"和 180000~240000ms；2D/文档/错题/基础打印/相册/扫描/格式转换链路禁止套用"模型处理进度"，应等待"打印前准备完成、立即打印按钮、确认打印弹窗/按钮"等真实 UI 条件，通常 30000~60000ms。只能在"原等待明显偏短或条件过泛"时修一次，不要反复加长等待掩盖真实产品/环境问题。
 8.1 如果失败发生在中间流程，例如点击"完成/确认/下一步"后目标格式按钮、PNG/PDF/Word、导出或确认按钮尚未渲染，应该在这两个业务动作之间补 aiWaitFor 等待目标按钮/选项出现，不要把它误修成最终保存成功校验。
-8.2 横向 icon 列表/分页功能区不要用 ai 自然语言描述"向左滑/向右滑"。必须使用官方 aiScroll：目标写清楚具体横向区域，露出右侧隐藏入口时使用两次 `scrollType: "singleAction"` + `direction: "right"` + `distance: 400`。禁止生成 `distance: 200` 这类过短距离，也不要超过单次距离上限。注意 Midscene 的 direction 表示"哪个方向的内容进入屏幕"，不是手指滑动方向。Android 上横向 icon 区域默认在 aiScroll 后增加 `runAdbShell: "input swipe 950 1080 150 1080 500"` 作为兜底。
+8.2 失败关键帧若明确显示同级入口行在屏幕边缘被裁切，应先尝试一次有界横向恢复再判产品缺陷。必须使用官方 aiScroll：目标用当前页真实可见文案描述具体横向区域，`scrollType: "singleAction"`、`direction: "right"`、`distance` 不超过 400，滑动后重新等待目标入口；一次不足时最多补第二次。禁止坐标、ADB swipe 和含糊的整页滚动。
 9. 如果是断言失败，先判断是否断言过严。可把"完全一致"改为"页面标题、关键入口、列表或空态可见"等视觉可验证断言；不要把真实产品缺陷改没。
 9.1 如果失败是保存/导出/下载/生成/转换这类结果型操作的短暂提示没捕捉到，先结合原 YAML 的业务链路和失败截图判断。可以优化为更合理的成功提示或失败态校验，但只能改失败相关步骤，不要批量插入重复校验，不要改变中间业务流程。
 10. 修复业务链路时，必须先对齐 goal、start_page、business_path、expected_result：入口路径可以修，等待条件可以修，断言表达可以修，但不能绕开核心业务目标。
@@ -4414,10 +4434,12 @@ def _current_visual_page_evidence_for_case(normalized, case, case_id, branch, ta
             continue
         evidence_case_id = str(item.get("caseId") or "").strip()
         evidence_requirement_id = str(item.get("requirementId") or "").strip()
-        if evidence_case_id and evidence_case_id != str(case_id or "").strip():
-            continue
-        if evidence_requirement_id and evidence_requirement_id not in case_requirement_ids:
-            continue
+        evidence_requirement_ids = set(_acceptance_requirement_ids(evidence_requirement_id))
+        requirement_matches = bool(
+            evidence_requirement_ids
+            and case_requirement_ids
+            and evidence_requirement_ids.intersection(case_requirement_ids)
+        )
         evidence_branch_key = re.sub(
             r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("branch") or "")
         ).lower()
@@ -4426,7 +4448,15 @@ def _current_visual_page_evidence_for_case(normalized, case, case_id, branch, ta
             and evidence_branch_key
             and _navigation_target_keys_match(branch_key, evidence_branch_key)
         )
-        if not evidence_case_id and not evidence_requirement_id and not branch_matches:
+        case_matches = bool(
+            evidence_case_id
+            and evidence_case_id == str(case_id or "").strip()
+        )
+        if evidence_case_id and not case_matches and not (requirement_matches and branch_matches):
+            continue
+        if evidence_requirement_id and not requirement_matches:
+            continue
+        if not case_matches and not requirement_matches and not branch_matches:
             continue
         target_key = re.sub(
             r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("targetText") or "")
@@ -4439,7 +4469,21 @@ def _current_visual_page_evidence_for_case(normalized, case, case_id, branch, ta
         if not leaf_key or any(_navigation_target_keys_match(leaf_key, value) for value in target_keys):
             continue
         eligible.append(item)
-    eligible.sort(key=lambda item: (float(item.get("confidence") or 0), len(item.get("parentPath") or [])), reverse=True)
+    def evidence_rank(item):
+        item_branch_key = re.sub(
+            r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("branch") or "")
+        ).lower()
+        return (
+            item.get("leafDerivedFromPageTitle") is not True,
+            str(item.get("caseId") or "").strip() == str(case_id or "").strip(),
+            bool(branch_key and item_branch_key == branch_key),
+            float(item.get("confidence") or 0),
+            len(item.get("parentPath") or []),
+        )
+
+    eligible.sort(key=evidence_rank, reverse=True)
+    # Python's stable sort preserves visual batch/Figma page order for equally
+    # grounded explicit variants, so repeated runs choose the same source page.
     return copy.deepcopy(eligible[0]) if eligible else {}
 
 
@@ -4924,7 +4968,10 @@ def _bounded_convergence_evidence(
                 == "manual"
             ),
             "currentLeafAdapted": current_leaf_adapted,
-            "currentLeafSourceCaseId": case_id if current_leaf_adapted else "",
+            "currentLeafSourceCaseId": (
+                str(current_leaf_evidence.get("caseId") or case_id).strip()
+                if current_leaf_adapted else ""
+            ),
             "currentLeafEvidenceSource": (
                 current_leaf_evidence.get("source") if visual_leaf_adapted else "ai_candidate"
             ) if current_leaf_adapted else "",
@@ -5150,7 +5197,9 @@ def _bounded_convergence_evidence(
             )
             if visual_leaf_adapted:
                 current_leaf_adapted = True
-                current_leaf_source_case_id = source_case_id
+                current_leaf_source_case_id = str(
+                    current_leaf_evidence.get("caseId") or source_case_id
+                ).strip()
                 current_leaf_evidence_source = current_leaf_evidence.get("source") or "visual_grounder"
             elif current_leaf_adapted:
                 current_leaf_evidence_source = "ai_candidate"
@@ -5824,6 +5873,82 @@ def call_skill_executable_yaml_planner(
         }
 
 
+_DYNAMIC_UI_DATA_PATTERNS = (
+    re.compile(r"[\w().（）-]+\.(?:docx?|xlsx?|pptx?|pdf|txt|csv|zip|rar|png|jpe?g|webp|stl|obj)\b", re.I),
+    re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
+    re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
+    re.compile(r"(?<!\d)\d{8,}(?!\d)"),
+    re.compile(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b"),
+)
+
+
+def _current_requirement_visual_evidence_text(normalized):
+    """Return current-source evidence without importing candidate or baseline sample data."""
+    normalized = normalized if isinstance(normalized, dict) else {}
+    analysis = normalized.get("analysis") if isinstance(normalized.get("analysis"), dict) else {}
+    review = normalized.get("review") if isinstance(normalized.get("review"), dict) else {}
+    source_items = [
+        analysis.get("requirement_points"),
+        analysis.get("requirement_contract"),
+        analysis.get("requirement_acceptance_checks"),
+        review.get("current_page_evidence"),
+        review.get("visual_batch_judgements"),
+    ]
+    return json.dumps(source_items, ensure_ascii=False)
+
+
+def _unsupported_dynamic_ui_literals(value, normalized):
+    """Find data-like literals that exist only in generated/history-derived execution text."""
+    text = "\n".join(normalize_text_list(value))
+    if not text:
+        return []
+    current_evidence = _current_requirement_visual_evidence_text(normalized)
+    literals = []
+    quoted = re.findall(r"[「『“\"'‘]([^」』”\"'’]+)[」』”\"'’]", text)
+    candidates = quoted + [match.group(0) for pattern in _DYNAMIC_UI_DATA_PATTERNS for match in pattern.finditer(text)]
+    for candidate in candidates:
+        literal = str(candidate or "").strip()
+        if not literal or literal in current_evidence:
+            continue
+        if not any(pattern.search(literal) for pattern in _DYNAMIC_UI_DATA_PATTERNS):
+            continue
+        if literal not in literals:
+            literals.append(literal)
+    return literals
+
+
+def _ground_planner_terminal_observation(flow, assertion_target, normalized):
+    """Replace a history-only data assertion with the planner's current-case terminal contract."""
+    steps = normalize_text_list(flow)[:8]
+    unsupported = _unsupported_dynamic_ui_literals(steps, normalized)
+    if not unsupported:
+        return steps, False, []
+    if not assertion_target or _unsupported_dynamic_ui_literals(assertion_target, normalized):
+        return steps, False, unsupported
+    last_action_index = max(
+        (index for index, step in enumerate(steps) if _navigation_action_target_key(step)),
+        default=-1,
+    )
+    changed = False
+    grounded = []
+    for index, step in enumerate(steps):
+        step_literals = [literal for literal in unsupported if literal in step]
+        if not step_literals:
+            grounded.append(step)
+            continue
+        is_terminal_observation = bool(
+            index > last_action_index
+            and str(step or "").strip().startswith(("等待", "观察", "检查", "验证", "校验", "断言"))
+        )
+        if not is_terminal_observation:
+            return steps, False, unsupported
+        replacement = f"等待{str(assertion_target).strip()}"
+        if not grounded or grounded[-1] != replacement:
+            grounded.append(replacement)
+        changed = True
+    return grounded, changed, unsupported
+
+
 def _ai_plan_satisfies_bounded_evidence(
     case,
     item,
@@ -6025,6 +6150,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     bounded_convergence_ai_path_count = 0
     convergence_demotion_blocked_count = 0
     redundant_unmentioned_manualized_count = 0
+    current_visual_leaf_adapted_count = 0
+    dynamic_data_observation_grounded_count = 0
+    dynamic_data_guard_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
@@ -6191,6 +6319,56 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         acceptance_checks = (
             (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
         )
+        mapped_requirement_ids = set(_acceptance_requirement_ids(requirement_refs))
+        mapped_checks = [
+            check for check in acceptance_checks
+            if isinstance(check, dict)
+            and set(_acceptance_requirement_ids(check.get("requirementId"))).intersection(mapped_requirement_ids)
+        ]
+        visual_branch = next((
+            str(check.get("branch") or "").strip()
+            for check in mapped_checks
+            if str(check.get("branch") or "").strip()
+        ), "")
+        visual_target_terms = _acceptance_target_terms("；".join(
+            str(check.get("text") or "").strip()
+            for check in mapped_checks
+            if str(check.get("text") or "").strip()
+        ))
+        current_visual_evidence = {}
+        visual_leaf_adapted = False
+        if level == "executable" and baseline_grounded and planned_flow and visual_branch:
+            current_visual_evidence = _current_visual_page_evidence_for_case(
+                normalized,
+                case,
+                case_id,
+                visual_branch,
+                visual_target_terms,
+            )
+            planned_flow, visual_leaf_adapted = _adapt_trusted_navigation_to_visual_evidence(
+                planned_flow,
+                current_visual_evidence,
+                visual_branch,
+            )
+            if visual_leaf_adapted:
+                current_visual_leaf_adapted_count += 1
+        unsupported_assertion_literals = _unsupported_dynamic_ui_literals(assertion_target, normalized)
+        planned_flow, data_observation_grounded, unsupported_flow_literals = (
+            _ground_planner_terminal_observation(planned_flow, assertion_target, normalized)
+        )
+        if data_observation_grounded:
+            dynamic_data_observation_grounded_count += 1
+        if level == "executable" and (unsupported_assertion_literals or (unsupported_flow_literals and not data_observation_grounded)):
+            level = "manual" if convergence_pass else "needs_review"
+            item = {
+                **item,
+                "reason": (
+                    "执行计划包含只在历史样例中出现、未被当前需求或当前视觉证据支持的动态数据；"
+                    "必须改为当前用例的稳定页面/区域终态后才能下发 Runner"
+                ),
+            }
+            path_plan_applied = False
+            dynamic_data_guard_count += 1
         if level == "executable" and _source_navigation_has_alternative_destinations(
             planned_flow or case.get("steps") or [],
             allow_terminal_wait_alternatives=True,
@@ -6341,6 +6519,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             "executableReason": item.get("executableReason") or "",
             "batch": item.get("batch") or "",
             "boundedConvergence": copy.deepcopy(item.get("boundedConvergence") or {}),
+            "currentVisualLeafAdapted": visual_leaf_adapted,
+            "currentVisualLeafEvidence": copy.deepcopy(current_visual_evidence),
+            "dynamicDataObservationGrounded": data_observation_grounded,
+            "unsupportedDynamicLiterals": list(dict.fromkeys(
+                unsupported_flow_literals + unsupported_assertion_literals
+            ))[:8],
         }
         if precondition and not case.get("preconditions"):
             case["preconditions"] = [precondition]
@@ -6450,6 +6634,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "bounded_convergence_ai_path_count": bounded_convergence_ai_path_count,
         "convergence_demotion_blocked_count": convergence_demotion_blocked_count,
         "redundant_unmentioned_manualized_count": redundant_unmentioned_manualized_count,
+        "current_visual_leaf_adapted_count": current_visual_leaf_adapted_count,
+        "dynamic_data_observation_grounded_count": dynamic_data_observation_grounded_count,
+        "dynamic_data_guard_count": dynamic_data_guard_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,

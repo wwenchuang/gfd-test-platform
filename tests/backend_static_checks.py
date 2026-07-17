@@ -1025,8 +1025,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     visual_leaf_payload["manual_cases"] = []
     visual_leaf_payload["review"] = {
         "current_page_evidence": [{
-            "caseId": "TC-HISTORICAL-LEAF",
-            "requirementId": "REQ-041",
+            "caseId": "TC-VISUAL-SIBLING",
+            "requirementId": "REQ-041 资料归档",
             "branch": "资料归档",
             "pageTitle": "新版归档",
             "parentPath": ["资料服务", "资料归档"],
@@ -1055,7 +1055,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     ), {})
     require(
         visual_leaf_evidence.get("currentLeafAdapted") is True
-        and visual_leaf_evidence.get("currentLeafSourceCaseId") == "TC-HISTORICAL-LEAF"
+        and visual_leaf_evidence.get("currentLeafSourceCaseId") == "TC-VISUAL-SIBLING"
         and "点击「新版归档」" in visual_leaf_evidence.get("flow", [])
         and "旧版归档" not in " ".join(visual_leaf_evidence.get("flow") or [])
         and (visual_leaf_evidence.get("currentLeafEvidence") or {}).get("confidence") == 0.96,
@@ -2304,7 +2304,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "planningContext.focus" in planner_prompt
         and "convergenceEvidence.eligible=true" in planner_prompt
         and "不要求新增入口或目标落地页已有历史成功结果" in planner_prompt
-        and "kind=source_ui_assertion" in planner_prompt,
+        and "kind=source_ui_assertion" in planner_prompt
+        and "历史成功基线里的文件名、账号、手机号、订单号" in planner_prompt,
         "Final executable planning must test explicit visible requirements without turning missing sibling Figma frames into a hard gate",
     )
     requirement_prompt = (ROOT / "ai_skills" / "prompts" / "requirement_analyzer.v1.md").read_text(encoding="utf-8")
@@ -2320,15 +2321,51 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "第三方入口本身不是人工判定理由" in automation_prompt
         and "不要把小屏和宽屏分别都放进 `cases`" in automation_prompt
         and "横切需求 ID" in automation_prompt
-        and "不得擅自把横切需求替换成" in automation_prompt,
+        and "不得擅自把横切需求替换成" in automation_prompt
+        and "历史成功基线中的文件名、账号名、手机号、订单号" in automation_prompt,
         "Automation filtering must keep bounded reachability automatable and collapse multi-device execution to one current-device case",
     )
 
     payload = {
-        "analysis": {"requirement_points": ["REQ-001 照片打印"]},
+        "analysis": {
+            "requirement_points": ["REQ-001 照片打印"],
+            "requirement_acceptance_checks": [{
+                "id": "REQ-001-CHECK-01",
+                "requirementId": "REQ-001",
+                "branch": "照片打印",
+                "kind": "visibility",
+                "text": "百度网盘入口可见",
+            }],
+        },
+        "review": {
+            "current_page_evidence": [{
+                "caseId": "TC-VISUAL-PHOTO-SIBLING",
+                "requirementId": "REQ-001 照片打印",
+                "branch": "照片打印",
+                "pageTitle": "5寸照片",
+                "parentPath": ["首页", "照片打印页"],
+                "navigationLeaf": "5寸照片",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.90,
+                "source": "figma_current_frame",
+            }, {
+                "caseId": "TC-001",
+                "requirementId": "REQ-001 照片打印",
+                "branch": "照片打印",
+                "pageTitle": "一寸照",
+                "parentPath": ["首页"],
+                "navigationLeaf": "照片打印页",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.90,
+                "source": "page_title_inference",
+            }],
+        },
         "cases": [{
             "case_id": "TC-001",
             "title": "5寸照片入口校验",
+            "requirementRefs": ["REQ-001 照片打印"],
             "steps": ["进入照片打印", "点击5寸照片"],
             "assertions": ["百度网盘可见"],
             "expected_result": "历史候选中的旧位置描述",
@@ -2343,14 +2380,42 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "baselineId": "base-photo-6",
             "baselineGrounded": True,
             "precondition": "App 首页",
-            "flow": ["进入照片打印", "点击页面内照片打印", "点击5寸照片"],
+            "flow": [
+                "进入照片打印",
+                "点击页面内照片打印",
+                "点击6寸照片",
+                "等待文件列表包含“百度文档测试.doc”和底部“去打印”按钮",
+            ],
             "assertionTarget": "百度网盘可见",
             "batch": "smoke",
         }],
     }
     applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, grounded_plan)
-    require(applied["cases"][0]["steps"] == grounded_plan["cases"][0]["flow"], "Grounded AI path plan must replace the generated path and preserve intermediate parent pages")
+    applied_steps = applied["cases"][0]["steps"]
+    require(
+        "点击「5寸照片」" in applied_steps
+        and "6寸照片" not in " ".join(applied_steps)
+        and "百度文档测试.doc" not in " ".join(applied_steps),
+        "A grounded AI path must prefer the current Figma leaf and must not inherit a history-only dynamic file name",
+    )
     require(applied["cases"][0]["ai_case_plan"].get("pathPlanApplied"), "Applied AI path plan must be observable")
+    require(
+        applied["cases"][0]["ai_case_plan"].get("currentVisualLeafAdapted") is True
+        and applied.get("review", {}).get("executable_yaml_plan", {}).get("current_visual_leaf_adapted_count") == 1
+        and not applied["cases"][0]["ai_case_plan"].get("unsupportedDynamicLiterals"),
+        "Current visual adaptation must remain observable and must not leave history-only dynamic literals behind",
+    )
+    grounded_observation, observation_changed, unsupported_literals = ai_skill_service._ground_planner_terminal_observation(
+        ["点击百度网盘入口", "等待文件列表包含“百度文档测试.doc”和底部“去打印”按钮"],
+        "百度网盘授权页、登录页、内容列表或空态页任一稳定状态可见",
+        payload,
+    )
+    require(
+        observation_changed is True
+        and unsupported_literals == ["百度文档测试.doc"]
+        and grounded_observation[-1] == "等待百度网盘授权页、登录页、内容列表或空态页任一稳定状态可见",
+        "A terminal observation copied from historical sample data must be grounded to the current planner assertion contract",
+    )
     require(
         applied["cases"][0].get("assertions") == [grounded_plan["cases"][0]["assertionTarget"]]
         and applied["cases"][0].get("expected_result") == grounded_plan["cases"][0]["assertionTarget"],
@@ -3144,6 +3209,24 @@ def check_agent_failure_review_and_repair_guard():
         "failure_brief": {},
     }) or {}
     require(positive_overlay.get("failure_type") == "popup_overlay", "Concrete runtime popup evidence must remain auto-repairable")
+    clipped_scan_yaml = """android:
+  tasks:
+    - name: 扫描复印入口展示
+      flow:
+        - aiTap: 扫描复印
+        - aiWaitFor: 百度网盘入口可见
+"""
+    clipped_scan_issue = ai_skill_service.detect_horizontal_scroll_script_issue(
+        clipped_scan_yaml,
+        "等待百度网盘入口失败，没有发现目标；右侧有一个被截断的同级导入图标，只显示入口行前部",
+    ) or {}
+    require(
+        clipped_scan_issue.get("category") == "script_issue"
+        and clipped_scan_issue.get("can_auto_repair") is True
+        and "aiScroll" in clipped_scan_issue.get("suggested_action", "")
+        and "禁止坐标或 ADB swipe" in clipped_scan_issue.get("suggested_action", ""),
+        "A report keyframe describing a clipped sibling row must allow one visible-text aiScroll repair even when the original YAML omitted scrolling",
+    )
     require(
         agent_service._normalize_agent_failed_items([
             {"jobId": "job-a", "stderrTail": "failed to locate element: 照片打印"},
@@ -3660,6 +3743,7 @@ def check_agent_failure_review_and_repair_guard():
     old_persist_snapshot = agent_service._persist_agent_run_snapshot
     old_log_rerun = agent_service._log_tool_call
     old_post_rerun = agent_service._agent_post_rerun_autonomy
+    old_prepare_rerun_targets = agent_service._agent_prepare_repair_rerun_targets
     snapshots = []
     created_counter = {"value": 0}
     try:
@@ -3701,6 +3785,107 @@ def check_agent_failure_review_and_repair_guard():
         require([item.get("status") for item in rerun_progress.get("items") or []] == ["success", "failed"], "Task-level rerun items must preserve terminal status in source order")
         require(all(item.get("runnerId") == "win-runner-01" and item.get("deviceId") == "ecbfd645" for item in rerun_progress.get("items") or []), "Every rerun progress item must expose the actual fixed Runner/device")
         require(any(snapshot.get("successCount") == 1 and snapshot.get("runningCount") == 1 for snapshot in snapshots), "Cumulative rerun snapshots must retain completed successes while the next serial task is running")
+
+        created_counter["value"] = 0
+        mixed_creates = []
+        script_source_job = {
+            "job_id": "job-script", "status": "failed", "module": "AI测试", "file": "scan.yaml",
+            "target_task_name": "扫描入口", "runner_id": "win-runner-01", "target_runner_id": "win-runner-01",
+            "device_id": "ecbfd645", "device_strategy": "fixed", "attempt": 1,
+        }
+        env_source_job = {
+            "job_id": "job-env", "status": "failed", "module": "AI测试", "file": "photo.yaml",
+            "target_task_name": "照片入口", "runner_id": "win-runner-01", "target_runner_id": "win-runner-01",
+            "device_id": "ecbfd645", "device_strategy": "fixed", "attempt": 1,
+        }
+        product_source_job = {
+            "job_id": "job-product", "status": "failed", "module": "AI测试", "file": "product.yaml",
+            "target_task_name": "产品入口", "runner_id": "win-runner-01", "target_runner_id": "win-runner-01",
+            "device_id": "ecbfd645", "device_strategy": "fixed", "attempt": 1,
+        }
+        job_service.load_jobs = lambda: [script_source_job, env_source_job, product_source_job]
+
+        def fake_mixed_create(module, file_name, **kwargs):
+            created_counter["value"] += 1
+            mixed_creates.append({"module": module, "file": file_name, **kwargs})
+            return {"job_id": f"job-mixed-{created_counter['value']}", "created_at": "2026-07-17T12:00:00"}
+
+        def fake_mixed_wait(job_ids, run, **kwargs):
+            job_id = job_ids[0]
+            return {
+                "completed": [{
+                    "job_id": job_id,
+                    "status": "success",
+                    "runner_id": "win-runner-01",
+                    "device_id": "ecbfd645",
+                    "report_url": f"/reports/{job_id}.html",
+                }],
+                "failed": [], "running": [], "timeout": [],
+            }
+
+        agent_service._agent_prepare_repair_rerun_targets = lambda *_args, **_kwargs: {
+            "hasRepairDrafts": True,
+            "draftCount": 1,
+            "targets": [{
+                "draftId": "repair-scan",
+                "sourceJobId": "job-script",
+                "sourceModule": "AI测试",
+                "sourceFile": "scan.yaml",
+                "sourceTaskName": "扫描入口",
+                "module": "AI_Agent_修复草稿.test",
+                "file": "scan-repair.yaml",
+                "path": "/tmp/scan-repair.yaml",
+                "taskNames": ["扫描入口"],
+                "sourceItem": {},
+                "sourceJob": script_source_job,
+                "failureReason": "入口行右侧被截断",
+            }],
+            "skipped": [{
+                "jobId": "job-product",
+                "taskName": "产品入口",
+                "status": "repair_not_eligible",
+                "failureType": "PRODUCT_BUG",
+                "reason": "产品失败只保留诊断证据",
+            }],
+        }
+        job_service.create_pending_job = fake_mixed_create
+        job_service.wait_jobs_finished = fake_mixed_wait
+        mixed_rerun_run = {
+            "runId": "agent-static-mixed-rerun",
+            "target": "入口回归",
+            "runnerId": "win-runner-01",
+            "deviceId": "ecbfd645",
+            "deviceStrategy": "fixed",
+            "artifacts": {},
+        }
+        mixed_rerun_call = agent_service._tool_rerun(mixed_rerun_run, failed_items_override=[{
+            "jobId": "job-script", "status": "failed", "module": "AI测试", "file": "scan.yaml",
+            "taskName": "扫描入口", "failureType": "SCRIPT_ISSUE",
+            "failureReview": {"category": "script_issue", "confidence": 0.96, "canAutoRepair": True},
+        }, {
+            "jobId": "job-env", "status": "failed", "module": "AI测试", "file": "photo.yaml",
+            "taskName": "照片入口", "failureType": "ENV_ISSUE", "error": "model request was aborted",
+        }, {
+            "jobId": "job-product", "status": "failed", "module": "AI测试", "file": "product.yaml",
+            "taskName": "产品入口", "failureType": "PRODUCT_BUG",
+            "failureReview": {"category": "product_bug", "confidence": 0.96, "canAutoRepair": False},
+        }])
+        mixed_progress = mixed_rerun_run.get("artifacts", {}).get("rerunProgress") or {}
+        require(
+            mixed_rerun_call.get("rerunSource") == "mixed"
+            and mixed_rerun_call.get("targetCount") == 2
+            and len(mixed_creates) == 2
+            and {item.get("parent_job_id") for item in mixed_creates} == {"job-script", "job-env"}
+            and all(item.get("device_id") == "ecbfd645" for item in mixed_creates)
+            and not any(item.get("parent_job_id") == "job-product" for item in mixed_creates),
+            "Mixed failures must execute the AI repair and one evidence-backed environment retry on the same fixed device without rerunning product failures",
+        )
+        require(
+            mixed_progress.get("successCount") == 2
+            and mixed_progress.get("skippedCount") == 1
+            and mixed_progress.get("originalRetryCount") == 1,
+            "Mixed rerun progress must preserve two real recoveries and one diagnosis-only product result",
+        )
     finally:
         job_service.load_jobs = old_load_jobs
         job_service.create_pending_job = old_create_pending_job
@@ -3708,6 +3893,49 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._persist_agent_run_snapshot = old_persist_snapshot
         agent_service._log_tool_call = old_log_rerun
         agent_service._agent_post_rerun_autonomy = old_post_rerun
+        agent_service._agent_prepare_repair_rerun_targets = old_prepare_rerun_targets
+
+    old_load_jobs = job_service.load_jobs
+    old_runner_material = agent_service._agent_runner_job_material
+    old_log_report = agent_service._log_tool_call
+    try:
+        job_service.load_jobs = lambda: [{
+            "job_id": "job-report-pass",
+            "status": "success",
+            "module": "AI测试",
+            "file": "pass.yaml",
+            "target_task_name": "文档入口",
+            "report_url": "/reports/job-report-pass.html",
+        }, {
+            "job_id": "job-report-fail",
+            "status": "failed",
+            "module": "AI测试",
+            "file": "fail.yaml",
+            "target_task_name": "扫描入口",
+            "report_url": "/reports/job-report-fail.html",
+            "error": "等待百度网盘入口超时",
+        }]
+        agent_service._agent_runner_job_material = lambda _job_id: {}
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        report_run = {
+            "runId": "agent-static-terminal-reports",
+            "executionMode": "RUNNER_JOB",
+            "artifacts": {"jobIds": ["job-report-pass", "job-report-fail"]},
+        }
+        report_call = agent_service._tool_collect_report(report_run)
+        terminal_reports = report_run.get("artifacts", {}).get("report", {}).get("executionReports") or []
+        terminal_refs = report_run.get("artifacts", {}).get("report", {}).get("yamlExecutionRefs") or []
+        require(
+            report_call.get("status") == "PARTIAL_FAILED"
+            and {item.get("status") for item in terminal_reports} == {"success", "failed"}
+            and len(terminal_reports) == 2
+            and len(terminal_refs) == 2,
+            "Report collection must retain both passed and failed terminal HTML reports instead of hiding failure evidence",
+        )
+    finally:
+        job_service.load_jobs = old_load_jobs
+        agent_service._agent_runner_job_material = old_runner_material
+        agent_service._log_tool_call = old_log_report
 
     old_create_refs = agent_service._agent_create_runner_jobs_for_refs
     old_runner_dry_support = agent_service._runner_supports_yaml_dry_run
@@ -8465,7 +8693,11 @@ def main():
     require('"rerunProgress"' in agent_service_source and '"learningSummary"' in agent_service_source, "Agent rerun and learning steps must persist readable timeline summaries")
     require("def _agent_prepare_repair_rerun_targets" in agent_service_source and '"usesRepairDraft"' in agent_service_source and '"notRerunOriginalYaml"' in agent_service_source, "Agent safe rerun must materialize repair drafts and avoid silently rerunning old YAML")
     require("def _agent_post_rerun_autonomy" in agent_service_source and '"maxRepairCycles": 1' in agent_service_source and "repair_depth < 1" in agent_service_source, "Agent must use latest rerun evidence for one bounded AI repair cycle without an unbounded retry loop")
-    require("已有修复草稿但没有可执行 YAML" in agent_service_source and "没有可用修复草稿，未重跑旧 YAML" in agent_service_source, "Agent safe rerun must explain missing or invalid repair drafts instead of reporting false success")
+    require(
+        "已有修复草稿但没有可执行 YAML" in agent_service_source
+        and "AI 未生成通过门禁的修复 YAML，禁止原样重跑" in agent_service_source,
+        "Agent safe rerun must explain missing or invalid repair drafts instead of reporting false success",
+    )
     require(
         '"PREPARE_SOURCE", "PLAN", "IMPACT_ANALYSIS", "CASE_RETRIEVAL", "MATCH_CASES"' in agent_service_source,
         "Agent step order must prepare source before AI planning, then analyze impact, retrieve cases, and match cases"

@@ -11465,6 +11465,52 @@ def _agent_repair_eligibility(item, fallback_failure_type="", fallback_can_auto_
     }
 
 
+def _agent_failure_type_counts(items):
+    """Count terminal failure types without collapsing mixed Runner outcomes."""
+    counts = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        failure_type = (
+            _agent_canonical_failure_type(item.get("failureType") or item.get("failure_type"))
+            or _agent_failure_type_from_review(_agent_failure_review(item))
+            or "UNKNOWN"
+        )
+        counts[failure_type] = counts.get(failure_type, 0) + 1
+    return counts
+
+
+def _agent_has_repairable_failure(run):
+    """Let one repairable task proceed even when another task is product or environment failure."""
+    items = _agent_failed_execution_items(run)
+    analysis = ((run or {}).get("artifacts") or {}).get("failureAnalysis") or {}
+    return any(
+        _agent_repair_eligibility(
+            item,
+            fallback_failure_type=analysis.get("failureType") if len(items) == 1 else None,
+            fallback_can_auto_repair=(
+                analysis.get("canAutoRepair")
+                if len(items) == 1 and "canAutoRepair" in analysis
+                else None
+            ),
+        ).get("eligible") is True
+        for item in items
+    )
+
+
+def _agent_original_rerun_eligible(item):
+    """Allow one unchanged retry only for concrete environment failures or legacy unclassified scripts."""
+    item = item if isinstance(item, dict) else {}
+    failure_type = (
+        _agent_canonical_failure_type(item.get("failureType") or item.get("failure_type"))
+        or _agent_failure_type_from_review(_agent_failure_review(item))
+        or "UNKNOWN"
+    )
+    if failure_type == "ENV_ISSUE":
+        return _agent_failed_item_has_concrete_environment_evidence(item)
+    return failure_type == "SCRIPT_ISSUE" and _agent_explicit_auto_repair_decision(item) is None
+
+
 def _agent_should_confirm_unknown_failure(run, failure_type):
     return (
         _agent_canonical_failure_type(failure_type) == "UNKNOWN"
@@ -11747,11 +11793,30 @@ def _tool_collect_report(run):
                     success_jobs.append(job_entry)
                 elif status in ("failed", "error", "timeout", "cancelled"):
                     # 收集失败信息
+                    report_url = job.get("report_url") or job.get("reportUrl", "")
+                    local_path = job.get("local_report_path") or job.get("localReportPath", "")
+                    yaml_execution_refs.append({
+                        "jobId": jid,
+                        "module": job.get("module", ""),
+                        "file": job.get("file", ""),
+                        "taskName": job_entry.get("taskName", ""),
+                        "status": status,
+                    })
+                    if report_url or str(local_path).lower().endswith((".html", ".htm")):
+                        execution_reports.append({
+                            "jobId": jid,
+                            "module": job.get("module", ""),
+                            "file": job.get("file", ""),
+                            "taskName": job_entry.get("taskName", ""),
+                            "reportUrl": report_url,
+                            "localPath": local_path,
+                            "status": status,
+                        })
                     material = _agent_runner_job_material(jid)
                     fail_entry = {
                         **job_entry,
                         **material,
-                        "localPath": job.get("local_report_path") or job.get("localReportPath", ""),
+                        "localPath": local_path,
                         "error": job.get("error") or job.get("fail_reason", ""),
                         "stderrTail": (material.get("stderrTail") or job.get("stderr") or job.get("stderr_tail") or "")[-1600:],
                         "stdoutTail": (material.get("stdoutTail") or job.get("stdout") or job.get("stdout_tail") or "")[-1200:],
@@ -11832,6 +11897,37 @@ def _tool_collect_report(run):
                     failed_jobs.append(timeout_entry)
                     timeout_jobs.append(timeout_entry)
                     errors.append(timeout_entry["error"])
+        report_ref_ids = {str(item.get("jobId") or "") for item in execution_reports}
+        yaml_ref_ids = {str(item.get("jobId") or "") for item in yaml_execution_refs}
+        for item in failed_jobs:
+            jid = str(item.get("jobId") or "").strip()
+            if not jid:
+                continue
+            status = str(item.get("status") or "failed").lower()
+            if jid not in yaml_ref_ids:
+                yaml_execution_refs.append({
+                    "jobId": jid,
+                    "module": item.get("module", ""),
+                    "file": item.get("file", ""),
+                    "taskName": item.get("taskName", ""),
+                    "status": status,
+                })
+                yaml_ref_ids.add(jid)
+            report_url = item.get("reportUrl") or item.get("report_url") or ""
+            local_path = item.get("localPath") or item.get("local_report_path") or ""
+            if jid not in report_ref_ids and (
+                report_url or str(local_path).lower().endswith((".html", ".htm"))
+            ):
+                execution_reports.append({
+                    "jobId": jid,
+                    "module": item.get("module", ""),
+                    "file": item.get("file", ""),
+                    "taskName": item.get("taskName", ""),
+                    "reportUrl": report_url,
+                    "localPath": local_path,
+                    "status": status,
+                })
+                report_ref_ids.add(jid)
         if success_job_ids:
             failed_jobs = [item for item in failed_jobs if item.get("jobId") not in success_job_ids]
             timeout_jobs = [item for item in timeout_jobs if item.get("jobId") not in success_job_ids]
@@ -12468,6 +12564,7 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
         # === 有失败需要分析 ===
         failure_context = ""
         failure_type = "UNKNOWN"
+        failure_type_counts = _agent_failure_type_counts(failed_jobs)
 
         if has_job_failures:
             # Runner 最新终态优先于准备阶段的旧体检诊断。
@@ -12512,6 +12609,8 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
         # 构建本地分析结果
         analysis = {
             "failureType": failure_type,
+            "failureTypeCounts": failure_type_counts,
+            "mixedFailureTypes": len(failure_type_counts) > 1,
             "summary": failure_context[:500],
             "conclusion": "",
             "recommendation": "",
@@ -12974,23 +13073,34 @@ def _tool_generate_bug_draft(run):
     }
     try:
         fa = (run.get("artifacts") or {}).get("failureAnalysis") or {}
-        ft = str(fa.get("failureType", "UNKNOWN")).upper()
-        if ft != "PRODUCT_BUG":
+        product_failures = [
+            item for item in _agent_failed_execution_items(run)
+            if _agent_repair_eligibility(item).get("failureType") == "PRODUCT_BUG"
+        ]
+        if not product_failures:
+            ft = str(fa.get("failureType", "UNKNOWN")).upper()
             call["status"] = "SKIPPED"
-            call["outputSummary"] = f"非 PRODUCT_BUG（{ft}），跳过缺陷草稿"
+            call["outputSummary"] = f"没有 PRODUCT_BUG 任务（汇总类型 {ft}），跳过缺陷草稿"
             return call
+        product_summary = "\n".join(
+            f"- {item.get('taskName') or item.get('file') or item.get('jobId')}："
+            f"{item.get('failureReason') or item.get('error') or ''}"
+            for item in product_failures[:10]
+        )
         draft = {
             "type": "PRODUCT_BUG",
             "title": f"[{run.get('appName', '')}] {run.get('target', '')[:50]}",
-            "description": f"失败分析：{fa.get('summary', '')[:300]}",
+            "description": f"失败分析：{product_summary[:1200]}",
             "status": "DRAFT",
+            "failedJobs": [item.get("jobId") for item in product_failures if item.get("jobId")],
         }
         if _ai_gateway_available():
             try:
                 resp = _ai_gateway_post("/ai/generate-bug", {
                     "failureType": "PRODUCT_BUG",
-                    "summary": fa.get("summary", ""),
-                    "jobId": fa.get("jobId", ""),
+                    "summary": product_summary,
+                    "jobId": product_failures[0].get("jobId", ""),
+                    "failedJobs": product_failures[:10],
                     **_agent_ai_route_payload(run),
                 })
                 if isinstance(resp, dict):
@@ -13307,16 +13417,29 @@ def _agent_post_rerun_autonomy(run, latest_failed, repair_depth=0):
         "analyzed": True,
         "analysisStatus": analysis_call.get("status") if isinstance(analysis_call, dict) else "",
         "failureType": failure_type,
+        "failureTypeCounts": _agent_failure_type_counts(latest_failed),
         "latestJobIds": [_failed_job_id(item) for item in latest_failed if _failed_job_id(item)],
         "reportKeyframes": ((failure_analysis.get("evidence") or {}).get("reportKeyframes") or [])[:12]
         if isinstance(failure_analysis.get("evidence"), dict) else [],
     })
-    if failure_type != "SCRIPT_ISSUE":
-        result["reason"] = f"最新证据归因为 {failure_type}，不自动修改 YAML"
-        artifacts["postRerunAutonomy"] = result
-        return result
-    if failure_analysis.get("canAutoRepair") is False:
-        result["reason"] = "AI 判断证据不足以安全修复"
+    repairable_latest = []
+    for item in latest_failed:
+        eligibility = _agent_repair_eligibility(
+            item,
+            fallback_failure_type=failure_type if len(latest_failed) == 1 else None,
+            fallback_can_auto_repair=(
+                failure_analysis.get("canAutoRepair")
+                if len(latest_failed) == 1 and "canAutoRepair" in failure_analysis
+                else None
+            ),
+        )
+        if eligibility.get("eligible") is True:
+            repairable_latest.append(item)
+    if not repairable_latest:
+        result["reason"] = (
+            f"最新失败中没有可安全自动修复的脚本任务："
+            f"{result.get('failureTypeCounts') or {failure_type: len(latest_failed)}}"
+        )
         artifacts["postRerunAutonomy"] = result
         return result
 
@@ -13640,7 +13763,12 @@ def _agent_mark_recovered_execution_steps(run, execution, report_refresh=None):
             refresh_call_id = report_refresh.get("callId")
             if not refresh_call_id or not any(item.get("callId") == refresh_call_id for item in tool_calls if isinstance(item, dict)):
                 tool_calls.append(copy.deepcopy(report_refresh))
-        recovery_method = "AI 修复" if recovery.get("usesRepairDraft") else "安全重跑"
+        recovery_method = (
+            "AI 修复与环境重试"
+            if recovery.get("rerunSource") == "mixed"
+            else "AI 修复" if recovery.get("usesRepairDraft")
+            else "安全重跑"
+        )
         step["summary"] = (
             f"首次 Runner 尝试失败已保留；{recovery_method}在原设备验证通过，"
             "延后 executable 已执行到终态，逻辑执行链恢复。"
@@ -13672,17 +13800,47 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             failed_items = _normalize_agent_failed_items(failed_items_override)
             artifacts["failedExecutionItems"] = failed_items
         failed_ids = [_failed_job_id(item) for item in failed_items if _failed_job_id(item)]
-        if failed_ids:
-            job_ids = failed_ids
-        else:
-            job_ids = [str(jid) for jid in (artifacts.get("jobIds") or []) if str(jid or "").strip()]
         source_by_id = {item.get("jobId"): item for item in failed_items if item.get("jobId")}
         retried = []
         retry_sources = []
         skipped = []
         jobs = job_service.load_jobs()
         repair_plan = _agent_prepare_repair_rerun_targets(run, failed_items, jobs)
-        uses_repair_draft = bool(repair_plan.get("hasRepairDrafts"))
+        repair_targets = [item for item in (repair_plan.get("targets") or []) if isinstance(item, dict)]
+        repair_source_ids = [
+            str(item.get("sourceJobId") or "").strip()
+            for item in repair_targets
+            if str(item.get("sourceJobId") or "").strip()
+        ]
+        candidate_original_ids = failed_ids or [
+            str(jid) for jid in (artifacts.get("jobIds") or []) if str(jid or "").strip()
+        ]
+        original_retry_ids = []
+        for jid in candidate_original_ids:
+            if jid in repair_source_ids:
+                continue
+            source_item = source_by_id.get(jid)
+            if source_item is None:
+                original_retry_ids.append(jid)
+                continue
+            failure_type = _agent_repair_eligibility(source_item).get("failureType")
+            if failure_type == "ENV_ISSUE" and _agent_original_rerun_eligible(source_item):
+                original_retry_ids.append(jid)
+            elif (
+                failure_type == "SCRIPT_ISSUE"
+                and not repair_plan.get("hasRepairDrafts")
+                and _agent_original_rerun_eligible(source_item)
+            ):
+                original_retry_ids.append(jid)
+        job_ids = list(dict.fromkeys(repair_source_ids + original_retry_ids))
+        had_repair_drafts = bool(repair_plan.get("hasRepairDrafts"))
+        uses_repair_draft = bool(repair_targets)
+        rerun_source = (
+            "mixed" if uses_repair_draft and original_retry_ids
+            else "repair_draft" if uses_repair_draft
+            else "original_yaml" if original_retry_ids
+            else "diagnosis_only"
+        )
         serial_same_device = _agent_rerun_requires_serial_device(run)
         serial_wait_results = []
         repair_summary = artifacts.get("repairSummary") if isinstance(artifacts.get("repairSummary"), dict) else {}
@@ -13705,7 +13863,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             return item
 
         if uses_repair_draft:
-            for target in repair_plan.get("targets") or []:
+            for target in repair_targets:
                 repair_meta = repair_summary_by_draft.get(str(target.get("draftId") or ""), {})
                 source_job = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
                 add_progress_item({
@@ -13724,8 +13882,8 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     "deviceId": source_job.get("device_id") or run.get("deviceId") or "",
                     "status": "pending",
                 })
-        else:
-            for jid in job_ids:
+        if original_retry_ids:
+            for jid in original_retry_ids:
                 source = source_by_id.get(jid) or {}
                 source_job = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), {})
                 add_progress_item({
@@ -13743,11 +13901,12 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
 
         rerun_progress = {
             "scope": "failed_tasks",
-            "source": "repair_draft" if uses_repair_draft else "original_yaml",
+            "source": rerun_source,
             "usesRepairDraft": uses_repair_draft,
-            "repairDraftCount": repair_plan.get("draftCount", 0) if uses_repair_draft else 0,
-            "appliedRepairDraftCount": len(repair_plan.get("targets") or []) if uses_repair_draft else 0,
-            "notRerunOriginalYaml": uses_repair_draft,
+            "repairDraftCount": repair_plan.get("draftCount", 0) if had_repair_drafts else 0,
+            "appliedRepairDraftCount": len(repair_targets) if uses_repair_draft else 0,
+            "originalRetryCount": len(original_retry_ids),
+            "notRerunOriginalYaml": not bool(original_retry_ids),
             "sourceFailedCount": len(failed_items),
             "targetCount": len(job_ids),
             "serialSameDevice": serial_same_device,
@@ -13811,7 +13970,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
 
         persist_rerun_progress("RUNNING")
         if uses_repair_draft:
-            for target in repair_plan.get("targets") or []:
+            for target in repair_targets:
                 if _agent_run_cancel_requested(run):
                     break
                 j = target.get("sourceJob") if isinstance(target.get("sourceJob"), dict) else {}
@@ -13874,46 +14033,17 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 elif progress_item is not None:
                     progress_item.update({"status": "failed", "resultReason": "创建 Runner 重跑任务失败"})
                     persist_rerun_progress("RUNNING")
-            skipped.extend(repair_plan.get("skipped") or [])
-            covered_source_ids = {item.get("sourceJobId") for item in retry_sources if item.get("sourceJobId")}
-            for item in failed_items:
-                item_id = _failed_job_id(item)
-                if item_id and item_id in covered_source_ids:
-                    continue
-                if any(_agent_repair_draft_matches_failed_item({"jobId": skipped_item.get("jobId"), "file": skipped_item.get("file"), "taskName": skipped_item.get("taskName")}, item) for skipped_item in skipped):
-                    continue
-                skipped.append({
-                    "jobId": item_id,
-                    "taskName": _failed_job_task_name(item) or item.get("file") or "",
-                    "status": item.get("status") or "failed",
-                    "reason": "没有可用修复草稿，未重跑旧 YAML",
-                })
-            for skipped_item in skipped:
-                source_job_id = str(skipped_item.get("jobId") or skipped_item.get("sourceJobId") or "").strip()
-                draft_id = str(skipped_item.get("draftId") or "").strip()
-                progress_item = progress_item_by_key.get(draft_id) or progress_item_by_key.get(source_job_id)
-                if progress_item is None:
-                    source_item = next((item for item in failed_items if _failed_job_id(item) == source_job_id), {})
-                    progress_item = add_progress_item({
-                        "draftId": draft_id,
-                        "sourceJobId": source_job_id,
-                        "sourceModule": source_item.get("module") or "",
-                        "sourceFile": source_item.get("file") or skipped_item.get("file") or "",
-                        "targetTaskName": skipped_item.get("taskName") or _failed_job_task_name(source_item),
-                        "failureReason": source_item.get("failureReason") or source_item.get("error") or "",
-                        "repairChanges": [],
-                        "repairSource": "diagnosis_only",
-                        "runnerId": run.get("runnerId") or "",
-                        "deviceId": run.get("deviceId") or "",
-                    })
-                if not progress_item.get("newJobId"):
-                    progress_item.update({
-                        "status": "skipped",
-                        "resultReason": skipped_item.get("reason") or "未创建重跑任务",
-                    })
-            persist_rerun_progress("RUNNING")
-        else:
-            for jid in job_ids:
+            original_retry_id_set = set(original_retry_ids)
+            skipped.extend(
+                item for item in (repair_plan.get("skipped") or [])
+                if str(item.get("jobId") or item.get("sourceJobId") or "").strip() not in original_retry_id_set
+                and not any(
+                    _agent_repair_draft_matches_failed_item(item, source_by_id.get(jid) or {})
+                    for jid in original_retry_ids
+                )
+            )
+        if original_retry_ids:
+            for jid in original_retry_ids:
                 if _agent_run_cancel_requested(run):
                     break
                 j = next((job for job in jobs if job.get("job_id") == jid or job.get("jobId") == jid), None)
@@ -13990,6 +14120,68 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     if progress_item is not None:
                         progress_item.update({"status": "skipped", "resultReason": "原始 job 已不存在"})
             persist_rerun_progress("RUNNING")
+
+        covered_source_ids = {
+            str(item.get("sourceJobId") or "").strip()
+            for item in retry_sources
+            if str(item.get("sourceJobId") or "").strip()
+        }
+        for item in failed_items:
+            item_id = _failed_job_id(item)
+            if item_id in covered_source_ids:
+                continue
+            progress_item = progress_item_by_key.get(str(item_id or ""))
+            if progress_item is not None and str(progress_item.get("status") or "").lower() in (
+                "failed", "error", "timeout", "cancelled"
+            ):
+                continue
+            existing_skipped = next((
+                skipped_item for skipped_item in skipped
+                if isinstance(skipped_item, dict)
+                and _agent_repair_draft_matches_failed_item(
+                    {
+                        "jobId": skipped_item.get("jobId") or skipped_item.get("sourceJobId"),
+                        "file": skipped_item.get("file"),
+                        "taskName": skipped_item.get("taskName"),
+                    },
+                    item,
+                )
+            ), None)
+            eligibility = _agent_repair_eligibility(item)
+            failure_type = eligibility.get("failureType") or "UNKNOWN"
+            if existing_skipped:
+                reason = existing_skipped.get("reason") or "该失败任务只保留诊断证据"
+            elif failure_type == "PRODUCT_BUG":
+                reason = "产品失败只保留缺陷证据，不自动重跑"
+            elif failure_type == "SCRIPT_ISSUE":
+                reason = "AI 未生成通过门禁的修复 YAML，禁止原样重跑"
+            elif failure_type == "ENV_ISSUE":
+                reason = "环境失败缺少可验证的临时性证据，禁止盲目重跑"
+            else:
+                reason = f"{failure_type} 证据不足，未自动重跑"
+            if not existing_skipped:
+                skipped.append({
+                    "jobId": item_id,
+                    "taskName": _failed_job_task_name(item) or item.get("file") or "",
+                    "status": "diagnosis_only",
+                    "failureType": failure_type,
+                    "reason": reason,
+                })
+            if progress_item is None:
+                progress_item = add_progress_item({
+                    "sourceJobId": item_id,
+                    "sourceModule": item.get("module") or "",
+                    "sourceFile": item.get("file") or "",
+                    "targetTaskName": _failed_job_task_name(item),
+                    "failureReason": item.get("failureReason") or item.get("error") or "",
+                    "repairChanges": [],
+                    "repairSource": "diagnosis_only",
+                    "runnerId": run.get("runnerId") or "",
+                    "deviceId": run.get("deviceId") or "",
+                })
+            progress_item.update({"status": "skipped", "resultReason": reason})
+        persist_rerun_progress("RUNNING")
+
         artifacts["retriedJobs"] = retried
         artifacts["rerunSources"] = retry_sources
         artifacts["rerunSkippedJobs"] = skipped
@@ -13999,16 +14191,27 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
         call["targetCount"] = len(job_ids)
         call["skippedCount"] = len(skipped)
         call["usesRepairDraft"] = uses_repair_draft
+        call["rerunSource"] = rerun_source
+        rerun_strategy_text = {
+            "mixed": "按任务混合恢复",
+            "repair_draft": "使用修复草稿",
+            "original_yaml": "使用原始 YAML",
+            "diagnosis_only": "仅保留诊断",
+        }.get(rerun_source, "按失败证据")
         call["outputSummary"] = (
             f"基于 {len(failed_items)} 个失败任务，"
-            f"{'使用修复草稿' if uses_repair_draft else '使用原始 YAML'}创建 {len(retried)} 个重跑任务"
+            f"{rerun_strategy_text}，创建 {len(retried)} 个重跑任务"
         )
         if not retried:
             persist_rerun_progress("SKIPPED")
-            call["status"] = "FAILED" if uses_repair_draft else ("SKIPPED" if not retry_sources else "FAILED")
+            creation_failed = any(
+                str(item.get("status") or "").lower() in ("failed", "error")
+                for item in progress_items
+            )
+            call["status"] = "FAILED" if creation_failed else "SKIPPED"
             call["outputSummary"] = (
                 "已有修复草稿但没有可执行 YAML，已阻止重跑原脚本"
-                if uses_repair_draft else "没有可重跑的失败任务"
+                if had_repair_drafts else "没有符合自动重跑条件的失败任务"
             )
             attach_diagnosis(call, make_diagnosis(
                 "没有创建任何重跑任务",
@@ -14046,7 +14249,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             }
             artifacts.setdefault("rerunAttempts", []).append({
                 "repairDepth": repair_depth,
-                "source": "repair_draft" if uses_repair_draft else "original_yaml",
+                "source": rerun_source,
                 "createdJobIds": list(retried),
                 "completedCount": len(completed),
                 "failedCount": len(failed),
@@ -14057,7 +14260,12 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             final_progress_status = "FAILED" if failed or timeout_jobs else ("PARTIAL_FAILED" if skipped else "SUCCESS")
             persist_rerun_progress(final_progress_status)
             summary = f"重跑执行完成：失败任务 {len(failed_items)} 个，创建 {len(retried)} 个，成功 {len(completed)} 个，失败 {len(failed)} 个，超时 {len(timeout_jobs)} 个"
-            if uses_repair_draft:
+            if rerun_source == "mixed":
+                summary += (
+                    f"；AI 修复 {len(repair_targets)} 个，环境原脚本重试 {len(original_retry_ids)} 个，"
+                    f"诊断跳过 {len(skipped)} 个"
+                )
+            elif uses_repair_draft:
                 summary += f"；使用修复草稿 {len(repair_plan.get('targets') or [])}/{repair_plan.get('draftCount', 0)} 条，未覆盖失败任务 {len(skipped)} 个"
             call["outputSummary"] = summary
             call["rerunResult"] = artifacts["rerunResult"]
@@ -14071,17 +14279,24 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     ["查看重跑 job 报告", "根据失败日志判断脚本/产品/环境问题", "必要时生成修复草稿后再重跑"],
                     failedJobs=(failed + timeout_jobs)[:10],
                 ))
-            elif uses_repair_draft and skipped:
+            elif skipped:
                 call["status"] = "PARTIAL_FAILED"
-                call["error"] = "仅重跑了可用修复草稿，仍有失败任务未覆盖"
+                call["error"] = "只执行了有证据支持的恢复动作，仍有失败任务保留为诊断项"
                 attach_diagnosis(call, make_diagnosis(
-                    "修复重跑覆盖不完整",
-                    "系统只重跑了有可执行修复 YAML 的失败任务，未静默回退到旧 YAML。",
-                    ["查看跳过的任务", "重新生成缺失任务的修复草稿", "确认是否需要人工处理剩余失败"],
+                    "自动恢复覆盖不完整",
+                    "系统只执行通过门禁的 AI 修复或有具体证据的环境重试，未对其余失败盲目重跑旧 YAML。",
+                    ["查看诊断跳过项", "检查是否已有足够报告证据", "产品失败转缺陷处理"],
                     skippedJobs=skipped[:10],
                 ))
             else:
                 call["status"] = "SUCCESS"
+            report_refresh = _tool_collect_report(run)
+            artifacts["rerunReportRefresh"] = {
+                "status": report_refresh.get("status") if isinstance(report_refresh, dict) else "",
+                "summary": report_refresh.get("outputSummary") if isinstance(report_refresh, dict) else "",
+                "refreshedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            call["reportRefresh"] = copy.deepcopy(artifacts["rerunReportRefresh"])
             sources_recovered = _agent_failed_sources_recovered(
                 failed_items,
                 retry_sources,
@@ -14095,6 +14310,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 recovery.update({
                     "status": "REPAIR_VALIDATED",
                     "usesRepairDraft": uses_repair_draft,
+                    "rerunSource": rerun_source,
                     "sourceJobIds": [_failed_job_id(item) for item in failed_items if _failed_job_id(item)],
                     "recoveryJobIds": list(retried),
                     "runnerId": run.get("runnerId") or "",
@@ -14999,8 +15215,8 @@ def _execute_agent_steps(run_id):
 
     Each step calls a real _tool_xxx function.  Conditional branching:
       - RISK_REVIEW: HIGH risk -> WAIT_CONFIRM (any mode)
-      - GENERATE_REPAIR: only SCRIPT_ISSUE
-      - GENERATE_BUG_DRAFT: only PRODUCT_BUG
+      - GENERATE_REPAIR: any per-task repairable SCRIPT_ISSUE
+      - GENERATE_BUG_DRAFT: any per-task PRODUCT_BUG
       - UNKNOWN failure type -> WAIT_CONFIRM
     """
     time.sleep(0.5)
@@ -15054,23 +15270,20 @@ def _execute_agent_steps(run_id):
                 _refresh_agent_run_progress(run)
                 _persist_agent_run_snapshot(run)
                 continue
-            # Conditional: GENERATE_REPAIR only for SCRIPT_ISSUE
+            # Mixed Runner outcomes keep per-task actions instead of collapsing to one aggregate type.
             if step_name == "GENERATE_REPAIR":
-                fa = (run.get("artifacts") or {}).get("failureAnalysis")
-                ft = str(fa.get("failureType", "UNKNOWN")).upper() if fa else "NONE"
-                if ft not in ("SCRIPT_ISSUE",):
+                if not _agent_has_repairable_failure(run):
+                    counts = _agent_failure_type_counts(_agent_failed_execution_items(run))
                     step["status"] = "SKIPPED"
-                    step["summary"] = f"非 SCRIPT_ISSUE（{ft}），跳过修复"
+                    step["summary"] = f"没有可安全自动修复的 SCRIPT_ISSUE（{counts or {'NONE': 0}}），跳过修复"
                     step["startedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     step["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     continue
-            # Conditional: GENERATE_BUG_DRAFT only for PRODUCT_BUG
             if step_name == "GENERATE_BUG_DRAFT":
-                fa = (run.get("artifacts") or {}).get("failureAnalysis")
-                ft = str(fa.get("failureType", "UNKNOWN")).upper() if fa else "NONE"
-                if ft != "PRODUCT_BUG":
+                counts = _agent_failure_type_counts(_agent_failed_execution_items(run))
+                if not counts.get("PRODUCT_BUG"):
                     step["status"] = "SKIPPED"
-                    step["summary"] = f"非 PRODUCT_BUG（{ft}），跳过缺陷草稿"
+                    step["summary"] = f"没有 PRODUCT_BUG 任务（{counts or {'NONE': 0}}），跳过缺陷草稿"
                     step["startedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     step["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
                     continue

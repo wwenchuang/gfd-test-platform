@@ -1018,7 +1018,7 @@ def call_dashscope_repair_yaml_task(module, file, task_name, yaml_text, task_blo
 21. 保存、下载、导出、生成、转换类结果操作如果失败原因是"没看到成功/已保存/完成提示"，要先看原业务链路，不要模板化批量插入校验。只允许围绕失败点做最小改动，例如调整一个等待条件或补一个失败态断言；不要把中间"完成/确认/PNG"等步骤误判成最终保存结果。
 22. 如果报错说明点击"完成/确认/下一步"后下一个目标按钮或格式选项尚未渲染，例如 PNG/PDF/Word/导出/确认按钮未出现，修复应只在该失败点附近补等待，不要顺手改其它步骤。
 23. 业务域不能串台：只有 3D/模型/建模/切片/STL/OBJ/模型导入链路才允许写"模型处理进度/100%"等待；2D/文档/错题/基础打印/相册/扫描/格式转换链路禁止套用"模型处理进度"，要等待目标按钮、打印前准备完成、确认弹窗/按钮或真实业务页面状态。
-24. 横向 icon 列表/分页区域必须用官方 aiScroll 结构，不要用 ai 自然语言滑动。目标入口在右侧隐藏时使用两次 `aiScroll: "具体横向区域"` + `scrollType: "singleAction"` + `direction: "right"` + `distance: 400`；禁止 `distance: 200`，也不要超过 Midscene 单次滚动距离上限。Android 横向 icon 区域默认补一条 `runAdbShell: "input swipe 950 1080 150 1080 500"` 兜底；不要同时写矛盾的"向右滑动/手指左划"。
+24. 报告关键帧若明确显示同级入口行在屏幕边缘被裁切，应在失败等待前补官方 aiScroll。区域必须用当前页真实可见文案描述，使用 `scrollType: "singleAction"` + `direction: "right"` + 不超过 400 的 `distance`，滑动后重新等待目标；一次不足时最多补第二次。禁止坐标、ADB swipe、整页盲滑和方向互相矛盾的描述。
 25. 不能瞎改原流程：原 YAML 中已经成功到达的核心业务步骤、入口顺序和目标断言必须保留。修复只能调整失败点附近的定位描述、等待条件、输入参数、弹窗处理或断言表达；不得删除核心业务动作，不得把链路改成另一个功能。
 26. 如果当前失败是产品 toast、业务错误、数据不满足、环境问题或模型配置问题，analysis 中说明原因，task 保持原流程，不要为了通过删断言、改目标、绕开失败页面。
 27. 字符串必须完整闭合：任何 `ai/aiTap/aiAssert/aiWaitFor/runAdbShell` 等带引号的值，行尾必须有对应的结束引号；禁止输出 `- ai: "xxx` 这种未闭合字符串。无法确定时不要加外层引号，由服务端统一转义。
@@ -1242,7 +1242,7 @@ def call_dashscope_failure_review(job, stdout, stderr, summary):
 3. 如果页面行为和需求预期不一致，归为 product_bug。
 4. 如果 YAML 动作明显不合理、入口文案臆造、断言过严，归为 script_issue。
 4.1 如果业务本身需要长时间处理（模型加载、切片、上传、生成、进度条到 100%、确认打印按钮出现），并且 YAML 只等待 20~30 秒或等待条件过于泛化，可以先归为 script_issue，建议只做一次等待策略修复；如果 YAML 已经有足够长的条件等待后仍失败，不要继续放宽脚本，应回到 product_bug/env_issue/unknown 复核。
-4.2 如果失败目标是横向 icon 列表中隐藏入口，例如"试卷夹"，且 YAML 失败点前存在 aiScroll 横向列表操作，但当前截图仍只显示前几个入口，应归为 script_issue：滑动没有真实生效或距离/方向/兜底不足，不要判 product_bug。
+4.2 如果截图/报告明确显示同级 icon 或导入入口行在屏幕边缘被裁切，目标可能位于屏外：原 YAML 没有横向 aiScroll 时属于遗漏屏外探索，已有 aiScroll 但仍只显示前几个入口时属于滑动未生效；两者都先归为 script_issue，允许基于关键帧做一次有界横向修复后重跑，不要直接判 product_bug。
 5. 如果截图或报告中出现 toast/浮层/运行时错误文案，例如"The mapper function returned a null value."、"系统异常"、"操作失败"，并且页面没有达到业务预期，应优先归为 product_bug 或 data_issue，can_auto_repair=false；不要把它当成普通"按钮没找到"去放宽断言。
 6. 如果是设备断连、模型配置、adb、超时、网络，归为 env_issue。
 7. 严格禁止引用当前 YAML、日志、summary、报告文本中没有出现过的按钮、控件或步骤；如果无法确认，就归为 unknown，can_auto_repair=false。比如当前 YAML 没有"确认打印"，日志也没有"确认打印"，就不能说脚本等待"确认打印"。

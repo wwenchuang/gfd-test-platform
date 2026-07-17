@@ -209,8 +209,9 @@ def main():
         and "baselineExamples" in repair_prompt
         and "requireBaselineCitationForNavigationChange" in repair_prompt
         and "最小语义修复" in repair_prompt
-        and "aiScroll` 的值必须是非空自然语言字符串" in repair_prompt
-        and "direction/distance/scrollType 对象" in repair_prompt,
+        and "官方 `aiScroll`" in repair_prompt
+        and "当前页真实可见文案描述具体横向区域" in repair_prompt
+        and "禁止坐标、ADB swipe" in repair_prompt,
         "AI repair prompt must combine execution evidence, cited branch baselines, and the current Midscene action contract",
     )
 

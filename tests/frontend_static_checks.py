@@ -236,7 +236,7 @@ def main():
     require("14 步全自动链路" not in html, "Agent timeline copy must not hard-code stale step count")
     require("timelineLiveTraceDetail" in html and "step-live-trace" in html, "Agent timeline must show live running trace when a step is expanded")
     require("agent-technical-trace" in html and "技术日志" in html and "stepDetailHtml" in html and html.index("stepDetailHtml ?") < html.index("technicalTraceDetail ?"), "Readable step results must appear before collapsed technical traces")
-    require("rerunProgressHistory" in html and "progress.items" in html and "agentRerunCycleMetrics" in html and "失败恢复执行链" in html and "原脚本证据重试" in html and "AI 修复脚本验证" in html, "Agent rerun UI must preserve a readable causal chain across serial and bounded repair cycles")
+    require("rerunProgressHistory" in html and "progress.items" in html and "agentRerunCycleMetrics" in html and "失败恢复执行链" in html and "原脚本证据重试" in html and "AI 修复脚本验证" in html and "AI 修复与环境重试" in html and "原脚本重试" in html and "仅保留失败诊断" in html, "Agent rerun UI must preserve a readable causal chain across serial, mixed, diagnosis-only, and bounded repair cycles")
     require("stepName === 'RERUN'" in html and "agentTraceMessageText" in html and "正在准备失败任务重跑" in html, "Running rerun steps must render readable progress before the internal tool call finishes")
     require("agentRunnerProgressMetrics" in html and "jobProgressByPhase" in html and "Runner 真实执行累计" in html and "当前阶段" in html and "排队中" in html, "Runner detail must separate cumulative phase outcomes, active execution, queueing, and timeout limit")
     require("renderExecutionPrecheckDetail" in html and "precheck-warnings" in html and "blockers" in html, "Execution precheck detail must show blockers and warnings")

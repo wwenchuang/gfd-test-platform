@@ -68,7 +68,7 @@
 4. 如果是系统弹窗/活动浮层遮挡：在失败点前插入自然语言弹窗处理。
 5. 如果是产品 bug、账号数据不满足、环境问题、模型配置问题：`patches=[]`，在 `analysis` 说明人工处理建议。
 6. 不要模板化套用“模型处理进度/100%”。只有 3D/模型/建模/切片/STL/OBJ/模型导入链路才允许等待模型处理进度。
-7. `aiScroll` 只能写成非空自然语言字符串，例如 `- aiScroll: "在导入方式横向列表中向左滑动，直到目标入口完整可见"`；禁止输出 direction/distance/scrollType 对象。
+7. 报告关键帧若明确显示同级入口行在屏幕边缘被裁切，可以在失败等待前插入官方 `aiScroll`：值必须是使用当前页真实可见文案描述的具体横向区域，并可在同一步下附 `scrollType: "singleAction"`、`direction: "right"`、不超过 400 的 `distance`；一次不足时最多插入两次，之后重新等待目标。禁止坐标、ADB swipe、整页盲滑或把 direction 写进 `aiScroll` 的自然语言值。
 8. `analysis` 和 `changes` 必须与 patches 的真实执行语义一致；声称补齐导航或新增点击时，patch lines 必须真实包含对应的 `aiTap/ai/aiAction/aiAct`。
 
 ## 输出 JSON

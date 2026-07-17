@@ -2755,6 +2755,8 @@ function agentRerunCycleMetrics(progress, items) {
 
 function agentRerunCycleTitle(progress, cycleIndex) {
   const attempt = cycleIndex + 1;
+  if (progress.source === 'mixed') return `第 ${attempt} 次：AI 修复与环境重试`;
+  if (progress.source === 'diagnosis_only') return `第 ${attempt} 次：仅保留失败诊断`;
   if (progress.usesRepairDraft || progress.source === 'repair_draft') return `第 ${attempt} 次：AI 修复脚本验证`;
   if (progress.source === 'original_yaml') return `第 ${attempt} 次：原脚本证据重试`;
   return `第 ${attempt} 次：失败任务重跑`;
@@ -2769,6 +2771,9 @@ function renderRerunCycle(progress, items, cycleIndex, cycleCount) {
     const repairText = changes.length
       ? changes.map(change => typeof change === 'string' ? change : JSON.stringify(change)).join('；')
       : (item.repairSource === 'original_yaml' ? '未使用 AI 修复，按原 YAML 重跑' : (item.repairSource === 'diagnosis_only' ? 'AI 未产出可执行修复' : '使用 AI 修复草稿'));
+    const strategyLabel = item.repairSource === 'repair_draft'
+      ? 'AI 修复'
+      : (item.repairSource === 'original_yaml' ? '原脚本重试' : (item.repairSource === 'diagnosis_only' ? '诊断处理' : '本轮策略'));
     const device = [item.runnerId || progress.runnerId, item.deviceId || progress.deviceId].filter(Boolean).join(' / ') || '设备信息待回传';
     const originalJob = item.sourceJobId || '未记录';
     const newJob = item.newJobId || (meta.key === 'skipped' ? '未创建' : '待创建');
@@ -2784,7 +2789,7 @@ function renderRerunCycle(progress, items, cycleIndex, cycleCount) {
       <div class="agent-rerun-job-chain"><span>原任务 ${escapeHtml(originalJob)}</span><b>→</b><span>重跑任务 ${escapeHtml(newJob)}</span></div>
       <div class="agent-rerun-evidence">
         <div><small>重跑触发</small><p>${escapeHtml(item.failureReason || '未记录失败原因')}</p></div>
-        <div><small>${progress.usesRepairDraft || progress.source === 'repair_draft' ? 'AI 修复' : '本轮策略'}</small><p>${escapeHtml(repairText)}</p>${item.repairFile ? `<code>修复文件：${escapeHtml(item.repairFile)}</code>` : ''}</div>
+        <div><small>${strategyLabel}</small><p>${escapeHtml(repairText)}</p>${item.repairFile ? `<code>修复文件：${escapeHtml(item.repairFile)}</code>` : ''}</div>
         <div><small>固定设备重跑</small><p>${escapeHtml(device)} · ${escapeHtml(meta.label)}</p>${item.resultReason ? `<p class="agent-rerun-result-reason">${escapeHtml(item.resultReason)}</p>` : ''}${reportLink}</div>
       </div>
     </div>`;
@@ -2799,7 +2804,9 @@ function renderRerunDetail(step, artifacts) {
   const progressHistory = Array.isArray((artifacts || {}).rerunProgressHistory) ? (artifacts || {}).rerunProgressHistory : [];
   const repairSummary = (artifacts || {}).repairSummary || {};
   const autonomy = (artifacts || {}).postRerunAutonomy || {};
-  const sourceText = progress.usesRepairDraft ? '修复草稿' : (progress.source === 'original_yaml' ? '原始 YAML' : '未记录');
+  const sourceText = progress.source === 'mixed'
+    ? 'AI 修复 + 环境原脚本重试'
+    : (progress.source === 'diagnosis_only' ? '仅保留诊断' : (progress.usesRepairDraft ? '修复草稿' : (progress.source === 'original_yaml' ? '原始 YAML' : '未记录')));
   const currentItems = Array.isArray(progress.items) && progress.items.length
     ? progress.items
     : agentRerunFallbackItems(progress, sources, result, repairSummary);

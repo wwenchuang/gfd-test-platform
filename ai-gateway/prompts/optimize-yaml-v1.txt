@@ -14,7 +14,7 @@
 - `repairPolicy.requireBaselineCitationForNavigationChange=true` 时，只要修改父子导航，就必须在 `usedBaselineIds` 引用实际采用的路径基线；没有合适基线时不要编造引用，并在 analysis 中说明证据不足。
 - 导航引用必须来自与当前失败业务分支一致且 `retrievalRoles` 包含 `business_branch` 的候选；宽泛标题或全局相似候选不能替代真实分支动作证据。
 - 采用最小语义修复：只修改导致失败的路径、等待或断言，不扩写无关用例，不靠堆 sleep 掩盖问题。
-- 所有动作参数必须符合当前 Midscene YAML 契约。`aiScroll` 的值必须是非空自然语言字符串，例如 `aiScroll: "在导入方式横向列表中向左滑动，直到目标入口完整可见"`；禁止输出 direction/distance/scrollType 对象。不确定时不要输出该动作。
+- 所有动作参数必须符合当前 Midscene YAML 契约。报告关键帧若明确显示同级入口行在屏幕边缘被裁切，可以在失败等待前插入官方 `aiScroll`：值使用当前页真实可见文案描述具体横向区域，同一步下可附 `scrollType: "singleAction"`、`direction: "right"`、不超过 400 的 `distance`，一次不足时最多两次，随后重新等待目标。禁止坐标、ADB swipe、整页盲滑或把方向混写进区域描述；证据不足时不要输出该动作。
 - `analysis` 和 `changes` 必须与 YAML 的真实执行 diff 完全一致。声称“新增点击、补齐父子导航、修正路径”时，YAML 中必须真实新增或修改对应的 `aiTap/ai/aiAction/aiAct`，不能只改等待、断言或说明文字。
 - 必须遵守 executionConstraint；固定设备任务不得在 YAML 或建议中切换、选择或并发第二台设备。
 - 如果涉及确认打印、开始打印、支付、删除、覆盖基线等高风险动作，只生成带人工确认含义的步骤描述，不要绕过确认。
