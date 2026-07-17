@@ -1137,15 +1137,27 @@ def _scope_guard_requirement_point_texts(analysis: dict) -> List[str]:
     return points
 
 
+def _scope_guard_explicit_requirement_ids(analysis: dict) -> List[str]:
+    """Return the authoritative REQ ids declared by the requirement contract."""
+    ids = _scope_guard_requirement_ids(_scope_guard_requirement_point_texts(analysis))
+    for check in (analysis or {}).get("requirement_acceptance_checks") or []:
+        if not isinstance(check, dict):
+            continue
+        for requirement_id in _scope_guard_requirement_ids(check.get("requirementId")):
+            if requirement_id not in ids:
+                ids.append(requirement_id)
+    return ids
+
+
 def _scope_guard_mapped_requirement_points(analysis: dict, case_blob: str) -> tuple:
     """Map a generated case to its own requirement points before token review."""
     points = _scope_guard_requirement_point_texts(analysis)
     case_ids = _scope_guard_requirement_ids(case_blob)
-    if case_ids:
-        wanted = set(case_ids)
+    explicit_ids = _scope_guard_explicit_requirement_ids(analysis)
+    if explicit_ids:
+        wanted = set(case_ids).intersection(explicit_ids)
         matched = [point for point in points if wanted.intersection(_scope_guard_requirement_ids(point))]
-        if matched:
-            return matched, case_ids
+        return matched, [item for item in explicit_ids if item in wanted]
 
     case_topics = set(_scope_guard_topic_terms(case_blob)) - {"百度网盘"}
     if case_topics:
@@ -1154,8 +1166,8 @@ def _scope_guard_mapped_requirement_points(analysis: dict, case_blob: str) -> tu
             if case_topics.intersection(set(_scope_guard_topic_terms(point)) - {"百度网盘"})
         ]
         if matched:
-            return matched, case_ids
-    return [], case_ids
+            return matched, []
+    return [], []
 
 
 def build_requirement_semantic_constraints_text(text_assets: List[str], title: str = "") -> str:
@@ -1238,6 +1250,7 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     compact_case = re.sub(r"\s+", "", case_blob)
     compact_case_lower = compact_case.lower()
     mapped_requirement_points, mapped_requirement_ids = _scope_guard_mapped_requirement_points(analysis, case_blob)
+    explicit_requirement_ids = _scope_guard_explicit_requirement_ids(analysis)
     trace_requirement_blob = _scope_guard_join_values(mapped_requirement_points) or requirement_blob
     reasons: List[str] = []
     title_blob = _scope_guard_join_values(case.get("title"), case.get("name"))
@@ -1246,6 +1259,8 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
     abstract_targets = _scope_guard_abstract_ui_targets(case, yaml_text)
     if abstract_targets:
         reasons.append("aiTap/导航步骤使用测试分组或抽象模块名作为界面目标，缺少真实可见入口文案")
+    if explicit_requirement_ids and not mapped_requirement_ids:
+        reasons.append("当前需求已有显式 REQ 契约，但用例未映射任何有效需求 ID，不能仅凭全局目标或 AI 建议自动执行")
 
     topic_terms = _scope_guard_topic_terms(requirement_blob)
     if topic_terms:
@@ -1292,6 +1307,8 @@ def generated_case_requirement_scope_review(case: dict, analysis: dict, yaml_tex
         "reasons": reasons,
         "matchedRequirementIds": mapped_requirement_ids,
         "matchedRequirementPointCount": len(mapped_requirement_points),
+        "requiresExplicitRequirementId": bool(explicit_requirement_ids),
+        "declaredRequirementIds": explicit_requirement_ids,
         "rule": "生成用例必须能追溯到当前需求点；需求未提到的历史记录、缓存、超时、干扰等扩展场景不自动执行。",
     }
 
@@ -1443,11 +1460,22 @@ def _generated_case_requirement_mapped_display_check(source_case: dict, scope_re
     declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
     if declared_level in {"needs_review", "draft", "manual"}:
         return False
-    if not (
-        safe_int(scope_review.get("matchedRequirementPointCount"), 0) > 0
-        or scope_review.get("matchedRequirementIds")
-        or re.search(r"\bREQ-\d+\b", _scope_guard_join_values(source_case.get("coverage"), source_case.get("requirement_point"), source_case.get("requirementPoint")), re.I)
-    ):
+    if scope_review.get("requiresExplicitRequirementId"):
+        requirement_mapped = bool(scope_review.get("matchedRequirementIds"))
+    else:
+        requirement_mapped = bool(
+            safe_int(scope_review.get("matchedRequirementPointCount"), 0) > 0
+            or re.search(
+                r"\bREQ-\d+\b",
+                _scope_guard_join_values(
+                    source_case.get("coverage"),
+                    source_case.get("requirement_point"),
+                    source_case.get("requirementPoint"),
+                ),
+                re.I,
+            )
+        )
+    if not requirement_mapped:
         return False
     reasons = [str(item or "") for item in (score.get("reasons") or [])]
     if not any("缺少成功基线依据" in item and any(word in item for word in ("异常", "边界", "鲁棒")) for item in reasons):
@@ -7297,6 +7325,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             )
             executable_plan["scopePlan"] = execution_scope_plan
             payload = apply_executable_yaml_plan_to_payload(payload, executable_plan)
+            payload = apply_generated_case_scope_gate(payload)
             review = payload.setdefault("review", {})
             ai_decision_trace = review.get("ai_decision_trace") if isinstance(review.get("ai_decision_trace"), dict) else ai_decision_trace
             ai_decision_trace["executable_yaml_planner"] = executable_plan.get("trace") or {}
@@ -7355,6 +7384,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
                     or convergence_plan.get("evidenceFallback") is True
                 ):
                     proposed_payload = apply_executable_yaml_plan_to_payload(payload, convergence_plan)
+                    proposed_payload = apply_generated_case_scope_gate(proposed_payload)
                     proposed_portfolio_after = executable_yaml_portfolio_audit(
                         proposed_payload,
                         planned_generation_targets,
@@ -7419,8 +7449,11 @@ def generate_ui_yaml_from_request(d, job_id=None):
             }
             review["ai_decision_trace"] = ai_decision_trace
             review["executable_yaml_planner_error"] = str(plan_error)
+    # Scope must be settled before portfolio and smoke selection so an AI-only
+    # suggestion cannot occupy a Runner slot or satisfy an explicit REQ contract.
+    payload = apply_generated_case_scope_gate(payload)
     if not deterministic_entry_visibility:
-        final_executable_portfolio = final_executable_portfolio or executable_yaml_portfolio_audit(
+        final_executable_portfolio = executable_yaml_portfolio_audit(
             payload,
             planned_generation_targets,
         )
@@ -7475,7 +7508,6 @@ def generate_ui_yaml_from_request(d, job_id=None):
             review["smoke_selector_final_policy"] = "最终冒烟筛选失败时不使用 P0/P1 或关键词兜底，保留现有显式 smoke 标记。"
     payload = restore_yaml_visual_review(payload, yaml_visual_review_trace)
     payload = enforce_generated_fallback_execution_floor(payload, force=local_fallback_execution_floor)
-    payload = apply_generated_case_scope_gate(payload)
     payload["id"] = case_set_id
     payload["module"] = module
 

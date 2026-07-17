@@ -4319,6 +4319,37 @@ def _normalize_visual_current_page_evidence(items):
             confidence = confidence_names.get(str(raw_confidence or "").strip().lower(), 0.0)
         confidence = max(0.0, min(1.0, confidence))
         same_branch = item.get("sameBranch") is True or item.get("same_branch") is True
+        branch_key = _navigation_action_target_key(f"点击「{branch}」")
+        page_title_key = _navigation_action_target_key(f"点击「{page_title}」")
+        navigation_leaf_key = _navigation_action_target_key(f"点击「{navigation_leaf}」")
+        target_text_key = _navigation_action_target_key(f"点击「{target_text}」")
+        page_title_is_concrete_leaf = bool(
+            same_branch
+            and confidence >= 0.75
+            and page_title_key
+            and navigation_leaf_key
+            and branch_key
+            and _navigation_target_keys_match(navigation_leaf_key, branch_key)
+            and not _navigation_target_keys_match(page_title_key, navigation_leaf_key)
+            and not _navigation_target_keys_match(page_title_key, branch_key)
+            and not _navigation_target_keys_match(page_title_key, target_text_key)
+            and not re.search(r"(?:^|\b)(?:frame|group|node|copy)(?:\b|\s*\d*$)|画板|节点|备份", page_title, re.I)
+        )
+        leaf_derived_from_page_title = False
+        original_navigation_leaf = ""
+        if page_title_is_concrete_leaf:
+            original_navigation_leaf = navigation_leaf
+            if not any(
+                _navigation_target_keys_match(
+                    _navigation_action_target_key(f"点击「{label}」"),
+                    navigation_leaf_key,
+                )
+                for label in parent_path
+            ):
+                parent_path.append(navigation_leaf)
+                parent_path = parent_path[-6:]
+            navigation_leaf = page_title
+            leaf_derived_from_page_title = True
         if (
             not navigation_leaf
             or not target_text
@@ -4348,6 +4379,9 @@ def _normalize_visual_current_page_evidence(items):
             "confidence": round(confidence, 4),
             "source": str(item.get("source") or "visual_grounder").strip() or "visual_grounder",
         }
+        if leaf_derived_from_page_title:
+            record["leafDerivedFromPageTitle"] = True
+            record["originalNavigationLeaf"] = original_navigation_leaf
         key = (
             case_id,
             requirement_id,
@@ -4669,6 +4703,34 @@ def _bounded_convergence_evidence(
         item for item in (audit.get("missingAcceptanceChecks") or [])
         if isinstance(item, dict)
     ]
+    unresolved_case_ids = {
+        str(item or "").strip()
+        for item in (audit.get("unresolvedAutomaticCaseIds") or [])
+        if str(item or "").strip()
+    }
+    unresolved_requirement_ids = set()
+    for record in automatic_records:
+        compact = (record or {}).get("compact") if isinstance((record or {}).get("compact"), dict) else {}
+        if str(compact.get("case_id") or "").strip() not in unresolved_case_ids:
+            continue
+        raw = (record or {}).get("raw") if isinstance((record or {}).get("raw"), dict) else {}
+        unresolved_requirement_ids.update(_source_case_requirement_ids(raw))
+    evidence_checks = list(missing_checks)
+    known_check_ids = {
+        str(item.get("id") or "").strip() for item in evidence_checks
+        if str(item.get("id") or "").strip()
+    }
+    for check in (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []:
+        if not isinstance(check, dict):
+            continue
+        check_id = str(check.get("id") or "").strip()
+        if (
+            str(check.get("requirementId") or "").strip() in unresolved_requirement_ids
+            and check_id
+            and check_id not in known_check_ids
+        ):
+            evidence_checks.append(check)
+            known_check_ids.add(check_id)
     reachability_checks = [
         item for item in missing_checks
         if str(item.get("kind") or "").strip().lower() == "reachability"
@@ -4690,13 +4752,13 @@ def _bounded_convergence_evidence(
     evidence_by_id = {}
     requirement_ids = list(dict.fromkeys(
         str(item.get("requirementId") or "").strip()
-        for item in missing_checks
+        for item in evidence_checks
         if str(item.get("requirementId") or "").strip()
     ))
     source_candidate_records = automatic_records + manual_records
     for requirement_id in requirement_ids:
         source_checks = [
-            item for item in missing_checks
+            item for item in evidence_checks
             if str(item.get("requirementId") or "").strip() == requirement_id
             and str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
         ]
@@ -4734,6 +4796,7 @@ def _bounded_convergence_evidence(
             and not _case_has_deep_external_action((item or {}).get("raw") or {})
         ]
         matching_records.sort(key=lambda item: (
+            str(((item or {}).get("compact") or {}).get("case_id") or "").strip() not in unresolved_case_ids,
             -sum(
                 1 for check in source_checks
                 if case_covers_requirement_acceptance((item or {}).get("raw") or {}, check)
@@ -4771,6 +4834,11 @@ def _bounded_convergence_evidence(
         )
         current_leaf_adapted = current_leaf_adapted or visual_leaf_adapted
         precondition = _bounded_candidate_precondition(source_case, branch_baseline)
+        navigation_flow = _ensure_trusted_home_start_guard(
+            navigation_flow,
+            branch_baseline,
+            precondition,
+        )
         requirement_refs = normalize_text_list(
             source_case.get("requirementRefs")
             or source_case.get("requirement_refs")
@@ -5800,10 +5868,70 @@ def _ai_plan_satisfies_bounded_evidence(
         "assertions": [assertion_target],
         "requirementRefs": requirement_refs,
     }
+    if not _planner_flow_reaches_required_branch(
+        case,
+        flow,
+        item.get("precondition"),
+        requirement_refs,
+        acceptance_checks,
+    ):
+        return False
     return all(
         case_covers_requirement_acceptance(probe, checks_by_id[check_id])
         for check_id in required_check_ids
     )
+
+
+def _planner_flow_reaches_required_branch(
+    case,
+    flow,
+    precondition,
+    requirement_refs,
+    acceptance_checks,
+):
+    """Require a visible navigation action when a plan starts from the app home page."""
+    case = case if isinstance(case, dict) else {}
+    flow = normalize_text_list(flow)
+    start_items = []
+    for value in (
+        precondition,
+        case.get("start_page"),
+        case.get("startPage"),
+        case.get("preconditions"),
+        case.get("precondition"),
+    ):
+        start_items.extend(normalize_text_list(value))
+    start_context = "\n".join(start_items)
+    if "首页" not in start_context:
+        return True
+    requirement_ids = set(_acceptance_requirement_ids(requirement_refs))
+    mapped_checks = [
+        check for check in (acceptance_checks or [])
+        if isinstance(check, dict)
+        and str(check.get("requirementId") or "").strip() in requirement_ids
+    ]
+    mapped_branches = list(dict.fromkeys(
+        str(check.get("branch") or "").strip()
+        for check in mapped_checks
+        if str(check.get("branch") or "").strip()
+    ))
+    branches = [branch for branch in mapped_branches if "首页" not in branch]
+    if mapped_branches and not branches:
+        return True
+    case_context = "\n".join(normalize_text_list([
+        case.get("title"),
+        case.get("business_path"),
+        case.get("businessPath"),
+    ]))
+    if mapped_checks and not mapped_branches and "首页" in case_context:
+        return True
+    flow_probe = {"steps": flow}
+    if branches:
+        return any(
+            _case_has_concrete_branch_execution_evidence(flow_probe, branch, branches)
+            for branch in branches
+        )
+    return any(_navigation_action_target_key(step) for step in flow)
 
 
 def apply_executable_yaml_plan_to_payload(payload, plan):
@@ -5890,6 +6018,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     path_mapping_guard_count = 0
     branch_scope_guard_count = 0
     ambiguous_navigation_guard_count = 0
+    navigation_path_guard_count = 0
     preserved_executable_count = 0
     outside_focus_preserved_count = 0
     bounded_convergence_override_count = 0
@@ -6059,6 +6188,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             and len(planned_flow) >= 2
             and not requirement_refs_guarded
         )
+        acceptance_checks = (
+            (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
+        )
         if level == "executable" and _source_navigation_has_alternative_destinations(
             planned_flow or case.get("steps") or [],
             allow_terminal_wait_alternatives=True,
@@ -6073,6 +6205,23 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             }
             path_plan_applied = False
             ambiguous_navigation_guard_count += 1
+        navigation_path_complete = _planner_flow_reaches_required_branch(
+            case,
+            planned_flow,
+            precondition,
+            requirement_refs,
+            acceptance_checks,
+        )
+        if level == "executable" and path_plan_applied and not navigation_path_complete:
+            level = "manual" if convergence_pass else "needs_review"
+            item = {
+                **item,
+                "reason": (
+                    "规划起点为 App 首页，但执行流只有等待/断言，缺少进入需求业务分支的真实可见文字导航"
+                ),
+            }
+            path_plan_applied = False
+            navigation_path_guard_count += 1
         if origin_level == "manual" and level == "executable" and not (
             path_plan_applied and precondition and assertion_target and requirement_refs
         ):
@@ -6294,6 +6443,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "path_mapping_guard_count": path_mapping_guard_count,
         "branch_scope_guard_count": branch_scope_guard_count,
         "ambiguous_navigation_guard_count": ambiguous_navigation_guard_count,
+        "navigation_path_guard_count": navigation_path_guard_count,
         "preserved_executable_count": preserved_executable_count,
         "outside_focus_preserved_count": outside_focus_preserved_count,
         "bounded_convergence_override_count": bounded_convergence_override_count,

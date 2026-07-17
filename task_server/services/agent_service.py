@@ -11409,6 +11409,62 @@ def _agent_canonical_failure_type(value):
     return ""
 
 
+def _agent_explicit_auto_repair_decision(item):
+    """Return an explicit per-failure repair decision without inventing a default."""
+    item = item if isinstance(item, dict) else {}
+    review = _agent_failure_review(item)
+    for source in (item, review):
+        for key in ("canAutoRepair", "can_auto_repair"):
+            if key not in source:
+                continue
+            value = source.get(key)
+            if isinstance(value, bool):
+                return value
+            normalized = str(value or "").strip().lower()
+            if normalized in ("true", "1", "yes"):
+                return True
+            if normalized in ("false", "0", "no"):
+                return False
+    return None
+
+
+def _agent_repair_eligibility(item, fallback_failure_type="", fallback_can_auto_repair=None):
+    """Keep repair eligibility bound to one failed Runner task."""
+    item = item if isinstance(item, dict) else {}
+    failure_type = (
+        _agent_canonical_failure_type(item.get("failureType") or item.get("failure_type"))
+        or _agent_failure_type_from_review(_agent_failure_review(item))
+        or _agent_canonical_failure_type(fallback_failure_type)
+        or "UNKNOWN"
+    )
+    can_auto_repair = _agent_explicit_auto_repair_decision(item)
+    if can_auto_repair is None and fallback_can_auto_repair is not None:
+        can_auto_repair = bool(fallback_can_auto_repair)
+    if failure_type != "SCRIPT_ISSUE":
+        return {
+            "eligible": False,
+            "failureType": failure_type,
+            "canAutoRepair": can_auto_repair,
+            "reason": f"{failure_type} 只保留诊断证据，不自动修改 YAML",
+            "code": "failure_type_not_repairable",
+        }
+    if can_auto_repair is False:
+        return {
+            "eligible": False,
+            "failureType": failure_type,
+            "canAutoRepair": False,
+            "reason": "该失败任务的证据明确不支持安全自动修复",
+            "code": "source_auto_repair_denied",
+        }
+    return {
+        "eligible": True,
+        "failureType": failure_type,
+        "canAutoRepair": can_auto_repair,
+        "reason": "失败分类允许生成有界 YAML 修复候选",
+        "code": "",
+    }
+
+
 def _agent_should_confirm_unknown_failure(run, failure_type):
     return (
         _agent_canonical_failure_type(failure_type) == "UNKNOWN"
@@ -11461,7 +11517,7 @@ def _normalize_failed_execution_item(item, fallback=None):
             if not failure_kind or _agent_canonical_failure_type(failure_kind) == "UNKNOWN":
                 failure_kind = inferred_kind
     failure_type = failure_type or "UNKNOWN"
-    return {
+    normalized = {
         "jobId": job_id,
         "status": str(item.get("status") or fallback.get("status") or "failed").strip() or "failed",
         "module": module,
@@ -11479,6 +11535,10 @@ def _normalize_failed_execution_item(item, fallback=None):
         "failureKind": failure_kind,
         "failureReview": failure_review,
     }
+    explicit_auto_repair = _agent_explicit_auto_repair_decision({**item, "failureReview": failure_review})
+    if explicit_auto_repair is not None:
+        normalized["canAutoRepair"] = explicit_auto_repair
+    return normalized
 
 
 def _agent_runner_job_material(job_id):
@@ -12192,6 +12252,33 @@ def _agent_repair_navigation_signature(yaml_text):
     return signature
 
 
+def _agent_repair_navigation_missing_ready_wait(yaml_text):
+    """Detect a first AI navigation action that runs immediately after app launch."""
+    if pyyaml is None:
+        return False
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return False
+    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        flow = [step for step in (task.get("flow") or []) if isinstance(step, dict)]
+        launch_index = -1
+        for index, step in enumerate(flow):
+            if "launch" in step:
+                launch_index = index
+                continue
+            if not navigation_actions.intersection(step):
+                continue
+            guard_start = launch_index + 1 if launch_index >= 0 else 0
+            if not any("aiWaitFor" in previous for previous in flow[guard_start:index]):
+                return True
+            break
+    return False
+
+
 _AGENT_REPAIR_NAVIGATION_CLAIM_TERMS = (
     "navigation", "parent page", "intermediate page", "navigation path", "route",
     "导航", "父页面", "中间页面", "页面层级", "页面路径", "业务路径", "补充点击", "新增点击",
@@ -12299,6 +12386,11 @@ def _agent_repair_candidate_gate(original_yaml, response, baseline_examples, pla
         add_issue("ai_gateway_validation_failed", "AI Gateway 判定修复 YAML 不符合 Midscene 契约")
     elif fixed_yaml and not validation.get("ok"):
         add_issue("yaml_validation_failed", "修复 YAML 未通过 Task Server 可执行校验")
+    elif fixed_yaml and navigation_changed and _agent_repair_navigation_missing_ready_wait(fixed_yaml):
+        add_issue(
+            "navigation_missing_ready_wait",
+            "新增或改写首个导航动作前缺少 aiWaitFor 起始页稳定态，应用仍在启动加载时会立即定位失败",
+        )
     elif fixed_yaml and not _agent_repair_has_semantic_change(original_yaml, fixed_yaml):
         add_issue("sleep_only_or_noop", "候选只增加 sleep、修改说明或与原 YAML 执行语义等价")
 
@@ -12501,25 +12593,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         "input": {},
     }
     try:
-        fa = (run.get("artifacts") or {}).get("failureAnalysis") or {}
-        ft = str(fa.get("failureType", "UNKNOWN")).upper()
-        if ft == "PRODUCT_BUG":
-            call["status"] = "SKIPPED"
-            call["outputSummary"] = "PRODUCT_BUG 不生成 YAML 修复，仅生成缺陷草稿"
-            return call
-        if ft == "ENV_ISSUE":
-            call["status"] = "SKIPPED"
-            call["outputSummary"] = "ENV_ISSUE 不自动修复，请检查环境"
-            return call
-        if ft == "UNKNOWN":
-            call["status"] = "SKIPPED"
-            call["outputSummary"] = "未知失败类型，进入人工复核"
-            return call
-        if ft == "SCRIPT_ISSUE" and fa.get("canAutoRepair") is False:
-            call["status"] = "SKIPPED"
-            call["outputSummary"] = "AI 证据不足以安全修改 YAML，保留失败分析并停止自动修复"
-            return call
         artifacts = run.setdefault("artifacts", {})
+        fa = artifacts.get("failureAnalysis") if isinstance(artifacts.get("failureAnalysis"), dict) else {}
+        ft = _agent_canonical_failure_type(fa.get("failureType")) or "UNKNOWN"
         if failed_jobs_override is None:
             failed_jobs = _agent_persist_failed_execution_items(run)
         else:
@@ -12555,6 +12631,16 @@ def _tool_generate_repair(run, failed_jobs_override=None):
             repair_service = None
 
         for index, target_job in enumerate(repair_targets, start=1):
+            item_eligibility = _agent_repair_eligibility(
+                target_job,
+                fallback_failure_type=ft,
+                fallback_can_auto_repair=(
+                    fa.get("canAutoRepair")
+                    if len(failed_jobs) == 1 and "canAutoRepair" in fa
+                    else None
+                ),
+            )
+            item_failure_type = item_eligibility.get("failureType") or "UNKNOWN"
             module = str(target_job.get("module") or fa.get("module") or "").strip()
             file_name = clean_filename(target_job.get("file") or fa.get("file") or "")
             task_name = str(target_job.get("taskName") or fa.get("taskName") or fa.get("task_name") or "").strip()
@@ -12564,11 +12650,17 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     original_yaml = read_text_file(safe_join(TASK_DIR, module, file_name), default="")
                 except Exception:
                     original_yaml = ""
-            report_keyframes = _agent_failure_report_keyframes(target_job, limit=4)
+            report_keyframes = (
+                _agent_failure_report_keyframes(target_job, limit=4)
+                if item_eligibility.get("eligible") else []
+            )
             report_keyframe_names = [item.get("name") or "report-keyframe" for item in report_keyframes]
-            baseline_examples = _agent_repair_baseline_examples(run, target_job, original_yaml, limit=6)
+            baseline_examples = (
+                _agent_repair_baseline_examples(run, target_job, original_yaml, limit=6)
+                if item_eligibility.get("eligible") else []
+            )
             evidence_parts = [
-                f"失败类型：{ft}",
+                f"失败类型：{item_failure_type}",
                 f"失败序号：{index}/{len(failed_jobs)}",
                 f"Agent 目标：{run.get('target', '')}",
                 f"失败用例：{task_name or file_name}",
@@ -12587,8 +12679,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 "module": module,
                 "file": file_name,
                 "taskName": task_name,
-                "type": ft,
-                "failureType": ft,
+                "type": item_failure_type,
+                "failureType": item_failure_type,
+                "sourceCanAutoRepair": item_eligibility.get("canAutoRepair"),
                 "riskLevel": "medium",
                 "analysis": fa.get("conclusion") or fa.get("summary") or "根据失败日志生成修复草稿",
                 "suggestion": fa.get("suggestion") or fa.get("recommendation") or "建议修复定位器、等待条件或断言范围",
@@ -12614,6 +12707,8 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 "targetTaskName": task_name,
                 "module": module,
                 "file": file_name,
+                "failureType": item_failure_type,
+                "canAutoRepair": item_eligibility.get("canAutoRepair"),
                 "failureReason": target_job.get("failureReason") or target_job.get("error") or "",
                 "aiAttempted": False,
                 "aiUsed": False,
@@ -12625,11 +12720,22 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 "selectedBaselines": [item.get("provenancePath") or item.get("file") for item in baseline_examples],
             }
 
-            if not original_yaml.strip():
+            if not item_eligibility.get("eligible"):
+                blocked_count += 1
+                item_summary["blockedReason"] = item_eligibility.get("code") or "failure_type_not_repairable"
+                item_summary["repairEligibilityReason"] = item_eligibility.get("reason") or ""
+                draft["blockedReason"] = item_summary["blockedReason"]
+                draft["analysis"] = (
+                    f"{draft.get('analysis') or ''}\n{item_eligibility.get('reason') or ''}"
+                ).strip()
+                draft["repairSource"] = "diagnosis_only"
+                draft["status"] = "REJECTED"
+            elif not original_yaml.strip():
                 blocked_count += 1
                 item_summary["blockedReason"] = "missing_original_yaml"
                 draft["analysis"] = "未找到原始 YAML；仅保留失败证据，无法生成可应用修复。"
                 draft["repairSource"] = "diagnosis_only"
+                draft["status"] = "REJECTED"
             elif ai_available:
                 ai_attempted_count += 1
                 item_summary["aiAttempted"] = True
@@ -12650,6 +12756,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "alignReportFramesWithBaselinePath": True,
                         "requireBaselineCitationForNavigationChange": True,
                         "requireProseYamlDiffConsistency": True,
+                        "requireReadyWaitBeforeNewNavigation": True,
                         "visibleTextOnly": True,
                         "preserveOriginalBusinessGoal": True,
                     },
@@ -12770,6 +12877,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 blocked_count += 1
                 item_summary["blockedReason"] = "ai_gateway_unavailable"
                 draft["repairSource"] = "diagnosis_only"
+                draft["status"] = "REJECTED"
 
             item_summary["repairSource"] = draft.get("repairSource")
             try:
@@ -13045,6 +13153,45 @@ def _agent_prepare_repair_rerun_targets(run, failed_items, jobs):
             source_item.get("jobId") or source_item.get("job_id") or
             source_job.get("job_id") or source_job.get("jobId") or ""
         ).strip()
+        draft_status = str(draft.get("status") or "").strip().upper()
+        draft_failure_type = _agent_canonical_failure_type(
+            draft.get("failureType") or draft.get("failure_type") or draft.get("type")
+        )
+        source_failure_type = (
+            _agent_canonical_failure_type(source_item.get("failureType") or source_item.get("failure_type"))
+            or _agent_failure_type_from_review(_agent_failure_review(source_item))
+        )
+        source_auto_repair = _agent_explicit_auto_repair_decision(source_item)
+        draft_auto_repair = _agent_explicit_auto_repair_decision({
+            "canAutoRepair": draft.get("sourceCanAutoRepair")
+        }) if "sourceCanAutoRepair" in draft else None
+        has_repair_classification = bool(
+            draft_failure_type or source_failure_type
+            or source_auto_repair is not None or draft_auto_repair is not None
+        )
+        rerun_eligibility = _agent_repair_eligibility(
+            source_item,
+            fallback_failure_type=draft_failure_type,
+            fallback_can_auto_repair=(
+                source_auto_repair if source_auto_repair is not None else draft_auto_repair
+            ),
+        )
+        if draft_status in ("REJECTED", "BLOCKED") or (
+            has_repair_classification and not rerun_eligibility.get("eligible")
+        ):
+            skipped.append({
+                "draftId": draft_id,
+                "jobId": source_job_id,
+                "taskName": draft.get("taskName") or source_item.get("taskName") or draft.get("file") or "",
+                "status": "repair_not_eligible",
+                "failureType": rerun_eligibility.get("failureType") or draft_failure_type or source_failure_type or "UNKNOWN",
+                "reason": (
+                    "修复草稿已被平台拒绝，禁止下发 Runner"
+                    if draft_status in ("REJECTED", "BLOCKED")
+                    else rerun_eligibility.get("reason")
+                ),
+            })
+            continue
         key = source_job_id or f"{draft.get('file')}::{draft.get('taskName') or draft.get('task_name')}::{draft_id}"
         if key in used_keys:
             continue

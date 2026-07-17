@@ -1061,6 +1061,55 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and (visual_leaf_evidence.get("currentLeafEvidence") or {}).get("confidence") == 0.96,
         "High-confidence current-frame evidence must replace only a historical baseline leaf after the shared parent path is proven",
     )
+    broad_leaf_evidence = ai_skill_service._normalize_visual_current_page_evidence([{
+        "caseId": "TC-HISTORICAL-LEAF",
+        "requirementId": "REQ-041",
+        "branch": "资料归档",
+        "pageTitle": "新版归档",
+        "parentPath": ["资料服务"],
+        "navigationLeaf": "资料归档页",
+        "targetText": "企业云盘",
+        "sameBranch": True,
+        "confidence": 0.93,
+        "source": "figma_current_frame",
+    }])[0]
+    broad_leaf_adapted, broad_leaf_changed = ai_skill_service._adapt_trusted_navigation_to_visual_evidence(
+        [
+            "点击「资料服务」",
+            "等待资料服务页面加载完成",
+            "点击「资料归档」",
+            "等待旧版归档入口可见",
+            "点击「旧版归档」",
+        ],
+        broad_leaf_evidence,
+        "资料归档",
+    )
+    require(
+        broad_leaf_evidence.get("leafDerivedFromPageTitle") is True
+        and broad_leaf_evidence.get("navigationLeaf") == "新版归档"
+        and broad_leaf_evidence.get("parentPath") == ["资料服务", "资料归档页"]
+        and broad_leaf_changed is True
+        and "点击「新版归档」" in broad_leaf_adapted
+        and "旧版归档" not in " ".join(broad_leaf_adapted),
+        "A concrete current Frame title must become the navigation leaf when visual AI returned only its broad parent page as navigationLeaf",
+    )
+    unresolved_only_evidence = ai_skill_service._bounded_convergence_evidence(
+        visual_leaf_payload,
+        visual_leaf_records,
+        {
+            "missingAcceptanceChecks": [],
+            "unresolvedAutomaticCaseIds": ["TC-HISTORICAL-LEAF"],
+        },
+        selected_baselines=[current_leaf_baseline],
+        manual_records=[],
+    ).get("TC-HISTORICAL-LEAF") or {}
+    require(
+        unresolved_only_evidence.get("eligible") is True
+        and unresolved_only_evidence.get("currentLeafAdapted") is True
+        and unresolved_only_evidence.get("flow", [""])[0] == "启动App并等待首页加载完成"
+        and "点击「新版归档」" in unresolved_only_evidence.get("flow", []),
+        "An unresolved home-start automatic case must receive bounded baseline and current-Frame evidence even when a sibling case already covers the REQ checks",
+    )
     home_guarded_prefix = ai_skill_service._ensure_trusted_home_start_guard(
         ["点击「会员服务」", "等待开票服务可见"],
         {"snippet": "# baseline.start_page: App 首页"},
@@ -2307,6 +2356,27 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and applied["cases"][0].get("expected_result") == grounded_plan["cases"][0]["assertionTarget"],
         "An accepted AI path and its final assertion must be written back as one execution contract instead of retaining stale generated copy",
     )
+    wait_only_plan = json.loads(json.dumps(grounded_plan, ensure_ascii=False))
+    wait_only_plan["cases"][0]["flow"] = [
+        "等待照片打印页面加载完成",
+        "等待企业云盘入口可见",
+    ]
+    wait_only_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, wait_only_plan)
+    require(
+        wait_only_applied.get("cases", [{}])[0].get("executionLevel") == "needs_review"
+        and wait_only_applied.get("review", {}).get("executable_yaml_plan", {}).get("navigation_path_guard_count") == 1,
+        "A home-start plan that only waits for a child page must not be marked pathPlanApplied or receive a Runner slot",
+    )
+    require(
+        ai_skill_service._planner_flow_reaches_required_branch(
+            {"title": "首页通知横幅展示", "business_path": "App 首页"},
+            ["等待首页稳定显示", "等待通知横幅可见"],
+            "App 首页",
+            ["REQ-009 首页通知横幅展示"],
+            [{"requirementId": "REQ-009", "branch": "App 首页", "kind": "visibility"}],
+        ),
+        "A requirement that explicitly targets the home page must not be forced to invent a navigation action",
+    )
     ungrounded_plan = json.loads(json.dumps(grounded_plan, ensure_ascii=False))
     ungrounded_plan["cases"][0]["baselineId"] = "invented-baseline"
     ungrounded_plan["cases"][0]["baselineGrounded"] = False
@@ -3219,9 +3289,13 @@ def check_agent_failure_review_and_repair_guard():
         "aiAssert: 百度网盘入口可见",
         "aiAssert: 百度网盘入口完整可见且文案正确",
     )
-    grounded_navigation_fix = original.replace(
+    unguarded_navigation_fix = original.replace(
         "        - aiAssert: 百度网盘入口可见",
         "        - aiTap: 照片打印\n        - aiTap: 5寸照片\n        - aiAssert: 百度网盘入口可见",
+    )
+    grounded_navigation_fix = unguarded_navigation_fix.replace(
+        "        - aiTap: 文档打印",
+        "        - aiWaitFor: 首页入口区域稳定显示\n        - aiTap: 文档打印",
     )
     branch_baseline = {
         "id": "base-photo-path",
@@ -3248,6 +3322,20 @@ def check_agent_failure_review_and_repair_guard():
     require(
         any(item.get("code") == "navigation_change_without_branch_baseline" for item in cross_branch_gate.get("issues") or []),
         "A global or sibling baseline citation must not authorize a current-branch navigation change",
+    )
+    startup_guard_gate = agent_service._agent_repair_candidate_gate(
+        original,
+        {
+            "fixedYaml": unguarded_navigation_fix,
+            "analysis": "根据分支基线补齐导航",
+            "usedBaselineIds": ["base-photo-path"],
+        },
+        [branch_baseline],
+        platform="android",
+    )
+    require(
+        any(item.get("code") == "navigation_missing_ready_wait" for item in startup_guard_gate.get("issues") or []),
+        "A repair that adds navigation immediately after launch must receive one bounded AI correction for a visible start-page ready wait",
     )
 
     old_task_dir = agent_service.TASK_DIR
@@ -3324,6 +3412,109 @@ def check_agent_failure_review_and_repair_guard():
             and correction_item.get("navigationChanged") is True
             and correction_item.get("usedBaselineIds") == ["base-photo-path"],
             "Only the corrected YAML with a real navigation diff and current-branch citation may become rerunnable",
+        )
+    finally:
+        agent_service.TASK_DIR = old_task_dir
+        agent_service._ai_gateway_available = old_gateway_available
+        agent_service._ai_gateway_post = old_gateway_post
+        agent_service._log_tool_call = old_log_tool_call
+        repair_service.upsert_repair_draft = old_upsert
+        agent_service._agent_failure_report_keyframes = old_report_keyframes
+        agent_service._agent_repair_baseline_examples = old_repair_baselines
+
+    eligible_script_fix = original.replace(
+        "        - aiTap: 文档打印",
+        "        - aiWaitFor: 首页入口区域稳定显示\n        - aiTap: 首页中名称为文档打印的入口",
+    )
+    old_task_dir = agent_service.TASK_DIR
+    old_gateway_available = agent_service._ai_gateway_available
+    old_gateway_post = agent_service._ai_gateway_post
+    old_log_tool_call = agent_service._log_tool_call
+    old_upsert = repair_service.upsert_repair_draft
+    old_report_keyframes = agent_service._agent_failure_report_keyframes
+    old_repair_baselines = agent_service._agent_repair_baseline_examples
+    mixed_repair_requests = []
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            (module_dir / "script.yaml").write_text(original, encoding="utf-8")
+            (module_dir / "product.yaml").write_text(original, encoding="utf-8")
+            agent_service._ai_gateway_available = lambda: True
+
+            def mixed_repair_gateway(*_args, **_kwargs):
+                mixed_repair_requests.append(True)
+                return {"fixedYaml": eligible_script_fix, "analysis": "补齐起始页稳定等待并修正可见文字定位"}
+
+            agent_service._ai_gateway_post = mixed_repair_gateway
+            agent_service._log_tool_call = lambda *args, **kwargs: None
+            agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
+            agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: []
+            repair_service.upsert_repair_draft = lambda draft: dict(draft)
+            mixed_run = {
+                "runId": "agent-static-mixed-failure-repair",
+                "target": "通用入口展示",
+                "platform": "android",
+                "artifacts": {
+                    "failureAnalysis": {"failureType": "SCRIPT_ISSUE", "canAutoRepair": True},
+                    "report": {"failedJobs": [{
+                        "jobId": "job-script",
+                        "module": "AI_Agent_草稿",
+                        "file": "script.yaml",
+                        "taskName": "脚本定位失败",
+                        "failureType": "SCRIPT_ISSUE",
+                        "error": "failed to locate element",
+                    }, {
+                        "jobId": "job-product",
+                        "module": "AI_Agent_草稿",
+                        "file": "product.yaml",
+                        "taskName": "需求入口未展示",
+                        "failureType": "PRODUCT_BUG",
+                        "failureReview": {
+                            "category": "product_bug",
+                            "confidence": 0.95,
+                            "canAutoRepair": False,
+                            "reason": "运行截图确认需求入口不存在",
+                        },
+                    }]},
+                },
+            }
+            mixed_call = agent_service._tool_generate_repair(mixed_run)
+            mixed_drafts = {
+                item.get("jobId"): item
+                for item in mixed_run.get("artifacts", {}).get("repairDrafts") or []
+            }
+            malicious_product_run = {
+                "runId": "agent-static-product-rerun-defense",
+                "artifacts": {
+                    "repairDrafts": [{
+                        "draftId": "repair-product-invalid",
+                        "jobId": "job-product",
+                        "failureType": "PRODUCT_BUG",
+                        "status": "WAIT_CONFIRM",
+                        "fixedYaml": eligible_script_fix,
+                    }],
+                    "repairSummary": {"draftIds": ["repair-product-invalid"], "draftCount": 1},
+                },
+            }
+            malicious_plan = agent_service._agent_prepare_repair_rerun_targets(
+                malicious_product_run,
+                mixed_run["artifacts"]["report"]["failedJobs"][1:],
+                [{"job_id": "job-product", "module": "AI_Agent_草稿", "file": "product.yaml"}],
+            )
+        require(
+            len(mixed_repair_requests) == 1
+            and mixed_call.get("aiUsedCount") == 1
+            and mixed_drafts.get("job-script", {}).get("status") == "WAIT_CONFIRM"
+            and mixed_drafts.get("job-product", {}).get("status") == "REJECTED"
+            and not mixed_drafts.get("job-product", {}).get("fixedYaml"),
+            "Batch repair must call AI only for each eligible SCRIPT_ISSUE and retain PRODUCT_BUG as diagnosis-only evidence",
+        )
+        require(
+            not malicious_plan.get("targets")
+            and malicious_plan.get("skipped", [{}])[0].get("status") == "repair_not_eligible",
+            "A persisted product-failure YAML draft must remain blocked at the final Runner rerun boundary",
         )
     finally:
         agent_service.TASK_DIR = old_task_dir
@@ -4044,6 +4235,27 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         and scan_review.get("matchedRequirementIds") == ["REQ-003"]
         and scan_review.get("matchedRequirementPointCount") == 1,
         "Scope review must compare a case with its mapped REQ point instead of the first global requirement tokens",
+    )
+    ai_suggestion_review = yaml_service.generated_case_requirement_scope_review({
+        "case_id": "TC-AI-SUGGESTED",
+        "title": "资料服务首页企业云盘入口展示",
+        "coverage": "business_goals[0]；ai_suggested_requirement_points[0]",
+        "steps": ["等待首页稳定显示", "等待企业云盘入口可见"],
+        "assertions": ["企业云盘与资料归档、文件管理入口同级展示"],
+    }, {
+        "requirement_points": [
+            "REQ-001 资料归档页面展示企业云盘入口",
+            "REQ-002 文件管理页面展示企业云盘入口",
+        ],
+        "business_goals": ["企业云盘入口展示、文案及同级关系"],
+        "ai_suggested_requirement_points": ["资料服务首页也可增加企业云盘入口"],
+    })
+    require(
+        not ai_suggestion_review.get("ok")
+        and ai_suggestion_review.get("requiresExplicitRequirementId") is True
+        and not ai_suggestion_review.get("matchedRequirementIds")
+        and any("显式 REQ 契约" in reason for reason in ai_suggestion_review.get("reasons") or []),
+        "An AI-suggested branch without a valid explicit REQ mapping must not satisfy scope through global business goals",
     )
     mobile_copy_review = yaml_service.generated_case_requirement_scope_review({
         "case_id": "TC-005",

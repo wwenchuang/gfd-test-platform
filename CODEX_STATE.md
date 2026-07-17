@@ -28,6 +28,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 显式需求溯源、当前 Frame 导航叶子与逐任务修复资格
+
+部署 `1057e04` 后，以相同需求和 Figma 发起完整 Agent `agent-1784267243585-95268e66`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- `8091 / 8088` 健康；Gateway 实时模型测试确认 `gpt-4.1-mini` 可用。Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`。所有 dry-run、原始 Smoke 和修复重跑均串行下发到固定 OPPO，没有选择或执行同 Runner 上的第二台设备。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 批图片全部送入创建时选定的 `gpt-4.1-mini`，均由首选模型在约 `3-12s` 完成，`fallbackIndex=0 / finishReason=stop / hardGate=false`。第 2 批结构化证据为 `REQ-002 / 照片打印 / pageTitle=5寸照片 / navigationLeaf=照片打印页 / targetText=百度网盘 / confidence=0.9`；设计稿真实参与 AI 判断且仍是软参考。
+- AI 生成 `8` 条业务流、`7` 条 executable YAML，static、dry-run 和 scorer 均通过且无坐标。首批固定设备串行执行 3 条：照片展示、AI 推测的“基础打印首页百度网盘入口”、扫描展示；文档展示被延后。Agent 最终为 `FAILED / RERUN`，不是生成、视觉、模型额度、设备选择或并发问题。
+- 照片展示 YAML 从 `App 首页` 直接等待照片页，没有点击照片打印，也没有进入当前设计的 `5寸照片`。原始 job `job_1784267561033_00004` 的 Midscene 报告关键帧确认手机仍停在首页，正确归类为 `SCRIPT_ISSUE / can_auto_repair=true`。
+- `TC-007` 没有任何 `REQ-*` 映射，只引用 `business_goals / ai_suggested_requirement_points`，却因旧 scope review 按全局目标关键词计数而获得 Runner 资格。真机首页只有文档打印、照片打印、扫描复印，job `job_1784267637893_00005` 因不存在首页百度网盘入口被归为 `PRODUCT_BUG / can_auto_repair=false`；这是无需求依据的测试假阳性，不是产品缺陷。
+- 批量修复错误地把 overall `SCRIPT_ISSUE` 覆盖到每个失败任务，导致上述产品失败又生成“点击基础打印”的虚构修复并重跑。照片修复虽补了点击照片打印，但在 `launch` 后立即 `aiTap`，没有首页稳定等待；修复 job `job_1784268120943_00010` 的报告显示 App 仍在“资源加载中 0%”时开始定位，因而再次失败。扫描失败复检证据不一致且 `can_auto_repair=false`，旧逻辑虽未下发修复 YAML，但仍做了无效 AI 修复尝试。
+
+通用修复：
+
+- 当需求分析已建立显式 `REQ-*` 契约时，自动用例必须映射至少一个真实存在的需求 ID；全局业务目标、AI 建议文本或伪造 ID 不能替代。scope gate 提前到最终组合审计和 Smoke 选择之前，并在收敛结果后再次执行；无映射候选保留到人工区供审阅，不占 Runner 名额，也不能满足覆盖门禁。没有显式 REQ 契约的旧需求继续使用原语义匹配，不强制改造历史输入。
+- AI 规划从 App 首页开始时，必须包含进入需求业务分支的真实可见文字导航；只有等待/断言的子页面假定路径降为复核。明确以首页为验收页的合法需求不要求虚构导航。多分支候选仍使用原有独立分支证据门禁。
+- 视觉证据若把上一级模块误填为 `navigationLeaf`、但 `pageTitle` 给出了同分支更具体的尺寸/版本/类型/状态标题，平台在 `sameBranch=true / confidence>=0.75 / REQ 与目标文案一致 / 无坐标和备选目标` 时把上一级移入 `parentPath`，将具体标题作为当前叶子。该规则不识别或硬编码 5 寸、6 寸等业务词，Figma parser 未修改。
+- 同一次已有覆盖收敛现在同时处理“验收缺口”和“未决自动用例”。即使兄弟用例已覆盖同一 REQ，未决路径仍可获得成功基线父路径和当前 Frame 叶子证据；不新增模型轮次。首页起点统一保留一个可见稳定等待，历史叶子只在共同父路径被证明后替换。
+- 修复资格绑定到每个失败 job 的不可变 `failureType / failureReview / canAutoRepair`。只有 `SCRIPT_ISSUE` 且未明确禁止自动修复才调用报告关键帧、可信分支基线和 AI YAML 优化；`PRODUCT_BUG / ENV_ISSUE / UNKNOWN / canAutoRepair=false` 只保存诊断草稿。Runner 下发前再次核验来源分类，旧持久化的错误修复也无法绕过。
+- AI 新增或改写导航时，修复 YAML 的首个 AI 导航动作前必须有 `aiWaitFor` 起始页稳定态；否则使用现有唯一一次有界纠错让 AI 修正，不用固定 sleep、坐标或新增重试循环。
+
+使用本次线上完整快照离线重放：
+
+- `TC-007` 变为 `scopeReview.ok=false / matchedRequirementIds=[]` 并移出自动池；其余 6 条真实 REQ 用例仍完整覆盖 `REQ-001/002/003`，组合审计 `ok=true / missing=[]`。
+- 原照片等待链返回 `path accepted=false`。同一次收敛生成的可信路径为 `首页稳定 -> 照片打印 icon -> 照片打印 -> 5寸照片 -> 校验百度网盘入口`，`currentLeafAdapted=true`，不含历史 `6寸照片`；转换后的 YAML 为 `static ok / scorer 100 / executable / coordinates=0`。
+- 原始照片失败仍允许 AI 修复；首页假阳性的 `PRODUCT_BUG` 和扫描 `canAutoRepair=false` 均不再调用 YAML 修复。旧照片修复候选被 `navigation_missing_ready_wait` 准确拦截，交给已有一次有界 AI 纠错。
+- `python3 -m py_compile ...`、`python3 tests/backend_static_checks.py`、完整 `npm test` 和 `git diff --check` 通过。完整检查包括 undefined-name、后端 `61`、前端 `69`、Gateway `46`、动态目录/文本/空答/截断/图像/超时降级、Skill fixtures `3/3` 以及 Playwright 桌面/移动端视觉回归。
+
+本地修复完成后待用户 push 和部署。部署后先探测创建时选定的 GPT；有额度且返回有效内容则继续使用 GPT，超时、限流、不可用或结构化截断才按 Gateway 能力路由降级。随后只发起一次相同完整 Agent，固定 `win-runner-01 / ecbfd645`，持续监督生成、首批 Smoke、remaining、修复、真实 Runner 报告、截图/录屏和最终终态；不得选择第二台设备，也不得用离线重放冒充真机成功。
+
 ### 2026-07-17 AI 修复成功必须恢复执行链，当前设计页证据必须覆盖历史叶子
 
 部署 `02158b9` 后，以完全相同需求和 Figma 发起 Agent `agent-1784262324968-f9f123a9`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
