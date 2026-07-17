@@ -568,6 +568,46 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         }, ["发票"]) is None,
         "Confirmation commands that mutate external state must not become observations",
     )
+    single_state_landing_case = {
+        "case_id": "MC-SINGLE-LANDING",
+        "requirementRefs": ["REQ-001"],
+        "steps": [
+            "进入订单管理页面",
+            "点击发票入口",
+            "观察跳转到发票内容列表页",
+            "确认页面包含文件名和操作按钮",
+            "确认无崩溃、无白屏",
+        ],
+        "expected_result": "点击发票入口后成功跳转，内容列表页稳定显示，无崩溃、无白屏",
+    }
+    single_state_tail = ai_skill_service._bounded_landing_tail(
+        single_state_landing_case,
+        ["发票"],
+    )
+    normalized_single_state_tail = ai_skill_service._merge_bounded_landing_tails(
+        [single_state_tail],
+    )
+    vague_landing_tail = ai_skill_service._bounded_landing_tail({
+        "steps": ["点击发票入口", "观察页面跳转情况", "确认无崩溃、无白屏"],
+        "expected_result": "点击后页面有响应，无崩溃、无白屏",
+    }, ["发票"])
+    require(
+        single_state_tail
+        and not ai_skill_service._bounded_landing_tail_is_executable(
+            single_state_tail,
+            single_state_landing_case["requirementRefs"],
+        )
+        and ai_skill_service._bounded_landing_tail_is_executable(
+            normalized_single_state_tail,
+            single_state_landing_case["requirementRefs"],
+        )
+        and "已离开来源页" in str(normalized_single_state_tail.get("assertionTarget") or "")
+        and not ai_skill_service._bounded_landing_tail_is_executable(
+            ai_skill_service._merge_bounded_landing_tails([vague_landing_tail]),
+            ["REQ-001"],
+        ),
+        "One concrete AI-authored landing state plus explicit stability may gain a target-bound visible alternative, while vague transition-only evidence must stay blocked",
+    )
     automatic_records = [{"raw": item, "compact": item} for item in generic_display_cases]
     manual_records = [{"raw": item, "compact": item} for item in generic_reachability_manual]
     _focused_auto, focused_manual, _focused_context, focus_meta = ai_skill_service._focus_executable_convergence_candidates(
@@ -1670,9 +1710,10 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and set(manual_branch_source_evidence.get("acceptanceCheckIds") or []) == {
             "REQ-021-CHECK-01", "REQ-021-CHECK-02", "REQ-021-CHECK-03", "REQ-021-CHECK-04",
         }
-        and {"MC-BRANCH-LANDING", "TC-SIBLING-LANDING"}.issubset(
-            set(manual_branch_source_evidence.get("landingEvidenceCaseIds") or [])
+        and "MC-BRANCH-LANDING" in set(
+            manual_branch_source_evidence.get("landingEvidenceCaseIds") or []
         )
+        and "已离开来源页" in str(manual_branch_source_evidence.get("assertionTarget") or "")
         and manual_branch_case.get("executionLevel") == "executable"
         and manual_branch_case.get("ai_case_plan", {}).get("batch") == "remaining"
         and yaml_service._case_manual_block_reason(manual_branch_case) == ""
@@ -1696,8 +1737,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         item["steps"] = [
             "进入售后服务",
             "点击发票入口",
-            "观察页面跳转情况",
-            "确认是否显示授权WebView、登录页或文件选择页",
+            "观察跳转到发票内容列表页",
+            "确认页面包含文件名和操作按钮",
             "检查没有白屏/崩溃",
         ]
         item["assertions"] = []
@@ -1803,8 +1844,10 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and len(manual_tail_evidence.get("flow") or []) <= 8
         and manual_tail_evidence.get("flow", [""])[0] == "启动 App 并等待首页加载"
         and "售后服务页面展示文案为发票的入口" in " ".join(manual_tail_evidence.get("flow") or [])
-        and "售后服务页面展示文案为发票的入口" not in str(manual_tail_evidence.get("assertionTarget") or ""),
-        "A trusted automatic source-page candidate must be able to reuse only the bounded observation tail from a same-branch AI manual candidate",
+        and "售后服务页面展示文案为发票的入口" not in str(manual_tail_evidence.get("assertionTarget") or "")
+        and "发票内容列表页" in str(manual_tail_evidence.get("assertionTarget") or "")
+        and "已离开来源页" in str(manual_tail_evidence.get("assertionTarget") or ""),
+        "A trusted automatic source-page candidate must reuse a concrete single-state AI observation tail without requiring speculative external states",
     )
     manual_tail_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
         manual_tail_payload,

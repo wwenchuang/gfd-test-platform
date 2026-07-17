@@ -4206,6 +4206,35 @@ def _merge_bounded_landing_tails(tails):
             break
     if not click_step or not outcomes:
         return None
+
+    # A model may describe one concrete first screen (for example a content
+    # list) instead of enumerating every possible auth/login state. Keep that
+    # AI-authored state and add only a target-bound visible landing alternative;
+    # the existing bounded-landing scorer still requires a concrete state plus
+    # an explicit crash/blank-screen stability claim before accepting it.
+    source_outcome_text = "；".join(outcomes)
+    stability_observed = bool(re.search(
+        r"(?:无|未|没有|不)(?:App)?(?:崩溃|Crash|白屏|闪退)|"
+        r"(?:未出现|没有出现|未发生|没有发生)[^；。]{0,20}(?:崩溃|Crash|白屏|闪退)",
+        source_outcome_text,
+        flags=re.I,
+    ))
+    quoted_targets = [
+        item.strip()
+        for item in re.findall(r"[「『\"'‘]([^」』\"'’]+)[」』\"'’]", click_step)
+        if item.strip()
+    ]
+    target_label = quoted_targets[-1] if quoted_targets else re.sub(
+        r"^(?:点击|点按|轻触)\s*", "", click_step,
+    ).strip(" ：，,。")
+    target_label = re.sub(r"(?:入口|按钮|图标|icon)$", "", target_label, flags=re.I).strip()
+    if target_label and stability_observed:
+        branded_landing = (
+            f"操作「{target_label}」后已离开来源页，且「{target_label}」落地页的"
+            "页面区域或页面元素可见，无崩溃、无白屏"
+        )
+        if branded_landing not in outcomes:
+            outcomes.append(branded_landing)
     assertion_target = "以下任一首个稳定状态可见：" + "；或：".join(outcomes)
     return {
         "flow": [click_step, f"检查{assertion_target}"],
@@ -5084,21 +5113,25 @@ def _bounded_convergence_evidence(
             landing_tail["sourceCaseId"] = donor_case_id
             if not _bounded_landing_tail_is_executable(landing_tail, requirement_refs):
                 supporting_tails = [landing_tail]
-                for support_record in donor_records:
-                    if support_record is donor_record:
-                        continue
-                    support_case = (support_record or {}).get("raw") or {}
-                    support_tail = _bounded_landing_tail(support_case, targets)
-                    if not support_tail:
-                        continue
-                    support_tail["sourceCaseId"] = str(
-                        ((support_record or {}).get("compact") or {}).get("case_id") or ""
-                    ).strip()
-                    supporting_tails.append(support_tail)
-                    merged_tail = _merge_bounded_landing_tails(supporting_tails)
-                    if _bounded_landing_tail_is_executable(merged_tail, requirement_refs):
-                        landing_tail = merged_tail
-                        break
+                merged_tail = _merge_bounded_landing_tails(supporting_tails)
+                if _bounded_landing_tail_is_executable(merged_tail, requirement_refs):
+                    landing_tail = merged_tail
+                else:
+                    for support_record in donor_records:
+                        if support_record is donor_record:
+                            continue
+                        support_case = (support_record or {}).get("raw") or {}
+                        support_tail = _bounded_landing_tail(support_case, targets)
+                        if not support_tail:
+                            continue
+                        support_tail["sourceCaseId"] = str(
+                            ((support_record or {}).get("compact") or {}).get("case_id") or ""
+                        ).strip()
+                        supporting_tails.append(support_tail)
+                        merged_tail = _merge_bounded_landing_tails(supporting_tails)
+                        if _bounded_landing_tail_is_executable(merged_tail, requirement_refs):
+                            landing_tail = merged_tail
+                            break
                 if not _bounded_landing_tail_is_executable(landing_tail, requirement_refs):
                     continue
             source_evidence_case = source_case

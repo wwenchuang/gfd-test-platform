@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-18 真实回归：单一具体落地状态也应进入 AI 有界收敛
+
+用户部署 `1d4362c` 后，以相同需求和 Figma 发起完整 Agent `agent-1784301845490-a6bf385b`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- 8091 / 8088、AI Gateway、Sonic 健康，Task Server 重启约 2 分钟；Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 预检 ready。任务开始前没有活动 Runner job，未选择或下发同 Runner 上的华为设备。
+- GPT Provider 实时目录可用且探针成功。需求分析、场景设计、基线重排、规划、收敛和 4 个视觉批次全程使用 `gpt-4.1-mini`，`fallbackUsed=false`。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`；4 张图按 4 批全部送入 AI，约 `5s / 8s / 8s / 3s` 完成，`sent=true / attempted=4 / done=4 / status=completed / hardGate=false`。视觉 AI 识别了照片打印 5 寸照片页中的百度网盘入口、文案和位置关系。
+- PLAN 由 MM skills 生成 8 个 AI 业务分支。初始 planner 形成 6 条文档/照片 executable；现有一次收敛使用执行成功的扫描基线 `d623c1e73180bfac`，将扫描展示 `TC-007` 提升为 remaining executable，补齐扫描 visibility / relation / copy。
+- Agent 终态仍为 `FAILED / GENERATE_YAML / 30%`，最终为 `7 executable / 11 of 12`，只缺 `REQ-003 reachability`。覆盖门禁正确阻断，未创建 Runner job，因此本轮没有冒烟、remaining、报告或截图，也没有操作第二台设备。
+
+根因：
+
+- 本轮 GPT 将扫描跳转自动候选 `TC-008` 降为人工并清空步骤，但同时生成了可用人工证据 `MC-002`：点击百度网盘入口，观察跳转到文件列表页，确认页面包含文件名和操作按钮，再确认无崩溃、无白屏；没有账号、授权确认、文件选择或坐标动作。
+- `1d4362c` 已能识别声明式“确认页面/列表”，但现有 bounded landing scorer 还要求至少两个可观察首屏类别。上一次 AI 给出“跳转或授权窗口 + 文件列表”，可以满足；本次 AI 只给出一个更明确的文件列表状态，所以同样安全的证据仍被丢弃。
+- 这是模型表达变化与平台证据规范化之间的契约缺口，不应删除 reachability 门禁、放宽 scorer，或要求 AI 猜测授权/登录等未提供状态。
+
+通用修复：
+
+- 当 AI 候选已经包含真实文字目标点击、一个具体首屏状态以及明确的无崩溃/白屏稳定性时，保留 AI 的具体状态，并补充同一点击目标绑定的可见落地页区域作为另一合法观察结果，再交给原 bounded landing scorer 复核。
+- 只有“页面跳转情况 / 页面有响应”等模糊描述时，仍因缺少具体首屏类别被拒绝；确认授权/登录、输入凭据、文件选择、坐标、多目标导航和深层外部动作门禁均保持不变。没有修改 scorer、Figma parser、Runner、设备策略、执行模式、`router.py`、Sonic 或历史 YAML。
+- 使用本次线上完整 cases payload、真实 `MC-002` 文案和扫描成功基线重放：收敛证据为 `kind=bounded_landing / sourceCaseId=TC-007 / tailSourceCaseId=MC-002`，覆盖从 `8/12` 变为 `12/12`，最终门禁 `ok=true`；合并 case 保持 `remaining`，不挤占 smoke。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态目录及文本/空答/截断/图像/超时降级、Skill fixtures `3/3`、桌面和移动端视觉回归全部通过。
+
+待完成：提交、推送并部署本轮修复；部署后仍需用完全相同输入发起唯一一条完整 Agent，固定 OPPO `ecbfd645`，持续监督 YAML、smoke、AI 修复、remaining、真实报告和关键帧到最终终态。离线 `12/12` 只证明生成收敛，不等于真机成功。
+
 ### 2026-07-17 真实回归：AI 有界落地页中的“确认状态”不能被误判为动作
 
 用户部署 `6afea34` 后，以相同需求和 Figma 发起完整 Agent `agent-1784299036082-dd00ea9d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
