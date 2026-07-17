@@ -12135,6 +12135,44 @@ def _agent_source_evidence(run):
     artifacts = (run or {}).get("artifacts") if isinstance((run or {}).get("artifacts"), dict) else {}
     source = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
     used_pages = source.get("figmaUsedPages") or source.get("uiDesigns") or []
+    visual_report = (
+        artifacts.get("visualReferenceReport")
+        if isinstance(artifacts.get("visualReferenceReport"), dict)
+        else {}
+    )
+    if not visual_report:
+        quality_report = artifacts.get("qualityReport") if isinstance(artifacts.get("qualityReport"), dict) else {}
+        visual_report = (
+            quality_report.get("visualReferenceReport")
+            if isinstance(quality_report.get("visualReferenceReport"), dict)
+            else {}
+        )
+    visual_current_page_evidence = []
+    seen_visual_evidence = set()
+    for batch in visual_report.get("visualBatchResults") or []:
+        if not isinstance(batch, dict) or str(batch.get("status") or "").lower() != "completed":
+            continue
+        for item in batch.get("currentPageEvidence") or []:
+            if not isinstance(item, dict):
+                continue
+            row = {
+                key: copy.deepcopy(item.get(key))
+                for key in (
+                    "caseId", "requirementId", "branch", "pageTitle", "parentPath",
+                    "navigationLeaf", "targetText", "sameBranch", "confidence", "source",
+                    "leafDerivedFromPageTitle", "originalNavigationLeaf",
+                )
+                if item.get(key) not in (None, "", [])
+            }
+            key = json.dumps(row, ensure_ascii=False, sort_keys=True)
+            if not row or key in seen_visual_evidence:
+                continue
+            seen_visual_evidence.add(key)
+            visual_current_page_evidence.append(row)
+            if len(visual_current_page_evidence) >= 16:
+                break
+        if len(visual_current_page_evidence) >= 16:
+            break
     return {
         "mode": "soft_reference",
         "target": str((run or {}).get("target") or source.get("target") or "")[:1000],
@@ -12148,9 +12186,11 @@ def _agent_source_evidence(run):
         ],
         "figmaPageCount": len(used_pages),
         "figmaImageCount": _safe_int_local(source.get("figmaImageCount"), 0),
+        "visualCurrentPageEvidence": visual_current_page_evidence,
         "policy": [
             "需求文本定义验证目标；Figma 只补充单个设计帧中的页面状态、层级和可见文字。",
             "Frame 名可能是内部旧命名，状态/变体和可见文字优先；一帧能力不能推广到相邻页面。",
+            "成功基线只提供父页面路径结构；当前视觉证据已采用的尺寸、模式或产品叶子不能被基线样例值替换。",
             "失败关键帧证明实际到达状态；若只到父页面，应先修正导航，不能直接判产品缺陷。",
             "画布设备形态不是第二台真实设备要求；执行设备仍由 executionConstraint 决定。",
         ],
@@ -12375,6 +12415,118 @@ def _agent_repair_navigation_missing_ready_wait(yaml_text):
     return False
 
 
+def _agent_repair_flow_records(yaml_text):
+    """Return ordered Midscene flow actions for source-backed repair checks."""
+    if pyyaml is None:
+        return []
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return []
+    result = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        records = []
+        for index, step in enumerate(task.get("flow") or []):
+            if not isinstance(step, dict):
+                continue
+            action = next((key for key in MIDSCENE_FLOW_ACTIONS if key in step), "")
+            if not action:
+                continue
+            text = str(step.get(action) or "").strip()
+            records.append({
+                "index": index,
+                "action": action,
+                "text": text,
+                "compact": re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", text).lower(),
+            })
+        result.append(records)
+    return result
+
+
+def _agent_repair_source_navigation_issues(original_yaml, fixed_yaml, source_evidence):
+    """Prevent a repair baseline from replacing an already adopted source leaf."""
+    source_evidence = source_evidence if isinstance(source_evidence, dict) else {}
+    visual_items = []
+    for item in source_evidence.get("visualCurrentPageEvidence") or []:
+        if not isinstance(item, dict) or item.get("sameBranch") is not True:
+            continue
+        try:
+            confidence = float(item.get("confidence") or 0)
+        except (TypeError, ValueError):
+            confidence = {"high": 0.9, "medium": 0.6, "low": 0.3}.get(
+                str(item.get("confidence") or "").strip().lower(),
+                0.0,
+            )
+        if confidence >= 0.75:
+            visual_items.append(item)
+    if not visual_items:
+        return []
+    original_records = _agent_repair_flow_records(original_yaml)
+    fixed_records = _agent_repair_flow_records(fixed_yaml)
+    if not original_records or not fixed_records:
+        return []
+    original_compact = re.sub(
+        r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(original_yaml or "")
+    ).lower()
+    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
+    observation_actions = {"aiWaitFor", "aiAssert"}
+    issues = []
+    seen = set()
+    for item in visual_items:
+        leaf = str(item.get("navigationLeaf") or "").strip()
+        target = str(item.get("targetText") or "").strip()
+        leaf_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", leaf).lower()
+        target_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", target).lower()
+        case_key = re.sub(
+            r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("caseId") or "")
+        ).lower()
+        if not leaf_key or not target_key or (case_key and case_key not in original_compact):
+            continue
+        for task_index, original_task in enumerate(original_records):
+            original_leaf = [
+                row for row in original_task
+                if row.get("action") in navigation_actions and leaf_key in row.get("compact", "")
+            ]
+            if not original_leaf or not any(target_key in row.get("compact", "") for row in original_task):
+                continue
+            fixed_task = fixed_records[task_index] if task_index < len(fixed_records) else []
+            fixed_leaf = [
+                row for row in fixed_task
+                if row.get("action") in navigation_actions and leaf_key in row.get("compact", "")
+            ]
+            if not fixed_leaf:
+                code = "source_backed_navigation_target_removed"
+                if code not in seen:
+                    seen.add(code)
+                    issues.append({
+                        "code": code,
+                        "message": (
+                            f"当前 YAML 已采用视觉 AI 证据支持的导航叶子“{leaf}”，修复候选不得用历史基线的"
+                            "同类尺寸、模式或产品值替换它"
+                        ),
+                    })
+                continue
+            first_leaf_index = min(row.get("index", 0) for row in fixed_leaf)
+            target_checks = [
+                row for row in fixed_task
+                if row.get("action") in observation_actions and target_key in row.get("compact", "")
+            ]
+            if target_checks and first_leaf_index > min(row.get("index", 0) for row in target_checks):
+                code = "source_backed_leaf_after_target_check"
+                if code not in seen:
+                    seen.add(code)
+                    issues.append({
+                        "code": code,
+                        "message": (
+                            f"视觉 AI 已确认目标“{target}”位于“{leaf}”页面；必须先通过可见文字进入该叶子，"
+                            "再执行目标等待或断言"
+                        ),
+                    })
+    return issues
+
+
 _AGENT_REPAIR_NAVIGATION_CLAIM_TERMS = (
     "navigation", "parent page", "intermediate page", "navigation path", "route",
     "导航", "父页面", "中间页面", "页面层级", "页面路径", "业务路径", "补充点击", "新增点击",
@@ -12382,7 +12534,13 @@ _AGENT_REPAIR_NAVIGATION_CLAIM_TERMS = (
 )
 
 
-def _agent_repair_candidate_gate(original_yaml, response, baseline_examples, platform="android"):
+def _agent_repair_candidate_gate(
+    original_yaml,
+    response,
+    baseline_examples,
+    platform="android",
+    source_evidence=None,
+):
     """Audit AI repair prose, baseline evidence and executable YAML as one candidate."""
     response = response if isinstance(response, dict) else {}
     baseline_examples = [item for item in (baseline_examples or []) if isinstance(item, dict)]
@@ -12478,6 +12636,13 @@ def _agent_repair_candidate_gate(original_yaml, response, baseline_examples, pla
         and not branch_baseline_ids.intersection(used_baseline_ids)
     ):
         add_issue("navigation_change_without_branch_baseline", "导航修改没有引用当前业务分支召回的路径基线")
+    if fixed_yaml:
+        for source_issue in _agent_repair_source_navigation_issues(
+            original_yaml,
+            fixed_yaml,
+            source_evidence,
+        ):
+            add_issue(source_issue.get("code"), source_issue.get("message"))
     if fixed_yaml and gateway_validation_failed:
         add_issue("ai_gateway_validation_failed", "AI Gateway 判定修复 YAML 不符合 Midscene 契约")
     elif fixed_yaml and not validation.get("ok"):
@@ -12858,6 +13023,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "requireReadyWaitBeforeNewNavigation": True,
                         "visibleTextOnly": True,
                         "preserveOriginalBusinessGoal": True,
+                        "preserveSourceBackedNavigationTargets": True,
+                        "baselineConcreteValuesAreExamplesOnly": True,
+                        "preferEarlierRuntimeTargetRegion": True,
                     },
                     "evidenceSources": [
                         "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
@@ -12887,6 +13055,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         resp,
                         baseline_examples,
                         platform=run.get("platform", "android"),
+                        source_evidence=source_evidence,
                     )
                     if candidate_gate.get("ok") or repair_attempt > 0 or not candidate_gate.get("rawFixedYaml"):
                         break
@@ -12916,7 +13085,11 @@ def _tool_generate_repair(run, failed_jobs_override=None):
 
                 item_summary["aiRequestCount"] = 2 if item_summary.get("aiCorrectionAttempted") else 1
                 candidate_gate = candidate_gate or _agent_repair_candidate_gate(
-                    original_yaml, resp, baseline_examples, platform=run.get("platform", "android")
+                    original_yaml,
+                    resp,
+                    baseline_examples,
+                    platform=run.get("platform", "android"),
+                    source_evidence=source_evidence,
                 )
                 fixed_yaml = candidate_gate.get("fixedYaml") or ""
                 model_trace = _agent_ai_response_model_trace(run, resp)

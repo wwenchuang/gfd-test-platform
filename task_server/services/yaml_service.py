@@ -3306,12 +3306,31 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
     assertions = select_yaml_assertions_for_case(case, raw_assertions, step_expected)
     meta = build_baseline_meta(case, normalized_steps, assertions)
 
+    limited_steps = normalized_steps[:12]
+    first_generated_step = next((
+        str(item).strip()
+        for item in limited_steps
+        if str(item).strip() and not str(item).strip().startswith("确认前置条件")
+    ), "")
+    first_step_supplies_launch_wait = bool(
+        generated_step_handled_by_launch_guard(first_generated_step) == "launch"
+        or (
+            "首页" in first_generated_step
+            and generated_step_explicitly_waits(first_generated_step)
+        )
+    )
     flows = []
+    launch_ready_added = False
     if app_package:
         flows.extend(launch_guard_flow(flow_indent + "  ", app_package))
+        if not first_step_supplies_launch_wait:
+            flows.append(
+                flow_indent + "  - aiWaitFor: "
+                + yaml_text("被测 App 首页已加载完成，首页核心功能入口可见")
+            )
+            flows.append(flow_indent + "    timeout: " + str(min(DEFAULT_WAITFOR_TIMEOUT_MS, 12000)))
+            launch_ready_added = True
 
-    launch_ready_added = False
-    limited_steps = normalized_steps[:12]
     for index, item in enumerate(limited_steps):
         text = str(item).strip()
         if not text or text.startswith("确认前置条件"):

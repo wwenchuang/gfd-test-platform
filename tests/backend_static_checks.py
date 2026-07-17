@@ -2491,6 +2491,21 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and not applied["cases"][0]["ai_case_plan"].get("unsupportedDynamicLiterals"),
         "Current visual adaptation must remain observable and must not leave history-only dynamic literals behind",
     )
+    late_leaf_plan = json.loads(json.dumps(grounded_plan, ensure_ascii=False))
+    late_leaf_plan["cases"][0]["flow"] = [
+        "进入照片打印",
+        "点击页面内照片打印",
+        "等待百度网盘入口可见",
+        "断言百度网盘入口文案正确",
+        "点击5寸照片",
+    ]
+    late_leaf_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, late_leaf_plan)
+    late_leaf_steps = late_leaf_applied["cases"][0]["steps"]
+    require(
+        late_leaf_steps.index("点击5寸照片") < late_leaf_steps.index("等待百度网盘入口可见")
+        and late_leaf_applied["cases"][0]["ai_case_plan"].get("currentVisualLeafAdapted") is True,
+        "A visual leaf already present after its target assertion must be moved before the first target check",
+    )
     grounded_observation, observation_changed, unsupported_literals = ai_skill_service._ground_planner_terminal_observation(
         ["点击百度网盘入口", "等待文件列表包含“百度文档测试.doc”和底部“去打印”按钮"],
         "百度网盘授权页、登录页、内容列表或空态页任一稳定状态可见",
@@ -3505,6 +3520,83 @@ def check_agent_failure_review_and_repair_guard():
     require(
         any(item.get("code") == "navigation_missing_ready_wait" for item in startup_guard_gate.get("issues") or []),
         "A repair that adds navigation immediately after launch must receive one bounded AI correction for a visible start-page ready wait",
+    )
+    source_backed_original = """android:
+  tasks:
+    - name: 照片打印页百度网盘入口校验
+      # baseline.case_id: TC-003
+      flow:
+        - launch: com.xbxxhz.box
+        - aiTap: 照片打印
+        - aiWaitFor: 百度网盘入口可见
+        - aiTap: 5寸照片
+        - aiAssert: 百度网盘入口可见
+"""
+    source_backed_late = source_backed_original.replace(
+        "        - aiTap: 照片打印",
+        "        - aiWaitFor: App 首页加载完成，照片打印入口可见\n        - aiTap: 照片打印",
+    )
+    source_backed_fixed = source_backed_late.replace(
+        "        - aiWaitFor: 百度网盘入口可见\n        - aiTap: 5寸照片",
+        "        - aiTap: 5寸照片\n        - aiWaitFor: 百度网盘入口可见",
+    )
+    source_backed_drift = source_backed_fixed.replace("aiTap: 5寸照片", "aiTap: 6寸照片")
+    source_backed_run = {
+        "artifacts": {
+            "visualReferenceReport": {
+                "visualBatchResults": [{
+                    "status": "completed",
+                    "currentPageEvidence": [{
+                        "caseId": "TC-003",
+                        "requirementId": "REQ-002",
+                        "branch": "照片打印",
+                        "pageTitle": "5寸照片",
+                        "parentPath": ["首页", "照片打印"],
+                        "navigationLeaf": "5寸照片",
+                        "targetText": "百度网盘",
+                        "sameBranch": True,
+                        "confidence": 0.95,
+                        "source": "figma_current_frame",
+                    }],
+                }],
+            },
+        },
+    }
+    source_backed_evidence = agent_service._agent_source_evidence(source_backed_run)
+    require(
+        source_backed_evidence.get("visualCurrentPageEvidence", [{}])[0].get("navigationLeaf") == "5寸照片",
+        "Agent repair input must retain bounded visual AI current-page evidence",
+    )
+    late_leaf_gate = agent_service._agent_repair_candidate_gate(
+        source_backed_original,
+        {"fixedYaml": source_backed_late, "analysis": "补充启动等待"},
+        [branch_baseline],
+        platform="android",
+        source_evidence=source_backed_evidence,
+    )
+    drift_gate = agent_service._agent_repair_candidate_gate(
+        source_backed_original,
+        {
+            "fixedYaml": source_backed_drift,
+            "analysis": "根据分支基线调整父子导航",
+            "usedBaselineIds": ["base-photo-path"],
+        },
+        [branch_baseline],
+        platform="android",
+        source_evidence=source_backed_evidence,
+    )
+    grounded_source_gate = agent_service._agent_repair_candidate_gate(
+        source_backed_original,
+        {"fixedYaml": source_backed_fixed, "analysis": "补充启动等待并保持当前目标叶子"},
+        [branch_baseline],
+        platform="android",
+        source_evidence=source_backed_evidence,
+    )
+    require(
+        any(item.get("code") == "source_backed_leaf_after_target_check" for item in late_leaf_gate.get("issues") or [])
+        and any(item.get("code") == "source_backed_navigation_target_removed" for item in drift_gate.get("issues") or [])
+        and grounded_source_gate.get("ok") is True,
+        "Repair candidates must enter the adopted visual leaf before assertions and must not replace it with a baseline sample value",
     )
 
     old_task_dir = agent_service.TASK_DIR
@@ -5423,6 +5515,28 @@ def check_agent_executable_gate_invokes_ai_rewrite():
         original_score.get("executionLevel") != "executable" and repaired_score.get("executionLevel") == "executable",
         "Local executable-gate repair must improve generated home-entry flow without relaxing the scorer",
     )
+    generated_task = yaml_service.case_to_task_yaml({
+        "title": "文档打印入口校验",
+        "app_package": "com.example.app",
+        "steps": ["点击底部 Tab「首页」", "点击「文档打印」入口"],
+        "assertions": ["文档打印页展示百度网盘入口"],
+    })
+    require(
+        generated_task.index("launch: com.example.app")
+        < generated_task.index("aiWaitFor: \"被测 App 首页已加载完成")
+        < generated_task.index("aiTap: \"点击底部 Tab「首页」"),
+        "Every newly generated Agent YAML must wait for a visible home state before its first AI navigation",
+    )
+    explicit_launch_wait_task = yaml_service.case_to_task_yaml({
+        "title": "显式启动等待",
+        "app_package": "com.example.app",
+        "steps": ["启动App并等待首页加载完成", "点击「文档打印」入口"],
+        "assertions": ["文档打印页可见"],
+    })
+    require(
+        explicit_launch_wait_task.count("首页核心功能入口可见") == 1,
+        "An AI-authored launch-ready step must replace the generic guard instead of adding a duplicate model wait",
+    )
 
     original_ai_rewrite = agent_service.ai_rewrite_yaml_for_executable_gate
     bad_yaml = """android:
@@ -6787,9 +6901,13 @@ def check_generated_yaml_uses_single_final_assertion():
         }],
     }, app_package="com.example.app")
     require(
-        bounded_yaml.count("aiWaitFor:") == 1
+        bounded_yaml.count("aiWaitFor:") == 2
+        and sum(
+            1 for line in bounded_yaml.splitlines()
+            if "aiWaitFor:" in line and bounded_terminal in line
+        ) == 1
         and bounded_yaml.count("aiAssert:") == 1,
-        "An explicit wait step that contains the final assertion must not generate a duplicate assertion wait",
+        "The launch-ready wait must not duplicate an explicit final assertion wait",
     )
     _, no_assert_yaml = yaml_service.cases_to_midscene_yaml({
         "_automation_ready": True,

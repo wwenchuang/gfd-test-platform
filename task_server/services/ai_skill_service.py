@@ -4534,6 +4534,9 @@ def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch
     evidence = evidence if isinstance(evidence, dict) else {}
     leaf = str(evidence.get("navigationLeaf") or "").strip()
     leaf_key = _navigation_action_target_key(f"点击「{leaf}」")
+    target_key = _navigation_action_target_key(
+        f"点击「{str(evidence.get('targetText') or '').strip()}」"
+    )
     actions = [
         (index, key)
         for index, step in enumerate(flow)
@@ -4542,8 +4545,36 @@ def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch
     ]
     if not leaf_key or not actions:
         return flow, False
-    if any(_navigation_target_keys_match(key, leaf_key) for _index, key in actions):
-        return flow, False
+    existing_leaf_indexes = [
+        index
+        for index, key in actions
+        if _navigation_target_keys_match(key, leaf_key)
+    ]
+    if existing_leaf_indexes:
+        first_leaf_index = min(existing_leaf_indexes)
+        first_target_check_index = next((
+            index
+            for index, step in enumerate(flow)
+            if index < first_leaf_index
+            and target_key
+            and target_key in re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(step or "")).lower()
+            and not _navigation_target_keys_match(_navigation_action_target_key(step), target_key)
+        ), None)
+        if first_target_check_index is None:
+            return flow, False
+        leaf_step = flow[first_leaf_index]
+        reordered = [
+            step for index, step in enumerate(flow)
+            if index not in set(existing_leaf_indexes)
+        ]
+        reordered.insert(first_target_check_index, leaf_step)
+        if (
+            len(reordered) > 7
+            or _source_navigation_has_alternative_destinations(reordered)
+            or not _case_has_branch_execution_evidence({"steps": reordered}, branch)
+        ):
+            return flow, False
+        return reordered, reordered != flow
     parent_keys = []
     for label in normalize_text_list(evidence.get("parentPath")):
         key = _navigation_action_target_key(label) or _navigation_action_target_key(f"点击「{label}」")

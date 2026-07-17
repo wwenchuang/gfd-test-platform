@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-18 真实回归：保留视觉目标实体并前置新生成 YAML 启动稳定态
+
+用户部署 `4dee24e` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784321921903-4ebdca4b`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- 8091 / 8088、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0 (357)` ready。所有正式和 dry-run job 都只使用 `win-runner-01 / ecbfd645`，没有选择、并发或下发第二台设备。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`；4 批视觉资料约 `7s / 6s / 7s / 3s` 全部送入 GPT-4.1 Mini 并完成，`fallbackUsed=false / hardGate=false`。视觉 AI 明确输出照片分支 `5寸照片 -> 百度网盘` 和一寸照页面证据。
+- AI 生成 8 个场景、6 条 executable YAML 和 2 条人工项，最终需求覆盖 `12/12`，6 条 YAML 均通过静态校验、scorer 100 和 Runner dry-run；没有坐标动作。
+- 原始文档/照片 smoke 均因 launch 后立即 `aiTap`、App 仍在启动页而失败。AI 使用 Runner 报告关键帧和同分支成功基线生成两条修复，文档修复在 OPPO 真机通过；报告末帧真实显示文档打印页中的本地文档、百度网盘、QQ 文档、WPS 文档同级入口。
+- 照片第一条修复把 5 寸点击留在百度网盘断言之后，停在尺寸弹窗失败；第二次有界 AI 修复错误地把参考 `6寸照片打印.yaml` 复制成实际点击 6 寸。Runner 在 6 寸页面真实通过百度网盘断言，但报告标题和截图明确为“6寸照片”，因此人工业务复核判定该绿色结果不能代表 Figma 的 5 寸目标。
+- 修复后恢复扩展只执行 remaining 扫描用例。它在扫描主页进入“证件扫描”后遇到相机权限说明弹窗，真机显示“取消 / 确定”，原 YAML 却继续点击历史基线中的“立即使用”，最终失败。失败前关键帧已经显示扫描主页导入入口横向区域，百度网盘图标在右侧边缘部分可见。
+- Agent 终态 `FAILED / RERUN / 95%`。双状态汇总正确保留真实结果：6 次正式尝试中 2 次通过、4 次脚本失败；按 3 个逻辑业务任务统计为 2 个 recovered、1 个 unresolved，产品失败为 0。没有把 Agent 编排失败覆盖成“全部任务失败”。
+
+根因：
+
+- 新生成 YAML 只有当 AI 步骤显式写“启动并等待首页”时才生成启动稳定等待；普通“点击首页 / 点击业务入口”会在 `launch` 后立即定位。静态校验能判断动作合法，却不能证明真机资源加载已结束。
+- `_adapt_trusted_navigation_to_visual_evidence()` 发现规划中已经存在视觉 navigationLeaf 时直接返回，未检查该叶子是否排在 targetText 等待/断言之后；本次 5 寸点击因此没有被移到百度网盘断言之前。
+- 失败修复请求虽带 Figma 文本，但没有携带视觉 AI 已结构化确认的 `caseId / navigationLeaf / targetText`。模型把 6 寸成功基线的样例实体误当成当前目标，现有修复门禁只能校验引用和路径变化，无法识别“路径结构可复用、具体变体不可替换”。
+- 有界重跑上限本身合理；但照片错误顺序消耗了唯一一次重跑后 AI 恢复，扫描最新关键帧便没有下一次自动修复机会。应消除更早的生成/修复偏差，而不是继续增加无限重试。
+
+通用修复：
+
+- 所有新生成 Agent YAML 在 `launch` 后、首次 AI 导航前增加一个可见首页稳定态 `aiWaitFor`；若 AI 已显式提供启动/首页等待则只保留该具体等待，不重复调用模型。历史 YAML 不迁移。
+- 视觉 AI 已确认且规划中已采用的 navigationLeaf 若位于 targetText 校验之后，平台将同一可见文字动作移动到首次目标等待/断言之前；没有新增或写死 5 寸规则。
+- 修复请求新增有界 `visualCurrentPageEvidence`。候选门禁只保护“原 YAML 已采用、同分支、置信度不低于 0.75”的视觉叶子：先叶子后目标断言；不得用相邻基线的尺寸、颜色、模式、产品或套餐样例替换。未采用的 Figma 状态仍是软参考，不会强制扩展用例。
+- AI 修复提示明确“基线只提供父页面路径结构”，并要求失败前关键帧已出现目标同级区域或边缘入口时回到最早真实状态，不继续复制更深的尺寸、权限、授权或确认动作。现有一次重跑后 AI 恢复上限保持不变。
+- 使用本次线上 cases 和 3 条真实照片 YAML 离线重放：照片顺序变为 `启动稳定等待 -> 照片打印 -> 5寸照片 -> 百度网盘等待/断言`；第一条修复被识别为 `source_backed_leaf_after_target_check`，6 寸替换被识别为 `source_backed_navigation_target_removed`，正确 5 寸候选通过。没有修改 Figma parser、scorer、Runner、Sonic、`router.py`、执行模式、历史 YAML 或设备策略。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py tests/ai_gateway_static_checks.py
+python3 tests/backend_static_checks.py
+python3 tests/ai_gateway_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及文本/空答/截断/图像/超时回退、Skill fixtures `3/3` 和视觉回归全部通过。
+
+待完成：推送并部署本轮修复；部署后仍需用完全相同输入发起唯一一条完整 Agent，固定 OPPO `ecbfd645`。重点验证文档/5 寸照片 smoke 首轮通过，以及扫描失败关键帧能在现有有界恢复轮次内驱动 AI 从最早真实导入区域修复并完成 remaining。
+
 ### 2026-07-18 真实回归：单一具体落地状态也应进入 AI 有界收敛
 
 用户部署 `1d4362c` 后，以相同需求和 Figma 发起完整 Agent `agent-1784301845490-a6bf385b`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：

@@ -211,7 +211,9 @@ def main():
         and "最小语义修复" in repair_prompt
         and "官方 `aiScroll`" in repair_prompt
         and "当前页真实可见文案描述具体横向区域" in repair_prompt
-        and "禁止坐标、ADB swipe" in repair_prompt,
+        and "禁止坐标、ADB swipe" in repair_prompt
+        and "具体尺寸、颜色、模式、产品或套餐名称只是历史样例值" in repair_prompt
+        and "运行时关键帧优先于历史基线的后续动作" in repair_prompt,
         "AI repair prompt must combine execution evidence, cited branch baselines, and the current Midscene action contract",
     )
 
