@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 AI 修复成功必须恢复执行链，当前设计页证据必须覆盖历史叶子
+
+部署 `02158b9` 后，以完全相同需求和 Figma 发起 Agent `agent-1784262324968-f9f123a9`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- 线上 `8091 / 8088` 可达；Gateway 实时目录返回 `182` 个 provider 项，`gpt-4.1-mini` 为 `available / live / healthy`。Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`。同 Runner 虽上报 OPPO 和华为两台设备，但本次原始 job 与修复 job 都只使用 `ecbfd645`，没有向第二台设备下发。
+- Figma parser 保持原实现，得到 `4 页 / 4 张 UI 图 / 忽略 0`。4 批全部送入 `gpt-4.1-mini` 并在约 `3 / 6 / 5 / 3s` 完成，`sentToAiForJudgement=true / aiJudgementCompleted=true / hardGate=false`。第 2 批明确识别“照片打印 5 寸照片变体、百度网盘入口及同级排列”。
+- 生成结果为 `5 cases / 9 scenarios / 5 YAML`，5 份 static / dry-run 均通过，scorer 均为 `100 / executable`。执行门禁选 1 条文档展示 Smoke，延后照片和扫描 2 条；文档深层跳转与单分支化文案检查 2 条没有进入自动首批/remaining。
+- 首次 Smoke `job_1784262680670_00002` 在固定 OPPO 上失败。最终 AI 规划断言已经是“百度网盘紧邻本地文档、同一行第 2 个”，但 case 仍保留上游旧 `expected_result=本地文档入口之后第2位`；YAML 断言选择优先读取旧字段，导致 Runner 把实际正确的 `本地文档、百度网盘、QQ文档、WPS文档` 判为失败。失败被正确归类为 `SCRIPT_ISSUE / assertion_too_strict`。
+- 失败分析真实使用报告关键帧和 6 条已验证基线，AI 生成修复草稿；同机修复 job `job_1784262908572_00004` 执行成功并有独立 Midscene 报告。旧状态机仍以首次报告为准，把 `RUN_SONIC / COLLECT_REPORT` 留为失败，不恢复 2 条 deferred，最终 Agent 为 `FAILED / COLLECT_REPORT`。这不是模型、额度、Figma、设备或修复 YAML 失败，而是修复结果没有回写逻辑执行链。
+- 人工复核还确认照片 remaining 仍复制历史成功基线的 `6寸照片` 叶子，虽然视觉 AI 已明确看到当前 `5寸照片`；旧视觉结果只有自然语言 judgement，无法作为结构化同分支当前页证据参与确定性收敛。
+
+通用修复：
+
+- 一旦可信 AI path plan 被接受，`flow / assertionTarget / assertions / expected_result` 作为同一执行契约同步写回；旧生成文案不再覆盖 AI 最终断言。原始 case 的 AI plan 和来源证据继续保留，未通过 baseline / requirement mapping 的路径仍不能落地。
+- `visual_grounder` 在当前 Frame 能明确映射到候选时，额外返回 `caseId / requirementId / branch / parentPath / navigationLeaf / targetText / sameBranch / confidence / source`。多批证据累积，不被最后一张图覆盖。平台只有在同分支、置信度不低于 `0.75`、真实目标入口文案存在、共同父路径能与成功基线逐级对齐且无坐标/多目标时，才替换历史叶子；与旧叶子绑定的等待也同时移除。Figma 仍是软参考，parser、static、scorer、dry-run 和 Smoke 门禁均未降低。
+- 报告改用不可变 attempt ledger，包含原始、扩展和每次修复 job。Runner 汇总同时给出原始 `passed / failed / broken` 尝试数和逻辑 `recovered / unresolved` 用例数；原失败报告、关键帧、错误分类和修复报告均保留，不能把红色简单改成绿色。
+- 每个失败源必须有显式 `sourceJobId -> newJobId` 且后继 job 真正通过，才可记为 recovered。成功修复后仅恢复原 gate 中的 deferred executable，继续使用 Agent 创建时选定的 `runnerId / deviceId / deviceStrategy`；固定设备仍逐条终态后再创建下一条。后续失败继续使用现有一次有界 AI 诊断/修复；dry-run 拦截、未覆盖、超时、取消、remaining 未清空或逻辑失败都会保持 Agent 失败。
+- 全部 deferred 到终态且没有 unresolved 后，`RUN_SONIC / COLLECT_REPORT` 保存原始失败到 `attemptHistory`，再标记逻辑恢复；原始报告 `status=failed` 不改写，新增 `logicalStatus=recovered`。最终总结可显示“修复后通过”，同时继续显示真实失败尝试数。
+
+验证结果：
+
+- 使用线上完整快照离线重放，新模型对当前数据给出 `2 attempts / 1 passed / 1 failed / recovered=1`，但因 `remainingDeferredCount=2` 仍保持“部分通过”；模拟两条 deferred 真实成功后才变为 `4 attempts / 3 passed / 1 failed / logical 3 of 3 / 修复后通过`。这证明修复成功不会掩盖首次失败，也不会在 remaining 未执行时提前 DONE。
+- 使用线上 TC-001 / TC-005 cases 重放，旧 `expected_result` 均与最终 AI `assertionTarget` 对齐。使用仓库真实 `6寸照片打印.yaml` 与本次结构化 Figma 证据重放，共同路径 `照片打印 icon -> 照片打印` 保持不变，历史 `点击「6寸照片」` 被替换为 `点击「5寸照片」`，无坐标、无历史叶子残留。
+- `python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py`、`python3 tests/backend_static_checks.py`、完整 `npm test` 和 `git diff --check` 均通过。完整检查包括 undefined-name、后端 `61`、前端 `69`、Gateway `46`、实时目录/降级集成、Skill fixtures `3/3` 和 Playwright 桌面/移动端视觉回归。
+
+待完成：本节修改待提交、用户推送和部署。部署后只发起一次同输入完整 Agent，继续固定 `win-runner-01 / ecbfd645`，持续监督到 Agent、Smoke、修复、remaining、报告、截图/录屏和最终终态；人工复核三个业务分支、5 寸当前页、真实可见文字和无坐标。离线重放不等于真机成功，不得选择或并发执行第二台设备。
+
 ### 2026-07-17 结构化输出截断、伪分支路径与历史叶子覆盖当前设计证据
 
 部署 `63ae3f1` 后，以同一需求和 Figma 发起完整 Agent `agent-1784257038297-b3c5e283`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：

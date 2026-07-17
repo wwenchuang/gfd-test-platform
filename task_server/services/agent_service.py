@@ -11566,6 +11566,45 @@ def _agent_persist_failed_execution_items(run):
     return items
 
 
+def _agent_rerun_source_links(artifacts):
+    """Return every persisted source -> repair job link across bounded rerun rounds."""
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    sources = []
+    for progress in list(artifacts.get("rerunProgressHistory") or []) + [artifacts.get("rerunProgress")]:
+        if isinstance(progress, dict):
+            sources.extend(progress.get("sources") or [])
+    sources.extend(artifacts.get("rerunSources") or [])
+    links = []
+    seen = set()
+    for item in sources:
+        if not isinstance(item, dict):
+            continue
+        source_job_id = str(item.get("sourceJobId") or item.get("source_job_id") or "").strip()
+        new_job_id = str(item.get("newJobId") or item.get("new_job_id") or "").strip()
+        key = (source_job_id, new_job_id)
+        if not source_job_id or not new_job_id or key in seen:
+            continue
+        seen.add(key)
+        links.append({**copy.deepcopy(item), "sourceJobId": source_job_id, "newJobId": new_job_id})
+    return links
+
+
+def _agent_attempt_job_ids(artifacts):
+    """Build the immutable attempt ledger used by report collection and summaries."""
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    values = list(artifacts.get("jobIds") or []) + list(artifacts.get("retriedJobs") or [])
+    for attempt in artifacts.get("rerunAttempts") or []:
+        if isinstance(attempt, dict):
+            values.extend(attempt.get("createdJobIds") or [])
+    values.extend(item.get("newJobId") for item in _agent_rerun_source_links(artifacts))
+    result = []
+    for value in values:
+        job_id = str(value or "").strip()
+        if job_id and job_id not in result:
+            result.append(job_id)
+    return result
+
+
 def _tool_collect_report(run):
     """收集执行报告 - 基于已完成的job收集真实报告。"""
     call = {
@@ -11579,7 +11618,7 @@ def _tool_collect_report(run):
         from task_server.services import job_service
         artifacts = run.get("artifacts") or {}
         normalize_yaml_refs(run)
-        job_ids = artifacts.get("jobIds") or []
+        job_ids = _agent_attempt_job_ids(artifacts)
         job_result = artifacts.get("jobResult") or {}
         sonic_result_id = artifacts.get("sonicResultId")
 
@@ -13148,6 +13187,321 @@ def _agent_post_rerun_autonomy(run, latest_failed, repair_depth=0):
     return result
 
 
+def _agent_failed_sources_recovered(failed_items, retry_sources, completed, failed, timeout_jobs, skipped):
+    """Require a passed repair descendant for every failed source in this rerun round."""
+    source_ids = {_failed_job_id(item) for item in failed_items if _failed_job_id(item)}
+    if not source_ids or failed or timeout_jobs or skipped:
+        return False
+    completed_ids = {
+        str(item.get("job_id") or item.get("jobId") or "").strip()
+        for item in completed or []
+        if isinstance(item, dict)
+    }
+    recovered_source_ids = {
+        str(item.get("sourceJobId") or "").strip()
+        for item in retry_sources or []
+        if isinstance(item, dict)
+        and str(item.get("newJobId") or "").strip() in completed_ids
+    }
+    return source_ids.issubset(recovered_source_ids)
+
+
+def _agent_resume_deferred_after_recovery(run):
+    """Resume only the executable refs paused by the smoke gate, on the selected device."""
+    from task_server.services import job_service
+
+    artifacts = run.setdefault("artifacts", {})
+    gate = artifacts.get("runnerExecutionGate") if isinstance(artifacts.get("runnerExecutionGate"), dict) else {}
+    if not gate.get("enabled"):
+        return {"status": "SUCCESS", "resumed": False, "reason": "无 generated YAML 执行门禁"}
+    if "remainingDeferred" in gate:
+        deferred = [item for item in (gate.get("remainingDeferred") or []) if isinstance(item, dict)]
+    else:
+        deferred = [item for item in (gate.get("deferred") or []) if isinstance(item, dict)]
+    if not deferred:
+        gate.update({
+            "smokeRecovered": True,
+            "remainingDeferredCount": 0,
+            "remainingDeferred": [],
+            "stopFurtherExecution": False,
+        })
+        artifacts["runnerExecutionGate"] = gate
+        artifacts["runnerSmokeGate"] = gate
+        return {"status": "SUCCESS", "resumed": False, "reason": "没有延后的 executable YAML"}
+
+    selected_runner_id = str(run.get("runnerId") or run.get("runner_id") or "").strip()
+    selected_device_id = str(run.get("deviceId") or run.get("device_id") or "").strip()
+    selected_device_strategy = job_service.normalize_device_strategy(
+        run.get("deviceStrategy") or run.get("device_strategy") or "auto",
+        device_id=selected_device_id,
+        runner_id=selected_runner_id,
+    )
+    runner_dry_run_enabled, runner_dry_run_reason = _runner_supports_yaml_dry_run(selected_runner_id)
+    expand_limit = max(1, AGENT_GENERATED_RUNNER_EXPAND_LIMIT)
+    batch_limit = max(1, min(AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT, expand_limit))
+    pending = list(deferred[:expand_limit])
+    overflow = list(deferred[expand_limit:])
+    aggregate_wait = {"completed": [], "failed": [], "timeout": []}
+    created_job_ids = []
+    dry_run_results = []
+    dry_run_blocked = []
+    runner_dry_run_jobs = []
+    batches = []
+    stop_reason = ""
+    batch_index = 0
+
+    while pending and not _agent_run_cancel_requested(run):
+        batch_index += 1
+        batch_refs = pending[:batch_limit]
+        pending = pending[batch_limit:]
+        phase = f"recovered-expanded-{batch_index}"
+        created = _agent_create_runner_jobs_for_refs(
+            run,
+            batch_refs,
+            selected_runner_id,
+            selected_device_id,
+            selected_device_strategy,
+            runner_dry_run_enabled=runner_dry_run_enabled,
+            phase=phase,
+        )
+        batch_job_ids = list(created.get("jobIds") or [])
+        batch_blocked = list(created.get("dryRunBlocked") or [])
+        created_job_ids.extend(batch_job_ids)
+        dry_run_results.extend(created.get("dryRunResults") or [])
+        dry_run_blocked.extend(batch_blocked)
+        runner_dry_run_jobs.extend(created.get("runnerDryRunJobs") or [])
+        wait_result = created.get("formalWaitResult") if isinstance(created.get("formalWaitResult"), dict) else None
+        if batch_job_ids and wait_result is None:
+            wait_result = job_service.wait_jobs_finished(
+                batch_job_ids,
+                run,
+                timeout=job_service.runner_job_wait_timeout_seconds(len(batch_job_ids)),
+                interval=5,
+                phase=f"修复通过后扩展第{batch_index}批",
+            )
+        wait_result = wait_result or {"completed": [], "failed": [], "timeout": []}
+        aggregate_wait = _agent_merge_runner_wait_results(aggregate_wait, wait_result)
+        batch_total = sum(len(wait_result.get(key) or []) for key in ("completed", "failed", "timeout"))
+        batch_failed = len(wait_result.get("failed") or []) + len(wait_result.get("timeout") or [])
+        batch_row = {
+            "batch": batch_index,
+            "phase": phase,
+            "plannedCount": len(batch_refs),
+            "createdCount": len(batch_job_ids),
+            "blockedCount": len(batch_blocked),
+            "jobIds": batch_job_ids,
+            "completedCount": len(wait_result.get("completed") or []),
+            "failedCount": len(wait_result.get("failed") or []),
+            "timeoutCount": len(wait_result.get("timeout") or []),
+        }
+        batches.append(batch_row)
+
+        if batch_blocked:
+            blocked_keys = {
+                (
+                    str(item.get("module") or "").strip(),
+                    str(item.get("file") or "").strip(),
+                    str(item.get("path") or "").strip(),
+                )
+                for item in batch_blocked if isinstance(item, dict)
+            }
+            blocked_refs = [
+                ref for ref in batch_refs
+                if (
+                    str(ref.get("module") or "").strip(),
+                    str(ref.get("file") or "").strip(),
+                    str(ref.get("path") or "").strip(),
+                ) in blocked_keys
+            ]
+            pending = blocked_refs + pending
+            stop_reason = f"修复通过后扩展 dry-run 拦截 {len(batch_blocked)} 个 executable YAML"
+        elif batch_total and batch_failed / batch_total > 0.5:
+            stop_reason = f"修复通过后第 {batch_index} 批扩展失败率超过 50%，暂停后续扩展"
+        elif not batch_job_ids:
+            pending = batch_refs + pending
+            stop_reason = "修复通过后扩展未创建 Runner 任务"
+        if stop_reason:
+            break
+
+    if _agent_run_cancel_requested(run):
+        stop_reason = stop_reason or "Agent 已取消，停止修复后的扩展执行"
+    remaining_deferred = pending + overflow
+    existing_job_ids = [str(item or "").strip() for item in (artifacts.get("jobIds") or []) if str(item or "").strip()]
+    artifacts["jobIds"] = list(dict.fromkeys(existing_job_ids + created_job_ids))
+    existing_result = artifacts.get("jobResult") if isinstance(artifacts.get("jobResult"), dict) else {}
+    merged_result = _agent_merge_runner_wait_results(existing_result, aggregate_wait)
+    phases = copy.deepcopy(existing_result.get("phases") or {})
+    for row in batches:
+        phases[row["phase"]] = {
+            key: copy.deepcopy(row[key]) for key in (
+                "jobIds", "completedCount", "failedCount", "timeoutCount"
+            )
+        }
+    artifacts["jobResult"] = {
+        **copy.deepcopy(existing_result),
+        "completedCount": len(merged_result["completed"]),
+        "failedCount": len(merged_result["failed"]),
+        "timeoutCount": len(merged_result["timeout"]),
+        "completed": merged_result["completed"],
+        "failed": merged_result["failed"],
+        "timeout": merged_result["timeout"],
+        "phases": phases,
+    }
+    runner_dry_run = artifacts.get("runnerDryRun") if isinstance(artifacts.get("runnerDryRun"), dict) else {}
+    runner_dry_run.setdefault("results", []).extend(dry_run_results)
+    runner_dry_run.setdefault("blocked", []).extend(dry_run_blocked)
+    runner_dry_run.setdefault("runnerJobIds", []).extend(runner_dry_run_jobs)
+    runner_dry_run.update({
+        "mode": "runner_yaml_dry_run" if runner_dry_run_enabled else "mock_dry_run",
+        "reason": runner_dry_run_reason,
+        "checked": len(runner_dry_run.get("results") or []),
+        "blockedCount": len(runner_dry_run.get("blocked") or []),
+        "createdCount": len(artifacts.get("jobIds") or []),
+        "ok": not runner_dry_run.get("blocked"),
+    })
+    artifacts["runnerDryRun"] = runner_dry_run
+    existing_expanded_job_ids = list(gate.get("expandedJobIds") or [])
+    existing_expanded_batches = list(gate.get("expandedBatches") or [])
+    gate.update({
+        "smokeRecovered": True,
+        "smokeRecoverySource": "successful_ai_repair_rerun",
+        "smokeRecoveredCount": len((artifacts.get("recovery") or {}).get("sourceJobIds") or []),
+        "smokePassThresholdMetAfterRecovery": True,
+        "recoveredExpandedExecution": True,
+        "recoveredExpandedBatches": batches,
+        "recoveredExpandedJobIds": created_job_ids,
+        "recoveredExpandedCompletedCount": len(aggregate_wait["completed"]),
+        "recoveredExpandedFailedCount": len(aggregate_wait["failed"]),
+        "recoveredExpandedTimeoutCount": len(aggregate_wait["timeout"]),
+        "recoveredExpandedBlockedCount": len(dry_run_blocked),
+        "expandedExecution": True,
+        "expandedBatches": existing_expanded_batches + batches,
+        "expandedBatchCount": len(existing_expanded_batches) + len(batches),
+        "expandedJobIds": list(dict.fromkeys(existing_expanded_job_ids + created_job_ids)),
+        "expandedCreatedCount": _safe_int_local(gate.get("expandedCreatedCount"), 0) + len(created_job_ids),
+        "expandedCompletedCount": _safe_int_local(gate.get("expandedCompletedCount"), 0) + len(aggregate_wait["completed"]),
+        "expandedFailedCount": _safe_int_local(gate.get("expandedFailedCount"), 0) + len(aggregate_wait["failed"]),
+        "expandedTimeoutCount": _safe_int_local(gate.get("expandedTimeoutCount"), 0) + len(aggregate_wait["timeout"]),
+        "expandedBlockedCount": _safe_int_local(gate.get("expandedBlockedCount"), 0) + len(dry_run_blocked),
+        "remainingDeferredCount": len(remaining_deferred),
+        "remainingDeferred": remaining_deferred[:30],
+        "stopFurtherExecution": bool(stop_reason or remaining_deferred),
+        "expandedStopReason": stop_reason,
+    })
+    execution_plan = dict(gate.get("executionPlan") or artifacts.get("generatedYamlExecutionPlan") or {})
+    readiness = dict(execution_plan.get("readiness") or {})
+    readiness.update({
+        "smokeRecovered": True,
+        "smokePassThresholdMetAfterRecovery": True,
+        "expandedExecution": bool(created_job_ids or dry_run_blocked),
+        "stopFurtherExecution": bool(stop_reason or remaining_deferred),
+        "remainingDeferredCount": len(remaining_deferred),
+    })
+    execution_plan["readiness"] = readiness
+    execution_plan["recoveredExpandedResult"] = {
+        "created": len(created_job_ids),
+        "passed": len(aggregate_wait["completed"]),
+        "failed": len(aggregate_wait["failed"]),
+        "timeout": len(aggregate_wait["timeout"]),
+        "blocked": len(dry_run_blocked),
+        "remainingDeferred": len(remaining_deferred),
+        "stopReason": stop_reason,
+    }
+    gate["executionPlan"] = execution_plan
+    gate["executionReadiness"] = readiness
+    artifacts["runnerExecutionGate"] = gate
+    artifacts["runnerSmokeGate"] = gate
+    artifacts["generatedYamlExecutionPlan"] = execution_plan
+    _persist_agent_run_snapshot(run)
+
+    status = "SUCCESS"
+    if aggregate_wait["failed"] or aggregate_wait["timeout"]:
+        status = "PARTIAL_FAILED" if aggregate_wait["completed"] else "FAILED"
+    elif dry_run_blocked or remaining_deferred:
+        status = "PARTIAL_FAILED"
+    return {
+        "status": status,
+        "resumed": True,
+        "runnerId": selected_runner_id,
+        "deviceId": selected_device_id,
+        "deviceStrategy": selected_device_strategy,
+        "createdJobIds": created_job_ids,
+        "completed": aggregate_wait["completed"],
+        "failed": aggregate_wait["failed"],
+        "timeout": aggregate_wait["timeout"],
+        "blocked": dry_run_blocked,
+        "remainingDeferred": remaining_deferred,
+        "batches": batches,
+        "stopReason": stop_reason,
+    }
+
+
+def _agent_mark_recovered_execution_steps(run, execution, report_refresh=None):
+    """Resolve orchestration steps while preserving their original failed attempts."""
+    artifacts = run.setdefault("artifacts", {})
+    recovered_job_ids = list(execution.get("recoveredJobIds") or [])
+    recovery_job_ids = [
+        item.get("newJobId") for item in _agent_rerun_source_links(artifacts)
+        if item.get("sourceJobId") in recovered_job_ids
+    ]
+    recovery = artifacts.get("recovery") if isinstance(artifacts.get("recovery"), dict) else {}
+    recovery.update({
+        "status": "RECOVERED",
+        "recovered": True,
+        "recoveredJobIds": recovered_job_ids,
+        "recoveryJobIds": [item for item in recovery_job_ids if item],
+        "logicalPassedCount": execution.get("logicalPassedCount", 0),
+        "rawPassedAttemptCount": execution.get("passedCount", 0),
+        "rawFailedAttemptCount": execution.get("failedCount", 0),
+        "remainingDeferredCount": execution.get("remainingDeferredCount", 0),
+        "reportRefreshStatus": (report_refresh or {}).get("status") if isinstance(report_refresh, dict) else "",
+        "resolvedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "rule": "原始失败尝试保留；仅关联修复任务通过且延后 executable 已完成时，逻辑执行链标记为 recovered。",
+    })
+    artifacts["recovery"] = recovery
+    artifacts["resolvedFailedExecutionItems"] = copy.deepcopy(artifacts.get("failedExecutionItems") or [])
+    failure_analysis = artifacts.get("failureAnalysis") if isinstance(artifacts.get("failureAnalysis"), dict) else {}
+    if failure_analysis:
+        failure_analysis["resolved"] = True
+        failure_analysis["resolution"] = copy.deepcopy(recovery)
+        artifacts["failureAnalysis"] = failure_analysis
+    report = artifacts.get("report") if isinstance(artifacts.get("report"), dict) else {}
+    if report:
+        report["logicalStatus"] = "recovered"
+        report["recoveredJobIds"] = recovered_job_ids
+        artifacts["report"] = report
+    for step in run.get("steps") or []:
+        if step.get("step") not in ("RUN_SONIC", "COLLECT_REPORT"):
+            continue
+        old_status = str(step.get("status") or "").upper()
+        if old_status not in ("FAILED", "PARTIAL_FAILED"):
+            continue
+        history = step.setdefault("attemptHistory", [])
+        history.append({
+            "status": old_status,
+            "summary": step.get("summary") or "",
+            "error": step.get("error") or "",
+            "endedAt": step.get("endedAt") or "",
+        })
+        del history[:-5]
+        step["initialStatus"] = step.get("initialStatus") or old_status
+        step["recovered"] = True
+        step["recovery"] = copy.deepcopy(recovery)
+        step["status"] = "SUCCESS"
+        if step.get("step") == "COLLECT_REPORT" and isinstance(report_refresh, dict):
+            tool_calls = step.setdefault("toolCalls", [])
+            refresh_call_id = report_refresh.get("callId")
+            if not refresh_call_id or not any(item.get("callId") == refresh_call_id for item in tool_calls if isinstance(item, dict)):
+                tool_calls.append(copy.deepcopy(report_refresh))
+        recovery_method = "AI 修复" if recovery.get("usesRepairDraft") else "安全重跑"
+        step["summary"] = (
+            f"首次 Runner 尝试失败已保留；{recovery_method}在原设备验证通过，"
+            "延后 executable 已执行到终态，逻辑执行链恢复。"
+        )
+        step.pop("error", None)
+    run.pop("error", None)
+
+
 def _tool_rerun(run, failed_items_override=None, repair_depth=0):
     """对失败任务重新创建 Runner job，并等待实际执行结果。"""
     call = {
@@ -13581,6 +13935,64 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                 ))
             else:
                 call["status"] = "SUCCESS"
+            sources_recovered = _agent_failed_sources_recovered(
+                failed_items,
+                retry_sources,
+                completed,
+                failed,
+                timeout_jobs,
+                skipped,
+            )
+            if sources_recovered:
+                recovery = artifacts.get("recovery") if isinstance(artifacts.get("recovery"), dict) else {}
+                recovery.update({
+                    "status": "REPAIR_VALIDATED",
+                    "usesRepairDraft": uses_repair_draft,
+                    "sourceJobIds": [_failed_job_id(item) for item in failed_items if _failed_job_id(item)],
+                    "recoveryJobIds": list(retried),
+                    "runnerId": run.get("runnerId") or "",
+                    "deviceId": run.get("deviceId") or "",
+                    "deviceStrategy": run.get("deviceStrategy") or run.get("device_strategy") or "",
+                    "validatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                })
+                artifacts["recovery"] = recovery
+                expansion_result = _agent_resume_deferred_after_recovery(run)
+                artifacts["recoveryExpansion"] = copy.deepcopy(expansion_result)
+                call["recoveryExpansion"] = copy.deepcopy(expansion_result)
+                report_refresh = _tool_collect_report(run)
+                artifacts["recoveryReportRefresh"] = {
+                    "status": report_refresh.get("status") if isinstance(report_refresh, dict) else "",
+                    "summary": report_refresh.get("outputSummary") if isinstance(report_refresh, dict) else "",
+                }
+                if expansion_result.get("status") == "SUCCESS":
+                    execution = _agent_runner_execution_summary(run)
+                    if (
+                        execution.get("outcome") == "passed"
+                        and execution.get("recoveredCount", 0) > 0
+                        and execution.get("remainingDeferredCount", 0) == 0
+                    ):
+                        _agent_mark_recovered_execution_steps(run, execution, report_refresh)
+                        call["status"] = "SUCCESS"
+                        call.pop("error", None)
+                        resumed_count = len(expansion_result.get("createdJobIds") or [])
+                        call["outputSummary"] = (
+                            f"{summary}；失败源已由关联重跑任务验证恢复，"
+                            f"并在原 Runner/设备完成 {resumed_count} 个延后 executable 任务"
+                        )
+                        call["recovery"] = copy.deepcopy(artifacts.get("recovery") or {})
+                    else:
+                        call["status"] = "PARTIAL_FAILED"
+                        call["error"] = "修复任务已通过，但逻辑执行链仍有未完成或未解析结果"
+                else:
+                    failed = list(expansion_result.get("failed") or [])
+                    timeout_jobs = list(expansion_result.get("timeout") or [])
+                    call["status"] = expansion_result.get("status") or "PARTIAL_FAILED"
+                    call["error"] = expansion_result.get("stopReason") or "修复通过后的扩展任务未全部通过"
+                    call["outputSummary"] = (
+                        f"{summary}；修复任务已通过，但后续扩展成功 "
+                        f"{len(expansion_result.get('completed') or [])}、失败 {len(failed)}、"
+                        f"超时 {len(timeout_jobs)}、拦截 {len(expansion_result.get('blocked') or [])}"
+                    )
             if (failed or timeout_jobs) and repair_depth < 1:
                 latest_failed = _normalize_agent_failed_items(list(failed) + list(timeout_jobs))
                 followup = _agent_post_rerun_autonomy(run, latest_failed, repair_depth=repair_depth)
@@ -13701,6 +14113,7 @@ def _agent_runner_execution_summary(run):
             continue
         rerun_job_ids.extend(attempt.get("createdJobIds") or [])
     rerun_job_ids.extend(artifacts.get("retriedJobs") or [])
+    rerun_job_ids.extend(item.get("newJobId") for item in _agent_rerun_source_links(artifacts))
     rerun_progress_rows = []
     for progress in list(artifacts.get("rerunProgressHistory") or []) + [artifacts.get("rerunProgress")]:
         if not isinstance(progress, dict):
@@ -13845,14 +14258,72 @@ def _agent_runner_execution_summary(run):
     attempted_count = sum(counts.values())
     terminal_count = counts["passed"] + counts["failed"] + counts["timeout"] + counts["cancelled"]
     adverse_count = counts["failed"] + counts["timeout"] + counts["cancelled"]
-    if counts["running"]:
+    status_by_job_id = {
+        str(item.get("jobId") or "").strip(): str(item.get("status") or "unknown")
+        for item in records.values()
+        if str(item.get("jobId") or "").strip()
+    }
+    children_by_source = {}
+    for link in _agent_rerun_source_links(artifacts):
+        children_by_source.setdefault(link["sourceJobId"], []).append(link["newJobId"])
+
+    def has_passed_descendant(job_id, visited=None):
+        visited = set(visited or set())
+        if not job_id or job_id in visited:
+            return False
+        visited.add(job_id)
+        for child_id in children_by_source.get(job_id, []):
+            if status_by_job_id.get(child_id) == "passed":
+                return True
+            if has_passed_descendant(child_id, visited):
+                return True
+        return False
+
+    logical_counts = {key: 0 for key in ("passed", "failed", "timeout", "running", "cancelled", "unknown")}
+    recovered_job_ids = []
+    unresolved_failed_job_ids = []
+    if original_job_ids:
+        for job_id in original_job_ids:
+            status = status_by_job_id.get(job_id, "unknown")
+            if status in ("failed", "timeout", "cancelled", "unknown") and has_passed_descendant(job_id):
+                logical_counts["passed"] += 1
+                recovered_job_ids.append(job_id)
+                continue
+            logical_counts[status if status in logical_counts else "unknown"] += 1
+            if status in ("failed", "timeout", "cancelled"):
+                unresolved_failed_job_ids.append(job_id)
+    else:
+        logical_counts = dict(counts)
+        unresolved_failed_job_ids = [
+            job_id for job_id, status in status_by_job_id.items()
+            if status in ("failed", "timeout", "cancelled")
+        ]
+    unresolved_failed_job_ids = list(dict.fromkeys(
+        unresolved_failed_job_ids + [
+            job_id for job_id, status in status_by_job_id.items()
+            if status in ("failed", "timeout", "cancelled")
+            and not has_passed_descendant(job_id)
+        ]
+    ))
+
+    gate = artifacts.get("runnerExecutionGate") if isinstance(artifacts.get("runnerExecutionGate"), dict) else {}
+    if "remainingDeferredCount" in gate:
+        remaining_deferred_count = _safe_int_local(gate.get("remainingDeferredCount"), 0)
+    elif gate.get("stopFurtherExecution"):
+        remaining_deferred_count = len(gate.get("remainingDeferred") or gate.get("deferred") or [])
+    else:
+        remaining_deferred_count = 0
+    logical_adverse_count = (
+        logical_counts["failed"] + logical_counts["timeout"] + logical_counts["cancelled"]
+    )
+    if logical_counts["running"]:
         outcome, label = "running", "执行中"
-    elif counts["passed"] and adverse_count:
+    elif logical_counts["passed"] and (logical_adverse_count or remaining_deferred_count):
         outcome, label = "partial", "部分通过"
-    elif adverse_count:
+    elif logical_adverse_count:
         outcome, label = "failed", "未通过"
-    elif counts["passed"]:
-        outcome, label = "passed", "通过"
+    elif logical_counts["passed"]:
+        outcome, label = "passed", "修复后通过" if recovered_job_ids else "通过"
     else:
         outcome, label = "not_executed", "未执行"
     return {
@@ -13867,6 +14338,15 @@ def _agent_runner_execution_summary(run):
         "terminalCount": terminal_count,
         "passedCount": counts["passed"],
         "failedCount": counts["failed"],
+        "logicalAttemptCount": len(original_job_ids) if original_job_ids else attempted_count,
+        "logicalPassedCount": logical_counts["passed"],
+        "logicalFailedCount": logical_counts["failed"],
+        "logicalTimeoutCount": logical_counts["timeout"],
+        "logicalRunningCount": logical_counts["running"],
+        "recoveredCount": len(recovered_job_ids),
+        "recoveredJobIds": recovered_job_ids[:100],
+        "unresolvedFailedJobIds": unresolved_failed_job_ids[:100],
+        "remainingDeferredCount": remaining_deferred_count,
         "productFailedCount": failure_counts["product"],
         "brokenCount": failure_counts["broken"],
         "unknownFailedCount": failure_counts["unknown"],
@@ -13877,7 +14357,7 @@ def _agent_runner_execution_summary(run):
         "phases": list(phase_counts.values()),
         "rule": (
             "Runner 真实结果与 Agent 编排终态分别汇总；原始正式任务和每次修复重跑均按 job ID 计入尝试，"
-            "编排失败不会抹掉已通过的冒烟或扩展任务。"
+            "编排失败不会抹掉已通过的冒烟或扩展任务；失败源只有在关联的同设备修复 job 真正通过后才记为 recovered。"
         ),
     }
 
@@ -13906,6 +14386,14 @@ def _tool_generate_summary(run):
         running_jobs = report.get("runningJobs") or []
         failed_execution_items = artifacts.get("failedExecutionItems") or _agent_failed_execution_items(run)
         execution = _agent_runner_execution_summary(run)
+        unresolved_failed_job_ids = set(execution.get("unresolvedFailedJobIds") or [])
+        active_failed_execution_items = [
+            item for item in failed_execution_items
+            if not item.get("jobId")
+            or item.get("jobId") in unresolved_failed_job_ids
+        ]
+        if execution.get("outcome") == "passed" and not unresolved_failed_job_ids:
+            active_failed_execution_items = []
         observed_run_status = str(run.get("status") or "").strip().upper()
         if observed_run_status == "CANCELLED":
             run_status = "CANCELLED"
@@ -13944,7 +14432,7 @@ def _tool_generate_summary(run):
         elif execution.get("outcome") == "not_executed" and report.get("status") == "missing":
             conclusion = "报告缺失"
         next_actions = []
-        if failed_execution_items or failed_jobs or timeout_jobs:
+        if active_failed_execution_items or execution.get("logicalFailedCount") or execution.get("logicalTimeoutCount"):
             next_actions.extend(["打开失败任务报告或 Runner 日志", "确认是脚本问题后生成修复草稿", "修复后重跑失败用例"])
         elif execution.get("runningCount") or running_jobs:
             next_actions.extend(["等待 Runner 回传执行结果", "刷新 Agent 运行状态"])
@@ -13970,6 +14458,9 @@ def _tool_generate_summary(run):
             "failedJobCount": execution.get("failedCount", 0),
             "productFailedJobCount": execution.get("productFailedCount", 0),
             "brokenJobCount": execution.get("brokenCount", 0),
+            "recoveredJobCount": execution.get("recoveredCount", 0),
+            "logicalPassedJobCount": execution.get("logicalPassedCount", 0),
+            "logicalFailedJobCount": execution.get("logicalFailedCount", 0),
             "unknownFailedJobCount": execution.get("unknownFailedCount", 0),
             "timeoutJobCount": execution.get("timeoutCount", 0),
             "runningJobCount": execution.get("runningCount", 0),
@@ -13983,7 +14474,7 @@ def _tool_generate_summary(run):
                     "file": item.get("file"),
                     "reason": item.get("failureReason") or item.get("error"),
                 }
-                for item in failed_execution_items[:30]
+                for item in active_failed_execution_items[:30]
             ],
             "failureType": failure.get("failureType") or "NONE",
             "nextActions": next_actions[:5],
@@ -13993,7 +14484,8 @@ def _tool_generate_summary(run):
             "riskLevel": run.get("riskLevel", ""),
             "message": (
                 f"Runner：{execution.get('label')}，通过 {execution.get('passedCount', 0)}，"
-                f"失败 {execution.get('failedCount', 0)}，超时 {execution.get('timeoutCount', 0)}；"
+                f"失败尝试 {execution.get('failedCount', 0)}，修复后通过 {execution.get('recoveredCount', 0)}，"
+                f"超时 {execution.get('timeoutCount', 0)}；"
                 f"Agent：{orchestration_label}，{completed}/{len(steps)} 步骤成功"
             ),
         }

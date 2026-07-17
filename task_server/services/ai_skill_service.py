@@ -4297,6 +4297,181 @@ def _navigation_target_keys_match(left, right):
     return len(shorter) >= 2 and shorter in longer
 
 
+def _normalize_visual_current_page_evidence(items):
+    """Keep auditable, visible-text evidence emitted by the visual AI."""
+    normalized = []
+    seen = set()
+    confidence_names = {"high": 0.9, "medium": 0.6, "low": 0.3}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
+        requirement_id = str(item.get("requirementId") or item.get("requirement_id") or "").strip()
+        branch = str(item.get("branch") or "").strip()
+        page_title = str(item.get("pageTitle") or item.get("page_title") or "").strip()
+        navigation_leaf = str(item.get("navigationLeaf") or item.get("navigation_leaf") or "").strip()
+        target_text = str(item.get("targetText") or item.get("target_text") or "").strip()
+        parent_path = normalize_text_list(item.get("parentPath") or item.get("parent_path"))[:6]
+        raw_confidence = item.get("confidence")
+        try:
+            confidence = float(raw_confidence)
+        except (TypeError, ValueError):
+            confidence = confidence_names.get(str(raw_confidence or "").strip().lower(), 0.0)
+        confidence = max(0.0, min(1.0, confidence))
+        same_branch = item.get("sameBranch") is True or item.get("same_branch") is True
+        if (
+            not navigation_leaf
+            or not target_text
+            or not branch
+            or not parent_path
+            or not (case_id or requirement_id)
+        ):
+            continue
+        unsafe_text = "\n".join(parent_path + [navigation_leaf])
+        if (
+            len(navigation_leaf) > 48
+            or re.search(r"(?:xpath|selector|coordinate|坐标|x\s*=|y\s*=|\d+\s*[,，]\s*\d+)", unsafe_text, re.I)
+            or _source_navigation_has_alternative_destinations(
+                [f"点击「{value}」" for value in parent_path + [navigation_leaf]]
+            )
+        ):
+            continue
+        record = {
+            "caseId": case_id,
+            "requirementId": requirement_id,
+            "branch": branch,
+            "pageTitle": page_title,
+            "parentPath": parent_path,
+            "navigationLeaf": navigation_leaf,
+            "targetText": target_text,
+            "sameBranch": same_branch,
+            "confidence": round(confidence, 4),
+            "source": str(item.get("source") or "visual_grounder").strip() or "visual_grounder",
+        }
+        key = (
+            case_id,
+            requirement_id,
+            re.sub(r"\s+", "", branch).lower(),
+            tuple(re.sub(r"\s+", "", value).lower() for value in parent_path),
+            re.sub(r"\s+", "", navigation_leaf).lower(),
+            re.sub(r"\s+", "", target_text).lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(record)
+    return normalized
+
+
+def _current_visual_page_evidence_for_case(normalized, case, case_id, branch, target_terms):
+    """Select current-frame evidence only when the AI mapped it to this exact branch."""
+    review = (normalized or {}).get("review") if isinstance((normalized or {}).get("review"), dict) else {}
+    evidence_items = _normalize_visual_current_page_evidence(review.get("current_page_evidence"))
+    case_requirement_ids = set(_source_case_requirement_ids(case))
+    branch_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(branch or "")).lower()
+    target_keys = {
+        re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(term or "")).lower()
+        for term in (target_terms or [])
+        if str(term or "").strip()
+    }
+    eligible = []
+    for item in evidence_items:
+        if item.get("sameBranch") is not True or float(item.get("confidence") or 0) < 0.75:
+            continue
+        evidence_case_id = str(item.get("caseId") or "").strip()
+        evidence_requirement_id = str(item.get("requirementId") or "").strip()
+        if evidence_case_id and evidence_case_id != str(case_id or "").strip():
+            continue
+        if evidence_requirement_id and evidence_requirement_id not in case_requirement_ids:
+            continue
+        evidence_branch_key = re.sub(
+            r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("branch") or "")
+        ).lower()
+        branch_matches = bool(
+            branch_key
+            and evidence_branch_key
+            and _navigation_target_keys_match(branch_key, evidence_branch_key)
+        )
+        if not evidence_case_id and not evidence_requirement_id and not branch_matches:
+            continue
+        target_key = re.sub(
+            r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("targetText") or "")
+        ).lower()
+        if target_keys and target_key and not any(
+            _navigation_target_keys_match(target_key, value) for value in target_keys
+        ):
+            continue
+        leaf_key = _navigation_action_target_key(f"点击「{item.get('navigationLeaf') or ''}」")
+        if not leaf_key or any(_navigation_target_keys_match(leaf_key, value) for value in target_keys):
+            continue
+        eligible.append(item)
+    eligible.sort(key=lambda item: (float(item.get("confidence") or 0), len(item.get("parentPath") or [])), reverse=True)
+    return copy.deepcopy(eligible[0]) if eligible else {}
+
+
+def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch):
+    """Replace only the historical leaf after a visual AI proves the shared parent path."""
+    flow = normalize_text_list(baseline_flow)
+    evidence = evidence if isinstance(evidence, dict) else {}
+    leaf = str(evidence.get("navigationLeaf") or "").strip()
+    leaf_key = _navigation_action_target_key(f"点击「{leaf}」")
+    actions = [
+        (index, key)
+        for index, step in enumerate(flow)
+        for key in [_navigation_action_target_key(step)]
+        if key
+    ]
+    if not leaf_key or not actions:
+        return flow, False
+    if any(_navigation_target_keys_match(key, leaf_key) for _index, key in actions):
+        return flow, False
+    parent_keys = []
+    for label in normalize_text_list(evidence.get("parentPath")):
+        key = _navigation_action_target_key(label) or _navigation_action_target_key(f"点击「{label}」")
+        if key and "首页" not in key:
+            parent_keys.append(key)
+    if not parent_keys:
+        return flow, False
+    matched_positions = []
+    before_position = len(actions)
+    for parent_key in reversed(parent_keys):
+        candidates = [
+            position for position in range(before_position)
+            if _navigation_target_keys_match(actions[position][1], parent_key)
+        ]
+        if not candidates:
+            return flow, False
+        matched_position = max(candidates)
+        matched_positions.append(matched_position)
+        before_position = matched_position
+    parent_action_position = matched_positions[0]
+    parent_step_index = actions[parent_action_position][0]
+    next_action_step_index = next(
+        (step_index for step_index, _key in actions[parent_action_position + 1:]),
+        len(flow),
+    )
+    historical_leaf_key = (
+        actions[parent_action_position + 1][1]
+        if parent_action_position + 1 < len(actions) else ""
+    )
+    stable_parent_waits = []
+    for step in flow[parent_step_index + 1:next_action_step_index]:
+        compact_step = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(step or "")).lower()
+        if historical_leaf_key and historical_leaf_key in compact_step:
+            continue
+        stable_parent_waits.append(step)
+    adapted = flow[:parent_step_index + 1] + stable_parent_waits + [f"点击「{leaf}」"]
+    if (
+        parent_step_index >= len(adapted)
+        or len(adapted) < 2
+        or len(adapted) > 7
+        or _source_navigation_has_alternative_destinations(adapted)
+        or not _case_has_branch_execution_evidence({"steps": adapted}, branch)
+    ):
+        return flow, False
+    return adapted, adapted != flow
+
+
 def _candidate_source_navigation_flow(case, target_terms, branch):
     """Keep the AI candidate's concrete path up to, but not including, the target control."""
     case = case if isinstance(case, dict) else {}
@@ -4582,6 +4757,19 @@ def _bounded_convergence_evidence(
             target_terms,
             branch,
         )
+        current_leaf_evidence = _current_visual_page_evidence_for_case(
+            normalized,
+            source_case,
+            str(((source_record or {}).get("compact") or {}).get("case_id") or "").strip(),
+            branch,
+            target_terms,
+        )
+        navigation_flow, visual_leaf_adapted = _adapt_trusted_navigation_to_visual_evidence(
+            navigation_flow,
+            current_leaf_evidence,
+            branch,
+        )
+        current_leaf_adapted = current_leaf_adapted or visual_leaf_adapted
         precondition = _bounded_candidate_precondition(source_case, branch_baseline)
         requirement_refs = normalize_text_list(
             source_case.get("requirementRefs")
@@ -4669,6 +4857,10 @@ def _bounded_convergence_evidence(
             ),
             "currentLeafAdapted": current_leaf_adapted,
             "currentLeafSourceCaseId": case_id if current_leaf_adapted else "",
+            "currentLeafEvidenceSource": (
+                current_leaf_evidence.get("source") if visual_leaf_adapted else "ai_candidate"
+            ) if current_leaf_adapted else "",
+            "currentLeafEvidence": current_leaf_evidence if visual_leaf_adapted else {},
             "acceptanceCheckIds": [
                 str(item.get("id") or "").strip()
                 for item in covered_checks
@@ -4749,6 +4941,8 @@ def _bounded_convergence_evidence(
             donor_case_id = str(((donor_record or {}).get("compact") or {}).get("case_id") or "").strip()
             current_leaf_adapted = False
             current_leaf_source_case_id = ""
+            current_leaf_evidence_source = ""
+            current_leaf_evidence = {}
             requirement_refs = normalize_text_list(
                 raw_case.get("requirementRefs") or raw_case.get("requirement_refs") or raw_case.get("coverage")
             )[:8]
@@ -4874,6 +5068,24 @@ def _bounded_convergence_evidence(
                     ((source_record or {}).get("compact") or {}).get("case_id") or ""
                 ).strip()
                 evidence_source = "selected_branch_baseline"
+            current_leaf_evidence = _current_visual_page_evidence_for_case(
+                normalized,
+                source_evidence_case,
+                source_case_id,
+                branch,
+                targets,
+            )
+            navigation_flow, visual_leaf_adapted = _adapt_trusted_navigation_to_visual_evidence(
+                navigation_flow,
+                current_leaf_evidence,
+                branch,
+            )
+            if visual_leaf_adapted:
+                current_leaf_adapted = True
+                current_leaf_source_case_id = source_case_id
+                current_leaf_evidence_source = current_leaf_evidence.get("source") or "visual_grounder"
+            elif current_leaf_adapted:
+                current_leaf_evidence_source = "ai_candidate"
             navigation_flow = _ensure_trusted_home_start_guard(
                 navigation_flow,
                 branch_baseline,
@@ -5002,6 +5214,8 @@ def _bounded_convergence_evidence(
                 ),
                 "currentLeafAdapted": current_leaf_adapted,
                 "currentLeafSourceCaseId": current_leaf_source_case_id,
+                "currentLeafEvidenceSource": current_leaf_evidence_source,
+                "currentLeafEvidence": current_leaf_evidence if visual_leaf_adapted else {},
                 "landingEvidenceCaseIds": normalize_text_list(
                     landing_tail.get("sourceCaseIds") or donor_case_id
                 ),
@@ -5772,6 +5986,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "source": bounded_evidence.get("source") or "",
                 "currentLeafAdapted": bounded_evidence.get("currentLeafAdapted") is True,
                 "currentLeafSourceCaseId": bounded_evidence.get("currentLeafSourceCaseId") or "",
+                "currentLeafEvidenceSource": bounded_evidence.get("currentLeafEvidenceSource") or "",
+                "currentLeafEvidence": copy.deepcopy(bounded_evidence.get("currentLeafEvidence") or {}),
                 "acceptanceCheckIds": sorted(bounded_check_ids),
                 "modelLevel": model_level,
                 "modelReason": model_reason,
@@ -5985,11 +6201,15 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 case["title"] = str(item.get("title") or "").strip()
             _set_case_smoke(case, False)
         if assertion_target and (
-            bounded_evidence_used or not normalize_text_list(case.get("assertions"))
+            path_plan_applied
+            or bounded_evidence_used
+            or not normalize_text_list(case.get("assertions"))
         ):
             case["assertions"] = [assertion_target]
         if assertion_target and (
-            bounded_evidence_used or not str(case.get("expected_result") or "").strip()
+            path_plan_applied
+            or bounded_evidence_used
+            or not str(case.get("expected_result") or "").strip()
         ):
             case["expected_result"] = assertion_target
         if assertion_target and not str(case.get("goal") or "").strip():
@@ -6380,8 +6600,16 @@ def merge_visual_grounder_payload(base_payload, grounded_payload):
     review = merged.setdefault("review", {})
     grounded_review = grounded.get("review") if isinstance(grounded.get("review"), dict) else {}
     for key, value in grounded_review.items():
+        if key == "current_page_evidence":
+            continue
         if value not in (None, "", [], {}):
             review[key] = copy.deepcopy(value)
+    current_page_evidence = _normalize_visual_current_page_evidence(
+        list(review.get("current_page_evidence") or [])
+        + list(grounded_review.get("current_page_evidence") or [])
+    )
+    if current_page_evidence:
+        review["current_page_evidence"] = current_page_evidence
     if blocked_patches:
         previous_guard = review.get("visual_scope_guard") if isinstance(review.get("visual_scope_guard"), dict) else {}
         previous_records = [

@@ -993,7 +993,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "- aiTap: 资料服务\n"
             "- aiWaitFor: 等待资料服务页面加载完成\n"
             "- aiTap: 资料归档\n"
-            "- aiWaitFor: 等待归档类型可见\n"
+            "- aiWaitFor: 等待旧版归档入口可见\n"
             "- aiTap: 旧版归档\n"
             "- aiTap: 本地导入"
         ),
@@ -1020,6 +1020,46 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "REQ-041-CHECK-04",
         },
         "Reachability convergence must prefer a concrete current AI leaf while using the verified baseline only for its common parent path",
+    )
+    visual_leaf_payload = json.loads(json.dumps(current_leaf_payload, ensure_ascii=False))
+    visual_leaf_payload["manual_cases"] = []
+    visual_leaf_payload["review"] = {
+        "current_page_evidence": [{
+            "caseId": "TC-HISTORICAL-LEAF",
+            "requirementId": "REQ-041",
+            "branch": "资料归档",
+            "pageTitle": "新版归档",
+            "parentPath": ["资料服务", "资料归档"],
+            "navigationLeaf": "新版归档",
+            "targetText": "企业云盘",
+            "sameBranch": True,
+            "confidence": 0.96,
+            "source": "figma_current_frame",
+        }],
+    }
+    visual_leaf_audit = ai_skill_service.executable_yaml_portfolio_audit(visual_leaf_payload, {})
+    visual_leaf_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(visual_leaf_payload["cases"])]
+    visual_leaf_evidence_by_id = ai_skill_service._bounded_convergence_evidence(
+        visual_leaf_payload,
+        visual_leaf_records,
+        visual_leaf_audit,
+        selected_baselines=[current_leaf_baseline],
+        manual_records=[],
+    )
+    visual_leaf_evidence = next((
+        item for item in visual_leaf_evidence_by_id.values()
+        if item.get("currentLeafEvidenceSource") == "figma_current_frame"
+    ), {})
+    require(
+        visual_leaf_evidence.get("currentLeafAdapted") is True
+        and visual_leaf_evidence.get("currentLeafSourceCaseId") == "TC-HISTORICAL-LEAF"
+        and "点击「新版归档」" in visual_leaf_evidence.get("flow", [])
+        and "旧版归档" not in " ".join(visual_leaf_evidence.get("flow") or [])
+        and (visual_leaf_evidence.get("currentLeafEvidence") or {}).get("confidence") == 0.96,
+        "High-confidence current-frame evidence must replace only a historical baseline leaf after the shared parent path is proven",
     )
     home_guarded_prefix = ai_skill_service._ensure_trusted_home_start_guard(
         ["点击「会员服务」", "等待开票服务可见"],
@@ -2242,6 +2282,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "title": "5寸照片入口校验",
             "steps": ["进入照片打印", "点击5寸照片"],
             "assertions": ["百度网盘可见"],
+            "expected_result": "历史候选中的旧位置描述",
         }],
     }
     grounded_plan = {
@@ -2261,6 +2302,11 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     applied = ai_skill_service.apply_executable_yaml_plan_to_payload(payload, grounded_plan)
     require(applied["cases"][0]["steps"] == grounded_plan["cases"][0]["flow"], "Grounded AI path plan must replace the generated path and preserve intermediate parent pages")
     require(applied["cases"][0]["ai_case_plan"].get("pathPlanApplied"), "Applied AI path plan must be observable")
+    require(
+        applied["cases"][0].get("assertions") == [grounded_plan["cases"][0]["assertionTarget"]]
+        and applied["cases"][0].get("expected_result") == grounded_plan["cases"][0]["assertionTarget"],
+        "An accepted AI path and its final assertion must be written back as one execution contract instead of retaining stale generated copy",
+    )
     ungrounded_plan = json.loads(json.dumps(grounded_plan, ensure_ascii=False))
     ungrounded_plan["cases"][0]["baselineId"] = "invented-baseline"
     ungrounded_plan["cases"][0]["baselineGrounded"] = False
@@ -3472,6 +3518,85 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._log_tool_call = old_log_rerun
         agent_service._agent_post_rerun_autonomy = old_post_rerun
 
+    old_create_refs = agent_service._agent_create_runner_jobs_for_refs
+    old_runner_dry_support = agent_service._runner_supports_yaml_dry_run
+    old_persist_snapshot = agent_service._persist_agent_run_snapshot
+    recovered_dispatches = []
+    try:
+        def fake_create_recovered_refs(run, refs, runner_id, device_id, device_strategy, **kwargs):
+            recovered_dispatches.append({
+                "refs": list(refs),
+                "runnerId": runner_id,
+                "deviceId": device_id,
+                "deviceStrategy": device_strategy,
+                "phase": kwargs.get("phase"),
+            })
+            jobs = [
+                {
+                    "job_id": f"job-expanded-{index}",
+                    "status": "success",
+                    "runner_id": runner_id,
+                    "device_id": device_id,
+                }
+                for index, _ref in enumerate(refs, start=1)
+            ]
+            return {
+                "jobIds": [item["job_id"] for item in jobs],
+                "dryRunResults": [{"ok": True, "phase": kwargs.get("phase")} for _ref in refs],
+                "dryRunBlocked": [],
+                "runnerDryRunJobs": [],
+                "formalWaitResult": {"completed": jobs, "failed": [], "timeout": []},
+            }
+
+        agent_service._agent_create_runner_jobs_for_refs = fake_create_recovered_refs
+        agent_service._runner_supports_yaml_dry_run = lambda _runner_id: (False, "static mock")
+        agent_service._persist_agent_run_snapshot = lambda _run: None
+        recovered_expand_run = {
+            "runId": "agent-static-recovered-expand",
+            "runnerId": "win-runner-01",
+            "deviceId": "ecbfd645",
+            "deviceStrategy": "fixed",
+            "artifacts": {
+                "jobIds": ["job-smoke-failed"],
+                "jobResult": {
+                    "completed": [],
+                    "failed": [{"job_id": "job-smoke-failed", "status": "failed"}],
+                    "timeout": [],
+                    "phases": {"smoke": {"jobIds": ["job-smoke-failed"]}},
+                },
+                "runnerExecutionGate": {
+                    "enabled": True,
+                    "stopFurtherExecution": True,
+                    "deferred": [
+                        {"module": "AI测试", "file": "photo.yaml", "path": "/tmp/photo.yaml"},
+                        {"module": "AI测试", "file": "scan.yaml", "path": "/tmp/scan.yaml"},
+                    ],
+                },
+            },
+        }
+        recovered_expand = agent_service._agent_resume_deferred_after_recovery(recovered_expand_run)
+        recovered_gate = recovered_expand_run["artifacts"].get("runnerExecutionGate") or {}
+        require(
+            recovered_expand.get("status") == "SUCCESS"
+            and len(recovered_expand.get("createdJobIds") or []) == 2
+            and recovered_gate.get("remainingDeferredCount") == 0
+            and recovered_gate.get("stopFurtherExecution") is False,
+            "A successful smoke repair must reopen and finish every deferred executable ref instead of ending the Agent at the repaired smoke job",
+        )
+        require(
+            len(recovered_dispatches) == 1
+            and recovered_dispatches[0].get("runnerId") == "win-runner-01"
+            and recovered_dispatches[0].get("deviceId") == "ecbfd645"
+            and recovered_dispatches[0].get("deviceStrategy") == "fixed"
+            and recovered_expand_run["artifacts"]["jobResult"].get("completedCount") == 2
+            and recovered_expand_run["artifacts"]["jobResult"].get("failedCount") == 1,
+            "Recovered expansion must preserve the selected fixed device and retain the original failed attempt in the raw result ledger",
+        )
+    finally:
+        agent_service._agent_create_runner_jobs_for_refs = old_create_refs
+        agent_service._runner_supports_yaml_dry_run = old_runner_dry_support
+        agent_service._persist_agent_run_snapshot = old_persist_snapshot
+
 
 def check_agent_quality_report_uses_figma_visual_reference():
     from task_server.services import agent_service
@@ -4139,7 +4264,21 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
             "title": concrete_case["title"],
             "assertions": ["设计稿中的百度网盘入口文案完整可见"],
         }],
-        "review": {"visual_grounding_check": "completed"},
+        "review": {
+            "visual_grounding_check": "completed",
+            "current_page_evidence": [{
+                "caseId": "TC-VISUAL-CURRENT-1",
+                "requirementId": "REQ-001",
+                "branch": "资料页",
+                "pageTitle": "标准版",
+                "parentPath": ["资料服务", "资料页"],
+                "navigationLeaf": "标准版",
+                "targetText": "企业云盘",
+                "sameBranch": True,
+                "confidence": 0.91,
+                "source": "figma_current_frame",
+            }],
+        },
     })
     require(
         merged_visual_payload.get("cases", [{}])[0].get("execution_trace") == {"large": "x" * 2000}
@@ -4151,6 +4290,29 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         and merged_visual_payload.get("review", {}).get("orchestration_history") == ["y" * 2000]
         and merged_visual_payload.get("review", {}).get("visual_grounding_check") == "completed",
         "Visual grounding merge must apply visual corrections without erasing full planning evidence",
+    )
+    merged_visual_payload = ai_skill_service.merge_visual_grounder_payload(merged_visual_payload, {
+        "review": {
+            "visual_grounding_check": "second batch completed",
+            "current_page_evidence": [{
+                "caseId": "TC-VISUAL-CURRENT-2",
+                "requirementId": "REQ-002",
+                "branch": "归档页",
+                "pageTitle": "新版归档",
+                "parentPath": ["资料服务", "归档页"],
+                "navigationLeaf": "新版归档",
+                "targetText": "企业云盘",
+                "sameBranch": True,
+                "confidence": "high",
+                "source": "uploaded_current_frame",
+            }],
+        },
+    })
+    require(
+        len(merged_visual_payload.get("review", {}).get("current_page_evidence") or []) == 2
+        and merged_visual_payload["review"]["current_page_evidence"][0].get("navigationLeaf") == "标准版"
+        and merged_visual_payload["review"]["current_page_evidence"][1].get("navigationLeaf") == "新版归档",
+        "Independent visual batches must accumulate structured current-page evidence instead of letting the last frame erase earlier AI judgements",
     )
     compact_convergence_analysis, compact_convergence_source = ai_skill_service._compact_executable_convergence_context(
         merged_visual_payload.get("analysis"),
@@ -7696,6 +7858,71 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
             and retry_orchestration.get("observedRunStatus") == "RUNNING"
             and retry_orchestration.get("statusProjectedAtSummary") is True,
             "Summary generation must project the deterministic final Agent state instead of persisting a stale RUNNING status",
+        )
+
+        job_service.load_jobs = lambda: [
+            {"job_id": "recovered-source", "status": "failed", "failure_type": "SCRIPT_ISSUE", "phase": "smoke"},
+            {"job_id": "recovered-repair", "status": "success", "phase": "safe-rerun"},
+            {"job_id": "recovered-expanded", "status": "success", "phase": "recovered-expanded-1"},
+        ]
+        recovered_run = {
+            "runId": "agent-static-recovered-summary",
+            "status": "RUNNING",
+            "steps": [
+                {"step": "RUN_SONIC", "status": "FAILED", "summary": "首次冒烟失败", "error": "断言过严"},
+                {"step": "COLLECT_REPORT", "status": "PARTIAL_FAILED", "summary": "原始报告含失败"},
+                {"step": "RERUN", "status": "RUNNING"},
+                {"step": "GENERATE_SUMMARY", "status": "RUNNING"},
+            ],
+            "artifacts": {
+                "jobIds": ["recovered-source", "recovered-expanded"],
+                "rerunAttempts": [{"createdJobIds": ["recovered-repair"]}],
+                "rerunSources": [{"sourceJobId": "recovered-source", "newJobId": "recovered-repair"}],
+                "runnerExecutionGate": {"enabled": True, "remainingDeferredCount": 0, "remainingDeferred": []},
+                "failedExecutionItems": [{
+                    "jobId": "recovered-source",
+                    "failureType": "SCRIPT_ISSUE",
+                    "failureReason": "首次断言过严",
+                }],
+                "report": {
+                    "status": "failed",
+                    "failedJobs": [{"jobId": "recovered-source", "status": "failed", "failureType": "SCRIPT_ISSUE"}],
+                    "successJobs": [
+                        {"jobId": "recovered-repair", "status": "success"},
+                        {"jobId": "recovered-expanded", "status": "success"},
+                    ],
+                },
+            },
+        }
+        recovered_execution = agent_service._agent_runner_execution_summary(recovered_run)
+        require(
+            recovered_execution.get("outcome") == "passed"
+            and recovered_execution.get("label") == "修复后通过"
+            and recovered_execution.get("attemptedCount") == 3
+            and recovered_execution.get("passedCount") == 2
+            and recovered_execution.get("failedCount") == 1
+            and recovered_execution.get("logicalPassedCount") == 2
+            and recovered_execution.get("recoveredCount") == 1
+            and not recovered_execution.get("unresolvedFailedJobIds"),
+            "A passed repair descendant must recover the logical case without erasing the original failed attempt from raw totals",
+        )
+        agent_service._agent_mark_recovered_execution_steps(recovered_run, recovered_execution)
+        try:
+            agent_service._ai_gateway_available = lambda: False
+            agent_service._log_tool_call = lambda *_args, **_kwargs: None
+            agent_service._tool_generate_summary(recovered_run)
+        finally:
+            agent_service._ai_gateway_available = old_health
+            agent_service._log_tool_call = old_log
+        recovered_summary = recovered_run["artifacts"].get("summary") or {}
+        require(
+            recovered_summary.get("conclusion") == "修复后通过"
+            and recovered_summary.get("recoveredJobCount") == 1
+            and recovered_summary.get("failedJobCount") == 1
+            and not recovered_summary.get("failedTasks")
+            and (recovered_summary.get("orchestration") or {}).get("runStatus") == "DONE"
+            and all(step.get("status") == "SUCCESS" for step in recovered_run["steps"][:2]),
+            "Recovered orchestration must finish while preserving the raw failed-attempt count and clearing only resolved active failures",
         )
     finally:
         job_service.load_jobs = old_load_jobs

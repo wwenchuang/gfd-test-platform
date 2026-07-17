@@ -8858,6 +8858,10 @@ def generate_mindmap_from_request(d, job_id=None):
                 )
             visual_batches_attempted += 1
             batch_started = time.time()
+            previous_current_page_evidence_count = len(
+                ((payload.get("review") or {}).get("current_page_evidence") or [])
+                if isinstance(payload.get("review"), dict) else []
+            )
             try:
                 payload = call_dashscope_refine_cases(
                     title,
@@ -8876,6 +8880,11 @@ def generate_mindmap_from_request(d, job_id=None):
                 batch_attempt_meta = payload_review.get("visual_grounder_attempts")
                 batch_attempt_meta = batch_attempt_meta if isinstance(batch_attempt_meta, dict) else {}
                 payload_review["mindmap_visual_grounded"] = True
+                current_page_evidence = [
+                    item for item in (payload_review.get("current_page_evidence") or [])
+                    if isinstance(item, dict)
+                ]
+                batch_current_page_evidence = current_page_evidence[previous_current_page_evidence_count:]
                 visual_batch_results.append({
                     "batch": batch_index,
                     "status": "completed",
@@ -8885,6 +8894,8 @@ def generate_mindmap_from_request(d, job_id=None):
                     "attemptCount": safe_int(batch_attempt_meta.get("count"), 1),
                     "retryUsed": bool(batch_attempt_meta.get("retryUsed")),
                     "judgement": str(payload_review.get("visual_grounding_check") or "").strip()[:500],
+                    "currentPageEvidenceCount": len(batch_current_page_evidence),
+                    "currentPageEvidence": copy.deepcopy(batch_current_page_evidence[:8]),
                     "modelTrace": copy.deepcopy(payload_review.get("model_trace") or {}),
                 })
             except Exception as e:

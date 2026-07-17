@@ -77,6 +77,7 @@
 - 记录中只返回发生变化的字段，不要复述未变化的步骤、断言和说明。
 - 不得新建与 `base_payload.analysis.requirement_points` 无关的记录。
 - `review.visual_grounding_check` 必须简洁说明本批图片看到了什么、校准了什么；图片信息不足时明确写“无可安全校准项”，各增量数组返回空。
+- 当前图片明确展示了某条候选所在的当前页面/状态变体和目标入口时，必须在 `review.current_page_evidence` 返回结构化软证据；否则返回空数组。每项包含 `caseId`、`requirementId`、`branch`、`pageTitle`、`parentPath`、`navigationLeaf`、`targetText`、`sameBranch`、`confidence`、`source`。`parentPath` 是从候选/可信页面知识中确认的共同父页面可见文案序列，不含当前叶子；`navigationLeaf` 是当前设计稿对应、执行时应点击的具体页面/状态文案；`targetText` 是当前帧真实看到的目标入口。只有能确认候选、共同父路径和当前 Frame 属于同一需求分支时才设 `sameBranch=true`，不得输出坐标或用猜测补字段。
 - 输出目标是小于 2048 tokens 的 JSON 增量，不得复制 `base_payload`。
 
 输入：
