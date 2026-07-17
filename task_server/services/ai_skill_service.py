@@ -4126,7 +4126,19 @@ def _bounded_landing_tail(case, target_terms):
         if step.startswith(("等待", "观察", "检查", "验证", "校验", "断言")):
             observations.append(re.sub(r"^(?:等待|观察|检查|验证|校验|断言)", "检查", step))
             continue
-        if step.startswith(("确认是否", "确认无", "确认未", "确认已", "确认页面")):
+        confirmation = step[2:].strip() if step.startswith("确认") else ""
+        confirmation_is_observation = bool(
+            confirmation
+            and any(term in confirmation for term in (
+                "可见", "显示", "出现", "存在", "加载", "完成", "已", "无", "未", "没有",
+                "页面", "列表", "弹窗", "跳转", "离开", "区域", "元素", "状态", "结果", "正确",
+            ))
+            and not any(term in step for term in (
+                "确认打印", "确认支付", "确认上传", "确认提交", "确认删除", "确认下载",
+                "确认保存", "确认发送", "确认下单", "确认选择", "确认授权", "确认登录",
+            ))
+        )
+        if confirmation_is_observation:
             observations.append("检查" + step[2:])
             continue
         return None

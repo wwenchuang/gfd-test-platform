@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-17 真实回归：AI 有界落地页中的“确认状态”不能被误判为动作
+
+用户部署 `6afea34` 后，以相同需求和 Figma 发起完整 Agent `agent-1784299036082-dd00ea9d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic 健康；线上 `js/agent-workbench.js` 与本地目标提交文件 SHA-256 完全一致。GPT-4.1 Mini 与千问实时探针均成功；Windows Runner 在线，上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0 (357)` ready。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 张图按 4 批全部送入创建时选择的 GPT，约 `10s / 9s / 11s / 10s` 完成，均为 `fallback=false / finishReason=stop / hardGate=false`。第一批识别扫描复印父页面且未把未见目标入口升级成硬门禁；其余批次结构化识别照片打印 `5寸照片 / 一寸照 / 百度网盘`。
+- PLAN 由平台 MM skills 生成 8 个 AI 业务分支，不是启动前预置主链。需求契约仍独立保留文档打印、照片打印、扫描复印各自的 visibility / relation / copy / reachability 共 12 个验收维度。
+- Agent 终态 `FAILED / GENERATE_YAML / 30%`，未创建任何 Runner job、未操作 OPPO，也未向同 Runner 上的华为设备下发。失败不是视觉超时、模型额度、scorer、Runner 或设备问题。
+- 首轮 executable planner 形成文档和照片 4 条 executable。现有一次最终 AI 收敛又使用执行成功的扫描基线 `d623c1e73180bfac`，把扫描展示人工项 `MC-001` 提升为 remaining executable，补齐 visibility / relation / copy；最终只缺 `REQ-003 reachability`，覆盖门禁正确阻断。
+
+根因：
+
+- 上游 AI 已提供扫描可达短链路 `MC-002`：点击百度网盘后观察跳转/授权窗口，确认无崩溃和长时间白屏，再确认文件列表页加载完成。该链路只观察首个稳定状态，不输入账号、不确认授权、不选择文件。
+- `_bounded_landing_tail()` 只接受 `确认是否 / 确认无 / 确认未 / 确认已 / 确认页面`，把同样是只读观察的“确认文件列表页加载完成”当成未知动作，直接丢弃整条 AI 候选。收敛请求因此只有扫描展示证据，没有 reachability 证据；GPT 没有安全候选可选。
+- 这是平台对 AI 产物的语义解析缺口，不应通过降低 12 维覆盖门禁、硬凑用例数量或针对百度网盘写特例处理。
+
+通用修复：
+
+- 有界外部落地页现在识别“确认 + 可见 / 显示 / 出现 / 加载 / 完成 / 页面 / 列表 / 弹窗 / 跳转 / 状态”等声明式观察，并统一规范为只读检查。
+- `确认打印 / 支付 / 上传 / 提交 / 删除 / 下载 / 保存 / 发送 / 下单 / 选择 / 授权 / 登录` 继续判定为真实动作，不能伪装成观察；既有深层账号、授权确认、文件操作、坐标和多目标门禁保持不变。
+- 使用本次线上完整 cases payload、真实扫描成功基线和原 AI 人工候选重放：同一 `MC-001` 合并来源页展示断言与 `MC-002` 有界点击尾链，`acceptanceCheckIds` 从 3 个变为完整 4 个；最终组合 `5 executable / 12 of 12 / missing=0 / gate ok`。它仍属于 remaining，不挤占三条 smoke。
+- 回归测试同时覆盖声明式“确认内容列表页加载完成”可进入 AI 有界证据，以及“确认打印”必须继续被拒绝。没有修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、历史 YAML或设备策略。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 后端 61 项、前端 69 项、Gateway 46 项、实时模型目录与文本/空答/截断/图像/超时降级、Skill fixtures `3/3` 和 Playwright 桌面/移动端视觉回归通过。
+
+待完成：提交、推送并部署本轮修复后，再执行一次完全相同的完整 Agent。继续固定 `win-runner-01 / ecbfd645`，监督 Figma、最终 YAML、首批 smoke、AI 修复、remaining、报告和关键帧到 Agent 终态；不得选择或并发执行第二台设备，离线重放不等于真机成功。
+
 ### 2026-07-17 真实回归：当前设计叶子、动态样例隔离与逐任务恢复
 
 部署 `de69242` 后，以相同需求和 Figma 发起完整 Agent `agent-1784279799286-3163a6e1`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed`，创建时选择 `highway_gpt4_1_mini / gpt-4.1-mini`：

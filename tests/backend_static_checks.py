@@ -534,6 +534,40 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ),
         "A reachability claim in the case title must not substitute for a real click and terminal assertion",
     )
+    confirmation_landing_case = {
+        "case_id": "MC-CONFIRM-LANDING",
+        "requirementRefs": ["REQ-001"],
+        "steps": [
+            "进入订单管理页面",
+            "点击发票入口",
+            "观察页面跳转或授权窗口弹出情况",
+            "确认无App崩溃、无长时间白屏",
+            "确认内容列表页加载完成，底部操作按钮可见",
+        ],
+        "expected_result": (
+            "点击发票入口后页面跳转或弹出授权窗口，无App崩溃、无长时间白屏，"
+            "内容列表页加载完成"
+        ),
+    }
+    confirmation_landing_tail = ai_skill_service._bounded_landing_tail(
+        confirmation_landing_case,
+        ["发票"],
+    )
+    require(
+        confirmation_landing_tail
+        and ai_skill_service._bounded_landing_tail_is_executable(
+            confirmation_landing_tail,
+            confirmation_landing_case["requirementRefs"],
+        ),
+        "Declarative confirmation steps must remain usable as bounded AI observations",
+    )
+    require(
+        ai_skill_service._bounded_landing_tail({
+            "steps": ["点击发票入口", "确认打印"],
+            "expected_result": "打印成功",
+        }, ["发票"]) is None,
+        "Confirmation commands that mutate external state must not become observations",
+    )
     automatic_records = [{"raw": item, "compact": item} for item in generic_display_cases]
     manual_records = [{"raw": item, "compact": item} for item in generic_reachability_manual]
     _focused_auto, focused_manual, _focused_context, focus_meta = ai_skill_service._focus_executable_convergence_candidates(
@@ -697,6 +731,19 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             "batch": "smoke",
         }
     for index, branch in enumerate(("订单管理", "优惠券"), start=1):
+        landing_steps = [
+            f"进入{branch}",
+            "点击发票入口",
+            "等待授权页、登录页或内容列表任一合法页面可见",
+        ]
+        if index == 2:
+            landing_steps = [
+                f"进入{branch}",
+                "点击发票入口",
+                "观察页面跳转后授权页或内容列表页任一合法页面可见",
+                "确认无App崩溃、无长时间白屏",
+                "确认内容列表页加载完成，底部操作按钮可见",
+            ]
         bounded_convergence_payload["manual_cases"].append({
             "case_id": f"TC-R{index:02d}",
             "title": f"{branch}发票入口首个落地页",
@@ -708,11 +755,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 "reason": "首轮 AI 对外部首屏过度保守",
             },
             "requirementRefs": [f"REQ-{index:03d}"],
-            "steps": [
-                f"进入{branch}",
-                "点击发票入口",
-                "等待授权页、登录页或内容列表任一合法页面可见",
-            ],
+            "steps": landing_steps,
             "assertions": [
                 (
                     "授权页、登录页或内容列表任一合法页面可见，且无长时间白屏或崩溃"
