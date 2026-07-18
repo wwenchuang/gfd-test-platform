@@ -2135,6 +2135,73 @@ def case_matches_requirement(case, requirement_point):
     return point in text or (point_core and point_core in text)
 
 
+def _case_intends_requirement_acceptance(case, check):
+    """Identify a source-authored acceptance case whose executable flow was degraded."""
+    case = case if isinstance(case, dict) else {}
+    check = check if isinstance(check, dict) else {}
+    requirement_id = str(check.get("requirementId") or check.get("requirement_id") or "").strip()
+    case_requirement_ids = set(_acceptance_requirement_ids([
+        case.get("coverage"),
+        case.get("requirement_point"),
+        case.get("requirementPoint"),
+        case.get("requirementRefs"),
+        case.get("requirement_refs"),
+    ]))
+    if requirement_id and case_requirement_ids and requirement_id not in case_requirement_ids:
+        return False
+    plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    intent_items = normalize_text_list([
+        case.get("title"),
+        case.get("scenario"),
+        case.get("goal"),
+        case.get("business_path"),
+        case.get("businessPath"),
+        case.get("expected_result"),
+        case.get("expectedResult"),
+        case.get("tags"),
+        plan.get("originalFlow"),
+    ])
+    if not intent_items:
+        return False
+    compact_items = [_compact_branch_text(item) for item in intent_items]
+    compact_intent = "\n".join(compact_items)
+    branch_key = _compact_branch_text(check.get("branch"))
+    if branch_key and branch_key not in compact_intent:
+        return False
+    targets = [_compact_branch_text(item) for item in _acceptance_target_terms(check.get("text"))]
+    target_items = [
+        item for item in compact_items
+        if not targets or any(target and target in item for target in targets)
+    ]
+    if targets and not target_items:
+        return False
+    kind = str(
+        check.get("kind") or classify_requirement_acceptance_check(check.get("text"))
+    ).strip().lower()
+    if kind == "reachability":
+        has_target_action = any(any(term in item for term in (
+            "点击", "点按", "轻触", "打开", "选择", "进入",
+        )) for item in target_items)
+        has_transition_intent = any(term in compact_intent for term in (
+            "可达", "跳转", "唤起", "落地", "授权页", "登录页", "列表页",
+            "文件列表", "选择页", "目标页面", "链路", "无白屏", "无崩溃",
+        ))
+        return has_target_action and has_transition_intent
+    if kind == "relation":
+        return any(any(term in item for term in (
+            "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序",
+        )) for item in target_items)
+    if kind == "copy":
+        return any(any(term in item for term in (
+            "文案", "文字", "文本", "命名", "名称", "完整", "截断", "清晰", "显示为",
+        )) for item in target_items)
+    if kind == "visibility":
+        return any(any(term in item for term in (
+            "可见", "展示", "显示", "存在", "出现", "看见",
+        )) for item in target_items)
+    return bool(target_items)
+
+
 def build_skill_coverage_matrix(analysis, scenarios, cases, manual_cases):
     """构建技能覆盖矩阵。"""
     analysis = analysis if isinstance(analysis, dict) else {}
@@ -4668,7 +4735,7 @@ def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch
         ), None)
         if first_target_check_index is None:
             if (
-                len(concrete_flow) > 7
+                len(concrete_flow) > 8
                 or _source_navigation_has_alternative_destinations(concrete_flow)
                 or not _case_has_branch_execution_evidence({"steps": concrete_flow}, branch)
             ):
@@ -4681,7 +4748,7 @@ def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch
         ]
         reordered.insert(first_target_check_index, leaf_step)
         if (
-            len(reordered) > 7
+            len(reordered) > 8
             or _source_navigation_has_alternative_destinations(reordered)
             or not _case_has_branch_execution_evidence({"steps": reordered}, branch)
         ):
@@ -4722,11 +4789,54 @@ def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch
         if historical_leaf_key and historical_leaf_key in compact_step:
             continue
         stable_parent_waits.append(step)
-    adapted = flow[:parent_step_index + 1] + stable_parent_waits + [f"点击「{leaf}」"]
+    historical_leaf_is_target = bool(
+        historical_leaf_key
+        and target_key
+        and _navigation_target_keys_match(historical_leaf_key, target_key)
+    )
+    source_has_target_action = bool(target_key and any(
+        _navigation_target_keys_match(key, target_key) for _index, key in actions
+    ))
+    tail_start = (
+        next_action_step_index
+        if historical_leaf_is_target
+        else min(next_action_step_index + 1, len(flow))
+    )
+    historical_leaf_label = ""
+    if next_action_step_index < len(flow) and not historical_leaf_is_target:
+        historical_leaf_step = str(flow[next_action_step_index] or "").strip()
+        historical_leaf_label = next((
+            label.strip()
+            for label in re.findall(r"[「『“\"'‘]([^」』”\"'’]+)[」』”\"'’]", historical_leaf_step)
+            if _navigation_target_keys_match(
+                _navigation_action_target_key(f"点击「{label.strip()}」"),
+                historical_leaf_key,
+            )
+        ), "")
+    preserved_tail = []
+    for raw_step in flow[tail_start:]:
+        step = str(raw_step or "").strip()
+        compact_step = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", step).lower()
+        if not source_has_target_action and target_key and target_key not in compact_step:
+            continue
+        if historical_leaf_label and historical_leaf_label in step:
+            step = step.replace(historical_leaf_label, leaf)
+        preserved_tail.append(step)
+    adapted = (
+        flow[:parent_step_index + 1]
+        + stable_parent_waits
+        + [f"点击「{leaf}」"]
+        + preserved_tail
+    )
+    adapted_has_target_action = bool(target_key and any(
+        _navigation_target_keys_match(_navigation_action_target_key(step), target_key)
+        for step in adapted
+    ))
     if (
         parent_step_index >= len(adapted)
         or len(adapted) < 2
-        or len(adapted) > 7
+        or len(adapted) > 8
+        or (source_has_target_action and not adapted_has_target_action)
         or _source_navigation_has_alternative_destinations(adapted)
         or not _case_has_branch_execution_evidence({"steps": adapted}, branch)
     ):
@@ -5642,16 +5752,38 @@ def _focus_executable_convergence_candidates(
             "outsideFocusCandidateIds": [],
         }
 
-    preserved_executable_ids = {
+    executable_ids = {
         str(item or "").strip()
         for item in (audit.get("executableCaseIds") or [])
         if str(item or "").strip()
     }
+    missing_checks = [
+        item for item in (audit.get("missingAcceptanceChecks") or [])
+        if isinstance(item, dict)
+    ]
+    repairable_executable_ids = set()
+    for missing_check in missing_checks:
+        matching_records = [
+            record for record in automatic_records
+            if str(record["compact"].get("case_id") or "").strip() in executable_ids
+            and _case_intends_requirement_acceptance(record["raw"], missing_check)
+            and not case_covers_requirement_acceptance(record["raw"], missing_check)
+        ]
+        matching_records.sort(key=lambda record: (
+            len(normalize_text_list(record["compact"].get("steps"))),
+            str(record["compact"].get("case_id") or "").strip(),
+        ))
+        if matching_records:
+            repairable_executable_ids.add(str(
+                matching_records[0]["compact"].get("case_id") or ""
+            ).strip())
+    preserved_executable_ids = executable_ids.difference(repairable_executable_ids)
     focus_ids = {
         str(item or "").strip()
         for item in (audit.get("unresolvedAutomaticCaseIds") or [])
         if str(item or "").strip()
     }
+    focus_ids.update(repairable_executable_ids)
     missing_points = normalize_text_list(audit.get("missingRequirementPoints"))
     for missing_check in audit.get("missingAcceptanceChecks") or []:
         if not isinstance(missing_check, dict):
@@ -5747,6 +5879,7 @@ def _focus_executable_convergence_candidates(
         "focusedManualCount": len(manual),
         "focusedCandidateIds": focused_ids,
         "preservedExecutableCandidateIds": sorted(preserved_executable_ids),
+        "repairableExecutableCandidateIds": sorted(repairable_executable_ids),
         "outsideFocusCandidateIds": [item for item in full_ids if item not in set(focused_ids)],
         "missingRequirementPoints": missing_points[:12],
         "targetExecutableCount": target_count,
@@ -6404,6 +6537,16 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         for item in (plan.get("focusedCandidateIds") or [])
         if str(item or "").strip()
     }
+    convergence_focus = (
+        plan.get("convergenceFocus")
+        if isinstance(plan.get("convergenceFocus"), dict)
+        else {}
+    )
+    repairable_executable_ids = {
+        str(item or "").strip()
+        for item in (convergence_focus.get("repairableExecutableCandidateIds") or [])
+        if str(item or "").strip() in focused_candidate_ids
+    }
     output_cases = []
     manual_cases = []
     candidate_records = []
@@ -6462,7 +6605,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             case.get("executionLevel") or case.get("execution_level") or record.get("containerLevel") or ""
         ).strip().lower()
         outside_focus = bool(convergence_pass and focused_candidate_ids and case_id not in focused_candidate_ids)
-        if convergence_pass and current_level == "executable":
+        if (
+            convergence_pass
+            and current_level == "executable"
+            and case_id not in repairable_executable_ids
+        ):
             level = "executable"
             item = _existing_executable_plan_item(case, case_id, title)
             preserved_executable_count += 1
@@ -6503,7 +6650,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             ):
                 unclassified_focused_automatic_ids.add(case_id)
 
-        if convergence_pass and current_level == "executable" and level != "executable":
+        if (
+            convergence_pass
+            and current_level == "executable"
+            and case_id not in repairable_executable_ids
+            and level != "executable"
+        ):
             level = "executable"
             item = _existing_executable_plan_item(case, case_id, title)
             item["batch"] = "remaining" if smoke_used >= smoke_limit else item.get("batch")
@@ -6988,6 +7140,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "ambiguous_navigation_guard_count": ambiguous_navigation_guard_count,
         "navigation_path_guard_count": navigation_path_guard_count,
         "preserved_executable_count": preserved_executable_count,
+        "repairable_executable_count": len(repairable_executable_ids),
         "outside_focus_preserved_count": outside_focus_preserved_count,
         "bounded_convergence_override_count": bounded_convergence_override_count,
         "bounded_convergence_ai_path_count": bounded_convergence_ai_path_count,

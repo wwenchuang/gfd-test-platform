@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-18 真实回归：视觉 Frame 替换不得截断目标动作，名义 executable 的验收缺口仍由 AI 收敛
+
+用户部署 `6b244b1` 后，以完全相同需求和 Figma 发起唯一 Agent `agent-1784336356080-c0199926`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；服务 uptime 证明已完成本轮重启。Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0 (357)` ready。Agent 在生成阶段终止，没有创建 Windows Runner job，也没有向华为设备下发任务。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`。4 个单图批次全部真实送入 `qwen3.6-plus`，分别约 `31s / 22s / 25s / 18s` 完成；`sentToAiForJudgement=true / attempted=4 / done=4 / status=completed / hardGate=false`。
+- AI PLAN 生成 8 个业务分支，前三条分别为文档打印、照片打印、扫描复印，另含三个可达性分支及人工异常/兼容性候选。路由仍为 `new_requirement_source / generate_draft`。
+- Agent 终态 `FAILED / GENERATE_YAML / 30%`，没有进入 Runner。初始 executable 为 `TC-001..TC-005`，覆盖 `9/12`；最终 qwen 收敛增加扫描可达 `TC-006` 和扫描关系 `MC-001` 后达到 `11/12`，唯一缺口为 `REQ-002-CHECK-04` 照片打印百度网盘可达性。数量目标已达到，不是 5 条门槛或 scorer 问题。
+
+深层根因：
+
+- 上游 AI 原始 `TC-005` 明确是照片打印百度网盘可达性用例，包含 `照片打印 -> 6寸照片 -> 点击百度网盘 -> 等待百度相关页面`；视觉 AI 又正确把当前需求 Frame 映射到 `照片打印 / 5寸照片 / 百度网盘`。
+- `_adapt_trusted_navigation_to_visual_evidence()` 在把历史 6 寸叶子替换为当前 5 寸叶子时，只保留成功基线父路径并追加 `点击5寸照片`，错误丢弃了旧叶子后的 `点击百度网盘` 和落地页稳定等待。用例标题、场景和断言仍写“可达”，因此被标成名义 `executable`，但 portfolio audit 正确判定它没有实际 target action。
+- `6b244b1` 为保护绿色结果，将所有当前 level 为 executable 的候选都排除出最终收敛并在应用阶段冻结。该策略没有区分“已真实覆盖验收维度”和“只被标成 executable 但正是缺口责任用例”，导致 AI 只能补扫描，不能修回 `TC-005`。
+- 门禁行为正确：最终仍缺 `1/12` 时阻断 YAML 转换和 Runner 下发，没有把假可执行结果发送到手机。
+
+通用修复：
+
+- 当前视觉叶子替换现在只替换历史页面状态。若原路径在叶子后包含需求目标点击，则完整保留该目标动作及其后的有界稳定终态；若历史尾部没有当前目标动作，只保留与当前目标直接相关的观察，不重新带入旧基线动态文件名或样例数据。
+- 视觉适配最多保留 8 个紧凑步骤，与 executable planner / YAML 转换上限一致；替换前存在的目标动作若替换后消失，适配直接拒绝，不能静默截断。
+- 最终 convergence 根据原用例 `title / scenario / goal / business_path / tags / originalFlow` 识别“声明负责缺失验收维度、但实际执行证据未覆盖”的名义 executable。每个缺失验收维度最多选择一个最短责任用例重新交给现有 AI；普通展示兄弟用例和其他已覆盖 executable 继续冻结。
+- 应用阶段只允许平台标记的 `repairableExecutableCandidateIds` 被 AI 重写或降级；模型不能自行扩大该集合。原有 rewrite / demotion 保护继续覆盖真正通过审计的 executable，并新增 `repairable_executable_count` 供报告审计。
+- 没有新增模型轮次或执行模式，没有降低覆盖、static、scorer、dry-run 或 Runner 门禁，也没有修改 Figma parser、`router.py`、Runner、Sonic、scorer、设备策略或历史 YAML。
+
+线上失败产物离线重放：
+
+- 直接读取线上保存的 `agent-agent-1784336356080-c0199926` cases payload。新 focus 只返回 `TC-005`，其余 6 条 executable 保持冻结；视觉证据选择 `5寸照片`，没有漂移到一寸照或历史 6 寸。
+- 修复后的真实路径为 `首页稳定 -> 照片打印 icon -> 照片打印 -> 5寸照片 -> 等待导入区 -> 点击百度网盘 -> 等待落地页首个稳定页面且无白屏/崩溃`。
+- 同一 payload 的 portfolio audit 从唯一缺 `REQ-002-CHECK-04` 恢复为 `12/12 / missing=0 / ok=true`；`preserved_executable_count=6 / repairable_executable_count=1`。
+- 回归测试同时验证：历史动态文件名不会随视觉尾部复活；已通过展示用例不会因缺失 reachability 被误选；模型试图重写或降级非责任 executable 时仍被阻断。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态目录及文本/空答/截断/图像/超时降级、Skill fixtures `3/3` 和 Playwright 桌面/移动视觉回归全部通过。
+
+待完成：提交、推送并部署本轮修复；部署后再次使用完全相同输入发起唯一 Agent，持续监督最终 YAML、固定 OPPO 上最多 3 条串行 Smoke、remaining、真实失败帧驱动的有界 AI 修复及最终报告到终态。任何阶段不得向第二台设备下发。
+
 ### 2026-07-18 真实回归：最终 AI 收敛只处理缺口，已通过用例与已接纳视觉状态保持不可变
 
 用户部署 `924762d` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784333460207-2717c372`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

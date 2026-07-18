@@ -1294,6 +1294,42 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ) is True,
         "A source-authored concrete design state must outrank a higher-confidence sibling Frame and replace ambiguous navigation with one visible target",
     )
+    photo_reachability_flow, photo_reachability_changed = (
+        ai_skill_service._adapt_trusted_navigation_to_visual_evidence(
+            [
+                "等待 App 首页稳定显示",
+                "点击「照片打印」入口",
+                "等待照片打印页面加载完成",
+                "点击「6寸照片」",
+                "等待导入区域加载完成",
+                "点击「百度网盘」入口",
+                "等待百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+            ],
+            selected_photo_variant,
+            "照片打印",
+        )
+    )
+    require(
+        photo_reachability_changed is True
+        and "点击「5寸照片」" in photo_reachability_flow
+        and "6寸照片" not in " ".join(photo_reachability_flow)
+        and "点击「百度网盘」入口" in photo_reachability_flow
+        and photo_reachability_flow[-1] == "等待百度网盘落地页首个稳定页面可见，无白屏或崩溃"
+        and ai_skill_service.case_covers_requirement_acceptance(
+            {
+                "steps": photo_reachability_flow,
+                "assertions": ["百度网盘落地页首个稳定页面可见，无白屏或崩溃"],
+                "requirementRefs": ["REQ-042"],
+            },
+            {
+                "requirementId": "REQ-042",
+                "branch": "照片打印",
+                "kind": "reachability",
+                "text": "点击百度网盘入口并校验目标页面稳定可达",
+            },
+        ),
+        "Replacing a historical visual leaf must preserve the target click and bounded landing terminal",
+    )
     unresolved_only_evidence = ai_skill_service._bounded_convergence_evidence(
         visual_leaf_payload,
         visual_leaf_records,
@@ -3275,6 +3311,164 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         == convergence_payload["cases"][0]["assertions"]
         and explicit_rewrite.get("review", {}).get("executable_yaml_plan", {}).get("convergence_rewrite_blocked_count") == 1,
         "Final convergence may classify gap candidates but must not rewrite an already-approved executable path or assertion",
+    )
+    degraded_photo_requirement = (
+        "REQ-042 照片打印：点击百度网盘入口并校验目标页面稳定可达"
+    )
+    degraded_photo_check = {
+        "id": "REQ-042-CHECK-04",
+        "requirementId": "REQ-042",
+        "branch": "照片打印",
+        "kind": "reachability",
+        "text": "点击百度网盘入口并校验目标页面稳定可达",
+    }
+    degraded_photo_payload = {
+        "analysis": {
+            "requirement_points": [degraded_photo_requirement],
+            "requirement_acceptance_checks": [degraded_photo_check],
+        },
+        "cases": [{
+            "case_id": "TC-PHOTO-DISPLAY",
+            "title": "照片打印百度网盘入口可见性及位置校验",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": [degraded_photo_requirement],
+            "steps": [
+                "等待 App 首页稳定显示",
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「百度网盘」入口可见",
+            ],
+            "assertions": ["「百度网盘」入口可见且文案正确"],
+            "ai_case_plan": {
+                "baselineId": "base-photo",
+                "baselineGrounded": True,
+                "precondition": "App 首页",
+                "flow": [
+                    "等待 App 首页稳定显示",
+                    "点击「照片打印」入口",
+                    "点击「5寸照片」",
+                    "等待「百度网盘」入口可见",
+                ],
+                "assertionTarget": "「百度网盘」入口可见且文案正确",
+            },
+        }, {
+            "case_id": "TC-PHOTO-LANDING-DEGRADED",
+            "title": "照片打印页-点击百度网盘入口可达性校验",
+            "scenario": "照片打印页-点击百度网盘入口-文件列表跳转",
+            "goal": "验证点击照片打印页的百度网盘入口后目标页面稳定可达",
+            "business_path": "照片打印页 -> 点击百度网盘 -> 校验文件选择页",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": [degraded_photo_requirement],
+            "steps": [
+                "等待 App 首页稳定显示",
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+            ],
+            "assertions": ["百度网盘落地页首个稳定页面可见，无白屏或崩溃"],
+            "ai_case_plan": {
+                "baselineId": "base-photo",
+                "baselineGrounded": True,
+                "precondition": "App 首页",
+                "flow": [
+                    "等待 App 首页稳定显示",
+                    "点击「照片打印」入口",
+                    "点击「5寸照片」",
+                ],
+                "assertionTarget": "百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+            },
+        }],
+        "manual_cases": [],
+    }
+    degraded_photo_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        degraded_photo_payload,
+        {"min_automation_cases": 0},
+    )
+    degraded_photo_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(
+            item,
+            index,
+            origin_level="automatic",
+        ),
+    } for index, item in enumerate(degraded_photo_payload["cases"])]
+    degraded_focus_auto, _degraded_focus_manual, _degraded_context, degraded_focus = (
+        ai_skill_service._focus_executable_convergence_candidates(
+            degraded_photo_payload,
+            degraded_photo_records,
+            [],
+            {"pass": "coverage_convergence", "portfolioAudit": degraded_photo_audit},
+            selected_baselines=[],
+        )
+    )
+    require(
+        degraded_photo_audit.get("missingAcceptanceCheckCount") == 1
+        and [item.get("case_id") for item in degraded_focus_auto]
+        == ["TC-PHOTO-LANDING-DEGRADED"]
+        and degraded_focus.get("preservedExecutableCandidateIds") == ["TC-PHOTO-DISPLAY"]
+        and degraded_focus.get("repairableExecutableCandidateIds")
+        == ["TC-PHOTO-LANDING-DEGRADED"],
+        "A nominal executable that declares a missing acceptance intent must remain repairable while approved sibling paths stay frozen",
+    )
+    repaired_photo_plan = {
+        "authoritative": True,
+        "cases": [{
+            "caseId": "TC-PHOTO-LANDING-DEGRADED",
+            "baselineId": "base-photo",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": [
+                "等待 App 首页稳定显示",
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「百度网盘」入口可见",
+                "点击「百度网盘」入口",
+                "等待百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+            ],
+            "assertionTarget": "百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+            "requirementRefs": [degraded_photo_requirement],
+            "batch": "remaining",
+        }],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+        "allowedBaselineIds": ["base-photo"],
+        "verifiedBaselineIds": ["base-photo"],
+        "requirementPoints": [degraded_photo_requirement],
+        "planningContext": {
+            "pass": "coverage_convergence",
+            "portfolioAudit": degraded_photo_audit,
+        },
+        "focusedCandidateIds": degraded_focus.get("focusedCandidateIds") or [],
+        "convergenceFocus": degraded_focus,
+        "candidateEligibilityById": {},
+        "scopePlan": {"smokeCount": 1},
+    }
+    repaired_photo_payload = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        degraded_photo_payload,
+        repaired_photo_plan,
+    )
+    repaired_photo_by_id = {
+        item.get("case_id"): item for item in repaired_photo_payload.get("cases") or []
+    }
+    repaired_photo_review = (
+        repaired_photo_payload.get("review", {}).get("executable_yaml_plan", {})
+    )
+    require(
+        repaired_photo_by_id["TC-PHOTO-DISPLAY"].get("steps")
+        == degraded_photo_payload["cases"][0]["steps"]
+        and "点击「百度网盘」入口" in repaired_photo_by_id[
+            "TC-PHOTO-LANDING-DEGRADED"
+        ].get("steps", [])
+        and repaired_photo_review.get("preserved_executable_count") == 1
+        and repaired_photo_review.get("repairable_executable_count") == 1
+        and repaired_photo_review.get("convergence_rewrite_blocked_count") == 0
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            repaired_photo_payload,
+            {"min_automation_cases": 0},
+        ).get("ok"),
+        "Final AI convergence must be able to repair a degraded acceptance owner without rewriting a valid executable sibling",
     )
     bounded_variant_requirement = (
         "REQ-042 照片打印：点击百度网盘入口并校验目标页面稳定可达"
