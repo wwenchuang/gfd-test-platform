@@ -1225,6 +1225,75 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "旧版归档" not in " ".join(broad_leaf_adapted),
         "A concrete current Frame title must become the navigation leaf when visual AI returned only its broad parent page as navigationLeaf",
     )
+    photo_variant_case = {
+        "case_id": "TC-PHOTO-VARIANT",
+        "title": "照片打印 5寸照片百度网盘入口",
+        "requirementRefs": ["REQ-042 照片打印百度网盘入口"],
+        "steps": [
+            "点击「照片打印」入口",
+            "若存在尺寸选择，点击「5寸照片」或类似选项进入编辑页",
+            "等待「百度网盘」入口可见",
+        ],
+        "ai_case_plan": {
+            "originalFlow": [
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「百度网盘」入口可见",
+            ],
+        },
+    }
+    photo_variant_payload = {
+        "review": {
+            "current_page_evidence": [{
+                "caseId": "TC-PHOTO-VARIANT",
+                "requirementId": "REQ-042",
+                "branch": "照片打印-5寸照片",
+                "pageTitle": "5寸照片",
+                "parentPath": ["照片打印"],
+                "navigationLeaf": "5寸照片",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.9,
+                "source": "figma_current_frame",
+            }, {
+                "caseId": "TC-PHOTO-VARIANT",
+                "requirementId": "REQ-042",
+                "branch": "照片打印-一寸照",
+                "pageTitle": "一寸照",
+                "parentPath": ["照片打印"],
+                "navigationLeaf": "一寸照",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.95,
+                "source": "figma_current_frame",
+            }],
+        },
+    }
+    selected_photo_variant = ai_skill_service._current_visual_page_evidence_for_case(
+        photo_variant_payload,
+        photo_variant_case,
+        "TC-PHOTO-VARIANT",
+        "照片打印",
+        ["百度网盘"],
+    )
+    concrete_photo_flow, concrete_photo_changed = (
+        ai_skill_service._adapt_trusted_navigation_to_visual_evidence(
+            photo_variant_case["steps"],
+            selected_photo_variant,
+            "照片打印",
+        )
+    )
+    require(
+        selected_photo_variant.get("navigationLeaf") == "5寸照片"
+        and concrete_photo_changed is True
+        and "点击「5寸照片」" in concrete_photo_flow
+        and "一寸照" not in " ".join(concrete_photo_flow)
+        and "或类似" not in " ".join(concrete_photo_flow)
+        and ai_skill_service._source_navigation_has_alternative_destinations(
+            photo_variant_case["steps"]
+        ) is True,
+        "A source-authored concrete design state must outrank a higher-confidence sibling Frame and replace ambiguous navigation with one visible target",
+    )
     unresolved_only_evidence = ai_skill_service._bounded_convergence_evidence(
         visual_leaf_payload,
         visual_leaf_records,
@@ -1974,7 +2043,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     manual_tail_request_by_id = {
         item.get("case_id"): item for item in manual_tail_requests[0].get("cases") or []
     }
-    manual_tail_evidence = manual_tail_request_by_id["TC-S03"].get("convergenceEvidence") or {}
+    manual_tail_evidence = manual_tail_request_by_id["MC-R03"].get("convergenceEvidence") or {}
     manual_tail_missing_check_ids = {
         item.get("id") for item in manual_tail_audit.get("missingAcceptanceChecks") or []
         if item.get("requirementId") == "REQ-003"
@@ -2002,15 +2071,21 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     }
     require(
         manual_tail_by_id["TC-S03"].get("executionLevel") == "executable"
-        and "点击后首个可见页" in str(manual_tail_by_id["TC-S03"].get("title") or "")
-        and manual_tail_by_id["TC-S03"].get("ai_case_plan", {}).get("boundedConvergence", {}).get("tailSourceCaseId") == "MC-R03"
+        and manual_tail_by_id["TC-S03"].get("steps")
+        == manual_tail_source.get("ai_case_plan", {}).get("flow")
+        and not manual_tail_by_id["TC-S03"].get("ai_case_plan", {}).get("boundedConvergence")
         and yaml_service._case_manual_block_reason(manual_tail_by_id["TC-S03"]) == ""
+        and manual_tail_by_id["MC-R03"].get("executionLevel") == "executable"
+        and "点击后首个可见页" in str(manual_tail_by_id["MC-R03"].get("title") or "")
+        and manual_tail_by_id["MC-R03"].get("ai_case_plan", {}).get("boundedConvergence", {}).get("sourceCaseId") == "TC-S03"
+        and manual_tail_by_id["MC-R03"].get("ai_case_plan", {}).get("boundedConvergence", {}).get("tailSourceCaseId") == "MC-R03"
+        and yaml_service._case_manual_block_reason(manual_tail_by_id["MC-R03"]) == ""
         and ai_skill_service.executable_yaml_portfolio_audit(
             manual_tail_applied,
             {"min_automation_cases": 5},
         ).get("ok")
-        and any(item.get("case_id") == "MC-R03" for item in manual_tail_applied.get("manual_cases") or []),
-        "The model-authored manual tail must remain manual while its safe first-screen evidence closes the explicit Runner acceptance contract",
+        and not any(item.get("case_id") == "MC-R03" for item in manual_tail_applied.get("manual_cases") or []),
+        "A safe model-authored landing candidate must own the missing acceptance check while the approved source-page executable stays immutable",
     )
     old_run_ai_skill = ai_skill_service.run_ai_skill
     try:
@@ -3102,6 +3177,45 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and focused_plan.get("trace", {}).get("request_context_chars") < 20000,
         "Convergence trace must expose the compact request size and exact focused candidate IDs",
     )
+    convergence_automatic_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(
+            item,
+            index,
+            origin_level="automatic",
+        ),
+    } for index, item in enumerate(convergence_payload["cases"])]
+    convergence_manual_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(
+            item,
+            index,
+            origin_level="manual",
+        ),
+    } for index, item in enumerate(convergence_payload["manual_cases"])]
+    original_bounded_convergence_evidence = ai_skill_service._bounded_convergence_evidence
+    try:
+        ai_skill_service._bounded_convergence_evidence = lambda *_args, **_kwargs: {
+            "TC-101": {"eligible": True, "acceptanceCheckIds": ["REQ-001-CHECK-01"]},
+            "TC-102": {"eligible": True, "acceptanceCheckIds": ["REQ-002-CHECK-01"]},
+        }
+        bounded_focus_auto, _bounded_focus_manual, _bounded_context, bounded_focus = (
+            ai_skill_service._focus_executable_convergence_candidates(
+                convergence_payload,
+                convergence_automatic_records,
+                convergence_manual_records,
+                {"pass": "coverage_convergence", "portfolioAudit": convergence_audit},
+                selected_baselines=[],
+            )
+        )
+    finally:
+        ai_skill_service._bounded_convergence_evidence = original_bounded_convergence_evidence
+    require(
+        [item.get("case_id") for item in bounded_focus_auto] == ["TC-102"]
+        and bounded_focus.get("boundedEvidenceCandidateIds") == ["TC-102"]
+        and "TC-101" not in bounded_focus.get("focusedCandidateIds", []),
+        "Bounded evidence must never re-add an already-approved executable to the final AI convergence request",
+    )
     focused_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(convergence_payload, focused_plan)
     focused_by_id = {item.get("case_id"): item for item in focused_applied.get("cases") or []}
     require(
@@ -3135,6 +3249,178 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         explicit_demotion_by_id["TC-101"].get("executionLevel") == "executable"
         and explicit_demotion.get("review", {}).get("executable_yaml_plan", {}).get("convergence_demotion_blocked_count") == 1,
         "Coverage convergence must keep an already-approved executable; Smoke overflow belongs to the remaining batch, not Manual",
+    )
+    explicit_rewrite_plan = json.loads(json.dumps(focused_plan, ensure_ascii=False))
+    explicit_rewrite_plan["cases"].append({
+        "caseId": "TC-101",
+        "baselineId": "base-nav",
+        "baselineGrounded": True,
+        "precondition": "App 首页",
+        "flow": ["等待首页", "点击照片打印", "等待错误分支可见"],
+        "assertionTarget": "错误分支可见",
+        "requirementRefs": ["REQ-001 文档入口可见"],
+        "batch": "remaining",
+    })
+    explicit_rewrite = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        convergence_payload,
+        explicit_rewrite_plan,
+    )
+    explicit_rewrite_by_id = {
+        item.get("case_id"): item for item in explicit_rewrite.get("cases") or []
+    }
+    require(
+        explicit_rewrite_by_id["TC-101"].get("steps")
+        == convergence_payload["cases"][0]["steps"]
+        and explicit_rewrite_by_id["TC-101"].get("assertions")
+        == convergence_payload["cases"][0]["assertions"]
+        and explicit_rewrite.get("review", {}).get("executable_yaml_plan", {}).get("convergence_rewrite_blocked_count") == 1,
+        "Final convergence may classify gap candidates but must not rewrite an already-approved executable path or assertion",
+    )
+    bounded_variant_requirement = (
+        "REQ-042 照片打印：点击百度网盘入口并校验目标页面稳定可达"
+    )
+    bounded_variant_payload = {
+        "analysis": {
+            "requirement_points": [bounded_variant_requirement],
+            "requirement_acceptance_checks": [{
+                "id": "REQ-042-CHECK-04",
+                "requirementId": "REQ-042",
+                "branch": "照片打印",
+                "kind": "reachability",
+                "text": "点击百度网盘入口并校验目标页面稳定可达",
+            }],
+        },
+        "cases": [{
+            "case_id": "TC-PHOTO-LANDING",
+            "title": "照片打印百度网盘入口可达",
+            "executionLevel": "needs_review",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": [bounded_variant_requirement],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "等待 App 首页稳定显示",
+                "点击「照片打印」入口",
+                "点击「百度网盘」入口",
+                "检查百度网盘落地页首个稳定页面可见",
+            ],
+            "assertions": ["百度网盘落地页首个稳定页面可见，无白屏或崩溃"],
+            "repair_hints": "【视觉校准冲突】旧视觉映射采用一寸照，需要人工确认",
+            "ai_case_plan": {
+                "currentVisualLeafEvidence": {
+                    "navigationLeaf": "一寸照",
+                },
+            },
+        }],
+        "manual_cases": [],
+        "review": {
+            "current_page_evidence": [{
+                "caseId": "TC-PHOTO-LANDING",
+                "requirementId": "REQ-042",
+                "branch": "照片打印-5寸照片",
+                "pageTitle": "5寸照片",
+                "parentPath": ["照片打印"],
+                "navigationLeaf": "5寸照片",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.9,
+                "source": "figma_current_frame",
+            }, {
+                "caseId": "TC-PHOTO-LANDING",
+                "requirementId": "REQ-042",
+                "branch": "照片打印-一寸照",
+                "pageTitle": "一寸照",
+                "parentPath": ["照片打印"],
+                "navigationLeaf": "一寸照",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.95,
+                "source": "figma_current_frame",
+            }],
+        },
+    }
+    bounded_variant_flow = [
+        "等待 App 首页稳定显示",
+        "点击「照片打印」入口",
+        "等待照片打印页面加载完成",
+        "点击「5寸照片」",
+        "等待「百度网盘」入口可见",
+        "点击「百度网盘」入口",
+        "检查百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+    ]
+    bounded_variant_evidence = {
+        "eligible": True,
+        "kind": "bounded_landing",
+        "sourceCaseId": "TC-PHOTO-DISPLAY",
+        "tailSourceCaseId": "TC-PHOTO-LANDING",
+        "baselineId": "base-photo-variant",
+        "precondition": "App 首页",
+        "flow": bounded_variant_flow,
+        "assertionTarget": "百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+        "requirementRefs": [bounded_variant_requirement],
+        "acceptanceCheckIds": ["REQ-042-CHECK-04"],
+        "currentLeafAdapted": True,
+        "currentLeafSourceCaseId": "TC-PHOTO-DISPLAY",
+        "currentLeafEvidenceSource": "figma_current_frame",
+        "currentLeafEvidence": bounded_variant_payload["review"]["current_page_evidence"][0],
+    }
+    bounded_variant_plan = {
+        "authoritative": True,
+        "cases": [{
+            "caseId": "TC-PHOTO-LANDING",
+            "baselineId": "base-photo-variant",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": bounded_variant_flow,
+            "assertionTarget": "百度网盘落地页首个稳定页面可见，无白屏或崩溃",
+            "requirementRefs": [bounded_variant_requirement],
+            "batch": "remaining",
+        }],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+        "selectedBaselines": [{
+            "id": "base-photo-variant",
+            "title": "照片打印历史成功路径",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "snippet": (
+                "# baseline.start_page: App 首页\n"
+                "- aiTap: 照片打印\n"
+                "- aiTap: 6寸照片\n"
+                "- aiWaitFor: 百度网盘入口可见"
+            ),
+        }],
+        "allowedBaselineIds": ["base-photo-variant"],
+        "verifiedBaselineIds": ["base-photo-variant"],
+        "requirementPoints": [bounded_variant_requirement],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["TC-PHOTO-LANDING"],
+        "candidateEligibilityById": {
+            "TC-PHOTO-LANDING": bounded_variant_evidence,
+        },
+        "scopePlan": {"smokeCount": 3},
+    }
+    bounded_variant_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        bounded_variant_payload,
+        bounded_variant_plan,
+    )
+    bounded_variant_case = bounded_variant_applied["cases"][0]
+    bounded_variant_steps = " ".join(bounded_variant_case.get("steps") or [])
+    require(
+        bounded_variant_case.get("executionLevel") == "executable"
+        and "点击「5寸照片」" in bounded_variant_steps
+        and "点击「百度网盘」入口" in bounded_variant_steps
+        and "一寸照" not in bounded_variant_steps
+        and "6寸照片" not in bounded_variant_steps,
+        "An AI-selected bounded path must keep its accepted Figma state through application instead of being re-grounded to a sibling Frame or historical baseline leaf",
+    )
+    require(
+        "5寸照片" in str(bounded_variant_case.get("repair_hints") or "")
+        and "一寸照" not in str(bounded_variant_case.get("repair_hints") or "")
+        and bounded_variant_applied.get("review", {}).get("executable_yaml_plan", {}).get(
+            "visual_variant_hint_refreshed_count"
+        ) == 1,
+        "Accepted current visual evidence must replace stale sibling-Frame repair metadata before the YAML can become a future baseline",
     )
     manualized_smoke = ai_skill_service.apply_executable_yaml_plan_to_payload(
         {

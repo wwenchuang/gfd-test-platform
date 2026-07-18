@@ -28,6 +28,48 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-18 真实回归：最终 AI 收敛只处理缺口，已通过用例与已接纳视觉状态保持不可变
+
+用户部署 `924762d` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784333460207-2717c372`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `yaml_dry_run=true / midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0 (357)` ready。Runner 同时登记华为设备，但本 Agent 只保存 OPPO 的固定设备参数；本轮在生成阶段终止，没有创建 Runner job，也没有操作第二台设备。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图 / 忽略 0`；4 个视觉批次全部送入 `qwen3.6-plus`，约 `14s / 19s / 18s / 16s` 完成，视觉资料为软参考且没有触发硬门禁。
+- Top3 基线重排从每个业务分支各自 `4` 个合格候选中选择一条真实执行成功基线：文档 `4478142771b41fcd`、照片 `300d829473029a32`、扫描 `d623c1e73180bfac`，三个必需分支均有专属导航证据。
+- Agent 终态 `FAILED / GENERATE_YAML / 30%`。初始组合只有 `TC-001/002/003` 三条 executable，覆盖 `7/12`；缺少照片 reachability 和扫描四个验收维度，`TC-004/005` 仍为非终态，因此覆盖门禁正确阻断，未进入 Runner。
+
+深层根因：
+
+- 最终一次 qwen 收敛调用本身成功，模型把扫描 visibility / relation / copy / reachability 全部补齐，并选择照片 reachability 候选；但它同时重写了已通过的照片展示 `TC-002`，丢失 `REQ-002-CHECK-02` 同级关系。平台的单调门禁只能整批拒绝该组合，于是正确新增的扫描结果也被一并回滚。这是收敛状态合并错误，不是模型没有产出。
+- 收敛聚焦先排除了 executable，随后有界证据构造又把它们重新加入请求；安全人工落地尾链也被嫁接回已通过来源用例，使模型仍有机会改写绿色结果。
+- 同一 `REQ-002 / TC-002` 有两个 Figma 当前页状态：`5寸照片 confidence=0.90` 与 `一寸照 confidence=0.95`。旧排序只看置信度，忽略源用例 `originalFlow` 已明确写出 5 寸；应用阶段还会在 AI 已选择有界路径后重新选一次视觉状态并重新拼接历史基线，导致 5 寸证据再次漂移到一寸照。
+- 原始步骤中的 `若存在尺寸选择，点击「5寸照片」或类似选项` 不是单一可执行目标；即使后续选中了正确 Frame，旧适配也不会把该条件句收敛成确定的可见文字动作。
+
+通用修复：
+
+- 最终 coverage convergence 现在只接收未解决候选。当前 executable 从模型请求中排除，并在应用阶段冻结其既有路径、断言和需求映射；模型即使返回改写或降级也只记录 `convergence_rewrite_blocked_count / convergence_demotion_blocked_count`，不会覆盖绿色结果。
+- 有界证据不能把 executable 重新加入 focus。自动缺口候选拥有自己的分支证据；安全人工落地候选通过原有基线、首屏和验收门禁后提升候选自身，而不是改写已通过的来源页展示用例。跨需求候选只保留实际执行分支对应的 requirement refs。
+- 视觉状态排序先匹配源用例 title / scenario / business path / `ai_case_plan.originalFlow` 中明确写出的具体实体，再比较 Frame 置信度。条件式或“或类似”导航在接纳当前 Frame 后收敛为一个精确可见文字动作，并移除该叶子与目标入口之间冲突的兄弟状态动作。
+- AI 已选择且通过有界门禁的路径成为应用阶段事实源，不再被第二次历史基线重建或兄弟 Frame 重选覆盖。只有旧视觉叶子与本轮接纳叶子明确不同时，才刷新对应的旧视觉冲突 repair hint，避免错误实体进入未来基线和失败修复上下文。
+- 没有修改 Figma parser、模型轮次、scorer、Runner、Sonic、`router.py`、执行模式、设备策略、历史 YAML 或覆盖门禁。
+
+真实数据重放与验证：
+
+- 使用线上完整 cases payload、4 条结构化 Figma 证据和三条线上成功基线重放，收敛请求从旧的 `TC-001/002/004/005/006 + MC-001` 缩为 `TC-004/005/006 + MC-001`；最终为 `6 executable / 12 of 12 / missing=0 / unresolved=0 / gate ok=true`。
+- 照片展示与可达两条路径均为 `首页稳定 -> 照片打印 -> 5寸照片 -> 百度网盘展示/点击/首屏`；生成的全部 6 个 YAML 不含“一寸照”、6 寸执行动作、模糊“或类似”或坐标。6 条均通过 static、scorer 100，warning 为 0。
+- 扫描路径仍只使用可见文字和已验证同分支基线；是否遇到当前真机权限弹窗必须由部署后的固定 OPPO Smoke 及真实末帧决定，不能用离线重放伪装真机成功。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及文本/空答/截断/图像/超时回退、Skill fixtures `3/3` 和 Playwright 桌面/移动视觉回归全部通过。
+
+待完成：提交、推送并部署本轮修复；部署后发起唯一一条完全相同的 Agent，持续监督 4 个视觉批次、最终 YAML、3 条首批 Smoke、基于真实失败帧的有界 AI 修复、remaining 和最终报告到终态。所有 dry-run、正式任务和修复任务必须继续固定 `win-runner-01 / ecbfd645` 串行执行，不得向华为设备下发。
+
 ### 2026-07-18 真实回归：失败 AI 必须读取 Midscene 真机帧，当前视觉叶子不能截断成功基线父路径
 
 用户部署 `bf879a2` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784328618231-f2042acf`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly`，创建时选择 `qwen3.6-plus`：

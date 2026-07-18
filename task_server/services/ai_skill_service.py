@@ -4458,6 +4458,62 @@ def _normalize_visual_current_page_evidence(items):
     return normalized
 
 
+def _visual_evidence_matches_case_state(item, case):
+    """Prefer a visual variant explicitly named by the source-authored case."""
+    item = item if isinstance(item, dict) else {}
+    case = case if isinstance(case, dict) else {}
+    leaf_key = _navigation_action_target_key(
+        f"点击「{str(item.get('navigationLeaf') or item.get('pageTitle') or '').strip()}」"
+    )
+    if not leaf_key:
+        return False
+    case_plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    authored_flow = case_plan.get("originalFlow") or case.get("steps") or []
+    source_text = "\n".join(normalize_text_list([
+        case.get("title"),
+        case.get("scenario"),
+        case.get("goal"),
+        case.get("business_path"),
+        case.get("businessPath"),
+        authored_flow,
+    ]))
+    source_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", source_text).lower()
+    return bool(source_key and leaf_key in source_key)
+
+
+def _refresh_case_visual_variant_hint(case, evidence):
+    """Remove a stale sibling-Frame hint after a different visual leaf is accepted."""
+    case = case if isinstance(case, dict) else {}
+    evidence = evidence if isinstance(evidence, dict) else {}
+    current_leaf = str(evidence.get("navigationLeaf") or "").strip()
+    previous_evidence = (
+        (case.get("ai_case_plan") or {}).get("currentVisualLeafEvidence")
+        if isinstance(case.get("ai_case_plan"), dict)
+        else {}
+    )
+    previous_leaf = str((previous_evidence or {}).get("navigationLeaf") or "").strip()
+    if not current_leaf or not previous_leaf or _navigation_target_keys_match(
+        _navigation_action_target_key(f"点击「{current_leaf}」"),
+        _navigation_action_target_key(f"点击「{previous_leaf}」"),
+    ):
+        return False
+    hint_keys = ("repair_hints", "repairHints", "repair_hint", "repairHint")
+    hint = next((
+        str(case.get(key) or "").strip()
+        for key in hint_keys
+        if str(case.get(key) or "").strip()
+    ), "")
+    if not hint or "视觉" not in hint or previous_leaf not in hint:
+        return False
+    for key in hint_keys:
+        case.pop(key, None)
+    case["repair_hints"] = (
+        f"当前执行路径已按视觉 AI 映射采用「{current_leaf}」页面状态；"
+        "若真机状态不同，以 Runner 最新执行帧驱动有界修复。"
+    )
+    return True
+
+
 def _current_visual_page_evidence_for_case(normalized, case, case_id, branch, target_terms):
     """Select current-frame evidence only when the AI mapped it to this exact branch."""
     review = (normalized or {}).get("review") if isinstance((normalized or {}).get("review"), dict) else {}
@@ -4515,6 +4571,7 @@ def _current_visual_page_evidence_for_case(normalized, case, case_id, branch, ta
             r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(item.get("branch") or "")
         ).lower()
         return (
+            _visual_evidence_matches_case_state(item, case),
             item.get("leafDerivedFromPageTitle") is not True,
             str(item.get("caseId") or "").strip() == str(case_id or "").strip(),
             bool(branch_key and item_branch_key == branch_key),
@@ -4545,26 +4602,81 @@ def _adapt_trusted_navigation_to_visual_evidence(baseline_flow, evidence, branch
     ]
     if not leaf_key or not actions:
         return flow, False
-    existing_leaf_indexes = [
+    existing_leaf_indexes = {
         index
         for index, key in actions
         if _navigation_target_keys_match(key, leaf_key)
-    ]
+    }
+    for index, step in enumerate(flow):
+        text = str(step or "").strip()
+        if not re.search(r"(?:点击|点按|轻触|进入|打开|选择|切换|前往)", text):
+            continue
+        compact = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", text).lower()
+        quoted_keys = [
+            _navigation_action_target_key(f"点击「{label}」")
+            for label in re.findall(r"[「『“\"'‘]([^」』”\"'’]+)[」』”\"'’]", text)
+        ]
+        if any(_navigation_target_keys_match(key, leaf_key) for key in quoted_keys if key) or leaf_key in compact:
+            existing_leaf_indexes.add(index)
+    existing_leaf_indexes = sorted(existing_leaf_indexes)
     if existing_leaf_indexes:
+        concrete_flow = list(flow)
+        uncertain_markers = (
+            "若存在", "如果存在", "如需点击", "必要时点击",
+            "或类似", "或相似", "或对应", "或相关", "或其他", "或其它",
+        )
+        for index in existing_leaf_indexes:
+            step = str(concrete_flow[index] or "").strip()
+            step_key = _navigation_action_target_key(step)
+            compact = re.sub(r"\s+", "", step)
+            if (
+                not _navigation_target_keys_match(step_key, leaf_key)
+                or any(marker in compact for marker in uncertain_markers)
+                or _source_navigation_has_alternative_destinations([step])
+            ):
+                concrete_flow[index] = f"点击「{leaf}」"
         first_leaf_index = min(existing_leaf_indexes)
+        first_target_action_index = next((
+            index
+            for index, step in enumerate(concrete_flow[first_leaf_index + 1:], start=first_leaf_index + 1)
+            if target_key and _navigation_target_keys_match(_navigation_action_target_key(step), target_key)
+        ), len(concrete_flow))
+        conflicting_leaf_indexes = {
+            index
+            for index, step in enumerate(concrete_flow)
+            if first_leaf_index < index < first_target_action_index
+            and _navigation_action_target_key(step)
+            and not _navigation_target_keys_match(_navigation_action_target_key(step), leaf_key)
+        }
+        if conflicting_leaf_indexes:
+            concrete_flow = [
+                step for index, step in enumerate(concrete_flow)
+                if index not in conflicting_leaf_indexes
+            ]
+            existing_leaf_indexes = [
+                index for index, step in enumerate(concrete_flow)
+                if _navigation_target_keys_match(_navigation_action_target_key(step), leaf_key)
+            ]
+            first_leaf_index = min(existing_leaf_indexes)
         first_target_check_index = next((
             index
-            for index, step in enumerate(flow)
+            for index, step in enumerate(concrete_flow)
             if index < first_leaf_index
             and target_key
             and target_key in re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(step or "")).lower()
             and not _navigation_target_keys_match(_navigation_action_target_key(step), target_key)
         ), None)
         if first_target_check_index is None:
-            return flow, False
-        leaf_step = flow[first_leaf_index]
+            if (
+                len(concrete_flow) > 7
+                or _source_navigation_has_alternative_destinations(concrete_flow)
+                or not _case_has_branch_execution_evidence({"steps": concrete_flow}, branch)
+            ):
+                return flow, False
+            return concrete_flow, concrete_flow != flow
+        leaf_step = concrete_flow[first_leaf_index]
         reordered = [
-            step for index, step in enumerate(flow)
+            step for index, step in enumerate(concrete_flow)
             if index not in set(existing_leaf_indexes)
         ]
         reordered.insert(first_target_check_index, leaf_step)
@@ -4779,6 +4891,15 @@ def _source_navigation_has_alternative_destinations(flow, allow_terminal_wait_al
     )
     for index, step in enumerate(steps):
         text = str(step or "").strip()
+        compact = re.sub(r"\s+", "", text)
+        if (
+            re.search(r"(?:点击|点按|轻触|进入|打开|选择|切换|前往)", text)
+            and any(marker in compact for marker in (
+                "若存在", "如果存在", "如需点击", "必要时点击",
+                "或类似", "或相似", "或对应", "或相关", "或其他", "或其它",
+            ))
+        ):
+            return True
         if (
             text.startswith("等待")
             and allow_terminal_wait_alternatives
@@ -4791,7 +4912,6 @@ def _source_navigation_has_alternative_destinations(flow, allow_terminal_wait_al
             text,
         ):
             continue
-        compact = re.sub(r"\s+", "", text)
         if any(marker in compact for marker in (
             "任一", "任意", "任选", "其中一个", "其中任意一个",
         )):
@@ -5107,7 +5227,14 @@ def _bounded_convergence_evidence(
             reverse=True,
         )
         strongest_alternate = source_alternates[0] if source_alternates else None
-        if source_case and strongest_alternate and _candidate_navigation_specificity(
+        source_visual_evidence = _current_visual_page_evidence_for_case(
+            normalized,
+            source_case or {},
+            str((source_case or {}).get("case_id") or "").strip(),
+            branch,
+            _acceptance_target_terms(check.get("text")),
+        ) if source_case else {}
+        if source_case and not source_visual_evidence and strongest_alternate and _candidate_navigation_specificity(
             (strongest_alternate or {}).get("raw") or {},
             _acceptance_target_terms(check.get("text")),
             branch,
@@ -5318,11 +5445,52 @@ def _bounded_convergence_evidence(
                 raw_case.get("requirementRefs"),
                 raw_case.get("requirement_refs"),
             ]))
-            shared_cross_branch_tail = len(donor_requirement_ids) > 1 and source_record is not None
+            donor_requirement_branches = list(dict.fromkeys(
+                str(item.get("branch") or "").strip()
+                for item in ((normalized.get("analysis") or {}).get("requirement_acceptance_checks") or [])
+                if isinstance(item, dict)
+                and str(item.get("requirementId") or "").strip() in donor_requirement_ids
+                and str(item.get("branch") or "").strip()
+            ))
+            donor_executed_branches = [
+                candidate_branch for candidate_branch in donor_requirement_branches
+                if _case_has_concrete_branch_execution_evidence(
+                    raw_case,
+                    candidate_branch,
+                    donor_requirement_branches,
+                )
+            ]
+            donor_is_branch_specific = bool(
+                len(donor_executed_branches) == 1
+                and _navigation_target_keys_match(
+                    _compact_branch_text(donor_executed_branches[0]),
+                    _compact_branch_text(branch),
+                )
+            )
+            shared_cross_branch_tail = bool(
+                len(donor_requirement_ids) > 1
+                and source_record is not None
+                and not donor_is_branch_specific
+            )
+            source_current_level = str(
+                ((source_record or {}).get("compact") or {}).get("currentLevel")
+                or ((source_record or {}).get("raw") or {}).get("executionLevel")
+                or ((source_record or {}).get("raw") or {}).get("execution_level")
+                or ""
+            ).strip().lower()
+            manual_tail_owns_gap = bool(
+                not donor_is_automatic
+                and source_record is not None
+                and source_current_level == "executable"
+            )
             target_record = (
                 source_record
                 if shared_cross_branch_tail
-                else (donor_record if donor_is_automatic else source_record)
+                else (
+                    donor_record
+                    if donor_is_automatic or manual_tail_owns_gap
+                    else source_record
+                )
             )
             case_id = str(((target_record or {}).get("compact") or {}).get("case_id") or "").strip()
             if not case_id or (not donor_is_automatic and not source_record):
@@ -5335,6 +5503,11 @@ def _bounded_convergence_evidence(
                 )[:8]
                 if requirement_id not in _acceptance_requirement_ids(requirement_refs):
                     continue
+            elif target_record is donor_record:
+                requirement_point = _planner_requirement_point_map(
+                    (normalized.get("analysis") or {}).get("requirement_points") or []
+                ).get(requirement_id)
+                requirement_refs = [requirement_point or requirement_id]
             if not baseline_id or not precondition or len(navigation_flow) < 2:
                 continue
             if (
@@ -5492,7 +5665,7 @@ def _focus_executable_convergence_candidates(
     for point in missing_points:
         for record in automatic_records:
             candidate_id = str(record["compact"].get("case_id") or "").strip()
-            if candidate_id in focus_ids:
+            if candidate_id in focus_ids or candidate_id in preserved_executable_ids:
                 continue
             if case_matches_requirement(record["raw"], point):
                 focus_ids.add(candidate_id)
@@ -5504,6 +5677,12 @@ def _focus_executable_convergence_candidates(
         selected_baselines=selected_baselines,
         manual_records=manual_records,
     )
+    bounded_evidence_by_id = {
+        case_id: evidence
+        for case_id, evidence in bounded_evidence_by_id.items()
+        if case_id not in preserved_executable_ids
+    }
+    focus_ids.difference_update(preserved_executable_ids)
     focus_ids.update(bounded_evidence_by_id)
     focused_automatic = [
         item for item in automatic_records
@@ -6263,8 +6442,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     bounded_convergence_override_count = 0
     bounded_convergence_ai_path_count = 0
     convergence_demotion_blocked_count = 0
+    convergence_rewrite_blocked_count = 0
+    bounded_requirement_scope_count = 0
     redundant_unmentioned_manualized_count = 0
     current_visual_leaf_adapted_count = 0
+    visual_variant_hint_refreshed_count = 0
     trusted_baseline_navigation_adapted_count = 0
     dynamic_data_observation_grounded_count = 0
     dynamic_data_guard_count = 0
@@ -6276,51 +6458,51 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         case_id = record["caseId"]
         title = str(case.get("title") or "").strip()
         classification = classification_by_id.get(case_id) or classification_by_title.get(title)
-        if classification:
-            level, item = classification
-        else:
-            current_level = str(
-                case.get("executionLevel") or case.get("execution_level") or record.get("containerLevel") or ""
-            ).strip().lower()
-            outside_focus = bool(convergence_pass and focused_candidate_ids and case_id not in focused_candidate_ids)
-            if convergence_pass and current_level == "executable":
-                level = "executable"
-                item = _existing_executable_plan_item(case, case_id, title)
-                preserved_executable_count += 1
-                if not outside_focus:
-                    unmentioned_count += 1
-            else:
-                fallback_level = "manual" if current_level == "manual" or origin_level == "manual" else "needs_review"
-                level, item = (fallback_level, {
-                    "caseId": case_id,
-                    "title": title,
-                    "reason": (
-                        "最终收敛未选中该人工候选，保留人工级别"
-                        if outside_focus and fallback_level == "manual"
-                        else (
-                            "AI 可执行规划未覆盖原人工候选，保留人工级别"
-                            if fallback_level == "manual"
-                            else "AI 可执行规划未覆盖该候选，按安全策略进入复核"
-                        )
-                    ),
-                })
-                if outside_focus:
-                    outside_focus_preserved_count += 1
-                else:
-                    unmentioned_count += 1
-                    if origin_level == "manual":
-                        unmentioned_manual_count += 1
-                if (
-                    convergence_pass
-                    and origin_level == "automatic"
-                    and case_id in focused_candidate_ids
-                    and fallback_level != "manual"
-                ):
-                    unclassified_focused_automatic_ids.add(case_id)
-
         current_level = str(
             case.get("executionLevel") or case.get("execution_level") or record.get("containerLevel") or ""
         ).strip().lower()
+        outside_focus = bool(convergence_pass and focused_candidate_ids and case_id not in focused_candidate_ids)
+        if convergence_pass and current_level == "executable":
+            level = "executable"
+            item = _existing_executable_plan_item(case, case_id, title)
+            preserved_executable_count += 1
+            if classification is not None:
+                convergence_rewrite_blocked_count += 1
+                if classification[0] != "executable":
+                    convergence_demotion_blocked_count += 1
+            elif not outside_focus:
+                unmentioned_count += 1
+        elif classification:
+            level, item = classification
+        else:
+            fallback_level = "manual" if current_level == "manual" or origin_level == "manual" else "needs_review"
+            level, item = (fallback_level, {
+                "caseId": case_id,
+                "title": title,
+                "reason": (
+                    "最终收敛未选中该人工候选，保留人工级别"
+                    if outside_focus and fallback_level == "manual"
+                    else (
+                        "AI 可执行规划未覆盖原人工候选，保留人工级别"
+                        if fallback_level == "manual"
+                        else "AI 可执行规划未覆盖该候选，按安全策略进入复核"
+                    )
+                ),
+            })
+            if outside_focus:
+                outside_focus_preserved_count += 1
+            else:
+                unmentioned_count += 1
+                if origin_level == "manual":
+                    unmentioned_manual_count += 1
+            if (
+                convergence_pass
+                and origin_level == "automatic"
+                and case_id in focused_candidate_ids
+                and fallback_level != "manual"
+            ):
+                unclassified_focused_automatic_ids.add(case_id)
+
         if convergence_pass and current_level == "executable" and level != "executable":
             level = "executable"
             item = _existing_executable_plan_item(case, case_id, title)
@@ -6418,11 +6600,34 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         planned_flow = normalize_text_list(item.get("flow"))[:8]
         precondition = str(item.get("precondition") or "").strip()
         assertion_target = str(item.get("assertionTarget") or "").strip()
+        acceptance_checks = (
+            (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
+        )
         requirement_refs, requirement_refs_guarded = _ground_planner_requirement_refs(
             case,
             item,
             plan.get("requirementPoints") or (normalized.get("analysis") or {}).get("requirement_points"),
         )
+        if convergence_pass and isinstance(bounded_evidence, dict) and item.get("boundedConvergence"):
+            bounded_refs = normalize_text_list(bounded_evidence.get("requirementRefs"))[:8]
+            bounded_requirement_ids = set(_acceptance_requirement_ids(bounded_refs))
+            source_requirement_ids = set(_source_case_requirement_ids(case))
+            bounded_check_requirement_ids = {
+                str(check.get("requirementId") or "").strip()
+                for check in acceptance_checks
+                if isinstance(check, dict)
+                and str(check.get("id") or "").strip() in bounded_check_ids
+            }
+            if (
+                bounded_refs
+                and bounded_requirement_ids
+                and bounded_requirement_ids.issubset(source_requirement_ids)
+                and bounded_requirement_ids.issubset(bounded_check_requirement_ids)
+            ):
+                if set(_acceptance_requirement_ids(requirement_refs)) != bounded_requirement_ids:
+                    bounded_requirement_scope_count += 1
+                requirement_refs = bounded_refs
+                requirement_refs_guarded = False
         if requirement_refs_guarded:
             requirement_ref_guard_count += 1
             path_mapping_guard_count += 1
@@ -6430,9 +6635,6 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             baseline_grounded
             and len(planned_flow) >= 2
             and not requirement_refs_guarded
-        )
-        acceptance_checks = (
-            (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
         )
         mapped_requirement_ids = set(_acceptance_requirement_ids(requirement_refs))
         mapped_checks = [
@@ -6454,18 +6656,31 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         visual_leaf_adapted = False
         trusted_baseline_navigation_adapted = False
         if level == "executable" and baseline_grounded and planned_flow and visual_branch:
-            current_visual_evidence = _current_visual_page_evidence_for_case(
-                normalized,
-                case,
-                case_id,
-                visual_branch,
-                visual_target_terms,
+            bounded_visual_evidence = (
+                (bounded_evidence or {}).get("currentLeafEvidence")
+                if item.get("boundedConvergence")
+                else {}
+            )
+            current_visual_evidence = (
+                copy.deepcopy(bounded_visual_evidence)
+                if isinstance(bounded_visual_evidence, dict) and bounded_visual_evidence
+                else _current_visual_page_evidence_for_case(
+                    normalized,
+                    case,
+                    case_id,
+                    visual_branch,
+                    visual_target_terms,
+                )
             )
             selected_baseline = selected_baselines_by_id.get(baseline_id) or {}
-            trusted_navigation = _trusted_baseline_source_navigation_flow(
-                selected_baseline,
-                visual_target_terms,
-                visual_branch,
+            trusted_navigation = (
+                []
+                if item.get("boundedConvergence")
+                else _trusted_baseline_source_navigation_flow(
+                    selected_baseline,
+                    visual_target_terms,
+                    visual_branch,
+                )
             )
             if current_visual_evidence and trusted_navigation:
                 grounded_navigation, trusted_baseline_navigation_adapted = (
@@ -6490,6 +6705,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             )
             if visual_leaf_adapted:
                 current_visual_leaf_adapted_count += 1
+            if current_visual_evidence and _refresh_case_visual_variant_hint(
+                case,
+                current_visual_evidence,
+            ):
+                visual_variant_hint_refreshed_count += 1
         unsupported_assertion_literals = _unsupported_dynamic_ui_literals(assertion_target, normalized)
         planned_flow, data_observation_grounded, unsupported_flow_literals = (
             _ground_planner_terminal_observation(planned_flow, assertion_target, normalized)
@@ -6772,9 +6992,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "bounded_convergence_override_count": bounded_convergence_override_count,
         "bounded_convergence_ai_path_count": bounded_convergence_ai_path_count,
         "convergence_demotion_blocked_count": convergence_demotion_blocked_count,
+        "convergence_rewrite_blocked_count": convergence_rewrite_blocked_count,
+        "bounded_requirement_scope_count": bounded_requirement_scope_count,
         "redundant_unmentioned_manualized_count": redundant_unmentioned_manualized_count,
         "trusted_baseline_navigation_adapted_count": trusted_baseline_navigation_adapted_count,
         "current_visual_leaf_adapted_count": current_visual_leaf_adapted_count,
+        "visual_variant_hint_refreshed_count": visual_variant_hint_refreshed_count,
         "dynamic_data_observation_grounded_count": dynamic_data_observation_grounded_count,
         "dynamic_data_guard_count": dynamic_data_guard_count,
         "focused_candidate_count": len(focused_candidate_ids),
