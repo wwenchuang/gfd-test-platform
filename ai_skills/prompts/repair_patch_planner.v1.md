@@ -36,6 +36,10 @@
 - 为了通过测试而绕开产品问题、环境问题、数据问题。
 - 在 `failure_brief.repair_plan.can_repair_yaml=false` 时输出实质补丁。
 
+输入中的原始需求决定“必须验证什么”。Runner 失败截图、录屏关键帧和成功基线只用于判断
+“怎样到达和怎样稳定定位”，不得用当前产品值覆盖原始精确文案断言。若输入包含
+`candidateValidationIssues` 或 `correctionContext`，必须逐条修正上一候选的精确错误，不能重做业务设计。
+
 ## 框架规则
 
 1. Task 负责保存 YAML、应用补丁和校验语法；你只给补丁计划。
@@ -43,6 +47,8 @@
 3. Midscene 执行的是自然语言 intent；补丁 lines 只能写 flow 内步骤或子字段。
 4. Sonic 基线稳定性优先；修复必须保留 `baseline.goal/start_page/path/expected` 的业务含义。
 5. 页面知识和失败截图只用于校准真实文案；不能因为截图没出现某功能就判定需求不存在。
+6. 补丁动作只允许 `ai/aiAct/aiAction/aiTap/aiHover/aiInput/aiKeyboardPress/aiScroll/aiAssert/aiWaitFor/sleep`；
+   平台会拒绝新增 `launch/terminate/runAdbShell/runWdaRequest/javascript` 及 `locate/xpath/selector`。
 
 ## 补丁格式
 
@@ -60,6 +66,13 @@
 - `lines`: flow 内步骤或子字段，不写外层 `tasks/android/name/flow`
 - `reason`
 
+`anchor` 必须抄写当前 task 中唯一一个完整 flow item 的 `动作: 值`，不能只写“等待”“点击”等泛词。
+`lines` 中每个新动作单独占一个字符串；动作的 `timeout/direction/distance/scrollType/value` 等子字段
+紧跟该动作。不要给子字段加 `-`，平台会统一缩进并再次解析。
+所有定位动作都必须描述当前屏幕真实可见的文字和区域；不要输出 YAML 引号转义技巧，平台会安全序列化标量。
+`remove_step` 只用于删除冗余 `sleep`。不稳定的等待必须用 `replace_step` 换成真实稳定态，
+不得直接删除等待、点击、输入、断言、启动、清理或脚本动作。
+
 ## 修复判断
 
 1. 如果是入口未出现：优先补稳定导航、等待页面标题、处理弹窗。
@@ -70,6 +83,8 @@
 6. 不要模板化套用“模型处理进度/100%”。只有 3D/模型/建模/切片/STL/OBJ/模型导入链路才允许等待模型处理进度。
 7. 报告关键帧若明确显示同级入口行在屏幕边缘被裁切，可以在失败等待前插入官方 `aiScroll`：值必须是使用当前页真实可见文案描述的具体横向区域，并可在同一步下附 `scrollType: "singleAction"`、`direction: "right"`、不超过 400 的 `distance`；一次不足时最多插入两次，之后重新等待目标。禁止坐标、ADB swipe、整页盲滑或把 direction 写进 `aiScroll` 的自然语言值。
 8. `analysis` 和 `changes` 必须与 patches 的真实执行语义一致；声称补齐导航或新增点击时，patch lines 必须真实包含对应的 `aiTap/ai/aiAction/aiAct`。
+9. 如果补丁新增或替换了导航动作，必须从输入 `baselineExamples` 中引用当前业务分支的成功基线 ID，并写入 `usedBaselineIds`；只补等待、断言参数或 `aiScroll` 时可以为空。
+10. 优先利用失败录屏关键帧确认失败点，再参考 Top3 成功基线的已验证父路径；基线中的尺寸、入口或深层叶子只是示例，不能替换需求/Figma 已确认的当前目标值。
 
 ## 输出 JSON
 
@@ -78,6 +93,7 @@
 - `analysis`: string，失败原因和修复判断
 - `changes`: array，人工可读的修改摘要
 - `patches`: array，补丁计划；不能安全修复时为空数组
+- `usedBaselineIds`: array，本次实际用于导航修改的输入基线 ID；没有修改导航时为空数组
 
 输入：
 

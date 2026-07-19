@@ -58,9 +58,12 @@ from task_server.services.yaml_service import (
     baseline_branch_anchor_terms,
     ensure_midscene_platform_root,
     extract_midscene_tasks,
+    find_yaml_task_block,
     loading_wait_timeout_for_context,
+    normalize_full_yaml_structure,
     remove_empty_midscene_platform_roots,
     repair_generated_yaml_executable_gate_issues,
+    replace_yaml_task_block,
     should_ai_rewrite_for_executable_gate,
     slug_for_file,
     strict_visible_value_contract,
@@ -12617,81 +12620,6 @@ def _agent_repair_claims_navigation_change(change_text):
     )
 
 
-def _agent_repair_correction_feedback(candidate_gate, response, yaml_limit=24000):
-    """Build one bounded correction prompt from exact rejected-candidate evidence."""
-    candidate_gate = candidate_gate if isinstance(candidate_gate, dict) else {}
-    response = response if isinstance(response, dict) else {}
-    details = []
-
-    def append_detail(prefix, value):
-        text = str(value or "").strip()
-        if not text:
-            return
-        detail = f"{prefix}{text}"
-        if detail not in details:
-            details.append(detail[:4000])
-
-    for issue in candidate_gate.get("issues") or []:
-        if not isinstance(issue, dict):
-            append_detail("平台门禁：", issue)
-            continue
-        code = str(issue.get("code") or "candidate_gate").strip()
-        append_detail(f"平台门禁 [{code}]：", issue.get("message") or code)
-    append_detail("模型调用错误：", response.get("error"))
-    for label, validation in (
-        ("AI Gateway 校验", candidate_gate.get("aiGatewayValidation")),
-        ("Task Server 校验", candidate_gate.get("yamlValidation")),
-    ):
-        if not isinstance(validation, dict):
-            continue
-        for field in ("errors", "issues"):
-            values = validation.get(field) or []
-            if not isinstance(values, (list, tuple)):
-                values = [values]
-            for issue in values:
-                append_detail(f"{label}：", issue)
-
-    previous_yaml = str(
-        candidate_gate.get("rawFixedYaml")
-        or candidate_gate.get("fixedYaml")
-        or ""
-    ).strip()
-    previous_analysis = str(response.get("analysis") or "").strip()
-    previous_changes = response.get("changes") or []
-    if not isinstance(previous_changes, list):
-        previous_changes = [previous_changes]
-    correction_text = (
-        "\n\n上一次修复候选被平台拒绝。这是本任务唯一一次有界纠错，请根据以下原始证据"
-        "修正候选，不要重新设计业务路径：\n- "
-        + "\n- ".join(details or ["模型未返回可校验的完整 YAML"])
-    )
-    if previous_analysis:
-        correction_text += "\n上一次 analysis：" + previous_analysis[:3000]
-    if previous_changes:
-        correction_text += "\n上一次 changes：" + json.dumps(
-            previous_changes[:20], ensure_ascii=False, separators=(",", ":")
-        )[:3000]
-    if previous_yaml:
-        excerpt = previous_yaml[:max(1000, safe_int(yaml_limit, 24000))]
-        suffix = "\n[候选过长，已截断]" if len(previous_yaml) > len(excerpt) else ""
-        correction_text += (
-            "\n上一次被拒 YAML（只用于纠错，必须返回修正后的完整 YAML）：\n"
-            "--- rejected yaml begin ---\n"
-            + excerpt
-            + suffix
-            + "\n--- rejected yaml end ---"
-        )
-    correction_text += (
-        "\n请逐条消除精确校验错误，并返回完整、可解析、符合 Midscene 契约的 YAML。"
-        "analysis/changes 必须与真实 YAML diff 一致；若没有修改导航，应明确写导航保持不变，"
-        "不要声称新增点击或补齐路径。YAML 标量内引用界面文案时，使用中文引号“”或合法的"
-        "单引号/转义，禁止在双引号标量中嵌入未转义的 ASCII 双引号。"
-        "若使用 aiScroll，aiScroll 本身必须是描述可见滚动区域的非空字符串，"
-        "direction/distance/scrollType 是同一 flow item 的同级字段。"
-    )
-    return details, correction_text
-
-
 def _agent_repair_candidate_gate(
     original_yaml,
     response,
@@ -12758,10 +12686,13 @@ def _agent_repair_candidate_gate(
     )
     ai_validation = response.get("validation") if isinstance(response.get("validation"), dict) else {}
     validation = {}
+    original_executable_score = score_midscene_yaml_executable(original_yaml, generated=True) if original_yaml else {}
+    fixed_executable_score = {}
     gateway_validation_failed = False
     if fixed_yaml:
         validation = validate_midscene_yaml_executability(fixed_yaml)
         validation["validatedBy"] = "task_server"
+        fixed_executable_score = score_midscene_yaml_executable(fixed_yaml, generated=True)
         gateway_validation_failed = bool(
             ai_validation
             and (
@@ -12828,6 +12759,20 @@ def _agent_repair_candidate_gate(
         add_issue("ai_gateway_validation_failed", "AI Gateway 判定修复 YAML 不符合 Midscene 契约")
     elif fixed_yaml and not validation.get("ok"):
         add_issue("yaml_validation_failed", "修复 YAML 未通过 Task Server 可执行校验")
+    elif (
+        fixed_yaml
+        and str(original_executable_score.get("executionLevel") or original_executable_score.get("level") or "") == "executable"
+        and str(fixed_executable_score.get("executionLevel") or fixed_executable_score.get("level") or "") != "executable"
+    ):
+        score_reasons = [
+            str(item).strip()
+            for item in (fixed_executable_score.get("reasons") or [])
+            if str(item or "").strip()
+        ]
+        add_issue(
+            "repair_executable_gate_regression",
+            "修复候选使原 executable YAML 降级：" + "；".join(score_reasons[:3]),
+        )
     elif fixed_yaml and navigation_changed and _agent_repair_navigation_missing_ready_wait(fixed_yaml):
         add_issue(
             "navigation_missing_ready_wait",
@@ -12850,6 +12795,8 @@ def _agent_repair_candidate_gate(
         "assertionContractPreserved": not missing_assertion_contract,
         "aiGatewayValidation": ai_validation,
         "yamlValidation": validation,
+        "originalExecutableScore": original_executable_score,
+        "fixedExecutableScore": fixed_executable_score,
         "issues": issues,
         "ok": not issues,
     }
@@ -13045,6 +12992,316 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
     return call
 
 
+def _agent_repair_task_info(original_yaml, task_name):
+    """Resolve the failed task without allowing a patch to spill into sibling tasks."""
+    target = str(task_name or "").strip()
+    if target:
+        try:
+            return find_yaml_task_block(original_yaml, target)
+        except Exception:
+            pass
+    if pyyaml is None:
+        raise ValueError(f"未找到失败用例：{target or '(empty)'}")
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(original_yaml or "")))
+    except Exception as exc:
+        raise ValueError(f"原始 YAML 无法解析失败用例：{exc}") from exc
+    names = [
+        str(item.get("name") or "").strip()
+        for item in tasks
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    if len(names) != 1:
+        raise ValueError(f"未唯一定位失败用例：{target or '(empty)'}")
+    return find_yaml_task_block(original_yaml, names[0])
+
+
+def _agent_repair_patch_error_gate(code, message, response=None):
+    response = response if isinstance(response, dict) else {}
+    return {
+        "rawFixedYaml": "",
+        "fixedYaml": "",
+        "usedBaselineIds": response.get("usedBaselineIds") or [],
+        "invalidBaselineIds": [],
+        "branchBaselineIds": [],
+        "navigationClaimed": _agent_repair_claims_navigation_change(
+            " ".join(
+                _agent_plan_text_list(response.get("analysis"), limit=20)
+                + _agent_plan_text_list(response.get("changes"), limit=20)
+            )
+        ),
+        "navigationChanged": False,
+        "originalAssertionContract": [],
+        "fixedAssertionContract": [],
+        "missingAssertionContract": [],
+        "assertionContractPreserved": False,
+        "aiGatewayValidation": {},
+        "yamlValidation": {},
+        "originalExecutableScore": {},
+        "fixedExecutableScore": {},
+        "issues": [{"code": str(code or "repair_patch_failed"), "message": str(message or code or "补丁失败")}],
+        "ok": False,
+    }
+
+
+def _agent_repair_patch_skill_candidate(
+    run,
+    target_job,
+    original_yaml,
+    task_name,
+    module,
+    file_name,
+    evidence,
+    failed_jobs,
+    report_keyframes,
+    report_keyframe_names,
+    baseline_examples,
+    source_evidence,
+    assertion_contract,
+    ai_timeout,
+):
+    """Ask the selected model for a local patch, apply it, then run the existing repair gate."""
+    from task_server.services import ai_skill_service, repair_service
+
+    try:
+        task_info = _agent_repair_task_info(original_yaml, task_name)
+    except Exception as exc:
+        response = {"error": str(exc)[:500], "repairPatchSkill": "repair_patch_planner.v1"}
+        return {
+            "response": response,
+            "candidateGate": _agent_repair_patch_error_gate("repair_task_not_found", str(exc), response),
+            "requestCount": 0,
+            "correctionAttempted": False,
+            "correctionIssues": [],
+            "attemptErrors": [{
+                "attempt": 0,
+                "error": str(exc)[:500],
+                "errorType": "task_resolution_error",
+                "httpStatus": 0,
+            }],
+            "patchPlan": {},
+            "appliedPatches": [],
+        }
+
+    business_context = repair_service.task_business_context(task_info.get("block") or "", "")
+    failure_reason = str(
+        target_job.get("failureReason")
+        or target_job.get("error")
+        or ""
+    ).strip()
+    suggestion = str(
+        target_job.get("suggestedAction")
+        or target_job.get("suggestion")
+        or ((target_job.get("failureReview") or {}).get("suggested_action") if isinstance(target_job.get("failureReview"), dict) else "")
+        or ""
+    ).strip()
+    base_payload = {
+        "module": module,
+        "file": file_name,
+        "task_name": task_info.get("name") or task_name,
+        "target": run.get("target") or "",
+        "requirement": _agent_plan_requirement_text(run),
+        "business_context": business_context,
+        "failure_brief": {
+            "failure_type": str(target_job.get("failureKind") or target_job.get("failureType") or "SCRIPT_ISSUE"),
+            "signals": [item for item in [failure_reason, target_job.get("error"), target_job.get("summaryText")] if str(item or "").strip()][:8],
+            "repair_plan": {
+                "priority": "targeted_yaml_repair",
+                "can_repair_yaml": True,
+                "focus": [item for item in [suggestion, failure_reason] if item][:4],
+                "avoid": [
+                    "不得改写原始精确文案断言",
+                    "不得新增坐标、ADB swipe、XPath 或 selector",
+                    "不得把当前业务分支替换为基线中的深层叶子",
+                ],
+            },
+        },
+        "failure_analysis": evidence,
+        "task_block": task_info.get("block") or "",
+        "report_keyframes": report_keyframe_names,
+        "baselineExamples": baseline_examples,
+        "sourceEvidence": source_evidence,
+        "exactVisibleValueAssertions": assertion_contract,
+        "allFailedJobs": failed_jobs[:30],
+        "repairPolicy": {
+            "maxPatches": 2,
+            "maxActionsPerPatch": 4,
+            "visibleTextOnly": True,
+            "preserveOriginalBusinessGoal": True,
+            "preserveExactVisibleValueAssertions": True,
+            "requireBaselineCitationForNavigationChange": True,
+            "preferEarlierRuntimeTargetRegion": True,
+        },
+        "executionConstraint": {
+            "runnerId": run.get("runnerId") or "",
+            "deviceId": run.get("deviceId") or "",
+            "deviceStrategy": run.get("deviceStrategy") or "",
+            "allowOtherDevices": not bool(
+                run.get("deviceId")
+                and str(run.get("deviceStrategy") or "").lower() == "fixed"
+            ),
+        },
+        "framework": {
+            "task": "应用局部补丁并执行静态、语义、断言与 Runner 门禁",
+            "ai": "结合失败关键帧、原需求和成功基线规划最小补丁",
+            "midscene": "执行自然语言 UI intent，禁止坐标定位",
+            "sonic": "只把真实成功基线作为路径参考",
+        },
+    }
+    model_config = _agent_model_config(run)
+    patch_timeout = max(
+        60,
+        min(
+            safe_int(ai_timeout, 120),
+            safe_int(os.getenv("MIDSCENE_AGENT_REPAIR_PATCH_TIMEOUT_SECONDS"), 90),
+        ),
+    )
+    response = {}
+    candidate_gate = None
+    attempt_errors = []
+    correction_issues = []
+    patch_plan = {}
+    applied_patches = []
+    request_count = 0
+
+    for attempt in range(2):
+        attempt_payload = copy.deepcopy(base_payload)
+        attempt_images = report_keyframes if attempt == 0 else report_keyframes[-2:]
+        if attempt > 0:
+            attempt_payload["allFailedJobs"] = [{
+                key: target_job.get(key)
+                for key in (
+                    "jobId", "taskName", "module", "file", "failureType",
+                    "failureReason", "error", "summaryText", "stderrTail", "stdoutTail",
+                )
+                if target_job.get(key) not in (None, "", [], {})
+            }]
+            attempt_payload["report_keyframes"] = report_keyframe_names[-2:]
+            attempt_payload["candidateValidationIssues"] = candidate_gate.get("issues") if isinstance(candidate_gate, dict) else []
+            attempt_payload["correctionContext"] = {
+                "attempt": 1,
+                "instruction": "这是唯一一次有界纠错；只修正补丁结构、唯一锚点或平台门禁错误，不重做业务路径。",
+                "previousCandidate": {
+                    "analysis": patch_plan.get("analysis") or response.get("analysis") or "",
+                    "changes": patch_plan.get("changes") or response.get("changes") or [],
+                    "patches": patch_plan.get("patches") or [],
+                    "usedBaselineIds": patch_plan.get("usedBaselineIds") or response.get("usedBaselineIds") or [],
+                },
+                "previousError": response.get("error") or "",
+            }
+
+        runtime_trace = {}
+        skill_returned = False
+        request_count += 1
+        try:
+            parsed = ai_skill_service.run_ai_skill(
+                "repair_patch_planner",
+                attempt_payload,
+                image_assets=attempt_images,
+                timeout=patch_timeout if attempt == 0 else min(patch_timeout, 60),
+                temperature=0.1,
+                model_config=model_config,
+                max_tokens=2048,
+                runtime_trace=runtime_trace,
+                repair_invalid_json=True,
+                output_defaults={
+                    "analysis": "",
+                    "changes": [],
+                    "patches": [],
+                    "usedBaselineIds": [],
+                },
+            )
+            skill_returned = True
+            patch_plan = parsed if isinstance(parsed, dict) else {}
+            used_baseline_ids = list(dict.fromkeys(
+                str(item).strip()
+                for item in (patch_plan.get("usedBaselineIds") or [])
+                if str(item or "").strip()
+            ))
+            response = {
+                "analysis": str(patch_plan.get("analysis") or ""),
+                "changes": patch_plan.get("changes") if isinstance(patch_plan.get("changes"), list) else [],
+                "patches": patch_plan.get("patches") if isinstance(patch_plan.get("patches"), list) else [],
+                "usedBaselineIds": used_baseline_ids,
+                "repairPatchSkill": "repair_patch_planner.v1",
+                "providerId": runtime_trace.get("providerId") or "",
+                "model": runtime_trace.get("model") or "",
+                "fallbackUsed": bool(runtime_trace.get("fallbackUsed")),
+                "fallbackIndex": safe_int(runtime_trace.get("fallbackIndex"), 0),
+                "fallbackReason": str(runtime_trace.get("fallbackReason") or "")[:500],
+                "finishReason": str(runtime_trace.get("finishReason") or ""),
+                "usage": runtime_trace.get("usage") if isinstance(runtime_trace.get("usage"), dict) else {},
+            }
+            patches = response.get("patches") or []
+            if not patches:
+                raise ValueError("AI 补丁规划未返回可应用 patches")
+            patched_block, applied_patches = repair_service.apply_task_repair_patches(
+                task_info.get("block") or "",
+                patches,
+            )
+            fixed_yaml = normalize_full_yaml_structure(
+                replace_yaml_task_block(original_yaml, task_info, patched_block)
+            )
+            response["fixedYaml"] = fixed_yaml
+            candidate_gate = _agent_repair_candidate_gate(
+                original_yaml,
+                response,
+                baseline_examples,
+                platform=run.get("platform", "android"),
+                source_evidence=source_evidence,
+            )
+            candidate_gate["patchPlan"] = copy.deepcopy(patch_plan)
+            candidate_gate["appliedPatches"] = copy.deepcopy(applied_patches)
+        except Exception as exc:
+            error_text = str(exc)[:500] or exc.__class__.__name__
+            response = {
+                **response,
+                "error": error_text,
+                "repairPatchSkill": "repair_patch_planner.v1",
+                "providerId": runtime_trace.get("providerId") or response.get("providerId") or "",
+                "model": runtime_trace.get("model") or response.get("model") or "",
+                "fallbackUsed": bool(runtime_trace.get("fallbackUsed") or response.get("fallbackUsed")),
+                "fallbackIndex": safe_int(runtime_trace.get("fallbackIndex") or response.get("fallbackIndex"), 0),
+                "fallbackReason": str(runtime_trace.get("fallbackReason") or response.get("fallbackReason") or "")[:500],
+            }
+            lowered = error_text.lower()
+            if not skill_returned:
+                code = "repair_patch_skill_failed"
+                error_type = "timeout" if "timeout" in lowered or "超时" in error_text else "skill_error"
+            elif not (patch_plan.get("patches") or []):
+                code = "ai_no_patches"
+                error_type = "empty_patch_plan"
+            else:
+                code = "repair_patch_application_failed"
+                error_type = "patch_application_error"
+            candidate_gate = _agent_repair_patch_error_gate(code, error_text, response)
+            attempt_errors.append({
+                "attempt": attempt + 1,
+                "error": error_text,
+                "errorType": error_type,
+                "httpStatus": 0,
+            })
+
+        if candidate_gate.get("ok") or attempt > 0:
+            break
+        correction_issues = [
+            f"平台门禁 [{item.get('code') or 'repair_patch_failed'}]：{item.get('message') or item.get('code') or ''}"
+            for item in (candidate_gate.get("issues") or [])
+            if isinstance(item, dict)
+        ]
+
+    return {
+        "response": response,
+        "candidateGate": candidate_gate or _agent_repair_patch_error_gate("repair_patch_failed", "补丁候选为空", response),
+        "requestCount": request_count,
+        "correctionAttempted": request_count > 1,
+        "correctionIssues": correction_issues,
+        "attemptErrors": attempt_errors,
+        "patchPlan": patch_plan,
+        "appliedPatches": applied_patches,
+    }
+
+
 def _tool_generate_repair(run, failed_jobs_override=None):
     """只对 SCRIPT_ISSUE 类型生成可追溯的 YAML 修复草稿。"""
     call = {
@@ -13208,111 +13465,50 @@ def _tool_generate_repair(run, failed_jobs_override=None):
             elif ai_available:
                 ai_attempted_count += 1
                 item_summary["aiAttempted"] = True
-                resp = None
-                request_payload = {
-                    "yaml": original_yaml,
-                    "target": run.get("target", ""),
-                    "requirement": _agent_plan_requirement_text(run),
-                    "taskName": task_name,
-                    "failureAnalysis": evidence,
-                    "issues": evidence,
-                    "allFailedJobs": failed_jobs[:30],
-                    "imageAssets": report_keyframes,
-                    "reportKeyframes": report_keyframe_names,
-                    "baselineExamples": baseline_examples,
-                    "sourceEvidence": source_evidence,
-                    "repairPolicy": {
-                        "alignReportFramesWithBaselinePath": True,
-                        "requireBaselineCitationForNavigationChange": True,
-                        "requireProseYamlDiffConsistency": True,
-                        "requireReadyWaitBeforeNewNavigation": True,
-                        "visibleTextOnly": True,
-                        "preserveOriginalBusinessGoal": True,
-                        "preserveExactVisibleValueAssertions": True,
-                        "exactVisibleValueAssertions": assertion_contract,
-                        "preserveSourceBackedNavigationTargets": True,
-                        "baselineConcreteValuesAreExamplesOnly": True,
-                        "preferEarlierRuntimeTargetRegion": True,
-                    },
-                    "evidenceSources": [
-                        "原始需求", "Figma 同帧软证据", "原始 YAML", "Runner 日志",
-                        "failureReview", "Midscene 报告关键帧", "可信分支基线",
-                    ],
-                    "executionConstraint": {
-                        "runnerId": run.get("runnerId") or "",
-                        "deviceId": run.get("deviceId") or "",
-                        "deviceStrategy": run.get("deviceStrategy") or "",
-                        "allowOtherDevices": not bool(run.get("deviceId") and str(run.get("deviceStrategy") or "").lower() == "fixed"),
-                    },
-                    **_agent_ai_route_payload(run, has_images=bool(report_keyframes)),
-                }
-                candidate_gate = None
-                ai_attempt_errors = []
-                for repair_attempt in range(2):
-                    try:
-                        ai_request_count += 1
-                        resp = _ai_gateway_post(
-                            "/ai/optimize-yaml",
-                            request_payload,
-                            timeout=ai_timeout if repair_attempt == 0 else min(ai_timeout, 75),
-                            include_error=True,
-                        )
-                    except Exception as e:
-                        resp = {"error": str(e)[:300]}
-                    if isinstance(resp, dict) and resp.get("error"):
-                        ai_attempt_errors.append({
-                            "attempt": repair_attempt + 1,
-                            "error": str(resp.get("error"))[:500],
-                            "errorType": str(resp.get("errorType") or ""),
-                            "httpStatus": safe_int(resp.get("httpStatus"), 0),
-                        })
-                    candidate_gate = _agent_repair_candidate_gate(
-                        original_yaml,
-                        resp,
-                        baseline_examples,
-                        platform=run.get("platform", "android"),
-                        source_evidence=source_evidence,
-                    )
-                    if candidate_gate.get("ok") or repair_attempt > 0:
-                        break
-                    correction_issues, correction_text = _agent_repair_correction_feedback(
-                        candidate_gate,
-                        resp,
-                    )
-                    item_summary["aiCorrectionAttempted"] = True
-                    item_summary["aiCorrectionIssues"] = correction_issues
-                    ai_correction_attempted_count += 1
-                    request_payload = dict(request_payload)
-                    request_payload["failureAnalysis"] = evidence + correction_text
-                    request_payload["issues"] = evidence + correction_text
-                    request_payload["candidateValidationIssues"] = candidate_gate.get("issues") or []
-                    request_payload["repairPolicy"] = {
-                        **request_payload["repairPolicy"],
-                        "boundedCorrectionAttempt": 1,
-                        "requireCompleteYamlResponse": True,
-                    }
-                    request_payload["imageAssets"] = report_keyframes[-2:]
-                    request_payload["reportKeyframes"] = report_keyframe_names[-2:]
-                    request_payload["baselineExamples"] = baseline_examples[:3]
-                    request_payload["allFailedJobs"] = [{
-                        key: target_job.get(key)
-                        for key in (
-                            "jobId", "taskName", "module", "file", "failureType",
-                            "failureReason", "error", "summaryText", "stderrTail", "stdoutTail",
-                        )
-                        if target_job.get(key) not in (None, "", [], {})
-                    }]
-
-                item_summary["aiRequestCount"] = 2 if item_summary.get("aiCorrectionAttempted") else 1
-                candidate_gate = candidate_gate or _agent_repair_candidate_gate(
+                patch_result = _agent_repair_patch_skill_candidate(
+                    run,
+                    target_job,
                     original_yaml,
-                    resp,
+                    task_name,
+                    module,
+                    file_name,
+                    evidence,
+                    failed_jobs,
+                    report_keyframes,
+                    report_keyframe_names,
                     baseline_examples,
-                    platform=run.get("platform", "android"),
-                    source_evidence=source_evidence,
+                    source_evidence,
+                    assertion_contract,
+                    ai_timeout,
                 )
+                resp = patch_result.get("response") or {}
+                candidate_gate = patch_result.get("candidateGate") or _agent_repair_patch_error_gate(
+                    "repair_patch_failed",
+                    "补丁候选为空",
+                    resp,
+                )
+                item_request_count = safe_int(patch_result.get("requestCount"), 0)
+                ai_request_count += item_request_count
+                item_summary["aiRequestCount"] = item_request_count
+                if patch_result.get("correctionAttempted"):
+                    item_summary["aiCorrectionAttempted"] = True
+                    item_summary["aiCorrectionIssues"] = patch_result.get("correctionIssues") or []
+                    ai_correction_attempted_count += 1
+                ai_attempt_errors = patch_result.get("attemptErrors") or []
+                patch_plan = patch_result.get("patchPlan") or {}
+                applied_patches = patch_result.get("appliedPatches") or []
+                item_summary["repairPatchSkill"] = "repair_patch_planner.v1"
+                item_summary["patchPlan"] = patch_plan
+                item_summary["appliedPatches"] = applied_patches
+                draft["repairPatchSkill"] = "repair_patch_planner.v1"
+                draft["patchPlan"] = patch_plan
+                draft["appliedPatches"] = applied_patches
                 fixed_yaml = candidate_gate.get("fixedYaml") or ""
                 model_trace = _agent_ai_response_model_trace(run, resp)
+                if resp.get("finishReason"):
+                    model_trace["finishReason"] = resp.get("finishReason")
+                if isinstance(resp.get("usage"), dict):
+                    model_trace["usage"] = resp.get("usage")
                 item_summary["modelTrace"] = model_trace
                 draft["modelTrace"] = model_trace
                 if ai_attempt_errors:
@@ -13334,6 +13530,23 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 item_summary["navigationChanged"] = bool(candidate_gate.get("navigationChanged"))
                 item_summary["navigationClaimed"] = bool(candidate_gate.get("navigationClaimed"))
                 item_summary["assertionContractPreserved"] = bool(candidate_gate.get("assertionContractPreserved"))
+                for score_key in ("originalExecutableScore", "fixedExecutableScore"):
+                    score_value = candidate_gate.get(score_key)
+                    if not isinstance(score_value, dict) or not score_value:
+                        continue
+                    compact_score = {
+                        "score": safe_int(score_value.get("score"), 0),
+                        "executionLevel": str(
+                            score_value.get("executionLevel") or score_value.get("level") or ""
+                        ),
+                        "reasons": [
+                            str(item).strip()
+                            for item in (score_value.get("reasons") or [])
+                            if str(item or "").strip()
+                        ][:8],
+                    }
+                    item_summary[score_key] = compact_score
+                    draft[score_key] = compact_score
                 if candidate_gate.get("missingAssertionContract"):
                     item_summary["missingAssertionContract"] = candidate_gate.get("missingAssertionContract")
                 if candidate_gate.get("invalidBaselineIds"):
@@ -13351,7 +13564,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     draft["fixedYaml"] = fixed_yaml[:200000]
                     draft["fixed_yaml"] = draft["fixedYaml"]
                     draft["draftYaml"] = draft["fixedYaml"][:5000]
-                    draft["repairSource"] = "ai_gateway"
+                    draft["repairSource"] = "ai_skill_patch"
                     draft["status"] = "WAIT_CONFIRM"
                     item_summary["aiUsed"] = True
                     ai_used_count += 1
@@ -14276,7 +14489,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     "repairFile": target.get("file") or "",
                     "failureReason": target.get("failureReason") or "",
                     "repairChanges": repair_meta.get("changes") or [],
-                    "repairSource": repair_meta.get("repairSource") or "ai_gateway",
+                    "repairSource": repair_meta.get("repairSource") or "repair_draft",
                     "selectedBaselines": repair_meta.get("selectedBaselines") or [],
                     "runnerId": source_job.get("target_runner_id") or source_job.get("runner_id") or run.get("runnerId") or "",
                     "deviceId": source_job.get("device_id") or run.get("deviceId") or "",

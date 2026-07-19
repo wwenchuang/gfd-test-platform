@@ -40,7 +40,7 @@ from task_server.config import (
     safe_bool,
     safe_int,
 )
-from task_server.schemas import HIGH_RISK_KEYWORDS, REPAIRABLE_FAILURE_TYPES
+from task_server.schemas import FLOW_CHILD_KEYS, HIGH_RISK_KEYWORDS, REPAIRABLE_FAILURE_TYPES
 from task_server.storage import (
     clean_filename,
     clean_id,
@@ -76,6 +76,7 @@ from task_server.services.yaml_service import (
     normalize_yaml_from_model,
     normalize_yaml_task_block_from_model,
     normalize_yaml_runtime_guards,
+    normalize_task_block_indent,
     normalize_task_block_runtime_guards,
     normalize_full_yaml_structure,
     replace_yaml_task_block,
@@ -87,6 +88,7 @@ from task_server.services.yaml_service import (
     validate_midscene_yaml,
     yaml_diff_summary,
     yaml_task_names,
+    yaml_text,
 )
 
 
@@ -171,6 +173,21 @@ SUPPORTED_FLOW_ITEMS = {
     "runAdbShell", "runWdaRequest"
 }
 
+REPAIR_PATCH_ACTIONS = {
+    "ai", "aiAct", "aiAction", "aiTap", "aiHover", "aiInput",
+    "aiKeyboardPress", "aiScroll", "aiAssert", "aiWaitFor", "sleep",
+}
+REPAIR_PATCH_CHILD_KEYS = {
+    "timeout", "errorMessage", "value", "direction", "scrollType", "distance",
+    "deepThink", "cacheable", "autoDismissKeyboard", "mode",
+}
+REPAIR_PATCH_BOOLEAN_FIELDS = {"deepThink", "cacheable", "autoDismissKeyboard"}
+REPAIR_PATCH_SCROLL_FIELDS = {"direction", "scrollType", "distance"}
+REPAIR_PATCH_HIDDEN_LOCATOR_MARKERS = (
+    "坐标", "coordinate", "xpath", "selector", "resource-id", "resourceid",
+    "content-desc", "accessibility id", "adb ", "input swipe", "css=",
+)
+
 
 def dedupe_keep_order(items):
     seen = set()
@@ -240,8 +257,197 @@ def repair_by_failure_type(yaml_text, ctx):
     return {"content": yaml_text, "changes": [], "analysis": "未命中特定失败类型修复规则"}
 
 
+def _normalize_repair_patch_scalar(key, raw_value):
+    raw = str(raw_value or "").strip()
+    value = strip_yaml_quotes(raw)
+    if not value:
+        raise ValueError(f"修复补丁字段 {key} 的值不能为空")
+    if key in ("sleep", "timeout", "distance"):
+        if not re.fullmatch(r"\d+", value):
+            raise ValueError(f"修复补丁字段 {key} 必须是正整数")
+        number = int(value)
+        if number <= 0:
+            raise ValueError(f"修复补丁字段 {key} 必须大于 0")
+        if key == "sleep" and number > 10000:
+            raise ValueError("修复补丁 sleep 最多允许 10000ms，应优先等待真实 UI 状态")
+        if key == "timeout" and number > 900000:
+            raise ValueError("修复补丁 timeout 最多允许 900000ms")
+        if key == "distance" and number > 400:
+            raise ValueError("修复补丁 aiScroll.distance 最多允许 400")
+        return str(number)
+    if key in REPAIR_PATCH_BOOLEAN_FIELDS:
+        lowered = value.lower()
+        if lowered not in ("true", "false"):
+            raise ValueError(f"修复补丁字段 {key} 必须是 true 或 false")
+        return lowered
+    if key == "direction" and value not in ("down", "up", "right", "left"):
+        raise ValueError("修复补丁 aiScroll.direction 必须是 down/up/right/left")
+    if key == "scrollType" and value != "singleAction":
+        raise ValueError("修复补丁 aiScroll.scrollType 仅支持 singleAction")
+    if key in REPAIR_PATCH_ACTIONS and key != "sleep":
+        lowered = value.casefold()
+        coordinate_pair = re.search(r"[\[(]\s*\d{1,5}\s*[,，]\s*\d{1,5}\s*[\])]", value)
+        if coordinate_pair or any(marker in lowered for marker in REPAIR_PATCH_HIDDEN_LOCATOR_MARKERS):
+            raise ValueError(f"修复补丁动作 {key} 禁止使用坐标、ADB 或隐藏定位器")
+    return yaml_text(value)
+
+
+def _normalize_repair_patch_lines(lines, flow_indent):
+    if not isinstance(lines, list):
+        raise ValueError("修复补丁 lines 必须是数组")
+    normalized = []
+    action_count = 0
+    current_action = ""
+    for raw in lines:
+        if not isinstance(raw, str):
+            raise ValueError("修复补丁 lines 只能包含字符串")
+        for part in raw.splitlines():
+            stripped = part.strip()
+            if not stripped:
+                continue
+            item = stripped[2:].strip() if stripped.startswith("- ") else stripped
+            match = re.match(r"^([A-Za-z][\w]*)\s*:\s*(.*)$", item)
+            if not match:
+                raise ValueError(f"修复补丁行不是合法 YAML 字段：{stripped}")
+            key = match.group(1)
+            value = match.group(2)
+            if key in REPAIR_PATCH_ACTIONS:
+                normalized.append(
+                    flow_indent + "- " + key + ": " + _normalize_repair_patch_scalar(key, value)
+                )
+                action_count += 1
+                current_action = key
+            elif key in REPAIR_PATCH_CHILD_KEYS:
+                if action_count <= 0:
+                    raise ValueError(f"修复补丁子字段 {key} 前缺少 flow 动作")
+                if key in REPAIR_PATCH_SCROLL_FIELDS and current_action != "aiScroll":
+                    raise ValueError(f"修复补丁字段 {key} 只能属于 aiScroll")
+                if key in ("value", "autoDismissKeyboard", "mode") and current_action != "aiInput":
+                    raise ValueError(f"修复补丁字段 {key} 只能属于 aiInput")
+                normalized.append(
+                    flow_indent + "  " + key + ": " + _normalize_repair_patch_scalar(key, value)
+                )
+            elif key in SUPPORTED_FLOW_ITEMS or key in FLOW_CHILD_KEYS:
+                raise ValueError(f"修复补丁禁止使用动作或字段：{key}")
+            else:
+                raise ValueError(f"修复补丁包含不支持的字段：{key}")
+    if not normalized or action_count <= 0:
+        raise ValueError("修复补丁 lines 必须至少包含一个 Midscene flow 动作")
+    if action_count > 4:
+        raise ValueError("单条修复补丁最多允许 4 个局部 flow 动作")
+    return normalized
+
+
+def _repair_patch_anchor_parts(value):
+    plain = str(value or "").strip()
+    if plain.startswith("- "):
+        plain = plain[2:].strip()
+    match = re.match(r"^([A-Za-z][\w]*)\s*:\s*(.*)$", plain)
+    if not match:
+        return "", ""
+    return match.group(1), re.sub(r"\s+", " ", strip_yaml_quotes(match.group(2))).strip()
+
+
+def _repair_patch_anchor_matches(line, anchor):
+    line_key, line_value = _repair_patch_anchor_parts(line)
+    anchor_key, anchor_value = _repair_patch_anchor_parts(anchor)
+    if not anchor_key or not anchor_value:
+        return False
+    return anchor_key == line_key and anchor_value == line_value
+
+
+def _repair_flow_item_end(lines, index):
+    end = index + 1
+    current_indent = len(lines[index]) - len(lines[index].lstrip())
+    while end < len(lines):
+        line = lines[end]
+        match = re.match(r"^(\s*)-\s+[A-Za-z][\w]*\s*:", line)
+        if match and len(match.group(1)) == current_indent:
+            break
+        end += 1
+    return end
+
+
 def apply_task_repair_patches(task_block, patches):
-    return task_block, []
+    """Apply at most two AI-planned local flow patches to one task block."""
+    if not isinstance(patches, list) or not patches:
+        raise ValueError("模型未返回可应用的修复补丁")
+    if len(patches) > 2:
+        raise ValueError("修复补丁最多允许 2 条")
+
+    lines = normalize_task_block_indent(task_block, "").splitlines()
+    flow_index = next(
+        (index for index, line in enumerate(lines) if re.match(r"^\s*flow\s*:\s*$", line)),
+        None,
+    )
+    if flow_index is None:
+        raise ValueError("当前 task 缺少 flow，无法应用补丁")
+    flow_indent = re.match(r"^(\s*)flow\s*:", lines[flow_index]).group(1) + "  "
+    flow_item_pattern = re.compile(r"^" + re.escape(flow_indent) + r"-\s+[A-Za-z][\w]*\s*:")
+    applied = []
+
+    for patch in patches:
+        if not isinstance(patch, dict):
+            raise ValueError("修复补丁必须是对象")
+        op = str(patch.get("op") or "").strip()
+        if op not in ("insert_after", "insert_before", "replace_step", "remove_step"):
+            raise ValueError(f"修复补丁 op 不受支持：{op or '(empty)'}")
+        anchor = str(patch.get("anchor") or "").strip()
+        if not anchor:
+            raise ValueError("修复补丁缺少原 YAML 锚点")
+
+        candidates = [
+            index
+            for index in range(flow_index + 1, len(lines))
+            if flow_item_pattern.match(lines[index])
+            and _repair_patch_anchor_matches(lines[index], anchor)
+        ]
+        if not candidates:
+            raise ValueError(f"修复补丁锚点未找到：{anchor}")
+        if len(candidates) > 1:
+            raise ValueError(f"修复补丁锚点不唯一：{anchor}")
+        target = candidates[0]
+        end = _repair_flow_item_end(lines, target)
+        anchor_action, _anchor_value = _repair_patch_anchor_parts(lines[target])
+        if op == "replace_step" and anchor_action not in REPAIR_PATCH_ACTIONS:
+            raise ValueError(f"修复补丁禁止替换平台或脚本动作：{anchor_action}")
+        if op == "remove_step" and anchor_action != "sleep":
+            raise ValueError(f"修复补丁只允许移除冗余 sleep，禁止删除：{anchor_action}")
+        patch_lines = []
+        if op != "remove_step":
+            patch_lines = _normalize_repair_patch_lines(patch.get("lines"), flow_indent)
+
+        if op in ("insert_after", "insert_before"):
+            existing_window = "\n".join(lines[max(flow_index, target - 2):min(len(lines), end + len(patch_lines) + 2)])
+            if patch_lines and all(line.strip() in existing_window for line in patch_lines):
+                raise ValueError(f"修复补丁与锚点附近现有步骤重复：{anchor}")
+        if op == "insert_after":
+            lines = lines[:end] + patch_lines + lines[end:]
+        elif op == "insert_before":
+            lines = lines[:target] + patch_lines + lines[target:]
+        elif op == "replace_step":
+            lines = lines[:target] + patch_lines + lines[end:]
+        else:
+            lines = lines[:target] + lines[end:]
+        applied.append({
+            "op": op,
+            "anchor": anchor,
+            "lines": [line.strip() for line in patch_lines],
+            "reason": str(patch.get("reason") or "").strip(),
+        })
+
+    candidate = "\n".join(lines).rstrip()
+    if pyyaml is not None:
+        try:
+            parsed = pyyaml.safe_load(candidate)
+        except Exception as exc:
+            raise ValueError(f"应用补丁后 task YAML 解析失败：{exc}") from exc
+        if not isinstance(parsed, list) or len(parsed) != 1 or not isinstance(parsed[0], dict):
+            raise ValueError("应用补丁后必须仍是唯一一条 task")
+        flow = parsed[0].get("flow")
+        if not isinstance(flow, list) or not flow:
+            raise ValueError("应用补丁后 task.flow 不能为空")
+    return candidate, applied
 
 
 def attach_repair_result_metadata(result, old_yaml, new_yaml, repair_dir="", before_version=None, yaml_check=None, safety_warnings=None, business_check=None):
@@ -640,6 +846,7 @@ __all__ = [
     "REPAIR_DRAFT_STATUSES",
     "RepairApplyError",
     "active_repair_draft_for_job",
+    "apply_task_repair_patches",
     "apply_repair_draft",
     "assess_repair_risk",
     "backup_before_repair",
@@ -874,6 +1081,7 @@ def call_dashscope_repair_yaml_task_patch(module, file, task_name, yaml_text, ta
             "analysis": parsed_obj.get("analysis") or "",
             "changes": parsed_obj.get("changes") or [],
             "patches": patches,
+            "usedBaselineIds": parsed_obj.get("usedBaselineIds") or [],
             "used_knowledge_pages": used_pages,
             "used_execution_screenshots": [item.get("name", "") for item in execution_images],
             "repair_patch_skill": "repair_patch_planner.v1"
@@ -950,6 +1158,7 @@ def call_dashscope_repair_yaml_task_patch(module, file, task_name, yaml_text, ta
         "analysis": parsed_obj.get("analysis") or parsed_obj.get("reason") or "",
         "changes": parsed_obj.get("changes") or [],
         "patches": patches,
+        "usedBaselineIds": parsed_obj.get("usedBaselineIds") or [],
         "used_knowledge_pages": used_pages,
         "used_execution_screenshots": [item.get("name", "") for item in execution_images],
         "repair_patch_skill": "fallback_legacy_repair_prompt",

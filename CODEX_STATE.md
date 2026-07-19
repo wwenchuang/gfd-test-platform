@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 真实回归：失败关键帧与成功基线驱动结构化 AI 修复，不再重写整份 YAML
+
+用户部署 `5dff82c` 后，以相同需求和 Figma 发起完整 Agent `agent-1784475423573-fd7be255`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Runner 在线并上报 `midscene_model_family=qwen3.6`。Runner 虽登记华为和 OPPO 两台设备，本 Agent 的 dry-run、首批及后续计划始终绑定 OPPO，未向华为下发。
+- Figma parser 未修改，仍解析 `4 页 / 4 图`。4 张图按 4 个批次全部送入 qwen3.6-plus，约 `17-20s` 完成，无回退、`hardGate=false`；设计资料继续是完整送 AI 的软参考。
+- AI 规划 `8 flows / 12 scenarios / 7 cases`，最终接受 6 条 executable 并生成 6 个一一对应 YAML，覆盖完整且没有机械凑 5 条。6 条均通过 static/scorer/dry-run，使用真实可见文字且无坐标。
+- 首批在固定 OPPO 串行执行：文档、照片真实成功，扫描失败；报告真实保留 `2 passed / 1 script failed`。文档报告帧可见“本地文档/百度网盘/QQ文档/WPS文档”，扫描失败帧可见“小白扫描王”及“本地导入/相册导入/微信导入”，右侧同级入口被屏幕边缘裁切。remaining 3 条按门禁延后，没有并发抢占同一设备。
+- failure review 确定性归因为 `SCRIPT_ISSUE / scroll_not_effective / confidence=0.93 / can_auto_repair=true`。失败分析和修复规划均使用 qwen；修复请求携带 3 张真实报告关键帧及 Top3 已验证扫描基线 `02b01e0cab690788 / d623c1e73180bfac / 3623ac0b65b5d2ca`。
+
+深层根因：
+
+- Agent 旧修复链路绕过已有 `repair_patch_planner.v1`，直接调用 `/ai/optimize-yaml` 要求模型重写整份 YAML。首个 qwen 候选的业务判断正确，增加了官方横向 `aiScroll`；但 Gateway 旧整 YAML validator 把合法子字段 `direction/distance/scrollType` 当成三个独立动作，错误拒绝候选。唯一一次整 YAML 纠错随后超时，最终草稿为 `REJECTED / ai_no_yaml`。
+- 模块化 `repair_service.apply_task_repair_patches()` 仍是迁移时的空 stub，导致 Agent 无法采用“AI 只规划局部补丁、平台负责应用”的短链路。本地旧回放只验证了最终候选门禁，没有覆盖线上真实的模型输出协议与 Gateway validator 差异，这是此前“本地 OK、线上失败”的直接原因。
+- 该问题不是 Figma、千问业务理解、Runner、Windows 脚本、华为设备、用例数量或 scorer 导致；本轮没有降低任何覆盖和可执行门禁。
+
+通用修复：
+
+- Agent 现在调用创建任务时所选模型的 `repair_patch_planner.v1`，输入原需求、失败任务 block、失败原因、最多 3 张报告/录屏关键帧、Top3 当前分支成功基线、Figma/source evidence、不可变精确文案断言，以及固定 Runner/设备约束。选定模型保持不变，只有 Gateway 因超时、不可用或能力不足时才按既有策略回退。
+- AI 最多返回 2 个局部结构化 patch；Task Server 用唯一完整 `动作: 值` 锚点应用到唯一失败 task，并安全序列化 YAML 标量、正确嵌套 `aiScroll` 子字段。补丁只允许可见文字 AI 动作，确定性拒绝 `runAdbShell/runWdaRequest/javascript/launch/terminate`、XPath/locator、非法方向/距离、歧义或部分锚点；`remove_step` 只能删除冗余 sleep，不能删除等待、点击、断言或生命周期动作。
+- 应用后继续走原有 assertion contract、source/Figma 叶子、导航 diff、当前分支基线引用、起始稳定等待、Task Server 强校验和语义 no-op 门禁；新增 scorer 非回退门禁，原 executable YAML 修复后仍必须是 executable。AI 不能用当前产品值覆盖需求期望，也不能把成功基线的深层叶子复制到当前需求。
+- 首次补丁结构或平台门禁失败时，只给同一模型一次有界纠错：最多 2 张最新关键帧、当前失败任务、上一补丁及精确校验错误；不再重传和重写整份 YAML。首轮默认上限 90s、纠错 60s，减少 token、超时和无关业务漂移。
+- 该流程对应成熟框架共同边界：Playwright healer 重放失败、检查当前 UI、提出补丁并由 guardrail 限制重跑；BrowserStack Appium Self-Heal 使用最近成功上下文生成替代定位、记录修改，并明确不把真实产品或系统故障伪装成可修复脚本问题。
+
+线上真实产物回放：
+
+- 原样读取生产保存的扫描失败 YAML、3 张关键帧名称、3 条基线、失败分类和固定设备配置，完整回放 `_tool_generate_repair()` 与重跑准备。一次结构化补丁后得到 `SUCCESS / WAIT_CONFIRM / repairSource=ai_skill_patch`，请求模型为 qwen3.6-plus、`fallback=false`、`allowOtherDevices=false`。
+- 修复只在“等待扫描复印页面加载完成”后插入一次针对“本地导入、相册导入、微信导入所在横向入口区域”的 `aiScroll singleAction / right / 350`，原百度网盘文案、同级关系、点击和终态断言全部保留。
+- 原 YAML 与修复 YAML 的 scorer 均为 `100 executable`；重跑准备只生成 1 个修复目标，继续绑定 `win-runner-01 / ecbfd645 / fixed`，不会重跑旧失败脚本或选择第二台设备。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/repair_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态 7 模型目录及空答/截断/图像/超时回退、Skill fixtures `3/3`、Playwright 桌面/移动视觉回归全部通过。第一次 `npm test` 仅遇到测试夹具临时端口竞争 `EADDRINUSE`，端口释放后原样重跑整套通过。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、历史 YAML 或设备策略；用户已有 dirty 文件继续保持未暂存。
+- 本轮提交待用户 push / 部署。部署后必须再运行完全相同的完整 Agent，监督固定 OPPO 上首批与 remaining 到真实终态；不能以离线回放代替线上成功。
+
 ### 2026-07-19 真实回归：最终 executable 到 YAML 必须原子保真，独立断言属于点击后终态
 
 用户部署 `ed14bdf` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784473300752-48472e24`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

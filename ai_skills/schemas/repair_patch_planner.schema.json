@@ -1,9 +1,23 @@
 {
   "type": "object",
-  "required": ["analysis", "changes", "patches"],
+  "required": ["analysis", "changes", "patches", "usedBaselineIds"],
   "properties": {
     "analysis": {"type": "string"},
-    "changes": {"type": "array"},
-    "patches": {"type": "array"}
+    "changes": {"type": "array", "items": {"type": "string"}},
+    "patches": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["op", "anchor", "lines", "reason"],
+        "properties": {
+          "op": {"type": "string", "enum": ["insert_after", "insert_before", "replace_step", "remove_step"]},
+          "anchor": {"type": "string"},
+          "lines": {"type": "array", "items": {"type": "string"}},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "usedBaselineIds": {"type": "array", "items": {"type": "string"}}
   }
 }

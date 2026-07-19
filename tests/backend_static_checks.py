@@ -4729,6 +4729,7 @@ def check_agent_failure_review_and_repair_guard():
     from task_server.services import ai_skill_service
     from task_server.services import job_service
     from task_server.services import repair_service
+    from task_server.services import yaml_service
 
     progress_run = {
         "currentStep": "RUN_TASK",
@@ -4909,6 +4910,129 @@ def check_agent_failure_review_and_repair_guard():
         and "禁止坐标或 ADB swipe" in clipped_scan_issue.get("suggested_action", ""),
         "A report keyframe describing a clipped sibling row must allow one visible-text aiScroll repair even when the original YAML omitted scrolling",
     )
+    patch_source = """android:
+  tasks:
+    - name: 横向来源入口检查
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: 来源页面加载完成
+        - aiWaitFor: 企业云盘入口可见
+"""
+    patch_info = yaml_service.find_yaml_task_block(patch_source, "横向来源入口检查")
+    patched_block, applied_patches = repair_service.apply_task_repair_patches(
+        patch_info["block"],
+        [{
+            "op": "insert_after",
+            "anchor": "aiWaitFor: 来源页面加载完成",
+            "lines": [
+                "aiScroll: 本地导入、相册导入、微信导入所在的横向入口区域",
+                "scrollType: singleAction",
+                "direction: right",
+                "distance: 350",
+                "sleep: 500",
+            ],
+            "reason": "失败关键帧显示右侧同级入口被裁切",
+        }],
+    )
+    patched_yaml = yaml_service.normalize_full_yaml_structure(
+        yaml_service.replace_yaml_task_block(patch_source, patch_info, patched_block)
+    )
+    patch_validation = yaml_service.validate_midscene_yaml_executability(patched_yaml)
+    require(
+        patch_validation.get("ok") is True
+        and applied_patches
+        and re.search(r"direction:\s*[\"']?right", patched_yaml)
+        and not any("未知动作：direction" in item for item in patch_validation.get("issues") or []),
+        "Structured repair patches must nest aiScroll child fields under one official action before candidate validation",
+    )
+    ambiguous_patch_source = patch_source.replace(
+        "        - aiWaitFor: 企业云盘入口可见",
+        "        - aiWaitFor: 来源页面加载完成\n        - aiWaitFor: 企业云盘入口可见",
+    )
+    ambiguous_info = yaml_service.find_yaml_task_block(ambiguous_patch_source, "横向来源入口检查")
+    try:
+        repair_service.apply_task_repair_patches(
+            ambiguous_info["block"],
+            [{
+                "op": "insert_after",
+                "anchor": "aiWaitFor: 来源页面加载完成",
+                "lines": ["sleep: 500"],
+                "reason": "歧义锚点测试",
+            }],
+        )
+        ambiguous_rejected = False
+    except ValueError as exc:
+        ambiguous_rejected = "不唯一" in str(exc)
+    require(ambiguous_rejected, "A repair patch with a repeated anchor must be rejected instead of mutating the first matching step")
+    for prohibited_lines in (
+        ["runAdbShell: input swipe 100 100 900 100"],
+        ["aiTap: 企业云盘入口", "xpath: //*[@text='企业云盘']"],
+        ["aiTap: 点击坐标 (120, 300)"],
+    ):
+        try:
+            repair_service.apply_task_repair_patches(
+                patch_info["block"],
+                [{
+                    "op": "insert_after",
+                    "anchor": "aiWaitFor: 来源页面加载完成",
+                    "lines": prohibited_lines,
+                    "reason": "不安全补丁测试",
+                }],
+            )
+            prohibited_rejected = False
+        except ValueError as exc:
+            prohibited_rejected = "禁止" in str(exc)
+        require(prohibited_rejected, "AI repair patches must deterministically reject shell and XPath locator mechanics")
+    try:
+        repair_service.apply_task_repair_patches(
+            patch_info["block"],
+            [{
+                "op": "insert_after",
+                "anchor": "aiWaitFor: 来源页面",
+                "lines": ["aiWaitFor: 企业云盘入口可见"],
+                "reason": "部分锚点测试",
+            }],
+        )
+        partial_anchor_rejected = False
+    except ValueError as exc:
+        partial_anchor_rejected = "未找到" in str(exc)
+    require(partial_anchor_rejected, "A repair patch anchor must match one complete original flow item, not a substring")
+    for protected_anchor in ("launch: com.example.app", "aiWaitFor: 企业云盘入口可见"):
+        protected_op = "replace_step" if protected_anchor.startswith("launch:") else "remove_step"
+        protected_lines = ["aiWaitFor: 来源页面加载完成"] if protected_op == "replace_step" else []
+        try:
+            repair_service.apply_task_repair_patches(
+                patch_info["block"],
+                [{
+                    "op": protected_op,
+                    "anchor": protected_anchor,
+                    "lines": protected_lines,
+                    "reason": "受保护步骤测试",
+                }],
+            )
+            protected_step_rejected = False
+        except ValueError as exc:
+            protected_step_rejected = "禁止" in str(exc)
+        require(
+            protected_step_rejected,
+            "AI repair patches must not replace lifecycle mechanics or remove business observations",
+        )
+    quoted_block, _ = repair_service.apply_task_repair_patches(
+        patch_info["block"],
+        [{
+            "op": "replace_step",
+            "anchor": "aiWaitFor: 企业云盘入口可见",
+            "lines": ['aiWaitFor: 页面文案为"企业云盘"且入口稳定可见'],
+            "reason": "标量安全序列化测试",
+        }],
+    )
+    quoted_yaml = yaml_service.normalize_full_yaml_structure(
+        yaml_service.replace_yaml_task_block(patch_source, patch_info, quoted_block)
+    )
+    require(
+        yaml_service.validate_midscene_yaml_executability(quoted_yaml).get("ok") is True,
+        "Task Server must safely serialize model patch scalars that contain UI-copy quotes",
+    )
     require(
         agent_service._normalize_agent_failed_items([
             {"jobId": "job-a", "stderrTail": "failed to locate element: 照片打印"},
@@ -5024,9 +5148,42 @@ def check_agent_failure_review_and_repair_guard():
     require(not agent_service._agent_repair_has_semantic_change(original, sleep_only), "Agent must reject sleep-only or task-name-only repair YAML")
     require(agent_service._agent_repair_has_semantic_change(original, semantic_fix), "Agent must accept repair YAML that changes an executable action")
 
+    executable_original = """android:
+  tasks:
+    - name: 文档打印入口展示冒烟
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 首页中可见文档打印入口
+        - aiTap: 首页中名称为文档打印的入口
+        - aiWaitFor: 文档打印页面加载完成并可见本地文档入口
+        - aiAssert: 文档打印页面展示百度网盘入口
+"""
+    executable_degraded = executable_original.replace(
+        "        - aiWaitFor: 首页中可见文档打印入口\n",
+        "",
+    ).replace(
+        "        - aiWaitFor: 文档打印页面加载完成并可见本地文档入口\n",
+        "",
+    )
+    executable_regression_gate = agent_service._agent_repair_candidate_gate(
+        executable_original,
+        {"fixedYaml": executable_degraded, "analysis": "删除入口前等待"},
+        [],
+        platform="android",
+    )
+    require(
+        any(
+            item.get("code") == "repair_executable_gate_regression"
+            for item in executable_regression_gate.get("issues") or []
+        )
+        and executable_regression_gate.get("originalExecutableScore", {}).get("executionLevel") == "executable"
+        and executable_regression_gate.get("fixedExecutableScore", {}).get("executionLevel") == "needs_review",
+        "AI repair must not downgrade a YAML that already passed the generated executable scorer",
+    )
+
     old_task_dir = agent_service.TASK_DIR
     old_gateway_available = agent_service._ai_gateway_available
-    old_gateway_post = agent_service._ai_gateway_post
+    old_repair_skill = ai_skill_service.run_ai_skill
     old_log_tool_call = agent_service._log_tool_call
     old_upsert = repair_service.upsert_repair_draft
     try:
@@ -5036,7 +5193,17 @@ def check_agent_failure_review_and_repair_guard():
             module_dir.mkdir()
             (module_dir / "case.yaml").write_text(original, encoding="utf-8")
             agent_service._ai_gateway_available = lambda: True
-            agent_service._ai_gateway_post = lambda *args, **kwargs: {"fixedYaml": sleep_only}
+            ai_skill_service.run_ai_skill = lambda *args, **kwargs: {
+                "analysis": "只增加固定等待",
+                "changes": ["启动后等待 3 秒"],
+                "patches": [{
+                    "op": "insert_after",
+                    "anchor": "launch: com.xbxxhz.box",
+                    "lines": ["sleep: 3000"],
+                    "reason": "等待页面",
+                }],
+                "usedBaselineIds": [],
+            }
             agent_service._log_tool_call = lambda *args, **kwargs: None
             repair_service.upsert_repair_draft = lambda draft: dict(draft)
             run = {
@@ -5066,7 +5233,7 @@ def check_agent_failure_review_and_repair_guard():
     finally:
         agent_service.TASK_DIR = old_task_dir
         agent_service._ai_gateway_available = old_gateway_available
-        agent_service._ai_gateway_post = old_gateway_post
+        ai_skill_service.run_ai_skill = old_repair_skill
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
 
@@ -5231,7 +5398,7 @@ def check_agent_failure_review_and_repair_guard():
 
     old_task_dir = agent_service.TASK_DIR
     old_gateway_available = agent_service._ai_gateway_available
-    old_gateway_post = agent_service._ai_gateway_post
+    old_repair_skill = ai_skill_service.run_ai_skill
     old_log_tool_call = agent_service._log_tool_call
     old_upsert = repair_service.upsert_repair_draft
     old_report_keyframes = agent_service._agent_failure_report_keyframes
@@ -5245,27 +5412,43 @@ def check_agent_failure_review_and_repair_guard():
             (module_dir / "case.yaml").write_text(original, encoding="utf-8")
             agent_service._ai_gateway_available = lambda: True
 
-            def repair_with_bounded_correction(_path, payload, **_kwargs):
-                correction_requests.append(payload)
+            def repair_with_bounded_correction(_skill, payload, **kwargs):
+                correction_requests.append({"payload": payload, "imageCount": len(kwargs.get("image_assets") or [])})
                 if len(correction_requests) == 1:
                     return {
-                        "fixedYaml": malformed_quoted_fix,
-                        "analysis": "已新增点击并补齐父子导航",
-                        "changes": ["新增点击照片打印子页"],
-                        "usedBaselineIds": ["base-photo-path"],
-                        "validation": {
-                            "valid": False,
-                            "errors": ["YAML parse error: unexpected scalar near 文案为\"百度网盘\""],
-                        },
+                        "analysis": "先尝试横向探索，导航保持不变",
+                        "changes": ["增加横向滚动"],
+                        "patches": [{
+                            "op": "insert_before",
+                            "anchor": "aiAssert: 百度网盘入口可见",
+                            "lines": [
+                                "aiScroll: 本地导入、相册导入、微信导入所在的横向入口区域",
+                                "scrollType: singleAction",
+                                "direction: horizontal",
+                                "distance: 350",
+                            ],
+                            "reason": "探索屏外入口",
+                        }],
+                        "usedBaselineIds": [],
                     }
                 return {
-                    "fixedYaml": grounded_navigation_fix,
                     "analysis": "根据照片分支基线真实补齐父子导航",
                     "changes": ["在原入口后新增照片打印和 5 寸照片两个可见文字点击"],
+                    "patches": [{
+                        "op": "insert_before",
+                        "anchor": "aiTap: 文档打印",
+                        "lines": ["aiWaitFor: 首页入口区域稳定显示"],
+                        "reason": "新增导航前等待起始页稳定",
+                    }, {
+                        "op": "insert_after",
+                        "anchor": "aiTap: 文档打印",
+                        "lines": ["aiTap: 照片打印", "aiTap: 5寸照片"],
+                        "reason": "按当前分支成功基线补齐父子路径",
+                    }],
                     "usedBaselineIds": ["base-photo-path"],
                 }
 
-            agent_service._ai_gateway_post = repair_with_bounded_correction
+            ai_skill_service.run_ai_skill = repair_with_bounded_correction
             agent_service._log_tool_call = lambda *args, **kwargs: None
             agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: [
                 {"name": f"frame-{index}", "data": "image"}
@@ -5301,13 +5484,12 @@ def check_agent_failure_review_and_repair_guard():
             len(correction_requests) == 2
             and correction_item.get("aiCorrectionAttempted") is True
             and correction_item.get("aiRequestCount") == 2
-            and "YAML parse error: unexpected scalar" in correction_requests[1].get("failureAnalysis", "")
-            and "YAML 解析失败" in correction_requests[1].get("failureAnalysis", "")
-            and '文案为"百度网盘"' in correction_requests[1].get("failureAnalysis", "")
-            and "target: 本地导入、相册导入、微信导入" in correction_requests[1].get("failureAnalysis", "")
-            and len(correction_requests[1].get("imageAssets") or []) == 2
-            and len(correction_requests[1].get("allFailedJobs") or []) == 1,
-            "A malformed first candidate must receive exactly one compact correction with exact Gateway, parser, and rejected-YAML evidence",
+            and correction_requests[1]["payload"].get("candidateValidationIssues", [{}])[0].get("code") == "repair_patch_application_failed"
+            and correction_requests[1]["payload"].get("correctionContext", {}).get("previousCandidate", {}).get("patches")
+            and "horizontal" in json.dumps(correction_requests[1]["payload"]["correctionContext"], ensure_ascii=False)
+            and correction_requests[1]["imageCount"] == 2
+            and len(correction_requests[1]["payload"].get("allFailedJobs") or []) == 1,
+            "An invalid first patch must receive exactly one compact correction with the rejected patch and exact platform issues",
         )
         require(
             correction_call.get("status") == "SUCCESS"
@@ -5319,7 +5501,7 @@ def check_agent_failure_review_and_repair_guard():
     finally:
         agent_service.TASK_DIR = old_task_dir
         agent_service._ai_gateway_available = old_gateway_available
-        agent_service._ai_gateway_post = old_gateway_post
+        ai_skill_service.run_ai_skill = old_repair_skill
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
         agent_service._agent_failure_report_keyframes = old_report_keyframes
@@ -5331,7 +5513,7 @@ def check_agent_failure_review_and_repair_guard():
     )
     old_task_dir = agent_service.TASK_DIR
     old_gateway_available = agent_service._ai_gateway_available
-    old_gateway_post = agent_service._ai_gateway_post
+    old_repair_skill = ai_skill_service.run_ai_skill
     old_log_tool_call = agent_service._log_tool_call
     old_upsert = repair_service.upsert_repair_draft
     old_report_keyframes = agent_service._agent_failure_report_keyframes
@@ -5350,20 +5532,31 @@ def check_agent_failure_review_and_repair_guard():
             (module_dir / "product.yaml").write_text(original, encoding="utf-8")
             agent_service._ai_gateway_available = lambda: True
 
-            def empty_then_repaired_gateway(_path, payload, **_kwargs):
-                empty_retry_requests.append(payload)
-                if len(empty_retry_requests) == 1:
-                    return {
-                        "error": "AI call timeout after 118000ms",
-                        "errorType": "request_error",
-                    }
+            def executable_patch():
                 return {
-                    "fixedYaml": eligible_script_fix,
                     "analysis": "根据最新失败帧补充起始页稳定等待并修正可见文字定位",
                     "changes": ["在首次入口点击前增加首页稳定等待"],
+                    "patches": [{
+                        "op": "insert_before",
+                        "anchor": "aiTap: 文档打印",
+                        "lines": ["aiWaitFor: 首页入口区域稳定显示"],
+                        "reason": "等待稳定起点",
+                    }, {
+                        "op": "replace_step",
+                        "anchor": "aiTap: 文档打印",
+                        "lines": ["aiTap: 首页中名称为文档打印的入口"],
+                        "reason": "使用真实可见文字定位",
+                    }],
+                    "usedBaselineIds": [],
                 }
 
-            agent_service._ai_gateway_post = empty_then_repaired_gateway
+            def empty_then_repaired_skill(_skill, payload, **kwargs):
+                empty_retry_requests.append({"payload": payload, "imageCount": len(kwargs.get("image_assets") or [])})
+                if len(empty_retry_requests) == 1:
+                    raise TimeoutError("AI skill timeout after 88000ms")
+                return executable_patch()
+
+            ai_skill_service.run_ai_skill = empty_then_repaired_skill
             agent_service._log_tool_call = lambda *args, **kwargs: None
             agent_service._agent_failure_report_keyframes = lambda *_args, **kwargs: (
                 repair_frame_limits.append(kwargs.get("limit"))
@@ -5394,11 +5587,11 @@ def check_agent_failure_review_and_repair_guard():
                 (empty_retry_run.get("artifacts", {}).get("repairSummary") or {}).get("items") or [{}]
             )[0]
 
-            def mixed_repair_gateway(*_args, **_kwargs):
+            def mixed_repair_skill(*_args, **_kwargs):
                 mixed_repair_requests.append(True)
-                return {"fixedYaml": eligible_script_fix, "analysis": "补齐起始页稳定等待并修正可见文字定位"}
+                return executable_patch()
 
-            agent_service._ai_gateway_post = mixed_repair_gateway
+            ai_skill_service.run_ai_skill = mixed_repair_skill
             agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
             agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: []
             mixed_run = {
@@ -5457,13 +5650,13 @@ def check_agent_failure_review_and_repair_guard():
             and len(empty_retry_requests) == 2
             and empty_retry_item.get("aiCorrectionAttempted") is True
             and empty_retry_item.get("aiRequestCount") == 2
-            and empty_retry_item.get("aiAttemptErrors", [{}])[0].get("errorType") == "request_error"
-            and len(empty_retry_requests[1].get("imageAssets") or []) == 2
-            and len(empty_retry_requests[1].get("allFailedJobs") or []) == 1
-            and empty_retry_requests[1].get("repairPolicy", {}).get("requireCompleteYamlResponse") is True
+            and empty_retry_item.get("aiAttemptErrors", [{}])[0].get("errorType") == "timeout"
+            and empty_retry_requests[1]["imageCount"] == 2
+            and len(empty_retry_requests[1]["payload"].get("allFailedJobs") or []) == 1
+            and empty_retry_requests[1]["payload"].get("correctionContext", {}).get("previousError")
             and repair_frame_limits == [3]
             and repair_baseline_limits == [3],
-            "An empty or timed-out first repair response must receive one compact evidence-bound retry and preserve the first error",
+            "A timed-out patch plan must receive one compact evidence-bound retry and preserve the first error",
         )
         require(
             len(mixed_repair_requests) == 1
@@ -5481,7 +5674,7 @@ def check_agent_failure_review_and_repair_guard():
     finally:
         agent_service.TASK_DIR = old_task_dir
         agent_service._ai_gateway_available = old_gateway_available
-        agent_service._ai_gateway_post = old_gateway_post
+        ai_skill_service.run_ai_skill = old_repair_skill
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
         agent_service._agent_failure_report_keyframes = old_report_keyframes
@@ -5503,7 +5696,7 @@ def check_agent_failure_review_and_repair_guard():
 """
     old_task_dir = agent_service.TASK_DIR
     old_gateway_available = agent_service._ai_gateway_available
-    old_gateway_post = agent_service._ai_gateway_post
+    old_repair_skill = ai_skill_service.run_ai_skill
     old_log_tool_call = agent_service._log_tool_call
     old_upsert = repair_service.upsert_repair_draft
     old_report_keyframes = agent_service._agent_failure_report_keyframes
@@ -5515,14 +5708,21 @@ def check_agent_failure_review_and_repair_guard():
             module_dir.mkdir()
             (module_dir / "case.yaml").write_text(original, encoding="utf-8")
             agent_service._ai_gateway_available = lambda: True
-            agent_service._ai_gateway_post = lambda *args, **kwargs: {
-                "fixedYaml": invalid_ai_scroll_repair,
+            ai_skill_service.run_ai_skill = lambda *args, **kwargs: {
+                "analysis": "在入口列表中横向滑动",
                 "changes": ["在入口列表中横向滑动"],
-                "validation": {
-                    "success": True,
-                    "valid": False,
-                    "errors": ["aiScroll 描述必须是非空字符串"],
-                },
+                "patches": [{
+                    "op": "insert_before",
+                    "anchor": "aiAssert: 百度网盘入口可见",
+                    "lines": [
+                        "aiScroll: 文档打印页导入入口列表",
+                        "direction: horizontal",
+                        "distance: 1",
+                        "scrollType: singleAction",
+                    ],
+                    "reason": "尝试探索入口",
+                }],
+                "usedBaselineIds": [],
             }
             agent_service._log_tool_call = lambda *args, **kwargs: None
             agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
@@ -5552,20 +5752,20 @@ def check_agent_failure_review_and_repair_guard():
             gateway_invalid_summary = gateway_invalid_run["artifacts"].get("repairSummary") or {}
             require(
                 gateway_invalid_call.get("status") == "SKIPPED" and not gateway_invalid_call.get("aiUsed"),
-                "An AI Gateway valid=false repair must never be reported as usable even when success=true is also present",
+                "An invalid AI patch must never be reported as usable",
             )
             require(
                 gateway_invalid_draft.get("status") == "REJECTED"
                 and not gateway_invalid_draft.get("fixedYaml")
-                and gateway_invalid_draft.get("rejectedYaml")
-                and (gateway_invalid_draft.get("aiGatewayValidation") or {}).get("valid") is False,
-                "Gateway-invalid repair YAML must be retained as rejected evidence and removed from the Runner payload surface",
+                and gateway_invalid_draft.get("patchPlan", {}).get("patches")
+                and "aiScroll.direction" in str(gateway_invalid_draft.get("aiError") or ""),
+                "A structurally invalid patch result must be retained as rejected evidence and removed from the Runner payload surface",
             )
             require(
                 gateway_invalid_summary.get("validationPassedCount") == 0
                 and gateway_invalid_summary.get("blockedCount") == 1
-                and gateway_invalid_summary.get("items", [{}])[0].get("blockedReason") == "ai_gateway_validation_failed",
-                "Repair summary must expose the authoritative Gateway rejection instead of claiming validation passed",
+                and gateway_invalid_summary.get("items", [{}])[0].get("blockedReason") == "repair_patch_application_failed",
+                "Repair summary must expose the early Task Server patch rejection instead of claiming validation passed",
             )
 
             legacy_invalid_draft = {
@@ -5609,7 +5809,7 @@ def check_agent_failure_review_and_repair_guard():
     finally:
         agent_service.TASK_DIR = old_task_dir
         agent_service._ai_gateway_available = old_gateway_available
-        agent_service._ai_gateway_post = old_gateway_post
+        ai_skill_service.run_ai_skill = old_repair_skill
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
         agent_service._agent_failure_report_keyframes = old_report_keyframes
@@ -10670,12 +10870,12 @@ def main():
     require("explainCallbackHttp000" in app_js_source and "/api/sonic/callback-diagnose" in app_js_source, "Frontend must show friendly HTTP 000 callback diagnosis")
     require("AI 分析并生成修复草稿" in task_page_source and "AI 修复当前文件" not in task_page_source, "Main repair button must say repair draft, not direct overwrite")
     require(
-        '"yaml": original_yaml' in agent_service_source
-        and 'response.get("fixedYaml")' in agent_service_source
-        and 'response.get("fixed_yaml")' in agent_service_source
-        and 'response.get("optimizedYaml")' in agent_service_source
-        and 'response.get("yaml")' in agent_service_source,
-        "Agent repair draft must send real YAML to AI Gateway and read all supported AI YAML response fields",
+        '"repair_patch_planner"' in agent_service_source
+        and '"task_block": task_info.get("block")' in agent_service_source
+        and "repair_service.apply_task_repair_patches" in agent_service_source
+        and "_agent_repair_candidate_gate(" in agent_service_source
+        and '"repairSource"] = "ai_skill_patch"' in agent_service_source,
+        "Agent repair must ask the selected model for a local patch, apply it to the real failed task, and retain platform gates",
     )
     require('"repairSummary"' in agent_service_source and '"aiAttempted"' in agent_service_source and '"aiUsed"' in agent_service_source and '"evidenceSources"' in agent_service_source, "Agent repair draft must expose evidence, AI usage, and validation summary")
     require("def _agent_failed_execution_items" in agent_service_source and '"failedExecutionItems"' in agent_service_source, "Agent failure, repair, and rerun steps must share one failed-task source of truth")
