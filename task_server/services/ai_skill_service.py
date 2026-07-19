@@ -4956,7 +4956,18 @@ def _adapt_trusted_navigation_to_candidate(
         for key in [_navigation_action_target_key(step)]
         if key
     ]
-    if len(candidate_actions) < 2 or not baseline_actions:
+    while candidate_actions and not any(
+        _navigation_target_keys_match(candidate_actions[0][1], baseline_key)
+        for _baseline_index, baseline_key in baseline_actions
+    ):
+        candidate_index, candidate_key = candidate_actions[0]
+        if candidate_index != 0 or not any(
+            _navigation_target_keys_match(candidate_key, start_key)
+            for start_key in ("首页", "App首页", "手机首页")
+        ):
+            break
+        candidate_actions.pop(0)
+    if not candidate_actions or not baseline_actions:
         return baseline_flow, False
 
     positions = [-1]
@@ -4977,12 +4988,28 @@ def _adapt_trusted_navigation_to_candidate(
         positions = next_positions
         matched_count += 1
         matched_baseline_position = max(next_positions)
-    if matched_count < 1 or matched_count >= len(candidate_actions):
+    if matched_count < 1:
         return baseline_flow, False
 
     baseline_cut = baseline_actions[matched_baseline_position][0]
     candidate_cut = candidate_actions[matched_count - 1][0]
     candidate_tail = candidate_flow[candidate_cut + 1:]
+    if matched_count >= len(candidate_actions):
+        historical_leaf_key = (
+            baseline_actions[matched_baseline_position + 1][1]
+            if matched_baseline_position + 1 < len(baseline_actions)
+            else ""
+        )
+        candidate_tail_key = re.sub(
+            r"[^0-9a-zA-Z\u4e00-\u9fff]+",
+            "",
+            "\n".join(candidate_tail),
+        ).lower()
+        if (
+            (not candidate_tail and not target_transition_tail)
+            or (historical_leaf_key and historical_leaf_key in candidate_tail_key)
+        ):
+            return baseline_flow, False
     candidate_first_tail_action = next(
         (index for index, step in enumerate(candidate_tail) if _navigation_action_target_key(step)),
         len(candidate_tail),
@@ -5185,6 +5212,29 @@ def _bounded_convergence_evidence(
         if str(item.get("requirementId") or "").strip()
     ))
     source_candidate_records = automatic_records + manual_records
+    requirement_point_by_id = _planner_requirement_point_map(
+        (normalized.get("analysis") or {}).get("requirement_points") or []
+    )
+
+    def source_record_matches_acceptance(record, requirement_id, branch, checks):
+        raw_case = ((record or {}).get("raw") or {})
+        source_requirement_ids = set(_source_case_requirement_ids(raw_case))
+        requirement_matches = bool(
+            requirement_id in source_requirement_ids
+            or (
+                not source_requirement_ids
+                and any(
+                    _case_intends_requirement_acceptance(raw_case, check)
+                    for check in checks
+                )
+            )
+        )
+        return bool(
+            requirement_matches
+            and _case_has_branch_execution_evidence(raw_case, branch)
+            and not _case_has_deep_external_action(raw_case)
+        )
+
     for requirement_id in requirement_ids:
         source_checks = [
             item for item in evidence_checks
@@ -5216,19 +5266,17 @@ def _bounded_convergence_evidence(
             continue
         matching_records = [
             item for item in source_candidate_records
-            if requirement_id in _acceptance_requirement_ids([
-                ((item or {}).get("raw") or {}).get("coverage"),
-                ((item or {}).get("raw") or {}).get("requirementRefs"),
-                ((item or {}).get("raw") or {}).get("requirement_refs"),
-            ])
-            and _case_has_branch_execution_evidence((item or {}).get("raw") or {}, branch)
-            and not _case_has_deep_external_action((item or {}).get("raw") or {})
+            if source_record_matches_acceptance(item, requirement_id, branch, source_checks)
         ]
         matching_records.sort(key=lambda item: (
             str(((item or {}).get("compact") or {}).get("case_id") or "").strip() not in unresolved_case_ids,
             -sum(
                 1 for check in source_checks
                 if case_covers_requirement_acceptance((item or {}).get("raw") or {}, check)
+            ),
+            -sum(
+                1 for check in source_checks
+                if _case_intends_requirement_acceptance((item or {}).get("raw") or {}, check)
             ),
             tuple(
                 -value for value in _candidate_navigation_specificity(
@@ -5261,6 +5309,11 @@ def _bounded_convergence_evidence(
             current_leaf_evidence,
             branch,
         )
+        navigation_flow = [
+            step for step in navigation_flow
+            if _navigation_action_target_key(step)
+            or not re.match(r"^(?:观察|查看|确认|校验|验证|检查|记录|截图)", str(step or "").strip())
+        ]
         current_leaf_adapted = current_leaf_adapted or visual_leaf_adapted
         precondition = _bounded_candidate_precondition(source_case, branch_baseline)
         navigation_flow = _ensure_trusted_home_start_guard(
@@ -5273,6 +5326,15 @@ def _bounded_convergence_evidence(
             or source_case.get("requirement_refs")
             or source_case.get("coverage")
         )[:8]
+        requirement_refs_inferred = False
+        if not requirement_refs and not _source_case_requirement_ids(source_case):
+            requirement_point = requirement_point_by_id.get(requirement_id)
+            if requirement_point and any(
+                _case_intends_requirement_acceptance(source_case, check)
+                for check in source_checks
+            ):
+                requirement_refs = [requirement_point]
+                requirement_refs_inferred = True
         case_id = str(((source_record or {}).get("compact") or {}).get("case_id") or "").strip()
         baseline_id = str(branch_baseline.get("id") or "").strip()
         source_page_checks = [
@@ -5294,6 +5356,11 @@ def _bounded_convergence_evidence(
         preserved_assertions = []
         preserved_check_indexes = set()
         for assertion in dict.fromkeys(source_assertion_candidates):
+            if (
+                not current_leaf_evidence
+                and re.search(r"(?:figma|设计稿|设计图|视觉稿|原型|截图)", assertion, re.I)
+            ):
+                continue
             assertion_probe = {
                 "assertions": [assertion],
                 "requirementRefs": requirement_refs,
@@ -5347,6 +5414,7 @@ def _bounded_convergence_evidence(
             "flow": flow,
             "assertionTarget": assertion_target,
             "requirementRefs": requirement_refs,
+            "requirementRefsInferredFromAcceptanceIntent": requirement_refs_inferred,
             "originLevel": str(((source_record or {}).get("compact") or {}).get("originLevel") or ""),
             "manualPromotionEligible": (
                 str(((source_record or {}).get("compact") or {}).get("originLevel") or "").strip().lower()
@@ -5877,7 +5945,7 @@ def _focus_executable_convergence_candidates(
         item for item in automatic_records
         if not focus_ids or str(item["compact"].get("case_id") or "").strip() in focus_ids
     ]
-    if not focused_automatic:
+    if not focused_automatic and not focus_ids:
         focused_automatic = list(automatic_records)
     target_count = max(0, safe_int(audit.get("targetExecutableCount"), 0))
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
@@ -6831,6 +6899,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "currentLeafEvidenceSource": bounded_evidence.get("currentLeafEvidenceSource") or "",
                 "currentLeafEvidence": copy.deepcopy(bounded_evidence.get("currentLeafEvidence") or {}),
                 "acceptanceCheckIds": sorted(bounded_check_ids),
+                "requirementRefsInferredFromAcceptanceIntent": (
+                    bounded_evidence.get("requirementRefsInferredFromAcceptanceIntent") is True
+                ),
                 "modelLevel": model_level,
                 "modelReason": model_reason,
             }

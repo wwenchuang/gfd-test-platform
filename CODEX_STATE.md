@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实回归：无显式 REQ 映射的 AI 来源页候选按精确验收意图收敛
+
+用户部署 `bdc5640` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784450235670-fd8ad477`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 1 台在线，OPPO Android 15 上 `com.xbxxhz.box 4.45.0` ready。Runner 虽登记第二台设备，但本轮在生成阶段终止，没有创建 Runner job，也没有向第二台设备下发。
+- Figma parser 未修改，解析 `4 页 / 4 张 UI 图 / 忽略 0`；4 张图分别送入 qwen3.6-plus，4 批均在约 `21-30s` 完成，未回退、`hardGate=false`。AI 业务计划生成 8 个 flow 并通过计划质量门禁。
+- 初始 5 条 executable 已达到数量目标并覆盖 `11/12`。最终 qwen 收敛成功、无回退，9 个候选全部结构化分类；`unclassified_focused_candidate_count=0 / bounded_omission_recovered_count=0`，证明 `bdc5640` 的候选遗漏闭环已在线生效。
+- Agent 终态仍为 `FAILED / GENERATE_YAML / 30%`，唯一缺口是 `REQ-003-CHECK-02`：扫描复印页百度网盘入口与当前页面同级入口的层级和位置关系。没有生成 YAML、precheck 或 Runner job。
+
+深层根因：
+
+- 上游 AI 已生成 `MC-001 扫描复印页-百度网盘入口同级关系人工确认`，其标题、步骤和期望结果明确包含“扫描复印 / 百度网盘 / 同级关系”，但没有 `coverage / requirementRefs`。旧有界证据在交给最终 AI 前要求候选先携带 REQ ID，因此这个最准确候选被排除，`acceptanceCheckCandidateIds` 为空；这不是模型遗漏、Figma 超时、数量门槛、scorer 或 Runner 问题。
+- 已验证扫描基线 `d623c1e73180bfac` 的历史深链路为 `扫描复印 -> 证件扫描 -> 立即使用 -> 相册导入`。当前需求只需要扫描复印来源页上的同级关系，旧叶子不能复制到新用例；原路径适配至少要求两个候选 action，无法用候选唯一的“扫描复印”共同动作截断历史深层叶子。
+- `MC-001` 的期望结果写有“与产品设计稿一致”，但本次 Figma 没有扫描复印同页 Frame。设计资料仍应完整送 AI 作为软参考，但平台不能把不存在的同页视觉证据包装成事实。
+
+通用修复：
+
+- 对完全没有原始 REQ 映射的上游 AI 候选，只有同时命中验收项的业务分支、目标文字和验收 kind，步骤确实进入该分支，且不含深层外部动作时，才允许绑定该唯一 canonical requirement point；已有 REQ 映射的候选仍严格保持原边界。绑定来源通过 `requirementRefsInferredFromAcceptanceIntent` 写入收敛证据和最终计划，便于审计。
+- 成功基线与候选只有一个共同业务 action 时，若候选尾部明确描述当前来源页或保留目标跳转，允许在共同 action 后截断历史叶子；候选仍描述历史叶子时不接管，继续由现有高置信 Figma 叶子适配处理。已有视觉叶子回归保持通过。
+- 没有当前同页视觉证据时，不继承候选中依赖 `Figma / 设计稿 / 原型 / 截图` 的断言，只使用原始需求定义的运行时可观察关系；这不改变 Figma parser，也不把视觉软参考变成硬门禁。
+- 当唯一缺口证据属于 manual 候选时，最终模型请求不再机械附带全部已冻结 executable。线上产物回放从 6 个聚焦候选缩为仅 `MC-001`，精确矩阵为 `REQ-003-CHECK-02 -> MC-001`，减少无效 token 和模型改写绿色结果的机会。
+
+线上产物离线重放：
+
+- 直接读取 `/private/tmp/bdc5640-cases-final.json`，补入线上所选扫描成功基线的本地可信 snippet。即使模拟 qwen 仍把 `MC-001` 判为 manual，现有有界证据闭环也只提升该候选为 remaining executable。
+- 生成路径为 `启动 App 并等待首页 -> 点击扫描复印 icon -> 校验百度网盘与当前页面同级入口的层级和位置关系`，不含历史的“证件扫描 / 立即使用”，也不宣称与不存在的扫描页设计 Frame 一致。AI 人工候选中的“观察页面导入区域”只是被动记录说明，路径抽取后不会进入 Runner。
+- 最终 portfolio audit 从 `11/12` 变为 `12/12 / missing=0 / ok=true`；错误分支的无 REQ 候选不会被推断映射。
+- 同一重放实际渲染 `6` 个独立 YAML；新增扫描关系 YAML 为真实文字 `aiTap / aiWaitFor / aiAssert`，无坐标，`static ok / dry-run ok（无 warning）/ scorer 100 executable`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录与空答/截断/图像/超时回退、Skill fixtures `3/3`、Playwright 桌面/移动视觉回归全部通过。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML。
+
+待完成：提交、推送并部署本轮修复；部署后用完全相同输入发起唯一 Agent，持续监督 4 个视觉批次、最终 YAML、固定 OPPO 上串行 Smoke、失败帧驱动修复和 remaining 到真实终态。任何阶段不得向第二台设备下发。
+
 ### 2026-07-19 真实回归：最终收敛必须按精确验收项选择候选，模型漏回已审计候选时有界闭环
 
 用户部署 `a67cb48` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784443923344-6cd2fc19`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

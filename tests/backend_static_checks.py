@@ -1795,6 +1795,159 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and ai_skill_service.executable_yaml_portfolio_audit(source_ui_applied, {}).get("ok"),
         "A trusted same-branch action path plus the explicit UI contract must let Runner verify source-page visibility/copy/relation without requiring a sibling Figma frame",
     )
+    inferred_source_ui_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-030 扫描复印：校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                "REQ-031 扫描复印：点击百度网盘入口并校验目标页面稳定可达",
+            ],
+            "requirement_acceptance_checks": [
+                {
+                    "id": "REQ-030-CHECK-01",
+                    "requirementId": "REQ-030",
+                    "branch": "扫描复印",
+                    "kind": "relation",
+                    "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                },
+                {
+                    "id": "REQ-031-CHECK-01",
+                    "requirementId": "REQ-031",
+                    "branch": "扫描复印",
+                    "kind": "reachability",
+                    "text": "点击百度网盘入口并校验目标页面稳定可达",
+                },
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-SCAN-REACH",
+            "title": "扫描复印百度网盘入口跳转",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": ["REQ-031 扫描复印：点击百度网盘入口并校验目标页面稳定可达"],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "点击「扫描复印」入口",
+                "等待扫描复印页加载完成",
+                "点击「百度网盘」入口",
+                "等待百度网盘授权页或登录页稳定可见，无白屏、无崩溃",
+            ],
+            "assertions": ["百度网盘授权页或登录页稳定可达，无白屏、无崩溃"],
+            "ai_case_plan": {"baselineGrounded": True, "pathPlanApplied": True},
+        }],
+        "manual_cases": [{
+            "case_id": "MC-SCAN-REL",
+            "title": "扫描复印页百度网盘入口同级关系人工确认",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "steps": [
+                "进入App首页",
+                "点击「扫描复印」入口",
+                "观察页面导入区域",
+                "确认「百度网盘」入口与当前页面其它入口同级并列",
+            ],
+            "expected_result": "百度网盘入口与产品设计稿中的同级入口布局一致",
+        }, {
+            "case_id": "MC-WRONG-BRANCH",
+            "title": "文档打印页百度网盘入口同级关系人工确认",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "steps": ["点击「文档打印」入口", "确认「百度网盘」入口与其它入口同级并列"],
+            "expected_result": "文档打印页百度网盘入口位置关系正确",
+        }],
+    }
+    inferred_source_ui_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        inferred_source_ui_payload,
+        {"min_automation_cases": 1},
+    )
+    inferred_source_auto_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(inferred_source_ui_payload["cases"])]
+    inferred_source_manual_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="manual"),
+    } for index, item in enumerate(inferred_source_ui_payload["manual_cases"])]
+    inferred_source_baseline = ai_skill_service._compact_baseline_candidate({
+        "id": "base-scan-nav",
+        "title": "证件扫描",
+        "aiSelectedBranchName": "扫描复印",
+        "sourceKind": "verified_execution",
+        "verificationStatus": "execution_success",
+        "snippet": (
+            "# baseline.start_page: App 首页\n"
+            "- aiTap: 扫描复印 icon\n"
+            "- aiTap: 证件扫描\n"
+            "- aiTap: 立即使用\n"
+            "- aiTap: 相册导入"
+        ),
+    })
+    (
+        inferred_source_automatic,
+        inferred_source_manual,
+        inferred_source_context,
+        inferred_source_focus,
+    ) = ai_skill_service._focus_executable_convergence_candidates(
+        inferred_source_ui_payload,
+        inferred_source_auto_records,
+        inferred_source_manual_records,
+        {
+            "pass": "coverage_convergence",
+            "portfolioAudit": inferred_source_ui_audit,
+        },
+        selected_baselines=[inferred_source_baseline],
+    )
+    inferred_source_evidence = {
+        item.get("case_id"): item.get("convergenceEvidence")
+        for item in inferred_source_automatic + inferred_source_manual
+        if item.get("convergenceEvidence")
+    }
+    inferred_relation_evidence = inferred_source_evidence.get("MC-SCAN-REL") or {}
+    inferred_source_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-scan-nav"],
+        "verifiedBaselineIds": ["base-scan-nav"],
+        "requirementPoints": inferred_source_ui_payload["analysis"]["requirement_points"],
+        "planningContext": inferred_source_context,
+        "focusedCandidateIds": inferred_source_focus.get("focusedCandidateIds"),
+        "candidateEligibilityById": inferred_source_evidence,
+        "cases": [],
+        "manual_cases": [{
+            "caseId": "MC-SCAN-REL",
+            "reason": "模型因缺少扫描页设计 Frame 建议人工确认",
+        }],
+    }
+    inferred_source_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        inferred_source_ui_payload,
+        inferred_source_plan,
+    )
+    inferred_source_case = next(
+        item for item in inferred_source_applied.get("cases") or []
+        if item.get("case_id") == "MC-SCAN-REL"
+    )
+    inferred_relation_flow = "\n".join(inferred_relation_evidence.get("flow") or [])
+    require(
+        inferred_source_focus.get("focusedCandidateIds") == ["MC-SCAN-REL"]
+        and inferred_source_focus.get("acceptanceCheckCandidateIds") == {
+            "REQ-030-CHECK-01": ["MC-SCAN-REL"],
+        }
+        and inferred_relation_evidence.get("requirementRefsInferredFromAcceptanceIntent") is True
+        and inferred_relation_evidence.get("acceptanceCheckIds") == ["REQ-030-CHECK-01"]
+        and "扫描复印 icon" in inferred_relation_flow
+        and "证件扫描" not in inferred_relation_flow
+        and "立即使用" not in inferred_relation_flow
+        and "观察页面" not in inferred_relation_flow
+        and "设计稿" not in str(inferred_relation_evidence.get("assertionTarget") or "")
+        and "当前页面同级入口的层级和位置关系" in str(
+            inferred_relation_evidence.get("assertionTarget") or ""
+        )
+        and "MC-WRONG-BRANCH" not in inferred_source_evidence
+        and inferred_source_case.get("executionLevel") == "executable"
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            inferred_source_applied,
+            {"min_automation_cases": 1},
+        ).get("ok"),
+        "A no-ref AI candidate may inherit one canonical requirement only from exact branch/target/acceptance intent; convergence must keep the request focused and replace a historical deep leaf without claiming absent visual evidence",
+    )
     source_ui_merge_payload = json.loads(json.dumps(source_ui_payload, ensure_ascii=False))
     source_ui_merge_case = source_ui_merge_payload["cases"][0]
     source_ui_merge_case["executionLevel"] = "executable"
