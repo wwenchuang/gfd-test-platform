@@ -3420,6 +3420,87 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         yaml_service._case_manual_block_reason(bounded_external) == "",
         "A grounded external-entry check that stops at the first observable state must not be reclassified as manual merely for mentioning authorization",
     )
+    assertion_terminal_bounded = {
+        **bounded_external,
+        "case_id": "TC-007",
+        "title": "媒体打印云盘入口首个可见页校验",
+        "executionLevel": "executable",
+        "steps": [
+            "等待 App 首页稳定显示媒体打印入口",
+            "点击「媒体打印」入口",
+            "等待规格列表加载完成",
+            "点击「当前规格」",
+            "等待云盘入口可见",
+            "点击「云盘」入口",
+        ],
+        "assertions": [
+            "点击后出现云盘相关页面、授权弹窗或系统跳转提示之一，且未白屏、未崩溃",
+        ],
+        "ai_case_plan": {
+            **(bounded_external.get("ai_case_plan") or {}),
+            "baselineGrounded": True,
+            "pathPlanApplied": True,
+            "boundedConvergence": {
+                "kind": "bounded_landing",
+                "acceptanceCheckIds": ["REQ-007-CHECK-04"],
+                "modelLevel": "executable",
+            },
+        },
+    }
+    require(
+        yaml_service._case_manual_block_reason(assertion_terminal_bounded) == "",
+        "A separately rendered terminal assertion must count as the post-click observation for a grounded bounded landing case",
+    )
+    seven_case_payload = {
+        "title": "七条已收敛可执行用例",
+        "review": {"generation_targets": {"target_automation_cases": 5}},
+        "cases": [
+            {
+                "case_id": f"TC-{index:03d}",
+                "title": f"已接受入口校验 {index}",
+                "executionLevel": "executable",
+                "steps": [f"点击「入口 {index}」", "等待目标页面稳定显示"],
+                "assertions": [f"入口 {index} 的目标页面可见"],
+            }
+            for index in range(1, 7)
+        ] + [assertion_terminal_bounded],
+        "manual_cases": [],
+    }
+    seven_ready = yaml_service.split_automation_ready_cases(seven_case_payload)
+    _, seven_yamls = yaml_service.cases_to_separate_midscene_yamls(
+        seven_ready,
+        app_package="com.example.app",
+    )
+    seven_contract = yaml_service.audit_executable_yaml_conversion(
+        seven_case_payload,
+        seven_ready,
+        seven_yamls,
+    )
+    require(
+        seven_contract.get("passed")
+        and seven_contract.get("acceptedExecutableCount") == 7
+        and seven_contract.get("yamlCaseIds", [])[-1] == "TC-007"
+        and len(seven_yamls) == 7,
+        "A late AI convergence candidate must survive Runner eligibility and YAML conversion even when the advisory planning target was five",
+    )
+    rejected_terminal_payload = json.loads(json.dumps(seven_case_payload, ensure_ascii=False))
+    rejected_terminal_payload["cases"][-1]["ai_case_plan"] = {}
+    rejected_ready = yaml_service.split_automation_ready_cases(rejected_terminal_payload)
+    _, rejected_yamls = yaml_service.cases_to_separate_midscene_yamls(
+        rejected_ready,
+        app_package="com.example.app",
+    )
+    rejected_contract = yaml_service.audit_executable_yaml_conversion(
+        rejected_terminal_payload,
+        rejected_ready,
+        rejected_yamls,
+    )
+    require(
+        not rejected_contract.get("passed")
+        and rejected_contract.get("missingYamlCaseIds") == ["TC-007"]
+        and rejected_contract.get("rejected", [{}])[0].get("stage") == "runner_eligibility",
+        "A deterministic Runner gate may reject an accepted case, but conversion must expose and block the partial portfolio instead of silently returning fewer YAML files",
+    )
     deep_external = json.loads(json.dumps(bounded_external, ensure_ascii=False))
     deep_external["steps"].extend(["点击同意授权", "输入账号和验证码", "选择文件"])
     require(

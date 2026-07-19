@@ -2505,13 +2505,19 @@ def _case_is_bounded_external_landing_check(case: dict) -> bool:
     if not click_indexes:
         return False
     tail = steps[click_indexes[-1] + 1:]
-    if not tail or any(not str(step).strip().startswith(("等待", "观察", "检查", "验证", "校验", "断言")) for step in tail):
+    outcome_items = normalize_text_list(
+        case.get("assertions") or case.get("expected_result") or case.get("expected")
+    )
+    # Assertions are rendered after every natural-language step, so a terminal
+    # assertion is a real post-click observation even when it is not duplicated
+    # in ``steps``.
+    if tail and any(not str(step).strip().startswith(("等待", "观察", "检查", "验证", "校验", "断言")) for step in tail):
+        return False
+    if not tail and not outcome_items:
         return False
     if _case_has_deep_external_action(case):
         return False
-    outcome_text = " ".join(normalize_text_list(
-        case.get("assertions") or case.get("expected_result") or case.get("expected")
-    ))
+    outcome_text = " ".join(outcome_items)
     if not (
         any(term in outcome_text for term in ("任一", "之一", "任意", "或"))
         or re.search(r"[/／、]", outcome_text)
@@ -2840,6 +2846,93 @@ def split_automation_ready_cases(payload: Any) -> dict:
     if not ready:
         raise ValueError("没有可转换为自动化 YAML 的用例：请补充可执行 UI 步骤")
     return normalized
+
+
+def audit_executable_yaml_conversion(
+    source_payload: Any,
+    converted_payload: Any,
+    yaml_items: Any,
+    accepted_case_ids: Any = None,
+) -> dict:
+    """Require every accepted executable case to produce exactly one YAML."""
+    source = normalize_cases_payload(source_payload)
+    converted = normalize_cases_payload(converted_payload)
+
+    def case_id(case: Any, index: int) -> str:
+        if not isinstance(case, dict):
+            return ""
+        return str(first_non_empty(
+            case.get("case_id"),
+            case.get("caseId"),
+            case.get("id"),
+            f"TC-{index:03d}",
+        ) or "").strip()
+
+    accepted = normalize_text_list(accepted_case_ids)
+    if not accepted:
+        accepted = [
+            case_id(case, index)
+            for index, case in enumerate(source.get("cases") or [], start=1)
+            if isinstance(case, dict)
+            and str(case.get("executionLevel") or case.get("execution_level") or "").strip().lower() == "executable"
+        ]
+    accepted = list(dict.fromkeys(item for item in accepted if item))
+    ready_ids = [
+        case_id(case, index)
+        for index, case in enumerate(converted.get("cases") or [], start=1)
+        if isinstance(case, dict)
+    ]
+    yaml_ids = [
+        str(first_non_empty(
+            item.get("case_id"),
+            (item.get("case") or {}).get("case_id") if isinstance(item.get("case"), dict) else "",
+        ) or "").strip()
+        for item in (yaml_items or [])
+        if isinstance(item, dict)
+    ]
+    ready_set = set(ready_ids)
+    yaml_counts = {item: yaml_ids.count(item) for item in set(yaml_ids) if item}
+    missing_ready = [item for item in accepted if item not in ready_set]
+    missing_yaml = [item for item in accepted if yaml_counts.get(item, 0) == 0]
+    duplicate_yaml = [item for item in accepted if yaml_counts.get(item, 0) > 1]
+
+    source_by_id = {
+        case_id(case, index): case
+        for index, case in enumerate(source.get("cases") or [], start=1)
+        if isinstance(case, dict)
+    }
+    manual_by_id = {
+        case_id(case, index): case
+        for index, case in enumerate(converted.get("manual_cases") or [], start=1)
+        if isinstance(case, dict)
+    }
+    rejected = []
+    for item in missing_yaml:
+        source_case = source_by_id.get(item) or {}
+        manual_case = manual_by_id.get(item) or {}
+        reason = str(manual_case.get("reason") or _case_manual_block_reason(source_case) or "YAML 渲染未返回该用例").strip()
+        rejected.append({
+            "caseId": item,
+            "title": source_case.get("title") or source_case.get("name") or "未命名用例",
+            "stage": "runner_eligibility" if item in missing_ready else "yaml_render",
+            "reason": reason,
+        })
+
+    return {
+        "passed": not missing_yaml and not duplicate_yaml,
+        "acceptedExecutableCount": len(accepted),
+        "acceptedExecutableCaseIds": accepted,
+        "runnerReadyCaseIds": ready_ids,
+        "yamlCaseIds": yaml_ids,
+        "missingRunnerReadyCaseIds": missing_ready,
+        "missingYamlCaseIds": missing_yaml,
+        "duplicateYamlCaseIds": duplicate_yaml,
+        "rejected": rejected,
+        "rule": (
+            "最终规划明确接受的每条 executable 用例必须恰好生成一个 YAML；"
+            "确定性门禁仍可拦截风险用例，但必须阻断整批并显式说明原因，不能静默返回部分 YAML。"
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -7787,6 +7880,35 @@ def generate_ui_yaml_from_request(d, job_id=None):
         update_generate_job(job_id, progress=85, step="转换 YAML", message="正在按用例拆分生成 Midscene YAML")
     converted_payload = split_automation_ready_cases(payload)
     _, yaml_items = cases_to_separate_midscene_yamls(converted_payload, app_package=app_package, base_file=yaml_file)
+    accepted_case_ids = (
+        final_executable_portfolio.get("executableCaseIds")
+        if isinstance(final_executable_portfolio, dict)
+        else None
+    )
+    yaml_conversion_contract = audit_executable_yaml_conversion(
+        payload,
+        converted_payload,
+        yaml_items,
+        accepted_case_ids=accepted_case_ids,
+    )
+    payload.setdefault("review", {})["yaml_conversion_contract"] = copy.deepcopy(yaml_conversion_contract)
+    converted_payload.setdefault("review", {})["yaml_conversion_contract"] = copy.deepcopy(yaml_conversion_contract)
+    write_json_file(cases_path(case_set_id), payload)
+    if not yaml_conversion_contract.get("passed"):
+        rejected = yaml_conversion_contract.get("rejected") or []
+        reason_text = "；".join(
+            f"{item.get('caseId')}: {item.get('reason')}"
+            for item in rejected[:5]
+            if isinstance(item, dict)
+        ) or "可执行用例未完整生成 YAML"
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=85,
+                step="YAML 转换契约",
+                message=reason_text[:500],
+            )
+        raise ValueError(f"可执行用例转 YAML 契约未通过：{reason_text}")
 
     if job_id:
         update_generate_job(job_id, progress=86, step="修复 YAML", message="正在对生成 YAML 做静态 dry-run 和必要修复")

@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实回归：最终 executable 到 YAML 必须原子保真，独立断言属于点击后终态
+
+用户部署 `ed14bdf` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784473300752-48472e24`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 1 台在线并上报 `midscene_model_family=qwen3.6`。本轮在生成阶段终止，没有创建 Runner job，没有向 OPPO 或同 Runner 上的第二台设备下发。
+- Figma parser 未修改，仍解析 `4 页 / 4 图 / 忽略 0`。4 张图按 4 个单图批次全部送入 qwen3.6-plus，分别约 `26 / 17 / 15 / 11s` 完成，均 `fallback=false / finishReason=stop / hardGate=false`。AI 在 5 寸照片设计页识别到百度网盘入口及同级关系；设计资料继续是完整送 AI 的软参考。
+- 初始规划得到 5 条 executable、9 条 manual，覆盖 `10/12`。最终 qwen 收敛真实调用成功且无回退，把 `TC-007` 照片可达和 `MC-001` 扫描同级关系升级为 remaining executable；最终 portfolio 为 `12/12 / 7 executable / missing=0`，证明 `ed14bdf` 已保留 AI 收敛契约，也没有按 5 条规划目标机械截断。
+- `TC-007` 使用真实可见文字路径 `首页 -> 照片打印 -> 照片打印 -> 5寸照片 -> 百度网盘`，点击百度网盘后只校验首个合法页面、授权弹窗或系统提示及无白屏/崩溃；不含坐标、账号、授权确认或文件操作。
+- 实际转换却只生成 6 个 YAML，缺少 `TC-007`。其余 6 个 YAML 均通过 static/scorer 100。Agent 因唯一缺口 `REQ-002-CHECK-04 照片打印点击百度网盘后目标页面稳定可达` 在 `FAILED / GENERATE_YAML / 30%` 阻断。
+
+深层根因：
+
+- `case_to_task_yaml()` 会在所有自然语言步骤之后渲染独立 `assertions`，所以 `TC-007` 的终态断言实际位于最后一次百度网盘点击之后，是合法的点击后观察。
+- `_case_is_bounded_external_landing_check()` 却只接受 `steps` 内显式存在点击后等待；当最后点击之后没有重复写一遍等待、终态只存在于 `assertions` 时，它错误返回 false。随后 `_case_manual_block_reason()` 因文案提到“授权弹窗”把已经由 AI 和 portfolio 接受的 `TC-007` 再降为 manual。
+- 最终覆盖审计发生在该确定性 Runner eligibility 转换之前，旧链路没有核对“已接受 executable ID”和“实际 YAML case ID”是否一一对应，因此以部分 6 个 YAML 继续返回，直到 Agent 下游覆盖复核才发现缺口。
+
+通用修复：
+
+- 有可信基线、已应用路径、显式需求映射、真实目标点击、多合法首屏终态及稳定性断言的有界外部跳转用例，现在允许把独立 `assertions` 作为点击后的终态观察；深层授权确认、账号/验证码、文件选择等动作仍由原门禁阻断。
+- 新增 executable-to-YAML 原子转换审计：最终明确接受的每个 executable case ID 必须恰好对应一个 Runner-ready case 和一个 YAML。确定性门禁仍可拒绝风险用例，但必须在写任何 YAML 前整批失败，并记录 case ID、标题、拦截阶段和原因，不能静默返回部分结果。
+- 3/5/8 继续只是 AI 规划目标，不是转换上限。本轮回归显式覆盖“目标为 5、AI 最终收敛出 7 条”的顺序无关转换；没有降低 portfolio、static、scorer、dry-run、Smoke 或 Runner 门禁。
+
+真实产物离线重放：
+
+- 原样读取线上保存的 7 条 case，不改任何业务字段。修复前稳定复现 `ready/yaml=6` 且 `TC-007` 被以权限弹窗风险降级；修复后 `accepted=7 / runnerReady=7 / yaml=7 / missing=0 / duplicate=0`。
+- 7 个 YAML 全部使用真实可见文字、无坐标；dry-run `7/7 ok`，static 均为 executable，scorer 均为 `100 executable`。
+- 负向回归移除同一候选的可信有界证据后，确定性门禁仍正确拒绝该候选；新增转换契约同时报告 `missingYamlCaseIds=[TC-007] / stage=runner_eligibility`，证明没有绕过安全边界。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及空答/截断/图像/超时回退、Skill fixtures `3/3`、Playwright 桌面/移动视觉回归全部通过。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML；用户已有 dirty 文件继续保持未暂存。
+- 本轮提交待用户 push / 部署。部署后再次运行完全相同 Agent，必须确认 7 条 YAML 全部生成，再只在固定 OPPO 上串行监督最多 3 条 Smoke 和 remaining 到真实终态。
+
 ### 2026-07-19 真实全链路：保留精确需求断言，失败帧只能修路径不能改期望
 
 用户部署 `a063ec5` 后，以同一需求、Figma 和固定设备发起完整 Agent `agent-1784456588304-b48b8363`：
