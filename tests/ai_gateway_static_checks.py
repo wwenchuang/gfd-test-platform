@@ -213,7 +213,10 @@ def main():
         and "当前页真实可见文案描述具体横向区域" in repair_prompt
         and "禁止坐标、ADB swipe" in repair_prompt
         and "具体尺寸、颜色、模式、产品或套餐名称只是历史样例值" in repair_prompt
-        and "运行时关键帧优先于历史基线的后续动作" in repair_prompt,
+        and "运行时关键帧优先于历史基线的后续动作" in repair_prompt
+        and "不得把 `target` 对象嵌套到 `aiScroll` 下" in repair_prompt
+        and "上一次被拒 YAML" in repair_prompt
+        and "未转义的 ASCII 双引号" in repair_prompt,
         "AI repair prompt must combine execution evidence, cited branch baselines, and the current Midscene action contract",
     )
 

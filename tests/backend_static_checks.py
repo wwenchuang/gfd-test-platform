@@ -4130,9 +4130,22 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._log_tool_call = old_log_tool_call
         repair_service.upsert_repair_draft = old_upsert
 
-    prose_only_fix = original.replace(
-        "aiAssert: 百度网盘入口可见",
-        "aiAssert: 百度网盘入口完整可见且文案正确",
+    malformed_quoted_fix = original.replace(
+        "        - aiAssert: 百度网盘入口可见",
+        "        - aiScroll:\n"
+        "            target: 本地导入、相册导入、微信导入等入口所在的横向区域\n"
+        "            direction: right\n"
+        "            distance: 350\n"
+        "            scrollType: singleAction\n"
+        '        - aiAssert: "「百度网盘」入口可见，文案为"百度网盘""',
+    )
+    horizontal_scroll_fix = original.replace(
+        "        - aiAssert: 百度网盘入口可见",
+        "        - aiScroll: 本地导入、相册导入、微信导入等入口所在的横向区域\n"
+        "          direction: right\n"
+        "          distance: 350\n"
+        "          scrollType: singleAction\n"
+        "        - aiAssert: 百度网盘入口可见，文案为“百度网盘”",
     )
     unguarded_navigation_fix = original.replace(
         "        - aiAssert: 百度网盘入口可见",
@@ -4181,6 +4194,22 @@ def check_agent_failure_review_and_repair_guard():
     require(
         any(item.get("code") == "navigation_missing_ready_wait" for item in startup_guard_gate.get("issues") or []),
         "A repair that adds navigation immediately after launch must receive one bounded AI correction for a visible start-page ready wait",
+    )
+    unchanged_navigation_gate = agent_service._agent_repair_candidate_gate(
+        original,
+        {
+            "fixedYaml": horizontal_scroll_fix,
+            "analysis": "新增横向探索；保持原有导航路径和断言逻辑不变",
+            "changes": ["在当前入口行增加一次有证据约束的横向滚动"],
+        },
+        [],
+        platform="android",
+    )
+    require(
+        unchanged_navigation_gate.get("ok") is True
+        and unchanged_navigation_gate.get("navigationClaimed") is False
+        and unchanged_navigation_gate.get("navigationChanged") is False,
+        "A real aiScroll-only repair that explicitly preserves navigation must not be rejected as a navigation mutation claim",
     )
     source_backed_original = """android:
   tasks:
@@ -4280,10 +4309,14 @@ def check_agent_failure_review_and_repair_guard():
                 correction_requests.append(payload)
                 if len(correction_requests) == 1:
                     return {
-                        "fixedYaml": prose_only_fix,
+                        "fixedYaml": malformed_quoted_fix,
                         "analysis": "已新增点击并补齐父子导航",
                         "changes": ["新增点击照片打印子页"],
                         "usedBaselineIds": ["base-photo-path"],
+                        "validation": {
+                            "valid": False,
+                            "errors": ["YAML parse error: unexpected scalar near 文案为\"百度网盘\""],
+                        },
                     }
                 return {
                     "fixedYaml": grounded_navigation_fix,
@@ -4294,7 +4327,10 @@ def check_agent_failure_review_and_repair_guard():
 
             agent_service._ai_gateway_post = repair_with_bounded_correction
             agent_service._log_tool_call = lambda *args, **kwargs: None
-            agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
+            agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: [
+                {"name": f"frame-{index}", "data": "image"}
+                for index in range(3)
+            ]
             agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: [branch_baseline]
             repair_service.upsert_repair_draft = lambda draft: dict(draft)
             correction_run = {
@@ -4325,8 +4361,13 @@ def check_agent_failure_review_and_repair_guard():
             len(correction_requests) == 2
             and correction_item.get("aiCorrectionAttempted") is True
             and correction_item.get("aiRequestCount") == 2
-            and "changes/analysis" in correction_requests[1].get("failureAnalysis", ""),
-            "A prose/YAML navigation mismatch must receive exactly one evidence-specific AI correction",
+            and "YAML parse error: unexpected scalar" in correction_requests[1].get("failureAnalysis", "")
+            and "YAML 解析失败" in correction_requests[1].get("failureAnalysis", "")
+            and '文案为"百度网盘"' in correction_requests[1].get("failureAnalysis", "")
+            and "target: 本地导入、相册导入、微信导入" in correction_requests[1].get("failureAnalysis", "")
+            and len(correction_requests[1].get("imageAssets") or []) == 2
+            and len(correction_requests[1].get("allFailedJobs") or []) == 1,
+            "A malformed first candidate must receive exactly one compact correction with exact Gateway, parser, and rejected-YAML evidence",
         )
         require(
             correction_call.get("status") == "SUCCESS"

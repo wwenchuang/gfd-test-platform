@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实回归：修复 AI 候选必须携带精确校验反馈，“导航保持不变”不能误判为路径修改
+
+用户部署 `0741347` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784441215220-ba6b5958`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 在线并上报 `midscene_model_family=qwen3.6`。首批、环境原样重跑及 dry-run 均只使用固定 OPPO，没有选择或执行同 Runner 上的第二台设备。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图`。4 张图按 4 个批次全部送入 qwen3.6-plus，`attempted=4 / done=4 / status=completed / fallback=false / hardGate=false`；设计资料继续是 AI 软参考，不是绕过需求或执行门禁的硬判定。
+- AI 规划 `8` 个业务流，生成 `12` 个场景、`7` 条自动化用例和 `7` 个 YAML；需求覆盖审计通过，static、scorer 和 Runner dry-run 为 `7/7`，全部使用真实可见文字，没有坐标动作。人工复核确认文档打印、照片打印、扫描复印三条业务分支均有展示/关系/文案或可达覆盖；两条照片 YAML 都保留 `照片打印 -> 5寸照片 -> 百度网盘`，可达 YAML 保留真实目标点击。
+- 首批只选择 3 条并在固定 OPPO 串行执行。文档展示 `job_1784441684210_00004` 首次恰好 300 秒失败，Runner 报告为 qwen/Midscene 请求 abort，归类 `ENV_ISSUE`；同一原 YAML 的安全重跑 `job_1784442397939_00009` 在 131.60 秒真实成功，证明不是 Windows Runner、ADB 或脚本缺陷。文档/WPS 关系 `job_1784442139343_00006` 在 89.09 秒成功。
+- 扫描展示 `job_1784441998961_00005` 在 120.27 秒失败。Midscene 真实末帧已进入“小白扫描王”，横向导入行可见“本地导入 / 相册导入 / 微信导入”，下一项在屏幕右侧被裁切；失败属于 `SCRIPT_ISSUE / scroll_not_effective`，不是产品入口缺失。按逻辑任务计，首批已有 2 条真实通过，扫描 1 条未解决；remaining 4 条因 Smoke 修复门禁未启动，Agent 最终 `FAILED / RERUN / 95%`，没有把 Agent 失败解释为全部产品失败。
+- 修复 AI 确实收到最新 3 张 Midscene 真机帧和 Top3 已验证扫描基线（证件扫描、文件扫描、PDF 合并），并使用创建 Agent 时选择的 qwen3.6-plus、无回退。模型正确提出在目标等待前对可见导入行进行一次有界横向 `aiScroll`，没有改业务导航；但最终完整 YAML 把 `target` 对象错误嵌套在 `aiScroll` 下，并在双引号标量中嵌入未转义的 `"百度网盘"`，Gateway 与 Task Server 均解析失败，修复草稿被正确拒绝而没有下发 Runner。
+
+深层根因：
+
+- 现有两次上限本身合理：首个候选失败后只允许同一模型再纠错一次。但第二次请求只拼入“Gateway 校验失败”等高层门禁文案，没有携带 Gateway/Task Server 的精确 parser error，也没有携带上一份被拒 YAML；模型看不到错误位置，无法可靠修正自身输出。
+- `navigationClaimed` 旧逻辑只要 analysis/changes 出现“导航、路径、route”等词就判定声称修改导航。模型写“保持原有导航路径和断言逻辑不变”仍被误判为 `navigation_claim_without_yaml_change`，尽管真实 diff 只有 `aiScroll`。
+- 有候选 YAML 时第二次请求不会压缩上下文；失败批次、关键帧和历史证据会继续占用纠错预算。该问题影响速度和精确度，但不应通过增加模型轮次、延长 Runner 超时或降低语义门禁解决。
+
+通用修复：
+
+- 导航声明改为识别“修改动词 + 导航对象”的正向语义，并先排除“保持原有导航不变、未修改导航、navigation unchanged”等否定/保留表达。真实 YAML 导航 signature 仍独立比较；只要实际修改 `aiTap/ai/aiAction/aiAct`，原有分支基线引用、启动稳定等待和 Figma 当前叶子保护继续生效。
+- 唯一一次有界纠错现在同时携带：高层门禁 code、Gateway 原始 errors、Task Server 原始 issues、上一候选 analysis/changes 和被拒 YAML。提示明确逐条修正并返回完整 YAML，禁止无转义嵌套 ASCII 双引号；没有第三次模型请求，也没有绕过候选复验。
+- 第二次请求无论首轮是否返回 YAML，都统一缩为当前失败任务、最近 2 张真实关键帧和 Top3 基线。`aiScroll` 提示补充当前 Midscene 合法形态：滚动区域是 `aiScroll` 的非空字符串，`direction / distance / scrollType` 为同一 flow item 的同级字段，禁止嵌套 `target` 对象。
+- 回归覆盖真实线上形态：合法横向滚动且声明“导航保持不变”可通过；首个候选同时含错误导航声明、Gateway parse error 和坏引号时，第二次请求必须包含精确错误与原候选、压缩为 2 帧/1 个当前失败任务，并在合法候选返回后进入 `WAIT_CONFIRM`；连续两个非法候选仍在恰好 2 次调用后保持 REJECTED。
+- 直接重放本 Agent 保存的被拒 YAML：新门禁不再产生导航误报，只保留真实 YAML 契约错误；将嵌套 `target` 改为标量 `aiScroll`、将内层 ASCII 引号改为中文引号后，同一完整候选得到 `Task Server ok=true / navigationClaimed=false / navigationChanged=false / issues=[]`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py tests/ai_gateway_static_checks.py
+python3 tests/backend_static_checks.py
+python3 tests/ai_gateway_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及空答/截断/图像/超时回退、Skill fixtures `3/3` 和 Playwright 桌面/移动视觉回归全部通过。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或任何历史 YAML。
+
+待完成：提交、推送并部署本轮修复；部署后再次用完全相同输入发起唯一 Agent。必须确认扫描失败的真实帧驱动 AI 产出合法横向滚动 YAML，在固定 OPPO 上通过修复重跑，再串行执行 remaining 4 条到终态；成功后仍需人工复核三条业务分支、5 寸照片实体、入口文案/同级关系和真实可达页面。
+
 ### 2026-07-19 真实回归：目标跳转不得在基线路径适配后消失，失败 AI 空答必须有界纠正
 
 用户部署 `7827802` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784434405265-959a92a5`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

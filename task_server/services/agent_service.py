@@ -12556,11 +12556,132 @@ def _agent_repair_source_navigation_issues(original_yaml, fixed_yaml, source_evi
     return issues
 
 
-_AGENT_REPAIR_NAVIGATION_CLAIM_TERMS = (
-    "navigation", "parent page", "intermediate page", "navigation path", "route",
-    "导航", "父页面", "中间页面", "页面层级", "页面路径", "业务路径", "补充点击", "新增点击",
-    "增加点击", "修正点击", "父子页面", "新增 aitap", "增加 aitap", "补充 aitap",
+_AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN = (
+    r"(?:navigation(?:\s+path)?|route|parent\s+page|intermediate\s+page|"
+    r"导航|父页面|中间页面|页面层级|页面路径|业务路径|父子页面|aitap|点击)"
 )
+_AGENT_REPAIR_NAVIGATION_MUTATION_PATTERN = (
+    r"(?:add(?:ed|ing)?|change(?:d|ing)?|modify|modified|adjust(?:ed|ing)?|"
+    r"rewrite|rewrote|replace(?:d)?|fix(?:ed)?|complete(?:d)?|"
+    r"新增|增加|补充|补齐|补全|修正|修改|调整|改写|替换|重建|优化)"
+)
+_AGENT_REPAIR_NAVIGATION_UNCHANGED_PATTERNS = (
+    r"(?:保持|保留|沿用)\s*(?:原有|现有|已有|当前)?\s*"
+    + _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN
+    + r"[^，。；;\n]{0,30}?(?:不变|未变|不修改|未修改|保持不变)",
+    r"(?:未|没有|并未|无需)\s*(?:修改|调整|改写|替换|变更|新增|增加|补充)\s*"
+    + _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN,
+    _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN + r"[^，。；;\n]{0,20}?(?:不变|未变|未修改|未调整)",
+    r"(?:preserve|keep|retain)\s+(?:the\s+)?(?:existing|original|current)?\s*"
+    + _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN
+    + r"(?:\s+unchanged)?",
+    _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN + r"\s+(?:is\s+)?(?:unchanged|unmodified|preserved)",
+    r"(?:did\s+not|do\s+not|without)\s+"
+    + _AGENT_REPAIR_NAVIGATION_MUTATION_PATTERN
+    + r"[^.;\n]{0,16}?"
+    + _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN,
+)
+
+
+def _agent_repair_claims_navigation_change(change_text):
+    """Recognize a positive navigation mutation claim, not a mention of navigation."""
+    normalized = str(change_text or "").strip().lower()
+    if not normalized:
+        return False
+    for pattern in _AGENT_REPAIR_NAVIGATION_UNCHANGED_PATTERNS:
+        normalized = re.sub(pattern, " ", normalized, flags=re.IGNORECASE)
+    nearby = r"[^，。；;\n]{0,24}?"
+    return bool(
+        re.search(
+            _AGENT_REPAIR_NAVIGATION_MUTATION_PATTERN
+            + nearby
+            + _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        or re.search(
+            _AGENT_REPAIR_NAVIGATION_SUBJECT_PATTERN
+            + nearby
+            + _AGENT_REPAIR_NAVIGATION_MUTATION_PATTERN,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _agent_repair_correction_feedback(candidate_gate, response, yaml_limit=24000):
+    """Build one bounded correction prompt from exact rejected-candidate evidence."""
+    candidate_gate = candidate_gate if isinstance(candidate_gate, dict) else {}
+    response = response if isinstance(response, dict) else {}
+    details = []
+
+    def append_detail(prefix, value):
+        text = str(value or "").strip()
+        if not text:
+            return
+        detail = f"{prefix}{text}"
+        if detail not in details:
+            details.append(detail[:4000])
+
+    for issue in candidate_gate.get("issues") or []:
+        if not isinstance(issue, dict):
+            append_detail("平台门禁：", issue)
+            continue
+        code = str(issue.get("code") or "candidate_gate").strip()
+        append_detail(f"平台门禁 [{code}]：", issue.get("message") or code)
+    append_detail("模型调用错误：", response.get("error"))
+    for label, validation in (
+        ("AI Gateway 校验", candidate_gate.get("aiGatewayValidation")),
+        ("Task Server 校验", candidate_gate.get("yamlValidation")),
+    ):
+        if not isinstance(validation, dict):
+            continue
+        for field in ("errors", "issues"):
+            values = validation.get(field) or []
+            if not isinstance(values, (list, tuple)):
+                values = [values]
+            for issue in values:
+                append_detail(f"{label}：", issue)
+
+    previous_yaml = str(
+        candidate_gate.get("rawFixedYaml")
+        or candidate_gate.get("fixedYaml")
+        or ""
+    ).strip()
+    previous_analysis = str(response.get("analysis") or "").strip()
+    previous_changes = response.get("changes") or []
+    if not isinstance(previous_changes, list):
+        previous_changes = [previous_changes]
+    correction_text = (
+        "\n\n上一次修复候选被平台拒绝。这是本任务唯一一次有界纠错，请根据以下原始证据"
+        "修正候选，不要重新设计业务路径：\n- "
+        + "\n- ".join(details or ["模型未返回可校验的完整 YAML"])
+    )
+    if previous_analysis:
+        correction_text += "\n上一次 analysis：" + previous_analysis[:3000]
+    if previous_changes:
+        correction_text += "\n上一次 changes：" + json.dumps(
+            previous_changes[:20], ensure_ascii=False, separators=(",", ":")
+        )[:3000]
+    if previous_yaml:
+        excerpt = previous_yaml[:max(1000, safe_int(yaml_limit, 24000))]
+        suffix = "\n[候选过长，已截断]" if len(previous_yaml) > len(excerpt) else ""
+        correction_text += (
+            "\n上一次被拒 YAML（只用于纠错，必须返回修正后的完整 YAML）：\n"
+            "--- rejected yaml begin ---\n"
+            + excerpt
+            + suffix
+            + "\n--- rejected yaml end ---"
+        )
+    correction_text += (
+        "\n请逐条消除精确校验错误，并返回完整、可解析、符合 Midscene 契约的 YAML。"
+        "analysis/changes 必须与真实 YAML diff 一致；若没有修改导航，应明确写导航保持不变，"
+        "不要声称新增点击或补齐路径。YAML 标量内引用界面文案时，使用中文引号“”或合法的"
+        "单引号/转义，禁止在双引号标量中嵌入未转义的 ASCII 双引号。"
+        "若使用 aiScroll，aiScroll 本身必须是描述可见滚动区域的非空字符串，"
+        "direction/distance/scrollType 是同一 flow item 的同级字段。"
+    )
+    return details, correction_text
 
 
 def _agent_repair_candidate_gate(
@@ -12608,7 +12729,7 @@ def _agent_repair_candidate_gate(
         _agent_plan_text_list(response.get("analysis"), limit=20)
         + _agent_plan_text_list(response.get("changes"), limit=20)
     ).lower()
-    navigation_claimed = any(term in change_text for term in _AGENT_REPAIR_NAVIGATION_CLAIM_TERMS)
+    navigation_claimed = _agent_repair_claims_navigation_change(change_text)
     original_navigation = _agent_repair_navigation_signature(original_yaml)
     fixed_navigation = _agent_repair_navigation_signature(fixed_yaml)
     navigation_changed = bool(
@@ -13097,21 +13218,13 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     )
                     if candidate_gate.get("ok") or repair_attempt > 0:
                         break
-                    correction_issues = [
-                        str(item.get("message") or item.get("code") or "").strip()
-                        for item in (candidate_gate.get("issues") or [])
-                        if str(item.get("message") or item.get("code") or "").strip()
-                    ]
+                    correction_issues, correction_text = _agent_repair_correction_feedback(
+                        candidate_gate,
+                        resp,
+                    )
                     item_summary["aiCorrectionAttempted"] = True
                     item_summary["aiCorrectionIssues"] = correction_issues
                     ai_correction_attempted_count += 1
-                    correction_text = (
-                        "\n\n上一次修复候选被平台语义门禁拒绝：\n- "
-                        + "\n- ".join(correction_issues)
-                        + "\n请只纠正上述问题。changes/analysis 必须与真实 YAML diff 一致；"
-                        "若补父子导航，必须真实修改可见文字驱动的 aiTap/ai/aiAction/aiAct，"
-                        "并引用当前业务分支的可信路径基线。"
-                    )
                     request_payload = dict(request_payload)
                     request_payload["failureAnalysis"] = evidence + correction_text
                     request_payload["issues"] = evidence + correction_text
@@ -13121,18 +13234,17 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "boundedCorrectionAttempt": 1,
                         "requireCompleteYamlResponse": True,
                     }
-                    if not candidate_gate.get("rawFixedYaml"):
-                        request_payload["imageAssets"] = report_keyframes[-2:]
-                        request_payload["reportKeyframes"] = report_keyframe_names[-2:]
-                        request_payload["baselineExamples"] = baseline_examples[:3]
-                        request_payload["allFailedJobs"] = [{
-                            key: target_job.get(key)
-                            for key in (
-                                "jobId", "taskName", "module", "file", "failureType",
-                                "failureReason", "error", "summaryText", "stderrTail", "stdoutTail",
-                            )
-                            if target_job.get(key) not in (None, "", [], {})
-                        }]
+                    request_payload["imageAssets"] = report_keyframes[-2:]
+                    request_payload["reportKeyframes"] = report_keyframe_names[-2:]
+                    request_payload["baselineExamples"] = baseline_examples[:3]
+                    request_payload["allFailedJobs"] = [{
+                        key: target_job.get(key)
+                        for key in (
+                            "jobId", "taskName", "module", "file", "failureType",
+                            "failureReason", "error", "summaryText", "stderrTail", "stdoutTail",
+                        )
+                        if target_job.get(key) not in (None, "", [], {})
+                    }]
 
                 item_summary["aiRequestCount"] = 2 if item_summary.get("aiCorrectionAttempted") else 1
                 candidate_gate = candidate_gate or _agent_repair_candidate_gate(
