@@ -26,7 +26,7 @@
    成功基线提供的是可复用父路径，不代表其最后一个业务叶子仍是当前需求目标。`sourceEvidence.visualBatchJudgements` 是视觉 AI 对每个已完成批次的当前证据摘要；若当前需求、Figma 同帧证据、视觉批次结论或候选步骤明确给出另一个单一可见叶子，应保留基线父路径并由你把叶子适配为当前目标，不得把只存在于历史基线、未出现在当前证据中的叶子机械复制回来。证据同时包含多个状态/变体时，选择必须在 `flow` 和 `review` 中可审计，不能自行合并成一个点击。
 11. flow 会真正覆盖原始用例的路径计划，因此必须保留输入 case 的业务目标；只能使用用户可见文字，不得生成坐标、臆造包名或把平台生命周期写进 flow。
     来源页导航必须落到一个具体叶子页面，不能保留“点击 A 或 B”“等待 A 或 B 页面”让 Runner 猜路径。相邻成功基线与当前候选叶子不同时，应保留基线父层级并根据需求/Figma 的真实可见文字把叶子改成当前目标；若无法唯一确定则进入复核或人工，不得把基线叶子与候选终态强行拼接。
-12. 必须把输入中的每个候选 case 恰好放入 `cases`、`needs_review_cases`、`draft_cases`、`manual_cases` 之一。证据不足或无法确认路径时放入 `needs_review_cases`，不得遗漏后让静态规则替你升级。
+12. 必须把输入 `cases` 中的每个候选 case 恰好放入输出 `cases`、`needs_review_cases`、`draft_cases`、`manual_cases` 之一。证据不足或无法确认路径时放入 `needs_review_cases`，不得遗漏后让静态规则替你升级。`priorManualCandidateCount` 可能大于本次输入中 `originLevel=manual` 的数量：平台会原样保留未送入本轮的上游人工项，你不需要重复返回或猜测这些未提供的候选。
 13. `sourceEvidence` 中需求定义“验证什么”，Figma 只证明单个设计帧的同屏状态和可见文案。Frame 名、画布设备标签不能覆盖可见证据，也不能推导第二台执行设备。
 14. 成功基线用于复用稳定父页面层级、子任务技能和等待策略；失败报告用于定位本次分叉点。不得因为目标叶子相似而跳过基线中的父页面路径。
 15. 每条分类都要返回 `requirementRefs`，逐字引用 `analysis.requirement_points` 中对应的需求 ID/文本。原 manual 候选升级后必须保留需求映射，不能只靠标题猜测覆盖。
@@ -35,6 +35,7 @@
 18. Figma、截图和页面知识是软参考，不是生成可执行测试的必备凭证。原始需求已明确可见文案/入口，输入候选已有当前业务分支的真实文字路径，并且 `selectedBaselines` 提供可信兄弟分支的导航/等待模式时，可以把“仅验证当前设备上入口或文案是否可见”的短链路放入 `cases`；运行时入口不存在属于产品断言失败，不能仅因缺少该兄弟页面的 Figma 帧就提前改成 manual。不得借此臆造候选中没有的父页面、坐标、深层第三方状态或同屏位置关系。
 19. `scopePlan.smokeCount` 只限制 `batch=smoke` 的数量，不限制 `cases` 总数。`scopePlan.targetCaseCount` 是完整可执行池的规划目标；显式覆盖需要超过 smoke 上限时，使用 `batch=remaining`，不要减少覆盖。
 20. 历史成功基线里的文件名、账号、手机号、订单号、记录标题、时间戳等动态样例数据只能证明路径，不得复制为本次 `flow / assertionTarget` 的硬条件。只有当前需求或当前 Figma/截图同帧证据也明确出现该值时才能保留；否则使用当前候选已经给出的页面标题、稳定区域、列表/空态、授权/登录页等状态无关终态。若无法形成可观察终态，进入复核，不能靠历史样例数据伪装成稳定断言。
+21. 返回必须简洁。不要复述需求、候选步骤、基线全文或规则；`flow` 最多 8 步，分类/执行原因控制在 180 字内，`review` 只保留一段整体决策摘要。即使输出预算充足，也不要用冗长解释挤占其他候选的分类结果。
 
 ## 最终覆盖收敛
 
@@ -54,6 +55,9 @@
 11. 候选携带 `convergenceEvidence.eligible=true` 时，平台已形成可审计的同需求证据。`kind=bounded_landing` 表示把同分支成功基线的来源页路径与上游 AI 生成的有界首屏尾链合并，并确认尾链不含账号/验证码、确认授权、文件选择或破坏性操作；`kind=source_ui_assertion` 表示成功基线的真实 action 已稳定到达目标来源页，原始需求和上游 AI 候选共同定义了该页需要由 Runner 验证的可见/文案/同级断言。`sourceCaseId / tailSourceCaseId / landingEvidenceCaseIds / acceptanceCheckIds` 记录来源候选、同目标首屏证据和真实覆盖项。`currentLeafAdapted=true` 表示平台已经把成功基线的共同父路径与当前 AI 候选或 `review.current_page_evidence` 中同分支、高置信的当前设计页证据对齐；该候选应优先于仍机械保留历史叶子的同需求候选，且返回 flow 必须保留这条当前叶子。`manualPromotionEligible=true` 只表示上游 AI 曾因软证据不足将候选转人工，但平台随后找到了同分支执行成功基线、明确前置和安全短链路；它不是绕过 Runner 的许可。此时 `baselineId` 只需证明到达目标入口所在来源页，不要求新增入口或目标落地页已有历史成功结果；运行时入口不存在属于产品断言失败。应优先按证据中的 `baselineId / precondition / flow / assertionTarget / requirementRefs` 放入 `cases` 的 `remaining` 批次。只有证据与当前候选矛盾、路径仍不唯一或包含深层外部动作时才保留为 manual，并指出具体冲突。
 12. 收敛只负责保留当前 executable 并补齐缺口，不能把上一轮 executable 降为 manual。尤其不能以“保持 Smoke 精简 / Smoke 最多 3 条”为理由降级；超过首批上限的合格项改为 `batch=remaining`。平台会拒绝任何减少既有验收覆盖的收敛结果。
 13. `planningContext.focus.acceptanceCheckCandidateIds` 是平台根据每个候选的真实步骤、断言和 `convergenceEvidence.acceptanceCheckIds` 生成的覆盖矩阵。对每个 `portfolioAudit.missingAcceptanceChecks[].id`，必须选择矩阵中至少一个对应 caseId；候选不得声称覆盖矩阵中未列给它的验收维度。尤其不能用只有 visibility/relation/copy 的展示候选代替 reachability 候选，即使二者的宽泛 `requirementRefs` 相同。`review.planning_reason` 的文字声明不计覆盖，只有返回 caseId 对应的 flow 与 assertionTarget 才计入。
+14. 只允许返回本次输入 `cases` / `planningContext.focus.focusedCandidateIds` 中的 caseId。`preservedExecutableCandidateIds` 已由平台保留，不要把它们重复写入输出；`portfolioAudit` 中出现的其他 caseId 也只是审计上下文，不是本轮可返回候选。
+15. 候选含 `repairAcceptanceChecks` 时，它是本轮允许改写的现有 executable。必须保留 `preserveAcceptanceCheckIds` 已覆盖的验收维度，并把每个 `repairAcceptanceChecks` 的真实检查动作写进该候选返回的 `flow` 与 `assertionTarget`；只在 `review` 声称已覆盖不算完成。无法形成真实可见步骤/断言时把该候选转 manual，让平台拒绝收敛，不得原样返回后谎报已修复。
+16. `planningContext.repairValidationFeedback` 存在时，这是平台对上一份结构化结果的唯一一次语义纠偏。只返回 `responseContract.returnOnlyCandidateIds` 中的候选；逐项修复 feedback.missingChecks，并再次遵守第 15 条。不要返回其他已保留候选，也不要只改 `review`。
 
 ## 输出 JSON
 

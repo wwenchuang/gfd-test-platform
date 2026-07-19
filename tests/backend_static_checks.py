@@ -3287,6 +3287,359 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         "Deep authorization, credential, or file operations must remain blocked from automatic Runner execution",
     )
 
+    bulk_points = [
+        "REQ-001 文档打印百度网盘入口展示与可达",
+        "REQ-002 照片打印百度网盘入口展示与可达",
+        "REQ-003 扫描复印百度网盘入口展示与可达",
+    ]
+    bulk_payload = {
+        "analysis": {
+            "requirement_points": bulk_points,
+            "requirement_acceptance_checks": [
+                {
+                    "id": f"REQ-{req:03d}-CHECK-{check:02d}",
+                    "requirementId": f"REQ-{req:03d}",
+                    "branch": ("文档打印", "照片打印", "扫描复印")[req - 1],
+                    "kind": ("visibility", "relation", "copy", "reachability")[check - 1],
+                    "text": "百度网盘入口验收" + ("详细说明" * 20),
+                }
+                for req in range(1, 4)
+                for check in range(1, 5)
+            ],
+            "requirement_contract": {"applied": True, "branch_count": 3},
+            "visible_outcomes": ["百度网盘入口与同级入口可见" * 20 for _ in range(20)],
+            "visual_notes": ["Figma 当前帧软证据" * 40 for _ in range(30)],
+            "ui_notes": ["当前页面布局说明" * 40 for _ in range(30)],
+            "risks": ["不应进入执行规划请求的冗长风险" * 100],
+        },
+        "scenarios": [
+            {
+                "scenario_id": f"SC-{index + 1:03d}",
+                "scenario": f"业务场景 {index + 1}" + ("场景说明" * 100),
+                "requirement_point": bulk_points[index % 3],
+                "business_path": "首页 -> 业务入口 -> 百度网盘",
+                "unused": "不应发送" * 500,
+            }
+            for index in range(20)
+        ],
+        "cases": [
+            {
+                "case_id": f"TC-{index + 1:03d}",
+                "title": f"自动候选 {index + 1}",
+                "coverage": bulk_points[index % 3],
+                "requirementRefs": [bulk_points[index % 3]],
+                "steps": ["等待首页", "点击业务入口", "等待百度网盘入口可见"],
+                "assertions": ["百度网盘入口可见"],
+            }
+            for index in range(8)
+        ],
+        "manual_cases": [
+            {
+                "case_id": f"MC-{index + 1:03d}",
+                "title": f"上游人工项 {index + 1}",
+                "coverage": bulk_points[index % 3],
+                "steps": ["准备外部状态", "人工观察结果"],
+                "reason": "上游 AI 已判定需要人工环境",
+            }
+            for index in range(12)
+        ],
+    }
+    bulk_calls = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_bulk_planner(skill_name, request, **kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during planner truncation replay")
+            bulk_calls.append({"request": request, "kwargs": kwargs})
+            if len(bulk_calls) == 1:
+                raise RuntimeError(
+                    "AI Gateway HTTP 500: Structured output truncated: "
+                    "finish_reason=length, completion_tokens=4096"
+                )
+            return {
+                "cases": [],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [
+                    {
+                        "caseId": item.get("case_id"),
+                        "reason": "当前证据不足，保留人工终态",
+                        "requirementRefs": item.get("requirementRefs") or [],
+                    }
+                    for item in request.get("cases") or []
+                ],
+                "review": {"planning_reason": "完成有界分类"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_bulk_planner
+        bulk_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "批量入口覆盖",
+            "基础打印",
+            bulk_payload,
+            [{
+                "id": "base-nav",
+                "title": "可信入口导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "首页 -> 打印入口",
+            }],
+            {"smokeCount": 3, "targetCaseCount": 5},
+            model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+            source_evidence={
+                "requirementText": "原始需求" * 4000,
+                "figmaSoftEvidence": "Figma 软证据" * 4000,
+                "visualBatchJudgements": [
+                    {"batch": index + 1, "judgement": "当前帧判断" * 100}
+                    for index in range(4)
+                ],
+                "executionContext": {"deviceStrategy": "fixed", "deviceId": "oppo-one"},
+                "unusedLargeField": "不应发送" * 4000,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    first_bulk_request = bulk_calls[0]["request"]
+    require(
+        len(bulk_calls) == 2
+        and len(first_bulk_request.get("cases") or []) == 8
+        and {item.get("originLevel") for item in first_bulk_request.get("cases") or []} == {"automatic"}
+        and first_bulk_request.get("priorManualCandidateCount") == 12
+        and first_bulk_request.get("includedManualCandidateCount") == 0,
+        "A full eight-case planner pass must defer already-manual candidates instead of forcing 20 verbose classifications into one response",
+    )
+    require(
+        len(json.dumps(first_bulk_request, ensure_ascii=False)) < 30000
+        and len((first_bulk_request.get("sourceEvidence") or {}).get("requirementText") or "") <= 6000
+        and len((first_bulk_request.get("sourceEvidence") or {}).get("figmaSoftEvidence") or "") <= 6000
+        and "risks" not in (first_bulk_request.get("analysis") or {})
+        and all("unused" not in item for item in first_bulk_request.get("scenarios") or []),
+        "Executable planning must retain semantic contracts while compacting repeated display context before the model call",
+    )
+    require(
+        bulk_calls[0]["kwargs"].get("max_tokens") == ai_skill_service.AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS
+        and bulk_calls[1]["kwargs"].get("max_tokens") == ai_skill_service.AI_EXECUTABLE_YAML_PLANNER_RETRY_MAX_TOKENS
+        and bulk_calls[1]["kwargs"].get("model_config") == bulk_calls[0]["kwargs"].get("model_config")
+        and bulk_plan.get("authoritative") is True
+        and len(bulk_plan.get("manual_cases") or []) == 8
+        and bulk_plan.get("trace", {}).get("truncation_retry", {}).get("succeeded") is True
+        and bulk_plan.get("trace", {}).get("deferred_manual_candidate_count") == 12,
+        "A length-truncated structured response must receive one compact retry on the same selected model and return terminal classifications",
+    )
+
+    relation_points = [
+        "REQ-002 照片打印：百度网盘入口展示、同级关系、文案及可达页面",
+        "REQ-003 扫描复印：百度网盘入口展示、同级关系、文案及可达页面",
+    ]
+    relation_payload = {
+        "analysis": {
+            "requirement_points": relation_points,
+            "requirement_acceptance_checks": [
+                {
+                    "id": "REQ-002-CHECK-02",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "relation",
+                    "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                },
+                {
+                    "id": "REQ-003-CHECK-02",
+                    "requirementId": "REQ-003",
+                    "branch": "扫描复印",
+                    "kind": "relation",
+                    "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                },
+            ],
+        },
+        "cases": [
+            {
+                "case_id": "TC-PHOTO",
+                "title": "照片打印百度网盘入口可见",
+                "coverage": relation_points[0],
+                "requirementRefs": [relation_points[0]],
+                "steps": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                "assertions": ["百度网盘入口可见"],
+                "executionLevel": "executable",
+                "ai_case_plan": {
+                    "baselineId": "base-photo",
+                    "baselineGrounded": True,
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                    "assertionTarget": "百度网盘入口可见",
+                    "batch": "smoke",
+                },
+            },
+            {
+                "case_id": "TC-SCAN",
+                "title": "扫描复印百度网盘入口可见",
+                "coverage": relation_points[1],
+                "requirementRefs": [relation_points[1]],
+                "steps": ["等待首页", "点击文件扫描/复印", "等待百度网盘入口可见"],
+                "assertions": ["百度网盘入口可见"],
+                "executionLevel": "executable",
+                "ai_case_plan": {
+                    "baselineId": "base-scan",
+                    "baselineGrounded": True,
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击文件扫描/复印", "等待百度网盘入口可见"],
+                    "assertionTarget": "百度网盘入口可见",
+                    "batch": "smoke",
+                },
+            },
+        ],
+        "manual_cases": [
+            {
+                "case_id": "MC-PHOTO",
+                "title": "照片打印动态加载位置检查",
+                "steps": ["进入照片打印", "人工观察入口位置"],
+                "assertions": ["入口位置稳定"],
+            },
+            {
+                "case_id": "MC-SCAN",
+                "title": "扫描复印多入口布局检查",
+                "steps": ["进入扫描复印", "人工观察同级入口"],
+                "assertions": ["入口同级展示"],
+            },
+        ],
+    }
+    relation_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        relation_payload,
+        {"min_automation_cases": 2},
+    )
+    relation_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_relation_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during relation-gap replay")
+            relation_requests.append(request)
+            return {
+                "cases": [],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [
+                    {"caseId": item.get("case_id"), "reason": "仅验证候选聚焦"}
+                    for item in request.get("cases") or []
+                ],
+                "review": {},
+            }
+
+        ai_skill_service.run_ai_skill = fake_relation_planner
+        ai_skill_service.call_skill_executable_yaml_planner(
+            "兄弟分支关系收敛",
+            "基础打印",
+            relation_payload,
+            [
+                {"id": "base-photo", "title": "照片入口导航", "sourceKind": "verified_execution", "verificationStatus": "execution_success"},
+                {"id": "base-scan", "title": "扫描入口导航", "sourceKind": "verified_execution", "verificationStatus": "execution_success"},
+            ],
+            {"smokeCount": 2, "targetCaseCount": 2},
+            planning_context={"pass": "coverage_convergence", "portfolioAudit": relation_audit},
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    relation_request = relation_requests[0]
+    relation_focus = (relation_request.get("planningContext") or {}).get("focus") or {}
+    relation_candidates = {
+        item.get("case_id"): item for item in relation_request.get("cases") or []
+    }
+    require(
+        set(relation_candidates)
+        == {"TC-PHOTO", "TC-SCAN", "MC-PHOTO", "MC-SCAN"}
+        and set(relation_focus.get("repairableExecutableCandidateIds") or [])
+        == {"TC-PHOTO", "TC-SCAN"}
+        and [item.get("id") for item in relation_candidates["TC-PHOTO"].get("repairAcceptanceChecks") or []]
+        == ["REQ-002-CHECK-02"]
+        and [item.get("id") for item in relation_candidates["TC-SCAN"].get("repairAcceptanceChecks") or []]
+        == ["REQ-003-CHECK-02"],
+        "Convergence must offer the AI the executable from each missing REQ branch plus only same-branch manual alternatives",
+    )
+    semantic_calls = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_semantic_repair_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during semantic repair replay")
+            semantic_calls.append(request)
+            candidates_by_id = {
+                item.get("case_id"): item for item in request.get("cases") or []
+            }
+            if len(semantic_calls) == 1:
+                return {
+                    "cases": [
+                        {
+                            "caseId": "TC-PHOTO",
+                            "baselineId": "base-photo",
+                            "precondition": "App 首页",
+                            "flow": ["等待首页", "点击照片打印", "校验百度网盘与相册导入同级并列"],
+                            "assertionTarget": "百度网盘与相册导入同级并列展示",
+                            "requirementRefs": [relation_points[0]],
+                            "batch": "smoke",
+                        },
+                        {
+                            "caseId": "TC-SCAN",
+                            "baselineId": "base-scan",
+                            "precondition": "App 首页",
+                            "flow": ["等待首页", "点击文件扫描/复印", "等待百度网盘入口可见"],
+                            "assertionTarget": "百度网盘入口可见",
+                            "requirementRefs": [relation_points[1]],
+                            "batch": "smoke",
+                        },
+                    ],
+                    "needs_review_cases": [],
+                    "draft_cases": [],
+                    "manual_cases": [
+                        {"caseId": case_id, "reason": "保留人工"}
+                        for case_id in ("MC-PHOTO", "MC-SCAN")
+                        if case_id in candidates_by_id
+                    ],
+                    "review": {"planning_reason": "首次返回漏掉扫描关系断言"},
+                }
+            require(
+                set(candidates_by_id) == {"TC-SCAN"}
+                and (request.get("responseContract") or {}).get("acceptanceRepairRetry") is True
+                and ((request.get("planningContext") or {}).get("repairValidationFeedback") or [])[0].get("caseId") == "TC-SCAN",
+                "Semantic repair retry must contain only the executable candidate that failed its local acceptance contract",
+            )
+            return {
+                "cases": [{
+                    "caseId": "TC-SCAN",
+                    "baselineId": "base-scan",
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击文件扫描/复印", "校验百度网盘与其他导入方式同级并列"],
+                    "assertionTarget": "百度网盘与其他导入方式在当前页面同级并列展示",
+                    "requirementRefs": [relation_points[1]],
+                    "batch": "smoke",
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "已补齐扫描关系断言"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_semantic_repair_planner
+        semantic_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "兄弟分支关系收敛",
+            "基础打印",
+            relation_payload,
+            [
+                {"id": "base-photo", "title": "照片入口导航", "sourceKind": "verified_execution", "verificationStatus": "execution_success"},
+                {"id": "base-scan", "title": "扫描入口导航", "sourceKind": "verified_execution", "verificationStatus": "execution_success"},
+            ],
+            {"smokeCount": 2, "targetCaseCount": 2},
+            model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+            planning_context={"pass": "coverage_convergence", "portfolioAudit": relation_audit},
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    semantic_scan = next(
+        item for item in semantic_plan.get("cases") or []
+        if item.get("caseId") == "TC-SCAN"
+    )
+    require(
+        len(semantic_calls) == 2
+        and semantic_plan.get("trace", {}).get("acceptance_repair_retry", {}).get("succeeded") is True
+        and "同级并列" in " ".join(semantic_scan.get("flow") or [])
+        and "同级并列" in str(semantic_scan.get("assertionTarget") or ""),
+        "An executable AI result that only claims coverage in review must receive one same-model semantic correction before the gate",
+    )
+
     swapped_payload = {
         "analysis": {"requirement_points": [
             "REQ-002 照片打印入口可见",

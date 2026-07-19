@@ -92,6 +92,14 @@ AI_SMOKE_SELECTOR_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_SMOK
 AI_BASELINE_RERANKER_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_BASELINE_RERANKER_TIMEOUT_SECONDS", "45"), 45))
 AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS = max(20, safe_int(os.getenv("MIDSCENE_AI_EXECUTION_SCOPE_PLANNER_TIMEOUT_SECONDS", "45"), 45))
 AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS = max(30, safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS", "75"), 75))
+AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS = max(
+    4096,
+    min(16384, safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS", "6144"), 6144)),
+)
+AI_EXECUTABLE_YAML_PLANNER_RETRY_MAX_TOKENS = max(
+    AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS,
+    min(16384, safe_int(os.getenv("MIDSCENE_AI_EXECUTABLE_YAML_PLANNER_RETRY_MAX_TOKENS", "8192"), 8192)),
+)
 AI_EXECUTABLE_YAML_EVIDENCE_CONVERGENCE_TIMEOUT_SECONDS = max(
     30,
     min(
@@ -5932,6 +5940,42 @@ def _bounded_convergence_evidence(
     return evidence_by_id
 
 
+def _convergence_record_matches_gap(record, point, missing_checks=None):
+    """Match convergence candidates by REQ identity before semantic keywords."""
+    record = record if isinstance(record, dict) else {}
+    raw = record.get("raw") if isinstance(record.get("raw"), dict) else {}
+    compact = record.get("compact") if isinstance(record.get("compact"), dict) else {}
+    target_ids = set(_planner_requirement_ids(point))
+    source_ids = set(_source_case_requirement_ids(raw))
+    if target_ids and source_ids:
+        return bool(target_ids.intersection(source_ids))
+    checks = [item for item in (missing_checks or []) if isinstance(item, dict)]
+    target_branches = list(dict.fromkeys(
+        str(item.get("branch") or "").strip()
+        for item in checks
+        if str(item.get("branch") or "").strip()
+        and (
+            not target_ids
+            or str(item.get("requirementId") or "").strip() in target_ids
+        )
+    ))
+    if target_ids and target_branches:
+        candidate_text = _compact_branch_text([
+            raw.get("title"), raw.get("scenario"), raw.get("coverage"),
+            raw.get("requirement_point"), raw.get("business_path"),
+            raw.get("steps"), raw.get("assertions"),
+            compact.get("title"), compact.get("scenario"), compact.get("steps"),
+        ])
+        return any(
+            _compact_branch_text(branch) in candidate_text
+            for branch in target_branches
+            if _compact_branch_text(branch)
+        )
+    if target_ids:
+        return False
+    return case_matches_requirement(raw, point)
+
+
 def _focus_executable_convergence_candidates(
     normalized,
     automatic_records,
@@ -5944,13 +5988,30 @@ def _focus_executable_convergence_candidates(
     audit = context.get("portfolioAudit") if isinstance(context.get("portfolioAudit"), dict) else {}
     if str(context.get("pass") or "").strip() != "coverage_convergence":
         automatic = [item["compact"] for item in automatic_records]
-        manual = [item["compact"] for item in manual_records]
+        # The upstream automation_filter has already classified manual cases. Give
+        # the planner a few promotion alternatives only when that keeps the whole
+        # decision set within the platform's eight-case generation ceiling.
+        manual_budget = max(0, min(3, 8 - len(automatic)))
+        selected_manual_records = manual_records[:manual_budget]
+        manual = [item["compact"] for item in selected_manual_records]
+        included_ids = {
+            str(item.get("case_id") or "").strip()
+            for item in automatic + manual
+            if str(item.get("case_id") or "").strip()
+        }
+        full_ids = [
+            str(item["compact"].get("case_id") or "").strip()
+            for item in automatic_records + manual_records
+            if str(item["compact"].get("case_id") or "").strip()
+        ]
         return automatic, manual, context, {
             "enabled": False,
-            "fullCandidateCount": len(automatic) + len(manual),
+            "fullCandidateCount": len(automatic_records) + len(manual_records),
             "focusedCandidateCount": len(automatic) + len(manual),
             "focusedCandidateIds": [item.get("case_id") for item in automatic + manual],
-            "outsideFocusCandidateIds": [],
+            "outsideFocusCandidateIds": [item for item in full_ids if item not in included_ids],
+            "includedManualCandidateCount": len(manual),
+            "deferredManualCandidateCount": max(0, len(manual_records) - len(manual)),
         }
 
     executable_ids = {
@@ -5962,6 +6023,13 @@ def _focus_executable_convergence_candidates(
         item for item in (audit.get("missingAcceptanceChecks") or [])
         if isinstance(item, dict)
     ]
+    bounded_evidence_by_id = _bounded_convergence_evidence(
+        normalized,
+        automatic_records,
+        audit,
+        selected_baselines=selected_baselines,
+        manual_records=manual_records,
+    )
     repairable_executable_ids = set()
     for missing_check in missing_checks:
         matching_records = [
@@ -5970,6 +6038,34 @@ def _focus_executable_convergence_candidates(
             and _case_intends_requirement_acceptance(record["raw"], missing_check)
             and not case_covers_requirement_acceptance(record["raw"], missing_check)
         ]
+        dedicated_unresolved_records = [
+            record for record in automatic_records
+            if str(record["compact"].get("case_id") or "").strip() not in executable_ids
+            and _case_intends_requirement_acceptance(record["raw"], missing_check)
+        ]
+        missing_check_id = str(missing_check.get("id") or "").strip()
+        dedicated_bounded_ids = {
+            case_id
+            for case_id, evidence in bounded_evidence_by_id.items()
+            if missing_check_id
+            and missing_check_id in normalize_text_list((evidence or {}).get("acceptanceCheckIds"))
+            and case_id not in executable_ids
+        }
+        if not matching_records and not dedicated_unresolved_records and not dedicated_bounded_ids:
+            descriptor = str(
+                missing_check.get("descriptor")
+                or requirement_acceptance_descriptor(missing_check)
+            ).strip()
+            matching_records = [
+                record for record in automatic_records
+                if str(record["compact"].get("case_id") or "").strip() in executable_ids
+                and _convergence_record_matches_gap(
+                    record,
+                    descriptor,
+                    missing_checks=[missing_check],
+                )
+                and not case_covers_requirement_acceptance(record["raw"], missing_check)
+            ]
         matching_records.sort(key=lambda record: (
             len(normalize_text_list(record["compact"].get("steps"))),
             str(record["compact"].get("case_id") or "").strip(),
@@ -5996,20 +6092,19 @@ def _focus_executable_convergence_candidates(
         if descriptor and descriptor not in missing_points:
             missing_points.append(descriptor)
     for point in missing_points:
+        if any(
+            str(record["compact"].get("case_id") or "").strip() in focus_ids
+            and _convergence_record_matches_gap(record, point, missing_checks=missing_checks)
+            for record in automatic_records
+        ):
+            continue
         for record in automatic_records:
             candidate_id = str(record["compact"].get("case_id") or "").strip()
             if candidate_id in focus_ids or candidate_id in preserved_executable_ids:
                 continue
-            if case_matches_requirement(record["raw"], point):
+            if _convergence_record_matches_gap(record, point, missing_checks=missing_checks):
                 focus_ids.add(candidate_id)
                 break
-    bounded_evidence_by_id = _bounded_convergence_evidence(
-        normalized,
-        automatic_records,
-        audit,
-        selected_baselines=selected_baselines,
-        manual_records=manual_records,
-    )
     bounded_evidence_by_id = {
         case_id: evidence
         for case_id, evidence in bounded_evidence_by_id.items()
@@ -6031,6 +6126,37 @@ def _focus_executable_convergence_candidates(
         candidate_id = str(record["compact"].get("case_id") or "").strip()
         if candidate_id in bounded_evidence_by_id:
             record["compact"]["convergenceEvidence"] = bounded_evidence_by_id[candidate_id]
+        if candidate_id in repairable_executable_ids:
+            pending_checks = [
+                check for check in missing_checks
+                if _convergence_record_matches_gap(
+                    record,
+                    requirement_acceptance_descriptor(check),
+                    missing_checks=[check],
+                )
+                and not case_covers_requirement_acceptance(record["raw"], check)
+            ]
+            all_acceptance_checks = [
+                check for check in (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
+                if isinstance(check, dict)
+            ]
+            record["compact"]["repairAcceptanceChecks"] = [
+                {
+                    "id": str(check.get("id") or "").strip(),
+                    "requirementId": str(check.get("requirementId") or "").strip(),
+                    "branch": str(check.get("branch") or "").strip(),
+                    "kind": str(check.get("kind") or "").strip(),
+                    "text": str(check.get("text") or "").strip(),
+                }
+                for check in pending_checks
+                if str(check.get("id") or "").strip()
+            ]
+            record["compact"]["preserveAcceptanceCheckIds"] = [
+                str(check.get("id") or "").strip()
+                for check in all_acceptance_checks
+                if str(check.get("id") or "").strip()
+                and case_covers_requirement_acceptance(record["raw"], check)
+            ]
 
     # One alternate per uncovered requirement keeps the final request bounded while
     # still allowing AI to recover a better candidate than the unresolved automatic one.
@@ -6038,7 +6164,7 @@ def _focus_executable_convergence_candidates(
     for point in focus_points:
         matching_manual_records = [
             record for record in manual_records
-            if case_matches_requirement(record["raw"], point)
+            if _convergence_record_matches_gap(record, point, missing_checks=missing_checks)
         ]
         matching_manual_records.sort(key=lambda record: (
             str(record["compact"].get("case_id") or "").strip() not in bounded_evidence_by_id,
@@ -6145,10 +6271,139 @@ def _compact_executable_convergence_context(analysis, source_evidence):
         )
         if source_evidence.get(key) not in (None, "", [], {})
     }
-    for key in ("requirementText", "figmaSoftEvidence"):
+    for key, limit in (("requirementText", 3000), ("figmaSoftEvidence", 2000)):
         if isinstance(compact_source.get(key), str):
-            compact_source[key] = compact_source[key][:6000]
+            compact_source[key] = compact_source[key][:limit]
+    for key, item_limit in (("visible_outcomes", 8), ("visual_notes", 6), ("ui_notes", 6)):
+        if isinstance(compact_analysis.get(key), list):
+            compact_analysis[key] = [
+                str(item or "")[:240]
+                for item in compact_analysis[key][:item_limit]
+                if str(item or "").strip()
+            ]
+    if isinstance(compact_source.get("visualBatchJudgements"), list):
+        compact_source["visualBatchJudgements"] = [
+            {
+                key: copy.deepcopy(value)
+                for key, value in {
+                    "batch": item.get("batch"),
+                    "status": item.get("status"),
+                    "imageNames": normalize_text_list(item.get("imageNames"))[:4],
+                    "judgement": str(item.get("judgement") or "")[:500],
+                }.items()
+                if value not in (None, "", [], {})
+            }
+            for item in compact_source["visualBatchJudgements"][:12]
+            if isinstance(item, dict)
+        ]
     return compact_analysis, compact_source
+
+
+def _compact_executable_planner_scenarios(scenarios, limit=8):
+    """Keep scenario identity and business mapping without repeating full case prose."""
+    compact = []
+    for index, raw in enumerate(scenarios or []):
+        if len(compact) >= max(1, safe_int(limit, 8)):
+            break
+        item = raw if isinstance(raw, dict) else {"scenario": str(raw or "")}
+        row = {}
+        for key in (
+            "scenario_id", "id", "title", "name", "scenario", "type",
+            "feature", "requirement_point", "requirementRefs", "business_path",
+        ):
+            value = item.get(key)
+            if value in (None, "", [], {}):
+                continue
+            if isinstance(value, str):
+                value = value[:200]
+            elif isinstance(value, list):
+                value = normalize_text_list(value)[:4]
+            row[key] = copy.deepcopy(value)
+        if not row:
+            row = {"scenario_id": f"SC-{index + 1:03d}"}
+        compact.append(row)
+    return compact
+
+
+def _structured_output_was_truncated(error):
+    text = str(error or "").lower()
+    return any(marker in text for marker in (
+        "structured output truncated",
+        "finish_reason=length",
+        "finish reason length",
+    ))
+
+
+def _executable_plan_repair_feedback(result, candidates):
+    """Find executable planner items that claim repair without proving each check."""
+    result = result if isinstance(result, dict) else {}
+    candidates_by_id = {
+        str(item.get("case_id") or "").strip(): item
+        for item in candidates or []
+        if isinstance(item, dict) and str(item.get("case_id") or "").strip()
+    }
+    feedback = []
+    for raw_item in result.get("cases") or []:
+        item = raw_item if isinstance(raw_item, dict) else {}
+        case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
+        candidate = candidates_by_id.get(case_id) or {}
+        repair_checks = [
+            check for check in (candidate.get("repairAcceptanceChecks") or [])
+            if isinstance(check, dict) and str(check.get("id") or "").strip()
+        ]
+        if not repair_checks:
+            continue
+        probe = {
+            "steps": normalize_text_list(item.get("flow"))[:8],
+            "assertions": normalize_text_list(item.get("assertionTarget"))[:4],
+            "requirementRefs": normalize_text_list(item.get("requirementRefs"))[:8],
+        }
+        missing = [
+            check for check in repair_checks
+            if not case_covers_requirement_acceptance(probe, check)
+        ]
+        if missing:
+            feedback.append({
+                "caseId": case_id,
+                "missingChecks": copy.deepcopy(missing),
+                "reason": (
+                    "模型把候选标为 executable，但返回的 flow/assertionTarget 未实际证明这些验收项；"
+                    "review 中的覆盖声明不计入门禁"
+                ),
+            })
+    return feedback
+
+
+def _merge_executable_plan_retry_result(result, retry_result, retried_ids):
+    """Replace only candidates that the bounded semantic retry actually returned."""
+    merged = copy.deepcopy(result) if isinstance(result, dict) else {}
+    retry_result = retry_result if isinstance(retry_result, dict) else {}
+    groups = ("cases", "needs_review_cases", "draft_cases", "manual_cases")
+    returned_ids = {
+        str(item.get("caseId") or item.get("case_id") or "").strip()
+        for key in groups
+        for item in (retry_result.get(key) or [])
+        if isinstance(item, dict)
+        and str(item.get("caseId") or item.get("case_id") or "").strip() in retried_ids
+    }
+    if not returned_ids:
+        return merged
+    for key in groups:
+        merged[key] = [
+            copy.deepcopy(item)
+            for item in (merged.get(key) or [])
+            if not isinstance(item, dict)
+            or str(item.get("caseId") or item.get("case_id") or "").strip() not in returned_ids
+        ]
+        merged[key].extend(
+            copy.deepcopy(item)
+            for item in (retry_result.get(key) or [])
+            if isinstance(item, dict)
+            and str(item.get("caseId") or item.get("case_id") or "").strip() in returned_ids
+        )
+    if isinstance(retry_result.get("review"), dict):
+        merged["review"] = copy.deepcopy(retry_result.get("review"))
+    return merged
 
 
 def _existing_executable_plan_item(case, case_id, title):
@@ -6360,6 +6615,8 @@ def call_skill_executable_yaml_planner(
         "convergence_focus": bool(convergence_focus.get("enabled")),
         "automatic_candidate_count": len(automatic_candidates),
         "manual_candidate_count": len(manual_candidates),
+        "prior_manual_candidate_count": len(manual_records),
+        "deferred_manual_candidate_count": max(0, len(manual_records) - len(manual_candidates)),
         **_model_config_trace(model_config, model_runtime_trace),
     }
     if not candidates:
@@ -6379,19 +6636,23 @@ def call_skill_executable_yaml_planner(
     request_analysis = normalized.get("analysis") or {}
     request_scenarios = normalized.get("scenarios") or []
     request_source_evidence = source_evidence if isinstance(source_evidence, dict) else {}
-    if convergence_pass:
-        request_analysis, request_source_evidence = _compact_executable_convergence_context(
-            request_analysis,
-            request_source_evidence,
-        )
-        request_scenarios = []
+    request_analysis, request_source_evidence = _compact_executable_convergence_context(
+        request_analysis,
+        request_source_evidence,
+    )
+    request_scenarios = (
+        []
+        if convergence_pass
+        else _compact_executable_planner_scenarios(request_scenarios)
+    )
     request = {
         "title": title,
         "module": module,
         "analysis": request_analysis,
         "scenarios": request_scenarios,
         "cases": candidates,
-        "priorManualCandidateCount": len(manual_candidates),
+        "priorManualCandidateCount": len(manual_records),
+        "includedManualCandidateCount": len(manual_candidates),
         "selectedBaselines": compact_baselines,
         "scopePlan": scope_plan or {},
         "sourceEvidence": request_source_evidence,
@@ -6408,8 +6669,16 @@ def call_skill_executable_yaml_planner(
             "explicitRequirementMayDefineExpectedVisibleUi": True,
             "runnerValidatesProductAssertion": True,
         },
+        "responseContract": {
+            "classifyEveryInputCandidateExactlyOnce": True,
+            "deferredManualCandidatesRemainManual": True,
+            "flowMaxSteps": 8,
+            "reasonMaxChars": 180,
+            "omitRepeatedInputText": True,
+        },
     }
-    trace["context_compacted"] = convergence_pass
+    trace["context_compacted"] = True
+    trace["context_compaction_mode"] = "coverage_convergence" if convergence_pass else "initial_decision"
     trace["request_context_chars"] = len(json.dumps(request, ensure_ascii=False))
     trace["request_candidate_ids"] = [
         str(item.get("case_id") or "").strip()
@@ -6423,17 +6692,143 @@ def call_skill_executable_yaml_planner(
         else AI_EXECUTABLE_YAML_PLANNER_TIMEOUT_SECONDS
     )
     trace["timeout_seconds"] = planner_timeout
+    trace["response_max_tokens"] = AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS
     try:
-        result = run_ai_skill(
-            "executable_yaml_planner",
-            request,
-            timeout=planner_timeout,
-            temperature=0.0,
-            respect_global_timeout=False,
-            retry_count=0,
-            model_config=model_config,
-            runtime_trace=model_runtime_trace,
-        )
+        try:
+            result = run_ai_skill(
+                "executable_yaml_planner",
+                request,
+                timeout=planner_timeout,
+                temperature=0.0,
+                respect_global_timeout=False,
+                retry_count=0,
+                model_config=model_config,
+                runtime_trace=model_runtime_trace,
+                max_tokens=AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS,
+            )
+        except Exception as first_error:
+            if not _structured_output_was_truncated(first_error):
+                raise
+            retry_request = copy.deepcopy(request)
+            retry_request["scenarios"] = []
+            retry_request["analysis"] = {
+                key: copy.deepcopy((request.get("analysis") or {}).get(key))
+                for key in (
+                    "requirement_points",
+                    "requirement_acceptance_checks",
+                    "requirement_contract",
+                    "visible_outcomes",
+                )
+                if (request.get("analysis") or {}).get(key) not in (None, "", [], {})
+            }
+            retry_source = retry_request.get("sourceEvidence") or {}
+            retry_request["sourceEvidence"] = {
+                key: copy.deepcopy(retry_source.get(key))
+                for key in (
+                    "mode", "requirementText", "visualBatchJudgements",
+                    "figmaPageCount", "figmaImageCount", "executionContext", "policy",
+                )
+                if retry_source.get(key) not in (None, "", [], {})
+            }
+            retry_request["responseContract"]["retryAfterTruncation"] = True
+            retry_runtime_trace = {}
+            trace["truncation_retry"] = {
+                "attempted": True,
+                "succeeded": False,
+                "first_error": str(first_error)[:500],
+                "request_context_chars": len(json.dumps(retry_request, ensure_ascii=False)),
+                "response_max_tokens": AI_EXECUTABLE_YAML_PLANNER_RETRY_MAX_TOKENS,
+                "same_selected_model": True,
+            }
+            try:
+                result = run_ai_skill(
+                    "executable_yaml_planner",
+                    retry_request,
+                    timeout=planner_timeout,
+                    temperature=0.0,
+                    respect_global_timeout=False,
+                    retry_count=0,
+                    model_config=model_config,
+                    runtime_trace=retry_runtime_trace,
+                    max_tokens=AI_EXECUTABLE_YAML_PLANNER_RETRY_MAX_TOKENS,
+                )
+            except Exception as retry_error:
+                trace["truncation_retry"]["error"] = str(retry_error)[:500]
+                model_runtime_trace.clear()
+                model_runtime_trace.update(retry_runtime_trace)
+                raise
+            trace["truncation_retry"]["succeeded"] = True
+            model_runtime_trace.clear()
+            model_runtime_trace.update(retry_runtime_trace)
+        repair_feedback = _executable_plan_repair_feedback(result, candidates)
+        if repair_feedback:
+            retry_ids = {
+                str(item.get("caseId") or "").strip()
+                for item in repair_feedback
+                if str(item.get("caseId") or "").strip()
+            }
+            semantic_request = copy.deepcopy(request)
+            semantic_request["cases"] = [
+                copy.deepcopy(item)
+                for item in candidates
+                if str(item.get("case_id") or "").strip() in retry_ids
+            ]
+            semantic_request["scenarios"] = []
+            semantic_context = (
+                semantic_request.get("planningContext")
+                if isinstance(semantic_request.get("planningContext"), dict)
+                else {}
+            )
+            semantic_context["repairValidationFeedback"] = copy.deepcopy(repair_feedback)
+            semantic_focus = (
+                semantic_context.get("focus")
+                if isinstance(semantic_context.get("focus"), dict)
+                else {}
+            )
+            semantic_focus["focusedCandidateIds"] = sorted(retry_ids)
+            semantic_context["focus"] = semantic_focus
+            semantic_request["planningContext"] = semantic_context
+            semantic_request["responseContract"]["acceptanceRepairRetry"] = True
+            semantic_request["responseContract"]["returnOnlyCandidateIds"] = sorted(retry_ids)
+            semantic_runtime_trace = {}
+            semantic_trace = {
+                "attempted": True,
+                "succeeded": False,
+                "candidate_ids": sorted(retry_ids),
+                "feedback": copy.deepcopy(repair_feedback),
+                "request_context_chars": len(json.dumps(semantic_request, ensure_ascii=False)),
+                "same_selected_model": True,
+            }
+            try:
+                semantic_result = run_ai_skill(
+                    "executable_yaml_planner",
+                    semantic_request,
+                    timeout=planner_timeout,
+                    temperature=0.0,
+                    respect_global_timeout=False,
+                    retry_count=0,
+                    model_config=model_config,
+                    runtime_trace=semantic_runtime_trace,
+                    max_tokens=AI_EXECUTABLE_YAML_PLANNER_MAX_TOKENS,
+                )
+                result = _merge_executable_plan_retry_result(
+                    result,
+                    semantic_result,
+                    retry_ids,
+                )
+                remaining_feedback = _executable_plan_repair_feedback(result, candidates)
+                semantic_trace["succeeded"] = not any(
+                    str(item.get("caseId") or "").strip() in retry_ids
+                    for item in remaining_feedback
+                )
+                semantic_trace["remaining_feedback"] = remaining_feedback
+                semantic_trace["model_trace"] = _model_config_trace(
+                    model_config,
+                    semantic_runtime_trace,
+                )
+            except Exception as semantic_error:
+                semantic_trace["error"] = str(semantic_error)[:500]
+            trace["acceptance_repair_retry"] = semantic_trace
         trace.update(_model_config_trace(model_config, model_runtime_trace))
         candidate_by_id = {str(item.get("case_id") or "").strip(): item for item in candidates if str(item.get("case_id") or "").strip()}
         candidate_by_title = {str(item.get("title") or "").strip(): item for item in candidates if str(item.get("title") or "").strip()}

@@ -3242,3 +3242,52 @@ git diff --check
 
 - 提交、推送并部署本轮修复。
 - 部署后使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询 Agent、smoke、remaining 与可能的 AI 修复到终态，并人工复核最终 YAML、真实 Runner 报告、截图和失败归因。
+
+### 2026-07-19 部署后真实回归：可执行规划截断与验收语义纠偏
+
+部署 `d240266` 后真实验证：
+
+- 8091 / 8088、AI Gateway、Sonic 健康；`win-runner-01` 在线并上报 `qwen3.6-plus / qwen3.6`，固定 OPPO `ecbfd645` 在线。本轮没有选择或下发华为设备。
+- Agent：`agent-1784464343852-5e478235`；终态 `FAILED / GENERATE_YAML`，进度 30。没有创建关联 Runner job，因此失败与 Windows Runner、ADB、设备或历史 Sonic 任务无关。
+- PREPARE_SOURCE 正确解析 Figma 4 页 / 4 图。PLAN 将 4 张图按 4 个单图批次真实送入 `qwen3.6-plus`，4 / 4 均在 13-19 秒完成，`sent=true`、`attempted=4`、`done=4`、`status=completed`、`hardGate=false`，所有批次均 `fallbackUsed=false`。
+- AI 生成 8 条业务分支；硬需求仍是文档打印、照片打印、扫描复印三个兄弟分支，各自覆盖 visibility / relation / copy / reachability。基线重排为三个必需分支各提供 4 个可信候选，最终选中文档、照片和文件扫描成功基线。
+
+失败根因：
+
+- 初始 `executable_yaml_planner` 一次接收 20 个候选：8 个待决自动候选和 12 个上游已判定人工项，同时携带约 4 万字符重复上下文。线上 `qwen3.6-plus` 在 4096 completion token 截断，Gateway 返回 `Structured output truncated: finish_reason=length`。
+- 规划异常兜底保留了原始 8 个自动候选，但没有将其升级或终结为 manual，最终覆盖门禁因此看到 0 executable、8 条非终态候选并正确阻断。
+- 真实产物继续重放后发现第二层问题：最终收敛按“入口位置”等泛词选择人工备选，可能把照片分支候选用于扫描缺口，也没有优先给 AI 当前同 REQ executable 来补缺失验收维度。
+- 千问在收敛中还会出现“review 声称已补齐，但 flow / assertionTarget 实际未包含 relation 检查”的语义漂移；既有覆盖门禁能识别并拒绝，不能把 review 文案当作通过依据。
+
+本轮通用修复：
+
+- 初始可执行规划始终保留全部待决自动候选；只有总决策面未达到平台 8 条上限时，才最多补 3 个上游人工备选供 AI 主动升级。超出预算的人工项不丢失，原样保持 manual，并在 trace 中记录 included / deferred 数量。
+- 规划输入只保留原始 requirement contract、12 个验收检查、压缩场景索引、候选步骤/断言、可信基线、视觉批次判断和固定设备约束。真实失败请求从 20 个待输出候选、约 4 万字符降为 8 个待决候选、17115 字符。
+- planner 默认输出预算由 4096 提升为 6144；只有明确的 `finish_reason=length` 才在同一所选模型上做一次更紧凑的 8192-token 有界重试。不会因业务输出截断静默切换用户选择的模型。
+- 收敛候选先按原始 `REQ-*` 与业务分支匹配，再参考语义；兄弟分支不能互相冒充。缺失验收维度没有专门自动候选或有界证据时，才把同 REQ 的现有 executable 作为可修复候选，并继续提供一个同分支人工备选给 AI。
+- 每个可修复 executable 携带局部 `repairAcceptanceChecks` 和 `preserveAcceptanceCheckIds`。平台不代写业务 flow；如果 AI 把候选标为 executable 却未在 flow / assertionTarget 证明局部缺口，只把不合格候选交回同一模型做最多一次语义纠偏。第二次仍不满足时，原覆盖门禁继续阻断。
+- Prompt 要求只返回本次输入 / focus caseId，已保留 executable 不得重复输出；理由和 review 简写，避免解释文本挤占结构化候选。没有修改 Figma 解析、覆盖/scorer/Runner 门禁、执行模式、`router.py`、历史 YAML、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+线上同模型真实重放：
+
+- 初始压缩请求直接调用线上 Gateway：32 秒，`qwen3.6-plus`，`finishReason=stop`，1803 completion token，0 fallback；8 个 caseId 全部且仅分类一次，AI 返回 5 executable / 3 manual。
+- 现有基线、路径和覆盖审计接受 5 条 executable，但如实发现照片、扫描 relation 两个缺口，覆盖 10 / 12。
+- 收敛第一次真实调用仍只在 review 声称补齐；语义检查识别 `TC-002 / TC-003` 的结构化结果未证明 relation。局部纠偏真实调用耗时 14 秒，仍为同一 `qwen3.6-plus`、0 fallback，并把同级关系写入两条 flow / assertionTarget。
+- 最终离线重放覆盖 12 / 12、5 executable、0 未决自动候选；`executable_yaml_convergence_decision` 为 accepted，新增 `REQ-002-CHECK-02 / REQ-003-CHECK-02`，无回退验收维度。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录/回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+- 新回归覆盖 8 自动 + 12 人工的真实截断形态、同模型截断重试、REQ/兄弟分支候选隔离、已有 executable 不可回退，以及 AI review 声明与实际 flow 不一致时的单次语义纠偏。
+
+待完成：
+
+- 提交、推送并部署本轮修复。
+- 部署后使用完全相同输入再次发起 Agent，持续轮询生成、首批冒烟、remaining 和可能的有界修复到 Agent 终态；所有 Runner job 只允许固定 OPPO `ecbfd645`，并人工复核最终 YAML、真实报告、截图和失败归因。
