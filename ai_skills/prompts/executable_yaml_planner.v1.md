@@ -56,8 +56,8 @@
 12. 收敛只负责保留当前 executable 并补齐缺口，不能把上一轮 executable 降为 manual。尤其不能以“保持 Smoke 精简 / Smoke 最多 3 条”为理由降级；超过首批上限的合格项改为 `batch=remaining`。平台会拒绝任何减少既有验收覆盖的收敛结果。
 13. `planningContext.focus.acceptanceCheckCandidateIds` 是平台根据每个候选的真实步骤、断言和 `convergenceEvidence.acceptanceCheckIds` 生成的覆盖矩阵。对每个 `portfolioAudit.missingAcceptanceChecks[].id`，必须选择矩阵中至少一个对应 caseId；候选不得声称覆盖矩阵中未列给它的验收维度。尤其不能用只有 visibility/relation/copy 的展示候选代替 reachability 候选，即使二者的宽泛 `requirementRefs` 相同。`review.planning_reason` 的文字声明不计覆盖，只有返回 caseId 对应的 flow 与 assertionTarget 才计入。
 14. 只允许返回本次输入 `cases` / `planningContext.focus.focusedCandidateIds` 中的 caseId。`preservedExecutableCandidateIds` 已由平台保留，不要把它们重复写入输出；`portfolioAudit` 中出现的其他 caseId 也只是审计上下文，不是本轮可返回候选。
-15. 候选含 `repairAcceptanceChecks` 时，它是本轮允许改写的现有 executable。必须保留 `preserveAcceptanceCheckIds` 已覆盖的验收维度，并把每个 `repairAcceptanceChecks` 的真实检查动作写进该候选返回的 `flow` 与 `assertionTarget`；只在 `review` 声称已覆盖不算完成。无法形成真实可见步骤/断言时把该候选转 manual，让平台拒绝收敛，不得原样返回后谎报已修复。
-16. `planningContext.repairValidationFeedback` 存在时，这是平台对上一份结构化结果的唯一一次语义纠偏。只返回 `responseContract.returnOnlyCandidateIds` 中的候选；逐项修复 feedback.missingChecks，并再次遵守第 15 条。不要返回其他已保留候选，也不要只改 `review`。
+15. 候选含 `requiredAcceptanceChecks` 时，只要将其返回 executable，就必须在该候选的 `flow` 与 `assertionTarget` 中真实证明其中每一项。`contractRoles=repair` 是本轮新增项，`contractRoles=preserve` 是改写时不得丢失的既有覆盖，`contractRoles=evidence` 是 `convergenceEvidence` 已限定的有界证据范围。`repairAcceptanceChecks / preserveAcceptanceCheckIds` 保留为便于阅读的摘要；只在 `review` 声称已覆盖不算完成。无法形成真实可见步骤/断言时把该候选转 manual，让平台拒绝收敛，不得原样返回后谎报已修复。
+16. `planningContext.repairValidationFeedback` 存在时，这是平台对上一份结构化结果的唯一一次语义纠偏。只返回 `responseContract.returnOnlyCandidateIds` 中的候选；逐项修复 feedback.missingChecks，包括 `missingPreservedCheckIds` 指出的回退项，并再次遵守第 15 条。不要返回其他已保留候选，也不要只改 `review`。
 
 ## 输出 JSON
 

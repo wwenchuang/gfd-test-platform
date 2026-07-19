@@ -4278,6 +4278,30 @@ def _bounded_landing_tail(case, target_terms):
     ), -1)
     if click_index < 0:
         return None
+    click_step = steps[click_index]
+    conditional_target_canonicalized = False
+    if re.match(r"^(?:若|如果|如)", click_step) and re.search(
+        r"(?:可见|出现|存在).{0,24}(?:则|就)?\s*(?:点击|点按|轻触)",
+        click_step,
+    ):
+        matched_target = next((
+            str(term or "").strip()
+            for term in sorted(target_terms or [], key=lambda item: len(str(item or "")), reverse=True)
+            if str(term or "").strip() and str(term or "").strip() in click_step
+        ), "")
+        if matched_target:
+            target_label = re.sub(
+                r"(?:入口|按钮|图标|icon)$",
+                "",
+                matched_target,
+                flags=re.I,
+            ).strip(" \"'「」『』")
+            if target_label:
+                # The requirement explicitly asks Runner to validate this target.
+                # A conditional click would silently skip the product assertion when
+                # the entry is absent, so retain the AI target but make the click real.
+                click_step = f"点击「{target_label}」入口"
+                conditional_target_canonicalized = True
     observations = []
     for raw_step in steps[click_index + 1:]:
         step = str(raw_step or "").strip()
@@ -4324,8 +4348,9 @@ def _bounded_landing_tail(case, target_terms):
         [item for item in outcomes + [observation_text] if str(item or "").strip()]
     ))
     return {
-        "flow": [steps[click_index], f"检查{observation_text}"],
+        "flow": [click_step, f"检查{observation_text}"],
         "assertionTarget": assertion_target,
+        "conditionalTargetCanonicalized": conditional_target_canonicalized,
     }
 
 
@@ -5930,6 +5955,9 @@ def _bounded_convergence_evidence(
                 "landingEvidenceCaseIds": normalize_text_list(
                     landing_tail.get("sourceCaseIds") or donor_case_id
                 ),
+                "conditionalTargetCanonicalized": bool(
+                    landing_tail.get("conditionalTargetCanonicalized")
+                ),
                 "acceptanceCheckIds": [
                     str(item.get("id") or "").strip()
                     for item in covered_checks
@@ -5974,6 +6002,21 @@ def _convergence_record_matches_gap(record, point, missing_checks=None):
     if target_ids:
         return False
     return case_matches_requirement(raw, point)
+
+
+def _planner_acceptance_contract_check(check, roles=None):
+    """Compact one candidate-local acceptance obligation for model validation."""
+    check = check if isinstance(check, dict) else {}
+    return {
+        "id": str(check.get("id") or "").strip(),
+        "requirementId": str(check.get("requirementId") or "").strip(),
+        "branch": str(check.get("branch") or "").strip(),
+        "kind": str(check.get("kind") or "").strip(),
+        "text": str(check.get("text") or "").strip(),
+        "contractRoles": list(dict.fromkeys(
+            str(item or "").strip() for item in (roles or []) if str(item or "").strip()
+        )),
+    }
 
 
 def _focus_executable_convergence_candidates(
@@ -6122,10 +6165,20 @@ def _focus_executable_convergence_candidates(
     executable_count = max(0, safe_int(audit.get("executableCount"), 0))
     focused_manual = []
     selected_manual_ids = set()
+    all_acceptance_checks = [
+        check for check in (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
+        if isinstance(check, dict) and str(check.get("id") or "").strip()
+    ]
+    acceptance_check_by_id = {
+        str(check.get("id") or "").strip(): check
+        for check in all_acceptance_checks
+    }
     for record in focused_automatic:
         candidate_id = str(record["compact"].get("case_id") or "").strip()
         if candidate_id in bounded_evidence_by_id:
             record["compact"]["convergenceEvidence"] = bounded_evidence_by_id[candidate_id]
+        repair_check_ids = set()
+        preserve_check_ids = set()
         if candidate_id in repairable_executable_ids:
             pending_checks = [
                 check for check in missing_checks
@@ -6136,18 +6189,8 @@ def _focus_executable_convergence_candidates(
                 )
                 and not case_covers_requirement_acceptance(record["raw"], check)
             ]
-            all_acceptance_checks = [
-                check for check in (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
-                if isinstance(check, dict)
-            ]
             record["compact"]["repairAcceptanceChecks"] = [
-                {
-                    "id": str(check.get("id") or "").strip(),
-                    "requirementId": str(check.get("requirementId") or "").strip(),
-                    "branch": str(check.get("branch") or "").strip(),
-                    "kind": str(check.get("kind") or "").strip(),
-                    "text": str(check.get("text") or "").strip(),
-                }
+                _planner_acceptance_contract_check(check, ["repair"])
                 for check in pending_checks
                 if str(check.get("id") or "").strip()
             ]
@@ -6156,6 +6199,33 @@ def _focus_executable_convergence_candidates(
                 for check in all_acceptance_checks
                 if str(check.get("id") or "").strip()
                 and case_covers_requirement_acceptance(record["raw"], check)
+            ]
+            repair_check_ids = {
+                str(check.get("id") or "").strip()
+                for check in pending_checks
+                if str(check.get("id") or "").strip()
+            }
+            preserve_check_ids = set(record["compact"]["preserveAcceptanceCheckIds"])
+        evidence_check_ids = {
+            str(check_id or "").strip()
+            for check_id in normalize_text_list(
+                (bounded_evidence_by_id.get(candidate_id) or {}).get("acceptanceCheckIds")
+            )
+            if str(check_id or "").strip()
+        }
+        required_check_ids = repair_check_ids | preserve_check_ids | evidence_check_ids
+        if required_check_ids:
+            record["compact"]["requiredAcceptanceChecks"] = [
+                _planner_acceptance_contract_check(check, [
+                    role for role, check_ids in (
+                        ("repair", repair_check_ids),
+                        ("preserve", preserve_check_ids),
+                        ("evidence", evidence_check_ids),
+                    )
+                    if check_id in check_ids
+                ])
+                for check_id, check in acceptance_check_by_id.items()
+                if check_id in required_check_ids
             ]
 
     # One alternate per uncovered requirement keeps the final request bounded while
@@ -6182,6 +6252,18 @@ def _focus_executable_convergence_candidates(
         candidate_id = str(record["compact"].get("case_id") or "").strip()
         if candidate_id in bounded_evidence_by_id:
             record["compact"]["convergenceEvidence"] = bounded_evidence_by_id[candidate_id]
+            evidence_check_ids = {
+                str(check_id or "").strip()
+                for check_id in normalize_text_list(
+                    bounded_evidence_by_id[candidate_id].get("acceptanceCheckIds")
+                )
+                if str(check_id or "").strip()
+            }
+            record["compact"]["requiredAcceptanceChecks"] = [
+                _planner_acceptance_contract_check(check, ["evidence"])
+                for check_id, check in acceptance_check_by_id.items()
+                if check_id in evidence_check_ids
+            ]
 
     candidate_selection_mode = "missing_requirement_alternates" if focus_points else "none"
 
@@ -6335,7 +6417,7 @@ def _structured_output_was_truncated(error):
 
 
 def _executable_plan_repair_feedback(result, candidates):
-    """Find executable planner items that claim repair without proving each check."""
+    """Find executable planner items that violate their candidate-local contract."""
     result = result if isinstance(result, dict) else {}
     candidates_by_id = {
         str(item.get("case_id") or "").strip(): item
@@ -6347,11 +6429,15 @@ def _executable_plan_repair_feedback(result, candidates):
         item = raw_item if isinstance(raw_item, dict) else {}
         case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
         candidate = candidates_by_id.get(case_id) or {}
-        repair_checks = [
-            check for check in (candidate.get("repairAcceptanceChecks") or [])
+        required_checks = [
+            check for check in (
+                candidate.get("requiredAcceptanceChecks")
+                or candidate.get("repairAcceptanceChecks")
+                or []
+            )
             if isinstance(check, dict) and str(check.get("id") or "").strip()
         ]
-        if not repair_checks:
+        if not required_checks:
             continue
         probe = {
             "steps": normalize_text_list(item.get("flow"))[:8],
@@ -6359,16 +6445,21 @@ def _executable_plan_repair_feedback(result, candidates):
             "requirementRefs": normalize_text_list(item.get("requirementRefs"))[:8],
         }
         missing = [
-            check for check in repair_checks
+            check for check in required_checks
             if not case_covers_requirement_acceptance(probe, check)
         ]
         if missing:
             feedback.append({
                 "caseId": case_id,
                 "missingChecks": copy.deepcopy(missing),
+                "missingPreservedCheckIds": [
+                    str(check.get("id") or "").strip()
+                    for check in missing
+                    if "preserve" in normalize_text_list(check.get("contractRoles"))
+                ],
                 "reason": (
-                    "模型把候选标为 executable，但返回的 flow/assertionTarget 未实际证明这些验收项；"
-                    "review 中的覆盖声明不计入门禁"
+                    "模型把候选标为 executable，但返回的 flow/assertionTarget 未满足本候选的"
+                    "新增/证据/保留验收契约；review 中的覆盖声明不计入门禁"
                 ),
             })
     return feedback
@@ -7239,6 +7330,14 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "originLevel": origin_level,
                 "containerLevel": container_level,
             })
+    portfolio_acceptance_checks = (
+        (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
+    )
+    candidate_record_by_id = {
+        str(record.get("caseId") or "").strip(): record
+        for record in candidate_records
+        if str(record.get("caseId") or "").strip()
+    }
     bounded_evidence_by_id = plan.get("candidateEligibilityById")
     bounded_evidence_by_id = (
         bounded_evidence_by_id
@@ -7259,6 +7358,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     outside_focus_preserved_count = 0
     bounded_convergence_override_count = 0
     bounded_convergence_ai_path_count = 0
+    bounded_convergence_redundant_count = 0
     convergence_demotion_blocked_count = 0
     convergence_rewrite_blocked_count = 0
     bounded_requirement_scope_count = 0
@@ -7377,14 +7477,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "modelLevel": model_level,
                 "modelReason": model_reason,
             }
-            acceptance_checks = (
-                (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
-            )
             if model_level == "executable" and _ai_plan_satisfies_bounded_evidence(
                 case,
                 item,
                 bounded_evidence,
-                acceptance_checks,
+                portfolio_acceptance_checks,
                 allowed_baseline_ids,
             ):
                 level = "executable"
@@ -7431,9 +7528,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         planned_flow = normalize_text_list(item.get("flow"))[:8]
         precondition = str(item.get("precondition") or "").strip()
         assertion_target = str(item.get("assertionTarget") or "").strip()
-        acceptance_checks = (
-            (normalized.get("analysis") or {}).get("requirement_acceptance_checks") or []
-        )
+        acceptance_checks = portfolio_acceptance_checks
         requirement_refs, requirement_refs_guarded = _ground_planner_requirement_refs(
             case,
             item,
@@ -7782,6 +7877,92 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 flags.append("冒烟")
             case["flag"] = flags
             smoke_used += 1
+
+    # A bounded fallback exists to close a real acceptance gap, not to satisfy a
+    # case-count target. Apply every guard first, then remove a fallback only when
+    # the final executable portfolio still proves every acceptance check it covered.
+    for fallback_case in list(output_cases):
+        fallback_plan = fallback_case.get("ai_case_plan") or {}
+        bounded_meta = fallback_plan.get("boundedConvergence") or {}
+        if not (
+            str(fallback_case.get("executionLevel") or "").strip().lower() == "executable"
+            and isinstance(bounded_meta, dict)
+            and bounded_meta
+            and str(bounded_meta.get("modelLevel") or "").strip().lower() != "executable"
+        ):
+            continue
+        fallback_case_id = str(fallback_case.get("case_id") or "").strip()
+        bounded_check_ids = {
+            str(value or "").strip()
+            for value in (bounded_meta.get("acceptanceCheckIds") or [])
+            if str(value or "").strip()
+        }
+        fallback_covered_check_ids = {
+            str(check.get("id") or "").strip()
+            for check in portfolio_acceptance_checks
+            if isinstance(check, dict)
+            and str(check.get("id") or "").strip()
+            and case_covers_requirement_acceptance(fallback_case, check)
+        }
+        required_replacement_check_ids = bounded_check_ids | fallback_covered_check_ids
+        other_executable_cases = [
+            item for item in output_cases
+            if item is not fallback_case
+            and str(item.get("executionLevel") or "").strip().lower() == "executable"
+        ]
+        replacement_covered_check_ids = {
+            str(check.get("id") or "").strip()
+            for check in portfolio_acceptance_checks
+            if isinstance(check, dict)
+            and str(check.get("id") or "").strip()
+            and any(
+                case_covers_requirement_acceptance(other_case, check)
+                for other_case in other_executable_cases
+            )
+        }
+        if not (
+            required_replacement_check_ids
+            and required_replacement_check_ids.issubset(replacement_covered_check_ids)
+        ):
+            continue
+        source_record = candidate_record_by_id.get(fallback_case_id) or {}
+        original_case = copy.deepcopy(source_record.get("case") or fallback_case)
+        origin_level = str(source_record.get("originLevel") or "manual").strip().lower()
+        model_reason = str(bounded_meta.get("modelReason") or "").strip()
+        reason = model_reason or (
+            "该验收维度已由另一条最终 executable 路径完整覆盖，保留 AI 的人工分类，"
+            "不为数量重复下发 Runner"
+        )
+        original_case["case_id"] = fallback_case_id
+        original_case["originExecutionLevel"] = origin_level
+        original_case["executionLevel"] = "manual"
+        _set_case_smoke(original_case, False)
+        original_case["automation_reason"] = reason
+        original_case["ai_case_classification"] = {
+            "level": "manual",
+            "reason": reason,
+            "originLevel": origin_level,
+            "redundantBoundedEvidence": True,
+        }
+        output_cases = [item for item in output_cases if item is not fallback_case]
+        manual_cases.append(original_case)
+        applied_counts["executable"] = max(0, applied_counts["executable"] - 1)
+        applied_counts["manual"] += 1
+        bounded_convergence_override_count = max(0, bounded_convergence_override_count - 1)
+        bounded_convergence_redundant_count += 1
+        if origin_level == "manual":
+            retained_manual_count += 1
+            promoted_manual_count = max(0, promoted_manual_count - 1)
+        original_current_level = str(
+            (source_record.get("case") or {}).get("executionLevel")
+            or (source_record.get("case") or {}).get("execution_level")
+            or ""
+        ).strip().lower()
+        if original_current_level == "manual":
+            manual_reclassification_canonicalized_count = max(
+                0,
+                manual_reclassification_canonicalized_count - 1,
+            )
     normalized["cases"] = output_cases
     if convergence_pass and unclassified_focused_automatic_ids:
         provisional_audit = executable_yaml_portfolio_audit(normalized, targets)
@@ -7850,6 +8031,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "outside_focus_preserved_count": outside_focus_preserved_count,
         "bounded_convergence_override_count": bounded_convergence_override_count,
         "bounded_convergence_ai_path_count": bounded_convergence_ai_path_count,
+        "bounded_convergence_redundant_count": bounded_convergence_redundant_count,
         "convergence_demotion_blocked_count": convergence_demotion_blocked_count,
         "convergence_rewrite_blocked_count": convergence_rewrite_blocked_count,
         "bounded_requirement_scope_count": bounded_requirement_scope_count,

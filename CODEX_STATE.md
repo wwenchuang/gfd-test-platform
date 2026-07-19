@@ -3291,3 +3291,49 @@ git diff --check
 
 - 提交、推送并部署本轮修复。
 - 部署后使用完全相同输入再次发起 Agent，持续轮询生成、首批冒烟、remaining 和可能的有界修复到 Agent 终态；所有 Runner job 只允许固定 OPPO `ecbfd645`，并人工复核最终 YAML、真实报告、截图和失败归因。
+
+### 2026-07-19 部署后真实回归：收敛契约保留与必验入口点击
+
+部署 `e4762be` 后真实验证：
+
+- 8091 / 8088、AI Gateway、Sonic 健康；`win-runner-01` 在线并上报 `qwen3.6-plus / qwen3.6`，固定 OPPO `ecbfd645` ready。Runner 虽同时登记了华为设备，本次 Agent 明确保持 `deviceStrategy=fixed / deviceId=ecbfd645`，没有选择或下发第二台设备。
+- Agent：`agent-1784469157132-cd007495`；终态 `FAILED / GENERATE_YAML`，进度 30。没有创建任何关联 Runner job，因此本轮失败与 Windows Runner、ADB、OPPO、华为或并行 Sonic 任务无关。
+- PREPARE_SOURCE 正确解析 Figma 4 页 / 4 图、忽略 0 页。PLAN 将 4 张图按 4 个单图批次真实送入 `qwen3.6-plus`，4 / 4 均完成，`hardGate=false`、所有批次 `fallbackUsed=false`；Figma 继续作为软参考，没有修改现有解析链路。
+- 初始 planner 请求约 2.7 万字符，`qwen3.6-plus` 正常 `finishReason=stop`、0 fallback，返回 5 executable / 3 manual。`e4762be` 的输入压缩和 6144 token 预算已生效，本次不再发生结构化输出截断。
+- 初始组合覆盖 9 / 12：缺照片 reachability、扫描 relation、扫描 reachability。最终收敛聚焦 `TC-002 / TC-008 / MC-004 / MC-001`，数量目标已经满足，没有按 5 条门槛硬凑候选。
+
+失败根因：
+
+- `TC-002` 在补照片 reachability 时丢失了原本已有的 relation。旧语义纠偏只验证 `repairAcceptanceChecks`，没有把 `preserveAcceptanceCheckIds` 作为同一候选的硬返回契约；组合级门禁最终发现回退并原子拒绝整次收敛，但已没有机会在同一次模型调用内纠正。
+- `TC-008` 的上游 AI 步骤写成“若百度网盘入口可见，则点击”。有界首屏证据曾接受这条尾链，但验收审计正确地不把条件点击计为真实 reachability：入口缺失时条件步骤会静默跳过，不能代表产品断言。
+- 收敛 AI 已用 `TC-008` 同时覆盖扫描 relation / reachability，却把重复的 `MC-001` 明确保留为 manual。旧证据兜底仍强制把 `MC-001` 升为 executable，虽然不破坏覆盖，但会无意义增加一条 Runner 任务。
+
+本轮通用修复：
+
+- 每个聚焦候选现在携带统一 `requiredAcceptanceChecks`，由 repair、preserve、evidence 三类局部契约组成并记录 `contractRoles`。同模型有界语义纠偏检查实际 `flow / assertionTarget`，既要补新增缺口，也不能丢失已有验收；review 自述仍不计入门禁。
+- 当原始显式需求要求点击某个可见文字入口，而上游 AI 写成“若/如果入口可见则点击”时，只把该目标点击规范为真实文字动作 `点击「目标」入口`。入口不存在应由 Runner 报产品断言失败，不能条件跳过；坐标、深层授权、账号、验证码和文件操作限制均未放宽。
+- 有界证据兜底仍先完整经过基线、需求映射、导航、动态数据和分支守卫。最终 executable 组合形成后，只有另一条最终可执行路径真实覆盖该兜底用例的全部验收项时，才尊重 AI 的 manual 决策并去掉重复任务；若替代路径被任一守卫降级，兜底继续保留。
+- 没有新增模型轮次、执行模式或数量门槛，没有修改 Figma 解析、`router.py`、历史 YAML、Runner、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+线上真实模型产物重放：
+
+- 同一生产 payload、同一三条生产成功基线和同一 `qwen3.6-plus` 收敛请求真实返回 `finishReason=stop / fallback=false`。首轮返回 `TC-008 / TC-002` executable；候选局部契约发现 `TC-002` 丢失 relation 后，只对 `TC-002` 做一次同模型语义纠偏，纠偏后无剩余 feedback。
+- `TC-008` 的条件目标点击被规范为真实可见文字点击，AI 返回流同时证明扫描 relation 和 reachability；`TC-002` 同时保留照片 visibility / relation / copy 并补齐 reachability。
+- 使用最终代码重新应用上述真实模型返回：覆盖由 9 / 12 变为 12 / 12，缺失 0，最终 6 条 executable：`TC-001 / TC-002 / TC-003 / TC-006 / TC-007 / TC-008`。重复的 `MC-001` 保留 manual，`bounded_convergence_redundant_count=1`、fallback override 0。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录/回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+- 新回归覆盖候选补新验收却丢旧验收、显式必验入口的条件点击、最终替代路径真实覆盖时去重，以及替代路径被导航守卫降级时必须保留兜底。
+
+待完成：
+
+- 提交、推送并部署本轮修复。
+- 部署后使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询到 Agent、首批 smoke、remaining 和可能的 AI 修复全部终态，再人工复核最终 YAML、Runner 报告、截图和失败分类。

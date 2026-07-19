@@ -621,6 +621,36 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ),
         "Declarative confirmation steps must remain usable as bounded AI observations",
     )
+    conditional_required_landing = ai_skill_service._bounded_landing_tail({
+        "requirementRefs": ["REQ-003 扫描复印百度网盘入口可达"],
+        "steps": [
+            "进入扫描复印页",
+            "若「百度网盘」入口可见，则点击该入口",
+            "等待页面跳转或弹窗出现",
+        ],
+        "expected_result": (
+            "点击后已离开扫描复印页，百度网盘授权页、文件列表或系统弹窗之一可见，"
+            "无Crash或白屏"
+        ),
+    }, ["百度网盘"])
+    conditional_reachability_check = {
+        "id": "REQ-003-CHECK-04",
+        "requirementId": "REQ-003",
+        "branch": "扫描复印",
+        "kind": "reachability",
+        "text": "点击百度网盘入口并校验目标页面稳定可达",
+    }
+    require(
+        conditional_required_landing
+        and conditional_required_landing.get("conditionalTargetCanonicalized") is True
+        and conditional_required_landing.get("flow", [""])[0] == "点击「百度网盘」入口"
+        and ai_skill_service.case_covers_requirement_acceptance({
+            "steps": conditional_required_landing.get("flow"),
+            "assertions": [conditional_required_landing.get("assertionTarget")],
+            "requirementRefs": ["REQ-003 扫描复印百度网盘入口可达"],
+        }, conditional_reachability_check),
+        "An AI-authored conditional target click must become a real visible-text product assertion instead of silently skipping a missing required entry",
+    )
     require(
         ai_skill_service._bounded_landing_tail({
             "steps": ["点击发票入口", "确认打印"],
@@ -2145,6 +2175,12 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and manual_branch_source_evidence.get("manualPromotionEligible") is True
         and manual_branch_source_evidence.get("precondition") == "App 首页"
         and manual_branch_focused_by_id["MC-BRANCH-SOURCE"].get("convergenceEvidence", {}).get("eligible") is True
+        and {
+            item.get("id")
+            for item in manual_branch_focused_by_id["MC-BRANCH-SOURCE"].get("requiredAcceptanceChecks") or []
+        } == {
+            "REQ-021-CHECK-01", "REQ-021-CHECK-02", "REQ-021-CHECK-03", "REQ-021-CHECK-04",
+        }
         and "MC-BRANCH-SOURCE" in manual_branch_focus.get("boundedEvidenceCandidateIds", [])
         and set(manual_branch_source_evidence.get("acceptanceCheckIds") or []) == {
             "REQ-021-CHECK-01", "REQ-021-CHECK-02", "REQ-021-CHECK-03", "REQ-021-CHECK-04",
@@ -2161,6 +2197,108 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             {"min_automation_cases": 1},
         ).get("ok"),
         "A required branch that AI initially marked manual must reuse its verified navigation baseline and same-target AI first-screen evidence instead of claiming that no baseline exists",
+    )
+    redundant_branch_payload = json.loads(json.dumps(manual_branch_payload, ensure_ascii=False))
+    redundant_branch_payload["cases"].append({
+        "case_id": "TC-BRANCH-COVER",
+        "title": "资料归档企业云盘完整验收",
+        "executionLevel": "needs_review",
+        "originExecutionLevel": "automatic",
+        "requirementRefs": [manual_branch_payload["analysis"]["requirement_points"][0]],
+        "steps": [
+            "启动App并等待首页稳定显示",
+            "进入资料服务",
+            "进入资料归档",
+            "检查企业云盘入口展示、同级关系及文案",
+            "点击企业云盘入口",
+            "等待首个稳定页面可见",
+        ],
+        "assertions": ["企业云盘入口完整验收通过"],
+    })
+    redundant_branch_flow = [
+        "启动App并等待首页稳定显示",
+        "点击「资料服务」",
+        "等待资料服务页面加载完成",
+        "点击「资料归档」",
+        "等待资料归档页面加载完成",
+        "检查「企业云盘」入口可见，文案显示为「企业云盘」，且与当前页面其它入口同级并列",
+        "点击「企业云盘」入口",
+        "检查已离开资料归档来源页，企业云盘授权页、登录页或内容列表任一首个稳定页面可见，且无白屏或崩溃",
+    ]
+    redundant_branch_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-archive-nav"],
+        "verifiedBaselineIds": ["base-archive-nav"],
+        "requirementPoints": manual_branch_payload["analysis"]["requirement_points"],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["TC-BRANCH-COVER", "MC-BRANCH-SOURCE"],
+        "candidateEligibilityById": manual_branch_evidence,
+        "cases": [{
+            "caseId": "TC-BRANCH-COVER",
+            "baselineId": "base-archive-nav",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": redundant_branch_flow,
+            "assertionTarget": "企业云盘入口可见，文案显示为「企业云盘」，与其它入口同级；点击后首个稳定页面可见且无白屏或崩溃",
+            "requirementRefs": [manual_branch_payload["analysis"]["requirement_points"][0]],
+            "executableReason": "成功来源路径与当前需求共同证明短链路可执行",
+            "batch": "remaining",
+        }],
+        "manual_cases": [{
+            "caseId": "MC-BRANCH-SOURCE",
+            "reason": "相同验收已由更完整的自动候选覆盖，无需重复执行",
+        }],
+    }
+    redundant_branch_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        redundant_branch_payload,
+        redundant_branch_plan,
+    )
+    redundant_branch_review = redundant_branch_applied.get("review", {}).get(
+        "executable_yaml_plan", {}
+    )
+    redundant_branch_manual = next(
+        item for item in redundant_branch_applied.get("manual_cases") or []
+        if item.get("case_id") == "MC-BRANCH-SOURCE"
+    )
+    require(
+        any(
+            item.get("case_id") == "TC-BRANCH-COVER"
+            and item.get("executionLevel") == "executable"
+            for item in redundant_branch_applied.get("cases") or []
+        )
+        and redundant_branch_manual.get("ai_case_classification", {}).get(
+            "redundantBoundedEvidence"
+        ) is True
+        and redundant_branch_review.get("bounded_convergence_redundant_count") == 1
+        and redundant_branch_review.get("bounded_convergence_override_count") == 0
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            redundant_branch_applied,
+            {"min_automation_cases": 1},
+        ).get("ok"),
+        "A bounded fallback must respect the AI manual decision when another final executable flow already proves every covered acceptance check",
+    )
+    guarded_replacement_plan = json.loads(json.dumps(redundant_branch_plan, ensure_ascii=False))
+    guarded_replacement_plan["cases"][0]["flow"] = [
+        "等待 App 首页稳定显示",
+        "检查企业云盘入口可见、文案正确且与其它入口同级",
+    ]
+    guarded_replacement_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        redundant_branch_payload,
+        guarded_replacement_plan,
+    )
+    guarded_replacement_review = guarded_replacement_applied.get("review", {}).get(
+        "executable_yaml_plan", {}
+    )
+    require(
+        any(
+            item.get("case_id") == "MC-BRANCH-SOURCE"
+            and item.get("executionLevel") == "executable"
+            for item in guarded_replacement_applied.get("cases") or []
+        )
+        and guarded_replacement_review.get("bounded_convergence_redundant_count") == 0
+        and guarded_replacement_review.get("bounded_convergence_override_count") == 1
+        and guarded_replacement_review.get("navigation_path_guard_count", 0) >= 1,
+        "A model candidate rejected by final navigation guards must never suppress the bounded acceptance fallback",
     )
     manual_tail_payload = json.loads(json.dumps(branch_fallback_payload, ensure_ascii=False))
     for item in manual_tail_payload.get("manual_cases") or []:
@@ -2920,6 +3058,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "visibility/relation/copy" in planner_prompt
         and "不要求新增入口或目标落地页已有历史成功结果" in planner_prompt
         and "kind=source_ui_assertion" in planner_prompt
+        and "requiredAcceptanceChecks" in planner_prompt
+        and "contractRoles=preserve" in planner_prompt
         and "历史成功基线里的文件名、账号、手机号、订单号" in planner_prompt,
         "Final executable planning must test explicit visible requirements without turning missing sibling Figma frames into a hard gate",
     )
@@ -3638,6 +3778,47 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "同级并列" in " ".join(semantic_scan.get("flow") or [])
         and "同级并列" in str(semantic_scan.get("assertionTarget") or ""),
         "An executable AI result that only claims coverage in review must receive one same-model semantic correction before the gate",
+    )
+    preserved_contract_feedback = ai_skill_service._executable_plan_repair_feedback(
+        {
+            "cases": [{
+                "caseId": "TC-ATOMIC",
+                "flow": [
+                    "等待首页",
+                    "点击照片打印",
+                    "点击百度网盘入口",
+                    "等待授权页、文件列表或系统弹窗之一可见",
+                ],
+                "assertionTarget": "授权页、文件列表或系统弹窗之一可见，无Crash或白屏",
+                "requirementRefs": [relation_points[0]],
+            }],
+        },
+        [{
+            "case_id": "TC-ATOMIC",
+            "requiredAcceptanceChecks": [{
+                "id": "REQ-002-CHECK-02",
+                "requirementId": "REQ-002",
+                "branch": "照片打印",
+                "kind": "relation",
+                "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                "contractRoles": ["preserve"],
+            }, {
+                "id": "REQ-002-CHECK-04",
+                "requirementId": "REQ-002",
+                "branch": "照片打印",
+                "kind": "reachability",
+                "text": "点击百度网盘入口并校验目标页面稳定可达",
+                "contractRoles": ["repair"],
+            }],
+        }],
+    )
+    require(
+        len(preserved_contract_feedback) == 1
+        and preserved_contract_feedback[0].get("missingPreservedCheckIds") == ["REQ-002-CHECK-02"]
+        and [
+            item.get("id") for item in preserved_contract_feedback[0].get("missingChecks") or []
+        ] == ["REQ-002-CHECK-02"],
+        "A convergence rewrite that closes a new gap but drops prior coverage must receive candidate-local semantic feedback before atomic portfolio application",
     )
 
     swapped_payload = {
