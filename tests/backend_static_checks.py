@@ -8450,6 +8450,8 @@ def check_yaml_runner_eligibility_filter():
         "requirementRefs": [requirement_point],
         "start_page": "App 首页",
         "business_path": "App 首页 -> 扫描复印 -> 证件扫描",
+        "goal": "校验入口展示；若授权态不确定则需 Mock 或预置后台状态",
+        "data_requirements": "需后台配置固定授权态",
         "expected_result": "云盘入口可见且与同页导入入口同级展示",
         "assertions": ["云盘入口文案准确且与同页导入入口同级展示"],
         "repair_hints": "使用同分支成功基线补齐真实可见文字导航",
@@ -8597,9 +8599,36 @@ def check_yaml_runner_eligibility_filter():
     require(
         restored_candidate.get("executionLevel") == "executable"
         and restored_candidate.get("originExecutionLevel") == "automatic"
-        and restored_candidate.get("ai_case_plan", {}).get("baselineVerified") is True,
-        "A grounded AI path may restore the original automatic candidate while all downstream gates remain active",
+        and restored_candidate.get("ai_case_plan", {}).get("baselineVerified") is True
+        and restored_candidate.get("goal") == "云盘入口文案准确且与同页导入入口同级展示"
+        and restored_candidate.get("data_requirements") is None
+        and (restored_candidate.get("previous_manual_context") or {}).get("goal") == source_candidate["goal"]
+        and identity_applied.get("review", {}).get("executable_yaml_plan", {}).get(
+            "manual_reclassification_canonicalized_count"
+        ) == 1,
+        "A grounded AI path must atomically replace stale manual execution conditions when it restores an automatic candidate",
     )
+    for ordered_cases in (
+        list(identity_applied.get("cases") or []),
+        list(reversed(identity_applied.get("cases") or [])),
+    ):
+        replay_payload = json.loads(json.dumps(identity_applied, ensure_ascii=False))
+        replay_payload["cases"] = ordered_cases
+        replay_filtered = yaml_service.split_automation_ready_cases(replay_payload)
+        _, replay_files = yaml_service.cases_to_separate_midscene_yamls(
+            replay_filtered,
+            app_package="com.xbxxhz.box",
+        )
+        require(
+            "TC-005" in {item.get("case_id") for item in replay_filtered.get("cases") or []}
+            and "TC-005" not in {item.get("case_id") for item in replay_filtered.get("manual_cases") or []},
+            "Runner eligibility must honor the current grounded AI contract regardless of candidate order instead of reviving stale manual metadata",
+        )
+        require(
+            {item.get("case_id") for item in replay_files}
+            == {item.get("case_id") for item in replay_filtered.get("cases") or []},
+            "Every candidate retained after AI reclassification must reach the split YAML conversion output",
+        )
 
     payload = {
         "title": "AI建模需求",

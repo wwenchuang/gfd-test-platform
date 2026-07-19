@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实回归：AI 恢复 executable 时原子替换旧人工执行契约
+
+用户部署 `2b91966` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784454424819-fba97f18`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 生产实际可用地址为 `101.34.197.12:8091 / :8088`，两端健康；AI Gateway、Sonic 健康，Windows Runner 1 台在线并上报 `midscene_model_family=qwen3.6`，固定 OPPO 上 `com.xbxxhz.box 4.45.0 (357)` ready。域名 `sonic.xiaobaiai.net` 当前解析到另一个可建立 TCP 但 HTTP 无响应的地址，真实验证未据此误判服务离线。
+- Figma parser 未修改，复用并解析 `4 页 / 4 张 UI 图`；4 张图按 4 个单图批次全部送入 qwen3.6-plus，均一次完成、无回退。AI 生成 8 个业务 flow，明确拆分文档打印、照片打印、扫描复印的展示与可达性。
+- 最终 AI 收敛把 `TC-001/002/003/004/005/006` 共 6 条候选判为 executable，portfolio audit 已达到 `12/12 / missing=0`；3/5/8 数量只是规划目标，没有为凑数生成额外用例。
+- 随后的实际 YAML 转换只产出 5 条，并在最终覆盖复核中以唯一缺口 `REQ-001-CHECK-04 文档打印点击百度网盘后目标页稳定可达` 阻断。Agent 终态为 `FAILED / GENERATE_YAML / 30%`，没有创建 Runner job，也没有向第二台设备下发。
+
+深层根因：
+
+- 上游第一轮 AI 曾把文档可达 `TC-003` 判为 manual，其旧 `goal` 留有“若未授权需 Mock 或预置授权态”，并写入 manual reason。最终收敛 AI 已基于文档打印成功基线 `b6a163ea9dc815d9` 把它改为状态无关的短链路：只点击百度网盘并校验首个合法页面，无深层授权、账号或文件操作。
+- 旧状态应用只在 `originExecutionLevel=manual` 时清理人工元数据。`TC-003` 原本由 AI 生成、后来暂时降级，因此 origin 仍是 `automatic`；第二轮恢复 executable 后，步骤、断言和新理由已更新，旧人工 `goal / reason` 却继续残留。
+- `split_automation_ready_cases()` 的确定性闸门随后从旧 goal 读到 `Mock`，把已经通过 AI 收敛和 `12/12` 审计的 `TC-003` 再次转回 manual。直接把生产保存的 6 条 cases 喂给转换器，可稳定复现 `ready=[TC-001,002,004,005,006] / TC-003 manualized`。这不是模型漏选、Figma、数量截断、scorer 或 Runner 问题。
+
+通用修复：
+
+- 只要候选当前状态确实从 manual 恢复为 executable，并且权威 AI 已给出可信基线路径或有界证据、明确前置、完整 flow 和可见终态，就把这些字段作为新的原子执行契约：替换 goal、business path、preconditions、steps、assertions 和 expected result，清除旧 reason、数据准备及 suggested setup。
+- 旧人工上下文不丢弃，转存到 `previous_manual_reason / previous_manual_context` 供审计，但不再参与 Runner eligibility。新增 `manual_reclassification_canonicalized_count`，线上可直接确认该路径是否生效。
+- 该规则不直接放行候选：需求映射、基线可信度、路径完整性、static、scorer、dry-run、首批最多 3 条、固定设备和真实 Runner 门禁全部保留；manual -> needs_review 不会触发执行契约替换。
+
+真实产物离线重放：
+
+- 用生产 `TC-003` 的原 goal、manual reason、最终 AI flow、断言和基线 ID 重建两轮状态转换；正序和倒序候选均得到 6 个 ready cases 和 6 个独立 YAML，`TC-003` 不再回到 manual，旧 goal 只保留在审计上下文。
+- 6 个 YAML 全部使用真实可见文字、无坐标；structure、dry-run 和 static 均 `6/6` 通过。scorer 均为 executable，`TC-001/002/003/005/006=100`，照片长链路 `TC-004=82` 且只保留非阻断的链路偏长建议。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及空答/截断/图像/超时回退、Skill fixtures `3/3`、Playwright 桌面/移动视觉回归全部通过。
+- 新增回归覆盖“automatic 候选先降 manual、再由 AI 恢复 executable”的真实两轮状态，并交换候选顺序后再次经过最终 YAML eligibility 闸门。
+- 本轮改动完成本地提交后待用户 push / 部署；部署后必须重跑同一 Agent，并监督固定 OPPO 上首批 Smoke 与 remaining 到真实终态。
+
 ### 2026-07-19 真实回归：无显式 REQ 映射的 AI 来源页候选按精确验收意图收敛
 
 用户部署 `bdc5640` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784450235670-fd8ad477`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

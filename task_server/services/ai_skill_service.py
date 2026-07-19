@@ -6797,6 +6797,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     trusted_baseline_navigation_adapted_count = 0
     dynamic_data_observation_grounded_count = 0
     dynamic_data_guard_count = 0
+    manual_reclassification_canonicalized_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
@@ -7193,13 +7194,14 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             if origin_level == "manual":
                 retained_manual_count += 1
             continue
-        if origin_level == "manual":
+        reclassified_from_manual = current_level == "manual" and level != "manual"
+        if origin_level == "manual" or reclassified_from_manual:
             previous_reason = str(case.get("automation_reason") or case.get("reason") or "").strip()
             if previous_reason:
                 case["previous_manual_reason"] = previous_reason
             for stale_key in ("reason", "reasons", "level", "score"):
                 case.pop(stale_key, None)
-            if level == "executable":
+            if origin_level == "manual" and level == "executable":
                 promoted_manual_count += 1
         case["executionLevel"] = level
         case["ai_case_classification"] = {
@@ -7244,9 +7246,35 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 unsupported_flow_literals + unsupported_assertion_literals
             ))[:8],
         }
-        if precondition and not case.get("preconditions"):
-            case["preconditions"] = [precondition]
         bounded_evidence_used = bool(item.get("boundedConvergence"))
+        canonicalize_reclassified_contract = bool(
+            reclassified_from_manual
+            and level == "executable"
+            and assertion_target
+            and planned_flow
+            and (path_plan_applied or bounded_evidence_used)
+        )
+        if canonicalize_reclassified_contract:
+            previous_context = {}
+            for stale_key in (
+                "goal", "business_path", "businessPath", "path",
+                "preconditions", "precondition",
+                "data_requirements", "dataRequirements", "test_data", "testData",
+                "suggested_setup", "suggestedSetup", "setup",
+            ):
+                stale_value = case.get(stale_key)
+                if stale_value not in (None, "", []):
+                    previous_context[stale_key] = copy.deepcopy(stale_value)
+                case.pop(stale_key, None)
+            if previous_context:
+                case["previous_manual_context"] = previous_context
+            case["goal"] = assertion_target
+            case["business_path"] = " -> ".join(planned_flow)
+            if precondition:
+                case["preconditions"] = [precondition]
+            manual_reclassification_canonicalized_count += 1
+        elif precondition and not case.get("preconditions"):
+            case["preconditions"] = [precondition]
         if bounded_evidence_used:
             if str(item.get("title") or "").strip():
                 case["title"] = str(item.get("title") or "").strip()
@@ -7360,6 +7388,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "visual_variant_hint_refreshed_count": visual_variant_hint_refreshed_count,
         "dynamic_data_observation_grounded_count": dynamic_data_observation_grounded_count,
         "dynamic_data_guard_count": dynamic_data_guard_count,
+        "manual_reclassification_canonicalized_count": manual_reclassification_canonicalized_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
