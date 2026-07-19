@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实回归：最终收敛必须按精确验收项选择候选，模型漏回已审计候选时有界闭环
+
+用户部署 `a67cb48` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784443923344-6cd2fc19`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康，Windows Runner 1 台在线并上报 `midscene_model_family=qwen3.6`。本轮在 `GENERATE_YAML / 30%` 终止，没有创建 Runner job，也没有向同 Runner 登记的第二台设备下发任务。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图`；4 张图按 4 个批次全部送入 qwen3.6-plus，`attempted=4 / done=4 / aiJudgementStatus=completed / hardGate=false`。AI 业务计划生成 8 个分支并通过计划质量门禁，设计稿继续是完整送 AI 的软参考。
+- 初始组合已有 `5` 条 executable，数量目标已满足；最终 qwen 收敛调用成功且未回退，聚焦 `TC-003/004/005/006 + MC-001/002`，消耗 `22602 prompt / 2161 completion` tokens。覆盖从 `6/12` 增加到 `11/12`，唯一缺口为 `REQ-003-CHECK-04` 扫描复印百度网盘可达性，因此 coverage gate 正确阻断 YAML 和 Runner。
+
+深层根因：
+
+- `TC-005` 只有扫描来源页导航和百度网盘 visibility / relation / copy 断言；`TC-006` 才包含真实的“点击百度网盘 -> 等待百度/登录/授权首屏 -> 非白屏断言”，并由平台有界证据精确映射 `REQ-003-CHECK-04`。
+- qwen 的说明文字声称 `TC-005` 同时覆盖扫描 UI 与可达性，但结构化结果只返回 5/6 个聚焦候选，遗漏 `TC-006`。旧请求只给宽泛 requirement refs，没有把验收项到候选的精确归属作为顶层矩阵；应用层又只有在模型返回某个分类时才会使用该候选的 `convergenceEvidence`，所以遗漏项保持 manual。
+- 这是模型结构化输出违反“每个聚焦候选恰好分类一次”的契约，不是数量门槛、Figma、scorer 或 Runner 问题。不能通过把 `TC-005` 文案解释成点击动作、降低覆盖门禁或硬凑用例解决。
+
+通用修复：
+
+- 最终收敛请求新增 `planningContext.focus.acceptanceCheckCandidateIds`，只列出本次实际发送给模型、且已由真实步骤/断言和 `convergenceEvidence.acceptanceCheckIds` 审计的 `验收项 ID -> 候选 ID`。提示要求每个缺口必须从对应矩阵中选择，visibility / relation / copy 不能代替 reachability，planning reason 的文字声明不计覆盖。
+- AI 仍负责在合法候选中选择。只有最终模型漏回聚焦候选，且该候选同时满足 `eligible=true`、拥有精确 acceptance IDs、属于本次矩阵时，平台才把它恢复到现有 `needs_review` 分类入口；非矩阵项、证据不足项和模型明确返回的其它分类不被扩大。
+- 恢复分类不是直接放行：同分支成功基线、前置、短路径、验收覆盖、YAML static、scorer、dry-run、固定设备和真实 Runner 门禁全部保留。没有增加模型轮次、硬凑数量或修改 Figma parser、`router.py`、Runner、Sonic、scorer、执行模式及历史 YAML。
+
+真实产物离线重放：
+
+- 直接读取线上保存的 `a67cb48` cases payload；旧审计为 `11/12`，唯一缺 `REQ-003-CHECK-04`。新 focus 只发送 `TC-006`，矩阵精确为 `REQ-003-CHECK-04 -> TC-006`。
+- 模拟 qwen 再次遗漏 `TC-006` 后，trace 只记录并恢复 `TC-006`；其 `boundedConvergence.acceptanceCheckIds` 仍只有 `REQ-003-CHECK-04`，最终 portfolio audit 为 `12/12 / missing=0 / ok=true`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及空答/截断/图像/超时回退、Skill fixtures `3/3` 和 Playwright 桌面/移动视觉回归全部通过。
+
+待完成：提交、推送并部署本轮修复；部署后再次用完全相同输入发起唯一 Agent，持续监督 4 个视觉批次、最终 YAML、固定 OPPO 上串行 Smoke、失败帧驱动修复和 remaining 到真实终态。任何阶段不得向第二台设备下发。
+
 ### 2026-07-19 真实回归：修复 AI 候选必须携带精确校验反馈，“导航保持不变”不能误判为路径修改
 
 用户部署 `0741347` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784441215220-ba6b5958`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

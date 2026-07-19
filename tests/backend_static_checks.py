@@ -2117,6 +2117,9 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         item.get("case_id"): item for item in manual_tail_requests[0].get("cases") or []
     }
     manual_tail_evidence = manual_tail_request_by_id["MC-R03"].get("convergenceEvidence") or {}
+    manual_tail_acceptance_candidates = (
+        (manual_tail_requests[0].get("planningContext") or {}).get("focus") or {}
+    ).get("acceptanceCheckCandidateIds") or {}
     manual_tail_missing_check_ids = {
         item.get("id") for item in manual_tail_audit.get("missingAcceptanceChecks") or []
         if item.get("requirementId") == "REQ-003"
@@ -2127,6 +2130,12 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and manual_tail_evidence.get("tailSourceCaseId") == "MC-R03"
         and set(manual_tail_evidence.get("acceptanceCheckIds") or []) == manual_tail_missing_check_ids
         and "REQ-003-CHECK-04" in manual_tail_missing_check_ids
+        and "MC-R03" in manual_tail_acceptance_candidates.get("REQ-003-CHECK-04", [])
+        and {
+            case_id
+            for case_ids in manual_tail_acceptance_candidates.values()
+            for case_id in case_ids
+        }.issubset(manual_tail_request_by_id)
         and len(manual_tail_evidence.get("flow") or []) <= 8
         and manual_tail_evidence.get("flow", [""])[0] == "启动 App 并等待首页加载"
         and "售后服务页面展示文案为发票的入口" in " ".join(manual_tail_evidence.get("flow") or [])
@@ -2159,6 +2168,79 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ).get("ok")
         and not any(item.get("case_id") == "MC-R03" for item in manual_tail_applied.get("manual_cases") or []),
         "A safe model-authored landing candidate must own the missing acceptance check while the approved source-page executable stays immutable",
+    )
+    omission_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def planner_omitting_bounded_tail(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in omission replay")
+            omission_requests.append(request)
+            return {
+                "cases": [],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [{
+                    "caseId": candidate.get("case_id"),
+                    "reason": "模拟最终模型对其它候选完成分类",
+                    "requirementRefs": candidate.get("requirementRefs") or [],
+                } for candidate in request.get("cases") or []
+                if candidate.get("case_id") != "MC-R03"],
+                "review": {"planning_reason": "模拟最终模型漏回唯一可达性候选"},
+            }
+
+        ai_skill_service.run_ai_skill = planner_omitting_bounded_tail
+        omission_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "新增发票入口",
+            "会员服务",
+            manual_tail_payload,
+            [{
+                "id": "base-entry-nav",
+                "title": "订单与优惠券入口导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+            }, {
+                "id": "base-service-nav",
+                "title": "售后服务入口导航",
+                "aiSelectedBranchName": "会员服务-售后服务",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "首页 -> 售后服务",
+                "snippet": "- aiTap: 售后服务\n- aiWaitFor: 等待售后服务页面加载完成",
+            }],
+            {"smokeCount": 3},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": manual_tail_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    omission_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        manual_tail_payload,
+        omission_plan,
+    )
+    omission_by_id = {
+        item.get("case_id"): item for item in omission_applied.get("cases") or []
+    }
+    omission_trace = omission_plan.get("trace") or {}
+    recovered_omission = next(
+        item for item in omission_plan.get("needs_review_cases") or []
+        if item.get("caseId") == "MC-R03"
+    )
+    require(
+        len(omission_requests) == 1
+        and omission_trace.get("unclassified_focused_candidate_ids") == ["MC-R03"]
+        and omission_trace.get("bounded_omission_recovered_case_ids") == ["MC-R03"]
+        and recovered_omission.get("recoveredFromModelOmission") is True
+        and omission_by_id["MC-R03"].get("executionLevel") == "executable"
+        and "REQ-003-CHECK-04" in omission_by_id["MC-R03"].get(
+            "ai_case_plan", {}
+        ).get("boundedConvergence", {}).get("acceptanceCheckIds", [])
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            omission_applied,
+            {"min_automation_cases": 5},
+        ).get("ok"),
+        "A final model omission must recover only the omitted candidate with audited bounded evidence and leave all execution gates in place",
     )
     old_run_ai_skill = ai_skill_service.run_ai_skill
     try:
@@ -2681,6 +2763,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "运行时入口不存在属于产品断言失败" in planner_prompt
         and "planningContext.focus" in planner_prompt
         and "convergenceEvidence.eligible=true" in planner_prompt
+        and "acceptanceCheckCandidateIds" in planner_prompt
+        and "visibility/relation/copy" in planner_prompt
         and "不要求新增入口或目标落地页已有历史成功结果" in planner_prompt
         and "kind=source_ui_assertion" in planner_prompt
         and "历史成功基线里的文件名、账号、手机号、订单号" in planner_prompt,
@@ -3286,8 +3370,11 @@ def check_agent_ai_owned_plan_and_evidence_loop():
     require(
         [item.get("case_id") for item in bounded_focus_auto] == ["TC-102"]
         and bounded_focus.get("boundedEvidenceCandidateIds") == ["TC-102"]
+        and bounded_focus.get("acceptanceCheckCandidateIds") == {
+            "REQ-002-CHECK-01": ["TC-102"],
+        }
         and "TC-101" not in bounded_focus.get("focusedCandidateIds", []),
-        "Bounded evidence must never re-add an already-approved executable to the final AI convergence request",
+        "Bounded evidence must expose its exact acceptance ownership without re-adding an already-approved executable",
     )
     focused_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(convergence_payload, focused_plan)
     focused_by_id = {item.get("case_id"): item for item in focused_applied.get("cases") or []}

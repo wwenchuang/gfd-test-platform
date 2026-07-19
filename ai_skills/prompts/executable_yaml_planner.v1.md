@@ -53,6 +53,7 @@
 10. 对 `kind=reachability` 的缺口，优先在同一业务分支已有短 case 中补充“点击目标入口 -> 等待首个稳定可见终态 -> 断言终态”，避免重复生成仅展示入口的 case。终态仍遵守第 5 条的有界规则；如果可信路径或真实终态不足，则保留对应人工候选并让门禁如实阻断，不能用需求 ID 冒充覆盖。
 11. 候选携带 `convergenceEvidence.eligible=true` 时，平台已形成可审计的同需求证据。`kind=bounded_landing` 表示把同分支成功基线的来源页路径与上游 AI 生成的有界首屏尾链合并，并确认尾链不含账号/验证码、确认授权、文件选择或破坏性操作；`kind=source_ui_assertion` 表示成功基线的真实 action 已稳定到达目标来源页，原始需求和上游 AI 候选共同定义了该页需要由 Runner 验证的可见/文案/同级断言。`sourceCaseId / tailSourceCaseId / landingEvidenceCaseIds / acceptanceCheckIds` 记录来源候选、同目标首屏证据和真实覆盖项。`currentLeafAdapted=true` 表示平台已经把成功基线的共同父路径与当前 AI 候选或 `review.current_page_evidence` 中同分支、高置信的当前设计页证据对齐；该候选应优先于仍机械保留历史叶子的同需求候选，且返回 flow 必须保留这条当前叶子。`manualPromotionEligible=true` 只表示上游 AI 曾因软证据不足将候选转人工，但平台随后找到了同分支执行成功基线、明确前置和安全短链路；它不是绕过 Runner 的许可。此时 `baselineId` 只需证明到达目标入口所在来源页，不要求新增入口或目标落地页已有历史成功结果；运行时入口不存在属于产品断言失败。应优先按证据中的 `baselineId / precondition / flow / assertionTarget / requirementRefs` 放入 `cases` 的 `remaining` 批次。只有证据与当前候选矛盾、路径仍不唯一或包含深层外部动作时才保留为 manual，并指出具体冲突。
 12. 收敛只负责保留当前 executable 并补齐缺口，不能把上一轮 executable 降为 manual。尤其不能以“保持 Smoke 精简 / Smoke 最多 3 条”为理由降级；超过首批上限的合格项改为 `batch=remaining`。平台会拒绝任何减少既有验收覆盖的收敛结果。
+13. `planningContext.focus.acceptanceCheckCandidateIds` 是平台根据每个候选的真实步骤、断言和 `convergenceEvidence.acceptanceCheckIds` 生成的覆盖矩阵。对每个 `portfolioAudit.missingAcceptanceChecks[].id`，必须选择矩阵中至少一个对应 caseId；候选不得声称覆盖矩阵中未列给它的验收维度。尤其不能用只有 visibility/relation/copy 的展示候选代替 reachability 候选，即使二者的宽泛 `requirementRefs` 相同。`review.planning_reason` 的文字声明不计覆盖，只有返回 caseId 对应的 flow 与 assertionTarget 才计入。
 
 ## 输出 JSON
 

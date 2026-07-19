@@ -5927,6 +5927,27 @@ def _focus_executable_convergence_candidates(
         for item in automatic + manual
         if str(item.get("case_id") or "").strip()
     ]
+    focused_id_set = set(focused_ids)
+    missing_acceptance_check_ids = {
+        str(item.get("id") or "").strip()
+        for item in missing_checks
+        if str(item.get("id") or "").strip()
+    }
+    acceptance_check_candidate_ids = {}
+    for case_id, evidence in bounded_evidence_by_id.items():
+        if case_id not in focused_id_set:
+            continue
+        for check_id in normalize_text_list((evidence or {}).get("acceptanceCheckIds")):
+            if missing_acceptance_check_ids and check_id not in missing_acceptance_check_ids:
+                continue
+            acceptance_check_candidate_ids.setdefault(check_id, []).append(case_id)
+    acceptance_check_candidate_ids = {
+        check_id: sorted(set(case_ids))
+        for check_id, case_ids in sorted(acceptance_check_candidate_ids.items())
+    }
+    focused_bounded_evidence_ids = sorted(
+        focused_id_set.intersection(bounded_evidence_by_id)
+    )
     focus = {
         "enabled": True,
         "policy": "platform_preserves_executable_ai_resolves_gaps_one_manual_alternate_per_requirement",
@@ -5942,8 +5963,9 @@ def _focus_executable_convergence_candidates(
         "targetExecutableCount": target_count,
         "currentExecutableCount": executable_count,
         "candidateSelectionMode": candidate_selection_mode,
-        "boundedLandingCandidateIds": sorted(bounded_evidence_by_id),
-        "boundedEvidenceCandidateIds": sorted(bounded_evidence_by_id),
+        "boundedLandingCandidateIds": focused_bounded_evidence_ids,
+        "boundedEvidenceCandidateIds": focused_bounded_evidence_ids,
+        "acceptanceCheckCandidateIds": acceptance_check_candidate_ids,
     }
     context["focus"] = focus
     return automatic, manual, context, focus
@@ -6292,6 +6314,59 @@ def call_skill_executable_yaml_planner(
             )
             classification_groups[key] = grounded
             rejected_classification_count += rejected
+        classified_candidate_ids = {
+            str(item.get("caseId") or "").strip()
+            for item in cases
+            if str(item.get("caseId") or "").strip()
+        }
+        for items in classification_groups.values():
+            classified_candidate_ids.update(
+                str(item.get("caseId") or "").strip()
+                for item in items
+                if str(item.get("caseId") or "").strip()
+            )
+        focused_candidate_ids = {
+            str(item or "").strip()
+            for item in (convergence_focus.get("focusedCandidateIds") or [])
+            if str(item or "").strip()
+        }
+        unclassified_focused_ids = sorted(
+            focused_candidate_ids.difference(classified_candidate_ids)
+        ) if convergence_pass else []
+        acceptance_check_candidate_ids = (
+            convergence_focus.get("acceptanceCheckCandidateIds")
+            if isinstance(convergence_focus.get("acceptanceCheckCandidateIds"), dict)
+            else {}
+        )
+        matrix_candidate_ids = {
+            str(case_id or "").strip()
+            for case_ids in acceptance_check_candidate_ids.values()
+            for case_id in normalize_text_list(case_ids)
+            if str(case_id or "").strip()
+        }
+        bounded_omission_recovered_ids = []
+        for case_id in unclassified_focused_ids:
+            evidence = candidate_eligibility_by_id.get(case_id)
+            source_case = candidate_by_id.get(case_id)
+            if not (
+                isinstance(evidence, dict)
+                and evidence.get("eligible") is True
+                and normalize_text_list(evidence.get("acceptanceCheckIds"))
+                and isinstance(source_case, dict)
+                and case_id in matrix_candidate_ids
+            ):
+                continue
+            classification_groups["needs_review_cases"].append({
+                "caseId": case_id,
+                "title": source_case.get("title") or "",
+                "reason": (
+                    "最终收敛模型漏回该聚焦候选；仅恢复平台已审计的 convergenceEvidence 分类，"
+                    "后续仍由验收覆盖、基线、路径、YAML、scorer、dry-run 与 Runner 门禁决定是否执行"
+                ),
+                "requirementRefs": source_case.get("requirementRefs") or [],
+                "recoveredFromModelOmission": True,
+            })
+            bounded_omission_recovered_ids.append(case_id)
         trace.update({
             "case_count": len(cases),
             "needs_review_count": len(classification_groups["needs_review_cases"]),
@@ -6301,6 +6376,10 @@ def call_skill_executable_yaml_planner(
             "rejected_case_count": rejected_case_count,
             "rejected_classification_count": rejected_classification_count,
             "ungrounded_baseline_count": ungrounded_baseline_count,
+            "unclassified_focused_candidate_count": len(unclassified_focused_ids),
+            "unclassified_focused_candidate_ids": unclassified_focused_ids,
+            "bounded_omission_recovered_count": len(bounded_omission_recovered_ids),
+            "bounded_omission_recovered_case_ids": bounded_omission_recovered_ids,
         })
         return {
             "cases": cases,
