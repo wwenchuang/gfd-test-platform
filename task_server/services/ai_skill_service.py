@@ -73,6 +73,7 @@ from task_server.services.yaml_service import (
     normalize_yaml_task_block_from_model,
     baseline_branch_anchor_terms,
     diff_yaml,
+    strict_visible_value_contract,
     _case_has_deep_external_action,
     _case_is_bounded_external_landing_check,
 )
@@ -785,6 +786,59 @@ def review_ui_terms(text):
     return terms[:12]
 
 
+def explicit_visible_value_mismatch(yaml_text="", evidence_text=""):
+    """Detect a product-visible value that contradicts an exact YAML contract."""
+    contract = strict_visible_value_contract(yaml_text)
+    expected_values = list(dict.fromkeys(
+        str(item.get("value") or "").strip()
+        for item in contract
+        if str(item.get("value") or "").strip()
+    ))
+    evidence = str(evidence_text or "")
+    lowered = evidence.lower()
+    mismatch_markers = (
+        "不严格等于", "不等于", "不一致", "不相符", "文案不符", "陈述为假",
+        "does not equal", "not equal", "mismatch", "differs from", "statement is false",
+    )
+    referenced_expected = [value for value in expected_values if value in evidence]
+    if not referenced_expected or not any(marker in lowered for marker in mismatch_markers):
+        return {}
+
+    observed_value_re = re.compile(
+        r"(?:"
+        r"实际(?:展示|显示)?(?:的)?(?:入口|按钮|控件)?(?:文案|文本|文字|标签|名称)"
+        r"|(?:当前|页面|按钮|入口|控件)(?:[^，。；;\r\n]{0,16})?(?:文案|文本|文字|标签|名称)"
+        r")\s*(?:为|是|显示为|显示的是)\s*"
+        r"[「『“‘\"'`]\s*([^」』”’\"'`\r\n]{1,80}?)\s*[」』”’\"'`]",
+        re.IGNORECASE,
+    )
+    observed_values = []
+    for match in observed_value_re.finditer(evidence):
+        value = re.sub(r"\s+", " ", str(match.group(1) or "")).strip()
+        if value and value not in observed_values:
+            observed_values.append(value)
+    differing_observed = [
+        value for value in observed_values
+        if all(value.casefold() != expected.casefold() for expected in referenced_expected)
+    ]
+    if not differing_observed:
+        return {}
+    evidence_lines = []
+    for line in evidence.splitlines():
+        compact = line.strip()
+        if not compact:
+            continue
+        if any(value in compact for value in referenced_expected + differing_observed):
+            evidence_lines.append(compact[:500])
+        if len(evidence_lines) >= 4:
+            break
+    return {
+        "expectedValues": referenced_expected,
+        "observedValues": differing_observed,
+        "evidence": evidence_lines,
+    }
+
+
 def detect_wait_strategy_issue(yaml_text, log_text):
     """检测等待策略过短的失败问题。"""
     log_lower = str(log_text or "").lower()
@@ -1371,6 +1425,28 @@ def classify_failure_by_context(ctx):
             "evidence": yaml_check.get("warnings", [])[:8],
             "suggested_action": "只执行规则级 YAML 结构/flowItem 修复，不改业务链路",
             "can_auto_repair": True
+        }
+    value_mismatch = explicit_visible_value_mismatch(task_block or yaml_text, evidence)
+    if value_mismatch:
+        expected_text = "、".join(
+            f"“{value}”" for value in value_mismatch.get("expectedValues") or []
+        )
+        observed_text = "、".join(
+            f"“{value}”" for value in value_mismatch.get("observedValues") or []
+        )
+        return {
+            "category": "product_bug",
+            "failure_type": "visible_value_mismatch",
+            "confidence": 0.98,
+            "reason": (
+                f"YAML 的明确可见文案契约期望 {expected_text}，Runner 页面证据实际显示 {observed_text}；"
+                "这是产品展示与需求期望不一致，不能通过改写断言制造通过"
+            ),
+            "evidence": value_mismatch.get("evidence") or [
+                f"期望：{expected_text}", f"实际：{observed_text}",
+            ],
+            "suggested_action": "保留原始断言与失败关键帧，生成产品缺陷草稿；产品修正后再按原契约验证",
+            "can_auto_repair": False,
         }
     if brief.get("failure_type") in ("model_config", "model_service", "device_env"):
         return {

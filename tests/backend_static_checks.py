@@ -4211,6 +4211,71 @@ def check_agent_failure_review_and_repair_guard():
         "failure_brief": {},
     }) or {}
     require(positive_overlay.get("failure_type") == "popup_overlay", "Concrete runtime popup evidence must remain auto-repairable")
+    exact_copy_yaml = """android:
+  tasks:
+    - name: 企业云盘入口文案
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: App 首页加载完成，可见「业务中心」入口
+        - aiTap: 业务中心
+        - aiWaitFor: 页面展示「企业云盘」入口
+        - aiAssert: '「企业云盘」入口文案严格等于“企业云盘”'
+"""
+    exact_copy_mismatch = ai_skill_service.classify_failure_by_context({
+        "yaml_text": exact_copy_yaml,
+        "task_block": exact_copy_yaml,
+        "evidence_text": (
+            "waitFor timeout: 当前页面实际文案是“企业云盘上传”。"
+            "需求要求入口文案严格等于“企业云盘”，实际值并不严格等于期望值，因此陈述为假。"
+        ),
+        "failure_brief": {},
+    }) or {}
+    require(
+        exact_copy_mismatch.get("category") == "product_bug"
+        and exact_copy_mismatch.get("failure_type") == "visible_value_mismatch"
+        and exact_copy_mismatch.get("can_auto_repair") is False,
+        "A visible actual-versus-exact-expected copy mismatch must remain a product failure, not an assertion repair",
+    )
+    normalized_product_mismatch = agent_service._normalize_failed_execution_item({
+        "jobId": "job-visible-value-mismatch",
+        "stderrTail": "waitFor timeout",
+        "failureReview": exact_copy_mismatch,
+    })
+    require(
+        normalized_product_mismatch.get("failureType") == "PRODUCT_BUG"
+        and agent_service._agent_repair_eligibility(normalized_product_mismatch).get("eligible") is False,
+        "High-confidence visible-value product evidence must block automatic YAML repair and rerun",
+    )
+    assertion_drift_yaml = exact_copy_yaml.replace(
+        "入口文案严格等于“企业云盘”",
+        "入口文案严格等于“企业云盘上传”",
+    )
+    assertion_drift_gate = agent_service._agent_repair_candidate_gate(
+        exact_copy_yaml,
+        {"fixedYaml": assertion_drift_yaml, "analysis": "按当前页面实际文案修正断言"},
+        [],
+        platform="android",
+    )
+    assertion_preserved_yaml = exact_copy_yaml.replace(
+        "页面展示「企业云盘」入口",
+        "企业云盘入口区域已加载，页面展示「企业云盘」入口",
+    )
+    assertion_preserved_gate = agent_service._agent_repair_candidate_gate(
+        exact_copy_yaml,
+        {"fixedYaml": assertion_preserved_yaml, "analysis": "只补充可观察稳定态，保持文案断言不变"},
+        [],
+        platform="android",
+    )
+    require(
+        any(item.get("code") == "assertion_contract_drift" for item in assertion_drift_gate.get("issues") or [])
+        and assertion_drift_gate.get("assertionContractPreserved") is False,
+        "Agent repair must reject candidates that replace an exact requirement value with the current product value",
+    )
+    require(
+        assertion_preserved_gate.get("ok") is True
+        and assertion_preserved_gate.get("assertionContractPreserved") is True,
+        "A wait-only repair that preserves the exact visible-value contract must remain eligible",
+    )
     clipped_scan_yaml = """android:
   tasks:
     - name: 扫描复印入口展示
@@ -4280,6 +4345,7 @@ def check_agent_failure_review_and_repair_guard():
     require(not agent_service._agent_should_confirm_unknown_failure({"unknownFailureConfirmed": True}, "UNKNOWN"), "Reviewed UNKNOWN failures must not enter a confirmation loop")
 
     old_gateway_available_for_analysis = agent_service._ai_gateway_available
+    old_gateway_post_for_analysis = agent_service._ai_gateway_post
     old_log_for_analysis = agent_service._log_tool_call
     try:
         agent_service._ai_gateway_available = lambda: False
@@ -4298,8 +4364,27 @@ def check_agent_failure_review_and_repair_guard():
             "stderrTail": "failed to locate element: 目标入口",
         }])
         require(stale_precheck_run["artifacts"]["failureAnalysis"].get("failureType") == "SCRIPT_ISSUE", "Latest Runner terminal evidence must take precedence over stale execution-precheck diagnosis")
+        agent_service._ai_gateway_available = lambda: True
+        agent_service._ai_gateway_post = lambda *_args, **_kwargs: {
+            "failureType": "SCRIPT_ISSUE",
+            "analysis": "尝试放宽断言",
+            "canAutoRepair": True,
+        }
+        product_lock_run = {"target": "明确文案契约", "artifacts": {}}
+        agent_service._tool_analyze_failure(product_lock_run, failed_jobs_override=[{
+            "jobId": "job-product-lock",
+            "status": "failed",
+            "failureType": "PRODUCT_BUG",
+            "failureReview": exact_copy_mismatch,
+            "stderrTail": "waitFor timeout",
+        }])
+        require(
+            product_lock_run["artifacts"]["failureAnalysis"].get("failureType") == "PRODUCT_BUG",
+            "Aggregate AI analysis must not downgrade a high-confidence product mismatch into an auto-repairable script issue",
+        )
     finally:
         agent_service._ai_gateway_available = old_gateway_available_for_analysis
+        agent_service._ai_gateway_post = old_gateway_post_for_analysis
         agent_service._log_tool_call = old_log_for_analysis
 
     original = """android:
@@ -6515,6 +6600,37 @@ def check_agent_executable_gate_invokes_ai_rewrite():
     require(
         original_score.get("executionLevel") != "executable" and repaired_score.get("executionLevel") == "executable",
         "Local executable-gate repair must improve generated home-entry flow without relaxing the scorer",
+    )
+    observable_wait_yaml = """android:
+  tasks:
+    - name: 企业云盘入口可达性
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: 等待 App 首页稳定显示
+        - aiTap: 点击「照片打印」入口
+        - aiWaitFor: 照片打印页面加载完成
+        - aiWaitFor: 校验确认「企业云盘」入口是否存在，若存在则UI符合设计规范；若不存在，需反馈产品确认是否为遗漏
+        - aiTap: 点击「企业云盘」入口
+        - aiWaitFor: 等待页面跳转或弹窗出现
+        - aiWaitFor: 企业云盘文件列表页已加载，页面标题和文件列表可见
+        - aiAssert: 企业云盘文件列表页无白屏或崩溃
+"""
+    observable_wait_repair = yaml_service.repair_generated_yaml_executable_gate_issues(observable_wait_yaml)
+    observable_wait_content = observable_wait_repair.get("content") or ""
+    require(
+        "App 首页加载完成，可见「照片打印」入口" in observable_wait_content
+        and "等待 App 首页稳定显示" not in observable_wait_content,
+        "An abstract generated home wait must be anchored to the next visible-text navigation target",
+    )
+    require(
+        "等待页面跳转或弹窗出现" not in observable_wait_content
+        and "企业云盘文件列表页已加载" in observable_wait_content,
+        "A process-only transition wait must be removed when the following stable target state already defines completion",
+    )
+    require(
+        "若不存在" not in observable_wait_content
+        and "页面展示「企业云盘」入口，入口文案及所在区域清晰可见" in observable_wait_content,
+        "A human existence-review branch must become the expected observable UI state before Runner dispatch",
     )
     generated_task = yaml_service.case_to_task_yaml({
         "title": "文档打印入口校验",

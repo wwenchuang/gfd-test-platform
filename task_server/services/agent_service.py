@@ -63,6 +63,7 @@ from task_server.services.yaml_service import (
     repair_generated_yaml_executable_gate_issues,
     should_ai_rewrite_for_executable_gate,
     slug_for_file,
+    strict_visible_value_contract,
     validate_midscene_yaml_executability,
 )
 from task_server.services.yaml_executable_scorer import (
@@ -2749,6 +2750,13 @@ def _agent_job_failure_type(text):
         "service unavailable", "gateway timeout", "econnreset", "etimedout",
     )):
         return "ENV_ISSUE"
+    if (
+        any(term in blob for term in ("实际文案", "实际文本", "实际显示", "实际展示"))
+        and any(term in lowered for term in (
+            "不严格等于", "不等于", "不一致", "不相符", "does not equal", "not equal", "mismatch",
+        ))
+    ):
+        return "PRODUCT_BUG"
     if "replanned 5 times" in lowered or "replanningcyclelimit" in lowered:
         return "Midscene 重规划超限"
     if any(term in lowered for term in (
@@ -12732,6 +12740,17 @@ def _agent_repair_candidate_gate(
     navigation_claimed = _agent_repair_claims_navigation_change(change_text)
     original_navigation = _agent_repair_navigation_signature(original_yaml)
     fixed_navigation = _agent_repair_navigation_signature(fixed_yaml)
+    original_assertion_contract = strict_visible_value_contract(original_yaml)
+    fixed_assertion_contract = strict_visible_value_contract(fixed_yaml)
+    fixed_assertion_values = {
+        str(item.get("value") or "").strip().casefold()
+        for item in fixed_assertion_contract
+        if str(item.get("value") or "").strip()
+    }
+    missing_assertion_contract = [
+        item for item in original_assertion_contract
+        if str(item.get("value") or "").strip().casefold() not in fixed_assertion_values
+    ]
     navigation_changed = bool(
         original_navigation is not None
         and fixed_navigation is not None
@@ -12770,6 +12789,18 @@ def _agent_repair_candidate_gate(
 
     if not fixed_yaml:
         add_issue("ai_no_yaml", "AI 未返回完整修复 YAML")
+    if fixed_yaml and missing_assertion_contract:
+        missing_values = list(dict.fromkeys(
+            str(item.get("value") or "").strip()
+            for item in missing_assertion_contract
+            if str(item.get("value") or "").strip()
+        ))
+        add_issue(
+            "assertion_contract_drift",
+            "修复候选删除、弱化或改写了原始精确可见文案断言："
+            + "、".join(f"“{value}”" for value in missing_values[:5])
+            + "；Runner 当前展示值只能作为产品差异证据，不能替换需求期望值",
+        )
     if invalid_baseline_ids:
         add_issue("unknown_baseline_citation", "引用了本次候选之外的基线：" + "、".join(invalid_baseline_ids[:3]))
     if fixed_yaml and navigation_claimed and not navigation_changed:
@@ -12813,6 +12844,10 @@ def _agent_repair_candidate_gate(
         "branchBaselineIds": sorted(branch_baseline_ids),
         "navigationClaimed": navigation_claimed,
         "navigationChanged": navigation_changed,
+        "originalAssertionContract": original_assertion_contract,
+        "fixedAssertionContract": fixed_assertion_contract,
+        "missingAssertionContract": missing_assertion_contract,
+        "assertionContractPreserved": not missing_assertion_contract,
         "aiGatewayValidation": ai_validation,
         "yamlValidation": validation,
         "issues": issues,
@@ -12966,7 +13001,20 @@ def _tool_analyze_failure(run, failed_jobs_override=None):
                         _agent_failed_item_has_concrete_environment_evidence(item)
                         for item in failed_jobs
                     )
-                    if ai_failure_type and ai_failure_type != "UNKNOWN" and not environment_locked:
+                    product_locked = any(
+                        _agent_canonical_failure_type(item.get("failureType") or item.get("failure_type")) == "PRODUCT_BUG"
+                        or (
+                            _agent_failure_type_from_review(_agent_failure_review(item)) == "PRODUCT_BUG"
+                            and _agent_high_confidence_failure_review(_agent_failure_review(item))
+                        )
+                        for item in failed_jobs
+                    )
+                    if (
+                        ai_failure_type
+                        and ai_failure_type != "UNKNOWN"
+                        and not environment_locked
+                        and not product_locked
+                    ):
                         analysis["failureType"] = ai_failure_type
             except Exception:
                 analysis["conclusion"] = f"AI分析超时，失败类型: {failure_type}"
@@ -13064,6 +13112,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     original_yaml = read_text_file(safe_join(TASK_DIR, module, file_name), default="")
                 except Exception:
                     original_yaml = ""
+            assertion_contract = strict_visible_value_contract(original_yaml)
             report_keyframes = (
                 _agent_failure_report_keyframes(target_job, limit=3)
                 if item_eligibility.get("eligible") else []
@@ -13073,12 +13122,18 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3)
                 if item_eligibility.get("eligible") else []
             )
+            assertion_contract_text = "、".join(
+                f"“{item.get('value')}”"
+                for item in assertion_contract
+                if str(item.get("value") or "").strip()
+            )
             evidence_parts = [
                 f"失败类型：{item_failure_type}",
                 f"失败序号：{index}/{len(failed_jobs)}",
                 f"Agent 目标：{run.get('target', '')}",
                 f"失败用例：{task_name or file_name}",
                 f"失败原因：{target_job.get('failureReason') or fa.get('summary') or target_job.get('error') or ''}",
+                f"不可变精确文案断言：{assertion_contract_text}" if assertion_contract_text else "",
                 f"Runner 错误：{target_job.get('error') or ''}",
                 f"stderr：{target_job.get('stderrTail') or target_job.get('stderr_tail') or ''}",
                 f"stdout：{target_job.get('stdoutTail') or target_job.get('stdout_tail') or ''}",
@@ -13173,6 +13228,8 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         "requireReadyWaitBeforeNewNavigation": True,
                         "visibleTextOnly": True,
                         "preserveOriginalBusinessGoal": True,
+                        "preserveExactVisibleValueAssertions": True,
+                        "exactVisibleValueAssertions": assertion_contract,
                         "preserveSourceBackedNavigationTargets": True,
                         "baselineConcreteValuesAreExamplesOnly": True,
                         "preferEarlierRuntimeTargetRegion": True,
@@ -13276,6 +13333,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 item_summary["branchBaselineIds"] = candidate_gate.get("branchBaselineIds") or []
                 item_summary["navigationChanged"] = bool(candidate_gate.get("navigationChanged"))
                 item_summary["navigationClaimed"] = bool(candidate_gate.get("navigationClaimed"))
+                item_summary["assertionContractPreserved"] = bool(candidate_gate.get("assertionContractPreserved"))
+                if candidate_gate.get("missingAssertionContract"):
+                    item_summary["missingAssertionContract"] = candidate_gate.get("missingAssertionContract")
                 if candidate_gate.get("invalidBaselineIds"):
                     item_summary["invalidBaselineIds"] = candidate_gate.get("invalidBaselineIds")
                 ai_validation = candidate_gate.get("aiGatewayValidation") or {}
@@ -13382,7 +13442,8 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         if ai_used_count:
             call["status"] = "SUCCESS" if validation_passed_count == ai_used_count and blocked_count == 0 else "PARTIAL_FAILED"
             call["outputSummary"] = (
-                f"AI 已生成 {ai_used_count} 条可应用修复草稿，覆盖 {len(repair_targets)}/{len(failed_jobs)} 条失败任务"
+                f"AI 已生成 {ai_used_count}/{len(repair_targets)} 条可应用修复草稿；"
+                f"本轮分析 {len(repair_targets)}/{len(failed_jobs)} 条失败任务，门禁拒绝 {blocked_count} 条"
             )
             if validation_passed_count != ai_used_count:
                 call["error"] = f"{ai_used_count - validation_passed_count} 条修复 YAML 未通过校验"

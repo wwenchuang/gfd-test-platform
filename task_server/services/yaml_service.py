@@ -203,6 +203,8 @@ __all__ = [
     "ai_rewrite_yaml_for_executable_gate",
     "case_to_task_yaml",
     "extract_midscene_tasks",
+    "extract_strict_visible_value_expectations",
+    "strict_visible_value_contract",
     "validate_midscene_yaml_executability",
     "save_file_version",
     "version_dir_for",
@@ -5014,6 +5016,82 @@ def extract_midscene_tasks(parsed):
     return "", []
 
 
+_STRICT_VISIBLE_VALUE_MARKER_RE = re.compile(
+    r"(?:"
+    r"(?:严格|精确|准确)\s*(?:等于|一致(?:于)?)"
+    r"|(?:文案|文本|文字|标签|名称)\s*(?:(?:必须|应当|应该|需)\s*)?"
+    r"(?:严格|精确|准确)?\s*(?:等于|显示为)"
+    r"|(?:文案|文本|文字|标签|名称)\s*(?:为|是)"
+    r"|exactly\s+(?:equals?|matches?|is)"
+    r"|must\s+(?:equal|be)"
+    r")",
+    re.IGNORECASE,
+)
+_VISIBLE_VALUE_OPEN_QUOTES = "\u300c\u300e\u201c\u2018\"'`"
+_VISIBLE_VALUE_CLOSE_QUOTES = "\u300d\u300f\u201d\u2019\"'`"
+_VISIBLE_VALUE_ALL_QUOTES = _VISIBLE_VALUE_OPEN_QUOTES + _VISIBLE_VALUE_CLOSE_QUOTES
+
+
+def extract_strict_visible_value_expectations(text):
+    """Extract unambiguous quoted UI values from exact-copy assertions."""
+    source = str(text or "")
+    if not source:
+        return []
+    quoted_value_re = re.compile(
+        _STRICT_VISIBLE_VALUE_MARKER_RE.pattern
+        + r"\s*[：:=]?\s*["
+        + re.escape(_VISIBLE_VALUE_OPEN_QUOTES)
+        + r"]\s*([^"
+        + re.escape(_VISIBLE_VALUE_ALL_QUOTES)
+        + r"\r\n]{1,80}?)\s*["
+        + re.escape(_VISIBLE_VALUE_CLOSE_QUOTES)
+        + r"]",
+        re.IGNORECASE,
+    )
+    values = []
+    for match in quoted_value_re.finditer(source):
+        value = re.sub(r"\s+", " ", str(match.group(1) or "")).strip()
+        if value and value not in values:
+            values.append(value)
+    return values
+
+
+def strict_visible_value_contract(yaml_text):
+    """Return exact UI-copy expectations encoded in executable observations."""
+    if _pyyaml is None or not str(yaml_text or "").strip():
+        return []
+    try:
+        _, tasks = extract_midscene_tasks(_pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return []
+    contract = []
+    seen = set()
+    for task_index, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            continue
+        task_name = str(task.get("name") or f"tasks[{task_index}]").strip()
+        for flow_index, step in enumerate(task.get("flow") or [], start=1):
+            if not isinstance(step, dict):
+                continue
+            for action in ("aiWaitFor", "aiAssert"):
+                if action not in step:
+                    continue
+                prompt = str(step.get(action) or "").strip()
+                for value in extract_strict_visible_value_expectations(prompt):
+                    key = (task_index, value.casefold())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    contract.append({
+                        "taskIndex": task_index,
+                        "taskName": task_name,
+                        "flowIndex": flow_index,
+                        "action": action,
+                        "value": value,
+                    })
+    return contract
+
+
 def _yaml_action_value_blank(value):
     if value is None:
         return True
@@ -5460,34 +5538,144 @@ def _repair_generated_broad_ai_step(step: dict) -> dict:
     }
 
 
+def _generated_next_tap_target(step: dict) -> str:
+    if not isinstance(step, dict) or "aiTap" not in step:
+        return ""
+    prompt = str(step.get("aiTap") or "").strip()
+    if not prompt or prompt_is_conditional_action(prompt):
+        return ""
+    quoted = re.search(r"[「『“‘\"']([^」』”’\"']{1,60})[」』”’\"']", prompt)
+    target = quoted.group(1).strip() if quoted else re.sub(
+        r"^(?:点击|点按|轻触|选择|进入|打开)", "", prompt, flags=re.IGNORECASE
+    ).strip(" ：:，,。\"'「」『』“”‘’")
+    target = re.sub(
+        r"(?:入口|按钮|控件|尺寸选项|选项|icon|图标)$", "", target, flags=re.IGNORECASE
+    ).strip()
+    return target if 1 < len(target) <= 40 else ""
+
+
+def _generated_home_wait_is_abstract(prompt: str) -> bool:
+    compact = _compact_text(prompt).lower()
+    compact = re.sub(r"^aiwaitfor[:：]", "", compact)
+    if "首页" not in compact:
+        return False
+    if re.fullmatch(
+        r"(?:等待)?(?:被测)?(?:app|应用|程序)?首页(?:页面)?(?:已)?"
+        r"(?:加载完成|加载完毕|加载稳定|稳定显示|显示稳定|稳定|可见)",
+        compact,
+    ):
+        return True
+    return bool(
+        any(word in compact for word in ("回到首页", "返回首页", "进入首页", "回到app首页"))
+        and any(word in compact for word in ("加载稳定", "稳定显示", "加载完成"))
+        and not any(word in compact for word in ("入口可见", "导航可见", "标题可见", "核心内容可见"))
+    )
+
+
 def _repair_generated_home_ai_step(step: dict, next_step: dict = None) -> dict:
-    """Convert generated home-recovery ai planning into an explicit wait state."""
+    """Convert generated home planning or abstract waits into a visible anchor."""
     if not isinstance(step, dict):
         return {}
     action_key = next((key for key in ("ai", "aiAction", "aiAct") if key in step), "")
+    if not action_key and "aiWaitFor" in step and _generated_home_wait_is_abstract(step.get("aiWaitFor")):
+        action_key = "aiWaitFor"
     if not action_key:
         return {}
     prompt = str(step.get(action_key) or "").strip()
     compact = _compact_text(prompt)
     if not compact or "首页" not in compact:
         return {}
-    if not any(word in compact for word in ("回到", "返回", "确保", "停留", "首页加载", "进入首页")):
+    if action_key != "aiWaitFor" and not any(
+        word in compact for word in ("回到", "返回", "确保", "停留", "首页加载", "进入首页")
+    ):
         return {}
-    target_hint = ""
-    if isinstance(next_step, dict) and "aiTap" in next_step:
-        tap_prompt = str(next_step.get("aiTap") or "").strip()
-        quoted = re.search(r"[「“\"]([^」”\"]+)[」”\"]", tap_prompt)
-        target = quoted.group(1).strip() if quoted else re.sub(r"^(点击|点按|轻触|选择|进入|打开)", "", tap_prompt).strip(" 「」")
-        target = re.sub(r"(入口|按钮|控件)$", "", target).strip()
-        if target:
-            target_hint = f"，{target}可见"
-    replacement_prompt = f"App 首页加载完成，主要入口或底部导航可见{target_hint}"
+    target = _generated_next_tap_target(next_step)
+    replacement_prompt = (
+        f"App 首页加载完成，可见「{target}」入口"
+        if target else "App 首页加载完成，主要入口或底部导航可见"
+    )
     _replace_step_action(step, action_key, "aiWaitFor", replacement_prompt, timeout=DEFAULT_WAITFOR_TIMEOUT_MS)
     return {
         "changed": f"{action_key} -> aiWaitFor",
         "prompt": prompt[:180],
         "replacement": replacement_prompt[:180],
     }
+
+
+def _repair_generated_human_branch_observation(step: dict) -> dict:
+    """Turn an existence-review instruction into the expected visible state."""
+    if not isinstance(step, dict):
+        return {}
+    action = next((key for key in ("aiWaitFor", "aiAssert") if key in step), "")
+    if not action:
+        return {}
+    prompt = str(step.get(action) or "").strip()
+    compact = _compact_text(prompt)
+    has_present_branch = any(word in compact for word in ("若存在", "如果存在", "如存在"))
+    has_absent_branch = any(word in compact for word in ("若不存在", "如果不存在", "如不存在"))
+    has_human_handoff = any(word in compact for word in ("反馈", "人工确认", "产品确认", "是否遗漏", "记录问题"))
+    if not (has_present_branch and has_absent_branch and has_human_handoff):
+        return {}
+    quoted = re.search(r"[「『“‘\"']([^」』”’\"']{1,60})[」』”’\"']", prompt)
+    if not quoted:
+        return {}
+    target = quoted.group(1).strip()
+    replacement = f"页面展示「{target}」入口，入口文案及所在区域清晰可见"
+    step[action] = replacement
+    if action == "aiWaitFor":
+        step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+    return {
+        "changed": f"conditional {action} -> observable expected state",
+        "prompt": prompt[:180],
+        "replacement": replacement[:180],
+    }
+
+
+def _generated_wait_is_process_only(prompt: str) -> bool:
+    compact = _compact_text(prompt)
+    if not compact or re.search(r"[「『“‘\"']", compact):
+        return False
+    return bool(re.fullmatch(
+        r"(?:等待)?(?:当前)?页面(?:跳转|加载|切换|响应)"
+        r"(?:完成|成功|或(?:弹窗出现|加载(?:完成)?|页面加载(?:完成)?))?",
+        compact,
+    ))
+
+
+def _remove_redundant_generated_process_waits(flow: list, task_name: str) -> list:
+    changes = []
+    index = 0
+    while index < len(flow):
+        step = flow[index]
+        prompt = str(step.get("aiWaitFor") or "") if isinstance(step, dict) else ""
+        if not _generated_wait_is_process_only(prompt):
+            index += 1
+            continue
+        concrete_observation = None
+        for following in flow[index + 1:index + 4]:
+            if not isinstance(following, dict) or "sleep" in following:
+                continue
+            action = next((key for key in ("aiWaitFor", "aiAssert") if key in following), "")
+            if not action:
+                break
+            following_prompt = str(following.get(action) or "").strip()
+            if _generated_wait_is_process_only(following_prompt):
+                continue
+            if following_prompt:
+                concrete_observation = following_prompt
+            break
+        if not concrete_observation:
+            index += 1
+            continue
+        flow.pop(index)
+        changes.append({
+            "task": task_name,
+            "flowIndex": index + 1,
+            "changed": "remove process-only wait before observable target state",
+            "prompt": prompt[:180],
+            "replacement": concrete_observation[:180],
+        })
+    return changes
 
 
 def _repair_generated_post_launch_restart_ai_step(step: dict, next_step: dict = None) -> dict:
@@ -5581,6 +5769,14 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                     **home_repair,
                 })
 
+            branch_observation_repair = _repair_generated_human_branch_observation(step)
+            if branch_observation_repair:
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    **branch_observation_repair,
+                })
+
             broad_repair = _repair_generated_broad_ai_step(step)
             if broad_repair:
                 changes.append({
@@ -5644,6 +5840,11 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                 "prompt": prompt[:180],
                 "waitFor": wait_prompt[:180],
             })
+
+        changes.extend(_remove_redundant_generated_process_waits(
+            flow,
+            task.get("name") or f"tasks[{task_index}]",
+        ))
 
         task_name_compact = _compact_text(task.get("name") or "")
         flow_text_compact = _compact_text(" ".join(

@@ -28,6 +28,50 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实全链路：保留精确需求断言，失败帧只能修路径不能改期望
+
+用户部署 `a063ec5` 后，以同一需求、Figma 和固定设备发起完整 Agent `agent-1784456588304-b48b8363`：
+
+- `101.34.197.12:8091 / :8088` 健康，AI Gateway、Sonic 健康；Windows Runner 在线并上报 qwen3.6 模型族。所有 Agent dry-run、首批、remaining 和修复重跑均只使用 `win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`，没有向华为或第二台设备下发。验证期间出现的其它 Sonic 任务与本 Agent 无关，后续不得等待它们。
+- Figma parser 未修改，仍解析 `4 页 / 4 图`；4 张图分别送入 qwen3.6-plus，`4/4` 批次完成、无回退、`hardGate=false`。AI 规划 8 个业务 flow，最终生成 8 条自动化用例和 8 个 YAML，portfolio `12/12 / missing=0`，`manual_reclassification_canonicalized_count=1` 证明 `a063ec5` 已在线生效。
+- 8 条 YAML 全部通过 static、scorer 和 dry-run，使用真实可见文字且无坐标。人工复核确认文档打印、照片打印、扫描复印三条分支均有展示/关系/文案或可达覆盖；照片可达路径明确为 `照片打印 -> 5寸照片 -> 百度网盘`。
+- 首批和 remaining 都在固定 OPPO 串行执行到终态。首次正式执行共 `2 成功 / 6 失败`：文档文案与文档展示通过；一寸照路径缺父页、首页抽象等待、跳转过程等待、扫描页实际缺少目标入口和条件式人工描述等分别失败。
+- 文档可达修复正确利用真实报告帧和成功基线：删除 `等待页面跳转或弹窗出现`，改用已可见的百度文件列表/`去打印` 稳定态，关联重跑 `job_1784459094137_00023` 真实成功。
+- 照片文案修复也正确利用失败帧和 6 寸照片成功基线，补出 `照片打印 -> 智能证件照 -> 一寸照`；关联重跑 `job_1784459219369_00024` 已到达目标页，并明确看到实际按钮为“百度网盘上传”。原需求/YAML 的精确期望是“百度网盘”，因此这应是产品文案差异。
+- 旧逻辑把该差异继续归为 `SCRIPT_ISSUE`，第二轮 AI 把断言从“百度网盘”改成“百度网盘上传”，随后 `job_1784459561608_00026` 通过。这个通过是 assertion drift，不是业务恢复；虽然 Agent 最终仍为 `FAILED / RERUN / 95%`，报告却错误增加了一条 recovered。
+
+深层根因：
+
+- 修复门禁只检查 YAML 契约、导航 diff、分支基线和 source-backed 叶子，没有把原始精确可见文案当成不可变业务契约。AI 因而可以依据失败截图修导航，也可以错误地用当前产品值覆盖需求期望值。
+- `classify_failure_by_context()` 将所有普通断言失败先归为可修复脚本问题；即使 Runner 证据同时给出明确 expected、actual 和“不严格等于”，也没有产品差异的确定性分类。汇总 AI 还能把已确认的产品失败再次降为脚本问题。
+- 生成规范化只处理 `ai/aiAction/aiAct: 回到首页`，没有处理已经写成 `aiWaitFor: 等待 App 首页稳定显示` 的抽象状态；Midscene 可能把底部其它高亮 Tab 当成非首页。`等待页面跳转或弹窗出现` 描述的是短暂过程而非稳定终态，页面已经到达后反而会等待失败。
+- `若存在则...若不存在反馈产品` 是人工评审说明，不是 Runner 可判真的等待条件；它应被还原成需求定义的明确可见状态，真实不存在时保留产品失败。
+
+通用修复：
+
+- 从 `aiWaitFor / aiAssert` 中结构化提取“严格等于/文案为”等带引号的精确 UI 值，作为 repairPolicy 中的不可变 assertion contract 送给 AI。候选返回后再次比较；删除、弱化或改值统一以 `assertion_contract_drift` 拒绝，不能下发 Runner。
+- Runner 证据同时包含精确 expected、不同的 observed value 和明确 mismatch 语句时，确定性归类为 `PRODUCT_BUG / visible_value_mismatch / confidence=0.98 / can_auto_repair=false`。高置信产品结论不可再被汇总 AI 降级，后续只保留失败帧并生成缺陷草稿。
+- 生成落盘前把抽象首页等待锚定到下一条真实文字点击目标，例如 `App 首页加载完成，可见「照片打印」入口`；当后续已有稳定页面状态时删除过程型跳转等待；把“存在/不存在并反馈”的人工分支改成明确目标入口可见状态。只匹配这些窄语义，不改普通等待、业务路径、用例数量或覆盖门禁。
+- 修复摘要改为分别显示“可应用数 / 分析数 / 门禁拒绝数”，不再把 2 条可用草稿描述成覆盖 6/6。
+
+真实产物离线重放：
+
+- 直接重放线上第二轮错误修复，“百度网盘 -> 百度网盘上传”现在得到 `ok=false / assertionContractPreserved=false / assertion_contract_drift`。
+- 同一 Runner 失败证据现在直接归为 `product_bug / visible_value_mismatch / can_auto_repair=false`，不会创建第三个修复 job。
+- 直接重放线上 YAML：03 删除过程等待；04 将首页等待锚定到“照片打印”并删除重复跳转等待；08 将人工条件分支改成明确“百度网盘入口可见”。已有目标稳定态、点击和断言均保留。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/ai_skill_service.py
+python3 tests/backend_static_checks.py
+git diff --check
+```
+
+- 后端 61 项全部通过；针对性回归覆盖断言漂移拒绝、保留断言的等待修复放行、expected/actual 产品分类、产品结论不可降级、抽象首页等待、过程等待和人工条件分支。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML；用户已有 dirty 文件继续保持未暂存。
+- 本轮提交待用户 push / 部署。部署后再次运行完全相同 Agent，只监督固定 OPPO 到终态；不等待其它设备或无关 Sonic 任务。
+
 ### 2026-07-19 真实回归：AI 恢复 executable 时原子替换旧人工执行契约
 
 用户部署 `2b91966` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784454424819-fba97f18`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
