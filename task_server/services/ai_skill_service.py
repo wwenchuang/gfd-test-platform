@@ -1917,9 +1917,14 @@ def _case_execution_flow_items(case):
     """Return only flow material that can prove a concrete branch was visited."""
     case = case if isinstance(case, dict) else {}
     items = normalize_text_list(case.get("steps"))
+    if items:
+        return [str(item or "").strip() for item in items if str(item or "").strip()]
     plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
-    items.extend(normalize_text_list(plan.get("flow")))
-    return list(dict.fromkeys(str(item or "").strip() for item in items if str(item or "").strip()))
+    return [
+        str(item or "").strip()
+        for item in normalize_text_list(plan.get("flow"))
+        if str(item or "").strip()
+    ]
 
 
 def _compact_branch_text(value):
@@ -2052,29 +2057,37 @@ def case_covers_requirement_acceptance(case, check):
     compact_evidence = re.sub(r"\s+", "", evidence).lower()
 
     if kind == "reachability":
-        action_terms = ("点击", "点按", "轻触", "打开", "选择", "aitap", "aiaction", "aiact")
         terminal_terms = (
             "授权页", "登录页", "列表页", "文件列表", "内容列表", "选择页", "详情页", "结果页",
-            "落地页", "提示页", "空态页", "弹窗", "已打开", "已进入", "成功唤起", "稳定可达",
+            "文件选择", "落地页", "提示页", "空态页", "弹窗", "已打开", "已进入", "成功唤起", "稳定可达",
             "无白屏", "未白屏", "无崩溃", "未崩溃", "无crash", "未crash",
         )
-        has_target_action = any(any(term in item for term in action_terms) for item in compact_items)
-        has_terminal = any(term in compact_evidence for term in terminal_terms)
+        flow_items = _case_execution_flow_items(case)
+        target_action_index = _target_navigation_action_index(flow_items, targets)
+        if target_action_index < 0:
+            return False
+        terminal_items = flow_items[target_action_index + 1:]
+        for key in ("assertions", "expected", "expected_result", "expectedResult"):
+            terminal_items.extend(normalize_text_list(case.get(key)))
+        plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+        terminal_items.extend(normalize_text_list(plan.get("assertionTarget")))
+        terminal_evidence = re.sub(r"\s+", "", "\n".join(terminal_items)).lower()
+        has_terminal = any(term in terminal_evidence for term in terminal_terms)
         has_bounded_transition_terminal = bool(
-            "已离开" in compact_evidence
-            and any(term in compact_evidence for term in ("页面区域", "页面元素", "页面跳转"))
+            "已离开" in terminal_evidence
+            and any(term in terminal_evidence for term in ("页面区域", "页面元素", "页面跳转"))
             and (
-                any(term in compact_evidence for term in (
+                any(term in terminal_evidence for term in (
                     "无白屏", "未白屏", "无崩溃", "未崩溃", "无crash", "未crash",
                 ))
                 or re.search(
                     r"(?:未出现|没有出现|未发生|没有发生)[^；。]{0,20}(?:崩溃|crash|白屏|闪退)",
-                    compact_evidence,
+                    terminal_evidence,
                     flags=re.I,
                 )
             )
         )
-        return has_target_action and (has_terminal or has_bounded_transition_terminal)
+        return has_terminal or has_bounded_transition_terminal
     if kind == "relation":
         return any(any(term in item for term in (
             "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序", "左侧", "右侧",
@@ -4394,6 +4407,14 @@ def _trusted_baseline_source_navigation_flow(baseline, target_terms, branch):
 def _navigation_action_target_key(step):
     """Return a comparable visible target for one human-readable navigation action."""
     text = str(step or "").strip()
+    raw_action = re.match(r"^(?:-\s*)?(?:aiTap|aiAction|aiAct)\s*:\s*(.+)$", text, re.I)
+    if raw_action:
+        raw_value = str(raw_action.group(1) or "").strip().strip("\"'")
+        text = (
+            raw_value
+            if re.match(r"^(?:请\s*)?(?:点击|点按|轻触|进入|打开|选择|切换|前往)", raw_value)
+            else f"点击「{raw_value}」"
+        )
     if not re.match(
         r"^(?:(?:请|然后|再)\s*)*(?:点击|点按|轻触|进入|打开|选择|切换|前往)",
         text,
@@ -4423,6 +4444,26 @@ def _navigation_target_keys_match(left, right):
         return True
     shorter, longer = sorted((left, right), key=len)
     return len(shorter) >= 2 and shorter in longer
+
+
+def _target_navigation_action_index(flow, target_terms):
+    """Locate a target-directed action, excluding assertions such as '可点击'."""
+    target_keys = [
+        _navigation_action_target_key(f"点击「{str(term or '').strip()}」")
+        for term in (target_terms or [])
+        if str(term or "").strip()
+    ]
+    for index, step in enumerate(normalize_text_list(flow)):
+        action_key = _navigation_action_target_key(step)
+        if not action_key:
+            continue
+        if not target_keys or any(
+            _navigation_target_keys_match(action_key, target_key)
+            for target_key in target_keys
+            if target_key
+        ):
+            return index
+    return -1
 
 
 def _normalize_visual_current_page_evidence(items):
@@ -4883,6 +4924,16 @@ def _candidate_navigation_specificity(case, target_terms, branch):
     return len(keys), len(set(keys)), -len(flow)
 
 
+def _candidate_target_transition_tail(case, target_terms):
+    """Keep the authored target click and bounded terminal after parent-path adaptation."""
+    case = case if isinstance(case, dict) else {}
+    flow = normalize_text_list(case.get("steps"))[:8]
+    target_action_index = _target_navigation_action_index(flow, target_terms)
+    if target_action_index < 0:
+        return []
+    return flow[target_action_index:]
+
+
 def _adapt_trusted_navigation_to_candidate(
     baseline_flow,
     candidate_case,
@@ -4892,6 +4943,7 @@ def _adapt_trusted_navigation_to_candidate(
     """Reuse the successful parent path while replacing a divergent historical leaf."""
     baseline_flow = normalize_text_list(baseline_flow)
     candidate_flow = _candidate_source_navigation_flow(candidate_case, target_terms, branch)
+    target_transition_tail = _candidate_target_transition_tail(candidate_case, target_terms)
     baseline_actions = [
         (index, key)
         for index, step in enumerate(baseline_flow)
@@ -4958,8 +5010,13 @@ def _adapt_trusted_navigation_to_candidate(
             stable_transition.append(step)
     adapted = baseline_flow[:baseline_cut + 1] + stable_transition + candidate_tail
     if (
+        target_transition_tail
+        and _target_navigation_action_index(adapted, target_terms) < 0
+    ):
+        adapted += target_transition_tail
+    if (
         len(adapted) < 2
-        or len(adapted) > 7
+        or len(adapted) > 8
         or _source_navigation_has_alternative_destinations(adapted)
         or not _case_has_branch_execution_evidence({"steps": adapted}, branch)
     ):

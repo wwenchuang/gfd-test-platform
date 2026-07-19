@@ -2852,15 +2852,35 @@ def _ai_gateway_available():
         return False
 
 
-def _ai_gateway_post(path, payload, timeout=30):
-    """对 AI Gateway 发起 POST 请求（默认 30 秒超时）。"""
+def _ai_gateway_post(path, payload, timeout=30, include_error=False):
+    """对 AI Gateway 发起 POST 请求，可为恢复链路保留可审计错误。"""
     url = AI_GATEWAY_URL.rstrip("/") + path
     try:
         request_payload = dict(payload) if isinstance(payload, dict) else {}
         request_payload.setdefault("timeoutMs", max(5000, (safe_int(timeout, 30) - 2) * 1000))
         resp = http_client.post_json(url, request_payload, timeout=timeout)
-        return resp.json(default={}) if resp.ok else None
-    except Exception as e:
+        parsed = resp.json(default={})
+        if resp.ok:
+            return parsed
+        if include_error:
+            parsed = parsed if isinstance(parsed, dict) else {}
+            detail = str(
+                parsed.get("error") or parsed.get("message") or resp.body or f"HTTP {resp.status}"
+            ).strip()
+            return {
+                **parsed,
+                "error": detail[:1000] or f"AI Gateway HTTP {resp.status}",
+                "errorType": "http_error",
+                "httpStatus": int(resp.status or 0),
+            }
+        return None
+    except Exception as exc:
+        if include_error:
+            return {
+                "error": str(exc)[:1000] or exc.__class__.__name__,
+                "errorType": "request_error",
+                "exceptionType": exc.__class__.__name__,
+            }
         return None
 
 
@@ -5619,6 +5639,16 @@ def _agent_generated_runner_smoke_limit(run):
     return AGENT_GENERATED_RUNNER_FIRST_SMOKE_LIMIT
 
 
+def _agent_runner_gate_ref_is_deferred(item):
+    """Keep every executable non-smoke case available for gated expansion."""
+    reason = str((item or {}).get("gateReason") or "").strip()
+    return bool(
+        reason.startswith("超过自动冒烟首批上限")
+        or reason.startswith("非首批冒烟候选")
+        or "待首批完成执行准入后再扩展执行" in reason
+    )
+
+
 def _select_agent_runner_refs(run, refs):
     """Gate Agent-generated YAML before Runner creation.
 
@@ -5645,8 +5675,7 @@ def _select_agent_runner_refs(run, refs):
     selected, blocked = rank_executable_yaml_refs(scored, limit=smoke_limit)
     deferred = [
         item for item in blocked
-        if str(item.get("gateReason") or "").startswith("超过自动冒烟首批上限")
-        or str(item.get("gateReason") or "").startswith("非首批冒烟候选")
+        if _agent_runner_gate_ref_is_deferred(item)
     ]
     blocking = [item for item in blocked if item not in deferred]
     gate = {
@@ -12878,7 +12907,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
             for idx, item in enumerate(failed_jobs[:30])
         )
         ai_available = _ai_gateway_available()
-        ai_timeout = max(20, safe_int(os.getenv("MIDSCENE_AGENT_REPAIR_TIMEOUT_SECONDS"), 90))
+        ai_timeout = max(90, safe_int(os.getenv("MIDSCENE_AGENT_REPAIR_TIMEOUT_SECONDS"), 120))
         source_evidence = _agent_source_evidence(run)
         saved_drafts = []
         summary_items = []
@@ -12915,12 +12944,12 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 except Exception:
                     original_yaml = ""
             report_keyframes = (
-                _agent_failure_report_keyframes(target_job, limit=4)
+                _agent_failure_report_keyframes(target_job, limit=3)
                 if item_eligibility.get("eligible") else []
             )
             report_keyframe_names = [item.get("name") or "report-keyframe" for item in report_keyframes]
             baseline_examples = (
-                _agent_repair_baseline_examples(run, target_job, original_yaml, limit=6)
+                _agent_repair_baseline_examples(run, target_job, original_yaml, limit=3)
                 if item_eligibility.get("eligible") else []
             )
             evidence_parts = [
@@ -13040,16 +13069,25 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     **_agent_ai_route_payload(run, has_images=bool(report_keyframes)),
                 }
                 candidate_gate = None
+                ai_attempt_errors = []
                 for repair_attempt in range(2):
                     try:
                         ai_request_count += 1
                         resp = _ai_gateway_post(
                             "/ai/optimize-yaml",
                             request_payload,
-                            timeout=ai_timeout if repair_attempt == 0 else min(ai_timeout, 60),
+                            timeout=ai_timeout if repair_attempt == 0 else min(ai_timeout, 75),
+                            include_error=True,
                         )
                     except Exception as e:
                         resp = {"error": str(e)[:300]}
+                    if isinstance(resp, dict) and resp.get("error"):
+                        ai_attempt_errors.append({
+                            "attempt": repair_attempt + 1,
+                            "error": str(resp.get("error"))[:500],
+                            "errorType": str(resp.get("errorType") or ""),
+                            "httpStatus": safe_int(resp.get("httpStatus"), 0),
+                        })
                     candidate_gate = _agent_repair_candidate_gate(
                         original_yaml,
                         resp,
@@ -13057,7 +13095,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                         platform=run.get("platform", "android"),
                         source_evidence=source_evidence,
                     )
-                    if candidate_gate.get("ok") or repair_attempt > 0 or not candidate_gate.get("rawFixedYaml"):
+                    if candidate_gate.get("ok") or repair_attempt > 0:
                         break
                     correction_issues = [
                         str(item.get("message") or item.get("code") or "").strip()
@@ -13081,7 +13119,20 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     request_payload["repairPolicy"] = {
                         **request_payload["repairPolicy"],
                         "boundedCorrectionAttempt": 1,
+                        "requireCompleteYamlResponse": True,
                     }
+                    if not candidate_gate.get("rawFixedYaml"):
+                        request_payload["imageAssets"] = report_keyframes[-2:]
+                        request_payload["reportKeyframes"] = report_keyframe_names[-2:]
+                        request_payload["baselineExamples"] = baseline_examples[:3]
+                        request_payload["allFailedJobs"] = [{
+                            key: target_job.get(key)
+                            for key in (
+                                "jobId", "taskName", "module", "file", "failureType",
+                                "failureReason", "error", "summaryText", "stderrTail", "stdoutTail",
+                            )
+                            if target_job.get(key) not in (None, "", [], {})
+                        }]
 
                 item_summary["aiRequestCount"] = 2 if item_summary.get("aiCorrectionAttempted") else 1
                 candidate_gate = candidate_gate or _agent_repair_candidate_gate(
@@ -13095,6 +13146,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 model_trace = _agent_ai_response_model_trace(run, resp)
                 item_summary["modelTrace"] = model_trace
                 draft["modelTrace"] = model_trace
+                if ai_attempt_errors:
+                    item_summary["aiAttemptErrors"] = ai_attempt_errors
+                    draft["aiAttemptErrors"] = ai_attempt_errors
                 if isinstance(resp, dict):
                     if resp.get("changes"):
                         changes = resp.get("changes")

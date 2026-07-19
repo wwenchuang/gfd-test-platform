@@ -583,6 +583,17 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ),
         "A reachability claim in the case title must not substitute for a real click and terminal assertion",
     )
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance(
+            {
+                "requirementRefs": ["REQ-001"],
+                "steps": ["进入订单管理", "等待发票入口可见"],
+                "assertions": ["发票入口可见，点击后应显示授权页或文件选择相关界面"],
+            },
+            next(item for item in generic_acceptance_checks if item.get("id") == "REQ-001-CHECK-04"),
+        ),
+        "A terminal phrase containing 文件选择 must not count as a target action without an ordered target click",
+    )
     confirmation_landing_case = {
         "case_id": "MC-CONFIRM-LANDING",
         "requirementRefs": ["REQ-001"],
@@ -1023,6 +1034,32 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ]
         and "电子发票" not in " ".join(adapted_current_leaf),
         "A concrete AI candidate leaf must replace only the divergent historical leaf while retaining the verified parent path",
+    )
+    target_transition_flow, target_transition_adapted = ai_skill_service._adapt_trusted_navigation_to_candidate(
+        trusted_prefix,
+        {
+            "steps": [
+                "启动App并等待首页加载完成",
+                "点击名称为「会员服务」的入口",
+                "等待开票服务可见",
+                "点击「开票服务」",
+                "等待当前可选发票类型加载完成",
+                "点击名称为「新版发票」的入口",
+                "点击「云端发票」入口",
+                "等待云端发票落地页首个稳定页面可见，无白屏或崩溃",
+            ],
+        },
+        ["云端发票"],
+        "会员服务",
+    )
+    require(
+        target_transition_adapted is True
+        and target_transition_flow[-2:] == [
+            "点击「云端发票」入口",
+            "等待云端发票落地页首个稳定页面可见，无白屏或崩溃",
+        ]
+        and "电子发票" not in " ".join(target_transition_flow),
+        "Trusted parent-path adaptation must retain the candidate's target click and bounded landing terminal",
     )
     require(
         ai_skill_service._candidate_navigation_specificity({
@@ -4319,24 +4356,70 @@ def check_agent_failure_review_and_repair_guard():
     old_report_keyframes = agent_service._agent_failure_report_keyframes
     old_repair_baselines = agent_service._agent_repair_baseline_examples
     mixed_repair_requests = []
+    empty_retry_requests = []
+    repair_frame_limits = []
+    repair_baseline_limits = []
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             agent_service.TASK_DIR = temp_dir
             module_dir = Path(temp_dir) / "AI_Agent_草稿"
             module_dir.mkdir()
+            (module_dir / "empty.yaml").write_text(original, encoding="utf-8")
             (module_dir / "script.yaml").write_text(original, encoding="utf-8")
             (module_dir / "product.yaml").write_text(original, encoding="utf-8")
             agent_service._ai_gateway_available = lambda: True
+
+            def empty_then_repaired_gateway(_path, payload, **_kwargs):
+                empty_retry_requests.append(payload)
+                if len(empty_retry_requests) == 1:
+                    return {
+                        "error": "AI call timeout after 118000ms",
+                        "errorType": "request_error",
+                    }
+                return {
+                    "fixedYaml": eligible_script_fix,
+                    "analysis": "根据最新失败帧补充起始页稳定等待并修正可见文字定位",
+                    "changes": ["在首次入口点击前增加首页稳定等待"],
+                }
+
+            agent_service._ai_gateway_post = empty_then_repaired_gateway
+            agent_service._log_tool_call = lambda *args, **kwargs: None
+            agent_service._agent_failure_report_keyframes = lambda *_args, **kwargs: (
+                repair_frame_limits.append(kwargs.get("limit"))
+                or [{"name": f"frame-{index}", "data": "image"} for index in range(3)]
+            )
+            agent_service._agent_repair_baseline_examples = lambda *_args, **kwargs: (
+                repair_baseline_limits.append(kwargs.get("limit")) or []
+            )
+            repair_service.upsert_repair_draft = lambda draft: dict(draft)
+            empty_retry_run = {
+                "runId": "agent-static-empty-repair-retry",
+                "target": "通用入口展示",
+                "platform": "android",
+                "artifacts": {
+                    "failureAnalysis": {"failureType": "SCRIPT_ISSUE", "canAutoRepair": True},
+                    "report": {"failedJobs": [{
+                        "jobId": "job-empty-retry",
+                        "module": "AI_Agent_草稿",
+                        "file": "empty.yaml",
+                        "taskName": "入口定位失败",
+                        "failureType": "SCRIPT_ISSUE",
+                        "error": "failed to locate element",
+                    }]},
+                },
+            }
+            empty_retry_call = agent_service._tool_generate_repair(empty_retry_run)
+            empty_retry_item = (
+                (empty_retry_run.get("artifacts", {}).get("repairSummary") or {}).get("items") or [{}]
+            )[0]
 
             def mixed_repair_gateway(*_args, **_kwargs):
                 mixed_repair_requests.append(True)
                 return {"fixedYaml": eligible_script_fix, "analysis": "补齐起始页稳定等待并修正可见文字定位"}
 
             agent_service._ai_gateway_post = mixed_repair_gateway
-            agent_service._log_tool_call = lambda *args, **kwargs: None
             agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
             agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: []
-            repair_service.upsert_repair_draft = lambda draft: dict(draft)
             mixed_run = {
                 "runId": "agent-static-mixed-failure-repair",
                 "target": "通用入口展示",
@@ -4388,6 +4471,19 @@ def check_agent_failure_review_and_repair_guard():
                 mixed_run["artifacts"]["report"]["failedJobs"][1:],
                 [{"job_id": "job-product", "module": "AI_Agent_草稿", "file": "product.yaml"}],
             )
+        require(
+            empty_retry_call.get("status") == "SUCCESS"
+            and len(empty_retry_requests) == 2
+            and empty_retry_item.get("aiCorrectionAttempted") is True
+            and empty_retry_item.get("aiRequestCount") == 2
+            and empty_retry_item.get("aiAttemptErrors", [{}])[0].get("errorType") == "request_error"
+            and len(empty_retry_requests[1].get("imageAssets") or []) == 2
+            and len(empty_retry_requests[1].get("allFailedJobs") or []) == 1
+            and empty_retry_requests[1].get("repairPolicy", {}).get("requireCompleteYamlResponse") is True
+            and repair_frame_limits == [3]
+            and repair_baseline_limits == [3],
+            "An empty or timed-out first repair response must receive one compact evidence-bound retry and preserve the first error",
+        )
         require(
             len(mixed_repair_requests) == 1
             and mixed_call.get("aiUsedCount") == 1
@@ -6280,6 +6376,7 @@ def check_yaml_static_validation_and_patterns():
     )
     from task_server.services.agent_service import (
         _agent_repair_missing_interaction_followups,
+        _agent_runner_gate_ref_is_deferred,
         _agent_yaml_dry_run_rows,
         normalize_yaml_refs,
     )
@@ -6519,6 +6616,26 @@ def check_yaml_static_validation_and_patterns():
         assertion_tap_score.get("executionLevel") != "executable"
         and any("aiTap 描述像检查/断言" in reason for reason in assertion_tap_score.get("reasons", [])),
         "Generated YAML scorer must block assertion-like aiTap prompts before Runner execution",
+    )
+    passive_clickability_step = "校验「百度网盘」入口可见、可点击且文案完整"
+    _, passive_clickability_yaml = yaml_service_module.cases_to_midscene_yaml({
+        "_automation_ready": True,
+        "title": "入口能力校验",
+        "cases": [{
+            "title": "入口能力校验",
+            "steps": [
+                "启动App并等待首页加载完成",
+                "点击「扫描复印」入口",
+                passive_clickability_step,
+            ],
+            "assertions": ["百度网盘入口可见且文案完整"],
+        }],
+    }, app_package="com.xbxxhz.box")
+    require(
+        yaml_service_module.action_type(passive_clickability_step) == "aiWaitFor"
+        and 'aiWaitFor: "校验「百度网盘」入口可见、可点击且文案完整"' in passive_clickability_yaml
+        and 'aiTap: "校验「百度网盘」' not in passive_clickability_yaml,
+        "A 校验 statement containing the capability adjective 可点击 must remain a passive wait",
     )
     repaired_assertion_tap = _agent_repair_missing_interaction_followups(assertion_tap_yaml)
     require(
@@ -6927,6 +7044,10 @@ def check_yaml_static_validation_and_patterns():
         and selected[0]["file"] == "01-normal.yaml"
         and any("异常/边界/权限类用例" in str(item.get("gateReason") or "") for item in blocked),
         "Runner gate must exclude abnormal/boundary/permission cases from the first smoke batch even when AI marks them as smoke",
+    )
+    require(
+        len([item for item in blocked if _agent_runner_gate_ref_is_deferred(item)]) == 2,
+        "Executable boundary or reachability cases excluded from first smoke must remain deferred for gated expansion",
     )
     selected, blocked = rank_executable_yaml_refs([
         {"file": "fallback-1.yaml", "executableScore": {

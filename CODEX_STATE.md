@@ -28,6 +28,52 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-19 真实回归：目标跳转不得在基线路径适配后消失，失败 AI 空答必须有界纠正
+
+用户部署 `7827802` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784434405265-959a92a5`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Task Server 文本/视觉模型为 `qwen3.6-plus`，Windows Runner 在线并上报 `midscene_model_family=qwen3.6`。本 Agent 的 3 个 dry-run 和 3 个正式 job 均只下发固定 OPPO，没有选择或执行 Runner 上登记的第二台设备。
+- Figma parser 保持原实现，解析 `4 页 / 4 张 UI 图`。4 张图分别送入 qwen3.6-plus，4 批均在约 `14-22s` 完成，未回退、未触发硬门禁；视觉 AI 明确识别照片分支 `5寸照片 -> 百度网盘` 和同级关系。
+- AI 生成 `12` 个场景、`6` 条自动化用例和 `6` 个 YAML。6 条均为 executable、scorer 100、static/dry-run `6/6`，且没有坐标动作。
+- 首批 3 条 Smoke 在固定 OPPO 串行执行：文档 `job_1784434888320_00004` 通过，照片 `job_1784435148730_00006` 通过，扫描 `job_1784435029811_00005` 失败。双状态汇总正确保留 `2 passed / 1 script failed / productFailed=0`，没有把两个真实通过覆盖成全失败。
+- 扫描 Midscene 报告的真实末帧显示相机权限“温馨提示”，可见按钮为“取消 / 确定”；原 YAML 复制历史基线继续点击“立即使用”，因此发生 element-not-found。平台正确提取 4 张真实 Midscene 关键帧并召回扫描分支成功基线，但 optimize-yaml 在约 88 秒后未返回 YAML。旧代码吞掉 Gateway 错误并在首个 `ai_no_yaml` 后直接退出，只保存 REJECTED 诊断草稿，没有 APPLY_SAFE_REPAIR、RERUN 或 remaining；Agent 终态为 `FAILED / COLLECT_REPORT`。
+
+深层根因：
+
+- 照片可达用例的上游 AI 原始路径包含 `5寸照片 -> 点击百度网盘 -> 等待落地页`。可信基线父路径适配先调用 `_candidate_source_navigation_flow()`，该函数按设计在目标入口前截断；适配结果覆盖完整计划后没有重新拼回目标点击和终态，最终 `TC-005` 只到 5 寸照片页。
+- reachability 覆盖审计在所有证据文本中搜索“点击/选择”等子串。`显示百度网盘授权或文件选择相关界面` 中的名词“选择”被误当成目标动作，使缺少百度网盘点击的 `TC-005` 仍被判定覆盖。
+- 自然语言动作分类没有把“校验/断言”视为被动检查，并把“可点击”中的“点击”当成执行命令；扫描可达 YAML 因而把 `校验百度网盘入口可见、可点击` 错渲染为 `aiTap`。
+- Runner 首批排除项的 gateReason 明写“待首批完成后扩展”，但 Agent 只把“超过上限/非首批候选”两个前缀归入 deferred；两条正常可达性 executable 因此被错误计入 blocking，remaining 从应有 3 条缩成 1 条。
+- repair 请求同时携带 4 张关键帧和 6 条基线，Task Server 与 Gateway 总预算同为 90 秒；首轮空答/超时既没有错误证据，也不会进入现有第二次有界纠正。
+
+通用修复：
+
+- 可信父路径适配现在从 AI 候选中独立提取真实目标动作及其后有界终态；适配后若目标动作不存在，则在 8 步上限内拼回。无法同时保留父路径和目标尾链时拒绝适配，保留原 AI 路径，不能静默截断业务目标。
+- reachability 只接受有序执行流中指向验收目标的真实 navigation action；终态必须位于该动作之后或来自明确 expected/assertion。`aiTap/aiAction/aiAct` 文本也按同一目标解析；断言中的“可点击/文件选择”不能代替动作。执行流不再按文本去重，重复出现在两个独立业务分支的相同步骤保持各自顺序。
+- `校验/断言` 加入被动检查前缀，并在动作判定前移除“可点击/不可点击/是否可点击”等能力形容词。生成 YAML 将这些步骤稳定渲染为 `aiWaitFor`，真实“点击目标”仍为 `aiTap`。
+- 所有达到 executable 且 gateReason 明确“待首批完成执行准入后再扩展”的非首批用例统一进入 deferred；首批 Smoke 上限和 50% 阈值、脚本失败先修复门禁均保持不变。
+- repair 首轮使用最新 3 张真实关键帧和 Top3 分支基线，默认总预算由 90 秒调整为 120 秒。HTTP/超时错误写入 `aiAttemptErrors`；首轮空答也进入现有唯一一次纠正，第二次只携带最后 2 帧、Top3 基线和当前失败任务，最长 75 秒，并继续使用创建 Agent 时选择的模型路由。没有无限重试，也没有让 AI 绕过 YAML、证据、dry-run 或设备门禁。
+
+线上产物离线重放：
+
+- 直接读取线上 cases payload，修复前严格审计为 `11/12`，唯一缺口为 `REQ-002-CHECK-04`；恢复上游 AI 已生成的 `点击百度网盘 -> 等待页面跳转` 后变为 `12/12 / missing=0 / ok=true`。
+- 同一 payload 重新生成 6 条 YAML：全部 executable，static/dry-run `6/6`，无坐标；照片可达路径完整保留 5 寸和百度网盘目标尾链，扫描两条“校验…可点击”均为 `aiWaitFor`，真实百度网盘点击仍为 `aiTap`。
+- 用线上 runner gate 的 3 个 blocked 项重放，新 deferred 判定为 `3/3`，不再把文档/照片可达性误计为预执行阻断。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录及空答/截断/图像/超时回退、Skill fixtures `3/3` 和 Playwright 桌面/移动视觉回归全部通过。
+- 未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML。
+
+待完成：提交、推送并部署本轮修复；部署后再次使用完全相同输入发起唯一 Agent，持续监督 4 个视觉批次、6 条最终 YAML、固定 OPPO 上最多 3 条串行 Smoke、真实失败帧驱动的一次有界 AI 修复、3 条 remaining 和最终报告到终态。成功也必须人工复核照片为 5 寸分支、三个入口文案/同级关系及真实跳转结果。
+
 ### 2026-07-18 真实回归：视觉 Frame 替换不得截断目标动作，名义 executable 的验收缺口仍由 AI 收敛
 
 用户部署 `6b244b1` 后，以完全相同需求和 Figma 发起唯一 Agent `agent-1784336356080-c0199926`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / singleDeviceOnly / qwen3.6-plus`：

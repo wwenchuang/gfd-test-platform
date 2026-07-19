@@ -2166,7 +2166,10 @@ def is_smoke_case(case):
 # 动作/输入解析工具
 # ---------------------------------------------------------------------------
 
-PASSIVE_CHECK_PREFIXES = ("检查", "验证", "确认", "查看", "观察", "等待", "直到出现", "直到看到", "直到", "等到")
+PASSIVE_CHECK_PREFIXES = (
+    "检查", "校验", "验证", "断言", "确认", "查看", "观察",
+    "等待", "直到出现", "直到看到", "直到", "等到",
+)
 PASSIVE_CHECK_WORDS = (
     "是否", "可见", "存在", "展示", "显示", "出现", "加载完成", "加载完",
     "文案", "布局", "位置", "同级", "顺序", "状态", "入口可见", "按钮可见",
@@ -2188,7 +2191,8 @@ def step_looks_passive_check(text):
     compact = re.sub(r"\s+", "", raw)
     if not compact:
         return False
-    explicit_tap = any(word in compact for word in EXPLICIT_TAP_WORDS)
+    action_probe = re.sub(r"(?:不?可点击|能否点击|是否可点击)", "", compact)
+    explicit_tap = any(word in action_probe for word in EXPLICIT_TAP_WORDS)
     passive_signal = any(word in compact for word in PASSIVE_CHECK_WORDS)
     if compact.startswith(PASSIVE_CHECK_PREFIXES):
         return passive_signal or not explicit_tap or compact.startswith(("等待", "直到", "等到"))
