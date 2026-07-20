@@ -4827,6 +4827,13 @@ def check_agent_failure_review_and_repair_guard():
         "failure_brief": {},
     }) or {}
     require(positive_overlay.get("failure_type") == "popup_overlay", "Concrete runtime popup evidence must remain auto-repairable")
+    visible_controls_overlay = ai_skill_service.positive_overlay_evidence(
+        "failed to locate element: 截图中未找到文本为“立即使用”的元素。弹窗底部只有“取消”和“确定”按钮。"
+    )
+    require(
+        visible_controls_overlay,
+        "A runtime screenshot description with concrete popup controls must count as positive overlay evidence",
+    )
     exact_copy_yaml = """android:
   tasks:
     - name: 企业云盘入口文案
@@ -5287,6 +5294,127 @@ def check_agent_failure_review_and_repair_guard():
     require(
         any(item.get("code") == "navigation_change_without_branch_baseline" for item in cross_branch_gate.get("issues") or []),
         "A global or sibling baseline citation must not authorize a current-branch navigation change",
+    )
+    overlay_original = """android:
+  tasks:
+    - name: 扫描复印入口校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 首页核心入口可见
+        - aiTap: 点击「扫描复印 icon」
+        - aiTap: 点击「证件扫描」
+        - aiTap: 点击「立即使用」
+        - aiAssert: 「百度网盘」入口可见
+"""
+    overlay_fixed = overlay_original.replace(
+        "        - aiTap: 点击「证件扫描」",
+        "        - aiTap: 点击「证件扫描」\n"
+        "        - ai: 如果出现权限说明弹窗，点击其中可见的「确定」按钮；若随后出现系统权限弹窗则点击「允许」",
+    )
+    overlay_response = {
+        "fixedYaml": overlay_fixed,
+        "analysis": "失败关键帧显示权限弹窗遮挡原业务步骤，仅插入临时弹窗处理并保持导航不变",
+        "changes": ["在证件扫描后插入权限弹窗处理"],
+        "patches": [{
+            "op": "insert_after",
+            "anchor": "aiTap: 点击「证件扫描」",
+            "lines": ["ai: 如果出现权限说明弹窗，点击其中可见的「确定」按钮；若随后出现系统权限弹窗则点击「允许」"],
+            "reason": "失败关键帧显示弹窗底部只有取消和确定",
+        }],
+        "usedBaselineIds": [],
+    }
+    overlay_runtime_evidence = {
+        "error": "failed to locate element: 截图中未找到文本为“立即使用”的元素。弹窗底部只有“取消”和“确定”按钮。",
+        "reportKeyframes": ["failure-frame-1.jpg"],
+    }
+    overlay_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        overlay_response,
+        [branch_baseline],
+        platform="android",
+        runtime_evidence=overlay_runtime_evidence,
+    )
+    require(
+        overlay_gate.get("ok") is True
+        and overlay_gate.get("navigationChanged") is True
+        and overlay_gate.get("baselineCitationExempt") is True
+        and overlay_gate.get("transientOverlayChange", {}).get("matchedControls") == ["确定"],
+        "A keyframe-backed transient overlay handler may preserve the business path without citing a navigation baseline",
+    )
+    ungrounded_overlay_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        overlay_response,
+        [branch_baseline],
+        platform="android",
+        runtime_evidence={"error": "failed to locate element", "reportKeyframes": ["failure-frame-1.jpg"]},
+    )
+    require(
+        any(item.get("code") == "navigation_change_without_baseline_citation" for item in ungrounded_overlay_gate.get("issues") or [])
+        and ungrounded_overlay_gate.get("baselineCitationExempt") is False,
+        "A generic locate failure must not unlock the transient-overlay baseline exception",
+    )
+    cross_job_overlay_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        overlay_response,
+        [branch_baseline],
+        platform="android",
+        runtime_evidence={
+            "error": "failed to locate element",
+            "failureAnalysis": overlay_runtime_evidence["error"],
+            "reportKeyframes": ["failure-frame-1.jpg"],
+        },
+    )
+    require(
+        any(item.get("code") == "navigation_change_without_baseline_citation" for item in cross_job_overlay_gate.get("issues") or [])
+        and cross_job_overlay_gate.get("baselineCitationExempt") is False,
+        "A popup mentioned only in aggregate or AI analysis must not authorize another failed job",
+    )
+    business_navigation_response = dict(overlay_response)
+    business_navigation_response["fixedYaml"] = overlay_original.replace(
+        "        - aiTap: 点击「立即使用」",
+        "        - aiTap: 点击「照片打印」\n        - aiTap: 点击「立即使用」",
+    )
+    business_navigation_response["patches"] = [{
+        "op": "insert_before",
+        "anchor": "aiTap: 点击「立即使用」",
+        "lines": ["aiTap: 点击「照片打印」"],
+        "reason": "改走其他入口",
+    }]
+    business_navigation_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        business_navigation_response,
+        [branch_baseline],
+        platform="android",
+        runtime_evidence=overlay_runtime_evidence,
+    )
+    require(
+        any(item.get("code") == "navigation_change_without_baseline_citation" for item in business_navigation_gate.get("issues") or [])
+        and business_navigation_gate.get("baselineCitationExempt") is False,
+        "Popup evidence must not authorize an unrelated business navigation insertion",
+    )
+    embedded_navigation_response = dict(overlay_response)
+    embedded_navigation_response["fixedYaml"] = overlay_original.replace(
+        "        - aiTap: 点击「立即使用」",
+        "        - ai: 如果权限弹窗出现，点击「确定」，然后点击「照片打印」\n"
+        "        - aiTap: 点击「立即使用」",
+    )
+    embedded_navigation_response["patches"] = [{
+        "op": "insert_before",
+        "anchor": "aiTap: 点击「立即使用」",
+        "lines": ["ai: 如果权限弹窗出现，点击「确定」，然后点击「照片打印」"],
+        "reason": "混入业务导航",
+    }]
+    embedded_navigation_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        embedded_navigation_response,
+        [branch_baseline],
+        platform="android",
+        runtime_evidence=overlay_runtime_evidence,
+    )
+    require(
+        any(item.get("code") == "navigation_change_without_baseline_citation" for item in embedded_navigation_gate.get("issues") or [])
+        and embedded_navigation_gate.get("baselineCitationExempt") is False,
+        "A compound AI action must not hide business navigation inside an overlay dismissal",
     )
     startup_guard_gate = agent_service._agent_repair_candidate_gate(
         original,

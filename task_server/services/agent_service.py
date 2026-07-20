@@ -12428,6 +12428,126 @@ def _agent_repair_navigation_signature(yaml_text):
     return signature
 
 
+_AGENT_REPAIR_OVERLAY_MARKERS = (
+    "弹窗", "权限", "浮层", "蒙层", "遮罩", "提示",
+    "dialog", "popup", "modal", "overlay", "permission",
+)
+_AGENT_REPAIR_OVERLAY_CONTROL_TERMS = (
+    "确定", "确认", "允许", "取消", "关闭", "跳过", "稍后", "我知道了", "同意",
+    "ok", "confirm", "allow", "cancel", "close", "dismiss", "skip", "later",
+)
+_AGENT_REPAIR_OVERLAY_ACTION_VERB_PATTERN = (
+    r"(?:点击|点按|轻触|选择|按下|\bclick\b|\btap\b|\bpress\b|\bselect\b)"
+)
+_AGENT_REPAIR_BUSINESS_TRANSITION_PATTERN = (
+    r"(?:进入|前往|导航(?:到|至)?|跳转(?:到|至)?|打开(?:页面|设置|应用|功能)|"
+    r"\bgo\s+to\b|\bnavigate\b|\bopen\s+(?:the\s+)?(?:page|settings|app)\b)"
+)
+
+
+def _agent_repair_navigation_additions(original_navigation, fixed_navigation):
+    """Return inserted actions only when every original navigation action remains ordered."""
+    if original_navigation is None or fixed_navigation is None:
+        return None
+    original_index = 0
+    additions = []
+    for item in fixed_navigation:
+        if original_index < len(original_navigation) and item == original_navigation[original_index]:
+            original_index += 1
+        else:
+            additions.append(item)
+    if original_index != len(original_navigation):
+        return None
+    return additions
+
+
+def _agent_repair_runtime_evidence_text(runtime_evidence):
+    runtime_evidence = runtime_evidence if isinstance(runtime_evidence, dict) else {}
+    values = []
+    for key in (
+        "failureReason", "error", "summaryText", "stderrTail", "stdoutTail", "evidenceText",
+    ):
+        value = runtime_evidence.get(key)
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False)
+        if str(value or "").strip():
+            values.append(str(value).strip())
+    return "\n".join(values)
+
+
+def _agent_repair_overlay_action_controls(action_text, positive_evidence_text):
+    """Return grounded overlay controls only when every explicit action targets a control."""
+    if re.search(_AGENT_REPAIR_BUSINESS_TRANSITION_PATTERN, action_text, re.I):
+        return []
+    action_targets = re.split(_AGENT_REPAIR_OVERLAY_ACTION_VERB_PATTERN, action_text, flags=re.I)[1:]
+    if len(action_targets) > 2:
+        return []
+    for target in action_targets:
+        target_clause = re.split(
+            r"(?:[，。；;,\.\n]|然后|随后|接着|之后|\bthen\b|\bafterwards\b)",
+            target,
+            maxsplit=1,
+            flags=re.I,
+        )[0]
+        if not any(term in target_clause for term in _AGENT_REPAIR_OVERLAY_CONTROL_TERMS):
+            return []
+    return [
+        term for term in _AGENT_REPAIR_OVERLAY_CONTROL_TERMS
+        if term in action_text and term in positive_evidence_text
+    ]
+
+
+def _agent_repair_transient_overlay_change(
+    original_navigation,
+    fixed_navigation,
+    response,
+    runtime_evidence,
+):
+    """Allow a keyframe-backed overlay dismissal without weakening business navigation gates."""
+    runtime_evidence = runtime_evidence if isinstance(runtime_evidence, dict) else {}
+    report_keyframes = runtime_evidence.get("reportKeyframes") or []
+    if not report_keyframes:
+        return {}
+    evidence_text = _agent_repair_runtime_evidence_text(runtime_evidence)
+    if not evidence_text:
+        return {}
+    try:
+        from task_server.services.ai_skill_service import positive_overlay_evidence
+        positive_evidence = positive_overlay_evidence(evidence_text)
+    except Exception:
+        positive_evidence = []
+    if not positive_evidence:
+        return {}
+
+    patches = response.get("patches") if isinstance(response, dict) else None
+    if not isinstance(patches, list) or not patches:
+        return {}
+    if any(str(item.get("op") or "") not in {"insert_before", "insert_after"} for item in patches if isinstance(item, dict)):
+        return {}
+
+    additions = _agent_repair_navigation_additions(original_navigation, fixed_navigation)
+    if not additions or len(additions) > 2:
+        return {}
+    lowered_evidence = "\n".join(positive_evidence).casefold()
+    matched_controls = []
+    for action, value in additions:
+        if action not in {"aiTap", "tap", "ai", "aiAction", "aiAct"}:
+            return {}
+        action_text = str(value or "").casefold()
+        if not any(marker in action_text for marker in _AGENT_REPAIR_OVERLAY_MARKERS):
+            return {}
+        controls = _agent_repair_overlay_action_controls(action_text, lowered_evidence)
+        if not controls:
+            return {}
+        matched_controls.extend(controls)
+    return {
+        "keyframeCount": len(report_keyframes),
+        "evidence": positive_evidence[:3],
+        "matchedControls": list(dict.fromkeys(matched_controls)),
+        "addedNavigationActions": [action for action, _value in additions],
+    }
+
+
 def _agent_repair_navigation_missing_ready_wait(yaml_text):
     """Detect a first AI navigation action that runs immediately after app launch."""
     if pyyaml is None:
@@ -12626,6 +12746,7 @@ def _agent_repair_candidate_gate(
     baseline_examples,
     platform="android",
     source_evidence=None,
+    runtime_evidence=None,
 ):
     """Audit AI repair prose, baseline evidence and executable YAML as one candidate."""
     response = response if isinstance(response, dict) else {}
@@ -12684,6 +12805,16 @@ def _agent_repair_candidate_gate(
         and fixed_navigation is not None
         and original_navigation != fixed_navigation
     )
+    transient_overlay_change = (
+        _agent_repair_transient_overlay_change(
+            original_navigation,
+            fixed_navigation,
+            response,
+            runtime_evidence,
+        )
+        if navigation_changed
+        else {}
+    )
     ai_validation = response.get("validation") if isinstance(response.get("validation"), dict) else {}
     validation = {}
     original_executable_score = score_midscene_yaml_executable(original_yaml, generated=True) if original_yaml else {}
@@ -12739,11 +12870,18 @@ def _agent_repair_candidate_gate(
             "navigation_claim_without_yaml_change",
             "changes/analysis 声称修正导航，但 YAML 的 aiTap/ai/aiAction/aiAct 路径没有变化",
         )
-    if fixed_yaml and navigation_changed and baseline_examples and not used_baseline_ids:
+    if (
+        fixed_yaml
+        and navigation_changed
+        and not transient_overlay_change
+        and baseline_examples
+        and not used_baseline_ids
+    ):
         add_issue("navigation_change_without_baseline_citation", "导航发生变化，但没有引用本次可信路径基线")
     if (
         fixed_yaml
         and navigation_changed
+        and not transient_overlay_change
         and branch_baseline_ids
         and not branch_baseline_ids.intersection(used_baseline_ids)
     ):
@@ -12789,6 +12927,8 @@ def _agent_repair_candidate_gate(
         "branchBaselineIds": sorted(branch_baseline_ids),
         "navigationClaimed": navigation_claimed,
         "navigationChanged": navigation_changed,
+        "transientOverlayChange": transient_overlay_change,
+        "baselineCitationExempt": bool(transient_overlay_change),
         "originalAssertionContract": original_assertion_contract,
         "fixedAssertionContract": fixed_assertion_contract,
         "missingAssertionContract": missing_assertion_contract,
@@ -13031,6 +13171,8 @@ def _agent_repair_patch_error_gate(code, message, response=None):
             )
         ),
         "navigationChanged": False,
+        "transientOverlayChange": {},
+        "baselineCitationExempt": False,
         "originalAssertionContract": [],
         "fixedAssertionContract": [],
         "missingAssertionContract": [],
@@ -13130,6 +13272,7 @@ def _agent_repair_patch_skill_candidate(
             "preserveOriginalBusinessGoal": True,
             "preserveExactVisibleValueAssertions": True,
             "requireBaselineCitationForNavigationChange": True,
+            "allowKeyframeBackedTransientOverlayWithoutBaselineCitation": True,
             "preferEarlierRuntimeTargetRegion": True,
         },
         "executionConstraint": {
@@ -13249,6 +13392,14 @@ def _agent_repair_patch_skill_candidate(
                 baseline_examples,
                 platform=run.get("platform", "android"),
                 source_evidence=source_evidence,
+                runtime_evidence={
+                    "failureReason": failure_reason,
+                    "error": target_job.get("error") or "",
+                    "summaryText": target_job.get("summaryText") or "",
+                    "stderrTail": target_job.get("stderrTail") or target_job.get("stderr_tail") or "",
+                    "stdoutTail": target_job.get("stdoutTail") or target_job.get("stdout_tail") or "",
+                    "reportKeyframes": report_keyframe_names,
+                },
             )
             candidate_gate["patchPlan"] = copy.deepcopy(patch_plan)
             candidate_gate["appliedPatches"] = copy.deepcopy(applied_patches)
@@ -13529,7 +13680,11 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 item_summary["branchBaselineIds"] = candidate_gate.get("branchBaselineIds") or []
                 item_summary["navigationChanged"] = bool(candidate_gate.get("navigationChanged"))
                 item_summary["navigationClaimed"] = bool(candidate_gate.get("navigationClaimed"))
+                item_summary["transientOverlayChange"] = candidate_gate.get("transientOverlayChange") or {}
+                item_summary["baselineCitationExempt"] = bool(candidate_gate.get("baselineCitationExempt"))
                 item_summary["assertionContractPreserved"] = bool(candidate_gate.get("assertionContractPreserved"))
+                draft["transientOverlayChange"] = item_summary["transientOverlayChange"]
+                draft["baselineCitationExempt"] = item_summary["baselineCitationExempt"]
                 for score_key in ("originalExecutableScore", "fixedExecutableScore"):
                     score_value = candidate_gate.get(score_key)
                     if not isinstance(score_value, dict) or not score_value:

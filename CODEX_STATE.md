@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 部署后真实回归：关键帧佐证的临时弹窗修复不能冒充业务改路
+
+用户部署 `c2ee824` 后，以相同需求和 Figma 发起完整 Agent `agent-1784508011655-ac1b0f0d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Runner 在线并上报 `qwen3.6-plus / qwen3.6`。所有 dry-run、首批和修复重跑均只绑定固定 OPPO，没有选择或下发华为设备。
+- Figma parser 未修改，仍解析 `4 页 / 4 图 / 忽略 0`。4 张图按 4 个批次全部送入 qwen3.6-plus，约 `32 / 20 / 20 / 17s` 完成，均无回退、`hardGate=false`；设计资料继续作为完整送 AI 判断的软参考。
+- AI 规划 `8 flows / 12 scenarios / 6 automated cases`，最终生成 6 个一一对应 YAML：文档、照片、扫描各有 UI 展示和可达检查。6 条均为 `executable / scorer 100 / dry-run 通过`，使用真实可见文字且无坐标；5 寸照片明确位于照片打印分支。
+- 首批在固定 OPPO 串行执行：文档 UI `job_1784508482425_00004` 成功，扫描 UI `job_1784508607121_00005` 失败，照片 UI `job_1784508738427_00006` 失败；平台真实保留 `1 passed / 2 failed`，remaining 3 条按冒烟门禁延后。Agent 终态为 `FAILED / RERUN / 95%`，不是“全部失败”。
+- 文档报告真实确认“百度网盘”与“本地文档 / QQ文档 / WPS文档”同排。照片失败帧显示底部照片 Tab 的聚合页仍需点击大卡片“照片打印”；结构化修复引用当前照片分支成功基线、补一次真实文字点击后，`job_1784508956985_00009` 在同一 OPPO 成功，最终 5 寸照片页可见“相册导入 / 微信导入 / 相机拍照 / 百度网盘”。
+- 扫描失败帧显示点击“证件扫描”后出现“温馨提示”权限说明弹窗，底部只有“取消 / 确定”，因此原脚本下一步查找“立即使用”失败。AI 正确提出在原失败点处理“确定 / 允许”后继续原路径，但两次均返回 `usedBaselineIds=[]`；旧门禁把自然语言 `ai` 一律计为业务导航修改，以 `navigation_change_without_baseline_citation / navigation_change_without_branch_baseline` 拒绝，最终只创建 1/2 条修复重跑。
+
+深层根因与通用修复：
+
+- 当前分支基线引用门禁对真实业务改路是必要的，但“失败关键帧已经显示临时系统/权限弹窗，补丁只关闭遮罩并继续原路径”不应要求一条成功业务路径基线。该证据来自本次 Runner 画面，不是 AI 猜测，也不能由历史基线证明。
+- 新门禁只在以下条件全部成立时豁免基线引用：存在报告关键帧；当前失败任务的 Runner 文本有非否定的弹窗/遮挡证据；结构化 patch 只使用 `insert_before / insert_after`；原业务导航完整保序；最多新增 1-2 个弹窗动作；每个动作同时含弹窗语义和同一条弹窗证据中真实出现的按钮文字。放行原因以 `transientOverlayChange / baselineCitationExempt` 写入修复摘要和草稿。
+- 普通定位失败、无关键帧、删除/替换原步骤、超过两个新增动作、按钮文字未被证据观察到，或借弹窗证据插入其它业务入口，仍继续触发原分支基线门禁。每个“点击/选择”子句只能指向弹窗控件，并拒绝“进入/前往/导航/打开页面”等转场语义，不能把业务改路藏在同一个 `ai` 动作里。精确文案断言、source/Figma 叶子、scorer 非回退、YAML 强校验和固定设备约束均未放宽。
+- `repair_patch_planner.v1` 同步要求 AI 只使用关键帧中真实可见的弹窗上下文和按钮文案；系统权限弹窗可由自然语言动作有界处理，但不得顺带执行业务导航。未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML。
+
+生产失败产物离线重放：
+
+- 原样读取生产扫描 YAML，在“点击证件扫描”后应用线上 AI 提议的条件弹窗处理和短 sleep；原始“立即使用”路径及“百度网盘”精确断言全部保留。
+- 新门禁得到 `ok=true / navigationChanged=true / baselineCitationExempt=true / matchedControls=[确定] / assertionContractPreserved=true`，YAML 强校验通过，原始和修复后的 scorer 均为 `100 executable`。
+- 负向回归确认：只有普通 `failed to locate element` 时仍拒绝；其它失败任务或 AI 汇总中的弹窗描述不能串用；即使有弹窗关键帧，单独插入或藏进复合 `ai` 的无关业务入口仍拒绝。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/agent_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录/回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+- 本轮修复尚未部署，不能宣称完整 Agent 已闭环成功。提交、推送并部署后，必须再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，持续监督首批、remaining、可能的 AI 修复和所有 Runner 报告到真实终态。
+
 ### 2026-07-20 真实回归：失败关键帧与成功基线驱动结构化 AI 修复，不再重写整份 YAML
 
 用户部署 `5dff82c` 后，以相同需求和 Figma 发起完整 Agent `agent-1784475423573-fd7be255`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
