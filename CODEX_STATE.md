@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 真实回归：最终收敛按验收增量合并，不再用整体回滚丢掉 AI 已补缺口
+
+用户部署 `31afa8b` 后，以相同需求和 Figma 发起完整 Agent `agent-1784514545628-705062d7`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 在线，固定 OPPO ready，上报 qwen3.6 模型族。本轮在 `GENERATE_YAML` 终止，没有创建 Runner job，没有向 OPPO、华为或第二台设备下发。
+- Figma parser 未修改，仍解析 `4 页 / 4 图 / 忽略 0`。4 张图按 4 个单图批次全部送入 `qwen_plus / qwen3.6-plus`，均 `finishReason=stop / fallback=false / hardGate=false`；设计资料继续是完整送 AI 判断的软参考。
+- 路由正确为 `new_requirement_source / generate_draft`。初始 portfolio 有 5 条 executable，覆盖 `8/12`，缺文档可达、照片可达、扫描同级关系和扫描可达；`unresolvedAutomaticCount=0`，证明 `31afa8b` 的“模型漏回自动候选”修复已生效，但本轮没有触发该形态。
+- qwen 最终收敛实际补齐了上述 4 个缺口，提案达到 `11/12`；但改写 `TC-002` 可达路径时丢掉了上一轮已证明的 `REQ-002-CHECK-02` 照片打印同级关系。同模型的现有语义纠偏仍漏掉该保留断言，单调收敛门禁因 1 个回归验收维度原子拒绝整份提案，因而最终又保留收敛前的 `8/12`。
+- Agent 真实终态为 `FAILED / GENERATE_YAML / 30%`；最终错误因为原子回滚再次列出 4 个原始缺口，不是视觉、Runner、Windows 脚本、设备或 scorer 导致。
+
+深层根因与通用修复：
+
+- 最终收敛本质是“为已有候选增加缺失验收路径”，旧协议却要求 AI 重写整个 `flow / assertionTarget`。AI 即使正确补出新的点击和首个稳定落地页，也可能在长上下文中遗失上一轮已通过审计的展示/同级/文案断言。再调一次模型既增加延迟，也不能确定性恢复已知事实。
+- 新逻辑把收敛结果当作 AI 负责的“新验收增量”。平台从聚焦候选构建独立于模型响应的 `preserveContractByCaseId`；即使模型只返回标题、遗漏 caseId、伪造内部字段，或后续有界证据重建 item，最终仍按平台规范化后的 canonical caseId 读取原候选契约。
+- 对同一候选中 `contractRoles=preserve` 的 visibility/relation/copy 验收，平台只能从该候选原有 assertions 或明确断言步骤中携带证据，并放在“最后一次非目标导航之后、同一目标点击之前”的来源页窗口。目标点击后、前一页面、条件/负向/复合导航文案均不能证明来源页状态；同窗口内完全相同的非导航断言只保留一条，避免无谓耗尽 8 步上限。
+- 可携带证据采用保守的正向结构：按验收类型识别引号外的可见性、同级关系或准确文案谓词；拒绝中英文导航、条件/负向/错误语义、引号外未识别英文，以及引号内英文负向语义。平台不会生成 `repair` 或 `evidence` 角色的新业务事实，无法安全携带时仍进入原有同模型语义纠偏；纠偏后仍缺失则继续由覆盖门禁阻断。
+- preserve 契约在可信基线导航、当前 Figma 叶子和动态终态适配全部完成后再执行一次；任何最终适配若破坏来源页断言，候选会降级并由覆盖门禁阻断，不会用中间态审计冒充最终 YAML 覆盖。
+- 未改动 Figma parser、`router.py`、生成数量策略、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML。
+
+生产产物离线重放与验证：
+
+- 原样读取线上保存的 5 条自动候选、9 条人工候选、12 个验收维度和 3 条成功基线，模拟线上那种“补可达但漏旧关系断言”的 qwen 返回。聚焦候选仍精确为 `TC-001 / TC-002 / TC-003 / MC-003 / MC-002 / MC-001`。
+- 新逻辑携带 `REQ-001-CHECK-02 / REQ-002-CHECK-02 / REQ-003-CHECK-03`；文档与照片的同级关系断言均位于“点击百度网盘”之前，扫描原文案证据也保留在来源页。不触发第二次模型调用，最终 portfolio 为 `12/12 / 5 executable / missing=0 / unresolvedAutomatic=0`，三个执行流均不超过 8 步且只用真实可见文字定位。
+- TDD 先后在旧逻辑上复现：保留断言丢失、点击后证据冒充来源页、负向/英文导航证据绕过、模型标题映射和伪造契约、最终视觉/基线改写后二次丢失，以及同窗口重复断言占满 8 步。独立 reviewer 的 P1/P2 反例也按 relation/visibility 真实类型完成 RED/GREEN；最终复核为 `No findings`。残余风险是少见别名或未枚举措辞可能被保守降级，但不会放宽覆盖门禁或伪造正向事实。
+- 完整检查命令：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态 7 模型目录及多类回退、Skill 契约 3 个 fixture，以及桌面/移动视觉回归全部通过。
+- 本轮修复将随本次提交落盘，当前尚未推送和部署，不能宣称完整 Agent 已闭环成功。部署后必须继续用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，监督生成、Smoke、remaining、AI 修复及所有 Runner 报告到真实终态。
+
 ### 2026-07-20 真实回归：最终收敛漏回自动候选时使用同模型定向语义纠偏
 
 用户部署 `3689aa1` 后，以相同需求和 Figma 发起完整 Agent `agent-1784512888040-e6ea0da4`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

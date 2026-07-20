@@ -6417,6 +6417,300 @@ def _structured_output_was_truncated(error):
     ))
 
 
+_PRESERVE_ASSERTION_PREFIX_RE = re.compile(
+    r"^(?:等待并校验|校验|验证|检查|断言|确认)"
+)
+_PRESERVE_POSITIVE_MARKERS = {
+    "visibility": (
+        "可见", "正常显示", "完整显示", "清晰显示", "正常展示", "完整展示",
+        "清晰展示", "正常呈现", "完整呈现", "清晰呈现",
+    ),
+    "relation": (
+        "同级", "并列", "位置正确", "关系正确", "层级一致", "布局一致",
+        "排列整齐", "排列正确", "位于", "相邻", "顺序正确", "对齐",
+    ),
+    "copy": (
+        "文案准确", "文案正确", "文案为", "文案是", "文字准确", "文字正确",
+        "名称为", "显示为", "命名为", "文案一致", "文字一致", "符合需求",
+        "完整显示", "完整展示", "清晰可见",
+    ),
+}
+_UNSAFE_PRESERVE_EVIDENCE_RE = re.compile(
+    r"(?:若|如果|如有|可能|疑似|推测|预计|或许|也许|需确认|待确认|待核实|不确定|视情况|必要时)"
+    r"|(?:不|未|无|没|非|否|错误|有误|缺失|偏差|乱码|异常|失败|问题|颠倒|隐藏|遮挡|模糊|截断|不一致|不符合|不正确)"
+)
+_UNSAFE_PRESERVE_ENGLISH_RE = re.compile(
+    r"\b(?:not|no|none|missing|error|incorrect|mismatch|truncated|wrong|invalid|hidden|invisible|fail(?:ed|ure)?)\b",
+    re.I,
+)
+_PRESERVE_NAVIGATION_INSTRUCTION_RE = re.compile(
+    r"(?:点击|点按|轻触|进入|打开|选择|切换|前往|跳转|跳到|跳至|唤起|返回|退出|离开|重定向)"
+    r"|\b(?:tap|click|navigate|redirect|back|open|select|switch|enter|leave|return)\b",
+    re.I,
+)
+_PRESERVE_QUOTED_LABEL_RE = re.compile(
+    r"「[^」]*」|『[^』]*』|“[^”]*”|‘[^’]*’|\"[^\"]*\"|'[^']*'"
+)
+
+
+def _preserve_acceptance_contract(candidate):
+    candidate = candidate if isinstance(candidate, dict) else {}
+    checks = [
+        copy.deepcopy(check)
+        for check in (candidate.get("requiredAcceptanceChecks") or [])
+        if isinstance(check, dict)
+        and str(check.get("id") or "").strip()
+        and "preserve" in normalize_text_list(check.get("contractRoles"))
+        and str(check.get("kind") or "").strip().lower()
+        in ("visibility", "relation", "copy")
+    ]
+    if not checks:
+        return {}
+    evidence = normalize_text_list(candidate.get("assertions"))
+    evidence.extend(
+        step for step in normalize_text_list(candidate.get("steps"))
+        if _PRESERVE_ASSERTION_PREFIX_RE.match(step)
+    )
+    return {
+        "requiredAcceptanceChecks": checks,
+        "candidateEvidence": list(dict.fromkeys(evidence)),
+    }
+
+
+def _preserve_evidence_is_intrinsically_unsafe(evidence):
+    text = str(evidence or "").strip()
+    outside_labels = _PRESERVE_QUOTED_LABEL_RE.sub("", text)
+    return bool(
+        not text
+        or _UNSAFE_PRESERVE_EVIDENCE_RE.search(text)
+        or _UNSAFE_PRESERVE_ENGLISH_RE.search(text)
+        or _PRESERVE_NAVIGATION_INSTRUCTION_RE.search(text)
+        or re.search(r"[A-Za-z]", outside_labels)
+    )
+
+
+def _safe_preserve_evidence(evidence, check, requirement_refs):
+    text = str(evidence or "").strip()
+    kind = str((check or {}).get("kind") or "").strip().lower()
+    positive_markers = _PRESERVE_POSITIVE_MARKERS.get(kind, ())
+    outside_labels = _PRESERVE_QUOTED_LABEL_RE.sub("", text)
+    if (
+        not text
+        or not positive_markers
+        or not any(marker in outside_labels for marker in positive_markers)
+        or _preserve_evidence_is_intrinsically_unsafe(text)
+    ):
+        return False
+    return case_covers_requirement_acceptance({
+        "steps": [text],
+        "assertions": [text],
+        "requirementRefs": requirement_refs,
+    }, check)
+
+
+def _preserve_source_page_window(flow, target_click_index):
+    prior_navigation_indexes = [
+        index for index, step in enumerate(flow[:target_click_index])
+        if _navigation_action_target_key(step)
+    ]
+    source_start = prior_navigation_indexes[-1] + 1 if prior_navigation_indexes else 0
+    return source_start, target_click_index
+
+
+def _merge_preserve_contract_into_flow(flow, requirement_refs, contract):
+    """Place trusted source-page assertions before the same target click."""
+    merged_flow = normalize_text_list(flow)[:8]
+    requirement_refs = normalize_text_list(requirement_refs)[:8]
+    contract = contract if isinstance(contract, dict) else {}
+    inserted = []
+    removed = []
+    covered_check_ids = []
+    missing_check_ids = []
+    for check in contract.get("requiredAcceptanceChecks") or []:
+        if not isinstance(check, dict):
+            continue
+        check_id = str(check.get("id") or "").strip()
+        targets = _acceptance_target_terms(check.get("text"))
+        target_click_index = _target_navigation_action_index(merged_flow, targets)
+        if target_click_index < 0:
+            missing_check_ids.append(check_id)
+            continue
+        source_start, source_end = _preserve_source_page_window(
+            merged_flow,
+            target_click_index,
+        )
+        seen_assertions = set()
+        duplicate_indexes = []
+        for index in range(source_start, source_end):
+            step = str(merged_flow[index] or "").strip()
+            if (
+                not _PRESERVE_ASSERTION_PREFIX_RE.match(step)
+                or _PRESERVE_NAVIGATION_INSTRUCTION_RE.search(step)
+            ):
+                continue
+            assertion_key = re.sub(r"\s+", "", step).lower()
+            if assertion_key in seen_assertions:
+                duplicate_indexes.append(index)
+            else:
+                seen_assertions.add(assertion_key)
+        for index in reversed(duplicate_indexes):
+            removed.append({
+                "checkId": check_id,
+                "step": merged_flow[index],
+                "reason": "exact_duplicate",
+            })
+            merged_flow.pop(index)
+        target_click_index = _target_navigation_action_index(merged_flow, targets)
+        source_start, source_end = _preserve_source_page_window(
+            merged_flow,
+            target_click_index,
+        )
+        for index in range(len(merged_flow) - 1, -1, -1):
+            step = str(merged_flow[index] or "").strip()
+            if not _PRESERVE_ASSERTION_PREFIX_RE.match(step):
+                continue
+            references_target = not targets or any(
+                str(target or "").strip() in step
+                for target in targets
+                if str(target or "").strip()
+            )
+            if references_target and _preserve_evidence_is_intrinsically_unsafe(step):
+                removed.append({
+                    "checkId": check_id,
+                    "step": step,
+                    "reason": "unsafe_target_assertion",
+                })
+                merged_flow.pop(index)
+                continue
+            outside_labels = _PRESERVE_QUOTED_LABEL_RE.sub("", step)
+            if not any(
+                marker in outside_labels
+                for marker in _PRESERVE_POSITIVE_MARKERS.get(
+                    str(check.get("kind") or "").strip().lower(),
+                    (),
+                )
+            ):
+                continue
+            if not case_covers_requirement_acceptance({
+                "steps": [step],
+                "assertions": [step],
+                "requirementRefs": requirement_refs,
+            }, check):
+                continue
+            if not source_start <= index < source_end or not _safe_preserve_evidence(
+                step,
+                check,
+                requirement_refs,
+            ):
+                removed.append({"checkId": check_id, "step": step})
+                merged_flow.pop(index)
+        target_click_index = _target_navigation_action_index(merged_flow, targets)
+        if target_click_index < 0:
+            missing_check_ids.append(check_id)
+            continue
+        source_start, source_end = _preserve_source_page_window(
+            merged_flow,
+            target_click_index,
+        )
+        if any(
+            _safe_preserve_evidence(step, check, requirement_refs)
+            for step in merged_flow[source_start:source_end]
+        ):
+            covered_check_ids.append(check_id)
+            continue
+        evidence = next((
+            str(item or "").strip()
+            for item in (contract.get("candidateEvidence") or [])
+            if _safe_preserve_evidence(item, check, requirement_refs)
+        ), "")
+        if not evidence or len(merged_flow) >= 8:
+            missing_check_ids.append(check_id)
+            continue
+        preservation_step = (
+            evidence
+            if _PRESERVE_ASSERTION_PREFIX_RE.match(evidence)
+            else f"校验{evidence}"
+        )
+        merged_flow.insert(target_click_index, preservation_step)
+        updated_click_index = _target_navigation_action_index(merged_flow, targets)
+        source_start, source_end = _preserve_source_page_window(
+            merged_flow,
+            updated_click_index,
+        )
+        if not any(
+            _safe_preserve_evidence(step, check, requirement_refs)
+            for step in merged_flow[source_start:source_end]
+        ):
+            merged_flow.pop(target_click_index)
+            missing_check_ids.append(check_id)
+            continue
+        covered_check_ids.append(check_id)
+        inserted.append({"checkId": check_id, "step": preservation_step})
+    return merged_flow, {
+        "covered_check_ids": sorted(set(covered_check_ids)),
+        "missing_check_ids": sorted(set(filter(None, missing_check_ids))),
+        "inserted": inserted,
+        "removed": removed,
+    }
+
+
+def _preserve_existing_acceptance_contract_in_plan(result, candidates):
+    """Carry already-proven source-page checks into an AI-authored landing delta."""
+    merged = copy.deepcopy(result) if isinstance(result, dict) else {}
+    candidates_by_id = {
+        str(item.get("case_id") or "").strip(): item
+        for item in candidates or []
+        if isinstance(item, dict) and str(item.get("case_id") or "").strip()
+    }
+    candidates_by_title = {
+        str(item.get("title") or "").strip(): item
+        for item in candidates or []
+        if isinstance(item, dict) and str(item.get("title") or "").strip()
+    }
+    preserved = []
+    removed = []
+    for raw_item in merged.get("cases") or []:
+        item = raw_item if isinstance(raw_item, dict) else {}
+        item.pop("platformPreserveContract", None)
+        requested_case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
+        requested_title = str(item.get("title") or "").strip()
+        candidate = (
+            candidates_by_id.get(requested_case_id)
+            or candidates_by_title.get(requested_title)
+            or candidates_by_title.get(requested_case_id)
+        )
+        case_id = str((candidate or {}).get("case_id") or "").strip()
+        if case_id:
+            item["caseId"] = case_id
+        contract = _preserve_acceptance_contract(candidate)
+        if not contract:
+            continue
+        flow, merge_trace = _merge_preserve_contract_into_flow(
+            item.get("flow"),
+            item.get("requirementRefs"),
+            contract,
+        )
+        item["flow"] = flow
+        preserved.extend({"caseId": case_id, **entry} for entry in merge_trace["inserted"])
+        removed.extend({"caseId": case_id, **entry} for entry in merge_trace["removed"])
+    return merged, {
+        "case_ids": sorted({item["caseId"] for item in preserved}),
+        "check_ids": sorted({item["checkId"] for item in preserved}),
+        "inserted_step_count": len({
+            (item["caseId"], item["step"]) for item in preserved
+        }),
+        "removed_step_count": len({
+            (item["caseId"], item["step"]) for item in removed
+        }),
+        "items": preserved,
+        "removed_items": removed,
+        "rule": (
+            "AI 负责新增验收路径；平台只把同一候选已通过审计的正向、确定、非导航 "
+            "visibility/relation/copy preserve 证据保序插入目标点击前"
+        ),
+    }
+
+
 def _executable_plan_repair_feedback(result, candidates):
     """Find executable planner items that violate their candidate-local contract."""
     result = result if isinstance(result, dict) else {}
@@ -6440,15 +6734,36 @@ def _executable_plan_repair_feedback(result, candidates):
         ]
         if not required_checks:
             continue
+        flow = normalize_text_list(item.get("flow"))[:8]
+        requirement_refs = normalize_text_list(item.get("requirementRefs"))[:8]
         probe = {
-            "steps": normalize_text_list(item.get("flow"))[:8],
+            "steps": flow,
             "assertions": normalize_text_list(item.get("assertionTarget"))[:4],
-            "requirementRefs": normalize_text_list(item.get("requirementRefs"))[:8],
+            "requirementRefs": requirement_refs,
         }
-        missing = [
-            check for check in required_checks
-            if not case_covers_requirement_acceptance(probe, check)
-        ]
+        missing = []
+        for check in required_checks:
+            preserve_source_check = bool(
+                "preserve" in normalize_text_list(check.get("contractRoles"))
+                and str(check.get("kind") or "").strip().lower()
+                in ("visibility", "relation", "copy")
+            )
+            if preserve_source_check:
+                _unused_flow, preserve_trace = _merge_preserve_contract_into_flow(
+                    flow,
+                    requirement_refs,
+                    {
+                        "requiredAcceptanceChecks": [check],
+                        "candidateEvidence": [],
+                    },
+                )
+                covered = str(check.get("id") or "").strip() in set(
+                    preserve_trace.get("covered_check_ids") or []
+                )
+            else:
+                covered = case_covers_requirement_acceptance(probe, check)
+            if not covered:
+                missing.append(check)
         if missing:
             feedback.append({
                 "caseId": case_id,
@@ -6728,6 +7043,12 @@ def call_skill_executable_yaml_planner(
         )
     )
     candidates = automatic_candidates + manual_candidates
+    preserve_contract_by_case_id = {
+        str(item.get("case_id") or "").strip(): contract
+        for item in candidates
+        for contract in [_preserve_acceptance_contract(item)]
+        if str(item.get("case_id") or "").strip() and contract
+    }
     candidate_eligibility_by_id = {
         str(item.get("case_id") or "").strip(): copy.deepcopy(item.get("convergenceEvidence"))
         for item in candidates
@@ -6755,6 +7076,7 @@ def call_skill_executable_yaml_planner(
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
             "authoritative": False, "trace": trace,
+            "preserveContractByCaseId": {},
             "selectedBaselines": copy.deepcopy(compact_baselines),
             "verifiedBaselineIds": sorted(verified_baseline_ids),
             "planningContext": planning_context if isinstance(planning_context, dict) else {},
@@ -6891,6 +7213,12 @@ def call_skill_executable_yaml_planner(
             trace["truncation_retry"]["succeeded"] = True
             model_runtime_trace.clear()
             model_runtime_trace.update(retry_runtime_trace)
+        result, preservation_trace = _preserve_existing_acceptance_contract_in_plan(
+            result,
+            candidates,
+        )
+        if preservation_trace.get("case_ids"):
+            trace["preserved_acceptance_contract"] = preservation_trace
         repair_feedback = _executable_plan_repair_feedback(result, candidates)
         if repair_feedback:
             retry_ids = {
@@ -6947,6 +7275,37 @@ def call_skill_executable_yaml_planner(
                     semantic_result,
                     retry_ids,
                 )
+                result, retry_preservation_trace = (
+                    _preserve_existing_acceptance_contract_in_plan(
+                        result,
+                        candidates,
+                    )
+                )
+                if retry_preservation_trace.get("case_ids"):
+                    prior_preservation_trace = trace.get(
+                        "preserved_acceptance_contract"
+                    ) or {}
+                    preservation_items = {
+                        (
+                            str(item.get("caseId") or ""),
+                            str(item.get("checkId") or ""),
+                            str(item.get("step") or ""),
+                        ): item
+                        for item in (
+                            (prior_preservation_trace.get("items") or [])
+                            + (retry_preservation_trace.get("items") or [])
+                        )
+                        if isinstance(item, dict)
+                    }
+                    trace["preserved_acceptance_contract"] = {
+                        "case_ids": sorted({key[0] for key in preservation_items}),
+                        "check_ids": sorted({key[1] for key in preservation_items}),
+                        "inserted_step_count": len({
+                            (key[0], key[2]) for key in preservation_items
+                        }),
+                        "items": list(preservation_items.values()),
+                        "rule": retry_preservation_trace.get("rule") or "",
+                    }
                 remaining_feedback = _executable_plan_repair_feedback(result, candidates)
                 semantic_trace["succeeded"] = not any(
                     str(item.get("caseId") or "").strip() in retry_ids
@@ -7067,6 +7426,7 @@ def call_skill_executable_yaml_planner(
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
             "candidateEligibilityById": candidate_eligibility_by_id,
+            "preserveContractByCaseId": copy.deepcopy(preserve_contract_by_case_id),
         }
     except Exception as exc:
         trace.update(_model_config_trace(model_config, model_runtime_trace))
@@ -7084,6 +7444,9 @@ def call_skill_executable_yaml_planner(
         )
         if evidence_fallback:
             evidence_fallback["selectedBaselines"] = copy.deepcopy(compact_baselines)
+            evidence_fallback["preserveContractByCaseId"] = copy.deepcopy(
+                preserve_contract_by_case_id
+            )
             return evidence_fallback
         return {
             "cases": [], "needs_review_cases": [], "draft_cases": [], "manual_cases": [],
@@ -7094,6 +7457,7 @@ def call_skill_executable_yaml_planner(
             "focusedCandidateIds": convergence_focus.get("focusedCandidateIds") or [],
             "convergenceFocus": convergence_focus,
             "candidateEligibilityById": candidate_eligibility_by_id,
+            "preserveContractByCaseId": copy.deepcopy(preserve_contract_by_case_id),
         }
 
 
@@ -7338,6 +7702,11 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     }
     planning_context = plan.get("planningContext") if isinstance(plan.get("planningContext"), dict) else {}
     convergence_pass = str(planning_context.get("pass") or "").strip() == "coverage_convergence"
+    preserve_contract_by_case_id = (
+        plan.get("preserveContractByCaseId")
+        if isinstance(plan.get("preserveContractByCaseId"), dict)
+        else {}
+    )
     focused_candidate_ids = {
         str(item or "").strip()
         for item in (plan.get("focusedCandidateIds") or [])
@@ -7408,6 +7777,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     trusted_baseline_navigation_adapted_count = 0
     dynamic_data_observation_grounded_count = 0
     dynamic_data_guard_count = 0
+    preserve_contract_applied_count = 0
+    preserve_contract_guard_count = 0
     manual_reclassification_canonicalized_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
@@ -7682,6 +8053,27 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         )
         if data_observation_grounded:
             dynamic_data_observation_grounded_count += 1
+        final_preserve_trace = {}
+        platform_preserve_contract = preserve_contract_by_case_id.get(case_id)
+        if level == "executable" and isinstance(platform_preserve_contract, dict):
+            planned_flow, final_preserve_trace = _merge_preserve_contract_into_flow(
+                planned_flow,
+                requirement_refs,
+                platform_preserve_contract,
+            )
+            if final_preserve_trace.get("missing_check_ids"):
+                level = "manual" if convergence_pass else "needs_review"
+                item = {
+                    **item,
+                    "reason": (
+                        "最终路径适配后无法在目标点击前保留已审计的来源页验收："
+                        + "、".join(final_preserve_trace["missing_check_ids"][:6])
+                    ),
+                }
+                path_plan_applied = False
+                preserve_contract_guard_count += 1
+            else:
+                preserve_contract_applied_count += 1
         if level == "executable" and (unsupported_assertion_literals or (unsupported_flow_literals and not data_observation_grounded)):
             level = "manual" if convergence_pass else "needs_review"
             item = {
@@ -7848,6 +8240,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             "currentVisualLeafAdapted": visual_leaf_adapted,
             "currentVisualLeafEvidence": copy.deepcopy(current_visual_evidence),
             "dynamicDataObservationGrounded": data_observation_grounded,
+            "preservedAcceptanceContract": {
+                "checkIds": final_preserve_trace.get("covered_check_ids") or [],
+                "insertedStepCount": len(final_preserve_trace.get("inserted") or []),
+                "removedStepCount": len(final_preserve_trace.get("removed") or []),
+                "appliedAfterFlowAdaptation": bool(final_preserve_trace),
+            },
             "unsupportedDynamicLiterals": list(dict.fromkeys(
                 unsupported_flow_literals + unsupported_assertion_literals
             ))[:8],
@@ -8081,6 +8479,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "visual_variant_hint_refreshed_count": visual_variant_hint_refreshed_count,
         "dynamic_data_observation_grounded_count": dynamic_data_observation_grounded_count,
         "dynamic_data_guard_count": dynamic_data_guard_count,
+        "preserve_contract_applied_count": preserve_contract_applied_count,
+        "preserve_contract_guard_count": preserve_contract_guard_count,
         "manual_reclassification_canonicalized_count": manual_reclassification_canonicalized_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),

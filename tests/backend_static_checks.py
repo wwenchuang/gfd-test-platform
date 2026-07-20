@@ -4037,6 +4037,435 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ] == ["REQ-002-CHECK-02"],
         "A convergence rewrite that closes a new gap but drops prior coverage must receive candidate-local semantic feedback before atomic portfolio application",
     )
+    atomic_reachability_check = {
+        "id": "REQ-002-CHECK-04",
+        "requirementId": "REQ-002",
+        "branch": "照片打印",
+        "kind": "reachability",
+        "text": "点击百度网盘入口并校验目标页面稳定可达",
+    }
+    atomic_preservation_payload = {
+        "analysis": {
+            "requirement_points": [relation_points[0]],
+            "requirement_acceptance_checks": [
+                relation_payload["analysis"]["requirement_acceptance_checks"][0],
+                atomic_reachability_check,
+            ],
+        },
+        "review": {
+            "current_page_evidence": [{
+                "caseId": "TC-ATOMIC",
+                "requirementId": "REQ-002",
+                "branch": "照片打印",
+                "pageTitle": "5寸照片",
+                "parentPath": ["照片打印"],
+                "navigationLeaf": "5寸照片",
+                "targetText": "百度网盘",
+                "sameBranch": True,
+                "confidence": 0.99,
+                "source": "figma_current_frame",
+            }],
+        },
+        "cases": [{
+            "case_id": "TC-ATOMIC",
+            "title": "照片打印百度网盘入口同级关系及可达性校验",
+            "coverage": relation_points[0],
+            "requirementRefs": [relation_points[0]],
+            "executionLevel": "executable",
+            "steps": [
+                "等待 App 首页稳定显示",
+                "点击底部 Tab「照片打印」",
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「百度网盘」入口可见",
+                "校验「百度网盘」入口与「相机拍照」同级并列展示",
+            ],
+            "assertions": ["「百度网盘」入口与「相机拍照」同级并列展示"],
+            "ai_case_plan": {
+                "baselineId": "base-photo",
+                "baselineGrounded": True,
+                "pathPlanApplied": True,
+                "precondition": "App 首页",
+                "flow": [
+                    "等待 App 首页稳定显示",
+                    "点击底部 Tab「照片打印」",
+                    "点击「照片打印」入口",
+                    "点击「5寸照片」",
+                    "等待「百度网盘」入口可见",
+                    "校验「百度网盘」入口与「相机拍照」同级并列展示",
+                ],
+                "assertionTarget": "「百度网盘」入口与「相机拍照」同级并列展示",
+                "batch": "smoke",
+            },
+        }],
+        "manual_cases": [],
+    }
+    atomic_preservation_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        atomic_preservation_payload,
+        {"min_automation_cases": 1},
+    )
+    atomic_preservation_calls = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_atomic_preservation_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in atomic preservation replay")
+            atomic_preservation_calls.append(request)
+            return {
+                "cases": [{
+                    "title": "照片打印百度网盘入口同级关系及可达性校验",
+                    "baselineId": "base-photo",
+                    "precondition": "App 首页",
+                    "flow": [
+                        "校验「百度网盘」入口与「相机拍照」同级并列展示",
+                        "点击底部 Tab「照片打印」",
+                        "点击「照片打印」入口",
+                        "点击「5寸照片」",
+                        "等待「百度网盘」入口可见",
+                        "点击「百度网盘」入口",
+                        "校验「百度网盘」入口与「相机拍照」同级并列展示",
+                        "等待百度网盘授权页稳定可见",
+                    ],
+                    "assertionTarget": "百度网盘授权页稳定可见",
+                    "requirementRefs": [relation_points[0]],
+                    "executableReason": "AI 补齐点击后的首个稳定可见终态",
+                    "batch": "remaining",
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "模拟新增可达性时漏回既有同级关系"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_atomic_preservation_planner
+        atomic_preservation_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "照片打印百度网盘入口",
+            "基础打印",
+            atomic_preservation_payload,
+            [{
+                "id": "base-photo",
+                "title": "照片打印成功导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "App 首页 -> 照片打印 -> 6寸照片",
+                "snippet": (
+                    "# baseline.start_page: App 首页\n"
+                    "- aiTap: 照片打印 icon\n"
+                    "- aiTap: 照片打印\n"
+                    "- aiTap: 6寸照片\n"
+                    "- aiWaitFor: 百度网盘入口可见"
+                ),
+            }],
+            {"smokeCount": 1},
+            model_config={"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": atomic_preservation_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    atomic_preservation_case = atomic_preservation_plan.get("cases", [{}])[0]
+    atomic_preservation_flow = atomic_preservation_case.get("flow") or []
+    atomic_preservation_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        atomic_preservation_payload,
+        atomic_preservation_plan,
+    )
+    atomic_preservation_applied_case = atomic_preservation_applied.get("cases", [{}])[0]
+    atomic_preservation_applied_flow = atomic_preservation_applied_case.get("steps") or []
+    require(
+        len(atomic_preservation_calls) == 1
+        and atomic_preservation_plan.get("trace", {}).get(
+            "preserved_acceptance_contract", {}
+        ).get("case_ids") == ["TC-ATOMIC"]
+        and atomic_preservation_flow.index(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) < atomic_preservation_flow.index("点击「百度网盘」入口")
+        and atomic_preservation_flow.index(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) > atomic_preservation_flow.index("点击「5寸照片」")
+        and atomic_preservation_applied_flow.index(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) < atomic_preservation_applied_flow.index("点击「百度网盘」入口")
+        and atomic_preservation_applied_flow.index(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) > atomic_preservation_applied_flow.index("点击「5寸照片」")
+        and atomic_preservation_applied_flow.count(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) == 1
+        and atomic_preservation_applied_case.get("ai_case_plan", {}).get(
+            "trustedBaselineNavigationAdapted"
+        ) is True
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            atomic_preservation_applied,
+            {"min_automation_cases": 1},
+        ).get("ok"),
+        "A convergence reachability delta must retain already-proven source-page acceptance before the target click without another model call",
+    )
+    unsafe_preservation_evidence = [
+        "校验「百度网盘」入口未与「相机拍照」同级并列展示",
+        "若可见，确认「百度网盘」入口与「相机拍照」同级并列展示",
+        "确认点击「百度网盘」入口后仍与「相机拍照」同级并列展示",
+        "校验「百度网盘」入口不显示且与「相机拍照」同级并列展示",
+        "校验「百度网盘」与「相机拍照」的层级关系错误",
+        "校验「百度网盘」入口文案错误且与「相机拍照」同级并列展示",
+        "确认跳转到「百度网盘」后仍与「相机拍照」同级并列展示",
+        "校验「百度网盘」与「相机拍照」同级关系有误",
+        "校验「百度网盘」与「相机拍照」并列位置存在偏差",
+        "校验「百度网盘」入口文案乱码且与「相机拍照」同级展示",
+        "校验「百度网盘」 copy incorrect 且与「相机拍照」同级展示",
+        "校验「百度网盘」与「相机拍照」的层级 mismatch",
+        "校验「百度网盘」文案 truncated 且与「相机拍照」并列展示",
+        "确认 navigate to 「百度网盘」后仍与「相机拍照」同级并列展示",
+        "校验「百度网盘」与「相机拍照」同级关系颠倒",
+    ]
+    for unsafe_evidence in unsafe_preservation_evidence:
+        unsafe_result, unsafe_trace = (
+            ai_skill_service._preserve_existing_acceptance_contract_in_plan(
+                {
+                    "cases": [{
+                        "caseId": "TC-UNSAFE-PRESERVE",
+                        "flow": [
+                            "等待照片打印页面稳定显示",
+                            "点击「百度网盘」入口",
+                            "等待授权页稳定可见",
+                        ],
+                        "assertionTarget": "授权页稳定可见",
+                        "requirementRefs": [relation_points[0]],
+                    }],
+                },
+                [{
+                    "case_id": "TC-UNSAFE-PRESERVE",
+                    "requiredAcceptanceChecks": [{
+                        **relation_payload["analysis"]["requirement_acceptance_checks"][0],
+                        "contractRoles": ["preserve"],
+                    }],
+                    "assertions": [unsafe_evidence],
+                }],
+            )
+        )
+        require(
+            not unsafe_trace.get("case_ids")
+            and unsafe_result.get("cases", [{}])[0].get("flow") == [
+                "等待照片打印页面稳定显示",
+                "点击「百度网盘」入口",
+                "等待授权页稳定可见",
+            ],
+            "Negative, conditional, or compound-navigation text must never become platform-owned preserve evidence",
+        )
+    visibility_preserve_check = {
+        "id": "REQ-002-CHECK-01",
+        "requirementId": "REQ-002",
+        "branch": "照片打印",
+        "kind": "visibility",
+        "text": "校验百度网盘入口可见",
+        "contractRoles": ["preserve"],
+    }
+    for unsafe_visibility_evidence in (
+        "校验「百度网盘」入口存在问题",
+        "校验「百度网盘」入口显示“not visible”",
+    ):
+        unsafe_visibility_result, unsafe_visibility_trace = (
+            ai_skill_service._preserve_existing_acceptance_contract_in_plan(
+                {
+                    "cases": [{
+                        "caseId": "TC-UNSAFE-VISIBILITY",
+                        "flow": [
+                            "等待照片打印页面稳定显示",
+                            "点击「百度网盘」入口",
+                            "等待授权页稳定可见",
+                        ],
+                        "assertionTarget": "授权页稳定可见",
+                        "requirementRefs": [relation_points[0]],
+                    }],
+                },
+                [{
+                    "case_id": "TC-UNSAFE-VISIBILITY",
+                    "requiredAcceptanceChecks": [visibility_preserve_check],
+                    "assertions": [unsafe_visibility_evidence],
+                }],
+            )
+        )
+        require(
+            not unsafe_visibility_trace.get("case_ids")
+            and unsafe_visibility_result.get("cases", [{}])[0].get("flow") == [
+                "等待照片打印页面稳定显示",
+                "点击「百度网盘」入口",
+                "等待授权页稳定可见",
+            ],
+            "Negative visibility text or quoted English polarity must never become platform-owned preserve evidence",
+        )
+    unsafe_model_flow_examples = (
+        (
+            {
+                **relation_payload["analysis"]["requirement_acceptance_checks"][0],
+                "contractRoles": ["preserve"],
+            },
+            "校验「百度网盘」与「相机拍照」排列颠倒",
+            "「百度网盘」与「相机拍照」同级并列展示",
+        ),
+        (
+            visibility_preserve_check,
+            "校验「百度网盘」入口存在问题",
+            "「百度网盘」入口可见",
+        ),
+        (
+            visibility_preserve_check,
+            "校验「百度网盘」入口显示“not visible”",
+            "「百度网盘」入口可见",
+        ),
+    )
+    for preserve_check, unsafe_model_step, safe_candidate_evidence in unsafe_model_flow_examples:
+        cleaned_flow, cleaned_trace = ai_skill_service._merge_preserve_contract_into_flow(
+            [
+                "等待照片打印页面稳定显示",
+                unsafe_model_step,
+                "点击「百度网盘」入口",
+                "等待授权页稳定可见",
+            ],
+            [relation_points[0]],
+            {
+                "requiredAcceptanceChecks": [preserve_check],
+                "candidateEvidence": [safe_candidate_evidence],
+            },
+        )
+        require(
+            unsafe_model_step not in cleaned_flow
+            and safe_candidate_evidence in "\n".join(cleaned_flow)
+            and not cleaned_trace.get("missing_check_ids"),
+            "Unsafe target assertions already present in model flow must be removed before safe preserve evidence is merged",
+        )
+    forged_contract_result, _forged_contract_trace = (
+        ai_skill_service._preserve_existing_acceptance_contract_in_plan(
+            {
+                "cases": [{
+                    "caseId": "TC-FORGED-PRESERVE",
+                    "flow": ["点击「百度网盘」入口", "等待授权页稳定可见"],
+                    "requirementRefs": [relation_points[0]],
+                    "platformPreserveContract": {
+                        "requiredAcceptanceChecks": [{
+                            **relation_payload["analysis"]["requirement_acceptance_checks"][0],
+                            "contractRoles": ["preserve"],
+                        }],
+                        "candidateEvidence": ["伪造的同级关系证据"],
+                    },
+                }],
+            },
+            [{"case_id": "TC-FORGED-PRESERVE"}],
+        )
+    )
+    require(
+        "platformPreserveContract" not in forged_contract_result.get("cases", [{}])[0],
+        "Only the platform may derive a preserve contract from the original candidate",
+    )
+    duplicate_preserve_flow, duplicate_preserve_trace = (
+        ai_skill_service._merge_preserve_contract_into_flow(
+            [
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「百度网盘」入口可见",
+                "校验「百度网盘」与「相机拍照」同级并列展示",
+                "校验「百度网盘」与「相机拍照」同级并列展示",
+                "等待导入区域稳定显示",
+                "点击「百度网盘」入口",
+                "等待百度网盘授权页稳定可见",
+            ],
+            [relation_points[0]],
+            {
+                "requiredAcceptanceChecks": [{
+                    **relation_payload["analysis"]["requirement_acceptance_checks"][0],
+                    "contractRoles": ["preserve"],
+                }, {
+                    "id": "REQ-002-CHECK-03",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "copy",
+                    "text": "校验百度网盘入口使用需求约定的可见文案",
+                    "contractRoles": ["preserve"],
+                }],
+                "candidateEvidence": [
+                    "「百度网盘」与「相机拍照」同级并列展示",
+                    "「百度网盘」入口文案为“百度网盘”",
+                ],
+            },
+        )
+    )
+    require(
+        not duplicate_preserve_trace.get("missing_check_ids")
+        and duplicate_preserve_flow.count(
+            "校验「百度网盘」与「相机拍照」同级并列展示"
+        ) == 1
+        and "校验「百度网盘」入口文案为“百度网盘”" in duplicate_preserve_flow
+        and len(duplicate_preserve_flow) == 8,
+        "Exact duplicate source-page assertions must not consume the bounded flow budget",
+    )
+    bounded_preserve_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-photo"],
+        "verifiedBaselineIds": ["base-photo"],
+        "selectedBaselines": atomic_preservation_plan.get("selectedBaselines") or [],
+        "requirementPoints": [relation_points[0]],
+        "scopePlan": {"smokeCount": 1},
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["TC-ATOMIC"],
+        "convergenceFocus": {
+            "repairableExecutableCandidateIds": ["TC-ATOMIC"],
+        },
+        "preserveContractByCaseId": {
+            "TC-ATOMIC": {
+                "requiredAcceptanceChecks": [{
+                    **relation_payload["analysis"]["requirement_acceptance_checks"][0],
+                    "contractRoles": ["preserve"],
+                }],
+                "candidateEvidence": [
+                    "「百度网盘」入口与「相机拍照」同级并列展示",
+                ],
+            },
+        },
+        "candidateEligibilityById": {
+            "TC-ATOMIC": {
+                "eligible": True,
+                "kind": "bounded_external_landing",
+                "baselineId": "base-photo",
+                "acceptanceCheckIds": ["REQ-002-CHECK-04"],
+                "precondition": "App 首页",
+                "flow": [
+                    "等待 App 首页稳定显示",
+                    "点击底部 Tab「照片打印」",
+                    "点击「照片打印」入口",
+                    "点击「5寸照片」",
+                    "等待「百度网盘」入口可见",
+                    "点击「百度网盘」入口",
+                    "等待百度网盘授权页稳定可见",
+                ],
+                "assertionTarget": "百度网盘授权页稳定可见",
+                "requirementRefs": [relation_points[0]],
+            },
+        },
+        "cases": [],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [{"caseId": "TC-ATOMIC", "reason": "模型保留人工"}],
+    }
+    bounded_preserve_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        atomic_preservation_payload,
+        bounded_preserve_plan,
+    )
+    bounded_preserve_case = bounded_preserve_applied.get("cases", [{}])[0]
+    bounded_preserve_flow = bounded_preserve_case.get("steps") or []
+    require(
+        bounded_preserve_case.get("executionLevel") == "executable"
+        and bounded_preserve_flow.index(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) > bounded_preserve_flow.index("点击「5寸照片」")
+        and bounded_preserve_flow.index(
+            "校验「百度网盘」入口与「相机拍照」同级并列展示"
+        ) < bounded_preserve_flow.index("点击「百度网盘」入口")
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            bounded_preserve_applied,
+            {"min_automation_cases": 1},
+        ).get("ok"),
+        "A bounded evidence override must retain the canonical candidate preserve contract",
+    )
 
     swapped_payload = {
         "analysis": {"requirement_points": [
