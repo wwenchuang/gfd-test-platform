@@ -2533,6 +2533,142 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ).get("ok"),
         "A final model omission must recover only the omitted candidate with audited bounded evidence and leave all execution gates in place",
     )
+    unbounded_omission_requirement = (
+        "REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达"
+    )
+    unbounded_omission_check = {
+        "id": "REQ-003-CHECK-04",
+        "requirementId": "REQ-003",
+        "branch": "扫描复印",
+        "kind": "reachability",
+        "text": "点击百度网盘入口并校验目标页面稳定可达",
+    }
+    unbounded_omission_payload = {
+        "analysis": {
+            "requirement_points": [unbounded_omission_requirement],
+            "requirement_acceptance_checks": [unbounded_omission_check],
+        },
+        "cases": [{
+            "case_id": "TC-SCAN-LANDING",
+            "title": "扫描复印百度网盘入口可达性校验",
+            "coverage": unbounded_omission_requirement,
+            "requirementRefs": [unbounded_omission_requirement],
+            "executionLevel": "executable",
+            "steps": [
+                "等待 App 首页稳定显示",
+                "点击「扫描复印」入口",
+                "等待「百度网盘」入口可见",
+            ],
+            "assertions": ["扫描复印页面展示「百度网盘」入口"],
+            "ai_case_plan": {
+                "baselineId": "base-scan-nav",
+                "baselineGrounded": True,
+                "pathPlanApplied": True,
+                "precondition": "App 首页",
+                "flow": [
+                    "等待 App 首页稳定显示",
+                    "点击「扫描复印」入口",
+                    "等待「百度网盘」入口可见",
+                ],
+                "assertionTarget": "扫描复印页面展示「百度网盘」入口",
+                "batch": "smoke",
+            },
+        }],
+        "manual_cases": [],
+    }
+    unbounded_omission_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        unbounded_omission_payload,
+        {"min_automation_cases": 1},
+    )
+    unbounded_omission_requests = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def planner_omitting_required_automatic(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in unbounded omission replay")
+            unbounded_omission_requests.append(request)
+            if len(unbounded_omission_requests) == 1:
+                return {
+                    "cases": [],
+                    "needs_review_cases": [],
+                    "draft_cases": [],
+                    "manual_cases": [],
+                    "review": {"planning_reason": "模拟模型漏回承担可达性缺口的自动候选"},
+                }
+            return {
+                "cases": [{
+                    "caseId": "TC-SCAN-LANDING",
+                    "baselineId": "base-scan-nav",
+                    "precondition": "App 首页",
+                    "flow": [
+                        "等待 App 首页稳定显示",
+                        "点击「扫描复印」入口",
+                        "等待「百度网盘」入口可见",
+                        "点击「百度网盘」入口",
+                        "等待百度网盘授权页或文件列表页任一稳定可见",
+                    ],
+                    "assertionTarget": "百度网盘授权页或文件列表页任一稳定可见",
+                    "requirementRefs": [unbounded_omission_requirement],
+                    "executableReason": "同模型语义纠偏补齐漏回候选的显式可达性契约",
+                    "batch": "remaining",
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "定向补齐漏回的扫描可达性候选"},
+            }
+
+        ai_skill_service.run_ai_skill = planner_omitting_required_automatic
+        unbounded_omission_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "基础打印新增百度网盘入口",
+            "基础打印",
+            unbounded_omission_payload,
+            [{
+                "id": "base-scan-nav",
+                "title": "扫描复印成功导航",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+                "businessPath": "App 首页 -> 扫描复印",
+                "snippet": "- aiTap: 扫描复印\n- aiWaitFor: 等待扫描复印页面加载完成",
+            }],
+            {"smokeCount": 1},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": unbounded_omission_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    unbounded_retry_trace = (
+        (unbounded_omission_plan.get("trace") or {}).get("acceptance_repair_retry") or {}
+    )
+    unbounded_retry_request = (
+        unbounded_omission_requests[1]
+        if len(unbounded_omission_requests) > 1
+        else {}
+    )
+    unbounded_retry_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        unbounded_omission_payload,
+        unbounded_omission_plan,
+    )
+    require(
+        len(unbounded_omission_requests) == 2
+        and [
+            item.get("case_id") for item in unbounded_retry_request.get("cases") or []
+        ] == ["TC-SCAN-LANDING"]
+        and unbounded_retry_request.get("responseContract", {}).get(
+            "acceptanceRepairRetry"
+        ) is True
+        and unbounded_retry_trace.get("succeeded") is True
+        and unbounded_retry_trace.get("candidate_ids") == ["TC-SCAN-LANDING"]
+        and unbounded_retry_trace.get("feedback", [{}])[0].get(
+            "omittedFromClassification"
+        ) is True
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            unbounded_retry_applied,
+            {"min_automation_cases": 1},
+        ).get("ok"),
+        "A focused automatic candidate omitted without recoverable bounded evidence must receive one same-model semantic retry before the final gate",
+    )
     old_run_ai_skill = ai_skill_service.run_ai_skill
     try:
         def timeout_convergence_planner(*_args, **_kwargs):

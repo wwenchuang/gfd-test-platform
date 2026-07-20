@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 真实回归：最终收敛漏回自动候选时使用同模型定向语义纠偏
+
+用户部署 `3689aa1` 后，以相同需求和 Figma 发起完整 Agent `agent-1784512888040-e6ea0da4`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 在线，固定 OPPO ready，并上报 `qwen3.6-plus / qwen3.6`。本轮在生成阶段终止，没有创建 Runner job，也没有向 OPPO、华为或第二台设备下发。
+- Figma parser 未修改，仍解析 `4 页 / 4 图 / 忽略 0`。4 张图按 4 个单图批次全部送入 `qwen_plus / qwen3.6-plus`，分别约 `28 / 22 / 23 / 21s` 完成，均 `finishReason=stop / fallback=false`；`sentToAiForJudgement=true / aiJudgementCompleted=true / hardGate=false`，设计资料继续作为完整送 AI 判断的软参考。
+- 路由正确为 `new_requirement_source / generate_draft`。平台 MM skills 生成 `8 flows / 12 scenarios / 7 cases`，执行规划选出 5 条 executable；文档、照片、扫描三个需求分支及 12 个显式验收维度均进入最终覆盖审计，5 寸照片明确位于照片打印分支。
+- 初始 executable portfolio 覆盖 `8/12`，缺文档可达、照片可达、扫描同级关系和扫描可达。最终 qwen 收敛补齐前三项，但漏回聚焦自动候选 `TC-003`，只留下扫描可达 `REQ-003-CHECK-04` 未覆盖；最终为 `11/12 / 5 executable / 1 needs_review`。
+- Agent 真实终态为 `FAILED / GENERATE_YAML / 30%`，错误明确为“扫描复印：点击百度网盘入口并校验目标页面稳定可达”。平台没有采用部分/兜底 YAML，也没有进入 Runner，覆盖门禁行为正确。
+
+深层根因：
+
+- `TC-003` 首轮 AI 已引用扫描成功基线 `d623c1e73180bfac`，能够从首页进入扫描复印并等待百度网盘入口；但候选只写了“查找入口”，没有点击入口后的稳定落地页观察，所以被标记为本轮 `repairableExecutableCandidate`。
+- 最终收敛请求已包含 `TC-003` 及其 4 个候选本地验收契约：保留可见性/文案，补齐同级关系/可达性。qwen 的结构化响应只修了文档和照片可达，并用 `TC-008` 补扫描同级关系，却完全遗漏 `TC-003`；`review` 还错误声称“其他候选由平台保留”。
+- 平台原有语义纠偏只检查“模型已经返回 executable、但 flow/assertionTarget 未满足契约”的候选。被模型完全漏回的自动候选不进入纠偏；平台随后按安全策略将它降为 `needs_review`，导致显式覆盖和分类终态同时失败。
+- 旧本地回放覆盖了有界证据候选的模型遗漏，可由已审计证据恢复且不增加模型调用；没有覆盖“候选承担显式缺口、没有可自动恢复的有界证据、模型又完全漏回”的线上形态。这是本地检查通过而线上仍失败的直接差异。
+
+通用修复：
+
+- 复用现有且唯一的 `acceptance_repair_retry`，在四个结构化分类组中检测模型漏回项。只有候选来自自动池、携带 `requiredAcceptanceChecks`、仍承担显式验收缺口，且没有 `convergenceEvidence.eligible=true` 可由现有有界证据恢复时，才加入同一模型的小范围语义纠偏。
+- 纠偏请求只包含漏回 caseId，并携带完整 `missingChecks / missingPreservedCheckIds / omittedFromClassification`。AI 必须明确返回 executable 或 manual；平台不替 AI 编写业务路径、不自动升级，不新增生成轮次上限之外的重型调用。
+- 若 AI 返回 executable，flow/assertionTarget 仍必须真实证明新增和保留契约，再继续经过需求覆盖、分类终态、可信基线、可见文字路径、YAML、scorer、dry-run 和 Runner 门禁；若 AI 判断为 manual、再次遗漏或仍缺验收证据，最终门禁继续失败。
+- 已有有界证据遗漏恢复保持原行为和单次模型调用，不为可恢复项增加延迟。未修改 Figma parser、`router.py`、执行模式、Runner、Sonic、scorer、设备策略或历史 YAML。
+
+生产候选离线重放与验证：
+
+- 原样读取线上保存的 6 个自动候选、8 个人工候选、3 条 AI 选中成功基线和初始 portfolio；新检测精确命中 `TC-003`，反馈同时携带 `REQ-003-CHECK-01/02/03/04`，不会为了补点击而丢掉原可见性、同级关系或文案断言。
+- TDD 回归先在旧代码上稳定失败：模型只被调用 1 次，漏回项没有纠偏；最小实现后变为 2 次，第二次请求只含唯一漏回候选，使用原选择模型，并在模拟 AI 返回完整可达短链路后通过最终 portfolio audit。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+npm test
+```
+
+- undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录/回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+- 本轮修复尚未部署，不能宣称完整 Agent 已闭环成功。提交、推送并部署后，必须再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，持续监督生成、首批、remaining、可能的 AI 修复和所有 Runner 报告到真实终态。
+
 ### 2026-07-20 部署后真实回归：关键帧佐证的临时弹窗修复不能冒充业务改路
 
 用户部署 `c2ee824` 后，以相同需求和 Figma 发起完整 Agent `agent-1784508011655-ac1b0f0d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

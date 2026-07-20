@@ -6463,6 +6463,45 @@ def _executable_plan_repair_feedback(result, candidates):
                     "新增/证据/保留验收契约；review 中的覆盖声明不计入门禁"
                 ),
             })
+    classified_candidate_ids = {
+        str(item.get("caseId") or item.get("case_id") or "").strip()
+        for key in ("cases", "needs_review_cases", "draft_cases", "manual_cases")
+        for item in (result.get(key) or [])
+        if isinstance(item, dict)
+        and str(item.get("caseId") or item.get("case_id") or "").strip()
+    }
+    for case_id, candidate in candidates_by_id.items():
+        if case_id in classified_candidate_ids:
+            continue
+        if str(candidate.get("originLevel") or "automatic").strip().lower() == "manual":
+            continue
+        required_checks = [
+            check for check in (
+                candidate.get("requiredAcceptanceChecks")
+                or candidate.get("repairAcceptanceChecks")
+                or []
+            )
+            if isinstance(check, dict) and str(check.get("id") or "").strip()
+        ]
+        bounded_evidence = candidate.get("convergenceEvidence")
+        if not required_checks:
+            continue
+        if isinstance(bounded_evidence, dict) and bounded_evidence.get("eligible") is True:
+            continue
+        feedback.append({
+            "caseId": case_id,
+            "missingChecks": copy.deepcopy(required_checks),
+            "missingPreservedCheckIds": [
+                str(check.get("id") or "").strip()
+                for check in required_checks
+                if "preserve" in normalize_text_list(check.get("contractRoles"))
+            ],
+            "omittedFromClassification": True,
+            "reason": (
+                "模型漏回了承担显式验收缺口的聚焦自动候选；本次必须基于候选和可信基线"
+                "将其明确归入 executable 或 manual，不能再次遗漏或只在 review 中声明"
+            ),
+        })
     return feedback
 
 
