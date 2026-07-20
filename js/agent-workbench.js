@@ -5,6 +5,7 @@
 const expandedStepIndexes = new Set();
 let agentCheckpointTraceOpen = false;
 const agentTimelineDetailStates = new Map();
+let agentRestoringTimelineDetails = false;
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
 
@@ -534,6 +535,8 @@ async function showAgentWorkbench() {
     && (typeof AppState === 'undefined' || !AppState.loaded?.agentRuns);
 
   const run = currentAgentRun();
+  const timelineViewState = captureAgentTimelineViewState(document.getElementById('agent-progress'));
+  const artifactViewState = captureAgentArtifactViewState(document.getElementById('agent-artifacts-card'));
 
   // Preserve form values before innerHTML replacement (prevents textarea/input reset during polling)
   const savedFormState = {};
@@ -744,6 +747,8 @@ async function showAgentWorkbench() {
       `}
     </div>
   `;
+  restoreAgentTimelineViewState(document.getElementById('agent-progress'), timelineViewState);
+  restoreAgentArtifactViewState(document.getElementById('agent-artifacts-card'), run, artifactViewState);
   // Populate failed jobs dropdown if scope is failed_rerun
   try {
     const stats = dashboardStats();
@@ -897,21 +902,27 @@ function captureAgentTimelineViewState(container) {
 function restoreAgentTimelineViewState(container, state) {
   if (!container || !state) return;
   const stateByKey = new Map((state.detailStates || []).map(item => [item.key, item]));
-  Array.from(container.querySelectorAll('details[data-agent-timeline-detail-key]')).forEach(detail => {
-    const key = detail.dataset.agentTimelineDetailKey || '';
-    const item = stateByKey.get(key) || agentTimelineDetailStates.get(key);
-    if (!item) return;
-    detail.open = !!item.open;
-    const scrollBox = detail.querySelector('.agent-technical-trace-body') || detail.querySelector('.step-live-trace');
-    if (scrollBox) {
-      scrollBox.scrollTop = Math.min(item.scrollTop || 0, Math.max(0, scrollBox.scrollHeight - scrollBox.clientHeight));
-      scrollBox.scrollLeft = item.scrollLeft || 0;
-    }
-  });
+  agentRestoringTimelineDetails = true;
+  try {
+    Array.from(container.querySelectorAll('details[data-agent-timeline-detail-key]')).forEach(detail => {
+      const key = detail.dataset.agentTimelineDetailKey || '';
+      const item = stateByKey.get(key) || agentTimelineDetailStates.get(key);
+      if (!item) return;
+      detail.open = !!item.open;
+      const scrollBox = detail.querySelector('.agent-technical-trace-body') || detail.querySelector('.step-live-trace');
+      if (scrollBox) {
+        scrollBox.scrollTop = Math.min(item.scrollTop || 0, Math.max(0, scrollBox.scrollHeight - scrollBox.clientHeight));
+        scrollBox.scrollLeft = item.scrollLeft || 0;
+      }
+    });
+  } finally {
+    setTimeout(() => { agentRestoringTimelineDetails = false; }, 0);
+  }
 }
 
 function agentTimelineDetailToggled(detail) {
   if (!detail) return;
+  if (agentRestoringTimelineDetails) return;
   const key = detail.dataset.agentTimelineDetailKey || '';
   if (!key) return;
   const scrollBox = detail.querySelector('.agent-technical-trace-body') || detail.querySelector('.step-live-trace');
@@ -948,6 +959,10 @@ function updateAgentWorkbenchDynamic() {
     riskLevelEl.textContent = `当前风险：${agentRiskText(classifyRiskLevel(goal))}`;
   }
   renderAgentCenter();
+}
+
+function agentTechnicalTracePointer(event) {
+  if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
 }
 
 // 同步下拉模式到隐藏的 radio 控件，保持原 payload 兼容
@@ -3216,7 +3231,7 @@ function renderAgentTimeline(run) {
     const technicalDetailState = agentTimelineDetailStates.get(technicalDetailKey);
     const technicalDetailOpen = technicalDetailState && technicalDetailState.open ? 'open' : '';
     const technicalTraceDetail = (liveTraceDetail || toolCallsDetail)
-      ? `<details class="agent-technical-trace" data-agent-timeline-detail-key="${escapeHtml(technicalDetailKey)}" ${technicalDetailOpen} ontoggle="agentTimelineDetailToggled(this)" onclick="event.stopPropagation()"><summary>技术日志<span>${liveTraceDetail ? '执行轨迹' : ''}${liveTraceDetail && toolCallsDetail ? ' · ' : ''}${toolCallsDetail ? '工具调用' : ''}</span></summary><div class="agent-technical-trace-body">${liveTraceDetail || ''}${toolCallsDetail || ''}</div></details>`
+      ? `<details class="agent-technical-trace" data-agent-timeline-detail-key="${escapeHtml(technicalDetailKey)}" ${technicalDetailOpen} ontoggle="agentTimelineDetailToggled(this)" onpointerdown="agentTechnicalTracePointer(event)" onclick="agentTechnicalTracePointer(event)"><summary onpointerdown="agentTechnicalTracePointer(event)" onclick="agentTechnicalTracePointer(event)">技术日志<span>${liveTraceDetail ? '执行轨迹' : ''}${liveTraceDetail && toolCallsDetail ? ' · ' : ''}${toolCallsDetail ? '工具调用' : ''}</span></summary><div class="agent-technical-trace-body">${liveTraceDetail || ''}${toolCallsDetail || ''}</div></details>`
       : '';
     const stepDetailHtml = renderStepDetail(data, run);
     const diagnosisHtml = renderDiagnosisDetail(data.diagnosis);

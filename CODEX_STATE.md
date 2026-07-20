@@ -3746,3 +3746,9 @@ npm test
 
 - 提交本轮修复；由用户推送、部署。
 - 部署后继续使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；重点确认人工提示项不会进入 Runner、页面检查型 tap 不再误点系统选择器，以及技术日志可展开停留查看。
+
+补充前端修复：
+
+- 用户在最新线上页面验证发现“技术日志 / 实时轨迹”展开后会立刻收回。根因是 Agent 轮询后可能走 `showAgentWorkbench()` 整页重绘路径，而前一版只在 `updateAgentWorkbenchDynamic()` 局部刷新里恢复时间线 details 状态；同时技术日志点击事件仍可能冒泡到父级时间线 step。
+- 已把时间线状态保存 / 恢复接入整页重绘路径，并增加恢复期间的 `ontoggle` 抑制，避免程序化恢复 open 状态时反向覆盖用户操作；技术日志自身增加 pointer/click 事件隔离，防止点击 summary 时触发父级 step 折叠。
+- 已验证：`python3 tests/frontend_static_checks.py`、`python3 -m py_compile tests/frontend_static_checks.py`、`git diff --check`、`npm test` 全部通过。
