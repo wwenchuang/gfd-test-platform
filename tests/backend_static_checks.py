@@ -8330,6 +8330,49 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         yaml_service.generated_yaml_effective_level("needs_review", manual_hint_display_case, display_scope_review, display_score) == "needs_review",
         "Generated cases with explicit manual/needs-review hints must not be promoted to executable by display-check correction",
     )
+    stale_hint_verified_case = {
+        **manual_hint_display_case,
+        "steps": [
+            "等待 App 首页加载完成",
+            "点击「扫描复印」入口",
+            "点击「证件扫描」",
+            "点击「立即使用」",
+            "校验「百度网盘」入口可见且文案为“百度网盘”",
+            "点击「百度网盘」入口",
+            "等待跳转至百度网盘相关页面",
+        ],
+        "ai_case_plan": {
+            "baselineGrounded": True,
+            "baselineVerified": True,
+            "pathPlanApplied": True,
+            "baselineId": "d623c1e73180bfac",
+            "flow": [
+                "等待 App 首页加载完成",
+                "点击「扫描复印」入口",
+                "点击「证件扫描」",
+                "点击「立即使用」",
+                "校验「百度网盘」入口可见且文案为“百度网盘”",
+                "点击「百度网盘」入口",
+                "等待跳转至百度网盘相关页面",
+            ],
+        },
+    }
+    require(
+        yaml_service.generated_yaml_effective_level("needs_review", stale_hint_verified_case, display_scope_review, {**display_score, "score": 100}) == "executable",
+        "Stale manual wording must not demote a case after platform verified baseline grounding and path planning have already made it executable",
+    )
+    stale_hint_conditional_case = {
+        **stale_hint_verified_case,
+        "steps": ["点击「扫描复印」入口", "若不存在「百度网盘」入口则记录缺陷"],
+        "ai_case_plan": {
+            **stale_hint_verified_case["ai_case_plan"],
+            "flow": ["点击「扫描复印」入口", "若不存在「百度网盘」入口则记录缺陷"],
+        },
+    }
+    require(
+        yaml_service.generated_yaml_effective_level("needs_review", stale_hint_conditional_case, display_scope_review, {**display_score, "score": 100}) == "needs_review",
+        "Verified-plan override must not allow conditional manual defect-recording branches into Runner",
+    )
     non_display_case = {
         **display_case,
         "title": "移动端首页入口加载中点击重试校验",

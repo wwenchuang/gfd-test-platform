@@ -1462,7 +1462,10 @@ def _generated_case_requirement_mapped_display_check(source_case: dict, scope_re
     declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
     if declared_level in {"needs_review", "draft", "manual"}:
         return False
-    if _generated_case_has_manual_execution_hint(source_case):
+    if (
+        _generated_case_has_manual_execution_hint(source_case)
+        and not _generated_case_has_verified_execution_plan(source_case)
+    ):
         return False
     if scope_review.get("requiresExplicitRequirementId"):
         requirement_mapped = bool(scope_review.get("matchedRequirementIds"))
@@ -1539,6 +1542,35 @@ def _generated_case_has_manual_execution_hint(source_case: dict) -> bool:
     ))
 
 
+def _generated_case_has_verified_execution_plan(source_case: dict) -> bool:
+    source_case = source_case if isinstance(source_case, dict) else {}
+    plan = source_case.get("ai_case_plan") if isinstance(source_case.get("ai_case_plan"), dict) else {}
+    baseline_grounded = (
+        plan.get("baselineGrounded") is True
+        or source_case.get("baselineGrounded") is True
+    )
+    baseline_verified = (
+        plan.get("baselineVerified") is True
+        or source_case.get("baselineVerified") is True
+    )
+    path_applied = (
+        plan.get("pathPlanApplied") is True
+        or source_case.get("pathPlanApplied") is True
+    )
+    if not (baseline_grounded and baseline_verified and path_applied):
+        return False
+    flow_blob = _scope_guard_join_values(
+        source_case.get("steps"),
+        source_case.get("assertions"),
+        plan.get("flow"),
+        plan.get("assertionTarget"),
+    )
+    compact_flow = re.sub(r"\s+", "", str(flow_blob or "")).lower()
+    if any(term in compact_flow for term in ("若不存在", "若没有", "记录缺陷", "人工确认", "人工复核", "手工确认")):
+        return False
+    return True
+
+
 def enforce_generated_fallback_execution_floor(payload: Any, force: bool = False) -> dict:
     """Keep every local AI fallback review-only even if later stages rewrite cases."""
     fallback_active = bool(force or generated_payload_uses_local_fallback(payload))
@@ -1583,12 +1615,25 @@ def generated_yaml_effective_level(score_level: str, source_case: dict, scope_re
     if level not in GENERATED_EXECUTION_LEVEL_ORDER:
         level = "draft"
     source_case = source_case if isinstance(source_case, dict) else {}
+    declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
+    score = score or {}
     if level == "needs_review" and _generated_case_requirement_mapped_display_check(source_case, scope_review, score or {}):
         level = "executable"
-    declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
+    if (
+        level == "needs_review"
+        and declared_level == "executable"
+        and isinstance(scope_review, dict)
+        and scope_review.get("ok", True)
+        and safe_int(score.get("score"), 0) >= 80
+        and _generated_case_has_verified_execution_plan(source_case)
+    ):
+        level = "executable"
     if _generated_case_uses_local_fallback(source_case):
         declared_level = _stricter_generated_execution_level(declared_level, "needs_review")
-    if _generated_case_has_manual_execution_hint(source_case):
+    if (
+        _generated_case_has_manual_execution_hint(source_case)
+        and not _generated_case_has_verified_execution_plan(source_case)
+    ):
         declared_level = _stricter_generated_execution_level(declared_level, "needs_review")
     if declared_level in GENERATED_EXECUTION_LEVEL_ORDER:
         level = _stricter_generated_execution_level(level, declared_level)

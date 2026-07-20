@@ -3752,3 +3752,11 @@ npm test
 - 用户在最新线上页面验证发现“技术日志 / 实时轨迹”展开后会立刻收回。根因是 Agent 轮询后可能走 `showAgentWorkbench()` 整页重绘路径，而前一版只在 `updateAgentWorkbenchDynamic()` 局部刷新里恢复时间线 details 状态；同时技术日志点击事件仍可能冒泡到父级时间线 step。
 - 已把时间线状态保存 / 恢复接入整页重绘路径，并增加恢复期间的 `ontoggle` 抑制，避免程序化恢复 open 状态时反向覆盖用户操作；技术日志自身增加 pointer/click 事件隔离，防止点击 summary 时触发父级 step 折叠。
 - 已验证：`python3 tests/frontend_static_checks.py`、`python3 -m py_compile tests/frontend_static_checks.py`、`git diff --check`、`npm test` 全部通过。
+
+补充生成门禁修复：
+
+- 最新部署后 Agent `agent-1784547916186-4ba828d0` 终态 `FAILED / GENERATE_YAML / 30%`，未创建 Runner job。Figma 4 页 / 4 图全部真实送入 `qwen3.6-plus` 并完成，PLAN 成功；失败点是最终生成 5 条 YAML 但只有 4 条 executable，REQ-003 扫描复印 4 个验收点缺失。
+- 生产产物显示 TC-003 同时存在两类信息：标题 / tags 残留“需人工确认 / 待确认”，但 `ai_case_plan` 已经具备 `baselineGrounded=true / baselineVerified=true / pathPlanApplied=true`，并引用扫描成功基线 `d623c1e73180bfac` 形成稳定扫描父路径和百度网盘点击步骤。上一版门禁把 stale 人工提示当作最终事实，错误地把已被平台证据修复的 TC-003 降为 `needs_review`。
+- 已收窄规则：人工提示默认仍降级；只有同一 case 同时具备可信基线 grounding、已验证 baseline、path plan applied、scope review 通过、scorer 高分且 flow 不包含“若不存在 / 记录缺陷 / 人工确认”等条件人工分支时，才把残留人工文案视为 stale metadata，不阻断 executable。
+- 生产 TC-003 离线判定已变为 `manualHint=true / verifiedPlan=true / effective=executable`；条件人工分支负例仍保持 `needs_review`。
+- 已验证：`python3 tests/backend_static_checks.py`、`python3 -m py_compile task_server/services/yaml_service.py tests/backend_static_checks.py`、`git diff --check`、`npm test` 全部通过。
