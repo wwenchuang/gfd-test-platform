@@ -1352,6 +1352,12 @@
 .agent-technical-trace .step-tool-calls {
   margin-top: 7px;
 }
+.agent-technical-trace-body {
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
 
 /* 模拟数据警告 */
 .step-mock-warning {
@@ -1467,6 +1473,13 @@
 }
 .precheck-warnings .failure-title { color: #f59e0b; }
 .failure-title { font-weight: 600; margin-bottom: 4px; color: #ef4444; }
+.failure-title span {
+    float: right;
+    color: #64748b;
+    font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 11px;
+    font-weight: 500;
+}
 .failure-list { margin: 0; padding-left: 16px; }
 .failure-list li { margin: 2px 0; font-size: 12px; color: #ccc; }
 .failure-item .failure-file { font-weight: 500; margin-right: 8px; }

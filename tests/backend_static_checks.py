@@ -8319,6 +8319,17 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         yaml_service.generated_yaml_effective_level("needs_review", display_case, display_scope_review, display_score) == "executable",
         "Requirement-mapped low-risk visible copy/display checks must not be blocked only by the generic robustness diagnostic",
     )
+    manual_hint_display_case = {
+        **display_case,
+        "title": "扫描复印页-百度网盘入口UI展示及同级位置校验（需人工确认）",
+        "tags": ["基础打印", "扫描复印", "needs_review"],
+        "executionLevel": "executable",
+        "reason": "扫描复印页需人工确认是否复用通用导入组件",
+    }
+    require(
+        yaml_service.generated_yaml_effective_level("needs_review", manual_hint_display_case, display_scope_review, display_score) == "needs_review",
+        "Generated cases with explicit manual/needs-review hints must not be promoted to executable by display-check correction",
+    )
     non_display_case = {
         **display_case,
         "title": "移动端首页入口加载中点击重试校验",
@@ -9306,6 +9317,27 @@ def check_yaml_static_validation_and_patterns():
         and "aiWaitFor: 页面展示" in service_repaired_content
         and dry_run_midscene_yaml(service_repaired_content, app_package="com.xbxxhz.box").get("ok") is True,
         "Generated YAML service must repair assertion-like aiTap prompts before persisting files",
+    )
+    broad_check_tap_yaml = """android:
+  tasks:
+    - name: 扫描复印页-百度网盘入口UI展示及同级位置校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成
+        - aiTap: 点击「扫描复印」入口
+        - aiWaitFor: 等待扫描复印页面加载完成
+        - aiTap: 检查页面导入或文件选择区域
+        - aiWaitFor: 「百度网盘」入口可见，文案为“百度网盘”，与同级入口并列展示
+        - aiAssert: 「百度网盘」入口可见，文案为“百度网盘”，与同级入口并列展示
+"""
+    broad_check_repair = repair_generated_yaml_executable_gate_issues(broad_check_tap_yaml)
+    broad_check_content = broad_check_repair.get("content", "")
+    require(
+        broad_check_repair.get("changed")
+        and "aiTap: 检查页面导入或文件选择区域" not in broad_check_content
+        and "aiWaitFor: 检查页面导入或文件选择区域" in broad_check_content
+        and dry_run_midscene_yaml(broad_check_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated YAML service must convert broad page-inspection aiTap prompts before Runner dispatch",
     )
     service_static_repair = repair_generated_yaml_static_errors(assertion_tap_yaml, app_package="com.xbxxhz.box", max_attempts=0)
     require(

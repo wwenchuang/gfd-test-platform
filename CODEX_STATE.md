@@ -3707,3 +3707,42 @@ git diff --check
 
 - 提交、推送并部署本轮修复。
 - 部署后继续使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询首批 smoke、AI 修复重跑、修复恢复后的 remaining 扩展及 Agent 到终态，并人工复核 6 条 YAML、所有真实报告、截图和失败分类。
+
+### 2026-07-20 最新真实回归：执行阶段暴露人工提示与日志可观测性问题
+
+部署 `d368f0d` 后真实验证：
+
+- Agent：`agent-1784544927906-70b76349`；终态 `FAILED / COLLECT_REPORT / 95%`。这次不再卡在 PLAN，也没有在 GENERATE_YAML 阶段被覆盖门禁阻断。
+- Figma 正确解析 4 页 / 4 图，4 个单图批次全部送入 `qwen3.6-plus` 并完成，耗时约 22 / 28 / 20 / 21 秒；`fallbackUsed=false`。
+- PLAN 成功生成 8 条 AI 业务流；GENERATE_YAML 成功生成 6 条 YAML / 12 个场景，VALIDATE_YAML 和执行前 dry-run 均通过。
+- 所有真实 Runner job 均固定 `win-runner-01 / ecbfd645 / fixed`，没有向第二台设备下发。首批 smoke 2 成功 / 1 失败，随后 expanded remaining 3 条执行完成但失败；总计 2 成功 / 4 失败。
+
+失败根因：
+
+- 扫描复印展示 YAML 的标题 / tags / reason 已明确包含“需人工确认 / needs_review”，但后续展示类提升逻辑仍把它提升为 executable，导致人工未消解项进入 Runner。
+- 同一 YAML 中 `aiTap: 检查页面导入或文件选择区域` 是页面检查语义，不是可点击目标。Runner 真实点击后进入系统照片选择器，页面变为“此应用只能访问您选择的照片”，自然无法再看到“百度网盘”。
+- 前端时间线在轮询时整体重绘 `agent-progress`，技术日志 `<details>` 的展开状态和滚动位置没有保存；同时实时轨迹只保留最后 12 条，用户无法展开后停留追查长执行过程。RUN_SONIC 摘要也优先展示旧 step summary，没有使用已有 `artifacts.jobProgress` 的最新 Runner 进度。
+
+本轮通用修复：
+
+- 生成用例只要标题、场景、reason、tags 或 automation 字段显式包含 `needs_review / manual / 人工确认 / 人工复核 / 需人工 / 待确认` 等提示，就不能被展示类修正规则提升为 executable。
+- YAML 入库前修复新增页面检查型 `aiTap` 识别：`检查 / 校验 / 验证 / 查看 / 观察 / 判断 / 识别 / 确认页面...` 且没有真实点击动作时，自动改为 `aiWaitFor`，保留原可见文字和 timeout，不放宽坐标、账号、授权、文件选择或深层外部动作限制。
+- Agent 前端时间线新增技术日志状态缓存：轮询刷新后保留技术日志展开状态和滚动位置；技术轨迹从最后 12 条扩展为最后 80 条，并显示当前展示数量。
+- RUN_SONIC 时间线摘要优先使用已有 `artifacts.jobProgress` / `jobProgressByPhase`，展示最新成功 / 失败 / 执行中 / 排队中、等待耗时、当前任务和更新时间。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+python3 -m py_compile task_server/services/yaml_service.py tests/backend_static_checks.py tests/frontend_static_checks.py
+git diff --check
+npm test
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交本轮修复；由用户推送、部署。
+- 部署后继续使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；重点确认人工提示项不会进入 Runner、页面检查型 tap 不再误点系统选择器，以及技术日志可展开停留查看。

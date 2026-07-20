@@ -1462,6 +1462,8 @@ def _generated_case_requirement_mapped_display_check(source_case: dict, scope_re
     declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
     if declared_level in {"needs_review", "draft", "manual"}:
         return False
+    if _generated_case_has_manual_execution_hint(source_case):
+        return False
     if scope_review.get("requiresExplicitRequirementId"):
         requirement_mapped = bool(scope_review.get("matchedRequirementIds"))
     else:
@@ -1505,6 +1507,36 @@ def _generated_case_requirement_mapped_display_check(source_case: dict, scope_re
     if any(term in compact_case for term in GENERATED_NON_DISPLAY_EXPANSION_TERMS):
         return False
     return any(term in compact_case for term in GENERATED_DISPLAY_ASSERTION_TERMS)
+
+
+def _generated_case_has_manual_execution_hint(source_case: dict) -> bool:
+    """Detect explicit model/user hints that a generated case still needs review."""
+    source_case = source_case if isinstance(source_case, dict) else {}
+    blob = _scope_guard_join_values(
+        source_case.get("title"),
+        source_case.get("name"),
+        source_case.get("scenario"),
+        source_case.get("goal"),
+        source_case.get("reason"),
+        source_case.get("reviewReason"),
+        source_case.get("review_reason"),
+        source_case.get("automation"),
+        source_case.get("tags"),
+    )
+    compact = re.sub(r"\s+", "", str(blob or "")).lower()
+    if not compact:
+        return False
+    return any(term in compact for term in (
+        "needs_review",
+        "needreview",
+        "manual",
+        "人工确认",
+        "人工复核",
+        "人工验证",
+        "需人工",
+        "待确认",
+        "待复核",
+    ))
 
 
 def enforce_generated_fallback_execution_floor(payload: Any, force: bool = False) -> dict:
@@ -1555,6 +1587,8 @@ def generated_yaml_effective_level(score_level: str, source_case: dict, scope_re
         level = "executable"
     declared_level = str(source_case.get("executionLevel") or source_case.get("level") or "").strip().lower()
     if _generated_case_uses_local_fallback(source_case):
+        declared_level = _stricter_generated_execution_level(declared_level, "needs_review")
+    if _generated_case_has_manual_execution_hint(source_case):
         declared_level = _stricter_generated_execution_level(declared_level, "needs_review")
     if declared_level in GENERATED_EXECUTION_LEVEL_ORDER:
         level = _stricter_generated_execution_level(level, declared_level)
@@ -5647,6 +5681,20 @@ def _generated_next_tap_target(step: dict) -> str:
     return target if 1 < len(target) <= 40 else ""
 
 
+def _generated_tap_prompt_is_passive_page_check(prompt: str) -> bool:
+    compact = _compact_text(prompt)
+    if not compact:
+        return False
+    if any(word in compact for word in ("点击", "点按", "轻触", "进入", "打开")):
+        return False
+    if re.match(r"^(?:选择|选中|勾选)", compact):
+        return False
+    return bool(re.match(
+        r"^(?:检查|校验|验证|查看|观察|判断|识别|确认(?:页面|当前|是否|有无|存在|展示|显示|可见))",
+        compact,
+    ))
+
+
 def _generated_home_wait_is_abstract(prompt: str) -> bool:
     compact = _compact_text(prompt).lower()
     compact = re.sub(r"^aiwaitfor[:：]", "", compact)
@@ -5918,6 +5966,18 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                 })
                 continue
             if not prompt or not tap_prompt_looks_assertion(prompt):
+                if _generated_tap_prompt_is_passive_page_check(prompt):
+                    step.pop("aiTap", None)
+                    step["aiWaitFor"] = prompt
+                    step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+                    changes.append({
+                        "task": task.get("name") or f"tasks[{task_index}]",
+                        "flowIndex": step_index,
+                        "changed": "passive page-check aiTap -> aiWaitFor",
+                        "prompt": prompt[:180],
+                        "waitFor": prompt[:180],
+                    })
+                    continue
                 if _is_baidu_netdisk_tap_prompt(prompt):
                     after_baidu_tap = True
                 continue

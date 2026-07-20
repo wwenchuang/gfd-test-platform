@@ -4,6 +4,7 @@
 // 记录用户手动展开的步骤索引，避免轮询刷新时收起
 const expandedStepIndexes = new Set();
 let agentCheckpointTraceOpen = false;
+const agentTimelineDetailStates = new Map();
 const DEFAULT_AGENT_APP_NAME = '智小白3D APP';
 const DEFAULT_AGENT_APP_PACKAGE = 'com.kfb.model';
 
@@ -878,15 +879,61 @@ function restoreAgentArtifactViewState(card, run, state) {
   if (nav) nav.scrollLeft = state.navScrollLeft || 0;
 }
 
+function captureAgentTimelineViewState(container) {
+  if (!container) return null;
+  const detailStates = Array.from(container.querySelectorAll('details[data-agent-timeline-detail-key]')).map(detail => {
+    const scrollBox = detail.querySelector('.agent-technical-trace-body') || detail.querySelector('.step-live-trace');
+    return {
+      key: detail.dataset.agentTimelineDetailKey || '',
+      open: detail.open,
+      scrollTop: scrollBox ? scrollBox.scrollTop : 0,
+      scrollLeft: scrollBox ? scrollBox.scrollLeft : 0,
+    };
+  }).filter(item => item.key);
+  detailStates.forEach(item => agentTimelineDetailStates.set(item.key, item));
+  return {detailStates};
+}
+
+function restoreAgentTimelineViewState(container, state) {
+  if (!container || !state) return;
+  const stateByKey = new Map((state.detailStates || []).map(item => [item.key, item]));
+  Array.from(container.querySelectorAll('details[data-agent-timeline-detail-key]')).forEach(detail => {
+    const key = detail.dataset.agentTimelineDetailKey || '';
+    const item = stateByKey.get(key) || agentTimelineDetailStates.get(key);
+    if (!item) return;
+    detail.open = !!item.open;
+    const scrollBox = detail.querySelector('.agent-technical-trace-body') || detail.querySelector('.step-live-trace');
+    if (scrollBox) {
+      scrollBox.scrollTop = Math.min(item.scrollTop || 0, Math.max(0, scrollBox.scrollHeight - scrollBox.clientHeight));
+      scrollBox.scrollLeft = item.scrollLeft || 0;
+    }
+  });
+}
+
+function agentTimelineDetailToggled(detail) {
+  if (!detail) return;
+  const key = detail.dataset.agentTimelineDetailKey || '';
+  if (!key) return;
+  const scrollBox = detail.querySelector('.agent-technical-trace-body') || detail.querySelector('.step-live-trace');
+  agentTimelineDetailStates.set(key, {
+    key,
+    open: detail.open,
+    scrollTop: scrollBox ? scrollBox.scrollTop : 0,
+    scrollLeft: scrollBox ? scrollBox.scrollLeft : 0,
+  });
+}
+
 function updateAgentWorkbenchDynamic() {
   const run = currentAgentRun();
   const progressEl = document.getElementById('agent-progress');
   const artifactsCard = document.getElementById('agent-artifacts-card');
   const riskLevelEl = document.getElementById('agent-risk-level');
+  const timelineViewState = captureAgentTimelineViewState(progressEl);
   const artifactViewState = captureAgentArtifactViewState(artifactsCard);
 
   if (progressEl) {
     progressEl.innerHTML = run ? renderAgentTimeline(run) : '';
+    restoreAgentTimelineViewState(progressEl, timelineViewState);
   } else {
     // agent-progress 不存在时，完整重渲染确保时间线可见
     showAgentWorkbench();
@@ -1190,10 +1237,11 @@ function timelineToolCallsDetail(step) {
 function timelineLiveTraceDetail(step) {
   const rows = (step && (step.liveTrace || step.trace)) || [];
   if (!Array.isArray(rows) || !rows.length) return '';
+  const visibleRows = rows.slice(-80);
   return `
     <div class="step-live-trace">
-      <div class="failure-title">实时轨迹</div>
-      ${rows.slice(-12).map(row => `
+      <div class="failure-title">实时轨迹<span>${visibleRows.length}/${rows.length}</span></div>
+      ${visibleRows.map(row => `
         <div class="step-live-trace-row status-${escapeHtml(String(row.status || '').toLowerCase())}">
           <span>${escapeHtml(formatDisplayTime(row.time))}</span>
           <strong>${escapeHtml(agentTraceMessageText(row.message || ''))}</strong>
@@ -1285,6 +1333,34 @@ function agentRunnerProgressMetrics(progress = {}) {
     pending: Math.max(0, pending),
     timeoutSeconds,
   };
+}
+
+function agentRunnerRealtimeSummary(run, key) {
+  if (String(key || '').toUpperCase() !== 'RUN_SONIC') return '';
+  const artifacts = (run && run.artifacts) || {};
+  const progress = artifacts.jobProgress && typeof artifacts.jobProgress === 'object'
+    ? artifacts.jobProgress
+    : {};
+  const phaseProgress = artifacts.jobProgressByPhase && typeof artifacts.jobProgressByPhase === 'object'
+    ? artifacts.jobProgressByPhase
+    : {};
+  const phaseEntries = Object.entries(phaseProgress).filter(([, value]) => value && typeof value === 'object');
+  const fallbackPhase = phaseEntries.length ? phaseEntries[phaseEntries.length - 1][1] : {};
+  const liveProgress = Object.keys(progress).length ? progress : fallbackPhase;
+  if (!Object.keys(liveProgress).length) return '';
+  const metrics = agentRunnerProgressMetrics(liveProgress);
+  const currentTask = liveProgress.currentTaskName || liveProgress.current_task_name || liveProgress.currentTask || liveProgress.current || liveProgress.taskName || '';
+  const phase = liveProgress.phase || liveProgress.currentPhase || liveProgress.current_phase || 'Runner';
+  const waited = liveProgress.waitedSeconds ?? liveProgress.elapsedSeconds ?? liveProgress.elapsed ?? liveProgress.durationSeconds;
+  const limit = liveProgress.timeoutSeconds || liveProgress.timeout || liveProgress.maxWaitSeconds || '';
+  const updatedAt = liveProgress.updatedAt || liveProgress.updated_at || liveProgress.lastUpdated || liveProgress.last_update || '';
+  const counters = `${metrics.completed} 成功 / ${metrics.failed} 失败 / ${metrics.running} 执行中 / ${metrics.pending} 排队中`;
+  const timing = Number.isFinite(Number(waited))
+    ? `，已等待 ${Math.round(Number(waited))}s${limit ? ` / 上限 ${Math.round(Number(limit))}s` : ''}`
+    : '';
+  const current = currentTask ? `；当前：${currentTask}` : '';
+  const updated = updatedAt ? `，更新 ${formatDisplayTime(updatedAt)}` : '';
+  return `${phase} 实时执行：${counters}${timing}${current}${updated}`;
 }
 
 function renderRunTaskDetail(step, artifacts) {
@@ -3115,6 +3191,8 @@ function renderAgentTimeline(run) {
 
     const meta = TIMELINE_STATUS_META[status] || TIMELINE_STATUS_META.pending;
     let summary = data.summary || data.message || '';
+    const realtimeSummary = agentRunnerRealtimeSummary(run, key);
+    if (realtimeSummary) summary = realtimeSummary;
     if (key === 'DONE' && runTerminal && !summary) {
       if (runDone) {
         summary = 'Agent 流程已完成';
@@ -3134,8 +3212,11 @@ function renderAgentTimeline(run) {
     const toolChips = timelineToolCallChips(data);
     const toolCallsDetail = timelineToolCallsDetail(data);
     const liveTraceDetail = timelineLiveTraceDetail(data);
+    const technicalDetailKey = `${String(run.runId || 'agent')}:${key}:technical`;
+    const technicalDetailState = agentTimelineDetailStates.get(technicalDetailKey);
+    const technicalDetailOpen = technicalDetailState && technicalDetailState.open ? 'open' : '';
     const technicalTraceDetail = (liveTraceDetail || toolCallsDetail)
-      ? `<details class="agent-technical-trace" onclick="event.stopPropagation()"><summary>技术日志<span>${liveTraceDetail ? '执行轨迹' : ''}${liveTraceDetail && toolCallsDetail ? ' · ' : ''}${toolCallsDetail ? '工具调用' : ''}</span></summary>${liveTraceDetail || ''}${toolCallsDetail || ''}</details>`
+      ? `<details class="agent-technical-trace" data-agent-timeline-detail-key="${escapeHtml(technicalDetailKey)}" ${technicalDetailOpen} ontoggle="agentTimelineDetailToggled(this)" onclick="event.stopPropagation()"><summary>技术日志<span>${liveTraceDetail ? '执行轨迹' : ''}${liveTraceDetail && toolCallsDetail ? ' · ' : ''}${toolCallsDetail ? '工具调用' : ''}</span></summary><div class="agent-technical-trace-body">${liveTraceDetail || ''}${toolCallsDetail || ''}</div></details>`
       : '';
     const stepDetailHtml = renderStepDetail(data, run);
     const diagnosisHtml = renderDiagnosisDetail(data.diagnosis);
