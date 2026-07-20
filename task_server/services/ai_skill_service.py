@@ -2170,6 +2170,16 @@ def case_covers_requirement_acceptance(case, check):
         terminal_items.extend(normalize_text_list(plan.get("assertionTarget")))
         terminal_evidence = re.sub(r"\s+", "", "\n".join(terminal_items)).lower()
         has_terminal = any(term in terminal_evidence for term in terminal_terms)
+        compact_targets = [
+            re.sub(r"\s+", "", str(term or "")).lower()
+            for term in (targets or [])
+            if str(term or "").strip()
+        ]
+        has_target_related_page = bool(
+            compact_targets
+            and any(f"{term}相关页面" in terminal_evidence for term in compact_targets)
+            and not re.search(r"(?:未|没有|无法|不能|失败)[^；。]{0,16}(?:跳转|进入|打开)?[^；。]{0,16}相关页面", terminal_evidence)
+        )
         has_bounded_transition_terminal = bool(
             "已离开" in terminal_evidence
             and any(term in terminal_evidence for term in ("页面区域", "页面元素", "页面跳转"))
@@ -2184,7 +2194,7 @@ def case_covers_requirement_acceptance(case, check):
                 )
             )
         )
-        return has_terminal or has_bounded_transition_terminal
+        return has_terminal or has_target_related_page or has_bounded_transition_terminal
     if kind == "relation":
         return any(any(term in item for term in (
             "同级", "层级", "位置", "关系", "并列", "相邻", "对齐", "布局", "排序", "左侧", "右侧",

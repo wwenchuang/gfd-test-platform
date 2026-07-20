@@ -7709,6 +7709,42 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         bounded_wait_review.get("ok"),
         "A numeric deadline on a normal wait must remain execution mechanics, not become an unrequested timeout scenario",
     )
+    related_page_reachability_check = {
+        "id": "REQ-003-CHECK-04",
+        "requirementId": "REQ-003",
+        "branch": "扫描复印",
+        "kind": "reachability",
+        "text": "点击百度网盘入口并校验目标页面稳定可达",
+    }
+    related_page_case = {
+        "case_id": "TC-RELATED-PAGE",
+        "coverage": "REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达",
+        "requirementRefs": ["REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达"],
+        "steps": [
+            "等待 App 首页加载完成",
+            "点击「扫描复印」入口",
+            "点击「证件扫描」",
+            "点击「立即使用」",
+            "点击「百度网盘」入口",
+            "等待跳转至百度网盘相关页面",
+        ],
+    }
+    require(
+        ai_skill_service.case_covers_requirement_acceptance(related_page_case, related_page_reachability_check),
+        "A bounded first-screen wait for the target cloud-disk related page after the target tap must satisfy reachability",
+    )
+    negative_related_page_case = {
+        **related_page_case,
+        "steps": [
+            "点击「扫描复印」入口",
+            "点击「百度网盘」入口",
+            "未跳转至百度网盘相关页面",
+        ],
+    }
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance(negative_related_page_case, related_page_reachability_check),
+        "A negative related-page observation must not satisfy reachability",
+    )
     timeout_scenario_review = yaml_service.generated_case_requirement_scope_review({
         "case_id": "TC-TIMEOUT-SCENARIO",
         "title": "扫描复印页百度网盘网络超时处理校验",

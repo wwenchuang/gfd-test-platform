@@ -3760,3 +3760,33 @@ npm test
 - 已收窄规则：人工提示默认仍降级；只有同一 case 同时具备可信基线 grounding、已验证 baseline、path plan applied、scope review 通过、scorer 高分且 flow 不包含“若不存在 / 记录缺陷 / 人工确认”等条件人工分支时，才把残留人工文案视为 stale metadata，不阻断 executable。
 - 生产 TC-003 离线判定已变为 `manualHint=true / verifiedPlan=true / effective=executable`；条件人工分支负例仍保持 `needs_review`。
 - 已验证：`python3 tests/backend_static_checks.py`、`python3 -m py_compile task_server/services/yaml_service.py tests/backend_static_checks.py`、`git diff --check`、`npm test` 全部通过。
+
+### 2026-07-20 最新回归补充：扫描 reachability 覆盖识别
+
+部署 `40958cd` 后发起 Agent `agent-1784549118642-bd8e3b01`：
+
+- 输入、Figma、模型和固定 OPPO 均正确：`win-runner-01 / ecbfd645 / fixed`，`com.xbxxhz.box 4.45.0`。
+- Figma 4 页 / 4 图全部送入 `qwen3.6-plus` 并完成，PLAN 成功，未创建 Runner job。
+- 终态仍为 `FAILED / GENERATE_YAML / 30%`，但失败已缩小为单一缺口：`REQ-003 [acceptance:reachability] 扫描复印：点击百度网盘入口并校验目标页面稳定可达`。
+
+根因：
+
+- 生成产物中的扫描复印步骤已经有目标点击和后续等待：`点击「百度网盘」入口` -> `等待跳转至百度网盘相关页面`。
+- `case_covers_requirement_acceptance` 的 reachability 终态词只认授权页、文件列表、落地页、稳定可达等固定词，没有把“目标名 + 相关页面”识别为有界首屏落地证据，导致最终 portfolio 覆盖门禁误判扫描 reachability 缺失。
+
+本轮修复：
+
+- reachability 覆盖判断在目标点击动作之后，允许“目标入口名 + 相关页面”作为有界首屏落地终态，例如“百度网盘相关页面”。
+- 加负向约束：`未 / 没有 / 无法 / 不能 / 失败 ... 相关页面` 不能满足 reachability，避免把失败观察当覆盖。
+- 不修改 Runner 动作、scorer、Figma、坐标、账号、授权或深层外部文件选择限制。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
