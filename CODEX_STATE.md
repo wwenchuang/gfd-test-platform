@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 真实回归：Agent PLAN 同步 MM 规划必须有硬超时，避免线上假卡死
+
+用户部署 `ff71991` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784543629519-7212477f`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic、Windows Runner 均健康；固定 OPPO `ecbfd645 / PHM110` ready，Runner 上报 `qwen3.6-plus / qwen3.6`。本轮未创建 Runner job，没有向 OPPO、华为或第二台设备下发。
+- PREPARE_SOURCE 成功，Figma 正确解析 `4 页 / 4 图 / 忽略 0`；但 Agent 随后停留在 `RUNNING / PLAN / progress=6` 超过 15 分钟，`updatedAt` 未推进。
+- `visualReferenceReport` 显示 `sentToAiForJudgement=false / aiJudgementCompleted=false / visualBatchesDone=0 / visualBatchesTotal=0`，说明本轮尚未进入 Figma 视觉分批 AI 判断，也不是上一轮的 YAML 覆盖门禁失败。
+- `mindmapPlan=null / plan=null`，无 pending confirmation，无 Runner job。问题边界在 PLAN 内部的 MM 业务规划调用返回前，而不是 scorer、Sonic、ADB、Windows Runner 或固定设备策略。
+
+深层根因与通用修复：
+
+- `_tool_agent_plan()` 为共享生成 job 写入了 `timeout_seconds=900`，但随后同步直接调用 `generate_mindmap_from_request()`。共享 job 的过期逻辑只能在读取/镜像进度时把 job 标记 timeout，不能中断正在等待的 Agent worker；如果 MM 规划内部某个 AI/网络调用迟迟不返回，外层 Agent 就无法返回 `FAILED` 终态。
+- 新增 Agent 级 `AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS`（环境变量 `MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS`，默认 900s），并用 `_run_agent_call_with_hard_timeout()` 包住 PLAN 的 MM 规划调用。超时后不等待卡住的 executor 线程退出，立即把 progress job 标成 `timeout`，让 `_tool_agent_plan()` 返回 `FAILED`，外层状态机可正常落到终态。
+- 该修复不改变 AI 规划 prompt、Figma 解析、视觉批次、YAML 生成策略、覆盖门禁、scorer、Runner、Sonic、设备选择、坐标/账号/授权限制或历史 YAML；只补 Agent runtime 的超时收敛边界。
+- 新增后端静态回归要求 PLAN 不能只依赖共享 job expiry，必须有 Agent 自己的硬超时包装，并确认 executor shutdown 使用 `wait=False`，避免超时路径再次阻塞。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮修复尚未提交/部署。提交、推送并部署后，不要复用已卡住的 Agent；必须再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，监督 PLAN、4 张 Figma 视觉批次、GENERATE_YAML、Smoke、remaining、可能的 AI 修复和所有 Runner 报告到真实终态。
+
 ### 2026-07-20 真实回归：收敛改写被守卫降级时恢复既有 executable，避免回归验收维度
 
 用户部署 `8870013` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784542291067-84192d7a`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

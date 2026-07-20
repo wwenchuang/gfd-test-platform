@@ -5,6 +5,7 @@
 """
 
 import copy
+import concurrent.futures
 import json
 import os
 import re
@@ -139,6 +140,10 @@ AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT = max(
         ),
     ),
 )
+AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS = max(
+    300,
+    safe_int(os.getenv("MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS"), 900),
+)
 
 
 def _trace_time_text():
@@ -164,6 +169,20 @@ def _agent_run_cancel_requested(run):
         return True
     run_id = str(run.get("runId") or "").strip()
     return bool(run_id and os.path.exists(_agent_cancel_marker_path(run_id)))
+
+
+def _run_agent_call_with_hard_timeout(func, timeout_seconds, label):
+    """Bound blocking Agent subcalls so the run can reach a terminal state."""
+    timeout_seconds = max(30, safe_int(timeout_seconds, 300))
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(func)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"{label} 超过 {timeout_seconds}s 未返回，已终止等待") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _run_agent_steps_guarded(run_id):
@@ -4418,7 +4437,7 @@ def _tool_agent_plan(run):
                 step="AI 业务规划",
                 message=f"正在复用平台 MM skills 生成业务计划（第 {attempt}/2 次）",
                 run_id=run.get("runId", ""),
-                timeout_seconds=900,
+                timeout_seconds=AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
             )
             stop_event = threading.Event()
             watcher = None
@@ -4430,15 +4449,31 @@ def _tool_agent_plan(run):
                 )
                 watcher.start()
             try:
-                mindmap_result = generate_mindmap_from_request(
-                    _agent_mindmap_plan_request(
-                        run,
-                        source_context,
-                        attempt=attempt,
-                        validation_issues=plan_issues if attempt > 1 else None,
+                mindmap_result = _run_agent_call_with_hard_timeout(
+                    lambda: generate_mindmap_from_request(
+                        _agent_mindmap_plan_request(
+                            run,
+                            source_context,
+                            attempt=attempt,
+                            validation_issues=plan_issues if attempt > 1 else None,
+                        ),
+                        job_id=progress_job_id,
                     ),
-                    job_id=progress_job_id,
+                    AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
+                    "PLAN AI业务规划",
                 )
+            except TimeoutError as exc:
+                update_generate_job(
+                    progress_job_id,
+                    status="timeout",
+                    ok=False,
+                    progress=99,
+                    step="AI 业务规划超时",
+                    message=str(exc),
+                    error=str(exc),
+                    timeout_seconds=AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
+                )
+                raise
             finally:
                 stop_event.set()
                 if watcher:
