@@ -28,6 +28,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 真实回归：有界落地尾链必须从 verified baseline 恢复前置，并规范化当前分支条件尾链
+
+用户确认 `ebbf857` 部署后，以同一需求和 Figma 发起完整 Agent `agent-1784540218073-9ff88889`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；Windows Runner 在线，固定 OPPO ready，上报 qwen3.6 模型族。本轮仍在 `GENERATE_YAML / 30%` 终止，没有创建 Runner job，没有向 OPPO、华为或第二台设备下发。
+- Figma 正确解析 `4 页 / 4 图 / 忽略 0`。4 张图分 4 批真实送入 qwen3.6-plus，批次均 completed、`fallback=false / finishReason=stop / hardGate=false`；设计资料仍是完整送 AI 判断的软参考。
+- AI 规划 8 条业务分支；本轮结构与上一轮不同：扫描自动候选 `TC-007` 只覆盖展示/文案，扫描可达性被放入人工项“扫描复印页-点击百度网盘入口可达性校验”，且该人工项缺少 `case_id / coverage / requirementRefs`，步骤和断言带有“若存在 / 若入口存在”的人工条件文案。
+- 生成阶段初始覆盖缺 6 个，最终仍缺 `REQ-003-CHECK-04` 扫描可达性，错误为“点击百度网盘入口并校验目标页面稳定可达”。平台没有采用兜底 YAML，覆盖门禁行为正确。
+
+深层根因与通用修复：
+
+- `ebbf857` 已允许“当前扫描来源页证据 + 同目标兄弟落地尾链”，但线上新形态中的扫描来源页自动候选只引用了 verified baseline，没有写 `precondition`。reachability 组合路径在已找到 selected baseline 时没有再从 baseline 恢复 `# baseline.start_page`，导致前置为空并丢弃有界证据。
+- 当前文档 donor 尾链又包含“已离开文档打印页”，按“不泄漏捐赠分支来源页”的安全规则被正确拒绝。因此不能为了过门禁复用带 donor 来源页的兄弟尾链。
+- 扫描当前人工项本身有正向点击后观察，但因没有 `requirementRefs` 被 donor 过滤提前丢弃；同时“查找并点击「百度网盘」入口（若存在）”和“若入口存在，点击后…”未被规范化，不能直接进入 Runner。
+- 新逻辑只做窄修复：source candidate 已有 verified selected baseline 但缺 precondition 时，从该 baseline 恢复前置；仅对匹配当前缺失验收且包含当前分支路径的 manual donor，从显式需求矩阵推断 `requirementRefs`；将“若存在”条件点击规范化为真实可见文字点击，并剥离条件前缀，补入“已离开来源页、落地页元素可见、无崩溃、无白屏”的稳定首屏断言。
+- 仍拒绝 donor 来源页泄漏、不同/前后缀/第二目标、未验证 baseline、账号/授权确认/选文件等深层外部动作；没有放宽 scorer、覆盖门禁、坐标、Figma 解析、Runner、Sonic、设备策略或历史 YAML。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+- 新增两个回归：verified source baseline 缺 precondition 时仍能生成 bounded landing；兄弟尾链泄漏 donor 来源页时，当前分支 manual 条件尾链会被正向规范化并绑定 `REQ-003-CHECK-04`。
+- 后端 61、undefined-name、前端 69、AI Gateway 46、动态模型目录/回退、Skill 契约 3 个 fixture、桌面/移动视觉回归均通过。第一次 `npm test` 遇到临时端口 `57477 EADDRINUSE`，端口释放后原样重跑整套通过。
+- 本轮修复尚未提交/部署。提交、推送、部署后必须再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，监督生成、首批、remaining、可能的 AI 修复和所有 Runner 报告到真实终态。
+
 ### 2026-07-20 真实回归：最终收敛按验收增量合并，不再用整体回滚丢掉 AI 已补缺口
 
 用户部署 `31afa8b` 后，以相同需求和 Figma 发起完整 Agent `agent-1784514545628-705062d7`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

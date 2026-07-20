@@ -2312,6 +2312,106 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "记录UI缺失缺陷" not in " ".join(sibling_tail_case_evidence.get("flow") or []),
         "A current branch with trusted source-page evidence may reuse only the bounded landing tail from an executable sibling branch when the visible target is identical, without leaking manual alternatives into Runner steps",
     )
+    sibling_tail_missing_precondition_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
+    sibling_tail_missing_precondition_payload["manual_cases"] = []
+    sibling_tail_missing_precondition_payload["cases"].append({
+        "case_id": "TC-SCAN-SOURCE",
+        "title": "扫描复印页百度网盘入口展示",
+        "executionLevel": "executable",
+        "originExecutionLevel": "automatic",
+        "coverage": "REQ-003 扫描复印：校验百度网盘入口可见、同级、文案正确",
+        "steps": [
+            "回到首页",
+            "点击「扫描复印」入口",
+            "等待扫描复印页面加载完成",
+            "等待「百度网盘」入口可见",
+        ],
+        "assertions": ["「百度网盘」入口文案为“百度网盘”，可见"],
+        "ai_case_plan": {
+            "baselineId": "base-scan-nav",
+            "baselineGrounded": True,
+            "baselineVerified": True,
+            "pathPlanApplied": True,
+        },
+    })
+    sibling_tail_missing_precondition_audit = {
+        "missingAcceptanceChecks": sibling_tail_payload["analysis"]["requirement_acceptance_checks"],
+        "unresolvedAutomaticCaseIds": ["TC-SCAN-SOURCE"],
+        "executableCaseIds": ["TC-DOCUMENT-LANDING", "TC-SCAN-SOURCE"],
+        "executableCount": 2,
+        "targetExecutableCount": 5,
+    }
+    sibling_tail_missing_precondition_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(sibling_tail_missing_precondition_payload["cases"])]
+    sibling_tail_missing_precondition_evidence = ai_skill_service._bounded_convergence_evidence(
+        sibling_tail_missing_precondition_payload,
+        sibling_tail_missing_precondition_records,
+        sibling_tail_missing_precondition_audit,
+        selected_baselines=[sibling_tail_baseline],
+        manual_records=[],
+    ).get("TC-SCAN-SOURCE") or {}
+    require(
+        sibling_tail_missing_precondition_evidence.get("kind") == "bounded_landing"
+        and sibling_tail_missing_precondition_evidence.get("precondition") == "App 首页"
+        and sibling_tail_missing_precondition_evidence.get("sourceCaseId") == "TC-SCAN-SOURCE"
+        and sibling_tail_missing_precondition_evidence.get("tailSourceCaseId") == "TC-DOCUMENT-LANDING"
+        and "REQ-003-CHECK-04" in set(
+            sibling_tail_missing_precondition_evidence.get("acceptanceCheckIds") or []
+        ),
+        "A verified source-page baseline must provide the precondition for sibling landing-tail convergence even when the AI source candidate omitted preconditions",
+    )
+    manual_conditional_tail_payload = json.loads(json.dumps(sibling_tail_missing_precondition_payload, ensure_ascii=False))
+    leaking_document_tail = manual_conditional_tail_payload["cases"][0]
+    leaking_document_tail["steps"][-1] = (
+        "等待页面跳转，已离开文档打印页，出现百度网盘文件列表或授权登录页面"
+    )
+    leaking_document_tail["assertions"] = [
+        "页面已离开文档打印页，且显示百度网盘相关文件选择界面或授权界面，无白屏或崩溃",
+    ]
+    manual_conditional_tail_payload["manual_cases"] = [{
+        "title": "扫描复印页-点击百度网盘入口可达性校验",
+        "priority": "P1",
+        "scenario": "扫描复印页-点击百度网盘入口可达性校验",
+        "reason": "【证据缺失】同REQ-003主场景，缺乏UI定位依据，自动化风险高，保留为人工检查点",
+        "steps": [
+            "进入App首页",
+            "点击「扫描复印」入口",
+            "查找并点击「百度网盘」入口（若存在）",
+            "观察是否跳转至百度网盘文件选择页或授权页",
+            "验证页面加载情况",
+        ],
+        "assertions": "若入口存在，点击后能稳定跳转至百度网盘文件选择页或授权页，无报错弹窗",
+    }]
+    manual_conditional_tail_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(manual_conditional_tail_payload["cases"])]
+    manual_conditional_tail_manual_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="manual"),
+    } for index, item in enumerate(manual_conditional_tail_payload["manual_cases"])]
+    manual_conditional_tail_evidence = ai_skill_service._bounded_convergence_evidence(
+        manual_conditional_tail_payload,
+        manual_conditional_tail_records,
+        sibling_tail_missing_precondition_audit,
+        selected_baselines=[sibling_tail_baseline],
+        manual_records=manual_conditional_tail_manual_records,
+    ).get("MC-001") or {}
+    require(
+        manual_conditional_tail_evidence.get("kind") == "bounded_landing"
+        and manual_conditional_tail_evidence.get("sourceCaseId") == "TC-SCAN-SOURCE"
+        and manual_conditional_tail_evidence.get("tailSourceCaseId") == "MC-001"
+        and "REQ-003-CHECK-04" in set(
+            manual_conditional_tail_evidence.get("acceptanceCheckIds") or []
+        )
+        and "点击「百度网盘」入口" in manual_conditional_tail_evidence.get("flow", [])
+        and "若存在" not in " ".join(manual_conditional_tail_evidence.get("flow") or [])
+        and "文档打印" not in " ".join(manual_conditional_tail_evidence.get("flow") or [])
+        and "若入口存在" not in str(manual_conditional_tail_evidence.get("assertionTarget") or ""),
+        "A current-branch manual landing tail without requirementRefs must be bound to the explicit missing check and canonicalized before Runner when sibling tails leak their donor source page",
+    )
     guarded_sibling_payloads = []
     wrong_target_sibling_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
     wrong_target_case = wrong_target_sibling_payload["cases"][0]

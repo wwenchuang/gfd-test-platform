@@ -4315,6 +4315,26 @@ def _bounded_landing_tail(case, target_terms):
                 # the entry is absent, so retain the AI target but make the click real.
                 click_step = f"点击「{target_label}」入口"
                 conditional_target_canonicalized = True
+    if not conditional_target_canonicalized and re.search(
+        r"(?:若|如果|如).{0,24}(?:可见|出现|存在)",
+        click_step,
+        re.I,
+    ):
+        matched_target = next((
+            str(term or "").strip()
+            for term in sorted(target_terms or [], key=lambda item: len(str(item or "")), reverse=True)
+            if str(term or "").strip() and str(term or "").strip() in click_step
+        ), "")
+        if matched_target:
+            target_label = re.sub(
+                r"(?:入口|按钮|图标|icon)$",
+                "",
+                matched_target,
+                flags=re.I,
+            ).strip(" \"'「」『』")
+            if target_label:
+                click_step = f"点击「{target_label}」入口"
+                conditional_target_canonicalized = True
     observations = []
     for raw_step in steps[click_index + 1:]:
         step = str(raw_step or "").strip()
@@ -4346,6 +4366,30 @@ def _bounded_landing_tail(case, target_terms):
     outcomes = normalize_text_list(
         case.get("assertions") or case.get("expected_result") or case.get("expected")
     )
+    if conditional_target_canonicalized:
+        cleaned_outcomes = []
+        for outcome in outcomes:
+            for raw_clause in re.split(r"[；;。]", str(outcome or "")):
+                clause = raw_clause.strip()
+                if not clause:
+                    continue
+                if re.search(
+                    r"(?:若|如果|如).{0,60}(?:未实现|不存在|不可见|未出现|找不到)",
+                    clause,
+                    re.I,
+                ):
+                    continue
+                positive_condition = re.match(
+                    r"^(?:若|如果|如)[^，,；;。]{0,80}(?:已实现|存在|可见|出现)"
+                    r"(?:则|，|,)\s*(.+)$",
+                    clause,
+                    re.I,
+                )
+                if positive_condition:
+                    clause = str(positive_condition.group(1) or "").strip()
+                if clause:
+                    cleaned_outcomes.append(clause)
+        outcomes = cleaned_outcomes
     if not observations and outcomes:
         observations = ["检查" + outcomes[0]]
     if not observations:
@@ -4360,6 +4404,19 @@ def _bounded_landing_tail(case, target_terms):
     assertion_target = "；".join(dict.fromkeys(
         [item for item in outcomes + [observation_text] if str(item or "").strip()]
     ))
+    if conditional_target_canonicalized:
+        quoted_targets = re.findall(r"[「『\"']([^」』\"']+)[」』\"']", click_step)
+        target_label = quoted_targets[0] if quoted_targets else ""
+        if target_label and not any(term in assertion_target for term in (
+            "无白屏", "没有白屏", "无崩溃", "没有崩溃", "不崩溃", "无Crash", "不闪退",
+        )):
+            generic_stable_state = (
+                f"操作「{target_label}」后已离开来源页，且「{target_label}」"
+                "落地页的页面区域或页面元素可见，无崩溃、无白屏"
+            )
+            assertion_target = "；".join(dict.fromkeys(
+                [item for item in [assertion_target, generic_stable_state] if str(item or "").strip()]
+            ))
     return {
         "flow": [click_step, f"检查{observation_text}"],
         "assertionTarget": assertion_target,
@@ -5697,6 +5754,20 @@ def _bounded_convergence_evidence(
             ]))
             donor_compact = (donor_record or {}).get("compact") or {}
             donor_plan = raw_case.get("ai_case_plan") if isinstance(raw_case.get("ai_case_plan"), dict) else {}
+            if (
+                not requirement_refs
+                and str(donor_compact.get("originLevel") or "").strip().lower() == "manual"
+                and _case_has_branch_execution_evidence(raw_case, branch)
+                and _convergence_record_matches_gap(
+                    donor_record,
+                    requirement_acceptance_descriptor(check),
+                    missing_checks=[check],
+                )
+            ):
+                requirement_point = requirement_point_by_id.get(requirement_id)
+                if requirement_point:
+                    requirement_refs = [requirement_point]
+                    donor_requirement_ids.add(requirement_id)
             shared_target_tail = bool(
                 source_evidence_plan
                 and requirement_id not in donor_requirement_ids
@@ -5825,6 +5896,11 @@ def _bounded_convergence_evidence(
                     precondition = (
                         precondition
                         or _bounded_candidate_precondition(source_case, branch_baseline)
+                    )
+                elif selected_baseline and not precondition:
+                    precondition = _bounded_candidate_precondition(
+                        source_case,
+                        selected_baseline,
                     )
                 baseline_navigation_flow = _trusted_baseline_source_navigation_flow(
                     selected_baseline,
