@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-20 真实回归：收敛改写被守卫降级时恢复既有 executable，避免回归验收维度
+
+用户部署 `8870013` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784542291067-84192d7a`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；通过 `x-token` 核对 `win-runner-01` 在线，固定 OPPO `ecbfd645 / PHM110` ready，`com.xbxxhz.box 4.45.0 (357)`，Runner 上报 `qwen3.6-plus / qwen3.6`。本轮仍在 `GENERATE_YAML / 30%` 终止，没有创建 Runner job，没有向 OPPO、华为或第二台设备下发。
+- Figma 正确解析 `4 页 / 4 图 / 忽略 0`。4 张图分 4 批真实送入 `qwen3.6-plus`，批次均 completed、`fallback=false / finishReason=stop / hardGate=false`；设计资料继续作为完整送 AI 判断的软参考。
+- AI 规划 8 条业务分支。初始 executable portfolio 覆盖 `8/12`，缺 `REQ-001-CHECK-04` 文档可达、`REQ-002-CHECK-04` 照片可达、`REQ-003-CHECK-02` 扫描同级、`REQ-003-CHECK-04` 扫描可达。
+- 最终收敛聚焦 `TC-002 / TC-003 / TC-007 / MC-002 / MC-004`。提案新增了文档可达和扫描同级/可达，但改写 `TC-002` 后丢失照片展示/同级。单调门禁正确拒绝整份提案并保留收敛前组合，最终仍缺 4 个验收维度。
+
+深层根因与通用修复：
+
+- `acceptance_repair_retry` 对 `TC-002` 的局部语义反馈显示 `remaining_feedback=[]`，但后续可信基线、动态数据、视觉/路径守卫仍可能把该 repairable executable 的改写降级。旧逻辑对 repairable 候选会完全接受模型分类；一旦改写被守卫降级，原本已通过审计的 executable 也从组合中消失，导致提案产生回归验收维度并被整体回滚。
+- 新逻辑只在 `coverage_convergence` 中保护“已有 executable 且属于 repairableExecutableCandidateIds”的候选：如果 AI 改写在后续守卫中变为 manual/needs_review，则恢复该候选收敛前已通过门禁的 executable 短链路，并记录 `convergence_repair_restore_count`。AI 的坏改写不会覆盖原路径，新增验收仍必须由其它候选或后续收敛真正证明。
+- 这不放宽覆盖门禁、scorer、dry-run、Runner、坐标、账号/授权/选文件或深层外部动作限制；如果恢复原 executable 后仍缺新增验收，最终门禁继续失败，但不会因为一个候选的坏改写丢掉其它候选可用增量。
+- 新增回归覆盖两种线上形态：AI 把显式可达性拆到通用风险流时，收敛仍聚焦各主分支 executable；repairable executable 的改写若含未被当前需求支持的动态文件名并被守卫降级，平台恢复原 executable 且不泄漏该动态文字。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+```
+
+本轮修复尚未提交/部署。提交、推送、部署后必须再次用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，监督生成、首批、remaining、可能的 AI 修复和所有 Runner 报告到真实终态。
+
 ### 2026-07-20 真实回归：有界落地尾链必须从 verified baseline 恢复前置，并规范化当前分支条件尾链
 
 用户确认 `ebbf857` 部署后，以同一需求和 Figma 发起完整 Agent `agent-1784540218073-9ff88889`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

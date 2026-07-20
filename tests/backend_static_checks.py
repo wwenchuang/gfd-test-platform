@@ -4193,6 +4193,202 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         == ["REQ-003-CHECK-02"],
         "Convergence must offer the AI the executable from each missing REQ branch plus only same-branch manual alternatives",
     )
+    split_reachability_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-001 文档打印：百度网盘入口展示、同级、文案及可达页面",
+                "REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面",
+            ],
+            "requirement_acceptance_checks": [
+                {
+                    "id": "REQ-001-CHECK-04",
+                    "requirementId": "REQ-001",
+                    "branch": "文档打印",
+                    "kind": "reachability",
+                    "text": "点击百度网盘入口并校验目标页面稳定可达",
+                },
+                {
+                    "id": "REQ-002-CHECK-04",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "reachability",
+                    "text": "点击百度网盘入口并校验目标页面稳定可达",
+                },
+            ],
+        },
+        "cases": [
+            {
+                "case_id": "TC-DOC",
+                "title": "文档打印百度网盘入口展示与文案",
+                "coverage": "REQ-001 文档打印：百度网盘入口展示、同级、文案及可达页面",
+                "requirementRefs": ["REQ-001 文档打印：百度网盘入口展示、同级、文案及可达页面"],
+                "steps": ["等待首页", "点击文档打印", "等待百度网盘入口可见"],
+                "assertions": ["文档打印页百度网盘入口可见，文案显示为百度网盘"],
+                "executionLevel": "executable",
+                "ai_case_plan": {
+                    "baselineId": "base-doc",
+                    "baselineGrounded": True,
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击文档打印", "等待百度网盘入口可见"],
+                    "assertionTarget": "文档打印页百度网盘入口可见，文案显示为百度网盘",
+                    "batch": "smoke",
+                },
+            },
+            {
+                "case_id": "TC-PHOTO",
+                "title": "照片打印百度网盘入口展示与文案",
+                "coverage": "REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面",
+                "requirementRefs": ["REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面"],
+                "steps": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                "assertions": ["照片打印页百度网盘入口可见，文案显示为百度网盘"],
+                "executionLevel": "executable",
+                "ai_case_plan": {
+                    "baselineId": "base-photo",
+                    "baselineGrounded": True,
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                    "assertionTarget": "照片打印页百度网盘入口可见，文案显示为百度网盘",
+                    "batch": "smoke",
+                },
+            },
+            {
+                "case_id": "TC-GENERIC-AUTH",
+                "title": "首次点击百度网盘入口触发授权流程",
+                "coverage": "REQ-001/002 点击百度网盘入口并校验目标页面稳定可达",
+                "requirementRefs": [
+                    "REQ-001 文档打印：百度网盘入口展示、同级、文案及可达页面",
+                    "REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面",
+                ],
+                "steps": ["任意打印子页面", "点击百度网盘", "检测授权窗"],
+                "assertions": ["若未绑定账号，应弹出授权窗"],
+                "executionLevel": "needs_review",
+            },
+        ],
+        "manual_cases": [],
+    }
+    split_reachability_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        split_reachability_payload,
+        {"min_automation_cases": 2},
+    )
+    split_automatic_records = [
+        {
+            "raw": item,
+            "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+            "origin": "automatic",
+        }
+        for index, item in enumerate(split_reachability_payload["cases"])
+    ]
+    split_auto, _, split_context, split_focus = ai_skill_service._focus_executable_convergence_candidates(
+        split_reachability_payload,
+        split_automatic_records,
+        [],
+        {"pass": "coverage_convergence", "portfolioAudit": split_reachability_audit},
+    )
+    split_by_id = {item.get("case_id"): item for item in split_auto}
+    require(
+        set(split_focus.get("repairableExecutableCandidateIds") or []) == {"TC-DOC", "TC-PHOTO"}
+        and set(split_by_id) == {"TC-DOC", "TC-PHOTO", "TC-GENERIC-AUTH"}
+        and [item.get("id") for item in split_by_id["TC-DOC"].get("repairAcceptanceChecks") or []]
+        == ["REQ-001-CHECK-04"]
+        and [item.get("id") for item in split_by_id["TC-PHOTO"].get("repairAcceptanceChecks") or []]
+        == ["REQ-002-CHECK-04"]
+        and split_context.get("focus", {}).get("policy"),
+        "When AI splits explicit reachability into a generic risk flow, convergence must still repair each main branch executable instead of preserving it",
+    )
+    guarded_repair_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面",
+            ],
+            "requirement_acceptance_checks": [
+                {
+                    "id": "REQ-002-CHECK-01",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "visibility",
+                    "text": "校验百度网盘入口可见",
+                },
+                {
+                    "id": "REQ-002-CHECK-04",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "reachability",
+                    "text": "点击百度网盘入口并校验目标页面稳定可达",
+                },
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-PHOTO-GUARDED",
+            "title": "照片打印百度网盘入口展示",
+            "coverage": "REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面",
+            "requirementRefs": ["REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面"],
+            "steps": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+            "assertions": ["照片打印页百度网盘入口可见"],
+            "executionLevel": "executable",
+            "ai_case_plan": {
+                "baselineId": "base-photo",
+                "baselineGrounded": True,
+                "baselineVerified": True,
+                "precondition": "App 首页",
+                "flow": ["等待首页", "点击照片打印", "等待百度网盘入口可见"],
+                "assertionTarget": "照片打印页百度网盘入口可见",
+                "batch": "smoke",
+                "pathPlanApplied": True,
+            },
+        }],
+        "manual_cases": [],
+    }
+    guarded_repair_plan = {
+        "authoritative": True,
+        "cases": [{
+            "caseId": "TC-PHOTO-GUARDED",
+            "baselineId": "base-photo",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": [
+                "等待首页",
+                "点击照片打印",
+                "点击百度网盘入口",
+                "等待「abc123.pdf」文件可见",
+            ],
+            "assertionTarget": "「abc123.pdf」文件可见",
+            "requirementRefs": ["REQ-002 照片打印：百度网盘入口展示、同级、文案及可达页面"],
+            "batch": "smoke",
+        }],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+        "selectedBaselines": [{
+            "id": "base-photo",
+            "title": "照片打印成功基线",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+        }],
+        "allowedBaselineIds": ["base-photo"],
+        "verifiedBaselineIds": ["base-photo"],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["TC-PHOTO-GUARDED"],
+        "convergenceFocus": {
+            "repairableExecutableCandidateIds": ["TC-PHOTO-GUARDED"],
+            "focusedCandidateIds": ["TC-PHOTO-GUARDED"],
+        },
+        "preserveContractByCaseId": {},
+        "scopePlan": {"smokeCount": 1, "targetCaseCount": 1},
+    }
+    guarded_repair_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        guarded_repair_payload,
+        guarded_repair_plan,
+    )
+    guarded_repair_case = next(
+        item for item in guarded_repair_applied.get("cases") or []
+        if item.get("case_id") == "TC-PHOTO-GUARDED"
+    )
+    require(
+        guarded_repair_case.get("executionLevel") == "executable"
+        and "abc123.pdf" not in json.dumps(guarded_repair_case, ensure_ascii=False)
+        and (guarded_repair_applied.get("review", {}).get("executable_yaml_plan", {}) or {}).get("convergence_repair_restore_count") == 1,
+        "A guarded rewrite of an existing repairable executable must restore the prior executable path instead of regressing covered acceptance",
+    )
     semantic_calls = []
     old_run_ai_skill = ai_skill_service.run_ai_skill
     try:

@@ -7990,6 +7990,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     preserve_contract_applied_count = 0
     preserve_contract_guard_count = 0
     manual_reclassification_canonicalized_count = 0
+    convergence_repair_restore_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
@@ -8376,6 +8377,43 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 }
                 branch_scope_guard_count += 1
 
+        if (
+            convergence_pass
+            and current_level == "executable"
+            and case_id in repairable_executable_ids
+            and level != "executable"
+        ):
+            level = "executable"
+            item = _existing_executable_plan_item(case, case_id, title)
+            item["batch"] = "remaining" if smoke_used >= smoke_limit else item.get("batch")
+            baseline_id = str(item.get("baselineId") or "").strip()
+            baseline_grounded = bool(
+                item.get("baselineGrounded") is True
+                and baseline_id
+                and baseline_id in allowed_baseline_ids
+            )
+            planned_flow = normalize_text_list(item.get("flow"))[:8]
+            precondition = str(item.get("precondition") or "").strip()
+            assertion_target = str(item.get("assertionTarget") or "").strip()
+            requirement_refs, requirement_refs_guarded = _ground_planner_requirement_refs(
+                case,
+                item,
+                plan.get("requirementPoints") or (normalized.get("analysis") or {}).get("requirement_points"),
+            )
+            path_plan_applied = bool(
+                baseline_grounded
+                and len(planned_flow) >= 2
+                and not requirement_refs_guarded
+            )
+            current_visual_evidence = {}
+            trusted_baseline_navigation_adapted = False
+            visual_leaf_adapted = False
+            data_observation_grounded = False
+            unsupported_flow_literals = []
+            unsupported_assertion_literals = []
+            final_preserve_trace = {}
+            convergence_repair_restore_count += 1
+
         applied_counts[level] += 1
         reason = str(
             item.get("reason") or item.get("executableReason") or item.get("reviewReason")
@@ -8682,6 +8720,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "bounded_convergence_redundant_count": bounded_convergence_redundant_count,
         "convergence_demotion_blocked_count": convergence_demotion_blocked_count,
         "convergence_rewrite_blocked_count": convergence_rewrite_blocked_count,
+        "convergence_repair_restore_count": convergence_repair_restore_count,
         "bounded_requirement_scope_count": bounded_requirement_scope_count,
         "redundant_unmentioned_manualized_count": redundant_unmentioned_manualized_count,
         "trusted_baseline_navigation_adapted_count": trusted_baseline_navigation_adapted_count,
