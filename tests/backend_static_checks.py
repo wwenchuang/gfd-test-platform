@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import base64
+import copy
 import json
 import os
 import re
@@ -5482,6 +5483,20 @@ def check_agent_failure_review_and_repair_guard():
         and "禁止坐标或 ADB swipe" in clipped_scan_issue.get("suggested_action", ""),
         "A report keyframe describing a clipped sibling row must allow one visible-text aiScroll repair even when the original YAML omitted scrolling",
     )
+    clipped_scan_english_issue = ai_skill_service.detect_horizontal_scroll_script_issue(
+        clipped_scan_yaml,
+        (
+            'I see "Local Import", "Album Import", and "WeChat Import". '
+            'To the right of "WeChat Import", there is a partially visible icon that resembles the '
+            'Baidu Netdisk logo, but the text "Baidu Netdisk" is cut off and not visible.'
+        ),
+    ) or {}
+    require(
+        clipped_scan_english_issue.get("category") == "script_issue"
+        and clipped_scan_english_issue.get("can_auto_repair") is True
+        and "aiScroll" in clipped_scan_english_issue.get("suggested_action", ""),
+        "English visual-model evidence for a clipped sibling row must enter the same bounded horizontal repair path",
+    )
     patch_source = """android:
   tasks:
     - name: 横向来源入口检查
@@ -6087,6 +6102,66 @@ def check_agent_failure_review_and_repair_guard():
         and any(item.get("code") == "source_backed_navigation_target_removed" for item in drift_gate.get("issues") or [])
         and grounded_source_gate.get("ok") is True,
         "Repair candidates must enter the adopted visual leaf before assertions and must not replace it with a baseline sample value",
+    )
+    runtime_leaf_original = source_backed_fixed.replace("5寸照片", "一寸照")
+    runtime_leaf_fixed = source_backed_fixed
+    runtime_leaf_baseline = {
+        **branch_baseline,
+        "id": "base-photo-runtime-leaf",
+        "businessPath": "首页 -> 照片打印 -> 6寸照片 -> 相册导入",
+        "content": "aiTap: 点击「6寸照片」",
+    }
+    runtime_source_evidence = copy.deepcopy(source_backed_evidence)
+    runtime_source_evidence["visualCurrentPageEvidence"].append({
+        "caseId": "TC-003",
+        "requirementId": "REQ-002",
+        "branch": "照片打印",
+        "pageTitle": "一寸照",
+        "parentPath": ["首页", "照片打印"],
+        "navigationLeaf": "一寸照",
+        "targetText": "百度网盘",
+        "sameBranch": True,
+        "confidence": 0.95,
+        "source": "figma_current_frame",
+    })
+    runtime_leaf_response = {
+        "fixedYaml": runtime_leaf_fixed,
+        "analysis": "真机尺寸弹窗明确没有一寸照；按当前分支 Figma 与成功基线改为可见的 5寸照片",
+        "changes": ["将失败步骤的一寸照替换为 5寸照片，保持百度网盘断言不变"],
+        "usedBaselineIds": ["base-photo-runtime-leaf"],
+    }
+    runtime_leaf_rejected_without_failure = agent_service._agent_repair_candidate_gate(
+        runtime_leaf_original,
+        runtime_leaf_response,
+        [runtime_leaf_baseline],
+        platform="android",
+        source_evidence=runtime_source_evidence,
+        runtime_evidence={"reportKeyframes": ["photo-size-dialog.jpg"]},
+    )
+    runtime_leaf_corrected = agent_service._agent_repair_candidate_gate(
+        runtime_leaf_original,
+        runtime_leaf_response,
+        [runtime_leaf_baseline],
+        platform="android",
+        source_evidence=runtime_source_evidence,
+        runtime_evidence={
+            "summaryText": "failed to locate element: 我看到了照片尺寸选择弹窗，但其中并没有「一寸照」这个选项。",
+            "reportKeyframes": ["photo-size-dialog.jpg"],
+        },
+    )
+    require(
+        any(
+            item.get("code") == "source_backed_navigation_target_removed"
+            for item in runtime_leaf_rejected_without_failure.get("issues") or []
+        ),
+        "A sibling source leaf must remain protected when runtime evidence does not disprove the adopted leaf",
+    )
+    require(
+        runtime_leaf_corrected.get("ok") is True
+        and runtime_leaf_corrected.get("assertionContractPreserved") is True
+        and (runtime_leaf_corrected.get("sourceLeafRuntimeOverrides") or [{}])[0].get("fromLeaf") == "一寸照"
+        and (runtime_leaf_corrected.get("sourceLeafRuntimeOverrides") or [{}])[0].get("toLeaf") == "5寸照片",
+        "A keyframe-backed missing runtime leaf may be corrected only by a cited same-branch baseline and alternate current Figma leaf",
     )
 
     old_task_dir = agent_service.TASK_DIR

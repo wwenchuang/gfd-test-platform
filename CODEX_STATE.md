@@ -3532,3 +3532,48 @@ git diff --check
 
 - 提交、推送并部署本轮修复。
 - 部署后使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询到 Agent、首批 smoke、remaining 和可能的 AI 修复全部终态，再人工复核最终 YAML、Runner 报告、截图和失败分类。
+
+### 2026-07-20 部署后真实回归：真机证据纠正软视觉叶子
+
+部署 `fe44f14` 后真实验证：
+
+- 8091 / 8088、AI Gateway、Sonic 健康；text / VL 均为 `qwen3.6-plus`。`win-runner-01` 在线并上报 `qwen3.6` 模型族，固定 OPPO `ecbfd645` ready；全部 dry-run、smoke job 都是 `deviceStrategy=fixed`，没有向华为或第二台设备下发。
+- Agent：`agent-1784526099999-fca69d80`；终态 `FAILED`。本轮已越过此前 `GENERATE_YAML` 阻断：生成 6 条用例 / 12 个场景 / 6 个 executable YAML，6 / 6 服务端校验通过，3 / 3 Runner dry-run 通过。
+- Figma 正确解析 4 页 / 4 图，并按 4 个单图批次全部送入 `qwen3.6-plus`；4 / 4 完成、`fallbackUsed=false`、`hardGate=false`。视觉资料继续是软参考，没有修改现有 Figma 解析。
+- 首批 smoke 在固定 OPPO 串行执行到终态：文档打印 1 条真实通过；扫描复印和照片打印 2 条失败。报告汇总正确保留 `passed=1 / broken=2 / productFailed=0`，没有把已通过冒烟覆盖成全失败。因首批通过率未达门槛，3 条 remaining 被如实延后，没有创建第二台设备任务。
+
+失败根因：
+
+- 照片用例在尺寸弹窗点击“一寸照”，Runner 明确报告当前弹窗没有该选项。失败修复 AI 使用 3 张报告关键帧、Figma Node `1:70` 的“5寸照片”页和当前照片分支成功基线，正确提出将失败步骤改为“5寸照片”，保留“百度网盘”断言；候选 YAML 仍为 executable / scorer 100。
+- 旧 `source_backed_navigation_target_removed` 门禁把 Figma 软参考叶子视为永不可替换，即使本次真机已明确否定它，也错误拦截上述 AI 修复。这里不是 scorer 或 Runner 脚本失败，而是生成阶段软证据与执行阶段新证据的优先级缺少受限纠正路径。
+- 扫描报告的视觉模型英文结论明确写出右侧同级导入 icon `partially visible`、文案 `cut off and not visible`。横向裁切规则只覆盖中文表达，未进入有界 `aiScroll` 修复，随后 AI 复检中的引用被来源校验降级为 `review_source_mismatch`，导致没有提取关键帧和修复 YAML。
+
+本轮通用修复：
+
+- Figma 仍是生成阶段软参考，不能仅凭历史基线替换其尺寸 / 模式 / 产品叶子。只有本次 Runner 错误明确否定旧叶子、存在报告关键帧、同 case / REQ / 父路径的当前 Figma 证据提供替代叶子、AI 说明同时引用新旧叶子、已引用当前业务分支基线证明父路径，且原始精确文案断言完整保留时，才允许一次真机证据纠正。
+- 成功基线只证明父路径结构，不要求样例值与替代值相同；例如成功 6 寸照片基线可证明照片打印规格路径，具体 5 寸值仍必须来自当前 Figma 和本次失败帧。这样既能复用基线，也不会把单一需求值硬编码进门禁。
+- 修复产物新增 `sourceLeafRuntimeOverrides` 审计，记录 from / to leaf、case / requirement、Figma 来源、引用基线和关键帧数量。缺任一证据时，原 `source_backed_navigation_target_removed`、断言契约、分支基线、YAML 可执行性和 scorer 门禁继续拒绝。
+- 横向裁切识别补齐视觉模型常见英文表达（`partially visible / cut off / not visible / to the right` 等），与既有中文证据走同一条最多一次、可见文字区域描述、禁止坐标和 ADB swipe 的 AI `aiScroll` 修复路径。
+- 没有新增模型轮次、执行模式或设备；没有修改 Figma 解析、`router.py`、历史 YAML、`sonic_service.py`、`yaml_executable_scorer.py` 或 Windows Runner 脚本。
+
+线上失败数据离线重放：
+
+- 使用生产照片原始 YAML、生产 AI 已生成但被拒的 5 寸候选、生产 4 批视觉证据、生产 Runner 错误和 3 张关键帧，配合本地真实召回的 6 寸照片分支基线重放：候选 `ok=true`、0 issue、断言契约保留、execution level 为 executable；审计记录 `一寸照 -> 5寸照片`、Figma 来源和 3 张关键帧。
+- 使用生产扫描原始 YAML 和完整英文 Runner 结果重放：稳定识别为 `script_issue / can_auto_repair=true`，建议在具体同级导入区域执行官方 `aiScroll`；来源清洗后仍保持该分类，不再误降级为 `review_source_mismatch`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+- 新回归覆盖 Runner 英文横向裁切证据，以及“有关键帧但没有真机否定”仍禁止替换、“真机否定 + 同 case Figma 替代叶子 + 当前分支父路径基线 + 断言不变”才允许纠正。
+
+待完成：
+
+- 提交、推送并部署本轮修复。
+- 部署后继续使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询首批 smoke、AI 修复重跑、修复恢复后的 remaining 扩展及 Agent 到终态，并人工复核 6 条 YAML、所有真实报告、截图和失败分类。

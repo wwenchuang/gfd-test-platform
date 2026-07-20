@@ -924,19 +924,31 @@ def detect_horizontal_scroll_script_issue(yaml_text, log_text):
     text = str(yaml_text or "")
     log = str(log_text or "")
     combined = "\n".join([text, log])
+    lower_log = log.lower()
+    lower_combined = combined.lower()
     has_horizontal_scroll = (
         "aiScroll" in text
         and any(word in text for word in ("横向", "icon", "图标", "我的学习", "功能", "列表"))
     )
-    missing_target = any(word in log for word in (
+    missing_target = any(word in lower_log for word in (
         "未出现", "没有出现", "没有发现", "找不到", "未找到", "不可见",
-        "failed to locate", "not found", "看不到",
+        "failed to locate", "not found", "not visible", "not fully visible",
+        "not clearly present", "cannot see", "can't see", "看不到",
     ))
-    target_is_icon = any(word in combined for word in ("试卷夹", "入口", "icon", "图标"))
+    target_is_icon = any(word in lower_combined for word in ("试卷夹", "入口", "icon", "图标"))
     clipped_row_evidence = bool(
-        any(word in log for word in ("右侧", "左侧", "屏幕边缘", "可见区域", "当前界面区域"))
-        and any(word in log for word in ("被截断", "截断", "只显示", "仅显示", "露出一部分", "部分可见"))
-        and any(word in combined for word in ("入口", "icon", "图标", "列表", "同级", "导入"))
+        any(word in lower_log for word in (
+            "右侧", "左侧", "屏幕边缘", "可见区域", "当前界面区域",
+            "to the right", "to the left", "right side", "left side", "screen edge",
+            "visible area", "viewport",
+        ))
+        and any(word in lower_log for word in (
+            "被截断", "截断", "只显示", "仅显示", "露出一部分", "部分可见",
+            "partially visible", "partly visible", "cut off", "clipped", "only partially",
+        ))
+        and any(word in lower_combined for word in (
+            "入口", "icon", "图标", "列表", "同级", "导入", "entry", "list", "import",
+        ))
     )
     if missing_target and target_is_icon and (has_horizontal_scroll or clipped_row_evidence):
         missing_scroll = clipped_row_evidence and not has_horizontal_scroll

@@ -12230,7 +12230,7 @@ def _agent_source_evidence(run):
         "policy": [
             "需求文本定义验证目标；Figma 只补充单个设计帧中的页面状态、层级和可见文字。",
             "Frame 名可能是内部旧命名，状态/变体和可见文字优先；一帧能力不能推广到相邻页面。",
-            "成功基线只提供父页面路径结构；当前视觉证据已采用的尺寸、模式或产品叶子不能被基线样例值替换。",
+            "成功基线只提供父页面路径结构；不能仅凭基线样例替换当前视觉叶子。若本次真机关键帧明确否定该软视觉叶子，只能采用同 case 当前 Figma 证据支持的替代叶子，并保留原断言。",
             "失败关键帧证明实际到达状态；若只到父页面，应先修正导航，不能直接判产品缺陷。",
             "画布设备形态不是第二台真实设备要求；执行设备仍由 executionConstraint 决定。",
         ],
@@ -12605,7 +12605,148 @@ def _agent_repair_flow_records(yaml_text):
     return result
 
 
-def _agent_repair_source_navigation_issues(original_yaml, fixed_yaml, source_evidence):
+def _agent_repair_runtime_rejects_leaf(leaf, runtime_evidence):
+    """Return true only when this run explicitly reports that a navigation leaf is absent."""
+    leaf = str(leaf or "").strip()
+    evidence_text = _agent_repair_runtime_evidence_text(runtime_evidence)
+    if not leaf or not evidence_text:
+        return False
+    escaped = re.escape(leaf)
+    absence_patterns = (
+        rf"(?:没有|并没有|不存在|未找到|找不到|未出现|未显示)[^，。；;\n]{{0,48}}{escaped}",
+        rf"{escaped}[^，。；;\n]{{0,48}}(?:不存在|未找到|找不到|未出现|未显示|没有这个选项|不可见)",
+        rf"failed\s+to\s+locate[^\n]{{0,120}}{escaped}",
+        rf"(?:no|without|does\s+not\s+(?:contain|include|show)|not\s+found)[^\n]{{0,80}}{escaped}",
+        rf"{escaped}[^\n]{{0,80}}(?:is\s+not\s+(?:available|present|visible)|option\s+is\s+missing)",
+    )
+    return any(re.search(pattern, evidence_text, re.I) for pattern in absence_patterns)
+
+
+def _agent_repair_runtime_source_leaf_override(
+    source_item,
+    visual_items,
+    fixed_task,
+    runtime_evidence,
+    baseline_examples,
+    used_baseline_ids,
+    repair_explanation,
+):
+    """Allow runtime evidence to correct one disproved soft-reference Figma leaf."""
+    runtime_evidence = runtime_evidence if isinstance(runtime_evidence, dict) else {}
+    report_keyframes = runtime_evidence.get("reportKeyframes") or []
+    old_leaf = str((source_item or {}).get("navigationLeaf") or "").strip()
+    if not report_keyframes or not _agent_repair_runtime_rejects_leaf(old_leaf, runtime_evidence):
+        return {}
+
+    old_case_id = str((source_item or {}).get("caseId") or "").strip()
+    old_requirement_id = str((source_item or {}).get("requirementId") or "").strip()
+    old_target_key = re.sub(
+        r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str((source_item or {}).get("targetText") or "")
+    ).lower()
+    old_parent_path = [
+        re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "")).lower()
+        for value in ((source_item or {}).get("parentPath") or [])
+        if str(value or "").strip()
+    ]
+    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
+    explanation_key = re.sub(
+        r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(repair_explanation or "")
+    ).lower()
+    old_leaf_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", old_leaf).lower()
+    used_ids = {str(item or "").strip() for item in (used_baseline_ids or []) if str(item or "").strip()}
+
+    for alternative in visual_items:
+        if not isinstance(alternative, dict) or alternative is source_item:
+            continue
+        new_leaf = str(alternative.get("navigationLeaf") or "").strip()
+        new_leaf_key = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", new_leaf).lower()
+        if not new_leaf_key or new_leaf_key == old_leaf_key:
+            continue
+        alternative_case_id = str(alternative.get("caseId") or "").strip()
+        alternative_requirement_id = str(alternative.get("requirementId") or "").strip()
+        if old_case_id and alternative_case_id and old_case_id != alternative_case_id:
+            continue
+        if old_requirement_id and alternative_requirement_id and old_requirement_id != alternative_requirement_id:
+            continue
+        alternative_target_key = re.sub(
+            r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(alternative.get("targetText") or "")
+        ).lower()
+        if old_target_key and alternative_target_key and old_target_key != alternative_target_key:
+            continue
+        alternative_parent_path = [
+            re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "")).lower()
+            for value in (alternative.get("parentPath") or [])
+            if str(value or "").strip()
+        ]
+        if old_parent_path and alternative_parent_path and old_parent_path != alternative_parent_path:
+            continue
+        if old_leaf_key not in explanation_key or new_leaf_key not in explanation_key:
+            continue
+
+        replacement_rows = [
+            row for row in fixed_task
+            if row.get("action") in navigation_actions and new_leaf_key in row.get("compact", "")
+        ]
+        target_rows = [
+            row for row in fixed_task
+            if old_target_key and old_target_key in row.get("compact", "")
+        ]
+        if not replacement_rows or not target_rows:
+            continue
+        if min(row.get("index", 0) for row in replacement_rows) > min(
+            row.get("index", 0) for row in target_rows
+        ):
+            continue
+
+        supporting_baseline_ids = []
+        parent_support_keys = [
+            value for value in alternative_parent_path
+            if value not in {"首页", "app首页", "应用首页", "home"}
+        ]
+        for baseline in baseline_examples or []:
+            if not isinstance(baseline, dict):
+                continue
+            baseline_id = str(baseline.get("id") or "").strip()
+            if (
+                not baseline_id
+                or baseline_id not in used_ids
+                or "business_branch" not in (baseline.get("retrievalRoles") or [])
+                or not (baseline.get("retrievalBranchIds") or [])
+            ):
+                continue
+            baseline_key = re.sub(
+                r"[^0-9a-zA-Z\u4e00-\u9fff]+",
+                "",
+                json.dumps(baseline, ensure_ascii=False),
+            ).lower()
+            if parent_support_keys and any(value in baseline_key for value in parent_support_keys):
+                supporting_baseline_ids.append(baseline_id)
+        if not supporting_baseline_ids:
+            continue
+        return {
+            "fromLeaf": old_leaf,
+            "toLeaf": new_leaf,
+            "caseId": old_case_id or alternative_case_id,
+            "requirementId": old_requirement_id or alternative_requirement_id,
+            "targetText": str(alternative.get("targetText") or source_item.get("targetText") or ""),
+            "visualSource": str(alternative.get("source") or "visual_grounder"),
+            "baselineIds": supporting_baseline_ids,
+            "reportKeyframeCount": len(report_keyframes),
+            "rule": "真实失败帧否定软视觉叶子后，仅允许同 case 当前 Figma 证据与已引用分支基线共同支持的替代叶子。",
+        }
+    return {}
+
+
+def _agent_repair_source_navigation_issues(
+    original_yaml,
+    fixed_yaml,
+    source_evidence,
+    runtime_evidence=None,
+    baseline_examples=None,
+    used_baseline_ids=None,
+    repair_explanation="",
+    accepted_overrides=None,
+):
     """Prevent a repair baseline from replacing an already adopted source leaf."""
     source_evidence = source_evidence if isinstance(source_evidence, dict) else {}
     visual_items = []
@@ -12657,6 +12798,19 @@ def _agent_repair_source_navigation_issues(original_yaml, fixed_yaml, source_evi
                 if row.get("action") in navigation_actions and leaf_key in row.get("compact", "")
             ]
             if not fixed_leaf:
+                runtime_override = _agent_repair_runtime_source_leaf_override(
+                    item,
+                    visual_items,
+                    fixed_task,
+                    runtime_evidence,
+                    baseline_examples,
+                    used_baseline_ids,
+                    repair_explanation,
+                )
+                if runtime_override:
+                    if isinstance(accepted_overrides, list) and runtime_override not in accepted_overrides:
+                        accepted_overrides.append(runtime_override)
+                    continue
                 code = "source_backed_navigation_target_removed"
                 if code not in seen:
                     seen.add(code)
@@ -12844,6 +12998,7 @@ def _agent_repair_candidate_gate(
             validation["gatewayRejected"] = True
 
     issues = []
+    source_leaf_runtime_overrides = []
 
     def add_issue(code, message):
         if code not in {item.get("code") for item in issues}:
@@ -12891,6 +13046,11 @@ def _agent_repair_candidate_gate(
             original_yaml,
             fixed_yaml,
             source_evidence,
+            runtime_evidence=runtime_evidence,
+            baseline_examples=baseline_examples,
+            used_baseline_ids=used_baseline_ids,
+            repair_explanation=change_text,
+            accepted_overrides=source_leaf_runtime_overrides,
         ):
             add_issue(source_issue.get("code"), source_issue.get("message"))
     if fixed_yaml and gateway_validation_failed:
@@ -12928,6 +13088,7 @@ def _agent_repair_candidate_gate(
         "navigationClaimed": navigation_claimed,
         "navigationChanged": navigation_changed,
         "transientOverlayChange": transient_overlay_change,
+        "sourceLeafRuntimeOverrides": source_leaf_runtime_overrides,
         "baselineCitationExempt": bool(transient_overlay_change),
         "originalAssertionContract": original_assertion_contract,
         "fixedAssertionContract": fixed_assertion_contract,
@@ -13172,6 +13333,7 @@ def _agent_repair_patch_error_gate(code, message, response=None):
         ),
         "navigationChanged": False,
         "transientOverlayChange": {},
+        "sourceLeafRuntimeOverrides": [],
         "baselineCitationExempt": False,
         "originalAssertionContract": [],
         "fixedAssertionContract": [],
@@ -13254,7 +13416,7 @@ def _agent_repair_patch_skill_candidate(
                 "avoid": [
                     "不得改写原始精确文案断言",
                     "不得新增坐标、ADB swipe、XPath 或 selector",
-                    "不得把当前业务分支替换为基线中的深层叶子",
+                    "不得仅凭历史基线把当前业务分支替换为样例中的深层叶子",
                 ],
             },
         },
@@ -13273,6 +13435,14 @@ def _agent_repair_patch_skill_candidate(
             "preserveExactVisibleValueAssertions": True,
             "requireBaselineCitationForNavigationChange": True,
             "allowKeyframeBackedTransientOverlayWithoutBaselineCitation": True,
+            "allowRuntimeDisprovedSoftLeafCorrection": True,
+            "runtimeLeafCorrectionRequires": [
+                "本次错误明确说明旧叶子不存在",
+                "报告关键帧",
+                "同 case 当前 Figma 替代叶子",
+                "当前业务分支基线父路径",
+                "原始精确文案断言不变",
+            ],
             "preferEarlierRuntimeTargetRegion": True,
         },
         "executionConstraint": {
@@ -13681,9 +13851,11 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                 item_summary["navigationChanged"] = bool(candidate_gate.get("navigationChanged"))
                 item_summary["navigationClaimed"] = bool(candidate_gate.get("navigationClaimed"))
                 item_summary["transientOverlayChange"] = candidate_gate.get("transientOverlayChange") or {}
+                item_summary["sourceLeafRuntimeOverrides"] = candidate_gate.get("sourceLeafRuntimeOverrides") or []
                 item_summary["baselineCitationExempt"] = bool(candidate_gate.get("baselineCitationExempt"))
                 item_summary["assertionContractPreserved"] = bool(candidate_gate.get("assertionContractPreserved"))
                 draft["transientOverlayChange"] = item_summary["transientOverlayChange"]
+                draft["sourceLeafRuntimeOverrides"] = item_summary["sourceLeafRuntimeOverrides"]
                 draft["baselineCitationExempt"] = item_summary["baselineCitationExempt"]
                 for score_key in ("originalExecutableScore", "fixedExecutableScore"):
                     score_value = candidate_gate.get(score_key)
