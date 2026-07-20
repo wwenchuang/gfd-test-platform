@@ -5477,7 +5477,49 @@ def _bounded_convergence_evidence(
             source_assertion_candidates.extend(normalize_text_list(value))
         preserved_assertions = []
         preserved_check_indexes = set()
-        for assertion in dict.fromkeys(source_assertion_candidates):
+        for raw_assertion in dict.fromkeys(source_assertion_candidates):
+            assertion = str(raw_assertion or "").strip()
+            manual_alternative = re.search(
+                r"(?:未实现|不存在|不可见|未出现|找不到).{0,80}"
+                r"(?:记录.{0,24}(?:缺陷|结果|现象)|上报缺陷|转(?:为)?人工|"
+                r"人工(?:确认|检查)|待确认)",
+                assertion,
+                re.I,
+            )
+            if manual_alternative:
+                product_clauses = []
+                for raw_clause in re.split(r"[；;。]", assertion):
+                    clause = raw_clause.strip()
+                    if not clause or re.search(
+                        r"(?:未实现|不存在|不可见|未出现|找不到).{0,80}"
+                        r"(?:记录.{0,24}(?:缺陷|结果|现象)|上报缺陷|转(?:为)?人工|"
+                        r"人工(?:确认|检查)|待确认)",
+                        clause,
+                        re.I,
+                    ):
+                        continue
+                    positive_condition = re.match(
+                        r"^(?:若|如果|如).{0,80}(?:已实现|存在|可见).{0,20}"
+                        r"(?:则|，|,)\s*(.+)$",
+                        clause,
+                        re.I,
+                    )
+                    if positive_condition:
+                        clause = str(positive_condition.group(1) or "").strip()
+                        if re.search(
+                            r"(?:跳转|可达|落地|授权|登录页|文件(?:列表|选择)|"
+                            r"webview|h5|白屏|崩溃|闪退)",
+                            clause,
+                            re.I,
+                        ):
+                            continue
+                    elif re.match(r"^(?:若|如果|如)", clause):
+                        continue
+                    if clause:
+                        product_clauses.append(clause)
+                assertion = "；".join(product_clauses)
+                if not assertion:
+                    continue
             if (
                 not current_leaf_evidence
                 and re.search(r"(?:figma|设计稿|设计图|视觉稿|原型|截图)", assertion, re.I)
@@ -5633,7 +5675,14 @@ def _bounded_convergence_evidence(
             str(((item or {}).get("compact") or {}).get("currentLevel") or "").strip().lower() == "executable",
             len(normalize_text_list(((item or {}).get("raw") or {}).get("steps"))),
         ))
-        for donor_record in donor_records:
+        ordered_donor_records = sorted(donor_records, key=lambda item: (
+            requirement_id not in _acceptance_requirement_ids([
+                ((item or {}).get("raw") or {}).get("coverage"),
+                ((item or {}).get("raw") or {}).get("requirementRefs"),
+                ((item or {}).get("raw") or {}).get("requirement_refs"),
+            ]),
+        ))
+        for donor_record in ordered_donor_records:
             raw_case = (donor_record or {}).get("raw") or {}
             donor_case_id = str(((donor_record or {}).get("compact") or {}).get("case_id") or "").strip()
             current_leaf_adapted = False
@@ -5643,16 +5692,46 @@ def _bounded_convergence_evidence(
             requirement_refs = normalize_text_list(
                 raw_case.get("requirementRefs") or raw_case.get("requirement_refs") or raw_case.get("coverage")
             )[:8]
-            if not requirement_refs or requirement_id not in _acceptance_requirement_ids([
+            donor_requirement_ids = set(_acceptance_requirement_ids([
                 raw_case.get("coverage"), raw_case.get("requirementRefs"), raw_case.get("requirement_refs"),
-            ]) or not _case_has_branch_execution_evidence(raw_case, branch):
+            ]))
+            donor_compact = (donor_record or {}).get("compact") or {}
+            donor_plan = raw_case.get("ai_case_plan") if isinstance(raw_case.get("ai_case_plan"), dict) else {}
+            shared_target_tail = bool(
+                source_evidence_plan
+                and requirement_id not in donor_requirement_ids
+                and str(
+                    donor_compact.get("currentLevel")
+                    or raw_case.get("executionLevel")
+                    or raw_case.get("execution_level")
+                    or ""
+                ).strip().lower() == "executable"
+                and str(donor_compact.get("originLevel") or "").strip().lower() == "automatic"
+                and donor_plan.get("baselineGrounded") is True
+                and donor_plan.get("baselineVerified") is True
+                and donor_plan.get("pathPlanApplied") is True
+            )
+            if (
+                not requirement_refs
+                or (requirement_id not in donor_requirement_ids and not shared_target_tail)
+                or (
+                    not shared_target_tail
+                    and not _case_has_branch_execution_evidence(raw_case, branch)
+                )
+            ):
                 continue
             targets = _acceptance_target_terms(check.get("text"))
             landing_tail = _bounded_landing_tail(raw_case, targets)
             if not landing_tail:
                 continue
             landing_tail["sourceCaseId"] = donor_case_id
-            if not _bounded_landing_tail_is_executable(landing_tail, requirement_refs):
+            landing_tail_executable = _bounded_landing_tail_is_executable(
+                landing_tail,
+                requirement_refs,
+            )
+            if shared_target_tail and not landing_tail_executable:
+                continue
+            if not landing_tail_executable:
                 supporting_tails = [landing_tail]
                 merged_tail = _merge_bounded_landing_tails(supporting_tails)
                 if _bounded_landing_tail_is_executable(merged_tail, requirement_refs):
@@ -5674,6 +5753,50 @@ def _bounded_convergence_evidence(
                             landing_tail = merged_tail
                             break
                 if not _bounded_landing_tail_is_executable(landing_tail, requirement_refs):
+                    continue
+            if shared_target_tail:
+                landing_flow = normalize_text_list(landing_tail.get("flow"))
+                landing_target_key = _navigation_action_target_key(
+                    landing_flow[0] if landing_flow else ""
+                )
+                required_target_keys = [
+                    _navigation_action_target_key(f"点击「{target}」")
+                    for target in targets
+                    if str(target or "").strip()
+                ]
+                if (
+                    not landing_target_key
+                    or not required_target_keys
+                    or landing_target_key != required_target_keys[0]
+                ):
+                    continue
+                donor_steps = normalize_text_list(raw_case.get("steps"))
+                target_click_index = _target_navigation_action_index(
+                    donor_steps,
+                    targets,
+                )
+                donor_source_keys = {
+                    key
+                    for key in (
+                        _navigation_action_target_key(step)
+                        for step in donor_steps[:max(0, target_click_index)]
+                    )
+                    if key
+                }
+                donor_source_aliases = {
+                    alias
+                    for key in donor_source_keys
+                    for alias in (
+                        key,
+                        re.sub(r"(?:来源)?(?:页面|页)$", "", key),
+                    )
+                    if len(alias) >= 2
+                }
+                landing_text = _compact_branch_text([
+                    landing_tail.get("flow"),
+                    landing_tail.get("assertionTarget"),
+                ])
+                if any(alias in landing_text for alias in donor_source_aliases):
                     continue
             source_evidence_case = source_case
             source_record = None
@@ -5797,11 +5920,6 @@ def _bounded_convergence_evidence(
             if _source_navigation_has_alternative_destinations(navigation_flow):
                 continue
             donor_is_automatic = any(donor_record is item for item in automatic_records)
-            donor_requirement_ids = set(_acceptance_requirement_ids([
-                raw_case.get("coverage"),
-                raw_case.get("requirementRefs"),
-                raw_case.get("requirement_refs"),
-            ]))
             donor_requirement_branches = list(dict.fromkeys(
                 str(item.get("branch") or "").strip()
                 for item in ((normalized.get("analysis") or {}).get("requirement_acceptance_checks") or [])
@@ -5829,6 +5947,9 @@ def _bounded_convergence_evidence(
                 and source_record is not None
                 and not donor_is_branch_specific
             )
+            shared_tail_bound_to_branch_source = bool(
+                shared_cross_branch_tail or shared_target_tail
+            )
             source_current_level = str(
                 ((source_record or {}).get("compact") or {}).get("currentLevel")
                 or ((source_record or {}).get("raw") or {}).get("executionLevel")
@@ -5842,7 +5963,7 @@ def _bounded_convergence_evidence(
             )
             target_record = (
                 source_record
-                if shared_cross_branch_tail
+                if shared_tail_bound_to_branch_source
                 else (
                     donor_record
                     if donor_is_automatic or manual_tail_owns_gap
@@ -5852,7 +5973,7 @@ def _bounded_convergence_evidence(
             case_id = str(((target_record or {}).get("compact") or {}).get("case_id") or "").strip()
             if not case_id or (not donor_is_automatic and not source_record):
                 continue
-            if shared_cross_branch_tail:
+            if shared_tail_bound_to_branch_source:
                 requirement_refs = normalize_text_list(
                     source_evidence_case.get("requirementRefs")
                     or source_evidence_case.get("requirement_refs")
@@ -5950,7 +6071,8 @@ def _bounded_convergence_evidence(
                 "sourceCaseId": source_case_id,
                 "tailSourceCaseId": donor_case_id,
                 "source": evidence_source,
-                "sharedTailBoundToBranchSource": shared_cross_branch_tail,
+                "sharedTailBoundToBranchSource": shared_tail_bound_to_branch_source,
+                "sharedTargetTailBoundToBranchSource": shared_target_tail,
                 "baselineId": baseline_id,
                 "precondition": precondition,
                 "flow": flow,

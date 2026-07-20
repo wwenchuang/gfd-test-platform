@@ -3533,6 +3533,54 @@ git diff --check
 - 提交、推送并部署本轮修复。
 - 部署后使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；持续轮询到 Agent、首批 smoke、remaining 和可能的 AI 修复全部终态，再人工复核最终 YAML、Runner 报告、截图和失败分类。
 
+### 2026-07-20 部署后真实回归：同目标兄弟分支有界落地尾链
+
+部署 `1457369` 后真实验证：
+
+- 8091 / 8088 健康，Figma Token 和 10 个 AI Skill 就绪，text / VL 均为 `qwen3.6-plus`。`win-runner-01` 在线并上报 `qwen3.6` 模型族，固定 OPPO `ecbfd645 / PHM110` 在线；任务开始前无活动 Runner job，没有选择或下发华为或第二台设备。
+- Agent：`agent-1784529244171-3db70532`；终态 `FAILED / GENERATE_YAML`，进度 30。没有创建 Runner job，因此本轮失败与 Windows Runner、ADB、手机或并发执行无关。
+- PREPARE_SOURCE 正确复用 Figma 解析结果：4 页 / 4 图 / 忽略 0。PLAN 将 4 张原图按 4 个单图批次真实送入 `qwen3.6-plus`，分别约 23 / 24 / 20 / 17 秒完成，`attempted=4 / done=4 / status=completed / hardGate=false`，所有批次 `fallbackUsed=false`。
+- AI 生成 8 条业务分支和 12 个场景，覆盖文档打印、照片打印、扫描复印各自的展示 / 同级 / 文案 / 可达性。初始 executable planner 正常返回 5 条 executable，数量规划目标已满足，不存在“为了 5 条硬凑”的问题。
+- 初始组合覆盖 8 / 12 个验收维度，缺扫描复印 4 项。现有一次 AI 最终收敛将合并的人工候选 `MC-001` 提升为 executable；模型 review 声称已覆盖 visibility / relation / copy / reachability，但实际 flow 只补了前三项。平台最终覆盖门禁正确按结构化步骤和断言识别为 11 / 12，唯一缺 `REQ-003-CHECK-04 reachability`，没有采信 AI 自述或把不完整 YAML 下发 Runner。
+
+失败根因：
+
+- 上游 AI 这次没有把扫描展示与扫描跳转拆成两个候选，而是合并为一个人工项：先查入口、检查文案 / 同级，再以“若存在则点击、若不存在则记录缺陷”描述跳转。现有有界证据能用扫描成功基线 `d623c1e73180bfac` 组合来源页展示检查，因此为 `MC-001` 建立了 `source_ui_assertion`，但该证据只允许 visibility / relation / copy。
+- 同一个人工项中的条件跳转尾链因包含人工缺陷记录分支而不能作为 Runner 尾链，这是正确的安全限制。与此同时，文档 `TC-003` 和照片 `TC-004` 已有相同可见目标“百度网盘”的 executable 点击后稳定首屏尾链，但旧组合只接受同一 REQ 内的尾链，AI 没有机会把“当前扫描分支成功父路径”和“相同目标的已验证短尾链”组合起来。
+- 这解释了为什么本地旧夹具和前一轮线上输出能通过，而本轮千问换成“展示 + 跳转合并人工项”后又失败：不是环境差异，而是候选结构的随机变化暴露了未覆盖的数据形态。
+
+本轮通用修复：
+
+- 保留现有一次最终 AI 收敛，不新增模型轮次。若当前分支已有自己的 `verified_execution` 导航基线和 AI 来源页展示证据，可向 AI 提供兄弟分支中**相同可见目标**的有界落地尾链；兄弟分支只捐赠目标点击后的稳定观察，不捐赠导航路径。
+- 捐赠候选必须来自上游 automatic、当前为 executable，并同时具备 `baselineGrounded / baselineVerified / pathPlanApplied`；目标动作文字规范化后必须与当前缺口目标完全相等，不能用前后缀子串冒充。落地观察不得引用捐赠分支点击目标之前的来源页面，当前分支继续使用自己的基线、requirement refs 和来源页断言。
+- 同 REQ 尾链仍优先于兄弟分支，避免新能力抢占原有更强证据。跨分支尾链本身必须独立通过现有有界首屏可执行检查，不允许再借其它模糊尾链拼接。
+- 坐标、账号、密码、验证码、确认授权、文件选择和其它深层外部动作限制均未放宽；最终仍经过验收覆盖、YAML 转换、scorer、dry-run 和真实 Runner 门禁。
+- “若未实现则记录缺陷”等人工备选叙述继续保留在原始候选和审计中，但不再拼进 Runner 的 `aiWaitFor`；只按分句移除条件人工分支，同一原始断言中的独立合法产品条款仍保留。Runner 只执行明确的可见 / 同级 / 文案产品断言，入口缺失应真实失败而不是条件跳过。
+- 没有修改 Figma 解析、`router.py`、历史 YAML、Runner、`sonic_service.py` 或 `yaml_executable_scorer.py`。
+
+本轮生产产物离线重放：
+
+- 使用线上用例集 `agent-agent-1784529244171-3db70532`、线上原始扫描人工项、线上文档 `TC-003` 落地尾链和扫描成功基线 `d623c1e73180bfac` 重放。证据审计为 `kind=bounded_landing / sourceCaseId=MC-001 / tailSourceCaseId=TC-003 / sharedTargetTail=true`，一次覆盖扫描 4 个验收维度。
+- 组合从 8 / 12 变为 12 / 12，`missing=[]`，`MC-001` 成为 remaining executable；没有新增数量目标或模型调用。
+- 转出的扫描 YAML 为 `05-扫描复印百度网盘点击后首个可见页校验.yaml`，使用真实可见文字进入扫描复印并点击百度网盘，结构校验、可执行校验均通过，scorer `100 / executable / 0 warning`，无坐标。Runner flow 中不再包含“若 UI 已实现 / 记录缺陷”的人工叙述。
+- 负向夹具确认：目标文字不同或仅为前后缀变体、落地断言泄漏捐赠分支来源页，或捐赠候选没有已验证 executable 基线时，只能保留来源页展示证据，不能满足 reachability；同 REQ 候选仍优先于跨 REQ 候选。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交、推送并部署本轮修复。
+- 部署后继续使用完全相同需求、Figma、`qwen3.6-plus`、`win-runner-01` 和固定 OPPO `ecbfd645` 发起完整 Agent；必须持续监督到首批 smoke、AI 修复重跑、remaining 和 Agent 全部终态，再人工复核所有 YAML、Runner 报告、截图 / 录屏和失败分类。
+
 ### 2026-07-20 部署后真实回归：真机证据纠正软视觉叶子
 
 部署 `fe44f14` 后真实验证：

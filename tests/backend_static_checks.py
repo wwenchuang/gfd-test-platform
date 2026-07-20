@@ -2199,6 +2199,190 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ).get("ok"),
         "A required branch that AI initially marked manual must reuse its verified navigation baseline and same-target AI first-screen evidence instead of claiming that no baseline exists",
     )
+    sibling_tail_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-003 扫描复印：校验百度网盘入口可见、同级、文案正确且点击后稳定可达",
+            ],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-003-CHECK-01", "requirementId": "REQ-003", "branch": "扫描复印", "kind": "visibility", "text": "校验百度网盘入口可见"},
+                {"id": "REQ-003-CHECK-02", "requirementId": "REQ-003", "branch": "扫描复印", "kind": "relation", "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系"},
+                {"id": "REQ-003-CHECK-03", "requirementId": "REQ-003", "branch": "扫描复印", "kind": "copy", "text": "校验百度网盘入口使用需求约定的可见文案"},
+                {"id": "REQ-003-CHECK-04", "requirementId": "REQ-003", "branch": "扫描复印", "kind": "reachability", "text": "点击「百度网盘」入口，并校验「文件列表」按钮所在目标页面稳定可达"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-DOCUMENT-LANDING",
+            "title": "文档打印百度网盘入口点击后首屏",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": ["REQ-001 文档打印：点击百度网盘入口并校验目标页面稳定可达"],
+            "steps": [
+                "进入文档打印页",
+                "点击「百度网盘」入口",
+                "等待百度网盘授权页或文件列表页稳定可见，无崩溃、无白屏",
+            ],
+            "assertions": ["百度网盘授权页或文件列表页稳定可见，无崩溃、无白屏"],
+            "ai_case_plan": {
+                "baselineId": "base-document-nav",
+                "baselineGrounded": True,
+                "baselineVerified": True,
+                "pathPlanApplied": True,
+            },
+        }],
+        "manual_cases": [{
+            "case_id": "MC-SCAN-COMBINED",
+            "title": "扫描复印页百度网盘入口展示及跳转",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "requirementRefs": [
+                "REQ-003 扫描复印：校验百度网盘入口可见、同级、文案正确且点击后稳定可达",
+            ],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "启动App并登录",
+                "点击首页「扫描复印」入口",
+                "等待页面加载完成",
+                "查找页面中是否有「百度网盘」入口",
+                "若存在，检查文案是否为“百度网盘”，位置是否与同级入口并列",
+                "若存在，点击入口，观察是否跳转至百度网盘相关页面",
+                "若不存在，记录UI缺失缺陷",
+            ],
+            "expected_result": (
+                "如果百度网盘入口可见，则文案必须严格为“百度网盘”；"
+                "若UI已实现，则百度网盘入口可见、文案正确、跳转稳定；"
+                "若未实现，则记录UI缺失缺陷"
+            ),
+        }],
+    }
+    sibling_tail_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        sibling_tail_payload,
+        {"min_automation_cases": 1},
+    )
+    sibling_tail_automatic_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(sibling_tail_payload["cases"])]
+    sibling_tail_manual_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="manual"),
+    } for index, item in enumerate(sibling_tail_payload["manual_cases"])]
+    sibling_tail_baseline = ai_skill_service._compact_baseline_candidate({
+        "id": "base-scan-nav",
+        "title": "证件扫描",
+        "aiSelectedBranchName": "扫描复印",
+        "sourceKind": "verified_execution",
+        "verificationStatus": "execution_success",
+        "snippet": (
+            "# baseline.start_page: App 首页\n"
+            "- aiTap: 扫描复印 icon\n"
+            "- aiWaitFor: 等待扫描复印页面加载完成\n"
+            "- aiTap: 证件扫描\n"
+            "- aiTap: 立即使用\n"
+            "- aiTap: 相册导入"
+        ),
+    })
+    sibling_tail_evidence = ai_skill_service._bounded_convergence_evidence(
+        sibling_tail_payload,
+        sibling_tail_automatic_records,
+        sibling_tail_audit,
+        selected_baselines=[sibling_tail_baseline],
+        manual_records=sibling_tail_manual_records,
+    )
+    sibling_tail_case_evidence = sibling_tail_evidence.get("MC-SCAN-COMBINED") or {}
+    sibling_source_assertion = next(
+        (
+            step for step in sibling_tail_case_evidence.get("flow") or []
+            if str(step).startswith("等待并校验")
+        ),
+        "",
+    )
+    require(
+        sibling_tail_case_evidence.get("kind") == "bounded_landing"
+        and sibling_tail_case_evidence.get("sharedTargetTailBoundToBranchSource") is True
+        and set(sibling_tail_case_evidence.get("acceptanceCheckIds") or []) == {
+            "REQ-003-CHECK-01", "REQ-003-CHECK-02", "REQ-003-CHECK-03", "REQ-003-CHECK-04",
+        }
+        and sibling_tail_case_evidence.get("landingEvidenceCaseIds") == ["TC-DOCUMENT-LANDING"]
+        and "扫描复印" in " ".join(sibling_tail_case_evidence.get("flow") or [])
+        and "文档打印" not in " ".join(sibling_tail_case_evidence.get("flow") or [])
+        and "文案必须严格为“百度网盘”" in " ".join(sibling_tail_case_evidence.get("flow") or [])
+        and "跳转稳定" not in sibling_source_assertion
+        and "若UI已实现" not in " ".join(sibling_tail_case_evidence.get("flow") or [])
+        and "记录UI缺失缺陷" not in " ".join(sibling_tail_case_evidence.get("flow") or []),
+        "A current branch with trusted source-page evidence may reuse only the bounded landing tail from an executable sibling branch when the visible target is identical, without leaking manual alternatives into Runner steps",
+    )
+    guarded_sibling_payloads = []
+    wrong_target_sibling_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
+    wrong_target_case = wrong_target_sibling_payload["cases"][0]
+    for key in ("title", "requirementRefs", "steps", "assertions"):
+        value = wrong_target_case.get(key)
+        if isinstance(value, list):
+            wrong_target_case[key] = [str(item).replace("百度网盘", "企业云盘") for item in value]
+        elif isinstance(value, str):
+            wrong_target_case[key] = value.replace("百度网盘", "企业云盘")
+    guarded_sibling_payloads.append(wrong_target_sibling_payload)
+    prefixed_target_sibling_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
+    prefixed_target_case = prefixed_target_sibling_payload["cases"][0]
+    for key in ("title", "requirementRefs", "steps", "assertions"):
+        value = prefixed_target_case.get(key)
+        if isinstance(value, list):
+            prefixed_target_case[key] = [
+                str(item).replace("百度网盘", "百度网盘上传") for item in value
+            ]
+        elif isinstance(value, str):
+            prefixed_target_case[key] = value.replace("百度网盘", "百度网盘上传")
+    guarded_sibling_payloads.append(prefixed_target_sibling_payload)
+    secondary_target_sibling_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
+    secondary_target_case = secondary_target_sibling_payload["cases"][0]
+    for key in ("title", "requirementRefs", "steps", "assertions"):
+        value = secondary_target_case.get(key)
+        if isinstance(value, list):
+            secondary_target_case[key] = [
+                str(item).replace("百度网盘", "文件列表") for item in value
+            ]
+        elif isinstance(value, str):
+            secondary_target_case[key] = value.replace("百度网盘", "文件列表")
+    guarded_sibling_payloads.append(secondary_target_sibling_payload)
+    branch_bound_sibling_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
+    branch_bound_case = branch_bound_sibling_payload["cases"][0]
+    branch_bound_case["steps"][-1] = (
+        "等待已离开文档打印来源页，百度网盘授权页或文件列表页稳定可见，无崩溃、无白屏"
+    )
+    branch_bound_case["assertions"] = [
+        "已离开文档打印来源页，百度网盘授权页或文件列表页稳定可见，无崩溃、无白屏",
+    ]
+    guarded_sibling_payloads.append(branch_bound_sibling_payload)
+    unverified_sibling_payload = json.loads(json.dumps(sibling_tail_payload, ensure_ascii=False))
+    unverified_sibling_payload["cases"][0]["ai_case_plan"]["baselineVerified"] = False
+    guarded_sibling_payloads.append(unverified_sibling_payload)
+    for guarded_payload in guarded_sibling_payloads:
+        guarded_audit = ai_skill_service.executable_yaml_portfolio_audit(
+            guarded_payload,
+            {"min_automation_cases": 1},
+        )
+        guarded_automatic_records = [{
+            "raw": item,
+            "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+        } for index, item in enumerate(guarded_payload["cases"])]
+        guarded_manual_records = [{
+            "raw": item,
+            "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="manual"),
+        } for index, item in enumerate(guarded_payload["manual_cases"])]
+        guarded_evidence = ai_skill_service._bounded_convergence_evidence(
+            guarded_payload,
+            guarded_automatic_records,
+            guarded_audit,
+            selected_baselines=[sibling_tail_baseline],
+            manual_records=guarded_manual_records,
+        ).get("MC-SCAN-COMBINED") or {}
+        require(
+            guarded_evidence.get("kind") == "source_ui_assertion"
+            and "REQ-003-CHECK-04" not in set(
+                guarded_evidence.get("acceptanceCheckIds") or []
+            ),
+            "A sibling landing tail with a different, prefixed, or secondary assertion target, a donor-branch page assertion, or no verified executable baseline must not satisfy current-branch reachability",
+        )
     redundant_branch_payload = json.loads(json.dumps(manual_branch_payload, ensure_ascii=False))
     redundant_branch_payload["cases"].append({
         "case_id": "TC-BRANCH-COVER",
