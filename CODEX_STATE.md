@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：同分支运行时叶子修正要复用，重跑必须处理启动停留非首页 Tab
+
+用户部署 `81199a6` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784626372632-9784175e`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110` 是唯一 dry-run、smoke、repair rerun 设备。华为设备在线但未被本轮 Agent 选择或执行。
+- PREPARE_SOURCE 正确保留完整需求正文，Figma 正确解析 `4 页 / 4 图 / 忽略 0`；PLAN 阶段 4 张 Figma 图全部真实送入 `qwen3.6-plus` 并完成，随后成功进入 GENERATE_YAML、RISK_REVIEW、EXECUTION_PRECHECK。
+- 本轮生成 5 条 executable YAML：文档展示、照片展示、文档可达、照片可达、扫描可达。人工确认 / 人工走查稿没有再进入 smoke，说明上一轮 `manualHint` Runner gate 生效。
+- 首批 smoke 3 条均绑定 `win-runner-01 / ecbfd645`。文档展示通过；照片展示和照片可达失败，根因相同：生成 YAML 采用了 Figma 软参考中的「一寸照」路径，但真机照片打印聚合页可见的是「5寸照片 / 6寸照片 / 7寸照片 / A4资料图片 / A4生活照片」或「普通证件照 / 智能证件照」，直接定位「一寸照」失败。
+- 修复阶段第一条照片展示用例正确基于真实失败帧、当前 Figma 证据和分支基线，将「一寸照」改为「5寸照片」并创建重跑；第二条照片可达兄弟用例没有复用这个已接受的 `sourceLeafRuntimeOverrides`，AI 另提“普通证件照 -> 一寸照”且无可信分支基线，被平台门禁正确拒绝。
+- `5寸照片` 修复稿重跑后又暴露启动状态问题：App launch 后停在底部「资料库」Tab，YAML 直接等待“首页已加载完成”超时。后续 AI 修复只增加照片页等待，没有先点击底部「首页」，再次失败。Agent 终态为 `FAILED / RERUN / 95%`，错误为“重跑后仍有失败或超时任务”。
+
+深层根因与通用修复：
+
+- 修复批处理现在维护已通过门禁的 `sourceLeafRuntimeOverrides`。同批后续失败用例若包含同一个被运行时否定的导航叶子，并且目标文案一致、当前分支基线 ID 仍在候选集中，平台会先用局部 patch 复用该 `fromLeaf -> toLeaf` 修正，再走现有 candidate gate、断言契约、scorer 和 YAML 校验；过不了才回退 AI。这样同一照片分支的展示和可达兄弟用例不会一个改成 `5寸照片`、另一个又被 AI 带去无基线的子流程。
+- 修复候选现在能识别“启动后停在非首页底部 Tab”的真实失败证据：错误文本同时证明底部导航可见、首页未选中、当前在「资料库」或非首页时，平台会在 `launch` 后插入可见底部导航等待、点击底部「首页」、再等待首页核心入口稳定显示。该本地 patch 仍通过常规 repair gate；不会使用坐标、ADB swipe 或跨设备重跑。
+- 两个修复都不硬编码百度网盘、不放宽导航基线门禁、不改 scorer、Sonic、Runner、Figma 解析、设备策略或历史 YAML；只是把已经由真实运行证据和可信基线证明的局部修复，在同批/同设备闭环中复用，并补齐真实启动状态守卫。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮涉及 `task_server/services/agent_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`。提交后不 push；用户手动 push/部署后，需要再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，重点确认照片展示与照片可达在修复阶段共享 `一寸照 -> 5寸照片` 运行时叶子修正，重跑遇到「资料库」起点时先回到底部「首页」，随后继续监督 remaining、repair rerun 和所有 Runner 报告到真实终态。
+
 ### 2026-07-21 真实回归：人工确认稿、横向入口、修复补丁与权限弹窗门禁必须闭环
 
 用户部署 `bd300df` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784622871663-d8f0ec7b`：

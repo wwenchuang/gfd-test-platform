@@ -6791,6 +6791,99 @@ def check_agent_failure_review_and_repair_guard():
         and (runtime_leaf_corrected.get("sourceLeafRuntimeOverrides") or [{}])[0].get("toLeaf") == "5寸照片",
         "A keyframe-backed missing runtime leaf may be corrected only by a cited same-branch baseline and alternate current Figma leaf",
     )
+    sibling_leaf_yaml = """android:
+  tasks:
+    - name: 照片打印页-点击百度网盘入口唤起响应校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 被测 App 首页已加载完成，首页核心功能入口可见
+        - aiTap: 点击「照片打印」功能卡片
+        - aiTap: 点击「一寸照」规格
+        - aiWaitFor: 等待页面加载，校验「百度网盘」入口可见
+        - aiTap: 点击「百度网盘」入口
+        - aiWaitFor: 百度网盘授权页、登录页或文件选择页已打开
+        - aiAssert: 百度网盘点击后首个可见页稳定显示，无崩溃或白屏
+"""
+    old_ai_skill_for_leaf = ai_skill_service.run_ai_skill
+    try:
+        ai_skill_service.run_ai_skill = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("sibling override should avoid a second AI call"))
+        sibling_leaf_patch = agent_service._agent_repair_patch_skill_candidate(
+            {"target": "基础打印新增百度网盘入口", "platform": "android", "runnerId": "win-runner-01", "deviceId": "ecbfd645", "deviceStrategy": "fixed"},
+            {
+                "failureType": "SCRIPT_ISSUE",
+                "failureReason": "failed to locate element: 我看到了“普通证件照”和“智能证件照”等按钮，但没有找到“一寸照”规格选项。",
+                "summaryText": "当前照片打印聚合页未直接展示一寸照",
+            },
+            sibling_leaf_yaml,
+            "照片打印页-点击百度网盘入口唤起响应校验",
+            "AI_Agent_草稿",
+            "04-照片打印页-点击百度网盘入口唤起响应校验.yaml",
+            "failed to locate element: 没有找到一寸照",
+            [],
+            [{"name": "photo-size-dialog.jpg"}],
+            ["photo-size-dialog.jpg"],
+            [runtime_leaf_baseline],
+            runtime_source_evidence,
+            yaml_service.strict_visible_value_contract(sibling_leaf_yaml),
+            90,
+            accepted_leaf_overrides=runtime_leaf_corrected.get("sourceLeafRuntimeOverrides") or [],
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_ai_skill_for_leaf
+    sibling_leaf_gate = sibling_leaf_patch.get("candidateGate") or {}
+    sibling_fixed_yaml = sibling_leaf_gate.get("fixedYaml") or ""
+    require(
+        sibling_leaf_patch.get("requestCount") == 0
+        and sibling_leaf_gate.get("ok") is True
+        and "点击「5寸照片」规格" in sibling_fixed_yaml
+        and "点击「一寸照」规格" not in sibling_fixed_yaml,
+        "A runtime-disproved leaf accepted for one failed task must be reusable for a sibling failed task before asking AI again",
+    )
+    off_home_yaml = """android:
+  tasks:
+    - name: 照片打印页-百度网盘入口UI展示及位置校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 被测 App 首页已加载完成，首页核心功能入口可见
+        - aiTap: 点击「照片打印」功能卡片
+        - aiTap: 点击「5寸照片」规格
+        - aiWaitFor: 等待页面加载，校验「百度网盘」入口可见
+        - aiAssert: 百度网盘入口可见，文案为“百度网盘”，与相册导入、相机拍照等入口同级并列
+"""
+    old_ai_skill_for_home = ai_skill_service.run_ai_skill
+    try:
+        ai_skill_service.run_ai_skill = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("home-tab repair should avoid AI for a proven start-state mismatch"))
+        home_start_patch = agent_service._agent_repair_patch_skill_candidate(
+            {"target": "基础打印新增百度网盘入口", "platform": "android", "runnerId": "win-runner-01", "deviceId": "ecbfd645", "deviceStrategy": "fixed"},
+            {
+                "failureType": "SCRIPT_ISSUE",
+                "failureReason": "waitFor timeout: 底部导航栏显示“资料库”被黄色高亮，首页标签灰色，当前用户正处于“资料库”页面而非首页。",
+                "stdoutTail": "当前激活的标签是资料库；首页标签未被选中；陈述“被测 App 首页已加载完成”不准确。",
+            },
+            off_home_yaml,
+            "照片打印页-百度网盘入口UI展示及位置校验",
+            "AI_Agent_修复重跑_agent",
+            "01-照片打印页-百度网盘入口UI展示及位置校验-repair_1.yaml",
+            "waitFor timeout: 当前页面停留在资料库 Tab，不在首页",
+            [],
+            [{"name": "off-home-tab.jpg"}],
+            ["off-home-tab.jpg"],
+            [runtime_leaf_baseline],
+            runtime_source_evidence,
+            yaml_service.strict_visible_value_contract(off_home_yaml),
+            90,
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_ai_skill_for_home
+    home_start_gate = home_start_patch.get("candidateGate") or {}
+    home_start_yaml = home_start_gate.get("fixedYaml") or ""
+    require(
+        home_start_patch.get("requestCount") == 0
+        and home_start_gate.get("ok") is True
+        and "底部导航栏「首页」" in home_start_yaml
+        and "App 已启动，底部导航栏可见" in home_start_yaml,
+        "A report-proven off-home startup state must insert a visible bottom-home-tab guard before rerun",
+    )
 
     old_task_dir = agent_service.TASK_DIR
     old_gateway_available = agent_service._ai_gateway_available

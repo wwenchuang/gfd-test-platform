@@ -13453,6 +13453,252 @@ def _agent_repair_patch_error_gate(code, message, response=None):
     }
 
 
+def _agent_repair_local_patch_candidate(
+    run,
+    target_job,
+    original_yaml,
+    task_info,
+    patches,
+    analysis,
+    changes,
+    used_baseline_ids,
+    baseline_examples,
+    source_evidence,
+    failure_reason,
+    report_keyframe_names,
+):
+    """Apply a platform-derived local patch, then audit it through the normal repair gate."""
+    from task_server.services import repair_service
+
+    response = {
+        "analysis": str(analysis or ""),
+        "changes": list(changes or []),
+        "patches": list(patches or []),
+        "usedBaselineIds": list(dict.fromkeys(
+            str(item or "").strip()
+            for item in (used_baseline_ids or [])
+            if str(item or "").strip()
+        )),
+        "repairPatchSkill": "platform_local_repair",
+    }
+    try:
+        patched_block, applied_patches = repair_service.apply_task_repair_patches(
+            task_info.get("block") or "",
+            response["patches"],
+        )
+        fixed_yaml = normalize_full_yaml_structure(
+            replace_yaml_task_block(original_yaml, task_info, patched_block)
+        )
+        response["fixedYaml"] = fixed_yaml
+        candidate_gate = _agent_repair_candidate_gate(
+            original_yaml,
+            response,
+            baseline_examples,
+            platform=run.get("platform", "android"),
+            source_evidence=source_evidence,
+            runtime_evidence={
+                "failureReason": failure_reason,
+                "error": target_job.get("error") or "",
+                "summaryText": target_job.get("summaryText") or "",
+                "stderrTail": target_job.get("stderrTail") or target_job.get("stderr_tail") or "",
+                "stdoutTail": target_job.get("stdoutTail") or target_job.get("stdout_tail") or "",
+                "reportKeyframes": report_keyframe_names,
+            },
+        )
+        candidate_gate["patchPlan"] = {
+            "analysis": response["analysis"],
+            "changes": response["changes"],
+            "patches": response["patches"],
+            "usedBaselineIds": response["usedBaselineIds"],
+            "source": "platform_local_repair",
+        }
+        candidate_gate["appliedPatches"] = copy.deepcopy(applied_patches)
+        return {
+            "response": response,
+            "candidateGate": candidate_gate,
+            "requestCount": 0,
+            "correctionAttempted": False,
+            "correctionIssues": [],
+            "attemptErrors": [],
+            "patchPlan": candidate_gate["patchPlan"],
+            "appliedPatches": applied_patches,
+        }
+    except Exception as exc:
+        return {
+            "response": {**response, "error": str(exc)[:500]},
+            "candidateGate": _agent_repair_patch_error_gate(
+                "platform_local_patch_failed",
+                str(exc)[:500],
+                response,
+            ),
+            "requestCount": 0,
+            "correctionAttempted": False,
+            "correctionIssues": [],
+            "attemptErrors": [{
+                "attempt": 0,
+                "error": str(exc)[:500],
+                "errorType": "platform_local_patch_error",
+                "httpStatus": 0,
+            }],
+            "patchPlan": {},
+            "appliedPatches": [],
+        }
+
+
+def _agent_repair_sibling_leaf_override_candidate(
+    run,
+    target_job,
+    original_yaml,
+    task_info,
+    baseline_examples,
+    source_evidence,
+    failure_reason,
+    report_keyframe_names,
+    accepted_leaf_overrides,
+):
+    task_block = str(task_info.get("block") or "")
+    if not task_block or not accepted_leaf_overrides:
+        return {}
+    known_baseline_ids = {
+        str(item.get("id") or "").strip()
+        for item in (baseline_examples or [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    }
+    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
+    for override in accepted_leaf_overrides:
+        if not isinstance(override, dict):
+            continue
+        from_leaf = str(override.get("fromLeaf") or "").strip()
+        to_leaf = str(override.get("toLeaf") or "").strip()
+        if not from_leaf or not to_leaf or from_leaf == to_leaf or from_leaf not in task_block:
+            continue
+        target_text = str(override.get("targetText") or "").strip()
+        if target_text and target_text not in str(original_yaml or ""):
+            continue
+        baseline_ids = [
+            str(item or "").strip()
+            for item in (override.get("baselineIds") or [])
+            if str(item or "").strip()
+        ]
+        if known_baseline_ids and not known_baseline_ids.intersection(baseline_ids):
+            continue
+        patch_line = ""
+        for raw_line in task_block.splitlines():
+            stripped = raw_line.strip()
+            if not stripped.startswith("- ") or from_leaf not in stripped:
+                continue
+            candidate = stripped[2:].strip()
+            match = re.match(r"^([A-Za-z][\w]*)\s*:\s*(.+)$", candidate)
+            if not match or match.group(1) not in navigation_actions:
+                continue
+            patch_line = stripped
+            break
+        if not patch_line:
+            continue
+        replacement = patch_line.replace(from_leaf, to_leaf)
+        return _agent_repair_local_patch_candidate(
+            run,
+            target_job,
+            original_yaml,
+            task_info,
+            [{
+                "op": "replace_step",
+                "anchor": patch_line,
+                "lines": [replacement],
+                "reason": (
+                    f"同批兄弟失败任务已用真实运行帧和当前分支基线证明“{from_leaf}”不可达，"
+                    f"并验证可改为“{to_leaf}”。"
+                ),
+            }],
+            f"复用同批已验证的运行时叶子修正：{from_leaf} -> {to_leaf}",
+            [f"将导航叶子“{from_leaf}”替换为同分支已验证可见叶子“{to_leaf}”"],
+            baseline_ids,
+            baseline_examples,
+            source_evidence,
+            failure_reason,
+            report_keyframe_names,
+        )
+    return {}
+
+
+def _agent_repair_off_home_start_candidate(
+    run,
+    target_job,
+    original_yaml,
+    task_info,
+    baseline_examples,
+    source_evidence,
+    failure_reason,
+    report_keyframe_names,
+):
+    task_block = str(task_info.get("block") or "")
+    if not task_block or "launch:" not in task_block:
+        return {}
+    evidence_text = "\n".join([
+        str(failure_reason or ""),
+        str(target_job.get("failureReason") or ""),
+        str(target_job.get("error") or ""),
+        str(target_job.get("summaryText") or ""),
+        str(target_job.get("stdoutTail") or target_job.get("stdout_tail") or ""),
+        str(target_job.get("stderrTail") or target_job.get("stderr_tail") or ""),
+    ])
+    compact = re.sub(r"[\s，。；;:：、\"'“”‘’「」『』\*\-]+", "", evidence_text)
+    if not (
+        "首页" in compact
+        and "底部导航" in compact
+        and any(word in compact for word in ("资料库", "不在首页", "非首页", "未被选中", "首页标签灰色", "当前页面停留"))
+    ):
+        return {}
+    if re.search(r"底部导航栏?[「\"]?首页[」\"]?", task_block):
+        return {}
+    launch_line = ""
+    for raw_line in task_block.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("- launch:"):
+            launch_line = stripped
+            break
+    if not launch_line:
+        return {}
+    branch_baseline_ids = [
+        str(item.get("id") or "").strip()
+        for item in (baseline_examples or [])
+        if isinstance(item, dict)
+        and str(item.get("id") or "").strip()
+        and "business_branch" in (item.get("retrievalRoles") or [])
+        and (item.get("retrievalBranchIds") or [])
+    ]
+    used_baseline_ids = branch_baseline_ids or [
+        str(item.get("id") or "").strip()
+        for item in (baseline_examples or [])
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    ][:3]
+    return _agent_repair_local_patch_candidate(
+        run,
+        target_job,
+        original_yaml,
+        task_info,
+        [{
+            "op": "insert_after",
+            "anchor": launch_line,
+            "lines": [
+                "aiWaitFor: App 已启动，底部导航栏可见，包含「首页」入口或当前已在首页",
+                "timeout: 8000",
+                "aiTap: 点击底部导航栏「首页」",
+                "aiWaitFor: App 首页加载完成，可见「文档打印」「照片打印」等首页核心入口",
+                "timeout: 10000",
+            ],
+            "reason": "真实失败帧显示启动后停在非首页底部 Tab；先用可见底部导航回到首页再执行业务入口。",
+        }],
+        "真实运行帧显示 App 启动后停在非首页 Tab，补充底部首页 Tab 起始守卫。",
+        ["在 launch 后先等待底部导航可见，再点击底部「首页」并等待首页核心入口稳定显示"],
+        used_baseline_ids,
+        baseline_examples,
+        source_evidence,
+        failure_reason,
+        report_keyframe_names,
+    )
+
+
 def _agent_repair_patch_skill_candidate(
     run,
     target_job,
@@ -13468,6 +13714,7 @@ def _agent_repair_patch_skill_candidate(
     source_evidence,
     assertion_contract,
     ai_timeout,
+    accepted_leaf_overrides=None,
 ):
     """Ask the selected model for a local patch, apply it, then run the existing repair gate."""
     from task_server.services import ai_skill_service, repair_service
@@ -13504,6 +13751,31 @@ def _agent_repair_patch_skill_candidate(
         or ((target_job.get("failureReview") or {}).get("suggested_action") if isinstance(target_job.get("failureReview"), dict) else "")
         or ""
     ).strip()
+    local_leaf_candidate = _agent_repair_sibling_leaf_override_candidate(
+        run,
+        target_job,
+        original_yaml,
+        task_info,
+        baseline_examples,
+        source_evidence,
+        failure_reason,
+        report_keyframe_names,
+        accepted_leaf_overrides or [],
+    )
+    if (local_leaf_candidate.get("candidateGate") or {}).get("ok"):
+        return local_leaf_candidate
+    local_home_candidate = _agent_repair_off_home_start_candidate(
+        run,
+        target_job,
+        original_yaml,
+        task_info,
+        baseline_examples,
+        source_evidence,
+        failure_reason,
+        report_keyframe_names,
+    )
+    if (local_home_candidate.get("candidateGate") or {}).get("ok"):
+        return local_home_candidate
     base_payload = {
         "module": module,
         "file": file_name,
@@ -13769,6 +14041,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         ai_used_count = 0
         validation_passed_count = 0
         blocked_count = 0
+        accepted_runtime_leaf_overrides = []
 
         try:
             from task_server.services import repair_service
@@ -13906,6 +14179,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     source_evidence,
                     assertion_contract,
                     ai_timeout,
+                    accepted_leaf_overrides=accepted_runtime_leaf_overrides,
                 )
                 resp = patch_result.get("response") or {}
                 candidate_gate = patch_result.get("candidateGate") or _agent_repair_patch_error_gate(
@@ -13993,6 +14267,9 @@ def _tool_generate_repair(run, failed_jobs_override=None):
                     item_summary["yamlValidation"] = validation
                     item_summary["taskCount"] = validation.get("taskCount")
                 if candidate_gate.get("ok"):
+                    for override in candidate_gate.get("sourceLeafRuntimeOverrides") or []:
+                        if isinstance(override, dict) and override not in accepted_runtime_leaf_overrides:
+                            accepted_runtime_leaf_overrides.append(override)
                     draft["fixedYaml"] = fixed_yaml[:200000]
                     draft["fixed_yaml"] = draft["fixedYaml"]
                     draft["draftYaml"] = draft["fixedYaml"][:5000]
