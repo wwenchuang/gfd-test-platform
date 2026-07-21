@@ -5848,6 +5848,27 @@ def check_agent_failure_review_and_repair_guard():
         },
     })
     require(low_confidence_review.get("failureType") == "SCRIPT_ISSUE", "Low-confidence failure review must not override concrete Runner script evidence")
+    source_mismatch_review = agent_service._normalize_failed_execution_item({
+        "jobId": "job-static-review-source-mismatch",
+        "summaryText": (
+            "waitFor timeout: 当前页面是应用的首页，虽然首页上有“文档打印”的入口按钮，"
+            "但用户并没有进入“文档打印”的具体页面。因此，“等待文档打印页面加载完成”这个状态描述不准确。"
+        ),
+        "failureReview": {
+            "category": "unknown",
+            "failure_type": "review_source_mismatch",
+            "confidence": 0.45,
+            "reason": "失败复检引用了当前 YAML、执行日志或报告文本中不存在的控件/步骤",
+            "can_auto_repair": False,
+        },
+    })
+    source_mismatch_eligibility = agent_service._agent_repair_eligibility(source_mismatch_review)
+    require(
+        source_mismatch_review.get("failureType") == "SCRIPT_ISSUE"
+        and source_mismatch_review.get("canAutoRepair") is None
+        and source_mismatch_eligibility.get("eligible") is True,
+        "Low-confidence source-mismatch review must not block auto repair for concrete Runner script evidence",
+    )
     require(
         agent_service._agent_job_failure_type("invalid_enum_value: expected 'down' | 'up' | 'right' | 'left', received horizontal") == "YAML 动作参数不兼容",
         "Midscene parameter schema errors must be classified as script issues instead of unknown failures",

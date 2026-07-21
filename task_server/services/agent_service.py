@@ -11488,17 +11488,49 @@ def _agent_explicit_auto_repair_decision(item):
     """Return an explicit per-failure repair decision without inventing a default."""
     item = item if isinstance(item, dict) else {}
     review = _agent_failure_review(item)
-    for source in (item, review):
+    for source_index, source in enumerate((item, review)):
         for key in ("canAutoRepair", "can_auto_repair"):
             if key not in source:
                 continue
             value = source.get(key)
             if isinstance(value, bool):
+                if value is False and source_index == 1:
+                    review_type = str(
+                        source.get("failure_type")
+                        or source.get("failureType")
+                        or source.get("category")
+                        or ""
+                    ).strip().lower()
+                    try:
+                        confidence = float(source.get("confidence") or 0)
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    if confidence < 0.8 and review_type in {
+                        "unknown",
+                        "review_source_mismatch",
+                    }:
+                        return None
                 return value
             normalized = str(value or "").strip().lower()
             if normalized in ("true", "1", "yes"):
                 return True
             if normalized in ("false", "0", "no"):
+                if source_index == 1:
+                    review_type = str(
+                        source.get("failure_type")
+                        or source.get("failureType")
+                        or source.get("category")
+                        or ""
+                    ).strip().lower()
+                    try:
+                        confidence = float(source.get("confidence") or 0)
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    if confidence < 0.8 and review_type in {
+                        "unknown",
+                        "review_source_mismatch",
+                    }:
+                        return None
                 return False
     return None
 

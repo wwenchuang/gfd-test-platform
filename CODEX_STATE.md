@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：低置信复检不能阻断明确脚本失败的自动修复
+
+用户部署 `7a7d091` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784596911529-3e875d9d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic 健康；固定 OPPO `ecbfd645` 被唯一选中。所有本轮 Agent dry-run、首批冒烟和修复重跑均绑定 `win-runner-01 / ecbfd645 / fixed`，没有向华为或第二台设备下发。
+- PREPARE_SOURCE 成功，Figma 解析 `4 页 / 4 图 / 忽略 0`。PLAN 不再假卡死，4 张 Figma 图分 4 批真实送入 `qwen3.6-plus`，批次均完成；随后 GENERATE_YAML、VALIDATE_YAML、RISK_REVIEW、EXECUTION_PRECHECK 均通过。
+- 生成阶段本轮已越过前几轮的覆盖门禁：5 条 executable YAML、12 个验收维度通过生成门禁和 dry-run。生成文件为文档展示、照片展示、文档可达、照片可达、扫描可达首屏 5 条。
+- 首批冒烟选择文档展示和照片展示两条。两条 dry-run 均成功；正式 Runner 串行执行后两条均失败。照片失败是 `一寸照` 不存在，AI 修复为 `5寸照片` 后创建 `job_1784597940251_00007` 并在同一 OPPO 成功。文档失败是点击「文档打印」后仍停留在首页，Runner 原始错误明确指出“等待文档打印页面加载完成”不准确；但失败复检被错误降级为 `review_source_mismatch / can_auto_repair=false`，导致只保存 1/2 条修复草稿，最终 Agent 为 `FAILED / RERUN / 95%`，错误为“使用修复草稿 1/2 条，未覆盖失败任务 1 个”。
+
+深层根因与通用修复：
+
+- 失败复检清洗会检查 AI review 是否引用了当前 YAML、日志、summary 或报告文本中不存在的 UI 术语。线上文档失败中，review 证据把相邻日志片段和换行拼成了不稳定片段，被误判为“未出现”。这个低置信 `review_source_mismatch` 本应只表示“复检结论不可采信”，却通过 `can_auto_repair=false` 覆盖了 Runner 原始的明确脚本证据。
+- `_normalize_failed_execution_item()` 已能保证低置信复检不覆盖 `failureType=SCRIPT_ISSUE`，但 `_agent_repair_eligibility()` 仍读取 review 内的 explicit false，从而把本可修复的文档脚本失败挡在 AI patch 之前。
+- 新逻辑只忽略低置信 `unknown / review_source_mismatch` 复检里的 `canAutoRepair=false`。产品缺陷、环境问题、高置信不可修复、以及 job 顶层明确的 `canAutoRepair=false` 仍保持硬门禁。
+- 新增回归复现本轮文档形态：Runner summary 明确 `waitFor timeout` 且当前页仍是首页，但低置信 source-mismatch review 声称不可修复。修复后 normalized item 仍是 `SCRIPT_ISSUE`，不会写入硬 `canAutoRepair=false`，修复资格保持 eligible，后续可进入同一套 AI patch、基线引用、断言契约、scorer、dry-run 和 Runner 门禁。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮只修改 `task_server/services/agent_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`。尚未部署；用户手动部署后，需要再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，确认文档失败能生成修复草稿并同设备重跑，随后监督 remaining 到真实终态。另：前端“实时展开日志会被刷新收回/技术日志不便停留查看”的体验问题已确认存在，但本轮先处理阻断回归闭环的后端根因，后续应单独做前端展开状态持久化和实时数据刷新优化。
+
 ### 2026-07-20 真实回归：Agent PLAN 同步 MM 规划必须有硬超时，避免线上假卡死
 
 用户部署 `ff71991` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784543629519-7212477f`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
