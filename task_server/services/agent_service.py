@@ -5401,14 +5401,40 @@ def _score_agent_yaml_ref_for_execution(run, ref):
         score["reasons"] = [str(item) for item in reasons if str(item or "").strip()][:8]
     level = score.get("level") or score.get("executionLevel") or ref.get("executionLevel") or ""
     task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+    manual_hint = bool(
+        generated_ref
+        and (
+            score.get("manualHint")
+            or any(task.get("manualHint") for task in task_scores)
+        )
+    )
+    if manual_hint:
+        score = dict(score)
+        task_scores = [dict(task) for task in task_scores]
+        reasons = list(score.get("reasons") or []) + ["生成 YAML 含人工确认/人工走查提示，禁止自动下发 Runner"]
+        score["score"] = min(int(score.get("score") or 0), 74)
+        score["executionLevel"] = "needs_review"
+        score["level"] = "needs_review"
+        score["ok"] = False
+        score["smokeCandidate"] = False
+        score["reasons"] = [str(item) for item in reasons if str(item or "").strip()][:8]
+        for task in task_scores:
+            task["smokeCandidate"] = False
+            task["executionLevel"] = "needs_review"
+            task["level"] = "needs_review"
+        score["taskScores"] = task_scores
+        level = "needs_review"
     runner_candidate = bool(
-        ref.get("smoke")
-        or ref.get("is_smoke")
-        or ref.get("isSmoke")
-        or ref.get("smokeCandidate")
-        or ref.get("runnerCandidate")
-        or score.get("smokeCandidate")
-        or any(task.get("smokeCandidate") for task in task_scores)
+        not manual_hint
+        and (
+            ref.get("smoke")
+            or ref.get("is_smoke")
+            or ref.get("isSmoke")
+            or ref.get("smokeCandidate")
+            or ref.get("runnerCandidate")
+            or score.get("smokeCandidate")
+            or any(task.get("smokeCandidate") for task in task_scores)
+        )
     )
     return {
         **ref,

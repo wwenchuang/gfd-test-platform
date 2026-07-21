@@ -5808,22 +5808,37 @@ def _repair_generated_business_page_wait_step(step: dict, next_step: dict = None
         return {}
     if any(word in compact for word in ("本地导入", "相册导入", "微信导入", "本地文档", "普通照片", "证件照", "照片拼版")):
         return {}
-    next_compact = _compact_text(_generated_step_observable_text(next_step))
+    next_text = _generated_step_observable_text(next_step)
+    next_compact = _compact_text(next_text)
     needs_import_anchor = any(word in next_compact for word in ("本地导入", "相册导入", "微信导入", "导入方式", "入口"))
     replacement = ""
     if (
         needs_import_anchor
-        and re.fullmatch(r"(?:等待)?(?:扫描复印|复印扫描)(?:页面|页|导入页面)?(?:加载完成|加载完毕|稳定显示)", compact)
+        and re.fullmatch(r"(?:等待)?(?:扫描复印|复印扫描)(?:页面|页|导入页面)?(?:加载|加载完成|加载完毕|稳定显示)", compact)
     ):
         replacement = "扫描复印页面或复印扫描导入页面加载完成，可见「本地导入」「相册导入」「微信导入」等导入入口区域"
     if not replacement:
         return {}
     step["aiWaitFor"] = replacement
     step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+    quoted = re.search(r"[「『“‘\"']([^」』”’\"']{1,60})[」』”’\"']", next_text or "")
+    target = quoted.group(1).strip() if quoted else ""
+    insert_after = []
+    if target and "aiScroll" not in (next_step or {}):
+        insert_after = [
+            {
+                "aiScroll": "在包含“本地导入”、“相册导入”、“微信导入”的横向导入栏区域向右滑动，使右侧更多入口进入视野",
+                "direction": "right",
+                "distance": 400,
+                "scrollType": "singleAction",
+            },
+            {"sleep": 500},
+        ]
     return {
         "changed": "business page loaded wait -> visible anchored wait",
         "prompt": prompt[:180],
         "replacement": replacement[:180],
+        "insertAfter": insert_after,
     }
 
 
@@ -6000,11 +6015,20 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                 })
             business_wait_repair = _repair_generated_business_page_wait_step(step, next_step)
             if business_wait_repair:
+                insert_after = business_wait_repair.pop("insertAfter", []) or []
                 changes.append({
                     "task": task.get("name") or f"tasks[{task_index}]",
                     "flowIndex": step_index,
                     **business_wait_repair,
                 })
+                if insert_after:
+                    flow[step_index:step_index] = insert_after
+                    changes.append({
+                        "task": task.get("name") or f"tasks[{task_index}]",
+                        "afterFlowIndex": step_index,
+                        "changed": "insert bounded horizontal aiScroll before target entry wait",
+                        "replacement": "aiScroll right over visible import entry row",
+                    })
 
             branch_observation_repair = _repair_generated_human_branch_observation(step)
             if branch_observation_repair:

@@ -298,6 +298,7 @@ def _normalize_repair_patch_lines(lines, flow_indent):
     normalized = []
     action_count = 0
     current_action = ""
+    pending_ai_scroll_index = None
     for raw in lines:
         if not isinstance(raw, str):
             raise ValueError("修复补丁 lines 只能包含字符串")
@@ -312,9 +313,15 @@ def _normalize_repair_patch_lines(lines, flow_indent):
             key = match.group(1)
             value = match.group(2)
             if key in REPAIR_PATCH_ACTIONS:
-                normalized.append(
-                    flow_indent + "- " + key + ": " + _normalize_repair_patch_scalar(key, value)
-                )
+                if pending_ai_scroll_index is not None:
+                    raise ValueError("修复补丁 aiScroll 缺少 value 描述")
+                if key == "aiScroll" and not strip_yaml_quotes(value):
+                    pending_ai_scroll_index = len(normalized)
+                    normalized.append(flow_indent + "- aiScroll: " + yaml_text("待补充横向滚动区域"))
+                else:
+                    normalized.append(
+                        flow_indent + "- " + key + ": " + _normalize_repair_patch_scalar(key, value)
+                    )
                 action_count += 1
                 current_action = key
             elif key in REPAIR_PATCH_CHILD_KEYS:
@@ -322,6 +329,14 @@ def _normalize_repair_patch_lines(lines, flow_indent):
                     raise ValueError(f"修复补丁子字段 {key} 前缺少 flow 动作")
                 if key in REPAIR_PATCH_SCROLL_FIELDS and current_action != "aiScroll":
                     raise ValueError(f"修复补丁字段 {key} 只能属于 aiScroll")
+                if key == "value" and current_action == "aiScroll":
+                    if pending_ai_scroll_index is None:
+                        raise ValueError("修复补丁 aiScroll.value 只能用于空标量 aiScroll")
+                    normalized[pending_ai_scroll_index] = (
+                        flow_indent + "- aiScroll: " + _normalize_repair_patch_scalar("aiScroll", value)
+                    )
+                    pending_ai_scroll_index = None
+                    continue
                 if key in ("value", "autoDismissKeyboard", "mode") and current_action != "aiInput":
                     raise ValueError(f"修复补丁字段 {key} 只能属于 aiInput")
                 normalized.append(
@@ -331,6 +346,8 @@ def _normalize_repair_patch_lines(lines, flow_indent):
                 raise ValueError(f"修复补丁禁止使用动作或字段：{key}")
             else:
                 raise ValueError(f"修复补丁包含不支持的字段：{key}")
+    if pending_ai_scroll_index is not None:
+        raise ValueError("修复补丁 aiScroll 缺少 value 描述")
     if not normalized or action_count <= 0:
         raise ValueError("修复补丁 lines 必须至少包含一个 Midscene flow 动作")
     if action_count > 4:

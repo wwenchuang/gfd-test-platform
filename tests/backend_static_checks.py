@@ -6106,6 +6106,28 @@ def check_agent_failure_review_and_repair_guard():
         and "被测 App 首页已加载完成" not in guarded_block,
         "Repair patch anchors that include an optional timeout child must still match a unique original flow item by its exact action text",
     )
+    scroll_value_block, scroll_value_patches = repair_service.apply_task_repair_patches(
+        patch_info["block"],
+        [{
+            "op": "insert_before",
+            "anchor": "aiWaitFor: 企业云盘入口可见",
+            "lines": [
+                "- aiScroll:",
+                "    direction: right",
+                "    distance: 300",
+                "    scrollType: singleAction",
+                "    value: 在包含“本地导入”、“相册导入”和“微信导入”的横向导入栏区域向右滑动",
+            ],
+            "reason": "线上修复模型返回 aiScroll 空标量和 value 子字段",
+        }],
+    )
+    require(
+        scroll_value_patches
+        and "aiScroll: \"在包含" in scroll_value_block
+        and "value:" not in scroll_value_block
+        and re.search(r"direction:\s*[\"']?right", scroll_value_block),
+        "Repair patches must normalize aiScroll empty-scalar + value child into the official aiScroll string action",
+    )
     ambiguous_patch_source = patch_source.replace(
         "        - aiWaitFor: 企业云盘入口可见",
         "        - aiWaitFor: 来源页面加载完成\n        - aiWaitFor: 企业云盘入口可见",
@@ -6494,6 +6516,38 @@ def check_agent_failure_review_and_repair_guard():
         and overlay_gate.get("baselineCitationExempt") is True
         and overlay_gate.get("transientOverlayChange", {}).get("matchedControls") == ["确定"],
         "A keyframe-backed transient overlay handler may preserve the business path without citing a navigation baseline",
+    )
+    camera_permission_fixed = overlay_original.replace(
+        "        - aiTap: 点击「证件扫描」",
+        "        - aiTap: 点击「证件扫描」\n"
+        "        - ai: 如果出现包含“取消”和“确定”按钮的相机权限请求弹窗，点击“确定”",
+    )
+    camera_permission_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        {
+            "fixedYaml": camera_permission_fixed,
+            "analysis": "失败关键帧显示相机权限请求弹窗遮挡原业务步骤，仅插入临时弹窗处理并保持导航不变",
+            "changes": ["在证件扫描后插入相机权限请求弹窗处理"],
+            "patches": [{
+                "op": "insert_after",
+                "anchor": "aiTap: 点击「证件扫描」",
+                "lines": ["ai: 如果出现包含“取消”和“确定”按钮的相机权限请求弹窗，点击“确定”"],
+                "reason": "失败关键帧显示权限请求弹窗包含取消和确定按钮",
+            }],
+            "usedBaselineIds": [],
+        },
+        [branch_baseline],
+        platform="android",
+        runtime_evidence={
+            "error": "failed to locate element: 图中显示的是一个权限请求弹窗，包含“取消”和“确定”按钮，未找到“立即使用”按钮。",
+            "reportKeyframes": ["failure-frame-1.jpg"],
+        },
+    )
+    require(
+        camera_permission_gate.get("ok") is True
+        and camera_permission_gate.get("baselineCitationExempt") is True
+        and "确定" in (camera_permission_gate.get("transientOverlayChange", {}).get("matchedControls") or []),
+        "Runtime evidence that a permission-request popup contains visible cancel/confirm controls must authorize only the transient overlay handler",
     )
     ungrounded_overlay_gate = agent_service._agent_repair_candidate_gate(
         overlay_original,
@@ -9227,6 +9281,7 @@ def check_yaml_static_validation_and_patterns():
         select_best_baseline_template,
     )
     from task_server.services import ai_skill_service
+    from task_server.services import agent_service
     from task_server.services import yaml_service as yaml_service_module
     from task_server.services.yaml_service import (
         ai_rewrite_yaml_for_executable_gate,
@@ -9745,6 +9800,27 @@ def check_yaml_static_validation_and_patterns():
         and dry_run_midscene_yaml(scan_generic_page_wait_content, app_package="com.xbxxhz.box").get("ok") is True,
         "Generated scan-page waits before import-area scrolling must include visible import anchors instead of a generic loaded-state claim",
     )
+    scan_missing_scroll_yaml = """android:
+  tasks:
+    - name: 扫描复印页-企业云盘入口可见性及文案校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，扫描复印入口可见
+        - aiTap: 点击「扫描复印」入口
+        - sleep: 300
+        - aiWaitFor: 等待扫描复印页面加载
+        - aiWaitFor: 校验「企业云盘」入口可见且文案为“企业云盘”
+        - aiAssert: 扫描复印页「企业云盘」入口可见，文案为“企业云盘”，与其他导入入口视觉层级一致
+"""
+    scan_missing_scroll_repair = repair_generated_yaml_executable_gate_issues(scan_missing_scroll_yaml)
+    scan_missing_scroll_content = scan_missing_scroll_repair.get("content", "")
+    require(
+        "等待扫描复印页面加载" not in scan_missing_scroll_content
+        and "- aiScroll:" in scan_missing_scroll_content
+        and "企业云盘" in scan_missing_scroll_content
+        and dry_run_midscene_yaml(scan_missing_scroll_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated scan import checks must add bounded horizontal aiScroll before waiting for a target that may be clipped off-screen",
+    )
     service_static_repair = repair_generated_yaml_static_errors(assertion_tap_yaml, app_package="com.xbxxhz.box", max_attempts=0)
     require(
         service_static_repair.get("ok")
@@ -9947,6 +10023,39 @@ def check_yaml_static_validation_and_patterns():
         len([item for item in blocked if _agent_runner_gate_ref_is_deferred(item)]) == 2,
         "Executable boundary or reachability cases excluded from first smoke must remain deferred for gated expansion",
     )
+    old_agent_task_dir = agent_service.TASK_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            manual_hint_yaml = """android:
+  tasks:
+    - name: 扫描复印页-百度网盘入口可见性校验(需人工确认UI)
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，扫描复印入口可见
+        - aiTap: 点击「扫描复印」入口
+        - aiWaitFor: 「百度网盘」入口可见且文案准确
+        - aiAssert: 「百度网盘」入口可见且文案准确
+"""
+            manual_path = module_dir / "manual.yaml"
+            manual_path.write_text(manual_hint_yaml, encoding="utf-8")
+            scored_manual_ref = agent_service._score_agent_yaml_ref_for_execution(
+                {"artifacts": {"generationPipeline": {"source": "agent_generate_yaml"}}},
+                {"module": "AI_Agent_草稿", "file": "manual.yaml", "path": str(manual_path), "source": "generated"},
+            )
+        manual_score = scored_manual_ref.get("executableScore") or {}
+        manual_task_score = (manual_score.get("taskScores") or [{}])[0]
+        require(
+            manual_task_score.get("manualHint") is True
+            and scored_manual_ref.get("runnerCandidate") is False
+            and scored_manual_ref.get("smokeCandidate") is False
+            and scored_manual_ref.get("executionLevel") in ("needs_review", "manual"),
+            "Generated YAML with explicit manual UI confirmation hints must not enter Agent Runner smoke selection",
+        )
+    finally:
+        agent_service.TASK_DIR = old_agent_task_dir
     selected, blocked = rank_executable_yaml_refs([
         {"file": "fallback-1.yaml", "executableScore": {
             **executable_score,

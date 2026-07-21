@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：人工确认稿、横向入口、修复补丁与权限弹窗门禁必须闭环
+
+用户部署 `bd300df` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784622871663-d8f0ec7b`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110` 是唯一 dry-run、smoke 和 repair 设备。另有华为在线，但本轮没有被 Agent 选择或执行。
+- Figma 正确解析为 `4 页 / 4 图 / 忽略 0`，4 张图分 4 批真实送入 `qwen3.6-plus` 并全部完成。Agent 越过 `GENERATE_YAML / RISK_REVIEW / EXECUTION_PRECHECK`，生成 7 条 YAML。
+- 首批 smoke 3 条真实执行：文档展示通过；扫描展示失败为 `SCRIPT_ISSUE / scroll_not_effective`，真实截图显示横向导入栏里「本地导入 / 相册导入 / 微信导入」可见，但右侧目标入口被裁切，生成 YAML 未先横向滑动；扫描人工走查失败为权限请求弹窗遮挡「立即使用」。冒烟通过率低于 50%，remaining 未执行，Agent 终态为 `FAILED / COLLECT_REPORT / 95%`。
+- 生成 YAML 中 `05/06` 标题含“需人工确认UI”，`07` 为“人工走查”，但仍被标成 executable 并进入 smoke；这违反“人工确认 / 人工走查稿不能下发 Runner”原则。
+- 自动修复里扫描展示 patch 方向正确，但模型返回了 `aiScroll:` 空标量 + `value:` 子字段，旧补丁 normalizer 认为 `aiScroll` 值为空，阻断应用；权限弹窗 patch 已有真实失败帧支持，但 transient overlay 证据识别没有覆盖“权限请求弹窗，包含取消和确定按钮”的线上文案，被导航基线门禁误挡。
+
+深层根因与通用修复：
+
+- Agent Runner gate 现在会消费 scorer 的 `manualHint`：生成 YAML 只要标题或任务被识别为人工确认 / 人工走查提示，即使 AI 或 ref 标为 smoke，也会降级为 `needs_review`，禁止进入 Runner 和首批 smoke。没有修改用户当前未提交的 `yaml_executable_scorer.py`。
+- 生成 YAML 本地修复器现在把“等待扫描复印页面加载”收敛为可见导入区锚点，并在下一步校验横向入口且目标可能被裁切时，插入有界 `aiScroll` 向右单次滑动和短 sleep，再等待目标可见。该逻辑按“本地导入 / 相册导入 / 微信导入”横向导入栏通用锚点工作，不硬编码百度网盘。
+- repair patch normalizer 现在接受 AI 产出的 `aiScroll:` 空标量加 `value:` 子字段，规范化为 Midscene 官方字符串动作，并保留 `direction / distance / scrollType` 子字段；仍限制坐标、ADB、隐藏定位器、过长距离和非官方动作。
+- transient overlay 门禁现在识别“权限请求弹窗，包含/显示可见按钮”的真实运行证据。只有在报告关键帧和当前 job 错误文本共同证明弹窗存在、且新增动作只处理弹窗控件时，才豁免导航基线引用；业务导航新增、跨 job 聚合分析和无关键帧泛化失败仍会被挡。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/repair_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮涉及 `task_server/services/agent_service.py`、`task_server/services/ai_skill_service.py`、`task_server/services/yaml_service.py`、`task_server/services/repair_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`。提交后不 push；用户手动 push/部署后，需要再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，重点确认人工确认稿不进入 smoke、扫描展示 YAML 先做有界横向滑动、`aiScroll.value` 修复补丁可应用、权限弹窗修复稿能进入同设备重跑，再监督 smoke、remaining、repair rerun 和所有 Runner 报告到真实终态。
+
 ### 2026-07-21 真实回归：点击后可达性 YAML 不能等待“跳转过程”，扫描页等待必须锚定可见导入区
 
 用户部署 `bb7189c` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784618340121-02ece831`：
