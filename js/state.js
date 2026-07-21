@@ -98,6 +98,14 @@ let selectedRepairJobId = '';
 let repairDrafts = [];
 let aiProviders = [];
 let aiModelRouter = {};
+let apiTestingOverview = null;
+let apiTestingSnapshots = [];
+let apiTestingEndpoints = [];
+let apiTestingPlans = [];
+let apiTestingReports = [];
+let apiTestingCurrentSnapshotId = '';
+let apiTestingCurrentPlan = null;
+const apiLogExpandedKeys = new Set(JSON.parse(localStorage.getItem('api_log_expanded_keys') || '[]'));
 const layoutPrefs = JSON.parse(localStorage.getItem('midscene_layout_prefs') || '{}');
 
 const AGENT_RISK_KEYWORDS = ['确认打印', '开始打印', '支付', '删除', '覆盖基线', '格式化', '清空', '解绑', '重置'];

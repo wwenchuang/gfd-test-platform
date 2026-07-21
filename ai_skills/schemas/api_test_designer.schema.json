@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "required": ["cases", "review"],
+  "properties": {
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["endpoint_id", "name", "type", "priority", "steps", "assertions"],
+        "properties": {
+          "case_id": {"type": "string"},
+          "endpoint_id": {"type": "string"},
+          "name": {"type": "string"},
+          "type": {"type": "string"},
+          "priority": {"type": "string"},
+          "steps": {"type": "array"},
+          "assertions": {"type": "array"}
+        }
+      }
+    },
+    "review": {"type": "object"}
+  }
+}

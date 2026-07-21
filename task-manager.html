@@ -83,6 +83,30 @@
             <span class="workflow-main"><span class="workflow-name">脚本编辑</span></span>
           </button>
         </details>
+        <!-- 接口测试 -->
+        <details class="nav-group" data-nav-group="api-testing" open>
+          <summary class="nav-group-title">接口测试</summary>
+          <button class="workflow-step" data-workflow="api_dashboard" onclick="activateWorkflow('api_dashboard')">
+            <span class="workflow-index">API</span>
+            <span class="workflow-main"><span class="workflow-name">API 工作台</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="api_assets" onclick="activateWorkflow('api_assets')">
+            <span class="workflow-index">OAS</span>
+            <span class="workflow-main"><span class="workflow-name">接口资产</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="api_plan" onclick="activateWorkflow('api_plan')">
+            <span class="workflow-index">AI</span>
+            <span class="workflow-main"><span class="workflow-name">AI 用例计划</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="api_execution" onclick="activateWorkflow('api_execution')">
+            <span class="workflow-index">MS</span>
+            <span class="workflow-main"><span class="workflow-name">MeterSphere 执行</span></span>
+          </button>
+          <button class="workflow-step" data-workflow="api_reports" onclick="activateWorkflow('api_reports')">
+            <span class="workflow-index">RPT</span>
+            <span class="workflow-main"><span class="workflow-name">API 报告</span></span>
+          </button>
+        </details>
         <!-- 执行 -->
         <details class="nav-group" data-nav-group="run" open>
           <summary class="nav-group-title">执行</summary>
@@ -908,6 +932,7 @@
 <script src="js/reports.js?v=20260701-install-refresh"></script>
 <script src="js/ai-repair.js?v=20260701-install-refresh"></script>
 <script src="js/model-config.js?v=20260701-install-refresh"></script>
+<script src="js/api-testing.js?v=20260721-api-testing-mvp"></script>
 <script src="js/yaml-editor.js?v=20260701-install-refresh"></script>
 <script src="js/app.js?v=20260701-smoke-dynamic"></script>
 <!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->

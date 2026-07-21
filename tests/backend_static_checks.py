@@ -12623,6 +12623,170 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
     require((no_runner_summary.get("execution") or {}).get("attemptedCount") == 0, "A pre-dispatch failure must not invent Runner attempts")
 
 
+def check_api_asset_service_openapi_import():
+    from task_server.services import api_asset_service
+
+    doc = {
+        "openapi": "3.0.1",
+        "info": {"title": "打印接口", "version": "1.0.0"},
+        "paths": {
+            "/print/task": {
+                "post": {
+                    "tags": ["打印"],
+                    "summary": "创建打印任务",
+                    "operationId": "createPrintTask",
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["modelId"],
+                                    "properties": {"modelId": {"type": "string"}},
+                                }
+                            }
+                        },
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "成功",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "code": {"type": "integer"},
+                                            "data": {
+                                                "type": "object",
+                                                "properties": {"taskId": {"type": "string"}},
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+    old_dir = api_asset_service.API_TESTING_DIR
+    temp_dir = tempfile.mkdtemp(prefix="api_asset_static_")
+    api_asset_service.API_TESTING_DIR = temp_dir
+    try:
+        imported = api_asset_service.import_openapi_document("打印接口", doc, "print-openapi.json")
+    finally:
+        api_asset_service.API_TESTING_DIR = old_dir
+    endpoints = imported.get("endpoints") or []
+    require(imported.get("snapshot_id"), "OpenAPI import must return a snapshot id")
+    require(len(endpoints) == 1, "OpenAPI import must extract one operation")
+    endpoint = endpoints[0]
+    require(endpoint.get("method") == "POST", "OpenAPI import must normalize method")
+    require(endpoint.get("path") == "/print/task", "OpenAPI import must keep path")
+    require(endpoint.get("module") == "打印", "OpenAPI import must use first tag as module")
+    require("modelId" in endpoint.get("required_fields", []), "OpenAPI import must extract required request fields")
+    require(endpoint.get("schema_hash"), "OpenAPI import must compute schema hash")
+
+
+def check_api_test_plan_generation_is_confirmable():
+    from task_server.services import api_asset_service, api_test_plan_service
+
+    doc = {
+        "openapi": "3.0.0",
+        "info": {"title": "账号接口"},
+        "paths": {
+            "/user/login": {
+                "post": {
+                    "tags": ["账号"],
+                    "summary": "登录",
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["username", "password"],
+                                    "properties": {
+                                        "username": {"type": "string"},
+                                        "password": {"type": "string"},
+                                    },
+                                }
+                            }
+                        }
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    old_asset_dir = api_asset_service.API_TESTING_DIR
+    old_plan_dir = api_test_plan_service.API_TESTING_DIR
+    temp_dir = tempfile.mkdtemp(prefix="api_plan_static_")
+    api_asset_service.API_TESTING_DIR = temp_dir
+    api_test_plan_service.API_TESTING_DIR = temp_dir
+    try:
+        snapshot = api_asset_service.import_openapi_document("账号接口", doc, "account.json")
+        plan = api_test_plan_service.generate_api_test_plan(snapshot.get("snapshot_id"), [])
+        confirmed = api_test_plan_service.confirm_api_test_plan(plan.get("plan_id"))
+    finally:
+        api_asset_service.API_TESTING_DIR = old_asset_dir
+        api_test_plan_service.API_TESTING_DIR = old_plan_dir
+    require(plan.get("status") == "draft", "Generated API plan must start as draft")
+    require(plan.get("cases"), "Generated API plan must contain cases")
+    require(any(case.get("type") == "positive" for case in plan.get("cases", [])), "Plan must include positive case")
+    require(any(case.get("type") == "negative" for case in plan.get("cases", [])), "Plan must include negative case for required fields")
+    require(confirmed.get("status") == "confirmed", "Plan confirmation must be explicit")
+
+
+def check_metersphere_config_masks_secrets():
+    from task_server.services import metersphere_service
+
+    config_source = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
+    require('"METERSPHERE_"' in config_source, "Startup env loader must allow MeterSphere connection variables")
+    old_dir = metersphere_service.API_TESTING_DIR
+    temp_dir = tempfile.mkdtemp(prefix="metersphere_static_")
+    metersphere_service.API_TESTING_DIR = temp_dir
+    try:
+        saved = metersphere_service.save_metersphere_config({
+            "base_url": "http://metersphere.local",
+            "token": "secret-token",
+            "workspace_id": "ws1",
+            "project_id": "project1",
+            "environment_id": "env1",
+        })
+        masked = metersphere_service.metersphere_config(masked=True)
+        raw = metersphere_service.metersphere_config(masked=False)
+    finally:
+        metersphere_service.API_TESTING_DIR = old_dir
+    require(saved.get("base_url") == "http://metersphere.local", "MeterSphere config must save base_url")
+    require(masked.get("token") != "secret-token", "MeterSphere token must be masked")
+    require(masked.get("token_configured") is True, "Masked config must expose token presence")
+    require(raw.get("token") == "secret-token", "Raw config must remain available server-side")
+
+
+def check_api_testing_routes_registered():
+    from task_server import router
+
+    for path in (
+        "/api/api-testing/overview",
+        "/api/api-testing/assets",
+        "/api/api-testing/plans",
+        "/api/api-testing/metersphere/config",
+        "/api/api-testing/reports",
+    ):
+        require(path in router.GET_ROUTES, f"Missing API testing GET route: {path}")
+    for path in (
+        "/api/api-testing/openapi/import",
+        "/api/api-testing/plans/generate",
+        "/api/api-testing/plans/confirm",
+        "/api/api-testing/metersphere/config",
+        "/api/api-testing/metersphere/health",
+        "/api/api-testing/metersphere/push",
+        "/api/api-testing/metersphere/run",
+        "/api/api-testing/reports/pull",
+    ):
+        require(path in router.POST_ROUTES, f"Missing API testing POST route: {path}")
+
+
 def main():
     check_ai_gateway_response_diagnostics()
     check_automation_filter_invalid_json_self_repair()
@@ -12630,6 +12794,10 @@ def main():
     check_runner_inline_android_device_injection()
     check_midscene_model_family_protocol()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
+    check_api_asset_service_openapi_import()
+    check_api_test_plan_generation_is_confirmable()
+    check_metersphere_config_masks_secrets()
+    check_api_testing_routes_registered()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
     source_paths = [

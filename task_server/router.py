@@ -2434,6 +2434,61 @@ def _get_tasks(handler, qs):
     handler._json({'ok': True, 'tasks': tasks, 'total': len(tasks)})
 
 
+# ── API Testing ─────────────────────────────────────────────────────
+
+@route_get("/api/api-testing/overview")
+def _get_api_testing_overview(handler, qs):
+    from task_server.services import api_asset_service, api_report_service, api_test_plan_service, metersphere_service
+    snapshots = api_asset_service.list_api_snapshots(limit=5)
+    latest_snapshot_id = snapshots[0].get("snapshot_id") if snapshots else ""
+    endpoints = api_asset_service.list_api_endpoints(latest_snapshot_id) if latest_snapshot_id else []
+    plans = api_test_plan_service.list_api_test_plans(limit=5)
+    reports = api_report_service.list_api_reports(limit=5)
+    handler._json({
+        "ok": True,
+        "summary": {
+            "snapshot_count": len(snapshots),
+            "endpoint_count": len(endpoints),
+            "plan_count": len(plans),
+            "report_count": len(reports),
+        },
+        "snapshots": snapshots,
+        "latest_snapshot_id": latest_snapshot_id,
+        "endpoints": endpoints[:20],
+        "plans": plans,
+        "reports": reports,
+        "metersphere": metersphere_service.metersphere_config(masked=True),
+    })
+
+
+@route_get("/api/api-testing/assets")
+def _get_api_testing_assets(handler, qs):
+    from task_server.services import api_asset_service
+    snapshot_id = str(qs.get("snapshot_id") or qs.get("snapshotId") or "").strip()
+    snapshots = api_asset_service.list_api_snapshots(limit=safe_int(qs.get("limit"), 20) or 20)
+    endpoints = api_asset_service.list_api_endpoints(snapshot_id)
+    snapshot = api_asset_service.get_api_snapshot(snapshot_id)
+    handler._json({"ok": True, "snapshots": snapshots, "snapshot": snapshot, "endpoints": endpoints})
+
+
+@route_get("/api/api-testing/plans")
+def _get_api_testing_plans(handler, qs):
+    from task_server.services import api_test_plan_service
+    handler._json({"ok": True, "plans": api_test_plan_service.list_api_test_plans(limit=safe_int(qs.get("limit"), 20) or 20)})
+
+
+@route_get("/api/api-testing/metersphere/config")
+def _get_api_testing_metersphere_config(handler, qs):
+    from task_server.services import metersphere_service
+    handler._json({"ok": True, "config": metersphere_service.metersphere_config(masked=True)})
+
+
+@route_get("/api/api-testing/reports")
+def _get_api_testing_reports(handler, qs):
+    from task_server.services import api_report_service
+    handler._json({"ok": True, "reports": api_report_service.list_api_reports(limit=safe_int(qs.get("limit"), 20) or 20)})
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  POST 路由注册
 # ══════════════════════════════════════════════════════════════════════
@@ -2464,6 +2519,98 @@ def _post_auth_logout(handler, qs):
     if token:
         REVOKED_SESSION_TOKENS.add(token)
     handler._json({"ok": True})
+
+
+# ── API Testing ─────────────────────────────────────────────────────
+
+@route_post("/api/api-testing/openapi/import")
+def _post_api_testing_openapi_import(handler, qs):
+    from task_server.services import api_asset_service
+    try:
+        d = handler._body()
+        document = d.get("document") or d.get("openapi") or d.get("content") or d.get("raw") or {}
+        snapshot = api_asset_service.import_openapi_document(
+            str(d.get("name") or "").strip(),
+            document,
+            str(d.get("filename") or "").strip(),
+        )
+        handler._json({"ok": True, "snapshot": snapshot, "endpoints": snapshot.get("endpoints") or []})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/api-testing/plans/generate")
+def _post_api_testing_plans_generate(handler, qs):
+    from task_server.services import api_test_plan_service
+    try:
+        d = handler._body()
+        plan = api_test_plan_service.generate_api_test_plan(
+            str(d.get("snapshot_id") or d.get("snapshotId") or "").strip(),
+            d.get("endpoint_ids") or d.get("endpointIds") or [],
+            model_config=d.get("model_config") or d.get("modelConfig") or None,
+            use_ai=d.get("use_ai") if "use_ai" in d else d.get("useAi"),
+        )
+        handler._json({"ok": True, "plan": plan})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/api-testing/plans/confirm")
+def _post_api_testing_plans_confirm(handler, qs):
+    from task_server.services import api_test_plan_service
+    try:
+        d = handler._body()
+        plan = api_test_plan_service.confirm_api_test_plan(str(d.get("plan_id") or d.get("planId") or "").strip())
+        handler._json({"ok": True, "plan": plan})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/api-testing/metersphere/config")
+def _post_api_testing_metersphere_config(handler, qs):
+    from task_server.services import metersphere_service
+    try:
+        config = metersphere_service.save_metersphere_config(handler._body())
+        handler._json({"ok": True, "config": config})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/api-testing/metersphere/health")
+def _post_api_testing_metersphere_health(handler, qs):
+    from task_server.services import metersphere_service
+    result = metersphere_service.metersphere_health()
+    handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
+
+
+@route_post("/api/api-testing/metersphere/push")
+def _post_api_testing_metersphere_push(handler, qs):
+    from task_server.services import metersphere_service
+    d = handler._body()
+    result = metersphere_service.push_plan_to_metersphere(str(d.get("plan_id") or d.get("planId") or "").strip())
+    handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
+
+
+@route_post("/api/api-testing/metersphere/run")
+def _post_api_testing_metersphere_run(handler, qs):
+    from task_server.services import metersphere_service
+    d = handler._body()
+    result = metersphere_service.create_metersphere_run(
+        str(d.get("plan_id") or d.get("planId") or "").strip(),
+        str(d.get("test_plan_id") or d.get("testPlanId") or "").strip(),
+    )
+    handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
+
+
+@route_post("/api/api-testing/reports/pull")
+def _post_api_testing_reports_pull(handler, qs):
+    from task_server.services import metersphere_service
+    d = handler._body()
+    result = metersphere_service.pull_metersphere_report(
+        str(d.get("run_id") or d.get("runId") or "").strip(),
+        raw_report=d.get("raw_report") or d.get("rawReport") or None,
+    )
+    handler._json({"ok": bool(result.get("ok")), "result": result, "report": result.get("report")}, 200 if result.get("ok") else 400)
 
 
 # ── 修复草稿保存 ────────────────────────────────────────────────────

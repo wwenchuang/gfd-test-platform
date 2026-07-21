@@ -74,6 +74,59 @@ const WORKFLOW_SECTIONS = {
     ],
     checklist: ['需求文档和临时截图从“新建自动化测试”上传', '长期复用页面沉淀到页面知识库', '生成后先看分析和脑图，再进入调试']
   },
+  api_dashboard: {
+    index: '2',
+    title: 'API 工作台',
+    subtitle: '接口资产、AI 用例计划、MeterSphere 执行和报告闭环',
+    help: '第一阶段从 Apifox 导出的 OpenAPI JSON 导入接口资产，确认 AI 用例计划后推送 MeterSphere 执行。',
+    cards: [
+      { title: '导入接口资产', text: '上传 Apifox 导出的 OpenAPI JSON，平台生成接口快照和覆盖基线。', actions: [
+        { label: '打开接口资产', cls: 'primary', fn: 'showApiAssetsPage()' }
+      ]},
+      { title: '生成 API 用例计划', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言草稿。', actions: [
+        { label: 'AI 用例计划', cls: 'ai', fn: 'showApiPlanPage()' }
+      ]},
+      { title: 'MeterSphere 执行', text: '保存连接配置后，推送确认过的用例并触发 MeterSphere 测试计划。', actions: [
+        { label: '执行配置', fn: 'showApiExecutionPage()' }
+      ]},
+      { title: '统一 API 报告', text: '回收 MeterSphere 报告并按鉴权、环境、测试数据、断言和接口缺陷分类。', actions: [
+        { label: 'API 报告', fn: 'showApiReportsPage()' }
+      ]}
+    ],
+    checklist: ['OpenAPI 导入先跑通', '推送前必须人工确认', 'MeterSphere token 只在服务端保存']
+  },
+  api_assets: {
+    index: '2',
+    title: '接口资产',
+    subtitle: '导入和查看 OpenAPI 接口快照',
+    help: '接口资产来自 Apifox OpenAPI JSON；这里展示接口、schema、覆盖状态和最近执行情况。',
+    cards: [],
+    checklist: []
+  },
+  api_plan: {
+    index: '2',
+    title: 'AI 用例计划',
+    subtitle: '生成并确认可推送 MeterSphere 的 API 用例草稿',
+    help: 'AI 用例计划默认是草稿，确认后才能推送 MeterSphere。',
+    cards: [],
+    checklist: []
+  },
+  api_execution: {
+    index: '2',
+    title: 'MeterSphere 执行',
+    subtitle: '配置 MeterSphere、推送用例、触发执行',
+    help: 'MeterSphere 是接口测试执行和测试管理引擎；平台只负责串联和报告归因。',
+    cards: [],
+    checklist: []
+  },
+  api_reports: {
+    index: '2',
+    title: 'API 报告',
+    subtitle: '统一展示 MeterSphere 执行结果和 AI 归因',
+    help: '报告从 MeterSphere 回收，平台按接口缺陷、环境、鉴权、测试数据和断言问题分类。',
+    cards: [],
+    checklist: []
+  },
   agent: {
     index: '2',
     title: 'AI Agent',

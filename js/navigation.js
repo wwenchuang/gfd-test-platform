@@ -236,6 +236,26 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showAssetsCenter();
     return;
   }
+  if (sectionKey === 'api_dashboard' && typeof showApiTestingDashboard === 'function') {
+    showApiTestingDashboard();
+    return;
+  }
+  if (sectionKey === 'api_assets' && typeof showApiAssetsPage === 'function') {
+    showApiAssetsPage();
+    return;
+  }
+  if (sectionKey === 'api_plan' && typeof showApiPlanPage === 'function') {
+    showApiPlanPage();
+    return;
+  }
+  if (sectionKey === 'api_execution' && typeof showApiExecutionPage === 'function') {
+    showApiExecutionPage();
+    return;
+  }
+  if (sectionKey === 'api_reports' && typeof showApiReportsPage === 'function') {
+    showApiReportsPage();
+    return;
+  }
   area.className = 'editor-area';
   area.innerHTML = workflowGuideHtml(sectionKey);
   updateToolbarState();

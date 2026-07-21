@@ -37,9 +37,14 @@ def main():
     require("assets/brand/kongfudou-icon.png" in html and "brand-mark-img" in html, "Kongfudou brand image must be used instead of a text placeholder")
     require("Qwen · Midscene · Sonic" in html, "Header subtitle must show core platform integrations")
     require("用例资产" in html, "Sidebar must include 用例资产 entry")
-    # Sidebar has 5 nav groups with sub-items
-    require(html.count('class="nav-group"') == 5, "Sidebar must include five nav groups (Agent/用例/执行/报告/配置)")
-    require('data-nav-group="agent"' in html and 'data-nav-group="cases"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/run/report/settings")
+    # Sidebar has 6 nav groups with sub-items
+    require(html.count('class="nav-group"') == 6, "Sidebar must include six nav groups (Agent/用例/接口测试/执行/报告/配置)")
+    require('data-nav-group="agent"' in html and 'data-nav-group="cases"' in html and 'data-nav-group="api-testing"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/api-testing/run/report/settings")
+    for workflow in ("api_dashboard", "api_assets", "api_plan", "api_execution", "api_reports"):
+        require(f'data-workflow="{workflow}"' in html, f"Sidebar missing API testing workflow: {workflow}")
+    require("js/api-testing.js" in html, "API testing frontend module must be loaded")
+    require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
+    require("apiLogExpandedKeys" in html and "runId + stepId" in html, "API execution logs must preserve expanded state by stable keys")
     require("Agent 工作台" in html, "Dashboard must serve as the Agent workbench entry")
     require(("AI修复" in html or "AI 修复" in html) and 'data-workflow="repair"' in html, "Sidebar must expose independent AI repair entry")
     require("const AI_GATEWAY_BASE = '/ai-gateway'" in html, "AI Gateway calls must use same-origin reverse proxy")
@@ -191,7 +196,7 @@ def main():
         require(pattern not in html, f"Write API must use apiRequest, found direct fetch pattern: {pattern}")
     require("path-rail" in html and "失败分析：Qwen Plus" in html, "Dashboard must show model strategy as visual nodes")
     require("generation-flow" in html and "读资料" in html and "生成 YAML" in html, "Generation records must show a visual generation flow")
-    require("nav-group" in html and "配置" in html, "Sidebar navigation must use five task-oriented groups")
+    require("nav-group" in html and "接口测试" in html and "配置" in html, "Sidebar navigation must use six task-oriented groups")
     require("setActiveWorkflow('config');\n  renderTaskAppModal();" not in html, "App config modal must not reset workflow back to model config")
     require("setActiveWorkflow('config');\n  document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 环境体检';" not in html, "System preflight must not reset workflow back to model config")
     require("['assets', 'generate', 'yaml_edit', 'execute', 'repair', 'baseline'].includes(activeWorkflow)" in html, "Opening YAML from assets/yaml_edit must preserve the current workflow")

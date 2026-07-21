@@ -1719,6 +1719,12 @@ const CONTEXT_TOOLBAR_MAP = {
   execute:          { module: 'run',      icon: '▶', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   baseline:         { module: 'run',      icon: '⇄', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   repair:           { module: 'run',      icon: '🔁', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
+  // 接口测试 模块
+  api_dashboard:    { module: 'api',      icon: 'API', title: '接口测试', refreshLabel: '刷新', refreshFn: 'showApiTestingDashboard()' },
+  api_assets:       { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
+  api_plan:         { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新计划', refreshFn: 'showApiPlanPage()' },
+  api_execution:    { module: 'api',      icon: 'MS', title: '接口测试', refreshLabel: '刷新执行', refreshFn: 'showApiExecutionPage()' },
+  api_reports:      { module: 'api',      icon: 'RPT', title: '接口测试', refreshLabel: '刷新报告', refreshFn: 'showApiReportsPage()' },
   // 报告 模块
   reports:          { module: 'report',   icon: '📊', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
   failure_analysis: { module: 'report',   icon: '🔍', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
@@ -1821,6 +1827,31 @@ async function activateWorkflow(sectionKey) {
   }
   if (activeWorkflow === 'agent_confirm') {
     await renderAgentConfirmPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_dashboard') {
+    showApiTestingDashboard();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_assets') {
+    showApiAssetsPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_plan') {
+    showApiPlanPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_execution') {
+    showApiExecutionPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_reports') {
+    showApiReportsPage();
     toggleLibrary(false);
     return;
   }

@@ -28,6 +28,52 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 接口测试 MVP：OpenAPI 导入到 MeterSphere 执行闭环第一版
+
+本轮按用户确认的“先跑通”范围，新增 API 测试工作区，不改现有 Sonic/Midscene/Runner 主链路：
+
+- 新增左侧「接口测试」分组：`API 工作台 / 接口资产 / AI 用例计划 / MeterSphere 执行 / API 报告`。
+- 第一阶段从 Apifox 导出的 OpenAPI JSON 导入接口资产；不接 Apifox token 自动同步，不自研 API Runner。
+- 新增 API 资产服务：解析 OpenAPI paths、method/path、module、request/response schema、required fields 和 schema hash，并落盘到 `LEARNING_DIR/api-testing`。
+- 新增 API 用例计划服务：生成 confirmable draft，用例覆盖成功响应、必填字段缺失、鉴权等基础场景；默认本地确定性生成，显式开启时可走 `api_test_designer` AI skill，AI 失败会回退本地草稿。
+- 新增 MeterSphere adapter：保存服务端配置、token 脱敏、健康检查、用例推送、执行触发和报告拉取入口。未配置具体 MeterSphere API 路径时返回 `requires_config`，不会假装执行成功。
+- 新增 API 报告服务：归并 MeterSphere 结果，并按鉴权、环境、测试数据、断言、接口/产品问题做轻量归因。
+- 技术日志展开状态使用 `runId + stepId` 稳定 key 存到 localStorage，刷新后不会立即收回。
+- 启动环境加载器已放行 `METERSPHERE_` 前缀，`deploy/midscene.env.example` 增加 MeterSphere 配置项；用户提供的 QA 地址应通过环境变量或页面配置写入，不把账号密码提交到代码。
+
+本轮主要涉及：
+
+- `task_server/services/api_asset_service.py`
+- `task_server/services/api_test_plan_service.py`
+- `task_server/services/metersphere_service.py`
+- `task_server/services/api_report_service.py`
+- `task_server/router.py`
+- `ai_skills/prompts/api_test_designer.v1.md`
+- `ai_skills/schemas/api_test_designer.schema.json`
+- `js/api-testing.js`
+- `task-manager.html`
+- `js/api.js`
+- `js/navigation.js`
+- `js/agent-status.js`
+- `js/state.js`
+- `css/round5.css`
+- `deploy/midscene.env.example`
+- `tests/backend_static_checks.py`
+- `tests/frontend_static_checks.py`
+- `docs/superpowers/plans/2026-07-21-api-testing-mvp.md`
+- `CODEX_STATE.md`
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/api_asset_service.py task_server/services/api_test_plan_service.py task_server/services/metersphere_service.py task_server/services/api_report_service.py task_server/router.py
+python3 tests/frontend_static_checks.py
+npm test
+```
+
+下一步部署后，在页面或 `/opt/midscene.env` 配置 `METERSPHERE_BASE_URL`、token/access key、workspace/project/environment ID，以及当前 MeterSphere 版本的 case push / plan run / report API path；如只能账号登录换 token，再用用户提供的测试账号做临时联调，但不要把明文账号密码写入仓库。
+
 ### 2026-07-21 真实回归：同分支运行时叶子修正要复用，重跑必须处理启动停留非首页 Tab
 
 用户部署 `81199a6` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784626372632-9784175e`：
