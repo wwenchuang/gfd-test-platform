@@ -7498,6 +7498,37 @@ def check_agent_quality_report_uses_figma_visual_reference():
 def check_agent_regression_scope_preserves_new_requirement_generation():
     from task_server.services import agent_service
 
+    requirement_text = "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需覆盖展示、同级关系、文案及可达页面。"
+    start_payload = {
+        "target": "基础打印新增百度网盘入口",
+        "requirement": requirement_text,
+        "sourceType": "figma",
+        "sourceRefs": {"figmaUrl": "https://www.figma.com/design/static/new-feature"},
+        "scope": "regression",
+        "executionMode": "RUNNER_JOB",
+        "runnerId": "win-runner-01",
+        "deviceId": "ecbfd645",
+        "deviceStrategy": "fixed",
+    }
+    normalized = agent_service.normalize_agent_input(start_payload)
+    run_with_requirement_alias = {
+        "target": start_payload["target"],
+        "normalizedInput": normalized,
+        "artifacts": {},
+    }
+    require(
+        normalized.get("requirementText") == requirement_text,
+        "Agent start must preserve the requirement alias as authoritative requirementText",
+    )
+    require(
+        agent_service._agent_plan_requirement_text(run_with_requirement_alias) == requirement_text,
+        "Agent PLAN must receive the full requirement text instead of falling back to the short target",
+    )
+    require(
+        agent_service._agent_source_material_context(run_with_requirement_alias).get("requirementText") == requirement_text,
+        "Agent PREPARE_SOURCE must carry the full requirement alias into source material",
+    )
+
     source_context = {
         "sourceType": "requirement",
         "requirementText": "基础打印新增百度网盘入口",

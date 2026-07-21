@@ -304,6 +304,8 @@ class AgentContext:
         self.requirement_text = str(
             request.get("requirementText")
             or source_inputs.get("requirementText")
+            or request.get("requirement")
+            or source_inputs.get("requirement")
             or ""
         ).strip()
         self.source_inputs = source_inputs
@@ -959,6 +961,7 @@ def create_agent_run(payload):
         - scope: smoke | regression | ...
         - sourceType: manual | requirement | figma | failed_job
         - sourceRefs: 输入来源引用，如 generateJobId / caseSetId / figmaUrl / failedJobId
+        - requirement / requirementText: 本次需求正文，优先作为新需求覆盖真相
         - executionMode: RUNNER_JOB | SONIC_SUITE
         - failedJobId: (可选) 关联的失败任务 ID
     """

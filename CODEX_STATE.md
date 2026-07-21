@@ -28,6 +28,32 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：Agent start 必须保留 `requirement` 正文，避免 PLAN 退化成短标题
+
+用户部署 `683c181` 后，以同一需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784605378358-1e58d5ad`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110` 是唯一执行设备，dry-run 和 smoke 均绑定 `win-runner-01 / ecbfd645 / fixed`，没有向第二台手机下发。
+- PREPARE_SOURCE 成功，Figma 解析 `4 页 / 4 图`；PLAN 阶段 4 张图分 4 批全部真实送入 `qwen3.6-plus` 并完成。
+- Agent 终态为 `FAILED / COLLECT_REPORT / 95%`。生成阶段只产出 3 条 YAML：文档展示、照片展示、以及错误的“基础打印首页”展示；缺扫描复印 YAML，缺三业务入口的可达性 YAML，覆盖审计却认为缺口为 0。首批 smoke 3 条真实执行，文档通过，照片和“基础打印首页”失败；修复草稿 2 条均被导航变更门禁阻断，没有创建修复重跑。
+
+深层根因与通用修复：
+
+- 线上 run 的 `normalizedInput.requirementText` 为空，PLAN tool input 里的 `requirement` 只有短标题“基础打印新增百度网盘入口”。因此原本明确的正文“基础打印的入口在首页：文档打印、照片打印、扫描复印……覆盖展示、同级关系、文案及可达页面”没有进入 `PREPARE_SOURCE / PLAN / MM skills / 覆盖审计`。
+- `AgentContext` 只把 `requirementText` 和 `sourceInputs.requirementText` 归一化为需求正文，没有兼容 start payload 中的 `requirement` 字段。带 Figma 的新需求因此被当作“短标题 + Figma 软参考”，业务分支退化为“目标业务页”，覆盖矩阵也随之错误收缩。
+- 新逻辑只扩展 Agent 输入归一化：`requirement` / `sourceInputs.requirement` 与 `requirementText` 等价进入 `normalizedInput.requirementText`，并继续由 `_agent_plan_requirement_text()` 和 `_agent_source_material_context()` 传给 PLAN 与 PREPARE_SOURCE。
+- 该修复不硬编码百度网盘，不改 scorer、覆盖门禁、AI prompt、Figma 解析、Runner、Sonic、设备选择、账号/授权、坐标或历史 YAML。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮涉及 `task_server/services/agent_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`。提交后不 push；用户手动 push/部署后，需要再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，重点先确认 `normalizedInput.requirementText` 和 PLAN tool input 为完整长需求，再监督 4 张 Figma AI 批次、YAML 覆盖矩阵、smoke、remaining、修复重跑和所有 Runner 报告到真实终态。
+
 ### 2026-07-21 真实回归：修复补丁多行锚点不能因可选 timeout 缺失被整条阻断
 
 用户部署 `90f0822` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784602711778-e6032d45`：
