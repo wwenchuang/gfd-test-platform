@@ -6660,6 +6660,7 @@ _PRESERVE_POSITIVE_MARKERS = {
     ),
     "copy": (
         "文案准确", "文案正确", "文案为", "文案是", "文字准确", "文字正确",
+        "文案完整", "文字完整", "文本完整", "文案清晰", "文字清晰",
         "名称为", "显示为", "命名为", "文案一致", "文字一致", "符合需求",
         "完整显示", "完整展示", "清晰可见",
     ),
@@ -8883,6 +8884,50 @@ def _visual_patch_inverts_positive_case(base_item, grounded_item):
     return not bool(_VISUAL_TARGET_ABSENCE_RE.search(base_text))
 
 
+def _visual_assertions_cover_acceptance(base_item, assertions, check, *, strict_copy=False):
+    base_item = base_item if isinstance(base_item, dict) else {}
+    assertions = normalize_text_list(assertions)
+    check = check if isinstance(check, dict) else {}
+    requirement_refs = base_item.get("requirementRefs") or base_item.get("requirement_refs")
+    kind = str(check.get("kind") or classify_requirement_acceptance_check(check.get("text"))).strip().lower()
+    if strict_copy and kind == "copy":
+        return any(_safe_preserve_evidence(assertion, check, requirement_refs) for assertion in assertions)
+    return case_covers_requirement_acceptance({
+        "coverage": base_item.get("coverage"),
+        "requirementRefs": requirement_refs,
+        "assertions": assertions,
+    }, check)
+
+
+def _visual_promote_preserved_assertion_targets(target, preserved_assertions, preserved_checks):
+    target = target if isinstance(target, dict) else {}
+    preserved_assertions = normalize_text_list(preserved_assertions)
+    preserved_checks = [
+        check for check in (preserved_checks or [])
+        if isinstance(check, dict)
+    ]
+    if not preserved_assertions or not preserved_checks:
+        return
+
+    def covers_preserved_checks(values):
+        texts = normalize_text_list(values)
+        return bool(texts) and all(
+            _visual_assertions_cover_acceptance(target, texts, check, strict_copy=True)
+            for check in preserved_checks
+        )
+
+    expected_values = [
+        target.get("expected_result"),
+        target.get("expectedResult"),
+        target.get("expected"),
+    ]
+    if not covers_preserved_checks(expected_values):
+        target["expected_result"] = preserved_assertions[0]
+    plan = target.get("ai_case_plan") if isinstance(target.get("ai_case_plan"), dict) else None
+    if plan is not None and not covers_preserved_checks(plan.get("assertionTarget")):
+        plan["assertionTarget"] = preserved_assertions[0]
+
+
 def _merge_visual_assertion_contract(base_item, grounded_assertions, acceptance_checks):
     """Keep requirement-backed dimensions that a soft visual delta does not address."""
     base_item = base_item if isinstance(base_item, dict) else {}
@@ -8895,23 +8940,15 @@ def _merge_visual_assertion_contract(base_item, grounded_assertions, acceptance_
         and str(item.get("requirementId") or "").strip() in requirement_ids
     ]
     if not base_assertions or not grounded_assertions or not relevant_checks:
-        return grounded_assertions, []
+        return grounded_assertions, [], []
 
-    def assertion_probe(assertions):
-        return {
-            "coverage": base_item.get("coverage"),
-            "requirementRefs": base_item.get("requirementRefs") or base_item.get("requirement_refs"),
-            "assertions": normalize_text_list(assertions),
-        }
-
-    grounded_probe = assertion_probe(grounded_assertions)
     preserved = []
     preserved_check_ids = []
     for check in relevant_checks:
-        if case_covers_requirement_acceptance(grounded_probe, check):
+        if _visual_assertions_cover_acceptance(base_item, grounded_assertions, check, strict_copy=True):
             continue
         for assertion in base_assertions:
-            if not case_covers_requirement_acceptance(assertion_probe([assertion]), check):
+            if not _visual_assertions_cover_acceptance(base_item, [assertion], check):
                 continue
             if assertion not in preserved:
                 preserved.append(assertion)
@@ -8919,7 +8956,7 @@ def _merge_visual_assertion_contract(base_item, grounded_assertions, acceptance_
             if check_id and check_id not in preserved_check_ids:
                 preserved_check_ids.append(check_id)
             break
-    return list(dict.fromkeys(preserved + grounded_assertions)), preserved_check_ids
+    return list(dict.fromkeys(preserved + grounded_assertions)), preserved_check_ids, preserved
 
 
 def _merge_visual_records(
@@ -8954,13 +8991,15 @@ def _merge_visual_records(
                             if grounded.get(field) not in (None, "", [], {})
                         ),
                     })
+            pending_preserved_values = []
+            pending_preserved_checks = []
             for field in _VISUAL_MUTABLE_FIELDS:
                 if field in blocked_fields:
                     continue
                 if grounded.get(field) not in (None, "", [], {}):
                     value = copy.deepcopy(grounded.get(field))
                     if field == "assertions" and kind in ("case", "manual"):
-                        value, preserved_check_ids = _merge_visual_assertion_contract(
+                        value, preserved_check_ids, preserved_values = _merge_visual_assertion_contract(
                             target,
                             value,
                             acceptance_checks,
@@ -8971,7 +9010,18 @@ def _merge_visual_records(
                                 "key": key,
                                 "acceptanceCheckIds": preserved_check_ids,
                             })
+                            preserved_checks = [
+                                check for check in (acceptance_checks or [])
+                                if str(check.get("id") or "").strip() in set(preserved_check_ids)
+                            ]
+                            pending_preserved_values.extend(preserved_values)
+                            pending_preserved_checks.extend(preserved_checks)
                     target[field] = value
+            _visual_promote_preserved_assertion_targets(
+                target,
+                pending_preserved_values,
+                pending_preserved_checks,
+            )
             continue
         # A genuinely new visual branch still needs an explicit source requirement.
         if _source_case_requirement_ids(grounded):

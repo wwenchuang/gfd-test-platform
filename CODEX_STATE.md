@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：视觉软参考不能用“展示入口”覆盖显式文案验收
+
+用户部署 `9f9d594` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784611806002-d2141bd5`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110` 是唯一选中设备。Agent 在 `GENERATE_YAML / 30%` 失败，没有创建 Runner job，也没有向第二台手机下发。
+- PREPARE_SOURCE 已确认 `normalizedInput.requirementText` 是完整长需求，不再退化为短标题；PLAN 阶段 4 张 Figma 图分 4 批真实送入 `qwen3.6-plus` 并全部完成。
+- 生成阶段产出 6 条 executable YAML：文档展示、照片展示、文档可达、照片可达、扫描展示、扫描可达。case portfolio 初始 `8/12`，收敛后 `12/12`；但最终 YAML 覆盖门禁仍阻断，缺口为 `REQ-002 [acceptance:copy] 照片打印：校验百度网盘入口使用需求约定的可见文案`。
+- 人工复核生成 YAML 发现照片展示 YAML 只断言“照片打印规格页底部展示「百度网盘」入口，与「相册导入」、「相机拍照」等同级并列”，覆盖展示和同级关系，但没有“文案准确 / 文案为百度网盘”等显式文案断言。平台最终门禁阻断正确，问题在视觉合并把需求侧 copy 断言吞掉。
+
+深层根因与通用修复：
+
+- `merge_visual_grounder_payload()` 用同一个 `case_covers_requirement_acceptance()` 判断视觉增量是否已覆盖所有验收维度；该函数为了 portfolio 粗审允许“断言里出现目标文字并且展示/显示/可见”作为 copy 的弱证据。视觉合并阶段复用这个弱判断后，把“展示「目标」入口”误当作文案验收已覆盖，导致原始“文案准确”断言不再保留。
+- 新逻辑只收紧视觉合并的 copy 覆盖判断：视觉软参考要覆盖 copy 验收，必须包含“文案准确 / 文案正确 / 文案为 / 文字准确 / 显示为 / 文案完整 / 文案清晰”等显式文案谓词；单纯“展示目标入口”只能证明展示，不能证明文案。
+- 若视觉增量只覆盖展示/同级而没有覆盖 copy，平台会保留需求侧文案断言，并把该断言同步恢复到 `expected_result` / `ai_case_plan.assertionTarget`，避免 YAML 生成在默认单断言限制下只选择视觉同级断言。
+- 该修复不硬编码百度网盘，不放宽最终覆盖门禁、scorer、dry-run、Runner、Sonic、设备选择、账号/授权、坐标或深层外部动作限制；只让视觉软参考不能覆盖掉未实际证明的验收维度。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮只修改 `task_server/services/ai_skill_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`。尚未 push；用户手动 push/部署后，需要再次用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，重点确认 6 条 YAML 的照片展示项包含显式文案验收，随后监督 smoke、remaining、修复重跑和所有 Runner 报告到真实终态。
+
 ### 2026-07-21 真实回归：Agent start 必须保留 `requirement` 正文，避免 PLAN 退化成短标题
 
 用户部署 `683c181` 后，以同一需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784605378358-1e58d5ad`：

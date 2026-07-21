@@ -8361,6 +8361,51 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         ) == {"REQ-031-CHECK-01", "REQ-031-CHECK-02", "REQ-031-CHECK-03"},
         "A soft visual delta may add current-frame assertions but must not replace requirement-mapped visibility, copy, or relation assertions with an adjacent page title",
     )
+    partial_copy_visual_base = {
+        "title": "新增企业云盘入口",
+        "module": "资料服务",
+        "analysis": {
+            "requirement_points": ["REQ-032 资料页企业云盘入口展示、文案及同级关系"],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-032-CHECK-01", "requirementId": "REQ-032", "branch": "资料页", "kind": "visibility", "text": "校验企业云盘入口可见"},
+                {"id": "REQ-032-CHECK-02", "requirementId": "REQ-032", "branch": "资料页", "kind": "relation", "text": "校验企业云盘入口与当前页面其它入口同级展示"},
+                {"id": "REQ-032-CHECK-03", "requirementId": "REQ-032", "branch": "资料页", "kind": "copy", "text": "校验企业云盘入口使用需求约定的可见文案"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-VIS-PARTIAL-COPY",
+            "title": "资料页企业云盘入口展示与文案校验",
+            "coverage": "REQ-032",
+            "requirementRefs": ["REQ-032 资料页企业云盘入口展示、文案及同级关系"],
+            "steps": ["进入资料页", "等待企业云盘入口可见"],
+            "assertions": ["资料页「企业云盘」入口可见，文案准确，与「本地文件」入口同级展示"],
+            "expected_result": "资料页「企业云盘」入口可见，文案准确，与「本地文件」入口同级展示",
+        }],
+        "manual_cases": [],
+    }
+    partial_copy_visual_text = "资料页底部展示「企业云盘」入口，与「本地文件」入口同级并列"
+    partial_copy_visual_merge = ai_skill_service.merge_visual_grounder_payload(
+        partial_copy_visual_base,
+        {
+            "cases": [{
+                "case_id": "TC-VIS-PARTIAL-COPY",
+                "assertions": [partial_copy_visual_text],
+                "expected_result": partial_copy_visual_text,
+            }],
+            "review": {"visual_grounding_check": "当前 Frame 确认企业云盘入口位置与同级入口"},
+        },
+    )
+    partial_copy_case = partial_copy_visual_merge.get("cases", [{}])[0]
+    partial_copy_yaml = yaml_service.case_to_task_yaml(partial_copy_case, indent="    ", case_index=1)
+    partial_copy_guard = partial_copy_visual_merge.get("review", {}).get("visual_acceptance_guard", {})
+    require(
+        "文案准确" in str(partial_copy_case.get("expected_result") or "")
+        and "文案准确" in "\n".join(partial_copy_case.get("assertions") or [])
+        and "文案准确" in partial_copy_yaml
+        and partial_copy_guard.get("preservedPatchCount") == 1
+        and set((partial_copy_guard.get("preservedRecords") or [{}])[0].get("acceptanceCheckIds") or []) == {"REQ-032-CHECK-03"},
+        "A visual delta that only proves visibility/relation must not erase explicit copy acceptance from the case or generated YAML",
+    )
     scoped_visual_base = {
         "title": "新增发票入口",
         "module": "会员服务",
