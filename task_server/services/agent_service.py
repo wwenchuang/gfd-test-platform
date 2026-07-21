@@ -12945,6 +12945,15 @@ def _agent_repair_claims_navigation_change(change_text):
         return False
     for pattern in _AGENT_REPAIR_NAVIGATION_UNCHANGED_PATTERNS:
         normalized = re.sub(pattern, " ", normalized, flags=re.IGNORECASE)
+    wait_condition_patterns = (
+        r"(?:点击|click|tap)[^，。；;\n]{0,24}?(?:后|after)[^，。；;\n]{0,40}?"
+        r"(?:等待|waitfor|wait|断言|assert|校验|条件|页面状态|终态)[^，。；;\n]{0,40}?"
+        r"(?:替换|改为|修正|修改|调整|优化|replace|fix|adjust|change)",
+        r"(?:替换|改为|修正|修改|调整|优化|replace|fix|adjust|change)[^，。；;\n]{0,48}?"
+        r"(?:等待|waitfor|wait|断言|assert|校验|条件|页面状态|终态)",
+    )
+    for pattern in wait_condition_patterns:
+        normalized = re.sub(pattern, " ", normalized, flags=re.IGNORECASE)
     nearby = r"[^，。；;\n]{0,24}?"
     return bool(
         re.search(

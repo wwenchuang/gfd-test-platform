@@ -5966,6 +5966,43 @@ def check_agent_failure_review_and_repair_guard():
         and assertion_preserved_gate.get("assertionContractPreserved") is True,
         "A wait-only repair that preserves the exact visible-value contract must remain eligible",
     )
+    landing_wait_original_yaml = """android:
+  tasks:
+    - name: 企业云盘点击后首屏校验
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: App 首页加载完成，可见「文档打印」入口
+        - aiTap: 点击「文档打印」入口
+        - aiWaitFor: 文档打印页面加载完成
+        - aiTap: 点击「企业云盘」入口
+        - sleep: 300
+        - aiWaitFor: 等待页面跳转或弹出新窗口
+        - aiWaitFor: 已离开文档打印页，且当前页面包含「授权」「登录」「企业云盘」或「文件选择」等可见文案，无崩溃或白屏
+        - aiAssert: 已离开文档打印页，且当前页面包含「授权」「登录」「企业云盘」或「文件选择」等可见文案，无崩溃或白屏
+"""
+    landing_wait_fixed_yaml = landing_wait_original_yaml.replace(
+        "        - aiWaitFor: 等待页面跳转或弹出新窗口",
+        "        - aiWaitFor: 企业云盘文件选择页已稳定显示，页面可见标题、返回、确定或文件列表任一稳定信号",
+    )
+    landing_wait_gate = agent_service._agent_repair_candidate_gate(
+        landing_wait_original_yaml,
+        {
+            "fixedYaml": landing_wait_fixed_yaml,
+            "analysis": (
+                "点击「企业云盘」后已成功进入文件选择页，原脚本等待页面跳转或弹出新窗口导致超时；"
+                "修复方案是替换点击入口后的通用跳转等待条件。"
+            ),
+            "changes": ["将点击入口后的通用跳转等待替换为企业云盘文件选择页具体特征等待"],
+        },
+        [],
+        platform="android",
+    )
+    require(
+        landing_wait_gate.get("ok") is True
+        and landing_wait_gate.get("navigationClaimed") is False
+        and landing_wait_gate.get("navigationChanged") is False,
+        "A landing wait-condition repair must not be rejected as a navigation claim without aiTap path changes",
+    )
     clipped_scan_yaml = """android:
   tasks:
     - name: 扫描复印入口展示
@@ -9007,6 +9044,33 @@ def check_agent_executable_gate_invokes_ai_rewrite():
         and "企业云盘文件列表页已加载" in observable_wait_content,
         "A process-only transition wait must be removed when the following stable target state already defines completion",
     )
+    observable_wait_variants_yaml = """android:
+  tasks:
+    - name: 企业云盘入口可达性变体
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: App 首页加载完成，可见「文档打印」入口
+        - aiTap: 点击「文档打印」入口
+        - aiWaitFor: 文档打印页面加载完成
+        - aiTap: 点击「企业云盘」入口
+        - aiWaitFor: 等待页面跳转或授权/文件列表弹窗出现
+        - aiWaitFor: 企业云盘授权页、登录页或文件选择页已打开，页面出现返回、搜索、确定或文件列表任一稳定信号
+        - aiTap: 点击「企业云盘」入口
+        - aiWaitFor: 等待页面跳转或弹出新窗口
+        - aiWaitFor: 已离开文档打印页，且当前页面包含「授权」「登录」「企业云盘」或「文件选择」等可见文案，无崩溃或白屏
+        - aiAssert: 企业云盘入口点击后进入相关稳定页面，未白屏、未崩溃
+"""
+    observable_wait_variants_repair = yaml_service.repair_generated_yaml_executable_gate_issues(
+        observable_wait_variants_yaml
+    )
+    observable_wait_variants_content = observable_wait_variants_repair.get("content") or ""
+    require(
+        "等待页面跳转或授权/文件列表弹窗出现" not in observable_wait_variants_content
+        and "等待页面跳转或弹出新窗口" not in observable_wait_variants_content
+        and "企业云盘授权页、登录页或文件选择页已打开" in observable_wait_variants_content
+        and "已离开文档打印页" in observable_wait_variants_content,
+        "All process-only transition wait variants must be removed before concrete stable landing assertions",
+    )
     require(
         "若不存在" not in observable_wait_content
         and "页面展示「企业云盘」入口，入口文案及所在区域清晰可见" in observable_wait_content,
@@ -9615,6 +9679,17 @@ def check_yaml_static_validation_and_patterns():
         and "未停留在原入口页" in fallback_blob,
         "Local Baidu Netdisk fallback generation must not assert the original business page after the click",
     )
+    scan_fallback_steps, _scan_fallback_assertions = ai_skill_service._fallback_steps_for_scenario({
+        "feature": "扫描复印",
+        "requirement_point": "扫描复印页展示百度网盘入口，并校验与其他导入方式同级。",
+    })
+    scan_fallback_blob = "\n".join(scan_fallback_steps)
+    require(
+        "等待扫描复印页面或复印扫描导入页面加载完成" not in scan_fallback_steps
+        and "本地导入" in scan_fallback_blob
+        and "相册导入" in scan_fallback_blob,
+        "Local fallback scan-page waits must include observable import-area anchors, not only a generic loaded-state claim",
+    )
     service_repaired_assertion_tap = repair_generated_yaml_executable_gate_issues(assertion_tap_yaml)
     service_repaired_content = service_repaired_assertion_tap.get("content", "")
     require(
@@ -9644,6 +9719,31 @@ def check_yaml_static_validation_and_patterns():
         and "aiWaitFor: 检查页面导入或文件选择区域" in broad_check_content
         and dry_run_midscene_yaml(broad_check_content, app_package="com.xbxxhz.box").get("ok") is True,
         "Generated YAML service must convert broad page-inspection aiTap prompts before Runner dispatch",
+    )
+    scan_generic_page_wait_yaml = """android:
+  tasks:
+    - name: 扫描复印页-企业云盘入口可见性及文案校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，扫描复印入口可见
+        - aiTap: 点击「扫描复印」入口
+        - sleep: 300
+        - aiWaitFor: 等待扫描复印页面加载完成
+        - aiScroll: 在包含“本地导入”、“相册导入”、“微信导入”的横向区域向右滑动，使右侧隐藏入口进入视野
+          direction: right
+          distance: 300
+          scrollType: singleAction
+        - aiWaitFor: 校验「企业云盘」入口可见且文案为“企业云盘”
+        - aiAssert: 扫描复印页「企业云盘」入口可见，文案为“企业云盘”，与其他导入入口视觉层级一致
+"""
+    scan_generic_page_wait_repair = repair_generated_yaml_executable_gate_issues(scan_generic_page_wait_yaml)
+    scan_generic_page_wait_content = scan_generic_page_wait_repair.get("content", "")
+    require(
+        "等待扫描复印页面加载完成" not in scan_generic_page_wait_content
+        and "本地导入" in scan_generic_page_wait_content
+        and "相册导入" in scan_generic_page_wait_content
+        and dry_run_midscene_yaml(scan_generic_page_wait_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated scan-page waits before import-area scrolling must include visible import anchors instead of a generic loaded-state claim",
     )
     service_static_repair = repair_generated_yaml_static_errors(assertion_tap_yaml, app_package="com.xbxxhz.box", max_attempts=0)
     require(

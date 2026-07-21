@@ -2651,7 +2651,7 @@ def _fallback_steps_for_scenario(scenario, app_context=None):
         elif feature_kind == "scan":
             steps.extend([
                 "点击首页中名称为「扫描复印」或「扫描仪扫描」的入口",
-                "等待扫描复印页面或复印扫描导入页面加载完成",
+                "等待扫描复印页面或复印扫描导入页面加载完成，并看到「本地导入」「相册导入」「微信导入」等导入方式区域",
                 "等待「百度网盘」入口可见",
             ])
             assertion = "扫描复印页面展示「百度网盘」入口，且与其他导入方式同级显示"

@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：点击后可达性 YAML 不能等待“跳转过程”，扫描页等待必须锚定可见导入区
+
+用户部署 `bb7189c` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784618340121-02ece831`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110` 是唯一被本轮 Agent 选择和执行的设备。另有华为设备在线，但本轮 Agent 的 dry-run、smoke、remaining、repair rerun 均绑定 `win-runner-01 / ecbfd645`。
+- Figma 正确解析为 `4 页 / 4 图`，4 张图分 4 批真实送入 `qwen3.6-plus` 并全部完成。生成阶段已越过上一轮照片打印文案门禁，产出 6 条 executable YAML：文档展示、照片展示、扫描展示、文档可达、照片可达、扫描可达。
+- Smoke 3 条中 2 条通过、文档可达失败；remaining 3 条均真实执行。失败集中为脚本问题：点击百度网盘后真实页面已稳定显示文件列表/授权页，但 YAML 仍等待“页面跳转或弹窗/弹出新窗口”；扫描修复重跑中“等待扫描复印页面加载完成”在首页/扫描壳页被误判为真，随后在错误页面查找“本地导入/相册导入”横向区域失败。
+- 自动修复 AI 对文档/扫描可达的 patch 方向正确，想把泛化跳转等待替换为文件选择页稳定信号；但修复候选门禁把“替换点击入口后的等待条件”误识别成“声称修改导航但 aiTap 路径未变”，以 `navigation_claim_without_yaml_change` 拒绝，没有下发 Runner。
+
+深层根因与通用修复：
+
+- 生成前本地修复器只删除了窄形态“等待页面跳转或弹窗出现”，没有覆盖线上出现的“等待页面跳转或授权/文件列表弹窗出现”“等待页面跳转或弹出新窗口”“点击后的目标页面或提示已稳定显示”等过程型等待变体。新逻辑会在后续已有具体稳定落地页 wait/assert 时删除这些过程型等待，保留授权页、登录页、文件选择页、返回/搜索/确定/文件列表等可见终态信号。
+- 扫描复印页的泛化加载等待不能只写“页面加载完成”。当下一步要在导入横向区滑动或校验入口时，平台会把等待收敛为“扫描复印页面或复印扫描导入页面加载完成，可见「本地导入」「相册导入」「微信导入」等导入入口区域”，避免在首页或错误壳页误放行。百度网盘本地 fallback 的扫描分支同步使用该可见锚点。
+- 修复候选门禁继续约束真实导航路径变更和基线引用，但不再把“wait/assert 条件替换”误当成导航路径修改声明；同一 aiTap 路径下替换点击后的落地页等待可以进入 scorer、静态校验和同设备重跑。
+- 该修复不硬编码百度网盘业务结果，不放宽覆盖门禁、scorer、坐标、账号/授权、Runner、Sonic、Figma 解析、设备策略或历史 YAML；只收紧生成 YAML 的可观测等待条件，并修正 repair gate 对等待条件修复的误判。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮涉及 `task_server/services/agent_service.py`、`task_server/services/ai_skill_service.py`、`task_server/services/yaml_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`。提交后不 push；用户手动 push/部署后，需要再次使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，重点确认生成 YAML 不再包含过程型跳转等待，扫描页等待包含真实导入区可见锚点，repair draft 不再因等待条件替换被 `navigation_claim_without_yaml_change` 拒绝，随后监督 smoke、remaining、repair rerun 到真实终态。
+
 ### 2026-07-21 真实回归：视觉软参考不能用“展示入口”覆盖显式文案验收
 
 用户部署 `9f9d594` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784611806002-d2141bd5`：

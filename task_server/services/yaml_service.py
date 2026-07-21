@@ -5788,6 +5788,45 @@ def _repair_generated_home_ai_step(step: dict, next_step: dict = None) -> dict:
     }
 
 
+def _generated_step_observable_text(step: dict) -> str:
+    if not isinstance(step, dict):
+        return ""
+    return " ".join(
+        str(value or "")
+        for key, value in step.items()
+        if key in MIDSCENE_FLOW_ACTIONS
+    )
+
+
+def _repair_generated_business_page_wait_step(step: dict, next_step: dict = None) -> dict:
+    """Add visible anchors to generated business-page waits before region actions."""
+    if not isinstance(step, dict) or "aiWaitFor" not in step:
+        return {}
+    prompt = str(step.get("aiWaitFor") or "").strip()
+    compact = _compact_text(prompt)
+    if not compact:
+        return {}
+    if any(word in compact for word in ("本地导入", "相册导入", "微信导入", "本地文档", "普通照片", "证件照", "照片拼版")):
+        return {}
+    next_compact = _compact_text(_generated_step_observable_text(next_step))
+    needs_import_anchor = any(word in next_compact for word in ("本地导入", "相册导入", "微信导入", "导入方式", "入口"))
+    replacement = ""
+    if (
+        needs_import_anchor
+        and re.fullmatch(r"(?:等待)?(?:扫描复印|复印扫描)(?:页面|页|导入页面)?(?:加载完成|加载完毕|稳定显示)", compact)
+    ):
+        replacement = "扫描复印页面或复印扫描导入页面加载完成，可见「本地导入」「相册导入」「微信导入」等导入入口区域"
+    if not replacement:
+        return {}
+    step["aiWaitFor"] = replacement
+    step.setdefault("timeout", DEFAULT_WAITFOR_TIMEOUT_MS)
+    return {
+        "changed": "business page loaded wait -> visible anchored wait",
+        "prompt": prompt[:180],
+        "replacement": replacement[:180],
+    }
+
+
 def _repair_generated_human_branch_observation(step: dict) -> dict:
     """Turn an existence-review instruction into the expected visible state."""
     if not isinstance(step, dict):
@@ -5821,9 +5860,14 @@ def _generated_wait_is_process_only(prompt: str) -> bool:
     compact = _compact_text(prompt)
     if not compact or re.search(r"[「『“‘\"']", compact):
         return False
+    if re.fullmatch(
+        r"(?:点击后(?:的)?|点击后的)?(?:目标|当前)?页面(?:或提示)?(?:已)?(?:稳定显示|加载完成|打开)",
+        compact,
+    ):
+        return True
     return bool(re.fullmatch(
-        r"(?:等待)?(?:当前)?页面(?:跳转|加载|切换|响应)"
-        r"(?:完成|成功|或(?:弹窗出现|加载(?:完成)?|页面加载(?:完成)?))?",
+        r"(?:等待)?(?:当前|目标)?页面(?:跳转|加载|切换|响应)"
+        r"(?:完成|成功|或[^，。；;]{0,32}(?:出现|打开|完成|成功)?)?",
         compact,
     ))
 
@@ -5953,6 +5997,13 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                     "task": task.get("name") or f"tasks[{task_index}]",
                     "flowIndex": step_index,
                     **home_repair,
+                })
+            business_wait_repair = _repair_generated_business_page_wait_step(step, next_step)
+            if business_wait_repair:
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    **business_wait_repair,
                 })
 
             branch_observation_repair = _repair_generated_human_branch_observation(step)
