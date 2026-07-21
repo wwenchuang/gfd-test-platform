@@ -13262,6 +13262,29 @@ def main():
     yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     require('agent_config.setdefault("screenshotShrinkFactor", 2)' in yaml_source, "Android Runner temporary YAML must pre-shrink mobile screenshots for stable Midscene coordinate mapping")
     require("quality_eval" in yaml_source and "evaluate_baseline_template_matching" in yaml_source, "YAML generation review must include template matcher quality eval")
+    from task_server.services.yaml_executable_scorer import rank_executable_yaml_refs, score_midscene_yaml_executable
+    conditional_runner_yaml = """android:
+  tasks:
+    - name: 扫描复印页-百度网盘入口UI展示与文案校验（待确认UI稿）
+      flow:
+        - aiWaitFor: 被测 App 首页已加载完成，首页核心功能入口可见
+        - aiTap: 点击「扫描复印」入口
+        - aiWaitFor: 检查页面中是否存在「百度网盘」入口
+        - aiWaitFor: 若存在，检查文案是否为“百度网盘”
+        - aiWaitFor: 记录入口的具体位置和样式
+        - aiAssert: 「百度网盘」入口可见，文案为“百度网盘”，与同级入口并列，或确认该页面无此入口
+"""
+    conditional_score = score_midscene_yaml_executable(conditional_runner_yaml, generated=True)
+    conditional_ranked, conditional_blocked = rank_executable_yaml_refs([{
+        "file": "06-扫描复印页-百度网盘入口UI展示与文案校验（待确认UI稿）.yaml",
+        "executableScore": conditional_score,
+    }])
+    require(
+        conditional_score.get("executionLevel") != "executable"
+        and not conditional_ranked
+        and conditional_blocked,
+        "Generated YAML with 若存在/待确认/or-confirm-absent manual branches must not enter Runner smoke",
+    )
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     require("TASK_APP_ENV='prod'" in env_example and "TASK_ALLOW_QUERY_TOKEN='0'" in env_example, "Env example must document production mode and disabled query token auth")
     for module_path in ["task_server/config.py", "task_server/auth.py", "task_server/storage.py", "task_server/repair_service.py", "task_server/sonic_service.py"]:

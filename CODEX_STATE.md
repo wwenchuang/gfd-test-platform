@@ -28,6 +28,32 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：人工条件式 YAML 不能进入 Runner smoke
+
+用户部署 `a1dd727` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784600036692-2accacd3`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：
+
+- 公网 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；本轮所有 dry-run 和正式 smoke job 均绑定 `win-runner-01 / ecbfd645 / fixed`，没有向华为或第二台设备下发。
+- PREPARE_SOURCE 成功，Figma 解析 `4 页 / 4 图 / 忽略 0`；4 张图分 4 批真实送入 `qwen3.6-plus` 并完成。GENERATE_YAML 成功生成 8 个 YAML，VALIDATE_YAML dry-run `8/8` 通过。
+- 首批 smoke 选择 3 条：文档入口成功、照片入口成功、扫描复印 `06-扫描复印页-百度网盘入口UI展示与文案校验（待确认UI稿）.yaml` 失败。Agent 终态为 `FAILED / COLLECT_REPORT / 96%`，报告收集到 3 个执行报告，2 成功、1 失败，remaining 5 条按冒烟门禁延后。
+- 失败分析把扫描项归为 `PRODUCT_BUG`，理由是扫描复印页缺少「百度网盘」。但人工复核生成 YAML 发现被下发的 `06` 本身含“待确认UI稿”“若存在，检查文案”“或确认该页面无此入口”“记录入口的具体位置”等人工条件分支，不应被 scorer 标成 executable/smoke；同轮 `03-扫描复印页-百度网盘入口可见性及文案校验.yaml` 已包含扫描复印点击百度网盘后的可达性短链路。
+
+深层根因与通用修复：
+
+- 旧 scorer 只会惩罚条件式 `aiTap`，没有识别条件式 `aiWaitFor / aiAssert` 和标题中的待确认语义，因此“若存在/或确认无此入口”这类人工验收脚本仍可能拿到 `executable` 并进入首批 smoke。
+- 新增 `GENERATED_MANUAL_CONDITION_WORDS` 和 `_has_generated_manual_condition()`，生成 YAML 只要含“待确认、若存在、如果存在、或确认无、确认该页面无此入口、记录缺陷、记录入口的具体位置”等人工条件分支，就降级为人工评审，不允许自动下发 Runner。
+- 该修复不把百度网盘结果硬编码为产品缺陷或脚本缺陷；只是恢复既有原则：人工条件文案不能进入 Runner。Figma 解析、AI 规划、覆盖门禁、Runner、Sonic、设备选择、账号/授权/坐标限制均未放宽。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+本轮涉及 `task_server/services/yaml_executable_scorer.py`、`tests/backend_static_checks.py`、`CODEX_STATE.md`。注意：`task_server/services/yaml_executable_scorer.py` 进入本轮前已有用户未提交改动，提交时必须只暂存本轮新增的人工条件门禁，不能把用户原有 scorer 改动一并提交。用户明确要求后续不要尝试 push；提交后等待用户手动 push/部署，再用完全相同输入和固定 OPPO `ecbfd645` 发起下一轮完整 Agent。
+
 ### 2026-07-21 真实回归：低置信复检不能阻断明确脚本失败的自动修复
 
 用户部署 `7a7d091` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784596911529-3e875d9d`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

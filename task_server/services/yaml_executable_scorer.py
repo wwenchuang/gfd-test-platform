@@ -77,6 +77,11 @@ EXTERNAL_FLOW_STRONG_WORDS = (
     "第三方授权", "选择文件", "打开百度网盘", "跳转百度网盘", "百度网盘授权",
     "百度网盘登录", "微信授权", "微信登录", "相册授权", "相机授权", "WebView",
 )
+GENERATED_MANUAL_CONDITION_WORDS = (
+    "待确认", "若存在", "如果存在", "如存在", "若入口存在", "如果入口存在",
+    "或确认无", "或确认该页面无", "确认该页面无此入口", "确认该页面无该入口",
+    "若不存在则记录", "如果不存在则记录", "记录缺陷", "记录入口的具体位置",
+)
 # Generated baseline metadata comments are trace data, not proof that the case
 # matched a successful baseline. Treat only explicit template/reference wording
 # as baseline execution evidence.
@@ -439,6 +444,11 @@ def _is_baidu_original_entry_prompt(text: str) -> bool:
     return original_state or mixed_post_click
 
 
+def _has_generated_manual_condition(text: str) -> bool:
+    compact = _compact_text(text)
+    return any(_compact_text(word) in compact for word in GENERATED_MANUAL_CONDITION_WORDS)
+
+
 def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) -> dict:
     """Score whether YAML is safe enough to auto-send to Runner.
 
@@ -532,6 +542,11 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         replan_risk = "low"
         manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
+        if generated and _has_generated_manual_condition(task_text):
+            manual_hint = True
+            warnings.append("生成 YAML 含若存在/待确认/记录缺陷等人工条件分支，不能自动下发 Runner")
+            score -= 65
+
         if flow and not start_guard:
             warnings.append("缺少稳定起点/启动守卫，可能依赖上一个页面状态")
             score -= 25 if generated else 10
