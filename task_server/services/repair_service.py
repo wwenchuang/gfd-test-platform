@@ -339,9 +339,19 @@ def _normalize_repair_patch_lines(lines, flow_indent):
 
 
 def _repair_patch_anchor_parts(value):
-    plain = str(value or "").strip()
-    if plain.startswith("- "):
-        plain = plain[2:].strip()
+    plain = ""
+    for raw_line in str(value or "").splitlines():
+        candidate = raw_line.strip()
+        if candidate.startswith("- "):
+            candidate = candidate[2:].strip()
+        match = re.match(r"^([A-Za-z][\w]*)\s*:\s*(.*)$", candidate)
+        if match and match.group(1) in REPAIR_PATCH_ACTIONS and str(match.group(2) or "").strip():
+            plain = candidate
+            break
+    if not plain:
+        plain = str(value or "").strip()
+        if plain.startswith("- "):
+            plain = plain[2:].strip()
     match = re.match(r"^([A-Za-z][\w]*)\s*:\s*(.*)$", plain)
     if not match:
         return "", ""

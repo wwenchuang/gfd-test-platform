@@ -28,6 +28,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-21 真实回归：修复补丁多行锚点不能因可选 timeout 缺失被整条阻断
+
+用户部署 `90f0822` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784602711778-e6032d45`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645` 是唯一执行设备，本轮 dry-run、smoke 和修复重跑均绑定 `win-runner-01 / ecbfd645 / fixed`，没有向华为或第二台设备下发。
+- PREPARE_SOURCE 成功，Figma 解析 `4 页 / 4 图`；PLAN 阶段 4 张图分 4 批全部真实送入 `qwen3.6-plus` 并完成，`sentToAiForJudgement=true / aiJudgementCompleted=true`。
+- GENERATE_YAML 成功生成 6 条 YAML：文档展示、照片展示、扫描展示、文档可达、照片可达、扫描可达。此前“待确认 / 若存在 / 记录缺陷”一类人工条件 YAML 没有再进入 smoke，说明 `90f0822` 的人工条件门禁生效。
+- 首批 smoke 3 条真实执行均失败，平台归因为 `SCRIPT_ISSUE` 并进入自动修复。修复重跑创建 2 条：照片修复稿通过，扫描修复稿因 Midscene AI 调用 `Timeout after 300s` 失败；文档修复稿没有创建 Runner job，因为 AI patch 被 `repair_patch_application_failed` 门禁阻断。Agent 终态为 `FAILED / RERUN / 95%`，总结为“部分通过”。
+
+深层根因与通用修复：
+
+- 文档失败的诊断和 patch plan 是正确方向：启动后设备停留在「资料库」Tab，应在 `launch` 后点击底部「首页」并用真实首页入口等待。失败点不是 AI 不会修，而是补丁应用器把第二个锚点写成多行：`aiWaitFor: "被测 App 首页已加载完成，首页核心功能入口可见"\n  timeout: 8000`。
+- 原始 YAML 的该 `aiWaitFor` 没有 `timeout: 8000` 子字段。旧 `_repair_patch_anchor_parts()` 对多行锚点按整串解析，导致锚点找不到；虽然第一条 `insert_after launch` 可用，整个 patch 应用仍被拒绝，文档修复无法落到可执行 YAML。
+- 新逻辑只改变锚点主动作行解析：若模型返回多行锚点，平台提取其中第一条受支持的 flow 动作行作为匹配依据；仍要求动作文本完整相等且唯一，不允许子串锚点、坐标、ADB、XPath、替换 `launch` 或删除业务断言。
+- 该修复不硬编码百度网盘，不改 Runner、Sonic、Figma、scorer、历史 YAML、设备选择或模型配置；只让 AI 产出的通用局部 patch 在可选 child 字段不一致时仍能匹配唯一原始 flow item。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/repair_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+待完成：
+
+- 提交本轮修复但不 push；用户手动 push/部署后，再用完全相同参数和固定 OPPO `ecbfd645` 发起下一轮完整 Agent，重点确认文档 repair patch 能应用并进入同设备重跑，扫描超时继续按环境 / 模型服务问题和报告证据分开归因。
+
 ### 2026-07-21 真实回归：人工条件式 YAML 不能进入 Runner smoke
 
 用户部署 `a1dd727` 后，以完全相同需求和 Figma 发起完整 Agent `agent-1784600036692-2accacd3`，固定 `RUNNER_JOB / win-runner-01 / ecbfd645 / OPPO PHM110 / fixed / qwen3.6-plus`：

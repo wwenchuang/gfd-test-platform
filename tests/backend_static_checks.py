@@ -6033,6 +6033,42 @@ def check_agent_failure_review_and_repair_guard():
         and not any("未知动作：direction" in item for item in patch_validation.get("issues") or []),
         "Structured repair patches must nest aiScroll child fields under one official action before candidate validation",
     )
+    home_guard_source = """android:
+  tasks:
+    - name: 回到首页后进入业务页
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: 被测 App 首页已加载完成，首页核心功能入口可见
+        - aiTap: 点击「文档打印」入口
+"""
+    home_guard_info = yaml_service.find_yaml_task_block(home_guard_source, "回到首页后进入业务页")
+    guarded_block, guarded_patches = repair_service.apply_task_repair_patches(
+        home_guard_info["block"],
+        [{
+            "op": "insert_after",
+            "anchor": "launch: com.example.app",
+            "lines": [
+                "aiTap: 点击底部导航栏的'首页'图标",
+                "aiWaitFor: 首页顶部'文档打印'、'照片打印'等核心入口可见",
+                "timeout: 8000",
+            ],
+            "reason": "启动后可能停留在非首页 Tab",
+        }, {
+            "op": "replace_step",
+            "anchor": 'aiWaitFor: "被测 App 首页已加载完成，首页核心功能入口可见"\n  timeout: 8000',
+            "lines": [
+                "aiWaitFor: 首页顶部'文档打印'、'照片打印'等核心入口可见",
+                "timeout: 8000",
+            ],
+            "reason": "用真实首页核心入口替代泛化等待",
+        }],
+    )
+    require(
+        len(guarded_patches) == 2
+        and "点击底部导航栏" in guarded_block
+        and "被测 App 首页已加载完成" not in guarded_block,
+        "Repair patch anchors that include an optional timeout child must still match a unique original flow item by its exact action text",
+    )
     ambiguous_patch_source = patch_source.replace(
         "        - aiWaitFor: 企业云盘入口可见",
         "        - aiWaitFor: 来源页面加载完成\n        - aiWaitFor: 企业云盘入口可见",
