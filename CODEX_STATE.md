@@ -3658,6 +3658,43 @@ git diff --check
 
 - 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
 
+### 2026-07-21 最新真实回归：扫描 relation 收敛候选识别
+
+部署 `058d4f6` 后重新发起有效 Agent `agent-1784595694809-776c1a1a`：
+
+- 输入、需求正文、Figma、模型和固定设备均正确：`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，小白学习打印 `com.xbxxhz.box 4.45.0 (357)`。
+- 线上 `8091 / 8088`、AI Gateway、Sonic 健康；Runner 清单里 OPPO 和华为都在线，但本 Agent 没有创建 Runner job，也没有向第二台设备下发。
+- Figma 4 页 / 4 图全部真实送入 `qwen3.6-plus`：4 个视觉批次均完成，耗时约 17 / 21 / 19 / 24 秒；PLAN 生成 8 条 AI 业务分支。
+- 终态 `FAILED / GENERATE_YAML / 30%`，失败已从上一轮扫描 reachability 缩小为单一缺口：`REQ-003 [acceptance:relation] 扫描复印：校验百度网盘入口与当前页面同级入口的层级和位置关系`。
+
+根因：
+
+- 生成结果已有 7 个 executable YAML，scorer 均为 100；`06-扫描复印百度网盘点击后首个可见页校验.yaml` 已覆盖扫描复印的入口可见、文案和点击后可达。
+- 该扫描用例的 `requirementRefs` 明确包含完整 REQ-003 四个验收维度，其中包括同级关系；但 `_case_intends_requirement_acceptance` 只读取 title / scenario / business_path / expected / tags / originalFlow，没有把完整 requirementRefs 纳入“可修复验收意图”。
+- 因此最终 coverage convergence 没有把这个已具备同分支可信导航的 executable 用例聚焦为 relation 修复候选，AI 没机会在点击「百度网盘」之前补入“同级 / 并列 / 位置关系”断言；最终门禁正确阻断 Runner。
+
+本轮通用修复：
+
+- `_case_intends_requirement_acceptance` 现在把 `coverage / requirementRefs / requirement_point` 作为验收维度意图文本来源，但分支身份仍必须来自 title / scenario / goal / business_path / expected / tags / originalFlow 等候选自身上下文，避免泛化授权流仅凭 requirementRefs 误绑定具体分支。
+- 新增回归证明：扫描复印 landing executable 若 requirementRefs 含完整 relation 义务，会进入 convergence repair 候选并要求修复 `REQ-003-CHECK-02`；但在补入具体“同级 / 并列”断言前，仍不能算覆盖 relation。
+- 保留既有负例：泛化“任意打印子页面”授权风险流不能被 requirementRefs 单独绑定到文档 / 照片主分支；最终门禁、scorer、Runner、Figma、坐标和账号/授权限制均未放宽。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+
+待完成：
+
+- 提交本轮修复；由用户推送、部署。
+- 部署后继续用完全相同参数重新发起 Agent，重点确认扫描 relation 被收敛修复为 executable，随后生成阶段通过并只向固定 OPPO 创建 smoke / remaining Runner job。
+
 待完成：
 
 - 提交、推送并部署本轮修复。

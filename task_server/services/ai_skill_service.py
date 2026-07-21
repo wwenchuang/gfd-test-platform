@@ -2270,7 +2270,7 @@ def _case_intends_requirement_acceptance(case, check):
     if requirement_id and case_requirement_ids and requirement_id not in case_requirement_ids:
         return False
     plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
-    intent_items = normalize_text_list([
+    primary_intent_items = normalize_text_list([
         case.get("title"),
         case.get("scenario"),
         case.get("goal"),
@@ -2281,12 +2281,21 @@ def _case_intends_requirement_acceptance(case, check):
         case.get("tags"),
         plan.get("originalFlow"),
     ])
+    reference_intent_items = normalize_text_list([
+        case.get("coverage"),
+        case.get("requirementRefs"),
+        case.get("requirement_refs"),
+        case.get("requirement_point"),
+        case.get("requirementPoint"),
+    ])
+    intent_items = primary_intent_items + reference_intent_items
     if not intent_items:
         return False
-    compact_items = [_compact_branch_text(item) for item in intent_items]
+    compact_primary_items = [_compact_branch_text(item) for item in primary_intent_items]
+    compact_items = compact_primary_items + [_compact_branch_text(item) for item in reference_intent_items]
     compact_intent = "\n".join(compact_items)
     branch_key = _compact_branch_text(check.get("branch"))
-    if branch_key and branch_key not in compact_intent:
+    if branch_key and branch_key not in "\n".join(compact_primary_items):
         return False
     targets = [_compact_branch_text(item) for item in _acceptance_target_terms(check.get("text"))]
     target_items = [

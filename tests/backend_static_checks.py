@@ -7745,6 +7745,100 @@ def check_generated_yaml_semantic_scope_and_visual_trace():
         not ai_skill_service.case_covers_requirement_acceptance(negative_related_page_case, related_page_reachability_check),
         "A negative related-page observation must not satisfy reachability",
     )
+    scan_relation_check = {
+        "id": "REQ-003-CHECK-02",
+        "requirementId": "REQ-003",
+        "branch": "扫描复印",
+        "kind": "relation",
+        "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+    }
+    scan_landing_case_with_full_refs = {
+        "case_id": "TC-SCAN-LANDING",
+        "title": "扫描复印百度网盘点击后首个可见页校验",
+        "coverage": "REQ-003 扫描复印：点击百度网盘入口并校验目标页面稳定可达",
+        "requirementRefs": [
+            "REQ-003 扫描复印：校验百度网盘入口可见；"
+            "校验百度网盘入口与当前页面同级入口的层级和位置关系；"
+            "校验百度网盘入口使用需求约定的可见文案；"
+            "点击百度网盘入口并校验目标页面稳定可达"
+        ],
+        "steps": [
+            "被测 App 首页已加载完成，首页核心功能入口可见",
+            "点击「扫描复印」入口",
+            "等待扫描复印页面加载完成",
+            "等待并校验「百度网盘」入口可见且文案为“百度网盘”",
+            "点击「百度网盘」入口",
+            "等待页面跳转或授权弹窗出现",
+        ],
+        "assertions": [
+            "点击百度网盘入口后进入百度网盘相关页面或出现可识别提示，未白屏、未闪退、未停留在原入口页"
+        ],
+    }
+    require(
+        ai_skill_service._case_intends_requirement_acceptance(scan_landing_case_with_full_refs, scan_relation_check),
+        "A same-branch executable landing case whose requirementRefs include the relation obligation must be eligible for relation repair",
+    )
+    require(
+        not ai_skill_service.case_covers_requirement_acceptance(scan_landing_case_with_full_refs, scan_relation_check),
+        "Intent to repair a relation obligation must not itself satisfy relation coverage without a concrete same-level assertion",
+    )
+    scan_landing_case_with_relation_assertion = {
+        **scan_landing_case_with_full_refs,
+        "steps": scan_landing_case_with_full_refs["steps"][:4] + [
+            "等待并校验「百度网盘」入口可见、文案准确，且与扫描复印页面同级入口并列展示",
+        ] + scan_landing_case_with_full_refs["steps"][4:],
+    }
+    require(
+        ai_skill_service.case_covers_requirement_acceptance(scan_landing_case_with_relation_assertion, scan_relation_check),
+        "The repaired scan branch case must satisfy relation only after adding a concrete same-level assertion",
+    )
+    scan_relation_payload = {
+        "analysis": {
+            "requirement_points": [
+                scan_landing_case_with_full_refs["requirementRefs"][0],
+            ],
+            "requirement_acceptance_checks": [scan_relation_check],
+        },
+        "cases": [{
+            **scan_landing_case_with_full_refs,
+            "executionLevel": "executable",
+            "ai_case_plan": {
+                "baselineGrounded": True,
+                "pathPlanApplied": True,
+                "baselineId": "scan-base",
+                "flow": scan_landing_case_with_full_refs["steps"],
+            },
+        }],
+        "manual_cases": [],
+    }
+    scan_relation_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        scan_relation_payload,
+        {"min_automation_cases": 1},
+    )
+    scan_relation_records = [{
+        "raw": scan_relation_payload["cases"][0],
+        "compact": ai_skill_service._compact_case_for_plan(
+            scan_relation_payload["cases"][0],
+            0,
+            origin_level="automatic",
+        ),
+        "origin": "automatic",
+    }]
+    scan_focused_auto, _, _, scan_focus = ai_skill_service._focus_executable_convergence_candidates(
+        scan_relation_payload,
+        scan_relation_records,
+        [],
+        {"pass": "coverage_convergence", "portfolioAudit": scan_relation_audit},
+    )
+    scan_focused_by_id = {item.get("case_id"): item for item in scan_focused_auto}
+    require(
+        scan_focus.get("repairableExecutableCandidateIds") == ["TC-SCAN-LANDING"]
+        and [
+            item.get("id")
+            for item in scan_focused_by_id["TC-SCAN-LANDING"].get("repairAcceptanceChecks") or []
+        ] == ["REQ-003-CHECK-02"],
+        "A scan branch landing executable with full requirement refs must be focused for relation repair instead of being preserved as complete",
+    )
     timeout_scenario_review = yaml_service.generated_case_requirement_scope_review({
         "case_id": "TC-TIMEOUT-SCENARIO",
         "title": "扫描复印页百度网盘网络超时处理校验",
