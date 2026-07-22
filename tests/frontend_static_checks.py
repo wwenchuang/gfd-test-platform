@@ -44,6 +44,22 @@ def main():
     require('data-nav-group="agent"' in html and 'data-nav-group="cases"' in html and 'data-nav-group="api-testing"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/api-testing/run/report/settings")
     for workflow in ("api_dashboard", "api_assets", "api_plan", "api_execution", "api_reports"):
         require(f'data-workflow="{workflow}"' in html, f"Sidebar missing API testing workflow: {workflow}")
+    for workflow, icon in {
+        "api_dashboard": "🧭",
+        "api_assets": "🔗",
+        "api_plan": "🧠",
+        "api_execution": "▶️",
+        "api_reports": "📊",
+    }.items():
+        require(
+            f'data-workflow="{workflow}"' in html and f'aria-hidden="true">{icon}</span>' in html,
+            f"API testing workflow must use its semantic sidebar icon: {workflow}",
+        )
+    for abbreviation in ("API", "OAS", "AI", "MS", "RPT"):
+        require(
+            f'<span class="workflow-index">{abbreviation}</span>' not in html,
+            f"API testing sidebar must not use the {abbreviation} text placeholder",
+        )
     require("js/api-testing.js" in html, "API testing frontend module must be loaded")
     require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
     require(
@@ -59,6 +75,14 @@ def main():
         and "api-source-token" in api_testing_js
         and 'type="password"' in api_testing_js,
         "Apifox sync must be the primary asset action while manual OpenAPI upload remains available",
+    )
+    require(
+        "api-source-credential-saved" in api_testing_js
+        and "已安全保存" in api_testing_js
+        and "更换 Apifox 访问令牌" in api_testing_js
+        and "editApiSourceCredential" in api_testing_js
+        and "cancelApiSourceCredentialEdit" in api_testing_js,
+        "A configured Apifox token must render as saved state and reveal an empty editor only on demand",
     )
     require(
         "captureApiAssetSyncViewState" in api_testing_js
@@ -365,7 +389,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260722-apifox-sync" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-apifox-sync" in html and "js/api-testing.js?v=20260722-apifox-sync" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Apifox asset sync and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260722-apifox-credential-icons" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-apifox-credential-icons" in html and "js/api-testing.js?v=20260722-apifox-credential-icons" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Apifox credential UX, API navigation icons, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")

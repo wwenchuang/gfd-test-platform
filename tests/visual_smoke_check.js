@@ -712,9 +712,22 @@ async function anyVisible(locator) {
     await page.waitForSelector('.api-asset-console');
     await page.waitForSelector('text=3D 接口');
     if (!await page.locator('.api-source-actions .btn-sm.primary', {hasText: '同步 Apifox'}).isVisible()) throw new Error('Apifox sync must be the primary asset action');
+    for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_execution: '▶️', api_reports: '📊'})) {
+      const iconText = await page.locator(`.workflow-step[data-workflow="${workflow}"] .workflow-index`).textContent();
+      if ((iconText || '').trim() !== icon) throw new Error(`API sidebar icon mismatch for ${workflow}: ${iconText}`);
+    }
     await page.locator('button[aria-label="Apifox 来源设置"]').click();
     await page.waitForSelector('#api-source-settings-panel:not([hidden])');
+    if (!await page.locator('#api-source-credential-saved').isVisible()) throw new Error('Configured Apifox token must show a saved credential state');
+    if (await page.locator('#api-source-token-editor').isVisible()) throw new Error('Configured Apifox token editor must stay hidden until replacement is requested');
     if (await page.locator('#api-source-token').inputValue()) throw new Error('Saved Apifox token must never be refilled into the browser');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-source-settings.png'), fullPage: true});
+    await page.locator('button[aria-label="更换 Apifox 访问令牌"]').click();
+    if (!await page.locator('#api-source-token-editor').isVisible()) throw new Error('Apifox replacement token editor did not open on demand');
+    if (await page.locator('#api-source-credential-saved').isVisible()) throw new Error('Saved credential state must hide while replacement editor is open');
+    if (await page.locator('#api-source-token').inputValue()) throw new Error('Apifox replacement token editor must open empty');
+    await page.locator('button[aria-label="取消更换 Apifox 访问令牌"]').click();
+    if (!await page.locator('#api-source-credential-saved').isVisible()) throw new Error('Cancelling token replacement must restore saved credential state');
     await page.locator('button[aria-label="关闭设置"]').click();
     await page.locator('.api-sync-log-detail > summary').click();
     const apiAssetLogScrollBefore = await page.locator('.api-asset-sync-log').evaluate(el => {
@@ -745,6 +758,10 @@ async function anyVisible(locator) {
       throw new Error(`API asset sync console overflows horizontally on mobile: ${JSON.stringify(overflowDetails)}`);
     }
     if (!await page.locator('.api-source-actions .btn-sm.primary').isVisible()) throw new Error('Apifox sync action is not visible on mobile');
+    await page.locator('button[aria-label="Apifox 来源设置"]').click();
+    if (!await page.locator('#api-source-credential-saved').isVisible()) throw new Error('Configured Apifox token state is not visible on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-source-settings-mobile.png'), fullPage: true});
+    await page.locator('button[aria-label="关闭设置"]').click();
     await page.screenshot({path: path.join(ARTIFACTS, 'api-assets-sync-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
 
@@ -1182,6 +1199,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'metersphere-execution-mobile.png'),
         path.join(ARTIFACTS, 'metersphere-settings.png'),
         path.join(ARTIFACTS, 'metersphere-settings-mobile.png'),
+        path.join(ARTIFACTS, 'api-source-settings.png'),
+        path.join(ARTIFACTS, 'api-source-settings-mobile.png'),
         path.join(ARTIFACTS, 'api-assets-sync.png'),
         path.join(ARTIFACTS, 'api-assets-sync-mobile.png'),
         path.join(ARTIFACTS, 'agent.png'),

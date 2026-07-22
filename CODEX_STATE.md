@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 Apifox 凭据体验、接口导航图标与线上真实同步
+
+用户反馈接口资产设置仍展示 Token 输入框，且接口测试侧栏使用 `API / OAS / AI / MS / RPT` 字母占位，和平台已有导航风格不一致。本轮只调整 API 测试前端和对应测试，没有修改 Agent、YAML、Runner、Sonic 或历史任务：
+
+- 根因不是服务端空值覆盖：`api_source_service` 已支持令牌只写、读取脱敏、空值更新保留和显式清除。真实线上检查发现当时 source 列表为空，用户此前提供的 Token 尚未写入服务端，所以页面正确显示“令牌未配置”。
+- 已通过平台认证 source API 将用户提供的 Token 写入线上服务端配置，读取接口只返回 `credential_configured=true`，不返回明文。随后绑定已验证的 Apifox `3D` 项目 `5904970`，来源变为 `3D 接口 / configured=true`。
+- 首次线上同步 `succeeded`：`added=971 / changed=0 / removed=0`；紧接着第二次真实同步 `no_change`：`unchanged=971`。两次均完成到 `analyze_impact`，没有错误，证明 Token、项目、导出、不可变版本和 no-change 复用链路真实可用。
+- 已配置 Token 在设置面板默认只显示“已安全保存 / 密钥仅保存在服务端”，不再呈现为待输入表单。只有点击“更换”才展开空白密码框；取消会清空输入并恢复保存状态，普通保存不会覆盖现有密钥，清除仍需独立确认。
+- 接口测试五个导航入口改为与现有侧栏一致的语义图形图标，并保留可见名称及按钮 title；移除字母占位。桌面和 `390px` 移动端均验证无横向溢出、文本遮挡或导航跳动。
+- 前端缓存版本已更新，避免部署后浏览器继续读取旧设置面板和旧侧栏。
+
+已验证：
+
+```bash
+python3 tests/api_asset_sync_checks.py -v  # 27 tests
+python3 tests/frontend_static_checks.py     # 69 checks
+node tests/visual_smoke_check.js
+git diff --check
+npm test
+```
+
+- 完整结果：后端静态 `61` 项、前端 `69` 项、AI Gateway `46` 项、动态模型目录 / 回退、Skill 契约 `3` 个 fixture 及全套桌面 / 移动端 Playwright 回归全部通过。
+- 新增视觉证据：`tests/artifacts/api-source-settings.png`、`api-source-settings-mobile.png`；测试同时覆盖 Token 默认隐藏、更换后空输入、取消恢复和五个导航图标。
+- 待用户 push、部署前端提交；Codex 不 push。线上 Apifox source 与 971 接口资产已经配置并同步完成。
+
 ### 2026-07-22 API 闭环 Phase A：Apifox 只读同步、不可变版本与真实资产控制台
 
 按 `docs/superpowers/specs/2026-07-22-api-automation-production-closure-design.md` 的首个子项目完成 API source / asset 基础闭环；本轮没有修改 UI Agent、YAML 生成、Runner、Sonic 或历史任务：

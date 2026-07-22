@@ -263,6 +263,8 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
 }
 
 function renderApiSourceSettings(source = {}) {
+  const credentialConfigured = source.credential_configured === true;
+  const credentialEditorOpen = !credentialConfigured || apiSourceCredentialEditing;
   return `
     <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>只读同步设置</h3></div><button class="btn-sm icon-only" title="关闭设置" aria-label="关闭设置" onclick="toggleApiSourceSettings(false)">×</button></div>
     <div class="api-source-settings-grid">
@@ -271,7 +273,17 @@ function renderApiSourceSettings(source = {}) {
       <label><span>分支 ID（可选）</span><input id="api-source-branch-id" value="${escapeHtml(source.branch_id || '')}" placeholder="默认主分支"></label>
       <label><span>环境 ID（可选）</span><input id="api-source-environment-id" value="${escapeHtml(source.environment_id || '')}" inputmode="numeric" placeholder="导出指定环境的服务地址"></label>
       <label><span>同步周期（分钟）</span><input id="api-source-interval" type="number" min="15" max="1440" step="15" value="${escapeHtml(source.sync_interval_minutes || 60)}"></label>
-      <label class="api-source-token-field"><span>访问令牌（只写）</span><input id="api-source-token" type="password" value="" autocomplete="new-password" placeholder="${source.credential_configured ? '已配置；留空保持不变' : '输入 Apifox Access Token'}"></label>
+      <div class="api-source-field api-source-token-field">
+        <span>访问令牌</span>
+        <div id="api-source-credential-saved" class="api-source-credential-saved" ${credentialEditorOpen ? 'hidden' : ''}>
+          <div class="api-source-credential-state"><span aria-hidden="true">✓</span><div><strong>已安全保存</strong><small>密钥仅保存在服务端</small></div></div>
+          <button type="button" class="btn-sm" aria-label="更换 Apifox 访问令牌" onclick="editApiSourceCredential()">更换</button>
+        </div>
+        <div id="api-source-token-editor" class="api-source-token-editor" ${credentialEditorOpen ? '' : 'hidden'}>
+          <input id="api-source-token" type="password" value="" autocomplete="new-password" aria-label="Apifox 访问令牌" placeholder="${credentialConfigured ? '输入新的 Apifox Access Token' : '输入 Apifox Access Token'}">
+          ${credentialConfigured ? '<button type="button" class="btn-sm" aria-label="取消更换 Apifox 访问令牌" onclick="cancelApiSourceCredentialEdit()">取消</button>' : ''}
+        </div>
+      </div>
       <label class="api-source-toggle"><input id="api-source-sync-enabled" type="checkbox" ${source.sync_enabled !== false ? 'checked' : ''}><span>启用定时同步</span></label>
     </div>
     <div class="api-source-settings-actions">
@@ -279,6 +291,25 @@ function renderApiSourceSettings(source = {}) {
       <button class="btn-sm primary" onclick="saveApiSourceConfig()">保存设置</button>
     </div>
   `;
+}
+
+function editApiSourceCredential() {
+  apiSourceCredentialEditing = true;
+  const saved = document.getElementById('api-source-credential-saved');
+  const editor = document.getElementById('api-source-token-editor');
+  if (saved) saved.hidden = true;
+  if (editor) editor.hidden = false;
+  document.getElementById('api-source-token')?.focus();
+}
+
+function cancelApiSourceCredentialEdit() {
+  apiSourceCredentialEditing = false;
+  const input = document.getElementById('api-source-token');
+  const saved = document.getElementById('api-source-credential-saved');
+  const editor = document.getElementById('api-source-token-editor');
+  if (input) input.value = '';
+  if (saved) saved.hidden = false;
+  if (editor) editor.hidden = true;
 }
 
 function renderApiAssetSync(sync) {
@@ -395,12 +426,14 @@ async function refreshApiAssetsBody() {
 
 function toggleApiSourceSettings(open = null) {
   apiAssetSettingsOpen = open === null ? !apiAssetSettingsOpen : !!open;
+  if (!apiAssetSettingsOpen) apiSourceCredentialEditing = false;
   const panel = document.getElementById('api-source-settings-panel');
   if (panel) panel.hidden = !apiAssetSettingsOpen;
 }
 
 async function selectApiAssetSource(sourceId) {
   apiAssetSelectedSourceId = sourceId || '';
+  apiSourceCredentialEditing = false;
   apiAssetSelectedRevisionId = '';
   apiAssetRevisionPinned = false;
   apiAssetActiveSyncId = '';
@@ -431,6 +464,7 @@ async function saveApiSourceConfig(clearCredentials = false) {
   try {
     const data = await apiRequest('/api-testing/sources', { method: 'POST', body: payload });
     apiAssetSelectedSourceId = data.source?.source_id || apiAssetSelectedSourceId;
+    apiSourceCredentialEditing = false;
     if (!source.source_id) {
       apiAssetSelectedRevisionId = '';
       apiAssetRevisionPinned = false;

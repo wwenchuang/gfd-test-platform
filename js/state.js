@@ -113,6 +113,7 @@ let apiAssetRevisionPinned = false;
 let apiAssetActiveSyncId = '';
 let apiAssetSyncPollTimer = null;
 let apiAssetSettingsOpen = false;
+let apiSourceCredentialEditing = false;
 let apiAssetContextRequestId = 0;
 let apiAssetPageScrollTop = 0;
 const apiAssetSyncExpandedKeys = new Set(JSON.parse(localStorage.getItem('api_asset_sync_expanded_keys') || '[]'));
