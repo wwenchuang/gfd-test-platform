@@ -46,6 +46,35 @@ def main():
         require(f'data-workflow="{workflow}"' in html, f"Sidebar missing API testing workflow: {workflow}")
     require("js/api-testing.js" in html, "API testing frontend module must be loaded")
     require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
+    require(
+        "/api-testing/sources" in api_testing_js
+        and "startApiAssetSync" in api_testing_js
+        and "pollApiAssetSync" in api_testing_js
+        and "poll_after_ms" in api_testing_js,
+        "API assets must use server-side sources and backend-timed asynchronous synchronization",
+    )
+    require(
+        "同步 Apifox" in api_testing_js
+        and "上传 OpenAPI JSON" in api_testing_js
+        and "api-source-token" in api_testing_js
+        and 'type="password"' in api_testing_js,
+        "Apifox sync must be the primary asset action while manual OpenAPI upload remains available",
+    )
+    require(
+        "captureApiAssetSyncViewState" in api_testing_js
+        and "restoreApiAssetSyncViewState" in api_testing_js
+        and "apiAssetSyncExpandedKeys" in state_js
+        and "apiAssetSyncScrollPositions" in state_js,
+        "API asset polling must preserve expanded technical events and scroll positions",
+    )
+    require(
+        "api-source-environment-id" in api_testing_js
+        and "environment_id:" in api_testing_js
+        and "apiAssetSelectedRevisionId" in state_js
+        and "selectApiAssetRevision" in api_testing_js
+        and "apiAssetSyncPhaseText" in api_testing_js,
+        "API assets must expose optional environments, explicit revision selection, and readable sync phases",
+    )
     require("apiLogExpandedKeys" in html and "runId + eventId" in html, "API execution logs must preserve expanded state by stable keys")
     require(
         "/api-testing/metersphere/execution-context" in api_testing_js
@@ -336,7 +365,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260714-agent-observability" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-ms-daily-console" in html and "js/api-testing.js?v=20260722-ms-daily-console" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include the MeterSphere daily console and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260722-apifox-sync" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-apifox-sync" in html and "js/api-testing.js?v=20260722-apifox-sync" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Apifox asset sync and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")

@@ -13505,6 +13505,7 @@ def check_api_testing_routes_registered():
     for path in (
         "/api/api-testing/overview",
         "/api/api-testing/assets",
+        "/api/api-testing/sources",
         "/api/api-testing/plans",
         "/api/api-testing/metersphere/config",
         "/api/api-testing/metersphere/execution-context",
@@ -13513,6 +13514,7 @@ def check_api_testing_routes_registered():
         require(path in router.GET_ROUTES, f"Missing API testing GET route: {path}")
     for path in (
         "/api/api-testing/openapi/import",
+        "/api/api-testing/sources",
         "/api/api-testing/plans/generate",
         "/api/api-testing/plans/confirm",
         "/api/api-testing/metersphere/config",
@@ -13529,6 +13531,23 @@ def check_api_testing_routes_registered():
             for pattern, _handler in router._GET_REGEX_ROUTES
         ),
         "Missing MeterSphere execution status route",
+    )
+    for expected_pattern in (
+        r"^/api/api-testing/syncs/([^/]+)$",
+        r"^/api/api-testing/assets/([^/]+)/revisions$",
+        r"^/api/api-testing/assets/([^/]+)/diff$",
+        r"^/api/api-testing/assets/([^/]+)/impact$",
+    ):
+        require(
+            any(pattern.pattern == expected_pattern for pattern, _handler in router._GET_REGEX_ROUTES),
+            f"Missing API asset GET route: {expected_pattern}",
+        )
+    require(
+        any(
+            pattern.pattern == r"^/api/api-testing/sources/([^/]+)/sync$"
+            for pattern, _handler in router._POST_REGEX_ROUTES
+        ),
+        "Missing API source synchronization route",
     )
 
     class FakeHandler:

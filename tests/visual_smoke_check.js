@@ -18,6 +18,28 @@ function json(res, body) {
 
 function serve() {
   let fileReadCount = 0;
+  let apiAssetSyncPollCount = 0;
+  const apiAssetSync = () => ({
+    sync_id: 'api-sync-visual-001',
+    source_id: 'api-source-visual-001',
+    trigger: 'manual',
+    status: 'running',
+    phase: apiAssetSyncPollCount ? 'analyze_impact' : 'diff_revision',
+    poll_after_ms: 3000,
+    created_at: '2026-07-22 09:20:00',
+    started_at: '2026-07-22 09:20:01',
+    finished_at: '',
+    previous_revision_id: 'api-revision-visual-000',
+    asset_id: 'api-asset-visual-001',
+    revision_id: 'api-revision-visual-001',
+    summary: {added: 3, changed: 2, removed: 1, unchanged: 586, affected_plans: 2},
+    error: '',
+    events: Array.from({length: 28}, (_, index) => ({
+      at: `2026-07-22 09:${String(20 + Math.floor(index / 6)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}`,
+      phase: index < 6 ? 'fetch_source' : index < 12 ? 'parse_document' : index < 20 ? 'diff_revision' : 'analyze_impact',
+      message: `真实同步事件 ${index + 1}：已完成服务端脱敏并持久化状态`,
+    })),
+  });
   const meterExecution = () => ({
     execution_id: 'ms-execution-visual-001',
     plan_id: 'api-plan-visual-001',
@@ -293,6 +315,56 @@ function serve() {
     }
     if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
       json(res, {ok: true});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/sources' && req.method === 'GET') {
+      json(res, {
+        ok: true,
+        sources: [{
+          source_id: 'api-source-visual-001',
+          source_type: 'apifox',
+          name: '3D 接口',
+          project_id: '5904970',
+          branch_id: '',
+          credential_configured: true,
+          configured: true,
+          sync_enabled: true,
+          sync_interval_minutes: 60,
+          last_success_at: '2026-07-22 08:20:00',
+          last_sync_status: 'running',
+          last_error: '',
+        }],
+        syncs: [apiAssetSync()],
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/assets' && req.method === 'GET') {
+      const endpoints = [
+        {endpoint_id: 'api-1', endpoint_key: 'route:GET /points', method: 'GET', path: '/points', module: '积分', name: '积分总额', required_fields: [], schema_hash: 'aa11'},
+        {endpoint_id: 'api-2', endpoint_key: 'route:GET /products', method: 'GET', path: '/products', module: '兑换', name: '兑换商品列表', required_fields: ['page'], schema_hash: 'bb22'},
+        {endpoint_id: 'api-3', endpoint_key: 'route:POST /exchange', method: 'POST', path: '/exchange', module: '兑换', name: '确认兑换', required_fields: ['productId'], schema_hash: 'cc33'},
+      ];
+      json(res, {
+        ok: true,
+        assets: [{asset_id: 'api-asset-visual-001', name: '3D 接口', active_revision_id: 'api-revision-visual-001', endpoint_count: 592}],
+        asset: {asset_id: 'api-asset-visual-001', name: '3D 接口', active_revision_id: 'api-revision-visual-001', schema_version: '3.0.1', endpoint_count: 592},
+        revisions: [
+          {revision_id: 'api-revision-visual-001', endpoint_count: 592, created_at: '2026-07-22 09:20:20'},
+          {revision_id: 'api-revision-visual-000', endpoint_count: 588, created_at: '2026-07-22 08:20:00'},
+        ],
+        snapshots: [{snapshot_id: 'api-revision-visual-001', title: '3D', version: '1.0.0', endpoint_count: 592}],
+        snapshot: {snapshot_id: 'api-revision-visual-001', title: '3D', version: '1.0.0', openapi_version: '3.0.1', endpoints},
+        endpoints,
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/syncs/api-sync-visual-001' && req.method === 'GET') {
+      apiAssetSyncPollCount += 1;
+      json(res, {ok: true, sync: apiAssetSync()});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/sources/api-source-visual-001/sync' && req.method === 'POST') {
+      json(res, {ok: true, sync: {...apiAssetSync(), created: true, conflict: false}});
       return;
     }
     if (url.pathname === '/api/api-testing/metersphere/execution-context') {
@@ -635,6 +707,46 @@ async function anyVisible(locator) {
     const runTaskOptions = await page.locator('#run-task-name option').count();
     if (runTaskOptions < 2) throw new Error(`single-task modal did not parse YAML tasks, options=${runTaskOptions}`);
     await page.click('#modal-run-task .btn-cancel');
+
+    await page.click('.workflow-step[data-workflow="api_assets"]');
+    await page.waitForSelector('.api-asset-console');
+    await page.waitForSelector('text=3D 接口');
+    if (!await page.locator('.api-source-actions .btn-sm.primary', {hasText: '同步 Apifox'}).isVisible()) throw new Error('Apifox sync must be the primary asset action');
+    await page.locator('button[aria-label="Apifox 来源设置"]').click();
+    await page.waitForSelector('#api-source-settings-panel:not([hidden])');
+    if (await page.locator('#api-source-token').inputValue()) throw new Error('Saved Apifox token must never be refilled into the browser');
+    await page.locator('button[aria-label="关闭设置"]').click();
+    await page.locator('.api-sync-log-detail > summary').click();
+    const apiAssetLogScrollBefore = await page.locator('.api-asset-sync-log').evaluate(el => {
+      const max = el.scrollHeight - el.clientHeight;
+      el.scrollTop = Math.min(160, max);
+      return {top: el.scrollTop, max};
+    });
+    if (apiAssetLogScrollBefore.max < 50 || apiAssetLogScrollBefore.top <= 0) throw new Error(`Apifox sync log fixture is not independently scrollable: ${JSON.stringify(apiAssetLogScrollBefore)}`);
+    await page.evaluate(() => pollApiAssetSync(apiAssetActiveSyncId));
+    await page.waitForTimeout(100);
+    if (!await page.locator('.api-sync-log-detail').evaluate(el => el.open)) throw new Error('Apifox sync polling collapsed an expanded technical log');
+    const apiAssetLogScrollAfter = await page.locator('.api-asset-sync-log').evaluate(el => el.scrollTop);
+    if (Math.abs(apiAssetLogScrollAfter - apiAssetLogScrollBefore.top) > 2) throw new Error(`Apifox sync polling reset technical log scroll: before=${apiAssetLogScrollBefore.top}, after=${apiAssetLogScrollAfter}`);
+    const apiAssetDesktopOverflow = await page.locator('.api-asset-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (apiAssetDesktopOverflow) throw new Error('API asset sync console overflows horizontally on desktop');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-assets-sync.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const apiAssetMobileOverflow = await page.locator('.api-asset-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (apiAssetMobileOverflow) {
+      const overflowDetails = await page.locator('.api-asset-console *').evaluateAll(elements => elements.map(el => ({
+        tag: el.tagName,
+        cls: el.className,
+        width: el.getBoundingClientRect().width,
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      })).filter(item => item.scrollWidth > item.clientWidth + 1).slice(0, 12));
+      throw new Error(`API asset sync console overflows horizontally on mobile: ${JSON.stringify(overflowDetails)}`);
+    }
+    if (!await page.locator('.api-source-actions .btn-sm.primary').isVisible()) throw new Error('Apifox sync action is not visible on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-assets-sync-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
 
     await page.click('.workflow-step[data-workflow="api_execution"]');
     await page.waitForSelector('.api-execution-console');
@@ -1070,6 +1182,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'metersphere-execution-mobile.png'),
         path.join(ARTIFACTS, 'metersphere-settings.png'),
         path.join(ARTIFACTS, 'metersphere-settings-mobile.png'),
+        path.join(ARTIFACTS, 'api-assets-sync.png'),
+        path.join(ARTIFACTS, 'api-assets-sync-mobile.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
         path.join(ARTIFACTS, 'agent-failure.png'),

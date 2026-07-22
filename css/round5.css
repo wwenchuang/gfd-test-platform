@@ -37,6 +37,275 @@
 .api-form-grid input {
   min-width: 0;
 }
+.api-asset-console {
+  width: min(1280px, 100%);
+}
+.api-asset-header {
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 0 16px;
+}
+.api-asset-header h2 {
+  margin: 6px 0;
+}
+.api-asset-header > p {
+  color: var(--text2);
+  margin: 0 0 14px;
+}
+.api-source-status-row,
+.api-source-identity,
+.api-source-actions,
+.api-source-settings-head,
+.api-source-settings-actions,
+.api-sync-main {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.api-source-status-row,
+.api-source-settings-head {
+  justify-content: space-between;
+}
+.api-source-identity {
+  flex-wrap: wrap;
+}
+.api-source-identity strong {
+  font-size: 14px;
+}
+.api-source-identity > span:last-child {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-source-select {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 5px 8px;
+}
+.api-source-actions {
+  flex: none;
+}
+.api-source-facts,
+.api-asset-revision-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-asset-revision-bar {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+.api-source-facts > span,
+.api-asset-revision-bar > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  background: var(--surface2);
+}
+.api-source-facts small,
+.api-asset-revision-bar span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-source-facts strong,
+.api-asset-revision-bar strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.api-asset-revision-picker select {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.api-source-settings {
+  border: 1px solid var(--border);
+  border-top: 0;
+  background: var(--surface);
+  padding: 16px;
+}
+.api-source-settings[hidden] {
+  display: none;
+}
+.api-source-settings-head span {
+  color: var(--accent);
+  font-size: 10px;
+}
+.api-source-settings-head h3 {
+  margin: 3px 0 0;
+  font-size: 14px;
+}
+.api-source-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.api-source-settings-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-source-settings-grid label > span {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-source-settings-grid input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 7px 9px;
+}
+.api-source-token-field {
+  grid-column: span 2;
+}
+.api-source-settings-grid .api-source-toggle {
+  align-content: end;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  padding-bottom: 8px;
+}
+.api-source-settings-grid .api-source-toggle input {
+  width: 16px;
+  min-height: 16px;
+}
+.api-source-settings-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.api-asset-sync-region:not(:empty) {
+  margin-top: 14px;
+}
+.api-sync-strip {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  background: var(--surface);
+  padding: 12px;
+}
+.api-sync-strip.status-succeeded,
+.api-sync-strip.status-no_change {
+  border-left-color: var(--success);
+}
+.api-sync-strip.status-failed {
+  border-left-color: var(--danger);
+}
+.api-sync-main {
+  flex-wrap: wrap;
+}
+.api-sync-main > span:last-child {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-sync-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(76px, 1fr));
+  gap: 1px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-sync-metrics span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface2);
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-sync-metrics strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.api-sync-log-detail {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.api-sync-log-detail > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  padding: 9px 2px 0;
+  color: var(--text2);
+  font-size: 12px;
+}
+.api-sync-log-detail > summary small {
+  color: var(--text3);
+}
+.api-asset-sync-log {
+  max-height: 230px;
+  overflow: auto;
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+}
+.api-asset-sync-log > div {
+  display: grid;
+  grid-template-columns: 150px 120px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.api-asset-sync-log > div:last-child {
+  border-bottom: 0;
+}
+.api-asset-sync-log time,
+.api-asset-sync-log strong {
+  color: var(--text3);
+}
+.api-asset-revision-bar {
+  margin: 14px 0;
+}
+.api-asset-endpoints {
+  margin-top: 0;
+  overflow: hidden;
+}
+.api-endpoint-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+}
+.api-endpoint-table {
+  min-width: 720px;
+}
+.api-upload-fallback {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.api-upload-fallback > summary {
+  cursor: pointer;
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-file-button {
+  cursor: pointer;
+  justify-content: center;
+}
+.api-file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
 .api-stat-grid {
   margin-top: 14px;
 }
@@ -541,6 +810,9 @@
   .api-two-column {
     grid-template-columns: 1fr;
   }
+  .api-source-settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .api-execution-plan-row {
     grid-template-columns: minmax(220px, 1.3fr) minmax(170px, 1fr) auto;
   }
@@ -559,9 +831,45 @@
   .api-execution-status-row,
   .api-execution-selectors,
   .api-section-heading,
-  .api-execution-empty {
+  .api-execution-empty,
+  .api-source-status-row {
     align-items: stretch;
     flex-direction: column;
+  }
+  .api-source-actions {
+    width: 100%;
+  }
+  .api-source-actions .primary {
+    flex: 1;
+    justify-content: center;
+  }
+  .api-source-facts,
+  .api-asset-revision-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .api-source-settings-grid {
+    grid-template-columns: 1fr;
+  }
+  .api-source-token-field {
+    grid-column: auto;
+  }
+  .api-source-settings-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+  .api-source-settings-actions .btn-sm {
+    justify-content: center;
+  }
+  .api-sync-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+  .api-sync-metrics span:last-child {
+    grid-column: 1 / -1;
+  }
+  .api-asset-sync-log > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
   .api-icon-actions {
     position: absolute;

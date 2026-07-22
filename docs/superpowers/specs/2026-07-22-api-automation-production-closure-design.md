@@ -168,10 +168,15 @@ Initial implementations:
 - `ApifoxSourceAdapter`: calls the official project export endpoint
   `POST https://api.apifox.com/v1/projects/{projectId}/export-openapi?locale=zh-CN`
   using `Authorization: Bearer <token>` and
-  `X-Apifox-Api-Version: 2024-03-28`. The initial export requests all APIs as OpenAPI 3.0
+  `X-Apifox-Api-Version: 2024-03-28`, with an explicit
+  `User-Agent: midscene-task-platform/api-sync`. The initial export requests all APIs as OpenAPI 3.0
   JSON and includes Apifox extension properties so a stable provider identifier can be
   used when the response exposes one. Optional configured environment IDs are passed in
-  the documented `environmentIds` field.
+  the documented `environmentIds` field. Apifox currently returns an undocumented `201`
+  empty response for Python's default user agent; the explicit platform user agent returns
+  the documented `200` JSON response. A bounded compatibility fallback to the current CLI
+  `/api/v1/.../export-openapi` route is allowed only when the official route is unavailable
+  (`404/405`) or returns an empty successful response.
 - `UploadedOpenApiSourceAdapter`: wraps a user-uploaded document and preserves current
   behavior.
 

@@ -38,6 +38,8 @@ def _save_plan_index(plan: Dict[str, Any]) -> None:
     item = {
         "plan_id": plan.get("plan_id"),
         "snapshot_id": plan.get("snapshot_id"),
+        "asset_id": plan.get("asset_id"),
+        "asset_revision_id": plan.get("asset_revision_id"),
         "name": plan.get("name"),
         "status": plan.get("status"),
         "case_count": plan.get("case_count"),
@@ -80,6 +82,8 @@ def _case(case_id: str, endpoint: Dict[str, Any], name: str, case_type: str, pri
     return {
         "case_id": case_id,
         "endpoint_id": endpoint.get("endpoint_id"),
+        "endpoint_key": endpoint.get("endpoint_key"),
+        "asset_revision_id": endpoint.get("asset_revision_id"),
         "endpoint": f"{endpoint.get('method')} {endpoint.get('path')}",
         "module": endpoint.get("module") or "未分组",
         "name": name,
@@ -241,6 +245,8 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
     plan = {
         "plan_id": plan_id,
         "snapshot_id": snapshot.get("snapshot_id"),
+        "asset_id": snapshot.get("asset_id"),
+        "asset_revision_id": snapshot.get("revision_id") or snapshot.get("asset_revision_id") or snapshot.get("snapshot_id"),
         "name": f"{snapshot.get('title') or snapshot.get('name') or 'API'} 接口测试计划",
         "status": "draft",
         "source": source,
@@ -284,10 +290,20 @@ def list_api_test_plans(limit: int = 20) -> List[Dict[str, Any]]:
     return index[:size]
 
 
+def list_full_api_test_plans(limit: int = 1000) -> List[Dict[str, Any]]:
+    return [
+        plan
+        for item in list_api_test_plans(limit=limit)
+        for plan in [get_api_test_plan(str(item.get("plan_id") or ""))]
+        if plan
+    ]
+
+
 __all__ = [
     "API_TESTING_DIR",
     "generate_api_test_plan",
     "confirm_api_test_plan",
     "get_api_test_plan",
     "list_api_test_plans",
+    "list_full_api_test_plans",
 ]

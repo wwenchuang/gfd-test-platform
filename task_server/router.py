@@ -2438,8 +2438,10 @@ def _get_tasks(handler, qs):
 
 @route_get("/api/api-testing/overview")
 def _get_api_testing_overview(handler, qs):
-    from task_server.services import api_asset_service, api_report_service, api_test_plan_service, metersphere_service
+    from task_server.services import api_asset_service, api_report_service, api_source_service, api_test_plan_service, metersphere_service
     snapshots = api_asset_service.list_api_snapshots(limit=5)
+    assets = api_asset_service.list_api_assets(limit=5)
+    sources = api_source_service.list_api_sources()
     latest_snapshot_id = snapshots[0].get("snapshot_id") if snapshots else ""
     endpoints = api_asset_service.list_api_endpoints(latest_snapshot_id) if latest_snapshot_id else []
     plans = api_test_plan_service.list_api_test_plans(limit=5)
@@ -2451,12 +2453,16 @@ def _get_api_testing_overview(handler, qs):
             "endpoint_count": len(endpoints),
             "plan_count": len(plans),
             "report_count": len(reports),
+            "source_count": len(sources),
+            "asset_count": len(assets),
         },
         "snapshots": snapshots,
         "latest_snapshot_id": latest_snapshot_id,
         "endpoints": endpoints[:20],
         "plans": plans,
         "reports": reports,
+        "sources": sources,
+        "assets": assets,
         "metersphere": metersphere_service.metersphere_config(masked=True),
     })
 
@@ -2464,11 +2470,127 @@ def _get_api_testing_overview(handler, qs):
 @route_get("/api/api-testing/assets")
 def _get_api_testing_assets(handler, qs):
     from task_server.services import api_asset_service
-    snapshot_id = str(qs.get("snapshot_id") or qs.get("snapshotId") or "").strip()
     snapshots = api_asset_service.list_api_snapshots(limit=safe_int(qs.get("limit"), 20) or 20)
-    endpoints = api_asset_service.list_api_endpoints(snapshot_id)
-    snapshot = api_asset_service.get_api_snapshot(snapshot_id)
-    handler._json({"ok": True, "snapshots": snapshots, "snapshot": snapshot, "endpoints": endpoints})
+    assets = api_asset_service.list_api_assets(limit=safe_int(qs.get("limit"), 20) or 20)
+    requested_snapshot_id = str(qs.get("snapshot_id") or qs.get("snapshotId") or "").strip()
+    requested_asset_id = str(qs.get("asset_id") or qs.get("assetId") or "").strip()
+    requested_source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
+    snapshot = api_asset_service.get_api_snapshot(requested_snapshot_id) if requested_snapshot_id else {}
+    asset = {}
+    if snapshot.get("asset_id"):
+        asset = api_asset_service.get_api_asset(str(snapshot.get("asset_id") or ""))
+    elif requested_asset_id:
+        asset = api_asset_service.get_api_asset(requested_asset_id)
+    elif requested_source_id:
+        asset = next(
+            (item for item in assets if str(item.get("source_id") or "") == requested_source_id),
+            {},
+        )
+        if asset:
+            asset = api_asset_service.get_api_asset(str(asset.get("asset_id") or ""))
+    elif not requested_snapshot_id and assets:
+        asset = api_asset_service.get_api_asset(str(assets[0].get("asset_id") or ""))
+    snapshot_id = requested_snapshot_id
+    if not snapshot_id and asset:
+        snapshot_id = str(asset.get("active_revision_id") or "").strip()
+    if not snapshot_id and snapshots and not (requested_asset_id or requested_source_id):
+        snapshot_id = str(snapshots[0].get("snapshot_id") or "").strip()
+    if not snapshot and snapshot_id:
+        snapshot = api_asset_service.get_api_snapshot(snapshot_id)
+    if not asset and snapshot.get("asset_id"):
+        asset = api_asset_service.get_api_asset(str(snapshot.get("asset_id") or ""))
+    endpoints = api_asset_service.list_api_endpoints(snapshot_id) if snapshot_id else []
+    asset_id = str(asset.get("asset_id") or "")
+    revisions = api_asset_service.list_api_revisions(asset_id, limit=50) if asset_id else []
+    handler._json({
+        "ok": True,
+        "snapshots": snapshots,
+        "snapshot": snapshot,
+        "endpoints": endpoints,
+        "assets": assets,
+        "asset": asset,
+        "revisions": revisions,
+    })
+
+
+@route_get("/api/api-testing/sources")
+def _get_api_testing_sources(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, api_sync_service
+    sources = api_source_service.list_api_sources()
+    handler._json({
+        "ok": True,
+        "sources": sources,
+        "syncs": api_sync_service.list_api_syncs(
+            limit=safe_int(qs.get("limit"), 20) or 20,
+            source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
+        ),
+    })
+
+
+@route_get_regex(r"^/api/api-testing/syncs/([^/]+)$")
+def _get_api_testing_sync(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_sync_service
+    sync_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    sync = api_sync_service.get_api_sync(sync_id)
+    if not sync:
+        handler._json({"ok": False, "error": "API sync 不存在"}, 404)
+        return
+    handler._json({"ok": True, "sync": sync})
+
+
+@route_get_regex(r"^/api/api-testing/assets/([^/]+)/revisions$")
+def _get_api_testing_asset_revisions(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_asset_service
+    asset_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    asset = api_asset_service.get_api_asset(asset_id)
+    if not asset:
+        handler._json({"ok": False, "error": "API asset 不存在"}, 404)
+        return
+    handler._json({
+        "ok": True,
+        "asset": asset,
+        "revisions": api_asset_service.list_api_revisions(asset_id, limit=safe_int(qs.get("limit"), 50) or 50),
+    })
+
+
+@route_get_regex(r"^/api/api-testing/assets/([^/]+)/diff$")
+def _get_api_testing_asset_diff(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_schema_diff_service
+    asset_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    try:
+        diff = api_schema_diff_service.get_asset_revision_diff(
+            asset_id,
+            from_revision_id=str(qs.get("from") or qs.get("from_revision_id") or "").strip(),
+            to_revision_id=str(qs.get("to") or qs.get("to_revision_id") or "").strip(),
+        )
+        handler._json({"ok": True, "diff": diff})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+
+
+@route_get_regex(r"^/api/api-testing/assets/([^/]+)/impact$")
+def _get_api_testing_asset_impact(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_schema_diff_service
+    asset_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    try:
+        diff = api_schema_diff_service.get_asset_revision_diff(
+            asset_id,
+            from_revision_id=str(qs.get("from") or qs.get("from_revision_id") or "").strip(),
+            to_revision_id=str(qs.get("revision_id") or qs.get("revisionId") or qs.get("to") or "").strip(),
+        )
+        handler._json({"ok": True, "asset_id": asset_id, "impact": diff.get("impact") or {}, "summary": diff.get("summary") or {}})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
 
 
 @route_get("/api/api-testing/plans")
@@ -2545,6 +2667,33 @@ def _post_auth_logout(handler, qs):
 
 
 # ── API Testing ─────────────────────────────────────────────────────
+
+@route_post("/api/api-testing/sources")
+def _post_api_testing_sources(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service
+    try:
+        source = api_source_service.save_api_source(handler._body())
+        handler._json({"ok": True, "source": source})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post_regex(r"^/api/api-testing/sources/([^/]+)/sync$")
+def _post_api_testing_source_sync(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, api_sync_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    try:
+        sync = api_sync_service.start_api_source_sync(source_id, spawn=True, trigger="manual")
+        handler._json({"ok": True, "sync": sync}, 202 if sync.get("created") else 200)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
 
 @route_post("/api/api-testing/openapi/import")
 def _post_api_testing_openapi_import(handler, qs):

@@ -78,9 +78,9 @@ const WORKFLOW_SECTIONS = {
     index: '2',
     title: 'API 工作台',
     subtitle: '接口资产、AI 用例计划、MeterSphere 执行和报告闭环',
-    help: '第一阶段从 Apifox 导出的 OpenAPI JSON 导入接口资产，确认 AI 用例计划后推送 MeterSphere 执行。',
+    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，确认 AI 用例计划后推送 MeterSphere 执行。',
     cards: [
-      { title: '导入接口资产', text: '上传 Apifox 导出的 OpenAPI JSON，平台生成接口快照和覆盖基线。', actions: [
+      { title: '同步接口资产', text: '服务端只读同步 Apifox OpenAPI，内容变化时生成不可变版本并分析影响。', actions: [
         { label: '打开接口资产', cls: 'primary', fn: 'showApiAssetsPage()' }
       ]},
       { title: '生成 API 用例计划', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言草稿。', actions: [
@@ -93,13 +93,13 @@ const WORKFLOW_SECTIONS = {
         { label: 'API 报告', fn: 'showApiReportsPage()' }
       ]}
     ],
-    checklist: ['OpenAPI 导入先跑通', '推送前必须人工确认', 'MeterSphere token 只在服务端保存']
+    checklist: ['Apifox 首次同步与无变化同步先跑通', '推送前必须人工确认', 'Apifox 和 MeterSphere token 只在服务端保存']
   },
   api_assets: {
     index: '2',
     title: '接口资产',
-    subtitle: '导入和查看 OpenAPI 接口快照',
-    help: '接口资产来自 Apifox OpenAPI JSON；这里展示接口、schema、覆盖状态和最近执行情况。',
+    subtitle: '同步和查看 OpenAPI 接口版本',
+    help: '接口资产默认从 Apifox 只读同步；这里展示活动版本、schema 差异、受影响计划和同步日志。',
     cards: [],
     checklist: []
   },

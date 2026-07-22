@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 API 闭环 Phase A：Apifox 只读同步、不可变版本与真实资产控制台
+
+按 `docs/superpowers/specs/2026-07-22-api-automation-production-closure-design.md` 的首个子项目完成 API source / asset 基础闭环；本轮没有修改 UI Agent、YAML 生成、Runner、Sonic 或历史任务：
+
+- 新增服务端 Apifox source 配置、只读导出 adapter、不可变 API revision、确定性 schema diff / plan impact 和异步同步调度。令牌只写，读取只返回 `credential_configured`；空值更新保留原令牌，显式清除才删除。已保存令牌绑定原 `base_url`，修改来源地址必须重新提交令牌，防止只写凭据被配置改址间接发送到新主机。
+- 官方导出优先调用 `POST /v1/projects/{projectId}/export-openapi?locale=zh-CN`，使用公开版本头 `2024-03-28`、OpenAPI 3.0 JSON、Apifox 扩展字段和诚实的 `User-Agent: midscene-task-platform/api-sync`。真实排查确认 Python 默认 User-Agent 会收到未文档化的 `201` 空体，而显式平台 User-Agent 返回 `200 JSON`；只有官方路由空体或 `404/405` 时才有界降级到当前 CLI 兼容路由。
+- endpoint 身份优先从真实 `x-run-in-apifox` 链接提取 Apifox API ID，其次使用唯一 `operationId`，最后才回退 `METHOD + path`。Apifox `x-apifox-folder` 作为业务模块第一事实来源，避免数百个接口退化成 URL 首段 `print3d`。
+- revision 先持久化再切换 `active_revision_id`。同步失败或线程异常继续保留上一活动版本；默认 snapshot 兼容视图只读取活动 revision，未激活 revision 仅保留在版本历史。diff 同时识别 schema、method/path、鉴权、响应、名称、标签和弃用状态等元数据变化，计划影响只按稳定 endpoint key 确定性关联，不猜测旧计划映射。
+- 同步记录使用真实 `sync_id / status / phase / poll_after_ms / events`，支持排队、运行、成功、无变化、失败、重复同步复用、重启恢复和 60 秒调度器。新增 `last_attempt_at`，远端失败后按配置周期退避，不会每分钟持续重试；手工同步不受退避限制。
+- 新增认证 source/sync/revision/diff/impact 路由，并保持旧 OpenAPI 上传、snapshot 和 plan 读取兼容。接口资产页改为 `同步 Apifox` 主操作，支持来源、环境 ID、活动/历史版本选择、真实增改删未变和受影响计划计数。技术日志使用稳定 key，轮询重绘保留展开和独立滚动位置；一次状态读取失败会保留已有日志并在 3 秒后重试。阶段显示为中文，JSON 上传仍作为折叠备用入口。
+
+真实 Apifox 验证（没有落盘或输出令牌）：
+
+- 使用用户提供的只读令牌查询到 `3D` 项目 `5904970`。生产 adapter 真实导出 `968` 条 paths、`971` 个 operations；`971 / 971` 均获得稳定 Apifox provider key，fallback key `0`，重复 endpoint key `0`。
+- 在隔离临时存储中连续执行两次完整同步：首轮 `succeeded / added=971` 并激活 revision；第二轮 `no_change / unchanged=971`，复用同一 revision，revision 总数仍为 `1`。
+- 本地集成夹具覆盖首轮、无变化、schema 变化、接口删除、远端失败保留活动 revision、线程异常脱敏、调度退避和未激活版本隔离。
+
+已验证：
+
+```bash
+python3 tests/api_asset_sync_checks.py -v  # 27 tests
+python3 -m py_compile task_server/services/api_source_service.py task_server/services/apifox_service.py task_server/services/api_asset_service.py task_server/services/api_schema_diff_service.py task_server/services/api_sync_service.py task_server/services/api_test_plan_service.py task_server/router.py task_server/app.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+git diff --check
+npm test
+```
+
+- 全量结果：undefined-name、后端 `61` 项、前端 `69` 项、AI Gateway `46` 项、动态模型目录 / 回退检查、Skill 契约 `3` 个 fixture，以及桌面 / `390px` 移动端视觉 smoke 全部通过。新增截图 `tests/artifacts/api-assets-sync.png` 与 `api-assets-sync-mobile.png`。
+- 凭据扫描未发现 Apifox 令牌内容；本轮提交只包含 API 闭环源码、测试、设计/计划和状态文档。用户历史 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、本地 Windows Runner 脚本和 `server-tasks/AI_Agent_草稿/` 不暂存、不回滚、不覆盖。
+
+待部署后完成：
+
+- 由用户手动 push、部署本轮提交；Codex 不 push。部署后通过认证 source API 或 `/opt/midscene.env` 保存真实 token / project `5904970`，在线执行首轮和 no-change 两次同步并核对页面 revision、971 接口、业务目录和技术日志。
+- Phase B 继续完成 executable API 请求/断言/依赖合同、确定性 readiness/stale 门禁和 AI trace；Phase C 完成 MeterSphere `3.6.5-lts` capability probe、定义映射、真实运行与报告闭环；Phase D 再把 MeterSphere 注册到全局 `ExecutionFacade`，不改现有 UI Agent 主链。
+
 ### 2026-07-22 真实回归：跨 App 语义门禁不能误伤扫描导入栏，模型动作子字段必须还原为官方标量
 
 用户部署 `e531598` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784701056435-88e908e2`：

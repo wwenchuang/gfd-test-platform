@@ -214,10 +214,12 @@ def ensure_dirs():
 
 def start_background_jobs():
     """启动后台任务"""
+    from .services.api_sync_service import start_api_sync_scheduler
     from .services.sonic_service import restore_pending_sonic_suite_summary_timers
     from .services.report_service import start_report_cleanup_scheduler
     restore_pending_sonic_suite_summary_timers()
     start_report_cleanup_scheduler()
+    start_api_sync_scheduler()
 
 
 # ── 主入口 ──────────────────────────────────────────────────────────

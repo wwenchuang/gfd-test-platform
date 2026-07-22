@@ -24,6 +24,7 @@ MIDSCENE_ENV_PREFIXES = (
     "SONIC_",
     "MIDSCENE_",
     "METERSPHERE_",
+    "APIFOX_",
     "TASK_",
 )
 MIDSCENE_ENV_EXACT_KEYS = {
