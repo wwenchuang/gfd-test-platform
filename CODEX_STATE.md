@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 全局生产演进盘点与 API 闭环 Phase B：可执行合同、版本门禁和真实就绪态
+
+基于用户最新附件与实际仓库逐项核对后，确认附件中的部分建议已由现有 `ExecutionFacade / DAG / parallel DAG / shadow / replay / observability / AI Skill / Apifox revision` 覆盖，不重复创建 executor、failure classifier 或资产 diff。全局依赖顺序已写入 `docs/superpowers/specs/2026-07-22-production-evolution-roadmap.md`：Phase A 资产基础已完成；本轮完成 Phase B；下一步依次是 MeterSphere 3.6.5 真实 adapter、canonical execution/report、Event Center/RBAC、统一资产 read model。UI Agent 主链只有在 shadow 证据通过后才迁移，不做一次性重构。
+
+本轮完成：
+
+- 新增纯确定性 `api_case_contract/v1`：每条 API case 包含结构化 `request / assertions / variables / dependencies / readiness`。method/path、参数位置、请求值和状态/schema 断言只来自 OpenAPI；请求值仅接受明确 `example / default / const / enum`，缺少必填数据时精确标记 `needs_review`，不生成账号、Token、手机号、订单号或占位值。
+- 负向用例必须引用真实必填字段，鉴权用例必须存在真实 OpenAPI security 约束；可选 request body、可选 security alternative、unsupported parameter location、非法 AI route/status、未知依赖、不可执行依赖、循环依赖和执行拓扑顺序均有平台级门禁。
+- `api_test_designer` 已显式映射到 Gateway `generate_case`，Prompt/schema 改为结构化合同。AI 输出的 method/path、断言和 readiness 不是事实源，平台会重新生成并校验；重复 case ID 会去重，AI 漏掉 endpoint 正向用例时保留确定性 positive seed。计划保存不含 Prompt/凭据的 `decision_trace`：skill/action/provider/model/fallback/input hash/output summary/timing/success/error。
+- 计划统一返回 `executable_case_count / needs_review_case_count / execution_readiness / revision_state`。绑定 revision 与当前活动 revision 相同时为 fresh；只新增无关接口仍保持 fresh；选中 endpoint 变更或删除时动态标记 stale，并阻止确认、推送和执行。旧纯文案 plan 仍可读取，但合同版本标记 legacy 且默认不可执行。
+- MeterSphere 边界现在只接受 `confirmed + fresh + can_execute` 计划；混合计划只下发 executable 子集，并保留 total/executable/excluded 数量。已确认但待补数据或过期的计划仍显示在执行台，按钮禁用并展示原因，不再被静默过滤。
+- AI 用例计划页显示接口数、总用例、可执行、待补数据、版本状态、结构化请求与断言；历史计划摘要可点击读取服务端详情。确认和执行按钮直接服从后端门禁。前端不再永久发送 `use_ai:false`：选择 1-12 个 endpoint 时真实调用 AI，较大批量保持确定性生成，避免把 971 个接口一次塞入模型。
+- 新增桌面和 `390px` 移动端截图 `api-plan-readiness.png / api-plan-readiness-mobile.png`。Playwright 首轮发现移动端横向溢出后，改为独立可滚动接口/用例表格并复跑通过；历史计划详情走真实只读 API，不使用页面伪数据。
+
+验证证据：
+
+```bash
+python3 tests/api_case_contract_checks.py       # 23 tests
+python3 tests/api_asset_sync_checks.py -v       # 27 tests
+python3 -m py_compile task_server/services/api_case_contract_service.py task_server/services/api_test_plan_service.py task_server/services/metersphere_service.py task_server/router.py
+git diff --check
+npm test
+```
+
+完整 `npm test` 明确 `exit_code=0`：undefined-name、后端 `61`、前端 `69`、AI Gateway `46`、API 合同 `23`、动态模型目录/回退、Skill contract `4` 个 fixture，以及桌面/移动端 Playwright 全部通过。
+
+尚未伪报完成的部分：本轮没有猜测 MeterSphere 3.6.5 写接口，也没有声称已完成真实 QA 推送/运行/报告；这些属于 Phase C。全局 Agent 默认模型仍保持已验证的 `qwen3.6-plus`，没有在本 API 变更里直接替换为未验证的 `qwen3.8`；后续模型升级必须先读取在线 catalog、确认 Midscene model family 兼容，并在固定设备 shadow 回归后切换。由用户手动 push、部署；Codex 不 push。
+
 ### 2026-07-22 Apifox 凭据体验、接口导航图标与线上真实同步
 
 用户反馈接口资产设置仍展示 Token 输入框，且接口测试侧栏使用 `API / OAS / AI / MS / RPT` 字母占位，和平台已有导航风格不一致。本轮只调整 API 测试前端和对应测试，没有修改 Agent、YAML、Runner、Sonic 或历史任务：

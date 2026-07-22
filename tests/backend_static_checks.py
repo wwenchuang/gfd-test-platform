@@ -13166,14 +13166,17 @@ def check_api_test_plan_generation_is_confirmable():
                                     "type": "object",
                                     "required": ["username", "password"],
                                     "properties": {
-                                        "username": {"type": "string"},
-                                        "password": {"type": "string"},
+                                        "username": {"type": "string", "example": "api-test-user"},
+                                        "password": {"type": "string", "example": "api-test-password"},
                                     },
                                 }
                             }
                         }
                     },
-                    "responses": {"200": {"description": "ok"}},
+                    "responses": {
+                        "200": {"description": "ok"},
+                        "400": {"description": "invalid credentials"},
+                    },
                 }
             }
         },
@@ -13247,6 +13250,45 @@ def check_metersphere_config_masks_secrets():
     )
 
 
+def _confirmed_api_contract_plan(plan_id="api_plan_ready"):
+    return {
+        "plan_id": plan_id,
+        "name": "账号接口回归",
+        "status": "confirmed",
+        "contract_version": "api_case_contract/v1",
+        "case_count": 1,
+        "executable_case_count": 1,
+        "needs_review_case_count": 0,
+        "revision_state": {"state": "fresh"},
+        "execution_readiness": {
+            "state": "ready",
+            "executable_case_count": 1,
+            "needs_review_case_count": 0,
+            "can_confirm": True,
+            "can_execute": True,
+            "missing": [],
+        },
+        "cases": [{
+            "contract_version": "api_case_contract/v1",
+            "case_id": "API-001",
+            "name": "登录成功",
+            "request": {
+                "method": "POST",
+                "path": "/login",
+                "path_params": {},
+                "query": {},
+                "headers": {},
+                "body": {},
+                "auth_ref": "",
+            },
+            "assertions": [{"type": "status", "operator": "in", "expected": [200]}],
+            "variables": [],
+            "dependencies": [],
+            "readiness": {"state": "executable", "missing": [], "issues": []},
+        }],
+    }
+
+
 def check_metersphere_public_adapters_redact_and_require_remote_run_id():
     from task_server.services import api_report_service, api_test_plan_service, metersphere_service
 
@@ -13257,13 +13299,7 @@ def check_metersphere_public_adapters_redact_and_require_remote_run_id():
     temp_dir = tempfile.mkdtemp(prefix="metersphere_public_adapter_")
     metersphere_service.API_TESTING_DIR = temp_dir
     api_report_service.API_TESTING_DIR = temp_dir
-    api_test_plan_service.get_api_test_plan = lambda plan_id: {
-        "plan_id": plan_id,
-        "name": "账号接口回归",
-        "status": "confirmed",
-        "case_count": 1,
-        "cases": [{"case_id": "API-001", "name": "登录成功"}],
-    }
+    api_test_plan_service.get_api_test_plan = lambda plan_id: _confirmed_api_contract_plan(plan_id)
     run_response_has_id = True
 
     def fake_request(method, path, payload=None, timeout=30):
@@ -13350,6 +13386,30 @@ def check_metersphere_execution_context_uses_live_metadata_and_safe_cache():
         "case_count": 3,
         "endpoint_count": 1,
         "confirmed_at": "2026-07-22 10:00:00",
+        "executable_case_count": 3,
+        "needs_review_case_count": 0,
+        "revision_state": {"state": "fresh"},
+        "execution_readiness": {
+            "state": "ready",
+            "executable_case_count": 3,
+            "can_execute": True,
+        },
+    }, {
+        "plan_id": "api_plan_needs_data",
+        "name": "待补测试数据计划",
+        "status": "confirmed",
+        "case_count": 2,
+        "endpoint_count": 1,
+        "confirmed_at": "2026-07-22 10:10:00",
+        "executable_case_count": 0,
+        "needs_review_case_count": 2,
+        "revision_state": {"state": "fresh"},
+        "execution_readiness": {
+            "state": "blocked",
+            "executable_case_count": 0,
+            "can_execute": False,
+            "missing": ["request.body.accountId"],
+        },
     }]
     requests = []
 
@@ -13456,6 +13516,13 @@ def check_metersphere_execution_context_uses_live_metadata_and_safe_cache():
         sanitized == {"nested": {"safe": "visible"}},
         "MeterSphere response and event payloads must recursively remove authentication material",
     )
+    context_plans = {item.get("plan_id"): item for item in context.get("plans", [])}
+    require(
+        set(context_plans) == {"api_plan_ready", "api_plan_needs_data"}
+        and context_plans["api_plan_ready"].get("can_execute") is False
+        and context_plans["api_plan_needs_data"].get("can_execute") is False,
+        "Execution context must keep blocked confirmed plans visible while disabling their actions",
+    )
     require(
         stale_context.get("metadata", {}).get("source") == "cache"
         and stale_context.get("metadata", {}).get("stale") is True
@@ -13482,13 +13549,7 @@ def check_metersphere_async_execution_contract_and_partial_failures():
     old_request = metersphere_service._request_json
     temp_dir = tempfile.mkdtemp(prefix="metersphere_execution_")
     metersphere_service.API_TESTING_DIR = temp_dir
-    confirmed_plan = {
-        "plan_id": "api_plan_ready",
-        "name": "账号接口回归",
-        "status": "confirmed",
-        "case_count": 1,
-        "cases": [{"case_id": "API-001", "name": "登录成功"}],
-    }
+    confirmed_plan = _confirmed_api_contract_plan()
     api_test_plan_service.get_api_test_plan = lambda plan_id: (
         copy.deepcopy(confirmed_plan) if plan_id == "api_plan_ready" else {}
     )
@@ -13690,6 +13751,7 @@ def check_api_testing_routes_registered():
         "Missing MeterSphere execution status route",
     )
     for expected_pattern in (
+        r"^/api/api-testing/plans/([^/]+)$",
         r"^/api/api-testing/syncs/([^/]+)$",
         r"^/api/api-testing/assets/([^/]+)/revisions$",
         r"^/api/api-testing/assets/([^/]+)/diff$",
@@ -13697,7 +13759,7 @@ def check_api_testing_routes_registered():
     ):
         require(
             any(pattern.pattern == expected_pattern for pattern, _handler in router._GET_REGEX_ROUTES),
-            f"Missing API asset GET route: {expected_pattern}",
+            f"Missing API testing GET route: {expected_pattern}",
         )
     require(
         any(

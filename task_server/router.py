@@ -2599,6 +2599,19 @@ def _get_api_testing_plans(handler, qs):
     handler._json({"ok": True, "plans": api_test_plan_service.list_api_test_plans(limit=safe_int(qs.get("limit"), 20) or 20)})
 
 
+@route_get_regex(r"^/api/api-testing/plans/([^/]+)$")
+def _get_api_testing_plan_detail(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_test_plan_service
+    plan_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    plan = api_test_plan_service.get_api_test_plan(plan_id)
+    if not plan:
+        handler._json({"ok": False, "error": "API 测试计划不存在"}, 404)
+        return
+    handler._json({"ok": True, "plan": plan})
+
+
 @route_get("/api/api-testing/metersphere/config")
 def _get_api_testing_metersphere_config(handler, qs):
     from task_server.services import metersphere_service

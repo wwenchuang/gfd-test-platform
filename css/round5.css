@@ -18,6 +18,8 @@
 }
 .api-panel {
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 1px solid var(--border);
   background: var(--surface);
   padding: 14px;
@@ -340,6 +342,14 @@
   max-width: 100%;
   overflow: auto;
 }
+.api-case-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+}
+.api-case-table {
+  min-width: 680px;
+}
 .api-endpoint-table {
   min-width: 720px;
 }
@@ -380,6 +390,20 @@
   padding: 10px;
   min-width: 0;
 }
+.api-plan-list-button {
+  width: 100%;
+  background: var(--surface2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.api-plan-list-button:hover,
+.api-plan-list-button:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface3);
+  outline: none;
+}
 .api-list-row strong,
 .api-list-row small {
   display: block;
@@ -394,6 +418,39 @@
 .api-endpoint-table td,
 .api-case-table td {
   vertical-align: top;
+}
+.api-case-table td strong,
+.api-case-table td small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.api-case-table td small {
+  margin-top: 4px;
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-plan-readiness {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.api-plan-state-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-plan-state-line + .generation-record-actions,
+.api-readiness-missing + .generation-record-actions,
+.api-stale-warning + .generation-record-actions {
+  margin-top: 12px;
+}
+.api-testing-page .generation-record-actions .btn-sm:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
 }
 .api-tech-log {
   margin-top: 14px;
@@ -885,6 +942,16 @@
 @media (max-width: 700px) {
   .api-testing-page {
     padding: 12px;
+  }
+  .api-two-column {
+    max-width: 100%;
+  }
+  .api-plan-readiness {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .api-plan-readiness .review-stat {
+    min-width: 0;
+    padding: 8px;
   }
   .api-execution-status-row,
   .api-execution-selectors,

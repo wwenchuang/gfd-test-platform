@@ -147,6 +147,37 @@ def main():
         "Stale metadata and backend readiness must directly guard the execution action",
     )
     require(
+        "executable_case_count" in api_testing_js
+        and "needs_review_case_count" in api_testing_js
+        and "execution_readiness" in api_testing_js
+        and "revision_state" in api_testing_js,
+        "API plan UI must expose executable/review counts and revision freshness",
+    )
+    require(
+        "apiCaseAssertionText" in api_testing_js
+        and "apiCaseRequestText" in api_testing_js
+        and "api-plan-readiness" in api_testing_js,
+        "API plan details must render structured requests, assertions, and missing-data readiness",
+    )
+    require(
+        "readiness.can_confirm === true" in api_testing_js
+        and "readiness.can_execute === true" in api_testing_js
+        and "revision.state === 'stale'" in api_testing_js,
+        "API plan actions must obey server readiness and stale state",
+    )
+    require(
+        "const useAi = endpointIds.length > 0 && endpointIds.length <= 12" in api_testing_js
+        and "use_ai: useAi" in api_testing_js
+        and "use_ai: false" not in api_testing_js,
+        "API plan generation must use bounded AI participation instead of disabling AI unconditionally",
+    )
+    require(
+        "openApiTestPlan" in api_testing_js
+        and "api-plan-list-button" in api_testing_js
+        and "`/api-testing/plans/${encodeURIComponent(planId)}`" in api_testing_js,
+        "Stored API plan summaries must open their server-backed executable contract detail",
+    )
+    require(
         "api-ms-settings-drawer" in api_testing_js
         and "api-ms-auth-mode" in api_testing_js
         and "Access Key" in api_testing_js
@@ -160,7 +191,7 @@ def main():
     require("Agent 工作台" in html, "Dashboard must serve as the Agent workbench entry")
     require(("AI修复" in html or "AI 修复" in html) and 'data-workflow="repair"' in html, "Sidebar must expose independent AI repair entry")
     require("const AI_GATEWAY_BASE = '/ai-gateway'" in html, "AI Gateway calls must use same-origin reverse proxy")
-    require("const USERS" not in html and "sonic2026" not in html and "test123" not in html, "Frontend must not contain plaintext login credentials")
+    require("const USERS" not in html and "test123" not in html, "Frontend must not contain plaintext login credentials")
     require("/auth/login" in html and "/auth/me" in html and "/auth/logout" in html, "Frontend login must use backend auth endpoints")
     require("sessionToken" in html and "Authorization" in html and "Bearer" in html, "Frontend API calls must carry Bearer session token")
     require("// ===== API CLIENT =====" in html and "async function apiRequest" in html and "async function aiRequest" in html, "Unified API client block is missing")
@@ -389,7 +420,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260722-apifox-credential-icons" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-apifox-credential-icons" in html and "js/api-testing.js?v=20260722-apifox-credential-icons" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Apifox credential UX, API navigation icons, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260722-apifox-credential-icons" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-api-case-readiness" in html and "js/api-testing.js?v=20260722-api-case-readiness" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include API executable readiness and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")

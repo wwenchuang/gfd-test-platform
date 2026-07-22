@@ -84,6 +84,44 @@ function serve() {
       },
     ],
   });
+  const apiPlan = () => ({
+    plan_id: 'api-plan-visual-ready',
+    name: '积分兑换接口回归',
+    status: 'draft',
+    source: 'ai',
+    endpoint_count: 2,
+    case_count: 2,
+    executable_case_count: 1,
+    needs_review_case_count: 1,
+    revision_state: {state: 'fresh', planned_revision_id: 'api-revision-visual-001', active_revision_id: 'api-revision-visual-001'},
+    execution_readiness: {
+      state: 'partial',
+      executable_case_count: 1,
+      needs_review_case_count: 1,
+      can_confirm: true,
+      can_execute: false,
+      missing: ['request.body.productId'],
+    },
+    cases: [{
+      contract_version: 'api_case_contract/v1',
+      case_id: 'API-001-P',
+      name: '查询积分成功',
+      type: 'positive',
+      priority: 'P0',
+      request: {method: 'GET', path: '/points', path_params: {}, query: {}, headers: {}, body: {}, auth_ref: 'environment_default'},
+      assertions: [{type: 'status', operator: 'in', expected: [200]}, {type: 'schema', schema_ref: 'response:2xx'}],
+      readiness: {state: 'executable', missing: [], issues: []},
+    }, {
+      contract_version: 'api_case_contract/v1',
+      case_id: 'API-002-P',
+      name: '确认兑换',
+      type: 'positive',
+      priority: 'P0',
+      request: {method: 'POST', path: '/exchange', path_params: {}, query: {}, headers: {}, body: {}, auth_ref: 'environment_default'},
+      assertions: [{type: 'status', operator: 'in', expected: [200]}],
+      readiness: {state: 'needs_review', missing: ['request.body.productId'], issues: []},
+    }],
+  });
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (url.pathname === '/' || url.pathname === '/task-manager.html') {
@@ -358,6 +396,25 @@ function serve() {
       });
       return;
     }
+    if (url.pathname === '/api/api-testing/plans' && req.method === 'GET') {
+      const plan = apiPlan();
+      json(res, {ok: true, plans: [{
+        plan_id: plan.plan_id,
+        name: plan.name,
+        status: plan.status,
+        case_count: plan.case_count,
+        executable_case_count: plan.executable_case_count,
+        needs_review_case_count: plan.needs_review_case_count,
+        execution_readiness: plan.execution_readiness,
+        revision_state: plan.revision_state,
+        created_at: '2026-07-22 09:30:00',
+      }]});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/plans/api-plan-visual-ready' && req.method === 'GET') {
+      json(res, {ok: true, plan: apiPlan()});
+      return;
+    }
     if (url.pathname === '/api/api-testing/syncs/api-sync-visual-001' && req.method === 'GET') {
       apiAssetSyncPollCount += 1;
       json(res, {ok: true, sync: apiAssetSync()});
@@ -407,6 +464,10 @@ function serve() {
           status: 'confirmed',
           endpoint_count: 12,
           case_count: 24,
+          executable_case_count: 24,
+          needs_review_case_count: 0,
+          execution_readiness: {state: 'ready', executable_case_count: 24, needs_review_case_count: 0, can_execute: true, missing: []},
+          revision_state: {state: 'fresh'},
           confirmed_at: '2026-07-22 09:30:00',
           test_plan_name: 'QA 每日主链路',
           can_execute: false,
@@ -629,7 +690,7 @@ async function anyVisible(locator) {
     if (!/功夫豆测试平台/.test(await visibleText(page, '.login-logo'))) throw new Error('login brand title is missing');
 
     await page.fill('#username', 'admin');
-    await page.fill('#password', 'sonic2026');
+    await page.fill('#password', 'visual-smoke-password');
     await page.click('button:has-text("登 录")');
     await page.waitForSelector('#app', {state: 'visible'});
     await page.waitForSelector('text=全自动 Agent 工作台');
@@ -763,6 +824,32 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'api-source-settings-mobile.png'), fullPage: true});
     await page.locator('button[aria-label="关闭设置"]').click();
     await page.screenshot({path: path.join(ARTIFACTS, 'api-assets-sync-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
+
+    await page.click('.workflow-step[data-workflow="api_plan"]');
+    await page.waitForSelector('#api-plan-result');
+    await page.locator('.api-plan-list-button').click();
+    await page.waitForSelector('#api-plan-result .api-plan-readiness');
+    const planText = await visibleText(page, '#api-plan-result');
+    if (!/可执行/.test(planText) || !/待补数据/.test(planText) || !/request\.body\.productId/.test(planText)) throw new Error('API plan detail must expose readiness counts and missing data');
+    if (await page.locator('#api-plan-result button:has-text("确认计划")').isDisabled()) throw new Error('A partial plan with executable cases must remain confirmable');
+    if (!await page.locator('#api-plan-result button:has-text("去执行")').isDisabled()) throw new Error('A draft plan must not be executable');
+    if (!/状态码 in 200/.test(planText) || !/GET \/points/.test(planText)) throw new Error('API plan detail must render structured requests and assertions');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-plan-readiness.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const apiPlanMobileOverflow = await page.locator('.api-testing-page').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (apiPlanMobileOverflow) {
+      const overflowDetails = await page.locator('.api-testing-page *').evaluateAll(elements => elements.map(el => ({
+        tag: el.tagName,
+        cls: el.className,
+        width: el.getBoundingClientRect().width,
+        scrollWidth: el.scrollWidth,
+        clientWidth: el.clientWidth,
+      })).filter(item => item.scrollWidth > item.clientWidth + 1).slice(0, 12));
+      throw new Error(`API plan readiness page overflows horizontally on mobile: ${JSON.stringify(overflowDetails)}`);
+    }
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-plan-readiness-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
 
     await page.click('.workflow-step[data-workflow="api_execution"]');
@@ -1203,6 +1290,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'api-source-settings-mobile.png'),
         path.join(ARTIFACTS, 'api-assets-sync.png'),
         path.join(ARTIFACTS, 'api-assets-sync-mobile.png'),
+        path.join(ARTIFACTS, 'api-plan-readiness.png'),
+        path.join(ARTIFACTS, 'api-plan-readiness-mobile.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
         path.join(ARTIFACTS, 'agent-failure.png'),

@@ -542,7 +542,12 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
     plans = api_test_plan_service.list_api_test_plans(limit=50)
     confirmed_plans = [
         item for item in plans
-        if item.get("status") == "confirmed" and int(item.get("case_count") or 0) > 0
+        if item.get("status") == "confirmed"
+    ]
+    executable_confirmed_plans = [
+        item for item in plans
+        if item.get("status") == "confirmed"
+        and bool((item.get("execution_readiness") or {}).get("can_execute"))
     ]
     capabilities = _execution_capabilities(cfg)
     readiness = _readiness_state(
@@ -551,8 +556,15 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
         capabilities,
         projects_result,
         environments_result,
-        confirmed_plans,
+        executable_confirmed_plans,
     )
+    if confirmed_plans and not executable_confirmed_plans and readiness.get("state") == "ready_no_plan":
+        readiness = {
+            **readiness,
+            "state": "ready_no_executable_plan",
+            "missing": ["至少一条可执行且已确认的 API 用例"],
+            "primary_action": "补齐计划测试数据",
+        }
     snapshots = api_asset_service.list_api_snapshots(limit=1)
     if not snapshots:
         empty_reason = "no_assets"
@@ -560,6 +572,8 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
         empty_reason = "no_plans"
     elif not confirmed_plans:
         empty_reason = "unconfirmed_plans"
+    elif not executable_confirmed_plans:
+        empty_reason = "no_executable_plans"
     elif not readiness.get("can_execute"):
         empty_reason = "metersphere_not_ready"
     else:
@@ -584,7 +598,11 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
         plan_id = str(plan_item.get("plan_id") or "")
         plan_item["latest_run"] = latest_by_plan.get(plan_id) or {}
         plan_item["active_run"] = active_by_plan.get(plan_id) or {}
-        plan_item["can_execute"] = bool(readiness.get("can_execute") and not plan_item["active_run"])
+        plan_item["can_execute"] = bool(
+            readiness.get("can_execute")
+            and (plan_item.get("execution_readiness") or {}).get("can_execute")
+            and not plan_item["active_run"]
+        )
         context_plans.append(plan_item)
     if active_runs:
         readiness = {
@@ -788,8 +806,10 @@ def _execution_plan(plan_id: str) -> Dict[str, Any]:
         raise MeterSphereExecutionValidationError("API 测试计划不存在")
     if plan.get("status") != "confirmed":
         raise MeterSphereExecutionValidationError("执行前必须先确认 API 测试计划")
-    cases = plan.get("cases") or []
-    if not isinstance(cases, list) or not cases or int(plan.get("case_count") or len(cases)) <= 0:
+    if (plan.get("revision_state") or {}).get("state") == "stale":
+        raise MeterSphereExecutionValidationError("API 测试计划已过期，请按当前接口版本重新生成")
+    readiness = plan.get("execution_readiness") or {}
+    if not readiness.get("can_execute") or int(readiness.get("executable_case_count") or 0) <= 0:
         raise MeterSphereExecutionValidationError("已确认计划没有可执行用例")
     return plan
 
@@ -1082,23 +1102,33 @@ def get_metersphere_execution(execution_id: str, refresh: bool = True) -> Dict[s
 
 def _meter_payload_for_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     cfg = _load_raw_config()
+    all_cases = [case for case in (plan.get("cases") or []) if isinstance(case, dict)]
+    executable_cases = api_test_plan_service.executable_api_cases(plan)
     return {
         "workspaceId": cfg.get("workspace_id"),
         "projectId": cfg.get("project_id"),
         "environmentId": cfg.get("environment_id"),
         "source": "midscene-task-platform",
+        "contractVersion": "api_case_contract/v1",
         "planId": plan.get("plan_id"),
         "name": plan.get("name"),
-        "cases": plan.get("cases") or [],
+        "totalCaseCount": len(all_cases),
+        "executableCaseCount": len(executable_cases),
+        "excludedCaseCount": len(all_cases) - len(executable_cases),
+        "cases": executable_cases,
     }
 
 
 def push_plan_to_metersphere(plan_id: str) -> Dict[str, Any]:
-    plan = api_test_plan_service.get_api_test_plan(plan_id)
-    if not plan:
-        return {"ok": False, "error": "API 测试计划不存在"}
-    if plan.get("status") != "confirmed":
-        return {"ok": False, "requires_confirmation": True, "error": "推送 MeterSphere 前必须先确认 API 测试计划"}
+    try:
+        plan = _execution_plan(plan_id)
+    except MeterSphereExecutionValidationError as exc:
+        return {
+            "ok": False,
+            "requires_confirmation": "确认" in str(exc),
+            "requires_review": True,
+            "error": str(exc),
+        }
     cfg = _load_raw_config()
     if not cfg.get("case_push_path"):
         return {"ok": False, "requires_config": True, "error": "MeterSphere 用例推送 API 路径未配置"}
@@ -1120,6 +1150,10 @@ def push_plan_to_metersphere(plan_id: str) -> Dict[str, Any]:
 
 
 def create_metersphere_run(plan_id: str, test_plan_id: str = "") -> Dict[str, Any]:
+    try:
+        _execution_plan(plan_id)
+    except MeterSphereExecutionValidationError as exc:
+        return {"ok": False, "requires_review": True, "error": str(exc), "run_id": ""}
     cfg = _load_raw_config()
     if not cfg.get("plan_run_path"):
         return {"ok": False, "requires_config": True, "error": "MeterSphere 测试计划执行 API 路径未配置"}

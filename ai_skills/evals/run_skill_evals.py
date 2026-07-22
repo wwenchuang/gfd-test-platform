@@ -14,6 +14,7 @@ SKILL_NAMES = [
     "visual_grounder",
     "coverage_auditor",
     "repair_patch_planner",
+    "api_test_designer",
 ]
 
 
@@ -106,6 +107,8 @@ def run_live_eval(project_root, ai_root, fixtures, errors, report_dir):
     backend = load_backend(project_root, ai_root)
     report_dir.mkdir(parents=True, exist_ok=True)
     for fixture in fixtures:
+        if fixture.get("contract_only"):
+            continue
         input_data = fixture.get("input") or {}
         payload = backend.build_cases_payload_from_skills(
             input_data.get("title") or fixture["name"],

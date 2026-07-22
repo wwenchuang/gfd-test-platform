@@ -1,0 +1,15 @@
+{
+  "name": "api_executable_contract",
+  "contract_only": true,
+  "expected_contract": {
+    "api_test_designer": {
+      "must_include_prompt_terms": [
+        "api_case_contract/v1",
+        "negative_target",
+        "needs_review",
+        "平台会重新校验"
+      ],
+      "output_fields": ["cases", "review"]
+    }
+  }
+}

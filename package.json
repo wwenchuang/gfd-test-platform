@@ -10,7 +10,7 @@
   "scripts": {
     "test": "npm run test:static && npm run test:visual",
     "test:api-sync": "python3 tests/api_asset_sync_checks.py -v",
-    "test:static": "python3 -m py_compile midscene-upload.py $(find task_server -name '*.py' -print) tests/backend_static_checks.py tests/frontend_static_checks.py tests/ai_gateway_static_checks.py tests/undefined_name_checks.py && python3 tests/undefined_name_checks.py && python3 tests/backend_static_checks.py && python3 tests/frontend_static_checks.py && python3 tests/ai_gateway_static_checks.py && node tests/ai_gateway_catalog_checks.mjs && python3 ai_skills/evals/run_skill_evals.py",
+    "test:static": "python3 -m py_compile midscene-upload.py $(find task_server -name '*.py' -print) tests/backend_static_checks.py tests/frontend_static_checks.py tests/ai_gateway_static_checks.py tests/api_case_contract_checks.py tests/undefined_name_checks.py && python3 tests/undefined_name_checks.py && python3 tests/backend_static_checks.py && python3 tests/frontend_static_checks.py && python3 tests/ai_gateway_static_checks.py && python3 tests/api_case_contract_checks.py && node tests/ai_gateway_catalog_checks.mjs && python3 ai_skills/evals/run_skill_evals.py",
     "test:visual": "node tests/visual_smoke_check.js"
   },
   "keywords": [],

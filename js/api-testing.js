@@ -40,6 +40,38 @@ function apiPlanStatusText(status) {
   return map[status] || status || '草稿';
 }
 
+function apiCaseAssertionText(assertion) {
+  if (typeof assertion === 'string') return assertion;
+  if (!assertion || typeof assertion !== 'object') return '-';
+  if (assertion.type === 'status') {
+    const expected = Array.isArray(assertion.expected) ? assertion.expected.join(' / ') : '-';
+    return `状态码 ${assertion.operator || 'in'} ${expected}`;
+  }
+  if (assertion.type === 'schema') return `响应结构 ${assertion.schema_ref || 'response schema'}`;
+  return JSON.stringify(assertion);
+}
+
+function apiCaseRequestText(item) {
+  const request = item?.request || {};
+  const route = `${request.method || ''} ${request.path || ''}`.trim() || item?.endpoint || '-';
+  const bindingCount = ['path_params', 'query', 'headers', 'body'].reduce((total, key) => {
+    const value = request[key];
+    if (!value || typeof value !== 'object') return total;
+    return total + Object.keys(value).length;
+  }, 0);
+  return `${route} · ${bindingCount} 项数据${request.auth_ref ? ' · 环境鉴权' : ''}`;
+}
+
+function apiPlanReadinessReason(plan) {
+  const readiness = plan?.execution_readiness || {};
+  const revision = plan?.revision_state || {};
+  if (revision.state === 'stale') return revision.reason || '接口版本已变化，请重新生成计划';
+  if ((readiness.missing || []).length) return `待补：${readiness.missing[0]}`;
+  if (!readiness.executable_case_count) return '当前计划没有可执行用例';
+  if (plan?.status !== 'confirmed') return '确认计划后可进入执行';
+  return '';
+}
+
 async function loadApiTestingOverview() {
   const data = await apiRequest('/api-testing/overview');
   apiTestingOverview = data;
@@ -615,32 +647,68 @@ async function showApiPlanPage() {
 function renderApiPlanList(plans) {
   if (!plans.length) return apiTestingEmpty('暂无计划草稿。');
   return `<div class="api-list">${plans.map(plan => `
-    <div class="api-list-row">
+    <button type="button" class="api-list-row api-plan-list-button" onclick="openApiTestPlan(${jsArg(plan.plan_id)})">
       <div><strong>${escapeHtml(plan.name || plan.plan_id)}</strong><small>${escapeHtml(plan.created_at || '')}</small></div>
-      <span>${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')} ${escapeHtml(plan.case_count || 0)} 条</span>
-    </div>
+      <span>${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')} 可执行 ${escapeHtml(plan.executable_case_count || 0)} / 待补 ${escapeHtml(plan.needs_review_case_count || 0)}</span>
+    </button>
   `).join('')}</div>`;
+}
+
+async function openApiTestPlan(planId) {
+  const target = document.getElementById('api-plan-result');
+  if (target) target.innerHTML = `<h3>计划详情</h3>${apiTestingEmpty('正在读取计划合同...')}`;
+  try {
+    const data = await apiRequest(`/api-testing/plans/${encodeURIComponent(planId)}`);
+    apiTestingCurrentPlan = data.plan || null;
+    if (target) target.innerHTML = renderApiPlanDetail(apiTestingCurrentPlan || {});
+  } catch (e) {
+    if (target) target.innerHTML = `<h3>读取失败</h3>${apiTestingEmpty(e.message || '计划详情读取失败')}`;
+    showToast(e.message || '计划详情读取失败', 'error');
+  }
 }
 
 function renderApiPlanDetail(plan) {
   const cases = plan.cases || [];
+  const readiness = plan.execution_readiness || {};
+  const revision = plan.revision_state || {};
+  const isStale = revision.state === 'stale';
+  const canConfirm = plan.status === 'draft' && readiness.can_confirm === true && !isStale;
+  const canExecute = readiness.can_execute === true && !isStale;
+  const actionReason = apiPlanReadinessReason(plan);
+  const missing = readiness.missing || [];
   return `
     <h3>${escapeHtml(plan.name || 'API 用例计划')}</h3>
-    <div class="review-stats compact">
+    <div class="review-stats compact api-plan-readiness">
       <div class="review-stat"><strong>${escapeHtml(plan.endpoint_count || 0)}</strong><span>接口</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.case_count || cases.length)}</strong><span>用例</span></div>
-      <div class="review-stat"><strong>${escapeHtml(apiPlanStatusText(plan.status))}</strong><span>状态</span></div>
+      <div class="review-stat"><strong>${escapeHtml(plan.executable_case_count || 0)}</strong><span>可执行</span></div>
+      <div class="review-stat"><strong>${escapeHtml(plan.needs_review_case_count || 0)}</strong><span>待补数据</span></div>
     </div>
+    <div class="api-plan-state-line">
+      ${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}
+      ${apiStatusPill(isStale ? '版本已过期' : (revision.state === 'fresh' ? '版本最新' : '未绑定版本'), isStale ? 'danger' : 'success')}
+      <span>${escapeHtml(plan.source === 'ai' ? 'AI 生成并经平台校验' : (plan.source === 'local_fallback' ? 'AI 失败，规则兜底' : '规则生成'))}</span>
+    </div>
+    ${missing.length ? `<div class="api-readiness-missing"><strong>待补数据：</strong>${missing.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
+    ${isStale ? `<div class="api-stale-warning">${escapeHtml(actionReason)}</div>` : ''}
     <div class="generation-record-actions">
-      <button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})">确认计划</button>
-      <button class="btn-sm" onclick="showApiExecutionPage()">去执行</button>
+      <button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})" ${canConfirm ? '' : 'disabled'} title="${escapeHtml(canConfirm ? '确认可执行用例' : actionReason)}">${plan.status === 'confirmed' ? '已确认' : '确认计划'}</button>
+      <button class="btn-sm" onclick="showApiExecutionPage()" ${canExecute ? '' : 'disabled'} title="${escapeHtml(canExecute ? '进入 MeterSphere 执行' : actionReason)}">去执行</button>
     </div>
-    <table class="assets-table api-case-table">
-      <thead><tr><th>用例</th><th>类型</th><th>优先级</th><th>接口</th><th>断言</th></tr></thead>
+    <div class="api-case-scroll"><table class="assets-table api-case-table">
+      <thead><tr><th>用例</th><th>类型</th><th>请求</th><th>断言</th><th>执行状态</th></tr></thead>
       <tbody>${cases.map(item => `
-        <tr><td>${escapeHtml(item.name || '-')}</td><td>${escapeHtml(item.type || '-')}</td><td>${escapeHtml(item.priority || '-')}</td><td>${escapeHtml(item.endpoint || '-')}</td><td>${escapeHtml((item.assertions || []).join('；'))}</td></tr>
+        <tr>
+          <td><strong>${escapeHtml(item.name || '-')}</strong><small>${escapeHtml(item.priority || '-')}</small></td>
+          <td>${escapeHtml(item.type || '-')}</td>
+          <td>${escapeHtml(apiCaseRequestText(item))}</td>
+          <td>${escapeHtml((item.assertions || []).map(apiCaseAssertionText).join('；') || '-')}</td>
+          <td>${(item.readiness || {}).state === 'executable'
+            ? apiStatusPill('可执行', 'success')
+            : `${apiStatusPill('待补数据', 'warn')}<small>${escapeHtml(((item.readiness || {}).missing || []).join('；') || '-')}</small>`}</td>
+        </tr>
       `).join('')}</tbody>
-    </table>
+    </table></div>
   `;
 }
 
@@ -651,12 +719,17 @@ async function generateApiTestPlan() {
     return;
   }
   const endpointIds = apiSelectedEndpointIds();
+  if (!endpointIds.length) {
+    showToast('请至少选择一个接口', 'error');
+    return;
+  }
+  const useAi = endpointIds.length > 0 && endpointIds.length <= 12;
   if (target) target.innerHTML = `<h3>生成中</h3>${apiTestingEmpty('正在生成 API 用例计划草稿...')}`;
   try {
     const data = await apiRequest('/api-testing/plans/generate', {
       method: 'POST',
       timeoutMs: 180000,
-      body: { snapshot_id: apiTestingCurrentSnapshotId, endpoint_ids: endpointIds, use_ai: false }
+      body: { snapshot_id: apiTestingCurrentSnapshotId, endpoint_ids: endpointIds, use_ai: useAi }
     });
     apiTestingCurrentPlan = data.plan || null;
     if (target) target.innerHTML = renderApiPlanDetail(apiTestingCurrentPlan || {});
@@ -694,6 +767,7 @@ function apiReadinessText(state) {
     disconnected: '连接检查失败',
     connected_needs_setup: '执行能力待配置',
     ready_no_plan: '等待已确认计划',
+    ready_no_executable_plan: '计划待补测试数据',
     ready: '可以执行',
     running: '正在执行',
     failed: '最近执行失败'
@@ -821,6 +895,7 @@ function apiExecutionEmptyAction(context) {
   if (reason === 'no_assets') return { text: '尚未导入接口', action: '去导入接口', handler: 'showApiAssetsPage()' };
   if (reason === 'no_plans') return { text: '尚未生成 API 用例计划', action: '去生成计划', handler: 'showApiPlanPage()' };
   if (reason === 'unconfirmed_plans') return { text: '有待确认计划', action: '去确认计划', handler: 'showApiPlanPage()' };
+  if (reason === 'no_executable_plans') return { text: '已确认计划仍缺测试数据', action: '查看计划', handler: 'showApiPlanPage()' };
   return { text: 'MeterSphere 尚未满足执行条件', action: '完成 MeterSphere 配置', handler: 'openApiMeterSphereSettings()' };
 }
 
@@ -833,22 +908,24 @@ function renderApiExecutionPlans(plans, context = {}) {
   const metadata = context.metadata || {};
   return `<div class="api-execution-plan-list">${plans.map(plan => {
     const latest = plan.latest_run || {};
+    const planReadiness = plan.execution_readiness || {};
+    const revision = plan.revision_state || {};
     const starting = String(apiExecutionStartingPlanId || '') === String(plan.plan_id || '');
-    const disabled = starting || metadata.stale || readiness.can_execute !== true || plan.can_execute !== true;
+    const disabled = starting || metadata.stale || revision.state === 'stale' || readiness.can_execute !== true || planReadiness.can_execute !== true || plan.can_execute !== true;
     const passRate = latest.stats?.total ? `${Math.round((latest.stats.passed || 0) * 100 / latest.stats.total)}%` : '-';
-    const disabledReason = starting ? '正在创建执行' : (metadata.stale ? '元数据已过期' : ((readiness.missing || [])[0] || (plan.active_run ? '当前计划正在执行' : '暂不可执行')));
+    const disabledReason = starting ? '正在创建执行' : (metadata.stale ? '元数据已过期' : (revision.state === 'stale' ? '接口版本已变化，请重新生成计划' : ((planReadiness.missing || readiness.missing || [])[0] || (plan.active_run ? '当前计划正在执行' : '暂不可执行'))));
     return `
       <article class="api-execution-plan-row">
         <div class="api-plan-identity">
           <strong>${escapeHtml(plan.name || plan.plan_id)}</strong>
-          <span>${escapeHtml(plan.endpoint_count || 0)} 个接口 · ${escapeHtml(plan.case_count || 0)} 条用例 · 确认于 ${escapeHtml(plan.confirmed_at || '-')}</span>
+          <span>${escapeHtml(plan.endpoint_count || 0)} 个接口 · 可执行 ${escapeHtml(plan.executable_case_count || 0)} / 待补 ${escapeHtml(plan.needs_review_case_count || 0)} · 确认于 ${escapeHtml(plan.confirmed_at || '-')}</span>
         </div>
         <div class="api-plan-binding"><span>MeterSphere 计划</span><strong>${escapeHtml(plan.test_plan_name || plan.test_plan_id || '首次执行时创建或选择')}</strong></div>
         <div class="api-plan-latest"><span>最近运行</span><strong>${escapeHtml(apiExecutionStateText(latest.status))} · 通过率 ${escapeHtml(passRate)}</strong><small>${escapeHtml(latest.started_at || latest.created_at || '暂无历史')} · 耗时 ${escapeHtml(apiDurationText(latest.duration_seconds))}</small></div>
         <div class="api-plan-actions">
           <button class="btn-sm primary" onclick="startApiMeterSphereExecution(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''} title="${escapeHtml(disabled ? disabledReason : '推送确认用例并执行')}">推送并执行</button>
           <details class="api-plan-menu"><summary title="更多操作" aria-label="更多操作">⋯</summary><div>
-            <button onclick="pushApiPlanToMeterSphere(${jsArg(plan.plan_id)})">仅推送</button>
+            <button onclick="pushApiPlanToMeterSphere(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''}>仅推送</button>
             <button onclick="startApiMeterSphereExecution(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''}>重新执行</button>
             <button onclick="showApiReportsPage()">查看历史</button>
             <button onclick="openMeterSphereFromContext()">打开 MeterSphere</button>

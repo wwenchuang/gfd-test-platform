@@ -6,15 +6,85 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["endpoint_id", "name", "type", "priority", "steps", "assertions"],
+        "required": [
+          "contract_version",
+          "endpoint_id",
+          "name",
+          "type",
+          "priority",
+          "request",
+          "assertions",
+          "variables",
+          "dependencies",
+          "readiness"
+        ],
         "properties": {
+          "contract_version": {"type": "string"},
           "case_id": {"type": "string"},
           "endpoint_id": {"type": "string"},
           "name": {"type": "string"},
           "type": {"type": "string"},
           "priority": {"type": "string"},
-          "steps": {"type": "array"},
-          "assertions": {"type": "array"}
+          "negative_target": {"type": "string"},
+          "steps": {"type": "array", "items": {"type": "string"}},
+          "assertion_texts": {"type": "array", "items": {"type": "string"}},
+          "request": {
+            "type": "object",
+            "required": ["method", "path", "path_params", "query", "headers", "body", "auth_ref"],
+            "properties": {
+              "method": {"type": "string"},
+              "path": {"type": "string"},
+              "path_params": {"type": "object"},
+              "query": {"type": "object"},
+              "headers": {"type": "object"},
+              "body": {},
+              "auth_ref": {"type": "string"}
+            }
+          },
+          "assertions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {"type": "string"},
+                "operator": {"type": "string"},
+                "expected": {"type": "array"},
+                "schema_ref": {"type": "string"}
+              }
+            }
+          },
+          "variables": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "source"],
+              "properties": {
+                "name": {"type": "string"},
+                "source": {"type": "string"}
+              }
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["case_id", "required"],
+              "properties": {
+                "case_id": {"type": "string"},
+                "required": {"type": "boolean"}
+              }
+            }
+          },
+          "readiness": {
+            "type": "object",
+            "required": ["state", "missing", "issues"],
+            "properties": {
+              "state": {"type": "string"},
+              "missing": {"type": "array", "items": {"type": "string"}},
+              "issues": {"type": "array", "items": {"type": "string"}}
+            }
+          }
         }
       }
     },
