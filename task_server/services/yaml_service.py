@@ -3290,6 +3290,26 @@ def attach_verified_baseline_evidence(yaml_text, case):
     return updated, updated != text
 
 
+_VERIFIED_CASE_MANUAL_TERMS = (
+    "待确认",
+    "待复核",
+    "需人工",
+    "人工确认",
+    "人工复核",
+    "手工确认",
+    "若存在",
+    "如果存在",
+    "如存在",
+    "若不存在",
+    "如果不存在",
+    "或确认无",
+    "确认该页面无",
+    "记录缺陷",
+    "记录问题",
+    "记录入口的具体位置",
+)
+
+
 def _verified_case_plan_for_yaml(case):
     """Return the server-verified plan that should drive YAML rendering."""
     case = case if isinstance(case, dict) else {}
@@ -3321,25 +3341,7 @@ def _verified_case_plan_for_yaml(case):
         "",
         " ".join(flow + normalize_text_list(assertion) + normalize_text_list(plan.get("precondition"))),
     )
-    manual_terms = (
-        "待确认",
-        "待复核",
-        "需人工",
-        "人工确认",
-        "人工复核",
-        "手工确认",
-        "若存在",
-        "如果存在",
-        "如存在",
-        "若不存在",
-        "如果不存在",
-        "或确认无",
-        "确认该页面无",
-        "记录缺陷",
-        "记录问题",
-        "记录入口的具体位置",
-    )
-    if any(term in compact_plan for term in manual_terms):
+    if any(term in compact_plan for term in _VERIFIED_CASE_MANUAL_TERMS):
         return {}
     return {
         "flow": flow,
@@ -3359,6 +3361,36 @@ def _clean_verified_case_plan_title(title):
     cleaned = re.sub(r"(?:待确认|待复核|需人工确认|人工确认|人工复核|手工确认)", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_：:，,。")
     return cleaned or original or "未命名用例"
+
+
+def _clean_verified_case_plan_metadata(case, plan):
+    """Remove superseded review-only metadata from an accepted execution plan."""
+    row = dict(case or {})
+    tags = [
+        tag for tag in case_tags(row)
+        if not any(term in str(tag or "") for term in _VERIFIED_CASE_MANUAL_TERMS)
+    ]
+    row["tags"] = tags
+
+    hint_keys = ("repair_hints", "repairHints", "repair_hint", "repairHint", "hints")
+    hint = first_non_empty(*(row.get(key) for key in hint_keys))
+    if any(term in str(hint or "") for term in _VERIFIED_CASE_MANUAL_TERMS):
+        for key in hint_keys:
+            row.pop(key, None)
+        row["repair_hints"] = "已采用平台验证的自动化路径；运行失败时只依据当前报告关键帧做局部修复。"
+
+    for key in ("data_requirements", "dataRequirements", "automation_reason", "automationReason"):
+        value = row.get(key)
+        if any(term in str(value or "") for term in _VERIFIED_CASE_MANUAL_TERMS):
+            row.pop(key, None)
+
+    goal = first_non_empty(row.get("goal"), row.get("business_goal"), row.get("objective"))
+    if any(term in str(goal or "") for term in _VERIFIED_CASE_MANUAL_TERMS):
+        row["goal"] = first_non_empty(
+            plan.get("assertion"),
+            f"验证{_clean_verified_case_plan_title(row.get('title') or row.get('name'))}",
+        )
+    return row
 
 
 def normalize_assertion_for_yaml(assertion, case):
@@ -3523,7 +3555,7 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
     assertions = case.get("assertions") or case.get("expects") or case.get("expected") or []
     verified_plan = _verified_case_plan_for_yaml(case)
     if verified_plan:
-        case = dict(case)
+        case = _clean_verified_case_plan_metadata(case, verified_plan)
         title = _clean_verified_case_plan_title(title)
         case["title"] = title
         steps = verified_plan["flow"]
@@ -4591,6 +4623,16 @@ def normalize_search_input_submit_in_task_block(block, evidence_text=""):
 # normalize_horizontal_icon_scrolls_in_task_block
 # ---------------------------------------------------------------------------
 
+def _horizontal_scroll_safe_target(target):
+    """Keep semantic scroll targeting away from Android system edge gestures."""
+    target = str(target or "").strip()
+    if not target:
+        target = "当前页面中的横向功能 icon 列表区域"
+    if "区域中部" in target and "避开屏幕左右边缘" in target:
+        return target
+    return target.rstrip("，。；; ") + "；从该横向区域中部起手，避开屏幕左右边缘"
+
+
 def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
     """将横向 icon 区域自然语言滑动幂等规范为一次官方 aiScroll。"""
     if not block:
@@ -4611,7 +4653,8 @@ def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
                 target = "我的学习下方的横向功能 icon 列表区域"
                 if "我的学习" not in text:
                     target = "当前页面中的横向功能 icon 列表区域"
-                result.append(indent + "- aiScroll: " + yaml_text(target + "，只滚动该横向列表，不要滚动整个页面"))
+                target = _horizontal_scroll_safe_target(target + "，只滚动该横向列表，不要滚动整个页面")
+                result.append(indent + "- aiScroll: " + yaml_text(target))
                 result.append(indent + "  scrollType: " + yaml_text("singleAction"))
                 result.append(indent + "  direction: " + yaml_text("right"))
                 result.append(indent + "  distance: 400")
@@ -4634,20 +4677,27 @@ def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
                 break
             children.append(child)
             j += 1
-        target_hint = any(word in target for word in ("横向", "水平", "icon", "图标", "我的学习", "功能"))
+        child_text = "\n".join(children)
+        horizontal_direction = bool(re.search(r"\bdirection\s*:\s*['\"]?right\b", child_text, re.I))
+        target_hint = horizontal_direction or any(
+            word in target.lower()
+            for word in ("横向", "水平", "icon", "图标", "我的学习", "功能", "horizontal")
+        )
         if target_hint:
-            child_text = "\n".join(children)
+            safe_target = _horizontal_scroll_safe_target(target)
             already_normalized = (
                 re.search(r"\bscrollType\s*:\s*['\"]?singleAction", child_text)
                 and re.search(r"\bdirection\s*:\s*['\"]?right", child_text)
                 and re.search(r"\bdistance\s*:\s*400\b", child_text)
             )
             if already_normalized:
-                result.append(line)
+                result.append(indent + "- aiScroll: " + yaml_text(safe_target))
                 result.extend(children)
+                if safe_target != target:
+                    changes.append("将横向滑动起手区域约束在内容区中部，避开 Android 左右边缘系统手势")
                 idx = j
                 continue
-            result.append(indent + "- aiScroll: " + yaml_text(target or "当前页面中的横向功能 icon 列表区域"))
+            result.append(indent + "- aiScroll: " + yaml_text(safe_target))
             result.append(indent + "  scrollType: " + yaml_text("singleAction"))
             result.append(indent + "  direction: " + yaml_text("right"))
             result.append(indent + "  distance: 400")
@@ -5197,6 +5247,9 @@ def cases_to_separate_midscene_yamls(payload: Any, app_package: str = "", base_f
         if app_package and not case.get("app_package") and not case.get("appPackage"):
             case["app_package"] = app_package
         case_title = str(case.get("title") or case.get("name") or f"用例{index}").strip()
+        if _verified_case_plan_for_yaml(case):
+            case_title = _clean_verified_case_plan_title(case_title)
+            case["title"] = case_title
         case_slug = slug_for_file(case_title) or f"case-{index:02d}"
         file_name = clean_filename(f"{index:02d}-{case_slug}.yaml")
         if file_name in used_names:
@@ -5929,7 +5982,7 @@ def _repair_generated_business_page_wait_step(step: dict, next_step: dict = None
     if target and "aiScroll" not in (next_step or {}):
         insert_after = [
             {
-                "aiScroll": "在包含“本地导入”、“相册导入”、“微信导入”的横向导入栏区域向右滑动，使右侧更多入口进入视野",
+                "aiScroll": "在包含“本地导入”、“相册导入”、“微信导入”的横向导入栏区域中部操作，避开屏幕左右边缘",
                 "direction": "right",
                 "distance": 400,
                 "scrollType": "singleAction",

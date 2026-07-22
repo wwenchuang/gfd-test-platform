@@ -3974,9 +3974,11 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "coordinate" not in promoted_yaml.lower(),
         "State-variant reachability must convert into visible-text Midscene actions without coordinates",
     )
-    verified_plan_yaml = yaml_service.case_to_task_yaml({
+    verified_plan_case = {
         "case_id": "TC-006",
         "title": "扫描复印页-百度网盘入口UI展示校验（待确认布局）",
+        "tags": ["基础打印", "扫描复印", "需人工确认路径"],
+        "repair_hints": "【阻塞】路径待确认；若入口未找到则记录缺陷并建议人工验证链路",
         "app_package": "com.xbxxhz.box",
         "executionLevel": "executable",
         "steps": [
@@ -4002,7 +4004,12 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 "REQ-003 扫描复印：校验百度网盘入口可见；校验百度网盘入口与当前页面同级入口的层级和位置关系；校验百度网盘入口使用需求约定的可见文案；点击百度网盘入口并校验目标页面稳定可达",
             ],
         },
-    }, indent="    ", case_index=6)
+    }
+    verified_plan_yaml = yaml_service.case_to_task_yaml(verified_plan_case, indent="    ", case_index=6)
+    _, verified_plan_files = yaml_service.cases_to_separate_midscene_yamls(
+        {"title": "扫描复印入口", "cases": [verified_plan_case], "manual_cases": [], "_automation_ready": True},
+        app_package="com.xbxxhz.box",
+    )
     verified_plan_score = yaml_service.score_midscene_yaml_executable(
         "android:\n  tasks:\n" + verified_plan_yaml,
         generated=True,
@@ -4012,10 +4019,14 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "成功跳转至百度网盘授权页或文件列表" in verified_plan_yaml
         and "aiAssert:" in verified_plan_yaml
         and "待确认" not in verified_plan_yaml
+        and "需人工" not in verified_plan_yaml
         and "若存在" not in verified_plan_yaml
         and "记录缺陷" not in verified_plan_yaml
+        and "待确认" not in verified_plan_files[0]["file"]
+        and "需人工" not in verified_plan_files[0]["content"]
+        and "记录缺陷" not in verified_plan_files[0]["content"]
         and verified_plan_score.get("executionLevel") == "executable",
-        "YAML conversion must render the server-verified ai_case_plan instead of stale manual draft wording",
+        "YAML conversion must render the server-verified ai_case_plan and remove stale manual metadata from Runner files",
     )
     bounded_external = {
         **promoted,
@@ -6231,6 +6242,30 @@ def check_agent_failure_review_and_repair_guard():
         and "aiScroll" in clipped_scan_english_issue.get("suggested_action", ""),
         "English visual-model evidence for a clipped sibling row must enter the same bounded horizontal repair path",
     )
+    edge_swipe_issue = ai_skill_service.detect_horizontal_scroll_script_issue(
+        """android:
+  tasks:
+    - name: generic clipped entry row
+      flow:
+        - aiWaitFor: 导入页面加载完成，可见本地导入、相册导入和微信导入
+        - aiScroll: 在本地导入、相册导入和微信导入所在的横向入口区域
+          direction: right
+          distance: 400
+          scrollType: singleAction
+        - aiWaitFor: 企业云盘入口可见
+""",
+        (
+            "Android ADB swipe coordinates must stay within the screen bounds. "
+            "requested 400px exceeds max 348px from current start point. "
+            "actual command: input swipe 1044 1374 0 1374 1000; after the swipe the app returned to its home page."
+        ),
+    ) or {}
+    require(
+        edge_swipe_issue.get("category") == "script_issue"
+        and "替换原 aiScroll" in edge_swipe_issue.get("suggested_action", "")
+        and "不得追加" in edge_swipe_issue.get("suggested_action", ""),
+        "A horizontal swipe that starts in the Android edge-gesture zone must replace the unsafe scroll instead of appending another one",
+    )
     patch_source = """android:
   tasks:
     - name: 横向来源入口检查
@@ -6883,6 +6918,71 @@ def check_agent_failure_review_and_repair_guard():
         and unchanged_navigation_gate.get("navigationChanged") is False,
         "A real aiScroll-only repair that explicitly preserves navigation must not be rejected as a navigation mutation claim",
     )
+    existing_horizontal_scroll = """android:
+  tasks:
+    - name: generic clipped entry row
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: App 首页加载完成，可见导入入口
+        - aiTap: 点击「导入」入口
+        - aiWaitFor: 导入页面加载完成，可见本地导入、相册导入和微信导入
+        - aiScroll: 在本地导入、相册导入和微信导入所在的横向入口区域
+          direction: right
+          distance: 400
+          scrollType: singleAction
+        - aiAssert: 企业云盘入口可见
+"""
+    duplicate_horizontal_scroll = existing_horizontal_scroll.replace(
+        "        - aiAssert: 企业云盘入口可见",
+        "        - aiScroll: 在本地导入、相册导入和微信导入所在的横向入口区域\n"
+        "          direction: right\n"
+        "          distance: 400\n"
+        "          scrollType: singleAction\n"
+        "        - aiAssert: 企业云盘入口可见",
+    )
+    duplicate_horizontal_gate = agent_service._agent_repair_candidate_gate(
+        existing_horizontal_scroll,
+        {
+            "fixedYaml": duplicate_horizontal_scroll,
+            "analysis": "第一次横滑没有找到目标，因此再追加一次相同横滑；原导航和断言保持不变",
+            "changes": ["在失败等待前追加第二次横向滚动"],
+        },
+        [],
+        platform="android",
+        runtime_evidence={
+            "stdoutTail": (
+                "Android ADB swipe coordinates must stay within the screen bounds; "
+                "input swipe 1044 1374 0 1374 1000; current page returned to app home"
+            ),
+            "reportKeyframes": ["edge-swipe-returned-home.jpg"],
+        },
+    )
+    require(
+        duplicate_horizontal_gate.get("ok") is False
+        and any(
+            item.get("code") == "duplicate_horizontal_scroll_repair"
+            for item in duplicate_horizontal_gate.get("issues") or []
+        ),
+        "Repair validation must reject a second equivalent horizontal scroll when the original task already contains one",
+    )
+    safe_horizontal_replacement = existing_horizontal_scroll.replace(
+        "在本地导入、相册导入和微信导入所在的横向入口区域",
+        "在本地导入、相册导入和微信导入所在的横向入口区域中部操作，避开屏幕左右边缘",
+    )
+    safe_horizontal_gate = agent_service._agent_repair_candidate_gate(
+        existing_horizontal_scroll,
+        {
+            "fixedYaml": safe_horizontal_replacement,
+            "analysis": "横滑从屏幕边缘起手触发系统返回，替换原横滑区域描述并保持导航和断言不变",
+            "changes": ["将原横滑替换为内容区中部起手，避开屏幕左右边缘"],
+        },
+        [],
+        platform="android",
+    )
+    require(
+        safe_horizontal_gate.get("ok") is True,
+        "Repair validation must allow replacing one unsafe horizontal scroll with one interior-anchored scroll",
+    )
     source_backed_original = """android:
   tasks:
     - name: 照片打印页百度网盘入口校验
@@ -7031,6 +7131,43 @@ def check_agent_failure_review_and_repair_guard():
         and (runtime_leaf_corrected.get("sourceLeafRuntimeOverrides") or [{}])[0].get("fromLeaf") == "一寸照"
         and (runtime_leaf_corrected.get("sourceLeafRuntimeOverrides") or [{}])[0].get("toLeaf") == "5寸照片",
         "A keyframe-backed missing runtime leaf may be corrected only by a cited same-branch baseline and alternate current Figma leaf",
+    )
+    nested_leaf_source_evidence = copy.deepcopy(source_backed_evidence)
+    nested_leaf_source_evidence["visualCurrentPageEvidence"][0]["parentPath"] = ["App首页", "照片打印"]
+    nested_leaf_source_evidence["visualCurrentPageEvidence"].append({
+        "caseId": "TC-003",
+        "requirementId": "REQ-002",
+        "branch": "照片打印-一寸照规格",
+        "pageTitle": "一寸照",
+        "parentPath": ["App首页", "照片打印", "一寸照规格页"],
+        "navigationLeaf": "一寸照规格页",
+        "targetText": "百度网盘",
+        "sameBranch": True,
+        "confidence": 1.0,
+        "source": "figma_current_frame",
+    })
+    nested_leaf_original = source_backed_fixed.replace("5寸照片", "一寸照规格页")
+    nested_leaf_gate = agent_service._agent_repair_candidate_gate(
+        nested_leaf_original,
+        {
+            "fixedYaml": source_backed_fixed,
+            "analysis": "真机尺寸弹窗没有一寸照规格页；按当前分支 Figma 与成功基线替换为 5寸照片",
+            "changes": ["将失败步骤的一寸照规格页替换为 5寸照片，保持百度网盘断言不变"],
+            "usedBaselineIds": ["base-photo-runtime-leaf"],
+        },
+        [runtime_leaf_baseline],
+        platform="android",
+        source_evidence=nested_leaf_source_evidence,
+        runtime_evidence={
+            "summaryText": "failed to locate element: 当前页面未显示一寸照规格页，仅可见5寸、6寸、7寸及A4尺寸选项。",
+            "reportKeyframes": ["photo-size-dialog.jpg"],
+        },
+    )
+    require(
+        nested_leaf_gate.get("ok") is True
+        and (nested_leaf_gate.get("sourceLeafRuntimeOverrides") or [{}])[0].get("fromLeaf") == "一寸照规格页"
+        and (nested_leaf_gate.get("sourceLeafRuntimeOverrides") or [{}])[0].get("toLeaf") == "5寸照片",
+        "Visual parent-path comparison must ignore a trailing segment that duplicates its own navigation leaf",
     )
     sibling_leaf_yaml = """android:
   tasks:
@@ -9709,6 +9846,24 @@ def check_yaml_static_validation_and_patterns():
         and yaml_service_module.validate_midscene_yaml_executability(valid_scroll_yaml).get("ok"),
         "The official aiScroll string target with sibling direction/distance options must remain executable",
     )
+    safe_scroll_block, safe_scroll_changes = yaml_service_module.normalize_horizontal_icon_scrolls_in_task_block(
+        """    - name: generic horizontal entry reveal
+      flow:
+        - aiWaitFor: 导入页面加载完成，可见本地导入、相册导入和微信导入
+        - aiScroll: 在本地导入、相册导入和微信导入所在的横向入口区域
+          direction: right
+          distance: 400
+          scrollType: singleAction
+        - aiAssert: 企业云盘入口可见
+"""
+    )
+    require(
+        safe_scroll_block.count("- aiScroll:") == 1
+        and "区域中部" in safe_scroll_block
+        and "避开屏幕左右边缘" in safe_scroll_block
+        and safe_scroll_changes,
+        "Horizontal scroll normalization must keep one action and anchor it away from Android edge-navigation zones",
+    )
     model_nested_prompt_yaml = """android:
   tasks:
     - name: generic cloud entry normalization
@@ -9735,7 +9890,9 @@ def check_yaml_static_validation_and_patterns():
     require(
         normalized_wait.get("aiWaitFor") == "App home is visible"
         and "text" not in normalized_wait
-        and normalized_scroll.get("aiScroll") == "Scroll the visible import row to reveal more entries"
+        and normalized_scroll.get("aiScroll", "").startswith("Scroll the visible import row to reveal more entries")
+        and "区域中部" in normalized_scroll.get("aiScroll", "")
+        and "避开屏幕左右边缘" in normalized_scroll.get("aiScroll", "")
         and "description" not in normalized_scroll
         and normalized_scroll.get("direction") == "right"
         and normalized_scroll.get("distance") == 400

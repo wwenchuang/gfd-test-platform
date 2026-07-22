@@ -12749,6 +12749,20 @@ def _agent_repair_parent_path_segment_key(value):
     return compact
 
 
+def _agent_repair_visual_parent_path(item):
+    """Normalize visual parent paths and remove a duplicated trailing leaf."""
+    item = item if isinstance(item, dict) else {}
+    path = [
+        _agent_repair_parent_path_segment_key(value)
+        for value in (item.get("parentPath") or [])
+        if str(value or "").strip()
+    ]
+    leaf_key = _agent_repair_parent_path_segment_key(item.get("navigationLeaf") or "")
+    if path and leaf_key and path[-1] == leaf_key:
+        path.pop()
+    return path
+
+
 def _agent_repair_runtime_source_leaf_override(
     source_item,
     visual_items,
@@ -12770,11 +12784,7 @@ def _agent_repair_runtime_source_leaf_override(
     old_target_key = re.sub(
         r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str((source_item or {}).get("targetText") or "")
     ).lower()
-    old_parent_path = [
-        _agent_repair_parent_path_segment_key(value)
-        for value in ((source_item or {}).get("parentPath") or [])
-        if str(value or "").strip()
-    ]
+    old_parent_path = _agent_repair_visual_parent_path(source_item)
     navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
     explanation_key = re.sub(
         r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(repair_explanation or "")
@@ -12800,11 +12810,7 @@ def _agent_repair_runtime_source_leaf_override(
         ).lower()
         if old_target_key and alternative_target_key and old_target_key != alternative_target_key:
             continue
-        alternative_parent_path = [
-            _agent_repair_parent_path_segment_key(value)
-            for value in (alternative.get("parentPath") or [])
-            if str(value or "").strip()
-        ]
+        alternative_parent_path = _agent_repair_visual_parent_path(alternative)
         if old_parent_path and alternative_parent_path and old_parent_path != alternative_parent_path:
             continue
         if old_leaf_key not in explanation_key or new_leaf_key not in explanation_key:
@@ -13030,6 +13036,49 @@ def _agent_repair_claims_navigation_change(change_text):
     )
 
 
+def _agent_repair_horizontal_scroll_counts(yaml_text):
+    """Count bounded horizontal scroll actions per task for repair idempotency."""
+    if pyyaml is None:
+        return []
+    try:
+        _platform, tasks = extract_midscene_tasks(pyyaml.safe_load(str(yaml_text or "")))
+    except Exception:
+        return []
+    counts = []
+    for task in tasks:
+        count = 0
+        if isinstance(task, dict):
+            for step in task.get("flow") or []:
+                if not isinstance(step, dict) or "aiScroll" not in step:
+                    continue
+                direction = str(step.get("direction") or "").strip().lower()
+                target = str(step.get("aiScroll") or "").strip().lower()
+                if direction in {"right", "left"} or any(
+                    marker in target
+                    for marker in ("横向", "水平", "horizontal", "向左", "向右", "左划", "右划")
+                ):
+                    count += 1
+        counts.append(count)
+    return counts
+
+
+def _agent_repair_horizontal_scroll_expansions(original_yaml, fixed_yaml):
+    """Return task-level horizontal scroll growth beyond one bounded action."""
+    original_counts = _agent_repair_horizontal_scroll_counts(original_yaml)
+    fixed_counts = _agent_repair_horizontal_scroll_counts(fixed_yaml)
+    expansions = []
+    for task_index, fixed_count in enumerate(fixed_counts):
+        original_count = original_counts[task_index] if task_index < len(original_counts) else 0
+        if fixed_count <= max(1, original_count):
+            continue
+        expansions.append({
+            "taskIndex": task_index,
+            "originalCount": original_count,
+            "fixedCount": fixed_count,
+        })
+    return expansions
+
+
 def _agent_repair_candidate_gate(
     original_yaml,
     response,
@@ -13135,6 +13184,10 @@ def _agent_repair_candidate_gate(
 
     issues = []
     source_leaf_runtime_overrides = []
+    horizontal_scroll_expansions = (
+        _agent_repair_horizontal_scroll_expansions(original_yaml, fixed_yaml)
+        if fixed_yaml else []
+    )
 
     def add_issue(code, message):
         if code not in {item.get("code") for item in issues}:
@@ -13156,6 +13209,12 @@ def _agent_repair_candidate_gate(
         )
     if invalid_baseline_ids:
         add_issue("unknown_baseline_citation", "引用了本次候选之外的基线：" + "、".join(invalid_baseline_ids[:3]))
+    if horizontal_scroll_expansions:
+        add_issue(
+            "duplicate_horizontal_scroll_repair",
+            "同一 task 的横向 aiScroll 必须保持一次有界动作；已有横滑时应替换原动作的可见区域描述，"
+            "将起手位置约束在内容区中部并避开屏幕左右边缘，不得继续追加同方向横滑",
+        )
     if fixed_yaml and navigation_claimed and not navigation_changed:
         add_issue(
             "navigation_claim_without_yaml_change",
@@ -13225,6 +13284,7 @@ def _agent_repair_candidate_gate(
         "navigationChanged": navigation_changed,
         "transientOverlayChange": transient_overlay_change,
         "sourceLeafRuntimeOverrides": source_leaf_runtime_overrides,
+        "horizontalScrollExpansions": horizontal_scroll_expansions,
         "baselineCitationExempt": bool(transient_overlay_change),
         "originalAssertionContract": original_assertion_contract,
         "fixedAssertionContract": fixed_assertion_contract,

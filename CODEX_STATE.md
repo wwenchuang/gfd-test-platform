@@ -4073,6 +4073,61 @@ git diff --check
 
 - 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
 
+### 2026-07-22 部署后完整回归：横滑边缘手势、重复修复与视觉父路径归一化
+
+部署 `9ebb40b` 后发起完全相同的百度网盘 Agent：
+
+- Agent：`agent-1784717510972-926edb56`；终态 `FAILED / RERUN / 95%`，错误为“重跑后仍有失败或超时任务”。
+- 输入保持原固定参数：`scope=regression`、`RUNNER_JOB`、`win-runner-01 / ecbfd645 / fixed`、`qwen3.6-plus`、`com.xbxxhz.box`。全部 dry-run、smoke 和修复重跑只使用 OPPO PHM110，没有向第二台设备下发。
+- 8091 / 8088、AI Gateway、Sonic 和 Runner 健康；Figma 解析 4 页 / 4 图，分 4 个单图批次全部真实送入 `qwen3.6-plus`，4 / 4 完成、无 fallback。
+- PLAN 生成 8 条 AI 业务流；GENERATE_YAML 生成 6 条 YAML / 12 个场景，6 / 6 通过 Task Server 静态和可执行门禁，3 / 3 Runner dry-run 成功。这证明上一轮空标量 YAML 修复已生效。
+- 固定 OPPO 首批 smoke 仅文档展示用例成功；扫描展示与照片展示失败，smoke 为 1 / 3，未达到扩展阈值，因此 remaining 3 条没有执行。
+- 最终 6 条 YAML 在结构上覆盖文档 / 照片 / 扫描三个分支的展示、同级、文案和可达性，且没有坐标、XPath、selector 或 ADB swipe；但照片与扫描 smoke 未通过，不能判定需求回归完成。
+
+真实执行根因：
+
+- 照片 YAML 点击“一寸照规格页”，固定 OPPO 真机弹窗明确只有 `5寸 / 6寸 / 7寸 / A4`。AI 修复正确使用 3 张报告关键帧、同 case Figma Node `1:70` 的“5寸照片”和照片分支成功基线 `652583bdad841b93`，提出 `一寸照规格页 -> 5寸照片`；候选仍为 `100 / executable`，但被 `source_backed_navigation_target_removed` 错误拒绝。
+- 错误拒绝来自视觉 AI 的父路径表示不一致：旧叶子证据把自身 `一寸照规格页` 再写入 `parentPath`，替代叶子 `5寸照片` 的 `parentPath` 只写到照片打印。两条证据实际属于同一父分支，旧门禁却要求数组完全相等。
+- 扫描 YAML 已成功点击“扫描复印”并等待到“小白扫描王”导入页；报告中横滑定位框中心位于逻辑屏幕 `x=522 / width=540` 的最右边缘，Runner 实际执行 `input swipe 1044 1374 0 1374 1000`。Android 15 把右边缘向内滑识别为系统返回，页面因此回到 App 首页，并非扫描导航失败或滑动次数不足。
+- 旧失败分类与 repair prompt 允许每轮继续追加 1-2 次同方向横滑。首次修复把 1 次横滑变为 2 次，post-rerun autonomy 又变为 3 次；两次重跑均在错误首页继续查找导入栏并失败。这与已有“横向列表幂等规范为一次官方 aiScroll”的生成规则冲突。
+- 扫描可达 YAML 的执行 flow 没有人工条件动作，但文件名 / tags / `baseline.repair_hint` 仍残留“需人工确认路径 / 若未找到 / 建议人工验证”等已被可信 `ai_case_plan` 替代的旧元数据，应从 Runner 文件中移除。
+
+本轮通用修复：
+
+- 横向 `aiScroll` 标准化会保留一次官方动作，并把自然语言定位区域约束为“从横向内容区中部起手，避开屏幕左右边缘”；扫描导入栏的确定性生成路径也使用同一安全描述。没有新增坐标或修改 Runner。
+- 修复候选门禁按 task 审计横向 `aiScroll` 数量：原 YAML 没有时最多新增一次；已有横滑时只能替换原动作，继续追加会以 `duplicate_horizontal_scroll_repair` 拒绝。安全的单动作区域替换仍可通过。
+- 横滑失败分类识别 `screen bounds / input swipe / returned home` 等边缘手势证据，明确要求替换原 `aiScroll`，不再建议增加距离或第二次横滑。`repair_patch_planner.v1`、AI repair guide 和 legacy repair prompt 的策略已同步。
+- 视觉父路径比较会先移除与自身 `navigationLeaf` 完全重复的尾段，再判断同 case / REQ / target 的替代叶子是否位于同一父分支。真机否定、关键帧、当前 Figma 替代叶子、当前分支成功基线和断言保留等原门禁均未放宽。
+- 已验证 `ai_case_plan` 渲染前会清理过期的人工 tags、repair hints、data / automation 元数据；拆分 YAML 的文件名也使用清理后的标题。真正包含人工条件的 plan 仍被 `_verified_case_plan_for_yaml` 拒绝。
+
+线上生产数据离线重放：
+
+- 原照片失败 YAML + 原 AI 5 寸修复候选 + 4 批视觉证据 + 原 Runner 错误 + 3 张关键帧 + 原照片分支基线：候选现在 `ok=true / 0 issue`，审计记录 `一寸照规格页 -> 5寸照片`、`TC-002 / REQ-002`、Figma Node `1:70`、基线 `652583bdad841b93`。
+- 原扫描失败 YAML 经运行时规范化后仍只有 1 个 `aiScroll`，并包含内容区中部 / 避开左右边缘约束；线上 AI 生成的第二次横滑修复被 `duplicate_horizontal_scroll_repair` 正确拒绝。
+- 已验证计划样例生成的 task、拆分文件名和 baseline comments 不再包含 `待确认 / 需人工 / 若存在 / 若不存在 / 记录缺陷`，原可见文字动作和精确断言保持不变。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/yaml_service.py task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/repair_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+- RED 测试先分别复现：安全横滑描述缺失、边缘手势仍建议追加、重复横滑候选通过、视觉父路径尾段不一致导致正确 5 寸修复被拒、已验证 Runner YAML 残留人工元数据。
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+
+模型升级记录：
+
+- 本次真实回归继续使用固定参数 `qwen3.6-plus`，避免把模型变化混入修复验证。
+- 2026-07-22 阿里云 Model Studio 官方目录显示通用多模态 Plus 最新为 `qwen3.7-plus`；没有 `qwen3.8-plus`，`qwen3-8b` 是参数规模名称。当前线上 `/api/models` 只暴露 `qwen3.6-plus`，后续应先验证 AI Gateway / Midscene 模型族与视觉路由，再单独升级默认 text / VL 配置，不在本轮回归修复中猜测切换。
+
+待完成：
+
+- 本轮修复已创建本地提交；由用户 push、部署，Codex 不尝试 push。
+- 部署后立即用完全相同参数重新发起百度网盘 Agent，持续监督到终态。重点确认照片 5 寸候选通过并在固定 OPPO 重跑、扫描只保留一次内容区中部横滑、smoke 达标后 remaining 全部执行，以及 6 条最终 YAML 不再带过期人工元数据。
+
 ### 2026-07-22 部署后真实回归：Figma 父路径展示后缀阻断真机叶子纠正
 
 部署 `0103401` 后发起完全相同百度网盘 Agent：

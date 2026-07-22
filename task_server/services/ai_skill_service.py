@@ -931,7 +931,17 @@ def detect_horizontal_scroll_script_issue(yaml_text, log_text):
         "aiScroll" in text
         and any(word in text for word in ("横向", "icon", "图标", "我的学习", "功能", "列表"))
     )
-    missing_target = any(word in lower_log for word in (
+    edge_gesture_evidence = bool(
+        any(word in lower_log for word in (
+            "screen bounds", "exceeds max", "input swipe", "edge gesture",
+            "屏幕边界", "边缘手势", "滑动坐标超出",
+        ))
+        and any(word in lower_log for word in (
+            "returned to its home", "returned to app home", "back navigation", "went back",
+            "返回首页", "回到首页", "触发返回", "返回上一页",
+        ))
+    )
+    missing_target = edge_gesture_evidence or any(word in lower_log for word in (
         "未出现", "没有出现", "没有发现", "找不到", "未找到", "不可见",
         "failed to locate", "not found", "not visible", "not fully visible",
         "not clearly present", "cannot see", "can't see", "看不到",
@@ -955,8 +965,11 @@ def detect_horizontal_scroll_script_issue(yaml_text, log_text):
         missing_scroll = clipped_row_evidence and not has_horizontal_scroll
         return {
             "category": "script_issue",
-            "confidence": 0.93 if missing_scroll else 0.94,
+            "confidence": 0.98 if edge_gesture_evidence else (0.93 if missing_scroll else 0.94),
             "reason": (
+                "Runner 日志证明横滑从 Android 屏幕边缘起手并触发系统返回；继续追加同方向横滑会重复离开目标页，"
+                "必须替换原动作的定位区域而不是增加动作"
+                if edge_gesture_evidence else
                 "失败关键帧显示同级入口行在屏幕边缘被裁切，但 YAML 在断言前没有横向探索；"
                 "目标可能仍在同一列表的屏外区域，应先做一次有界可见文字滑动修复，再判断是否为产品缺陷"
                 if missing_scroll else
@@ -964,6 +977,8 @@ def detect_horizontal_scroll_script_issue(yaml_text, log_text):
             ),
             "evidence": [
                 (
+                    "Runner 日志包含越界横滑和返回父页/首页的直接证据"
+                    if edge_gesture_evidence else
                     "报告文字明确描述同级入口行在屏幕边缘被截断，原 YAML 未包含横向 aiScroll"
                     if missing_scroll else "YAML 中存在横向 icon 列表 aiScroll"
                 ),
@@ -971,8 +986,11 @@ def detect_horizontal_scroll_script_issue(yaml_text, log_text):
                 "当前页面只完整显示列表前部入口，符合目标仍在屏外的可恢复脚本分叉"
             ],
             "suggested_action": (
-                "让修复 AI 根据报告关键帧，在失败等待前为具体同级入口区域补充一次或两次官方 aiScroll，"
-                "使用可见文字描述区域并在滑动后重新等待目标；禁止坐标或 ADB swipe"
+                "替换原 aiScroll 的区域描述，用当前页真实可见文案把起手区域锚定在横向内容区中部并避开屏幕左右边缘；"
+                "横滑总数保持一次，不得追加第二次横滑；禁止坐标或 ADB swipe"
+                if has_horizontal_scroll else
+                "在失败等待前插入一次官方 aiScroll，用当前页真实可见文案把起手区域锚定在横向内容区中部并避开屏幕左右边缘；"
+                "不得追加第二次横滑，滑动后重新等待目标；禁止坐标或 ADB swipe"
             ),
             "can_auto_repair": True
         }
@@ -1188,7 +1206,7 @@ def repair_strategy_guide():
 7. 如果是弹窗/权限/升级/广告/引导遮挡，只在关键路径前补自然语言弹窗处理，不要每一步都加，避免拖慢。
 8. 如果是加载慢，使用 aiWaitFor + timeout 等目标 UI 条件，不要用固定长 sleep。Midscene 自身会重试/重规划，不要无限加长等待；任何新增或修改的 aiWaitFor timeout 都不得超过 300000ms。只有 3D/模型/建模/切片/STL/OBJ/模型导入这类链路才允许写"模型处理进度到 100%"和 180000~240000ms；2D/文档/错题/基础打印/相册/扫描/格式转换链路禁止套用"模型处理进度"，应等待"打印前准备完成、立即打印按钮、确认打印弹窗/按钮"等真实 UI 条件，通常 30000~60000ms。只能在"原等待明显偏短或条件过泛"时修一次，不要反复加长等待掩盖真实产品/环境问题。
 8.1 如果失败发生在中间流程，例如点击"完成/确认/下一步"后目标格式按钮、PNG/PDF/Word、导出或确认按钮尚未渲染，应该在这两个业务动作之间补 aiWaitFor 等待目标按钮/选项出现，不要把它误修成最终保存成功校验。
-8.2 失败关键帧若明确显示同级入口行在屏幕边缘被裁切，应先尝试一次有界横向恢复再判产品缺陷。必须使用官方 aiScroll：目标用当前页真实可见文案描述具体横向区域，`scrollType: "singleAction"`、`direction: "right"`、`distance` 不超过 400，滑动后重新等待目标入口；一次不足时最多补第二次。禁止坐标、ADB swipe 和含糊的整页滚动。
+8.2 失败关键帧若明确显示同级入口行在屏幕边缘被裁切，应先尝试一次有界横向恢复再判产品缺陷。必须使用官方 aiScroll：原 YAML 没有横滑时只插入一次；已有横滑时只能 replace 原动作，禁止追加第二次。目标用当前页真实可见文案描述具体横向区域，并明确从内容区中部起手、避开屏幕左右边缘；`scrollType: "singleAction"`、`direction: "right"`、`distance` 不超过 400，滑动后重新等待目标入口。禁止坐标、ADB swipe 和含糊的整页滚动。
 9. 如果是断言失败，先判断是否断言过严。可把"完全一致"改为"页面标题、关键入口、列表或空态可见"等视觉可验证断言；不要把真实产品缺陷改没。
 9.1 如果失败是保存/导出/下载/生成/转换这类结果型操作的短暂提示没捕捉到，先结合原 YAML 的业务链路和失败截图判断。可以优化为更合理的成功提示或失败态校验，但只能改失败相关步骤，不要批量插入重复校验，不要改变中间业务流程。
 10. 修复业务链路时，必须先对齐 goal、start_page、business_path、expected_result：入口路径可以修，等待条件可以修，断言表达可以修，但不能绕开核心业务目标。
