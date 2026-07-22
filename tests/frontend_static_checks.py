@@ -30,6 +30,8 @@ def main():
     # concatenate task-manager.html + css/app.css + js/*.js as a single blob.
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
+    api_testing_js = (JS_DIR / "api-testing.js").read_text(encoding="utf-8")
+    state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
     require("<title>功夫豆测试平台</title>" in html, "Browser title must use 功夫豆测试平台")
     require("Midscene Task 管理平台" not in html and "Midscene Task 管理" not in html, "Old product title must not appear in the UI")
     require('<span class="header-logo">⚡</span>' not in html and '<div class="login-logo">⚡' not in html, "Old lightning emoji brand logo must not be used")
@@ -44,7 +46,64 @@ def main():
         require(f'data-workflow="{workflow}"' in html, f"Sidebar missing API testing workflow: {workflow}")
     require("js/api-testing.js" in html, "API testing frontend module must be loaded")
     require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
-    require("apiLogExpandedKeys" in html and "runId + stepId" in html, "API execution logs must preserve expanded state by stable keys")
+    require("apiLogExpandedKeys" in html and "runId + eventId" in html, "API execution logs must preserve expanded state by stable keys")
+    require(
+        "/api-testing/metersphere/execution-context" in api_testing_js
+        and "/api-testing/metersphere/executions" in api_testing_js,
+        "MeterSphere daily execution UI must use the aggregate context and asynchronous execution contracts",
+    )
+    require(
+        "poll_after_ms" in api_testing_js
+        and "pollApiMeterSphereExecution" in api_testing_js
+        and "setTimeout" in api_testing_js,
+        "MeterSphere execution polling must use the backend-provided interval",
+    )
+    require(
+        "captureApiExecutionLogViewState" in api_testing_js
+        and "restoreApiExecutionLogViewState" in api_testing_js
+        and "apiLogScrollPositions" in api_testing_js
+        and "api-log-content" in api_testing_js,
+        "MeterSphere technical logs must preserve expansion and scroll position during polling",
+    )
+    require(
+        "apiExecutionStartingPlanId" in state_js
+        and "正在创建执行" in api_testing_js
+        and "active_run: execution" in api_testing_js,
+        "MeterSphere start must disable the submitted plan immediately and keep it disabled while the run is active",
+    )
+    require(
+        "row.run_id || row.execution_id || runId" in api_testing_js,
+        "MeterSphere log keys must remain stable when the real run id first appears",
+    )
+    require(
+        "apiDurationText" in api_testing_js
+        and "duration_seconds" in api_testing_js
+        and "耗时" in api_testing_js,
+        "MeterSphere active phases and latest runs must display backend-derived duration",
+    )
+    require(
+        "暂无执行日志" in api_testing_js
+        and "runId: 'local'" not in api_testing_js
+        and "等待保存 MeterSphere 配置" not in api_testing_js,
+        "MeterSphere logs must show a real empty state instead of fabricated local events",
+    )
+    require(
+        "metadata.stale" in api_testing_js
+        and "readiness.can_execute" in api_testing_js
+        and "plan.can_execute" in api_testing_js,
+        "Stale metadata and backend readiness must directly guard the execution action",
+    )
+    require(
+        "api-ms-settings-drawer" in api_testing_js
+        and "api-ms-auth-mode" in api_testing_js
+        and "Access Key" in api_testing_js
+        and "Token" in api_testing_js,
+        "MeterSphere credentials and advanced paths must live in a controlled settings drawer",
+    )
+    require(
+        "3D业务" not in api_testing_js and "3D业务" not in (ROOT / "task-manager.html").read_text(encoding="utf-8"),
+        "Production frontend must not hardcode a MeterSphere business name",
+    )
     require("Agent 工作台" in html, "Dashboard must serve as the Agent workbench entry")
     require(("AI修复" in html or "AI 修复" in html) and 'data-workflow="repair"' in html, "Sidebar must expose independent AI repair entry")
     require("const AI_GATEWAY_BASE = '/ai-gateway'" in html, "AI Gateway calls must use same-origin reverse proxy")
@@ -277,7 +336,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260714-agent-observability" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260715-agent-failure-cards" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache version must be bumped for install refresh, smoke rerun, Agent phases, artifacts, and result semantics")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260714-agent-observability" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-ms-daily-console" in html and "js/api-testing.js?v=20260722-ms-daily-console" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include the MeterSphere daily console and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")

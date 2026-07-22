@@ -2483,6 +2483,29 @@ def _get_api_testing_metersphere_config(handler, qs):
     handler._json({"ok": True, "config": metersphere_service.metersphere_config(masked=True)})
 
 
+@route_get("/api/api-testing/metersphere/execution-context")
+def _get_api_testing_metersphere_execution_context(handler, qs):
+    from task_server.services import metersphere_service
+    context = metersphere_service.metersphere_execution_context(
+        force=safe_bool(qs.get("force") or qs.get("refresh"), False)
+    )
+    handler._json(context)
+
+
+@route_get_regex(r"^/api/api-testing/metersphere/executions/([^/]+)$")
+def _get_api_testing_metersphere_execution(handler, qs, match):
+    from task_server.services import metersphere_service
+    execution_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    try:
+        execution = metersphere_service.get_metersphere_execution(
+            execution_id,
+            refresh=not safe_bool(qs.get("cached"), False),
+        )
+        handler._json({"ok": True, "execution": execution})
+    except metersphere_service.MeterSphereExecutionNotFound as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+
+
 @route_get("/api/api-testing/reports")
 def _get_api_testing_reports(handler, qs):
     from task_server.services import api_report_service
@@ -2600,6 +2623,22 @@ def _post_api_testing_metersphere_run(handler, qs):
         str(d.get("test_plan_id") or d.get("testPlanId") or "").strip(),
     )
     handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
+
+
+@route_post("/api/api-testing/metersphere/executions")
+def _post_api_testing_metersphere_executions(handler, qs):
+    from task_server.services import metersphere_service
+    d = handler._body()
+    try:
+        execution = metersphere_service.start_metersphere_execution(
+            str(d.get("plan_id") or d.get("planId") or "").strip(),
+            str(d.get("test_plan_id") or d.get("testPlanId") or "").strip(),
+        )
+        handler._json({"ok": True, "execution": execution}, 202)
+    except metersphere_service.MeterSphereExecutionConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+    except metersphere_service.MeterSphereExecutionValidationError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
 
 
 @route_post("/api/api-testing/reports/pull")

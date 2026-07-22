@@ -106,6 +106,13 @@ let apiTestingReports = [];
 let apiTestingCurrentSnapshotId = '';
 let apiTestingCurrentPlan = null;
 const apiLogExpandedKeys = new Set(JSON.parse(localStorage.getItem('api_log_expanded_keys') || '[]'));
+const apiLogScrollPositions = new Map();
+let apiExecutionContext = null;
+let apiExecutionActiveId = '';
+let apiExecutionPollTimer = null;
+let apiExecutionSettingsOpen = false;
+let apiExecutionContextRequestId = 0;
+let apiExecutionStartingPlanId = '';
 const layoutPrefs = JSON.parse(localStorage.getItem('midscene_layout_prefs') || '{}');
 
 const AGENT_RISK_KEYWORDS = ['确认打印', '开始打印', '支付', '删除', '覆盖基线', '格式化', '清空', '解绑', '重置'];

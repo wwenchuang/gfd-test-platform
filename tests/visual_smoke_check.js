@@ -18,6 +18,50 @@ function json(res, body) {
 
 function serve() {
   let fileReadCount = 0;
+  const meterExecution = () => ({
+    execution_id: 'ms-execution-visual-001',
+    plan_id: 'api-plan-visual-001',
+    plan_name: '账号接口日常回归',
+    status: 'running',
+    current_phase: 'metersphere_run',
+    created_at: '2026-07-22 09:40:00',
+    started_at: '2026-07-22 09:40:02',
+    updated_at: '2026-07-22 09:42:18',
+    run_id: 'ms-run-visual-001',
+    remote_status: 'running',
+    report_status: 'waiting',
+    duration_seconds: 136,
+    poll_after_ms: 3000,
+    stats: {total: 24, passed: 8, failed: 0},
+    phases: [
+      {id: 'push_cases', title: '推送用例', state: 'succeeded', summary: '24 条确认用例已推送', started_at: '2026-07-22 09:40:02', updated_at: '2026-07-22 09:40:08', duration_seconds: 6},
+      {id: 'trigger_plan', title: '触发计划', state: 'succeeded', summary: 'MeterSphere 计划已触发', started_at: '2026-07-22 09:40:08', updated_at: '2026-07-22 09:40:12', duration_seconds: 4},
+      {id: 'metersphere_run', title: 'MeterSphere 执行', state: 'running', summary: '8 / 24 条已完成', started_at: '2026-07-22 09:40:12', updated_at: '2026-07-22 09:42:18', duration_seconds: 126},
+      {id: 'sync_report', title: '同步报告', state: 'waiting', summary: '等待远端执行终态', started_at: '', updated_at: '', duration_seconds: 0},
+    ],
+    events: [
+      {
+        event_id: 'event-push-001',
+        timestamp: '2026-07-22 09:40:08',
+        phase_id: 'push_cases',
+        state: 'succeeded',
+        summary: '确认用例推送完成',
+        detail: {
+          push_id: 'push-visual-001',
+          counts: {total: 24, succeeded: 24, failed: 0},
+          response_summary: Array.from({length: 28}, (_, index) => `批次 ${index + 1}：已接收并完成服务端脱敏`).join('\n'),
+        },
+      },
+      {
+        event_id: 'event-run-001',
+        timestamp: '2026-07-22 09:42:18',
+        phase_id: 'metersphere_run',
+        state: 'running',
+        summary: 'MeterSphere 正在执行',
+        detail: {run_id: 'ms-run-visual-001', status: 'RUNNING', completed: 8, total: 24},
+      },
+    ],
+  });
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (url.pathname === '/' || url.pathname === '/task-manager.html') {
@@ -249,6 +293,62 @@ function serve() {
     }
     if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
       json(res, {ok: true});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/metersphere/execution-context') {
+      const execution = meterExecution();
+      json(res, {
+        ok: true,
+        connection: {
+          state: 'connected',
+          base_url: 'http://metersphere.example.test',
+          auth_mode: 'access_key',
+          latency_ms: 82,
+          checked_at: '2026-07-22 09:42:18',
+        },
+        selection: {project_id: 'project-interface', environment_id: 'env-qa'},
+        businesses: [{id: 'project-interface', name: '接口业务', enabled: true}],
+        environments: [{id: 'env-qa', name: 'QA 环境', project_id: 'project-interface', enabled: true}],
+        metadata: {source: 'live', stale: false, fetched_at: '2026-07-22 09:42:18', errors: []},
+        config: {
+          base_url: 'http://metersphere.example.test',
+          auth_mode: 'access_key',
+          access_key_configured: true,
+          secret_key_configured: true,
+          token_configured: false,
+          workspace_id: 'workspace-visual',
+          project_id: 'project-interface',
+          environment_id: 'env-qa',
+          health_path: '/api/health',
+          project_list_path: '/projects',
+          environment_list_path: '/environments/{project_id}',
+          case_push_path: '/cases/push',
+          plan_run_path: '/plans/run',
+          run_status_path: '/runs/{run_id}',
+          report_path: '/reports/{run_id}',
+        },
+        capabilities: {can_push: true, can_run: true, can_query_run: true, can_pull_report: true, missing: [], ready: true},
+        readiness: {state: 'running', can_execute: true, missing: [], primary_action: '查看实时进度'},
+        plans: [{
+          plan_id: 'api-plan-visual-001',
+          name: '账号接口日常回归',
+          status: 'confirmed',
+          endpoint_count: 12,
+          case_count: 24,
+          confirmed_at: '2026-07-22 09:30:00',
+          test_plan_name: 'QA 每日主链路',
+          can_execute: false,
+          active_run: execution,
+          latest_run: execution,
+        }],
+        active_runs: [execution],
+        recent_runs: [],
+        empty_reason: '',
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/metersphere/executions/ms-execution-visual-001') {
+      json(res, {ok: true, execution: meterExecution()});
       return;
     }
     if (url.pathname === '/ai-gateway/ai/providers/test' && req.method === 'POST') {
@@ -535,6 +635,56 @@ async function anyVisible(locator) {
     const runTaskOptions = await page.locator('#run-task-name option').count();
     if (runTaskOptions < 2) throw new Error(`single-task modal did not parse YAML tasks, options=${runTaskOptions}`);
     await page.click('#modal-run-task .btn-cancel');
+
+    await page.click('.workflow-step[data-workflow="api_execution"]');
+    await page.waitForSelector('.api-execution-console');
+    await page.waitForSelector('text=账号接口日常回归');
+    if (!/接口业务/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere business must render from execution-context data');
+    if (!/QA 环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere environment must render from execution-context data');
+    if (await page.locator('.api-execution-plan-row').count() !== 1) throw new Error('Daily execution console must render confirmed plans as a compact list');
+    if (await page.locator('.api-run-phases > li').count() !== 4) throw new Error('Active MeterSphere run must render four stable phases');
+    await page.locator('.api-log-detail').first().locator('summary').click();
+    const meterLogScrollBefore = await page.locator('.api-log-detail').first().locator('.api-log-content').evaluate(el => {
+      const max = el.scrollHeight - el.clientHeight;
+      el.scrollTop = Math.min(180, max);
+      return {top: el.scrollTop, max};
+    });
+    if (meterLogScrollBefore.max < 50 || meterLogScrollBefore.top <= 0) throw new Error(`MeterSphere technical log fixture is not independently scrollable: ${JSON.stringify(meterLogScrollBefore)}`);
+    await page.evaluate(() => pollApiMeterSphereExecution(apiExecutionActiveId));
+    await page.waitForTimeout(100);
+    if (!await page.locator('.api-log-detail').first().evaluate(el => el.open)) throw new Error('MeterSphere status polling collapsed an expanded technical log');
+    const meterLogScrollAfter = await page.locator('.api-log-detail').first().locator('.api-log-content').evaluate(el => el.scrollTop);
+    if (Math.abs(meterLogScrollAfter - meterLogScrollBefore.top) > 2) throw new Error(`MeterSphere polling reset technical log scroll: before=${meterLogScrollBefore.top}, after=${meterLogScrollAfter}`);
+    const meterDesktopOverflow = await page.locator('.api-execution-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (meterDesktopOverflow) throw new Error('MeterSphere daily execution console overflows horizontally on desktop');
+    await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-execution.png'), fullPage: true});
+    await page.locator('button[aria-label="MeterSphere 设置"]').click();
+    await page.waitForSelector('.api-settings-drawer.open');
+    await page.waitForTimeout(220);
+    if (await page.locator('.api-settings-group').count() !== 4) throw new Error('MeterSphere settings must use four responsibility-based groups');
+    if (!await page.locator('#api-ms-auth-access').isVisible() || await page.locator('#api-ms-auth-token').isVisible()) throw new Error('MeterSphere settings must show only the selected authentication fields');
+    const meterSecretValues = await page.locator('#api-ms-access-key, #api-ms-secret-key, #api-ms-token').evaluateAll(inputs => inputs.map(input => input.value));
+    if (meterSecretValues.some(Boolean)) throw new Error('MeterSphere saved credentials must never be refilled into browser inputs');
+    const meterSettingsDesktopOverflow = await page.locator('.api-settings-drawer').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (meterSettingsDesktopOverflow) throw new Error('MeterSphere settings drawer overflows horizontally on desktop');
+    await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-settings.png'), fullPage: true});
+    await page.locator('.api-settings-head button[aria-label="关闭设置"]').click();
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const meterMobileOverflow = await page.locator('.api-execution-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (meterMobileOverflow) throw new Error('MeterSphere daily execution console overflows horizontally on mobile');
+    if (!await page.locator('.api-execution-plan-row .btn-sm.primary').isVisible()) throw new Error('MeterSphere primary plan action is not visible on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-execution-mobile.png'), fullPage: true});
+    await page.locator('button[aria-label="MeterSphere 设置"]').click();
+    await page.waitForSelector('.api-settings-drawer.open');
+    await page.waitForTimeout(220);
+    const meterSettingsMobileOverflow = await page.locator('.api-settings-drawer').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (meterSettingsMobileOverflow) throw new Error('MeterSphere settings drawer overflows horizontally on mobile');
+    const meterSettingsMobileBox = await page.locator('.api-settings-drawer').boundingBox();
+    if (!meterSettingsMobileBox || meterSettingsMobileBox.x > 1 || Math.abs(meterSettingsMobileBox.width - 390) > 1) throw new Error(`MeterSphere mobile settings drawer must fill the viewport after opening: ${JSON.stringify(meterSettingsMobileBox)}`);
+    await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-settings-mobile.png'), fullPage: true});
+    await page.locator('.api-settings-head button[aria-label="关闭设置"]').click();
+    await page.setViewportSize({width: 1440, height: 900});
 
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');
@@ -916,6 +1066,10 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'login.png'),
         path.join(ARTIFACTS, 'dashboard.png'),
         path.join(ARTIFACTS, 'execution.png'),
+        path.join(ARTIFACTS, 'metersphere-execution.png'),
+        path.join(ARTIFACTS, 'metersphere-execution-mobile.png'),
+        path.join(ARTIFACTS, 'metersphere-settings.png'),
+        path.join(ARTIFACTS, 'metersphere-settings-mobile.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
         path.join(ARTIFACTS, 'agent-failure.png'),

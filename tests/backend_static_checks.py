@@ -12992,6 +12992,7 @@ def check_metersphere_config_masks_secrets():
             "token": "secret-token",
             "access_key": "access-key-value",
             "secret_key": "secret-key-value",
+            "auth_mode": "access_key",
             "workspace_id": "ws1",
             "project_id": "project1",
             "environment_id": "env1",
@@ -12999,6 +13000,11 @@ def check_metersphere_config_masks_secrets():
         masked = metersphere_service.metersphere_config(masked=True)
         raw = metersphere_service.metersphere_config(masked=False)
         auth_headers = metersphere_service._metersphere_auth_headers(raw, method="GET", path="/project/get/project1")
+        token_headers = metersphere_service._metersphere_auth_headers(
+            {**raw, "auth_mode": "token"},
+            method="GET",
+            path="/project/get/project1",
+        )
     finally:
         metersphere_service.API_TESTING_DIR = old_dir
     require(saved.get("base_url") == "http://metersphere.local", "MeterSphere config must save base_url")
@@ -13016,6 +13022,419 @@ def check_metersphere_config_masks_secrets():
         and "Authorization" not in auth_headers,
         "MeterSphere AK/SK auth must send accessKey/timestamp/signature headers instead of Bearer token",
     )
+    require(
+        token_headers == {"Authorization": "Bearer secret-token"},
+        "MeterSphere requests must honor token auth mode even when inactive Access Key credentials remain saved",
+    )
+
+
+def check_metersphere_public_adapters_redact_and_require_remote_run_id():
+    from task_server.services import api_report_service, api_test_plan_service, metersphere_service
+
+    old_dir = metersphere_service.API_TESTING_DIR
+    old_report_dir = api_report_service.API_TESTING_DIR
+    old_get_plan = api_test_plan_service.get_api_test_plan
+    old_request = metersphere_service._request_json
+    temp_dir = tempfile.mkdtemp(prefix="metersphere_public_adapter_")
+    metersphere_service.API_TESTING_DIR = temp_dir
+    api_report_service.API_TESTING_DIR = temp_dir
+    api_test_plan_service.get_api_test_plan = lambda plan_id: {
+        "plan_id": plan_id,
+        "name": "账号接口回归",
+        "status": "confirmed",
+        "case_count": 1,
+        "cases": [{"case_id": "API-001", "name": "登录成功"}],
+    }
+    run_response_has_id = True
+
+    def fake_request(method, path, payload=None, timeout=30):
+        nonlocal run_response_has_id
+        if path == "/health":
+            return {"ok": True, "token": "health-secret", "nested": {"cookie": "session-secret", "safe": "visible"}}
+        if path == "/cases/push":
+            return {"ok": True, "id": "remote-push", "authorization": "Bearer push-secret"}
+        if path == "/plans/run":
+            if run_response_has_id:
+                return {"ok": True, "data": {"id": "remote-run-nested", "secretKey": "run-secret"}}
+            return {"ok": True, "data": {"status": "RUNNING", "accessKey": "run-secret"}}
+        return {"ok": False, "error": f"unexpected path {path}"}
+
+    try:
+        metersphere_service.save_metersphere_config({
+            "base_url": "http://metersphere.local",
+            "token": "server-only-token",
+            "auth_mode": "token",
+            "health_path": "/health",
+            "project_id": "project-a",
+            "environment_id": "env-a",
+            "case_push_path": "/cases/push",
+            "plan_run_path": "/plans/run",
+        })
+        metersphere_service._request_json = fake_request
+        health = metersphere_service.metersphere_health()
+        push = metersphere_service.push_plan_to_metersphere("api_plan_ready")
+        run = metersphere_service.create_metersphere_run("api_plan_ready")
+        report = metersphere_service.pull_metersphere_report(
+            "remote-run-nested",
+            {
+                "results": [{"id": "case-1", "name": "登录成功", "status": "passed"}],
+                "token": "report-secret",
+                "nested": {"signature": "report-signature", "safe": "visible"},
+            },
+        )
+        run_response_has_id = False
+        missing_id_run = metersphere_service.create_metersphere_run("api_plan_ready")
+    finally:
+        metersphere_service.API_TESTING_DIR = old_dir
+        api_report_service.API_TESTING_DIR = old_report_dir
+        api_test_plan_service.get_api_test_plan = old_get_plan
+        metersphere_service._request_json = old_request
+
+    require(
+        "health-secret" not in json.dumps(health, ensure_ascii=False)
+        and health.get("nested") == {"safe": "visible"}
+        and "push-secret" not in json.dumps(push, ensure_ascii=False),
+        "Compatibility health and push adapters must not return remote credentials to the browser",
+    )
+    require(
+        run.get("ok") is True
+        and run.get("run_id") == "remote-run-nested"
+        and "run-secret" not in json.dumps(run, ensure_ascii=False),
+        "Run creation must extract a real nested MeterSphere run id and redact its response",
+    )
+    require(
+        missing_id_run.get("ok") is False
+        and not missing_id_run.get("run_id")
+        and "真实 run_id" in str(missing_id_run.get("error") or ""),
+        "A successful trigger response without a real MeterSphere run id must fail instead of inventing a local id",
+    )
+    require(
+        report.get("ok") is True
+        and "report-secret" not in json.dumps(report, ensure_ascii=False)
+        and report.get("report", {}).get("raw", {}).get("nested") == {"safe": "visible"},
+        "Normalized MeterSphere reports must be recursively redacted before persistence and response",
+    )
+
+
+def check_metersphere_execution_context_uses_live_metadata_and_safe_cache():
+    from task_server.services import api_test_plan_service, metersphere_service
+
+    old_dir = metersphere_service.API_TESTING_DIR
+    old_plan_list = api_test_plan_service.list_api_test_plans
+    old_request = metersphere_service._request_json
+    temp_dir = tempfile.mkdtemp(prefix="metersphere_context_")
+    metersphere_service.API_TESTING_DIR = temp_dir
+    api_test_plan_service.list_api_test_plans = lambda limit=20: [{
+        "plan_id": "api_plan_ready",
+        "name": "账号接口回归",
+        "status": "confirmed",
+        "case_count": 3,
+        "endpoint_count": 1,
+        "confirmed_at": "2026-07-22 10:00:00",
+    }]
+    requests = []
+
+    def fake_request(method, path, payload=None, timeout=30):
+        requests.append((method, path))
+        if path == "/health":
+            return {"ok": True, "elapsed_ms": 18}
+        if path == "/projects":
+            return {
+                "ok": True,
+                "data": {"list": [{
+                    "id": "project-a",
+                    "name": "业务A",
+                    "enable": True,
+                }]},
+            }
+        if path == "/environments/project-a":
+            return {
+                "ok": True,
+                "data": [{
+                    "id": "env-a",
+                    "name": "测试环境",
+                    "projectId": "project-a",
+                    "status": "ACTIVE",
+                }, {
+                    "id": "env-other",
+                    "name": "其它项目环境",
+                    "projectId": "project-b",
+                    "status": "ACTIVE",
+                }],
+            }
+        return {"ok": False, "error": f"unexpected path {path}"}
+
+    try:
+        metersphere_service.save_metersphere_config({
+            "base_url": "http://metersphere.local",
+            "token": "secret-token",
+            "auth_mode": "token",
+            "project_id": "project-a",
+            "environment_id": "env-a",
+            "health_path": "/health",
+            "project_list_path": "/projects",
+            "environment_list_path": "/environments/{project_id}",
+            "case_push_path": "/cases/push",
+            "plan_run_path": "/plans/run",
+            "run_status_path": "",
+            "report_path": "/reports/{run_id}",
+        })
+        metersphere_service._request_json = fake_request
+        context = metersphere_service.metersphere_execution_context(force=True)
+        masked = metersphere_service.metersphere_config(masked=True)
+        sanitized = metersphere_service.sanitize_metersphere_data({
+            "Authorization": "Bearer secret",
+            "nested": {
+                "accessKey": "access",
+                "secretKey": "secret",
+                "cookie": "session=secret",
+                "safe": "visible",
+            },
+        })
+
+        def failed_metadata_request(method, path, payload=None, timeout=30):
+            if path == "/health":
+                return {"ok": True, "elapsed_ms": 21}
+            return {"ok": False, "error": "metadata unavailable"}
+
+        metersphere_service._request_json = failed_metadata_request
+        stale_context = metersphere_service.metersphere_execution_context(force=True)
+    finally:
+        metersphere_service.API_TESTING_DIR = old_dir
+        api_test_plan_service.list_api_test_plans = old_plan_list
+        metersphere_service._request_json = old_request
+
+    require(
+        context.get("businesses") == [{"id": "project-a", "name": "业务A", "enabled": True}],
+        "MeterSphere project API must dynamically populate business names without frontend constants",
+    )
+    require(
+        context.get("environments") == [{
+            "id": "env-a",
+            "name": "测试环境",
+            "project_id": "project-a",
+            "enabled": True,
+        }],
+        "MeterSphere environments must be normalized and filtered by the selected project",
+    )
+    require(
+        context.get("connection", {}).get("state") == "connected"
+        and context.get("connection", {}).get("latency_ms") == 18
+        and context.get("readiness", {}).get("state") == "connected_needs_setup"
+        and "运行状态查询接口" in context.get("capabilities", {}).get("missing", [])
+        and context.get("readiness", {}).get("can_execute") is False,
+        "Connection success with an incomplete execution contract must not be reported as executable",
+    )
+    require(
+        masked.get("auth_mode") == "token"
+        and masked.get("token") == ""
+        and masked.get("token_configured") is True
+        and masked.get("project_name") == "业务A"
+        and masked.get("environment_name") == "测试环境",
+        "Configuration metadata must expose presence and selected names without returning masked secrets as input values",
+    )
+    require(
+        sanitized == {"nested": {"safe": "visible"}},
+        "MeterSphere response and event payloads must recursively remove authentication material",
+    )
+    require(
+        stale_context.get("metadata", {}).get("source") == "cache"
+        and stale_context.get("metadata", {}).get("stale") is True
+        and stale_context.get("businesses", [{}])[0].get("name") == "业务A"
+        and stale_context.get("readiness", {}).get("can_execute") is False,
+        "Failed live metadata refresh may show stale cache but must keep execution disabled",
+    )
+    require(
+        ("GET", "/projects") in requests and ("GET", "/environments/project-a") in requests,
+        "Execution context must fetch projects and the selected project's environments through the adapter",
+    )
+
+
+def check_metersphere_async_execution_contract_and_partial_failures():
+    from task_server.services import api_test_plan_service, metersphere_service
+
+    old_dir = metersphere_service.API_TESTING_DIR
+    old_get_plan = api_test_plan_service.get_api_test_plan
+    old_context = getattr(metersphere_service, "metersphere_execution_context", None)
+    old_spawn = getattr(metersphere_service, "_spawn_execution_worker", None)
+    old_push = metersphere_service.push_plan_to_metersphere
+    old_run = metersphere_service.create_metersphere_run
+    old_pull = metersphere_service.pull_metersphere_report
+    old_request = metersphere_service._request_json
+    temp_dir = tempfile.mkdtemp(prefix="metersphere_execution_")
+    metersphere_service.API_TESTING_DIR = temp_dir
+    confirmed_plan = {
+        "plan_id": "api_plan_ready",
+        "name": "账号接口回归",
+        "status": "confirmed",
+        "case_count": 1,
+        "cases": [{"case_id": "API-001", "name": "登录成功"}],
+    }
+    api_test_plan_service.get_api_test_plan = lambda plan_id: (
+        copy.deepcopy(confirmed_plan) if plan_id == "api_plan_ready" else {}
+    )
+    context_calls = []
+
+    def ready_context(force=False):
+        context_calls.append(force)
+        return {"readiness": {"state": "ready", "can_execute": True, "missing": []}}
+
+    metersphere_service.metersphere_execution_context = ready_context
+    spawned = []
+    metersphere_service._spawn_execution_worker = lambda execution_id: spawned.append(execution_id)
+    try:
+        metersphere_service.save_metersphere_config({
+            "base_url": "http://metersphere.local",
+            "token": "secret-token",
+            "auth_mode": "token",
+            "project_id": "project-a",
+            "environment_id": "env-a",
+            "case_push_path": "/cases/push",
+            "plan_run_path": "/plans/run",
+            "run_status_path": "/runs/{run_id}",
+            "report_path": "/reports/{run_id}",
+        })
+        queued = metersphere_service.start_metersphere_execution("api_plan_ready")
+        start_context_calls = list(context_calls)
+        duplicate_rejected = False
+        try:
+            metersphere_service.start_metersphere_execution("api_plan_ready")
+        except metersphere_service.MeterSphereExecutionConflict:
+            duplicate_rejected = True
+
+        metersphere_service.push_plan_to_metersphere = lambda plan_id: {
+            "ok": True,
+            "push_id": "push-1",
+            "Authorization": "Bearer hidden",
+        }
+        metersphere_service.create_metersphere_run = lambda plan_id, test_plan_id="": {
+            "ok": False,
+            "error": "trigger failed",
+            "secretKey": "hidden",
+        }
+        metersphere_service._run_metersphere_execution(queued.get("execution_id"))
+        trigger_failed = metersphere_service.get_metersphere_execution(
+            queued.get("execution_id"),
+            refresh=False,
+        )
+
+        second = metersphere_service.start_metersphere_execution("api_plan_ready")
+        metersphere_service.push_plan_to_metersphere = lambda plan_id: {
+            "ok": True,
+            "push_id": "push-2",
+        }
+        metersphere_service.create_metersphere_run = lambda plan_id, test_plan_id="": {
+            "ok": True,
+            "run_id": "remote-run-2",
+            "status": "RUNNING",
+        }
+        metersphere_service._run_metersphere_execution(second.get("execution_id"))
+
+        def completed_status(method, path, payload=None, timeout=30):
+            require(path == "/runs/remote-run-2", "Run status path must interpolate the real run id")
+            return {
+                "ok": True,
+                "data": {
+                    "status": "SUCCESS",
+                    "total": 4,
+                    "passed": 3,
+                    "failed": 1,
+                    "token": "must-not-leak",
+                },
+            }
+
+        metersphere_service._request_json = completed_status
+        def crashing_report_pull(run_id, raw_report=None):
+            raise RuntimeError("report adapter crash")
+
+        metersphere_service.pull_metersphere_report = crashing_report_pull
+        report_failed = metersphere_service.get_metersphere_execution(
+            second.get("execution_id"),
+            refresh=True,
+        )
+
+        third = metersphere_service.start_metersphere_execution("api_plan_ready")
+
+        def crashing_push(plan_id):
+            raise RuntimeError("unexpected adapter crash")
+
+        metersphere_service.push_plan_to_metersphere = crashing_push
+        metersphere_service._run_metersphere_execution_guarded(third.get("execution_id"))
+        guarded_failure = metersphere_service.get_metersphere_execution(
+            third.get("execution_id"),
+            refresh=False,
+        )
+
+        unconfirmed_rejected = False
+        api_test_plan_service.get_api_test_plan = lambda plan_id: {
+            "plan_id": plan_id,
+            "status": "draft",
+            "case_count": 0,
+            "cases": [],
+        }
+        try:
+            metersphere_service.start_metersphere_execution("api_plan_draft")
+        except metersphere_service.MeterSphereExecutionValidationError:
+            unconfirmed_rejected = True
+    finally:
+        metersphere_service.API_TESTING_DIR = old_dir
+        api_test_plan_service.get_api_test_plan = old_get_plan
+        if old_context is not None:
+            metersphere_service.metersphere_execution_context = old_context
+        if old_spawn is not None:
+            metersphere_service._spawn_execution_worker = old_spawn
+        metersphere_service.push_plan_to_metersphere = old_push
+        metersphere_service.create_metersphere_run = old_run
+        metersphere_service.pull_metersphere_report = old_pull
+        metersphere_service._request_json = old_request
+
+    require(
+        queued.get("status") == "queued"
+        and queued.get("execution_id")
+        and spawned == [queued.get("execution_id"), second.get("execution_id"), third.get("execution_id")]
+        and queued.get("poll_after_ms") == 3000,
+        "Execution start must persist a queued execution_id before dispatching the worker",
+    )
+    require(
+        start_context_calls == [] and context_calls and all(context_calls),
+        "Execution start must return before live MeterSphere readiness checks, while the worker force-validates before push",
+    )
+    require(duplicate_rejected, "A plan with an unfinished execution must reject duplicate starts")
+    trigger_phases = {item.get("id"): item for item in trigger_failed.get("phases") or []}
+    require(
+        trigger_failed.get("status") == "failed"
+        and trigger_phases.get("push_cases", {}).get("state") == "succeeded"
+        and trigger_phases.get("trigger_plan", {}).get("state") == "failed"
+        and trigger_phases.get("metersphere_run", {}).get("state") == "skipped"
+        and trigger_failed.get("push_id") == "push-1"
+        and trigger_failed.get("poll_after_ms") == 0,
+        "Push success followed by trigger failure must preserve completed work and mark later phases skipped",
+    )
+    report_phases = {item.get("id"): item for item in report_failed.get("phases") or []}
+    require(
+        report_failed.get("status") == "failed"
+        and report_failed.get("remote_status") == "succeeded"
+        and report_failed.get("stats") == {"total": 4, "passed": 3, "failed": 1}
+        and isinstance(report_failed.get("duration_seconds"), int)
+        and all(isinstance(item.get("duration_seconds"), int) for item in report_failed.get("phases") or [])
+        and report_phases.get("metersphere_run", {}).get("state") == "succeeded"
+        and report_phases.get("sync_report", {}).get("state") == "failed"
+        and report_failed.get("report_status") == "failed"
+        and report_failed.get("poll_after_ms") == 0,
+        "Remote success with report failure must retain the real run result without claiming full workflow success",
+    )
+    require(
+        "must-not-leak" not in json.dumps(report_failed, ensure_ascii=False)
+        and "hidden" not in json.dumps(trigger_failed, ensure_ascii=False),
+        "Execution status and technical events must recursively redact remote credentials",
+    )
+    require(
+        guarded_failure.get("status") == "failed"
+        and guarded_failure.get("poll_after_ms") == 0
+        and "内部异常" in str(guarded_failure.get("error") or ""),
+        "Unexpected worker exceptions must be persisted as terminal failures instead of leaving a permanent running record",
+    )
+    require(unconfirmed_rejected, "Unconfirmed or empty API plans must be rejected before execution is queued")
 
 
 def check_api_testing_routes_registered():
@@ -13026,6 +13445,7 @@ def check_api_testing_routes_registered():
         "/api/api-testing/assets",
         "/api/api-testing/plans",
         "/api/api-testing/metersphere/config",
+        "/api/api-testing/metersphere/execution-context",
         "/api/api-testing/reports",
     ):
         require(path in router.GET_ROUTES, f"Missing API testing GET route: {path}")
@@ -13037,9 +13457,53 @@ def check_api_testing_routes_registered():
         "/api/api-testing/metersphere/health",
         "/api/api-testing/metersphere/push",
         "/api/api-testing/metersphere/run",
+        "/api/api-testing/metersphere/executions",
         "/api/api-testing/reports/pull",
     ):
         require(path in router.POST_ROUTES, f"Missing API testing POST route: {path}")
+    require(
+        any(
+            pattern.pattern == r"^/api/api-testing/metersphere/executions/([^/]+)$"
+            for pattern, _handler in router._GET_REGEX_ROUTES
+        ),
+        "Missing MeterSphere execution status route",
+    )
+
+    class FakeHandler:
+        def __init__(self):
+            self.response = None
+
+        def _body(self):
+            return {"plan_id": "api_plan_ready", "test_plan_id": "remote-plan"}
+
+        def _json(self, payload, status=200):
+            self.response = (payload, status)
+
+    from task_server.services import metersphere_service
+    old_start = metersphere_service.start_metersphere_execution
+    metersphere_service.start_metersphere_execution = lambda plan_id, test_plan_id="": {
+        "execution_id": "ms_execution_1",
+        "plan_id": plan_id,
+        "test_plan_id": test_plan_id,
+        "status": "queued",
+    }
+    try:
+        handler = FakeHandler()
+        router.POST_ROUTES["/api/api-testing/metersphere/executions"](handler, {})
+    finally:
+        metersphere_service.start_metersphere_execution = old_start
+    require(
+        handler.response == ({
+            "ok": True,
+            "execution": {
+                "execution_id": "ms_execution_1",
+                "plan_id": "api_plan_ready",
+                "test_plan_id": "remote-plan",
+                "status": "queued",
+            },
+        }, 202),
+        "MeterSphere orchestration start route must return HTTP 202 with the persisted execution_id",
+    )
 
 
 def main():
@@ -13052,6 +13516,9 @@ def main():
     check_api_asset_service_openapi_import()
     check_api_test_plan_generation_is_confirmable()
     check_metersphere_config_masks_secrets()
+    check_metersphere_public_adapters_redact_and_require_remote_run_id()
+    check_metersphere_execution_context_uses_live_metadata_and_safe_cache()
+    check_metersphere_async_execution_contract_and_partial_failures()
     check_api_testing_routes_registered()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")

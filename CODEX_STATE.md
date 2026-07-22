@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 MeterSphere 日常执行台：接口数据、异步执行与可停留技术日志
+
+按已确认的 `docs/superpowers/specs/2026-07-22-metersphere-daily-execution-console-design.md` 完成 MeterSphere 执行页重构，不修改 Agent、YAML、Runner、Sonic 或移动端执行链路：
+
+- 主页面不再平铺连接凭据和 11 个调试字段，改为紧凑连接状态、动态业务/环境、当前运行、已确认计划和右侧高级设置抽屉。业务名称来自 MeterSphere Project API，生产 HTML/JavaScript 没有写死 `3D业务`。
+- 新增聚合读取合同 `GET /api/api-testing/metersphere/execution-context`。项目、环境、平台已确认计划、运行、报告映射、能力缺项和 readiness 均由后端归一化；项目/环境成功结果最多缓存 30 秒，实时刷新失败时仅返回 `stale=true` 的只读缓存，执行按钮保持禁用。
+- 新增异步编排合同 `POST /api/api-testing/metersphere/executions` 与状态合同 `GET /api/api-testing/metersphere/executions/{execution_id}`。入口先持久化 `queued` 记录并以 HTTP 202 返回 `execution_id`，工作线程再强制实时校验连接、业务、环境和执行能力，校验通过后依次执行 `push_cases / trigger_plan / metersphere_run / sync_report`。
+- 远端终态只由配置的运行状态接口返回，前端计时和等待时间不会推断成功。计划触发响应必须包含真实 MeterSphere `run_id`；缺失时明确失败，不再生成本地假运行 ID。远端执行成功但报告同步失败时，保留 `remote_status=succeeded`，整体流程单独标记报告阶段失败。
+- 后端根据已持久化开始/结束时间返回运行和阶段 `duration_seconds`；前端只做格式化展示。状态轮询遵循后端 `poll_after_ms`，终态停止。
+- 技术日志只渲染后端事件；没有事件时显示“暂无执行日志”。日志展开键优先使用事件自己的 `run_id / execution_id + event_id`，轮询局部更新前后保存每条日志的展开状态和独立滚动位置。真实 `run_id` 首次出现时，早期事件也不会因此收起。
+- 所有 MeterSphere 远端响应、事件和归一化报告在返回或落盘前递归清理 Authorization、Token、Access Key、Secret Key、Cookie、签名和密码字段。配置读取只返回 `*_configured` 布尔值，密码输入始终为空；空输入保留原密钥，只有明确“清除当前认证”才删除。
+- 请求头严格遵循当前 `auth_mode`：选择 Token 时即使服务端仍保留未启用的 Access Key，也只发送 Bearer Token；选择 Access Key 时必须同时存在 Access Key 和 Secret Key 才签名。
+- 点击“推送并执行”后立即锁定当前计划并写入本地 active run，避免下一次上下文刷新前重复提交；后端仍保留同计划未结束运行的 409 冲突门禁。
+- 工作线程、报告归一化或报告落盘出现非预期异常时，会把当前阶段持久化为终态失败并停止轮询，不会留下永久 `running` 记录；远端已经成功时仍保留 `remote_status=succeeded`。
+- 保留原 `/metersphere/push`、`/metersphere/run` 和 `/reports/pull` 接口兼容旧调用，但同样收紧响应脱敏和真实 `run_id` 要求。
+
+定向验证：
+
+```bash
+python3 -m py_compile task_server/services/metersphere_service.py task_server/router.py tests/backend_static_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py   # 61 checks
+python3 tests/frontend_static_checks.py  # 69 checks
+node tests/visual_smoke_check.js
+git diff --check
+npm test
+```
+
+视觉回归新增 `metersphere-execution.png / metersphere-execution-mobile.png / metersphere-settings.png / metersphere-settings-mobile.png`，覆盖动态业务/环境、四阶段、计划主操作、设置职责分组、认证字段切换、密钥不回填、桌面/手机无横向溢出，以及一次真实轮询式重绘后技术日志仍保持展开和滚动位置。
+
+待部署后真实验收：
+
+- 由用户手动 push、部署；不要由 Codex push。
+- 在服务端设置当前 MeterSphere 版本的项目列表、环境列表、用例推送、计划执行、运行状态和报告查询路径，再强制刷新确认 `source=live / stale=false / readiness=ready`。
+- 使用现有 QA MeterSphere 的动态业务和环境发起一条已确认计划，核对真实 push ID、run ID、四阶段终态和归一化报告。代码和本地夹具已通过，但本轮提交前没有把“真实 QA 执行已跑通”写成完成事实。
+
 ### 2026-07-22 真实回归：人工 Figma 验收候选不能借可信导航提升为 Runner 用例
 
 用户确认部署后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784690470923-f7198fc0`：
