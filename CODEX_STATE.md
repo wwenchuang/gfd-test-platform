@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 真实回归：人工 Figma 验收候选不能借可信导航提升为 Runner 用例
+
+用户确认部署后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784690470923-f7198fc0`：
+
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110 / com.xbxxhz.box 4.45.0 (357)` 可用。华为设备同时在线，但本轮 Agent 只绑定固定 OPPO；生成阶段失败前没有创建 Runner job，因此没有向任一手机下发执行。
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图`。4 张图分 4 批、每批 1 图真实送入 `qwen3.6-plus`，耗时约 `18 / 26 / 22 / 23` 秒，全部一次完成，无重试、无 fallback。
+- AI PLAN 生成 8 条业务流和 12 个场景。收敛结果中扫描复印 `TC-005` 已成功组合本分支可信导航基线 `d623c1e73180bfac` 与同目标兄弟分支 `TC-004` 的有界落地尾链，`boundedConvergence.kind=bounded_landing`，证明上一轮父路径归一化和兄弟尾链修复已在线生效。
+- Agent 最终为 `FAILED / GENERATE_YAML / 30%`。YAML 转换契约拒绝 `MC-001`：该用例标题和场景仍是“扫描复印页百度网盘入口 UI 结构 / Figma 设计稿人工确认”，却被 `source_ui_assertion` 收敛错误提升为 executable；后续确定性 Runner 门禁正确判定“属于设计稿对比或视觉验收，Runner 无设计稿上下文时容易误判”。转换契约没有静默丢弃该用例，而是阻止整批进入 Runner，行为正确。
+
+深层根因与通用修复：
+
+- `_bounded_convergence_evidence()` 原来只根据 `originLevel == manual` 设置 `manualPromotionEligible`。只要存在同分支可信导航，人工 Figma/设计稿验收候选也能生成 `source_ui_assertion` 证据并被强制提升；规划层接受后，YAML 转换层再按 `_case_manual_block_reason()` 拒绝，形成同一用例在两个阶段结论不一致。
+- 现在构造来源页断言证据时，会按实际候选级别和最终收敛字段建立 Runner probe，并复用同一个确定性 Runner 资格门禁。计划应用层还会在路径、断言、标题和上下文全部写回后检查每一条最终 executable case；命中阻断时恢复原候选到 manual 并记录原因。这样无论候选来自 manual、needs_review 或 automatic，模型即使直接返回 executable、可信 baseline 和完整 flow，也不能绕过门禁；普通可见文字、展示、同级、文案断言及合法 bounded landing 仍可执行。
+- 没有放宽 YAML 转换契约、scorer、覆盖门禁、坐标、账号/授权、深层外部操作、Runner、Sonic、Figma 解析或设备策略；没有针对百度网盘、扫描复印或具体 case ID 写死规则。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py  # 61 checks
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+npm test
+```
+
+线上产物离线复核：真实 `MC-001 / source_ui_assertion` 命中设计稿人工验收阻断；真实 `TC-005 / bounded_landing` 无 Runner 资格阻断。提交本轮修复但不 push；用户手动 push/部署后，再使用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，继续监督生成、smoke、remaining、真实报告和修复重跑到终态。
+
 ### 2026-07-22 真实回归：权限请求“对话框”证据也应支持有界弹窗修复；照片叶子缺运行时否定证据不能硬改
 
 用户部署 `1104516` 后，先完成接口测试第一阶段线上配置，再继续以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起百度网盘完整 Agent `agent-1784681089790-2ea0f8e1`：

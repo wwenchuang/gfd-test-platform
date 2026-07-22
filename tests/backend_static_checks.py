@@ -1826,6 +1826,159 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and ai_skill_service.executable_yaml_portfolio_audit(source_ui_applied, {}).get("ok"),
         "A trusted same-branch action path plus the explicit UI contract must let Runner verify source-page visibility/copy/relation without requiring a sibling Figma frame",
     )
+    manual_visual_payload = {
+        "analysis": {
+            "requirement_points": ["REQ-010 客服中心：展示云存储入口、文案正确且与同页入口同级"],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-010-CHECK-01", "requirementId": "REQ-010", "branch": "客服中心", "kind": "visibility", "text": "校验云存储入口可见"},
+                {"id": "REQ-010-CHECK-02", "requirementId": "REQ-010", "branch": "客服中心", "kind": "relation", "text": "校验云存储入口与当前页面其它入口同级展示"},
+                {"id": "REQ-010-CHECK-03", "requirementId": "REQ-010", "branch": "客服中心", "kind": "copy", "text": "校验云存储入口使用需求约定的可见文案"},
+            ],
+        },
+        "cases": [{
+            "case_id": "MC-FIGMA-REVIEW",
+            "title": "客服中心云存储入口 Figma 设计稿人工确认",
+            "executionLevel": "manual",
+            "originExecutionLevel": "manual",
+            "scenario": "缺少对应真机截图，需要人工确认页面与 Figma 设计稿一致",
+            "requirementRefs": ["REQ-010 客服中心：展示云存储入口、文案正确且与同页入口同级"],
+            "preconditions": ["App 首页，用户已登录"],
+            "steps": ["进入客服中心", "人工对比云存储入口与 Figma 设计稿"],
+            "assertions": ["云存储入口的位置、样式和文案与 Figma 设计稿一致"],
+        }],
+        "manual_cases": [],
+    }
+    manual_visual_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        manual_visual_payload,
+        {},
+    )
+    manual_visual_record = {
+        "raw": manual_visual_payload["cases"][0],
+        "compact": ai_skill_service._compact_case_for_plan(
+            manual_visual_payload["cases"][0],
+            0,
+            origin_level="manual",
+        ),
+    }
+    manual_visual_evidence = ai_skill_service._bounded_convergence_evidence(
+        manual_visual_payload,
+        [],
+        manual_visual_audit,
+        selected_baselines=[{
+            "id": "base-customer-service",
+            "selectedBranchName": "客服中心",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "snippet": "- aiTap: 个人中心\n- aiWaitFor: 等待个人中心页面加载完成\n- aiTap: 客服中心\n- aiWaitFor: 等待客服中心页面加载完成\n- aiTap: 常见问题",
+        }],
+        manual_records=[manual_visual_record],
+    )
+    manual_visual_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-customer-service"],
+        "verifiedBaselineIds": ["base-customer-service"],
+        "requirementPoints": manual_visual_payload["analysis"]["requirement_points"],
+        "planningContext": {"pass": "coverage_convergence"},
+        "focusedCandidateIds": ["MC-FIGMA-REVIEW"],
+        "candidateEligibilityById": manual_visual_evidence,
+        "cases": [{
+            "caseId": "MC-FIGMA-REVIEW",
+            "title": "客服中心云存储入口 Figma 设计稿人工确认",
+            "baselineId": "base-customer-service",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": [
+                "启动App并等待首页加载完成",
+                "点击「个人中心」",
+                "等待个人中心页面加载完成",
+                "点击「客服中心」",
+                "等待并校验「云存储」入口可见、文案正确且与同页入口同级",
+            ],
+            "assertionTarget": "「云存储」入口可见、文案正确且与同页入口同级",
+            "requirementRefs": manual_visual_payload["analysis"]["requirement_points"],
+            "executableReason": "模型认为可信基线足以支持自动化",
+            "batch": "remaining",
+        }],
+        "manual_cases": [],
+    }
+    manual_visual_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        manual_visual_payload,
+        manual_visual_plan,
+    )
+    require(
+        "MC-FIGMA-REVIEW" not in manual_visual_evidence
+        and not any(
+            item.get("case_id") == "MC-FIGMA-REVIEW"
+            and item.get("executionLevel") == "executable"
+            for item in manual_visual_applied.get("cases") or []
+        )
+        and any(
+            item.get("case_id") == "MC-FIGMA-REVIEW"
+            and item.get("executionLevel") == "manual"
+            for item in manual_visual_applied.get("manual_cases") or []
+        ),
+        "A trusted navigation baseline must not promote a manual Figma/design-review candidate into Runner execution",
+    )
+    needs_review_visual_payload = copy.deepcopy(manual_visual_payload)
+    needs_review_visual_case = needs_review_visual_payload["cases"][0]
+    needs_review_visual_case.update({
+        "title": "客服中心云存储入口展示",
+        "executionLevel": "needs_review",
+        "originExecutionLevel": "automatic",
+        "scenario": "校验客服中心云存储入口展示",
+        "business_path": "App 首页 -> 客服中心 -> 人工对比 Figma 设计稿一致性",
+        "steps": ["进入客服中心", "等待云存储入口可见"],
+        "assertions": ["云存储入口可见、文案正确且与同页入口同级"],
+    })
+    needs_review_visual_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        needs_review_visual_payload,
+        {},
+    )
+    needs_review_visual_record = {
+        "raw": needs_review_visual_case,
+        "compact": ai_skill_service._compact_case_for_plan(
+            needs_review_visual_case,
+            0,
+            origin_level="automatic",
+        ),
+    }
+    needs_review_visual_evidence = ai_skill_service._bounded_convergence_evidence(
+        needs_review_visual_payload,
+        [needs_review_visual_record],
+        needs_review_visual_audit,
+        selected_baselines=[{
+            "id": "base-customer-service",
+            "selectedBranchName": "客服中心",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+            "snippet": "- aiTap: 个人中心\n- aiWaitFor: 等待个人中心页面加载完成\n- aiTap: 客服中心\n- aiWaitFor: 等待客服中心页面加载完成\n- aiTap: 常见问题",
+        }],
+    )
+    needs_review_visual_plan = copy.deepcopy(manual_visual_plan)
+    needs_review_visual_plan["candidateEligibilityById"] = needs_review_visual_evidence
+    needs_review_visual_plan["cases"][0]["title"] = needs_review_visual_case["title"]
+    needs_review_visual_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        needs_review_visual_payload,
+        needs_review_visual_plan,
+    )
+    require(
+        "MC-FIGMA-REVIEW" not in needs_review_visual_evidence
+        and not any(
+            item.get("case_id") == "MC-FIGMA-REVIEW"
+            and item.get("executionLevel") == "executable"
+            for item in needs_review_visual_applied.get("cases") or []
+        )
+        and any(
+            item.get("case_id") == "MC-FIGMA-REVIEW"
+            and item.get("executionLevel") == "manual"
+            and "设计稿对比" in str(item.get("automation_reason") or "")
+            for item in needs_review_visual_applied.get("manual_cases") or []
+        )
+        and needs_review_visual_applied.get("review", {}).get(
+            "executable_yaml_plan", {}
+        ).get("runner_eligibility_guard_count") == 1,
+        "Runner eligibility must inspect the final materialized case for every executable classification, including automatic needs-review candidates",
+    )
     inferred_source_ui_payload = {
         "analysis": {
             "requirement_points": [

@@ -76,6 +76,7 @@ from task_server.services.yaml_service import (
     strict_visible_value_contract,
     _case_has_deep_external_action,
     _case_is_bounded_external_landing_check,
+    _case_manual_block_reason,
 )
 from task_server.services.knowledge_service import (
     repair_knowledge_context,
@@ -5346,6 +5347,53 @@ def _baseline_navigation_matches_landing_source(flow, landing_tail, branch):
     return True
 
 
+def _runner_eligibility_probe_for_planned_case(
+    source_case,
+    flow,
+    assertion_target,
+    precondition,
+    requirement_refs,
+    title="",
+    automation_reason="",
+    canonicalize_context=True,
+):
+    """Materialize the fields that Runner eligibility will inspect after promotion."""
+    probe = copy.deepcopy(source_case) if isinstance(source_case, dict) else {}
+    if canonicalize_context:
+        for stale_key in (
+            "goal", "business_path", "businessPath", "path",
+            "preconditions", "precondition",
+            "data_requirements", "dataRequirements", "test_data", "testData",
+            "suggested_setup", "suggestedSetup", "setup",
+        ):
+            probe.pop(stale_key, None)
+    if str(title or "").strip():
+        probe["title"] = str(title).strip()
+    probe["steps"] = normalize_text_list(flow)[:8]
+    probe["assertions"] = [assertion_target]
+    probe["expected_result"] = assertion_target
+    if canonicalize_context or not str(probe.get("goal") or "").strip():
+        probe["goal"] = assertion_target
+    if canonicalize_context or not str(
+        probe.get("business_path") or probe.get("businessPath") or ""
+    ).strip():
+        probe["business_path"] = " -> ".join(probe["steps"])
+    if canonicalize_context or not normalize_text_list(
+        probe.get("preconditions") or probe.get("precondition")
+    ):
+        probe["preconditions"] = [precondition]
+    probe["requirementRefs"] = normalize_text_list(requirement_refs)[:8]
+    probe["automation_reason"] = (
+        str(automation_reason or "").strip()
+        or "可信来源页路径与当前需求可见断言已收敛"
+    )
+    probe["ai_case_plan"] = {
+        "baselineGrounded": True,
+        "pathPlanApplied": True,
+    }
+    return probe
+
+
 def _bounded_convergence_evidence(
     normalized,
     automatic_records,
@@ -5646,6 +5694,24 @@ def _bounded_convergence_evidence(
             if case_covers_requirement_acceptance(probe, item)
         ]
         if not covered_checks:
+            continue
+        runner_probe = _runner_eligibility_probe_for_planned_case(
+            source_case,
+            flow,
+            assertion_target,
+            precondition,
+            requirement_refs,
+            canonicalize_context=(
+                str(
+                    ((source_record or {}).get("compact") or {}).get("currentLevel")
+                    or source_case.get("executionLevel")
+                    or source_case.get("execution_level")
+                    or ""
+                ).strip().lower()
+                == "manual"
+            ),
+        )
+        if _case_manual_block_reason(runner_probe):
             continue
         evidence_by_id[case_id] = {
             "eligible": True,
@@ -8015,6 +8081,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     preserve_contract_applied_count = 0
     preserve_contract_guard_count = 0
     manual_reclassification_canonicalized_count = 0
+    runner_eligibility_guard_count = 0
     convergence_repair_restore_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
@@ -8482,8 +8549,8 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         }
         if reason:
             case["automation_reason"] = reason
-        output_cases.append(case)
         if level != "executable":
+            output_cases.append(case)
             case["smoke"] = False
             flags = [flag for flag in normalize_text_list(case.get("flag") or case.get("flags")) if flag != "冒烟"]
             case["flag"] = flags
@@ -8576,6 +8643,35 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 case["business_path"] = " -> ".join(planned_flow)
         if item.get("executableReason") and not case.get("automation_reason"):
             case["automation_reason"] = item.get("executableReason")
+        runner_block_reason = _case_manual_block_reason(case)
+        if runner_block_reason:
+            manual_item = copy.deepcopy(record["case"])
+            manual_item["case_id"] = case_id
+            manual_item["originExecutionLevel"] = origin_level
+            manual_item["executionLevel"] = "manual"
+            _set_case_smoke(manual_item, False)
+            manual_item["automation_reason"] = (
+                "最终执行计划仍不适合直接下发 Runner：" + runner_block_reason
+            )
+            manual_item["ai_case_classification"] = {
+                "level": "manual",
+                "reason": manual_item["automation_reason"],
+                "originLevel": origin_level,
+            }
+            manual_cases.append(manual_item)
+            applied_counts["executable"] = max(0, applied_counts["executable"] - 1)
+            applied_counts["manual"] += 1
+            if origin_level == "manual":
+                promoted_manual_count = max(0, promoted_manual_count - 1)
+                retained_manual_count += 1
+            if canonicalize_reclassified_contract:
+                manual_reclassification_canonicalized_count = max(
+                    0,
+                    manual_reclassification_canonicalized_count - 1,
+                )
+            runner_eligibility_guard_count += 1
+            continue
+        output_cases.append(case)
         can_smoke = bool(
             path_plan_applied
             and item.get("precondition")
@@ -8756,6 +8852,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "preserve_contract_applied_count": preserve_contract_applied_count,
         "preserve_contract_guard_count": preserve_contract_guard_count,
         "manual_reclassification_canonicalized_count": manual_reclassification_canonicalized_count,
+        "runner_eligibility_guard_count": runner_eligibility_guard_count,
         "focused_candidate_count": len(focused_candidate_ids),
         "overlap_count": sum(1 for levels in classification_hits.values() if len(levels) > 1),
         "smoke_count": smoke_used,
