@@ -3952,6 +3952,49 @@ git diff --check
 
 - 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
 
+### 2026-07-22 最新真实回归：已验证执行计划写入 YAML 时丢失
+
+部署 `5303203` 后已先完成 MeterSphere 线上配置校验，平台保存了 MeterSphere Base URL、`3D业务` 项目、Access Key / Secret Key（配置读取只返回脱敏值），`/api/api-testing/metersphere/health` 返回 `health_ok=true`、MeterSphere `code=100200`。随后继续监督百度网盘回归。
+
+最新 Agent：
+
+- Agent：`agent-1784684943625-4d915138`。
+- 输入保持不变：`基础打印新增百度网盘入口`，Figma 原链接，`scope=regression`，`executionMode=RUNNER_JOB`，`runnerId=win-runner-01`，固定 OPPO `ecbfd645`，模型 `qwen3.6-plus`，包名 `com.xbxxhz.box`。
+- Runner 和设备预检正常：`win-runner-01` 在线，OPPO PHM110 / `ecbfd645` 在线且 app `4.45.0` 可用；未选择第二台设备。
+- 终态：`FAILED / GENERATE_YAML / 30%`，未创建 Runner job，失败与 Windows Runner、ADB、Sonic 或手机无关。
+- Figma 4 页 / 4 图全部真实送入 `qwen3.6-plus` 并完成；PLAN 成功生成 8 条业务流、12 个场景。
+- GENERATE_YAML 产物生成 5 个 YAML，但最终只有 4 个 executable；覆盖门禁正确阻断，缺口集中在 `REQ-003 扫描复印` 的展示、同级、文案、可达性 4 个验收点。
+
+根因：
+
+- 生成 payload 中扫描 case `TC-006` 已经是 executable，且 `ai_case_plan` 具备 `baselineGrounded=true / baselineVerified=true / pathPlanApplied=true`，引用扫描成功基线 `d623c1e73180bfac`，计划 flow 也包含扫描复印导航、等待百度网盘入口、点击百度网盘和首屏落地断言。
+- 但 `case_to_task_yaml` 最终写 YAML 时仍优先使用旧的 `case.steps / case.assertions / title`，没有把服务端已验证的 `ai_case_plan.flow / assertionTarget` 作为 Runner YAML 渲染合同。
+- 旧标题和步骤残留“待确认布局 / 若存在 / 记录缺陷”，生成的扫描 YAML 因人工条件文案和缺少明确 `aiAssert` 被 scorer 降级，导致 12 个验收点只确认 8 个可执行覆盖。
+
+本轮通用修复：
+
+- `case_to_task_yaml` 增加已验证计划渲染路径：只有 `baselineGrounded + baselineVerified + pathPlanApplied` 同时为真、且计划自身不含人工条件分支时，才使用 `ai_case_plan.flow` 生成 Runner 步骤，并把 `assertionTarget` 写入最终 `aiAssert`。
+- 已验证计划场景下清理任务标题中的审稿型尾巴，例如“待确认 / 需人工 / 人工复核 / 记录缺陷”等，避免标题本身触发人工条件降级。
+- 未验证计划、计划 flow 自身带“若存在 / 若不存在 / 记录缺陷 / 人工确认”等条件分支时，仍走原有保守路径并由 scorer / 覆盖门禁阻断。
+- 未修改 `yaml_executable_scorer.py`、Runner、Sonic、Figma 解析、坐标策略、账号授权或深层外部文件操作限制。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/yaml_service.py task_server/services/ai_skill_service.py task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+- RED 测试先复现了线上失败：已验证 `ai_case_plan` 未被用于 YAML 渲染时，扫描 YAML 仍含“待确认 / 若存在 / 记录缺陷”并被降级。
+- 修复后后端 61 项、undefined-name、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端 visual smoke 全部通过。
+
+待完成：
+
+- 提交本轮修复；由用户 push、部署。
+- 部署后继续使用完全相同的百度网盘 Agent 参数发起真实线上回归；重点确认扫描复印 YAML 由已验证 `ai_case_plan` 渲染，三个业务入口的展示、同级关系、文案和可达性都被 executable YAML 覆盖，然后再进入固定 OPPO Runner 执行。
+
 ### 2026-07-21 最新真实回归：扫描 relation 收敛候选识别
 
 部署 `058d4f6` 后重新发起有效 Agent `agent-1784595694809-776c1a1a`：

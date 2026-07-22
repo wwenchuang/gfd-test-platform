@@ -3290,6 +3290,77 @@ def attach_verified_baseline_evidence(yaml_text, case):
     return updated, updated != text
 
 
+def _verified_case_plan_for_yaml(case):
+    """Return the server-verified plan that should drive YAML rendering."""
+    case = case if isinstance(case, dict) else {}
+    plan = case.get("ai_case_plan") if isinstance(case.get("ai_case_plan"), dict) else {}
+    baseline_grounded = (
+        plan.get("baselineGrounded") is True
+        or case.get("baselineGrounded") is True
+    )
+    baseline_verified = (
+        plan.get("baselineVerified") is True
+        or case.get("baselineVerified") is True
+    )
+    path_applied = (
+        plan.get("pathPlanApplied") is True
+        or case.get("pathPlanApplied") is True
+    )
+    flow = normalize_text_list(plan.get("flow"))
+    if not (baseline_grounded and baseline_verified and path_applied and flow):
+        return {}
+
+    assertion = first_non_empty(
+        plan.get("assertionTarget"),
+        plan.get("expected_result"),
+        plan.get("expectedResult"),
+        plan.get("assertion"),
+    )
+    compact_plan = re.sub(
+        r"\s+",
+        "",
+        " ".join(flow + normalize_text_list(assertion) + normalize_text_list(plan.get("precondition"))),
+    )
+    manual_terms = (
+        "待确认",
+        "待复核",
+        "需人工",
+        "人工确认",
+        "人工复核",
+        "手工确认",
+        "若存在",
+        "如果存在",
+        "如存在",
+        "若不存在",
+        "如果不存在",
+        "或确认无",
+        "确认该页面无",
+        "记录缺陷",
+        "记录问题",
+        "记录入口的具体位置",
+    )
+    if any(term in compact_plan for term in manual_terms):
+        return {}
+    return {
+        "flow": flow,
+        "assertion": assertion,
+        "precondition": first_non_empty(plan.get("precondition"), plan.get("preconditions")),
+    }
+
+
+def _clean_verified_case_plan_title(title):
+    """Drop review-only suffixes after the server has accepted an executable plan."""
+    original = str(title or "").strip()
+    cleaned = re.sub(
+        r"[（(][^）)]*(?:待确认|待复核|需人工|人工确认|人工复核|手工确认|若存在|如果存在|如存在|记录缺陷)[^）)]*[）)]",
+        "",
+        original,
+    )
+    cleaned = re.sub(r"(?:待确认|待复核|需人工确认|人工确认|人工复核|手工确认)", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_：:，,。")
+    return cleaned or original or "未命名用例"
+
+
 def normalize_assertion_for_yaml(assertion, case):
     """规范化断言文本。"""
     text = str(assertion or "").strip()
@@ -3450,6 +3521,22 @@ def case_to_task_yaml(case, indent="  ", case_index=1):
     preconditions = case.get("preconditions") or case.get("precondition") or []
     steps = case.get("steps") or []
     assertions = case.get("assertions") or case.get("expects") or case.get("expected") or []
+    verified_plan = _verified_case_plan_for_yaml(case)
+    if verified_plan:
+        case = dict(case)
+        title = _clean_verified_case_plan_title(title)
+        case["title"] = title
+        steps = verified_plan["flow"]
+        case["steps"] = steps
+        plan_precondition = verified_plan.get("precondition")
+        if plan_precondition and not normalize_text_list(preconditions):
+            preconditions = [plan_precondition]
+            case["preconditions"] = preconditions
+        plan_assertion = verified_plan.get("assertion")
+        if plan_assertion:
+            assertions = normalize_text_list(plan_assertion) + normalize_text_list(assertions)
+            case["assertions"] = assertions
+            case["expected_result"] = plan_assertion
     app_package = resolve_app_package(explicit=case.get("app_package") or case.get("appPackage") or "")
     flow_indent = indent + "  "
 

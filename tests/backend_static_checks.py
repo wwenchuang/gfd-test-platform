@@ -3821,6 +3821,49 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "coordinate" not in promoted_yaml.lower(),
         "State-variant reachability must convert into visible-text Midscene actions without coordinates",
     )
+    verified_plan_yaml = yaml_service.case_to_task_yaml({
+        "case_id": "TC-006",
+        "title": "扫描复印页-百度网盘入口UI展示校验（待确认布局）",
+        "app_package": "com.xbxxhz.box",
+        "executionLevel": "executable",
+        "steps": [
+            "点击「扫描复印」入口",
+            "若存在「百度网盘」入口则记录位置，否则记录缺陷",
+        ],
+        "assertions": [],
+        "ai_case_plan": {
+            "baselineId": "d623c1e73180bfac",
+            "baselineGrounded": True,
+            "baselineVerified": True,
+            "pathPlanApplied": True,
+            "precondition": "App 首页",
+            "flow": [
+                "启动App并等待首页加载完成",
+                "点击「扫描复印 icon」",
+                "等待扫描复印页面加载完成",
+                "等待并校验「百度网盘」入口可见，文案为“百度网盘”，且与同级入口层级位置关系正确",
+                "点击「百度网盘」入口",
+            ],
+            "assertionTarget": "成功跳转至百度网盘授权页或文件列表，无Crash，无长时间白屏",
+            "requirementRefs": [
+                "REQ-003 扫描复印：校验百度网盘入口可见；校验百度网盘入口与当前页面同级入口的层级和位置关系；校验百度网盘入口使用需求约定的可见文案；点击百度网盘入口并校验目标页面稳定可达",
+            ],
+        },
+    }, indent="    ", case_index=6)
+    verified_plan_score = yaml_service.score_midscene_yaml_executable(
+        "android:\n  tasks:\n" + verified_plan_yaml,
+        generated=True,
+    )
+    require(
+        "点击「扫描复印 icon」" in verified_plan_yaml
+        and "成功跳转至百度网盘授权页或文件列表" in verified_plan_yaml
+        and "aiAssert:" in verified_plan_yaml
+        and "待确认" not in verified_plan_yaml
+        and "若存在" not in verified_plan_yaml
+        and "记录缺陷" not in verified_plan_yaml
+        and verified_plan_score.get("executionLevel") == "executable",
+        "YAML conversion must render the server-verified ai_case_plan instead of stale manual draft wording",
+    )
     bounded_external = {
         **promoted,
         "steps": [
