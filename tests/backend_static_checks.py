@@ -12782,18 +12782,32 @@ def check_metersphere_config_masks_secrets():
         saved = metersphere_service.save_metersphere_config({
             "base_url": "http://metersphere.local",
             "token": "secret-token",
+            "access_key": "access-key-value",
+            "secret_key": "secret-key-value",
             "workspace_id": "ws1",
             "project_id": "project1",
             "environment_id": "env1",
         })
         masked = metersphere_service.metersphere_config(masked=True)
         raw = metersphere_service.metersphere_config(masked=False)
+        auth_headers = metersphere_service._metersphere_auth_headers(raw, method="GET", path="/project/get/project1")
     finally:
         metersphere_service.API_TESTING_DIR = old_dir
     require(saved.get("base_url") == "http://metersphere.local", "MeterSphere config must save base_url")
     require(masked.get("token") != "secret-token", "MeterSphere token must be masked")
+    require(masked.get("access_key") != "access-key-value", "MeterSphere access key must be masked")
+    require(masked.get("secret_key") != "secret-key-value", "MeterSphere secret key must be masked")
     require(masked.get("token_configured") is True, "Masked config must expose token presence")
+    require(masked.get("access_key_configured") is True and masked.get("secret_key_configured") is True, "Masked config must expose MeterSphere AK/SK presence")
     require(raw.get("token") == "secret-token", "Raw config must remain available server-side")
+    require(raw.get("access_key") == "access-key-value" and raw.get("secret_key") == "secret-key-value", "Raw MeterSphere AK/SK config must remain server-side")
+    require(
+        auth_headers.get("accessKey") == "access-key-value"
+        and auth_headers.get("timestamp")
+        and auth_headers.get("signature")
+        and "Authorization" not in auth_headers,
+        "MeterSphere AK/SK auth must send accessKey/timestamp/signature headers instead of Bearer token",
+    )
 
 
 def check_api_testing_routes_registered():

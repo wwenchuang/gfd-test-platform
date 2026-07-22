@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 import time
 import urllib.error
@@ -40,6 +42,8 @@ def _env_config() -> Dict[str, Any]:
     return {
         "base_url": os.getenv("METERSPHERE_BASE_URL", "").strip(),
         "token": os.getenv("METERSPHERE_TOKEN", "").strip(),
+        "access_key": os.getenv("METERSPHERE_ACCESS_KEY", "").strip(),
+        "secret_key": os.getenv("METERSPHERE_SECRET_KEY", "").strip(),
         "workspace_id": os.getenv("METERSPHERE_WORKSPACE_ID", "").strip(),
         "project_id": os.getenv("METERSPHERE_PROJECT_ID", "").strip(),
         "environment_id": os.getenv("METERSPHERE_ENVIRONMENT_ID", "").strip(),
@@ -73,9 +77,18 @@ def metersphere_config(masked: bool = True) -> Dict[str, Any]:
     cfg = _load_raw_config()
     cfg["configured"] = bool(cfg.get("base_url"))
     cfg["token_configured"] = bool(cfg.get("token"))
+    cfg["access_key_configured"] = bool(cfg.get("access_key"))
+    cfg["secret_key_configured"] = bool(cfg.get("secret_key"))
     if masked:
         cfg["token"] = _mask_secret(cfg.get("token"))
+        cfg["access_key"] = _mask_secret(cfg.get("access_key"))
+        cfg["secret_key"] = _mask_secret(cfg.get("secret_key"))
     return cfg
+
+
+def _looks_like_masked_secret(value: Any, current: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(current) and ("***" in text or text == "******")
 
 
 def save_metersphere_config(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -83,6 +96,8 @@ def save_metersphere_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     allowed = {
         "base_url",
         "token",
+        "access_key",
+        "secret_key",
         "workspace_id",
         "project_id",
         "environment_id",
@@ -94,8 +109,8 @@ def save_metersphere_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     next_cfg: Dict[str, Any] = {}
     for key in allowed:
         value = payload.get(key, current.get(key, ""))
-        if key == "token" and str(value or "").startswith("***"):
-            value = current.get("token", "")
+        if key in {"token", "access_key", "secret_key"} and _looks_like_masked_secret(value, current.get(key, "")):
+            value = current.get(key, "")
         next_cfg[key] = str(value or "").strip()
     next_cfg["base_url"] = next_cfg.get("base_url", "").rstrip("/")
     if not next_cfg.get("health_path"):
@@ -103,6 +118,27 @@ def save_metersphere_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     next_cfg["updated_at"] = _now()
     write_json_file(_config_path(), next_cfg)
     return metersphere_config(masked=True)
+
+
+def _metersphere_auth_headers(
+    cfg: Dict[str, Any],
+    method: str = "GET",
+    path: str = "",
+    payload: Dict[str, Any] | None = None,
+) -> Dict[str, str]:
+    access_key = str(cfg.get("access_key") or "").strip()
+    secret_key = str(cfg.get("secret_key") or "").strip()
+    if access_key:
+        timestamp = str(int(time.time() * 1000))
+        normalized_path = "/" + str(path or "").lstrip("/")
+        body = json.dumps(payload, ensure_ascii=False, sort_keys=True) if payload is not None else ""
+        canonical = "\n".join([str(method or "GET").upper(), normalized_path, access_key, timestamp, body])
+        signature = hmac.new(secret_key.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+        return {"accessKey": access_key, "timestamp": timestamp, "signature": signature}
+    token = str(cfg.get("token") or "").strip()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    return {}
 
 
 def _request_json(method: str, path: str, payload: Dict[str, Any] | None = None, timeout: float = 30) -> Dict[str, Any]:
@@ -116,8 +152,7 @@ def _request_json(method: str, path: str, payload: Dict[str, Any] | None = None,
     url = base_url + (api_path if api_path.startswith("/") else f"/{api_path}")
     data = None
     headers = {"Content-Type": "application/json; charset=utf-8"}
-    if cfg.get("token"):
-        headers["Authorization"] = f"Bearer {cfg.get('token')}"
+    headers.update(_metersphere_auth_headers(cfg, method=method, path=api_path, payload=payload))
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
@@ -146,10 +181,15 @@ def metersphere_health() -> Dict[str, Any]:
     cfg = _load_raw_config()
     if not cfg.get("base_url"):
         return {"ok": False, "configured": False, "error": "MeterSphere base_url 未配置"}
-    result = _request_json("GET", cfg.get("health_path") or "/api/health", timeout=10)
+    health_path = cfg.get("health_path") or "/api/health"
+    if cfg.get("access_key") and cfg.get("project_id") and str(health_path).strip("/") == "api/health":
+        health_path = f"/project/get/{cfg.get('project_id')}"
+    result = _request_json("GET", health_path, timeout=10)
     result["configured"] = True
     result["base_url"] = cfg.get("base_url")
     result["token_configured"] = bool(cfg.get("token"))
+    result["access_key_configured"] = bool(cfg.get("access_key"))
+    result["secret_key_configured"] = bool(cfg.get("secret_key"))
     return result
 
 

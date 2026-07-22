@@ -323,6 +323,8 @@ async function showApiExecutionPage() {
             <div class="api-form-grid">
               <input id="api-ms-base-url" placeholder="MeterSphere 地址" value="${escapeHtml(config.base_url || '')}">
               <input id="api-ms-token" placeholder="Token / Access Token" value="${escapeHtml(config.token || '')}">
+              <input id="api-ms-access-key" placeholder="Access Key" value="${escapeHtml(config.access_key || '')}">
+              <input id="api-ms-secret-key" placeholder="Secret Key" value="${escapeHtml(config.secret_key || '')}">
               <input id="api-ms-workspace" placeholder="Workspace ID" value="${escapeHtml(config.workspace_id || '')}">
               <input id="api-ms-project" placeholder="Project ID" value="${escapeHtml(config.project_id || '')}">
               <input id="api-ms-env" placeholder="Environment ID" value="${escapeHtml(config.environment_id || '')}">
@@ -368,6 +370,8 @@ function collectApiMeterSphereConfig() {
   return {
     base_url: document.getElementById('api-ms-base-url')?.value.trim() || '',
     token: document.getElementById('api-ms-token')?.value.trim() || '',
+    access_key: document.getElementById('api-ms-access-key')?.value.trim() || '',
+    secret_key: document.getElementById('api-ms-secret-key')?.value.trim() || '',
     workspace_id: document.getElementById('api-ms-workspace')?.value.trim() || '',
     project_id: document.getElementById('api-ms-project')?.value.trim() || '',
     environment_id: document.getElementById('api-ms-env')?.value.trim() || '',
@@ -384,7 +388,8 @@ async function saveApiMeterSphereConfig() {
     const data = await apiRequest('/api-testing/metersphere/config', { method: 'POST', body: collectApiMeterSphereConfig() });
     if (status) {
       status.className = 'generate-status show success';
-      status.textContent = `已保存配置，token ${data.config?.token_configured ? '已配置' : '未配置'}`;
+      const apiKeyReady = data.config?.access_key_configured && data.config?.secret_key_configured;
+      status.textContent = `已保存配置，API Key ${apiKeyReady ? '已配置' : '未配置'}，token ${data.config?.token_configured ? '已配置' : '未配置'}`;
     }
     showToast('✓ MeterSphere 配置已保存', 'success');
   } catch(e) {
