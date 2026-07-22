@@ -12532,6 +12532,14 @@ _AGENT_REPAIR_OVERLAY_CONTROL_TERMS = (
     "确定", "确认", "允许", "取消", "关闭", "跳过", "稍后", "我知道了", "同意",
     "ok", "confirm", "allow", "cancel", "close", "dismiss", "skip", "later",
 )
+_AGENT_REPAIR_PERMISSION_CONFIRM_TERMS = (
+    "确定", "确认", "允许", "同意", "继续", "我知道了",
+    "ok", "confirm", "allow",
+)
+_AGENT_REPAIR_PERMISSION_CONTEXT_TERMS = (
+    "温馨提示", "权限", "相机权限", "请求相机权限", "请求使用相机权限",
+    "授权", "permission", "camera permission",
+)
 _AGENT_REPAIR_OVERLAY_ACTION_VERB_PATTERN = (
     r"(?:点击|点按|轻触|选择|按下|\bclick\b|\btap\b|\bpress\b|\bselect\b)"
 )
@@ -12587,10 +12595,22 @@ def _agent_repair_overlay_action_controls(action_text, positive_evidence_text):
         )[0]
         if not any(term in target_clause for term in _AGENT_REPAIR_OVERLAY_CONTROL_TERMS):
             return []
-    return [
+    matched = [
         term for term in _AGENT_REPAIR_OVERLAY_CONTROL_TERMS
         if term in action_text and term in positive_evidence_text
     ]
+    if matched:
+        return matched
+    if (
+        any(term.casefold() in positive_evidence_text for term in _AGENT_REPAIR_PERMISSION_CONTEXT_TERMS)
+        and any(term.casefold() in action_text for term in _AGENT_REPAIR_PERMISSION_CONTEXT_TERMS)
+        and any(marker in positive_evidence_text for marker in ("弹窗", "对话框", "dialog", "popup", "modal"))
+    ):
+        return [
+            term for term in _AGENT_REPAIR_PERMISSION_CONFIRM_TERMS
+            if term.casefold() in action_text
+        ]
+    return []
 
 
 def _agent_repair_transient_overlay_change(

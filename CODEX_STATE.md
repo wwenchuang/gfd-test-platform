@@ -28,6 +28,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 真实回归：权限请求“对话框”证据也应支持有界弹窗修复；照片叶子缺运行时否定证据不能硬改
+
+用户部署 `1104516` 后，先完成接口测试第一阶段线上配置，再继续以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起百度网盘完整 Agent `agent-1784681089790-2ea0f8e1`：
+
+- MeterSphere QA 地址已通过平台配置保存为 `http://qa-ms-apiauto.gongfudou.com:8081`，平台 `/api/api-testing/overview` 显示 `metersphere.configured=true`、`token_configured=false`。使用用户提供的账号完成 MeterSphere 登录握手后，`/user/api/key/list` 返回 403，当前账号缺少 `SYSTEM_PERSONAL_API_KEY:READ` 权限；平台 MeterSphere adapter 目前只支持 Bearer token/API Key 形态，不能把临时登录态当正式 token 提交到仓库或配置。
+- 线上 `8091 / 8088`、AI Gateway、Sonic、Runner 健康；固定 OPPO `ecbfd645 / PHM110` 是唯一 dry-run 和 smoke 执行设备。华为设备在线但本轮没有被 Agent 选择或执行。
+- PREPARE_SOURCE 成功，Figma 解析 `4 页 / 4 图 / 忽略 0`；PLAN 阶段 4 张图分 4 批真实送入 `qwen3.6-plus` 并全部完成。GENERATE_YAML 成功生成 6 条 executable YAML，覆盖 12 个场景：文档/照片/扫描三个入口的展示、同级、文案和可达性均通过生成阶段覆盖门禁。
+- 首批 smoke 3 条真实执行：文档展示通过；扫描展示失败于「小白扫描王」页的“温馨提示”相机权限请求对话框遮挡；照片展示在“请选择需要制作的照片尺寸”弹窗后点击「一寸照规格页」发生 Runner/Midscene 300 秒超时。冒烟通过率 `1/3 = 33.3%`，remaining 3 条被门禁暂停。
+- 扫描修复草稿方向正确，只是在 `点击「文件扫描」` 后插入“若出现标题为温馨提示且内容包含请求使用相机权限的弹窗，点击黄色确定按钮”。旧门禁只接受运行证据同时 OCR 出“取消/确定”的情况；本轮真实报告的关键文本主要是“权限请求对话框/请求使用相机权限”，导致 `navigation_change_without_baseline_citation` 误挡。
+- 照片失败公开报告只能证明当前在照片打印页底部尺寸选择弹窗，随后 `aiTap: 点击「一寸照规格页」` 超时；没有稳定 OCR 出可选尺寸，也没有明确“没有一寸照”的运行时否定证据。因此本轮没有把照片叶子硬改成 `5寸照片`，避免绕过既有“运行时否定 + 当前 Figma 替代叶子 + 当前分支基线”证据链。
+
+本轮通用修复：
+
+- `positive_overlay_evidence()` 将中文“对话框”纳入弹窗/浮层遮挡证据：覆盖“权限请求对话框”“温馨提示权限对话框”“业务入口被对话框遮挡”等真实报告表述，并增加“无对话框/未出现对话框”等否定词，避免误判。
+- repair candidate gate 在已有报告关键帧和强权限上下文时，允许使用补丁动作里明确写出的确认类控件补齐 OCR 缺失，只限 `确定 / 确认 / 允许 / 同意 / 继续 / 我知道了 / ok / confirm / allow`；不会因为动作里出现“如果没有弹窗则跳过”而把 `跳过` 当目标控件，也不会允许 `取消`、业务导航、坐标或无弹窗证据。
+- 该修复不硬编码百度网盘，不放宽导航基线门禁、scorer、覆盖门禁、账号/授权、Runner、Sonic、Figma 解析、设备策略或历史 YAML；只修正真实报告证据与 transient overlay 门禁之间的同义词/按钮 OCR 缺失问题。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+待完成：
+
+- 提交本轮修复但不 push；用户手动 push/部署后，再用相同参数和固定 OPPO `ecbfd645` 发起下一轮完整 Agent，重点确认扫描权限请求对话框修复稿能通过门禁并进入同设备重跑。照片“一寸照”问题仍需等 Runner 失败证据明确否定该叶子，或生成阶段有更强通用规则证明应优先选择 5 寸当前页，禁止为百度网盘写死。
+
 ### 2026-07-21 接口测试 MVP：OpenAPI 导入到 MeterSphere 执行闭环第一版
 
 本轮按用户确认的“先跑通”范围，新增 API 测试工作区，不改现有 Sonic/Midscene/Runner 主链路：

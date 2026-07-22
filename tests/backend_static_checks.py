@@ -6549,6 +6549,39 @@ def check_agent_failure_review_and_repair_guard():
         and "确定" in (camera_permission_gate.get("transientOverlayChange", {}).get("matchedControls") or []),
         "Runtime evidence that a permission-request popup contains visible cancel/confirm controls must authorize only the transient overlay handler",
     )
+    camera_permission_prompt_fixed = overlay_original.replace(
+        "        - aiTap: 点击「证件扫描」",
+        "        - aiTap: 点击「证件扫描」\n"
+        "        - ai: 如果屏幕中间出现标题为“温馨提示”且内容包含“请求使用相机权限”的弹窗，点击黄色的“确定”按钮；如果没有弹窗则跳过",
+    )
+    camera_permission_prompt_gate = agent_service._agent_repair_candidate_gate(
+        overlay_original,
+        {
+            "fixedYaml": camera_permission_prompt_fixed,
+            "analysis": "失败关键帧显示温馨提示相机权限请求弹窗遮挡原业务步骤，仅插入临时弹窗处理并保持导航不变",
+            "changes": ["在证件扫描后插入温馨提示相机权限弹窗处理"],
+            "patches": [{
+                "op": "insert_after",
+                "anchor": "aiTap: 点击「证件扫描」",
+                "lines": ["ai: 如果屏幕中间出现标题为“温馨提示”且内容包含“请求使用相机权限”的弹窗，点击黄色的“确定”按钮；如果没有弹窗则跳过"],
+                "reason": "失败关键帧显示温馨提示相机权限请求弹窗遮挡业务入口",
+            }],
+            "usedBaselineIds": [],
+        },
+        [branch_baseline],
+        platform="android",
+        runtime_evidence={
+            "error": "waitFor timeout: 根据截图，当前页面显示的是“小白扫描王”应用，中间弹出了一个“温馨提示”的权限请求对话框，提示小白学习打印请求使用相机权限，背景可见“文件扫描”“证件扫描”等入口。",
+            "summaryText": "业务入口被温馨提示相机权限请求对话框遮挡，未进入百度网盘入口校验。",
+            "reportKeyframes": ["camera-permission-prompt.jpg"],
+        },
+    )
+    require(
+        camera_permission_prompt_gate.get("ok") is True
+        and camera_permission_prompt_gate.get("baselineCitationExempt") is True
+        and "确定" in (camera_permission_prompt_gate.get("transientOverlayChange", {}).get("matchedControls") or []),
+        "A keyframe-backed system permission prompt may use the action's explicit confirm control when OCR evidence proves the prompt but misses the button text",
+    )
     ungrounded_overlay_gate = agent_service._agent_repair_candidate_gate(
         overlay_original,
         overlay_response,
