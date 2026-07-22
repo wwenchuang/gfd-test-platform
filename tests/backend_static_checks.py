@@ -9623,6 +9623,7 @@ def check_yaml_static_validation_and_patterns():
         build_executable_smoke_yaml_policy_text,
         build_requirement_semantic_constraints_text,
         dry_run_midscene_yaml,
+        normalize_yaml_runtime_guards,
         repair_generated_yaml_executable_gate_issues,
         repair_generated_yaml_static_errors,
         should_ai_rewrite_for_executable_gate,
@@ -9707,6 +9708,67 @@ def check_yaml_static_validation_and_patterns():
         validate_yaml_static_executable(valid_scroll_yaml).get("ok")
         and yaml_service_module.validate_midscene_yaml_executability(valid_scroll_yaml).get("ok"),
         "The official aiScroll string target with sibling direction/distance options must remain executable",
+    )
+    model_nested_prompt_yaml = """android:
+  tasks:
+    - name: generic cloud entry normalization
+      flow:
+        - launch: com.example.print
+        - aiWaitFor:
+            text: App home is visible
+            timeout: 8000
+        - aiScroll:
+            description: Scroll the visible import row to reveal more entries
+            direction: right
+            distance: 400
+            scrollType: singleAction
+        - aiAssert: Enterprise cloud entry is visible
+"""
+    normalized_model_yaml, normalized_model_changes = normalize_yaml_runtime_guards(
+        model_nested_prompt_yaml,
+        app_package="com.example.print",
+    )
+    normalized_model_payload = yaml_service_module._pyyaml.safe_load(normalized_model_yaml)
+    normalized_model_flow = normalized_model_payload["android"]["tasks"][0]["flow"]
+    normalized_wait = next(item for item in normalized_model_flow if "aiWaitFor" in item)
+    normalized_scroll = next(item for item in normalized_model_flow if "aiScroll" in item)
+    require(
+        normalized_wait.get("aiWaitFor") == "App home is visible"
+        and "text" not in normalized_wait
+        and normalized_scroll.get("aiScroll") == "Scroll the visible import row to reveal more entries"
+        and "description" not in normalized_scroll
+        and normalized_scroll.get("direction") == "right"
+        and normalized_scroll.get("distance") == 400
+        and normalized_scroll.get("scrollType") == "singleAction"
+        and normalized_model_changes
+        and dry_run_midscene_yaml(normalized_model_yaml, app_package="com.example.print").get("ok") is True,
+        "Runtime guard normalization must flatten model text/description prompt aliases into official Midscene string actions",
+    )
+    scan_reachability_yaml = """android:
+  tasks:
+    - name: 扫描复印企业云盘点击后首个可见页校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，扫描复印入口可见
+        - aiTap: 点击「扫描复印」入口
+        - aiWaitFor: 扫描复印页面已加载，可见本地导入、相册导入和微信导入
+        - aiScroll: 在横向导入栏向右滑动，使右侧更多入口进入视野
+          direction: right
+          distance: 400
+          scrollType: singleAction
+        - aiWaitFor: 「企业云盘」入口可见
+        - aiTap: 点击「企业云盘」入口
+        - aiWaitFor: 页面跳转至授权页或文件列表页
+        - aiAssert: 企业云盘相关页面已稳定显示，无白屏或崩溃
+"""
+    scan_reachability_dry_run = dry_run_midscene_yaml(
+        scan_reachability_yaml,
+        app_package="com.xbxxhz.box",
+    )
+    require(
+        scan_reachability_dry_run.get("ok") is True
+        and not any("旧版多入口" in item for item in scan_reachability_dry_run.get("errors") or []),
+        "Scan import-row wording must not trigger the AI-model app's legacy multi-entry gate",
     )
     unstable_yaml = """android:
   tasks:

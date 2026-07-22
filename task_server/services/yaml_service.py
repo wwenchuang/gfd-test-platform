@@ -4359,7 +4359,7 @@ def normalize_flowitem_syntax_in_task_block(block):
             child = lines[child_idx]
             if child.strip() and (len(child) - len(child.lstrip(" "))) <= base_indent and re.match(r"^\s*-\s+[A-Za-z][\w]*\s*:", child):
                 break
-            cm = re.match(r"^\s*(prompt|locate|value|timeout|errorMessage|name|keyName|direction|scrollType|distance|deepThink|xpath|cacheable|autoDismissKeyboard|mode)\s*:\s*(.*)$", child)
+            cm = re.match(r"^\s*(prompt|locate|value|text|description|timeout|errorMessage|name|keyName|direction|scrollType|distance|deepThink|xpath|cacheable|autoDismissKeyboard|mode)\s*:\s*(.*)$", child)
             if cm:
                 child_lines.append((cm.group(1), cm.group(2).strip()))
                 child_idx += 1
@@ -4369,10 +4369,23 @@ def normalize_flowitem_syntax_in_task_block(block):
         for child_key, child_value in child_lines:
             child_map[child_key] = strip_yaml_quotes(child_value)
         if child_lines and key in prompt_style_items and strip_yaml_quotes(value) in ("", "null", "None"):
-            prompt_value = child_map.get("prompt") or child_map.get("locate") or child_map.get("value") or child_map.get("name") or ""
+            prompt_value = (
+                child_map.get("prompt")
+                or child_map.get("locate")
+                or child_map.get("value")
+                or child_map.get("text")
+                or child_map.get("description")
+                or child_map.get("name")
+                or ""
+            )
             if prompt_value:
                 value = yaml_text(prompt_value)
-                keep_keys = {"timeout", "errorMessage", "name"} if key in ("aiAssert", "aiWaitFor", "aiQuery") else set()
+                if key in ("aiAssert", "aiWaitFor", "aiQuery"):
+                    keep_keys = {"timeout", "errorMessage", "name"}
+                elif key == "aiScroll":
+                    keep_keys = {"direction", "distance", "scrollType"}
+                else:
+                    keep_keys = set()
                 normalized.append(f"{prefix}{key}: {value}")
                 for child_key, child_value in child_lines:
                     if child_key in keep_keys:
@@ -5621,16 +5634,17 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
         prefix = f"{name}: "
         issues.extend(_app_brand_conflict_issues(effective_app_package, compact, prefix))
 
-        if text_has(compact, "三种入口", "多入口") and text_has(compact, "开始创作", "跳转", "验证"):
+        if is_xiaobai_ai_model and text_has(compact, "三种入口", "多入口") and text_has(compact, "开始创作", "跳转", "验证"):
             issues.append(prefix + "当前 App 入口已改版，旧版多入口验证不能直接下发 Runner")
-        if text_has(compact, "文字输入") and text_has(compact, "首页", "三维创作", "开始创作", "入口"):
+        if is_xiaobai_ai_model and text_has(compact, "文字输入") and text_has(compact, "首页", "三维创作", "开始创作", "入口"):
             issues.append(prefix + "当前首页没有旧版“文字输入”入口，需改为底部 AI建模 Tab/当前真机入口")
         if (
-            text_has(compact, "大家都在做", "骨架屏", "缩放控件", "固定推荐", "推荐标题", "素材标题")
+            is_xiaobai_ai_model
+            and text_has(compact, "大家都在做", "骨架屏", "缩放控件", "固定推荐", "推荐标题", "素材标题")
             and not text_has(compact, "或", "任一", "任意", "之一", "任意一个")
         ):
             issues.append(prefix + "包含动态推荐/加载瞬态/历史稿控件，不能作为自动化必过断言")
-        if text_has(compact, "我是小魔法师"):
+        if is_xiaobai_ai_model and text_has(compact, "我是小魔法师"):
             issues.append(prefix + "欢迎态文案随版本变化，不能作为固定 wait/assert 信号")
         if text_has(compact, "标牌", "趣味印章", "涂鸦建模") and not text_has(compact, "横向", "滑动", "aiScroll"):
             issues.append(prefix + "横向功能入口缺少滑动步骤，真机上目标入口可能不可见")
@@ -5639,7 +5653,8 @@ def _yaml_current_app_semantic_issues(yaml_text: str, *, app_package: str = "", 
             if action in ("aiTap", "aiWaitFor", "aiAssert") and text_has(action_text, "没有喜欢的", "不补充直接生成"):
                 issues.append(prefix + "条件分支被写成固定动作；应改为 ai 条件处理或转待准备")
             if (
-                action in ("aiTap", "aiWaitFor", "aiAssert")
+                is_xiaobai_ai_model
+                and action in ("aiTap", "aiWaitFor", "aiAssert")
                 and text_has(action_text, "语音创作")
                 and text_has(action_text, "长按输入", "录音", "麦克风", "权限", "直接说", "点击语音")
             ):

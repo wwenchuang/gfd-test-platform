@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-22 真实回归：跨 App 语义门禁不能误伤扫描导入栏，模型动作子字段必须还原为官方标量
+
+用户部署 `e531598` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784701056435-88e908e2`：
+
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`。4 张图分 4 批、每批 1 张真实送入 `qwen3.6-plus`，耗时约 `26 / 24 / 21 / 9` 秒，全部一次完成，无重试、无 fallback；PLAN 生成 8 条 AI 业务分支。
+- 生成阶段形成 5 条 executable 候选：文档展示、照片展示、文档可达、照片可达、扫描可达。前 4 条 YAML 静态校验通过；扫描可达 YAML 已使用自己的可信扫描导航，并生成有界横向导入栏滚动及点击后首个可见页校验。
+- Agent 最终为 `FAILED / GENERATE_YAML / 30%`。扫描可达文件中 3 个 `aiWaitFor` 和 1 个 `aiScroll` 被改写为空标量加 `text` 子字段，强校验分别报“内容不能为空 / 描述必须是非空字符串”。后续步骤全部跳过，Agent 没有创建 Runner job，也没有向 OPPO 或华为下发执行。
+
+深层根因与通用修复：
+
+- `_yaml_current_app_semantic_issues()` 同时识别小白学习打印和智小白 3D，但“开始创作旧版多入口”规则没有像用例规划门禁一样限定到 `com.kfb.model`。扫描可达 YAML 的横向滚动文案“使右侧更多入口进入视野”被子串命中“多入口”，再与后续“页面跳转”组合，错误触发 AI 建模旧入口门禁，导致本来合法的 YAML 进入不必要的 AI 静态修复。
+- 现在 AI 建模旧入口、旧文字输入、动态推荐、旧欢迎态和语音录制规则只在 AI 建模 App 上生效；小白学习打印的扫描/文档/照片导入栏不再被跨 App 规则误伤。原 AI 建模旧入口回归样本仍继续被阻断。
+- AI 静态修复可能返回 `aiWaitFor: {text: ...}` 或 `aiScroll: {description: ...}` 风格的 YAML。运行时规范化现将 `text / description` 与已有 `prompt / locate / value` 一样视为模型提示别名，扁平化为 Midscene 1.7.10 官方字符串动作；`aiScroll` 的 `direction / distance / scrollType` 保留为同级官方参数。静态校验仍拒绝未规范化的空动作，没有放宽 action 合同。
+- 修复没有硬编码百度网盘、扫描复印、具体 case ID 或目标入口；没有修改 scorer、覆盖门禁、Runner、Sonic、Figma 解析、设备策略、坐标、账号/授权或历史 YAML。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py  # 61 checks
+npm test
+```
+
+真实线上失败文件离线回放：原始空 prompt 动作 `4` 个，规范化后 `0` 个；横向滚动仍保留 `right / 400 / singleAction`；dry-run `ok=true / 0 error`。提交后不 push；由用户手动 push、部署，再用完全相同输入和固定 OPPO `ecbfd645` 发起完整 Agent，继续监督 5 条 YAML 的最终覆盖、smoke、remaining、真实报告和修复重跑到终态。
+
 ### 2026-07-22 MeterSphere 日常执行台：接口数据、异步执行与可停留技术日志
 
 按已确认的 `docs/superpowers/specs/2026-07-22-metersphere-daily-execution-console-design.md` 完成 MeterSphere 执行页重构，不修改 Agent、YAML、Runner、Sonic 或移动端执行链路：
