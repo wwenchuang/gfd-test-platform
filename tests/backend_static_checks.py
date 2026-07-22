@@ -6760,7 +6760,7 @@ def check_agent_failure_review_and_repair_guard():
                         "requirementId": "REQ-002",
                         "branch": "照片打印",
                         "pageTitle": "5寸照片",
-                        "parentPath": ["首页", "照片打印"],
+                        "parentPath": ["首页", "照片打印", "规格选择"],
                         "navigationLeaf": "5寸照片",
                         "targetText": "百度网盘",
                         "sameBranch": True,
@@ -6821,7 +6821,7 @@ def check_agent_failure_review_and_repair_guard():
         "requirementId": "REQ-002",
         "branch": "照片打印",
         "pageTitle": "一寸照",
-        "parentPath": ["首页", "照片打印"],
+        "parentPath": ["首页", "照片打印", "规格选择页"],
         "navigationLeaf": "一寸照",
         "targetText": "百度网盘",
         "sameBranch": True,
@@ -6834,6 +6834,18 @@ def check_agent_failure_review_and_repair_guard():
         "changes": ["将失败步骤的一寸照替换为 5寸照片，保持百度网盘断言不变"],
         "usedBaselineIds": ["base-photo-runtime-leaf"],
     }
+    require(
+        agent_service._agent_repair_parent_path_segment_key("规格选择")
+        == agent_service._agent_repair_parent_path_segment_key("规格选择页")
+        == agent_service._agent_repair_parent_path_segment_key("规格选择页面")
+        and agent_service._agent_repair_parent_path_segment_key("页面") == "页面"
+        and agent_service._agent_repair_parent_path_segment_key("网页") == "网页"
+        and agent_service._agent_repair_parent_path_segment_key("分页") == "分页"
+        and agent_service._agent_repair_parent_path_segment_key("首页") == "首页"
+        and agent_service._agent_repair_parent_path_segment_key("App首页") == "app首页"
+        and agent_service._agent_repair_parent_path_segment_key("主页") == "主页",
+        "Figma parent-path normalization must remove only a genuine page-label suffix without creating empty or semantic aliases",
+    )
     runtime_leaf_rejected_without_failure = agent_service._agent_repair_candidate_gate(
         runtime_leaf_original,
         runtime_leaf_response,

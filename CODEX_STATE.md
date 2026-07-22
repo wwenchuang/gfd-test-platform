@@ -3952,6 +3952,43 @@ git diff --check
 
 - 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
 
+### 2026-07-22 部署后真实回归：Figma 父路径展示后缀阻断真机叶子纠正
+
+部署 `0103401` 后发起完全相同百度网盘 Agent：
+
+- Agent：`agent-1784686459528-f818e642`；输入保持 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.6-plus`，只向 OPPO PHM110 下发本 Agent 的 dry-run 和真机任务。
+- 8091 / 8088、AI Gateway、Figma、Runner 和固定 OPPO 健康。Figma 4 页 / 4 图分 4 个单图批次全部真实送入 `qwen3.6-plus`，4 / 4 completed，无 retry、无 fallback，耗时约 10 / 17 / 19 / 11 秒。
+- `0103401` 的生成修复已在线上生效：PLAN 生成 8 条 AI 业务分支和 12 个场景；生成 6 个 YAML，6 / 6 executable，服务端静态校验无 error / warning，Runner dry-run 6 / 6 通过。
+- 三个业务入口均分别生成展示和可达性 YAML。扫描复印两条使用成功基线 `d623c1e73180bfac`，标题不再含“待确认”，Runner flow 不含“若存在 / 记录缺陷”，包含明确 `aiAssert`；scorer 均为 executable。三个入口的展示、同级关系、文案和可达性均进入自动化覆盖。
+- 首批 smoke 在固定 OPPO 串行执行：文档打印展示用例成功；照片打印展示用例在尺寸弹窗点击“一寸照规格页”失败。真机明确报告弹窗只有 5寸、6寸、7寸、A4 等选项，失败正确分类为 `SCRIPT_ISSUE / element_not_found`，报告和关键帧均已上传。
+- 首批通过 1 / 2，未达到扩展门槛，remaining 4 条按策略暂停。Agent 最终为 `FAILED / COLLECT_REPORT / 95%`，不是生成覆盖、设备、ADB、Sonic 或报告上传问题。
+
+失败根因：
+
+- 修复 AI 使用 3 张报告关键帧、当前 Figma 的 5寸页面和照片分支成功基线 `46123c7c7595934e`，正确提出把“一寸照规格页”替换为“5寸照片”，并完整保留百度网盘断言；候选 YAML 仍为 100 / executable。
+- 平台仍以 `source_backed_navigation_target_removed` 拒绝候选。两条同 case / REQ / 目标的 Figma 证据父路径分别为 `App首页 / 照片打印 / 规格选择` 和 `App首页 / 照片打印 / 规格选择页`；旧门禁按父路径字符串数组完全相等比较，把仅多一个展示后缀“页”误判为不同业务父路径，因此 `sourceLeafRuntimeOverrides=[]`。
+
+本轮通用修复：
+
+- 真机叶子纠正门禁在比较 Figma 父路径段时，只在前缀至少有两个有效字符、且不是首页 / 主页语义时规范化末尾展示后缀“页 / 页面”；单独“页面”、`网页 / 分页`、`首页 / App首页 / 主页` 均保持原值，不能产生空路径键或词义别名。caseId、requirementId、目标文案、完整父路径层级、失败关键帧、真机明确否定、当前 Figma 替代叶子、已引用分支基线、替代动作必须位于目标断言前，以及精确断言合同等门禁均未放宽。
+- 回归夹具使用生产差异 `规格选择` 与 `规格选择页`；修改前稳定失败，修改后通过，并补充空值、词义型“页”和首页 / 主页负例。目标不同、case / REQ 不同、父路径层级不同、无真机否定、无关键帧、无当前 Figma 替代叶子或无已引用分支基线时仍不能纠正。
+- 使用线上 Agent 完整产物离线重放：候选 `ok=true / issues=[] / assertionContractPreserved=true / executable`，审计为 `一寸照规格页 -> 5寸照片 / TC-002 / REQ-002 / 3 张关键帧 / baseline 46123c7c7595934e`。
+
+已验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+npm test
+git diff --check
+```
+
+- 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉 smoke 全部通过。
+
+待完成：
+
+- 由用户 push、部署本轮提交；部署后继续使用完全相同参数发起百度网盘 Agent，重点确认照片 5寸修复候选通过门禁并在固定 OPPO 自动重跑，随后恢复 remaining 扩展执行到 Agent 终态。
+
 ### 2026-07-22 最新真实回归：已验证执行计划写入 YAML 时丢失
 
 部署 `5303203` 后已先完成 MeterSphere 线上配置校验，平台保存了 MeterSphere Base URL、`3D业务` 项目、Access Key / Secret Key（配置读取只返回脱敏值），`/api/api-testing/metersphere/health` 返回 `health_ok=true`、MeterSphere `code=100200`。随后继续监督百度网盘回归。

@@ -12738,6 +12738,17 @@ def _agent_repair_runtime_rejects_leaf(leaf, runtime_evidence):
     return any(re.search(pattern, evidence_text, re.I) for pattern in absence_patterns)
 
 
+def _agent_repair_parent_path_segment_key(value):
+    compact = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "")).lower()
+    for suffix in ("\u9875\u9762", "\u9875"):
+        if not compact.endswith(suffix):
+            continue
+        stem = compact[:-len(suffix)]
+        if len(stem) >= 2 and not stem.endswith(("\u9996", "\u4e3b")):
+            return stem
+    return compact
+
+
 def _agent_repair_runtime_source_leaf_override(
     source_item,
     visual_items,
@@ -12760,7 +12771,7 @@ def _agent_repair_runtime_source_leaf_override(
         r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str((source_item or {}).get("targetText") or "")
     ).lower()
     old_parent_path = [
-        re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "")).lower()
+        _agent_repair_parent_path_segment_key(value)
         for value in ((source_item or {}).get("parentPath") or [])
         if str(value or "").strip()
     ]
@@ -12790,7 +12801,7 @@ def _agent_repair_runtime_source_leaf_override(
         if old_target_key and alternative_target_key and old_target_key != alternative_target_key:
             continue
         alternative_parent_path = [
-            re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", str(value or "")).lower()
+            _agent_repair_parent_path_segment_key(value)
             for value in (alternative.get("parentPath") or [])
             if str(value or "").strip()
         ]
