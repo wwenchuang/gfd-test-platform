@@ -48,6 +48,10 @@ _CONNECTION_FINGERPRINT_PATH_FIELDS = (
 )
 _CONNECTION_CONFIG_LOCK = threading.RLock()
 _EXECUTION_LOCK = threading.RLock()
+_SCHEDULED_EXECUTION_WORKERS: set[str] = set()
+_RUNNING_EXECUTION_WORKERS: set[str] = set()
+_SCHEDULED_EXECUTION_POLLS: set[str] = set()
+_RUNNING_EXECUTION_POLLS: set[str] = set()
 
 
 class MeterSphereExecutionValidationError(ValueError):
@@ -1467,16 +1471,35 @@ def start_metersphere_execution(plan_id: str, test_plan_id: str = "") -> Dict[st
 
 
 def _spawn_execution_worker(execution_id: str) -> None:
+    selected_execution_id = str(execution_id or "").strip()
+    with _EXECUTION_LOCK:
+        if (
+            not selected_execution_id
+            or selected_execution_id in _SCHEDULED_EXECUTION_WORKERS
+            or selected_execution_id in _RUNNING_EXECUTION_WORKERS
+        ):
+            return
+        _SCHEDULED_EXECUTION_WORKERS.add(selected_execution_id)
     thread = threading.Thread(
         target=_run_metersphere_execution_guarded,
-        args=(execution_id,),
+        args=(selected_execution_id,),
         daemon=True,
-        name=f"metersphere-{execution_id}",
+        name=f"metersphere-{selected_execution_id}",
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        with _EXECUTION_LOCK:
+            _SCHEDULED_EXECUTION_WORKERS.discard(selected_execution_id)
+        raise
 
 
 def _run_metersphere_execution_guarded(execution_id: str) -> None:
+    with _EXECUTION_LOCK:
+        _SCHEDULED_EXECUTION_WORKERS.discard(execution_id)
+        if execution_id in _RUNNING_EXECUTION_WORKERS:
+            return
+        _RUNNING_EXECUTION_WORKERS.add(execution_id)
     try:
         _run_metersphere_execution(execution_id)
     except Exception as exc:
@@ -1495,6 +1518,9 @@ def _run_metersphere_execution_guarded(execution_id: str) -> None:
                 f"MeterSphere 执行线程内部异常：{safe_error}",
                 safe_detail,
             )
+    finally:
+        with _EXECUTION_LOCK:
+            _RUNNING_EXECUTION_WORKERS.discard(execution_id)
 
 
 def _run_metersphere_execution(execution_id: str) -> None:
@@ -1747,6 +1773,7 @@ def _refresh_running_execution_phase(record: Dict[str, Any]) -> Dict[str, Any]:
                 None,
                 cfg,
                 request_config=cfg,
+                execution=record,
             )
             if str(record.get("source_id") or "")
             else pull_metersphere_report(run_id)
@@ -1786,6 +1813,124 @@ def _refresh_running_execution_phase(record: Dict[str, Any]) -> Dict[str, Any]:
     record["error"] = "MeterSphere 执行失败" if remote_failed else ""
     _save_execution(record)
     return record
+
+
+def _run_execution_polling_guarded(execution_id: str) -> None:
+    with _EXECUTION_LOCK:
+        _SCHEDULED_EXECUTION_POLLS.discard(execution_id)
+        if execution_id in _RUNNING_EXECUTION_POLLS:
+            return
+        _RUNNING_EXECUTION_POLLS.add(execution_id)
+    try:
+        while True:
+            with _EXECUTION_LOCK:
+                record = _load_execution(execution_id)
+                if (
+                    not record
+                    or record.get("status") in TERMINAL_EXECUTION_STATES
+                    or not str(record.get("run_id") or "").strip()
+                ):
+                    return
+                record = _refresh_running_execution(record)
+                if record.get("status") in TERMINAL_EXECUTION_STATES:
+                    return
+                delay_seconds = max(
+                    1.0,
+                    float(_execution_poll_after_ms(record)) / 1000.0,
+                )
+            time.sleep(delay_seconds)
+    except Exception as exc:
+        safe_detail = sanitize_metersphere_data({"error": str(exc)})
+        with _EXECUTION_LOCK:
+            record = _load_execution(execution_id)
+            if not record or record.get("status") in TERMINAL_EXECUTION_STATES:
+                return
+            _fail_execution(
+                record,
+                "metersphere_run",
+                "服务重启后恢复 MeterSphere 状态轮询失败",
+                safe_detail,
+            )
+    finally:
+        with _EXECUTION_LOCK:
+            _RUNNING_EXECUTION_POLLS.discard(execution_id)
+
+
+def _spawn_execution_poll_worker(execution_id: str) -> None:
+    selected_execution_id = str(execution_id or "").strip()
+    with _EXECUTION_LOCK:
+        if (
+            not selected_execution_id
+            or selected_execution_id in _SCHEDULED_EXECUTION_POLLS
+            or selected_execution_id in _RUNNING_EXECUTION_POLLS
+        ):
+            return
+        _SCHEDULED_EXECUTION_POLLS.add(selected_execution_id)
+    thread = threading.Thread(
+        target=_run_execution_polling_guarded,
+        args=(selected_execution_id,),
+        daemon=True,
+        name=f"metersphere-poll-{selected_execution_id}",
+    )
+    try:
+        thread.start()
+    except Exception:
+        with _EXECUTION_LOCK:
+            _SCHEDULED_EXECUTION_POLLS.discard(selected_execution_id)
+        raise
+
+
+def _queued_execution_is_safe_to_resume(record: Dict[str, Any]) -> bool:
+    if str(record.get("status") or "") != "queued":
+        return False
+    if str(record.get("run_id") or "").strip():
+        return False
+    if str(record.get("push_id") or "").strip():
+        return False
+    return all(
+        not isinstance(phase, dict)
+        or str(phase.get("state") or "waiting") == "waiting"
+        for phase in (record.get("phases") or [])
+    )
+
+
+def recover_metersphere_executions() -> Dict[str, int]:
+    """Resume provably safe executions and fail closed on uncertain effects."""
+    queued_ids = []
+    remote_ids = []
+    interrupted = 0
+    with _EXECUTION_LOCK:
+        for record in _execution_records():
+            if record.get("status") in TERMINAL_EXECUTION_STATES:
+                continue
+            execution_id = str(record.get("execution_id") or "").strip()
+            if str(record.get("run_id") or "").strip():
+                remote_ids.append(execution_id)
+                continue
+            if _queued_execution_is_safe_to_resume(record):
+                queued_ids.append(execution_id)
+                continue
+            record["error_code"] = "restart_interrupted"
+            record["recoverable"] = False
+            phase_id = str(record.get("current_phase") or "push_cases")
+            if not _phase(record, phase_id):
+                phase_id = "push_cases"
+            _fail_execution(
+                record,
+                phase_id,
+                "服务重启时远端副作用状态不确定，已停止执行且不会自动重复触发",
+                {"error_code": "restart_interrupted"},
+            )
+            interrupted += 1
+    for execution_id in queued_ids:
+        _spawn_execution_worker(execution_id)
+    for execution_id in remote_ids:
+        _spawn_execution_poll_worker(execution_id)
+    return {
+        "resumed_queued": len(queued_ids),
+        "resumed_remote": len(remote_ids),
+        "interrupted_uncertain": interrupted,
+    }
 
 
 def get_metersphere_execution(execution_id: str, refresh: bool = True) -> Dict[str, Any]:
@@ -2122,6 +2267,7 @@ def pull_metersphere_report(
                     raw_report,
                     selected_config,
                     request_config=selected_config,
+                    execution=execution,
                 )
     cfg = dict(selected_config or _load_raw_config())
     return _pull_metersphere_report_with_config(
@@ -2129,6 +2275,7 @@ def pull_metersphere_report(
         raw_report,
         cfg,
         request_config=cfg if selected_config is not None else None,
+        execution=execution,
     )
 
 
@@ -2138,6 +2285,7 @@ def _pull_metersphere_report_with_config(
     cfg: Dict[str, Any],
     *,
     request_config: Dict[str, Any] | None,
+    execution: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     from task_server.services import api_report_service
 
@@ -2161,10 +2309,23 @@ def _pull_metersphere_report_with_config(
             if not fetched.get("ok"):
                 return fetched
             raw = sanitize_metersphere_data(fetched)
+    execution_snapshot = execution if isinstance(execution, dict) else {}
     report = api_report_service.normalize_metersphere_report(
         run_id,
         raw,
-        plan_id=str((raw or {}).get("plan_id") or ""),
+        plan_id=str(
+            execution_snapshot.get("plan_id")
+            or (raw or {}).get("plan_id")
+            or ""
+        ),
+        source_id=str(execution_snapshot.get("source_id") or ""),
+        execution_id=str(execution_snapshot.get("execution_id") or ""),
+        binding_id=str(execution_snapshot.get("binding_id") or ""),
+        binding_fingerprint=str(
+            execution_snapshot.get("binding_fingerprint") or ""
+        ),
+        project_id=str(execution_snapshot.get("project_id") or ""),
+        environment_id=str(execution_snapshot.get("environment_id") or ""),
     )
     saved = api_report_service.save_api_report(sanitize_metersphere_data(report))
     return {"ok": True, "report": sanitize_metersphere_data(saved)}
@@ -2186,6 +2347,7 @@ __all__ = [
     "list_metersphere_environments",
     "metersphere_project_options",
     "metersphere_execution_context",
+    "recover_metersphere_executions",
     "start_metersphere_execution",
     "get_metersphere_execution",
     "list_metersphere_executions",

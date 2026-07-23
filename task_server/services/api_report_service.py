@@ -29,23 +29,55 @@ def _index_path() -> str:
     return _api_path("reports", "index.json")
 
 
-def _save_index(report: Dict[str, Any]) -> None:
-    index = read_json_file(_index_path(), default=[]) or []
-    if not isinstance(index, list):
-        index = []
-    item = {
+def _report_index_item(report: Dict[str, Any]) -> Dict[str, Any]:
+    return {
         "report_id": report.get("report_id"),
         "run_id": report.get("run_id"),
         "plan_id": report.get("plan_id"),
+        "source_id": report.get("source_id"),
+        "execution_id": report.get("execution_id"),
+        "binding_id": report.get("binding_id"),
+        "binding_fingerprint": report.get("binding_fingerprint"),
+        "project_id": report.get("project_id"),
+        "environment_id": report.get("environment_id"),
         "status": report.get("status"),
         "total": report.get("summary", {}).get("total", 0),
         "passed": report.get("summary", {}).get("passed", 0),
         "failed": report.get("summary", {}).get("failed", 0),
         "created_at": report.get("created_at"),
     }
+
+
+def _save_index(report: Dict[str, Any]) -> None:
+    index = read_json_file(_index_path(), default=[]) or []
+    if not isinstance(index, list):
+        index = []
+    item = _report_index_item(report)
     index = [row for row in index if row.get("report_id") != item.get("report_id")]
     index.insert(0, item)
     write_json_file(_index_path(), index[:100])
+
+
+def _plan_source_id(plan_id: str) -> str:
+    selected_plan_id = str(plan_id or "").strip()
+    if not selected_plan_id:
+        return ""
+    from task_server.services import api_test_plan_service
+
+    plan = api_test_plan_service.get_api_test_plan(selected_plan_id)
+    return str((plan or {}).get("source_id") or "").strip()
+
+
+def _report_source_ownership(report: Dict[str, Any]) -> tuple[str, bool, bool]:
+    explicit_source_id = str(report.get("source_id") or "").strip()
+    derived_source_id = _plan_source_id(str(report.get("plan_id") or ""))
+    if explicit_source_id and derived_source_id and explicit_source_id != derived_source_id:
+        return "", False, False
+    if explicit_source_id:
+        return explicit_source_id, True, False
+    if derived_source_id:
+        return derived_source_id, True, True
+    return "", False, False
 
 
 def classify_api_failure(item: Dict[str, Any]) -> Dict[str, str]:
@@ -68,7 +100,18 @@ def classify_api_failure(item: Dict[str, Any]) -> Dict[str, str]:
     return {"failure_type": failure_type, "suggestion": suggestion}
 
 
-def normalize_metersphere_report(run_id: str, raw_report: Dict[str, Any] | None = None, plan_id: str = "") -> Dict[str, Any]:
+def normalize_metersphere_report(
+    run_id: str,
+    raw_report: Dict[str, Any] | None = None,
+    plan_id: str = "",
+    *,
+    source_id: str = "",
+    execution_id: str = "",
+    binding_id: str = "",
+    binding_fingerprint: str = "",
+    project_id: str = "",
+    environment_id: str = "",
+) -> Dict[str, Any]:
     raw = raw_report if isinstance(raw_report, dict) else {}
     rows = raw.get("results") or raw.get("cases") or raw.get("items") or []
     if not isinstance(rows, list):
@@ -105,6 +148,12 @@ def normalize_metersphere_report(run_id: str, raw_report: Dict[str, Any] | None 
         "report_id": unique_millis_id("api_report"),
         "run_id": str(run_id or raw.get("run_id") or raw.get("id") or "").strip(),
         "plan_id": str(plan_id or raw.get("plan_id") or "").strip(),
+        "source_id": str(source_id or "").strip(),
+        "execution_id": str(execution_id or "").strip(),
+        "binding_id": str(binding_id or "").strip(),
+        "binding_fingerprint": str(binding_fingerprint or "").strip(),
+        "project_id": str(project_id or "").strip(),
+        "environment_id": str(environment_id or "").strip(),
         "status": status,
         "created_at": _now(),
         "summary": {"total": total, "passed": passed, "failed": failed},
@@ -114,6 +163,12 @@ def normalize_metersphere_report(run_id: str, raw_report: Dict[str, Any] | None 
 
 
 def save_api_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    source_id, ownership_valid, source_derived = _report_source_ownership(report)
+    if str(report.get("source_id") or "").strip() and not ownership_valid:
+        raise ValueError("API report 不属于计划对应的 source")
+    if source_derived:
+        report["source_id"] = source_id
+        report["source_id_derived"] = True
     if not report.get("report_id"):
         report["report_id"] = unique_millis_id("api_report")
     if not report.get("created_at"):
@@ -123,7 +178,25 @@ def save_api_report(report: Dict[str, Any]) -> Dict[str, Any]:
     return report
 
 
-def list_api_reports(limit: int = 20) -> List[Dict[str, Any]]:
+def get_api_report(report_id: str, source_id: str = "") -> Dict[str, Any]:
+    report = read_json_file(_report_path(report_id), default={}) or {}
+    if not isinstance(report, dict) or not report.get("report_id"):
+        return {}
+    selected_source_id = str(source_id or "").strip()
+    resolved_source_id, ownership_valid, source_derived = _report_source_ownership(
+        report
+    )
+    if selected_source_id and (
+        not ownership_valid or resolved_source_id != selected_source_id
+    ):
+        return {}
+    if source_derived:
+        report["source_id"] = resolved_source_id
+        report["source_id_derived"] = True
+    return report
+
+
+def list_api_reports(limit: int = 20, source_id: str = "") -> List[Dict[str, Any]]:
     index = read_json_file(_index_path(), default=[]) or []
     if not isinstance(index, list):
         return []
@@ -131,12 +204,27 @@ def list_api_reports(limit: int = 20) -> List[Dict[str, Any]]:
         size = max(1, int(limit))
     except Exception:
         size = 20
-    return index[:size]
+    selected_source_id = str(source_id or "").strip()
+    if not selected_source_id:
+        return index[:size]
+    reports = []
+    for item in index:
+        report = get_api_report(
+            str(item.get("report_id") or ""),
+            source_id=selected_source_id,
+        )
+        if not report:
+            continue
+        reports.append(_report_index_item(report))
+        if len(reports) >= size:
+            break
+    return reports
 
 
 __all__ = [
     "API_TESTING_DIR",
     "classify_api_failure",
+    "get_api_report",
     "normalize_metersphere_report",
     "save_api_report",
     "list_api_reports",

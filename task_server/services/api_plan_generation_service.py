@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any, Callable, Dict, List
@@ -25,6 +26,7 @@ TERMINAL_STATES = {"succeeded", "partial", "failed", "cancelled"}
 
 _GENERATION_LOCK = threading.RLock()
 _RUNNING_GENERATIONS: set[str] = set()
+_SCHEDULED_GENERATIONS: set[str] = set()
 
 
 def _now() -> str:
@@ -165,6 +167,23 @@ def get_api_plan_generation(generation_id: str) -> Dict[str, Any]:
     return _safe(record) if isinstance(record, dict) else {}
 
 
+def _generation_records() -> List[Dict[str, Any]]:
+    root = safe_join(API_TESTING_DIR, "plan-generations")
+    if not os.path.isdir(root):
+        return []
+    records = []
+    for name in os.listdir(root):
+        if not name.endswith(".json"):
+            continue
+        record = read_json_file(safe_join(root, name), default={}) or {}
+        if isinstance(record, dict) and record.get("generation_id"):
+            records.append(record)
+    records.sort(
+        key=lambda item: str(item.get("created_at") or item.get("updated_at") or "")
+    )
+    return records
+
+
 def start_api_plan_generation(
     source_id: str,
     revision_id: str,
@@ -293,6 +312,7 @@ def run_api_plan_generation(
 ) -> Dict[str, Any]:
     selected_generation_id = str(generation_id or "").strip()
     with _GENERATION_LOCK:
+        _SCHEDULED_GENERATIONS.discard(selected_generation_id)
         if selected_generation_id in _RUNNING_GENERATIONS:
             return get_api_plan_generation(selected_generation_id)
         record = get_api_plan_generation(selected_generation_id)
@@ -399,13 +419,68 @@ def _run_api_plan_generation_guarded(generation_id: str) -> None:
 
 
 def _spawn_generation_worker(generation_id: str) -> None:
+    selected_generation_id = str(generation_id or "").strip()
+    with _GENERATION_LOCK:
+        if (
+            not selected_generation_id
+            or selected_generation_id in _SCHEDULED_GENERATIONS
+            or selected_generation_id in _RUNNING_GENERATIONS
+        ):
+            return
+        _SCHEDULED_GENERATIONS.add(selected_generation_id)
     thread = threading.Thread(
         target=_run_api_plan_generation_guarded,
-        args=(generation_id,),
-        name=f"api-plan-generation-{clean_id(generation_id, 'generation')}",
+        args=(selected_generation_id,),
+        name=f"api-plan-generation-{clean_id(selected_generation_id, 'generation')}",
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        with _GENERATION_LOCK:
+            _SCHEDULED_GENERATIONS.discard(selected_generation_id)
+        raise
+
+
+def recover_api_plan_generations() -> Dict[str, int]:
+    """Recover persisted generations without replaying successful AI batches."""
+    queued_ids = []
+    interrupted = 0
+    with _GENERATION_LOCK:
+        for record in _generation_records():
+            generation_id = str(record.get("generation_id") or "").strip()
+            status = str(record.get("status") or "").strip()
+            if status == "queued":
+                queued_ids.append(generation_id)
+                continue
+            if status != "running":
+                continue
+            for batch in record.get("batches") or []:
+                if not isinstance(batch, dict):
+                    continue
+                if batch.get("status") in {"succeeded", "failed"}:
+                    continue
+                batch["status"] = "failed"
+                batch["plan_id"] = ""
+                batch["finished_at"] = _now()
+                batch["error_code"] = "restart_interrupted"
+                batch["error"] = "服务重启中断当前 AI 批次，可重试失败批次"
+                batch["recoverable"] = True
+            record["recoverable"] = True
+            record["error_code"] = "restart_interrupted"
+            _append_event(
+                record,
+                "failed",
+                "服务重启中断未完成的 AI 批次，已保留成功计划并开放失败批次重试",
+            )
+            _finalize_generation(record)
+            interrupted += 1
+    for generation_id in queued_ids:
+        _spawn_generation_worker(generation_id)
+    return {
+        "resumed_queued": len(queued_ids),
+        "interrupted_running": interrupted,
+    }
 
 
 def retry_api_plan_generation(
@@ -451,6 +526,7 @@ __all__ = [
     "POLL_AFTER_MS",
     "TERMINAL_STATES",
     "get_api_plan_generation",
+    "recover_api_plan_generations",
     "retry_api_plan_generation",
     "run_api_plan_generation",
     "start_api_plan_generation",
