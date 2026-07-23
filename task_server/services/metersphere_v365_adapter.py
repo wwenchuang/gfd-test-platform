@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import uuid
 from typing import Any, Callable, Dict, List
@@ -23,6 +24,8 @@ SUPPORTED_VERSIONS = {
 }
 PROVIDER_TERMINAL_GRACE_MS = 300_000
 _REQUEST_STEP_TYPES = {"API_CASE", "API", "CUSTOM_REQUEST", "SCRIPT"}
+_ENVIRONMENT_LOCK_GUARD = threading.RLock()
+_ENVIRONMENT_LOCKS: Dict[str, threading.RLock] = {}
 
 
 class MeterSphereV365DependencyError(RuntimeError):
@@ -351,6 +354,12 @@ class MeterSphereV365Adapter:
             )
         return name
 
+    @staticmethod
+    def _environment_lock(environment_id: str) -> threading.RLock:
+        selected_environment_id = str(environment_id or "").strip()
+        with _ENVIRONMENT_LOCK_GUARD:
+            return _ENVIRONMENT_LOCKS.setdefault(selected_environment_id, threading.RLock())
+
     def _environment_detail(self, environment_id: str) -> Dict[str, Any]:
         selected_environment_id = str(environment_id or "").strip()
         if not selected_environment_id:
@@ -404,7 +413,9 @@ class MeterSphereV365Adapter:
         variable_name = self._environment_variable_key(key)
         environment = self._environment_detail(environment_id)
         configured = any(
-            str(item.get("key") or "").strip() == variable_name and item.get("enable", True) is not False
+            str(item.get("key") or "").strip() == variable_name
+            and self._enabled(item)
+            and bool(str(item.get("value") or "").strip())
             for item in self._common_variables(environment)
         )
         return self._environment_summary(environment, variable_name, configured)
@@ -417,54 +428,61 @@ class MeterSphereV365Adapter:
         description: str,
     ) -> Dict[str, Any]:
         variable_name = self._environment_variable_key(key)
-        environment = self._environment_detail(environment_id)
-        request = self._environment_request(environment)
-        config = request["config"]
-        variables = self._common_variables(environment)
-        replacement = {
-            "key": variable_name,
-            "value": str(value or ""),
-            "paramType": "CONSTANT",
-            "enable": True,
-            "description": str(description or ""),
-        }
-        updated = False
-        for index, item in enumerate(variables):
-            if str(item.get("key") or "").strip() != variable_name:
-                continue
-            replacement = {**item, **replacement}
-            variables[index] = replacement
-            updated = True
-            break
-        if not updated:
-            variables.append(replacement)
-        config["commonVariables"] = variables
-        result = self._request_environment_update(request, timeout=30)
-        if not result.get("ok"):
-            raise MeterSphereV365ContractError("environment_update_failed", "MeterSphere 环境变量更新失败")
-        verified_environment = self._environment_detail(environment_id)
-        verified = next((
-            item for item in self._common_variables(verified_environment)
-            if str(item.get("key") or "").strip() == variable_name
-        ), {})
-        configured = bool(verified) and str(verified.get("value") or "") == str(value or "")
-        return self._environment_summary(verified_environment, variable_name, configured)
+        with self._environment_lock(environment_id):
+            environment = self._environment_detail(environment_id)
+            request = self._environment_request(environment)
+            config = request["config"]
+            variables = self._common_variables(environment)
+            replacement = {
+                "key": variable_name,
+                "value": str(value or ""),
+                "paramType": "CONSTANT",
+                "enable": True,
+                "description": str(description or ""),
+            }
+            updated = False
+            for index, item in enumerate(variables):
+                if str(item.get("key") or "").strip() != variable_name:
+                    continue
+                replacement = {**item, **replacement}
+                variables[index] = replacement
+                updated = True
+                break
+            if not updated:
+                variables.append(replacement)
+            config["commonVariables"] = variables
+            result = self._request_environment_update(request, timeout=30)
+            if not result.get("ok"):
+                raise MeterSphereV365ContractError("environment_update_failed", "MeterSphere 环境变量更新失败")
+            verified_environment = self._environment_detail(environment_id)
+            verified = next((
+                item for item in self._common_variables(verified_environment)
+                if str(item.get("key") or "").strip() == variable_name
+            ), {})
+            configured = (
+                bool(verified)
+                and self._enabled(verified)
+                and bool(str(verified.get("value") or "").strip())
+                and str(verified.get("value") or "") == str(value or "")
+            )
+            return self._environment_summary(verified_environment, variable_name, configured)
 
     def delete_environment_variable(self, environment_id: str, key: str) -> Dict[str, Any]:
         variable_name = self._environment_variable_key(key)
-        environment = self._environment_detail(environment_id)
-        request = self._environment_request(environment)
-        variables = self._common_variables(environment)
-        retained = [
-            item for item in variables
-            if str(item.get("key") or "").strip() != variable_name
-        ]
-        if len(retained) != len(variables):
-            request["config"]["commonVariables"] = retained
-            result = self._request_environment_update(request, timeout=30)
-            if not result.get("ok"):
-                raise MeterSphereV365ContractError("environment_update_failed", "MeterSphere 环境变量删除失败")
-        return self.verify_environment_variable(environment_id, variable_name)
+        with self._environment_lock(environment_id):
+            environment = self._environment_detail(environment_id)
+            request = self._environment_request(environment)
+            variables = self._common_variables(environment)
+            retained = [
+                item for item in variables
+                if str(item.get("key") or "").strip() != variable_name
+            ]
+            if len(retained) != len(variables):
+                request["config"]["commonVariables"] = retained
+                result = self._request_environment_update(request, timeout=30)
+                if not result.get("ok"):
+                    raise MeterSphereV365ContractError("environment_update_failed", "MeterSphere 环境变量删除失败")
+            return self.verify_environment_variable(environment_id, variable_name)
 
     def probe(self) -> Dict[str, Any]:
         project_id = str(self.config.get("project_id") or "").strip()

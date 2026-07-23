@@ -431,6 +431,34 @@ def _plan_auth_binding(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _binding_drift(plan: Dict[str, Any]) -> List[str]:
+    source_id = str(plan.get("source_id") or "").strip()
+    if not source_id:
+        return []
+    current_workspace = api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=True)
+    expected_fingerprint = str(plan.get("binding_fingerprint") or "").strip()
+    drift: List[str] = []
+    if not current_workspace or not expected_fingerprint or (
+        str(current_workspace.get("config_fingerprint") or "").strip() != expected_fingerprint
+    ):
+        drift.append("workspace_binding_drift")
+    expected_auth = _plan_auth_binding(plan)
+    requires_auth = any(
+        api_case_contract_service.endpoint_requires_auth(endpoint)
+        for endpoint in (plan.get("endpoints") or [])
+        if isinstance(endpoint, dict)
+    )
+    if requires_auth:
+        current_auth = api_workspace_service.get_api_auth_binding(source_id)
+        fields = ("auth_ref", "auth_type", "header_name", "variable_name", "environment_id", "binding_fingerprint")
+        if not expected_auth or not current_auth or any(
+            str(expected_auth.get(field) or "").strip() != str(current_auth.get(field) or "").strip()
+            for field in fields
+        ):
+            drift.append("auth_binding_drift")
+    return drift
+
+
 def _evaluated_cases(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     endpoint_by_id = {
         str(endpoint.get("endpoint_id") or ""): endpoint
@@ -605,6 +633,15 @@ def _revision_state(plan: Dict[str, Any]) -> Dict[str, Any]:
 def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     evaluated = copy.deepcopy(plan) if isinstance(plan, dict) else {}
     cases = _evaluated_cases(evaluated)
+    binding_drift = _binding_drift(evaluated)
+    if binding_drift:
+        for case in cases:
+            readiness = case.get("readiness") if isinstance(case.get("readiness"), dict) else {}
+            missing = set(readiness.get("missing") or [])
+            missing.update(binding_drift)
+            readiness["missing"] = sorted(missing)
+            readiness["state"] = "needs_review"
+            case["readiness"] = readiness
     evaluated["cases"] = cases
     evaluated["case_count"] = len(cases)
     readiness = api_case_contract_service.summarize_api_case_readiness(cases)
@@ -629,6 +666,7 @@ def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     evaluated["needs_review_case_count"] = readiness.get("needs_review_case_count", 0)
     evaluated["execution_readiness"] = readiness
     evaluated["revision_state"] = revision_state
+    evaluated["binding_drift"] = binding_drift
     return evaluated
 
 
@@ -673,6 +711,7 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
     if not endpoints:
         raise ValueError("未选择可生成用例的接口")
     source_id = str(snapshot.get("source_id") or "").strip()
+    workspace_binding = api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=True) if source_id else {}
     auth_binding = api_workspace_service.get_api_auth_binding(source_id) if source_id else {}
     plan_id = unique_millis_id("api_plan")
     local_cases = _local_plan_cases(endpoints, plan_id)
@@ -707,11 +746,11 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
         "confirmed_at": "",
         "endpoint_count": len(endpoints),
         "case_count": len(selected_cases),
-        "endpoints": endpoints,
+        "endpoints": [api_case_contract_service.sanitize_endpoint_for_plan(endpoint) for endpoint in endpoints],
         "cases": selected_cases,
         "ai": ai_meta,
         "auth_binding": auth_binding,
-        "binding_fingerprint": str(auth_binding.get("binding_fingerprint") or ""),
+        "binding_fingerprint": str(workspace_binding.get("config_fingerprint") or ""),
     }
     plan = evaluate_api_plan(plan)
     write_json_file(_plan_path(plan_id), plan)
@@ -736,6 +775,11 @@ def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
     evaluated = evaluate_api_plan(plan)
     if (evaluated.get("revision_state") or {}).get("state") == "stale":
         raise ValueError("API 测试计划已过期，请按当前接口版本重新生成")
+    binding_drift = evaluated.get("binding_drift") or []
+    if "auth_binding_drift" in binding_drift:
+        raise ValueError("API 测试计划认证绑定已变更，请重新生成")
+    if "workspace_binding_drift" in binding_drift:
+        raise ValueError("API 测试计划 MeterSphere 绑定已变更，请重新生成")
     if not (evaluated.get("execution_readiness") or {}).get("can_confirm"):
         raise ValueError("API 测试计划没有可执行用例，请先补齐必填测试数据")
     plan["status"] = "confirmed"

@@ -11,6 +11,8 @@ import json
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -79,6 +81,19 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
             "headers": [{"key": "X-Trace", "value": "trace-visible"}],
             "variables": [{"name": "region", "value": "cn-east"}],
         })
+
+    def test_api_key_variants_are_recursively_redacted(self):
+        sanitized = metersphere_service.sanitize_metersphere_data({
+            "headers": [
+                {"key": "X-API-Key", "value": "header-api-key-secret"},
+                {"name": "apiKey", "defaultValue": "default-api-key-secret"},
+            ],
+            "nested": {"api_key": "direct-api-key-secret"},
+        })
+
+        serialized = json.dumps(sanitized, ensure_ascii=False)
+        self.assertNotIn("api-key-secret", serialized)
+        self.assertNotIn("direct-api-key-secret", serialized)
 
     def test_nested_sensitive_records_are_removed_across_key_casing(self):
         sanitized = metersphere_service.sanitize_metersphere_data({
@@ -684,6 +699,77 @@ class MeterSphereV365EnvironmentVariableChecks(unittest.TestCase):
 
         with self.assertRaisesRegex(metersphere_v365_adapter.MeterSphereV365ContractError, "当前项目"):
             adapter.get_environment_detail("env-a")
+
+    def test_verify_requires_enabled_nonempty_variable_value(self):
+        class Remote:
+            def request(self, method, path, payload=None, timeout=30, **_kwargs):
+                return {"ok": True, "data": {
+                    "id": "env-a", "projectId": "project-a", "name": "测试环境",
+                    "config": {"commonVariables": [
+                        {"key": "MTP_API_AUTH_EMPTY", "value": "", "enable": True},
+                        {"key": "MTP_API_AUTH_DISABLED", "value": "present", "enable": False},
+                    ]},
+                }}
+
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a", "environment_id": "env-a"}, Remote().request,
+        )
+
+        self.assertFalse(adapter.verify_environment_variable("env-a", "MTP_API_AUTH_EMPTY")["configured"])
+        self.assertFalse(adapter.verify_environment_variable("env-a", "MTP_API_AUTH_DISABLED")["configured"])
+
+    def test_same_environment_mutations_are_serialized_in_process(self):
+        class Remote:
+            def __init__(self):
+                self.lock = threading.Lock()
+                self.active_updates = 0
+                self.max_active_updates = 0
+                self.environment = {
+                    "id": "env-a", "projectId": "project-a", "name": "测试环境",
+                    "config": {"commonVariables": []},
+                }
+
+            def request(self, method, path, payload=None, timeout=30, **_kwargs):
+                with self.lock:
+                    return {"ok": True, "data": copy.deepcopy(self.environment)}
+
+            def multipart(self, method, path, request, timeout=30, **_kwargs):
+                with self.lock:
+                    self.active_updates += 1
+                    self.max_active_updates = max(self.max_active_updates, self.active_updates)
+                time.sleep(0.03)
+                with self.lock:
+                    self.environment = copy.deepcopy(request)
+                    self.active_updates -= 1
+                return {"ok": True, "data": {"id": "env-a"}}
+
+        remote = Remote()
+        adapters = [
+            metersphere_v365_adapter.MeterSphereV365Adapter(
+                {"project_id": "project-a", "environment_id": "env-a"},
+                remote.request,
+                request_multipart=remote.multipart,
+            )
+            for _index in range(2)
+        ]
+        threads = [
+            threading.Thread(
+                target=adapter.upsert_environment_variable,
+                args=("env-a", f"MTP_API_AUTH_{index}", f"secret-{index}", "test"),
+            )
+            for index, adapter in enumerate(adapters)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(remote.max_active_updates, 1)
+        self.assertEqual(
+            {item["key"] for item in remote.environment["config"]["commonVariables"]},
+            {"MTP_API_AUTH_0", "MTP_API_AUTH_1"},
+        )
 
 
 def _case_plan():

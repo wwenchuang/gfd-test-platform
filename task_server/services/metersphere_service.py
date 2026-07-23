@@ -28,7 +28,7 @@ API_TESTING_DIR = api_asset_service.API_TESTING_DIR
 METADATA_CACHE_TTL_SECONDS = 30
 _SENSITIVE_KEY_PARTS = (
     "authorization", "token", "accesskey", "secretkey", "cookie", "signature",
-    "password", "credential", "apiauth",
+    "password", "credential", "apiauth", "apikey",
 )
 EXECUTION_PHASES = (
     ("push_cases", "推送用例"),
@@ -1195,6 +1195,11 @@ def _execution_plan(plan_id: str) -> Dict[str, Any]:
         raise MeterSphereExecutionValidationError("执行前必须先确认 API 测试计划")
     if (plan.get("revision_state") or {}).get("state") == "stale":
         raise MeterSphereExecutionValidationError("API 测试计划已过期，请按当前接口版本重新生成")
+    binding_drift = plan.get("binding_drift") or []
+    if "auth_binding_drift" in binding_drift:
+        raise MeterSphereExecutionValidationError("API 测试计划认证绑定已变更，请重新生成")
+    if "workspace_binding_drift" in binding_drift:
+        raise MeterSphereExecutionValidationError("API 测试计划 MeterSphere 绑定已变更，请重新生成")
     readiness = plan.get("execution_readiness") or {}
     if not readiness.get("can_execute") or int(readiness.get("executable_case_count") or 0) <= 0:
         raise MeterSphereExecutionValidationError("已确认计划没有可执行用例")

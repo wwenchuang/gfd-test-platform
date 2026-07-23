@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 
@@ -25,9 +26,13 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def is_sensitive_header_name(name: Any) -> bool:
+def is_sensitive_field_name(name: Any) -> bool:
     normalized = "".join(char for char in _text(name).lower() if char.isalnum())
     return bool(normalized) and any(part in normalized for part in _SENSITIVE_HEADER_PARTS)
+
+
+def is_sensitive_header_name(name: Any) -> bool:
+    return is_sensitive_field_name(name)
 
 
 def _explicit_value(schema: Any, owner: Any = None) -> Any:
@@ -43,14 +48,22 @@ def _explicit_value(schema: Any, owner: Any = None) -> Any:
     return _MISSING
 
 
-def _materialize_schema(schema: Any, prefix: str, required: bool = False) -> Tuple[Any, List[str]]:
+def _materialize_schema(
+    schema: Any,
+    prefix: str,
+    required: bool = False,
+    sensitive: bool = False,
+    provided_value: Any = _MISSING,
+) -> Tuple[Any, List[str]]:
+    if sensitive:
+        return (_MISSING, [prefix] if required else [])
     if not isinstance(schema, dict) or not schema:
         return (_MISSING, [prefix] if required else [])
-    explicit = _explicit_value(schema)
+    explicit = provided_value if provided_value is not _MISSING else _explicit_value(schema)
     schema_type = _text(schema.get("type"))
     properties = schema.get("properties")
     if isinstance(explicit, dict) or schema_type == "object" or isinstance(properties, dict):
-        result = dict(explicit) if isinstance(explicit, dict) else {}
+        result: Dict[str, Any] = {}
         missing: List[str] = []
         property_map = properties if isinstance(properties, dict) else {}
         required_names = {
@@ -63,12 +76,12 @@ def _materialize_schema(schema: Any, prefix: str, required: bool = False) -> Tup
             if not child_name:
                 continue
             child_required = child_name in required_names
-            if child_name in result:
-                continue
             value, child_missing = _materialize_schema(
                 child_schema,
                 f"{prefix}.{child_name}",
                 required=child_required,
+                sensitive=is_sensitive_field_name(child_name),
+                provided_value=explicit.get(child_name, _MISSING) if isinstance(explicit, dict) else _MISSING,
             )
             if value is not _MISSING:
                 result[child_name] = value
@@ -107,6 +120,10 @@ def _request_parameters(endpoint: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, A
             if parameter.get("required"):
                 missing.append(f"request.parameters.{location or 'unknown'}.{name}")
             issues.append(f"unsupported_parameter_location:{location or 'unknown'}:{name}")
+            continue
+        if is_sensitive_field_name(name):
+            if parameter.get("required"):
+                missing.append(f"request.{request_keys[location]}.{name}")
             continue
         value = _explicit_value(parameter.get("schema"), parameter)
         if value is not _MISSING:
@@ -262,6 +279,40 @@ def endpoint_requires_auth(endpoint: Dict[str, Any]) -> bool:
     return all(isinstance(requirement, dict) and bool(requirement) for requirement in security)
 
 
+def _sanitize_openapi_value(value: Any, field_name: str = "", inherited_sensitive: bool = False) -> Any:
+    sensitive = inherited_sensitive or is_sensitive_field_name(field_name)
+    if isinstance(value, list):
+        return [_sanitize_openapi_value(item, "", sensitive) for item in value]
+    if not isinstance(value, dict):
+        return copy.deepcopy(value)
+    result: Dict[str, Any] = {}
+    for key, nested in value.items():
+        key_text = _text(key)
+        if sensitive and key_text in {"example", "examples", "default", "const", "enum"}:
+            continue
+        if is_sensitive_field_name(key_text) and key_text not in {"required"}:
+            continue
+        if key_text == "properties" and isinstance(nested, dict):
+            result[key_text] = {
+                str(name): _sanitize_openapi_value(schema, str(name), sensitive)
+                for name, schema in nested.items()
+            }
+            continue
+        if key_text == "parameters" and isinstance(nested, list):
+            result[key_text] = [
+                _sanitize_openapi_value(item, _text(item.get("name")) if isinstance(item, dict) else "", sensitive)
+                for item in nested
+            ]
+            continue
+        result[key_text] = _sanitize_openapi_value(nested, key_text, sensitive)
+    return result
+
+
+def sanitize_endpoint_for_plan(endpoint: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep execution identity/schema shape while removing sensitive OpenAPI values."""
+    return _sanitize_openapi_value(endpoint if isinstance(endpoint, dict) else {})
+
+
 def build_api_case_contract(
     endpoint: Dict[str, Any],
     case_type: str,
@@ -412,6 +463,8 @@ __all__ = [
     "CONTRACT_VERSION",
     "build_api_case_contract",
     "endpoint_requires_auth",
+    "is_sensitive_field_name",
     "normalize_api_case_contract",
+    "sanitize_endpoint_for_plan",
     "summarize_api_case_readiness",
 ]

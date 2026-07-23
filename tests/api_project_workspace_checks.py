@@ -233,6 +233,19 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
 
         self.assertNotIn("unexpected-secret", json.dumps(public_binding, ensure_ascii=False))
 
+    def test_auth_metadata_rejects_non_printable_api_key_header(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+
+        with self.assertRaisesRegex(ValueError, "可打印 ASCII"):
+            api_workspace_service.save_api_auth_binding_metadata(
+                "api_source_a",
+                auth_type="api_key",
+                header_name="X-API-Key\r\nInjected: yes",
+            )
+
 
 class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
     def setUp(self):

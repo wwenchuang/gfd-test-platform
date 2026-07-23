@@ -168,6 +168,12 @@ def save_api_auth_binding_metadata(
             raise ValueError("认证类型仅支持 bearer 或 api_key")
         if normalized_type == "bearer":
             normalized_header = "Authorization"
+        if normalized_type == "api_key" and (
+            "\r" in normalized_header
+            or "\n" in normalized_header
+            or any(ord(char) < 33 or ord(char) > 126 for char in normalized_header)
+        ):
+            raise ValueError("API Key header 必须是可打印 ASCII 名称")
         if not normalized_header:
             raise ValueError("认证 header 不能为空")
         identity = f"{selected_source_id}:{selected_environment_id}"

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -99,6 +100,54 @@ class ApiCaseContractChecks(unittest.TestCase):
         self.assertNotIn("leaked", serialized)
         self.assertNotIn("Authorization", contract["request"]["headers"])
         self.assertNotIn("X-API-Key", contract["request"]["headers"])
+
+    def test_nested_sensitive_schema_values_never_enter_contract(self):
+        endpoint = _endpoint(
+            parameters=[
+                {"name": "accessToken", "in": "query", "required": True,
+                 "schema": {"type": "string", "example": "query-token-secret"}},
+                {"name": "credential", "in": "path", "required": True,
+                 "schema": {"type": "string", "default": "path-secret"}},
+            ],
+            request_schema={
+                "type": "object",
+                "example": {
+                    "profile": {
+                        "apiKey": "root-nested-api-key",
+                        "password": "root-nested-password",
+                        "displayName": "保留公开值",
+                    },
+                },
+                "required": ["profile"],
+                "properties": {
+                    "profile": {
+                        "type": "object",
+                        "required": ["apiKey", "password"],
+                        "properties": {
+                            "apiKey": {"type": "string", "example": "nested-api-key"},
+                            "password": {"type": "string", "default": "nested-password"},
+                            "displayName": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            required_fields=["accessToken", "credential", "profile"],
+        )
+
+        contract = api_case_contract_service.build_api_case_contract(endpoint, "positive")
+
+        serialized = json.dumps(contract, ensure_ascii=False)
+        for secret in (
+            "query-token-secret", "path-secret", "nested-api-key", "nested-password",
+            "root-nested-api-key", "root-nested-password",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertEqual(contract["request"]["body"]["profile"]["displayName"], "保留公开值")
+        self.assertEqual(contract["readiness"]["state"], "needs_review")
+        self.assertIn("request.query.accessToken", contract["readiness"]["missing"])
+        self.assertIn("request.path_params.credential", contract["readiness"]["missing"])
+        self.assertIn("request.body.profile.apiKey", contract["readiness"]["missing"])
+
 
     def test_positive_contract_uses_only_explicit_openapi_values(self):
         case = api_case_contract_service.build_api_case_contract(
@@ -497,6 +546,82 @@ class ApiPlanContractChecks(unittest.TestCase):
         self.assertEqual(positive["readiness"]["state"], "needs_review")
         self.assertIn("auth_binding", positive["readiness"]["missing"])
 
+    def test_plan_never_persists_or_returns_raw_endpoint_secrets(self):
+        document = _openapi_document()
+        operation = document["paths"]["/pets/{petId}"]["post"]
+        operation["parameters"].append({
+            "name": "X-API-Key",
+            "in": "header",
+            "required": True,
+            "schema": {"type": "string", "example": "endpoint-header-secret"},
+        })
+        operation["requestBody"]["content"]["application/json"]["schema"]["properties"]["password"] = {
+            "type": "string", "default": "endpoint-body-secret",
+        }
+        staged = self._activate(document)
+
+        plan = self.plan_service.generate_api_test_plan(staged["revision_id"], [], use_ai=False)
+        stored = Path(self.plan_service._plan_path(plan["plan_id"])).read_text(encoding="utf-8")
+        index = Path(self.plan_service._index_path()).read_text(encoding="utf-8")
+        returned = self.plan_service.get_api_test_plan(plan["plan_id"])
+
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.payload = {}
+
+            def _authorized(self):
+                return True
+
+            def _json(self, payload, _status=200):
+                self.payload = payload
+
+        handler = Handler()
+        router._get_api_testing_plan_detail(
+            handler,
+            {},
+            re.match(r"^/api/api-testing/plans/([^/]+)$", f"/api/api-testing/plans/{plan['plan_id']}"),
+        )
+
+        for value in ("endpoint-header-secret", "endpoint-body-secret"):
+            self.assertNotIn(value, json.dumps(plan, ensure_ascii=False))
+            self.assertNotIn(value, stored)
+            self.assertNotIn(value, index)
+            self.assertNotIn(value, json.dumps(returned, ensure_ascii=False))
+            self.assertNotIn(value, json.dumps(handler.payload, ensure_ascii=False))
+
+    def test_confirmed_plan_stops_when_current_auth_binding_is_cleared(self):
+        staged = self._activate(_openapi_document())
+        plan = self.plan_service.generate_api_test_plan(staged["revision_id"], [], use_ai=False)
+        self.plan_service.confirm_api_test_plan(plan["plan_id"])
+        self.workspace_service.clear_api_auth_binding_metadata("source-pets")
+
+        evaluated = self.plan_service.get_api_test_plan(plan["plan_id"])
+
+        self.assertFalse(evaluated["execution_readiness"]["can_execute"])
+        self.assertEqual(evaluated["execution_readiness"]["state"], "blocked")
+        with self.assertRaisesRegex(ValueError, "认证绑定"):
+            self.plan_service.confirm_api_test_plan(plan["plan_id"])
+
+    def test_confirmed_plan_stops_when_auth_binding_is_rebound(self):
+        staged = self._activate(_openapi_document())
+        plan = self.plan_service.generate_api_test_plan(staged["revision_id"], [], use_ai=False)
+        self.plan_service.confirm_api_test_plan(plan["plan_id"])
+        self.workspace_service.save_api_auth_binding_metadata(
+            "source-pets",
+            auth_type="api_key",
+            header_name="X-API-Key",
+            auth_ref="api_auth_rebound",
+            variable_name="MTP_API_AUTH_REBOUND",
+            environment_id="env-pets",
+        )
+
+        evaluated = self.plan_service.get_api_test_plan(plan["plan_id"])
+
+        self.assertIn("auth_binding_drift", evaluated["binding_drift"])
+        self.assertFalse(evaluated["execution_readiness"]["can_execute"])
+
     def test_changed_selected_endpoint_makes_plan_stale_and_unconfirmable(self):
         first = self._activate(_openapi_document(response_type="string"))
         plan = self.plan_service.generate_api_test_plan(first["revision_id"], [], use_ai=False)
@@ -699,6 +824,24 @@ class MeterSphereContractBoundaryChecks(unittest.TestCase):
         self.plan_service.get_api_test_plan = lambda plan_id: copy.deepcopy(blocked_plan)
         with self.assertRaisesRegex(self.metersphere_service.MeterSphereExecutionValidationError, "可执行用例"):
             self.metersphere_service._execution_plan("api-plan-blocked")
+
+    def test_execution_plan_rejects_current_auth_binding_drift(self):
+        drifted_plan = {
+            "plan_id": "api-plan-auth-drift",
+            "status": "confirmed",
+            "cases": [_meter_case("API-1")],
+            "revision_state": {"state": "fresh"},
+            "binding_drift": ["auth_binding_drift"],
+            "execution_readiness": {
+                "state": "blocked",
+                "executable_case_count": 0,
+                "can_execute": False,
+            },
+        }
+        self.plan_service.get_api_test_plan = lambda _plan_id: copy.deepcopy(drifted_plan)
+
+        with self.assertRaisesRegex(self.metersphere_service.MeterSphereExecutionValidationError, "认证绑定"):
+            self.metersphere_service._execution_plan("api-plan-auth-drift")
 
     def test_meter_payload_contains_only_executable_cases_with_audit_counts(self):
         plan = {
