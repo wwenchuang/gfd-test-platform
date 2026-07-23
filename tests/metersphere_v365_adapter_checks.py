@@ -204,6 +204,15 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
         old_config = metersphere_service._load_raw_config
         old_urlopen = urllib.request.urlopen
         old_save = metersphere_service._save_execution
+        connection_config = {
+            "base_url": "http://metersphere.example.test",
+            "auth_mode": "token",
+            "token": "server-token",
+            "workspace_id": "organization-global",
+            "project_id": "project-global",
+            "environment_id": "env-global",
+            "run_status_path": "/runs/{run_id}",
+        }
 
         class Response:
             def __enter__(self):
@@ -219,15 +228,7 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
             captured.update(dict(request.header_items()))
             return Response()
 
-        metersphere_service._load_raw_config = lambda: {
-            "base_url": "http://metersphere.example.test",
-            "auth_mode": "token",
-            "token": "server-token",
-            "workspace_id": "organization-global",
-            "project_id": "project-global",
-            "environment_id": "env-global",
-            "run_status_path": "/runs/{run_id}",
-        }
+        metersphere_service._load_raw_config = lambda: dict(connection_config)
         metersphere_service._save_execution = lambda _record: None
         urllib.request.urlopen = fake_urlopen
         try:
@@ -236,6 +237,7 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
                 "source_id": "api_source_bound",
                 "project_id": "project-snapshot",
                 "environment_id": "env-snapshot",
+                "connection_fingerprint": metersphere_service._connection_fingerprint(connection_config),
                 "run_id": "run-1",
                 "adapter": "legacy",
                 "remote_status": "running",
@@ -1478,6 +1480,57 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         api_test_plan_service.list_api_test_plans = self.old_list_plans
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
+    def _token_connection(self, **overrides):
+        config = {
+            "base_url": "http://metersphere.example.test",
+            "auth_mode": "token",
+            "token": "connection-token-a",
+            "access_key": "",
+            "secret_key": "",
+            "clear_secrets": ["access_key", "secret_key"],
+            "workspace_id": "org-a",
+            "project_id": "project-global",
+            "environment_id": "env-global",
+            "health_path": "/health",
+            "project_list_path": "/projects",
+            "environment_list_path": "/environments/{project_id}",
+            "case_push_path": "/cases",
+            "plan_run_path": "/runs",
+            "run_status_path": "/runs/{run_id}",
+            "report_path": "/reports/{run_id}",
+        }
+        config.update(overrides)
+        return config
+
+    def _start_source_execution(self, run_id="run-source-a"):
+        api_source_service.save_api_source({
+            "source_id": "api_source_pets",
+            "name": "宠物项目",
+            "project_id": "apifox-pets",
+            "access_token": "test-token",
+        })
+        binding = api_workspace_service.save_api_workspace_binding(
+            "api_source_pets", "project-a", "env-a",
+            project_name="业务A", environment_name="测试环境",
+        )
+        self.plan["source_id"] = "api_source_pets"
+        old_spawn = metersphere_service._spawn_execution_worker
+        metersphere_service._spawn_execution_worker = lambda _execution_id: None
+        try:
+            execution = metersphere_service.start_metersphere_execution(self.plan["plan_id"])
+        finally:
+            metersphere_service._spawn_execution_worker = old_spawn
+        record = metersphere_service._load_execution(execution["execution_id"])
+        record["run_id"] = run_id
+        record["adapter"] = "legacy"
+        record["status"] = "running"
+        record["remote_status"] = "running"
+        for phase in record.get("phases") or []:
+            if phase.get("id") == "metersphere_run":
+                phase["state"] = "running"
+        metersphere_service._save_execution(record)
+        return record, binding
+
     def test_service_auto_selects_v365_for_context_push_run_and_report(self):
         context = metersphere_service.metersphere_execution_context(force=True)
         first_push = metersphere_service.push_plan_to_metersphere(self.plan["plan_id"])
@@ -1526,29 +1579,17 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.assertFalse(any(path in guessed_paths for _method, path, _payload in self.remote.calls))
 
     def test_execution_snapshots_source_specific_binding_before_worker_starts(self):
-        old_spawn = metersphere_service._spawn_execution_worker
-        api_source_service.save_api_source({
-            "source_id": "api_source_pets",
-            "name": "宠物项目",
-            "project_id": "apifox-pets",
-            "access_token": "test-token",
-        })
-        binding = api_workspace_service.save_api_workspace_binding(
-            "api_source_pets", "project-a", "env-a",
-            project_name="业务A", environment_name="测试环境",
-        )
-        self.plan["source_id"] = "api_source_pets"
-        metersphere_service._spawn_execution_worker = lambda _execution_id: None
-        try:
-            execution = metersphere_service.start_metersphere_execution(self.plan["plan_id"])
-        finally:
-            metersphere_service._spawn_execution_worker = old_spawn
+        execution, binding = self._start_source_execution()
 
         self.assertEqual(execution["source_id"], "api_source_pets")
         self.assertEqual(execution["binding_id"], binding["binding_id"])
         self.assertEqual(execution["project_id"], "project-a")
         self.assertEqual(execution["environment_id"], "env-a")
         self.assertEqual(execution["binding_fingerprint"], binding["config_fingerprint"])
+        self.assertRegex(execution.get("connection_fingerprint") or "", r"^[0-9a-f]{64}$")
+        serialized = json.dumps(execution, ensure_ascii=False)
+        self.assertNotIn("1234567890abcdef", serialized)
+        self.assertNotIn("abcdef1234567890", serialized)
 
     def test_manual_report_pull_uses_execution_snapshot_after_global_selection_changes(self):
         captured = []
@@ -1559,33 +1600,155 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
                 "results": [{"id": "case-1", "name": "用例", "status": "passed"}],
             }}
 
-        metersphere_service.save_metersphere_config({
-            "base_url": "http://metersphere.example.test",
-            "auth_mode": "token",
-            "token": "token-global-b",
-            "workspace_id": "org-global",
-            "project_id": "project-b",
-            "environment_id": "env-b",
-            "report_path": "/reports/{run_id}",
-        })
-        metersphere_service._save_execution({
-            "execution_id": "execution-source-a",
-            "source_id": "api_source_a",
-            "project_id": "project-a",
-            "environment_id": "env-a",
-            "run_id": "run-source-a",
-            "adapter": "legacy",
-        })
+        metersphere_service.save_metersphere_config(self._token_connection(
+            project_id="project-b",
+            environment_id="env-b",
+        ))
+        execution, _binding = self._start_source_execution()
         metersphere_service._request_json = report_request
 
         result = metersphere_service.pull_metersphere_report(
             "run-source-a",
-            execution_id="execution-source-a",
+            execution_id=execution["execution_id"],
         )
 
         self.assertTrue(result["ok"])
         self.assertEqual(captured[0][2]["project_id"], "project-a")
         self.assertNotEqual(captured[0][2]["project_id"], "project-b")
+
+    def test_source_report_fails_before_network_when_connection_changes(self):
+        baseline = self._token_connection()
+        metersphere_service.save_metersphere_config(baseline)
+        execution, _binding = self._start_source_execution()
+        calls = []
+
+        def report_request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, config))
+            return {"ok": True, "data": {
+                "results": [{"id": "case-1", "name": "用例", "status": "passed"}],
+            }}
+
+        metersphere_service._request_json = report_request
+        changes = {
+            "base_url": "http://other-metersphere.example.test",
+            "token": "connection-token-b",
+            "workspace_id": "org-b",
+            "case_push_path": "/other/cases",
+            "plan_run_path": "/other/runs",
+            "run_status_path": "/other/runs/{run_id}",
+            "report_path": "/other/reports/{run_id}",
+        }
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                metersphere_service.save_metersphere_config({**baseline, field: value})
+                calls.clear()
+
+                result = metersphere_service.pull_metersphere_report(
+                    execution["run_id"],
+                    execution_id=execution["execution_id"],
+                )
+
+                self.assertFalse(result["ok"])
+                self.assertIn("连接配置已变更", result["error"])
+                self.assertEqual(calls, [])
+
+        metersphere_service.save_metersphere_config(baseline)
+        calls.clear()
+        result = metersphere_service.pull_metersphere_report(
+            execution["run_id"],
+            execution_id=execution["execution_id"],
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls[0][2]["project_id"], "project-a")
+        self.assertEqual(calls[0][2]["environment_id"], "env-a")
+
+    def test_source_poll_fails_before_network_when_connection_changes(self):
+        baseline = self._token_connection()
+        metersphere_service.save_metersphere_config(baseline)
+        execution, _binding = self._start_source_execution()
+        calls = []
+
+        def status_request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, config))
+            return {"ok": True, "data": {"status": "RUNNING"}}
+
+        metersphere_service._request_json = status_request
+        changes = {
+            "base_url": "http://other-metersphere.example.test",
+            "token": "connection-token-b",
+            "workspace_id": "org-b",
+            "case_push_path": "/other/cases",
+            "plan_run_path": "/other/runs",
+            "run_status_path": "/other/runs/{run_id}",
+            "report_path": "/other/reports/{run_id}",
+        }
+        for field, value in changes.items():
+            with self.subTest(field=field):
+                metersphere_service.save_metersphere_config({**baseline, field: value})
+                calls.clear()
+
+                refreshed = metersphere_service._refresh_running_execution(copy.deepcopy(execution))
+
+                self.assertEqual(refreshed["status"], "failed")
+                self.assertIn("连接配置已变更", refreshed["error"])
+                self.assertEqual(calls, [])
+
+        metersphere_service.save_metersphere_config(baseline)
+        calls.clear()
+        refreshed = metersphere_service._refresh_running_execution(copy.deepcopy(execution))
+        self.assertEqual(refreshed["status"], "running")
+        self.assertEqual(calls[0][2]["project_id"], "project-a")
+        self.assertEqual(calls[0][2]["environment_id"], "env-a")
+
+    def test_legacy_execution_id_cannot_bypass_source_run_ownership(self):
+        metersphere_service.save_metersphere_config(self._token_connection())
+        source_execution, _binding = self._start_source_execution(run_id="run-shared")
+        metersphere_service._save_execution({
+            "execution_id": "execution-legacy-collision",
+            "source_id": "",
+            "project_id": "project-global",
+            "environment_id": "env-global",
+            "run_id": source_execution["run_id"],
+            "adapter": "legacy",
+        })
+        calls = []
+        metersphere_service._request_json = lambda *args, **kwargs: calls.append((args, kwargs)) or {
+            "ok": True,
+            "data": {"results": []},
+        }
+
+        result = metersphere_service.pull_metersphere_report(
+            source_execution["run_id"],
+            execution_id="execution-legacy-collision",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("source", result["error"])
+        self.assertEqual(calls, [])
+
+    def test_pure_legacy_execution_id_keeps_global_report_compatibility(self):
+        metersphere_service.save_metersphere_config(self._token_connection())
+        metersphere_service._save_execution({
+            "execution_id": "execution-legacy-only",
+            "source_id": "",
+            "run_id": "run-legacy-only",
+            "adapter": "legacy",
+        })
+        calls = []
+
+        def report_request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, config))
+            return {"ok": True, "data": {"results": []}}
+
+        metersphere_service._request_json = report_request
+
+        result = metersphere_service.pull_metersphere_report(
+            "run-legacy-only",
+            execution_id="execution-legacy-only",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(calls), 1)
 
     def test_context_does_not_fake_all_businesses_when_exact_project_options_fail(self):
         original_request = self.remote.request

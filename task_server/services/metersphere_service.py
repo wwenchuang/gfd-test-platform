@@ -37,6 +37,15 @@ EXECUTION_PHASES = (
     ("sync_report", "同步报告"),
 )
 TERMINAL_EXECUTION_STATES = {"succeeded", "failed", "cancelled"}
+_CONNECTION_FINGERPRINT_PATH_FIELDS = (
+    "health_path",
+    "project_list_path",
+    "environment_list_path",
+    "case_push_path",
+    "plan_run_path",
+    "run_status_path",
+    "report_path",
+)
 _EXECUTION_LOCK = threading.RLock()
 
 
@@ -1216,10 +1225,56 @@ def _plan_binding_context(plan: Dict[str, Any]) -> tuple[str, Dict[str, Any], Di
     return source_id, cfg, binding
 
 
+def _connection_fingerprint(cfg: Dict[str, Any]) -> str:
+    auth_mode = str(cfg.get("auth_mode") or "").strip().lower()
+    credential_identity = {
+        field: hashlib.sha256(str(cfg.get(field) or "").encode("utf-8")).hexdigest()
+        for field in ("token", "access_key", "secret_key")
+    }
+    credential_identity["auth_mode"] = auth_mode
+    credential_fingerprint = hashlib.sha256(
+        json.dumps(
+            credential_identity,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    identity = {
+        "schema": "metersphere-connection/v1",
+        "adapter_contract": METERSPHERE_V365_ADAPTER_ID,
+        "base_url": str(cfg.get("base_url") or "").strip().rstrip("/"),
+        "auth_mode": auth_mode,
+        "credential_fingerprint": credential_fingerprint,
+        "workspace_id": str(cfg.get("workspace_id") or "").strip(),
+        "paths": {
+            field: str(cfg.get(field) or "").strip()
+            for field in _CONNECTION_FINGERPRINT_PATH_FIELDS
+        },
+    }
+    return hashlib.sha256(
+        json.dumps(
+            identity,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _execution_config(record: Dict[str, Any]) -> Dict[str, Any]:
     cfg = _load_raw_config()
     if not str(record.get("source_id") or "").strip():
         return cfg
+    expected_fingerprint = str(record.get("connection_fingerprint") or "").strip()
+    if not expected_fingerprint:
+        raise MeterSphereExecutionValidationError(
+            "source 执行记录缺少 MeterSphere 连接快照，拒绝使用当前全局连接"
+        )
+    if _connection_fingerprint(cfg) != expected_fingerprint:
+        raise MeterSphereExecutionValidationError(
+            "MeterSphere 连接配置已变更，请重新发起执行"
+        )
     cfg["project_id"] = str(record.get("project_id") or "").strip()
     cfg["environment_id"] = str(record.get("environment_id") or "").strip()
     return cfg
@@ -1254,6 +1309,7 @@ def start_metersphere_execution(plan_id: str, test_plan_id: str = "") -> Dict[st
             "project_id": str(binding.get("project_id") or _cfg.get("project_id") or ""),
             "environment_id": str(binding.get("environment_id") or _cfg.get("environment_id") or ""),
             "binding_fingerprint": str(binding.get("config_fingerprint") or ""),
+            "connection_fingerprint": _connection_fingerprint(_cfg) if source_id else "",
             "plan_name": str(plan.get("name") or selected_plan_id),
             "test_plan_id": str(test_plan_id or "").strip(),
             "status": "queued",
@@ -1324,6 +1380,8 @@ def _run_metersphere_execution(execution_id: str) -> None:
 
     try:
         source_id = str(record.get("source_id") or "")
+        if source_id:
+            _execution_config(record)
         context = (
             metersphere_execution_context(force=True, source_id=source_id)
             if source_id
@@ -1469,8 +1527,12 @@ def _remote_run_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 def _refresh_running_execution(record: Dict[str, Any]) -> Dict[str, Any]:
     run_id = str(record.get("run_id") or "").strip()
-    cfg = _execution_config(record)
     if not run_id:
+        return record
+    try:
+        cfg = _execution_config(record)
+    except MeterSphereExecutionValidationError as exc:
+        _fail_execution(record, "metersphere_run", str(exc))
         return record
     if str(record.get("adapter") or "") == METERSPHERE_V365_ADAPTER_ID:
         result = _v365_adapter(cfg).get_run(run_id)
@@ -1523,7 +1585,10 @@ def _refresh_running_execution(record: Dict[str, Any]) -> Dict[str, Any]:
     _save_execution(record)
     try:
         report_result = (
-            pull_metersphere_report(run_id, config=cfg)
+            pull_metersphere_report(
+                run_id,
+                execution_id=str(record.get("execution_id") or ""),
+            )
             if str(record.get("source_id") or "")
             else pull_metersphere_report(run_id)
         )
@@ -1766,21 +1831,23 @@ def create_metersphere_run(
 def _report_execution_snapshot(run_id: str, execution_id: str = "") -> tuple[Dict[str, Any], str]:
     selected_run_id = str(run_id or "").strip()
     selected_execution_id = str(execution_id or "").strip()
+    source_matches = [
+        record for record in _execution_records()
+        if str(record.get("run_id") or "").strip() == selected_run_id
+        and str(record.get("source_id") or "").strip()
+    ]
     if selected_execution_id:
         record = _load_execution(selected_execution_id)
         if not record:
             return {}, "MeterSphere execution_id 不存在"
         if str(record.get("run_id") or "").strip() != selected_run_id:
             return {}, "run_id 不属于指定 MeterSphere execution"
+        if not str(record.get("source_id") or "").strip() and source_matches:
+            return {}, "run_id 已属于 source-bound execution，不能使用 legacy execution_id"
         return record, ""
-    matches = [
-        record for record in _execution_records()
-        if str(record.get("run_id") or "").strip() == selected_run_id
-        and str(record.get("source_id") or "").strip()
-    ]
-    if len(matches) > 1:
+    if len(source_matches) > 1:
         return {}, "run_id 对应多个 source 执行记录，必须指定 execution_id"
-    return (matches[0], "") if matches else ({}, "")
+    return (source_matches[0], "") if source_matches else ({}, "")
 
 
 def pull_metersphere_report(
@@ -1793,14 +1860,18 @@ def pull_metersphere_report(
     from task_server.services import api_report_service
 
     selected_config = config
-    if selected_config is None:
+    execution = {}
+    if execution_id or selected_config is None:
         execution, error = _report_execution_snapshot(run_id, execution_id)
         if error:
             return {"ok": False, "error": error}
-        if execution:
+        if str(execution.get("source_id") or "").strip():
             if not str(execution.get("project_id") or "").strip():
                 return {"ok": False, "error": "source 执行记录缺少 MeterSphere 项目快照"}
-            selected_config = _execution_config(execution)
+            try:
+                selected_config = _execution_config(execution)
+            except MeterSphereExecutionValidationError as exc:
+                return {"ok": False, "error": str(exc)}
     raw = sanitize_metersphere_data(raw_report) if isinstance(raw_report, dict) else None
     if raw is None:
         cfg = dict(selected_config or _load_raw_config())
