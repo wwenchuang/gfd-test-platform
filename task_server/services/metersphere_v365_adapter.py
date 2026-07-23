@@ -261,10 +261,12 @@ class MeterSphereV365Adapter:
         request_json: Callable[..., Dict[str, Any]],
         *,
         bindings_dir: str = "",
+        request_supports_config: bool = False,
     ) -> None:
         self.config = dict(config or {})
         self.request_json = request_json
         self.bindings_dir = str(bindings_dir or "").strip()
+        self.request_supports_config = bool(request_supports_config)
 
     def _request(
         self,
@@ -273,15 +275,9 @@ class MeterSphereV365Adapter:
         payload: Dict[str, Any] | None = None,
         timeout: float = 30,
     ) -> Dict[str, Any]:
-        try:
+        if self.request_supports_config:
             return self.request_json(method, path, payload, timeout, config=self.config)
-        except TypeError as exc:
-            # Existing adapter tests and third-party callbacks predate the bound-config
-            # callback contract. Keep those callbacks usable while the service boundary
-            # receives the source-specific configuration.
-            if "unexpected keyword argument 'config'" not in str(exc):
-                raise
-            return self.request_json(method, path, payload, timeout)
+        return self.request_json(method, path, payload, timeout)
 
     @staticmethod
     def _enabled(item: Dict[str, Any]) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 import re
 import threading
@@ -134,7 +135,10 @@ def metersphere_config(masked: bool = True) -> Dict[str, Any]:
     cfg["secret_key_configured"] = bool(cfg.get("secret_key"))
     project_names = {
         str(item.get("id") or ""): str(item.get("name") or "")
-        for item in (_load_metadata_cache("projects").get("items") or [])
+        for item in (
+            _load_metadata_cache("projects", str(cfg.get("project_id") or "")).get("items")
+            or []
+        )
         if isinstance(item, dict)
     }
     environment_names = {
@@ -352,14 +356,20 @@ def _request_json_with_config(
     *,
     config: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    if config is None:
+    if config is None or not _request_supports_config(_request_json):
         return _request_json(method, path, payload, timeout)
+    return _request_json(method, path, payload, timeout, config=config)
+
+
+def _request_supports_config(request: Any) -> bool:
     try:
-        return _request_json(method, path, payload, timeout, config=config)
-    except TypeError as exc:
-        if "unexpected keyword argument 'config'" not in str(exc):
-            raise
-        return _request_json(method, path, payload, timeout)
+        signature = inspect.signature(request)
+    except (TypeError, ValueError):
+        return False
+    return "config" in signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
 
 
 def _load_metadata_cache(kind: str, project_id: str = "") -> Dict[str, Any]:
@@ -499,6 +509,7 @@ def list_metersphere_projects(
         "projects",
         str(cfg.get("project_list_path") or "").strip(),
         _normalize_projects,
+        project_id=str(cfg.get("project_id") or "").strip(),
         force=force,
         config=config,
     )
@@ -547,6 +558,7 @@ def _v365_adapter(cfg: Dict[str, Any] | None = None) -> MeterSphereV365Adapter:
         cfg or _load_raw_config(),
         _request_json,
         bindings_dir=_metersphere_bindings_dir(),
+        request_supports_config=_request_supports_config(_request_json),
     )
 
 

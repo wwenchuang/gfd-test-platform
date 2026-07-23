@@ -172,6 +172,7 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
                     "workspace_id": "organization-bound",
                 },
                 metersphere_service._request_json,
+                request_supports_config=True,
             )
             result = adapter._request("GET", "/project/list/options/organization-bound")
         finally:
@@ -308,6 +309,36 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
         self.assertEqual(context["environments"][0]["id"], "env-bound")
         self.assertTrue(captured)
         self.assertTrue(all(item.get("project") == "project-bound" for item in captured))
+
+    def test_source_scoped_project_metadata_does_not_reuse_another_project_cache(self):
+        calls = []
+        temp_dir = tempfile.mkdtemp(prefix="metersphere_project_metadata_cache_")
+        old_dir = metersphere_service.API_TESTING_DIR
+        old_request = metersphere_service._request_json
+
+        def request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, config))
+            return {"ok": True, "data": [{
+                "id": config["project_id"],
+                "name": config["project_id"],
+            }]}
+
+        config_a = {"project_id": "project-a", "project_list_path": "/projects"}
+        config_b = {"project_id": "project-b", "project_list_path": "/projects"}
+        metersphere_service.API_TESTING_DIR = temp_dir
+        metersphere_service._request_json = request
+        try:
+            first = metersphere_service.list_metersphere_projects(config=config_a)
+            second = metersphere_service.list_metersphere_projects(config=config_b)
+        finally:
+            metersphere_service.API_TESTING_DIR = old_dir
+            metersphere_service._request_json = old_request
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(first["items"][0]["id"], "project-a")
+        self.assertEqual(second["items"][0]["id"], "project-b")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[-1][2]["project_id"], "project-b")
 
     def test_service_request_fails_closed_before_network_on_invalid_access_key(self):
         called = False
@@ -507,6 +538,7 @@ class MeterSphereV365ProbeChecks(unittest.TestCase):
         adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
             {"workspace_id": "org-a", "project_id": "project-a"},
             request,
+            request_supports_config=True,
         )
 
         projects = adapter.list_projects()
@@ -531,12 +563,48 @@ class MeterSphereV365ProbeChecks(unittest.TestCase):
 
         adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
             {"project_id": "project-a"}, request,
+            request_supports_config=True,
         )
 
         with self.assertRaisesRegex(TypeError, "config decoder failed"):
             adapter._request("GET", "/system/version/current")
 
         self.assertEqual(len(calls), 1)
+
+    def test_config_capable_callback_with_side_effecting_type_error_is_not_retried(self):
+        calls = []
+
+        def request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, config))
+            raise TypeError("unexpected keyword argument 'config'")
+
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a"},
+            request,
+            request_supports_config=True,
+        )
+
+        with self.assertRaisesRegex(TypeError, "unexpected keyword argument 'config'"):
+            adapter._request("POST", "/api/case/add", {"name": "side effect"})
+
+        self.assertEqual(len(calls), 1)
+
+    def test_legacy_callback_is_called_once_without_config_keyword(self):
+        calls = []
+
+        def request(method, path, payload=None, timeout=30):
+            calls.append((method, path, payload))
+            return {"ok": True, "data": {}}
+
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a"}, request,
+            request_supports_config=False,
+        )
+
+        result = adapter._request("GET", "/system/version/current")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(calls, [("GET", "/system/version/current", None)])
 
 
 def _case_plan():
