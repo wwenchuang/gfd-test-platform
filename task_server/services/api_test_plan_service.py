@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 
 from task_server.config import safe_bool
 from task_server.storage import clean_id, read_json_file, safe_join, unique_millis_id, write_json_file
-from task_server.services import api_asset_service, api_case_contract_service, api_schema_diff_service
+from task_server.services import api_asset_service, api_case_contract_service, api_schema_diff_service, api_workspace_service
 from task_server.services.ai_skill_service import run_ai_skill
 
 
@@ -420,6 +420,17 @@ def _case_contract_missing(case: Dict[str, Any], endpoint: Dict[str, Any] | None
     return sorted(set(missing))
 
 
+def _plan_auth_binding(plan: Dict[str, Any]) -> Dict[str, Any]:
+    binding = plan.get("auth_binding") if isinstance(plan.get("auth_binding"), dict) else {}
+    required = ("auth_ref", "auth_type", "header_name", "variable_name", "environment_id")
+    if not binding.get("configured") or any(not str(binding.get(key) or "").strip() for key in required):
+        return {}
+    return {
+        key: binding.get(key)
+        for key in (*required, "configured", "configured_at", "updated_at", "binding_fingerprint")
+    }
+
+
 def _evaluated_cases(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     endpoint_by_id = {
         str(endpoint.get("endpoint_id") or ""): endpoint
@@ -427,6 +438,7 @@ def _evaluated_cases(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
         if isinstance(endpoint, dict) and endpoint.get("endpoint_id")
     }
     raw_cases = [case for case in (plan.get("cases") or []) if isinstance(case, dict)]
+    auth_binding = _plan_auth_binding(plan)
     known_case_ids = {
         str(case.get("case_id") or "").strip()
         for case in raw_cases
@@ -436,7 +448,25 @@ def _evaluated_cases(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     for raw_case in raw_cases:
         case = copy.deepcopy(raw_case)
         endpoint = endpoint_by_id.get(str(case.get("endpoint_id") or ""))
+        request = case.get("request") if isinstance(case.get("request"), dict) else {}
+        if (
+            endpoint
+            and api_case_contract_service.endpoint_requires_auth(endpoint)
+            and str(case.get("type") or "").strip().lower() in {"positive", "chain"}
+        ):
+            if auth_binding:
+                request["auth_ref"] = str(auth_binding["auth_ref"])
+            else:
+                request["auth_ref"] = ""
+            case["request"] = request
         missing = _case_contract_missing(case, endpoint, known_case_ids)
+        if (
+            endpoint
+            and api_case_contract_service.endpoint_requires_auth(endpoint)
+            and str(case.get("type") or "").strip().lower() in {"positive", "chain"}
+            and not auth_binding
+        ):
+            missing.append("auth_binding")
         if endpoint_by_id and not endpoint:
             missing.append("endpoint_id")
             missing = sorted(set(missing))
@@ -642,6 +672,8 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
     endpoints = _selected_endpoints(snapshot.get("snapshot_id"), endpoint_ids or [])
     if not endpoints:
         raise ValueError("未选择可生成用例的接口")
+    source_id = str(snapshot.get("source_id") or "").strip()
+    auth_binding = api_workspace_service.get_api_auth_binding(source_id) if source_id else {}
     plan_id = unique_millis_id("api_plan")
     local_cases = _local_plan_cases(endpoints, plan_id)
     ai_enabled = safe_bool(os.getenv("API_TESTING_AI_ENABLED", "0"), False) if use_ai is None else bool(use_ai)
@@ -667,6 +699,7 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
         "snapshot_id": snapshot.get("snapshot_id"),
         "asset_id": snapshot.get("asset_id"),
         "asset_revision_id": snapshot.get("revision_id") or snapshot.get("asset_revision_id") or snapshot.get("snapshot_id"),
+        "source_id": source_id,
         "name": f"{snapshot.get('title') or snapshot.get('name') or 'API'} 接口测试计划",
         "status": "draft",
         "source": source,
@@ -677,6 +710,8 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
         "endpoints": endpoints,
         "cases": selected_cases,
         "ai": ai_meta,
+        "auth_binding": auth_binding,
+        "binding_fingerprint": str(auth_binding.get("binding_fingerprint") or ""),
     }
     plan = evaluate_api_plan(plan)
     write_json_file(_plan_path(plan_id), plan)

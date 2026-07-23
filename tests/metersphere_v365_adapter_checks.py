@@ -607,6 +607,85 @@ class MeterSphereV365ProbeChecks(unittest.TestCase):
         self.assertEqual(calls, [("GET", "/system/version/current", None)])
 
 
+@unittest.skipIf(metersphere_v365_adapter is None, "adapter module not available")
+class MeterSphereV365EnvironmentVariableChecks(unittest.TestCase):
+    def test_environment_variable_upsert_verify_and_delete_use_exact_contract(self):
+        class Remote:
+            def __init__(self):
+                self.calls = []
+                self.environment = {
+                    "id": "env-a",
+                    "projectId": "project-a",
+                    "name": "测试环境",
+                    "description": "",
+                    "config": {"commonVariables": [{
+                        "key": "REGION", "value": "cn", "paramType": "CONSTANT", "enable": True,
+                    }]},
+                }
+
+            def request(self, method, path, payload=None, timeout=30, **_kwargs):
+                self.calls.append((method, path, payload))
+                if method == "GET" and path == "/project/environment/get/env-a":
+                    return {"ok": True, "data": copy.deepcopy(self.environment)}
+                return {"ok": False, "error": f"unexpected {method} {path}"}
+
+            def multipart(self, method, path, request, timeout=30, **_kwargs):
+                self.calls.append((method, path, copy.deepcopy(request)))
+                if method == "POST" and path == "/project/environment/update":
+                    self.environment = copy.deepcopy(request)
+                    return {"ok": True, "data": {"id": "env-a"}}
+                return {"ok": False, "error": f"unexpected multipart {method} {path}"}
+
+        remote = Remote()
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a", "environment_id": "env-a"},
+            remote.request,
+            request_multipart=remote.multipart,
+        )
+
+        saved = adapter.upsert_environment_variable(
+            "env-a", "MTP_API_AUTH_EXACT", "runtime-secret", "Midscene API authentication",
+        )
+
+        self.assertTrue(saved["configured"])
+        self.assertNotIn("runtime-secret", json.dumps(saved, ensure_ascii=False))
+        self.assertEqual(
+            [call[:2] for call in remote.calls],
+            [
+                ("GET", "/project/environment/get/env-a"),
+                ("POST", "/project/environment/update"),
+                ("GET", "/project/environment/get/env-a"),
+            ],
+        )
+        self.assertEqual(
+            remote.environment["config"]["commonVariables"][-1]["key"],
+            "MTP_API_AUTH_EXACT",
+        )
+        self.assertTrue(adapter.verify_environment_variable("env-a", "MTP_API_AUTH_EXACT")["configured"])
+
+        cleared = adapter.delete_environment_variable("env-a", "MTP_API_AUTH_EXACT")
+
+        self.assertFalse(cleared["configured"])
+        self.assertNotIn(
+            "MTP_API_AUTH_EXACT",
+            [item["key"] for item in remote.environment["config"]["commonVariables"]],
+        )
+
+    def test_environment_detail_from_another_project_is_rejected(self):
+        class Remote:
+            def request(self, method, path, payload=None, timeout=30, **_kwargs):
+                return {"ok": True, "data": {
+                    "id": "env-a", "projectId": "project-other", "name": "其他项目环境", "config": {},
+                }}
+
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a", "environment_id": "env-a"}, Remote().request,
+        )
+
+        with self.assertRaisesRegex(metersphere_v365_adapter.MeterSphereV365ContractError, "当前项目"):
+            adapter.get_environment_detail("env-a")
+
+
 def _case_plan():
     endpoint = {
         "endpoint_id": "endpoint-pet-update",
@@ -634,7 +713,7 @@ def _case_plan():
             "query": {"notify": True},
             "headers": {"X-Trace": "trace-001"},
             "body": {"name": "豆豆"},
-            "auth_ref": "environment_default",
+            "auth_ref": "",
         },
         "assertions": [
             {"type": "status", "operator": "in", "expected": [200, 201]},
@@ -916,6 +995,41 @@ class MeterSphereV365CaseUpsertChecks(unittest.TestCase):
         self.assertEqual(result["created"], 0)
         self.assertEqual(remote.case_add_calls, 0)
         self.assertEqual(result["blocked"][0]["reason"], "sensitive_header_in_contract")
+
+    def test_exact_auth_reference_is_the_only_sensitive_header_allowed(self):
+        remote = _CaseRemote()
+        adapter = self._adapter(remote)
+        plan = _case_plan()
+        plan["auth_binding"] = {
+            "auth_ref": "api_auth_exact",
+            "auth_type": "bearer",
+            "header_name": "Authorization",
+            "variable_name": "MTP_API_AUTH_EXACT",
+            "environment_id": "env-a",
+            "configured": True,
+        }
+        plan["cases"][0]["request"]["auth_ref"] = "api_auth_exact"
+
+        payload, _evidence = adapter._materialize_case(
+            plan, plan["cases"][0], plan["endpoints"][0], remote.definitions[0],
+        )
+
+        headers = {item["key"]: item["value"] for item in payload["request"]["headers"]}
+        self.assertEqual(headers["Authorization"], "Bearer ${MTP_API_AUTH_EXACT}")
+
+        wrong_auth = copy.deepcopy(plan)
+        wrong_auth["cases"][0]["request"]["auth_ref"] = "api_auth_other"
+        with self.assertRaisesRegex(metersphere_v365_adapter.MeterSphereV365ContractError, "认证引用"):
+            adapter._materialize_case(
+                wrong_auth, wrong_auth["cases"][0], wrong_auth["endpoints"][0], remote.definitions[0],
+            )
+
+        wrong_environment = self._adapter(remote)
+        wrong_environment.config["environment_id"] = "env-b"
+        with self.assertRaisesRegex(metersphere_v365_adapter.MeterSphereV365ContractError, "环境"):
+            wrong_environment._materialize_case(
+                plan, plan["cases"][0], plan["endpoints"][0], remote.definitions[0],
+            )
 
 
 class _ScenarioRemote(_CaseRemote):

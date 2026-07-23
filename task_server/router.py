@@ -2774,6 +2774,44 @@ def _post_api_testing_source_execution_binding(handler, qs, match):
     )
     handler._json({"ok": True, "binding": binding, "version": probe.get("version") or ""})
 
+
+@route_post_regex(r"^/api/api-testing/sources/([^/]+)/auth-binding$")
+def _post_api_testing_source_auth_binding(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, metersphere_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    try:
+        data = handler._body()
+        binding = metersphere_service.save_api_auth_binding(
+            source_id,
+            str(data.get("auth_type") or data.get("authType") or "").strip(),
+            str(data.get("header_name") or data.get("headerName") or "").strip(),
+            str(data.get("secret") or ""),
+        )
+        handler._json({"ok": True, "binding": binding})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_delete_regex(r"^/api/api-testing/sources/([^/]+)/auth-binding$")
+def _delete_api_testing_source_auth_binding(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, metersphere_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    try:
+        binding = metersphere_service.clear_api_auth_binding(source_id)
+        handler._json({"ok": True, "binding": binding})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
 @route_post("/api/api-testing/openapi/import")
 def _post_api_testing_openapi_import(handler, qs):
     from task_server.services import api_asset_service

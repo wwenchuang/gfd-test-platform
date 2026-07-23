@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import sys
 import tempfile
@@ -169,8 +171,85 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
             {},
         )
 
+    def test_auth_secret_is_forwarded_but_never_persisted(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+
+        class Adapter:
+            def __init__(self):
+                self.calls = []
+
+            def upsert_environment_variable(self, environment_id, key, value, description):
+                self.calls.append((environment_id, key, value, description))
+                return {"ok": True, "configured": True, "environment_id": environment_id, "variable_name": key}
+
+            def delete_environment_variable(self, environment_id, key):
+                return {"ok": True, "configured": False, "environment_id": environment_id, "variable_name": key}
+
+        adapter = Adapter()
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = lambda config: (adapter, {"version": "v3.6.5-lts"}, True)
+        try:
+            result = metersphere_service.save_api_auth_binding(
+                "api_source_a", "bearer", "Authorization", "runtime-secret",
+            )
+            cleared = metersphere_service.clear_api_auth_binding("api_source_a")
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertTrue(result["configured"])
+        self.assertEqual(adapter.calls[0][0], "ms_env_a")
+        self.assertEqual(adapter.calls[0][2], "runtime-secret")
+        self.assertEqual(result["header_name"], "Authorization")
+        self.assertFalse(cleared["configured"])
+        binding = api_workspace_service.get_api_workspace_binding("api_source_a", allow_legacy=False)
+        self.assertNotIn("auth_binding", binding)
+        self.assertNotIn("runtime-secret", json.dumps(binding, ensure_ascii=False))
+        local_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in Path(self.temp_dir).rglob("*")
+            if path.is_file()
+        )
+        self.assertNotIn("runtime-secret", local_text)
+
+    def test_workspace_binding_public_read_filters_unexpected_auth_secret_field(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+        api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+        )
+        path = Path(api_workspace_service._binding_path("api_source_a"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw["auth_binding"]["secret"] = "unexpected-secret"
+        path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        public_binding = api_workspace_service.get_api_workspace_binding("api_source_a", allow_legacy=False)
+
+        self.assertNotIn("unexpected-secret", json.dumps(public_binding, ensure_ascii=False))
+
 
 class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
+    def setUp(self):
+        self.old_source_dir = api_source_service.API_TESTING_DIR
+        self.temp_dir = tempfile.mkdtemp(prefix="api_workspace_route_auth_checks_")
+        api_source_service.API_TESTING_DIR = self.temp_dir
+        api_source_service.save_api_source({
+            "source_id": "api_source_a",
+            "name": "项目 A",
+            "project_id": "apifox_a",
+            "access_token": "token-a",
+        })
+
+    def tearDown(self):
+        api_source_service.API_TESTING_DIR = self.old_source_dir
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
     def test_execution_context_rejects_unauthenticated_request(self):
         from task_server import router
 
@@ -195,6 +274,55 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
 
         self.assertEqual(called, [])
         self.assertEqual(handler.responses, [({"ok": False, "error": "Unauthorized"}, 401)])
+
+    def test_auth_binding_routes_require_auth_and_never_return_secret(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self, authorized, body):
+                self.authorized = authorized
+                self.body = body
+                self.responses = []
+
+            def _authorized(self):
+                return self.authorized
+
+            def _body(self):
+                return self.body
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        pattern = r"^/api/api-testing/sources/([^/]+)/auth-binding$"
+        post = next(fn for matcher, fn in router._POST_REGEX_ROUTES if matcher.pattern == pattern)
+        delete = next(fn for matcher, fn in router._DELETE_REGEX_ROUTES if matcher.pattern == pattern)
+        match = re.match(pattern, "/api/api-testing/sources/api_source_a/auth-binding")
+        unauthenticated = Handler(False, {"secret": "runtime-secret"})
+        post(unauthenticated, {}, match)
+        self.assertEqual(unauthenticated.responses, [({"ok": False, "error": "Unauthorized"}, 401)])
+
+        original_save = metersphere_service.save_api_auth_binding
+        original_clear = metersphere_service.clear_api_auth_binding
+        metersphere_service.save_api_auth_binding = lambda *_args: {
+            "auth_ref": "api_auth_a", "configured": True, "variable_name": "MTP_API_AUTH_A",
+        }
+        metersphere_service.clear_api_auth_binding = lambda *_args: {
+            "auth_ref": "api_auth_a", "configured": False, "variable_name": "MTP_API_AUTH_A",
+        }
+        try:
+            authenticated = Handler(True, {
+                "auth_type": "bearer", "header_name": "Authorization", "secret": "runtime-secret",
+            })
+            post(authenticated, {}, match)
+            deleted = Handler(True, {})
+            delete(deleted, {}, match)
+        finally:
+            metersphere_service.save_api_auth_binding = original_save
+            metersphere_service.clear_api_auth_binding = original_clear
+
+        self.assertTrue(authenticated.responses[0][0]["binding"]["configured"])
+        self.assertFalse(deleted.responses[0][0]["binding"]["configured"])
+        self.assertNotIn("runtime-secret", json.dumps(authenticated.responses, ensure_ascii=False))
 
 
 if __name__ == "__main__":

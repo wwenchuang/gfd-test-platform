@@ -7,10 +7,27 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 
 CONTRACT_VERSION = "api_case_contract/v1"
 _MISSING = object()
+_SENSITIVE_HEADER_PARTS = (
+    "authorization",
+    "apikey",
+    "accesstoken",
+    "accesskey",
+    "token",
+    "secret",
+    "signature",
+    "credential",
+    "password",
+    "cookie",
+)
 
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def is_sensitive_header_name(name: Any) -> bool:
+    normalized = "".join(char for char in _text(name).lower() if char.isalnum())
+    return bool(normalized) and any(part in normalized for part in _SENSITIVE_HEADER_PARTS)
 
 
 def _explicit_value(schema: Any, owner: Any = None) -> Any:
@@ -259,6 +276,18 @@ def build_api_case_contract(
     if normalized_type not in {"positive", "negative", "auth", "boundary", "chain", "error"}:
         normalized_type = "positive"
     parameter_values, missing, issues = _request_parameters(endpoint)
+    for name in list(parameter_values["header"]):
+        if is_sensitive_header_name(name):
+            parameter_values["header"].pop(name, None)
+    if not endpoint_requires_auth(endpoint):
+        for parameter in endpoint.get("parameters") or []:
+            if not isinstance(parameter, dict) or not parameter.get("required"):
+                continue
+            if _text(parameter.get("in")).lower() != "header":
+                continue
+            name = _text(parameter.get("name"))
+            if name and is_sensitive_header_name(name):
+                missing.append(f"request.headers.{name}")
     request_schema = endpoint.get("request_schema")
     body_required = bool(endpoint.get("request_body_required"))
     if not body_required and _explicit_value(request_schema) is _MISSING:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import shutil
 import sys
 import tempfile
@@ -76,6 +77,29 @@ def _endpoint(**overrides):
 
 
 class ApiCaseContractChecks(unittest.TestCase):
+    def test_sensitive_openapi_header_example_never_enters_case(self):
+        endpoint = _endpoint(parameters=[
+            {
+                "name": "Authorization",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string", "example": "Bearer leaked"},
+            },
+            {
+                "name": "X-API-Key",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string", "default": "api-key-leaked"},
+            },
+        ])
+
+        contract = api_case_contract_service.build_api_case_contract(endpoint, "positive")
+
+        serialized = json.dumps(contract, ensure_ascii=False)
+        self.assertNotIn("leaked", serialized)
+        self.assertNotIn("Authorization", contract["request"]["headers"])
+        self.assertNotIn("X-API-Key", contract["request"]["headers"])
+
     def test_positive_contract_uses_only_explicit_openapi_values(self):
         case = api_case_contract_service.build_api_case_contract(
             _endpoint(),
@@ -377,19 +401,44 @@ def _openapi_document(response_type="string", include_health=False):
 
 class ApiPlanContractChecks(unittest.TestCase):
     def setUp(self):
-        from task_server.services import api_asset_service, api_test_plan_service
+        from task_server.services import api_asset_service, api_source_service, api_test_plan_service, api_workspace_service
 
         self.asset_service = api_asset_service
+        self.source_service = api_source_service
         self.plan_service = api_test_plan_service
+        self.workspace_service = api_workspace_service
         self.old_asset_dir = api_asset_service.API_TESTING_DIR
+        self.old_source_dir = api_source_service.API_TESTING_DIR
         self.old_plan_dir = api_test_plan_service.API_TESTING_DIR
+        self.old_workspace_dir = api_workspace_service.API_TESTING_DIR
         self.temp_dir = tempfile.mkdtemp(prefix="api_case_plan_checks_")
         api_asset_service.API_TESTING_DIR = self.temp_dir
+        api_source_service.API_TESTING_DIR = self.temp_dir
         api_test_plan_service.API_TESTING_DIR = self.temp_dir
+        api_workspace_service.API_TESTING_DIR = self.temp_dir
+        api_source_service.save_api_source({
+            "source_id": "source-pets",
+            "name": "宠物接口",
+            "project_id": "pets",
+            "access_token": "test-token",
+        })
+        api_workspace_service.save_api_workspace_binding(
+            "source-pets", "ms-pets", "env-pets",
+        )
+        api_workspace_service.save_api_auth_binding_metadata(
+            "source-pets",
+            auth_type="bearer",
+            header_name="Authorization",
+            auth_ref="api_auth_pets",
+            variable_name="MTP_API_AUTH_PETS",
+            environment_id="env-pets",
+        )
 
     def tearDown(self):
         self.asset_service.API_TESTING_DIR = self.old_asset_dir
+        self.source_service.API_TESTING_DIR = self.old_source_dir
         self.plan_service.API_TESTING_DIR = self.old_plan_dir
+        self.workspace_service.API_TESTING_DIR = self.old_workspace_dir
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _activate(self, document):
@@ -425,6 +474,28 @@ class ApiPlanContractChecks(unittest.TestCase):
 
         self.assertEqual(confirmed["status"], "confirmed")
         self.assertTrue(confirmed["execution_readiness"]["can_execute"])
+
+    def test_secured_plan_binds_only_the_current_source_auth_reference(self):
+        staged = self._activate(_openapi_document())
+
+        plan = self.plan_service.generate_api_test_plan(staged["revision_id"], [], use_ai=False)
+        positive = next(case for case in plan["cases"] if case["type"] == "positive")
+
+        self.assertEqual(plan["source_id"], "source-pets")
+        self.assertEqual(plan["auth_binding"]["auth_ref"], "api_auth_pets")
+        self.assertEqual(positive["request"]["auth_ref"], "api_auth_pets")
+        self.assertEqual(positive["readiness"]["state"], "executable")
+
+    def test_secured_plan_without_auth_binding_needs_review(self):
+        self.workspace_service.clear_api_auth_binding_metadata("source-pets")
+        staged = self._activate(_openapi_document())
+
+        plan = self.plan_service.generate_api_test_plan(staged["revision_id"], [], use_ai=False)
+        positive = next(case for case in plan["cases"] if case["type"] == "positive")
+
+        self.assertEqual(positive["request"]["auth_ref"], "")
+        self.assertEqual(positive["readiness"]["state"], "needs_review")
+        self.assertIn("auth_binding", positive["readiness"]["missing"])
 
     def test_changed_selected_endpoint_makes_plan_stale_and_unconfirmable(self):
         first = self._activate(_openapi_document(response_type="string"))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import inspect
 import os
 import re
@@ -27,7 +28,7 @@ API_TESTING_DIR = api_asset_service.API_TESTING_DIR
 METADATA_CACHE_TTL_SECONDS = 30
 _SENSITIVE_KEY_PARTS = (
     "authorization", "token", "accesskey", "secretkey", "cookie", "signature",
-    "password", "credential",
+    "password", "credential", "apiauth",
 )
 EXECUTION_PHASES = (
     ("push_cases", "推送用例"),
@@ -348,6 +349,62 @@ def _request_json(
         return sanitize_metersphere_data({"ok": False, "error": f"MeterSphere 请求失败：{exc}"})
 
 
+def _request_multipart(
+    method: str,
+    path: str,
+    request: Dict[str, Any],
+    timeout: float = 30,
+    *,
+    config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Send the exact MeterSphere multipart `request` part without persisting its content."""
+    cfg = dict(config or _load_raw_config())
+    base_url = str(cfg.get("base_url") or "").strip().rstrip("/")
+    api_path = str(path or "").strip()
+    if not base_url:
+        return {"ok": False, "configured": False, "error": "MeterSphere base_url 未配置"}
+    if not api_path:
+        return {"ok": False, "requires_config": True, "error": "MeterSphere API 路径未配置"}
+    boundary = f"----MidsceneMeterSphere{unique_millis_id('')[-12:]}"
+    body_json = json.dumps(request if isinstance(request, dict) else {}, ensure_ascii=False).encode("utf-8")
+    body = b"\r\n".join((
+        f"--{boundary}".encode("ascii"),
+        b'Content-Disposition: form-data; name="request"',
+        b"Content-Type: application/json; charset=utf-8",
+        b"",
+        body_json,
+        f"--{boundary}--".encode("ascii"),
+        b"",
+    ))
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+    try:
+        headers.update(_metersphere_auth_headers(cfg, method=method, path=api_path, payload=None))
+    except Exception as exc:
+        return {"ok": False, "error": f"MeterSphere 认证配置无效：{exc}"}
+    project_id = str(cfg.get("project_id") or "").strip()
+    organization_id = str(cfg.get("workspace_id") or "").strip()
+    if project_id:
+        headers["PROJECT"] = project_id
+    if organization_id:
+        headers["ORGANIZATION"] = organization_id
+    url = base_url + (api_path if api_path.startswith("/") else f"/{api_path}")
+    req = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
+    started = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+        parsed = json.loads(raw) if raw else {}
+        if not isinstance(parsed, dict):
+            parsed = {"data": parsed}
+        parsed.setdefault("ok", True)
+        parsed["elapsed_ms"] = int((time.time() - started) * 1000)
+        return sanitize_metersphere_data(parsed)
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "http_status": exc.code, "error": f"MeterSphere HTTP {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"MeterSphere 请求失败：{exc}"}
+
+
 def _request_json_with_config(
     method: str,
     path: str,
@@ -559,6 +616,8 @@ def _v365_adapter(cfg: Dict[str, Any] | None = None) -> MeterSphereV365Adapter:
         _request_json,
         bindings_dir=_metersphere_bindings_dir(),
         request_supports_config=_request_supports_config(_request_json),
+        request_multipart=_request_multipart,
+        request_multipart_supports_config=True,
     )
 
 
@@ -603,6 +662,94 @@ def _binding_config(source_id: str, allow_legacy: bool = True) -> tuple[Dict[str
     cfg["project_id"] = str(binding.get("project_id") or "").strip()
     cfg["environment_id"] = str(binding.get("environment_id") or "").strip()
     return cfg, binding
+
+
+def _api_auth_identity(source_id: str, environment_id: str) -> tuple[str, str]:
+    digest = hashlib.sha256(f"{source_id}:{environment_id}".encode("utf-8")).hexdigest()
+    return f"api_auth_{digest[:16]}", f"MTP_API_AUTH_{digest[:12].upper()}"
+
+
+def _api_auth_header(auth_type: str, header_name: str) -> tuple[str, str]:
+    normalized_type = str(auth_type or "").strip().lower()
+    normalized_header = str(header_name or "").strip()
+    if normalized_type not in {"bearer", "api_key"}:
+        raise ValueError("认证类型仅支持 bearer 或 api_key")
+    if normalized_type == "bearer":
+        return normalized_type, "Authorization"
+    if (
+        not normalized_header
+        or "\r" in normalized_header
+        or "\n" in normalized_header
+        or any(ord(char) < 33 or ord(char) > 126 for char in normalized_header)
+    ):
+        raise ValueError("API Key header 必须是可打印 ASCII 名称")
+    return normalized_type, normalized_header
+
+
+def save_api_auth_binding(
+    source_id: str,
+    auth_type: str,
+    header_name: str,
+    secret: str,
+) -> Dict[str, Any]:
+    """Forward one business secret to the source-bound environment without local storage."""
+    from task_server.services import api_workspace_service
+
+    selected_source_id = str(source_id or "").strip()
+    secret_value = str(secret or "")
+    if not selected_source_id:
+        raise ValueError("source_id 不能为空")
+    if not secret_value:
+        raise ValueError("认证密钥不能为空；清除认证请使用 DELETE")
+    normalized_type, normalized_header = _api_auth_header(auth_type, header_name)
+    cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+    environment_id = str(binding.get("environment_id") or "").strip()
+    if not environment_id:
+        raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+    auth_ref, variable_name = _api_auth_identity(selected_source_id, environment_id)
+    adapter, _probe, supported = _v365_adapter_probe(cfg)
+    if not supported:
+        raise ValueError("MeterSphere v3.6.5 实时校验不可用")
+    remote = adapter.upsert_environment_variable(
+        environment_id,
+        variable_name,
+        secret_value,
+        "Midscene API authentication",
+    )
+    if not remote.get("configured"):
+        raise ValueError("MeterSphere 环境变量写入后校验失败")
+    return api_workspace_service.save_api_auth_binding_metadata(
+        selected_source_id,
+        auth_type=normalized_type,
+        header_name=normalized_header,
+        auth_ref=auth_ref,
+        variable_name=variable_name,
+        environment_id=environment_id,
+    )
+
+
+def clear_api_auth_binding(source_id: str) -> Dict[str, Any]:
+    from task_server.services import api_workspace_service
+
+    selected_source_id = str(source_id or "").strip()
+    if not selected_source_id:
+        raise ValueError("source_id 不能为空")
+    binding = api_workspace_service.get_api_workspace_binding(selected_source_id, allow_legacy=True)
+    auth_binding = api_workspace_service.get_api_auth_binding(selected_source_id)
+    if not auth_binding:
+        return {"configured": False}
+    environment_id = str(binding.get("environment_id") or "").strip()
+    if environment_id != str(auth_binding.get("environment_id") or "").strip():
+        raise ValueError("认证引用不属于当前 MeterSphere 环境")
+    cfg, _bound = _binding_config(selected_source_id, allow_legacy=True)
+    adapter, _probe, supported = _v365_adapter_probe(cfg)
+    if not supported:
+        raise ValueError("MeterSphere v3.6.5 实时校验不可用")
+    remote = adapter.delete_environment_variable(environment_id, str(auth_binding.get("variable_name") or ""))
+    if remote.get("configured"):
+        raise ValueError("MeterSphere 环境变量删除后校验失败")
+    previous = api_workspace_service.clear_api_auth_binding_metadata(selected_source_id)
+    return {**previous, "configured": False}
 
 
 def _plan_source_id(plan: Dict[str, Any]) -> str:
@@ -1685,7 +1832,9 @@ __all__ = [
     "MeterSphereExecutionConflict",
     "MeterSphereExecutionNotFound",
     "MeterSphereExecutionValidationError",
+    "clear_api_auth_binding",
     "save_metersphere_config",
+    "save_api_auth_binding",
     "metersphere_config",
     "metersphere_health",
     "sanitize_metersphere_data",

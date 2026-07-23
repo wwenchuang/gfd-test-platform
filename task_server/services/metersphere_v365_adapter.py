@@ -13,6 +13,7 @@ import uuid
 from typing import Any, Callable, Dict, List
 
 from task_server.storage import clean_id, read_json_file, safe_join, write_json_file
+from task_server.services.api_case_contract_service import is_sensitive_header_name
 
 
 ADAPTER_ID = "metersphere_v3.6.5"
@@ -21,17 +22,6 @@ SUPPORTED_VERSIONS = {
     "v3.6.5-lts-f043cdd2",
 }
 PROVIDER_TERMINAL_GRACE_MS = 300_000
-_SENSITIVE_HEADER_KEY_PARTS = (
-    "authorization",
-    "token",
-    "apikey",
-    "accesskey",
-    "secret",
-    "cookie",
-    "signature",
-    "password",
-    "credential",
-)
 _REQUEST_STEP_TYPES = {"API_CASE", "API", "CUSTOM_REQUEST", "SCRIPT"}
 
 
@@ -262,11 +252,15 @@ class MeterSphereV365Adapter:
         *,
         bindings_dir: str = "",
         request_supports_config: bool = False,
+        request_multipart: Callable[..., Dict[str, Any]] | None = None,
+        request_multipart_supports_config: bool = False,
     ) -> None:
         self.config = dict(config or {})
         self.request_json = request_json
         self.bindings_dir = str(bindings_dir or "").strip()
         self.request_supports_config = bool(request_supports_config)
+        self.request_multipart = request_multipart
+        self.request_multipart_supports_config = bool(request_multipart_supports_config)
 
     def _request(
         self,
@@ -278,6 +272,22 @@ class MeterSphereV365Adapter:
         if self.request_supports_config:
             return self.request_json(method, path, payload, timeout, config=self.config)
         return self.request_json(method, path, payload, timeout)
+
+    def _request_environment_update(
+        self,
+        request: Dict[str, Any],
+        timeout: float = 30,
+    ) -> Dict[str, Any]:
+        if self.request_multipart is None:
+            raise MeterSphereV365ContractError(
+                "environment_update_transport_missing",
+                "MeterSphere 环境变量更新传输不可用",
+            )
+        if self.request_multipart_supports_config:
+            return self.request_multipart(
+                "POST", "/project/environment/update", request, timeout, config=self.config,
+            )
+        return self.request_multipart("POST", "/project/environment/update", request, timeout)
 
     @staticmethod
     def _enabled(item: Dict[str, Any]) -> bool:
@@ -330,6 +340,131 @@ class MeterSphereV365Adapter:
             raise MeterSphereV365ContractError("project_missing", "MeterSphere project ID 未配置")
         result = self._request("GET", f"/api/test/env-list/{selected_project_id}", timeout=20)
         return self._normalize_environment_options(result, selected_project_id) if result.get("ok") else []
+
+    @staticmethod
+    def _environment_variable_key(key: Any) -> str:
+        name = str(key or "").strip()
+        if not name.startswith("MTP_API_AUTH_"):
+            raise MeterSphereV365ContractError(
+                "environment_variable_not_owned",
+                "只能更新平台管理的 MeterSphere 认证环境变量",
+            )
+        return name
+
+    def _environment_detail(self, environment_id: str) -> Dict[str, Any]:
+        selected_environment_id = str(environment_id or "").strip()
+        if not selected_environment_id:
+            raise MeterSphereV365ContractError("environment_missing", "MeterSphere environment ID 未配置")
+        result = self._request("GET", f"/project/environment/get/{selected_environment_id}", timeout=30)
+        detail = _result_data(result)
+        detail = detail if isinstance(detail, dict) else {}
+        if not result.get("ok") or str(detail.get("id") or "").strip() != selected_environment_id:
+            raise MeterSphereV365ContractError("environment_not_found", "MeterSphere 环境详情不可用")
+        project_id = str(self.config.get("project_id") or "").strip()
+        detail_project_id = str(detail.get("projectId") or "").strip()
+        if project_id and detail_project_id and detail_project_id != project_id:
+            raise MeterSphereV365ContractError(
+                "environment_project_mismatch",
+                "MeterSphere 环境不属于当前项目",
+            )
+        return copy.deepcopy(detail)
+
+    @staticmethod
+    def _environment_summary(environment: Dict[str, Any], variable_name: str, configured: bool) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "configured": bool(configured),
+            "environment_id": str(environment.get("id") or "").strip(),
+            "project_id": str(environment.get("projectId") or "").strip(),
+            "environment_name": str(environment.get("name") or "").strip(),
+            "variable_name": str(variable_name or "").strip(),
+        }
+
+    @staticmethod
+    def _environment_request(environment: Dict[str, Any]) -> Dict[str, Any]:
+        request = {
+            key: copy.deepcopy(environment.get(key))
+            for key in ("id", "projectId", "name", "config", "description")
+            if key in environment
+        }
+        request["config"] = request.get("config") if isinstance(request.get("config"), dict) else {}
+        return request
+
+    @staticmethod
+    def _common_variables(environment: Dict[str, Any]) -> List[Dict[str, Any]]:
+        config = environment.get("config") if isinstance(environment.get("config"), dict) else {}
+        values = config.get("commonVariables") if isinstance(config.get("commonVariables"), list) else []
+        return [copy.deepcopy(item) for item in values if isinstance(item, dict)]
+
+    def get_environment_detail(self, environment_id: str) -> Dict[str, Any]:
+        environment = self._environment_detail(environment_id)
+        return self._environment_summary(environment, "", False)
+
+    def verify_environment_variable(self, environment_id: str, key: str) -> Dict[str, Any]:
+        variable_name = self._environment_variable_key(key)
+        environment = self._environment_detail(environment_id)
+        configured = any(
+            str(item.get("key") or "").strip() == variable_name and item.get("enable", True) is not False
+            for item in self._common_variables(environment)
+        )
+        return self._environment_summary(environment, variable_name, configured)
+
+    def upsert_environment_variable(
+        self,
+        environment_id: str,
+        key: str,
+        value: str,
+        description: str,
+    ) -> Dict[str, Any]:
+        variable_name = self._environment_variable_key(key)
+        environment = self._environment_detail(environment_id)
+        request = self._environment_request(environment)
+        config = request["config"]
+        variables = self._common_variables(environment)
+        replacement = {
+            "key": variable_name,
+            "value": str(value or ""),
+            "paramType": "CONSTANT",
+            "enable": True,
+            "description": str(description or ""),
+        }
+        updated = False
+        for index, item in enumerate(variables):
+            if str(item.get("key") or "").strip() != variable_name:
+                continue
+            replacement = {**item, **replacement}
+            variables[index] = replacement
+            updated = True
+            break
+        if not updated:
+            variables.append(replacement)
+        config["commonVariables"] = variables
+        result = self._request_environment_update(request, timeout=30)
+        if not result.get("ok"):
+            raise MeterSphereV365ContractError("environment_update_failed", "MeterSphere 环境变量更新失败")
+        verified_environment = self._environment_detail(environment_id)
+        verified = next((
+            item for item in self._common_variables(verified_environment)
+            if str(item.get("key") or "").strip() == variable_name
+        ), {})
+        configured = bool(verified) and str(verified.get("value") or "") == str(value or "")
+        return self._environment_summary(verified_environment, variable_name, configured)
+
+    def delete_environment_variable(self, environment_id: str, key: str) -> Dict[str, Any]:
+        variable_name = self._environment_variable_key(key)
+        environment = self._environment_detail(environment_id)
+        request = self._environment_request(environment)
+        variables = self._common_variables(environment)
+        retained = [
+            item for item in variables
+            if str(item.get("key") or "").strip() != variable_name
+        ]
+        if len(retained) != len(variables):
+            request["config"]["commonVariables"] = retained
+            result = self._request_environment_update(request, timeout=30)
+            if not result.get("ok"):
+                raise MeterSphereV365ContractError("environment_update_failed", "MeterSphere 环境变量删除失败")
+        return self.verify_environment_variable(environment_id, variable_name)
 
     def probe(self) -> Dict[str, Any]:
         project_id = str(self.config.get("project_id") or "").strip()
@@ -662,16 +797,42 @@ class MeterSphereV365Adapter:
                 "unsupported_request_headers",
                 "API case headers 必须是 key/value 对象",
             )
-        if any(
-            any(
-                part in re.sub(r"[^a-z0-9]+", "", str(key).lower())
-                for part in _SENSITIVE_HEADER_KEY_PARTS
-            )
-            for key in headers
-        ):
+        if any(is_sensitive_header_name(key) for key in headers):
             raise MeterSphereV365ContractError(
                 "sensitive_header_in_contract",
                 "请求合同不能携带明文鉴权 header",
+            )
+        materialized_headers = dict(headers)
+        auth_ref = str(request.get("auth_ref") or "").strip()
+        auth_binding = plan.get("auth_binding") if isinstance(plan.get("auth_binding"), dict) else {}
+        if auth_ref:
+            binding_environment_id = str(auth_binding.get("environment_id") or "").strip()
+            configured = bool(auth_binding.get("configured"))
+            if not configured or auth_ref != str(auth_binding.get("auth_ref") or "").strip():
+                raise MeterSphereV365ContractError(
+                    "auth_binding_mismatch",
+                    "认证引用与当前计划认证绑定不匹配",
+                )
+            if binding_environment_id != str(self.config.get("environment_id") or "").strip():
+                raise MeterSphereV365ContractError(
+                    "auth_environment_mismatch",
+                    "认证引用不属于当前 MeterSphere 环境",
+                )
+            header_name = str(auth_binding.get("header_name") or "").strip()
+            variable_name = str(auth_binding.get("variable_name") or "").strip()
+            auth_type = str(auth_binding.get("auth_type") or "").strip().lower()
+            if not header_name or not variable_name or auth_type not in {"bearer", "api_key"}:
+                raise MeterSphereV365ContractError(
+                    "auth_binding_invalid",
+                    "认证绑定不完整，无法物化远端接口用例",
+                )
+            if auth_type == "bearer" and header_name != "Authorization":
+                raise MeterSphereV365ContractError(
+                    "auth_binding_invalid",
+                    "Bearer 认证必须使用 Authorization header",
+                )
+            materialized_headers[header_name] = (
+                f"Bearer ${{{variable_name}}}" if auth_type == "bearer" else f"${{{variable_name}}}"
             )
         assertion_items = []
         schema_coverage = "none"
@@ -715,7 +876,7 @@ class MeterSphereV365Adapter:
             "path": str(request.get("path") or "").strip(),
             "method": method,
             "body": self._body(request.get("body")),
-            "headers": self._parameter_items(headers),
+            "headers": self._parameter_items(materialized_headers),
             "rest": self._parameter_items(request.get("path_params") or {}, rest=True),
             "query": self._parameter_items(request.get("query") or {}),
             "otherConfig": {
