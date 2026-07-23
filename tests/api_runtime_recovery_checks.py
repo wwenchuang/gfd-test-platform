@@ -397,6 +397,32 @@ class ApiReportOwnershipChecks(unittest.TestCase):
         self.assertEqual("project-a", report["project_id"])
         self.assertEqual("environment-a", report["environment_id"])
 
+    def test_reports_route_forwards_source_filter(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        calls = []
+        route = router.GET_ROUTES["/api/api-testing/reports"]
+        with mock.patch.object(
+            api_report_service,
+            "list_api_reports",
+            side_effect=lambda limit, source_id="": calls.append(
+                (limit, source_id)
+            )
+            or [],
+        ):
+            handler = Handler()
+            route(handler, {"limit": "7", "source_id": "source-a"})
+
+        self.assertEqual([(7, "source-a")], calls)
+        self.assertEqual(({"ok": True, "reports": []}, 200), handler.responses[0])
+
 
 if __name__ == "__main__":
     unittest.main()

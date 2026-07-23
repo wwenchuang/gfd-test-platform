@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import threading
 import time
 from typing import Any, Dict
@@ -18,6 +19,10 @@ from task_server.services import api_source_service
 API_TESTING_DIR = os.getenv("API_TESTING_DIR", safe_join(LEARNING_DIR, "api-testing"))
 _BINDING_LOCK = threading.RLock()
 _HTTP_FIELD_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+
+class ApiWorkspaceBindingConflict(ValueError):
+    """Raised when an older binding write races with a newer selection."""
 
 
 def _now() -> str:
@@ -46,6 +51,37 @@ def _config_fingerprint(project_id: str, environment_id: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+def _binding_version() -> str:
+    return secrets.token_hex(12)
+
+
+def _binding_compare_token(binding: Dict[str, Any]) -> str:
+    return str(
+        binding.get("binding_version")
+        or binding.get("config_fingerprint")
+        or ""
+    ).strip()
+
+
+def _client_write_guard(client_session_id: str, client_intent_id: Any) -> Dict[str, Any]:
+    session_id = str(client_session_id or "").strip()
+    raw_intent_id = str(client_intent_id or "").strip()
+    if not session_id and not raw_intent_id:
+        return {}
+    if not session_id or not raw_intent_id:
+        raise ValueError("binding client session 和 intent 必须同时提供")
+    try:
+        intent_id = int(raw_intent_id)
+    except (TypeError, ValueError):
+        raise ValueError("binding client intent 必须是正整数")
+    if intent_id < 1:
+        raise ValueError("binding client intent 必须是正整数")
+    return {
+        "session_hash": hashlib.sha256(session_id.encode("utf-8")).hexdigest(),
+        "intent_id": intent_id,
+    }
+
+
 def _stable_hash(value: str, size: int) -> str:
     return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:size]
 
@@ -72,7 +108,7 @@ def _public_workspace_binding(value: Any) -> Dict[str, Any]:
         for key in (
             "binding_id", "source_id", "provider", "project_id", "project_name",
             "environment_id", "environment_name", "verified_at", "config_fingerprint",
-            "created_at", "updated_at",
+            "binding_version", "created_at", "updated_at",
         )
     }
     if isinstance(binding.get("auth_binding"), dict):
@@ -93,6 +129,9 @@ def save_api_workspace_binding(
     project_name: str = "",
     environment_name: str = "",
     verified_at: str = "",
+    expected_binding_fingerprint: str | None = None,
+    client_session_id: str = "",
+    client_intent_id: Any = None,
 ) -> Dict[str, Any]:
     """Persist a source-specific MeterSphere selection without connection secrets."""
     selected_source_id = str(source_id or "").strip()
@@ -104,8 +143,39 @@ def save_api_workspace_binding(
         raise ValueError("MeterSphere project_id 不能为空")
     if not selected_environment_id:
         raise ValueError("MeterSphere environment_id 不能为空")
+    incoming_guard = _client_write_guard(client_session_id, client_intent_id)
     with _BINDING_LOCK:
         current = _load_binding(selected_source_id)
+        current_guard = (
+            current.get("_client_write_guard")
+            if isinstance(current.get("_client_write_guard"), dict)
+            else {}
+        )
+        same_client = bool(
+            incoming_guard
+            and current_guard
+            and incoming_guard.get("session_hash") == current_guard.get("session_hash")
+        )
+        newer_same_client_intent = bool(
+            same_client
+            and int(incoming_guard.get("intent_id") or 0)
+            > int(current_guard.get("intent_id") or 0)
+        )
+        if (
+            incoming_guard
+            and same_client
+            and not newer_same_client_intent
+        ):
+            raise ApiWorkspaceBindingConflict(
+                "MeterSphere 执行绑定已由当前页面的更新选择覆盖"
+            )
+        if expected_binding_fingerprint is not None:
+            expected = str(expected_binding_fingerprint or "").strip()
+            current_token = _binding_compare_token(current)
+            if expected != current_token and not newer_same_client_intent:
+                raise ApiWorkspaceBindingConflict(
+                    "MeterSphere 执行绑定已由其他请求更新"
+                )
         now = _now()
         binding = {
             "binding_id": _binding_id(selected_source_id),
@@ -117,9 +187,12 @@ def save_api_workspace_binding(
             "environment_name": str(environment_name or "").strip(),
             "verified_at": str(verified_at or now).strip(),
             "config_fingerprint": _config_fingerprint(selected_project_id, selected_environment_id),
+            "binding_version": _binding_version(),
             "created_at": str(current.get("created_at") or now),
             "updated_at": now,
         }
+        if incoming_guard:
+            binding["_client_write_guard"] = incoming_guard
         current_auth = _public_auth_binding(current.get("auth_binding"))
         if (
             current_auth.get("configured")
@@ -132,7 +205,7 @@ def save_api_workspace_binding(
             os.chmod(path, 0o600)
         except OSError:
             pass
-        return binding
+        return _public_workspace_binding(binding)
 
 
 def get_api_auth_binding(source_id: str) -> Dict[str, Any]:
@@ -259,6 +332,7 @@ def get_api_workspace_binding(source_id: str, allow_legacy: bool = True) -> Dict
 
 __all__ = [
     "API_TESTING_DIR",
+    "ApiWorkspaceBindingConflict",
     "clear_api_auth_binding_metadata",
     "get_api_auth_binding",
     "get_api_workspace_binding",

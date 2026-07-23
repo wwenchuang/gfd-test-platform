@@ -20,6 +20,8 @@ let apiExecutionBindingIntentId = 0;
 let apiExecutionBindingIntent = null;
 let apiReportRequestId = 0;
 let apiReportRequestController = null;
+const apiExecutionBindingClientSessionId = globalThis.crypto?.randomUUID?.()
+  || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function currentApiExecutionSourceId() {
   return apiTestingProjectScope.sourceId || apiAssetSelectedSourceId || apiExecutionContext?.source_id || '';
@@ -2145,7 +2147,8 @@ async function saveApiSourceExecutionBinding(projectId, environmentId, intent = 
   const controller = new AbortController();
   const requestId = ++apiExecutionBindingSaveRequestId;
   apiExecutionBindingSaveController = controller;
-  const expectedBindingFingerprint = apiExecutionContext?.binding?.config_fingerprint
+  const expectedBindingFingerprint = apiExecutionContext?.binding?.binding_version
+    || apiExecutionContext?.binding?.config_fingerprint
     || apiExecutionContext?.binding?.binding_fingerprint
     || apiExecutionContext?.binding?.version
     || '';
@@ -2157,6 +2160,8 @@ async function saveApiSourceExecutionBinding(projectId, environmentId, intent = 
         project_id: projectId,
         environment_id: environmentId,
         expected_binding_fingerprint: expectedBindingFingerprint,
+        client_session_id: apiExecutionBindingClientSessionId,
+        client_intent_id: bindingIntent.intentId,
       }
     });
     if (!apiExecutionBindingResponseIsCurrent(controller, requestId, bindingIntent)) return;

@@ -258,6 +258,98 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         self.assertNotIn("access_key", first)
         self.assertNotEqual(first["config_fingerprint"], second["config_fingerprint"])
 
+    def test_newer_client_binding_intent_wins_regardless_of_completion_order(self):
+        self._create_sources(1)
+        initial = api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_initial", "ms_env_initial",
+        )
+        expected = initial.get("binding_version") or initial["config_fingerprint"]
+
+        first = api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_a",
+            "ms_env_a",
+            expected_binding_fingerprint=expected,
+            client_session_id="browser-session-a",
+            client_intent_id=1,
+        )
+        latest = api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_b",
+            "ms_env_b",
+            expected_binding_fingerprint=expected,
+            client_session_id="browser-session-a",
+            client_intent_id=2,
+        )
+
+        self.assertEqual("ms_project_a", first["project_id"])
+        self.assertEqual("ms_project_b", latest["project_id"])
+        self.assertNotEqual(first["binding_version"], latest["binding_version"])
+        self.assertEqual(
+            "ms_project_b",
+            api_workspace_service.get_api_workspace_binding(
+                "api_source_a", allow_legacy=False
+            )["project_id"],
+        )
+
+    def test_late_older_binding_intent_cannot_overwrite_latest_selection(self):
+        self._create_sources(1)
+        initial = api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_initial", "ms_env_initial",
+        )
+        expected = initial.get("binding_version") or initial["config_fingerprint"]
+        latest = api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_b",
+            "ms_env_b",
+            expected_binding_fingerprint=expected,
+            client_session_id="browser-session-a",
+            client_intent_id=2,
+        )
+
+        with self.assertRaises(api_workspace_service.ApiWorkspaceBindingConflict):
+            api_workspace_service.save_api_workspace_binding(
+                "api_source_a",
+                "ms_project_a",
+                "ms_env_a",
+                expected_binding_fingerprint=expected,
+                client_session_id="browser-session-a",
+                client_intent_id=1,
+            )
+
+        current = api_workspace_service.get_api_workspace_binding(
+            "api_source_a", allow_legacy=False
+        )
+        self.assertEqual(latest["binding_version"], current["binding_version"])
+        self.assertEqual("ms_project_b", current["project_id"])
+        self.assertNotIn("client_session", json.dumps(current, ensure_ascii=False))
+        self.assertNotIn("client_intent", json.dumps(current, ensure_ascii=False))
+
+    def test_stale_binding_write_from_another_client_is_a_conflict(self):
+        self._create_sources(1)
+        initial = api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_initial", "ms_env_initial",
+        )
+        expected = initial.get("binding_version") or initial["config_fingerprint"]
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_a",
+            "ms_env_a",
+            expected_binding_fingerprint=expected,
+            client_session_id="browser-session-a",
+            client_intent_id=1,
+        )
+
+        with self.assertRaises(api_workspace_service.ApiWorkspaceBindingConflict):
+            api_workspace_service.save_api_workspace_binding(
+                "api_source_a",
+                "ms_project_b",
+                "ms_env_b",
+                expected_binding_fingerprint=expected,
+                client_session_id="browser-session-b",
+                client_intent_id=1,
+            )
+
     def test_single_source_may_adopt_legacy_global_selection(self):
         self._create_sources(1)
 
@@ -684,6 +776,75 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
         )
         self.assertEqual(payload["selected_project_id"], "ms_project_b")
         self.assertEqual(payload["environments"][0]["id"], "ms_env_b")
+
+    def test_execution_binding_save_forwards_client_cas_and_returns_conflict(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _authorized(self):
+                return True
+
+            def _body(self):
+                return {
+                    "project_id": "ms_project_b",
+                    "environment_id": "ms_env_b",
+                    "expected_binding_fingerprint": "binding-version-old",
+                    "client_session_id": "browser-session-a",
+                    "client_intent_id": 2,
+                }
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        class Adapter:
+            def list_projects(self):
+                return [{"id": "ms_project_b", "name": "B", "enabled": True}]
+
+            def list_environments(self, project_id):
+                self.assert_project_id = project_id
+                return [{
+                    "id": "ms_env_b",
+                    "name": "B测试",
+                    "project_id": "ms_project_b",
+                    "enabled": True,
+                }]
+
+        pattern = r"^/api/api-testing/sources/([^/]+)/execution-binding$"
+        route = next(fn for matcher, fn in router._POST_REGEX_ROUTES if matcher.pattern == pattern)
+        match = re.match(
+            pattern,
+            "/api/api-testing/sources/api_source_a/execution-binding",
+        )
+        calls = []
+        original_probe = metersphere_service._v365_adapter_probe
+        original_save = api_workspace_service.save_api_workspace_binding
+        metersphere_service._v365_adapter_probe = (
+            lambda _cfg: (Adapter(), {"version": "v3.6.5-lts"}, True)
+        )
+
+        def conflicting_save(*args, **kwargs):
+            calls.append((args, kwargs))
+            raise api_workspace_service.ApiWorkspaceBindingConflict(
+                "MeterSphere 执行绑定已由其他请求更新"
+            )
+
+        api_workspace_service.save_api_workspace_binding = conflicting_save
+        try:
+            handler = Handler()
+            route(handler, {}, match)
+        finally:
+            metersphere_service._v365_adapter_probe = original_probe
+            api_workspace_service.save_api_workspace_binding = original_save
+
+        payload, status = handler.responses[0]
+        self.assertEqual(409, status)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("binding-version-old", calls[0][1]["expected_binding_fingerprint"])
+        self.assertEqual("browser-session-a", calls[0][1]["client_session_id"])
+        self.assertEqual(2, calls[0][1]["client_intent_id"])
 
 
 def generation_document(endpoint_count=25):

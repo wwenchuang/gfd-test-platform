@@ -1349,7 +1349,11 @@ async function anyVisible(locator) {
     if (bindingRace.mutations.some(item => item.projectId === 'project-interface' || item.environmentId === 'env-qa')) throw new Error(`A delayed old binding response overwrote the latest UI selection: ${JSON.stringify(bindingRace)}`);
     if (bindingRace.selection.project_id !== 'project-3d' || bindingRace.selection.environment_id !== 'env-staging') throw new Error(`Latest binding intent was not retained: ${JSON.stringify(bindingRace.selection)}`);
     const bindingBodies = getBindingRequestBodies();
-    if (!bindingBodies.length || bindingBodies.some(body => !Object.prototype.hasOwnProperty.call(body, 'expected_binding_fingerprint'))) throw new Error(`Binding save did not send expected_binding_fingerprint: ${JSON.stringify(bindingBodies)}`);
+    if (
+      !bindingBodies.length
+      || bindingBodies.some(body => !Object.prototype.hasOwnProperty.call(body, 'expected_binding_fingerprint'))
+      || bindingBodies.some(body => !body.client_session_id || !Number.isInteger(body.client_intent_id))
+    ) throw new Error(`Binding save did not send optimistic concurrency identity: ${JSON.stringify(bindingBodies)}`);
     await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-project-binding.png'), fullPage: true});
     await page.locator('button[aria-label="配置业务鉴权"]').click();
     if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Business auth replacement must always open with an empty secret');

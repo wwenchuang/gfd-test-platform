@@ -237,8 +237,10 @@ def main():
         and "apiExecutionBindingIntent" in api_testing_js
         and "apiExecutionBindingResponseIsCurrent" in api_testing_js
         and "expected_binding_fingerprint:" in api_testing_js
+        and "client_session_id:" in api_testing_js
+        and "client_intent_id:" in api_testing_js
         and "signal: controller.signal" in api_testing_js,
-        "MeterSphere binding saves must reject stale responses and send an optimistic concurrency fingerprint",
+        "MeterSphere binding saves must reject stale responses and send optimistic concurrency identity",
     )
     require(
         "apiReportRequestId" in api_testing_js

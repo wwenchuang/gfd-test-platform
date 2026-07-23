@@ -2770,7 +2770,13 @@ def _get_api_testing_metersphere_execution(handler, qs, match):
 @route_get("/api/api-testing/reports")
 def _get_api_testing_reports(handler, qs):
     from task_server.services import api_report_service
-    handler._json({"ok": True, "reports": api_report_service.list_api_reports(limit=safe_int(qs.get("limit"), 20) or 20)})
+    handler._json({
+        "ok": True,
+        "reports": api_report_service.list_api_reports(
+            limit=safe_int(qs.get("limit"), 20) or 20,
+            source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
+        ),
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -2847,6 +2853,21 @@ def _post_api_testing_source_execution_binding(handler, qs, match):
     data = handler._body()
     project_id = str(data.get("project_id") or data.get("projectId") or "").strip()
     environment_id = str(data.get("environment_id") or data.get("environmentId") or "").strip()
+    expected_binding_fingerprint = (
+        data.get("expected_binding_fingerprint")
+        if "expected_binding_fingerprint" in data
+        else data.get("expectedBindingFingerprint")
+        if "expectedBindingFingerprint" in data
+        else None
+    )
+    client_session_id = str(
+        data.get("client_session_id") or data.get("clientSessionId") or ""
+    ).strip()
+    client_intent_id = (
+        data.get("client_intent_id")
+        if "client_intent_id" in data
+        else data.get("clientIntentId")
+    )
     cfg = metersphere_service._load_raw_config()
     cfg["project_id"] = project_id
     cfg["environment_id"] = environment_id
@@ -2865,13 +2886,23 @@ def _post_api_testing_source_execution_binding(handler, qs, match):
     if not project or not environment:
         handler._json({"ok": False, "error": "MeterSphere 项目或环境不存在、已停用或不匹配"}, 400)
         return
-    binding = api_workspace_service.save_api_workspace_binding(
-        source_id,
-        project_id,
-        environment_id,
-        project_name=str(project.get("name") or ""),
-        environment_name=str(environment.get("name") or ""),
-    )
+    try:
+        binding = api_workspace_service.save_api_workspace_binding(
+            source_id,
+            project_id,
+            environment_id,
+            project_name=str(project.get("name") or ""),
+            environment_name=str(environment.get("name") or ""),
+            expected_binding_fingerprint=expected_binding_fingerprint,
+            client_session_id=client_session_id,
+            client_intent_id=client_intent_id,
+        )
+    except api_workspace_service.ApiWorkspaceBindingConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+        return
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
     handler._json({"ok": True, "binding": binding, "version": probe.get("version") or ""})
 
 
