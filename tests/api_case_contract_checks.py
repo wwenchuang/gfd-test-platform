@@ -208,6 +208,90 @@ class ApiCaseContractChecks(unittest.TestCase):
         self.assertEqual(contract["request"]["body"]["authCount"], 6)
         self.assertEqual(contract["readiness"]["state"], "executable")
 
+    def test_recursive_sanitizer_uses_header_map_context_but_preserves_schema_fields(self):
+        payload = {
+            "review": {
+                "headers": {
+                    "X-Auth": "HEADER-MAP-SECRET",
+                    "AuthorizationStatus": "missing",
+                },
+                "requestHeaders": {
+                    "X-API-Key": "REQUEST-HEADER-SECRET",
+                    "AuthCount": 2,
+                },
+                "headerMap": {
+                    "Authorization": "Bearer HEADER-MAP-AUTH-SECRET",
+                    "Trace-Id": "trace-public",
+                },
+            },
+            "request_schema": {
+                "type": "object",
+                "properties": {
+                    "headers": {
+                        "type": "object",
+                        "properties": {
+                            "authorizationStatus": {
+                                "type": "string",
+                                "example": "approved",
+                            },
+                            "authCount": {
+                                "type": "integer",
+                                "example": 3,
+                            },
+                        },
+                    },
+                },
+            },
+        }
+
+        sanitized = api_case_contract_service.sanitize_sensitive_data(payload)
+        serialized = json.dumps(sanitized, ensure_ascii=False)
+
+        for secret in (
+            "HEADER-MAP-SECRET",
+            "REQUEST-HEADER-SECRET",
+            "HEADER-MAP-AUTH-SECRET",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertEqual(
+            sanitized["review"]["headers"]["AuthorizationStatus"],
+            "missing",
+        )
+        self.assertEqual(sanitized["review"]["requestHeaders"]["AuthCount"], 2)
+        self.assertEqual(sanitized["review"]["headerMap"]["Trace-Id"], "trace-public")
+        schema_fields = sanitized["request_schema"]["properties"]["headers"]["properties"]
+        self.assertEqual(schema_fields["authorizationStatus"]["example"], "approved")
+        self.assertEqual(schema_fields["authCount"]["example"], 3)
+
+    def test_text_sanitizer_preserves_diagnostics_and_redacts_secret_shapes(self):
+        payload = {
+            "messages": [
+                "error: Authorization: missing header",
+                "token: expired",
+                '{"error":"Authorization: missing header"}',
+                'context {"authorization":"JSON-TEXT-SECRET"}',
+                "context {'authorization': 'SINGLE-TEXT-SECRET'}",
+                "auth=EQUAL-TEXT-SECRET",
+                "Authorization: Bearer BEARER-TEXT-SECRET",
+                "X-API-Key: API-KEY-TEXT-SECRET",
+                "token: qN8vK2mP7xR4tY9uW6cB3zL5",
+            ],
+        }
+
+        sanitized = api_case_contract_service.sanitize_sensitive_data(payload)
+        serialized = json.dumps(sanitized, ensure_ascii=False)
+
+        for secret in (
+            "JSON-TEXT-SECRET",
+            "SINGLE-TEXT-SECRET",
+            "EQUAL-TEXT-SECRET",
+            "BEARER-TEXT-SECRET",
+            "API-KEY-TEXT-SECRET",
+            "qN8vK2mP7xR4tY9uW6cB3zL5",
+        ):
+            self.assertNotIn(secret, serialized)
+        self.assertIn("error: Authorization: missing header", serialized)
+        self.assertIn("token: expired", serialized)
 
     def test_positive_contract_uses_only_explicit_openapi_values(self):
         case = api_case_contract_service.build_api_case_contract(
@@ -676,6 +760,18 @@ class ApiPlanContractChecks(unittest.TestCase):
         endpoint_id = staged["revision"]["endpoints"][0]["endpoint_id"]
         captured = {}
         old_run_ai_skill = self.plan_service.run_ai_skill
+        old_selected_endpoints = self.plan_service._selected_endpoints
+
+        def selected_endpoints_with_header_maps(snapshot_id, endpoint_ids):
+            selected = old_selected_endpoints(snapshot_id, endpoint_ids)
+            selected[0]["review"] = {
+                "headers": {"X-Auth": "input-header-map-secret"},
+                "requestHeaders": {"X-API-Key": "input-request-header-secret"},
+                "headerMap": {
+                    "Authorization": "Bearer input-header-map-auth-secret",
+                },
+            }
+            return selected
 
         def fake_run_ai_skill(_skill_name, payload, **kwargs):
             captured["payload"] = copy.deepcopy(payload)
@@ -695,10 +791,16 @@ class ApiPlanContractChecks(unittest.TestCase):
                 "review": {
                     "echo": copy.deepcopy(payload),
                     "authorization": "review-output-secret",
+                    "headers": {"X-Auth": "review-header-map-secret"},
+                    "requestHeaders": {"X-API-Key": "review-request-header-secret"},
+                    "headerMap": {
+                        "Authorization": "Bearer review-header-map-auth-secret",
+                    },
                 },
             }
 
         self.plan_service.run_ai_skill = fake_run_ai_skill
+        self.plan_service._selected_endpoints = selected_endpoints_with_header_maps
         try:
             plan = self.plan_service.generate_api_test_plan(
                 staged["revision_id"],
@@ -707,6 +809,7 @@ class ApiPlanContractChecks(unittest.TestCase):
             )
         finally:
             self.plan_service.run_ai_skill = old_run_ai_skill
+            self.plan_service._selected_endpoints = old_selected_endpoints
 
         stored = Path(self.plan_service._plan_path(plan["plan_id"])).read_text(encoding="utf-8")
         index = Path(self.plan_service._index_path()).read_text(encoding="utf-8")
@@ -742,6 +845,9 @@ class ApiPlanContractChecks(unittest.TestCase):
             "raw-ai-body-secret",
             "raw-auth-header-secret",
             "raw-auth-body-secret",
+            "input-header-map-secret",
+            "input-request-header-secret",
+            "input-header-map-auth-secret",
         ):
             self.assertNotIn(secret, json.dumps(captured["payload"], ensure_ascii=False))
             self.assertNotIn(secret, serialized_outputs)
@@ -749,6 +855,9 @@ class ApiPlanContractChecks(unittest.TestCase):
             "trace-output-secret",
             "review-output-secret",
             "case-output-secret",
+            "review-header-map-secret",
+            "review-request-header-secret",
+            "review-header-map-auth-secret",
         ):
             self.assertNotIn(secret, serialized_outputs)
 
@@ -761,11 +870,17 @@ class ApiPlanContractChecks(unittest.TestCase):
                 "providerId": "qwen_plus",
                 "model": "qwen3.8-plus",
                 "error": '{"authorization":"TRACE-JSON-SECRET","message":"TRACE-CONTEXT"}',
-                "detail": "authorization = 'TRACE-EQUAL-SECRET'; TRACE-DETAIL",
+                "detail": (
+                    "authorization = 'TRACE-EQUAL-SECRET'; TRACE-DETAIL; "
+                    "error: Authorization: missing header; token: expired; "
+                    "Authorization: Bearer TRACE-BEARER-SECRET"
+                ),
             })
             raise RuntimeError(
                 'UPSTREAM-CONTEXT {"authorization":"ERROR-JSON-SECRET"} '
-                "auth = \"ERROR-EQUAL-SECRET\""
+                'auth = "ERROR-EQUAL-SECRET"; '
+                "error: Authorization: missing header; token: expired; "
+                "token: qN8vK2mP7xR4tY9uW6cB3zL5"
             )
 
         self.plan_service.run_ai_skill = fake_run_ai_skill
@@ -812,9 +927,17 @@ class ApiPlanContractChecks(unittest.TestCase):
             "ERROR-EQUAL-SECRET",
             "TRACE-JSON-SECRET",
             "TRACE-EQUAL-SECRET",
+            "TRACE-BEARER-SECRET",
+            "qN8vK2mP7xR4tY9uW6cB3zL5",
         ):
             self.assertNotIn(secret, serialized)
-        for ordinary in ("UPSTREAM-CONTEXT", "TRACE-CONTEXT", "TRACE-DETAIL"):
+        for ordinary in (
+            "UPSTREAM-CONTEXT",
+            "TRACE-CONTEXT",
+            "TRACE-DETAIL",
+            "error: Authorization: missing header",
+            "token: expired",
+        ):
             self.assertIn(ordinary, serialized)
 
     def test_confirmed_plan_stops_when_current_auth_binding_is_cleared(self):

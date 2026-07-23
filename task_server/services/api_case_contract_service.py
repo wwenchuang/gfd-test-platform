@@ -40,6 +40,11 @@ _SENSITIVE_HEADER_SUFFIXES = (
     "cookie",
     "signature",
 )
+_HEADER_MAP_KEYS = frozenset({
+    "headers",
+    "requestheaders",
+    "headermap",
+})
 _SENSITIVE_TEXT_KEY = (
     r"(?:authorization|x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|"
     r"refresh[-_]?token|token|secret|password|cookie|auth)"
@@ -58,9 +63,9 @@ _SINGLE_QUOTED_ASSIGNMENT_RE = re.compile(
 )
 _UNQUOTED_ASSIGNMENT_RE = re.compile(
     rf"(?i)(?<![A-Za-z0-9_])"
-    rf"(?P<prefix>(?P<key_quote>[\"']?){_SENSITIVE_TEXT_KEY}"
-    rf"(?![A-Za-z0-9_])(?P=key_quote)\s*[:=]\s*)"
-    rf"(?:bearer\s+)?[^\s,;}}\]\"']+"
+    rf"(?P<prefix>(?P<key_quote>[\"']?)(?P<key>{_SENSITIVE_TEXT_KEY})"
+    rf"(?![A-Za-z0-9_])(?P=key_quote)\s*(?P<separator>[:=])\s*)"
+    rf"(?P<value>(?!\[REDACTED\])(?:bearer\s+)?[^\s,;}}\]\"']+)"
 )
 
 
@@ -337,6 +342,35 @@ def endpoint_requires_auth(endpoint: Dict[str, Any]) -> bool:
     return all(isinstance(requirement, dict) and bool(requirement) for requirement in security)
 
 
+def _looks_like_high_entropy_secret(value: str) -> bool:
+    token = value.strip()
+    if len(token) < 16 or any(char.isspace() for char in token):
+        return False
+    if re.fullmatch(r"[A-Fa-f0-9]{24,}", token):
+        return True
+    character_classes = sum((
+        any(char.islower() for char in token),
+        any(char.isupper() for char in token),
+        any(char.isdigit() for char in token),
+        any(not char.isalnum() for char in token),
+    ))
+    return character_classes >= 3
+
+
+def _sanitize_unquoted_assignment(match: re.Match[str]) -> str:
+    candidate = match.group("value")
+    normalized_key = _normalized_name(match.group("key"))
+    should_redact = (
+        match.group("separator") == "="
+        or candidate.lower().startswith("bearer ")
+        or normalized_key.endswith(("apikey", "accesskey"))
+        or _looks_like_high_entropy_secret(candidate)
+    )
+    if not should_redact:
+        return match.group(0)
+    return f'{match.group("prefix")}[REDACTED]'
+
+
 def _sanitize_text(value: str) -> str:
     stripped = value.strip()
     if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
@@ -356,21 +390,18 @@ def _sanitize_text(value: str) -> str:
         lambda match: f"{match.group('prefix')}'[REDACTED]'",
         sanitized,
     )
-    return _UNQUOTED_ASSIGNMENT_RE.sub(
-        lambda match: f'{match.group("prefix")}[REDACTED]',
-        sanitized,
-    )
+    return _UNQUOTED_ASSIGNMENT_RE.sub(_sanitize_unquoted_assignment, sanitized)
 
 
 def _sanitize_openapi_value(
     value: Any,
     field_name: str = "",
     inherited_sensitive: bool = False,
-    field_context: str = "schema",
+    field_context: str = "generic",
 ) -> Any:
     field_sensitive = (
         is_sensitive_header_name(field_name)
-        if field_context == "header"
+        if field_context in {"header", "header_map"}
         else is_sensitive_field_name(field_name)
     )
     sensitive = inherited_sensitive or field_sensitive
@@ -383,7 +414,12 @@ def _sanitize_openapi_value(
         key_text = _text(key)
         if sensitive and key_text in {"example", "examples", "default", "const", "enum"}:
             continue
-        if is_sensitive_field_name(key_text) and key_text not in {"required"}:
+        key_sensitive = (
+            is_sensitive_header_name(key_text)
+            if field_context == "header_map"
+            else is_sensitive_field_name(key_text)
+        )
+        if key_sensitive and key_text not in {"required"}:
             continue
         if key_text == "properties" and isinstance(nested, dict):
             result[key_text] = {
@@ -404,7 +440,22 @@ def _sanitize_openapi_value(
                 ))
             result[key_text] = parameters
             continue
-        result[key_text] = _sanitize_openapi_value(nested, key_text, sensitive, "schema")
+        if (
+            field_context != "schema"
+            and isinstance(nested, dict)
+            and _normalized_name(key_text) in _HEADER_MAP_KEYS
+        ):
+            child_context = "header_map"
+        elif field_context == "header_map":
+            child_context = "header"
+        else:
+            child_context = field_context
+        result[key_text] = _sanitize_openapi_value(
+            nested,
+            key_text,
+            sensitive,
+            child_context,
+        )
     return result
 
 

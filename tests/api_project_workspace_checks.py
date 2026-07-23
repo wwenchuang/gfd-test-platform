@@ -240,6 +240,7 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         )
 
         for invalid in (
+            "",
             "X API Key",
             "X-API-Key:Injected",
             "X-API-Key\r\nInjected",
@@ -261,6 +262,39 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         )
         self.assertEqual(normalized_type, "api_key")
         self.assertEqual(normalized_header, "X-Auth!#$%&'*+.^_`|~-09")
+
+    def test_bearer_header_is_canonical_and_rejects_other_names(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+
+        for accepted in ("", "authorization", "AUTHORIZATION"):
+            with self.subTest(accepted=accepted):
+                normalized = api_workspace_service.normalize_api_auth_header(
+                    "bearer",
+                    accepted,
+                )
+                self.assertEqual(normalized, ("bearer", "Authorization"))
+
+        for invalid in (
+            "X-Auth",
+            "Authorization:Injected",
+            " Authorization",
+            "Authorization\r\nInjected",
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    api_workspace_service.normalize_api_auth_header(
+                        "bearer",
+                        invalid,
+                    )
+                with self.assertRaises(ValueError):
+                    api_workspace_service.save_api_auth_binding_metadata(
+                        "api_source_a",
+                        auth_type="bearer",
+                        header_name=invalid,
+                    )
 
     def test_service_rejects_invalid_api_key_header_before_remote_probe(self):
         self._create_sources(1)
@@ -293,6 +327,40 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
             metersphere_service._v365_adapter_probe = old_probe
 
         self.assertEqual(calls, [])
+
+    def test_service_rejects_invalid_bearer_header_before_remote_probe(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+        calls = []
+
+        class Adapter:
+            def upsert_environment_variable(self, *_args, **_kwargs):
+                calls.append("upsert")
+                return {"ok": True, "configured": True}
+
+        old_probe = metersphere_service._v365_adapter_probe
+
+        def fake_probe(_config):
+            calls.append("probe")
+            return Adapter(), {"version": "v3.6.5-lts"}, True
+
+        metersphere_service._v365_adapter_probe = fake_probe
+        try:
+            for invalid in ("X-Auth", "Authorization:Injected"):
+                with self.subTest(invalid=invalid):
+                    calls.clear()
+                    with self.assertRaises(ValueError):
+                        metersphere_service.save_api_auth_binding(
+                            "api_source_a",
+                            "bearer",
+                            invalid,
+                            "must-not-reach-remote",
+                        )
+                    self.assertEqual(calls, [])
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
 
 
 class ApiWorkspaceRouteAuthChecks(unittest.TestCase):

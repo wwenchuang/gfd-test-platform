@@ -150,9 +150,13 @@ def normalize_api_auth_header(auth_type: str, header_name: str) -> tuple[str, st
     raw_header = str(header_name or "")
     if normalized_type not in {"bearer", "api_key"}:
         raise ValueError("认证类型仅支持 bearer 或 api_key")
+    if raw_header and not _HTTP_FIELD_NAME_RE.fullmatch(raw_header):
+        raise ValueError("认证 header 必须符合 RFC HTTP field-name")
     if normalized_type == "bearer":
+        if raw_header and raw_header.casefold() != "authorization":
+            raise ValueError("Bearer header 只能使用 Authorization")
         return normalized_type, "Authorization"
-    if not _HTTP_FIELD_NAME_RE.fullmatch(raw_header):
+    if not raw_header:
         raise ValueError("API Key header 必须符合 RFC HTTP field-name")
     return normalized_type, raw_header
 
