@@ -131,27 +131,112 @@ async function showApiTestingDashboard() {
   }
 }
 
-function renderApiAssetTable(endpoints) {
-  if (!endpoints.length) return apiTestingEmpty('暂无接口资产。');
+function apiProjectScopeKey(sourceId = apiTestingProjectScope.sourceId, revisionId = apiTestingProjectScope.revisionId) {
+  return `${sourceId}:${revisionId}`;
+}
+
+function apiModuleSelectionState(sourceId = apiTestingProjectScope.sourceId, revisionId = apiTestingProjectScope.revisionId) {
+  const key = apiProjectScopeKey(sourceId, revisionId);
+  if (!apiTestingSelectionByScope.has(key)) {
+    apiTestingSelectionByScope.set(key, {
+      endpointIds: new Set(),
+      selectedModules: new Set(),
+      activeModulePath: '',
+      search: '',
+      method: ''
+    });
+  }
+  return apiTestingSelectionByScope.get(key);
+}
+
+function apiNormalizeModulePath(value) {
+  return String(value || '').replace(/\\/g, '/').split('/').map(part => part.trim()).filter(Boolean).join('/');
+}
+
+function apiEndpointModulePath(endpoint = {}) {
+  return apiNormalizeModulePath(endpoint.module_path || endpoint.module || '未分组');
+}
+
+function apiModulePathMatches(modulePath, parentPath) {
+  const module = apiNormalizeModulePath(modulePath);
+  const parent = apiNormalizeModulePath(parentPath);
+  return !!parent && (module === parent || module.startsWith(`${parent}/`));
+}
+
+function apiModuleRows(source = {}, endpoints = []) {
+  const rows = new Map();
+  const addPath = (value, count = 0) => {
+    const path = apiNormalizeModulePath(value);
+    if (!path) return;
+    const parts = path.split('/');
+    parts.forEach((_, index) => {
+      const itemPath = parts.slice(0, index + 1).join('/');
+      const prior = rows.get(itemPath) || { path: itemPath, parent: parts.slice(0, index).join('/'), depth: index, endpointCount: 0 };
+      if (itemPath === path) prior.endpointCount = Math.max(prior.endpointCount, Number(count || 0));
+      rows.set(itemPath, prior);
+    });
+  };
+  (source.module_catalog || []).forEach(item => addPath(item.path, item.endpoint_count));
+  endpoints.forEach(endpoint => addPath(apiEndpointModulePath(endpoint), 0));
+  return Array.from(rows.values()).map(item => ({
+    ...item,
+    endpointCount: endpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), item.path)).length || item.endpointCount
+  })).sort((left, right) => left.path.localeCompare(right.path, 'zh-Hans-CN'));
+}
+
+function apiModuleCheckState(path, rows, selectedModules) {
+  const descendants = rows.filter(row => apiModulePathMatches(row.path, path));
+  const selected = descendants.filter(row => selectedModules.has(row.path)).length;
+  return { checked: descendants.length > 0 && selected === descendants.length, indeterminate: selected > 0 && selected < descendants.length };
+}
+
+function renderApiAssetTable(endpoints, options = {}) {
+  if (!endpoints.length) return apiTestingEmpty(options.emptyText || '暂无接口资产。');
+  const state = apiModuleSelectionState();
+  const allSelected = endpoints.every(endpoint => state.endpointIds.has(String(endpoint.endpoint_id || '')));
   return `
     <table class="assets-table api-endpoint-table">
-      <thead><tr><th><input type="checkbox" onchange="toggleApiEndpointSelection(this.checked)" checked></th><th>接口</th><th>模块</th><th>名称</th><th>必填</th><th>Schema</th></tr></thead>
-      <tbody>${endpoints.map(endpoint => `
-        <tr>
-          <td><input class="api-endpoint-check" type="checkbox" value="${escapeHtml(endpoint.endpoint_id || '')}" checked></td>
-          <td><strong>${escapeHtml(apiEndpointLabel(endpoint))}</strong></td>
-          <td>${escapeHtml(endpoint.module || '-')}</td>
-          <td>${escapeHtml(endpoint.name || '-')}</td>
-          <td>${escapeHtml((endpoint.required_fields || []).join('、') || '-')}</td>
-          <td><code>${escapeHtml(endpoint.schema_hash || '-')}</code></td>
-        </tr>
-      `).join('')}</tbody>
+      <thead><tr><th><input type="checkbox" aria-label="选择当前接口" data-api-endpoint-select-all="1" onchange="toggleApiEndpointSelection(this.checked)" ${allSelected ? 'checked' : ''}></th><th>接口</th><th>模块</th><th>名称</th><th>必填</th><th>Schema</th></tr></thead>
+      <tbody>${endpoints.map(endpoint => {
+        const endpointId = String(endpoint.endpoint_id || '');
+        return `
+          <tr>
+            <td><input class="api-endpoint-check" type="checkbox" value="${escapeHtml(endpointId)}" ${state.endpointIds.has(endpointId) ? 'checked' : ''} onchange="toggleApiEndpointById(this.value, this.checked)"></td>
+            <td><strong>${escapeHtml(apiEndpointLabel(endpoint))}</strong></td>
+            <td>${escapeHtml(apiEndpointModulePath(endpoint) || '-')}</td>
+            <td>${escapeHtml(endpoint.name || '-')}</td>
+            <td>${escapeHtml((endpoint.required_fields || []).join('、') || '-')}</td>
+            <td><code>${escapeHtml(endpoint.schema_hash || '-')}</code></td>
+          </tr>
+        `;
+      }).join('')}</tbody>
     </table>
   `;
 }
 
+function toggleApiEndpointById(endpointId, checked) {
+  const state = apiModuleSelectionState();
+  if (checked) state.endpointIds.add(String(endpointId));
+  else state.endpointIds.delete(String(endpointId));
+  syncApiEndpointCheckboxStates();
+}
+
 function toggleApiEndpointSelection(checked) {
-  document.querySelectorAll('.api-endpoint-check').forEach(input => input.checked = !!checked);
+  const state = apiModuleSelectionState();
+  document.querySelectorAll('.api-endpoint-check').forEach(input => {
+    if (checked) state.endpointIds.add(String(input.value));
+    else state.endpointIds.delete(String(input.value));
+  });
+  syncApiEndpointCheckboxStates();
+}
+
+function syncApiEndpointCheckboxStates() {
+  const checks = Array.from(document.querySelectorAll('.api-endpoint-check'));
+  const selectAll = document.querySelector('[data-api-endpoint-select-all]');
+  if (!selectAll) return;
+  const selected = checks.filter(input => input.checked).length;
+  selectAll.checked = checks.length > 0 && selected === checks.length;
+  selectAll.indeterminate = selected > 0 && selected < checks.length;
 }
 
 async function showApiAssetsPage() {
@@ -259,11 +344,12 @@ function selectedApiAssetSource() {
   return apiTestingSources.find(item => String(item.source_id || '') === String(apiAssetSelectedSourceId || '')) || apiTestingSources[0] || null;
 }
 
-function renderApiSourceOptions(sources, selectedId) {
-  if ((sources || []).length <= 1) return '';
-  return `<select class="api-source-select" aria-label="API 来源" onchange="selectApiAssetSource(this.value)">${sources.map(source => `
-    <option value="${escapeHtml(source.source_id || '')}" ${String(source.source_id || '') === String(selectedId || '') ? 'selected' : ''}>${escapeHtml(source.name || source.source_id || 'API 来源')}</option>
-  `).join('')}</select>`;
+function renderApiProjectSelector(sources, selectedId) {
+  const options = (sources || []).map(source => {
+    const label = `${source.name || source.source_id || 'API 项目'} · ${source.project_id || '未配置项目 ID'}`;
+    return `<option value="${escapeHtml(source.source_id || '')}" ${String(source.source_id || '') === String(selectedId || '') ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+  return `<div class="api-project-switcher"><select class="api-project-select" aria-label="选择 Apifox 项目" onchange="selectApiAssetSource(this.value)">${options}</select><button class="btn-sm icon-only api-project-add" type="button" title="新增 Apifox 项目" aria-label="新增 Apifox 项目" onclick="startApiSourceDraft()">＋</button></div>`;
 }
 
 function renderApiSourceSummary(source, latestSync, snapshot = {}) {
@@ -274,8 +360,7 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
     <div class="api-source-status-row">
       <div class="api-source-identity">
         ${apiStatusPill(configured ? '连接已配置' : '待配置', configured ? 'success' : 'warn')}
-        <strong>${escapeHtml(source?.name || 'Apifox 来源')}</strong>
-        ${renderApiSourceOptions(apiTestingSources, source?.source_id)}
+        ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
         <span>${source?.project_id ? `项目 ${escapeHtml(source.project_id)}` : '尚未填写项目 ID'} · ${source?.credential_configured ? '令牌已配置' : '令牌未配置'}</span>
       </div>
       <div class="api-source-actions">
@@ -297,8 +382,12 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
 function renderApiSourceSettings(source = {}) {
   const credentialConfigured = source.credential_configured === true;
   const credentialEditorOpen = !credentialConfigured || apiSourceCredentialEditing;
+  const scope = source.sync_scope || { mode: 'all', module_paths: [] };
+  const scopeState = apiModuleSelectionState();
+  const selectedModules = apiTestingSourceDraftMode ? [] : (scopeState.selectedModules.size ? Array.from(scopeState.selectedModules) : (scope.module_paths || []));
+  const selectedSummary = selectedModules.length ? selectedModules.join('、') : '尚未选择模块';
   return `
-    <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>只读同步设置</h3></div><button class="btn-sm icon-only" title="关闭设置" aria-label="关闭设置" onclick="toggleApiSourceSettings(false)">×</button></div>
+    <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>${apiTestingSourceDraftMode ? '新增 Apifox 项目' : '只读同步设置'}</h3></div><button class="btn-sm icon-only" title="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" aria-label="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" onclick="${apiTestingSourceDraftMode ? 'cancelApiSourceDraft()' : 'toggleApiSourceSettings(false)'}">×</button></div>
     <div class="api-source-settings-grid">
       <label><span>来源名称</span><input id="api-source-name" value="${escapeHtml(source.name || 'Apifox 接口')}" placeholder="例如：3D 接口"></label>
       <label><span>项目 ID</span><input id="api-source-project-id" value="${escapeHtml(source.project_id || '')}" inputmode="numeric" placeholder="Apifox 项目设置中的 Project ID"></label>
@@ -318,11 +407,55 @@ function renderApiSourceSettings(source = {}) {
       </div>
       <label class="api-source-toggle"><input id="api-source-sync-enabled" type="checkbox" ${source.sync_enabled !== false ? 'checked' : ''}><span>启用定时同步</span></label>
     </div>
+    <div class="api-source-scope" data-api-source-scope>
+      <span>同步范围</span>
+      <div class="api-segmented-control" role="group" aria-label="Apifox 同步范围">
+        <button type="button" class="${scope.mode !== 'selected' ? 'active' : ''}" data-sync-scope="all" onclick="setApiSourceSyncScopeMode('all')">全部模块</button>
+        <button type="button" class="${scope.mode === 'selected' ? 'active' : ''}" data-sync-scope="selected" onclick="setApiSourceSyncScopeMode('selected')">已选模块</button>
+      </div>
+      <small id="api-source-selected-modules">${escapeHtml(selectedSummary)}</small>
+    </div>
     <div class="api-source-settings-actions">
       ${source.credential_configured ? '<button class="btn-sm danger" onclick="clearApiSourceCredential()">清除当前令牌</button>' : ''}
       <button class="btn-sm primary" onclick="saveApiSourceConfig()">保存设置</button>
     </div>
   `;
+}
+
+function startApiSourceDraft() {
+  apiTestingSourceDraftMode = true;
+  apiAssetSettingsOpen = true;
+  apiSourceCredentialEditing = false;
+  const panel = document.getElementById('api-source-settings-panel');
+  if (panel) {
+    panel.innerHTML = renderApiSourceSettings({ sync_scope: { mode: 'all', module_paths: [] } });
+    panel.hidden = false;
+  }
+}
+
+function cancelApiSourceDraft() {
+  apiTestingSourceDraftMode = false;
+  apiSourceCredentialEditing = false;
+  toggleApiSourceSettings(false);
+}
+
+function setApiSourceSyncScopeMode(mode) {
+  document.querySelectorAll('[data-sync-scope]').forEach(button => button.classList.toggle('active', button.dataset.syncScope === mode));
+  const summary = document.getElementById('api-source-selected-modules');
+  if (summary && mode === 'selected' && !apiModuleSelectionState().selectedModules.size) summary.textContent = '请先在模块树中选择模块';
+}
+
+function apiSourceSelectedModulePaths(source = {}) {
+  if (apiTestingSourceDraftMode) return [];
+  const selected = Array.from(apiModuleSelectionState().selectedModules);
+  return selected.length ? selected : ((source.sync_scope || {}).module_paths || []).map(apiNormalizeModulePath).filter(Boolean);
+}
+
+function updateApiSourceScopePreview() {
+  const summary = document.getElementById('api-source-selected-modules');
+  if (!summary) return;
+  const paths = Array.from(apiModuleSelectionState().selectedModules);
+  summary.textContent = paths.length ? paths.join('、') : '尚未选择模块';
 }
 
 function editApiSourceCredential() {
@@ -374,6 +507,112 @@ function renderApiAssetSync(sync) {
   `;
 }
 
+function renderApiModuleTree(source, endpoints) {
+  const rows = apiModuleRows(source, endpoints);
+  const state = apiModuleSelectionState();
+  if (!rows.length) return apiTestingEmpty('当前版本没有可选择的业务模块。');
+  return `<div class="api-module-tree" role="tree">${rows.map(row => {
+    const checkState = apiModuleCheckState(row.path, rows, state.selectedModules);
+    const active = state.activeModulePath === row.path;
+    return `<div class="api-module-tree-row ${active ? 'active' : ''}" style="padding-left:${10 + Math.min(row.depth, 5) * 14}px">
+      <input type="checkbox" data-module-path="${escapeHtml(row.path)}" ${checkState.checked ? 'checked' : ''} data-indeterminate="${checkState.indeterminate ? 'true' : 'false'}" aria-label="选择模块 ${escapeHtml(row.path)}" onchange="toggleApiModuleSelection(this.dataset.modulePath, this.checked)">
+      <button type="button" data-module-path="${escapeHtml(row.path)}" onclick="selectApiAssetModule(this.dataset.modulePath)"><span>${escapeHtml(row.path.split('/').pop())}</span><small>${escapeHtml(row.endpointCount)}</small></button>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function syncApiModuleCheckboxStates() {
+  document.querySelectorAll('.api-module-tree input[data-module-path]').forEach(input => {
+    input.indeterminate = input.dataset.indeterminate === 'true';
+  });
+}
+
+function toggleApiModuleSelection(path, checked) {
+  const source = selectedApiAssetSource() || {};
+  const rows = apiModuleRows(source, apiTestingEndpoints);
+  const state = apiModuleSelectionState();
+  rows.filter(row => apiModulePathMatches(row.path, path)).forEach(row => {
+    if (checked) state.selectedModules.add(row.path);
+    else state.selectedModules.delete(row.path);
+  });
+  renderApiModuleWorkspace();
+  updateApiSourceScopePreview();
+}
+
+function selectApiAssetModule(path) {
+  const state = apiModuleSelectionState();
+  state.activeModulePath = apiNormalizeModulePath(path);
+  renderApiModuleWorkspace();
+}
+
+function apiActiveModuleEndpoints() {
+  const state = apiModuleSelectionState();
+  if (!state.activeModulePath) return [];
+  return apiTestingEndpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), state.activeModulePath));
+}
+
+function apiFilteredModuleEndpoints() {
+  const state = apiModuleSelectionState();
+  const query = state.search.trim().toLowerCase();
+  return apiActiveModuleEndpoints().filter(endpoint => {
+    if (state.method && endpoint.method !== state.method) return false;
+    if (!query) return true;
+    return [apiEndpointLabel(endpoint), endpoint.name, apiEndpointModulePath(endpoint)].join(' ').toLowerCase().includes(query);
+  });
+}
+
+function setApiModuleSearch(value) {
+  apiModuleSelectionState().search = String(value || '');
+  renderApiModuleEndpointTable();
+}
+
+function setApiModuleMethodFilter(value) {
+  apiModuleSelectionState().method = String(value || '');
+  renderApiModuleEndpointTable();
+}
+
+function selectCurrentApiModule() {
+  const state = apiModuleSelectionState();
+  apiActiveModuleEndpoints().forEach(endpoint => state.endpointIds.add(String(endpoint.endpoint_id || '')));
+  renderApiModuleEndpointTable();
+}
+
+function renderApiModuleEndpointTable() {
+  const container = document.getElementById('api-module-endpoint-table');
+  if (!container) return;
+  const state = apiModuleSelectionState();
+  const endpoints = apiFilteredModuleEndpoints();
+  container.innerHTML = state.activeModulePath
+    ? renderApiAssetTable(endpoints, { emptyText: '当前模块没有符合筛选条件的接口。' })
+    : apiTestingEmpty('请从左侧选择一个模块，再查看接口。');
+  syncApiEndpointCheckboxStates();
+}
+
+function renderApiModuleWorkspace() {
+  const root = document.getElementById('api-module-workspace');
+  if (!root) return;
+  const source = selectedApiAssetSource() || {};
+  const state = apiModuleSelectionState();
+  const methods = Array.from(new Set(apiActiveModuleEndpoints().map(endpoint => endpoint.method).filter(Boolean))).sort();
+  root.innerHTML = `
+    <div class="api-module-workspace">
+      <section class="api-module-pane">
+        <div class="api-module-pane-head"><strong>业务模块</strong><span>${escapeHtml(apiModuleRows(source, apiTestingEndpoints).length)} 个</span></div>
+        <div class="api-module-tree-scroll">${renderApiModuleTree(source, apiTestingEndpoints)}</div>
+      </section>
+      <section class="api-module-endpoints">
+        <div class="api-module-pane-head"><div><strong>${escapeHtml(state.activeModulePath || '当前模块')}</strong><span>${state.activeModulePath ? `${apiActiveModuleEndpoints().length} 个接口` : '未选择'}</span></div><button class="btn-sm api-module-select-current" type="button" ${state.activeModulePath ? '' : 'disabled'} onclick="selectCurrentApiModule()">选择当前模块</button></div>
+        <div class="api-module-filters">
+          <input id="api-module-search" type="search" value="${escapeHtml(state.search)}" placeholder="搜索当前模块接口" oninput="setApiModuleSearch(this.value)">
+          <select id="api-module-method-filter" aria-label="接口方法筛选" onchange="setApiModuleMethodFilter(this.value)"><option value="">全部方法</option>${methods.map(method => `<option value="${escapeHtml(method)}" ${state.method === method ? 'selected' : ''}>${escapeHtml(method)}</option>`).join('')}</select>
+        </div>
+        <div id="api-module-endpoint-table" class="api-module-endpoint-scroll"></div>
+      </section>
+    </div>`;
+  renderApiModuleEndpointTable();
+  syncApiModuleCheckboxStates();
+}
+
 function renderApiAssetWorkspaceBody(data) {
   const asset = data.asset || {};
   const snapshot = data.snapshot || {};
@@ -397,21 +636,21 @@ function renderApiAssetWorkspaceBody(data) {
       <div><span>接口</span><strong>${escapeHtml(endpoints.length)}</strong></div>
       <div><span>历史版本</span><strong>${escapeHtml(revisions.length || (snapshot.snapshot_id ? 1 : 0))}</strong></div>
     </section>
-    <section class="api-panel api-asset-endpoints">
-      <div class="assets-table-head"><strong>接口列表</strong><span>${escapeHtml(endpoints.length)} 个接口</span></div>
-      <div class="api-endpoint-scroll">${renderApiAssetTable(endpoints)}</div>
-    </section>
+    <div id="api-module-workspace"></div>
   `;
 }
 
 async function refreshApiAssetWorkspace(force = false, requestedRevisionId = null) {
   const body = document.getElementById('api-assets-body');
   if (!body) return;
+  if (apiAssetRequestController) apiAssetRequestController.abort();
+  const controller = new AbortController();
+  apiAssetRequestController = controller;
   const requestId = ++apiAssetContextRequestId;
   captureApiAssetSyncViewState(document.getElementById('editor-area'));
   try {
-    const sourceData = await apiRequest(`/api-testing/sources${force ? '?limit=20' : ''}`);
-    if (requestId !== apiAssetContextRequestId || activeWorkflow !== 'api_assets') return;
+    const sourceData = await apiRequest(`/api-testing/sources${force ? '?limit=20' : ''}`, { signal: controller.signal });
+    if (requestId !== apiAssetContextRequestId || controller !== apiAssetRequestController || activeWorkflow !== 'api_assets') return;
     apiTestingSources = sourceData.sources || [];
     apiTestingSyncs = sourceData.syncs || [];
     if (!apiAssetSelectedSourceId || !apiTestingSources.some(item => item.source_id === apiAssetSelectedSourceId)) {
@@ -422,15 +661,20 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
       ? (apiAssetRevisionPinned ? apiAssetSelectedRevisionId : '')
       : String(requestedRevisionId || '');
     const assetQuery = revisionId
-      ? `?snapshot_id=${encodeURIComponent(revisionId)}`
+      ? `?source_id=${encodeURIComponent(source?.source_id || '')}&snapshot_id=${encodeURIComponent(revisionId)}`
       : (source?.source_id ? `?source_id=${encodeURIComponent(source.source_id)}` : '');
-    const assetData = await apiRequest(`/api-testing/assets${assetQuery}`);
-    if (requestId !== apiAssetContextRequestId || activeWorkflow !== 'api_assets') return;
+    const assetData = await apiRequest(`/api-testing/assets${assetQuery}`, { signal: controller.signal });
+    if (requestId !== apiAssetContextRequestId || controller !== apiAssetRequestController || activeWorkflow !== 'api_assets') return;
     if (!source && !apiAssetSettingsOpen) apiAssetSettingsOpen = true;
     apiTestingSnapshots = assetData.snapshots || [];
     apiTestingEndpoints = assetData.endpoints || [];
     apiAssetSelectedRevisionId = (assetData.snapshot || {}).revision_id || (assetData.snapshot || {}).snapshot_id || '';
     apiTestingCurrentSnapshotId = apiAssetSelectedRevisionId || apiTestingCurrentSnapshotId || (apiTestingSnapshots[0] || {}).snapshot_id || '';
+    apiTestingProjectScope = { sourceId: source?.source_id || assetData.source_id || '', revisionId: apiAssetSelectedRevisionId };
+    const moduleState = apiModuleSelectionState();
+    if (source?.sync_scope?.mode === 'selected' && !moduleState.selectedModules.size) {
+      (source.sync_scope.module_paths || []).map(apiNormalizeModulePath).filter(Boolean).forEach(path => moduleState.selectedModules.add(path));
+    }
     const latestSync = apiTestingSyncs.find(item => item.source_id === source?.source_id && ['queued', 'running'].includes(item.status))
       || apiTestingSyncs.find(item => item.source_id === source?.source_id)
       || null;
@@ -445,10 +689,14 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
     }
     if (syncRegion) syncRegion.innerHTML = renderApiAssetSync(latestSync);
     body.innerHTML = renderApiAssetWorkspaceBody(assetData);
+    renderApiModuleWorkspace();
     restoreApiAssetSyncViewState(document.getElementById('editor-area'));
     scheduleApiAssetSyncPoll(latestSync);
   } catch(e) {
+    if (e?.name === 'AbortError') return;
     body.innerHTML = apiTestingEmpty(e.message || '接口资产读取失败');
+  } finally {
+    if (controller === apiAssetRequestController) apiAssetRequestController = null;
   }
 }
 
@@ -458,29 +706,61 @@ async function refreshApiAssetsBody() {
 
 function toggleApiSourceSettings(open = null) {
   apiAssetSettingsOpen = open === null ? !apiAssetSettingsOpen : !!open;
-  if (!apiAssetSettingsOpen) apiSourceCredentialEditing = false;
+  if (!apiAssetSettingsOpen) {
+    apiSourceCredentialEditing = false;
+    apiTestingSourceDraftMode = false;
+  }
   const panel = document.getElementById('api-source-settings-panel');
-  if (panel) panel.hidden = !apiAssetSettingsOpen;
+  if (panel) {
+    if (apiAssetSettingsOpen) panel.innerHTML = renderApiSourceSettings(selectedApiAssetSource() || {});
+    panel.hidden = !apiAssetSettingsOpen;
+  }
 }
 
 async function selectApiAssetSource(sourceId) {
+  abortApiProjectScopeRequests();
   apiAssetSelectedSourceId = sourceId || '';
   apiSourceCredentialEditing = false;
+  apiTestingSourceDraftMode = false;
   apiAssetSelectedRevisionId = '';
   apiAssetRevisionPinned = false;
   apiAssetActiveSyncId = '';
+  apiTestingProjectScope = { sourceId: apiAssetSelectedSourceId, revisionId: '' };
+  apiTestingSelectionByScope.delete(apiProjectScopeKey());
   await refreshApiAssetWorkspace(true);
 }
 
 async function selectApiAssetRevision(revisionId) {
+  abortApiProjectScopeRequests();
   apiAssetSelectedRevisionId = revisionId || '';
   apiAssetRevisionPinned = !!apiAssetSelectedRevisionId;
+  apiTestingProjectScope = { sourceId: apiAssetSelectedSourceId, revisionId: apiAssetSelectedRevisionId };
+  apiTestingSelectionByScope.delete(apiProjectScopeKey());
   await refreshApiAssetWorkspace(true, apiAssetSelectedRevisionId);
 }
 
+function abortApiProjectScopeRequests() {
+  [apiAssetRequestController, apiPlanRequestController, apiExecutionRequestController].forEach(controller => controller?.abort());
+  apiAssetRequestController = null;
+  apiPlanRequestController = null;
+  apiExecutionRequestController = null;
+  apiAssetContextRequestId += 1;
+  apiExecutionContextRequestId += 1;
+  apiExecutionActiveId = '';
+  apiExecutionContext = null;
+  stopApiAssetSyncPolling();
+  stopApiExecutionPolling();
+}
+
 async function saveApiSourceConfig(clearCredentials = false) {
-  const source = selectedApiAssetSource() || {};
+  const source = apiTestingSourceDraftMode ? {} : (selectedApiAssetSource() || {});
   const token = document.getElementById('api-source-token')?.value.trim() || '';
+  const scopeMode = document.querySelector('[data-sync-scope].active')?.dataset.syncScope || 'all';
+  const selectedModules = apiSourceSelectedModulePaths(source);
+  if (scopeMode === 'selected' && !selectedModules.length) {
+    showToast('请选择至少一个同步模块', 'error');
+    return;
+  }
   const payload = {
     source_id: source.source_id || undefined,
     source_type: 'apifox',
@@ -490,12 +770,15 @@ async function saveApiSourceConfig(clearCredentials = false) {
     environment_id: document.getElementById('api-source-environment-id')?.value.trim() || '',
     sync_interval_minutes: Number(document.getElementById('api-source-interval')?.value || 60),
     sync_enabled: !!document.getElementById('api-source-sync-enabled')?.checked,
+    sync_scope: { mode: scopeMode, module_paths: scopeMode === 'selected' ? selectedModules : [] },
+    selected_modules: scopeMode === 'selected' ? selectedModules : [],
     clear_credentials: !!clearCredentials
   };
   if (token) payload.access_token = token;
   try {
     const data = await apiRequest('/api-testing/sources', { method: 'POST', body: payload });
     apiAssetSelectedSourceId = data.source?.source_id || apiAssetSelectedSourceId;
+    apiTestingSourceDraftMode = false;
     apiSourceCredentialEditing = false;
     if (!source.source_id) {
       apiAssetSelectedRevisionId = '';
@@ -607,12 +890,21 @@ async function handleApiOpenApiFile(input) {
 async function showApiPlanPage() {
   const area = setApiTestingPage('api_plan', 'AI 用例计划', '生成 API 用例草稿，确认后才能推送 MeterSphere。');
   if (!area) return;
+  if (apiPlanRequestController) apiPlanRequestController.abort();
+  const controller = new AbortController();
+  apiPlanRequestController = controller;
   area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取接口资产和计划...')}</div>`;
   try {
+    const sourceId = apiTestingProjectScope.sourceId || apiAssetSelectedSourceId;
+    const revisionId = apiTestingProjectScope.revisionId || apiTestingCurrentSnapshotId;
+    const assetQuery = new URLSearchParams();
+    if (sourceId) assetQuery.set('source_id', sourceId);
+    if (revisionId) assetQuery.set('snapshot_id', revisionId);
     const [assets, plans] = await Promise.all([
-      apiRequest(`/api-testing/assets${apiTestingCurrentSnapshotId ? `?snapshot_id=${encodeURIComponent(apiTestingCurrentSnapshotId)}` : ''}`),
-      apiRequest('/api-testing/plans')
+      apiRequest(`/api-testing/assets${assetQuery.toString() ? `?${assetQuery}` : ''}`, { signal: controller.signal }),
+      apiRequest(`/api-testing/plans${sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''}`, { signal: controller.signal })
     ]);
+    if (controller !== apiPlanRequestController || activeWorkflow !== 'api_plan') return;
     apiTestingEndpoints = assets.endpoints || [];
     apiTestingCurrentSnapshotId = (assets.snapshot || {}).snapshot_id || apiTestingCurrentSnapshotId || ((assets.snapshots || [])[0] || {}).snapshot_id || '';
     apiTestingPlans = plans.plans || [];
@@ -640,7 +932,10 @@ async function showApiPlanPage() {
       </div>
     `;
   } catch(e) {
+    if (controller !== apiPlanRequestController || activeWorkflow !== 'api_plan') return;
     area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 用例计划读取失败')}</div>`;
+  } finally {
+    if (controller === apiPlanRequestController) apiPlanRequestController = null;
   }
 }
 
@@ -824,10 +1119,16 @@ async function showApiExecutionPage() {
 }
 
 async function refreshApiExecutionContext(force = false) {
+  if (apiExecutionRequestController) apiExecutionRequestController.abort();
+  const controller = new AbortController();
+  apiExecutionRequestController = controller;
   const requestId = ++apiExecutionContextRequestId;
   try {
-    const data = await apiRequest(`/api-testing/metersphere/execution-context${force ? '?force=1' : ''}`);
-    if (requestId !== apiExecutionContextRequestId || activeWorkflow !== 'api_execution') return;
+    const query = new URLSearchParams();
+    if (force) query.set('force', '1');
+    if (apiTestingProjectScope.sourceId || apiAssetSelectedSourceId) query.set('source_id', apiTestingProjectScope.sourceId || apiAssetSelectedSourceId);
+    const data = await apiRequest(`/api-testing/metersphere/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal });
+    if (requestId !== apiExecutionContextRequestId || controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution') return;
     apiExecutionContext = data;
     apiTestingPlans = data.plans || [];
     const active = (data.active_runs || [])[0] || null;
@@ -836,8 +1137,11 @@ async function refreshApiExecutionContext(force = false) {
     if (active && !apiExecutionTerminal(active)) scheduleApiExecutionPoll(active);
     else stopApiExecutionPolling();
   } catch (e) {
+    if (controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution') return;
     const header = document.getElementById('api-execution-header');
     if (header) header.innerHTML = `<div class="api-inline-error">${escapeHtml(e.message || 'MeterSphere 执行上下文读取失败')}</div>`;
+  } finally {
+    if (controller === apiExecutionRequestController) apiExecutionRequestController = null;
   }
 }
 

@@ -99,6 +99,31 @@ def main():
         and "apiAssetSyncPhaseText" in api_testing_js,
         "API assets must expose optional environments, explicit revision selection, and readable sync phases",
     )
+    require(
+        "apiTestingProjectScope" in state_js
+        and "apiTestingSourceDraftMode" in state_js
+        and "apiTestingSelectionByScope" in state_js
+        and "renderApiProjectSelector" in api_testing_js
+        and "renderApiModuleTree" in api_testing_js
+        and "apiModuleSelectionState" in api_testing_js,
+        "API asset workspace must keep source/revision scoped selection and render project/module controls",
+    )
+    require(
+        "sourceId}:${revisionId" in api_testing_js
+        and "AbortController" in api_testing_js
+        and "apiAssetRequestController" in state_js
+        and "selected_modules" in api_testing_js
+        and "sync_scope" in api_testing_js,
+        "API source switching must abort stale asset requests and persist selected module sync scope",
+    )
+    require(
+        "api-module-tree" in api_testing_js
+        and "api-module-endpoints" in api_testing_js
+        and "api-module-search" in api_testing_js
+        and "api-module-method-filter" in api_testing_js
+        and "api-module-select-current" in api_testing_js,
+        "API asset workspace must provide a controlled module tree and filtered endpoint table",
+    )
     require("apiLogExpandedKeys" in html and "runId + eventId" in html, "API execution logs must preserve expanded state by stable keys")
     require(
         "/api-testing/metersphere/execution-context" in api_testing_js
@@ -420,7 +445,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260722-apifox-credential-icons" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260722-api-case-readiness" in html and "js/api-testing.js?v=20260722-api-case-readiness" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include API executable readiness and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260723-api-project-modules" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260723-api-project-modules" in html and "js/api-testing.js?v=20260723-api-project-modules" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include API project/module workspace and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
@@ -430,7 +455,7 @@ def main():
     require("function mindmapRecordTimeValue" in html and "mindmap_sort_ts" in html and "mindmap-compact-list" in html and "function mindmapTaskRow" in html, "Mindmap center must sort latest first and use compact rows instead of oversized cards")
     require("activeWorkspaceMode === 'mindmap'" in html and "await showMindmapCenter();" in html, "Mindmap background actions must refresh the mindmap center after cancel/retry")
     require("mindmapCenterRefreshTimer" in html and "scheduleMindmapCenterRefresh(taskRows)" in html and "pending', 'running" in html, "Mindmap center must auto-refresh while mindmap jobs are active")
-    print({"ok": True, "file": str(HTML), "checks": 69})
+    print({"ok": True, "file": str(HTML), "checks": 72})
 
 
 if __name__ == "__main__":

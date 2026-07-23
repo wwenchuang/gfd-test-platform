@@ -371,27 +371,68 @@ function serve() {
           last_success_at: '2026-07-22 08:20:00',
           last_sync_status: 'running',
           last_error: '',
+          sync_scope: {mode: 'all', module_paths: []},
+          module_catalog: [
+            {path: '家用业务/app接口/我的', parent: '家用业务/app接口', depth: 3, endpoint_count: 12},
+            {path: '家用业务/app接口/我的/收藏', parent: '家用业务/app接口/我的', depth: 4, endpoint_count: 6},
+            {path: '家用业务/app接口/我的下载', parent: '家用业务/app接口', depth: 3, endpoint_count: 7},
+            {path: '家用业务/app接口/我的下载备份', parent: '家用业务/app接口', depth: 3, endpoint_count: 3},
+          ],
+        }, {
+          source_id: 'api-source-visual-002',
+          source_type: 'apifox',
+          name: '账户中心',
+          project_id: '5904971',
+          branch_id: '',
+          credential_configured: true,
+          configured: true,
+          sync_enabled: true,
+          sync_interval_minutes: 60,
+          last_success_at: '2026-07-22 08:20:00',
+          last_sync_status: 'no_change',
+          last_error: '',
+          sync_scope: {mode: 'selected', module_paths: ['账户/登录']},
+          module_catalog: [{path: '账户/登录', parent: '账户', depth: 2, endpoint_count: 5}],
         }],
         syncs: [apiAssetSync()],
       });
       return;
     }
     if (url.pathname === '/api/api-testing/assets' && req.method === 'GET') {
-      const endpoints = [
-        {endpoint_id: 'api-1', endpoint_key: 'route:GET /points', method: 'GET', path: '/points', module: '积分', name: '积分总额', required_fields: [], schema_hash: 'aa11'},
-        {endpoint_id: 'api-2', endpoint_key: 'route:GET /products', method: 'GET', path: '/products', module: '兑换', name: '兑换商品列表', required_fields: ['page'], schema_hash: 'bb22'},
-        {endpoint_id: 'api-3', endpoint_key: 'route:POST /exchange', method: 'POST', path: '/exchange', module: '兑换', name: '确认兑换', required_fields: ['productId'], schema_hash: 'cc33'},
-      ];
+      const sourceId = url.searchParams.get('source_id') || 'api-source-visual-001';
+      const modulePaths = sourceId === 'api-source-visual-002'
+        ? ['账户/登录']
+        : ['家用业务/app接口/我的', '家用业务/app接口/我的/收藏', '家用业务/app接口/我的下载', '家用业务/app接口/我的下载备份'];
+      const endpoints = Array.from({length: 25}, (_, index) => {
+        const modulePath = modulePaths[index % modulePaths.length];
+        return {
+          endpoint_id: `${sourceId}-api-${index + 1}`,
+          endpoint_key: `route:${index % 3 ? 'GET' : 'POST'} /visual/${index + 1}`,
+          method: index % 3 ? 'GET' : 'POST',
+          path: `/visual/${index + 1}`,
+          module: modulePath,
+          module_path: modulePath,
+          name: `${modulePath} 接口 ${index + 1}`,
+          required_fields: index % 2 ? [] : ['page'],
+          schema_hash: `schema-${index + 1}`,
+        };
+      });
+      const defaultRevisionId = sourceId === 'api-source-visual-002' ? 'api-revision-visual-002' : 'api-revision-visual-001';
+      const revisionId = url.searchParams.get('snapshot_id') || defaultRevisionId;
       json(res, {
         ok: true,
-        assets: [{asset_id: 'api-asset-visual-001', name: '3D 接口', active_revision_id: 'api-revision-visual-001', endpoint_count: 592}],
-        asset: {asset_id: 'api-asset-visual-001', name: '3D 接口', active_revision_id: 'api-revision-visual-001', schema_version: '3.0.1', endpoint_count: 592},
-        revisions: [
-          {revision_id: 'api-revision-visual-001', endpoint_count: 592, created_at: '2026-07-22 09:20:20'},
-          {revision_id: 'api-revision-visual-000', endpoint_count: 588, created_at: '2026-07-22 08:20:00'},
-        ],
-        snapshots: [{snapshot_id: 'api-revision-visual-001', title: '3D', version: '1.0.0', endpoint_count: 592}],
-        snapshot: {snapshot_id: 'api-revision-visual-001', title: '3D', version: '1.0.0', openapi_version: '3.0.1', endpoints},
+        source_id: sourceId,
+        assets: [{asset_id: `api-asset-${sourceId}`, name: sourceId === 'api-source-visual-002' ? '账户中心' : '3D 接口', active_revision_id: revisionId, endpoint_count: endpoints.length}],
+        asset: {asset_id: `api-asset-${sourceId}`, name: sourceId === 'api-source-visual-002' ? '账户中心' : '3D 接口', active_revision_id: revisionId, schema_version: '3.0.1', endpoint_count: endpoints.length},
+        revisions: sourceId === 'api-source-visual-001'
+          ? [
+            {revision_id: 'api-revision-visual-001', endpoint_count: endpoints.length, created_at: '2026-07-22 09:20:20'},
+            {revision_id: 'api-revision-visual-000', endpoint_count: endpoints.length, created_at: '2026-07-22 08:20:00'},
+          ]
+          : [{revision_id: revisionId, endpoint_count: endpoints.length, created_at: '2026-07-22 09:20:20'}],
+        snapshots: [{snapshot_id: revisionId, title: sourceId === 'api-source-visual-002' ? '账户中心' : '3D', version: '1.0.0', endpoint_count: endpoints.length}],
+        snapshot: {snapshot_id: revisionId, revision_id: revisionId, title: sourceId === 'api-source-visual-002' ? '账户中心' : '3D', version: '1.0.0', openapi_version: '3.0.1', endpoints},
+        module_summary: {total_modules: modulePaths.length, total_endpoints: endpoints.length, roots: []},
         endpoints,
       });
       return;
@@ -771,7 +812,30 @@ async function anyVisible(locator) {
 
     await page.click('.workflow-step[data-workflow="api_assets"]');
     await page.waitForSelector('.api-asset-console');
-    await page.waitForSelector('text=3D 接口');
+    await page.waitForFunction(() => document.querySelector('.api-project-select')?.value === 'api-source-visual-001');
+    if (await page.locator('.api-endpoint-check:checked').count()) throw new Error('Module workspace must start with zero selected endpoints');
+    await page.locator('.api-project-select').selectOption('api-source-visual-002');
+    await page.waitForFunction(() => document.querySelector('.api-project-select')?.value === 'api-source-visual-002');
+    if (await page.locator('.api-endpoint-check:checked').count()) throw new Error('Switching source must reset endpoint selection');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-project-switch.png'), fullPage: true});
+    await page.locator('.api-project-select').selectOption('api-source-visual-001');
+    await page.waitForFunction(() => document.querySelector('.api-project-select')?.value === 'api-source-visual-001');
+    await page.locator('.api-asset-revision-picker select').selectOption('api-revision-visual-000');
+    await page.waitForFunction(() => apiTestingProjectScope.revisionId === 'api-revision-visual-000');
+    if (await page.locator('.api-endpoint-check:checked').count()) throw new Error('Switching revision must reset endpoint selection');
+    await page.locator('.api-asset-revision-picker select').selectOption('api-revision-visual-001');
+    await page.waitForFunction(() => apiTestingProjectScope.revisionId === 'api-revision-visual-001');
+    await page.locator('.api-module-tree input[data-module-path="家用业务/app接口/我的"]').check();
+    const siblingSelected = await page.locator('.api-module-tree input[data-module-path="家用业务/app接口/我的下载"]').isChecked();
+    if (siblingSelected) throw new Error('Selecting a parent-like module must not select a same-prefix sibling');
+    await page.locator('.api-module-tree button[data-module-path="家用业务/app接口/我的"]').click();
+    const activeEndpointText = await visibleText(page, '.api-module-endpoints');
+    if (!/家用业务\/app接口\/我的/.test(activeEndpointText) || /我的下载备份/.test(activeEndpointText)) throw new Error('Endpoint table must show only the active module path boundary');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-module-tree.png'), fullPage: true});
+    await page.locator('button[aria-label="新增 Apifox 项目"]').click();
+    if (!await page.locator('#api-source-settings-panel:not([hidden])').isVisible()) throw new Error('Add project action must open an empty source draft');
+    if (await page.locator('#api-source-project-id').inputValue()) throw new Error('New project draft must not inherit an existing Apifox project id');
+    await page.locator('button[aria-label="取消新增 Apifox 项目"]').click();
     if (!await page.locator('.api-source-actions .btn-sm.primary', {hasText: '同步 Apifox'}).isVisible()) throw new Error('Apifox sync must be the primary asset action');
     for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_execution: '▶️', api_reports: '📊'})) {
       const iconText = await page.locator(`.workflow-step[data-workflow="${workflow}"] .workflow-index`).textContent();
@@ -807,6 +871,9 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'api-assets-sync.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
     await page.waitForTimeout(100);
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-project-switch-mobile.png'), fullPage: true});
+    if (await page.locator('.api-module-workspace').evaluate(el => el.scrollWidth > el.clientWidth + 1)) throw new Error('Module workspace overflows horizontally on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-module-tree-mobile.png'), fullPage: true});
     const apiAssetMobileOverflow = await page.locator('.api-asset-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
     if (apiAssetMobileOverflow) {
       const overflowDetails = await page.locator('.api-asset-console *').evaluateAll(elements => elements.map(el => ({
@@ -1288,6 +1355,10 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'metersphere-settings-mobile.png'),
         path.join(ARTIFACTS, 'api-source-settings.png'),
         path.join(ARTIFACTS, 'api-source-settings-mobile.png'),
+        path.join(ARTIFACTS, 'api-project-switch.png'),
+        path.join(ARTIFACTS, 'api-project-switch-mobile.png'),
+        path.join(ARTIFACTS, 'api-module-tree.png'),
+        path.join(ARTIFACTS, 'api-module-tree-mobile.png'),
         path.join(ARTIFACTS, 'api-assets-sync.png'),
         path.join(ARTIFACTS, 'api-assets-sync-mobile.png'),
         path.join(ARTIFACTS, 'api-plan-readiness.png'),

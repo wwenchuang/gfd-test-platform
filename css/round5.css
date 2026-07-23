@@ -87,6 +87,27 @@
   color: var(--text);
   padding: 5px 8px;
 }
+.api-project-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: min(100%, 290px);
+}
+.api-project-select {
+  min-width: 0;
+  width: min(100%, 260px);
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 5px 8px;
+}
+.api-project-add {
+  flex: none;
+  font-size: 18px;
+  line-height: 1;
+}
 .api-source-actions {
   flex: none;
 }
@@ -248,6 +269,47 @@
   justify-content: flex-end;
   margin-top: 14px;
 }
+.api-source-scope {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.api-source-scope > span {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-source-scope small {
+  grid-column: 2;
+  color: var(--text2);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.api-segmented-control {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.api-segmented-control button {
+  min-height: 28px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text3);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.api-segmented-control button:last-child { border-right: 0; }
+.api-segmented-control button.active {
+  background: rgba(0, 214, 224, .14);
+  color: var(--accent);
+}
 .api-asset-sync-region:not(:empty) {
   margin-top: 14px;
 }
@@ -336,6 +398,124 @@
 .api-asset-endpoints {
   margin-top: 0;
   overflow: hidden;
+}
+.api-module-workspace {
+  display: grid;
+  grid-template-columns: minmax(230px, .36fr) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 430px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.api-module-pane,
+.api-module-endpoints {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+.api-module-pane {
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-module-endpoints { background: var(--surface); }
+.api-module-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.api-module-pane-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.api-module-pane-head strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.api-module-pane-head span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-module-tree-scroll,
+.api-module-endpoint-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.api-module-tree { padding: 6px 0; }
+.api-module-tree-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  min-height: 32px;
+  padding-top: 2px;
+  padding-right: 8px;
+  padding-bottom: 2px;
+}
+.api-module-tree-row input { width: 14px; height: 14px; margin: 0; }
+.api-module-tree-row button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text2);
+  padding: 5px 7px;
+  text-align: left;
+  cursor: pointer;
+}
+.api-module-tree-row button:hover,
+.api-module-tree-row.active button {
+  background: rgba(0, 214, 224, .1);
+  color: var(--text);
+}
+.api-module-tree-row button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-module-tree-row button small {
+  flex: none;
+  color: var(--text3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.api-module-endpoints {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.api-module-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.api-module-filters input,
+.api-module-filters select {
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 5px 8px;
+}
+.api-module-endpoint-scroll {
+  padding: 0 12px 12px;
+}
+.api-module-endpoint-scroll .api-endpoint-table {
+  min-width: 680px;
 }
 .api-endpoint-scroll {
   width: 100%;
@@ -968,6 +1148,16 @@
     flex: 1;
     justify-content: center;
   }
+  .api-project-switcher,
+  .api-project-select {
+    width: 100%;
+  }
+  .api-source-scope {
+    grid-template-columns: 1fr;
+  }
+  .api-source-scope small {
+    grid-column: auto;
+  }
   .api-source-facts,
   .api-asset-revision-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1039,6 +1229,24 @@
   }
   .api-settings-drawer {
     width: 100vw;
+  }
+  .api-module-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(190px, .72fr) minmax(320px, 1fr);
+    min-height: 0;
+  }
+  .api-module-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .api-module-tree-scroll {
+    max-height: 250px;
+  }
+  .api-module-endpoint-scroll {
+    max-height: 380px;
+  }
+  .api-module-filters {
+    grid-template-columns: minmax(0, 1fr) 100px;
   }
 }
 
