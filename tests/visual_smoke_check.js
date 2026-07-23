@@ -16,9 +16,36 @@ function json(res, body) {
   res.end(payload);
 }
 
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 function serve() {
   let fileReadCount = 0;
   let apiAssetSyncPollCount = 0;
+  let apiPlanGenerationPollCount = 0;
+  let apiPlanGenerationRetried = false;
+  let meterSelection = {project_id: 'project-interface', environment_id: 'env-qa'};
+  let businessAuth = {
+    configured: true,
+    auth_type: 'bearer',
+    header_name: 'Authorization',
+    variable_name: 'API_BEARER_TOKEN',
+    environment_id: 'env-qa',
+    environment_name: 'QA 环境',
+    updated_at: '2026-07-22 09:38:00',
+  };
   const apiAssetSync = () => ({
     sync_id: 'api-sync-visual-001',
     source_id: 'api-source-visual-001',
@@ -89,6 +116,15 @@ function serve() {
     name: '积分兑换接口回归',
     status: 'draft',
     source: 'ai',
+    source_id: 'api-source-visual-001',
+    source_name: '3D 接口',
+    revision_id: 'api-revision-visual-001',
+    module_paths: ['家用业务/app接口/我的'],
+    generation_id: 'api-generation-visual-001',
+    ai_trace: {model: 'qwen3.8-plus', provider: 'qwen', batches: 1, completed_at: '2026-07-22 09:30:00'},
+    execution_binding: {project_id: 'project-interface', project_name: '接口业务', environment_id: 'env-qa', environment_name: 'QA 环境', binding_fingerprint: 'binding-visual-001'},
+    auth_binding: {...businessAuth},
+    binding_state: {state: 'matched', current_fingerprint: 'binding-visual-001', planned_fingerprint: 'binding-visual-001'},
     endpoint_count: 2,
     case_count: 2,
     executable_case_count: 1,
@@ -122,6 +158,64 @@ function serve() {
       readiness: {state: 'needs_review', missing: ['request.body.productId'], issues: []},
     }],
   });
+  const apiPlanGeneration = (generationId = 'api-generation-visual-001') => {
+    const late = generationId === 'api-generation-late';
+    const completed = !apiPlanGenerationRetried && apiPlanGenerationPollCount >= 3;
+    const afterRetry = apiPlanGenerationRetried && apiPlanGenerationPollCount >= 1;
+    const status = late ? 'succeeded' : (afterRetry ? 'succeeded' : (completed ? 'partial' : (apiPlanGenerationPollCount ? 'running' : 'queued')));
+    const batchStates = apiPlanGenerationRetried && !afterRetry
+      ? ['succeeded', 'succeeded', 'queued']
+      : status === 'queued'
+      ? ['queued', 'queued', 'queued']
+      : status === 'running' && apiPlanGenerationPollCount === 1
+        ? ['running', 'queued', 'queued']
+        : status === 'running'
+          ? ['succeeded', 'running', 'queued']
+          : status === 'partial'
+            ? ['succeeded', 'succeeded', 'failed']
+            : ['succeeded', 'succeeded', 'succeeded'];
+    return {
+      generation_id: generationId,
+      source_id: late ? 'api-source-visual-001' : 'api-source-visual-001',
+      asset_revision_id: 'api-revision-visual-001',
+      module_paths: ['家用业务'],
+      selected_endpoint_keys: Array.from({length: 25}, (_, index) => `route:GET /visual/${index + 1}`),
+      scope_fingerprint: 'scope-visual-001',
+      execution_binding_id: 'source-binding-visual-001',
+      binding_fingerprint: 'binding-visual-001',
+      auth_binding: {...businessAuth},
+      status,
+      batch_size: 12,
+      batch_count: 3,
+      completed_batches: status === 'succeeded' ? 3 : (status === 'partial' || apiPlanGenerationRetried ? 2 : Math.min(apiPlanGenerationPollCount, 1)),
+      failed_batches: status === 'partial' ? 1 : 0,
+      retry_count: apiPlanGenerationRetried ? 1 : 0,
+      poll_after_ms: 20,
+      created_at: '2026-07-22 09:28:00',
+      started_at: '2026-07-22 09:28:01',
+      updated_at: '2026-07-22 09:30:00',
+      finished_at: ['partial', 'succeeded'].includes(status) ? '2026-07-22 09:30:00' : '',
+      error: status === 'partial' ? '第 3 批模型响应超时' : '',
+      batches: [12, 12, 1].map((endpointCount, index) => ({
+        batch_index: index + 1,
+        status: batchStates[index],
+        endpoint_count: endpointCount,
+        endpoint_ids: Array.from({length: endpointCount}, (_, endpointIndex) => `api-${index * 12 + endpointIndex + 1}`),
+        plan_id: batchStates[index] === 'succeeded' ? `api-plan-real-00${index + 1}` : '',
+        attempts: index === 2 && apiPlanGenerationRetried ? 2 : 1,
+        started_at: batchStates[index] === 'queued' ? '' : `2026-07-22 09:${28 + index}:00`,
+        finished_at: ['succeeded', 'failed'].includes(batchStates[index]) ? `2026-07-22 09:${28 + index}:20` : '',
+        error: batchStates[index] === 'failed' ? '模型响应超时' : '',
+      })),
+      events: Array.from({length: 28}, (_, index) => ({
+        event_id: `generation-event-${index + 1}`,
+        timestamp: `2026-07-22 09:${String(28 + Math.floor(index / 10)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}`,
+        phase: index < 8 ? 'prepare' : index < 22 ? 'generate_batch' : 'validate_plan',
+        summary: late ? 'LATE RESPONSE MUST NOT RENDER' : `AI 批次真实事件 ${index + 1}`,
+        detail: {generation_id: generationId, batch_index: Math.min(2, Math.floor(index / 10)), model: 'qwen3.8-plus'},
+      })),
+    };
+  };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (url.pathname === '/' || url.pathname === '/task-manager.html') {
@@ -437,23 +531,104 @@ function serve() {
       });
       return;
     }
+    if (url.pathname === '/api/api-testing/plan-generations' && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        const endpointIds = body.endpoint_ids || [];
+        if (body.source_id !== 'api-source-visual-001' || body.revision_id !== 'api-revision-visual-001' || endpointIds.length !== 25) {
+          res.writeHead(400, {'content-type': 'application/json; charset=utf-8'});
+          res.end(JSON.stringify({ok: false, error: `unexpected generation scope: ${JSON.stringify(body)}`}));
+          return;
+        }
+        apiPlanGenerationPollCount = 0;
+        apiPlanGenerationRetried = false;
+        json(res, {ok: true, generation: apiPlanGeneration()});
+      });
+      return;
+    }
+    const planGenerationRetryMatch = url.pathname.match(/^\/api\/api-testing\/plan-generations\/([^/]+)\/retry$/);
+    if (planGenerationRetryMatch && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        if (Object.prototype.hasOwnProperty.call(body, 'endpoint_ids') || Object.prototype.hasOwnProperty.call(body, 'module_paths')) {
+          res.writeHead(400, {'content-type': 'application/json; charset=utf-8'});
+          res.end(JSON.stringify({ok: false, error: 'retry must not resubmit successful batches'}));
+          return;
+        }
+        apiPlanGenerationRetried = true;
+        apiPlanGenerationPollCount = 0;
+        json(res, {ok: true, generation: apiPlanGeneration(planGenerationRetryMatch[1])});
+      });
+      return;
+    }
+    const planGenerationMatch = url.pathname.match(/^\/api\/api-testing\/plan-generations\/([^/]+)$/);
+    if (planGenerationMatch && req.method === 'GET') {
+      const generationId = planGenerationMatch[1];
+      const respond = () => {
+        apiPlanGenerationPollCount += 1;
+        json(res, {ok: true, generation: apiPlanGeneration(generationId)});
+      };
+      if (generationId === 'api-generation-late') setTimeout(respond, 180);
+      else respond();
+      return;
+    }
     if (url.pathname === '/api/api-testing/plans' && req.method === 'GET') {
       const plan = apiPlan();
-      json(res, {ok: true, plans: [{
-        plan_id: plan.plan_id,
-        name: plan.name,
-        status: plan.status,
-        case_count: plan.case_count,
-        executable_case_count: plan.executable_case_count,
-        needs_review_case_count: plan.needs_review_case_count,
-        execution_readiness: plan.execution_readiness,
-        revision_state: plan.revision_state,
+      const stalePlan = {
+        ...plan,
+        plan_id: 'api-plan-visual-stale',
+        name: '旧版本登录接口回归',
+        revision_state: {
+          state: 'stale',
+          planned_revision_id: 'api-revision-visual-000',
+          active_revision_id: 'api-revision-visual-001',
+          reason: '接口版本已变化，请重新生成计划',
+        },
+        execution_readiness: {...plan.execution_readiness, can_confirm: false, can_execute: false},
+        binding_state: {state: 'mismatched', current_fingerprint: 'binding-visual-002', planned_fingerprint: 'binding-visual-001'},
+      };
+      json(res, {ok: true, plans: [plan, stalePlan].map(item => ({
+        plan_id: item.plan_id,
+        name: item.name,
+        status: item.status,
+        source_id: item.source_id,
+        source_name: item.source_name,
+        revision_id: item.revision_id,
+        module_paths: item.module_paths,
+        generation_id: item.generation_id,
+        ai_trace: item.ai_trace,
+        execution_binding: item.execution_binding,
+        auth_binding: item.auth_binding,
+        binding_state: item.binding_state,
+        case_count: item.case_count,
+        executable_case_count: item.executable_case_count,
+        needs_review_case_count: item.needs_review_case_count,
+        execution_readiness: item.execution_readiness,
+        revision_state: item.revision_state,
         created_at: '2026-07-22 09:30:00',
-      }]});
+      }))});
       return;
     }
     if (url.pathname === '/api/api-testing/plans/api-plan-visual-ready' && req.method === 'GET') {
       json(res, {ok: true, plan: apiPlan()});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/plans/api-plan-visual-stale' && req.method === 'GET') {
+      const plan = apiPlan();
+      json(res, {
+        ok: true,
+        plan: {
+          ...plan,
+          plan_id: 'api-plan-visual-stale',
+          name: '旧版本登录接口回归',
+          revision_state: {
+            state: 'stale',
+            planned_revision_id: 'api-revision-visual-000',
+            active_revision_id: 'api-revision-visual-001',
+            reason: '接口版本已变化，请重新生成计划',
+          },
+          execution_readiness: {...plan.execution_readiness, can_confirm: false, can_execute: false},
+          binding_state: {state: 'mismatched', current_fingerprint: 'binding-visual-002', planned_fingerprint: 'binding-visual-001'},
+        },
+      });
       return;
     }
     if (url.pathname === '/api/api-testing/syncs/api-sync-visual-001' && req.method === 'GET') {
@@ -465,10 +640,90 @@ function serve() {
       json(res, {ok: true, sync: {...apiAssetSync(), created: true, conflict: false}});
       return;
     }
+    if (url.pathname === '/api/api-testing/sources/api-source-visual-001/execution-binding' && req.method === 'GET') {
+      json(res, {
+        ok: true,
+        source_id: 'api-source-visual-001',
+        binding: {
+          binding_id: 'source-binding-visual-001',
+          source_id: 'api-source-visual-001',
+          provider: 'metersphere',
+          project_id: meterSelection.project_id,
+          project_name: meterSelection.project_id === 'project-3d' ? '3D 业务' : '接口业务',
+          environment_id: meterSelection.environment_id,
+          environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+          config_fingerprint: 'binding-visual-001',
+          auth_binding: {...businessAuth},
+          updated_at: '2026-07-22 09:42:18',
+        },
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/sources/api-source-visual-001/execution-binding' && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        meterSelection = {project_id: body.project_id || '', environment_id: body.environment_id || ''};
+        if (businessAuth.environment_id !== meterSelection.environment_id) {
+          businessAuth = {
+            configured: false,
+            auth_type: 'bearer',
+            header_name: 'Authorization',
+            variable_name: '',
+            environment_id: meterSelection.environment_id,
+            environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+            updated_at: '2026-07-22 09:44:00',
+          };
+        }
+        json(res, {
+          ok: true,
+          binding: {
+            binding_id: 'source-binding-visual-001',
+            source_id: 'api-source-visual-001',
+            provider: 'metersphere',
+            project_id: meterSelection.project_id,
+            project_name: meterSelection.project_id === 'project-3d' ? '3D 业务' : '接口业务',
+            environment_id: meterSelection.environment_id,
+            environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+            config_fingerprint: 'binding-visual-002',
+            auth_binding: {...businessAuth},
+            updated_at: '2026-07-22 09:44:00',
+          },
+        });
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/sources/api-source-visual-001/auth-binding' && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        businessAuth = {
+          configured: true,
+          auth_type: body.auth_type,
+          header_name: body.auth_type === 'api_key' ? body.header_name : 'Authorization',
+          variable_name: body.auth_type === 'api_key' ? 'API_KEY' : 'API_BEARER_TOKEN',
+          environment_id: meterSelection.environment_id,
+          environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+          updated_at: '2026-07-22 09:45:00',
+        };
+        json(res, {ok: true, binding: {...businessAuth}});
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/sources/api-source-visual-001/auth-binding' && req.method === 'DELETE') {
+      businessAuth = {
+        configured: false,
+        auth_type: businessAuth.auth_type,
+        header_name: businessAuth.header_name,
+        variable_name: '',
+        environment_id: meterSelection.environment_id,
+        environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+        updated_at: '2026-07-22 09:46:00',
+      };
+      json(res, {ok: true, binding: {...businessAuth}});
+      return;
+    }
     if (url.pathname === '/api/api-testing/metersphere/execution-context') {
       const execution = meterExecution();
       json(res, {
         ok: true,
+        source_id: url.searchParams.get('source_id') || 'api-source-visual-001',
         connection: {
           state: 'connected',
           base_url: 'http://metersphere.example.test',
@@ -476,9 +731,28 @@ function serve() {
           latency_ms: 82,
           checked_at: '2026-07-22 09:42:18',
         },
-        selection: {project_id: 'project-interface', environment_id: 'env-qa'},
-        businesses: [{id: 'project-interface', name: '接口业务', enabled: true}],
-        environments: [{id: 'env-qa', name: 'QA 环境', project_id: 'project-interface', enabled: true}],
+        selection: {...meterSelection},
+        binding: {
+          binding_id: 'source-binding-visual-001',
+          source_id: 'api-source-visual-001',
+          provider: 'metersphere',
+          project_id: meterSelection.project_id,
+          project_name: meterSelection.project_id === 'project-3d' ? '3D 业务' : '接口业务',
+          environment_id: meterSelection.environment_id,
+          environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+          config_fingerprint: 'binding-visual-001',
+          auth_binding: {...businessAuth},
+          updated_at: '2026-07-22 09:42:18',
+        },
+        auth_binding: {...businessAuth},
+        businesses: [
+          {id: 'project-interface', name: '接口业务', enabled: true},
+          {id: 'project-3d', name: '3D 业务', enabled: true},
+        ],
+        environments: [
+          {id: 'env-qa', name: 'QA 环境', project_id: 'project-interface', enabled: true},
+          {id: 'env-staging', name: '预发环境', project_id: 'project-3d', enabled: true},
+        ],
         metadata: {source: 'live', stale: false, fetched_at: '2026-07-22 09:42:18', errors: []},
         config: {
           base_url: 'http://metersphere.example.test',
@@ -523,6 +797,19 @@ function serve() {
     }
     if (url.pathname === '/api/api-testing/metersphere/executions/ms-execution-visual-001') {
       json(res, {ok: true, execution: meterExecution()});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/metersphere/executions/ms-execution-late') {
+      setTimeout(() => {
+        json(res, {
+          ok: true,
+          execution: {
+            ...meterExecution(),
+            execution_id: 'ms-execution-late',
+            plan_name: 'LATE EXECUTION MUST NOT RENDER',
+          },
+        });
+      }, 180);
       return;
     }
     if (url.pathname === '/ai-gateway/ai/providers/test' && req.method === 'POST') {
@@ -892,10 +1179,64 @@ async function anyVisible(locator) {
     await page.locator('button[aria-label="关闭设置"]').click();
     await page.screenshot({path: path.join(ARTIFACTS, 'api-assets-sync-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
+    await page.locator('.api-module-tree button[data-module-path="家用业务"]').click();
+    await page.locator('.api-module-select-current').click();
+    if (await page.locator('.api-endpoint-check:checked').count() !== 25) throw new Error('Plan generation fixture must explicitly select all 25 endpoints');
 
     await page.click('.workflow-step[data-workflow="api_plan"]');
     await page.waitForSelector('#api-plan-result');
-    await page.locator('.api-plan-list-button').click();
+    if (!await page.locator('.api-plan-generate-action').isVisible()) throw new Error('Asynchronous plan generation action is missing');
+    await page.locator('.api-plan-generate-action').click();
+    await page.waitForSelector('.api-plan-generation[data-status="running"]');
+    if (await page.locator('.api-plan-batch-row.status-running').count() !== 1) throw new Error('Plan generation UI must show only the server-reported sequential active batch');
+    await page.waitForSelector('.api-plan-generation[data-status="partial"]');
+    const generationCounts = await page.locator('.api-plan-batch-row .api-plan-batch-count').allTextContents();
+    if (generationCounts.map(value => Number(value.trim())).join(',') !== '12,12,1') throw new Error(`25 endpoint generation must render stable 12/12/1 batches: ${generationCounts}`);
+    const partialGenerationText = await visibleText(page, '.api-plan-generation');
+    if (!/api-generation-visual-001/.test(partialGenerationText)) throw new Error('Plan generation must expose its real generation id');
+    if (!/api-plan-real-001/.test(partialGenerationText) || !/api-plan-real-002/.test(partialGenerationText)) throw new Error('Successful batches must expose their real server plan ids');
+    if (await page.locator('.api-plan-generation button:has-text("重试失败批次")').count() !== 1) throw new Error('Partial generation must offer exactly one failed-batch retry action');
+    const planCardsText = await visibleText(page, '.api-plan-card-list');
+    if (!/3D 接口/.test(planCardsText) || !/api-revision-visual-001/.test(planCardsText) || !/qwen3\.8-plus/.test(planCardsText) || !/接口业务/.test(planCardsText) || !/API_BEARER_TOKEN/.test(planCardsText)) throw new Error('Plan cards must show source, revision, AI trace, binding, and auth facts');
+    await page.locator('.api-generation-log-detail > summary').click();
+    const generationLogScrollBefore = await page.locator('.api-generation-log-content').evaluate(el => {
+      const max = el.scrollHeight - el.clientHeight;
+      el.scrollTop = Math.min(170, max);
+      return {top: el.scrollTop, max};
+    });
+    if (generationLogScrollBefore.max < 50 || generationLogScrollBefore.top <= 0) throw new Error(`Generation technical log fixture is not independently scrollable: ${JSON.stringify(generationLogScrollBefore)}`);
+    await page.evaluate(() => pollApiPlanGeneration(apiPlanGenerationCurrent.generation_id));
+    await page.waitForTimeout(100);
+    if (!await page.locator('.api-generation-log-detail').evaluate(el => el.open)) throw new Error('Generation polling collapsed an expanded technical log');
+    const generationLogScrollAfter = await page.locator('.api-generation-log-content').evaluate(el => el.scrollTop);
+    if (Math.abs(generationLogScrollAfter - generationLogScrollBefore.top) > 2) throw new Error(`Generation polling reset technical log scroll: before=${generationLogScrollBefore.top}, after=${generationLogScrollAfter}`);
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-batch-review.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    if (await page.locator('.api-plan-workspace').evaluate(el => el.scrollWidth > el.clientWidth + 1)) throw new Error('API batch review overflows horizontally on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-batch-review-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
+    await page.locator('.api-plan-generation button:has-text("重试失败批次")').click();
+    await page.waitForSelector('.api-plan-generation[data-status="succeeded"]');
+    const completedGenerationText = await visibleText(page, '.api-plan-generation');
+    if (!/api-plan-real-003/.test(completedGenerationText)) throw new Error('Retry must preserve successful plans and expose the recovered batch plan id');
+    await page.evaluate(() => {
+      window.__lateGenerationPoll = pollApiPlanGeneration('api-generation-late');
+      apiTestingProjectScope = {sourceId: 'api-source-visual-002', revisionId: 'api-revision-visual-002'};
+    });
+    await page.waitForTimeout(260);
+    if (/LATE RESPONSE MUST NOT RENDER/.test(await visibleText(page, '.api-plan-generation'))) throw new Error('A late generation response redrew the newly selected source');
+    await page.evaluate(() => {
+      apiTestingProjectScope = {sourceId: 'api-source-visual-001', revisionId: 'api-revision-visual-001'};
+    });
+    await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-stale"]').click();
+    await page.waitForSelector('#api-plan-result .api-plan-readiness');
+    const stalePlanText = await visibleText(page, '#api-plan-result');
+    if (!/3D 接口/.test(stalePlanText) || !/api-revision-visual-001/.test(stalePlanText) || !/家用业务/.test(stalePlanText) || !/qwen3\.8-plus/.test(stalePlanText)) throw new Error('Plan detail must show source, revision, modules, and AI trace from backend facts');
+    if (!/接口业务/.test(stalePlanText) || !/API_BEARER_TOKEN/.test(stalePlanText)) throw new Error('Plan detail must show execution binding and public auth metadata');
+    if (!await page.locator('#api-plan-result button:has-text("确认计划")').isDisabled()) throw new Error('A stale plan must not be confirmable');
+    if (!await page.locator('#api-plan-result button:has-text("重新生成")').isVisible()) throw new Error('A stale plan must offer regeneration');
+    await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-ready"]').click();
     await page.waitForSelector('#api-plan-result .api-plan-readiness');
     const planText = await visibleText(page, '#api-plan-result');
     if (!/可执行/.test(planText) || !/待补数据/.test(planText) || !/request\.body\.productId/.test(planText)) throw new Error('API plan detail must expose readiness counts and missing data');
@@ -924,9 +1265,30 @@ async function anyVisible(locator) {
     await page.waitForSelector('text=账号接口日常回归');
     if (!/接口业务/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere business must render from execution-context data');
     if (!/QA 环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere environment must render from execution-context data');
+    if (!await page.locator('.api-business-auth-panel').isVisible()) throw new Error('Source-scoped business authentication panel is missing');
+    if (!/API_BEARER_TOKEN/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Business authentication must show only public variable metadata');
+    await page.locator('.api-execution-project-select').selectOption('project-3d');
+    await page.waitForFunction(() => document.querySelector('.api-execution-project-select')?.value === 'project-3d' && document.querySelector('.api-execution-environment-select')?.value === 'env-staging');
+    if (!/3D 业务/.test(await visibleText(page, '#api-execution-header')) || !/预发环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('Project and environment changes must persist on the selected source binding');
+    await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-project-binding.png'), fullPage: true});
+    await page.locator('button[aria-label="配置业务鉴权"]').click();
+    if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Business auth replacement must always open with an empty secret');
+    await page.locator('button[data-auth-type="api_key"]').click();
+    if (!await page.locator('#api-business-auth-header').isVisible()) throw new Error('API Key mode must expose a conditional header field');
+    await page.locator('#api-business-auth-header').fill('X-API-Key');
+    await page.locator('#api-business-auth-secret').fill('visual-secret-must-not-render');
+    await page.locator('button:has-text("保存业务鉴权")').click();
+    await page.waitForFunction(() => document.querySelector('.api-business-auth-panel')?.innerText.includes('API_KEY'));
+    if (/visual-secret-must-not-render/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Saved business secret leaked into rendered metadata');
+    await page.locator('button[aria-label="更换业务鉴权"]').click();
+    if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Saved business auth secret was rehydrated into the replacement field');
+    await page.locator('button[aria-label="取消更换业务鉴权"]').click();
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-business-auth.png'), fullPage: true});
     if (await page.locator('.api-execution-plan-row').count() !== 1) throw new Error('Daily execution console must render confirmed plans as a compact list');
     if (await page.locator('.api-run-phases > li').count() !== 4) throw new Error('Active MeterSphere run must render four stable phases');
     await page.locator('.api-log-detail').first().locator('summary').click();
+    const executionLogKey = await page.locator('.api-log-detail').first().getAttribute('data-api-log-key');
+    if (!executionLogKey || !executionLogKey.startsWith('api-source-visual-001:api-revision-visual-001::')) throw new Error(`Execution log key must include the selected source scope: ${executionLogKey}`);
     const meterLogScrollBefore = await page.locator('.api-log-detail').first().locator('.api-log-content').evaluate(el => {
       const max = el.scrollHeight - el.clientHeight;
       el.scrollTop = Math.min(180, max);
@@ -938,6 +1300,18 @@ async function anyVisible(locator) {
     if (!await page.locator('.api-log-detail').first().evaluate(el => el.open)) throw new Error('MeterSphere status polling collapsed an expanded technical log');
     const meterLogScrollAfter = await page.locator('.api-log-detail').first().locator('.api-log-content').evaluate(el => el.scrollTop);
     if (Math.abs(meterLogScrollAfter - meterLogScrollBefore.top) > 2) throw new Error(`MeterSphere polling reset technical log scroll: before=${meterLogScrollBefore.top}, after=${meterLogScrollAfter}`);
+    await page.evaluate(() => {
+      window.__previousApiExecutionId = apiExecutionActiveId;
+      apiExecutionActiveId = 'ms-execution-late';
+      window.__lateExecutionPoll = pollApiMeterSphereExecution('ms-execution-late');
+      apiTestingProjectScope = {sourceId: 'api-source-visual-002', revisionId: 'api-revision-visual-002'};
+    });
+    await page.waitForTimeout(260);
+    if (/LATE EXECUTION MUST NOT RENDER/.test(await visibleText(page, '#api-active-run'))) throw new Error('A late execution poll response redrew the newly selected source');
+    await page.evaluate(() => {
+      apiTestingProjectScope = {sourceId: 'api-source-visual-001', revisionId: 'api-revision-visual-001'};
+      apiExecutionActiveId = window.__previousApiExecutionId;
+    });
     const meterDesktopOverflow = await page.locator('.api-execution-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
     if (meterDesktopOverflow) throw new Error('MeterSphere daily execution console overflows horizontally on desktop');
     await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-execution.png'), fullPage: true});
@@ -957,6 +1331,9 @@ async function anyVisible(locator) {
     const meterMobileOverflow = await page.locator('.api-execution-console').evaluate(el => el.scrollWidth > el.clientWidth + 1);
     if (meterMobileOverflow) throw new Error('MeterSphere daily execution console overflows horizontally on mobile');
     if (!await page.locator('.api-execution-plan-row .btn-sm.primary').isVisible()) throw new Error('MeterSphere primary plan action is not visible on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-project-binding-mobile.png'), fullPage: true});
+    if (await page.locator('.api-business-auth-panel').evaluate(el => el.scrollWidth > el.clientWidth + 1)) throw new Error('Business authentication panel overflows horizontally on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-business-auth-mobile.png'), fullPage: true});
     await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-execution-mobile.png'), fullPage: true});
     await page.locator('button[aria-label="MeterSphere 设置"]').click();
     await page.waitForSelector('.api-settings-drawer.open');
@@ -1363,6 +1740,12 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'api-assets-sync-mobile.png'),
         path.join(ARTIFACTS, 'api-plan-readiness.png'),
         path.join(ARTIFACTS, 'api-plan-readiness-mobile.png'),
+        path.join(ARTIFACTS, 'api-batch-review.png'),
+        path.join(ARTIFACTS, 'api-batch-review-mobile.png'),
+        path.join(ARTIFACTS, 'api-business-auth.png'),
+        path.join(ARTIFACTS, 'api-business-auth-mobile.png'),
+        path.join(ARTIFACTS, 'metersphere-project-binding.png'),
+        path.join(ARTIFACTS, 'metersphere-project-binding-mobile.png'),
         path.join(ARTIFACTS, 'agent.png'),
         path.join(ARTIFACTS, 'agent-mobile.png'),
         path.join(ARTIFACTS, 'agent-failure.png'),

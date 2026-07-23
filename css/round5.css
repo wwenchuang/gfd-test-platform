@@ -626,6 +626,304 @@
 .api-stale-warning + .generation-record-actions {
   margin-top: 12px;
 }
+.api-plan-workspace {
+  width: min(1280px, 100%);
+  min-width: 0;
+}
+.api-plan-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, .72fr) minmax(0, 1.28fr);
+  gap: 14px;
+  align-items: start;
+  margin-top: 14px;
+  min-width: 0;
+}
+.api-plan-selection-panel {
+  position: sticky;
+  top: 0;
+}
+.api-plan-selection-panel .api-endpoint-scroll {
+  max-height: 680px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.api-plan-review-column {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.api-plan-scope-facts,
+.api-plan-generation-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  color: var(--text3);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.api-plan-scope-facts code,
+.api-plan-generation-scope code {
+  color: var(--text2);
+  overflow-wrap: anywhere;
+}
+.api-plan-generation {
+  min-width: 0;
+}
+.api-plan-generation-head,
+.api-plan-detail-head,
+.api-business-auth-head,
+.api-business-auth-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.api-plan-generation-head > div:first-child,
+.api-plan-detail-head > div,
+.api-business-auth-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.api-plan-generation-head > div:first-child > span,
+.api-plan-detail-head > div > span,
+.api-business-auth-head > div > span {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.api-plan-generation-head h3,
+.api-plan-detail-head h3,
+.api-business-auth-head h3 {
+  margin: 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.api-plan-generation-head code,
+.api-plan-detail-head code {
+  color: var(--text3);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.api-plan-generation-progress {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  flex: none;
+  font-size: 11px;
+}
+.api-plan-generation-scope {
+  margin-top: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.api-plan-batch-list {
+  display: grid;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+}
+.api-plan-batch-row {
+  display: grid;
+  grid-template-columns: 28px minmax(88px, .8fr) 42px auto minmax(150px, 1.3fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  min-height: 54px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--border);
+  background: var(--surface2);
+}
+.api-plan-batch-row + .api-plan-batch-row {
+  border-top: 1px solid var(--border);
+}
+.api-plan-batch-row.status-running { border-left-color: var(--accent); }
+.api-plan-batch-row.status-succeeded { border-left-color: var(--success); }
+.api-plan-batch-row.status-failed { border-left-color: var(--danger); }
+.api-plan-batch-index {
+  color: var(--text3);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.api-plan-batch-row > div {
+  min-width: 0;
+}
+.api-plan-batch-row > div:nth-child(2) {
+  display: grid;
+  gap: 2px;
+}
+.api-plan-batch-row > div:nth-child(2) strong {
+  font-size: 11px;
+}
+.api-plan-batch-row > div:nth-child(2) small {
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-plan-batch-count {
+  font-family: var(--mono);
+  font-size: 14px;
+  text-align: center;
+}
+.api-plan-batch-result {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+.api-plan-batch-result code,
+.api-plan-batch-result span {
+  min-width: 0;
+  color: var(--text3);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.api-plan-generation .generation-record-actions {
+  align-items: center;
+  margin-top: 10px;
+}
+.api-plan-generation .generation-record-actions > span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-generation-log-detail {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.api-generation-log-detail > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 2px 0;
+  color: var(--text2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.api-generation-log-detail > summary span {
+  color: var(--text3);
+}
+.api-generation-log-content {
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+}
+.api-generation-log-content > div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) 100px;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+}
+.api-generation-log-content > div:last-child {
+  border-bottom: 0;
+}
+.api-generation-log-content time,
+.api-generation-log-content small {
+  color: var(--text3);
+}
+.api-generation-log-content strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-generation-log-content pre {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  padding: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.api-plan-card-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.api-plan-card {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  padding: 10px;
+}
+.api-plan-card.is-stale {
+  border-left: 3px solid var(--danger);
+}
+.api-plan-card > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.api-plan-card > header > div {
+  display: flex;
+  gap: 5px;
+}
+.api-plan-card .api-plan-list-button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  border-radius: 3px;
+  padding: 5px 7px;
+}
+.api-plan-card .api-plan-list-button strong,
+.api-plan-card .api-plan-list-button small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-plan-card .api-plan-list-button small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-plan-fact-grid,
+.api-business-auth-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 9px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-plan-fact-grid > div,
+.api-business-auth-facts > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--surface);
+}
+.api-plan-fact-grid span,
+.api-business-auth-facts span {
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-plan-fact-grid strong,
+.api-business-auth-facts strong {
+  min-width: 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.api-plan-fact-grid small,
+.api-business-auth-facts small {
+  min-width: 0;
+  color: var(--text3);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.api-plan-detail-head {
+  margin-bottom: 10px;
+}
+.api-plan-detail-head + .api-plan-fact-grid {
+  margin-bottom: 10px;
+}
 .api-testing-page .generation-record-actions .btn-sm:disabled {
   cursor: not-allowed;
   opacity: 0.45;
@@ -755,6 +1053,83 @@
 }
 .api-readiness-fact strong {
   font-size: 12px;
+}
+.api-business-auth-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin-top: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.api-business-auth-panel > p {
+  margin: 0;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.api-business-auth-panel.is-editing {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+}
+.api-business-auth-head > small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-business-auth-facts {
+  margin-top: 0;
+}
+.api-business-auth-actions {
+  justify-content: flex-end;
+}
+.api-auth-segmented {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.api-auth-segmented button {
+  min-width: 92px;
+  min-height: 32px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text3);
+  cursor: pointer;
+}
+.api-auth-segmented button:last-child {
+  border-right: 0;
+}
+.api-auth-segmented button.active {
+  background: rgba(0, 214, 224, .14);
+  color: var(--accent);
+}
+.api-business-auth-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.api-business-auth-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-business-auth-form label > span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-business-auth-form input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 7px 9px;
 }
 .api-readiness-missing {
   display: flex;
@@ -1105,6 +1480,15 @@
   .api-two-column {
     grid-template-columns: 1fr;
   }
+  .api-plan-layout {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-selection-panel {
+    position: static;
+  }
+  .api-plan-selection-panel .api-endpoint-scroll {
+    max-height: 420px;
+  }
   .api-source-settings-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1128,6 +1512,58 @@
   }
   .api-plan-readiness {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .api-plan-workspace {
+    max-width: 100%;
+  }
+  .api-plan-layout,
+  .api-plan-review-column,
+  .api-plan-generation,
+  .api-plan-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .api-plan-generation-head,
+  .api-plan-detail-head,
+  .api-business-auth-head,
+  .api-business-auth-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .api-plan-generation-progress {
+    justify-items: start;
+  }
+  .api-plan-batch-row {
+    grid-template-columns: 26px minmax(0, 1fr) 36px auto;
+  }
+  .api-plan-batch-result {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .api-plan-fact-grid,
+  .api-business-auth-facts {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-card > header {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-card > header > div {
+    flex-wrap: wrap;
+  }
+  .api-generation-log-content > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+  .api-business-auth-form {
+    grid-template-columns: 1fr;
+  }
+  .api-auth-segmented {
+    width: 100%;
+  }
+  .api-auth-segmented button {
+    flex: 1;
+    min-width: 0;
   }
   .api-plan-readiness .review-stat {
     min-width: 0;

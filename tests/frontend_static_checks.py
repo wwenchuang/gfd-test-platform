@@ -191,16 +191,67 @@ def main():
         "API plan actions must obey server readiness and stale state",
     )
     require(
-        "const useAi = endpointIds.length > 0 && endpointIds.length <= 12" in api_testing_js
-        and "use_ai: useAi" in api_testing_js
-        and "use_ai: false" not in api_testing_js,
-        "API plan generation must use bounded AI participation instead of disabling AI unconditionally",
+        "startApiPlanGeneration" in api_testing_js
+        and "pollApiPlanGeneration" in api_testing_js
+        and "retryApiPlanGeneration" in api_testing_js
+        and "/api-testing/plan-generations" in api_testing_js
+        and "/api-testing/plans/generate" not in api_testing_js,
+        "API plan generation must use the asynchronous generation create/poll/retry contract",
+    )
+    require(
+        "source_id:" in api_testing_js
+        and "revision_id:" in api_testing_js
+        and "endpoint_ids:" in api_testing_js
+        and "module_paths:" in api_testing_js
+        and "poll_after_ms" in api_testing_js
+        and "plan_id" in api_testing_js,
+        "Plan generation must submit its exact source scope and render backend batch plan ids",
+    )
+    require(
+        "apiPlanGenerationScopeKey" in api_testing_js
+        and "apiPlanGenerationRequestId" in api_testing_js
+        and "apiPlanGenerationController" in api_testing_js
+        and "controller.signal" in api_testing_js
+        and "capturedScopeKey" in api_testing_js,
+        "Plan generation polling must abort old source requests and reject late responses",
+    )
+    require(
+        "renderApiPlanGeneration" in api_testing_js
+        and "api-plan-generation" in api_testing_js
+        and "failed_batches" in api_testing_js
+        and "重新生成" in api_testing_js,
+        "Plan review must expose stable batches, failed-only retry, and stale regeneration",
+    )
+    require(
+        "saveApiSourceExecutionBinding" in api_testing_js
+        and "/execution-binding" in api_testing_js
+        and "project_id:" in api_testing_js
+        and "environment_id:" in api_testing_js,
+        "MeterSphere business and environment changes must save the selected source binding",
+    )
+    require(
+        "renderApiBusinessAuthPanel" in api_testing_js
+        and "saveApiBusinessAuth" in api_testing_js
+        and "clearApiBusinessAuth" in api_testing_js
+        and "/auth-binding" in api_testing_js
+        and "api-business-auth-panel" in api_testing_js
+        and 'autocomplete="new-password"' in api_testing_js,
+        "Business authentication must use a separate source binding panel with empty secret entry",
+    )
+    require(
+        "captureApiPlanGenerationLogViewState" in api_testing_js
+        and "restoreApiPlanGenerationLogViewState" in api_testing_js
+        and "apiPlanGenerationLogKey" in api_testing_js
+        and "apiExecutionLogKey" in api_testing_js
+        and "apiProjectScopeKey()" in api_testing_js,
+        "Generation and execution technical logs must preserve expansion and scroll by source scope",
     )
     require(
         "openApiTestPlan" in api_testing_js
         and "api-plan-list-button" in api_testing_js
-        and "`/api-testing/plans/${encodeURIComponent(planId)}`" in api_testing_js,
-        "Stored API plan summaries must open their server-backed executable contract detail",
+        and "/api-testing/plans/${encodeURIComponent(planId)}${query}" in api_testing_js
+        and "source_id=" in api_testing_js,
+        "Stored API plan summaries must open their source-scoped server-backed executable contract detail",
     )
     require(
         "api-ms-settings-drawer" in api_testing_js
@@ -445,7 +496,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260723-api-project-modules" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260723-api-project-modules" in html and "js/api-testing.js?v=20260723-api-project-modules" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include API project/module workspace and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260701-smoke-dynamic" in html and "js/state.js?v=20260723-api-project-modules" in html and "js/agent-workbench.js?v=20260715-agent-failure-cards" in html and "css/app.css?v=20260714-agent-results" in html and "css/round5.css?v=20260723-api-plan-binding-auth" in html and "js/api-testing.js?v=20260723-api-plan-binding-auth" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include API plan/binding/auth workspace and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require("handleApkInstallJobsUpdated" in html and "loadRunnerDevices({force: true, quiet: true})" in html and "previousJobs" in html and "[0, 3000, 8000]" in html, "APK install completion must refresh runner devices and app versions automatically")
     require("closeMindmapCreateModal(options = {})" in html and "#modal-mindmap-create .modal-close, #modal-mindmap-create .btn-cancel" in html, "Mindmap create modal must remain closable while background generation is running")
