@@ -288,6 +288,9 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
         plans = api_test_plan_service.list_full_api_test_plans(limit=1000)
         impact = api_schema_diff_service.analyze_api_plan_impact(diff, plans)
         saved_diff = api_schema_diff_service.save_api_diff(asset_id, diff, impact)
+        api_source_service.update_api_source_discovery_state(
+            str(source.get("source_id") or ""), catalog, scope_fingerprint
+        )
         api_asset_service.activate_api_revision(asset_id, revision_id)
         summary = dict(diff.get("summary") or {})
         summary["affected_plans"] = int(impact.get("affected_plans") or 0)
@@ -307,9 +310,6 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             last_success_at=finished_at,
             last_sync_status="succeeded",
             last_error="",
-        )
-        api_source_service.update_api_source_discovery_state(
-            str(source.get("source_id") or ""), catalog, scope_fingerprint
         )
         return result
     except Exception as exc:

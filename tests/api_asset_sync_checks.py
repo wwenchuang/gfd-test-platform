@@ -673,6 +673,68 @@ class ApiSyncServiceTests(unittest.TestCase):
         asset = self.asset_service.get_api_asset(first["asset_id"])
         self.assertEqual(active_revision_id, asset["active_revision_id"])
 
+    def test_discovery_failure_before_activation_keeps_the_previous_active_revision(self):
+        first = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="string")]))
+        active_revision_id = first["revision_id"]
+        original_discovery_update = self.source_service.update_api_source_discovery_state
+
+        def fail_discovery(*_args, **_kwargs):
+            raise OSError("discovery storage unavailable")
+
+        self.source_service.update_api_source_discovery_state = fail_discovery
+        try:
+            failed = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="array")]))
+        finally:
+            self.source_service.update_api_source_discovery_state = original_discovery_update
+
+        self.assertEqual("failed", failed["status"])
+        asset = self.asset_service.get_api_asset(first["asset_id"])
+        self.assertEqual(active_revision_id, asset["active_revision_id"])
+
+    def test_selected_scope_stages_only_the_selected_module(self):
+        document = _openapi_document(path="/selected", operation_id="selected")
+        document["paths"]["/selected"]["get"]["x-apifox-folder"] = "A/B"
+        sibling = _openapi_document(path="/sibling", operation_id="sibling")
+        sibling["paths"]["/sibling"]["get"]["x-apifox-folder"] = "A/BB"
+        document["paths"].update(sibling["paths"])
+        self.source = self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "sync_scope": {"mode": "selected", "module_paths": ["A/B"]},
+        })
+
+        synced = self._run(_SequenceApifoxAdapter([document]))
+
+        self.assertEqual("succeeded", synced["status"])
+        revision = self.asset_service.get_api_revision(synced["revision_id"])
+        self.assertEqual(["/selected"], [endpoint["path"] for endpoint in revision["endpoints"]])
+        self.assertEqual(2, synced["module_count"])
+        self.assertEqual(1, synced["scoped_module_count"])
+        self.assertEqual("selected", revision["sync_scope"]["mode"])
+
+    def test_scope_fingerprint_change_stages_a_new_revision_for_the_same_document(self):
+        document = _openapi_document(path="/selected", operation_id="selected")
+        document["paths"]["/selected"]["get"]["x-apifox-folder"] = "A/B/C"
+        first = self._run(_SequenceApifoxAdapter([document]))
+        self.source = self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "sync_scope": {"mode": "selected", "module_paths": ["A/B"]},
+        })
+
+        scoped = self._run(_SequenceApifoxAdapter([document]))
+
+        self.assertEqual("succeeded", scoped["status"])
+        self.assertNotEqual(first["revision_id"], scoped["revision_id"])
+        self.assertEqual(
+            [
+                (endpoint["endpoint_key"], endpoint["path"], endpoint["schema_hash"])
+                for endpoint in self.asset_service.get_api_revision(first["revision_id"])["endpoints"]
+            ],
+            [
+                (endpoint["endpoint_key"], endpoint["path"], endpoint["schema_hash"])
+                for endpoint in self.asset_service.get_api_revision(scoped["revision_id"])["endpoints"]
+            ],
+        )
+
     def test_duplicate_sync_reuses_current_sync_id(self):
         first = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)
         second = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)

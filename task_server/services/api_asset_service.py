@@ -138,20 +138,6 @@ def _required_fields(operation: Dict[str, Any], request_schema: Dict[str, Any]) 
     return fields
 
 
-def _module_for_operation(path: str, operation: Dict[str, Any]) -> str:
-    apifox_folder = str(operation.get("x-apifox-folder") or "").strip()
-    if apifox_folder:
-        return apifox_folder
-    tags = operation.get("tags")
-    if isinstance(tags, list):
-        for tag in tags:
-            text = str(tag or "").strip()
-            if text:
-                return text
-    segments = [item for item in str(path or "").split("/") if item]
-    return segments[0] if segments else "未分组"
-
-
 def _schema_hash(payload: Dict[str, Any]) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
