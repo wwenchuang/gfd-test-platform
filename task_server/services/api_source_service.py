@@ -192,7 +192,33 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     public["sync_scope"] = normalized_sync_scope(public.get("sync_scope"))
     public["module_catalog"] = public.get("module_catalog") if isinstance(public.get("module_catalog"), list) else []
     public["scope_fingerprint"] = str(public.get("scope_fingerprint") or "")
+    interval = _sync_interval(public.get("sync_interval_minutes"))
+    reference = max(
+        _timestamp(public.get("last_attempt_at")),
+        _timestamp(public.get("last_success_at")),
+    )
+    if reference:
+        next_check_at = time.strftime(
+            "%Y-%m-%d %H:%M:%S",
+            time.localtime(reference + interval * 60),
+        )
+    else:
+        next_check_at = str(public.get("created_at") or _now())
+    public["sync_schedule"] = {
+        "mode": "automatic" if public.get("sync_enabled") else "manual",
+        "interval_minutes": interval,
+        "last_success_at": str(public.get("last_success_at") or ""),
+        "next_check_at": next_check_at if public.get("sync_enabled") else "",
+        "status": str(public.get("last_sync_status") or ""),
+    }
     return public
+
+
+def _timestamp(value: Any) -> float:
+    try:
+        return time.mktime(time.strptime(str(value or ""), "%Y-%m-%d %H:%M:%S"))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def get_api_source(source_id: str, masked: bool = True) -> Dict[str, Any]:

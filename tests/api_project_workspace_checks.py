@@ -104,6 +104,37 @@ class ApiModuleScopeChecks(unittest.TestCase):
         self.assertTrue(source["credential_configured"])
         self.assertEqual("all", source["sync_scope"]["mode"])
 
+    def test_public_source_exposes_verifiable_automatic_sync_schedule(self):
+        source = api_source_service.save_api_source({
+            "name": "项目 A",
+            "project_id": "1",
+            "access_token": "secret",
+            "sync_enabled": True,
+            "sync_interval_minutes": 60,
+        })
+
+        self.assertEqual("automatic", source["sync_schedule"]["mode"])
+        self.assertEqual(60, source["sync_schedule"]["interval_minutes"])
+        self.assertTrue(source["sync_schedule"]["next_check_at"])
+        self.assertEqual("", source["sync_schedule"]["last_success_at"])
+
+    def test_business_lines_are_derived_from_first_module_segment(self):
+        summary = api_module_service.business_line_summary([
+            {"module_path": "家用业务/app接口/我的"},
+            {"module_path": "家用业务/app接口/订单"},
+            {"module_path": "共享业务/商户小程序/订单"},
+            {"module_path": ""},
+        ])
+
+        self.assertEqual(
+            [
+                {"name": "共享业务", "module_count": 1, "endpoint_count": 1},
+                {"name": "家用业务", "module_count": 2, "endpoint_count": 2},
+                {"name": "未分组", "module_count": 1, "endpoint_count": 1},
+            ],
+            summary,
+        )
+
 
 class ApiAssetOwnershipRouteChecks(unittest.TestCase):
     def setUp(self):
@@ -203,6 +234,124 @@ class ApiAssetOwnershipRouteChecks(unittest.TestCase):
         payload, status = handler.responses[-1]
         self.assertEqual(status, 200)
         self.assertEqual(["/legacy"], [item["path"] for item in payload["endpoints"]])
+
+    def test_assets_route_returns_business_line_summary(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        staged = api_asset_service.stage_api_revision(
+            "api_source_a",
+            "项目 A",
+            {
+                "openapi": "3.0.1",
+                "info": {"title": "业务线"},
+                "paths": {
+                    "/home": {
+                        "get": {
+                            "x-apifox-folder": "家用业务/app接口",
+                            "responses": {"200": {"description": "ok"}},
+                        }
+                    },
+                    "/shared": {
+                        "post": {
+                            "x-apifox-folder": "共享业务/商户",
+                            "responses": {"200": {"description": "ok"}},
+                        }
+                    },
+                },
+            },
+            source_type="apifox",
+        )
+        api_asset_service.activate_api_revision(
+            staged["asset_id"],
+            staged["revision_id"],
+        )
+        handler = Handler()
+        router.GET_ROUTES["/api/api-testing/assets"](
+            handler,
+            {
+                "source_id": "api_source_a",
+                "snapshot_id": staged["revision_id"],
+            },
+        )
+
+        payload, status = handler.responses[0]
+        self.assertEqual(200, status)
+        self.assertEqual(
+            ["共享业务", "家用业务"],
+            [item["name"] for item in payload["business_lines"]],
+        )
+
+
+class ApiSourceRouteSyncChecks(unittest.TestCase):
+    def setUp(self):
+        self.old_source_dir = api_source_service.API_TESTING_DIR
+        self.temp_dir = tempfile.mkdtemp(prefix="api_source_route_sync_checks_")
+        api_source_service.API_TESTING_DIR = self.temp_dir
+
+    def tearDown(self):
+        api_source_service.API_TESTING_DIR = self.old_source_dir
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_configured_source_change_queues_sync_but_display_rename_does_not(self):
+        from task_server import router
+        from task_server.services import api_sync_service
+
+        class Handler:
+            def __init__(self, body):
+                self.body = body
+                self.responses = []
+
+            def _authorized(self):
+                return True
+
+            def _body(self):
+                return self.body
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        calls = []
+        original_start = api_sync_service.start_api_source_sync
+        api_sync_service.start_api_source_sync = (
+            lambda source_id, **kwargs: calls.append((source_id, kwargs))
+            or {
+                "sync_id": "api_sync_configuration",
+                "source_id": source_id,
+                "status": "queued",
+                "created": True,
+            }
+        )
+        try:
+            created = Handler({
+                "name": "3D 接口",
+                "project_id": "5904970",
+                "access_token": "apifox-token",
+                "sync_enabled": True,
+            })
+            router.POST_ROUTES["/api/api-testing/sources"](created, {})
+            source_id = created.responses[0][0]["source"]["source_id"]
+            renamed = Handler({
+                "source_id": source_id,
+                "name": "3D 接口（研发）",
+            })
+            router.POST_ROUTES["/api/api-testing/sources"](renamed, {})
+        finally:
+            api_sync_service.start_api_source_sync = original_start
+
+        self.assertEqual(1, len(calls))
+        self.assertEqual("configuration", calls[0][1]["trigger"])
+        self.assertEqual(
+            "api_sync_configuration",
+            created.responses[0][0]["sync"]["sync_id"],
+        )
+        self.assertNotIn("sync", renamed.responses[0][0])
 
 
 class ApiWorkspaceBindingChecks(unittest.TestCase):

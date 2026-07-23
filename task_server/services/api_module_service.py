@@ -143,8 +143,45 @@ def module_summary(endpoints: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def business_line_for_module(module_path: Any) -> str:
+    normalized = normalize_module_path(module_path)
+    return normalized.split("/", 1)[0] if normalized else "未分组"
+
+
+def business_line_summary(
+    endpoints: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    lines: Dict[str, Dict[str, Any]] = {}
+    for endpoint in endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        module_path = (
+            normalize_module_path(
+                endpoint.get("module_path") or endpoint.get("module")
+            )
+            or "未分组"
+        )
+        name = business_line_for_module(module_path)
+        row = lines.setdefault(
+            name,
+            {"name": name, "modules": set(), "endpoint_count": 0},
+        )
+        row["modules"].add(module_path)
+        row["endpoint_count"] += 1
+    return [
+        {
+            "name": name,
+            "module_count": len(lines[name]["modules"]),
+            "endpoint_count": lines[name]["endpoint_count"],
+        }
+        for name in sorted(lines)
+    ]
+
+
 __all__ = [
     "MODULE_MATCHER_VERSION",
+    "business_line_for_module",
+    "business_line_summary",
     "filter_document",
     "module_catalog",
     "module_selected",

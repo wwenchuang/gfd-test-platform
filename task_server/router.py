@@ -2556,6 +2556,7 @@ def _get_api_testing_assets(handler, qs):
         "revisions": revisions,
         "source_id": str((asset or snapshot).get("source_id") or requested_source_id),
         "module_summary": api_module_service.module_summary(endpoints),
+        "business_lines": api_module_service.business_line_summary(endpoints),
     })
 
 
@@ -2817,10 +2818,50 @@ def _post_auth_logout(handler, qs):
 def _post_api_testing_sources(handler, qs):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service
+    from task_server.services import api_source_service, api_sync_service
     try:
-        source = api_source_service.save_api_source(handler._body())
-        handler._json({"ok": True, "source": source})
+        data = handler._body()
+        source_id = str(
+            data.get("source_id") or data.get("sourceId") or ""
+        ).strip()
+        previous = (
+            api_source_service.get_api_source(source_id, masked=False)
+            if source_id
+            else {}
+        )
+        previous_fingerprint = (
+            api_source_service.source_config_fingerprint(previous)
+            if previous
+            else ""
+        )
+        source = api_source_service.save_api_source(data)
+        current = api_source_service.get_api_source(
+            str(source.get("source_id") or ""),
+            masked=False,
+        )
+        current_fingerprint = api_source_service.source_config_fingerprint(current)
+        response = {"ok": True, "source": source}
+        status = 200
+        should_sync = bool(
+            source.get("source_type") == "apifox"
+            and source.get("configured")
+            and source.get("sync_enabled")
+            and current_fingerprint != previous_fingerprint
+        )
+        if should_sync:
+            try:
+                sync = api_sync_service.start_api_source_sync(
+                    str(source.get("source_id") or ""),
+                    spawn=True,
+                    trigger="configuration",
+                )
+                response["sync"] = sync
+                status = 202 if sync.get("created") else 200
+            except ValueError as exc:
+                response["sync_error"] = str(exc)
+            except Exception:
+                response["sync_error"] = "接口配置已保存，自动同步排队失败，请点击重试"
+        handler._json(response, status)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 
