@@ -834,9 +834,21 @@ def metersphere_health(config: Dict[str, Any] | None = None) -> Dict[str, Any]:
     return sanitize_metersphere_data(result)
 
 
-def metersphere_execution_context(force: bool = False, source_id: str = "") -> Dict[str, Any]:
+def metersphere_execution_context(
+    force: bool = False,
+    source_id: str = "",
+    *,
+    config: Dict[str, Any] | None = None,
+    expected_connection_fingerprint: str = "",
+) -> Dict[str, Any]:
     selected_source_id = str(source_id or "").strip()
-    cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+    current_cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+    expected_fingerprint = str(expected_connection_fingerprint or "").strip()
+    if expected_fingerprint and _connection_fingerprint(current_cfg) != expected_fingerprint:
+        raise MeterSphereExecutionValidationError(
+            "MeterSphere 连接配置已变更，请重新发起执行"
+        )
+    cfg = dict(config) if config is not None else current_cfg
     checked_at = _now()
     _adapter, v365_probe, v365_supported = _v365_adapter_probe(cfg)
     health = (
@@ -1380,10 +1392,16 @@ def _run_metersphere_execution(execution_id: str) -> None:
 
     try:
         source_id = str(record.get("source_id") or "")
-        if source_id:
-            _execution_config(record)
+        execution_cfg = _execution_config(record) if source_id else None
         context = (
-            metersphere_execution_context(force=True, source_id=source_id)
+            metersphere_execution_context(
+                force=True,
+                source_id=source_id,
+                config=execution_cfg,
+                expected_connection_fingerprint=str(
+                    record.get("connection_fingerprint") or ""
+                ),
+            )
             if source_id
             else metersphere_execution_context(force=True)
         )

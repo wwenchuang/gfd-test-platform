@@ -1531,6 +1531,36 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         metersphere_service._save_execution(record)
         return record, binding
 
+    def _run_worker_during_connection_change(self, **changes):
+        execution, _binding = self._start_source_execution()
+        baseline = metersphere_service._load_raw_config()
+        drifted = {**baseline, **changes}
+        config_reads = []
+        network_calls = []
+        old_load_config = metersphere_service._load_raw_config
+        old_request = metersphere_service._request_json
+
+        def changing_config():
+            config_reads.append(len(config_reads) + 1)
+            return dict(baseline if len(config_reads) == 1 else drifted)
+
+        def unexpected_request(method, path, payload=None, timeout=30, *, config=None):
+            network_calls.append((method, path, config))
+            return {"ok": False, "error": "network must not be reached after connection drift"}
+
+        metersphere_service._load_raw_config = changing_config
+        metersphere_service._request_json = unexpected_request
+        try:
+            metersphere_service._run_metersphere_execution(execution["execution_id"])
+        finally:
+            metersphere_service._load_raw_config = old_load_config
+            metersphere_service._request_json = old_request
+        return (
+            metersphere_service._load_execution(execution["execution_id"]),
+            config_reads,
+            network_calls,
+        )
+
     def test_service_auto_selects_v365_for_context_push_run_and_report(self):
         context = metersphere_service.metersphere_execution_context(force=True)
         first_push = metersphere_service.push_plan_to_metersphere(self.plan["plan_id"])
@@ -1590,6 +1620,26 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         serialized = json.dumps(execution, ensure_ascii=False)
         self.assertNotIn("1234567890abcdef", serialized)
         self.assertNotIn("abcdef1234567890", serialized)
+
+    def test_worker_rejects_base_url_race_before_remote_read(self):
+        failed, config_reads, network_calls = self._run_worker_during_connection_change(
+            base_url="http://other-metersphere.example.test",
+        )
+
+        self.assertGreaterEqual(len(config_reads), 2)
+        self.assertEqual(network_calls, [])
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("连接配置已变更", failed["error"])
+
+    def test_worker_rejects_access_key_rotation_race_before_remote_read(self):
+        failed, config_reads, network_calls = self._run_worker_during_connection_change(
+            access_key="fedcba0987654321",
+        )
+
+        self.assertGreaterEqual(len(config_reads), 2)
+        self.assertEqual(network_calls, [])
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("连接配置已变更", failed["error"])
 
     def test_manual_report_pull_uses_execution_snapshot_after_global_selection_changes(self):
         captured = []
