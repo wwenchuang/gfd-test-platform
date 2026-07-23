@@ -37,6 +37,8 @@ function serve() {
   let apiPlanGenerationPollCount = 0;
   let apiPlanGenerationRetried = false;
   let meterSelection = {project_id: 'project-interface', environment_id: 'env-qa'};
+  const bindingRequestBodies = [];
+  const reportSourceQueries = [];
   let businessAuth = {
     configured: true,
     auth_type: 'bearer',
@@ -678,33 +680,38 @@ function serve() {
     }
     if (url.pathname === '/api/api-testing/sources/api-source-visual-001/execution-binding' && req.method === 'POST') {
       readJsonBody(req).then(body => {
-        meterSelection = {project_id: body.project_id || '', environment_id: body.environment_id || ''};
-        if (businessAuth.environment_id !== meterSelection.environment_id) {
+        bindingRequestBodies.push({...body});
+        const requestedSelection = {project_id: body.project_id || '', environment_id: body.environment_id || ''};
+        meterSelection = requestedSelection;
+        if (businessAuth.environment_id !== requestedSelection.environment_id) {
           businessAuth = {
             configured: false,
             auth_type: 'bearer',
             header_name: 'Authorization',
             variable_name: '',
-            environment_id: meterSelection.environment_id,
-            environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+            environment_id: requestedSelection.environment_id,
+            environment_name: requestedSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
             updated_at: '2026-07-22 09:44:00',
           };
         }
-        json(res, {
-          ok: true,
-          binding: {
-            binding_id: 'source-binding-visual-001',
-            source_id: 'api-source-visual-001',
-            provider: 'metersphere',
-            project_id: meterSelection.project_id,
-            project_name: meterSelection.project_id === 'project-3d' ? '3D 业务' : '接口业务',
-            environment_id: meterSelection.environment_id,
-            environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
-            config_fingerprint: 'binding-visual-002',
-            auth_binding: {...businessAuth},
-            updated_at: '2026-07-22 09:44:00',
-          },
-        });
+        const delay = requestedSelection.project_id === 'project-interface' ? 180 : 20;
+        setTimeout(() => {
+          json(res, {
+            ok: true,
+            binding: {
+              binding_id: 'source-binding-visual-001',
+              source_id: 'api-source-visual-001',
+              provider: 'metersphere',
+              project_id: requestedSelection.project_id,
+              project_name: requestedSelection.project_id === 'project-3d' ? '3D 业务' : '接口业务',
+              environment_id: requestedSelection.environment_id,
+              environment_name: requestedSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+              config_fingerprint: 'binding-visual-002',
+              auth_binding: {...businessAuth},
+              updated_at: '2026-07-22 09:44:00',
+            },
+          });
+        }, delay);
       });
       return;
     }
@@ -828,6 +835,28 @@ function serve() {
           },
         });
       }, 180);
+      return;
+    }
+    if (url.pathname === '/api/api-testing/reports' && req.method === 'GET') {
+      const sourceId = url.searchParams.get('source_id') || '';
+      reportSourceQueries.push(sourceId);
+      const reportId = sourceId === 'api-source-visual-002'
+        ? 'SOURCE 2 REPORT'
+        : (sourceId === 'api-source-visual-001' ? 'LATE SOURCE 1 REPORT' : 'UNSCOPED REPORT');
+      setTimeout(() => {
+        json(res, {
+          ok: true,
+          reports: [{
+            report_id: reportId,
+            source_id: sourceId,
+            status: 'passed',
+            total: 1,
+            passed: 1,
+            failed: 0,
+            created_at: '2026-07-22 09:50:00',
+          }],
+        });
+      }, sourceId === 'api-source-visual-001' ? 180 : 20);
       return;
     }
     if (url.pathname === '/ai-gateway/ai/providers/test' && req.method === 'POST') {
@@ -988,7 +1017,13 @@ function serve() {
   return new Promise(resolve => {
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
-      resolve({server, url: `http://127.0.0.1:${address.port}/task-manager.html`, getFileReadCount: () => fileReadCount});
+      resolve({
+        server,
+        url: `http://127.0.0.1:${address.port}/task-manager.html`,
+        getFileReadCount: () => fileReadCount,
+        getBindingRequestBodies: () => bindingRequestBodies.map(item => ({...item})),
+        getReportSourceQueries: () => [...reportSourceQueries],
+      });
     });
   });
 }
@@ -1007,7 +1042,7 @@ async function anyVisible(locator) {
 
 (async () => {
   fs.mkdirSync(ARTIFACTS, {recursive: true});
-  const {server, url, getFileReadCount} = await serve();
+  const {server, url, getFileReadCount, getBindingRequestBodies, getReportSourceQueries} = await serve();
   const browser = await chromium.launch({headless: true});
   try {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}});
@@ -1288,6 +1323,33 @@ async function anyVisible(locator) {
     await page.locator('.api-execution-project-select').selectOption('project-3d');
     await page.waitForFunction(() => document.querySelector('.api-execution-project-select')?.value === 'project-3d' && document.querySelector('.api-execution-environment-select')?.value === 'env-staging');
     if (!/3D 业务/.test(await visibleText(page, '#api-execution-header')) || !/预发环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('Project and environment changes must persist on the selected source binding');
+    await page.evaluate(() => {
+      window.__oldBindingSave = updateApiMeterSphereSelection({project_id: 'project-interface', environment_id: 'env-qa'});
+    });
+    await page.waitForTimeout(15);
+    await page.evaluate(() => {
+      window.__latestBindingSave = updateApiMeterSphereSelection({project_id: 'project-3d', environment_id: 'env-staging'});
+      window.__bindingRaceMutations = [];
+      window.__bindingRaceObserver = new MutationObserver(() => {
+        window.__bindingRaceMutations.push({
+          projectId: document.querySelector('.api-execution-project-select')?.value || '',
+          environmentId: document.querySelector('.api-execution-environment-select')?.value || '',
+        });
+      });
+      window.__bindingRaceObserver.observe(document.querySelector('#api-execution-header'), {childList: true, subtree: true});
+    });
+    await page.waitForTimeout(260);
+    const bindingRace = await page.evaluate(() => {
+      window.__bindingRaceObserver.disconnect();
+      return {
+        mutations: window.__bindingRaceMutations,
+        selection: {...(apiExecutionContext?.selection || {})},
+      };
+    });
+    if (bindingRace.mutations.some(item => item.projectId === 'project-interface' || item.environmentId === 'env-qa')) throw new Error(`A delayed old binding response overwrote the latest UI selection: ${JSON.stringify(bindingRace)}`);
+    if (bindingRace.selection.project_id !== 'project-3d' || bindingRace.selection.environment_id !== 'env-staging') throw new Error(`Latest binding intent was not retained: ${JSON.stringify(bindingRace.selection)}`);
+    const bindingBodies = getBindingRequestBodies();
+    if (!bindingBodies.length || bindingBodies.some(body => !Object.prototype.hasOwnProperty.call(body, 'expected_binding_fingerprint'))) throw new Error(`Binding save did not send expected_binding_fingerprint: ${JSON.stringify(bindingBodies)}`);
     await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-project-binding.png'), fullPage: true});
     await page.locator('button[aria-label="配置业务鉴权"]').click();
     if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Business auth replacement must always open with an empty secret');
@@ -1363,6 +1425,21 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-settings-mobile.png'), fullPage: true});
     await page.locator('.api-settings-head button[aria-label="关闭设置"]').click();
     await page.setViewportSize({width: 1440, height: 900});
+
+    await page.evaluate(() => {
+      apiTestingProjectScope = {sourceId: 'api-source-visual-001', revisionId: 'api-revision-visual-001'};
+      window.__oldReportLoad = showApiReportsPage();
+    });
+    await page.waitForTimeout(15);
+    await page.evaluate(() => {
+      apiTestingProjectScope = {sourceId: 'api-source-visual-002', revisionId: 'api-revision-visual-002'};
+      window.__latestReportLoad = showApiReportsPage();
+    });
+    await page.waitForTimeout(260);
+    const reportText = await visibleText(page, '.api-testing-page');
+    if (!/SOURCE 2 REPORT/.test(reportText) || /LATE SOURCE 1 REPORT|UNSCOPED REPORT/.test(reportText)) throw new Error(`API reports rendered a stale or unscoped source response: ${reportText}`);
+    const reportQueries = getReportSourceQueries();
+    if (!reportQueries.includes('api-source-visual-001') || !reportQueries.includes('api-source-visual-002') || reportQueries.includes('')) throw new Error(`API report requests were not source scoped: ${JSON.stringify(reportQueries)}`);
 
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');

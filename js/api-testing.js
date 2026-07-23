@@ -13,11 +13,84 @@ let apiBusinessAuthType = 'bearer';
 let apiExecutionPollRequestId = 0;
 let apiExecutionPollController = null;
 let apiExecutionBindingLookupRequestId = 0;
+let apiExecutionBindingLookupController = null;
+let apiExecutionBindingSaveRequestId = 0;
+let apiExecutionBindingSaveController = null;
+let apiExecutionBindingIntentId = 0;
+let apiExecutionBindingIntent = null;
+let apiReportRequestId = 0;
+let apiReportRequestController = null;
+
+function currentApiExecutionSourceId() {
+  return apiTestingProjectScope.sourceId || apiAssetSelectedSourceId || apiExecutionContext?.source_id || '';
+}
+
+function abortApiExecutionBindingRequests() {
+  apiExecutionBindingLookupController?.abort();
+  apiExecutionBindingSaveController?.abort();
+  apiExecutionBindingLookupController = null;
+  apiExecutionBindingSaveController = null;
+  apiExecutionBindingLookupRequestId += 1;
+  apiExecutionBindingSaveRequestId += 1;
+  apiExecutionBindingIntent = null;
+}
+
+function abortApiReportRequests() {
+  apiReportRequestController?.abort();
+  apiReportRequestController = null;
+  apiReportRequestId += 1;
+}
+
+function beginApiExecutionBindingIntent(projectId, environmentId = '') {
+  apiExecutionBindingLookupController?.abort();
+  apiExecutionBindingSaveController?.abort();
+  apiExecutionBindingLookupController = null;
+  apiExecutionBindingSaveController = null;
+  apiExecutionBindingLookupRequestId += 1;
+  apiExecutionBindingSaveRequestId += 1;
+  apiExecutionBindingIntent = {
+    intentId: ++apiExecutionBindingIntentId,
+    sourceId: currentApiExecutionSourceId(),
+    scopeKey: apiProjectScopeKey(),
+    projectId: String(projectId || ''),
+    environmentId: String(environmentId || ''),
+  };
+  return apiExecutionBindingIntent;
+}
+
+function apiExecutionBindingIntentIsCurrent(intent) {
+  return !!intent
+    && intent === apiExecutionBindingIntent
+    && intent.intentId === apiExecutionBindingIntentId
+    && intent.sourceId === currentApiExecutionSourceId()
+    && intent.scopeKey === apiProjectScopeKey();
+}
+
+function apiExecutionBindingResponseIsCurrent(controller, requestId, intent) {
+  return controller === apiExecutionBindingSaveController
+    && requestId === apiExecutionBindingSaveRequestId
+    && activeWorkflow === 'api_execution'
+    && apiExecutionBindingIntentIsCurrent(intent)
+    && intent.projectId === String(apiExecutionBindingIntent?.projectId || '')
+    && intent.environmentId === String(apiExecutionBindingIntent?.environmentId || '');
+}
+
+function apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey) {
+  return controller === apiReportRequestController
+    && requestId === apiReportRequestId
+    && activeWorkflow === 'api_reports'
+    && sourceId === currentApiExecutionSourceId()
+    && scopeKey === apiProjectScopeKey();
+}
 
 function setApiTestingPage(workflow, title, help) {
-  if (workflow !== 'api_execution') stopApiExecutionPolling(true);
+  if (workflow !== 'api_execution') {
+    stopApiExecutionPolling(true);
+    abortApiExecutionBindingRequests();
+  }
   if (workflow !== 'api_assets') stopApiAssetSyncPolling();
   if (workflow !== 'api_plan') stopApiPlanGenerationPolling(true);
+  if (workflow !== 'api_reports') abortApiReportRequests();
   activeWorkflow = workflow;
   renderWorkflowNav();
   updateWorkbenchPanelMode();
@@ -767,6 +840,8 @@ function abortApiProjectScopeRequests() {
   apiExecutionContextRequestId += 1;
   apiExecutionActiveId = '';
   apiExecutionContext = null;
+  abortApiExecutionBindingRequests();
+  abortApiReportRequests();
   stopApiAssetSyncPolling();
   stopApiPlanGenerationPolling();
   stopApiExecutionPolling(true);
@@ -1950,29 +2025,39 @@ async function pushApiPlanToMeterSphere(planId) {
   }
 }
 
-async function loadApiMeterSphereProjectEnvironments(projectId) {
-  const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId || apiAssetSelectedSourceId;
+async function loadApiMeterSphereProjectEnvironments(projectId, intent = null) {
+  const sourceId = currentApiExecutionSourceId();
   if (!sourceId || !projectId) return [];
+  const bindingIntent = intent || beginApiExecutionBindingIntent(projectId);
+  if (!apiExecutionBindingIntentIsCurrent(bindingIntent) || bindingIntent.projectId !== String(projectId)) return null;
+  apiExecutionBindingLookupController?.abort();
+  const controller = new AbortController();
   const requestId = ++apiExecutionBindingLookupRequestId;
-  const capturedScopeKey = apiProjectScopeKey();
-  const data = await apiRequest(
-    `/api-testing/sources/${encodeURIComponent(sourceId)}/execution-binding?project_id=${encodeURIComponent(projectId)}&force=true`
-  );
-  if (
-    requestId !== apiExecutionBindingLookupRequestId
-    || capturedScopeKey !== apiProjectScopeKey()
-    || sourceId !== (apiExecutionContext?.source_id || apiTestingProjectScope.sourceId || apiAssetSelectedSourceId)
-  ) return [];
-  const environments = (data.environments || []).filter(
-    item => String(item.project_id || projectId) === String(projectId) && item.enabled !== false
-  );
-  apiExecutionContext = {
-    ...(apiExecutionContext || {}),
-    businesses: data.projects || apiExecutionContext?.businesses || [],
-    environments,
-    selection: {project_id: projectId, environment_id: ''},
-  };
-  return environments;
+  apiExecutionBindingLookupController = controller;
+  try {
+    const data = await apiRequest(
+      `/api-testing/sources/${encodeURIComponent(sourceId)}/execution-binding?project_id=${encodeURIComponent(projectId)}&force=true`,
+      {signal: controller.signal}
+    );
+    if (
+      controller !== apiExecutionBindingLookupController
+      || requestId !== apiExecutionBindingLookupRequestId
+      || !apiExecutionBindingIntentIsCurrent(bindingIntent)
+      || bindingIntent.projectId !== String(projectId)
+    ) return null;
+    const environments = (data.environments || []).filter(
+      item => String(item.project_id || projectId) === String(projectId) && item.enabled !== false
+    );
+    apiExecutionContext = {
+      ...(apiExecutionContext || {}),
+      businesses: data.projects || apiExecutionContext?.businesses || [],
+      environments,
+      selection: {project_id: projectId, environment_id: ''},
+    };
+    return environments;
+  } finally {
+    if (controller === apiExecutionBindingLookupController) apiExecutionBindingLookupController = null;
+  }
 }
 
 async function changeApiMeterSphereProject(projectId) {
@@ -1981,16 +2066,20 @@ async function changeApiMeterSphereProject(projectId) {
     renderApiBusinessAuthInHeader();
     return;
   }
+  const intent = beginApiExecutionBindingIntent(projectId);
   try {
-    const environments = await loadApiMeterSphereProjectEnvironments(projectId);
+    const environments = await loadApiMeterSphereProjectEnvironments(projectId, intent);
+    if (!environments || !apiExecutionBindingIntentIsCurrent(intent)) return;
     const environmentId = (environments[0] || {}).id || '';
     if (!environmentId) {
       showToast('当前业务没有可用环境', 'error');
       renderApiBusinessAuthInHeader();
       return;
     }
-    await saveApiSourceExecutionBinding(projectId, environmentId);
+    intent.environmentId = String(environmentId);
+    await saveApiSourceExecutionBinding(projectId, environmentId, intent);
   } catch (error) {
+    if (!apiExecutionBindingIntentIsCurrent(intent)) return;
     showToast(error.message || '业务环境读取失败', 'error');
     renderApiBusinessAuthInHeader();
   }
@@ -1998,28 +2087,79 @@ async function changeApiMeterSphereProject(projectId) {
 
 async function changeApiMeterSphereEnvironment(environmentId) {
   const projectId = document.querySelector('.api-execution-project-select')?.value || apiExecutionContext?.selection?.project_id || '';
-  await saveApiSourceExecutionBinding(projectId, environmentId);
+  const intent = beginApiExecutionBindingIntent(projectId, environmentId);
+  await saveApiSourceExecutionBinding(projectId, environmentId, intent);
 }
 
 async function updateApiMeterSphereSelection(selection) {
   const current = apiExecutionContext?.selection || {};
+  const projectId = selection.project_id || current.project_id || '';
+  const environmentId = selection.environment_id || current.environment_id || '';
+  const intent = beginApiExecutionBindingIntent(projectId, environmentId);
   return saveApiSourceExecutionBinding(
-    selection.project_id || current.project_id || '',
-    selection.environment_id || current.environment_id || ''
+    projectId,
+    environmentId,
+    intent
   );
 }
 
-async function saveApiSourceExecutionBinding(projectId, environmentId) {
-  const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId || apiAssetSelectedSourceId;
+async function reloadApiExecutionBindingAfterConflict(intent, controller, requestId) {
+  const sourceId = intent.sourceId;
+  const [bindingData, projectData] = await Promise.all([
+    apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/execution-binding`, {signal: controller.signal}),
+    apiRequest(
+      `/api-testing/sources/${encodeURIComponent(sourceId)}/execution-binding?project_id=${encodeURIComponent(intent.projectId)}&force=true`,
+      {signal: controller.signal}
+    ),
+  ]);
+  if (!apiExecutionBindingResponseIsCurrent(controller, requestId, intent)) return;
+  const binding = bindingData.binding || {};
+  const environments = (projectData.environments || []).filter(
+    item => String(item.project_id || intent.projectId) === intent.projectId && item.enabled !== false
+  );
+  apiExecutionContext = {
+    ...(apiExecutionContext || {}),
+    binding,
+    auth_binding: binding.auth_binding || apiExecutionContext?.auth_binding || {},
+    businesses: projectData.projects || apiExecutionContext?.businesses || [],
+    environments,
+    selection: {project_id: intent.projectId, environment_id: intent.environmentId},
+  };
+  renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
+}
+
+async function saveApiSourceExecutionBinding(projectId, environmentId, intent = null) {
+  const sourceId = currentApiExecutionSourceId();
   if (!sourceId || !projectId || !environmentId) {
     showToast('请选择当前来源的 MeterSphere 业务和环境', 'error');
     return;
   }
+  const bindingIntent = intent || beginApiExecutionBindingIntent(projectId, environmentId);
+  bindingIntent.environmentId = String(environmentId);
+  if (
+    !apiExecutionBindingIntentIsCurrent(bindingIntent)
+    || bindingIntent.sourceId !== sourceId
+    || bindingIntent.projectId !== String(projectId)
+  ) return;
+  apiExecutionBindingSaveController?.abort();
+  const controller = new AbortController();
+  const requestId = ++apiExecutionBindingSaveRequestId;
+  apiExecutionBindingSaveController = controller;
+  const expectedBindingFingerprint = apiExecutionContext?.binding?.config_fingerprint
+    || apiExecutionContext?.binding?.binding_fingerprint
+    || apiExecutionContext?.binding?.version
+    || '';
   try {
     const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/execution-binding`, {
       method: 'POST',
-      body: {project_id: projectId, environment_id: environmentId}
+      signal: controller.signal,
+      body: {
+        project_id: projectId,
+        environment_id: environmentId,
+        expected_binding_fingerprint: expectedBindingFingerprint,
+      }
     });
+    if (!apiExecutionBindingResponseIsCurrent(controller, requestId, bindingIntent)) return;
     const binding = data.binding || {};
     apiBusinessAuthEditing = false;
     apiExecutionContext = {
@@ -2030,10 +2170,19 @@ async function saveApiSourceExecutionBinding(projectId, environmentId) {
     };
     renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
     showToast('✓ 当前来源的执行业务与环境已保存', 'success');
-    await refreshApiExecutionContext(true);
   } catch (error) {
-    showToast(error.message || '业务或环境保存失败', 'error');
-    renderApiBusinessAuthInHeader();
+    if (!apiExecutionBindingResponseIsCurrent(controller, requestId, bindingIntent)) return;
+    try {
+      await reloadApiExecutionBindingAfterConflict(bindingIntent, controller, requestId);
+    } catch (reloadError) {
+      if (!apiExecutionBindingResponseIsCurrent(controller, requestId, bindingIntent)) return;
+      renderApiBusinessAuthInHeader();
+    }
+    if (apiExecutionBindingResponseIsCurrent(controller, requestId, bindingIntent)) {
+      showToast(error.message || '业务或环境保存冲突，已重新读取当前绑定', 'error');
+    }
+  } finally {
+    if (controller === apiExecutionBindingSaveController) apiExecutionBindingSaveController = null;
   }
 }
 
@@ -2161,9 +2310,23 @@ async function testApiMeterSphereHealth() {
 async function showApiReportsPage() {
   const area = setApiTestingPage('api_reports', 'API 报告', '查看 MeterSphere 执行结果和接口失败归因。');
   if (!area) return;
+  apiReportRequestController?.abort();
+  const controller = new AbortController();
+  const requestId = ++apiReportRequestId;
+  apiReportRequestController = controller;
+  const sourceId = currentApiExecutionSourceId();
+  const scopeKey = apiProjectScopeKey();
   area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 报告...')}</div>`;
+  if (!sourceId) {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('请先选择 API 项目，再查看对应报告。')}</div>`;
+    if (controller === apiReportRequestController) apiReportRequestController = null;
+    return;
+  }
   try {
-    const data = await apiRequest('/api-testing/reports');
+    const query = new URLSearchParams();
+    query.set('source_id', sourceId);
+    const data = await apiRequest(`/api-testing/reports?${query.toString()}`, {signal: controller.signal});
+    if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
     apiTestingReports = data.reports || [];
     area.innerHTML = `
       <div class="api-testing-page">
@@ -2184,6 +2347,9 @@ async function showApiReportsPage() {
       </div>
     `;
   } catch(e) {
+    if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
     area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 报告读取失败')}</div>`;
+  } finally {
+    if (controller === apiReportRequestController) apiReportRequestController = null;
   }
 }

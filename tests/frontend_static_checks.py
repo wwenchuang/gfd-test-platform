@@ -232,6 +232,23 @@ def main():
         "MeterSphere business changes must load live project environments before saving the selected source binding",
     )
     require(
+        "apiExecutionBindingSaveRequestId" in api_testing_js
+        and "apiExecutionBindingSaveController" in api_testing_js
+        and "apiExecutionBindingIntent" in api_testing_js
+        and "apiExecutionBindingResponseIsCurrent" in api_testing_js
+        and "expected_binding_fingerprint:" in api_testing_js
+        and "signal: controller.signal" in api_testing_js,
+        "MeterSphere binding saves must reject stale responses and send an optimistic concurrency fingerprint",
+    )
+    require(
+        "apiReportRequestId" in api_testing_js
+        and "apiReportRequestController" in api_testing_js
+        and "apiReportResponseIsCurrent" in api_testing_js
+        and "query.set('source_id', sourceId)" in api_testing_js
+        and "/api-testing/reports?${query.toString()}" in api_testing_js,
+        "API reports must be source scoped and reject responses from an older source request",
+    )
+    require(
         "renderApiBusinessAuthPanel" in api_testing_js
         and "saveApiBusinessAuth" in api_testing_js
         and "clearApiBusinessAuth" in api_testing_js
