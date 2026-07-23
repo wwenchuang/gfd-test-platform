@@ -1068,12 +1068,62 @@ def _read_api_test_plan(plan_id: str) -> Dict[str, Any]:
     return plan if isinstance(plan, dict) else {}
 
 
+def _plan_source_ownership(plan: Dict[str, Any]) -> tuple[str, bool, bool]:
+    """Resolve plan ownership without mutating legacy plan files.
+
+    Old plans predate source_id.  They are source-scoped only when exactly one
+    immutable API revision proves the source; conflicting or missing revision
+    references stay readable without a source, but never enter a source filter.
+    """
+    explicit_source_id = str(plan.get("source_id") or "").strip()
+    revision_ids = {
+        str(plan.get(field) or "").strip()
+        for field in ("asset_revision_id", "snapshot_id")
+        if str(plan.get(field) or "").strip()
+    }
+    revision_source_id = ""
+    revision_is_clear = len(revision_ids) == 1
+    revision_asset_mismatch = False
+    if revision_is_clear:
+        revision = api_asset_service.get_api_revision(next(iter(revision_ids)))
+        revision_source_id = str(revision.get("source_id") or "").strip()
+        revision_asset_id = str(revision.get("asset_id") or "").strip()
+        declared_asset_id = str(plan.get("asset_id") or "").strip()
+        revision_asset_mismatch = bool(
+            declared_asset_id
+            and revision_asset_id
+            and declared_asset_id != revision_asset_id
+        )
+        revision_is_clear = bool(
+            revision_source_id
+            and revision_asset_id
+            and not revision_asset_mismatch
+        )
+
+    if revision_asset_mismatch:
+        return "", False, False
+    if explicit_source_id:
+        if revision_is_clear and explicit_source_id != revision_source_id:
+            return "", False, False
+        return explicit_source_id, False, True
+    if revision_is_clear:
+        return revision_source_id, True, True
+    return "", False, True
+
+
 def get_api_test_plan(plan_id: str, source_id: str = "") -> Dict[str, Any]:
     plan = _read_api_test_plan(plan_id)
     selected_source_id = str(source_id or "").strip()
-    if selected_source_id and str(plan.get("source_id") or "").strip() != selected_source_id:
+    resolved_source_id, source_id_derived, ownership_valid = _plan_source_ownership(plan)
+    if not ownership_valid or (selected_source_id and resolved_source_id != selected_source_id):
         return {}
-    return evaluate_api_plan(plan) if plan else {}
+    if not plan:
+        return {}
+    evaluated = evaluate_api_plan(plan)
+    if source_id_derived:
+        evaluated["source_id"] = resolved_source_id
+        evaluated["source_id_derived"] = True
+    return evaluated
 
 
 def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
@@ -1125,6 +1175,7 @@ def list_api_test_plans(limit: int = 20, source_id: str = "") -> List[Dict[str, 
                 "confirmed_at", "contract_version", "executable_case_count",
                 "needs_review_case_count", "execution_readiness", "revision_state",
                 "source_id", "module_paths", "selected_endpoint_keys",
+                "source_id_derived",
                 "scope_fingerprint", "generation_id", "batch_index", "batch_count",
                 "execution_binding_id", "binding_fingerprint", "binding_drift",
                 "scope_drift", "auth_binding", "ai",

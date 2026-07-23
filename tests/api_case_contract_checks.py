@@ -1020,6 +1020,133 @@ class ApiPlanContractChecks(unittest.TestCase):
         self.assertEqual(evaluated["contract_version"], "legacy")
         self.assertEqual(evaluated["cases"][0]["steps"], ["发送请求"])
 
+    def test_legacy_plan_derives_source_only_from_one_immutable_revision(self):
+        staged = self._activate(_openapi_document())
+        legacy = {
+            "plan_id": "legacy-derived-source",
+            "snapshot_id": staged["revision_id"],
+            "asset_revision_id": staged["revision_id"],
+            "asset_id": staged["asset_id"],
+            "status": "draft",
+            "cases": [{"case_id": "LEGACY-DERIVED", "steps": ["发送请求"]}],
+        }
+        path = Path(self.plan_service._plan_path(legacy["plan_id"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+        self.plan_service._save_plan_index(legacy)
+
+        listed = self.plan_service.list_api_test_plans(source_id="source-pets")
+        loaded = self.plan_service.get_api_test_plan(legacy["plan_id"], source_id="source-pets")
+
+        self.assertEqual([legacy["plan_id"]], [item["plan_id"] for item in listed])
+        self.assertEqual("source-pets", listed[0]["source_id"])
+        self.assertTrue(listed[0]["source_id_derived"])
+        self.assertEqual("source-pets", loaded["source_id"])
+        self.assertTrue(loaded["source_id_derived"])
+        self.assertNotIn("source_id", json.loads(path.read_text(encoding="utf-8")))
+
+        from task_server import router
+
+        class Handler:
+            def __init__(self, authorized=True):
+                self.authorized = authorized
+                self.responses = []
+
+            def _authorized(self):
+                return self.authorized
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        handler = Handler()
+        router._get_api_testing_plan_detail(
+            handler,
+            {"source_id": "source-pets"},
+            re.match(r"^/api/api-testing/plans/([^/]+)$", f"/api/api-testing/plans/{legacy['plan_id']}"),
+        )
+        self.assertEqual(handler.responses[-1][1], 200)
+        self.assertEqual(handler.responses[-1][0]["plan"]["source_id"], "source-pets")
+
+        listed_handler = Handler()
+        router._get_api_testing_plans(listed_handler, {"source_id": "source-pets"})
+        self.assertEqual(listed_handler.responses[-1][1], 200)
+        self.assertEqual(
+            [legacy["plan_id"]],
+            [item["plan_id"] for item in listed_handler.responses[-1][0]["plans"]],
+        )
+
+        rejected = Handler()
+        router._get_api_testing_plan_detail(
+            rejected,
+            {"source_id": "source-other"},
+            re.match(r"^/api/api-testing/plans/([^/]+)$", f"/api/api-testing/plans/{legacy['plan_id']}"),
+        )
+        self.assertEqual(rejected.responses[-1][1], 404)
+
+        unauthenticated = Handler(authorized=False)
+        router._get_api_testing_plan_detail(
+            unauthenticated,
+            {"source_id": "source-pets"},
+            re.match(r"^/api/api-testing/plans/([^/]+)$", f"/api/api-testing/plans/{legacy['plan_id']}"),
+        )
+        self.assertEqual(unauthenticated.responses[-1][1], 401)
+
+    def test_legacy_plan_never_guesses_source_when_revision_is_ambiguous_or_missing(self):
+        staged = self._activate(_openapi_document())
+        self.source_service.save_api_source({
+            "source_id": "source-other",
+            "name": "另一个接口",
+            "project_id": "other",
+            "access_token": "other-token",
+        })
+        other = self.asset_service.stage_api_revision(
+            "source-other", "另一个接口", _openapi_document(), source_type="apifox",
+        )
+        self.asset_service.activate_api_revision(other["asset_id"], other["revision_id"])
+        legacy = {
+            "plan_id": "legacy-ambiguous-source",
+            "snapshot_id": staged["revision_id"],
+            "asset_revision_id": other["revision_id"],
+            "status": "draft",
+            "cases": [{"case_id": "LEGACY-AMBIGUOUS", "steps": ["发送请求"]}],
+        }
+        path = Path(self.plan_service._plan_path(legacy["plan_id"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+        self.plan_service._save_plan_index(legacy)
+
+        self.assertEqual([], self.plan_service.list_api_test_plans(source_id="source-pets"))
+        self.assertEqual([], self.plan_service.list_api_test_plans(source_id="source-other"))
+        self.assertNotIn("source_id", self.plan_service.get_api_test_plan(legacy["plan_id"]))
+
+    def test_explicit_plan_source_must_match_its_immutable_revision(self):
+        staged = self._activate(_openapi_document())
+        self.source_service.save_api_source({
+            "source_id": "source-other",
+            "name": "另一个接口",
+            "project_id": "other",
+            "access_token": "other-token",
+        })
+        other = self.asset_service.stage_api_revision(
+            "source-other", "另一个接口", _openapi_document(), source_type="apifox",
+        )
+        legacy = {
+            "plan_id": "legacy-explicit-mismatch",
+            "source_id": "source-pets",
+            "snapshot_id": other["revision_id"],
+            "asset_revision_id": other["revision_id"],
+            "asset_id": other["asset_id"],
+            "status": "draft",
+            "cases": [{"case_id": "LEGACY-MISMATCH", "steps": ["发送请求"]}],
+        }
+        path = Path(self.plan_service._plan_path(legacy["plan_id"]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+        self.plan_service._save_plan_index(legacy)
+
+        self.assertEqual({}, self.plan_service.get_api_test_plan(legacy["plan_id"], source_id="source-pets"))
+        self.assertEqual([], self.plan_service.list_api_test_plans(source_id="source-pets"))
+
     def test_ai_cases_are_revalidated_and_duplicate_ids_are_deduplicated(self):
         staged = self._activate(_openapi_document())
         endpoint_id = staged["revision"]["endpoints"][0]["endpoint_id"]

@@ -105,6 +105,106 @@ class ApiModuleScopeChecks(unittest.TestCase):
         self.assertEqual("all", source["sync_scope"]["mode"])
 
 
+class ApiAssetOwnershipRouteChecks(unittest.TestCase):
+    def setUp(self):
+        self.old_asset_dir = api_asset_service.API_TESTING_DIR
+        self.temp_dir = tempfile.mkdtemp(prefix="api_asset_ownership_route_checks_")
+        api_asset_service.API_TESTING_DIR = self.temp_dir
+
+    def tearDown(self):
+        api_asset_service.API_TESTING_DIR = self.old_asset_dir
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def _stage(self, source_id, path):
+        staged = api_asset_service.stage_api_revision(
+            source_id,
+            f"{source_id} asset",
+            {
+                "openapi": "3.0.1",
+                "info": {"title": source_id},
+                "paths": {
+                    path: {
+                        "get": {"responses": {"200": {"description": "ok"}}},
+                    },
+                },
+            },
+            source_type="apifox",
+        )
+        api_asset_service.activate_api_revision(staged["asset_id"], staged["revision_id"])
+        return staged
+
+    def test_assets_route_rejects_cross_source_revision_combinations(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        source_a = self._stage("api_source_a", "/a")
+        source_b = self._stage("api_source_b", "/b")
+        route = router.GET_ROUTES["/api/api-testing/assets"]
+
+        for query in (
+            {"source_id": "api_source_a", "snapshot_id": source_b["revision_id"]},
+            {"asset_id": source_a["asset_id"], "snapshot_id": source_b["revision_id"]},
+            {
+                "source_id": "api_source_a",
+                "asset_id": source_b["asset_id"],
+                "snapshot_id": source_b["revision_id"],
+            },
+            {"source_id": "api_source_a", "asset_id": source_b["asset_id"]},
+        ):
+            with self.subTest(query=query):
+                handler = Handler()
+                route(handler, query)
+                payload, status = handler.responses[-1]
+                self.assertEqual(status, 404)
+                self.assertFalse(payload["ok"])
+                self.assertNotIn("/b", json.dumps(payload, ensure_ascii=False))
+
+        handler = Handler()
+        route(handler, {
+            "source_id": "api_source_a",
+            "asset_id": source_a["asset_id"],
+            "snapshot_id": source_a["revision_id"],
+        })
+        payload, status = handler.responses[-1]
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(["/a"], [item["path"] for item in payload["endpoints"]])
+
+    def test_assets_route_keeps_unscoped_legacy_snapshot_readable(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        legacy = api_asset_service.import_openapi_document(
+            "Legacy",
+            {
+                "openapi": "3.0.1",
+                "info": {"title": "Legacy"},
+                "paths": {"/legacy": {"get": {"responses": {"200": {"description": "ok"}}}}},
+            },
+            "legacy.json",
+        )
+        handler = Handler()
+        router.GET_ROUTES["/api/api-testing/assets"](
+            handler, {"snapshot_id": legacy["snapshot_id"]}
+        )
+
+        payload, status = handler.responses[-1]
+        self.assertEqual(status, 200)
+        self.assertEqual(["/legacy"], [item["path"] for item in payload["endpoints"]])
+
+
 class ApiWorkspaceBindingChecks(unittest.TestCase):
     def setUp(self):
         self.old_source_dir = api_source_service.API_TESTING_DIR

@@ -2476,11 +2476,30 @@ def _get_api_testing_assets(handler, qs):
     requested_asset_id = str(qs.get("asset_id") or qs.get("assetId") or "").strip()
     requested_source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
     snapshot = api_asset_service.get_api_snapshot(requested_snapshot_id) if requested_snapshot_id else {}
+    if requested_snapshot_id and not snapshot:
+        handler._json({"ok": False, "error": "API revision 不存在"}, 404)
+        return
+    requested_asset = api_asset_service.get_api_asset(requested_asset_id) if requested_asset_id else {}
+    if requested_asset_id and not requested_asset:
+        handler._json({"ok": False, "error": "API asset 不存在"}, 404)
+        return
     asset = {}
     if snapshot.get("asset_id"):
         asset = api_asset_service.get_api_asset(str(snapshot.get("asset_id") or ""))
+        snapshot_source_id = str(snapshot.get("source_id") or "").strip()
+        snapshot_asset_id = str(snapshot.get("asset_id") or "").strip()
+        asset_source_id = str(asset.get("source_id") or "").strip()
+        if (
+            not asset
+            or not snapshot_source_id
+            or asset_source_id != snapshot_source_id
+            or (requested_asset_id and requested_asset_id != snapshot_asset_id)
+            or (requested_source_id and requested_source_id != snapshot_source_id)
+        ):
+            handler._json({"ok": False, "error": "API asset、revision 与 source 不匹配"}, 404)
+            return
     elif requested_asset_id:
-        asset = api_asset_service.get_api_asset(requested_asset_id)
+        asset = requested_asset
     elif requested_source_id:
         asset = next(
             (item for item in assets if str(item.get("source_id") or "") == requested_source_id),
@@ -2490,6 +2509,9 @@ def _get_api_testing_assets(handler, qs):
             asset = api_asset_service.get_api_asset(str(asset.get("asset_id") or ""))
     elif not requested_snapshot_id and assets:
         asset = api_asset_service.get_api_asset(str(assets[0].get("asset_id") or ""))
+    if requested_source_id and asset and str(asset.get("source_id") or "").strip() != requested_source_id:
+        handler._json({"ok": False, "error": "API asset 不属于当前 source"}, 404)
+        return
     snapshot_id = requested_snapshot_id
     if not snapshot_id and asset:
         snapshot_id = str(asset.get("active_revision_id") or "").strip()
@@ -2499,6 +2521,28 @@ def _get_api_testing_assets(handler, qs):
         snapshot = api_asset_service.get_api_snapshot(snapshot_id)
     if not asset and snapshot.get("asset_id"):
         asset = api_asset_service.get_api_asset(str(snapshot.get("asset_id") or ""))
+    if snapshot:
+        snapshot_source_id = str(snapshot.get("source_id") or "").strip()
+        snapshot_asset_id = str(snapshot.get("asset_id") or "").strip()
+        if snapshot_source_id or snapshot_asset_id:
+            asset_source_id = str(asset.get("source_id") or "").strip()
+            if (
+                not asset
+                or not snapshot_source_id
+                or not snapshot_asset_id
+                or str(asset.get("asset_id") or "").strip() != snapshot_asset_id
+                or asset_source_id != snapshot_source_id
+                or (requested_source_id and requested_source_id != snapshot_source_id)
+                or (requested_asset_id and requested_asset_id != snapshot_asset_id)
+            ):
+                handler._json({"ok": False, "error": "API asset、revision 与 source 不匹配"}, 404)
+                return
+        elif requested_source_id or requested_asset_id:
+            handler._json({"ok": False, "error": "API asset、revision 与 source 不匹配"}, 404)
+            return
+    elif requested_source_id or requested_asset_id:
+        handler._json({"ok": False, "error": "API asset 没有可读取的活动 revision"}, 404)
+        return
     endpoints = api_asset_service.list_api_endpoints(snapshot_id) if snapshot_id else []
     asset_id = str(asset.get("asset_id") or "")
     revisions = api_asset_service.list_api_revisions(asset_id, limit=50) if asset_id else []
