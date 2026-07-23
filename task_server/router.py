@@ -2544,6 +2544,27 @@ def _get_api_testing_sync(handler, qs, match):
     handler._json({"ok": True, "sync": sync})
 
 
+@route_get_regex(r"^/api/api-testing/sources/([^/]+)/execution-binding$")
+def _get_api_testing_source_execution_binding(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, api_workspace_service, metersphere_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    context = metersphere_service.metersphere_execution_context(
+        force=safe_bool(qs.get("force") or qs.get("refresh"), False),
+        source_id=source_id,
+    )
+    handler._json({
+        "ok": True,
+        "source_id": source_id,
+        "binding": api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=True),
+        "context": context,
+    })
+
+
 @route_get_regex(r"^/api/api-testing/assets/([^/]+)/revisions$")
 def _get_api_testing_asset_revisions(handler, qs, match):
     if _require_user_auth(handler):
@@ -2624,7 +2645,8 @@ def _get_api_testing_metersphere_config(handler, qs):
 def _get_api_testing_metersphere_execution_context(handler, qs):
     from task_server.services import metersphere_service
     context = metersphere_service.metersphere_execution_context(
-        force=safe_bool(qs.get("force") or qs.get("refresh"), False)
+        force=safe_bool(qs.get("force") or qs.get("refresh"), False),
+        source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
     )
     handler._json(context)
 
@@ -2709,6 +2731,46 @@ def _post_api_testing_source_sync(handler, qs, match):
         handler._json({"ok": True, "sync": sync}, 202 if sync.get("created") else 200)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post_regex(r"^/api/api-testing/sources/([^/]+)/execution-binding$")
+def _post_api_testing_source_execution_binding(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, api_workspace_service, metersphere_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    data = handler._body()
+    project_id = str(data.get("project_id") or data.get("projectId") or "").strip()
+    environment_id = str(data.get("environment_id") or data.get("environmentId") or "").strip()
+    cfg = metersphere_service._load_raw_config()
+    cfg["project_id"] = project_id
+    cfg["environment_id"] = environment_id
+    adapter, probe, supported = metersphere_service._v365_adapter_probe(cfg)
+    if not supported:
+        handler._json({"ok": False, "error": "MeterSphere v3.6.5 实时校验不可用"}, 400)
+        return
+    try:
+        projects = adapter.list_projects()
+        project = next((item for item in projects if item.get("id") == project_id), {})
+        environments = adapter.list_environments(project_id)
+        environment = next((item for item in environments if item.get("id") == environment_id), {})
+    except (metersphere_service.MeterSphereV365ContractError, ValueError) as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+        return
+    if not project or not environment:
+        handler._json({"ok": False, "error": "MeterSphere 项目或环境不存在、已停用或不匹配"}, 400)
+        return
+    binding = api_workspace_service.save_api_workspace_binding(
+        source_id,
+        project_id,
+        environment_id,
+        project_name=str(project.get("name") or ""),
+        environment_name=str(environment.get("name") or ""),
+    )
+    handler._json({"ok": True, "binding": binding, "version": probe.get("version") or ""})
 
 @route_post("/api/api-testing/openapi/import")
 def _post_api_testing_openapi_import(handler, qs):

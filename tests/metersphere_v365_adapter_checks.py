@@ -28,7 +28,7 @@ except ImportError:
     metersphere_v365_adapter = None
 
 from task_server.services import metersphere_service
-from task_server.services import api_report_service, api_test_plan_service
+from task_server.services import api_report_service, api_source_service, api_test_plan_service, api_workspace_service
 
 
 class MeterSphereV365AuthChecks(unittest.TestCase):
@@ -132,6 +132,56 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(normalized.get("project"), "project-a")
         self.assertEqual(normalized.get("organization"), "organization-a")
+
+    def test_adapter_request_uses_bound_project_not_global_project(self):
+        captured = {}
+        old_config = metersphere_service._load_raw_config
+        old_urlopen = urllib.request.urlopen
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"data":[]}'
+
+        def fake_urlopen(request, timeout=30):
+            captured.update(dict(request.header_items()))
+            return Response()
+
+        metersphere_service._load_raw_config = lambda: {
+            "base_url": "http://metersphere.example.test",
+            "auth_mode": "access_key",
+            "access_key": "1234567890abcdef",
+            "secret_key": "abcdef1234567890",
+            "project_id": "project-global",
+            "workspace_id": "organization-global",
+        }
+        urllib.request.urlopen = fake_urlopen
+        try:
+            adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+                {
+                    "base_url": "http://metersphere.example.test",
+                    "auth_mode": "access_key",
+                    "access_key": "1234567890abcdef",
+                    "secret_key": "abcdef1234567890",
+                    "project_id": "project-bound",
+                    "workspace_id": "organization-bound",
+                },
+                metersphere_service._request_json,
+            )
+            result = adapter._request("GET", "/project/list/options/organization-bound")
+        finally:
+            metersphere_service._load_raw_config = old_config
+            urllib.request.urlopen = old_urlopen
+
+        normalized = {key.lower(): value for key, value in captured.items()}
+        self.assertTrue(result["ok"])
+        self.assertEqual(normalized.get("project"), "project-bound")
+        self.assertEqual(normalized.get("organization"), "organization-bound")
 
     def test_service_request_fails_closed_before_network_on_invalid_access_key(self):
         called = False
@@ -304,6 +354,42 @@ class MeterSphereV365ProbeChecks(unittest.TestCase):
         self.assertFalse(probe["capabilities"]["ready"])
         self.assertFalse(probe["capabilities"]["can_push"])
         self.assertIn("有效环境", probe["capabilities"]["missing"])
+
+    def test_project_and_environment_options_use_exact_v365_endpoints(self):
+        calls = []
+
+        def request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, payload, config))
+            if path == "/project/list/options/org-a":
+                return {"ok": True, "data": [
+                    {"id": "project-a", "name": "业务 A", "enable": True},
+                    {"id": "project-disabled", "name": "停用业务", "enable": False},
+                ]}
+            if path == "/api/test/env-list/project-a":
+                return {"ok": True, "data": [
+                    {"id": "env-a", "name": "测试环境", "projectId": "project-a", "enable": True},
+                    {"id": "env-other", "name": "其他业务", "projectId": "project-other", "enable": True},
+                    {"id": "env-disabled", "name": "停用环境", "projectId": "project-a", "enable": False},
+                ]}
+            return {"ok": False, "error": f"unexpected {method} {path}"}
+
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"workspace_id": "org-a", "project_id": "project-a"},
+            request,
+        )
+
+        projects = adapter.list_projects()
+        environments = adapter.list_environments("project-a")
+
+        self.assertEqual(projects, [{"id": "project-a", "name": "业务 A", "enabled": True}])
+        self.assertEqual(environments, [{
+            "id": "env-a", "name": "测试环境", "project_id": "project-a", "enabled": True,
+        }])
+        self.assertEqual([call[:2] for call in calls], [
+            ("GET", "/project/list/options/org-a"),
+            ("GET", "/api/test/env-list/project-a"),
+        ])
+        self.assertTrue(all(call[3]["project_id"] == "project-a" for call in calls))
 
 
 def _case_plan():
@@ -924,11 +1010,15 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp(prefix="metersphere_v365_service_")
         self.old_service_dir = metersphere_service.API_TESTING_DIR
         self.old_report_dir = api_report_service.API_TESTING_DIR
+        self.old_source_dir = api_source_service.API_TESTING_DIR
+        self.old_workspace_dir = api_workspace_service.API_TESTING_DIR
         self.old_request = metersphere_service._request_json
         self.old_get_plan = api_test_plan_service.get_api_test_plan
         self.old_list_plans = api_test_plan_service.list_api_test_plans
         metersphere_service.API_TESTING_DIR = self.temp_dir
         api_report_service.API_TESTING_DIR = self.temp_dir
+        api_source_service.API_TESTING_DIR = self.temp_dir
+        api_workspace_service.API_TESTING_DIR = self.temp_dir
         self.remote = _ScenarioRemote()
         metersphere_service._request_json = self.remote.request
         self.plan = _case_plan()
@@ -966,6 +1056,8 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
     def tearDown(self):
         metersphere_service.API_TESTING_DIR = self.old_service_dir
         api_report_service.API_TESTING_DIR = self.old_report_dir
+        api_source_service.API_TESTING_DIR = self.old_source_dir
+        api_workspace_service.API_TESTING_DIR = self.old_workspace_dir
         metersphere_service._request_json = self.old_request
         api_test_plan_service.get_api_test_plan = self.old_get_plan
         api_test_plan_service.list_api_test_plans = self.old_list_plans
@@ -1017,6 +1109,31 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
             "/guessed/report/remote-report-1",
         }
         self.assertFalse(any(path in guessed_paths for _method, path, _payload in self.remote.calls))
+
+    def test_execution_snapshots_source_specific_binding_before_worker_starts(self):
+        old_spawn = metersphere_service._spawn_execution_worker
+        api_source_service.save_api_source({
+            "source_id": "api_source_pets",
+            "name": "宠物项目",
+            "project_id": "apifox-pets",
+            "access_token": "test-token",
+        })
+        binding = api_workspace_service.save_api_workspace_binding(
+            "api_source_pets", "project-a", "env-a",
+            project_name="业务A", environment_name="测试环境",
+        )
+        self.plan["source_id"] = "api_source_pets"
+        metersphere_service._spawn_execution_worker = lambda _execution_id: None
+        try:
+            execution = metersphere_service.start_metersphere_execution(self.plan["plan_id"])
+        finally:
+            metersphere_service._spawn_execution_worker = old_spawn
+
+        self.assertEqual(execution["source_id"], "api_source_pets")
+        self.assertEqual(execution["binding_id"], binding["binding_id"])
+        self.assertEqual(execution["project_id"], "project-a")
+        self.assertEqual(execution["environment_id"], "env-a")
+        self.assertEqual(execution["binding_fingerprint"], binding["config_fingerprint"])
 
     def test_v365_execution_refresh_uses_report_status_without_manual_status_path(self):
         push = metersphere_service.push_plan_to_metersphere(self.plan["plan_id"])

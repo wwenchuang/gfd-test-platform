@@ -273,7 +273,67 @@ class MeterSphereV365Adapter:
         payload: Dict[str, Any] | None = None,
         timeout: float = 30,
     ) -> Dict[str, Any]:
-        return self.request_json(method, path, payload, timeout)
+        try:
+            return self.request_json(method, path, payload, timeout, config=self.config)
+        except TypeError as exc:
+            # Existing adapter tests and third-party callbacks predate the bound-config
+            # callback contract. Keep those callbacks usable while the service boundary
+            # receives the source-specific configuration.
+            if "config" not in str(exc):
+                raise
+            return self.request_json(method, path, payload, timeout)
+
+    @staticmethod
+    def _enabled(item: Dict[str, Any]) -> bool:
+        for key in ("enable", "enabled", "isEnable", "isEnabled"):
+            value = item.get(key)
+            if value is False or str(value).strip().lower() in {"0", "false", "disabled"}:
+                return False
+        return str(item.get("status") or "").strip().lower() not in {"disabled", "disable", "inactive"}
+
+    @classmethod
+    def _normalize_project_options(cls, result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        projects = []
+        for item in _result_items(result):
+            project_id = str(item.get("id") or item.get("projectId") or "").strip()
+            name = str(item.get("name") or item.get("label") or "").strip()
+            if project_id and name and cls._enabled(item):
+                projects.append({"id": project_id, "name": name, "enabled": True})
+        return projects
+
+    @classmethod
+    def _normalize_environment_options(
+        cls,
+        result: Dict[str, Any],
+        project_id: str,
+    ) -> List[Dict[str, Any]]:
+        environments = []
+        for item in _result_items(result):
+            item_project_id = str(item.get("projectId") or item.get("project_id") or project_id).strip()
+            environment_id = str(item.get("id") or item.get("environmentId") or "").strip()
+            name = str(item.get("name") or item.get("label") or "").strip()
+            if environment_id and name and item_project_id == project_id and cls._enabled(item):
+                environments.append({
+                    "id": environment_id,
+                    "name": name,
+                    "project_id": project_id,
+                    "enabled": True,
+                })
+        return environments
+
+    def list_projects(self) -> List[Dict[str, Any]]:
+        workspace_id = str(self.config.get("workspace_id") or "").strip()
+        if not workspace_id:
+            raise MeterSphereV365ContractError("organization_missing", "MeterSphere organization ID 未配置")
+        result = self._request("GET", f"/project/list/options/{workspace_id}", timeout=20)
+        return self._normalize_project_options(result) if result.get("ok") else []
+
+    def list_environments(self, project_id: str) -> List[Dict[str, Any]]:
+        selected_project_id = str(project_id or "").strip()
+        if not selected_project_id:
+            raise MeterSphereV365ContractError("project_missing", "MeterSphere project ID 未配置")
+        result = self._request("GET", f"/api/test/env-list/{selected_project_id}", timeout=20)
+        return self._normalize_environment_options(result, selected_project_id) if result.get("ok") else []
 
     def probe(self) -> Dict[str, Any]:
         project_id = str(self.config.get("project_id") or "").strip()
@@ -319,19 +379,7 @@ class MeterSphereV365Adapter:
             f"/api/test/env-list/{project_id}",
             timeout=20,
         )
-        environments = []
-        if environment_result.get("ok"):
-            for item in _result_items(environment_result):
-                item_project_id = str(item.get("projectId") or item.get("project_id") or project_id)
-                item_id = str(item.get("id") or "").strip()
-                name = str(item.get("name") or "").strip()
-                if item_id and name and item_project_id == project_id:
-                    environments.append({
-                        "id": item_id,
-                        "name": name,
-                        "project_id": project_id,
-                        "enabled": True,
-                    })
+        environments = self._normalize_environment_options(environment_result, project_id) if environment_result.get("ok") else []
         selected_environment = next((
             item for item in environments if item["id"] == environment_id
         ), {})

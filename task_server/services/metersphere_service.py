@@ -17,6 +17,7 @@ from task_server.services.metersphere_v365_adapter import (
     ADAPTER_ID as METERSPHERE_V365_ADAPTER_ID,
     SUPPORTED_VERSIONS as METERSPHERE_V365_SUPPORTED_VERSIONS,
     MeterSphereV365Adapter,
+    MeterSphereV365ContractError,
     build_v365_auth_headers,
 )
 
@@ -274,8 +275,15 @@ def _metersphere_auth_headers(
     return {}
 
 
-def _request_json(method: str, path: str, payload: Dict[str, Any] | None = None, timeout: float = 30) -> Dict[str, Any]:
-    cfg = _load_raw_config()
+def _request_json(
+    method: str,
+    path: str,
+    payload: Dict[str, Any] | None = None,
+    timeout: float = 30,
+    *,
+    config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    cfg = dict(config or _load_raw_config())
     base_url = cfg.get("base_url")
     if not base_url:
         return {"ok": False, "configured": False, "error": "MeterSphere base_url 未配置"}
@@ -537,6 +545,35 @@ def _v365_adapter_probe(
     return adapter, sanitize_metersphere_data(probe), supported
 
 
+def _binding_config(source_id: str, allow_legacy: bool = True) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    cfg = _load_raw_config()
+    selected_source_id = str(source_id or "").strip()
+    if not selected_source_id:
+        return cfg, {}
+    from task_server.services import api_workspace_service
+
+    binding = api_workspace_service.get_api_workspace_binding(
+        selected_source_id,
+        allow_legacy=allow_legacy,
+    )
+    if not binding:
+        cfg["project_id"] = ""
+        cfg["environment_id"] = ""
+        return cfg, {}
+    cfg["project_id"] = str(binding.get("project_id") or "").strip()
+    cfg["environment_id"] = str(binding.get("environment_id") or "").strip()
+    return cfg, binding
+
+
+def _plan_source_id(plan: Dict[str, Any]) -> str:
+    source_id = str(plan.get("source_id") or "").strip()
+    if source_id:
+        return source_id
+    snapshot_id = str(plan.get("asset_revision_id") or plan.get("snapshot_id") or "").strip()
+    snapshot = api_asset_service.get_api_snapshot(snapshot_id) if snapshot_id else {}
+    return str(snapshot.get("source_id") or "").strip()
+
+
 def _readiness_state(
     cfg: Dict[str, Any],
     connection: Dict[str, Any],
@@ -576,8 +613,8 @@ def _readiness_state(
     return {"state": "ready", "can_execute": True, "missing": [], "primary_action": "推送并执行"}
 
 
-def metersphere_health() -> Dict[str, Any]:
-    cfg = _load_raw_config()
+def metersphere_health(config: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    cfg = dict(config or _load_raw_config())
     if not cfg.get("base_url"):
         return {"ok": False, "configured": False, "error": "MeterSphere base_url 未配置"}
     health_path = cfg.get("health_path") or "/api/health"
@@ -588,7 +625,11 @@ def metersphere_health() -> Dict[str, Any]:
         and str(health_path).strip("/") == "api/health"
     ):
         health_path = f"/project/get/{cfg.get('project_id')}"
-    result = _request_json("GET", health_path, timeout=10)
+    result = (
+        _request_json("GET", health_path, timeout=10, config=cfg)
+        if config is not None
+        else _request_json("GET", health_path, timeout=10)
+    )
     result["configured"] = True
     result["base_url"] = cfg.get("base_url")
     result["token_configured"] = bool(cfg.get("token"))
@@ -597,8 +638,9 @@ def metersphere_health() -> Dict[str, Any]:
     return sanitize_metersphere_data(result)
 
 
-def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
-    cfg = _load_raw_config()
+def metersphere_execution_context(force: bool = False, source_id: str = "") -> Dict[str, Any]:
+    selected_source_id = str(source_id or "").strip()
+    cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
     checked_at = _now()
     _adapter, v365_probe, v365_supported = _v365_adapter_probe(cfg)
     health = (
@@ -610,7 +652,11 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
             "version": v365_probe.get("version") or "",
         }
         if v365_supported
-        else metersphere_health()
+        else (
+            metersphere_health(config=cfg)
+            if selected_source_id
+            else metersphere_health()
+        )
     )
     connection = {
         "state": (
@@ -627,19 +673,30 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
     project_id = str(cfg.get("project_id") or "").strip()
     if v365_supported:
         project = v365_probe.get("project") if isinstance(v365_probe.get("project"), dict) else {}
-        projects_result = {
-            "ok": bool(project.get("id")),
-            "items": ([{
+        try:
+            live_projects = _adapter.list_projects()
+        except (MeterSphereV365ContractError, ValueError):
+            live_projects = []
+        if not live_projects and project.get("id"):
+            live_projects = [{
                 "id": str(project.get("id") or ""),
                 "name": str(project.get("name") or ""),
                 "enabled": True,
-            }] if project.get("id") else []),
+            }]
+        projects_result = {
+            "ok": bool(live_projects),
+            "items": live_projects,
             "source": "live",
             "stale": False,
             "fetched_at": checked_at,
-            "error": "" if project.get("id") else "MeterSphere 当前业务不可用",
+            "error": "" if live_projects else "MeterSphere 当前业务不可用",
         }
-        environments = v365_probe.get("environments") if isinstance(v365_probe.get("environments"), list) else []
+        try:
+            environments = _adapter.list_environments(project_id) if project_id else []
+        except (MeterSphereV365ContractError, ValueError):
+            environments = []
+        if not environments:
+            environments = v365_probe.get("environments") if isinstance(v365_probe.get("environments"), list) else []
         environments_result = {
             "ok": bool(environments),
             "items": environments,
@@ -659,6 +716,8 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
             "error": "尚未选择业务",
         }
     plans = api_test_plan_service.list_api_test_plans(limit=50)
+    if selected_source_id:
+        plans = [item for item in plans if _plan_source_id(item) == selected_source_id]
     confirmed_plans = [
         item for item in plans
         if item.get("status") == "confirmed"
@@ -710,6 +769,11 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
         projects_result.get("source") == "cache" or environments_result.get("source") == "cache"
     ) else "live"
     executions = list_metersphere_executions(limit=50)
+    if selected_source_id:
+        executions = [
+            item for item in executions
+            if str(item.get("source_id") or "") == selected_source_id
+        ]
     active_runs = [item for item in executions if item.get("status") not in TERMINAL_EXECUTION_STATES]
     recent_runs = [item for item in executions if item.get("status") in TERMINAL_EXECUTION_STATES][:20]
     latest_by_plan: Dict[str, Dict[str, Any]] = {}
@@ -745,6 +809,8 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
             "project_id": project_id,
             "environment_id": str(cfg.get("environment_id") or "").strip(),
         },
+        "source_id": selected_source_id,
+        "binding": binding,
         "businesses": projects_result.get("items") or [],
         "environments": environments_result.get("items") or [],
         "metadata": {
@@ -763,7 +829,13 @@ def metersphere_execution_context(force: bool = False) -> Dict[str, Any]:
                 if result.get("error")
             ],
         },
-        "config": metersphere_config(masked=True),
+        "config": {
+            **metersphere_config(masked=True),
+            "project_id": project_id,
+            "environment_id": str(cfg.get("environment_id") or "").strip(),
+            "project_name": str(binding.get("project_name") or ""),
+            "environment_name": str(binding.get("environment_name") or ""),
+        },
         "capabilities": capabilities,
         "readiness": readiness,
         "plans": context_plans,
@@ -941,6 +1013,25 @@ def _execution_plan(plan_id: str) -> Dict[str, Any]:
     return plan
 
 
+def _plan_binding_context(plan: Dict[str, Any]) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    source_id = _plan_source_id(plan)
+    if not source_id:
+        return "", _load_raw_config(), {}
+    cfg, binding = _binding_config(source_id, allow_legacy=True)
+    if not binding:
+        raise MeterSphereExecutionValidationError("当前 API source 尚未绑定 MeterSphere 项目和环境")
+    return source_id, cfg, binding
+
+
+def _execution_config(record: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = _load_raw_config()
+    if not str(record.get("source_id") or "").strip():
+        return cfg
+    cfg["project_id"] = str(record.get("project_id") or "").strip()
+    cfg["environment_id"] = str(record.get("environment_id") or "").strip()
+    return cfg
+
+
 def _active_execution_for_plan(plan_id: str) -> Dict[str, Any]:
     return next((
         item for item in _execution_records()
@@ -954,6 +1045,7 @@ def start_metersphere_execution(plan_id: str, test_plan_id: str = "") -> Dict[st
     if not selected_plan_id:
         raise MeterSphereExecutionValidationError("plan_id 不能为空")
     plan = _execution_plan(selected_plan_id)
+    source_id, _cfg, binding = _plan_binding_context(plan)
     with _EXECUTION_LOCK:
         active = _active_execution_for_plan(selected_plan_id)
         if active:
@@ -964,6 +1056,11 @@ def start_metersphere_execution(plan_id: str, test_plan_id: str = "") -> Dict[st
         record = {
             "execution_id": execution_id,
             "plan_id": selected_plan_id,
+            "source_id": source_id,
+            "binding_id": str(binding.get("binding_id") or ""),
+            "project_id": str(binding.get("project_id") or _cfg.get("project_id") or ""),
+            "environment_id": str(binding.get("environment_id") or _cfg.get("environment_id") or ""),
+            "binding_fingerprint": str(binding.get("config_fingerprint") or ""),
             "plan_name": str(plan.get("name") or selected_plan_id),
             "test_plan_id": str(test_plan_id or "").strip(),
             "status": "queued",
@@ -1033,8 +1130,22 @@ def _run_metersphere_execution(execution_id: str) -> None:
         _save_execution(record)
 
     try:
-        context = metersphere_execution_context(force=True)
+        source_id = str(record.get("source_id") or "")
+        context = (
+            metersphere_execution_context(force=True, source_id=source_id)
+            if source_id
+            else metersphere_execution_context(force=True)
+        )
         readiness = context.get("readiness") or {}
+        if (
+            record.get("binding_fingerprint")
+            and str((context.get("binding") or {}).get("config_fingerprint") or "")
+            != str(record.get("binding_fingerprint") or "")
+        ):
+            readiness = {
+                "can_execute": False,
+                "missing": ["MeterSphere source 绑定已变更，请重新发起执行"],
+            }
     except Exception as exc:
         context = {}
         readiness = {
@@ -1056,7 +1167,16 @@ def _run_metersphere_execution(execution_id: str) -> None:
         _append_execution_event(record, "push_cases", "running", "实时执行条件校验通过，开始推送确认用例")
         _save_execution(record)
 
-    push_result = push_plan_to_metersphere(str(record.get("plan_id") or ""))
+    push_result = (
+        push_plan_to_metersphere(
+            str(record.get("plan_id") or ""),
+            config=_execution_config(record),
+            expected_source_id=source_id,
+            expected_binding_fingerprint=str(record.get("binding_fingerprint") or ""),
+        )
+        if source_id
+        else push_plan_to_metersphere(str(record.get("plan_id") or ""))
+    )
     with _EXECUTION_LOCK:
         record = _load_execution(execution_id)
         if not push_result.get("ok"):
@@ -1074,9 +1194,19 @@ def _run_metersphere_execution(execution_id: str) -> None:
         _append_execution_event(record, "trigger_plan", "running", "开始触发 MeterSphere 计划")
         _save_execution(record)
 
-    run_result = create_metersphere_run(
-        str(record.get("plan_id") or ""),
-        str(record.get("test_plan_id") or ""),
+    run_result = (
+        create_metersphere_run(
+            str(record.get("plan_id") or ""),
+            str(record.get("test_plan_id") or ""),
+            config=_execution_config(record),
+            expected_source_id=source_id,
+            expected_binding_fingerprint=str(record.get("binding_fingerprint") or ""),
+        )
+        if source_id
+        else create_metersphere_run(
+            str(record.get("plan_id") or ""),
+            str(record.get("test_plan_id") or ""),
+        )
     )
     with _EXECUTION_LOCK:
         record = _load_execution(execution_id)
@@ -1146,7 +1276,7 @@ def _remote_run_stats(payload: Dict[str, Any]) -> Dict[str, int]:
 
 def _refresh_running_execution(record: Dict[str, Any]) -> Dict[str, Any]:
     run_id = str(record.get("run_id") or "").strip()
-    cfg = _load_raw_config()
+    cfg = _execution_config(record)
     if not run_id:
         return record
     if str(record.get("adapter") or "") == METERSPHERE_V365_ADAPTER_ID:
@@ -1199,7 +1329,11 @@ def _refresh_running_execution(record: Dict[str, Any]) -> Dict[str, Any]:
     record["report_status"] = "running"
     _save_execution(record)
     try:
-        report_result = pull_metersphere_report(run_id)
+        report_result = (
+            pull_metersphere_report(run_id, config=cfg)
+            if str(record.get("source_id") or "")
+            else pull_metersphere_report(run_id)
+        )
     except Exception as exc:
         safe_detail = sanitize_metersphere_data({"error": str(exc)})
         report_result = {
@@ -1251,8 +1385,8 @@ def get_metersphere_execution(execution_id: str, refresh: bool = True) -> Dict[s
     return _public_execution(record)
 
 
-def _meter_payload_for_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = _load_raw_config()
+def _meter_payload_for_plan(plan: Dict[str, Any], cfg: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    cfg = cfg or _load_raw_config()
     all_cases = [case for case in (plan.get("cases") or []) if isinstance(case, dict)]
     executable_cases = api_test_plan_service.executable_api_cases(plan)
     return {
@@ -1270,7 +1404,13 @@ def _meter_payload_for_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def push_plan_to_metersphere(plan_id: str) -> Dict[str, Any]:
+def push_plan_to_metersphere(
+    plan_id: str,
+    *,
+    config: Dict[str, Any] | None = None,
+    expected_source_id: str = "",
+    expected_binding_fingerprint: str = "",
+) -> Dict[str, Any]:
     try:
         plan = _execution_plan(plan_id)
     except MeterSphereExecutionValidationError as exc:
@@ -1280,7 +1420,16 @@ def push_plan_to_metersphere(plan_id: str) -> Dict[str, Any]:
             "requires_review": True,
             "error": str(exc),
         }
-    cfg = _load_raw_config()
+    try:
+        source_id, selected_cfg, binding = _plan_binding_context(plan)
+    except MeterSphereExecutionValidationError as exc:
+        return {"ok": False, "requires_config": True, "error": str(exc)}
+    if expected_source_id and source_id != expected_source_id:
+        return {"ok": False, "error": "API 测试计划不属于当前 source"}
+    if expected_binding_fingerprint and str(binding.get("config_fingerprint") or "") != expected_binding_fingerprint:
+        return {"ok": False, "error": "MeterSphere source 绑定已变更，请重新发起执行"}
+    cfg = dict(config or selected_cfg)
+    request_config = cfg if config is not None or source_id else None
     adapter, probe, v365_supported = _v365_adapter_probe(cfg)
     if v365_supported:
         case_result = sanitize_metersphere_data(adapter.upsert_plan_cases(plan))
@@ -1326,9 +1475,11 @@ def push_plan_to_metersphere(plan_id: str) -> Dict[str, Any]:
         return result
     if not cfg.get("case_push_path"):
         return {"ok": False, "requires_config": True, "error": "MeterSphere 用例推送 API 路径未配置"}
-    payload = _meter_payload_for_plan(plan)
+    payload = _meter_payload_for_plan(plan, cfg)
     result = sanitize_metersphere_data(
-        _request_json("POST", cfg.get("case_push_path"), payload, timeout=60)
+        _request_json("POST", cfg.get("case_push_path"), payload, timeout=60, config=request_config)
+        if request_config is not None
+        else _request_json("POST", cfg.get("case_push_path"), payload, timeout=60)
     )
     push_id = unique_millis_id("ms_push")
     record = {
@@ -1343,12 +1494,28 @@ def push_plan_to_metersphere(plan_id: str) -> Dict[str, Any]:
     return result
 
 
-def create_metersphere_run(plan_id: str, test_plan_id: str = "") -> Dict[str, Any]:
+def create_metersphere_run(
+    plan_id: str,
+    test_plan_id: str = "",
+    *,
+    config: Dict[str, Any] | None = None,
+    expected_source_id: str = "",
+    expected_binding_fingerprint: str = "",
+) -> Dict[str, Any]:
     try:
-        _execution_plan(plan_id)
+        plan = _execution_plan(plan_id)
     except MeterSphereExecutionValidationError as exc:
         return {"ok": False, "requires_review": True, "error": str(exc), "run_id": ""}
-    cfg = _load_raw_config()
+    try:
+        source_id, selected_cfg, binding = _plan_binding_context(plan)
+    except MeterSphereExecutionValidationError as exc:
+        return {"ok": False, "requires_config": True, "error": str(exc), "run_id": ""}
+    if expected_source_id and source_id != expected_source_id:
+        return {"ok": False, "error": "API 测试计划不属于当前 source", "run_id": ""}
+    if expected_binding_fingerprint and str(binding.get("config_fingerprint") or "") != expected_binding_fingerprint:
+        return {"ok": False, "error": "MeterSphere source 绑定已变更，请重新发起执行", "run_id": ""}
+    cfg = dict(config or selected_cfg)
+    request_config = cfg if config is not None or source_id else None
     adapter, probe, v365_supported = _v365_adapter_probe(cfg)
     if v365_supported:
         result = sanitize_metersphere_data(adapter.trigger_plan(plan_id))
@@ -1375,7 +1542,9 @@ def create_metersphere_run(plan_id: str, test_plan_id: str = "") -> Dict[str, An
         "testPlanId": test_plan_id,
     }
     result = sanitize_metersphere_data(
-        _request_json("POST", cfg.get("plan_run_path"), payload, timeout=60)
+        _request_json("POST", cfg.get("plan_run_path"), payload, timeout=60, config=request_config)
+        if request_config is not None
+        else _request_json("POST", cfg.get("plan_run_path"), payload, timeout=60)
     )
     run_id = _remote_run_id(result)
     request_id = run_id or unique_millis_id("ms_run_request")
@@ -1401,12 +1570,17 @@ def create_metersphere_run(plan_id: str, test_plan_id: str = "") -> Dict[str, An
     return result
 
 
-def pull_metersphere_report(run_id: str, raw_report: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def pull_metersphere_report(
+    run_id: str,
+    raw_report: Dict[str, Any] | None = None,
+    *,
+    config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     from task_server.services import api_report_service
 
     raw = sanitize_metersphere_data(raw_report) if isinstance(raw_report, dict) else None
     if raw is None:
-        cfg = _load_raw_config()
+        cfg = dict(config or _load_raw_config())
         adapter, _probe, v365_supported = _v365_adapter_probe(cfg)
         if v365_supported:
             fetched = adapter.get_report(run_id)
@@ -1417,7 +1591,11 @@ def pull_metersphere_report(run_id: str, raw_report: Dict[str, Any] | None = Non
             report_path = str(cfg.get("report_path") or "").replace("{run_id}", clean_id(run_id, "ms_run"))
             if not report_path:
                 return {"ok": False, "requires_config": True, "error": "MeterSphere 报告 API 路径未配置"}
-            fetched = _request_json("GET", report_path, timeout=60)
+            fetched = (
+                _request_json("GET", report_path, timeout=60, config=cfg)
+                if config is not None
+                else _request_json("GET", report_path, timeout=60)
+            )
             if not fetched.get("ok"):
                 return fetched
             raw = sanitize_metersphere_data(fetched)
