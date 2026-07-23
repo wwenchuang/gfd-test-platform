@@ -2619,7 +2619,13 @@ def _get_api_testing_asset_impact(handler, qs, match):
 @route_get("/api/api-testing/plans")
 def _get_api_testing_plans(handler, qs):
     from task_server.services import api_test_plan_service
-    handler._json({"ok": True, "plans": api_test_plan_service.list_api_test_plans(limit=safe_int(qs.get("limit"), 20) or 20)})
+    handler._json({
+        "ok": True,
+        "plans": api_test_plan_service.list_api_test_plans(
+            limit=safe_int(qs.get("limit"), 20) or 20,
+            source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
+        ),
+    })
 
 
 @route_get_regex(r"^/api/api-testing/plans/([^/]+)$")
@@ -2628,11 +2634,34 @@ def _get_api_testing_plan_detail(handler, qs, match):
         return
     from task_server.services import api_test_plan_service
     plan_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
-    plan = api_test_plan_service.get_api_test_plan(plan_id)
+    plan = api_test_plan_service.get_api_test_plan(
+        plan_id,
+        source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
+    )
     if not plan:
         handler._json({"ok": False, "error": "API 测试计划不存在"}, 404)
         return
     handler._json({"ok": True, "plan": plan})
+
+
+@route_get_regex(r"^/api/api-testing/plan-generations/([^/]+)$")
+def _get_api_testing_plan_generation(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_plan_generation_service
+    generation_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    generation = api_plan_generation_service.get_api_plan_generation(generation_id)
+    selected_source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
+    if (
+        not generation
+        or (
+            selected_source_id
+            and str(generation.get("source_id") or "") != selected_source_id
+        )
+    ):
+        handler._json({"ok": False, "error": "API plan generation 不存在"}, 404)
+        return
+    handler._json({"ok": True, "generation": generation})
 
 
 @route_get("/api/api-testing/metersphere/config")
@@ -2842,6 +2871,48 @@ def _post_api_testing_plans_generate(handler, qs):
         handler._json({"ok": True, "plan": plan})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/api-testing/plan-generations")
+def _post_api_testing_plan_generations(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_plan_generation_service
+    try:
+        data = handler._body()
+        generation = api_plan_generation_service.start_api_plan_generation(
+            str(data.get("source_id") or data.get("sourceId") or "").strip(),
+            str(
+                data.get("revision_id")
+                or data.get("revisionId")
+                or data.get("snapshot_id")
+                or data.get("snapshotId")
+                or ""
+            ).strip(),
+            data.get("endpoint_ids") or data.get("endpointIds") or [],
+            data.get("module_paths") or data.get("modulePaths") or [],
+            model_config=data.get("model_config") or data.get("modelConfig") or None,
+            spawn=True,
+        )
+        handler._json({"ok": True, "generation": generation}, 202)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post_regex(r"^/api/api-testing/plan-generations/([^/]+)/retry$")
+def _post_api_testing_plan_generation_retry(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_plan_generation_service
+    generation_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    try:
+        generation = api_plan_generation_service.retry_api_plan_generation(
+            generation_id,
+            spawn=True,
+        )
+        handler._json({"ok": True, "generation": generation}, 202)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
 
 
 @route_post("/api/api-testing/plans/confirm")

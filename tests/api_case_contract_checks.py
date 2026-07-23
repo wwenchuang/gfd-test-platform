@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import re
 import shutil
@@ -1101,6 +1102,103 @@ class ApiPlanContractChecks(unittest.TestCase):
             {case.get("endpoint_id") for case in plan["cases"] if case.get("type") == "positive"},
             {endpoint_id},
         )
+
+    def test_plan_generation_signature_is_additive_and_keyword_only(self):
+        signature = inspect.signature(self.plan_service.generate_api_test_plan)
+
+        self.assertEqual(
+            str(signature),
+            "(snapshot_id: 'str', endpoint_ids: 'List[str] | None', "
+            "model_config: 'Dict[str, Any] | None' = None, use_ai: 'bool | None' = None, "
+            "*, source_id: 'str' = '', module_paths: 'List[str] | None' = None, "
+            "generation_id: 'str' = '', batch_index: 'int' = 1, batch_count: 'int' = 1, "
+            "require_ai_success: 'bool' = False) -> 'Dict[str, Any]'",
+        )
+
+    def test_required_ai_failure_raises_before_any_plan_is_written(self):
+        staged = self._activate(_openapi_document())
+        endpoint_id = staged["revision"]["endpoints"][0]["endpoint_id"]
+        old_run_ai_skill = self.plan_service.run_ai_skill
+        self.plan_service.run_ai_skill = lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(RuntimeError("required AI unavailable"))
+        )
+        try:
+            with self.assertRaisesRegex(ValueError, "AI"):
+                self.plan_service.generate_api_test_plan(
+                    staged["revision_id"],
+                    [endpoint_id],
+                    use_ai=True,
+                    source_id="source-pets",
+                    module_paths=["pets"],
+                    generation_id="api_plan_generation_required",
+                    batch_index=1,
+                    batch_count=1,
+                    require_ai_success=True,
+                )
+        finally:
+            self.plan_service.run_ai_skill = old_run_ai_skill
+
+        plans_dir = Path(self.temp_dir, "plans")
+        plan_files = [
+            path for path in plans_dir.glob("api_plan*.json")
+            if path.name != "index.json"
+        ] if plans_dir.exists() else []
+        self.assertEqual(plan_files, [])
+
+    def test_source_scoped_plan_fields_and_list_filter(self):
+        staged = self._activate(_openapi_document())
+        endpoint = staged["revision"]["endpoints"][0]
+        plan = self.plan_service.generate_api_test_plan(
+            staged["revision_id"],
+            [endpoint["endpoint_id"]],
+            use_ai=False,
+            source_id="source-pets",
+            module_paths=["pets"],
+            generation_id="api_plan_generation_scope",
+            batch_index=1,
+            batch_count=2,
+        )
+
+        self.assertEqual(plan["source_id"], "source-pets")
+        self.assertEqual(plan["module_paths"], ["pets"])
+        self.assertEqual(plan["selected_endpoint_keys"], [endpoint["endpoint_key"]])
+        self.assertEqual(plan["generation_id"], "api_plan_generation_scope")
+        self.assertEqual(plan["batch_index"], 1)
+        self.assertEqual(plan["batch_count"], 2)
+        self.assertTrue(plan["execution_binding_id"])
+        self.assertTrue(plan["binding_fingerprint"])
+        self.assertEqual(
+            [item["plan_id"] for item in self.plan_service.list_api_test_plans(
+                20, source_id="source-pets",
+            )],
+            [plan["plan_id"]],
+        )
+        self.assertEqual(
+            self.plan_service.list_api_test_plans(20, source_id="another-source"),
+            [],
+        )
+
+    def test_confirmation_revalidates_stored_module_scope(self):
+        staged = self._activate(_openapi_document())
+        endpoint = staged["revision"]["endpoints"][0]
+        plan = self.plan_service.generate_api_test_plan(
+            staged["revision_id"],
+            [endpoint["endpoint_id"]],
+            use_ai=False,
+            source_id="source-pets",
+            module_paths=["pets"],
+        )
+        stored = self.plan_service._read_api_test_plan(plan["plan_id"])
+        stored["module_paths"] = ["another-module"]
+        from task_server.storage import write_json_file
+        write_json_file(self.plan_service._plan_path(plan["plan_id"]), stored)
+
+        evaluated = self.plan_service.get_api_test_plan(plan["plan_id"])
+
+        self.assertEqual(evaluated["revision_state"]["state"], "stale")
+        self.assertIn("module_scope_drift", evaluated["scope_drift"])
+        with self.assertRaisesRegex(ValueError, "过期|范围"):
+            self.plan_service.confirm_api_test_plan(plan["plan_id"])
 
 
 def _meter_case(case_id, state="executable"):

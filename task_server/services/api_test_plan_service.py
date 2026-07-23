@@ -11,7 +11,14 @@ from typing import Any, Dict, List
 
 from task_server.config import safe_bool
 from task_server.storage import clean_id, read_json_file, safe_join, unique_millis_id, write_json_file
-from task_server.services import api_asset_service, api_case_contract_service, api_schema_diff_service, api_workspace_service
+from task_server.services import (
+    api_asset_service,
+    api_case_contract_service,
+    api_module_service,
+    api_schema_diff_service,
+    api_source_service,
+    api_workspace_service,
+)
 from task_server.services.ai_skill_service import run_ai_skill
 
 
@@ -43,6 +50,15 @@ def _save_plan_index(plan: Dict[str, Any]) -> None:
         "snapshot_id": plan.get("snapshot_id"),
         "asset_id": plan.get("asset_id"),
         "asset_revision_id": plan.get("asset_revision_id"),
+        "source_id": plan.get("source_id"),
+        "module_paths": plan.get("module_paths") or [],
+        "selected_endpoint_keys": plan.get("selected_endpoint_keys") or [],
+        "scope_fingerprint": plan.get("scope_fingerprint") or "",
+        "generation_id": plan.get("generation_id") or "",
+        "batch_index": plan.get("batch_index", 1),
+        "batch_count": plan.get("batch_count", 1),
+        "execution_binding_id": plan.get("execution_binding_id") or "",
+        "binding_fingerprint": plan.get("binding_fingerprint") or "",
         "name": plan.get("name"),
         "status": plan.get("status"),
         "case_count": plan.get("case_count"),
@@ -69,6 +85,119 @@ def _selected_endpoints(snapshot_id: str, endpoint_ids: List[str]) -> List[Dict[
     if not selected:
         return endpoints
     return [endpoint for endpoint in endpoints if endpoint.get("endpoint_id") in selected]
+
+
+def _normalized_module_paths(module_paths: List[str] | None) -> List[str]:
+    return sorted({
+        normalized
+        for value in (module_paths or [])
+        for normalized in [api_module_service.normalize_module_path(value)]
+        if normalized
+    })
+
+
+def _source_scope_fingerprint(source: Dict[str, Any]) -> str:
+    scope = api_source_service.normalized_sync_scope(source.get("sync_scope"))
+    return api_module_service.scope_fingerprint(scope)
+
+
+def _validate_selected_scope(
+    snapshot: Dict[str, Any],
+    endpoints: List[Dict[str, Any]],
+    endpoint_ids: List[str],
+    source_id: str,
+    module_paths: List[str],
+) -> None:
+    snapshot_source_id = str(snapshot.get("source_id") or "").strip()
+    if source_id and snapshot_source_id != source_id:
+        raise ValueError("API revision 不属于当前 source")
+    requested_ids = {
+        str(item or "").strip()
+        for item in endpoint_ids
+        if str(item or "").strip()
+    }
+    selected_ids = {
+        str(item.get("endpoint_id") or "").strip()
+        for item in endpoints
+        if isinstance(item, dict)
+    }
+    if requested_ids and selected_ids != requested_ids:
+        raise ValueError("所选接口不存在或不属于当前 revision")
+    if module_paths and any(
+        not api_module_service.module_selected(
+            endpoint.get("module_path") or endpoint.get("module"),
+            module_paths,
+        )
+        for endpoint in endpoints
+    ):
+        raise ValueError("所选接口不属于指定模块范围")
+
+
+def _generation_context(
+    generation_id: str,
+    source_id: str,
+    snapshot_id: str,
+    endpoint_ids: List[str],
+    module_paths: List[str],
+    batch_index: int,
+    batch_count: int,
+) -> Dict[str, Any]:
+    if not generation_id:
+        return {}
+    from task_server.services import api_plan_generation_service
+
+    generation = api_plan_generation_service.get_api_plan_generation(generation_id)
+    if not generation:
+        return {}
+    if (
+        str(generation.get("source_id") or "") != source_id
+        or str(generation.get("asset_revision_id") or "") != snapshot_id
+        or int(generation.get("batch_count") or 0) != batch_count
+    ):
+        raise ValueError("API plan generation 与当前计划范围不匹配")
+    batch = next((
+        item for item in (generation.get("batches") or [])
+        if int(item.get("batch_index") or 0) == batch_index
+    ), {})
+    if not batch:
+        raise ValueError("API plan generation batch 不存在")
+    if (
+        [str(item) for item in (batch.get("endpoint_ids") or [])]
+        != [str(item) for item in endpoint_ids]
+        or _normalized_module_paths(generation.get("module_paths"))
+        != module_paths
+    ):
+        raise ValueError("API plan generation batch 范围不匹配")
+    return generation
+
+
+def _assert_generation_snapshot_current(
+    generation: Dict[str, Any],
+    source_id: str,
+    snapshot: Dict[str, Any],
+) -> None:
+    if not generation:
+        return
+    source = api_source_service.get_api_source(source_id, masked=True)
+    workspace_binding = api_workspace_service.get_api_workspace_binding(
+        source_id,
+        allow_legacy=True,
+    )
+    auth_binding = api_workspace_service.get_api_auth_binding(source_id)
+    asset = api_asset_service.get_api_asset(str(snapshot.get("asset_id") or ""))
+    if (
+        not source
+        or str(asset.get("active_revision_id") or "").strip()
+        != str(snapshot.get("snapshot_id") or "").strip()
+        or str(generation.get("scope_fingerprint") or "")
+        != _source_scope_fingerprint(source)
+        or str(generation.get("binding_fingerprint") or "")
+        != str(workspace_binding.get("config_fingerprint") or "")
+        or str(generation.get("execution_binding_id") or "")
+        != str(workspace_binding.get("binding_id") or "")
+        or (generation.get("auth_binding") or {}) != auth_binding
+    ):
+        raise ValueError("API plan generation 的 source/revision/binding/auth 快照已过期")
 
 
 def _response_assertion_texts(endpoint: Dict[str, Any]) -> List[str]:
@@ -464,6 +593,72 @@ def _binding_drift(plan: Dict[str, Any]) -> List[str]:
     return drift
 
 
+def _scope_drift(plan: Dict[str, Any]) -> List[str]:
+    source_id = str(plan.get("source_id") or "").strip()
+    if not source_id:
+        return []
+    drift: List[str] = []
+    source = api_source_service.get_api_source(source_id, masked=True)
+    if not source:
+        return ["source_missing"]
+    revision_id = str(plan.get("asset_revision_id") or "").strip()
+    revision = api_asset_service.get_api_revision(revision_id)
+    if (
+        not revision
+        or str(revision.get("source_id") or "").strip() != source_id
+        or str(revision.get("asset_id") or "").strip()
+        != str(plan.get("asset_id") or "").strip()
+    ):
+        drift.append("source_revision_drift")
+        return drift
+    has_scope_contract = any(
+        key in plan
+        for key in (
+            "module_paths",
+            "selected_endpoint_keys",
+            "scope_fingerprint",
+            "generation_id",
+        )
+    )
+    if not has_scope_contract:
+        return drift
+    expected_scope_fingerprint = str(plan.get("scope_fingerprint") or "").strip()
+    if (
+        not expected_scope_fingerprint
+        or expected_scope_fingerprint != _source_scope_fingerprint(source)
+    ):
+        drift.append("source_scope_drift")
+    revision_endpoints = {
+        str(endpoint.get("endpoint_key") or "").strip(): endpoint
+        for endpoint in (revision.get("endpoints") or [])
+        if isinstance(endpoint, dict) and str(endpoint.get("endpoint_key") or "").strip()
+    }
+    selected_keys = {
+        str(item or "").strip()
+        for item in (plan.get("selected_endpoint_keys") or [])
+        if str(item or "").strip()
+    }
+    stored_keys = {
+        str(endpoint.get("endpoint_key") or "").strip()
+        for endpoint in (plan.get("endpoints") or [])
+        if isinstance(endpoint, dict) and str(endpoint.get("endpoint_key") or "").strip()
+    }
+    if not selected_keys or selected_keys != stored_keys or not selected_keys.issubset(revision_endpoints):
+        drift.append("endpoint_scope_drift")
+    module_paths = _normalized_module_paths(plan.get("module_paths"))
+    if not module_paths or any(
+        not api_module_service.module_selected(
+            revision_endpoints[key].get("module_path")
+            or revision_endpoints[key].get("module"),
+            module_paths,
+        )
+        for key in selected_keys
+        if key in revision_endpoints
+    ):
+        drift.append("module_scope_drift")
+    return sorted(set(drift))
+
+
 def _evaluated_cases(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     endpoint_by_id = {
         str(endpoint.get("endpoint_id") or ""): endpoint
@@ -639,11 +834,13 @@ def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     evaluated = copy.deepcopy(plan) if isinstance(plan, dict) else {}
     cases = _evaluated_cases(evaluated)
     binding_drift = _binding_drift(evaluated)
-    if binding_drift:
+    scope_drift = _scope_drift(evaluated)
+    if binding_drift or scope_drift:
         for case in cases:
             readiness = case.get("readiness") if isinstance(case.get("readiness"), dict) else {}
             missing = set(readiness.get("missing") or [])
             missing.update(binding_drift)
+            missing.update(scope_drift)
             readiness["missing"] = sorted(missing)
             readiness["state"] = "needs_review"
             case["readiness"] = readiness
@@ -651,6 +848,13 @@ def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     evaluated["case_count"] = len(cases)
     readiness = api_case_contract_service.summarize_api_case_readiness(cases)
     revision_state = _revision_state(evaluated)
+    if scope_drift:
+        revision_state = {
+            **revision_state,
+            "state": "stale",
+            "reason": "计划来源、接口或模块范围已变更",
+            "scope_drift": scope_drift,
+        }
     is_stale = revision_state.get("state") == "stale"
     readiness["can_confirm"] = bool(readiness.get("executable_case_count")) and not is_stale
     readiness["can_execute"] = (
@@ -672,6 +876,7 @@ def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     evaluated["execution_readiness"] = readiness
     evaluated["revision_state"] = revision_state
     evaluated["binding_drift"] = binding_drift
+    evaluated["scope_drift"] = scope_drift
     return evaluated
 
 
@@ -708,23 +913,97 @@ def executable_api_cases(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     return ordered
 
 
-def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, model_config: Dict[str, Any] | None = None, use_ai: bool | None = None) -> Dict[str, Any]:
+def generate_api_test_plan(
+    snapshot_id: str,
+    endpoint_ids: List[str] | None,
+    model_config: Dict[str, Any] | None = None,
+    use_ai: bool | None = None,
+    *,
+    source_id: str = "",
+    module_paths: List[str] | None = None,
+    generation_id: str = "",
+    batch_index: int = 1,
+    batch_count: int = 1,
+    require_ai_success: bool = False,
+) -> Dict[str, Any]:
     snapshot = api_asset_service.get_api_snapshot(snapshot_id)
     if not snapshot:
         raise ValueError("API snapshot 不存在，请先导入 OpenAPI")
-    endpoints = _selected_endpoints(snapshot.get("snapshot_id"), endpoint_ids or [])
+    requested_endpoint_ids = [
+        str(item or "").strip()
+        for item in (endpoint_ids or [])
+        if str(item or "").strip()
+    ]
+    endpoints = _selected_endpoints(snapshot.get("snapshot_id"), requested_endpoint_ids)
     if not endpoints:
         raise ValueError("未选择可生成用例的接口")
+    selected_source_id = str(source_id or snapshot.get("source_id") or "").strip()
+    selected_module_paths = _normalized_module_paths(module_paths)
+    if selected_source_id and not selected_module_paths:
+        selected_module_paths = sorted({
+            api_module_service.normalize_module_path(
+                endpoint.get("module_path") or endpoint.get("module")
+            )
+            for endpoint in endpoints
+            if api_module_service.normalize_module_path(
+                endpoint.get("module_path") or endpoint.get("module")
+            )
+        })
+    _validate_selected_scope(
+        snapshot,
+        endpoints,
+        requested_endpoint_ids,
+        selected_source_id,
+        selected_module_paths,
+    )
+    selected_batch_index = int(batch_index)
+    selected_batch_count = int(batch_count)
+    if selected_batch_index < 1 or selected_batch_count < 1 or selected_batch_index > selected_batch_count:
+        raise ValueError("API plan batch 序号无效")
+    generation = _generation_context(
+        str(generation_id or "").strip(),
+        selected_source_id,
+        str(snapshot.get("snapshot_id") or ""),
+        requested_endpoint_ids,
+        selected_module_paths,
+        selected_batch_index,
+        selected_batch_count,
+    )
     safe_endpoints = [
         api_case_contract_service.sanitize_endpoint_for_plan(endpoint)
         for endpoint in endpoints
     ]
-    source_id = str(snapshot.get("source_id") or "").strip()
-    workspace_binding = api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=True) if source_id else {}
-    auth_binding = api_workspace_service.get_api_auth_binding(source_id) if source_id else {}
+    source = (
+        api_source_service.get_api_source(selected_source_id, masked=True)
+        if selected_source_id
+        else {}
+    )
+    if selected_source_id and not source:
+        raise ValueError("API source 不存在")
+    workspace_binding = (
+        api_workspace_service.get_api_workspace_binding(
+            selected_source_id,
+            allow_legacy=True,
+        )
+        if selected_source_id
+        else {}
+    )
+    auth_binding = (
+        api_workspace_service.get_api_auth_binding(selected_source_id)
+        if selected_source_id
+        else {}
+    )
+    scope_fingerprint = (
+        _source_scope_fingerprint(source)
+        if selected_source_id
+        else ""
+    )
+    _assert_generation_snapshot_current(generation, selected_source_id, snapshot)
     plan_id = unique_millis_id("api_plan")
     local_cases = _local_plan_cases(safe_endpoints, plan_id)
     ai_enabled = safe_bool(os.getenv("API_TESTING_AI_ENABLED", "0"), False) if use_ai is None else bool(use_ai)
+    if require_ai_success and not ai_enabled:
+        raise ValueError("当前批次要求 AI 成功，不能禁用 AI")
     selected_cases = local_cases
     ai_meta: Dict[str, Any] = {"enabled": ai_enabled, "used": False, "fallback_reason": ""}
     source = "local"
@@ -742,13 +1021,28 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
             selected_cases = ai_result.get("cases") or local_cases
             source = "ai"
         else:
+            if require_ai_success:
+                error = str(ai_result.get("error") or "AI 生成失败")
+                raise ValueError(f"AI 生成失败：{error}")
             source = "local_fallback"
+    _assert_generation_snapshot_current(generation, selected_source_id, snapshot)
     plan = {
         "plan_id": plan_id,
         "snapshot_id": snapshot.get("snapshot_id"),
         "asset_id": snapshot.get("asset_id"),
         "asset_revision_id": snapshot.get("revision_id") or snapshot.get("asset_revision_id") or snapshot.get("snapshot_id"),
-        "source_id": source_id,
+        "source_id": selected_source_id,
+        "module_paths": selected_module_paths,
+        "selected_endpoint_keys": [
+            str(endpoint.get("endpoint_key") or "")
+            for endpoint in safe_endpoints
+            if str(endpoint.get("endpoint_key") or "")
+        ],
+        "scope_fingerprint": scope_fingerprint,
+        "generation_id": str(generation_id or "").strip(),
+        "batch_index": selected_batch_index,
+        "batch_count": selected_batch_count,
+        "execution_binding_id": str(workspace_binding.get("binding_id") or ""),
         "name": f"{snapshot.get('title') or snapshot.get('name') or 'API'} 接口测试计划",
         "status": "draft",
         "source": source,
@@ -774,8 +1068,11 @@ def _read_api_test_plan(plan_id: str) -> Dict[str, Any]:
     return plan if isinstance(plan, dict) else {}
 
 
-def get_api_test_plan(plan_id: str) -> Dict[str, Any]:
+def get_api_test_plan(plan_id: str, source_id: str = "") -> Dict[str, Any]:
     plan = _read_api_test_plan(plan_id)
+    selected_source_id = str(source_id or "").strip()
+    if selected_source_id and str(plan.get("source_id") or "").strip() != selected_source_id:
+        return {}
     return evaluate_api_plan(plan) if plan else {}
 
 
@@ -801,7 +1098,7 @@ def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
     return confirmed
 
 
-def list_api_test_plans(limit: int = 20) -> List[Dict[str, Any]]:
+def list_api_test_plans(limit: int = 20, source_id: str = "") -> List[Dict[str, Any]]:
     index = read_json_file(_index_path(), default=[]) or []
     if not isinstance(index, list):
         return []
@@ -809,11 +1106,15 @@ def list_api_test_plans(limit: int = 20) -> List[Dict[str, Any]]:
         size = max(1, int(limit))
     except Exception:
         size = 20
+    selected_source_id = str(source_id or "").strip()
     result: List[Dict[str, Any]] = []
-    for item in index[:size]:
+    for item in index:
         if not isinstance(item, dict):
             continue
-        plan = get_api_test_plan(str(item.get("plan_id") or ""))
+        plan = get_api_test_plan(
+            str(item.get("plan_id") or ""),
+            source_id=selected_source_id,
+        )
         if not plan:
             continue
         result.append({
@@ -823,12 +1124,18 @@ def list_api_test_plans(limit: int = 20) -> List[Dict[str, Any]]:
                 "status", "case_count", "endpoint_count", "source", "created_at",
                 "confirmed_at", "contract_version", "executable_case_count",
                 "needs_review_case_count", "execution_readiness", "revision_state",
+                "source_id", "module_paths", "selected_endpoint_keys",
+                "scope_fingerprint", "generation_id", "batch_index", "batch_count",
+                "execution_binding_id", "binding_fingerprint", "binding_drift",
+                "scope_drift", "auth_binding", "ai",
             )
         })
+        if len(result) >= size:
+            break
     return result
 
 
-def list_full_api_test_plans(limit: int = 1000) -> List[Dict[str, Any]]:
+def list_full_api_test_plans(limit: int = 1000, source_id: str = "") -> List[Dict[str, Any]]:
     index = read_json_file(_index_path(), default=[]) or []
     if not isinstance(index, list):
         return []
@@ -836,13 +1143,20 @@ def list_full_api_test_plans(limit: int = 1000) -> List[Dict[str, Any]]:
         size = max(1, int(limit))
     except Exception:
         size = 1000
-    return [
-        plan
-        for item in index[:size]
-        if isinstance(item, dict)
-        for plan in [get_api_test_plan(str(item.get("plan_id") or ""))]
-        if plan
-    ]
+    selected_source_id = str(source_id or "").strip()
+    result: List[Dict[str, Any]] = []
+    for item in index:
+        if not isinstance(item, dict):
+            continue
+        plan = get_api_test_plan(
+            str(item.get("plan_id") or ""),
+            source_id=selected_source_id,
+        )
+        if plan:
+            result.append(plan)
+        if len(result) >= size:
+            break
+    return result
 
 
 __all__ = [
