@@ -687,6 +687,51 @@ def _binding_config(source_id: str, allow_legacy: bool = True) -> tuple[Dict[str
     return cfg, binding
 
 
+def metersphere_project_options(
+    source_id: str,
+    project_id: str,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Read live environments for one project without changing the source binding."""
+    selected_source_id = str(source_id or "").strip()
+    selected_project_id = str(project_id or "").strip()
+    if not selected_source_id:
+        raise ValueError("source_id 不能为空")
+    if not selected_project_id:
+        raise ValueError("project_id 不能为空")
+    with _CONNECTION_CONFIG_LOCK:
+        cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+        if not binding:
+            cfg = _load_raw_config()
+        adapter, probe, supported = _v365_adapter_probe(cfg)
+        if not supported:
+            raise ValueError("MeterSphere v3.6.5 实时校验不可用")
+        projects = adapter.list_projects()
+        project = next(
+            (
+                item
+                for item in projects
+                if str(item.get("id") or "").strip() == selected_project_id
+                and item.get("enabled", True) is not False
+            ),
+            {},
+        )
+        if not project:
+            raise ValueError("MeterSphere 项目不存在或已停用")
+        scoped_cfg = dict(cfg)
+        scoped_cfg["project_id"] = selected_project_id
+        scoped_cfg["environment_id"] = ""
+        environments = _v365_adapter(scoped_cfg).list_environments(selected_project_id)
+        return sanitize_metersphere_data({
+            "projects": projects,
+            "environments": environments,
+            "selected_project_id": selected_project_id,
+            "version": str(probe.get("version") or ""),
+            "fetched_at": _now(),
+            "force": bool(force),
+        })
+
+
 def _source_operation_config(
     source_id: str,
     *,
@@ -871,6 +916,41 @@ def metersphere_execution_context(
                 expected_connection_fingerprint=expected_connection_fingerprint,
                 snapshot=config,
             )
+            if (
+                not binding
+                and config is None
+                and not str(expected_connection_fingerprint or "").strip()
+            ):
+                catalog_context = _metersphere_execution_context_with_config(
+                    force,
+                    selected_source_id,
+                    _load_raw_config(),
+                    {},
+                )
+                catalog_context["selection"] = {
+                    "project_id": "",
+                    "environment_id": "",
+                }
+                catalog_context["binding"] = {}
+                catalog_context["environments"] = []
+                catalog_context["config"] = {
+                    **copy_dict(catalog_context.get("config")),
+                    "project_id": "",
+                    "environment_id": "",
+                    "project_name": "",
+                    "environment_name": "",
+                }
+                catalog_context["plans"] = [
+                    {**copy_dict(plan), "can_execute": False}
+                    for plan in (catalog_context.get("plans") or [])
+                ]
+                catalog_context["readiness"] = {
+                    "state": "connected_needs_setup",
+                    "can_execute": False,
+                    "missing": ["当前来源执行绑定"],
+                    "primary_action": "选择业务与环境",
+                }
+                return catalog_context
             return _metersphere_execution_context_with_config(
                 force,
                 selected_source_id,
@@ -2104,6 +2184,7 @@ __all__ = [
     "sanitize_metersphere_data",
     "list_metersphere_projects",
     "list_metersphere_environments",
+    "metersphere_project_options",
     "metersphere_execution_context",
     "start_metersphere_execution",
     "get_metersphere_execution",

@@ -224,10 +224,12 @@ def main():
     )
     require(
         "saveApiSourceExecutionBinding" in api_testing_js
+        and "loadApiMeterSphereProjectEnvironments" in api_testing_js
         and "/execution-binding" in api_testing_js
+        and "project_id=${encodeURIComponent(projectId)}" in api_testing_js
         and "project_id:" in api_testing_js
         and "environment_id:" in api_testing_js,
-        "MeterSphere business and environment changes must save the selected source binding",
+        "MeterSphere business changes must load live project environments before saving the selected source binding",
     )
     require(
         "renderApiBusinessAuthPanel" in api_testing_js

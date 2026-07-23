@@ -2553,6 +2553,33 @@ def _get_api_testing_source_execution_binding(handler, qs, match):
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
         return
+    requested_project_id = str(
+        qs.get("project_id") or qs.get("projectId") or ""
+    ).strip()
+    if requested_project_id:
+        try:
+            options = metersphere_service.metersphere_project_options(
+                source_id,
+                requested_project_id,
+                force=safe_bool(qs.get("force") or qs.get("refresh"), False),
+            )
+        except (
+            metersphere_service.MeterSphereV365ContractError,
+            ValueError,
+        ) as exc:
+            handler._json({"ok": False, "error": str(exc)}, 400)
+            return
+        handler._json({
+            "ok": True,
+            "source_id": source_id,
+            "binding": api_workspace_service.get_api_workspace_binding(
+                source_id,
+                allow_legacy=True,
+            ),
+            **options,
+            "selected_project_id": requested_project_id,
+        })
+        return
     context = metersphere_service.metersphere_execution_context(
         force=safe_bool(qs.get("force") or qs.get("refresh"), False),
         source_id=source_id,

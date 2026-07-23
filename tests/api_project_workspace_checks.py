@@ -179,6 +179,61 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
             {},
         )
 
+    def test_unbound_source_uses_global_connection_only_for_project_catalog(self):
+        self._create_sources(2)
+        captured = []
+        original_context = metersphere_service._metersphere_execution_context_with_config
+
+        def fake_context(force, source_id, cfg, binding):
+            captured.append((source_id, dict(cfg), dict(binding)))
+            return {
+                "ok": True,
+                "source_id": source_id,
+                "binding": binding,
+                "businesses": [
+                    {"id": "ms_project_legacy", "name": "默认项目", "enabled": True},
+                    {"id": "ms_project_b", "name": "项目 B", "enabled": True},
+                ],
+                "environments": [
+                    {
+                        "id": "ms_env_legacy",
+                        "name": "默认环境",
+                        "project_id": "ms_project_legacy",
+                        "enabled": True,
+                    }
+                ],
+                "selection": {
+                    "project_id": cfg.get("project_id"),
+                    "environment_id": cfg.get("environment_id"),
+                },
+                "config": {
+                    "project_id": cfg.get("project_id"),
+                    "environment_id": cfg.get("environment_id"),
+                },
+                "readiness": {"state": "ready", "can_execute": True, "missing": []},
+            }
+
+        metersphere_service._metersphere_execution_context_with_config = fake_context
+        try:
+            context = metersphere_service.metersphere_execution_context(
+                source_id="api_source_b",
+            )
+        finally:
+            metersphere_service._metersphere_execution_context_with_config = original_context
+
+        self.assertEqual(captured[0][0], "api_source_b")
+        self.assertEqual(captured[0][1]["project_id"], "ms_project_legacy")
+        self.assertEqual(captured[0][2], {})
+        self.assertEqual(context["selection"], {"project_id": "", "environment_id": ""})
+        self.assertEqual(context["environments"], [])
+        self.assertFalse(context["readiness"]["can_execute"])
+        self.assertTrue(
+            any(
+                "来源执行绑定" in item
+                for item in context["readiness"]["missing"]
+            )
+        )
+
     def test_auth_secret_is_forwarded_but_never_persisted(self):
         self._create_sources(1)
         api_workspace_service.save_api_workspace_binding(
@@ -460,6 +515,75 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
         self.assertTrue(authenticated.responses[0][0]["binding"]["configured"])
         self.assertFalse(deleted.responses[0][0]["binding"]["configured"])
         self.assertNotIn("runtime-secret", json.dumps(authenticated.responses, ensure_ascii=False))
+
+    def test_execution_binding_reads_environments_for_requested_project(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _authorized(self):
+                return True
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        self.assertTrue(
+            hasattr(metersphere_service, "metersphere_project_options"),
+            "MeterSphere project option lookup is missing",
+        )
+        pattern = r"^/api/api-testing/sources/([^/]+)/execution-binding$"
+        route = next(fn for matcher, fn in router._GET_REGEX_ROUTES if matcher.pattern == pattern)
+        match = re.match(
+            pattern,
+            "/api/api-testing/sources/api_source_a/execution-binding",
+        )
+        original_options = metersphere_service.metersphere_project_options
+        original_context = metersphere_service.metersphere_execution_context
+        calls = []
+        metersphere_service.metersphere_project_options = (
+            lambda source_id, project_id, force=False: calls.append(
+                (source_id, project_id, force)
+            )
+            or {
+                "projects": [
+                    {"id": "ms_project_a", "name": "A", "enabled": True},
+                    {"id": "ms_project_b", "name": "B", "enabled": True},
+                ],
+                "environments": [
+                    {
+                        "id": "ms_env_b",
+                        "name": "B测试",
+                        "project_id": "ms_project_b",
+                        "enabled": True,
+                    }
+                ],
+                "version": "v3.6.5-lts",
+            }
+        )
+        metersphere_service.metersphere_execution_context = (
+            lambda **_kwargs: self.fail("project-scoped lookup must not load the bound context")
+        )
+        try:
+            handler = Handler()
+            route(
+                handler,
+                {"project_id": "ms_project_b", "force": "true"},
+                match,
+            )
+        finally:
+            metersphere_service.metersphere_project_options = original_options
+            metersphere_service.metersphere_execution_context = original_context
+
+        payload, status = handler.responses[0]
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            calls,
+            [("api_source_a", "ms_project_b", True)],
+        )
+        self.assertEqual(payload["selected_project_id"], "ms_project_b")
+        self.assertEqual(payload["environments"][0]["id"], "ms_env_b")
 
 
 def generation_document(endpoint_count=25):

@@ -641,6 +641,23 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/api-testing/sources/api-source-visual-001/execution-binding' && req.method === 'GET') {
+      const requestedProjectId = url.searchParams.get('project_id') || '';
+      if (requestedProjectId) {
+        json(res, {
+          ok: true,
+          source_id: 'api-source-visual-001',
+          selected_project_id: requestedProjectId,
+          projects: [
+            {id: 'project-interface', name: '接口业务', enabled: true},
+            {id: 'project-3d', name: '3D 业务', enabled: true},
+          ],
+          environments: requestedProjectId === 'project-3d'
+            ? [{id: 'env-staging', name: '预发环境', project_id: 'project-3d', enabled: true}]
+            : [{id: 'env-qa', name: 'QA 环境', project_id: 'project-interface', enabled: true}],
+          version: 'v3.6.5-lts',
+        });
+        return;
+      }
       json(res, {
         ok: true,
         source_id: 'api-source-visual-001',
@@ -750,8 +767,9 @@ function serve() {
           {id: 'project-3d', name: '3D 业务', enabled: true},
         ],
         environments: [
-          {id: 'env-qa', name: 'QA 环境', project_id: 'project-interface', enabled: true},
-          {id: 'env-staging', name: '预发环境', project_id: 'project-3d', enabled: true},
+          meterSelection.project_id === 'project-3d'
+            ? {id: 'env-staging', name: '预发环境', project_id: 'project-3d', enabled: true}
+            : {id: 'env-qa', name: 'QA 环境', project_id: 'project-interface', enabled: true},
         ],
         metadata: {source: 'live', stale: false, fetched_at: '2026-07-22 09:42:18', errors: []},
         config: {

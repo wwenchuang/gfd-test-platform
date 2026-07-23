@@ -12,6 +12,7 @@ let apiBusinessAuthEditing = false;
 let apiBusinessAuthType = 'bearer';
 let apiExecutionPollRequestId = 0;
 let apiExecutionPollController = null;
+let apiExecutionBindingLookupRequestId = 0;
 
 function setApiTestingPage(workflow, title, help) {
   if (workflow !== 'api_execution') stopApiExecutionPolling(true);
@@ -1949,15 +1950,50 @@ async function pushApiPlanToMeterSphere(planId) {
   }
 }
 
+async function loadApiMeterSphereProjectEnvironments(projectId) {
+  const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId || apiAssetSelectedSourceId;
+  if (!sourceId || !projectId) return [];
+  const requestId = ++apiExecutionBindingLookupRequestId;
+  const capturedScopeKey = apiProjectScopeKey();
+  const data = await apiRequest(
+    `/api-testing/sources/${encodeURIComponent(sourceId)}/execution-binding?project_id=${encodeURIComponent(projectId)}&force=true`
+  );
+  if (
+    requestId !== apiExecutionBindingLookupRequestId
+    || capturedScopeKey !== apiProjectScopeKey()
+    || sourceId !== (apiExecutionContext?.source_id || apiTestingProjectScope.sourceId || apiAssetSelectedSourceId)
+  ) return [];
+  const environments = (data.environments || []).filter(
+    item => String(item.project_id || projectId) === String(projectId) && item.enabled !== false
+  );
+  apiExecutionContext = {
+    ...(apiExecutionContext || {}),
+    businesses: data.projects || apiExecutionContext?.businesses || [],
+    environments,
+    selection: {project_id: projectId, environment_id: ''},
+  };
+  return environments;
+}
+
 async function changeApiMeterSphereProject(projectId) {
-  const environments = (apiExecutionContext?.environments || []).filter(item => String(item.project_id || '') === String(projectId || '') && item.enabled !== false);
-  const environmentId = (environments[0] || {}).id || '';
-  if (!projectId || !environmentId) {
-    showToast(projectId ? '当前实时数据中没有该业务的可用环境' : '请选择 MeterSphere 业务', 'error');
+  if (!projectId) {
+    showToast('请选择 MeterSphere 业务', 'error');
     renderApiBusinessAuthInHeader();
     return;
   }
-  await saveApiSourceExecutionBinding(projectId, environmentId);
+  try {
+    const environments = await loadApiMeterSphereProjectEnvironments(projectId);
+    const environmentId = (environments[0] || {}).id || '';
+    if (!environmentId) {
+      showToast('当前业务没有可用环境', 'error');
+      renderApiBusinessAuthInHeader();
+      return;
+    }
+    await saveApiSourceExecutionBinding(projectId, environmentId);
+  } catch (error) {
+    showToast(error.message || '业务环境读取失败', 'error');
+    renderApiBusinessAuthInHeader();
+  }
 }
 
 async function changeApiMeterSphereEnvironment(environmentId) {
