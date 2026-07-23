@@ -344,6 +344,24 @@ def _request_json(
         return sanitize_metersphere_data({"ok": False, "error": f"MeterSphere 请求失败：{exc}"})
 
 
+def _request_json_with_config(
+    method: str,
+    path: str,
+    payload: Dict[str, Any] | None = None,
+    timeout: float = 30,
+    *,
+    config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    if config is None:
+        return _request_json(method, path, payload, timeout)
+    try:
+        return _request_json(method, path, payload, timeout, config=config)
+    except TypeError as exc:
+        if "unexpected keyword argument 'config'" not in str(exc):
+            raise
+        return _request_json(method, path, payload, timeout)
+
+
 def _load_metadata_cache(kind: str, project_id: str = "") -> Dict[str, Any]:
     cached = read_json_file(_metadata_cache_path(kind, project_id), default={}) or {}
     return cached if isinstance(cached, dict) else {}
@@ -421,6 +439,7 @@ def _cached_or_live_metadata(
     normalizer,
     project_id: str = "",
     force: bool = False,
+    config: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     cached = _load_metadata_cache(kind, project_id)
     cached_epoch = float(cached.get("fetched_epoch") or 0)
@@ -436,7 +455,7 @@ def _cached_or_live_metadata(
     if not str(path or "").strip():
         result = {"ok": False, "error": f"MeterSphere {kind} API 路径未配置"}
     else:
-        result = _request_json("GET", path, timeout=20)
+        result = _request_json_with_config("GET", path, timeout=20, config=config)
     if result.get("ok"):
         items = normalizer(result)
         record = {
@@ -471,18 +490,26 @@ def _cached_or_live_metadata(
     }
 
 
-def list_metersphere_projects(force: bool = False) -> Dict[str, Any]:
-    cfg = _load_raw_config()
+def list_metersphere_projects(
+    force: bool = False,
+    config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    cfg = dict(config or _load_raw_config())
     return _cached_or_live_metadata(
         "projects",
         str(cfg.get("project_list_path") or "").strip(),
         _normalize_projects,
         force=force,
+        config=config,
     )
 
 
-def list_metersphere_environments(project_id: str, force: bool = False) -> Dict[str, Any]:
-    cfg = _load_raw_config()
+def list_metersphere_environments(
+    project_id: str,
+    force: bool = False,
+    config: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    cfg = dict(config or _load_raw_config())
     selected_project_id = str(project_id or "").strip()
     path = str(cfg.get("environment_list_path") or "").strip()
     path = path.replace("{project_id}", selected_project_id).replace("{projectId}", selected_project_id)
@@ -492,6 +519,7 @@ def list_metersphere_environments(project_id: str, force: bool = False) -> Dict[
         lambda result: _normalize_environments(result, selected_project_id),
         project_id=selected_project_id,
         force=force,
+        config=config,
     )
 
 
@@ -677,12 +705,6 @@ def metersphere_execution_context(force: bool = False, source_id: str = "") -> D
             live_projects = _adapter.list_projects()
         except (MeterSphereV365ContractError, ValueError):
             live_projects = []
-        if not live_projects and project.get("id"):
-            live_projects = [{
-                "id": str(project.get("id") or ""),
-                "name": str(project.get("name") or ""),
-                "enabled": True,
-            }]
         projects_result = {
             "ok": bool(live_projects),
             "items": live_projects,
@@ -706,8 +728,15 @@ def metersphere_execution_context(force: bool = False, source_id: str = "") -> D
             "error": "" if environments else "MeterSphere 当前业务没有可用环境",
         }
     else:
-        projects_result = list_metersphere_projects(force=force)
-        environments_result = list_metersphere_environments(project_id, force=force) if project_id else {
+        projects_result = list_metersphere_projects(
+            force=force,
+            config=cfg if selected_source_id else None,
+        )
+        environments_result = list_metersphere_environments(
+            project_id,
+            force=force,
+            config=cfg if selected_source_id else None,
+        ) if project_id else {
             "ok": False,
             "items": [],
             "source": "none",
@@ -1286,7 +1315,7 @@ def _refresh_running_execution(record: Dict[str, Any]) -> Dict[str, Any]:
         path = path.replace("{run_id}", clean_id(run_id, "ms_run")).replace("{runId}", clean_id(run_id, "ms_run"))
         if not path:
             return record
-        result = _request_json("GET", path, timeout=30)
+        result = _request_json_with_config("GET", path, timeout=30, config=cfg)
     if not result.get("ok"):
         record["status_poll_failures"] = int(record.get("status_poll_failures") or 0) + 1
         if record["status_poll_failures"] in {1, 3}:

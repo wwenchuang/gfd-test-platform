@@ -279,7 +279,7 @@ class MeterSphereV365Adapter:
             # Existing adapter tests and third-party callbacks predate the bound-config
             # callback contract. Keep those callbacks usable while the service boundary
             # receives the source-specific configuration.
-            if "config" not in str(exc):
+            if "unexpected keyword argument 'config'" not in str(exc):
                 raise
             return self.request_json(method, path, payload, timeout)
 

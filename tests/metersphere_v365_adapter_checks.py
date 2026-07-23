@@ -183,6 +183,132 @@ class MeterSphereV365AuthChecks(unittest.TestCase):
         self.assertEqual(normalized.get("project"), "project-bound")
         self.assertEqual(normalized.get("organization"), "organization-bound")
 
+    def test_legacy_execution_refresh_uses_snapshot_project_header(self):
+        captured = {}
+        old_config = metersphere_service._load_raw_config
+        old_urlopen = urllib.request.urlopen
+        old_save = metersphere_service._save_execution
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return b'{"data":{"status":"RUNNING"}}'
+
+        def fake_urlopen(request, timeout=30):
+            captured.update(dict(request.header_items()))
+            return Response()
+
+        metersphere_service._load_raw_config = lambda: {
+            "base_url": "http://metersphere.example.test",
+            "auth_mode": "token",
+            "token": "server-token",
+            "workspace_id": "organization-global",
+            "project_id": "project-global",
+            "environment_id": "env-global",
+            "run_status_path": "/runs/{run_id}",
+        }
+        metersphere_service._save_execution = lambda _record: None
+        urllib.request.urlopen = fake_urlopen
+        try:
+            metersphere_service._refresh_running_execution({
+                "execution_id": "execution-snapshot",
+                "source_id": "api_source_bound",
+                "project_id": "project-snapshot",
+                "environment_id": "env-snapshot",
+                "run_id": "run-1",
+                "adapter": "legacy",
+                "remote_status": "running",
+                "status_poll_failures": 0,
+                "unchanged_polls": 0,
+            })
+        finally:
+            metersphere_service._load_raw_config = old_config
+            metersphere_service._save_execution = old_save
+            urllib.request.urlopen = old_urlopen
+
+        headers = {key.lower(): value for key, value in captured.items()}
+        self.assertEqual(headers.get("project"), "project-snapshot")
+        self.assertNotEqual(headers.get("project"), "project-global")
+
+    def test_source_context_legacy_metadata_uses_bound_project_header(self):
+        captured = []
+        temp_dir = tempfile.mkdtemp(prefix="metersphere_bound_metadata_")
+        old_dir = metersphere_service.API_TESTING_DIR
+        old_config = metersphere_service._load_raw_config
+        old_binding_config = metersphere_service._binding_config
+        old_urlopen = urllib.request.urlopen
+        old_plans = api_test_plan_service.list_api_test_plans
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(self.payload).encode("utf-8")
+
+        global_cfg = {
+            "base_url": "http://metersphere.example.test",
+            "auth_mode": "token",
+            "token": "server-token",
+            "workspace_id": "organization-global",
+            "project_id": "project-global",
+            "environment_id": "env-global",
+            "health_path": "/health",
+            "project_list_path": "/projects",
+            "environment_list_path": "/environments/{project_id}",
+        }
+        bound_cfg = {
+            **global_cfg,
+            "workspace_id": "organization-bound",
+            "project_id": "project-bound",
+            "environment_id": "env-bound",
+        }
+
+        def fake_urlopen(request, timeout=30):
+            captured.append({key.lower(): value for key, value in request.header_items()})
+            if request.full_url.endswith("/projects"):
+                return Response({"data": [{"id": "project-bound", "name": "绑定业务"}]})
+            if request.full_url.endswith("/environments/project-bound"):
+                return Response({"data": [{"id": "env-bound", "name": "绑定环境", "projectId": "project-bound"}]})
+            return Response({"data": {}})
+
+        metersphere_service.API_TESTING_DIR = temp_dir
+        metersphere_service._load_raw_config = lambda: dict(global_cfg)
+        metersphere_service._binding_config = lambda _source_id, allow_legacy=True: (
+            dict(bound_cfg),
+            {"project_id": "project-bound", "environment_id": "env-bound"},
+        )
+        api_test_plan_service.list_api_test_plans = lambda limit=20: []
+        urllib.request.urlopen = fake_urlopen
+        try:
+            context = metersphere_service.metersphere_execution_context(
+                force=True,
+                source_id="api_source_second",
+            )
+        finally:
+            metersphere_service.API_TESTING_DIR = old_dir
+            metersphere_service._load_raw_config = old_config
+            metersphere_service._binding_config = old_binding_config
+            api_test_plan_service.list_api_test_plans = old_plans
+            urllib.request.urlopen = old_urlopen
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        self.assertEqual(context["businesses"][0]["id"], "project-bound")
+        self.assertEqual(context["environments"][0]["id"], "env-bound")
+        self.assertTrue(captured)
+        self.assertTrue(all(item.get("project") == "project-bound" for item in captured))
+
     def test_service_request_fails_closed_before_network_on_invalid_access_key(self):
         called = False
         old_config = metersphere_service._load_raw_config
@@ -264,6 +390,11 @@ class _ProbeRemote:
                 "id": "project-a",
                 "name": "业务A",
                 "moduleSetting": ["apiTest"],
+            }
+        if path == "/project/list/options/org-a":
+            return {
+                "ok": True,
+                "data": [{"id": "project-a", "name": "业务A", "enable": True}],
             }
         if path == "/api/test/env-list/project-a":
             return {
@@ -390,6 +521,22 @@ class MeterSphereV365ProbeChecks(unittest.TestCase):
             ("GET", "/api/test/env-list/project-a"),
         ])
         self.assertTrue(all(call[3]["project_id"] == "project-a" for call in calls))
+
+    def test_request_does_not_retry_callback_type_error_that_is_not_config_signature(self):
+        calls = []
+
+        def request(method, path, payload=None, timeout=30, *, config=None):
+            calls.append((method, path, config))
+            raise TypeError("config decoder failed")
+
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a"}, request,
+        )
+
+        with self.assertRaisesRegex(TypeError, "config decoder failed"):
+            adapter._request("GET", "/system/version/current")
+
+        self.assertEqual(len(calls), 1)
 
 
 def _case_plan():
@@ -1134,6 +1281,24 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.assertEqual(execution["project_id"], "project-a")
         self.assertEqual(execution["environment_id"], "env-a")
         self.assertEqual(execution["binding_fingerprint"], binding["config_fingerprint"])
+
+    def test_context_does_not_fake_all_businesses_when_exact_project_options_fail(self):
+        original_request = self.remote.request
+
+        def failed_project_options(method, path, payload=None, timeout=30, *, config=None):
+            if path == "/project/list/options/org-a":
+                return {"ok": False, "error": "project options unavailable"}
+            return original_request(method, path, payload, timeout)
+
+        metersphere_service._request_json = failed_project_options
+        try:
+            context = metersphere_service.metersphere_execution_context(force=True)
+        finally:
+            metersphere_service._request_json = self.remote.request
+
+        self.assertEqual(context["businesses"], [])
+        self.assertFalse(context["readiness"]["can_execute"])
+        self.assertIn("MeterSphere 当前业务不可用", context["metadata"]["errors"])
 
     def test_v365_execution_refresh_uses_report_status_without_manual_status_path(self):
         push = metersphere_service.push_plan_to_metersphere(self.plan["plan_id"])
