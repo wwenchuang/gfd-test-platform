@@ -607,6 +607,30 @@ class _SequenceApifoxAdapter:
         }
 
 
+class _BlockingApifoxAdapter:
+    def __init__(self, document):
+        self.document = document
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.seen_source = {}
+
+    def fetch_openapi(self, source, timeout=30):
+        self.seen_source = dict(source)
+        self.started.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("test adapter was not released")
+        raw = json.dumps(self.document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        import hashlib
+        return {
+            "document": self.document,
+            "document_hash": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+            "etag": "",
+            "last_modified": "",
+            "source_revision": "",
+            "fetched_at": "2026-07-23 10:00:00",
+        }
+
+
 class ApiSyncServiceTests(unittest.TestCase):
     def setUp(self):
         from task_server.services import api_asset_service, api_source_service, api_sync_service, api_test_plan_service
@@ -775,6 +799,79 @@ class ApiSyncServiceTests(unittest.TestCase):
                 for endpoint in self.asset_service.get_api_revision(scoped["revision_id"])["endpoints"]
             ],
         )
+
+    def test_sync_configuration_drift_after_fetch_never_stages_or_activates_old_project_document(self):
+        initial = self._run(_SequenceApifoxAdapter([_openapi_document(path="/active", operation_id="active")]))
+        active_revision_id = initial["revision_id"]
+        adapter = _BlockingApifoxAdapter(_openapi_document(path="/p1-only", operation_id="p1Only"))
+        queued = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)
+        worker = threading.Thread(
+            target=self.sync_service.run_api_source_sync,
+            args=(queued["sync_id"], adapter),
+        )
+        worker.start()
+        self.assertTrue(adapter.started.wait(timeout=2))
+
+        changed = self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "project_id": "project-p2",
+            "base_url": "https://p2.example.test",
+            "branch_id": "branch-p2",
+            "environment_id": "environment-p2",
+            "access_token": "token-p2",
+            "sync_scope": {"mode": "selected", "module_paths": ["P2/Module"]},
+        })
+        adapter.release.set()
+        worker.join(timeout=5)
+
+        result = self.sync_service.get_api_sync(queued["sync_id"])
+        asset = self.asset_service.get_api_asset(initial["asset_id"])
+        revisions = self.asset_service.list_api_revisions(initial["asset_id"])
+        current = self.source_service.get_api_source(self.source["source_id"], masked=False)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual("failed", result["status"])
+        self.assertTrue(result["conflict"])
+        self.assertEqual(active_revision_id, asset["active_revision_id"])
+        self.assertEqual([active_revision_id], [item["revision_id"] for item in revisions])
+        self.assertEqual("project-p2", current["project_id"])
+        self.assertEqual("https://p2.example.test", current["base_url"])
+        self.assertEqual("branch-p2", current["branch_id"])
+        self.assertEqual("environment-p2", current["environment_id"])
+        self.assertEqual("selected", current["sync_scope"]["mode"])
+        self.assertNotEqual("failed", current["last_sync_status"])
+        self.assertNotIn("secret-apifox-token", result["error"])
+        self.assertNotIn("token-p2", result["error"])
+
+    def test_token_rotation_during_sync_is_a_configuration_conflict_without_secret_leak(self):
+        initial = self._run(_SequenceApifoxAdapter([_openapi_document(path="/active", operation_id="active")]))
+        adapter = _BlockingApifoxAdapter(_openapi_document(path="/rotated", operation_id="rotated"))
+        queued = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)
+        worker = threading.Thread(
+            target=self.sync_service.run_api_source_sync,
+            args=(queued["sync_id"], adapter),
+        )
+        worker.start()
+        self.assertTrue(adapter.started.wait(timeout=2))
+
+        self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "access_token": "rotated-token-only",
+        })
+        adapter.release.set()
+        worker.join(timeout=5)
+
+        result = self.sync_service.get_api_sync(queued["sync_id"])
+        asset = self.asset_service.get_api_asset(initial["asset_id"])
+        revisions = self.asset_service.list_api_revisions(initial["asset_id"])
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual("failed", result["status"])
+        self.assertTrue(result["conflict"])
+        self.assertEqual(initial["revision_id"], asset["active_revision_id"])
+        self.assertEqual([initial["revision_id"]], [item["revision_id"] for item in revisions])
+        self.assertNotIn("secret-apifox-token", result["error"])
+        self.assertNotIn("rotated-token-only", result["error"])
 
     def test_duplicate_sync_reuses_current_sync_id(self):
         first = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)

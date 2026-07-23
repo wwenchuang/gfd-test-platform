@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import hashlib
+import json
 import os
 import threading
 import time
@@ -19,6 +22,10 @@ DEFAULT_APIFOX_SOURCE_ID = "api_source_apifox_default"
 MIN_SYNC_INTERVAL_MINUTES = 15
 MAX_SYNC_INTERVAL_MINUTES = 1440
 _SOURCE_LOCK = threading.RLock()
+
+
+class ApiSourceConfigDriftError(RuntimeError):
+    """Raised when a sync is no longer operating on its original source config."""
 
 
 def _now() -> str:
@@ -88,6 +95,33 @@ def normalized_sync_scope(value: Any) -> Dict[str, Any]:
         "module_paths": paths if mode == "selected" else [],
         "matcher_version": api_module_service.MODULE_MATCHER_VERSION,
     }
+
+
+def source_config_fingerprint(source: Dict[str, Any]) -> str:
+    """Return a stable, non-reversible identity for sync-relevant source config."""
+    scope = normalized_sync_scope((source or {}).get("sync_scope"))
+    credential = str((source or {}).get("access_token") or "").strip()
+    identity = {
+        "source_type": str((source or {}).get("source_type") or "").strip().lower(),
+        "project_id": str((source or {}).get("project_id") or "").strip(),
+        "base_url": str((source or {}).get("base_url") or "").strip().rstrip("/").lower(),
+        "branch_id": str((source or {}).get("branch_id") or "").strip(),
+        "environment_id": str((source or {}).get("environment_id") or "").strip(),
+        "scope_fingerprint": api_module_service.scope_fingerprint(scope),
+        "credential_identity_hash": hashlib.sha256(credential.encode("utf-8")).hexdigest(),
+    }
+    raw = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@contextmanager
+def locked_api_source_config(source_id: str, expected_fingerprint: str):
+    """Keep a sync persistence boundary coupled to its original source config."""
+    with _SOURCE_LOCK:
+        source = _raw_source(source_id)
+        if not source or source_config_fingerprint(source) != str(expected_fingerprint or ""):
+            raise ApiSourceConfigDriftError("API source configuration changed during synchronization")
+        yield dict(source)
 
 
 def _validate_base_url(value: Any) -> str:
@@ -248,10 +282,17 @@ def save_api_source(payload: Dict[str, Any]) -> Dict[str, Any]:
         return _save_api_source_locked(payload)
 
 
-def _update_api_source_sync_state_locked(source_id: str, **changes: Any) -> Dict[str, Any]:
+def _update_api_source_sync_state_locked(
+    source_id: str,
+    *,
+    expected_config_fingerprint: str = "",
+    **changes: Any,
+) -> Dict[str, Any]:
     source = _raw_source(source_id)
     if not source:
         raise ValueError("API source 不存在")
+    if expected_config_fingerprint and source_config_fingerprint(source) != expected_config_fingerprint:
+        raise ApiSourceConfigDriftError("API source configuration changed during synchronization")
     allowed = {"last_sync_id", "last_attempt_at", "last_success_at", "last_sync_status", "last_error", "updated_at"}
     for key, value in changes.items():
         if key in allowed:
@@ -262,20 +303,33 @@ def _update_api_source_sync_state_locked(source_id: str, **changes: Any) -> Dict
     return _public_source(source)
 
 
-def update_api_source_sync_state(source_id: str, **changes: Any) -> Dict[str, Any]:
+def update_api_source_sync_state(
+    source_id: str,
+    *,
+    expected_config_fingerprint: str = "",
+    **changes: Any,
+) -> Dict[str, Any]:
     with _SOURCE_LOCK:
-        return _update_api_source_sync_state_locked(source_id, **changes)
+        return _update_api_source_sync_state_locked(
+            source_id,
+            expected_config_fingerprint=expected_config_fingerprint,
+            **changes,
+        )
 
 
 def update_api_source_discovery_state(
     source_id: str,
     module_catalog: List[Dict[str, Any]],
     scope_fingerprint: str,
+    *,
+    expected_config_fingerprint: str = "",
 ) -> Dict[str, Any]:
     with _SOURCE_LOCK:
         source = _raw_source(source_id)
         if not source:
             raise ValueError("API source 不存在")
+        if expected_config_fingerprint and source_config_fingerprint(source) != expected_config_fingerprint:
+            raise ApiSourceConfigDriftError("API source configuration changed during synchronization")
         source["module_catalog"] = [dict(item) for item in module_catalog if isinstance(item, dict)]
         source["scope_fingerprint"] = str(scope_fingerprint or "")
         source["updated_at"] = _now()
@@ -287,11 +341,14 @@ def update_api_source_discovery_state(
 __all__ = [
     "ALLOWED_SOURCE_TYPES",
     "API_TESTING_DIR",
+    "ApiSourceConfigDriftError",
     "DEFAULT_APIFOX_SOURCE_ID",
     "get_api_source",
     "list_api_sources",
     "save_api_source",
     "normalized_sync_scope",
+    "locked_api_source_config",
     "update_api_source_discovery_state",
     "update_api_source_sync_state",
+    "source_config_fingerprint",
 ]

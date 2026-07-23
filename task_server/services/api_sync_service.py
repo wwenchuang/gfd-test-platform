@@ -28,6 +28,7 @@ SYNC_PHASES = (
     "analyze_impact",
 )
 POLL_AFTER_MS = 1000
+SOURCE_CONFIG_CONFLICT_MESSAGE = "API source configuration changed during synchronization"
 _SYNC_LOCK = threading.RLock()
 _SCHEDULER_LOCK = threading.Lock()
 _SCHEDULER_THREAD: threading.Thread | None = None
@@ -119,6 +120,17 @@ def _update_sync(sync_id: str, **changes: Any) -> Dict[str, Any]:
         return record
 
 
+def _source_config_conflict(sync_id: str) -> Dict[str, Any]:
+    return _update_sync(
+        sync_id,
+        status="failed",
+        conflict=True,
+        finished_at=_now(),
+        error=SOURCE_CONFIG_CONFLICT_MESSAGE,
+        event="来源配置已变更，同步已中止并保留上一活动版本",
+    )
+
+
 def start_api_source_sync(
     source_id: str,
     *,
@@ -134,6 +146,7 @@ def start_api_source_sync(
         raise ValueError("当前 source 不支持远端同步")
     if not source.get("project_id") or not source.get("access_token"):
         raise ValueError("Apifox project_id 或访问令牌未配置")
+    source_config_fingerprint = api_source_service.source_config_fingerprint(source)
     with _SYNC_LOCK:
         active = _active_sync(target)
         if active:
@@ -145,6 +158,7 @@ def start_api_source_sync(
         record = {
             "sync_id": sync_id,
             "source_id": target,
+            "source_config_fingerprint": source_config_fingerprint,
             "trigger": str(trigger or "manual"),
             "status": "queued",
             "phase": "fetch_source",
@@ -163,6 +177,7 @@ def start_api_source_sync(
             "scoped_module_count": 0,
             "scoped_endpoint_count": 0,
             "error": "",
+            "conflict": False,
             "events": [{"at": now, "phase": "fetch_source", "message": "同步已排队"}],
         }
         _write_sync(record)
@@ -192,7 +207,8 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
         raise ValueError("API sync 不存在")
     if record.get("status") in TERMINAL_SYNC_STATES:
         return record
-    source = api_source_service.get_api_source(str(record.get("source_id") or ""), masked=False)
+    source_id = str(record.get("source_id") or "")
+    source = api_source_service.get_api_source(source_id, masked=False)
     if not source:
         return _update_sync(
             sync_id,
@@ -201,7 +217,13 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             error="API source 不存在",
             event="同步失败",
         )
+    expected_config_fingerprint = str(record.get("source_config_fingerprint") or "")
+    if not expected_config_fingerprint:
+        expected_config_fingerprint = api_source_service.source_config_fingerprint(source)
+        _update_sync(sync_id, source_config_fingerprint=expected_config_fingerprint)
     try:
+        with api_source_service.locked_api_source_config(source_id, expected_config_fingerprint) as stable_source:
+            source = stable_source
         _update_sync(
             sync_id,
             status="running",
@@ -230,17 +252,18 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             scoped_module_count=len(scoped_catalog),
             scoped_endpoint_count=sum(int(item.get("endpoint_count") or 0) for item in scoped_catalog),
         )
-        staged = api_asset_service.stage_api_revision(
-            source_id=str(source.get("source_id") or ""),
-            source_name=str(source.get("name") or "Apifox 接口"),
-            document=scoped_document,
-            source_type="apifox",
-            source_revision=str(fetched.get("source_revision") or ""),
-            document_hash=str(fetched.get("document_hash") or ""),
-            scope_fingerprint=scope_fingerprint,
-            sync_scope=scope,
-            module_catalog=catalog,
-        )
+        with api_source_service.locked_api_source_config(source_id, expected_config_fingerprint) as stable_source:
+            staged = api_asset_service.stage_api_revision(
+                source_id=str(stable_source.get("source_id") or ""),
+                source_name=str(stable_source.get("name") or "Apifox 接口"),
+                document=scoped_document,
+                source_type="apifox",
+                source_revision=str(fetched.get("source_revision") or ""),
+                document_hash=str(fetched.get("document_hash") or ""),
+                scope_fingerprint=scope_fingerprint,
+                sync_scope=scope,
+                module_catalog=catalog,
+            )
         asset_id = str(staged.get("asset_id") or "")
         revision_id = str(staged.get("revision_id") or "")
         previous_revision_id = str(staged.get("previous_revision_id") or "")
@@ -250,27 +273,32 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             endpoint_count = int((staged.get("revision") or {}).get("endpoint_count") or 0)
             summary = {"added": 0, "changed": 0, "removed": 0, "unchanged": endpoint_count, "affected_plans": 0}
             finished_at = _now()
-            result = _update_sync(
-                sync_id,
-                status="no_change",
-                phase="analyze_impact",
-                finished_at=finished_at,
-                previous_revision_id=revision_id,
-                asset_id=asset_id,
-                revision_id=revision_id,
-                summary=summary,
-                event="内容未变化，继续使用当前版本",
-            )
-            api_source_service.update_api_source_sync_state(
-                str(source.get("source_id") or ""),
-                last_sync_id=sync_id,
-                last_success_at=finished_at,
-                last_sync_status="no_change",
-                last_error="",
-            )
-            api_source_service.update_api_source_discovery_state(
-                str(source.get("source_id") or ""), catalog, scope_fingerprint
-            )
+            with api_source_service.locked_api_source_config(source_id, expected_config_fingerprint):
+                result = _update_sync(
+                    sync_id,
+                    status="no_change",
+                    phase="analyze_impact",
+                    finished_at=finished_at,
+                    previous_revision_id=revision_id,
+                    asset_id=asset_id,
+                    revision_id=revision_id,
+                    summary=summary,
+                    event="内容未变化，继续使用当前版本",
+                )
+                api_source_service.update_api_source_sync_state(
+                    source_id,
+                    expected_config_fingerprint=expected_config_fingerprint,
+                    last_sync_id=sync_id,
+                    last_success_at=finished_at,
+                    last_sync_status="no_change",
+                    last_error="",
+                )
+                api_source_service.update_api_source_discovery_state(
+                    source_id,
+                    catalog,
+                    scope_fingerprint,
+                    expected_config_fingerprint=expected_config_fingerprint,
+                )
             return result
         revision = staged.get("revision") or {}
         previous_revision = api_asset_service.get_api_revision(previous_revision_id) if previous_revision_id else {}
@@ -287,31 +315,40 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
         _update_sync(sync_id, phase="analyze_impact", event="正在分析受影响计划")
         plans = api_test_plan_service.list_full_api_test_plans(limit=1000)
         impact = api_schema_diff_service.analyze_api_plan_impact(diff, plans)
-        saved_diff = api_schema_diff_service.save_api_diff(asset_id, diff, impact)
-        api_source_service.update_api_source_discovery_state(
-            str(source.get("source_id") or ""), catalog, scope_fingerprint
-        )
+        with api_source_service.locked_api_source_config(source_id, expected_config_fingerprint):
+            saved_diff = api_schema_diff_service.save_api_diff(asset_id, diff, impact)
+        with api_source_service.locked_api_source_config(source_id, expected_config_fingerprint):
+            api_source_service.update_api_source_discovery_state(
+                source_id,
+                catalog,
+                scope_fingerprint,
+                expected_config_fingerprint=expected_config_fingerprint,
+            )
         summary = dict(diff.get("summary") or {})
         summary["affected_plans"] = int(impact.get("affected_plans") or 0)
         finished_at = _now()
-        result = _update_sync(
-            sync_id,
-            status="succeeded",
-            finished_at=finished_at,
-            diff_id=str(saved_diff.get("diff_id") or ""),
-            summary=summary,
-            error="",
-            event="同步完成并激活新版本",
-        )
-        api_source_service.update_api_source_sync_state(
-            str(source.get("source_id") or ""),
-            last_sync_id=sync_id,
-            last_success_at=finished_at,
-            last_sync_status="succeeded",
-            last_error="",
-        )
-        api_asset_service.activate_api_revision(asset_id, revision_id)
+        with api_source_service.locked_api_source_config(source_id, expected_config_fingerprint):
+            result = _update_sync(
+                sync_id,
+                status="succeeded",
+                finished_at=finished_at,
+                diff_id=str(saved_diff.get("diff_id") or ""),
+                summary=summary,
+                error="",
+                event="同步完成并激活新版本",
+            )
+            api_source_service.update_api_source_sync_state(
+                source_id,
+                expected_config_fingerprint=expected_config_fingerprint,
+                last_sync_id=sync_id,
+                last_success_at=finished_at,
+                last_sync_status="succeeded",
+                last_error="",
+            )
+            api_asset_service.activate_api_revision(asset_id, revision_id)
         return result
+    except api_source_service.ApiSourceConfigDriftError:
+        return _source_config_conflict(sync_id)
     except Exception as exc:
         error = _redacted_error(exc, source)
         finished_at = _now()
@@ -322,12 +359,16 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             error=error,
             event="同步失败，保留上一活动版本",
         )
-        api_source_service.update_api_source_sync_state(
-            str(source.get("source_id") or ""),
-            last_sync_id=sync_id,
-            last_sync_status="failed",
-            last_error=error,
-        )
+        try:
+            api_source_service.update_api_source_sync_state(
+                source_id,
+                expected_config_fingerprint=expected_config_fingerprint,
+                last_sync_id=sync_id,
+                last_sync_status="failed",
+                last_error=error,
+            )
+        except api_source_service.ApiSourceConfigDriftError:
+            return _source_config_conflict(sync_id)
         return result
 
 
