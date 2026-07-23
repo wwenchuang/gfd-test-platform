@@ -170,5 +170,32 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         )
 
 
+class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
+    def test_execution_context_rejects_unauthenticated_request(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _authorized(self):
+                return False
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        handler = Handler()
+        original_context = metersphere_service.metersphere_execution_context
+        called = []
+        metersphere_service.metersphere_execution_context = lambda **_kwargs: called.append(True) or {}
+        try:
+            router.GET_ROUTES["/api/api-testing/metersphere/execution-context"](handler, {})
+        finally:
+            metersphere_service.metersphere_execution_context = original_context
+
+        self.assertEqual(called, [])
+        self.assertEqual(handler.responses, [({"ok": False, "error": "Unauthorized"}, 401)])
+
+
 if __name__ == "__main__":
     unittest.main()

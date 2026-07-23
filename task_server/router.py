@@ -2643,6 +2643,8 @@ def _get_api_testing_metersphere_config(handler, qs):
 
 @route_get("/api/api-testing/metersphere/execution-context")
 def _get_api_testing_metersphere_execution_context(handler, qs):
+    if _require_user_auth(handler):
+        return
     from task_server.services import metersphere_service
     context = metersphere_service.metersphere_execution_context(
         force=safe_bool(qs.get("force") or qs.get("refresh"), False),
@@ -2874,6 +2876,7 @@ def _post_api_testing_reports_pull(handler, qs):
     result = metersphere_service.pull_metersphere_report(
         str(d.get("run_id") or d.get("runId") or "").strip(),
         raw_report=d.get("raw_report") or d.get("rawReport") or None,
+        execution_id=str(d.get("execution_id") or d.get("executionId") or "").strip(),
     )
     handler._json({"ok": bool(result.get("ok")), "result": result, "report": result.get("report")}, 200 if result.get("ok") else 400)
 

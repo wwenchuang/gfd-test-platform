@@ -1611,17 +1611,47 @@ def create_metersphere_run(
     return result
 
 
+def _report_execution_snapshot(run_id: str, execution_id: str = "") -> tuple[Dict[str, Any], str]:
+    selected_run_id = str(run_id or "").strip()
+    selected_execution_id = str(execution_id or "").strip()
+    if selected_execution_id:
+        record = _load_execution(selected_execution_id)
+        if not record:
+            return {}, "MeterSphere execution_id 不存在"
+        if str(record.get("run_id") or "").strip() != selected_run_id:
+            return {}, "run_id 不属于指定 MeterSphere execution"
+        return record, ""
+    matches = [
+        record for record in _execution_records()
+        if str(record.get("run_id") or "").strip() == selected_run_id
+        and str(record.get("source_id") or "").strip()
+    ]
+    if len(matches) > 1:
+        return {}, "run_id 对应多个 source 执行记录，必须指定 execution_id"
+    return (matches[0], "") if matches else ({}, "")
+
+
 def pull_metersphere_report(
     run_id: str,
     raw_report: Dict[str, Any] | None = None,
     *,
     config: Dict[str, Any] | None = None,
+    execution_id: str = "",
 ) -> Dict[str, Any]:
     from task_server.services import api_report_service
 
+    selected_config = config
+    if selected_config is None:
+        execution, error = _report_execution_snapshot(run_id, execution_id)
+        if error:
+            return {"ok": False, "error": error}
+        if execution:
+            if not str(execution.get("project_id") or "").strip():
+                return {"ok": False, "error": "source 执行记录缺少 MeterSphere 项目快照"}
+            selected_config = _execution_config(execution)
     raw = sanitize_metersphere_data(raw_report) if isinstance(raw_report, dict) else None
     if raw is None:
-        cfg = dict(config or _load_raw_config())
+        cfg = dict(selected_config or _load_raw_config())
         adapter, _probe, v365_supported = _v365_adapter_probe(cfg)
         if v365_supported:
             fetched = adapter.get_report(run_id)
@@ -1634,7 +1664,7 @@ def pull_metersphere_report(
                 return {"ok": False, "requires_config": True, "error": "MeterSphere 报告 API 路径未配置"}
             fetched = (
                 _request_json("GET", report_path, timeout=60, config=cfg)
-                if config is not None
+                if selected_config is not None
                 else _request_json("GET", report_path, timeout=60)
             )
             if not fetched.get("ok"):

@@ -1350,6 +1350,43 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.assertEqual(execution["environment_id"], "env-a")
         self.assertEqual(execution["binding_fingerprint"], binding["config_fingerprint"])
 
+    def test_manual_report_pull_uses_execution_snapshot_after_global_selection_changes(self):
+        captured = []
+
+        def report_request(method, path, payload=None, timeout=30, *, config=None):
+            captured.append((method, path, config))
+            return {"ok": True, "data": {
+                "results": [{"id": "case-1", "name": "用例", "status": "passed"}],
+            }}
+
+        metersphere_service.save_metersphere_config({
+            "base_url": "http://metersphere.example.test",
+            "auth_mode": "token",
+            "token": "token-global-b",
+            "workspace_id": "org-global",
+            "project_id": "project-b",
+            "environment_id": "env-b",
+            "report_path": "/reports/{run_id}",
+        })
+        metersphere_service._save_execution({
+            "execution_id": "execution-source-a",
+            "source_id": "api_source_a",
+            "project_id": "project-a",
+            "environment_id": "env-a",
+            "run_id": "run-source-a",
+            "adapter": "legacy",
+        })
+        metersphere_service._request_json = report_request
+
+        result = metersphere_service.pull_metersphere_report(
+            "run-source-a",
+            execution_id="execution-source-a",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(captured[0][2]["project_id"], "project-a")
+        self.assertNotEqual(captured[0][2]["project_id"], "project-b")
+
     def test_context_does_not_fake_all_businesses_when_exact_project_options_fail(self):
         original_request = self.remote.request
 
