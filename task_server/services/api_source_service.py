@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 from task_server.config import LEARNING_DIR, safe_bool, safe_int
 from task_server.storage import clean_id, read_json_file, safe_join, unique_millis_id, write_json_file
+from task_server.services import api_module_service
 
 
 API_TESTING_DIR = os.getenv("API_TESTING_DIR", safe_join(LEARNING_DIR, "api-testing"))
@@ -58,6 +59,9 @@ def _env_source() -> Dict[str, Any]:
         "last_success_at": "",
         "last_sync_status": "",
         "last_error": "",
+        "sync_scope": normalized_sync_scope({}),
+        "module_catalog": [],
+        "scope_fingerprint": "",
         "created_at": "",
         "updated_at": "",
         "config_source": "environment",
@@ -67,6 +71,23 @@ def _env_source() -> Dict[str, Any]:
 def _sync_interval(value: Any) -> int:
     interval = safe_int(value, 60)
     return max(MIN_SYNC_INTERVAL_MINUTES, min(MAX_SYNC_INTERVAL_MINUTES, interval))
+
+
+def normalized_sync_scope(value: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    mode = str(raw.get("mode") or "all").strip().lower()
+    if mode not in {"all", "selected"}:
+        raise ValueError("sync_scope.mode 仅支持 all 或 selected")
+    raw_paths = raw.get("module_paths", raw.get("modulePaths", []))
+    values = raw_paths if isinstance(raw_paths, list) else []
+    paths = sorted({api_module_service.normalize_module_path(item) for item in values if api_module_service.normalize_module_path(item)})
+    if mode == "selected" and not paths:
+        raise ValueError("selected 同步范围至少选择一个模块")
+    return {
+        "mode": mode,
+        "module_paths": paths if mode == "selected" else [],
+        "matcher_version": api_module_service.MODULE_MATCHER_VERSION,
+    }
 
 
 def _validate_base_url(value: Any) -> str:
@@ -134,6 +155,9 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     public.pop("token", None)
     public["credential_configured"] = bool(token)
     public["configured"] = bool(public.get("project_id") and token) if public.get("source_type") == "apifox" else True
+    public["sync_scope"] = normalized_sync_scope(public.get("sync_scope"))
+    public["module_catalog"] = public.get("module_catalog") if isinstance(public.get("module_catalog"), list) else []
+    public["scope_fingerprint"] = str(public.get("scope_fingerprint") or "")
     return public
 
 
@@ -187,6 +211,8 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
     else:
         access_token = str(current.get("access_token") or "").strip()
     sync_enabled_default = source_type == "apifox"
+    scope_input = payload.get("sync_scope", payload.get("syncScope", current.get("sync_scope")))
+    sync_scope = normalized_sync_scope(scope_input)
     source = {
         "source_id": source_id,
         "source_type": source_type,
@@ -204,6 +230,9 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
         "last_success_at": str(current.get("last_success_at") or ""),
         "last_sync_status": str(current.get("last_sync_status") or ""),
         "last_error": str(current.get("last_error") or ""),
+        "sync_scope": sync_scope,
+        "module_catalog": current.get("module_catalog") if isinstance(current.get("module_catalog"), list) else [],
+        "scope_fingerprint": str(current.get("scope_fingerprint") or ""),
         "created_at": str(current.get("created_at") or now),
         "updated_at": now,
         "config_source": "file",
@@ -238,6 +267,23 @@ def update_api_source_sync_state(source_id: str, **changes: Any) -> Dict[str, An
         return _update_api_source_sync_state_locked(source_id, **changes)
 
 
+def update_api_source_discovery_state(
+    source_id: str,
+    module_catalog: List[Dict[str, Any]],
+    scope_fingerprint: str,
+) -> Dict[str, Any]:
+    with _SOURCE_LOCK:
+        source = _raw_source(source_id)
+        if not source:
+            raise ValueError("API source 不存在")
+        source["module_catalog"] = [dict(item) for item in module_catalog if isinstance(item, dict)]
+        source["scope_fingerprint"] = str(scope_fingerprint or "")
+        source["updated_at"] = _now()
+        source["config_source"] = "file"
+        _write_source(source)
+        return _public_source(source)
+
+
 __all__ = [
     "ALLOWED_SOURCE_TYPES",
     "API_TESTING_DIR",
@@ -245,5 +291,7 @@ __all__ = [
     "get_api_source",
     "list_api_sources",
     "save_api_source",
+    "normalized_sync_scope",
+    "update_api_source_discovery_state",
     "update_api_source_sync_state",
 ]

@@ -2469,7 +2469,7 @@ def _get_api_testing_overview(handler, qs):
 
 @route_get("/api/api-testing/assets")
 def _get_api_testing_assets(handler, qs):
-    from task_server.services import api_asset_service
+    from task_server.services import api_asset_service, api_module_service
     snapshots = api_asset_service.list_api_snapshots(limit=safe_int(qs.get("limit"), 20) or 20)
     assets = api_asset_service.list_api_assets(limit=safe_int(qs.get("limit"), 20) or 20)
     requested_snapshot_id = str(qs.get("snapshot_id") or qs.get("snapshotId") or "").strip()
@@ -2510,6 +2510,8 @@ def _get_api_testing_assets(handler, qs):
         "assets": assets,
         "asset": asset,
         "revisions": revisions,
+        "source_id": str((asset or snapshot).get("source_id") or requested_source_id),
+        "module_summary": api_module_service.module_summary(endpoints),
     })
 
 

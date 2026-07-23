@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from task_server.storage import clean_id, read_json_file, safe_join, unique_millis_id, write_json_file
 from task_server.services import (
     api_asset_service,
+    api_module_service,
     api_schema_diff_service,
     api_source_service,
     api_test_plan_service,
@@ -157,6 +158,10 @@ def start_api_source_sync(
             "revision_id": "",
             "diff_id": "",
             "summary": {"added": 0, "changed": 0, "removed": 0, "unchanged": 0, "affected_plans": 0},
+            "sync_scope": api_source_service.normalized_sync_scope(source.get("sync_scope")),
+            "module_count": 0,
+            "scoped_module_count": 0,
+            "scoped_endpoint_count": 0,
             "error": "",
             "events": [{"at": now, "phase": "fetch_source", "message": "同步已排队"}],
         }
@@ -207,14 +212,34 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
         )
         source_adapter = adapter or ApifoxSourceAdapter()
         fetched = source_adapter.fetch_openapi(source, timeout=30)
+        full_document = fetched.get("document") or {}
+        catalog = api_module_service.module_catalog(full_document)
+        scope = api_source_service.normalized_sync_scope(source.get("sync_scope"))
+        scoped_document = (
+            full_document
+            if scope["mode"] == "all"
+            else api_module_service.filter_document(full_document, scope["module_paths"])
+        )
+        scope_fingerprint = api_module_service.scope_fingerprint(scope)
+        scoped_catalog = api_module_service.module_catalog(scoped_document)
         _update_sync(sync_id, phase="parse_document", event="OpenAPI 已获取，正在解析")
+        _update_sync(
+            sync_id,
+            sync_scope=scope,
+            module_count=len(catalog),
+            scoped_module_count=len(scoped_catalog),
+            scoped_endpoint_count=sum(int(item.get("endpoint_count") or 0) for item in scoped_catalog),
+        )
         staged = api_asset_service.stage_api_revision(
             source_id=str(source.get("source_id") or ""),
             source_name=str(source.get("name") or "Apifox 接口"),
-            document=fetched.get("document") or {},
+            document=scoped_document,
             source_type="apifox",
             source_revision=str(fetched.get("source_revision") or ""),
             document_hash=str(fetched.get("document_hash") or ""),
+            scope_fingerprint=scope_fingerprint,
+            sync_scope=scope,
+            module_catalog=catalog,
         )
         asset_id = str(staged.get("asset_id") or "")
         revision_id = str(staged.get("revision_id") or "")
@@ -242,6 +267,9 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
                 last_success_at=finished_at,
                 last_sync_status="no_change",
                 last_error="",
+            )
+            api_source_service.update_api_source_discovery_state(
+                str(source.get("source_id") or ""), catalog, scope_fingerprint
             )
             return result
         revision = staged.get("revision") or {}
@@ -279,6 +307,9 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             last_success_at=finished_at,
             last_sync_status="succeeded",
             last_error="",
+        )
+        api_source_service.update_api_source_discovery_state(
+            str(source.get("source_id") or ""), catalog, scope_fingerprint
         )
         return result
     except Exception as exc:

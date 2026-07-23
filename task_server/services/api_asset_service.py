@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 from task_server.config import LEARNING_DIR
 from task_server.storage import clean_asset_filename, clean_id, read_json_file, safe_join, unique_millis_id, write_json_file
+from task_server.services import api_module_service
 
 
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
@@ -226,6 +227,7 @@ def _operation_endpoint(
     request = _request_schema(operation)
     response = _response_schema(operation)
     operation_id = str(operation.get("operationId") or "").strip()
+    module_path = api_module_service.operation_module_path(path, operation)
     hash_input = {
         "method": method.upper(),
         "path": path,
@@ -246,7 +248,9 @@ def _operation_endpoint(
         "operation_id": operation_id,
         "method": method.upper(),
         "path": path,
-        "module": _module_for_operation(path, operation),
+        "module": module_path,
+        "module_path": module_path,
+        "module_segments": module_path.split("/"),
         "name": str(operation.get("summary") or operation_id or f"{method.upper()} {path}").strip(),
         "description": str(operation.get("description") or "").strip(),
         "tags": [str(tag).strip() for tag in (operation.get("tags") or []) if str(tag).strip()],
@@ -426,12 +430,19 @@ def stage_api_revision(
     source_type: str = "apifox",
     source_revision: str = "",
     document_hash: str = "",
+    scope_fingerprint: str = "",
+    sync_scope: Dict[str, Any] | None = None,
+    module_catalog: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     source_key = str(source_id or "").strip()
     if not source_key:
         raise ValueError("API source_id 不能为空")
     doc = _parse_openapi_content(document)
-    resolved_hash = str(document_hash or _document_hash(doc)).strip()
+    resolved_hash = (
+        _document_hash({"document": doc, "scope_fingerprint": str(scope_fingerprint or "")})
+        if scope_fingerprint
+        else str(document_hash or _document_hash(doc)).strip()
+    )
     asset_id = _asset_id_for_source(source_key)
     asset = get_api_asset(asset_id)
     active_revision = get_active_api_revision(asset_id) if asset else {}
@@ -456,6 +467,9 @@ def stage_api_revision(
         "source_type": str(source_type or "").strip() or "openapi_upload",
         "source_revision": str(source_revision or "").strip(),
         "document_hash": resolved_hash,
+        "scope_fingerprint": str(scope_fingerprint or ""),
+        "sync_scope": dict(sync_scope) if isinstance(sync_scope, dict) else {},
+        "module_catalog": [dict(item) for item in (module_catalog or []) if isinstance(item, dict)],
         "name": str(source_name or title).strip() or title,
         "title": title,
         "version": str(info.get("version") or "").strip(),
