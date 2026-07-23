@@ -1542,7 +1542,7 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
 
         def changing_config():
             config_reads.append(len(config_reads) + 1)
-            return dict(baseline if len(config_reads) == 1 else drifted)
+            return dict(drifted)
 
         def unexpected_request(method, path, payload=None, timeout=30, *, config=None):
             network_calls.append((method, path, config))
@@ -1560,6 +1560,75 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
             config_reads,
             network_calls,
         )
+
+    def _run_source_phase_during_config_save(
+        self,
+        operation,
+        remote_request,
+        updated_config,
+    ):
+        remote_entered = threading.Event()
+        release_remote = threading.Event()
+        save_started = threading.Event()
+        save_finished = threading.Event()
+        captured_configs = []
+        operation_result = {}
+        operation_errors = []
+        save_errors = []
+        old_request = metersphere_service._request_json
+
+        def blocking_request(method, path, payload=None, timeout=30, *, config=None):
+            captured_configs.append(copy.deepcopy(config or {}))
+            remote_entered.set()
+            if not release_remote.wait(2):
+                return {"ok": False, "error": "test remote release timed out"}
+            return remote_request(method, path, payload, timeout)
+
+        def run_operation():
+            try:
+                operation_result.update(operation())
+            except Exception as exc:
+                operation_errors.append(exc)
+
+        def save_config():
+            save_started.set()
+            try:
+                metersphere_service.save_metersphere_config(updated_config)
+            except Exception as exc:
+                save_errors.append(exc)
+            finally:
+                save_finished.set()
+
+        metersphere_service._request_json = blocking_request
+        operation_thread = threading.Thread(target=run_operation)
+        save_thread = threading.Thread(target=save_config)
+        try:
+            operation_thread.start()
+            entered = remote_entered.wait(2)
+            if entered:
+                save_thread.start()
+                save_started.wait(1)
+                saved_while_remote_blocked = save_finished.wait(0.1)
+            else:
+                saved_while_remote_blocked = False
+        finally:
+            release_remote.set()
+            operation_thread.join(2)
+            if save_thread.ident is not None:
+                save_thread.join(2)
+            metersphere_service._request_json = old_request
+
+        return {
+            "entered": entered,
+            "saved_while_remote_blocked": saved_while_remote_blocked,
+            "save_finished": save_finished.is_set(),
+            "operation_alive": operation_thread.is_alive(),
+            "save_alive": save_thread.is_alive(),
+            "operation_result": operation_result,
+            "operation_errors": operation_errors,
+            "save_errors": save_errors,
+            "captured_configs": captured_configs,
+        }
 
     def test_service_auto_selects_v365_for_context_push_run_and_report(self):
         context = metersphere_service.metersphere_execution_context(force=True)
@@ -1621,25 +1690,213 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.assertNotIn("1234567890abcdef", serialized)
         self.assertNotIn("abcdef1234567890", serialized)
 
-    def test_worker_rejects_base_url_race_before_remote_read(self):
+    def test_worker_rejects_preexisting_base_url_drift_before_remote_read(self):
         failed, config_reads, network_calls = self._run_worker_during_connection_change(
             base_url="http://other-metersphere.example.test",
         )
 
-        self.assertGreaterEqual(len(config_reads), 2)
+        self.assertEqual(len(config_reads), 1)
         self.assertEqual(network_calls, [])
         self.assertEqual(failed["status"], "failed")
         self.assertIn("连接配置已变更", failed["error"])
 
-    def test_worker_rejects_access_key_rotation_race_before_remote_read(self):
+    def test_worker_rejects_preexisting_access_key_drift_before_remote_read(self):
         failed, config_reads, network_calls = self._run_worker_during_connection_change(
             access_key="fedcba0987654321",
         )
 
-        self.assertGreaterEqual(len(config_reads), 2)
+        self.assertEqual(len(config_reads), 1)
         self.assertEqual(network_calls, [])
         self.assertEqual(failed["status"], "failed")
         self.assertIn("连接配置已变更", failed["error"])
+
+    def test_worker_makes_no_requests_after_reviewer_fifth_read_drift(self):
+        execution, _binding = self._start_source_execution()
+        api_test_plan_service.list_api_test_plans = lambda limit=50: [{
+            "plan_id": self.plan["plan_id"],
+            "name": self.plan["name"],
+            "status": "confirmed",
+            "source_id": self.plan["source_id"],
+            "execution_readiness": {"can_execute": True, "executable_case_count": 1},
+        }]
+        baseline = metersphere_service._load_raw_config()
+        drifted = {
+            **baseline,
+            "base_url": "http://rotated-metersphere.example.test",
+            "access_key": "fedcba0987654321",
+            "secret_key": "0123456789abcdef",
+        }
+        config_reads = []
+        post_drift_requests = []
+        drift_active = threading.Event()
+        old_load_config = metersphere_service._load_raw_config
+        old_request = metersphere_service._request_json
+
+        def changing_config():
+            config_reads.append(len(config_reads) + 1)
+            if len(config_reads) >= 5:
+                drift_active.set()
+                return dict(drifted)
+            return dict(baseline)
+
+        def tracked_request(method, path, payload=None, timeout=30, *, config=None):
+            if drift_active.is_set():
+                post_drift_requests.append((method, path, copy.deepcopy(config or {})))
+            return self.remote.request(method, path, payload, timeout)
+
+        metersphere_service._load_raw_config = changing_config
+        metersphere_service._request_json = tracked_request
+        try:
+            metersphere_service._run_metersphere_execution_guarded(
+                execution["execution_id"],
+            )
+            while len(config_reads) < 5:
+                changing_config()
+        finally:
+            metersphere_service._load_raw_config = old_load_config
+            metersphere_service._request_json = old_request
+
+        record = metersphere_service._load_execution(execution["execution_id"])
+        self.assertTrue(drift_active.is_set())
+        self.assertEqual(post_drift_requests, [])
+        self.assertTrue(
+            record.get("run_id") or "连接配置已变更" in str(record.get("error") or ""),
+        )
+        serialized = json.dumps(record, ensure_ascii=False)
+        for secret in (
+            baseline["access_key"],
+            baseline["secret_key"],
+            drifted["access_key"],
+            drifted["secret_key"],
+        ):
+            self.assertNotIn(secret, serialized)
+
+    def test_source_v365_push_serializes_connection_save(self):
+        execution, _binding = self._start_source_execution()
+        baseline = metersphere_service._load_raw_config()
+        updated = {
+            **baseline,
+            "base_url": "http://rotated-metersphere.example.test",
+            "access_key": "fedcba0987654321",
+            "secret_key": "0123456789abcdef",
+        }
+
+        observed = self._run_source_phase_during_config_save(
+            lambda: metersphere_service.push_plan_to_metersphere(
+                self.plan["plan_id"],
+            ),
+            self.remote.request,
+            updated,
+        )
+
+        self.assertTrue(observed["entered"])
+        self.assertFalse(observed["saved_while_remote_blocked"])
+        self.assertTrue(observed["save_finished"])
+        self.assertFalse(observed["operation_alive"])
+        self.assertFalse(observed["save_alive"])
+        self.assertEqual(observed["operation_errors"], [])
+        self.assertEqual(observed["save_errors"], [])
+        self.assertTrue(observed["operation_result"].get("ok"))
+        self.assertTrue(observed["captured_configs"])
+        self.assertTrue(all(
+            cfg.get("base_url") == baseline["base_url"]
+            and cfg.get("access_key") == baseline["access_key"]
+            and cfg.get("secret_key") == baseline["secret_key"]
+            and cfg.get("project_id") == execution["project_id"]
+            and cfg.get("environment_id") == execution["environment_id"]
+            for cfg in observed["captured_configs"]
+        ))
+        serialized = json.dumps({
+            "execution": metersphere_service._load_execution(execution["execution_id"]),
+            "result": observed["operation_result"],
+        }, ensure_ascii=False)
+        for secret in (
+            baseline["access_key"],
+            baseline["secret_key"],
+            updated["access_key"],
+            updated["secret_key"],
+        ):
+            self.assertNotIn(secret, serialized)
+
+    def test_source_legacy_run_serializes_connection_save(self):
+        baseline = self._token_connection()
+        metersphere_service.save_metersphere_config(baseline)
+        execution, _binding = self._start_source_execution()
+        updated = {
+            **baseline,
+            "base_url": "http://rotated-metersphere.example.test",
+            "token": "connection-token-b",
+        }
+
+        def legacy_run(method, path, payload=None, timeout=30):
+            return {"ok": True, "data": {"id": "legacy-run-locked"}}
+
+        observed = self._run_source_phase_during_config_save(
+            lambda: metersphere_service.create_metersphere_run(
+                self.plan["plan_id"],
+            ),
+            legacy_run,
+            updated,
+        )
+
+        self.assertTrue(observed["entered"])
+        self.assertFalse(observed["saved_while_remote_blocked"])
+        self.assertTrue(observed["save_finished"])
+        self.assertEqual(observed["operation_errors"], [])
+        self.assertEqual(observed["save_errors"], [])
+        self.assertEqual(observed["operation_result"].get("run_id"), "legacy-run-locked")
+        self.assertTrue(all(
+            cfg.get("base_url") == baseline["base_url"]
+            and cfg.get("token") == baseline["token"]
+            and cfg.get("project_id") == execution["project_id"]
+            and cfg.get("environment_id") == execution["environment_id"]
+            for cfg in observed["captured_configs"]
+        ))
+        serialized = json.dumps({
+            "execution": metersphere_service._load_execution(execution["execution_id"]),
+            "result": observed["operation_result"],
+        }, ensure_ascii=False)
+        self.assertNotIn(baseline["token"], serialized)
+        self.assertNotIn(updated["token"], serialized)
+
+    def test_source_report_serializes_connection_save(self):
+        baseline = self._token_connection()
+        metersphere_service.save_metersphere_config(baseline)
+        execution, _binding = self._start_source_execution()
+        updated = {
+            **baseline,
+            "base_url": "http://rotated-metersphere.example.test",
+            "token": "connection-token-b",
+        }
+
+        def legacy_report(method, path, payload=None, timeout=30):
+            return {
+                "ok": True,
+                "data": {"results": [{"id": "case-1", "status": "passed"}]},
+            }
+
+        observed = self._run_source_phase_during_config_save(
+            lambda: metersphere_service.pull_metersphere_report(
+                execution["run_id"],
+                execution_id=execution["execution_id"],
+            ),
+            legacy_report,
+            updated,
+        )
+
+        self.assertTrue(observed["entered"])
+        self.assertFalse(observed["saved_while_remote_blocked"])
+        self.assertTrue(observed["save_finished"])
+        self.assertEqual(observed["operation_errors"], [])
+        self.assertEqual(observed["save_errors"], [])
+        self.assertTrue(observed["operation_result"].get("ok"))
+        self.assertTrue(all(
+            cfg.get("base_url") == baseline["base_url"]
+            and cfg.get("token") == baseline["token"]
+            and cfg.get("project_id") == execution["project_id"]
+            and cfg.get("environment_id") == execution["environment_id"]
+            for cfg in observed["captured_configs"]
+        ))
 
     def test_manual_report_pull_uses_execution_snapshot_after_global_selection_changes(self):
         captured = []
