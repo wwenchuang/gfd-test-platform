@@ -561,7 +561,16 @@ def _plan_auth_binding(plan: Dict[str, Any]) -> Dict[str, Any]:
         return {}
     return {
         key: binding.get(key)
-        for key in (*required, "configured", "configured_at", "updated_at", "binding_fingerprint")
+        for key in (
+            *required,
+            "project_id",
+            "configured",
+            "configured_at",
+            "updated_at",
+            "binding_fingerprint",
+            "profile_fingerprint",
+            "scope",
+        )
     }
 
 

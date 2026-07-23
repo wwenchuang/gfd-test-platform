@@ -755,8 +755,10 @@ def _source_operation_config(
     return cfg, binding
 
 
-def _api_auth_identity(source_id: str, environment_id: str) -> tuple[str, str]:
-    digest = hashlib.sha256(f"{source_id}:{environment_id}".encode("utf-8")).hexdigest()
+def _api_auth_identity(project_id: str, environment_id: str) -> tuple[str, str]:
+    digest = hashlib.sha256(
+        f"metersphere:{project_id}:{environment_id}".encode("utf-8")
+    ).hexdigest()
     return f"api_auth_{digest[:16]}", f"MTP_API_AUTH_{digest[:12].upper()}"
 
 
@@ -786,7 +788,10 @@ def save_api_auth_binding(
     environment_id = str(binding.get("environment_id") or "").strip()
     if not environment_id:
         raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
-    auth_ref, variable_name = _api_auth_identity(selected_source_id, environment_id)
+    project_id = str(binding.get("project_id") or "").strip()
+    if not project_id:
+        raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+    auth_ref, variable_name = _api_auth_identity(project_id, environment_id)
     adapter, _probe, supported = _v365_adapter_probe(cfg)
     if not supported:
         raise ValueError("MeterSphere v3.6.5 实时校验不可用")

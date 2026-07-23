@@ -258,6 +258,49 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         self.assertNotIn("access_key", first)
         self.assertNotEqual(first["config_fingerprint"], second["config_fingerprint"])
 
+    def test_sources_in_same_environment_reuse_one_auth_profile(self):
+        self._create_sources(2)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_shared",
+        )
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_b", "ms_project_a", "ms_env_shared",
+        )
+
+        first = api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+            variable_name="MTP_API_AUTH_SHARED",
+        )
+        second = api_workspace_service.get_api_auth_binding("api_source_b")
+
+        self.assertEqual(first["auth_ref"], second["auth_ref"])
+        self.assertEqual("environment", second["scope"])
+        self.assertTrue(second["reused"])
+        self.assertEqual(2, second["usage_count"])
+        self.assertNotIn("source_id", second["auth_ref"])
+
+    def test_auth_profiles_remain_isolated_between_environments(self):
+        self._create_sources(2)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_b", "ms_project_a", "ms_env_b",
+        )
+        first = api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+        )
+
+        self.assertEqual({}, api_workspace_service.get_api_auth_binding("api_source_b"))
+        self.assertEqual(
+            first["auth_ref"],
+            api_workspace_service.get_api_auth_binding("api_source_a")["auth_ref"],
+        )
+
     def test_newer_client_binding_intent_wins_regardless_of_completion_order(self):
         self._create_sources(1)
         initial = api_workspace_service.save_api_workspace_binding(
@@ -468,6 +511,52 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
             if path.is_file()
         )
         self.assertNotIn("runtime-secret", local_text)
+
+    def test_auth_service_uses_one_remote_variable_for_shared_environment(self):
+        self._create_sources(2)
+        for source_id in ("api_source_a", "api_source_b"):
+            api_workspace_service.save_api_workspace_binding(
+                source_id, "ms_project_a", "ms_env_shared",
+            )
+
+        class Adapter:
+            def __init__(self):
+                self.calls = []
+
+            def upsert_environment_variable(self, environment_id, key, value, description):
+                self.calls.append((environment_id, key, value, description))
+                return {
+                    "ok": True,
+                    "configured": True,
+                    "environment_id": environment_id,
+                    "variable_name": key,
+                }
+
+        adapter = Adapter()
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = (
+            lambda config: (adapter, {"version": "v3.6.5-lts"}, True)
+        )
+        try:
+            first = metersphere_service.save_api_auth_binding(
+                "api_source_a", "bearer", "Authorization", "first-secret",
+            )
+            second = metersphere_service.save_api_auth_binding(
+                "api_source_b", "bearer", "Authorization", "second-secret",
+            )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertEqual(first["auth_ref"], second["auth_ref"])
+        self.assertEqual(adapter.calls[0][1], adapter.calls[1][1])
+        self.assertEqual("environment", second["scope"])
+        local_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in Path(self.temp_dir).rglob("*")
+            if path.is_file()
+        )
+        self.assertNotIn("first-secret", local_text)
+        self.assertNotIn("second-secret", local_text)
 
     def test_workspace_binding_public_read_filters_unexpected_auth_secret_field(self):
         self._create_sources(1)
