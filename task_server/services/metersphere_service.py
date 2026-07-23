@@ -712,20 +712,9 @@ def _api_auth_identity(source_id: str, environment_id: str) -> tuple[str, str]:
 
 
 def _api_auth_header(auth_type: str, header_name: str) -> tuple[str, str]:
-    normalized_type = str(auth_type or "").strip().lower()
-    normalized_header = str(header_name or "").strip()
-    if normalized_type not in {"bearer", "api_key"}:
-        raise ValueError("认证类型仅支持 bearer 或 api_key")
-    if normalized_type == "bearer":
-        return normalized_type, "Authorization"
-    if (
-        not normalized_header
-        or "\r" in normalized_header
-        or "\n" in normalized_header
-        or any(ord(char) < 33 or ord(char) > 126 for char in normalized_header)
-    ):
-        raise ValueError("API Key header 必须是可打印 ASCII 名称")
-    return normalized_type, normalized_header
+    from task_server.services import api_workspace_service
+
+    return api_workspace_service.normalize_api_auth_header(auth_type, header_name)
 
 
 def save_api_auth_binding(

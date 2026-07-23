@@ -163,17 +163,36 @@ class ApiCaseContractChecks(unittest.TestCase):
                     "required": True,
                     "schema": {"type": "integer", "default": 2},
                 },
+                {
+                    "name": "authCount",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "integer", "example": 5},
+                },
+                {
+                    "name": "AuthorizationStatus",
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "string", "example": "approved"},
+                },
+                {
+                    "name": "AuthCount",
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "integer", "example": 7},
+                },
             ],
             request_schema={
                 "type": "object",
-                "required": ["authorizationStatus", "tokenCount"],
+                "required": ["authorizationStatus", "tokenCount", "authCount"],
                 "properties": {
                     "authorizationStatus": {"type": "string", "example": "approved"},
                     "tokenCount": {"type": "integer", "default": 4},
+                    "authCount": {"type": "integer", "example": 6},
                 },
             },
             required_fields=[
-                "tokenCount", "cookieCount", "authorizationStatus",
+                "tokenCount", "cookieCount", "authCount", "authorizationStatus",
             ],
         )
 
@@ -181,8 +200,12 @@ class ApiCaseContractChecks(unittest.TestCase):
 
         self.assertEqual(contract["request"]["query"]["tokenCount"], 3)
         self.assertEqual(contract["request"]["query"]["cookieCount"], 2)
+        self.assertEqual(contract["request"]["query"]["authCount"], 5)
+        self.assertEqual(contract["request"]["headers"]["AuthorizationStatus"], "approved")
+        self.assertEqual(contract["request"]["headers"]["AuthCount"], 7)
         self.assertEqual(contract["request"]["body"]["authorizationStatus"], "approved")
         self.assertEqual(contract["request"]["body"]["tokenCount"], 4)
+        self.assertEqual(contract["request"]["body"]["authCount"], 6)
         self.assertEqual(contract["readiness"]["state"], "executable")
 
 
@@ -637,8 +660,17 @@ class ApiPlanContractChecks(unittest.TestCase):
             "required": True,
             "schema": {"type": "string", "example": "raw-ai-header-secret"},
         })
+        operation["parameters"].append({
+            "name": "Auth",
+            "in": "header",
+            "required": True,
+            "schema": {"type": "string", "example": "raw-auth-header-secret"},
+        })
         operation["requestBody"]["content"]["application/json"]["schema"]["properties"]["password"] = {
             "type": "string", "default": "raw-ai-body-secret",
+        }
+        operation["requestBody"]["content"]["application/json"]["schema"]["properties"]["auth"] = {
+            "type": "string", "default": "raw-auth-body-secret",
         }
         staged = self._activate(document)
         endpoint_id = staged["revision"]["endpoints"][0]["endpoint_id"]
@@ -708,6 +740,8 @@ class ApiPlanContractChecks(unittest.TestCase):
         for secret in (
             "raw-ai-header-secret",
             "raw-ai-body-secret",
+            "raw-auth-header-secret",
+            "raw-auth-body-secret",
         ):
             self.assertNotIn(secret, json.dumps(captured["payload"], ensure_ascii=False))
             self.assertNotIn(secret, serialized_outputs)
@@ -717,6 +751,71 @@ class ApiPlanContractChecks(unittest.TestCase):
             "case-output-secret",
         ):
             self.assertNotIn(secret, serialized_outputs)
+
+    def test_ai_exception_json_and_quoted_assignments_are_sanitized(self):
+        staged = self._activate(_openapi_document())
+        old_run_ai_skill = self.plan_service.run_ai_skill
+
+        def fake_run_ai_skill(_skill_name, _payload, **kwargs):
+            kwargs["runtime_trace"].update({
+                "providerId": "qwen_plus",
+                "model": "qwen3.8-plus",
+                "error": '{"authorization":"TRACE-JSON-SECRET","message":"TRACE-CONTEXT"}',
+                "detail": "authorization = 'TRACE-EQUAL-SECRET'; TRACE-DETAIL",
+            })
+            raise RuntimeError(
+                'UPSTREAM-CONTEXT {"authorization":"ERROR-JSON-SECRET"} '
+                "auth = \"ERROR-EQUAL-SECRET\""
+            )
+
+        self.plan_service.run_ai_skill = fake_run_ai_skill
+        try:
+            plan = self.plan_service.generate_api_test_plan(
+                staged["revision_id"],
+                [],
+                use_ai=True,
+            )
+        finally:
+            self.plan_service.run_ai_skill = old_run_ai_skill
+
+        stored = Path(self.plan_service._plan_path(plan["plan_id"])).read_text(encoding="utf-8")
+        index = Path(self.plan_service._index_path()).read_text(encoding="utf-8")
+        returned = self.plan_service.get_api_test_plan(plan["plan_id"])
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.payload = {}
+
+            def _authorized(self):
+                return True
+
+            def _json(self, payload, _status=200):
+                self.payload = payload
+
+        handler = Handler()
+        router._get_api_testing_plan_detail(
+            handler,
+            {},
+            re.match(r"^/api/api-testing/plans/([^/]+)$", f"/api/api-testing/plans/{plan['plan_id']}"),
+        )
+        serialized = "\n".join((
+            json.dumps(plan, ensure_ascii=False),
+            stored,
+            index,
+            json.dumps(returned, ensure_ascii=False),
+            json.dumps(handler.payload, ensure_ascii=False),
+        ))
+
+        for secret in (
+            "ERROR-JSON-SECRET",
+            "ERROR-EQUAL-SECRET",
+            "TRACE-JSON-SECRET",
+            "TRACE-EQUAL-SECRET",
+        ):
+            self.assertNotIn(secret, serialized)
+        for ordinary in ("UPSTREAM-CONTEXT", "TRACE-CONTEXT", "TRACE-DETAIL"):
+            self.assertIn(ordinary, serialized)
 
     def test_confirmed_plan_stops_when_current_auth_binding_is_cleared(self):
         staged = self._activate(_openapi_document())

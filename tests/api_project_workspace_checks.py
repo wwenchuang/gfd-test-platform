@@ -262,6 +262,38 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         self.assertEqual(normalized_type, "api_key")
         self.assertEqual(normalized_header, "X-Auth!#$%&'*+.^_`|~-09")
 
+    def test_service_rejects_invalid_api_key_header_before_remote_probe(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+        calls = []
+
+        class Adapter:
+            def upsert_environment_variable(self, *_args, **_kwargs):
+                calls.append("upsert")
+                return {"ok": True, "configured": True}
+
+        old_probe = metersphere_service._v365_adapter_probe
+
+        def fake_probe(_config):
+            calls.append("probe")
+            return Adapter(), {"version": "v3.6.5-lts"}, True
+
+        metersphere_service._v365_adapter_probe = fake_probe
+        try:
+            with self.assertRaisesRegex(ValueError, "HTTP field-name"):
+                metersphere_service.save_api_auth_binding(
+                    "api_source_a",
+                    "api_key",
+                    "X-API-Key:Injected",
+                    "must-not-reach-remote",
+                )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertEqual(calls, [])
+
 
 class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
     def setUp(self):

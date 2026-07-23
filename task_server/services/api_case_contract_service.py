@@ -3,25 +3,15 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 
 CONTRACT_VERSION = "api_case_contract/v1"
 _MISSING = object()
-_SENSITIVE_HEADER_PARTS = (
-    "authorization",
-    "apikey",
-    "accesstoken",
-    "accesskey",
-    "token",
-    "secret",
-    "signature",
-    "credential",
-    "password",
-    "cookie",
-)
 _SENSITIVE_FIELD_EXACT = frozenset({
+    "auth",
     "authorization",
     "apikey",
     "accesskey",
@@ -44,10 +34,33 @@ _SENSITIVE_FIELD_SUFFIXES = (
     "password",
     "passwd",
 )
-_SENSITIVE_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(authorization|x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|"
-    r"refresh[-_]?token|token|secret|password|cookie)\b\s*[:=]\s*"
-    r"(?:bearer\s+)?[^\s,;}\]]+"
+_SENSITIVE_HEADER_SUFFIXES = (
+    "auth",
+    "authorization",
+    "cookie",
+    "signature",
+)
+_SENSITIVE_TEXT_KEY = (
+    r"(?:authorization|x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|"
+    r"refresh[-_]?token|token|secret|password|cookie|auth)"
+)
+_DOUBLE_QUOTED_ASSIGNMENT_RE = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_])"
+    rf"(?P<prefix>(?P<key_quote>[\"']?){_SENSITIVE_TEXT_KEY}"
+    rf"(?![A-Za-z0-9_])(?P=key_quote)\s*[:=]\s*)"
+    rf"\"(?:bearer\s+)?[^\"]*\""
+)
+_SINGLE_QUOTED_ASSIGNMENT_RE = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_])"
+    rf"(?P<prefix>(?P<key_quote>[\"']?){_SENSITIVE_TEXT_KEY}"
+    rf"(?![A-Za-z0-9_])(?P=key_quote)\s*[:=]\s*)"
+    rf"'(?:bearer\s+)?[^']*'"
+)
+_UNQUOTED_ASSIGNMENT_RE = re.compile(
+    rf"(?i)(?<![A-Za-z0-9_])"
+    rf"(?P<prefix>(?P<key_quote>[\"']?){_SENSITIVE_TEXT_KEY}"
+    rf"(?![A-Za-z0-9_])(?P=key_quote)\s*[:=]\s*)"
+    rf"(?:bearer\s+)?[^\s,;}}\]\"']+"
 )
 
 
@@ -69,7 +82,10 @@ def is_sensitive_field_name(name: Any) -> bool:
 
 def is_sensitive_header_name(name: Any) -> bool:
     normalized = _normalized_name(name)
-    return bool(normalized) and any(part in normalized for part in _SENSITIVE_HEADER_PARTS)
+    return bool(normalized) and (
+        is_sensitive_field_name(normalized)
+        or any(normalized.endswith(suffix) for suffix in _SENSITIVE_HEADER_SUFFIXES)
+    )
 
 
 def _explicit_value(schema: Any, owner: Any = None) -> Any:
@@ -322,7 +338,28 @@ def endpoint_requires_auth(endpoint: Dict[str, Any]) -> bool:
 
 
 def _sanitize_text(value: str) -> str:
-    return _SENSITIVE_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", value)
+    stripped = value.strip()
+    if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                sanitized = _sanitize_openapi_value(parsed)
+                return json.dumps(sanitized, ensure_ascii=False, separators=(",", ":"))
+    sanitized = _DOUBLE_QUOTED_ASSIGNMENT_RE.sub(
+        lambda match: f'{match.group("prefix")}"[REDACTED]"',
+        value,
+    )
+    sanitized = _SINGLE_QUOTED_ASSIGNMENT_RE.sub(
+        lambda match: f"{match.group('prefix')}'[REDACTED]'",
+        sanitized,
+    )
+    return _UNQUOTED_ASSIGNMENT_RE.sub(
+        lambda match: f'{match.group("prefix")}[REDACTED]',
+        sanitized,
+    )
 
 
 def _sanitize_openapi_value(

@@ -1084,6 +1084,20 @@ class MeterSphereV365CaseUpsertChecks(unittest.TestCase):
         self.assertEqual(remote.case_add_calls, 0)
         self.assertEqual(result["blocked"][0]["reason"], "sensitive_header_in_contract")
 
+    def test_literal_auth_header_is_rejected_before_remote_write(self):
+        remote = _CaseRemote()
+        plan = _case_plan()
+        plan["cases"][0]["request"]["headers"] = {
+            "Auth": "literal-auth-secret",
+        }
+
+        result = self._adapter(remote).upsert_plan_cases(plan)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(remote.case_add_calls, 0)
+        self.assertEqual(result["blocked"][0]["reason"], "sensitive_header_in_contract")
+
     def test_exact_auth_reference_is_the_only_sensitive_header_allowed(self):
         remote = _CaseRemote()
         adapter = self._adapter(remote)
