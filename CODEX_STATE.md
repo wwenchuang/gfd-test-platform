@@ -28,6 +28,37 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-23 API 项目工作区闭环：多项目、模块同步、AI 批次、来源级执行与报告隔离
+
+本轮严格按用户提供的 Production Evolution Plan、`docs/superpowers/specs/2026-07-22-production-evolution-roadmap.md`、`docs/superpowers/specs/2026-07-23-api-project-workspace-design.md` 和对应实施计划收敛 API 闭环。没有重复创建现有 `ExecutionFacade / DAG / shadow / replay / observability / AI Skill / Apifox revision`，也没有修改 UI Agent、Midscene YAML、Runner、Sonic 或 scorer。`source_id` 继续作为 API 项目工作区边界，后续新增同事或业务时创建独立 Apifox source，不把 `3D业务` 写死为全局唯一项目。
+
+本轮完成：
+
+- 接口资产支持多个 Apifox source 的选择、新增和独立配置；每个 source 保存自己的项目 ID、分支、环境、令牌状态和模块同步范围。Apifox 仍只做完整官方 OpenAPI 导出，模块筛选在服务端确定性执行；父模块只包含真实子目录，不误匹配前缀兄弟目录。不可变 revision 保存 scope fingerprint、模块目录和 endpoint 稳定身份，资产页按模块树和当前模块展示，不再平铺 971 条接口或默认全选。
+- 同步期间固定来源配置指纹；项目、地址、分支、环境、模块范围或令牌轮换时立即以 conflict 失败，保留上一活动 revision 和新来源配置。`source_id / asset_id / snapshot_id` 任意跨来源组合返回 404，不泄漏另一项目资产。
+- AI 用例计划改为异步 generation：单次 1-60 个接口，按最多 12 个接口顺序分批；保存真实 provider/model/trace、批次状态、部分成功和失败批次重试。required-AI 失败不会伪装成本地成功；成功批次不会在重试或服务重启后重复生成。计划强绑定 source、immutable revision、模块范围、MeterSphere binding 和 auth reference；旧计划只有在 revision 能唯一证明来源时才进入来源视图，不猜测、不改写历史文件。
+- MeterSphere 连接与 Access Key 保持全局，项目和环境改为每个 source 独立绑定；项目下拉和环境列表从精确 `v3.6.5-lts` 接口实时读取。业务鉴权首版支持 Bearer 和 API Key：明文只直接写入选定 MeterSphere 环境变量，本地 binding、计划、日志、报告和浏览器响应只保存 `auth_ref`、变量名和指纹。
+- 绑定保存增加服务端 CAS、每页面 client intent 顺序和独立 binding version。快速切换业务/环境时，无论旧请求何时返回，最后一次选择都胜出；其他会话的过期写入返回 409。前端所有 source、项目、环境、计划、执行和报告异步响应在更新 UI 前都核对请求代次与当前工作区，技术日志的展开和滚动状态继续保留。
+- execution 在 worker 启动前固化 source、binding、连接、项目、环境和 auth 指纹；执行前及轮询/报告阶段持续 fail closed 校验。服务重启后，安全的 queued generation/execution 会恢复；已有真实 `run_id` 的执行只恢复状态轮询；push/trigger 等远端副作用不确定且无法证明 run ID 的任务以 `restart_interrupted` 失败，绝不盲目重复触发。
+- API report 持久化 source、execution、binding、project、environment 和 plan 归属，列表与详情按 source 隔离；旧报告仅在计划/revision 能唯一推导来源时兼容。报告页请求显式携带当前 `source_id`，来源切换后的迟到响应不会覆盖当前页面。
+
+本轮最终验证：
+
+```bash
+python3 tests/api_project_workspace_checks.py -v  # 32/32
+python3 tests/api_asset_sync_checks.py -v         # 34/34
+python3 tests/api_case_contract_checks.py         # 43/43
+python3 tests/api_runtime_recovery_checks.py -v   # 11/11
+python3 tests/metersphere_v365_adapter_checks.py  # 54/54
+npm test                                          # exit 0
+git diff --check
+```
+
+- `npm test` 包含 undefined-name、后端静态 `61`、前端静态 `72`、AI Gateway `46`、动态模型目录/回退、Skill contract `4` 个 fixture，以及桌面/390px 移动端 Playwright；全部通过。
+- 受保护的两份生肖 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、Windows Runner 本地脚本和 `server-tasks/AI_Agent_草稿/` 均未修改；仓库生产源码未包含用户提供的 Apifox/MeterSphere 明文凭据。
+- 尚未伪报完成：当前代码提交尚未由用户 push/部署，因此新的多 source/module/CAS/recovery/report 合同还没有在 QA 做首次真实验收。部署后需用真实 Apifox 项目选择模块同步，保存 source 对应 MeterSphere project/environment/auth，生成小批计划并执行到真实主报告终态；MeterSphere 资源池仍可能复现上一节记录的主报告终态阻断。
+- Phase D 的统一 UI Agent/API canonical execution/report 迁移、Phase E 的 Outbox/通知补偿/RBAC/审计、Phase F 的统一资产索引/质量看板/流程晋级仍未启动。千问仍按在线 catalog、Midscene 兼容和固定 OPPO shadow 证据升级，不在本轮盲切型号字符串。Codex 不 push，由用户手动 push、部署。
+
 ### 2026-07-23 全局生产路线 Phase C：MeterSphere 3.6.5 真实 adapter 已实现，QA 主报告终态仍阻断
 
 本轮再次逐项对照用户提供的 Production Evolution Plan 与实际仓库。已有 `ExecutionFacade / DAG / parallel DAG / shadow / replay / observability / Feishu / AI Skill / Apifox revision` 均保留，不创建重复 executor、failure classifier 或资产存储。全局状态以 `docs/superpowers/specs/2026-07-22-production-evolution-roadmap.md` 为事实源：Phase A/B 已完成；Phase C adapter 代码已实现，但真实 QA 首次执行尚未取得 MeterSphere 主报告终态；Phase D/E/F 不得提前启动。千问不直接替换为型号字符串，仍需在线模型目录、Midscene 兼容和固定 OPPO shadow 证据。
