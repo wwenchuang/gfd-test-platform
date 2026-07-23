@@ -291,7 +291,6 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
         api_source_service.update_api_source_discovery_state(
             str(source.get("source_id") or ""), catalog, scope_fingerprint
         )
-        api_asset_service.activate_api_revision(asset_id, revision_id)
         summary = dict(diff.get("summary") or {})
         summary["affected_plans"] = int(impact.get("affected_plans") or 0)
         finished_at = _now()
@@ -311,6 +310,7 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
             last_sync_status="succeeded",
             last_error="",
         )
+        api_asset_service.activate_api_revision(asset_id, revision_id)
         return result
     except Exception as exc:
         error = _redacted_error(exc, source)

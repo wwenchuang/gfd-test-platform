@@ -691,6 +691,47 @@ class ApiSyncServiceTests(unittest.TestCase):
         asset = self.asset_service.get_api_asset(first["asset_id"])
         self.assertEqual(active_revision_id, asset["active_revision_id"])
 
+    def test_success_sync_record_failure_keeps_the_previous_active_revision(self):
+        first = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="string")]))
+        active_revision_id = first["revision_id"]
+        original_update_sync = self.sync_service._update_sync
+
+        def fail_success_sync(sync_id, **changes):
+            if changes.get("status") == "succeeded":
+                raise OSError("sync record storage unavailable")
+            return original_update_sync(sync_id, **changes)
+
+        self.sync_service._update_sync = fail_success_sync
+        try:
+            failed = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="array")]))
+        finally:
+            self.sync_service._update_sync = original_update_sync
+
+        self.assertEqual("failed", failed["status"])
+        self.assertEqual("failed", self.sync_service.get_api_sync(failed["sync_id"])["status"])
+        self.assertEqual(active_revision_id, self.asset_service.get_api_asset(first["asset_id"])["active_revision_id"])
+
+    def test_source_success_state_failure_keeps_the_previous_active_revision(self):
+        first = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="string")]))
+        active_revision_id = first["revision_id"]
+        original_update_source = self.source_service.update_api_source_sync_state
+
+        def fail_source_success(source_id, **changes):
+            if changes.get("last_sync_status") == "succeeded":
+                raise OSError("source state storage unavailable")
+            return original_update_source(source_id, **changes)
+
+        self.source_service.update_api_source_sync_state = fail_source_success
+        try:
+            failed = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="array")]))
+        finally:
+            self.source_service.update_api_source_sync_state = original_update_source
+
+        self.assertEqual("failed", failed["status"])
+        self.assertEqual("failed", self.sync_service.get_api_sync(failed["sync_id"])["status"])
+        self.assertEqual("failed", self.source_service.get_api_source(self.source["source_id"], masked=True)["last_sync_status"])
+        self.assertEqual(active_revision_id, self.asset_service.get_api_asset(first["asset_id"])["active_revision_id"])
+
     def test_selected_scope_stages_only_the_selected_module(self):
         document = _openapi_document(path="/selected", operation_id="selected")
         document["paths"]["/selected"]["get"]["x-apifox-folder"] = "A/B"
