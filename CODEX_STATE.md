@@ -28,6 +28,39 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-23 全局生产路线 Phase C：MeterSphere 3.6.5 真实 adapter 已实现，QA 主报告终态仍阻断
+
+本轮再次逐项对照用户提供的 Production Evolution Plan 与实际仓库。已有 `ExecutionFacade / DAG / parallel DAG / shadow / replay / observability / Feishu / AI Skill / Apifox revision` 均保留，不创建重复 executor、failure classifier 或资产存储。全局状态以 `docs/superpowers/specs/2026-07-22-production-evolution-roadmap.md` 为事实源：Phase A/B 已完成；Phase C adapter 代码已实现，但真实 QA 首次执行尚未取得 MeterSphere 主报告终态；Phase D/E/F 不得提前启动。千问不直接替换为型号字符串，仍需在线模型目录、Midscene 兼容和固定 OPPO shadow 证据。
+
+本轮 Phase C 实现：
+
+- 新增精确 `MeterSphereV365Adapter`，只接受 `v3.6.5-lts` 与已验证构建 `v3.6.5-lts-f043cdd2`。Access Key 认证严格使用 AES-CBC/PKCS7 的 `accessKey|nonce|timestamp` 合同，header 只有 `accessKey / signature`；依赖或密钥长度错误在发起网络请求前失败。
+- capability 来自真实版本、项目、环境、definition、case、scenario module 和 report 接口，不再由手填 path 是否存在推断。3.6.5 一旦被识别，push/run/status/report 均绕过 legacy 猜测路径；非匹配版本仍保留原兼容逻辑。
+- 结构化 executable API case 通过 method + 规范化 path 唯一匹配 MeterSphere definition；映射 path/query/header/body、状态断言与 OpenAPI required-field 结构断言。未知变量、依赖、鉴权抑制或断言类型全部 fail closed。
+- `Authorization / Cookie / Token / API Key / Access Key / Secret / Signature / Password / Credential` 等敏感鉴权 Header 在远端写入前阻断；远端响应、事件和报告继续递归脱敏。binding 只保存稳定 provider identity、remote IDs 和 hash，不保存请求值、环境变量或凭据。
+- case/scenario 使用稳定 ownership marker 和本地 binding，支持 create/update/no-op、binding 丢失精确找回和多候选阻断。场景只引用 binding 中的远端 case，触发前再次核对远端步骤集合。
+- 按 MeterSphere 官方前端合同使用 `POST /api/scenario/run`，请求体包含完整场景、客户端 UUID `reportId` 和稳定步骤 `uniqueId`；仅接受响应中的 `taskItem.reportId`，不伪造 run ID。报告只归一化 binding 中的稳定请求步骤或明确 API 请求类型，分组/控制容器不计为用例。
+- 远端执行失败后仍同步真实报告。若所有请求步骤已经 `SUCCESS / ERROR / FAKE_ERROR`，但主报告超过 5 分钟仍未写入 `COMPLETED / STOPPED`，以 `provider_terminal_state_missing` 失败结束并同步步骤证据，绝不根据子步骤成功推断整次成功。
+
+真实 QA 证据：
+
+- 精确版本、Access Key、动态项目与环境读取均通过；受控 executable case/scenario 已真实写入。连续两次同步均为 `created=0 / updated=0 / unchanged=1`，没有重复远端对象。
+- 官方 POST 触发返回真实 report ID。稳定步骤 ID 正确回映本地 `API-LIVE-001`，子步骤真实结果为 HTTP `200 / 47ms / 289B`。
+- QA 默认资源池超过 6 分钟后，主报告仍为 `execStatus=PENDING / status=- / endTime=null`，但唯一请求步骤已经 `SUCCESS`。新 adapter 对该报告返回 `failed / provider_terminal_state_missing`，本地四阶段会保留 `metersphere_run=failed / sync_report=succeeded / overall=failed`。
+- 因此 Phase C 不能写成“首次真实执行成功”。需要 MeterSphere 资源池或执行完成回调恢复主报告终态后，再用同一受控计划重跑退出验收；在此之前不进入 Phase D 的生产迁移。
+
+验证证据：
+
+```bash
+python3 tests/metersphere_v365_adapter_checks.py  # 26 tests
+npm test
+git diff --check
+```
+
+- 新增回归先复现并阻断 `X-API-Key` 写入远端、HTTP 错误 JSON body 泄漏密码字段，以及报告把 `GROUP` 容器误算为用例；修复后 MeterSphere 聚焦测试 `26/26`。
+- 完整 `npm test` 退出码为 0：undefined-name、后端 `61`、前端 `69`、AI Gateway `46`、API 合同 `23`、MeterSphere adapter `26`、动态模型目录/回退、Skill 合同 `4` 个 fixture，以及桌面/移动端 Playwright 全部通过。
+- 本轮不包含任何凭据；不修改受保护历史 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、本地 Windows Runner 脚本或草稿目录。Codex 不 push，由用户手动 push / 部署。
+
 ### 2026-07-22 全局生产演进盘点与 API 闭环 Phase B：可执行合同、版本门禁和真实就绪态
 
 基于用户最新附件与实际仓库逐项核对后，确认附件中的部分建议已由现有 `ExecutionFacade / DAG / parallel DAG / shadow / replay / observability / AI Skill / Apifox revision` 覆盖，不重复创建 executor、failure classifier 或资产 diff。全局依赖顺序已写入 `docs/superpowers/specs/2026-07-22-production-evolution-roadmap.md`：Phase A 资产基础已完成；本轮完成 Phase B；下一步依次是 MeterSphere 3.6.5 真实 adapter、canonical execution/report、Event Center/RBAC、统一资产 read model。UI Agent 主链只有在 shadow 证据通过后才迁移，不做一次性重构。

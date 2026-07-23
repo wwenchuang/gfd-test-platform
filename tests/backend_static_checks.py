@@ -13239,10 +13239,10 @@ def check_metersphere_config_masks_secrets():
     require(raw.get("access_key") == "access-key-value" and raw.get("secret_key") == "secret-key-value", "Raw MeterSphere AK/SK config must remain server-side")
     require(
         auth_headers.get("accessKey") == "access-key-value"
-        and auth_headers.get("timestamp")
         and auth_headers.get("signature")
+        and set(auth_headers) == {"accessKey", "signature"}
         and "Authorization" not in auth_headers,
-        "MeterSphere AK/SK auth must send accessKey/timestamp/signature headers instead of Bearer token",
+        "MeterSphere 3.6.5 AK/SK auth must send the exact accessKey/signature AES contract instead of HMAC or Bearer headers",
     )
     require(
         token_headers == {"Authorization": "Bearer secret-token"},

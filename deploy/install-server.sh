@@ -62,6 +62,26 @@ then
   fi
 fi
 
+if ! python3 - <<'PY' >/dev/null 2>&1
+import cryptography
+PY
+then
+  echo "未检测到 cryptography，正在安装（用于 MeterSphere 3.6.5 Access Key 签名）..."
+  cryptography_installed=0
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update
+    apt-get install -y python3-cryptography && cryptography_installed=1
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y python3-cryptography && cryptography_installed=1
+  fi
+  if [ "${cryptography_installed}" -eq 0 ] && python3 -m pip --version >/dev/null 2>&1; then
+    python3 -m pip install cryptography && cryptography_installed=1
+  fi
+  if [ "${cryptography_installed}" -eq 0 ]; then
+    echo "警告：无法自动安装 cryptography；服务仍可启动，但 MeterSphere Access Key 模式会保持不可执行。"
+  fi
+fi
+
 if ! getent group "${GROUP_NAME}" >/dev/null 2>&1; then
   groupadd --system "${GROUP_NAME}"
 fi
