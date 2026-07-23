@@ -1526,6 +1526,9 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         binding = api_workspace_service.save_api_workspace_binding(
             "api_source_pets", "project-a", "env-a",
             project_name="业务A", environment_name="测试环境",
+            connection_identity=metersphere_service._api_auth_connection_identity(
+                metersphere_service._load_raw_config()
+            ),
         )
         self.plan["source_id"] = "api_source_pets"
         old_spawn = metersphere_service._spawn_execution_worker

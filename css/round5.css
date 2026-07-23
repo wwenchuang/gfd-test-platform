@@ -595,6 +595,159 @@
   font-size: 11px;
   margin-top: 4px;
 }
+.api-workflow-stepper {
+  display: grid;
+  grid-template-columns: minmax(190px, .72fr) minmax(420px, 1.7fr) auto;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border-top: 2px solid var(--accent);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-workflow-context {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.api-workflow-context > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.api-workflow-context span,
+.api-workflow-context small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-workflow-context strong {
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.api-workflow-stepper > ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(72px, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.api-workflow-stepper > ol li {
+  position: relative;
+  min-width: 0;
+}
+.api-workflow-stepper > ol li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  top: 13px;
+  left: calc(50% + 15px);
+  right: calc(-50% + 15px);
+  height: 1px;
+  background: var(--border);
+}
+.api-workflow-stepper > ol button {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text3);
+  cursor: pointer;
+}
+.api-workflow-stepper > ol button span {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface2);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.api-workflow-stepper > ol button strong {
+  font-size: 10px;
+  white-space: nowrap;
+}
+.api-workflow-stepper > ol li.active button,
+.api-workflow-stepper > ol li.next button {
+  color: var(--text);
+}
+.api-workflow-stepper > ol li.active button span {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #031218;
+}
+.api-workflow-stepper > ol li.next button span {
+  border-color: var(--warn);
+}
+.api-workflow-stepper > ol li.done:not(.active) button {
+  color: var(--success);
+}
+.api-workflow-stepper > ol li.done:not(.active) button span {
+  border-color: var(--success);
+  color: var(--success);
+}
+.api-workflow-mobile-steps {
+  display: none;
+}
+.api-workflow-next {
+  white-space: nowrap;
+}
+.api-workflow-tech-detail {
+  grid-column: 1 / -1;
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-workflow-tech-detail > summary,
+.api-plan-tech-detail > summary {
+  width: fit-content;
+  color: var(--text3);
+  cursor: pointer;
+}
+.api-workflow-tech-detail > div,
+.api-plan-tech-detail > div {
+  margin-top: 7px;
+  overflow-wrap: anywhere;
+}
+.api-business-line-switcher {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-business-line-switcher > div {
+  display: grid;
+  gap: 3px;
+}
+.api-business-line-switcher span {
+  color: var(--accent);
+  font-size: 10px;
+}
+.api-business-line-switcher strong {
+  font-size: 12px;
+}
+.api-business-line-switcher select {
+  width: min(360px, 46%);
+  min-width: 220px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 7px 9px;
+}
 .api-endpoint-table td,
 .api-case-table td {
   vertical-align: top;
@@ -632,25 +785,84 @@
 }
 .api-plan-layout {
   display: grid;
-  grid-template-columns: minmax(340px, .72fr) minmax(0, 1.28fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   align-items: start;
   margin-top: 14px;
   min-width: 0;
 }
 .api-plan-selection-panel {
-  position: sticky;
-  top: 0;
+  position: static;
 }
-.api-plan-selection-panel .api-endpoint-scroll {
-  max-height: 680px;
+.api-plan-scope-summary {
+  display: grid;
+  gap: 14px;
   margin-top: 10px;
-  border-top: 1px solid var(--border);
+}
+.api-plan-scope-primary {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface2);
+}
+.api-plan-scope-primary span,
+.api-plan-scope-primary small,
+.api-plan-scope-modules > span,
+.api-plan-scope-modules > small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-plan-scope-primary strong {
+  font-size: 17px;
+}
+.api-plan-scope-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border);
+}
+.api-plan-scope-metrics > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+}
+.api-plan-scope-metrics > div + div {
+  border-left: 1px solid var(--border);
+}
+.api-plan-scope-metrics strong {
+  font-family: var(--mono);
+  font-size: 18px;
+}
+.api-plan-scope-metrics span {
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-plan-scope-modules {
+  display: grid;
+  gap: 7px;
+}
+.api-plan-scope-modules > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.api-plan-scope-modules > div strong {
+  max-width: 100%;
+  border-left: 2px solid var(--border2);
+  padding: 4px 7px;
+  background: var(--surface2);
+  color: var(--text2);
+  font-size: 10px;
+  overflow-wrap: anywhere;
 }
 .api-plan-review-column {
   display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, .75fr);
   gap: 14px;
   min-width: 0;
+}
+.api-plan-review-column > #api-plan-result {
+  grid-column: 1 / -1;
 }
 .api-plan-scope-facts,
 .api-plan-generation-scope {
@@ -788,6 +1000,52 @@
   color: var(--text3);
   font-size: 10px;
 }
+.api-generation-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--border);
+  list-style: none;
+}
+.api-generation-stages li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  background: var(--surface2);
+  color: var(--text3);
+}
+.api-generation-stages li span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+.api-generation-stages li strong {
+  min-width: 0;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.api-generation-stages li.done {
+  color: var(--success);
+}
+.api-generation-stages li.active {
+  color: var(--text);
+  box-shadow: inset 0 -2px var(--accent);
+}
+.api-generation-stages li.active span {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .api-generation-log-detail {
   margin-top: 10px;
   border-top: 1px solid var(--border);
@@ -883,6 +1141,30 @@
   color: var(--text3);
   font-size: 10px;
 }
+.api-plan-card-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 9px 7px;
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-plan-card-summary strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.api-plan-card-summary .warn strong {
+  color: var(--warn);
+}
+.api-plan-review-action {
+  margin-left: 7px;
+}
+.api-plan-card > .api-plan-tech-detail {
+  margin: 9px 7px 0;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+}
 .api-plan-fact-grid,
 .api-business-auth-facts {
   display: grid;
@@ -923,6 +1205,232 @@
 }
 .api-plan-detail-head + .api-plan-fact-grid {
   margin-bottom: 10px;
+}
+.api-plan-generation-method {
+  display: grid;
+  grid-template-columns: minmax(140px, .6fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface2);
+}
+.api-plan-generation-method > strong {
+  font-size: 11px;
+}
+.api-plan-generation-method ol {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  background: var(--border);
+  list-style: none;
+}
+.api-plan-generation-method li {
+  padding: 7px;
+  background: var(--surface);
+  color: var(--text3);
+  font-size: 9px;
+  text-align: center;
+}
+.api-plan-primary-action {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.api-plan-facts-detail {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.api-plan-endpoint-review {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.api-plan-review-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+  gap: 10px;
+  margin-top: 10px;
+}
+.api-plan-review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.api-plan-review-filters button {
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text3);
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.api-plan-review-filters button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.api-plan-review-filters button span {
+  margin-left: 4px;
+  color: inherit;
+  font-family: var(--mono);
+}
+.api-plan-review-toolbar > input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 6px 9px;
+}
+.api-plan-missing-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--warn);
+  background: rgba(255, 193, 7, .06);
+  font-size: 10px;
+}
+.api-plan-missing-summary button,
+.api-plan-missing-actions button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text3);
+  padding: 3px 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.api-plan-missing-summary button:hover,
+.api-plan-missing-summary button:focus-visible,
+.api-plan-missing-summary button.active,
+.api-plan-missing-actions button:hover,
+.api-plan-missing-actions button:focus-visible {
+  border-color: var(--warn);
+  color: var(--warn);
+  outline: none;
+}
+.api-case-group-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.api-case-group {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+}
+.api-case-group > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px 12px;
+  cursor: pointer;
+}
+.api-case-group[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+.api-case-group-route {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: center;
+  min-width: 0;
+}
+.api-case-group-route .api-method {
+  grid-row: 1 / 3;
+}
+.api-case-group-route strong,
+.api-case-group-route small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-case-group-route strong {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.api-case-group-route small {
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-case-group-counts {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.api-case-group-counts span {
+  color: var(--text3);
+}
+.api-case-group-counts strong {
+  color: var(--success);
+}
+.api-case-group-counts em {
+  color: var(--warn);
+  font-style: normal;
+}
+.api-case-group-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-case-group-cases {
+  display: grid;
+}
+.api-case-row {
+  display: grid;
+  grid-template-columns: minmax(150px, .8fr) minmax(200px, 1.2fr) minmax(180px, 1fr) minmax(110px, .6fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-case-row > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+.api-case-row span,
+.api-case-row small {
+  color: var(--text3);
+  font-size: 9px;
+}
+.api-case-row strong,
+.api-case-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-case-row strong {
+  font-size: 10px;
+  line-height: 1.45;
+}
+.api-case-row-state .status-pill {
+  width: fit-content;
+}
+.api-plan-review-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--text3);
+  font-size: 10px;
 }
 .api-testing-page .generation-record-actions .btn-sm:disabled {
   cursor: not-allowed;
@@ -1068,6 +1576,20 @@
   color: var(--text3);
   font-size: 11px;
   line-height: 1.5;
+}
+.api-auth-summary {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.api-auth-summary > p {
+  margin: 0;
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-auth-detail {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 .api-business-auth-panel.is-editing {
   border-left: 3px solid var(--accent);
@@ -1477,11 +1999,24 @@
   background: var(--surface);
 }
 @media (max-width: 1100px) {
+  .api-workflow-stepper {
+    grid-template-columns: minmax(170px, .6fr) minmax(360px, 1.4fr);
+  }
+  .api-workflow-next {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
   .api-two-column {
     grid-template-columns: 1fr;
   }
   .api-plan-layout {
     grid-template-columns: 1fr;
+  }
+  .api-plan-review-column {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-review-column > #api-plan-result {
+    grid-column: auto;
   }
   .api-plan-selection-panel {
     position: static;
@@ -1506,6 +2041,94 @@
 @media (max-width: 700px) {
   .api-testing-page {
     padding: 12px;
+  }
+  .api-workflow-stepper {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+  .api-workflow-stepper > .api-workflow-desktop-steps {
+    display: none;
+  }
+  .api-workflow-mobile-steps {
+    display: block;
+    min-width: 0;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .api-workflow-mobile-steps > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .api-workflow-mobile-steps > summary::-webkit-details-marker {
+    display: none;
+  }
+  .api-workflow-mobile-steps > summary span {
+    color: var(--text3);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+  .api-workflow-mobile-steps > summary strong {
+    color: var(--text);
+    font-size: 12px;
+  }
+  .api-workflow-mobile-steps > ol {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 6px;
+    border-top: 1px solid var(--border);
+    list-style: none;
+  }
+  .api-workflow-mobile-steps li button {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--text3);
+    padding: 6px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .api-workflow-mobile-steps li button span {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    font-family: var(--mono);
+    font-size: 9px;
+  }
+  .api-workflow-mobile-steps li button strong {
+    font-size: 11px;
+  }
+  .api-workflow-mobile-steps li.active button {
+    color: var(--accent);
+  }
+  .api-workflow-mobile-steps li.done:not(.active) button {
+    color: var(--success);
+  }
+  .api-workflow-next {
+    grid-column: auto;
+    width: 100%;
+    justify-content: center;
+  }
+  .api-business-line-switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .api-business-line-switcher select {
+    width: 100%;
+    min-width: 0;
   }
   .api-two-column {
     max-width: 100%;
@@ -1533,6 +2156,9 @@
   .api-plan-generation-progress {
     justify-items: start;
   }
+  .api-generation-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .api-plan-batch-row {
     grid-template-columns: 26px minmax(0, 1fr) 36px auto;
   }
@@ -1544,6 +2170,32 @@
   .api-plan-fact-grid,
   .api-business-auth-facts {
     grid-template-columns: 1fr;
+  }
+  .api-plan-generation-method {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-generation-method ol {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .api-plan-review-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .api-case-group > summary {
+    grid-template-columns: 1fr;
+  }
+  .api-case-group-counts {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .api-case-row {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-primary-action {
+    justify-content: stretch;
+  }
+  .api-plan-primary-action .btn-sm {
+    width: 100%;
+    justify-content: center;
   }
   .api-plan-card > header {
     grid-template-columns: 1fr;

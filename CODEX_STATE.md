@@ -28,6 +28,39 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-23 API 日常流程 V2：业务线、自动同步、环境公共鉴权与按接口审阅
+
+本轮按用户提供的生产演进文档、`docs/superpowers/specs/2026-07-23-api-daily-workflow-v2-design.md` 和对应实施计划收敛 API 日常工作流。产品取舍同时对照 Postman Workspace / Collection Run、Apifox 项目 / 环境变量 / 自动化测试及 MeterSphere 项目环境 / 接口测试的官方文档：用户默认只处理业务、范围、用例、执行和报告，source / revision / generation / trace / auth reference 继续保留为可展开技术证据。
+
+本轮完成：
+
+- 全部 API 页面统一显示 `选择业务 -> 同步接口 -> 生成用例 -> 审阅确认 -> 执行报告` 五步进度和唯一下一步操作。当前 Apifox 项目、业务线和接口更新时间是首屏业务上下文；内部 source/revision 默认折叠。
+- 接口资产从服务端模块事实派生业务线，先选业务线再选模块和接口。单次 AI 计划继续严格限制 `1-60` 个接口；超过上限要求缩小子模块或搜索结果，不任意截断。来源新建或项目、分支、环境、同步范围等有效配置变化后自动排队同步，普通显示名修改不触发远端请求；已有同步运行时只记录一条最新配置替代任务，旧同步结束或服务重启恢复后立即接续，来源读取返回可验证的自动同步周期、最近成功和下次检查。
+- AI 计划页不再默认平铺 971 个接口，也不再把 1590 条用例放进一张密集表。生成范围用业务线、接口数、模块数和请求方法摘要表达；AI 过程显示“校验范围、AI 分批设计、平台可执行性校验、草稿生成”四个业务阶段，真实批次、事件、generation/plan ID 和模型轨迹放入可停留的技术详情。
+- 计划详情按 endpoint 分组，每页最多 20 个接口组，支持搜索以及“全部 / 可执行 / 待补数据 / 本版变更”筛选。每个接口展开后显示用例名、正负类型、请求、断言、可执行状态和缺失数据；待补字段按请求体、查询参数、路径参数、环境鉴权和响应断言聚合并可点击筛选。搜索、页码、缺失类型和展开状态按 plan 隔离，用户手动收起后即使马上重绘也不会重新展开。草稿、过期计划和已确认计划分别只展示当前唯一主操作。
+- 业务鉴权从 source 级交互改成 MeterSphere `connection + project_id + environment_id` 环境公共鉴权。相同连接、项目和环境中的多个 Apifox source 复用一个远端变量和本地非秘密 profile；不同连接或环境严格隔离。保存和清除均使用 binding/profile 版本 CAS，旧页面请求在远端写入前返回 409。明文只写入 MeterSphere 环境变量，不落本地 binding、计划、报告、事件或浏览器响应。页面默认显示环境、鉴权类型、复用业务数，变量名和 auth reference 只在管理详情中展示；清除前明确提示影响的业务来源数量。
+- 执行页和报告页接入同一五步流程。执行轮询继续只使用服务端事实，切换上下文时即使 execution ID 恰好相同也会使旧请求失效；报告按来源和业务线读取。技术日志的展开与滚动位置在刷新后保持；没有伪事件或前端推断终态。
+- 前端缓存版本更新为 `20260723-api-daily-workflow-v2`。桌面使用完整五步流程，`390px` 移动端默认只显示当前步骤并可按需展开；Playwright 覆盖业务线、25 接口的 `12/12/1` AI 批次、技术详情停留、接口分组、公共鉴权版本保护和执行日志，所有页面无横向溢出。
+
+最终验证：
+
+```bash
+python3 tests/api_project_workspace_checks.py -v  # 44/44
+python3 tests/api_asset_sync_checks.py -v         # 37/37
+python3 tests/api_case_contract_checks.py          # 43/43
+python3 tests/api_runtime_recovery_checks.py -v   # 12/12
+python3 tests/metersphere_v365_adapter_checks.py   # 54/54
+python3 tests/frontend_static_checks.py            # 72 checks
+node tests/visual_smoke_check.js
+npm test
+git diff --check
+```
+
+- 完整 `npm test` 退出码为 0；包含后端静态 `61`、前端静态 `72`、AI Gateway `46`、API 合同 `43`、恢复 `12`、MeterSphere `54`、动态模型目录/回退、Skill contract `4` 个 fixture，以及完整桌面/移动端 Playwright。
+- 本轮没有修改 UI Agent、Midscene YAML 生成、Runner、Sonic 或 scorer；用户已有 Prompt、两份生肖 YAML、`sonic_service.py`、`yaml_executable_scorer.py`、Windows Runner 本地脚本和 `server-tasks/AI_Agent_草稿/` 未暂存、未回滚、未覆盖。
+- 下一生产验收仍需用户 push / 部署后，以真实 `3D 接口` 来源验证配置变化自动同步、选择一个小模块生成 AI 用例、确认可执行子集、使用环境公共鉴权推送 MeterSphere，并取得真实主报告终态。Codex 不 push。
+- 全局后续顺序不变：Phase D 统一 UI Agent/API canonical execution/report；Phase E Event Outbox、通知补偿、RBAC 和审计；Phase F 统一资产索引、质量看板及流程晋级。千问升级继续先读在线 catalog、验证 Midscene 兼容并在固定 OPPO 做 shadow 回归，不直接盲切型号字符串。
+
 ### 2026-07-23 API 项目工作区闭环：多项目、模块同步、AI 批次、来源级执行与报告隔离
 
 本轮严格按用户提供的 Production Evolution Plan、`docs/superpowers/specs/2026-07-22-production-evolution-roadmap.md`、`docs/superpowers/specs/2026-07-23-api-project-workspace-design.md` 和对应实施计划收敛 API 闭环。没有重复创建现有 `ExecutionFacade / DAG / shadow / replay / observability / AI Skill / Apifox revision`，也没有修改 UI Agent、Midscene YAML、Runner、Sonic 或 scorer。`source_id` 继续作为 API 项目工作区边界，后续新增同事或业务时创建独立 Apifox source，不把 `3D业务` 写死为全局唯一项目。

@@ -38,6 +38,7 @@ function serve() {
   let apiPlanGenerationRetried = false;
   let meterSelection = {project_id: 'project-interface', environment_id: 'env-qa'};
   const bindingRequestBodies = [];
+  const authRequestBodies = [];
   const reportSourceQueries = [];
   let businessAuth = {
     configured: true,
@@ -46,6 +47,9 @@ function serve() {
     variable_name: 'API_BEARER_TOKEN',
     environment_id: 'env-qa',
     environment_name: 'QA 环境',
+    scope: 'environment',
+    reused: true,
+    usage_count: 2,
     updated_at: '2026-07-22 09:38:00',
   };
   const apiAssetSync = () => ({
@@ -583,6 +587,7 @@ function serve() {
           planned_revision_id: 'api-revision-visual-000',
           active_revision_id: 'api-revision-visual-001',
           reason: '接口版本已变化，请重新生成计划',
+          affected_case_ids: ['API-001-P'],
         },
         execution_readiness: {...plan.execution_readiness, can_confirm: false, can_execute: false},
         binding_state: {state: 'mismatched', current_fingerprint: 'binding-visual-002', planned_fingerprint: 'binding-visual-001'},
@@ -626,6 +631,7 @@ function serve() {
             planned_revision_id: 'api-revision-visual-000',
             active_revision_id: 'api-revision-visual-001',
             reason: '接口版本已变化，请重新生成计划',
+            affected_case_ids: ['API-001-P'],
           },
           execution_readiness: {...plan.execution_readiness, can_confirm: false, can_execute: false},
           binding_state: {state: 'mismatched', current_fingerprint: 'binding-visual-002', planned_fingerprint: 'binding-visual-001'},
@@ -691,6 +697,9 @@ function serve() {
             variable_name: '',
             environment_id: requestedSelection.environment_id,
             environment_name: requestedSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+            scope: 'environment',
+            reused: false,
+            usage_count: 0,
             updated_at: '2026-07-22 09:44:00',
           };
         }
@@ -717,6 +726,7 @@ function serve() {
     }
     if (url.pathname === '/api/api-testing/sources/api-source-visual-001/auth-binding' && req.method === 'POST') {
       readJsonBody(req).then(body => {
+        authRequestBodies.push({...body});
         businessAuth = {
           configured: true,
           auth_type: body.auth_type,
@@ -724,6 +734,9 @@ function serve() {
           variable_name: body.auth_type === 'api_key' ? 'API_KEY' : 'API_BEARER_TOKEN',
           environment_id: meterSelection.environment_id,
           environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+          scope: 'environment',
+          reused: true,
+          usage_count: 2,
           updated_at: '2026-07-22 09:45:00',
         };
         json(res, {ok: true, binding: {...businessAuth}});
@@ -731,16 +744,19 @@ function serve() {
       return;
     }
     if (url.pathname === '/api/api-testing/sources/api-source-visual-001/auth-binding' && req.method === 'DELETE') {
-      businessAuth = {
-        configured: false,
-        auth_type: businessAuth.auth_type,
-        header_name: businessAuth.header_name,
-        variable_name: '',
-        environment_id: meterSelection.environment_id,
-        environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
-        updated_at: '2026-07-22 09:46:00',
-      };
-      json(res, {ok: true, binding: {...businessAuth}});
+      readJsonBody(req).then(body => {
+        authRequestBodies.push({...body});
+        businessAuth = {
+          configured: false,
+          auth_type: businessAuth.auth_type,
+          header_name: businessAuth.header_name,
+          variable_name: '',
+          environment_id: meterSelection.environment_id,
+          environment_name: meterSelection.environment_id === 'env-staging' ? '预发环境' : 'QA 环境',
+          updated_at: '2026-07-22 09:46:00',
+        };
+        json(res, {ok: true, binding: {...businessAuth}});
+      });
       return;
     }
     if (url.pathname === '/api/api-testing/metersphere/execution-context') {
@@ -839,7 +855,10 @@ function serve() {
     }
     if (url.pathname === '/api/api-testing/reports' && req.method === 'GET') {
       const sourceId = url.searchParams.get('source_id') || '';
-      reportSourceQueries.push(sourceId);
+      reportSourceQueries.push({
+        sourceId,
+        businessLine: url.searchParams.get('business_line') || '',
+      });
       const reportId = sourceId === 'api-source-visual-002'
         ? 'SOURCE 2 REPORT'
         : (sourceId === 'api-source-visual-001' ? 'LATE SOURCE 1 REPORT' : 'UNSCOPED REPORT');
@@ -1022,6 +1041,7 @@ function serve() {
         url: `http://127.0.0.1:${address.port}/task-manager.html`,
         getFileReadCount: () => fileReadCount,
         getBindingRequestBodies: () => bindingRequestBodies.map(item => ({...item})),
+        getAuthRequestBodies: () => authRequestBodies.map(item => ({...item})),
         getReportSourceQueries: () => [...reportSourceQueries],
       });
     });
@@ -1042,7 +1062,7 @@ async function anyVisible(locator) {
 
 (async () => {
   fs.mkdirSync(ARTIFACTS, {recursive: true});
-  const {server, url, getFileReadCount, getBindingRequestBodies, getReportSourceQueries} = await serve();
+  const {server, url, getFileReadCount, getBindingRequestBodies, getAuthRequestBodies, getReportSourceQueries} = await serve();
   const browser = await chromium.launch({headless: true});
   try {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}});
@@ -1176,7 +1196,7 @@ async function anyVisible(locator) {
     if (!await page.locator('#api-source-settings-panel:not([hidden])').isVisible()) throw new Error('Add project action must open an empty source draft');
     if (await page.locator('#api-source-project-id').inputValue()) throw new Error('New project draft must not inherit an existing Apifox project id');
     await page.locator('button[aria-label="取消新增 Apifox 项目"]').click();
-    if (!await page.locator('.api-source-actions .btn-sm.primary', {hasText: '同步 Apifox'}).isVisible()) throw new Error('Apifox sync must be the primary asset action');
+    if (!await page.locator('.api-source-actions .btn-sm.primary').isVisible()) throw new Error('Apifox sync must remain the primary asset action while an automatic sync is running');
     for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_execution: '▶️', api_reports: '📊'})) {
       const iconText = await page.locator(`.workflow-step[data-workflow="${workflow}"] .workflow-index`).textContent();
       if ((iconText || '').trim() !== icon) throw new Error(`API sidebar icon mismatch for ${workflow}: ${iconText}`);
@@ -1238,6 +1258,14 @@ async function anyVisible(locator) {
 
     await page.click('.workflow-step[data-workflow="api_plan"]');
     await page.waitForSelector('#api-plan-result');
+    await page.evaluate(async () => {
+      apiTestingCurrentSnapshotId = '';
+      apiTestingProjectScope = {sourceId: 'api-source-visual-001', revisionId: ''};
+      await showApiPlanPage();
+    });
+    await page.waitForSelector('.api-plan-workspace');
+    const directPlanScope = await page.evaluate(() => ({...apiTestingProjectScope}));
+    if (directPlanScope.revisionId !== 'api-revision-visual-001') throw new Error(`Direct plan navigation did not resolve the active revision: ${JSON.stringify(directPlanScope)}`);
     if (!await page.locator('.api-plan-generate-action').isVisible()) throw new Error('Asynchronous plan generation action is missing');
     await page.locator('.api-plan-generate-action').click();
     await page.waitForSelector('.api-plan-generation[data-status="running"]');
@@ -1246,12 +1274,16 @@ async function anyVisible(locator) {
     const generationCounts = await page.locator('.api-plan-batch-row .api-plan-batch-count').allTextContents();
     if (generationCounts.map(value => Number(value.trim())).join(',') !== '12,12,1') throw new Error(`25 endpoint generation must render stable 12/12/1 batches: ${generationCounts}`);
     const partialGenerationText = await visibleText(page, '.api-plan-generation');
-    if (!/api-generation-visual-001/.test(partialGenerationText)) throw new Error('Plan generation must expose its real generation id');
-    if (!/api-plan-real-001/.test(partialGenerationText) || !/api-plan-real-002/.test(partialGenerationText)) throw new Error('Successful batches must expose their real server plan ids');
+    if (!/校验接口范围/.test(partialGenerationText) || !/AI 分批设计/.test(partialGenerationText) || /api-generation-visual-001/.test(partialGenerationText)) throw new Error('Plan generation must show human stages and keep technical ids collapsed by default');
     if (await page.locator('.api-plan-generation button:has-text("重试失败批次")').count() !== 1) throw new Error('Partial generation must offer exactly one failed-batch retry action');
     const planCardsText = await visibleText(page, '.api-plan-card-list');
-    if (!/3D 接口/.test(planCardsText) || !/api-revision-visual-001/.test(planCardsText) || !/qwen3\.8-plus/.test(planCardsText) || !/接口业务/.test(planCardsText) || !/API_BEARER_TOKEN/.test(planCardsText)) throw new Error('Plan cards must show source, revision, AI trace, binding, and auth facts');
+    if (!/可执行/.test(planCardsText) || !/待补/.test(planCardsText) || /api-revision-visual-001|API_BEARER_TOKEN/.test(planCardsText)) throw new Error('Plan cards must prioritize review counts and keep technical facts collapsed');
+    await page.locator('.api-plan-card .api-plan-tech-detail > summary').first().click();
+    const planCardTechnicalText = await visibleText(page, '.api-plan-card-list');
+    if (!/3D 接口/.test(planCardTechnicalText) || !/api-revision-visual-001/.test(planCardTechnicalText) || !/qwen3\.8-plus/.test(planCardTechnicalText) || !/接口业务/.test(planCardTechnicalText) || !/API_BEARER_TOKEN/.test(planCardTechnicalText)) throw new Error('Expanded plan technical details must retain backend source, revision, AI, binding, and auth facts');
     await page.locator('.api-generation-log-detail > summary').click();
+    const generationTechnicalText = await visibleText(page, '.api-plan-generation');
+    if (!/api-generation-visual-001/.test(generationTechnicalText) || !/api-plan-real-001/.test(generationTechnicalText) || !/api-plan-real-002/.test(generationTechnicalText)) throw new Error('Expanded generation technical details must expose real server ids');
     const generationLogScrollBefore = await page.locator('.api-generation-log-content').evaluate(el => {
       const max = el.scrollHeight - el.clientHeight;
       el.scrollTop = Math.min(170, max);
@@ -1271,6 +1303,9 @@ async function anyVisible(locator) {
     await page.setViewportSize({width: 1440, height: 900});
     await page.locator('.api-plan-generation button:has-text("重试失败批次")').click();
     await page.waitForSelector('.api-plan-generation[data-status="succeeded"]');
+    if (!await page.locator('.api-generation-log-detail').evaluate(el => el.open)) {
+      await page.locator('.api-generation-log-detail > summary').click();
+    }
     const completedGenerationText = await visibleText(page, '.api-plan-generation');
     if (!/api-plan-real-003/.test(completedGenerationText)) throw new Error('Retry must preserve successful plans and expose the recovered batch plan id');
     await page.evaluate(() => {
@@ -1285,17 +1320,44 @@ async function anyVisible(locator) {
     await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-stale"]').click();
     await page.waitForSelector('#api-plan-result .api-plan-readiness');
     const stalePlanText = await visibleText(page, '#api-plan-result');
-    if (!/3D 接口/.test(stalePlanText) || !/api-revision-visual-001/.test(stalePlanText) || !/家用业务/.test(stalePlanText) || !/qwen3\.8-plus/.test(stalePlanText)) throw new Error('Plan detail must show source, revision, modules, and AI trace from backend facts');
-    if (!/接口业务/.test(stalePlanText) || !/API_BEARER_TOKEN/.test(stalePlanText)) throw new Error('Plan detail must show execution binding and public auth metadata');
-    if (!await page.locator('#api-plan-result button:has-text("确认计划")').isDisabled()) throw new Error('A stale plan must not be confirmable');
-    if (!await page.locator('#api-plan-result button:has-text("重新生成")').isVisible()) throw new Error('A stale plan must offer regeneration');
+    if (!/接口已变化/.test(stalePlanText) || /api-revision-visual-001|API_BEARER_TOKEN/.test(stalePlanText)) throw new Error('Stale plan must explain the user action while technical facts remain collapsed');
+    if (!/本版变更 1/.test(stalePlanText)) throw new Error('Changed-case ids from revision state must map back to the affected endpoint group');
+    await page.locator('#api-plan-result .api-plan-facts-detail > summary').click();
+    const stalePlanTechnicalText = await visibleText(page, '#api-plan-result');
+    if (!/3D 接口/.test(stalePlanTechnicalText) || !/api-revision-visual-001/.test(stalePlanTechnicalText) || !/家用业务/.test(stalePlanTechnicalText) || !/qwen3\.8-plus/.test(stalePlanTechnicalText)) throw new Error('Expanded plan details must show source, revision, modules, and AI trace from backend facts');
+    if (!/接口业务/.test(stalePlanTechnicalText) || !/API_BEARER_TOKEN/.test(stalePlanTechnicalText)) throw new Error('Expanded plan details must show execution binding and public auth metadata');
+    if (await page.locator('#api-plan-result button:has-text("确认可执行用例")').count()) throw new Error('A stale plan must not be confirmable');
+    if (!await page.locator('#api-plan-result button:has-text("按最新接口重新生成")').isVisible()) throw new Error('A stale plan must offer regeneration');
     await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-ready"]').click();
     await page.waitForSelector('#api-plan-result .api-plan-readiness');
-    const planText = await visibleText(page, '#api-plan-result');
+    let planText = await visibleText(page, '#api-plan-result');
     if (!/可执行/.test(planText) || !/待补数据/.test(planText) || !/request\.body\.productId/.test(planText)) throw new Error('API plan detail must expose readiness counts and missing data');
-    if (await page.locator('#api-plan-result button:has-text("确认计划")').isDisabled()) throw new Error('A partial plan with executable cases must remain confirmable');
-    if (!await page.locator('#api-plan-result button:has-text("去执行")').isDisabled()) throw new Error('A draft plan must not be executable');
+    if (!await page.locator('#api-plan-result button:has-text("确认可执行用例")').isVisible()) throw new Error('A partial plan with executable cases must remain confirmable');
+    if (await page.locator('#api-plan-result button:has-text("进入执行")').count()) throw new Error('A draft plan must not expose an execution action');
+    const pointsGroup = page.locator('#api-plan-result .api-case-group[data-endpoint-key="GET /points"]');
+    if (!await pointsGroup.evaluate(el => el.open)) await pointsGroup.locator('summary').click();
+    planText = await visibleText(page, '#api-plan-result');
     if (!/状态码 in 200/.test(planText) || !/GET \/points/.test(planText)) throw new Error('API plan detail must render structured requests and assertions');
+    if (await page.locator('#api-plan-result .api-case-group').count() !== 2) throw new Error('API cases must be grouped by endpoint instead of flattened into one dense table');
+    const missingCategoryButton = page.locator('#api-plan-result .api-plan-missing-summary button', {hasText: '请求体数据'});
+    if (!await missingCategoryButton.isVisible()) throw new Error('Missing-data summary categories must be actionable filters');
+    await missingCategoryButton.click();
+    if (await page.locator('#api-plan-result .api-case-group').count() !== 1) throw new Error('Missing-data category did not filter endpoint groups');
+    await missingCategoryButton.click();
+    const reviewSearch = page.locator('#api-plan-result input[aria-label="搜索接口或用例"]');
+    await reviewSearch.fill('points');
+    const filteredPoints = page.locator('#api-plan-result .api-case-group[data-endpoint-key="GET /points"]');
+    if (!await filteredPoints.evaluate(el => el.open)) await filteredPoints.locator('summary').click();
+    await filteredPoints.locator('summary').click();
+    await page.evaluate(() => rerenderApiPlanReview());
+    if (await page.locator('#api-plan-result .api-case-group[data-endpoint-key="GET /points"]').evaluate(el => el.open)) throw new Error('A manually collapsed endpoint group reopened after rerender');
+    await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-stale"]').click();
+    await page.waitForSelector('#api-plan-result .api-plan-readiness');
+    if (await page.locator('#api-plan-result input[aria-label="搜索接口或用例"]').inputValue()) throw new Error('Review search leaked into another plan');
+    await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-ready"]').click();
+    await page.waitForSelector('#api-plan-result .api-plan-readiness');
+    if (await page.locator('#api-plan-result input[aria-label="搜索接口或用例"]').inputValue() !== 'points') throw new Error('Plan-scoped review search was not restored');
+    await page.locator('#api-plan-result input[aria-label="搜索接口或用例"]').fill('');
     await page.screenshot({path: path.join(ARTIFACTS, 'api-plan-readiness.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
     await page.waitForTimeout(100);
@@ -1310,6 +1372,11 @@ async function anyVisible(locator) {
       })).filter(item => item.scrollWidth > item.clientWidth + 1).slice(0, 12));
       throw new Error(`API plan readiness page overflows horizontally on mobile: ${JSON.stringify(overflowDetails)}`);
     }
+    if (await page.locator('.api-workflow-desktop-steps').isVisible()) throw new Error('Desktop workflow steps must collapse on mobile');
+    const mobileWorkflow = page.locator('.api-workflow-mobile-steps');
+    if (!await mobileWorkflow.isVisible() || !/审阅确认/.test(await visibleText(page, '.api-workflow-mobile-steps > summary'))) throw new Error('Mobile workflow must summarize the current review step');
+    await mobileWorkflow.locator('summary').click();
+    if (await mobileWorkflow.locator('ol > li').count() !== 5) throw new Error('Expanded mobile workflow must expose all five steps');
     await page.screenshot({path: path.join(ARTIFACTS, 'api-plan-readiness-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
 
@@ -1318,8 +1385,10 @@ async function anyVisible(locator) {
     await page.waitForSelector('text=账号接口日常回归');
     if (!/接口业务/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere business must render from execution-context data');
     if (!/QA 环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere environment must render from execution-context data');
-    if (!await page.locator('.api-business-auth-panel').isVisible()) throw new Error('Source-scoped business authentication panel is missing');
-    if (!/API_BEARER_TOKEN/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Business authentication must show only public variable metadata');
+    if (!await page.locator('.api-business-auth-panel').isVisible()) throw new Error('Environment-shared business authentication panel is missing');
+    if (!/环境公共鉴权/.test(await visibleText(page, '.api-business-auth-panel')) || !/覆盖 2 个业务来源/.test(await visibleText(page, '.api-business-auth-panel')) || /API_BEARER_TOKEN/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Public auth summary must show reusable environment status without technical variables');
+    await page.locator('.api-business-auth-panel .api-auth-detail > summary').click();
+    if (!/API_BEARER_TOKEN/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Expanded auth management must show only public variable metadata');
     await page.locator('.api-execution-project-select').selectOption('project-3d');
     await page.waitForFunction(() => document.querySelector('.api-execution-project-select')?.value === 'project-3d' && document.querySelector('.api-execution-environment-select')?.value === 'env-staging');
     if (!/3D 业务/.test(await visibleText(page, '#api-execution-header')) || !/预发环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('Project and environment changes must persist on the selected source binding');
@@ -1361,9 +1430,19 @@ async function anyVisible(locator) {
     if (!await page.locator('#api-business-auth-header').isVisible()) throw new Error('API Key mode must expose a conditional header field');
     await page.locator('#api-business-auth-header').fill('X-API-Key');
     await page.locator('#api-business-auth-secret').fill('visual-secret-must-not-render');
-    await page.locator('button:has-text("保存业务鉴权")').click();
-    await page.waitForFunction(() => document.querySelector('.api-business-auth-panel')?.innerText.includes('API_KEY'));
+    await page.locator('button:has-text("保存公共鉴权")').click();
+    await page.waitForFunction(() => document.querySelector('.api-business-auth-panel')?.innerText.includes('API Key 已配置'));
+    const authBodies = getAuthRequestBodies();
+    if (
+      authBodies.length !== 1
+      || authBodies[0].expected_project_id !== 'project-3d'
+      || authBodies[0].expected_environment_id !== 'env-staging'
+      || authBodies[0].expected_binding_version !== 'binding-visual-002'
+      || !Object.prototype.hasOwnProperty.call(authBodies[0], 'expected_profile_version')
+    ) throw new Error(`Public auth save did not carry the visible binding/profile CAS state: ${JSON.stringify(authBodies)}`);
     if (/visual-secret-must-not-render/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Saved business secret leaked into rendered metadata');
+    await page.locator('.api-business-auth-panel .api-auth-detail > summary').click();
+    if (!/API_KEY/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Saved public auth metadata must remain available in management details');
     await page.locator('button[aria-label="更换业务鉴权"]').click();
     if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Saved business auth secret was rehydrated into the replacement field');
     await page.locator('button[aria-label="取消更换业务鉴权"]').click();
@@ -1384,6 +1463,20 @@ async function anyVisible(locator) {
     if (!await page.locator('.api-log-detail').first().evaluate(el => el.open)) throw new Error('MeterSphere status polling collapsed an expanded technical log');
     const meterLogScrollAfter = await page.locator('.api-log-detail').first().locator('.api-log-content').evaluate(el => el.scrollTop);
     if (Math.abs(meterLogScrollAfter - meterLogScrollBefore.top) > 2) throw new Error(`MeterSphere polling reset technical log scroll: before=${meterLogScrollBefore.top}, after=${meterLogScrollAfter}`);
+    await page.evaluate(() => {
+      apiExecutionActiveId = 'ms-execution-late';
+      window.__sameScopeLateExecutionPoll = pollApiMeterSphereExecution(
+        'ms-execution-late',
+        apiExecutionPollRequestId,
+        apiProjectScopeKey(),
+      );
+    });
+    await page.waitForTimeout(20);
+    await page.evaluate(() => {
+      apiExecutionActiveId = 'ms-execution-visual-001';
+    });
+    await page.waitForTimeout(220);
+    if (/LATE EXECUTION MUST NOT RENDER/.test(await visibleText(page, '#api-active-run'))) throw new Error('A late execution response replaced a newer execution in the same source scope');
     await page.evaluate(() => {
       window.__previousApiExecutionId = apiExecutionActiveId;
       apiExecutionActiveId = 'ms-execution-late';
@@ -1443,7 +1536,7 @@ async function anyVisible(locator) {
     const reportText = await visibleText(page, '.api-testing-page');
     if (!/SOURCE 2 REPORT/.test(reportText) || /LATE SOURCE 1 REPORT|UNSCOPED REPORT/.test(reportText)) throw new Error(`API reports rendered a stale or unscoped source response: ${reportText}`);
     const reportQueries = getReportSourceQueries();
-    if (!reportQueries.includes('api-source-visual-001') || !reportQueries.includes('api-source-visual-002') || reportQueries.includes('')) throw new Error(`API report requests were not source scoped: ${JSON.stringify(reportQueries)}`);
+    if (!reportQueries.some(item => item.sourceId === 'api-source-visual-001' && item.businessLine === '家用业务') || !reportQueries.some(item => item.sourceId === 'api-source-visual-002') || reportQueries.some(item => !item.sourceId)) throw new Error(`API report requests were not source/business-line scoped: ${JSON.stringify(reportQueries)}`);
 
     await page.click('.workflow-step:has-text("Agent 工作台")');
     await page.waitForSelector('#agent-goal');

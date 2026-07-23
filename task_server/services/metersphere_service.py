@@ -66,6 +66,10 @@ class MeterSphereExecutionNotFound(ValueError):
     pass
 
 
+class MeterSphereAuthConflict(ValueError):
+    pass
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -678,6 +682,9 @@ def _binding_config(source_id: str, allow_legacy: bool = True) -> tuple[Dict[str
         return cfg, {}
     from task_server.services import api_workspace_service
 
+    api_workspace_service.migrate_legacy_connection_identity(
+        _api_auth_connection_identity(cfg)
+    )
     binding = api_workspace_service.get_api_workspace_binding(
         selected_source_id,
         allow_legacy=allow_legacy,
@@ -755,9 +762,32 @@ def _source_operation_config(
     return cfg, binding
 
 
-def _api_auth_identity(project_id: str, environment_id: str) -> tuple[str, str]:
+def _api_auth_connection_identity(cfg: Dict[str, Any]) -> str:
+    identity = {
+        "schema": "metersphere-auth-connection/v1",
+        "adapter_contract": METERSPHERE_V365_ADAPTER_ID,
+        "base_url": str(cfg.get("base_url") or "").strip().rstrip("/"),
+        "workspace_id": str(cfg.get("workspace_id") or "").strip(),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            identity,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+
+
+def _api_auth_identity(
+    connection_identity: str,
+    project_id: str,
+    environment_id: str,
+) -> tuple[str, str]:
     digest = hashlib.sha256(
-        f"metersphere:{project_id}:{environment_id}".encode("utf-8")
+        (
+            f"metersphere:{connection_identity}:{project_id}:{environment_id}"
+        ).encode("utf-8")
     ).hexdigest()
     return f"api_auth_{digest[:16]}", f"MTP_API_AUTH_{digest[:12].upper()}"
 
@@ -773,6 +803,11 @@ def save_api_auth_binding(
     auth_type: str,
     header_name: str,
     secret: str,
+    *,
+    expected_project_id: str = "",
+    expected_environment_id: str = "",
+    expected_binding_version: str | None = None,
+    expected_profile_version: str | None = None,
 ) -> Dict[str, Any]:
     """Forward one business secret to the source-bound environment without local storage."""
     from task_server.services import api_workspace_service
@@ -784,57 +819,140 @@ def save_api_auth_binding(
     if not secret_value:
         raise ValueError("认证密钥不能为空；清除认证请使用 DELETE")
     normalized_type, normalized_header = _api_auth_header(auth_type, header_name)
-    cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
-    environment_id = str(binding.get("environment_id") or "").strip()
-    if not environment_id:
-        raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+    with _CONNECTION_CONFIG_LOCK:
+        with api_workspace_service.workspace_binding_transaction():
+            cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+            environment_id = str(binding.get("environment_id") or "").strip()
+            project_id = str(binding.get("project_id") or "").strip()
+            if not project_id or not environment_id:
+                raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+            connection_identity = _api_auth_connection_identity(cfg)
+            _validate_api_auth_expectations(
+                binding,
+                api_workspace_service.get_api_auth_binding(selected_source_id),
+                connection_identity=connection_identity,
+                expected_project_id=expected_project_id,
+                expected_environment_id=expected_environment_id,
+                expected_binding_version=expected_binding_version,
+                expected_profile_version=expected_profile_version,
+            )
+            auth_ref, variable_name = _api_auth_identity(
+                connection_identity,
+                project_id,
+                environment_id,
+            )
+            adapter, _probe, supported = _v365_adapter_probe(cfg)
+            if not supported:
+                raise ValueError("MeterSphere v3.6.5 实时校验不可用")
+            remote = adapter.upsert_environment_variable(
+                environment_id,
+                variable_name,
+                secret_value,
+                "Midscene API authentication",
+            )
+            if not remote.get("configured"):
+                raise ValueError("MeterSphere 环境变量写入后校验失败")
+            return api_workspace_service.save_api_auth_binding_metadata(
+                selected_source_id,
+                auth_type=normalized_type,
+                header_name=normalized_header,
+                auth_ref=auth_ref,
+                variable_name=variable_name,
+                environment_id=environment_id,
+            )
+
+
+def _validate_api_auth_expectations(
+    binding: Dict[str, Any],
+    auth_binding: Dict[str, Any],
+    *,
+    connection_identity: str,
+    expected_project_id: str,
+    expected_environment_id: str,
+    expected_binding_version: str | None,
+    expected_profile_version: str | None,
+) -> None:
     project_id = str(binding.get("project_id") or "").strip()
-    if not project_id:
-        raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
-    auth_ref, variable_name = _api_auth_identity(project_id, environment_id)
-    adapter, _probe, supported = _v365_adapter_probe(cfg)
-    if not supported:
-        raise ValueError("MeterSphere v3.6.5 实时校验不可用")
-    remote = adapter.upsert_environment_variable(
-        environment_id,
-        variable_name,
-        secret_value,
-        "Midscene API authentication",
-    )
-    if not remote.get("configured"):
-        raise ValueError("MeterSphere 环境变量写入后校验失败")
-    return api_workspace_service.save_api_auth_binding_metadata(
-        selected_source_id,
-        auth_type=normalized_type,
-        header_name=normalized_header,
-        auth_ref=auth_ref,
-        variable_name=variable_name,
-        environment_id=environment_id,
-    )
+    environment_id = str(binding.get("environment_id") or "").strip()
+    binding_connection_identity = str(
+        binding.get("connection_identity") or ""
+    ).strip()
+    expected_project = str(expected_project_id or "").strip()
+    expected_environment = str(expected_environment_id or "").strip()
+    current_binding_version = str(
+        binding.get("binding_version")
+        or binding.get("config_fingerprint")
+        or ""
+    ).strip()
+    if expected_project and expected_project != project_id:
+        raise MeterSphereAuthConflict("MeterSphere 鉴权项目已更新，请刷新后重试")
+    if expected_environment and expected_environment != environment_id:
+        raise MeterSphereAuthConflict("MeterSphere 鉴权环境已更新，请刷新后重试")
+    if (
+        expected_binding_version is not None
+        and str(expected_binding_version or "").strip() != current_binding_version
+    ):
+        raise MeterSphereAuthConflict("MeterSphere 执行绑定已更新，请刷新后重试")
+    if (
+        binding_connection_identity
+        and binding_connection_identity != connection_identity
+    ):
+        raise MeterSphereAuthConflict("MeterSphere 连接已更新，请重新绑定项目和环境")
+    current_profile_version = str(
+        auth_binding.get("profile_version") or ""
+    ).strip()
+    if (
+        expected_profile_version is not None
+        and str(expected_profile_version or "").strip() != current_profile_version
+    ):
+        raise MeterSphereAuthConflict("MeterSphere 公共鉴权已更新，请刷新后重试")
 
 
-def clear_api_auth_binding(source_id: str) -> Dict[str, Any]:
+def clear_api_auth_binding(
+    source_id: str,
+    *,
+    expected_project_id: str = "",
+    expected_environment_id: str = "",
+    expected_binding_version: str | None = None,
+    expected_profile_version: str | None = None,
+) -> Dict[str, Any]:
     from task_server.services import api_workspace_service
 
     selected_source_id = str(source_id or "").strip()
     if not selected_source_id:
         raise ValueError("source_id 不能为空")
-    binding = api_workspace_service.get_api_workspace_binding(selected_source_id, allow_legacy=True)
-    auth_binding = api_workspace_service.get_api_auth_binding(selected_source_id)
-    if not auth_binding:
-        return {"configured": False}
-    environment_id = str(binding.get("environment_id") or "").strip()
-    if environment_id != str(auth_binding.get("environment_id") or "").strip():
-        raise ValueError("认证引用不属于当前 MeterSphere 环境")
-    cfg, _bound = _binding_config(selected_source_id, allow_legacy=True)
-    adapter, _probe, supported = _v365_adapter_probe(cfg)
-    if not supported:
-        raise ValueError("MeterSphere v3.6.5 实时校验不可用")
-    remote = adapter.delete_environment_variable(environment_id, str(auth_binding.get("variable_name") or ""))
-    if remote.get("configured"):
-        raise ValueError("MeterSphere 环境变量删除后校验失败")
-    previous = api_workspace_service.clear_api_auth_binding_metadata(selected_source_id)
-    return {**previous, "configured": False}
+    with _CONNECTION_CONFIG_LOCK:
+        with api_workspace_service.workspace_binding_transaction():
+            cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+            auth_binding = api_workspace_service.get_api_auth_binding(selected_source_id)
+            connection_identity = _api_auth_connection_identity(cfg)
+            _validate_api_auth_expectations(
+                binding,
+                auth_binding,
+                connection_identity=connection_identity,
+                expected_project_id=expected_project_id,
+                expected_environment_id=expected_environment_id,
+                expected_binding_version=expected_binding_version,
+                expected_profile_version=expected_profile_version,
+            )
+            if not auth_binding:
+                return {"configured": False}
+            environment_id = str(binding.get("environment_id") or "").strip()
+            if environment_id != str(auth_binding.get("environment_id") or "").strip():
+                raise ValueError("认证引用不属于当前 MeterSphere 环境")
+            adapter, _probe, supported = _v365_adapter_probe(cfg)
+            if not supported:
+                raise ValueError("MeterSphere v3.6.5 实时校验不可用")
+            remote = adapter.delete_environment_variable(
+                environment_id,
+                str(auth_binding.get("variable_name") or ""),
+            )
+            if remote.get("configured"):
+                raise ValueError("MeterSphere 环境变量删除后校验失败")
+            previous = api_workspace_service.clear_api_auth_binding_metadata(
+                selected_source_id
+            )
+            return {**previous, "configured": False}
 
 
 def _plan_source_id(plan: Dict[str, Any]) -> str:

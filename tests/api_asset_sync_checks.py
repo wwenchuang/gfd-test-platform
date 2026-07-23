@@ -880,6 +880,84 @@ class ApiSyncServiceTests(unittest.TestCase):
         self.assertEqual(first["sync_id"], second["sync_id"])
         self.assertFalse(second["created"])
         self.assertTrue(second["conflict"])
+        self.assertFalse(second.get("replacement_pending"))
+
+    def test_sync_enabled_participates_in_source_configuration_fingerprint(self):
+        enabled = self.source_service.get_api_source(
+            self.source["source_id"],
+            masked=False,
+        )
+        disabled = {**enabled, "sync_enabled": False}
+
+        self.assertNotEqual(
+            self.source_service.source_config_fingerprint(enabled),
+            self.source_service.source_config_fingerprint(disabled),
+        )
+
+    def test_configuration_change_during_active_sync_runs_one_replacement(self):
+        first = self.sync_service.start_api_source_sync(
+            self.source["source_id"],
+            spawn=False,
+        )
+        self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "project_id": "5904970-updated",
+        })
+        requested = self.sync_service.start_api_source_sync(
+            self.source["source_id"],
+            spawn=False,
+            trigger="configuration",
+        )
+
+        self.assertEqual(first["sync_id"], requested["sync_id"])
+        self.assertTrue(requested["replacement_pending"])
+        self.assertEqual(
+            self.source_service.source_config_fingerprint(
+                self.source_service.get_api_source(
+                    self.source["source_id"],
+                    masked=False,
+                )
+            ),
+            requested["replacement_fingerprint"],
+        )
+
+        replacement_adapter = _SequenceApifoxAdapter([
+            _openapi_document(path="/replacement", operation_id="replacement"),
+        ])
+        self.sync_service._run_api_source_sync_guarded(
+            first["sync_id"],
+            adapter=replacement_adapter,
+        )
+        deadline = time.time() + 3
+        replacement = {}
+        while time.time() < deadline:
+            candidates = [
+                item
+                for item in self.sync_service.list_api_syncs(
+                    limit=10,
+                    source_id=self.source["source_id"],
+                )
+                if item["sync_id"] != first["sync_id"]
+            ]
+            if candidates and candidates[0].get("status") in self.sync_service.TERMINAL_SYNC_STATES:
+                replacement = candidates[0]
+                break
+            time.sleep(0.02)
+
+        self.assertTrue(replacement)
+        self.assertEqual("configuration", replacement["trigger"])
+        self.assertEqual("succeeded", replacement["status"])
+        self.assertEqual(
+            requested["replacement_fingerprint"],
+            replacement["source_config_fingerprint"],
+        )
+        self.assertEqual(
+            2,
+            len(self.sync_service.list_api_syncs(
+                limit=10,
+                source_id=self.source["source_id"],
+            )),
+        )
 
     def test_restart_recovery_and_due_source_selection(self):
         queued = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)
@@ -890,6 +968,37 @@ class ApiSyncServiceTests(unittest.TestCase):
         self.assertEqual("failed", stored["status"])
         self.assertNotIn(self.source["source_id"], self.sync_service.due_api_source_ids(now=time.time() + 60))
         self.assertIn(self.source["source_id"], self.sync_service.due_api_source_ids(now=time.time() + 7200))
+
+    def test_restart_recovery_resumes_requested_configuration_replacement(self):
+        queued = self.sync_service.start_api_source_sync(
+            self.source["source_id"],
+            spawn=False,
+        )
+        self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "project_id": "5904970-after-restart",
+        })
+        requested = self.sync_service.start_api_source_sync(
+            self.source["source_id"],
+            spawn=False,
+            trigger="configuration",
+        )
+        started = []
+        original = self.sync_service._start_requested_replacement
+
+        def record_replacement(sync_id, adapter=None):
+            started.append(sync_id)
+            return {}
+
+        self.sync_service._start_requested_replacement = record_replacement
+        try:
+            recovered = self.sync_service.recover_stale_api_syncs()
+        finally:
+            self.sync_service._start_requested_replacement = original
+
+        self.assertTrue(requested["replacement_pending"])
+        self.assertIn(queued["sync_id"], recovered)
+        self.assertEqual([queued["sync_id"]], started)
 
     def test_guarded_thread_failure_redacts_credentials_and_updates_source_state(self):
         queued = self.sync_service.start_api_source_sync(self.source["source_id"], spawn=False)

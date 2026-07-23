@@ -450,6 +450,33 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
             api_workspace_service.get_api_auth_binding("api_source_a")["auth_ref"],
         )
 
+    def test_auth_profiles_remain_isolated_between_metersphere_connections(self):
+        self._create_sources(2)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_shared",
+            "ms_env_shared",
+            connection_identity="ms_connection_a",
+        )
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_b",
+            "ms_project_shared",
+            "ms_env_shared",
+            connection_identity="ms_connection_b",
+        )
+        first = api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+        )
+
+        self.assertEqual({}, api_workspace_service.get_api_auth_binding("api_source_b"))
+        self.assertEqual(
+            first["auth_ref"],
+            api_workspace_service.get_api_auth_binding("api_source_a")["auth_ref"],
+        )
+        self.assertEqual("ms_connection_a", first["connection_identity"])
+
     def test_newer_client_binding_intent_wins_regardless_of_completion_order(self):
         self._create_sources(1)
         initial = api_workspace_service.save_api_workspace_binding(
@@ -663,9 +690,15 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
 
     def test_auth_service_uses_one_remote_variable_for_shared_environment(self):
         self._create_sources(2)
+        connection_identity = metersphere_service._api_auth_connection_identity(
+            metersphere_service._load_raw_config()
+        )
         for source_id in ("api_source_a", "api_source_b"):
             api_workspace_service.save_api_workspace_binding(
-                source_id, "ms_project_a", "ms_env_shared",
+                source_id,
+                "ms_project_a",
+                "ms_env_shared",
+                connection_identity=connection_identity,
             )
 
         class Adapter:
@@ -706,6 +739,103 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         )
         self.assertNotIn("first-secret", local_text)
         self.assertNotIn("second-secret", local_text)
+
+    def test_auth_service_rejects_stale_binding_before_remote_write(self):
+        self._create_sources(1)
+        connection_identity = metersphere_service._api_auth_connection_identity(
+            metersphere_service._load_raw_config()
+        )
+        initial = api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_a",
+            "ms_env_a",
+            connection_identity=connection_identity,
+        )
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_b",
+            "ms_env_b",
+            connection_identity=connection_identity,
+            expected_binding_fingerprint=initial["binding_version"],
+        )
+        calls = []
+
+        class Adapter:
+            def upsert_environment_variable(self, *_args, **_kwargs):
+                calls.append("upsert")
+                return {"ok": True, "configured": True}
+
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = (
+            lambda config: (Adapter(), {"version": "v3.6.5-lts"}, True)
+        )
+        try:
+            with self.assertRaises(metersphere_service.MeterSphereAuthConflict):
+                metersphere_service.save_api_auth_binding(
+                    "api_source_a",
+                    "bearer",
+                    "Authorization",
+                    "must-not-reach-remote",
+                    expected_project_id="ms_project_a",
+                    expected_environment_id="ms_env_a",
+                    expected_binding_version=initial["binding_version"],
+                    expected_profile_version="",
+                )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertEqual([], calls)
+
+    def test_auth_service_rejects_stale_profile_before_remote_delete(self):
+        self._create_sources(1)
+        connection_identity = metersphere_service._api_auth_connection_identity(
+            metersphere_service._load_raw_config()
+        )
+        binding = api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_a",
+            "ms_env_a",
+            connection_identity=connection_identity,
+        )
+        first = api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+        )
+        latest = api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+        )
+        self.assertNotEqual(first["profile_version"], latest["profile_version"])
+        calls = []
+
+        class Adapter:
+            def delete_environment_variable(self, *_args, **_kwargs):
+                calls.append("delete")
+                return {"ok": True, "configured": False}
+
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = (
+            lambda config: (Adapter(), {"version": "v3.6.5-lts"}, True)
+        )
+        try:
+            with self.assertRaises(metersphere_service.MeterSphereAuthConflict):
+                metersphere_service.clear_api_auth_binding(
+                    "api_source_a",
+                    expected_project_id="ms_project_a",
+                    expected_environment_id="ms_env_a",
+                    expected_binding_version=binding["binding_version"],
+                    expected_profile_version=first["profile_version"],
+                )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertEqual([], calls)
+        self.assertEqual(
+            latest["profile_version"],
+            api_workspace_service.get_api_auth_binding("api_source_a")["profile_version"],
+        )
 
     def test_workspace_binding_public_read_filters_unexpected_auth_secret_field(self):
         self._create_sources(1)
@@ -925,18 +1055,32 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
 
         original_save = metersphere_service.save_api_auth_binding
         original_clear = metersphere_service.clear_api_auth_binding
-        metersphere_service.save_api_auth_binding = lambda *_args: {
+        calls = []
+        metersphere_service.save_api_auth_binding = lambda *_args, **kwargs: calls.append(
+            ("save", kwargs)
+        ) or {
             "auth_ref": "api_auth_a", "configured": True, "variable_name": "MTP_API_AUTH_A",
         }
-        metersphere_service.clear_api_auth_binding = lambda *_args: {
+        metersphere_service.clear_api_auth_binding = lambda *_args, **kwargs: calls.append(
+            ("clear", kwargs)
+        ) or {
             "auth_ref": "api_auth_a", "configured": False, "variable_name": "MTP_API_AUTH_A",
         }
         try:
             authenticated = Handler(True, {
                 "auth_type": "bearer", "header_name": "Authorization", "secret": "runtime-secret",
+                "expected_project_id": "ms_project_a",
+                "expected_environment_id": "ms_env_a",
+                "expected_binding_version": "binding-version-a",
+                "expected_profile_version": "profile-version-a",
             })
             post(authenticated, {}, match)
-            deleted = Handler(True, {})
+            deleted = Handler(True, {
+                "expected_project_id": "ms_project_a",
+                "expected_environment_id": "ms_env_a",
+                "expected_binding_version": "binding-version-a",
+                "expected_profile_version": "profile-version-a",
+            })
             delete(deleted, {}, match)
         finally:
             metersphere_service.save_api_auth_binding = original_save
@@ -945,6 +1089,56 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
         self.assertTrue(authenticated.responses[0][0]["binding"]["configured"])
         self.assertFalse(deleted.responses[0][0]["binding"]["configured"])
         self.assertNotIn("runtime-secret", json.dumps(authenticated.responses, ensure_ascii=False))
+        self.assertEqual(
+            {
+                "expected_project_id": "ms_project_a",
+                "expected_environment_id": "ms_env_a",
+                "expected_binding_version": "binding-version-a",
+                "expected_profile_version": "profile-version-a",
+            },
+            calls[0][1],
+        )
+        self.assertEqual(calls[0][1], calls[1][1])
+
+    def test_auth_binding_route_returns_conflict_without_downgrading_to_bad_request(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _authorized(self):
+                return True
+
+            def _body(self):
+                return {
+                    "auth_type": "bearer",
+                    "header_name": "Authorization",
+                    "secret": "runtime-secret",
+                }
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        pattern = r"^/api/api-testing/sources/([^/]+)/auth-binding$"
+        post = next(fn for matcher, fn in router._POST_REGEX_ROUTES if matcher.pattern == pattern)
+        match = re.match(pattern, "/api/api-testing/sources/api_source_a/auth-binding")
+        original_save = metersphere_service.save_api_auth_binding
+        metersphere_service.save_api_auth_binding = lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(
+                metersphere_service.MeterSphereAuthConflict(
+                    "MeterSphere 鉴权目标已更新"
+                )
+            )
+        )
+        try:
+            handler = Handler()
+            post(handler, {}, match)
+        finally:
+            metersphere_service.save_api_auth_binding = original_save
+
+        self.assertEqual(409, handler.responses[0][1])
+        self.assertIn("已更新", handler.responses[0][0]["error"])
 
     def test_execution_binding_reads_environments_for_requested_project(self):
         from task_server import router
@@ -1083,6 +1277,12 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
         self.assertEqual("binding-version-old", calls[0][1]["expected_binding_fingerprint"])
         self.assertEqual("browser-session-a", calls[0][1]["client_session_id"])
         self.assertEqual(2, calls[0][1]["client_intent_id"])
+        self.assertEqual(
+            metersphere_service._api_auth_connection_identity(
+                metersphere_service._load_raw_config()
+            ),
+            calls[0][1]["connection_identity"],
+        )
 
 
 def generation_document(endpoint_count=25):
@@ -1442,6 +1642,55 @@ class ApiPlanGenerationChecks(unittest.TestCase):
             if path.name != "index.json"
         ] if plans_dir.exists() else []
         self.assertEqual(plan_files, [])
+
+    def test_auth_reuse_count_change_during_ai_does_not_expire_generation(self):
+        api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+        )
+        generation = api_plan_generation_service.start_api_plan_generation(
+            "api_source_a",
+            self.revision_id,
+            self.endpoint_ids(1),
+            ["家用业务/app接口"],
+            spawn=False,
+        )
+        api_source_service.save_api_source({
+            "source_id": "api_source_b",
+            "name": "项目 B",
+            "project_id": "apifox_b",
+            "access_token": "token-b",
+        })
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_b",
+            "ms_project_a",
+            "ms_env_a",
+        )
+        original_run_ai_skill = api_test_plan_service.run_ai_skill
+
+        def successful_ai(_skill_name, payload, **_kwargs):
+            return {
+                "cases": [{
+                    "case_id": "AI-AUTH-REUSE-1",
+                    "endpoint_id": payload["endpoints"][0]["endpoint_id"],
+                    "name": "公共鉴权复用不改变计划身份",
+                    "type": "positive",
+                    "steps": ["发送请求"],
+                }],
+                "review": {},
+            }
+
+        api_test_plan_service.run_ai_skill = successful_ai
+        try:
+            completed = api_plan_generation_service.run_api_plan_generation(
+                generation["generation_id"],
+            )
+        finally:
+            api_test_plan_service.run_ai_skill = original_run_ai_skill
+
+        self.assertEqual("succeeded", completed["status"])
+        self.assertTrue(completed["batches"][0]["plan_id"])
 
     def test_generation_routes_require_auth_and_return_202_with_poll_interval(self):
         from task_server import router

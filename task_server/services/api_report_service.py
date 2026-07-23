@@ -7,7 +7,7 @@ import time
 from typing import Any, Dict, List
 
 from task_server.storage import clean_id, read_json_file, safe_join, unique_millis_id, write_json_file
-from task_server.services import api_asset_service
+from task_server.services import api_asset_service, api_module_service
 
 
 API_TESTING_DIR = api_asset_service.API_TESTING_DIR
@@ -40,6 +40,7 @@ def _report_index_item(report: Dict[str, Any]) -> Dict[str, Any]:
         "binding_fingerprint": report.get("binding_fingerprint"),
         "project_id": report.get("project_id"),
         "environment_id": report.get("environment_id"),
+        "business_lines": _report_business_lines(report),
         "status": report.get("status"),
         "total": report.get("summary", {}).get("total", 0),
         "passed": report.get("summary", {}).get("passed", 0),
@@ -66,6 +67,29 @@ def _plan_source_id(plan_id: str) -> str:
 
     plan = api_test_plan_service.get_api_test_plan(selected_plan_id)
     return str((plan or {}).get("source_id") or "").strip()
+
+
+def _report_business_lines(report: Dict[str, Any]) -> List[str]:
+    existing = report.get("business_lines")
+    if isinstance(existing, list):
+        normalized = sorted({
+            str(value or "").strip()
+            for value in existing
+            if str(value or "").strip()
+        })
+        if normalized:
+            return normalized
+    plan_id = str(report.get("plan_id") or "").strip()
+    if not plan_id:
+        return []
+    from task_server.services import api_test_plan_service
+
+    plan = api_test_plan_service.get_api_test_plan(plan_id)
+    return sorted({
+        api_module_service.business_line_for_module(path)
+        for path in (plan.get("module_paths") or [])
+        if str(path or "").strip()
+    })
 
 
 def _report_source_ownership(report: Dict[str, Any]) -> tuple[str, bool, bool]:
@@ -173,6 +197,7 @@ def save_api_report(report: Dict[str, Any]) -> Dict[str, Any]:
         report["report_id"] = unique_millis_id("api_report")
     if not report.get("created_at"):
         report["created_at"] = _now()
+    report["business_lines"] = _report_business_lines(report)
     write_json_file(_report_path(report.get("report_id")), report)
     _save_index(report)
     return report
@@ -196,7 +221,11 @@ def get_api_report(report_id: str, source_id: str = "") -> Dict[str, Any]:
     return report
 
 
-def list_api_reports(limit: int = 20, source_id: str = "") -> List[Dict[str, Any]]:
+def list_api_reports(
+    limit: int = 20,
+    source_id: str = "",
+    business_line: str = "",
+) -> List[Dict[str, Any]]:
     index = read_json_file(_index_path(), default=[]) or []
     if not isinstance(index, list):
         return []
@@ -205,7 +234,8 @@ def list_api_reports(limit: int = 20, source_id: str = "") -> List[Dict[str, Any
     except Exception:
         size = 20
     selected_source_id = str(source_id or "").strip()
-    if not selected_source_id:
+    selected_business_line = str(business_line or "").strip()
+    if not selected_source_id and not selected_business_line:
         return index[:size]
     reports = []
     for item in index:
@@ -215,7 +245,13 @@ def list_api_reports(limit: int = 20, source_id: str = "") -> List[Dict[str, Any
         )
         if not report:
             continue
-        reports.append(_report_index_item(report))
+        indexed = _report_index_item(report)
+        if (
+            selected_business_line
+            and selected_business_line not in (indexed.get("business_lines") or [])
+        ):
+            continue
+        reports.append(indexed)
         if len(reports) >= size:
             break
     return reports

@@ -107,6 +107,7 @@ def source_config_fingerprint(source: Dict[str, Any]) -> str:
         "base_url": str((source or {}).get("base_url") or "").strip().rstrip("/").lower(),
         "branch_id": str((source or {}).get("branch_id") or "").strip(),
         "environment_id": str((source or {}).get("environment_id") or "").strip(),
+        "sync_enabled": bool((source or {}).get("sync_enabled")),
         "scope_fingerprint": api_module_service.scope_fingerprint(scope),
         "credential_identity_hash": hashlib.sha256(credential.encode("utf-8")).hexdigest(),
     }

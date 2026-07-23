@@ -9,6 +9,7 @@ import re
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Dict
 
 from task_server.config import LEARNING_DIR
@@ -37,12 +38,28 @@ def _binding_path(source_id: str) -> str:
     )
 
 
-def _auth_profile_identity(project_id: str, environment_id: str) -> str:
-    return f"metersphere:{str(project_id or '').strip()}:{str(environment_id or '').strip()}"
+def _auth_profile_identity(
+    connection_identity: str,
+    project_id: str,
+    environment_id: str,
+) -> str:
+    return ":".join((
+        "metersphere",
+        str(connection_identity or "legacy").strip(),
+        str(project_id or "").strip(),
+        str(environment_id or "").strip(),
+    ))
 
 
-def _auth_profile_path(project_id: str, environment_id: str) -> str:
-    digest = _stable_hash(_auth_profile_identity(project_id, environment_id), 24)
+def _auth_profile_path(
+    connection_identity: str,
+    project_id: str,
+    environment_id: str,
+) -> str:
+    digest = _stable_hash(
+        _auth_profile_identity(connection_identity, project_id, environment_id),
+        24,
+    )
     return safe_join(API_TESTING_DIR, "auth-profiles", f"{digest}.json")
 
 
@@ -51,9 +68,14 @@ def _binding_id(source_id: str) -> str:
     return f"api_execution_binding_{digest}"
 
 
-def _config_fingerprint(project_id: str, environment_id: str) -> str:
+def _config_fingerprint(
+    project_id: str,
+    environment_id: str,
+    connection_identity: str = "",
+) -> str:
     payload = json.dumps({
         "provider": "metersphere",
+        "connection_identity": str(connection_identity or "").strip(),
         "project_id": str(project_id),
         "environment_id": str(environment_id),
     }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -109,21 +131,31 @@ def _public_auth_binding(value: Any) -> Dict[str, Any]:
         "updated_at": str(binding.get("updated_at") or "").strip(),
         "binding_fingerprint": str(binding.get("binding_fingerprint") or "").strip(),
         "profile_fingerprint": str(binding.get("profile_fingerprint") or "").strip(),
+        "profile_version": str(binding.get("profile_version") or "").strip(),
+        "connection_identity": str(binding.get("connection_identity") or "").strip(),
         "scope": str(binding.get("scope") or "").strip(),
         "reused": bool(binding.get("reused")),
         "usage_count": max(0, int(binding.get("usage_count") or 0)),
     }
 
 
-def _load_auth_profile(project_id: str, environment_id: str) -> Dict[str, Any]:
+def _load_auth_profile(
+    connection_identity: str,
+    project_id: str,
+    environment_id: str,
+) -> Dict[str, Any]:
     profile = read_json_file(
-        _auth_profile_path(project_id, environment_id),
+        _auth_profile_path(connection_identity, project_id, environment_id),
         default={},
     ) or {}
     return profile if isinstance(profile, dict) else {}
 
 
-def _profile_usage_count(project_id: str, environment_id: str) -> int:
+def _profile_usage_count(
+    connection_identity: str,
+    project_id: str,
+    environment_id: str,
+) -> int:
     directory = safe_join(API_TESTING_DIR, "workspace-bindings")
     try:
         names = os.listdir(directory)
@@ -137,7 +169,8 @@ def _profile_usage_count(project_id: str, environment_id: str) -> int:
         if not isinstance(candidate, dict):
             continue
         if (
-            str(candidate.get("project_id") or "").strip() == project_id
+            str(candidate.get("connection_identity") or "").strip() == connection_identity
+            and str(candidate.get("project_id") or "").strip() == project_id
             and str(candidate.get("environment_id") or "").strip() == environment_id
         ):
             count += 1
@@ -147,16 +180,25 @@ def _profile_usage_count(project_id: str, environment_id: str) -> int:
 def _public_auth_profile(
     value: Any,
     *,
+    connection_identity: str = "",
     project_id: str = "",
     environment_id: str = "",
 ) -> Dict[str, Any]:
     public = _public_auth_binding(value)
     selected_project_id = str(project_id or public.get("project_id") or "").strip()
+    selected_connection_identity = str(
+        connection_identity or public.get("connection_identity") or ""
+    ).strip()
     selected_environment_id = str(
         environment_id or public.get("environment_id") or ""
     ).strip()
-    usage_count = _profile_usage_count(selected_project_id, selected_environment_id)
+    usage_count = _profile_usage_count(
+        selected_connection_identity,
+        selected_project_id,
+        selected_environment_id,
+    )
     public.update({
+        "connection_identity": selected_connection_identity,
         "project_id": selected_project_id,
         "environment_id": selected_environment_id,
         "scope": "environment",
@@ -168,6 +210,7 @@ def _public_auth_profile(
 
 def _write_auth_profile(profile: Dict[str, Any]) -> None:
     path = _auth_profile_path(
+        str(profile.get("connection_identity") or ""),
         str(profile.get("project_id") or ""),
         str(profile.get("environment_id") or ""),
     )
@@ -178,9 +221,13 @@ def _write_auth_profile(profile: Dict[str, Any]) -> None:
         pass
 
 
-def _delete_auth_profile(project_id: str, environment_id: str) -> None:
+def _delete_auth_profile(
+    connection_identity: str,
+    project_id: str,
+    environment_id: str,
+) -> None:
     try:
-        os.remove(_auth_profile_path(project_id, environment_id))
+        os.remove(_auth_profile_path(connection_identity, project_id, environment_id))
     except FileNotFoundError:
         pass
 
@@ -192,15 +239,17 @@ def _public_workspace_binding(value: Any) -> Dict[str, Any]:
         for key in (
             "binding_id", "source_id", "provider", "project_id", "project_name",
             "environment_id", "environment_name", "verified_at", "config_fingerprint",
-            "binding_version", "created_at", "updated_at",
+            "binding_version", "connection_identity", "created_at", "updated_at",
         )
     }
+    connection_identity = str(binding.get("connection_identity") or "").strip()
     project_id = str(binding.get("project_id") or "").strip()
     environment_id = str(binding.get("environment_id") or "").strip()
-    profile = _load_auth_profile(project_id, environment_id)
+    profile = _load_auth_profile(connection_identity, project_id, environment_id)
     if profile.get("configured"):
         public["auth_binding"] = _public_auth_profile(
             profile,
+            connection_identity=connection_identity,
             project_id=project_id,
             environment_id=environment_id,
         )
@@ -214,6 +263,82 @@ def _load_binding(source_id: str) -> Dict[str, Any]:
     return binding if isinstance(binding, dict) else {}
 
 
+@contextmanager
+def workspace_binding_transaction():
+    """Serialize source binding and environment auth mutations."""
+    with _BINDING_LOCK:
+        yield
+
+
+def migrate_legacy_connection_identity(connection_identity: str) -> int:
+    """Move pre-connection bindings and profiles into the current connection scope."""
+    selected_connection_identity = str(connection_identity or "").strip()
+    if not selected_connection_identity:
+        return 0
+    with _BINDING_LOCK:
+        directory = safe_join(API_TESTING_DIR, "workspace-bindings")
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return 0
+        migrated = 0
+        migrated_profiles: set[tuple[str, str]] = set()
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            path = safe_join(directory, name)
+            binding = read_json_file(path, default={}) or {}
+            if (
+                not isinstance(binding, dict)
+                or str(binding.get("connection_identity") or "").strip()
+            ):
+                continue
+            project_id = str(binding.get("project_id") or "").strip()
+            environment_id = str(binding.get("environment_id") or "").strip()
+            if not project_id or not environment_id:
+                continue
+            legacy_profile = _load_auth_profile("", project_id, environment_id)
+            current_profile = _load_auth_profile(
+                selected_connection_identity,
+                project_id,
+                environment_id,
+            )
+            if legacy_profile.get("configured") and not current_profile.get("configured"):
+                migrated_profile = {
+                    **legacy_profile,
+                    "connection_identity": selected_connection_identity,
+                    "project_id": project_id,
+                    "environment_id": environment_id,
+                    "profile_fingerprint": _stable_hash(
+                        _auth_profile_identity(
+                            selected_connection_identity,
+                            project_id,
+                            environment_id,
+                        ),
+                        16,
+                    ),
+                }
+                _write_auth_profile(migrated_profile)
+                migrated_profiles.add((project_id, environment_id))
+            binding["connection_identity"] = selected_connection_identity
+            binding["config_fingerprint"] = _config_fingerprint(
+                project_id,
+                environment_id,
+                selected_connection_identity,
+            )
+            binding["binding_version"] = _binding_version()
+            binding["updated_at"] = _now()
+            write_json_file(path, binding)
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            migrated += 1
+        for project_id, environment_id in migrated_profiles:
+            _delete_auth_profile("", project_id, environment_id)
+        return migrated
+
+
 def save_api_workspace_binding(
     source_id: str,
     project_id: str,
@@ -221,6 +346,7 @@ def save_api_workspace_binding(
     *,
     project_name: str = "",
     environment_name: str = "",
+    connection_identity: str = "",
     verified_at: str = "",
     expected_binding_fingerprint: str | None = None,
     client_session_id: str = "",
@@ -230,6 +356,7 @@ def save_api_workspace_binding(
     selected_source_id = str(source_id or "").strip()
     selected_project_id = str(project_id or "").strip()
     selected_environment_id = str(environment_id or "").strip()
+    selected_connection_identity = str(connection_identity or "").strip()
     if not selected_source_id:
         raise ValueError("source_id 不能为空")
     if not selected_project_id:
@@ -274,21 +401,30 @@ def save_api_workspace_binding(
             "binding_id": _binding_id(selected_source_id),
             "source_id": selected_source_id,
             "provider": "metersphere",
+            "connection_identity": selected_connection_identity,
             "project_id": selected_project_id,
             "project_name": str(project_name or "").strip(),
             "environment_id": selected_environment_id,
             "environment_name": str(environment_name or "").strip(),
             "verified_at": str(verified_at or now).strip(),
-            "config_fingerprint": _config_fingerprint(selected_project_id, selected_environment_id),
+            "config_fingerprint": _config_fingerprint(
+                selected_project_id,
+                selected_environment_id,
+                selected_connection_identity,
+            ),
             "binding_version": _binding_version(),
             "created_at": str(current.get("created_at") or now),
             "updated_at": now,
         }
         if incoming_guard:
             binding["_client_write_guard"] = incoming_guard
+        elif current_guard:
+            binding["_client_write_guard"] = current_guard
         current_auth = _public_auth_binding(current.get("auth_binding"))
         if (
             current_auth.get("configured")
+            and current_auth.get("connection_identity") == selected_connection_identity
+            and current_auth.get("project_id") == selected_project_id
             and current_auth.get("environment_id") == selected_environment_id
         ):
             binding["auth_binding"] = current_auth
@@ -311,9 +447,14 @@ def get_api_auth_binding(source_id: str) -> Dict[str, Any]:
             return {}
         project_id = str(binding.get("project_id") or "").strip()
         environment_id = str(binding.get("environment_id") or "").strip()
+        connection_identity = str(binding.get("connection_identity") or "").strip()
         if not project_id or not environment_id:
             return {}
-        profile = _load_auth_profile(project_id, environment_id)
+        profile = _load_auth_profile(
+            connection_identity,
+            project_id,
+            environment_id,
+        )
         if not profile.get("configured"):
             legacy = _public_auth_binding(binding.get("auth_binding"))
             if (
@@ -322,24 +463,32 @@ def get_api_auth_binding(source_id: str) -> Dict[str, Any]:
             ):
                 profile = {
                     **legacy,
+                    "connection_identity": connection_identity,
                     "project_id": project_id,
                     "environment_id": environment_id,
                     "scope": "environment",
                     "profile_fingerprint": _stable_hash(
-                        _auth_profile_identity(project_id, environment_id),
+                        _auth_profile_identity(
+                            connection_identity,
+                            project_id,
+                            environment_id,
+                        ),
                         16,
                     ),
+                    "profile_version": _binding_version(),
                 }
                 _write_auth_profile(profile)
         if not profile.get("configured"):
             return {}
         if (
             str(profile.get("project_id") or "").strip() != project_id
+            or str(profile.get("connection_identity") or "").strip() != connection_identity
             or str(profile.get("environment_id") or "").strip() != environment_id
         ):
             return {}
         return _public_auth_profile(
             profile,
+            connection_identity=connection_identity,
             project_id=project_id,
             environment_id=environment_id,
         )
@@ -348,13 +497,17 @@ def get_api_auth_binding(source_id: str) -> Dict[str, Any]:
 def get_environment_auth_profile(
     project_id: str,
     environment_id: str,
+    *,
+    connection_identity: str = "",
 ) -> Dict[str, Any]:
+    selected_connection_identity = str(connection_identity or "").strip()
     selected_project_id = str(project_id or "").strip()
     selected_environment_id = str(environment_id or "").strip()
     if not selected_project_id or not selected_environment_id:
         return {}
     with _BINDING_LOCK:
         profile = _load_auth_profile(
+            selected_connection_identity,
             selected_project_id,
             selected_environment_id,
         )
@@ -362,6 +515,7 @@ def get_environment_auth_profile(
             return {}
         return _public_auth_profile(
             profile,
+            connection_identity=selected_connection_identity,
             project_id=selected_project_id,
             environment_id=selected_environment_id,
         )
@@ -403,19 +557,25 @@ def save_api_auth_binding_metadata(
         if selected_environment_id != str(binding.get("environment_id") or "").strip():
             raise ValueError("认证引用必须绑定当前 MeterSphere 环境")
         project_id = str(binding.get("project_id") or "").strip()
+        connection_identity = str(binding.get("connection_identity") or "").strip()
         if not project_id:
             raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
         normalized_type, normalized_header = normalize_api_auth_header(
             auth_type,
             header_name,
         )
-        identity = _auth_profile_identity(project_id, selected_environment_id)
+        identity = _auth_profile_identity(
+            connection_identity,
+            project_id,
+            selected_environment_id,
+        )
         now = _now()
         auth = {
             "auth_ref": str(auth_ref or f"api_auth_{_stable_hash(identity, 16)}").strip(),
             "auth_type": normalized_type,
             "header_name": normalized_header,
             "variable_name": str(variable_name or f"MTP_API_AUTH_{_stable_hash(identity, 12).upper()}").strip(),
+            "connection_identity": connection_identity,
             "project_id": project_id,
             "environment_id": selected_environment_id,
             "configured": True,
@@ -423,6 +583,7 @@ def save_api_auth_binding_metadata(
             "updated_at": now,
             "binding_fingerprint": str(binding.get("config_fingerprint") or "").strip(),
             "profile_fingerprint": _stable_hash(identity, 16),
+            "profile_version": _binding_version(),
             "scope": "environment",
         }
         _write_auth_profile(auth)
@@ -440,6 +601,7 @@ def save_api_auth_binding_metadata(
             pass
         return _public_auth_profile(
             auth,
+            connection_identity=connection_identity,
             project_id=project_id,
             environment_id=selected_environment_id,
         )
@@ -455,13 +617,15 @@ def clear_api_auth_binding_metadata(source_id: str) -> Dict[str, Any]:
             return {}
         project_id = str(binding.get("project_id") or "").strip()
         environment_id = str(binding.get("environment_id") or "").strip()
+        connection_identity = str(binding.get("connection_identity") or "").strip()
         previous = _public_auth_profile(
-            _load_auth_profile(project_id, environment_id)
+            _load_auth_profile(connection_identity, project_id, environment_id)
             or binding.get("auth_binding"),
+            connection_identity=connection_identity,
             project_id=project_id,
             environment_id=environment_id,
         )
-        _delete_auth_profile(project_id, environment_id)
+        _delete_auth_profile(connection_identity, project_id, environment_id)
         directory = safe_join(API_TESTING_DIR, "workspace-bindings")
         try:
             names = os.listdir(directory)
@@ -475,7 +639,8 @@ def clear_api_auth_binding_metadata(source_id: str) -> Dict[str, Any]:
             if not isinstance(candidate, dict):
                 continue
             if (
-                str(candidate.get("project_id") or "").strip() != project_id
+                str(candidate.get("connection_identity") or "").strip() != connection_identity
+                or str(candidate.get("project_id") or "").strip() != project_id
                 or str(candidate.get("environment_id") or "").strip() != environment_id
             ):
                 continue
@@ -515,6 +680,7 @@ def get_api_workspace_binding(source_id: str, allow_legacy: bool = True) -> Dict
             selected_source_id,
             project_id,
             environment_id,
+            connection_identity=metersphere_service._api_auth_connection_identity(config),
             verified_at="",
         )
 
@@ -526,7 +692,9 @@ __all__ = [
     "get_environment_auth_profile",
     "get_api_auth_binding",
     "get_api_workspace_binding",
+    "migrate_legacy_connection_identity",
     "normalize_api_auth_header",
     "save_api_auth_binding_metadata",
     "save_api_workspace_binding",
+    "workspace_binding_transaction",
 ]

@@ -195,7 +195,8 @@ def _assert_generation_snapshot_current(
         != str(workspace_binding.get("config_fingerprint") or "")
         or str(generation.get("execution_binding_id") or "")
         != str(workspace_binding.get("binding_id") or "")
-        or (generation.get("auth_binding") or {}) != auth_binding
+        or _stable_api_auth_binding(generation.get("auth_binding"))
+        != _stable_api_auth_binding(auth_binding)
     ):
         raise ValueError("API plan generation 的 source/revision/binding/auth 快照已过期")
 
@@ -554,8 +555,8 @@ def _case_contract_missing(case: Dict[str, Any], endpoint: Dict[str, Any] | None
     return sorted(set(missing))
 
 
-def _plan_auth_binding(plan: Dict[str, Any]) -> Dict[str, Any]:
-    binding = plan.get("auth_binding") if isinstance(plan.get("auth_binding"), dict) else {}
+def _stable_api_auth_binding(value: Any) -> Dict[str, Any]:
+    binding = value if isinstance(value, dict) else {}
     required = ("auth_ref", "auth_type", "header_name", "variable_name", "environment_id")
     if not binding.get("configured") or any(not str(binding.get(key) or "").strip() for key in required):
         return {}
@@ -564,14 +565,18 @@ def _plan_auth_binding(plan: Dict[str, Any]) -> Dict[str, Any]:
         for key in (
             *required,
             "project_id",
+            "connection_identity",
             "configured",
-            "configured_at",
-            "updated_at",
             "binding_fingerprint",
             "profile_fingerprint",
+            "profile_version",
             "scope",
         )
     }
+
+
+def _plan_auth_binding(plan: Dict[str, Any]) -> Dict[str, Any]:
+    return _stable_api_auth_binding(plan.get("auth_binding"))
 
 
 def _binding_drift(plan: Dict[str, Any]) -> List[str]:
@@ -593,7 +598,17 @@ def _binding_drift(plan: Dict[str, Any]) -> List[str]:
     )
     if requires_auth:
         current_auth = api_workspace_service.get_api_auth_binding(source_id)
-        fields = ("auth_ref", "auth_type", "header_name", "variable_name", "environment_id", "binding_fingerprint")
+        fields = (
+            "auth_ref",
+            "auth_type",
+            "header_name",
+            "variable_name",
+            "connection_identity",
+            "project_id",
+            "environment_id",
+            "binding_fingerprint",
+            "profile_version",
+        )
         if not expected_auth or not current_auth or any(
             str(expected_auth.get(field) or "").strip() != str(current_auth.get(field) or "").strip()
             for field in fields

@@ -150,8 +150,27 @@ def start_api_source_sync(
     with _SYNC_LOCK:
         active = _active_sync(target)
         if active:
+            active_fingerprint = str(
+                active.get("source_config_fingerprint") or ""
+            ).strip()
+            if active_fingerprint != source_config_fingerprint:
+                active = _update_sync(
+                    str(active.get("sync_id") or ""),
+                    replacement_requested=True,
+                    replacement_fingerprint=source_config_fingerprint,
+                    replacement_trigger=str(trigger or "configuration"),
+                    event="来源配置已更新，当前同步结束后将立即按最新配置重试",
+                )
             result = dict(active)
-            result.update({"created": False, "conflict": True})
+            result.update({
+                "created": False,
+                "conflict": True,
+                "replacement_pending": bool(
+                    active.get("replacement_requested")
+                    and str(active.get("replacement_fingerprint") or "").strip()
+                    != active_fingerprint
+                ),
+            })
             return result
         sync_id = unique_millis_id("api_sync")
         now = _now()
@@ -178,6 +197,9 @@ def start_api_source_sync(
             "scoped_endpoint_count": 0,
             "error": "",
             "conflict": False,
+            "replacement_requested": False,
+            "replacement_fingerprint": "",
+            "replacement_trigger": "",
             "events": [{"at": now, "phase": "fetch_source", "message": "同步已排队"}],
         }
         _write_sync(record)
@@ -395,10 +417,67 @@ def _run_api_source_sync_guarded(sync_id: str, adapter: Any = None) -> None:
                     last_sync_status="failed",
                     last_error=error,
                 )
+    finally:
+        _start_requested_replacement(sync_id, adapter=adapter)
+
+
+def _start_requested_replacement(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
+    with _SYNC_LOCK:
+        record = get_api_sync(sync_id)
+        if (
+            not record
+            or record.get("status") not in TERMINAL_SYNC_STATES
+            or not record.get("replacement_requested")
+        ):
+            return {}
+        source_id = str(record.get("source_id") or "").strip()
+        source = api_source_service.get_api_source(source_id, masked=False)
+        if (
+            not source
+            or not source.get("sync_enabled")
+            or not source.get("project_id")
+            or not source.get("access_token")
+        ):
+            return _update_sync(
+                sync_id,
+                replacement_requested=False,
+                replacement_skipped=True,
+                event="最新配置未启用自动同步，已取消替代任务",
+            )
+        latest_fingerprint = api_source_service.source_config_fingerprint(source)
+        trigger = str(record.get("replacement_trigger") or "configuration")
+        _update_sync(
+            sync_id,
+            replacement_requested=False,
+            replacement_fingerprint=latest_fingerprint,
+            replacement_started_at=_now(),
+            event="开始按最新来源配置创建替代同步",
+        )
+    try:
+        replacement = start_api_source_sync(
+            source_id,
+            spawn=True,
+            adapter=adapter,
+            trigger=trigger,
+        )
+    except Exception as exc:
+        source = api_source_service.get_api_source(source_id, masked=False)
+        return _update_sync(
+            sync_id,
+            replacement_error=_redacted_error(exc, source),
+            event="替代同步创建失败",
+        )
+    _update_sync(
+        sync_id,
+        replacement_sync_id=str(replacement.get("sync_id") or ""),
+        event="替代同步已排队",
+    )
+    return replacement
 
 
 def recover_stale_api_syncs() -> List[str]:
     recovered: List[str] = []
+    replacements: List[str] = []
     with _SYNC_LOCK:
         for record in list_api_syncs(limit=500):
             if record.get("status") not in ACTIVE_SYNC_STATES:
@@ -421,6 +500,10 @@ def recover_stale_api_syncs() -> List[str]:
                     last_error="服务重启时同步仍未完成，请重新同步",
                 )
             recovered.append(sync_id)
+            if record.get("replacement_requested"):
+                replacements.append(sync_id)
+    for sync_id in replacements:
+        _start_requested_replacement(sync_id)
     return recovered
 
 

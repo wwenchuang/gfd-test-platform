@@ -2776,6 +2776,9 @@ def _get_api_testing_reports(handler, qs):
         "reports": api_report_service.list_api_reports(
             limit=safe_int(qs.get("limit"), 20) or 20,
             source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
+            business_line=str(
+                qs.get("business_line") or qs.get("businessLine") or ""
+            ).strip(),
         ),
     })
 
@@ -2934,6 +2937,7 @@ def _post_api_testing_source_execution_binding(handler, qs, match):
             environment_id,
             project_name=str(project.get("name") or ""),
             environment_name=str(environment.get("name") or ""),
+            connection_identity=metersphere_service._api_auth_connection_identity(cfg),
             expected_binding_fingerprint=expected_binding_fingerprint,
             client_session_id=client_session_id,
             client_intent_id=client_intent_id,
@@ -2963,8 +2967,32 @@ def _post_api_testing_source_auth_binding(handler, qs, match):
             str(data.get("auth_type") or data.get("authType") or "").strip(),
             str(data.get("header_name") or data.get("headerName") or "").strip(),
             str(data.get("secret") or ""),
+            expected_project_id=str(
+                data.get("expected_project_id") or data.get("expectedProjectId") or ""
+            ).strip(),
+            expected_environment_id=str(
+                data.get("expected_environment_id")
+                or data.get("expectedEnvironmentId")
+                or ""
+            ).strip(),
+            expected_binding_version=(
+                data.get("expected_binding_version")
+                if "expected_binding_version" in data
+                else data.get("expectedBindingVersion")
+                if "expectedBindingVersion" in data
+                else None
+            ),
+            expected_profile_version=(
+                data.get("expected_profile_version")
+                if "expected_profile_version" in data
+                else data.get("expectedProfileVersion")
+                if "expectedProfileVersion" in data
+                else None
+            ),
         )
         handler._json({"ok": True, "binding": binding})
+    except metersphere_service.MeterSphereAuthConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 
@@ -2979,8 +3007,35 @@ def _delete_api_testing_source_auth_binding(handler, qs, match):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
         return
     try:
-        binding = metersphere_service.clear_api_auth_binding(source_id)
+        data = handler._body()
+        binding = metersphere_service.clear_api_auth_binding(
+            source_id,
+            expected_project_id=str(
+                data.get("expected_project_id") or data.get("expectedProjectId") or ""
+            ).strip(),
+            expected_environment_id=str(
+                data.get("expected_environment_id")
+                or data.get("expectedEnvironmentId")
+                or ""
+            ).strip(),
+            expected_binding_version=(
+                data.get("expected_binding_version")
+                if "expected_binding_version" in data
+                else data.get("expectedBindingVersion")
+                if "expectedBindingVersion" in data
+                else None
+            ),
+            expected_profile_version=(
+                data.get("expected_profile_version")
+                if "expected_profile_version" in data
+                else data.get("expectedProfileVersion")
+                if "expectedProfileVersion" in data
+                else None
+            ),
+        )
         handler._json({"ok": True, "binding": binding})
+    except metersphere_service.MeterSphereAuthConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 

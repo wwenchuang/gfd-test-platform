@@ -306,6 +306,45 @@ class ApiReportOwnershipChecks(unittest.TestCase):
             ),
         )
 
+    def test_report_list_filters_by_plan_business_line(self):
+        reports = [
+            api_report_service.normalize_metersphere_report(
+                f"run-{index}",
+                {"results": [{"id": f"case-{index}", "status": "passed"}]},
+                plan_id=plan_id,
+                source_id="source-a",
+            )
+            for index, plan_id in enumerate(("plan-home", "plan-shared"), start=1)
+        ]
+        plans = {
+            "plan-home": {
+                "plan_id": "plan-home",
+                "source_id": "source-a",
+                "module_paths": ["家用业务/app接口/我的"],
+            },
+            "plan-shared": {
+                "plan_id": "plan-shared",
+                "source_id": "source-a",
+                "module_paths": ["共享业务/商户小程序/订单"],
+            },
+        }
+
+        with mock.patch.object(
+            api_test_plan_service,
+            "get_api_test_plan",
+            side_effect=lambda plan_id: plans.get(plan_id, {}),
+        ):
+            for report in reports:
+                api_report_service.save_api_report(report)
+            home_reports = api_report_service.list_api_reports(
+                source_id="source-a",
+                business_line="家用业务",
+            )
+
+        self.assertEqual(1, len(home_reports))
+        self.assertEqual("plan-home", home_reports[0]["plan_id"])
+        self.assertEqual(["家用业务"], home_reports[0]["business_lines"])
+
     def test_legacy_report_is_visible_only_when_plan_source_is_unambiguous(self):
         legacy = api_report_service.normalize_metersphere_report(
             "legacy-run",
@@ -412,15 +451,19 @@ class ApiReportOwnershipChecks(unittest.TestCase):
         with mock.patch.object(
             api_report_service,
             "list_api_reports",
-            side_effect=lambda limit, source_id="": calls.append(
-                (limit, source_id)
+            side_effect=lambda limit, source_id="", business_line="": calls.append(
+                (limit, source_id, business_line)
             )
             or [],
         ):
             handler = Handler()
-            route(handler, {"limit": "7", "source_id": "source-a"})
+            route(handler, {
+                "limit": "7",
+                "source_id": "source-a",
+                "business_line": "家用业务",
+            })
 
-        self.assertEqual([(7, "source-a")], calls)
+        self.assertEqual([(7, "source-a", "家用业务")], calls)
         self.assertEqual(({"ok": True, "reports": []}, 200), handler.responses[0])
 
 

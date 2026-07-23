@@ -20,6 +20,9 @@ let apiExecutionBindingIntentId = 0;
 let apiExecutionBindingIntent = null;
 let apiReportRequestId = 0;
 let apiReportRequestController = null;
+const API_PLAN_MAX_ENDPOINTS = 60;
+let apiAssetBusinessLines = [];
+const apiPlanReviewStateByPlan = new Map();
 const apiExecutionBindingClientSessionId = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -117,6 +120,126 @@ function apiTestingEmpty(text) {
   return `<div class="report-empty">${escapeHtml(text)}</div>`;
 }
 
+function apiBusinessLineForEndpoint(endpoint = {}) {
+  return apiEndpointModulePath(endpoint).split('/')[0] || '未分组';
+}
+
+function apiBusinessLineOptions(endpoints = apiTestingEndpoints, serverLines = apiAssetBusinessLines) {
+  const counts = new Map();
+  (serverLines || []).forEach(item => {
+    const name = String(item?.name || '').trim();
+    if (name) counts.set(name, Number(item.endpoint_count || 0));
+  });
+  if (!counts.size) {
+    (endpoints || []).forEach(endpoint => {
+      const name = apiBusinessLineForEndpoint(endpoint);
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+  }
+  return Array.from(counts, ([name, endpointCount]) => ({name, endpointCount}))
+    .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+}
+
+function currentApiBusinessLine() {
+  const state = apiModuleSelectionState();
+  const options = apiBusinessLineOptions();
+  if (state.businessLine && options.some(item => item.name === state.businessLine)) {
+    return state.businessLine;
+  }
+  return options[0]?.name || '';
+}
+
+function selectApiBusinessLine(name) {
+  const state = apiModuleSelectionState();
+  state.businessLine = String(name || '');
+  state.activeModulePath = '';
+  state.search = '';
+  state.method = '';
+  state.endpointIds.clear();
+  renderApiModuleWorkspace();
+  updateApiWorkflowStepper();
+}
+
+function apiWorkflowNextAction(context = {}) {
+  const source = context.source || selectedApiAssetSource() || {};
+  const endpoints = context.endpoints || apiTestingEndpoints || [];
+  const selectedCount = selectedApiPlanEndpointIds().length;
+  const plans = context.plans || apiTestingPlans || [];
+  const generation = context.generation || apiPlanGenerationCurrent || {};
+  const execution = context.execution || (apiExecutionContext?.active_runs || [])[0] || {};
+  const reports = context.reports || apiTestingReports || [];
+  if (!source.configured) return {step: 'assets', label: '选择业务', handler: 'showApiAssetsPage()'};
+  if (!endpoints.length) return {step: 'assets', label: '同步接口', handler: 'showApiAssetsPage()'};
+  if (!selectedCount && !plans.length) return {step: 'assets', label: '选择模块和接口', handler: 'showApiAssetsPage()'};
+  if (['queued', 'running'].includes(generation.status)) return {step: 'plan', label: '查看生成进度', handler: 'showApiPlanPage()'};
+  const draft = plans.find(plan => plan.status === 'draft');
+  if (draft) return {step: 'review', label: '审阅用例', handler: 'showApiPlanPage()'};
+  const confirmed = plans.find(plan => plan.status === 'confirmed' && (plan.revision_state || {}).state !== 'stale');
+  if (['queued', 'running'].includes(execution.status)) return {step: 'execution', label: '查看执行进度', handler: 'showApiExecutionPage()'};
+  if (reports.length) return {step: 'reports', label: '查看报告', handler: 'showApiReportsPage()'};
+  if (confirmed) return {step: 'execution', label: '推送并执行', handler: 'showApiExecutionPage()'};
+  return {step: 'plan', label: selectedCount ? '生成 AI 用例' : '选择接口', handler: selectedCount ? 'showApiPlanPage()' : 'showApiAssetsPage()'};
+}
+
+function renderApiWorkflowStepper(context = {}) {
+  const workflow = context.workflow || activeWorkflow || 'api_assets';
+  const source = context.source || selectedApiAssetSource() || {};
+  const plans = context.plans || apiTestingPlans || [];
+  const endpoints = context.endpoints || apiTestingEndpoints || [];
+  let activeStep = ({
+    api_assets: 'assets',
+    api_plan: 'plan',
+    api_execution: 'execution',
+    api_reports: 'execution',
+  })[workflow] || 'assets';
+  if (workflow === 'api_assets' && source.configured && !endpoints.length) activeStep = 'sync';
+  if (workflow === 'api_plan' && (apiTestingCurrentPlan || plans.some(plan => plan.status === 'draft'))) activeStep = 'review';
+  const steps = [
+    {id: 'assets', label: '选择业务', handler: 'showApiAssetsPage()'},
+    {id: 'sync', label: '同步接口', handler: 'showApiAssetsPage()'},
+    {id: 'plan', label: '生成用例', handler: 'showApiPlanPage()'},
+    {id: 'review', label: '审阅确认', handler: 'showApiPlanPage()'},
+    {id: 'execution', label: '执行报告', handler: 'showApiExecutionPage()'},
+  ];
+  const action = apiWorkflowNextAction(context);
+  const completedSteps = new Set();
+  if (source.configured) completedSteps.add('assets');
+  if (endpoints.length) completedSteps.add('sync');
+  if (plans.length || apiPlanGenerationCurrent?.status === 'succeeded') completedSteps.add('plan');
+  if (plans.some(plan => plan.status === 'confirmed')) completedSteps.add('review');
+  if ((context.reports || apiTestingReports || []).length) completedSteps.add('execution');
+  const businessLine = currentApiBusinessLine();
+  const revisionTime = context.revisionTime || context.snapshot?.created_at || '';
+  const stepMarkup = steps.map((step, index) => {
+    const isActive = step.id === activeStep;
+    const isNext = step.id === action.step;
+    const isDone = completedSteps.has(step.id);
+    return `<li class="${isActive ? 'active' : ''} ${isNext ? 'next' : ''} ${isDone ? 'done' : ''}"><button type="button" onclick="${step.handler}"><span>${isDone ? '✓' : index + 1}</span><strong>${escapeHtml(step.label)}</strong></button></li>`;
+  }).join('');
+  const activeStepIndex = Math.max(0, steps.findIndex(step => step.id === activeStep));
+  const activeStepLabel = steps[activeStepIndex]?.label || steps[0].label;
+  return `
+    <nav class="api-workflow-stepper" aria-label="API 测试流程">
+      <div class="api-workflow-context">
+        <div><span>当前测试</span><strong>${escapeHtml(source.name || '选择 Apifox 项目')}${businessLine ? ` · ${escapeHtml(businessLine)}` : ''}</strong></div>
+        <small>${revisionTime ? `接口更新于 ${escapeHtml(revisionTime)}` : '按步骤完成一次接口回归'}</small>
+      </div>
+      <ol class="api-workflow-desktop-steps">${stepMarkup}</ol>
+      <details class="api-workflow-mobile-steps">
+        <summary><span>当前 ${activeStepIndex + 1} / ${steps.length}</span><strong>${escapeHtml(activeStepLabel)}</strong></summary>
+        <ol>${stepMarkup}</ol>
+      </details>
+      <button type="button" class="btn-sm primary api-workflow-next" onclick="${action.handler}">${escapeHtml(action.label)}</button>
+      <details class="api-workflow-tech-detail"><summary>技术详情</summary><div>Source ${escapeHtml(apiTestingProjectScope.sourceId || '-')} · Revision ${escapeHtml(apiTestingProjectScope.revisionId || '-')}</div></details>
+    </nav>
+  `;
+}
+
+function updateApiWorkflowStepper(context = {}) {
+  const target = document.getElementById('api-workflow-stepper');
+  if (target) target.innerHTML = renderApiWorkflowStepper({workflow: activeWorkflow, ...context});
+}
+
 function apiEndpointLabel(endpoint) {
   return `${endpoint.method || ''} ${endpoint.path || ''}`.trim();
 }
@@ -183,6 +306,7 @@ async function showApiTestingDashboard() {
     const ms = data.metersphere || {};
     area.innerHTML = `
       <div class="api-testing-page">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_dashboard', reports: apiTestingReports})}</div>
         <div class="generation-record-head">
           <div class="workflow-kicker">API TESTING · OpenAPI / MeterSphere</div>
           <h2>API 工作台</h2>
@@ -233,7 +357,8 @@ function apiModuleSelectionState(sourceId = apiTestingProjectScope.sourceId, rev
       selectedModules: new Set(),
       activeModulePath: '',
       search: '',
-      method: ''
+      method: '',
+      businessLine: ''
     });
   }
   return apiTestingSelectionByScope.get(key);
@@ -306,18 +431,32 @@ function renderApiAssetTable(endpoints, options = {}) {
 
 function toggleApiEndpointById(endpointId, checked) {
   const state = apiModuleSelectionState();
+  if (checked && !state.endpointIds.has(String(endpointId)) && state.endpointIds.size >= API_PLAN_MAX_ENDPOINTS) {
+    showToast(`单次最多选择 ${API_PLAN_MAX_ENDPOINTS} 个接口，请缩小模块或搜索范围`, 'error');
+    renderApiModuleEndpointTable();
+    return;
+  }
   if (checked) state.endpointIds.add(String(endpointId));
   else state.endpointIds.delete(String(endpointId));
   syncApiEndpointCheckboxStates();
+  updateApiWorkflowStepper();
 }
 
 function toggleApiEndpointSelection(checked) {
   const state = apiModuleSelectionState();
+  const checks = Array.from(document.querySelectorAll('.api-endpoint-check'));
+  const adding = checks.filter(input => !state.endpointIds.has(String(input.value))).length;
+  if (checked && state.endpointIds.size + adding > API_PLAN_MAX_ENDPOINTS) {
+    showToast(`当前范围有 ${checks.length} 个接口，单次最多生成 ${API_PLAN_MAX_ENDPOINTS} 个。请继续选择子模块或搜索接口。`, 'error');
+    syncApiEndpointCheckboxStates();
+    return;
+  }
   document.querySelectorAll('.api-endpoint-check').forEach(input => {
     if (checked) state.endpointIds.add(String(input.value));
     else state.endpointIds.delete(String(input.value));
   });
   syncApiEndpointCheckboxStates();
+  updateApiWorkflowStepper();
 }
 
 function syncApiEndpointCheckboxStates() {
@@ -335,10 +474,11 @@ async function showApiAssetsPage() {
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-asset-console">
+      <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_assets'})}</div>
       <header class="api-asset-header">
         <div class="workflow-kicker">API ASSET · APIFOX / OPENAPI</div>
         <h2>接口资产</h2>
-        <p>服务端只读同步 Apifox，内容变化才生成新版本。同步失败时继续保留上一活动版本。</p>
+        <p>选择业务线和模块后生成测试用例。接口由服务端自动从 Apifox 更新。</p>
         <div id="api-source-summary">${apiTestingEmpty('正在读取 Apifox 来源...')}</div>
       </header>
       <section id="api-source-settings-panel" class="api-source-settings" hidden></section>
@@ -445,25 +585,28 @@ function renderApiProjectSelector(sources, selectedId) {
 function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const configured = source?.configured === true;
   const status = latestSync?.status || source?.last_sync_status || '';
+  const schedule = source?.sync_schedule || {};
   const syncDisabled = !configured || ['queued', 'running'].includes(status);
+  const running = ['queued', 'running'].includes(status);
+  const primaryLabel = status === 'failed' ? '重试同步' : '立即同步';
   return `
     <div class="api-source-status-row">
       <div class="api-source-identity">
-        ${apiStatusPill(configured ? '连接已配置' : '待配置', configured ? 'success' : 'warn')}
         ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
-        <span>${source?.project_id ? `项目 ${escapeHtml(source.project_id)}` : '尚未填写项目 ID'} · ${source?.credential_configured ? '令牌已配置' : '令牌未配置'}</span>
+        ${apiStatusPill(configured ? '已连接' : '待配置', configured ? 'success' : 'warn')}
+        <span>${source?.credential_configured ? '访问凭据已安全保存' : '需要配置 Apifox 项目和访问令牌'}</span>
       </div>
       <div class="api-source-actions">
-        <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>同步 Apifox</button>
+        <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在同步' : primaryLabel)}</button>
         <button class="btn-sm icon-only" title="刷新接口资产" aria-label="刷新接口资产" onclick="refreshApiAssetWorkspace(true)">↻</button>
         <button class="btn-sm icon-only" title="Apifox 来源设置" aria-label="Apifox 来源设置" onclick="toggleApiSourceSettings()">⚙</button>
       </div>
     </div>
     <div class="api-source-facts">
-      <span><small>最近成功</small><strong>${escapeHtml(source?.last_success_at || '尚未同步')}</strong></span>
-      <span><small>文档版本</small><strong>${escapeHtml(snapshot.version || '等待同步')}</strong></span>
-      <span><small>同步周期</small><strong>${escapeHtml(source?.sync_interval_minutes || 60)} 分钟</strong></span>
-      <span><small>来源状态</small><strong>${escapeHtml(apiAssetSyncStatusText(status))}</strong></span>
+      <span><small>自动同步</small><strong>${schedule.mode === 'automatic' ? '已开启' : '未开启'}</strong></span>
+      <span><small>最近成功</small><strong>${escapeHtml(schedule.last_success_at || source?.last_success_at || '等待首次同步')}</strong></span>
+      <span><small>下次检查</small><strong>${escapeHtml(schedule.next_check_at || '手动同步')}</strong></span>
+      <span><small>当前状态</small><strong>${escapeHtml(apiAssetSyncStatusText(status))}</strong></span>
     </div>
     ${source?.last_error ? `<div class="api-inline-error">${escapeHtml(source.last_error)}</div>` : ''}
   `;
@@ -587,7 +730,7 @@ function renderApiAssetSync(sync) {
         <span><strong>${escapeHtml(summary.affected_plans || 0)}</strong>受影响计划</span>
       </div>
       ${sync.error ? `<div class="api-inline-error">${escapeHtml(sync.error)}</div>` : ''}
-      <details class="api-sync-log-detail" data-api-asset-log-key="${escapeHtml(key)}" onchange="toggleApiAssetSyncLog(${jsArg(sync.sync_id)}, this.open)">
+      <details class="api-sync-log-detail" data-api-asset-log-key="${escapeHtml(key)}" ontoggle="toggleApiAssetSyncLog(${jsArg(sync.sync_id)}, this.open)">
         <summary><span>技术日志</span><small>${escapeHtml(events.length)} 条真实事件</small></summary>
         <div class="api-asset-sync-log">${events.length ? events.map(event => `
           <div><time>${escapeHtml(event.at || '-')}</time><strong title="${escapeHtml(event.phase || '')}">${escapeHtml(apiAssetSyncPhaseText(event.phase))}</strong><span>${escapeHtml(event.message || '')}</span></div>
@@ -598,7 +741,13 @@ function renderApiAssetSync(sync) {
 }
 
 function renderApiModuleTree(source, endpoints) {
-  const rows = apiModuleRows(source, endpoints);
+  const businessLine = currentApiBusinessLine();
+  const scopedEndpoints = businessLine
+    ? endpoints.filter(endpoint => apiBusinessLineForEndpoint(endpoint) === businessLine)
+    : endpoints;
+  const rows = apiModuleRows(source, scopedEndpoints).filter(
+    row => !businessLine || row.path === businessLine || row.path.startsWith(`${businessLine}/`)
+  );
   const state = apiModuleSelectionState();
   if (!rows.length) return apiTestingEmpty('当前版本没有可选择的业务模块。');
   return `<div class="api-module-tree" role="tree">${rows.map(row => {
@@ -619,7 +768,11 @@ function syncApiModuleCheckboxStates() {
 
 function toggleApiModuleSelection(path, checked) {
   const source = selectedApiAssetSource() || {};
-  const rows = apiModuleRows(source, apiTestingEndpoints);
+  const businessLine = currentApiBusinessLine();
+  const rows = apiModuleRows(
+    source,
+    apiTestingEndpoints.filter(endpoint => !businessLine || apiBusinessLineForEndpoint(endpoint) === businessLine)
+  );
   const state = apiModuleSelectionState();
   rows.filter(row => apiModulePathMatches(row.path, path)).forEach(row => {
     if (checked) state.selectedModules.add(row.path);
@@ -638,7 +791,11 @@ function selectApiAssetModule(path) {
 function apiActiveModuleEndpoints() {
   const state = apiModuleSelectionState();
   if (!state.activeModulePath) return [];
-  return apiTestingEndpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), state.activeModulePath));
+  const businessLine = currentApiBusinessLine();
+  return apiTestingEndpoints.filter(endpoint => (
+    (!businessLine || apiBusinessLineForEndpoint(endpoint) === businessLine)
+    && apiModulePathMatches(apiEndpointModulePath(endpoint), state.activeModulePath)
+  ));
 }
 
 function apiFilteredModuleEndpoints() {
@@ -663,8 +820,15 @@ function setApiModuleMethodFilter(value) {
 
 function selectCurrentApiModule() {
   const state = apiModuleSelectionState();
-  apiActiveModuleEndpoints().forEach(endpoint => state.endpointIds.add(String(endpoint.endpoint_id || '')));
+  const endpoints = apiFilteredModuleEndpoints();
+  const newIds = endpoints.filter(endpoint => !state.endpointIds.has(String(endpoint.endpoint_id || '')));
+  if (state.endpointIds.size + newIds.length > API_PLAN_MAX_ENDPOINTS) {
+    showToast(`当前范围有 ${endpoints.length} 个接口，单次最多生成 ${API_PLAN_MAX_ENDPOINTS} 个。请继续选择子模块或搜索接口。`, 'error');
+    return;
+  }
+  endpoints.forEach(endpoint => state.endpointIds.add(String(endpoint.endpoint_id || '')));
   renderApiModuleEndpointTable();
+  updateApiWorkflowStepper();
 }
 
 function renderApiModuleEndpointTable() {
@@ -683,15 +847,27 @@ function renderApiModuleWorkspace() {
   if (!root) return;
   const source = selectedApiAssetSource() || {};
   const state = apiModuleSelectionState();
+  const businessLines = apiBusinessLineOptions();
+  const businessLine = currentApiBusinessLine();
+  if (!state.businessLine && businessLine) state.businessLine = businessLine;
+  const businessEndpoints = apiTestingEndpoints.filter(
+    endpoint => !businessLine || apiBusinessLineForEndpoint(endpoint) === businessLine
+  );
   const methods = Array.from(new Set(apiActiveModuleEndpoints().map(endpoint => endpoint.method).filter(Boolean))).sort();
   root.innerHTML = `
+    <div class="api-business-line-switcher">
+      <div><span>业务线</span><strong>先缩小业务范围，再选择模块和接口</strong></div>
+      <select aria-label="选择接口业务线" onchange="selectApiBusinessLine(this.value)">
+        ${businessLines.map(item => `<option value="${escapeHtml(item.name)}" ${item.name === businessLine ? 'selected' : ''}>${escapeHtml(item.name)} · ${escapeHtml(item.endpointCount)} 个接口</option>`).join('')}
+      </select>
+    </div>
     <div class="api-module-workspace">
       <section class="api-module-pane">
-        <div class="api-module-pane-head"><strong>业务模块</strong><span>${escapeHtml(apiModuleRows(source, apiTestingEndpoints).length)} 个</span></div>
-        <div class="api-module-tree-scroll">${renderApiModuleTree(source, apiTestingEndpoints)}</div>
+        <div class="api-module-pane-head"><strong>${escapeHtml(businessLine || '业务')}模块</strong><span>${escapeHtml(apiModuleRows(source, businessEndpoints).length)} 个</span></div>
+        <div class="api-module-tree-scroll">${renderApiModuleTree(source, businessEndpoints)}</div>
       </section>
       <section class="api-module-endpoints">
-        <div class="api-module-pane-head"><div><strong>${escapeHtml(state.activeModulePath || '当前模块')}</strong><span>${state.activeModulePath ? `${apiActiveModuleEndpoints().length} 个接口` : '未选择'}</span></div><button class="btn-sm api-module-select-current" type="button" ${state.activeModulePath ? '' : 'disabled'} onclick="selectCurrentApiModule()">选择当前模块</button></div>
+        <div class="api-module-pane-head"><div><strong>${escapeHtml(state.activeModulePath ? state.activeModulePath.split('/').pop() : '选择一个模块')}</strong><span>${state.activeModulePath ? `${apiActiveModuleEndpoints().length} 个接口 · 已选 ${selectedApiPlanEndpointIds().length}` : `单次最多 ${API_PLAN_MAX_ENDPOINTS} 个`}</span></div><button class="btn-sm api-module-select-current" type="button" ${state.activeModulePath ? '' : 'disabled'} onclick="selectCurrentApiModule()">选择当前结果</button></div>
         <div class="api-module-filters">
           <input id="api-module-search" type="search" value="${escapeHtml(state.search)}" placeholder="搜索当前模块接口" oninput="setApiModuleSearch(this.value)">
           <select id="api-module-method-filter" aria-label="接口方法筛选" onchange="setApiModuleMethodFilter(this.value)"><option value="">全部方法</option>${methods.map(method => `<option value="${escapeHtml(method)}" ${state.method === method ? 'selected' : ''}>${escapeHtml(method)}</option>`).join('')}</select>
@@ -716,7 +892,7 @@ function renderApiAssetWorkspaceBody(data) {
   }] : []);
   return `
     <section class="api-asset-revision-bar">
-      <div><span>活动版本</span><strong>${escapeHtml(asset.active_revision_id || snapshot.snapshot_id || '尚未生成')}</strong></div>
+      <div><span>当前接口</span><strong>${selectedRevisionId ? '最新可用版本' : '尚未生成'}</strong></div>
       <div class="api-asset-revision-picker"><span>查看版本</span><select aria-label="查看接口版本" onchange="selectApiAssetRevision(this.value)">${revisionOptions.map(revision => {
         const revisionId = revision.revision_id || revision.snapshot_id || '';
         const active = revisionId && revisionId === asset.active_revision_id ? ' · 活动' : '';
@@ -758,6 +934,7 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
     if (!source && !apiAssetSettingsOpen) apiAssetSettingsOpen = true;
     apiTestingSnapshots = assetData.snapshots || [];
     apiTestingEndpoints = assetData.endpoints || [];
+    apiAssetBusinessLines = assetData.business_lines || [];
     apiAssetSelectedRevisionId = (assetData.snapshot || {}).revision_id || (assetData.snapshot || {}).snapshot_id || '';
     apiTestingCurrentSnapshotId = apiAssetSelectedRevisionId || apiTestingCurrentSnapshotId || (apiTestingSnapshots[0] || {}).snapshot_id || '';
     apiTestingProjectScope = { sourceId: source?.source_id || assetData.source_id || '', revisionId: apiAssetSelectedRevisionId };
@@ -780,6 +957,12 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
     if (syncRegion) syncRegion.innerHTML = renderApiAssetSync(latestSync);
     body.innerHTML = renderApiAssetWorkspaceBody(assetData);
     renderApiModuleWorkspace();
+    updateApiWorkflowStepper({
+      source,
+      endpoints: apiTestingEndpoints,
+      snapshot: assetData.snapshot || {},
+      revisionTime: (assetData.snapshot || {}).created_at || '',
+    });
     restoreApiAssetSyncViewState(document.getElementById('editor-area'));
     scheduleApiAssetSyncPoll(latestSync);
   } catch(e) {
@@ -883,7 +1066,14 @@ async function saveApiSourceConfig(clearCredentials = false) {
     }
     const tokenInput = document.getElementById('api-source-token');
     if (tokenInput) tokenInput.value = '';
-    showToast('✓ Apifox 来源设置已保存', 'success');
+    if (data.sync?.sync_id) {
+      apiAssetActiveSyncId = data.sync.sync_id;
+      showToast('✓ 设置已保存，接口正在自动同步', 'success');
+    } else if (data.sync_error) {
+      showToast(data.sync_error, 'error');
+    } else {
+      showToast('✓ Apifox 来源设置已保存', 'success');
+    }
     await refreshApiAssetWorkspace(true);
   } catch (e) {
     showToast(e.message || 'Apifox 来源设置保存失败', 'error');
@@ -1086,50 +1276,64 @@ function restoreApiPlanGenerationLogViewState(root = document) {
 }
 
 function renderApiPlanGeneration(generation) {
-  if (!generation?.generation_id) return apiTestingEmpty('尚未发起本范围的 AI 计划生成。');
+  if (!generation?.generation_id) return apiTestingEmpty('选择接口后，点击“生成 AI 用例”开始。');
   const batches = generation.batches || [];
   const events = generation.events || [];
   const failedCount = Number(generation.failed_batches || batches.filter(batch => batch.status === 'failed').length);
   const retryable = ['partial', 'failed'].includes(generation.status) && failedCount > 0;
   const logKey = apiPlanGenerationLogKey(generation.generation_id);
   const logOpen = apiPlanGenerationExpandedKeys.has(logKey);
+  const completed = Number(generation.completed_batches || 0);
+  const stageIndex = generation.status === 'queued'
+    ? 0
+    : generation.status === 'running'
+      ? 1
+      : ['succeeded', 'partial'].includes(generation.status)
+        ? 3
+        : 2;
+  const stages = ['校验接口范围', 'AI 分批设计', '平台可执行性校验', '草稿已生成'];
   return `
     <article class="api-plan-generation" data-status="${escapeHtml(generation.status || '')}">
       <header class="api-plan-generation-head">
         <div>
           <span>本次生成</span>
           <h3>${escapeHtml(apiPlanGenerationStatusText(generation.status))}</h3>
-          <code>${escapeHtml(generation.generation_id)}</code>
+          <small>${escapeHtml((generation.selected_endpoint_keys || []).length)} 个接口 · ${escapeHtml(generation.batch_count || batches.length)} 个 AI 批次</small>
         </div>
         <div class="api-plan-generation-progress">
           ${apiStatusPill(apiPlanGenerationStatusText(generation.status), apiPlanGenerationStatusClass(generation.status))}
-          <strong>${escapeHtml(generation.completed_batches || 0)} / ${escapeHtml(generation.batch_count || batches.length)} 批</strong>
+          <strong>${escapeHtml(completed)} / ${escapeHtml(generation.batch_count || batches.length)} 批</strong>
         </div>
       </header>
-      <div class="api-plan-generation-scope">
-        <span>来源 <code>${escapeHtml(generation.source_id || '-')}</code></span>
-        <span>版本 <code>${escapeHtml(generation.asset_revision_id || '-')}</code></span>
-        <span>模块 ${escapeHtml((generation.module_paths || []).join('、') || '-')}</span>
-        <span>接口 ${escapeHtml((generation.selected_endpoint_keys || []).length)}</span>
-      </div>
-      <div class="api-plan-batch-list">${batches.map((batch, index) => {
-        const batchNumber = Number(batch.batch_index || index + 1);
-        return `
-          <div class="api-plan-batch-row status-${escapeHtml(batch.status || 'queued')}">
-            <span class="api-plan-batch-index">${String(batchNumber).padStart(2, '0')}</span>
-            <div><strong>批次 ${escapeHtml(batchNumber)}</strong><small>第 ${escapeHtml(batch.attempts || 0)} 次尝试</small></div>
-            <strong class="api-plan-batch-count">${escapeHtml(batch.endpoint_count || 0)}</strong>
-            ${apiStatusPill(apiPlanBatchStatusText(batch.status), apiPlanGenerationStatusClass(batch.status))}
-            <div class="api-plan-batch-result">${batch.plan_id
-              ? `<code>${escapeHtml(batch.plan_id)}</code><button class="btn-sm ghost" onclick="openApiTestPlan(${jsArg(batch.plan_id)})">查看计划</button>`
-              : `<span>${escapeHtml(batch.error || (batch.status === 'running' ? '等待 AI 返回' : '尚未生成计划'))}</span>`}</div>
-          </div>
-        `;
-      }).join('')}</div>
+      <ol class="api-generation-stages">${stages.map((stage, index) => `
+        <li class="${index < stageIndex ? 'done' : index === stageIndex ? 'active' : ''}">
+          <span>${index < stageIndex ? '✓' : index + 1}</span><strong>${escapeHtml(stage)}</strong>
+        </li>
+      `).join('')}</ol>
       ${generation.error ? `<div class="api-inline-error">${escapeHtml(generation.error)}</div>` : ''}
-      ${retryable ? `<div class="generation-record-actions"><button class="btn-sm ai" onclick="retryApiPlanGeneration(${jsArg(generation.generation_id)})">重试失败批次</button><span>仅重试 ${failedCount} 个失败批次，已成功计划保持不变。</span></div>` : ''}
-      <details class="api-generation-log-detail" data-api-generation-log-key="${escapeHtml(logKey)}" ${logOpen ? 'open' : ''} ontoggle="toggleApiPlanGenerationLog(${jsArg(generation.generation_id)}, this.open)">
-        <summary><strong>技术日志</strong><span>${events.length} 条服务端事件</span></summary>
+      ${retryable ? `<div class="generation-record-actions"><button class="btn-sm ai" onclick="retryApiPlanGeneration(${jsArg(generation.generation_id)})">重试失败批次</button><span>已成功内容保持不变。</span></div>` : ''}
+      <details class="api-plan-tech-detail api-generation-log-detail" data-api-generation-log-key="${escapeHtml(logKey)}" ${logOpen ? 'open' : ''} ontoggle="toggleApiPlanGenerationLog(${jsArg(generation.generation_id)}, this.open)">
+        <summary><strong>技术详情</strong><span>${batches.length} 个批次 · ${events.length} 条事件</span></summary>
+        <div class="api-plan-generation-scope">
+          <span>Generation <code>${escapeHtml(generation.generation_id)}</code></span>
+          <span>Source <code>${escapeHtml(generation.source_id || '-')}</code></span>
+          <span>Revision <code>${escapeHtml(generation.asset_revision_id || '-')}</code></span>
+          <span>模块 ${escapeHtml((generation.module_paths || []).join('、') || '-')}</span>
+        </div>
+        <div class="api-plan-batch-list">${batches.map((batch, index) => {
+          const batchNumber = Number(batch.batch_index || index + 1);
+          return `
+            <div class="api-plan-batch-row status-${escapeHtml(batch.status || 'queued')}">
+              <span class="api-plan-batch-index">${String(batchNumber).padStart(2, '0')}</span>
+              <div><strong>批次 ${escapeHtml(batchNumber)}</strong><small>第 ${escapeHtml(batch.attempts || 0)} 次尝试</small></div>
+              <strong class="api-plan-batch-count">${escapeHtml(batch.endpoint_count || 0)}</strong>
+              ${apiStatusPill(apiPlanBatchStatusText(batch.status), apiPlanGenerationStatusClass(batch.status))}
+              <div class="api-plan-batch-result">${batch.plan_id
+                ? `<code>${escapeHtml(batch.plan_id)}</code><button class="btn-sm ghost" onclick="openApiTestPlan(${jsArg(batch.plan_id)})">查看计划</button>`
+                : `<span>${escapeHtml(batch.error || (batch.status === 'running' ? '等待 AI 返回' : '尚未生成计划'))}</span>`}</div>
+            </div>
+          `;
+        }).join('')}</div>
         <div class="api-generation-log-content" onscroll="rememberApiPlanGenerationLogScroll(${jsArg(logKey)}, this.scrollTop)">${events.length ? events.map(event => {
           const detail = event.detail == null ? '' : (typeof event.detail === 'string' ? event.detail : JSON.stringify(event.detail, null, 2));
           return `<div><time>${escapeHtml(event.at || event.timestamp || '-')}</time><strong>${escapeHtml(event.message || event.summary || event.status || '生成事件')}</strong><small>${escapeHtml(event.status || event.phase || '')}</small>${detail ? `<pre>${escapeHtml(detail)}</pre>` : ''}</div>`;
@@ -1177,7 +1381,17 @@ async function pollApiPlanGeneration(generationId, requestId = apiPlanGeneration
     const generation = data.generation || {};
     updateApiPlanGeneration(generation);
     if (apiPlanGenerationTerminal(generation)) {
-      if (generation.status === 'succeeded') await refreshApiPlanCards(capturedScopeKey);
+      if (['succeeded', 'partial'].includes(generation.status)) {
+        await refreshApiPlanCards(capturedScopeKey);
+        const generatedPlanIds = (generation.batches || [])
+          .map(batch => String(batch.plan_id || ''))
+          .filter(Boolean);
+        const latestGeneratedPlanId = generatedPlanIds[generatedPlanIds.length - 1] || '';
+        const latestGeneratedPlan = apiTestingPlans.find(
+          plan => String(plan.plan_id || '') === latestGeneratedPlanId
+        );
+        if (latestGeneratedPlan) await openApiTestPlan(latestGeneratedPlan.plan_id);
+      }
     } else {
       scheduleApiPlanGenerationPoll(generation, requestId, capturedScopeKey);
     }
@@ -1273,8 +1487,41 @@ async function loadApiPlanDetails(planSummaries, sourceId, controller) {
   }));
 }
 
+function renderApiPlanScopeSummary() {
+  const endpointIds = new Set(selectedApiPlanEndpointIds().map(String));
+  const selected = apiTestingEndpoints.filter(endpoint => endpointIds.has(String(endpoint.endpoint_id || '')));
+  const modules = Array.from(new Set(selected.map(apiEndpointModulePath).filter(Boolean)));
+  const methods = Array.from(new Set(selected.map(endpoint => endpoint.method).filter(Boolean))).sort();
+  const businessLine = currentApiBusinessLine();
+  return `
+    <div class="api-plan-scope-summary">
+      <div class="api-plan-scope-primary">
+        <span>本次范围</span>
+        <strong>${escapeHtml(businessLine || '尚未选择业务线')}</strong>
+        <small>${selected.length ? `${selected.length} 个接口，预计分 ${Math.ceil(selected.length / 12)} 个 AI 批次` : '请返回接口资产选择模块和接口'}</small>
+      </div>
+      <div class="api-plan-scope-metrics">
+        <div><strong>${escapeHtml(selected.length)}</strong><span>已选接口</span></div>
+        <div><strong>${escapeHtml(modules.length)}</strong><span>涉及模块</span></div>
+        <div><strong>${escapeHtml(methods.length)}</strong><span>请求方法</span></div>
+      </div>
+      <div class="api-plan-scope-modules">
+        <span>模块</span>
+        <div>${modules.length
+          ? modules.slice(0, 8).map(module => `<strong>${escapeHtml(module)}</strong>`).join('')
+          : '<small>尚未选择</small>'}</div>
+        ${modules.length > 8 ? `<small>另有 ${escapeHtml(modules.length - 8)} 个模块</small>` : ''}
+      </div>
+      <details class="api-plan-tech-detail">
+        <summary>查看技术范围</summary>
+        <div>Source ${escapeHtml(apiTestingProjectScope.sourceId || '-')} · Revision ${escapeHtml(apiTestingCurrentSnapshotId || '-')} · Methods ${escapeHtml(methods.join(', ') || '-')}</div>
+      </details>
+    </div>
+  `;
+}
+
 async function showApiPlanPage() {
-  const area = setApiTestingPage('api_plan', 'AI 用例计划', '按来源、版本和模块生成计划；确认前复核 AI 轨迹、绑定与鉴权。');
+  const area = setApiTestingPage('api_plan', 'AI 用例计划', '从已选接口生成、审阅并确认可执行用例。');
   if (!area) return;
   if (apiPlanRequestController) apiPlanRequestController.abort();
   const controller = new AbortController();
@@ -1297,12 +1544,14 @@ async function showApiPlanPage() {
     ]);
     if (controller !== apiPlanRequestController || requestId !== apiPlanPageRequestId || activeWorkflow !== 'api_plan' || capturedScopeKey !== apiProjectScopeKey(sourceId, revisionId)) return;
     apiTestingEndpoints = assets.endpoints || [];
+    apiAssetBusinessLines = assets.business_lines || [];
     apiTestingCurrentSnapshotId = (assets.snapshot || {}).revision_id || (assets.snapshot || {}).snapshot_id || apiTestingCurrentSnapshotId || ((assets.snapshots || [])[0] || {}).snapshot_id || '';
     apiTestingProjectScope = {sourceId, revisionId: apiTestingCurrentSnapshotId};
+    const resolvedScopeKey = apiProjectScopeKey(sourceId, apiTestingCurrentSnapshotId);
     apiPlanBindingContext = bindingResponse.context || {binding: bindingResponse.binding || {}};
     if (!apiPlanBindingContext.binding) apiPlanBindingContext.binding = bindingResponse.binding || {};
     apiTestingPlans = await loadApiPlanDetails(planResponse.plans || [], sourceId, controller);
-    if (controller !== apiPlanRequestController || requestId !== apiPlanPageRequestId || activeWorkflow !== 'api_plan' || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
+    if (controller !== apiPlanRequestController || requestId !== apiPlanPageRequestId || activeWorkflow !== 'api_plan' || resolvedScopeKey !== apiPlanGenerationScopeKey()) return;
     if (apiPlanGenerationCurrent && (
       apiPlanGenerationCurrent.source_id !== sourceId
       || apiPlanGenerationCurrent.asset_revision_id !== apiTestingCurrentSnapshotId
@@ -1310,28 +1559,28 @@ async function showApiPlanPage() {
     const source = selectedApiAssetSource() || {};
     area.innerHTML = `
       <div class="api-testing-page api-plan-workspace">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_plan', source, snapshot: assets.snapshot})}</div>
         <div class="generation-record-head">
           <div class="workflow-kicker">AI PLAN · API CASES</div>
           <h2>AI 用例计划</h2>
-          <p>当前范围固定为 ${escapeHtml(source.name || sourceId || '未选择来源')} / ${escapeHtml(apiTestingCurrentSnapshotId || '未选择版本')}，服务端按 12 个接口一批顺序生成。</p>
+          <p>先确认本次业务范围，再由 AI 设计用例，平台校验后只把可执行内容送入 MeterSphere。</p>
           <div class="generation-record-actions">
-            <button class="btn-sm ai api-plan-generate-action" onclick="generateApiTestPlan()">生成计划草稿</button>
+            <button class="btn-sm ai api-plan-generate-action" onclick="generateApiTestPlan()" ${selectedApiPlanEndpointIds().length ? '' : 'disabled'}>生成 AI 用例</button>
             <button class="btn-sm" onclick="showApiAssetsPage()">调整接口范围</button>
           </div>
         </div>
         <div class="api-plan-layout">
           <section class="api-panel api-plan-selection-panel">
-            <div class="api-section-heading"><div><span>生成范围</span><h3>已选接口</h3></div><strong>${selectedApiPlanEndpointIds().length} / ${apiTestingEndpoints.length}</strong></div>
-            <div class="api-plan-scope-facts"><span>来源 <code>${escapeHtml(sourceId || '-')}</code></span><span>版本 <code>${escapeHtml(apiTestingCurrentSnapshotId || '-')}</code></span><span>模块 ${escapeHtml(selectedApiPlanModulePaths().join('、') || '尚未选择')}</span></div>
-            <div class="api-endpoint-scroll">${renderApiAssetTable(apiTestingEndpoints)}</div>
+            <div class="api-section-heading"><div><span>生成范围</span><h3>这次要测什么</h3></div><strong>${selectedApiPlanEndpointIds().length} / ${API_PLAN_MAX_ENDPOINTS}</strong></div>
+            ${renderApiPlanScopeSummary()}
           </section>
           <div class="api-plan-review-column">
             <section class="api-panel" id="api-plan-generation-region">${renderApiPlanGeneration(apiPlanGenerationCurrent)}</section>
             <section class="api-panel" id="api-plan-list-region">
-              <div class="api-section-heading"><div><span>服务端事实</span><h3>计划审阅</h3></div><small>${apiTestingPlans.length} 个计划</small></div>
+              <div class="api-section-heading"><div><span>待处理</span><h3>用例草稿</h3></div><small>${apiTestingPlans.length} 个计划</small></div>
               ${renderApiPlanList(apiTestingPlans)}
             </section>
-            <section class="api-panel" id="api-plan-result">${apiTestingEmpty('选择一个计划查看完整用例合同。')}</section>
+            <section class="api-panel" id="api-plan-result">${apiTestingEmpty('选择一个草稿，按接口审阅用例。')}</section>
           </div>
         </div>
       </div>
@@ -1395,10 +1644,21 @@ function renderApiPlanList(plans) {
   if (!plans.length) return apiTestingEmpty('当前来源暂无计划草稿。');
   return `<div class="api-plan-card-list">${plans.map(plan => {
     const stale = (plan.revision_state || {}).state === 'stale';
+    const needsReview = Number(plan.needs_review_case_count || 0);
+    const executable = Number(plan.executable_case_count || 0);
     return `
       <article class="api-plan-card ${stale ? 'is-stale' : ''}">
-        <header><button type="button" class="api-plan-list-button" data-plan-id="${escapeHtml(plan.plan_id || '')}" onclick="openApiTestPlan(${jsArg(plan.plan_id)})"><strong>${escapeHtml(plan.name || plan.plan_id)}</strong><small>${escapeHtml(plan.created_at || '')}</small></button><div>${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}${stale ? apiStatusPill('已过期', 'danger') : ''}</div></header>
-        ${renderApiPlanFacts(plan)}
+        <header>
+          <button type="button" class="api-plan-list-button" data-plan-id="${escapeHtml(plan.plan_id || '')}" onclick="openApiTestPlan(${jsArg(plan.plan_id)})"><strong>${escapeHtml(plan.name || plan.plan_id)}</strong><small>${escapeHtml(plan.created_at || '')}</small></button>
+          <div>${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}${stale ? apiStatusPill('接口已变化', 'danger') : ''}</div>
+        </header>
+        <div class="api-plan-card-summary">
+          <span><strong>${escapeHtml(plan.endpoint_count || 0)}</strong> 个接口</span>
+          <span><strong>${escapeHtml(executable)}</strong> 条可执行</span>
+          <span class="${needsReview ? 'warn' : ''}"><strong>${escapeHtml(needsReview)}</strong> 条待补</span>
+        </div>
+        <button type="button" class="btn-sm ghost api-plan-review-action" onclick="openApiTestPlan(${jsArg(plan.plan_id)})">审阅用例</button>
+        <details class="api-plan-tech-detail"><summary>技术详情</summary>${renderApiPlanFacts(plan)}</details>
       </article>
     `;
   }).join('')}</div>`;
@@ -1414,7 +1674,7 @@ async function refreshApiPlanCards(capturedScopeKey = apiPlanGenerationScopeKey(
     apiTestingPlans = await loadApiPlanDetails(response.plans || [], sourceId, controller);
     if (activeWorkflow !== 'api_plan' || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
     const target = document.getElementById('api-plan-list-region');
-    if (target) target.innerHTML = `<div class="api-section-heading"><div><span>服务端事实</span><h3>计划审阅</h3></div><small>${apiTestingPlans.length} 个计划</small></div>${renderApiPlanList(apiTestingPlans)}`;
+    if (target) target.innerHTML = `<div class="api-section-heading"><div><span>待处理</span><h3>用例草稿</h3></div><small>${apiTestingPlans.length} 个计划</small></div>${renderApiPlanList(apiTestingPlans)}`;
   } catch (_) {
     // Generation remains visible even when the secondary plan-list refresh fails.
   }
@@ -1439,6 +1699,215 @@ async function openApiTestPlan(planId) {
   }
 }
 
+function apiPlanCaseEndpointKey(item = {}) {
+  const request = item.request || {};
+  return String(item.endpoint_key || item.endpoint_id || item.asset_endpoint_id || `${request.method || ''} ${request.path || item.endpoint || ''}`).trim();
+}
+
+function apiPlanCaseMissingCategory(value) {
+  const path = String(value || '');
+  if (path.startsWith('request.body')) return '请求体数据';
+  if (path.startsWith('request.query')) return '查询参数';
+  if (path.startsWith('request.path_params')) return '路径参数';
+  if (path.startsWith('request.headers') || /auth|token|cookie/i.test(path)) return '环境鉴权';
+  if (path.startsWith('assertions')) return '响应断言';
+  return '其他数据';
+}
+
+function groupApiPlanCasesByEndpoint(cases = [], plan = {}) {
+  const endpointByKey = new Map();
+  apiTestingEndpoints.forEach(endpoint => {
+    const requestKey = `${endpoint.method || ''} ${endpoint.path || ''}`.trim();
+    [endpoint.endpoint_key, endpoint.endpoint_id, requestKey].filter(Boolean).forEach(key => endpointByKey.set(String(key), endpoint));
+  });
+  const changedKeys = new Set([
+    ...(plan.changed_endpoint_keys || []),
+    ...((plan.revision_state || {}).changed_endpoint_keys || []),
+    ...((plan.revision_state || {}).affected_endpoint_keys || []),
+  ].map(String));
+  const affectedCaseIds = new Set(((plan.revision_state || {}).affected_case_ids || []).map(String));
+  const groups = new Map();
+  (cases || []).forEach(item => {
+    const key = apiPlanCaseEndpointKey(item) || `case:${item.case_id || groups.size}`;
+    const endpoint = endpointByKey.get(key)
+      || endpointByKey.get(`${item.request?.method || ''} ${item.request?.path || ''}`.trim())
+      || {};
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        endpoint,
+        method: endpoint.method || item.request?.method || '',
+        path: endpoint.path || item.request?.path || item.endpoint || '',
+        name: endpoint.name || item.endpoint_name || '',
+        module: apiEndpointModulePath(endpoint),
+        cases: [],
+        executableCount: 0,
+        needsReviewCount: 0,
+        missing: new Set(),
+        changed: changedKeys.has(key) || changedKeys.has(String(endpoint.endpoint_key || '')),
+      });
+    }
+    const group = groups.get(key);
+    group.cases.push(item);
+    if (affectedCaseIds.has(String(item.case_id || ''))) group.changed = true;
+    const executable = (item.readiness || {}).state === 'executable';
+    if (executable) group.executableCount += 1;
+    else group.needsReviewCount += 1;
+    ((item.readiness || {}).missing || []).forEach(value => group.missing.add(String(value)));
+  });
+  return Array.from(groups.values()).sort((left, right) => (
+    left.module.localeCompare(right.module, 'zh-Hans-CN')
+    || left.path.localeCompare(right.path)
+  ));
+}
+
+function apiPlanFilteredEndpointGroups(plan) {
+  const state = apiPlanReviewState(plan);
+  const query = state.search.trim().toLowerCase();
+  return groupApiPlanCasesByEndpoint(plan.cases || [], plan).filter(group => {
+    if (state.apiPlanReviewFilter === 'executable' && !group.executableCount) return false;
+    if (state.apiPlanReviewFilter === 'needs_review' && !group.needsReviewCount) return false;
+    if (state.apiPlanReviewFilter === 'changed' && !group.changed) return false;
+    if (
+      state.missingCategory
+      && !Array.from(group.missing).some(
+        value => apiPlanCaseMissingCategory(value) === state.missingCategory
+      )
+    ) return false;
+    if (!query) return true;
+    return [
+      group.method,
+      group.path,
+      group.name,
+      group.module,
+      ...group.cases.map(item => item.name || ''),
+    ].join(' ').toLowerCase().includes(query);
+  });
+}
+
+function apiPlanReviewState(plan = apiTestingCurrentPlan || {}) {
+  const planId = String(plan?.plan_id || '__unselected__');
+  if (!apiPlanReviewStateByPlan.has(planId)) {
+    apiPlanReviewStateByPlan.set(planId, {
+      apiPlanReviewFilter: 'all',
+      search: '',
+      page: 1,
+      missingCategory: '',
+      expandedGroups: new Set(),
+      initialized: false,
+    });
+  }
+  return apiPlanReviewStateByPlan.get(planId);
+}
+
+function toggleApiPlanReviewGroup(groupKey, open) {
+  const state = apiPlanReviewState();
+  if (open) state.expandedGroups.add(String(groupKey));
+  else state.expandedGroups.delete(String(groupKey));
+  state.initialized = true;
+}
+
+function setApiPlanReviewFilter(value) {
+  const state = apiPlanReviewState();
+  state.apiPlanReviewFilter = String(value || 'all');
+  state.page = 1;
+  rerenderApiPlanReview();
+}
+
+function setApiPlanReviewSearch(value) {
+  const state = apiPlanReviewState();
+  state.search = String(value || '');
+  state.page = 1;
+  rerenderApiPlanReview();
+}
+
+function setApiPlanReviewPage(page) {
+  apiPlanReviewState().page = Math.max(1, Number(page || 1));
+  rerenderApiPlanReview();
+}
+
+function setApiPlanMissingCategory(category) {
+  const state = apiPlanReviewState();
+  const selected = String(category || '');
+  state.missingCategory = state.missingCategory === selected ? '' : selected;
+  state.page = 1;
+  rerenderApiPlanReview();
+}
+
+function rerenderApiPlanReview() {
+  const target = document.getElementById('api-plan-endpoint-groups');
+  if (target && apiTestingCurrentPlan) target.innerHTML = renderApiPlanEndpointGroups(apiTestingCurrentPlan);
+}
+
+function renderApiPlanCaseRow(item) {
+  const executable = (item.readiness || {}).state === 'executable';
+  const missing = (item.readiness || {}).missing || [];
+  return `
+    <article class="api-case-row">
+      <div class="api-case-row-name">
+        <strong>${escapeHtml(item.name || item.case_id || '未命名用例')}</strong>
+        <span>${escapeHtml(item.type || 'case')} · ${escapeHtml(item.priority || '-')}</span>
+      </div>
+      <div class="api-case-row-request"><span>请求</span><strong>${escapeHtml(apiCaseRequestText(item))}</strong></div>
+      <div class="api-case-row-assertions"><span>校验</span><strong>${escapeHtml((item.assertions || []).map(apiCaseAssertionText).join('；') || '尚未配置')}</strong></div>
+      <div class="api-case-row-state">
+        ${apiStatusPill(executable ? '可执行' : '待补数据', executable ? 'success' : 'warn')}
+        ${missing.length ? `<small>${escapeHtml(missing.join('；'))}</small>` : ''}
+      </div>
+    </article>
+  `;
+}
+
+function renderApiPlanEndpointGroups(plan) {
+  const state = apiPlanReviewState(plan);
+  const allGroups = groupApiPlanCasesByEndpoint(plan.cases || [], plan);
+  const groups = apiPlanFilteredEndpointGroups(plan);
+  const pageSize = 20;
+  const pageCount = Math.max(1, Math.ceil(groups.length / pageSize));
+  state.page = Math.min(state.page, pageCount);
+  const pageGroups = groups.slice((state.page - 1) * pageSize, state.page * pageSize);
+  const missingCategories = new Map();
+  allGroups.forEach(group => group.missing.forEach(value => {
+    const category = apiPlanCaseMissingCategory(value);
+    missingCategories.set(category, (missingCategories.get(category) || 0) + 1);
+  }));
+  const allowDefaultOpen = !state.initialized;
+  const html = `
+    <div class="api-plan-review-toolbar">
+      <div class="api-plan-review-filters" role="group" aria-label="用例筛选">
+        ${[
+          ['all', '全部', allGroups.length],
+          ['executable', '可执行', allGroups.filter(group => group.executableCount).length],
+          ['needs_review', '待补数据', allGroups.filter(group => group.needsReviewCount).length],
+          ['changed', '本版变更', allGroups.filter(group => group.changed).length],
+        ].map(([value, label, count]) => `<button type="button" class="${state.apiPlanReviewFilter === value ? 'active' : ''}" onclick="setApiPlanReviewFilter(${jsArg(value)})">${escapeHtml(label)} <span>${escapeHtml(count)}</span></button>`).join('')}
+      </div>
+      <input type="search" value="${escapeHtml(state.search)}" placeholder="搜索接口或用例" aria-label="搜索接口或用例" oninput="setApiPlanReviewSearch(this.value)">
+    </div>
+    ${missingCategories.size ? `<div class="api-plan-missing-summary"><strong>待补数据集中在</strong>${Array.from(missingCategories, ([name, count]) => `<button type="button" class="${state.missingCategory === name ? 'active' : ''}" onclick="setApiPlanMissingCategory(${jsArg(name)})">${escapeHtml(name)} ${escapeHtml(count)}</button>`).join('')}</div>` : ''}
+    <div class="api-case-group-list">${pageGroups.length ? pageGroups.map((group, index) => {
+      const open = state.expandedGroups.has(group.key) || (
+        allowDefaultOpen
+        && state.page === 1
+        && index === 0
+      );
+      return `
+        <details class="api-case-group" data-endpoint-key="${escapeHtml(group.key)}" ${open ? 'open' : ''} ontoggle="toggleApiPlanReviewGroup(${jsArg(group.key)}, this.open)">
+          <summary onclick="toggleApiPlanReviewGroup(${jsArg(group.key)}, !this.parentElement.open)">
+            <div class="api-case-group-route"><span class="api-method ${escapeHtml((group.method || '').toLowerCase())}">${escapeHtml(group.method || '-')}</span><strong>${escapeHtml(group.path || group.key)}</strong><small>${escapeHtml(group.name || group.module || '未命名接口')}</small></div>
+            <div class="api-case-group-counts"><span>${escapeHtml(group.cases.length)} 条用例</span><strong>${escapeHtml(group.executableCount)} 可执行</strong>${group.needsReviewCount ? `<em>${escapeHtml(group.needsReviewCount)} 待补</em>` : ''}</div>
+          </summary>
+          <div class="api-case-group-meta"><span>${escapeHtml(group.module || '未分组')}</span>${group.changed ? apiStatusPill('本版变更', 'warn') : ''}</div>
+          <div class="api-case-group-cases">${group.cases.map(renderApiPlanCaseRow).join('')}</div>
+        </details>
+      `;
+    }).join('') : apiTestingEmpty('当前筛选没有匹配的接口用例。')}</div>
+    ${pageCount > 1 ? `<div class="api-plan-review-pagination"><button class="btn-sm" onclick="setApiPlanReviewPage(${state.page - 1})" ${state.page <= 1 ? 'disabled' : ''}>上一页</button><span>${state.page} / ${pageCount}</span><button class="btn-sm" onclick="setApiPlanReviewPage(${state.page + 1})" ${state.page >= pageCount ? 'disabled' : ''}>下一页</button></div>` : ''}
+  `;
+  state.initialized = true;
+  return html;
+}
+
 function renderApiPlanDetail(plan) {
   const cases = plan.cases || [];
   const readiness = plan.execution_readiness || {};
@@ -1449,41 +1918,45 @@ function renderApiPlanDetail(plan) {
   const canExecute = readiness.can_execute === true && !isStale && !bindingDrift.length;
   const actionReason = bindingDrift[0] || apiPlanReadinessReason(plan);
   const missing = readiness.missing || [];
+  const missingSummary = new Map();
+  missing.forEach(item => {
+    const category = apiPlanCaseMissingCategory(item);
+    missingSummary.set(category, (missingSummary.get(category) || 0) + 1);
+  });
+  const sourceText = plan.source === 'ai' ? 'AI 设计，平台校验' : (plan.source === 'local_fallback' ? '规则兜底，平台校验' : '规则生成');
+  let primaryAction = '';
+  if (isStale) {
+    primaryAction = `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按最新接口重新生成</button>`;
+  } else if (plan.status === 'draft' && canConfirm) {
+    primaryAction = `<button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})">确认可执行用例</button>`;
+  } else if (plan.status === 'draft') {
+    primaryAction = `<button class="btn-sm primary" onclick="setApiPlanReviewFilter('needs_review')">查看待补数据</button>`;
+  } else if (canExecute) {
+    primaryAction = '<button class="btn-sm primary" onclick="showApiExecutionPage()">进入执行</button>';
+  } else {
+    primaryAction = `<button class="btn-sm" disabled title="${escapeHtml(actionReason)}">${escapeHtml(actionReason || '当前不可执行')}</button>`;
+  }
   return `
-    <div class="api-plan-detail-head"><div><span>plan_id <code>${escapeHtml(plan.plan_id || '-')}</code></span><h3>${escapeHtml(plan.name || 'API 用例计划')}</h3></div>${isStale ? apiStatusPill('版本已过期', 'danger') : apiStatusPill('版本最新', 'success')}</div>
-    ${renderApiPlanFacts(plan)}
+    <div class="api-plan-detail-head"><div><span>用例审阅</span><h3>${escapeHtml(plan.name || 'API 用例计划')}</h3></div>${isStale ? apiStatusPill('接口已变化', 'danger') : apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}</div>
     <div class="review-stats compact api-plan-readiness">
       <div class="review-stat"><strong>${escapeHtml(plan.endpoint_count || 0)}</strong><span>接口</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.case_count || cases.length)}</strong><span>用例</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.executable_case_count || 0)}</strong><span>可执行</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.needs_review_case_count || 0)}</strong><span>待补数据</span></div>
     </div>
-    <div class="api-plan-state-line">
-      ${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}
-      <span>${escapeHtml(plan.source === 'ai' ? 'AI 生成并经平台校验' : (plan.source === 'local_fallback' ? 'AI 失败，规则兜底' : '规则生成'))}</span>
+    <div class="api-plan-generation-method">
+      <strong>${escapeHtml(sourceText)}</strong>
+      <ol><li>读取接口合同</li><li>设计正常与异常场景</li><li>校验请求和断言</li><li>标记可执行项</li></ol>
     </div>
-    ${missing.length ? `<div class="api-readiness-missing"><strong>待补数据：</strong>${missing.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
+    ${missing.length ? `<div class="api-readiness-missing api-plan-missing-actions"><strong>仍需补充：</strong>${Array.from(missingSummary, ([name, count]) => `<button type="button" onclick="setApiPlanMissingCategory(${jsArg(name)})">${escapeHtml(name)} ${escapeHtml(count)} 项</button>`).join('')}</div>` : ''}
     ${bindingDrift.length ? `<div class="api-stale-warning">执行绑定已变化：${escapeHtml(bindingDrift.join('、'))}</div>` : ''}
     ${isStale ? `<div class="api-stale-warning">${escapeHtml(actionReason)}</div>` : ''}
-    <div class="generation-record-actions">
-      <button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})" ${canConfirm ? '' : 'disabled'} title="${escapeHtml(canConfirm ? '确认可执行用例' : actionReason)}">${plan.status === 'confirmed' ? '已确认' : '确认计划'}</button>
-      <button class="btn-sm" onclick="showApiExecutionPage()" ${canExecute ? '' : 'disabled'} title="${escapeHtml(canExecute ? '进入 MeterSphere 执行' : actionReason)}">去执行</button>
-      ${isStale ? `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">重新生成</button>` : ''}
-    </div>
-    <div class="api-case-scroll"><table class="assets-table api-case-table">
-      <thead><tr><th>用例</th><th>类型</th><th>请求</th><th>断言</th><th>执行状态</th></tr></thead>
-      <tbody>${cases.map(item => `
-        <tr>
-          <td><strong>${escapeHtml(item.name || '-')}</strong><small>${escapeHtml(item.priority || '-')}</small></td>
-          <td>${escapeHtml(item.type || '-')}</td>
-          <td>${escapeHtml(apiCaseRequestText(item))}</td>
-          <td>${escapeHtml((item.assertions || []).map(apiCaseAssertionText).join('；') || '-')}</td>
-          <td>${(item.readiness || {}).state === 'executable'
-            ? apiStatusPill('可执行', 'success')
-            : `${apiStatusPill('待补数据', 'warn')}<small>${escapeHtml(((item.readiness || {}).missing || []).join('；') || '-')}</small>`}</td>
-        </tr>
-      `).join('')}</tbody>
-    </table></div>
+    <div class="generation-record-actions api-plan-primary-action">${primaryAction}</div>
+    <details class="api-plan-tech-detail api-plan-facts-detail"><summary>来源、AI 与执行绑定</summary>${renderApiPlanFacts(plan)}<div class="api-plan-scope-facts"><span>Plan <code>${escapeHtml(plan.plan_id || '-')}</code></span></div></details>
+    <section class="api-plan-endpoint-review">
+      <div class="api-section-heading"><div><span>按接口审阅</span><h3>用例明细</h3></div><small>${escapeHtml(groupApiPlanCasesByEndpoint(cases, plan).length)} 个接口组</small></div>
+      <div id="api-plan-endpoint-groups">${renderApiPlanEndpointGroups(plan)}</div>
+    </section>
   `;
 }
 
@@ -1522,8 +1995,8 @@ async function confirmApiTestPlan(planId) {
 function stopApiExecutionPolling(abortRequest = false) {
   if (apiExecutionPollTimer) clearTimeout(apiExecutionPollTimer);
   apiExecutionPollTimer = null;
-  if (abortRequest && apiExecutionPollController) {
-    apiExecutionPollController.abort();
+  if (abortRequest) {
+    apiExecutionPollController?.abort();
     apiExecutionPollController = null;
     apiExecutionPollRequestId += 1;
   }
@@ -1581,6 +2054,7 @@ async function showApiExecutionPage() {
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-execution-console">
+      <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_execution'})}</div>
       <section id="api-execution-header" class="api-execution-header">${apiTestingEmpty('正在检查 MeterSphere...')}</section>
       <section id="api-active-run" class="api-active-run" hidden></section>
       <section class="api-execution-plans-section">
@@ -1609,13 +2083,13 @@ async function refreshApiExecutionContext(force = false) {
     if (sourceId) query.set('source_id', sourceId);
     const data = await apiRequest(`/api-testing/metersphere/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal });
     if (requestId !== apiExecutionContextRequestId || controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution' || capturedScopeKey !== apiProjectScopeKey()) return;
+    stopApiExecutionPolling(true);
     apiExecutionContext = data;
     apiTestingPlans = data.plans || [];
     const active = (data.active_runs || [])[0] || null;
     apiExecutionActiveId = active?.execution_id || '';
     renderApiExecutionDynamic(data, active);
     if (active && !apiExecutionTerminal(active)) {
-      apiExecutionPollRequestId += 1;
       scheduleApiExecutionPoll(active, apiExecutionPollRequestId, capturedScopeKey);
     }
     else stopApiExecutionPolling();
@@ -1635,6 +2109,7 @@ function renderApiExecutionDynamic(context, activeRun) {
   const count = document.getElementById('api-plan-count');
   captureApiExecutionLogViewState(active);
   if (header) header.innerHTML = renderApiExecutionHeader(context);
+  updateApiWorkflowStepper({execution: activeRun || {}, plans: context.plans || []});
   if (plans) plans.innerHTML = renderApiExecutionPlans(context.plans || [], context);
   if (count) count.textContent = `${(context.plans || []).length} 个计划`;
   if (active) {
@@ -1683,6 +2158,28 @@ function apiBusinessAuthMetadata(context = apiExecutionContext || {}) {
   return context.auth_binding || context.binding?.auth_binding || {};
 }
 
+function apiBusinessAuthExpectedState(context = apiExecutionContext || {}) {
+  const binding = context.binding || {};
+  const auth = apiBusinessAuthMetadata(context);
+  return {
+    expected_project_id: String(binding.project_id || context.selection?.project_id || ''),
+    expected_environment_id: String(binding.environment_id || context.selection?.environment_id || ''),
+    expected_binding_version: String(binding.binding_version || binding.config_fingerprint || ''),
+    expected_profile_version: String(auth.profile_version || '')
+  };
+}
+
+function apiBusinessAuthContextMatches(sourceId, expected) {
+  const currentSourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
+  if (String(currentSourceId || '') !== String(sourceId || '')) return false;
+  const current = apiBusinessAuthExpectedState();
+  return (
+    current.expected_project_id === expected.expected_project_id
+    && current.expected_environment_id === expected.expected_environment_id
+    && current.expected_binding_version === expected.expected_binding_version
+  );
+}
+
 function apiBusinessAuthEnvironmentName(context, auth) {
   const environment = (context.environments || []).find(item => String(item.id || '') === String(auth.environment_id || context.selection?.environment_id || ''));
   return environment?.name || context.binding?.environment_name || auth.environment_name || auth.environment_id || '未选择环境';
@@ -1694,33 +2191,44 @@ function renderApiBusinessAuthPanel(context = {}) {
   const selectedEnvironmentId = context.selection?.environment_id || context.binding?.environment_id || '';
   const canEdit = !!context.source_id && !!selectedEnvironmentId;
   if (configured && !apiBusinessAuthEditing) {
+    const usageCount = Math.max(1, Number(auth.usage_count || 1));
+    const reused = auth.reused === true || usageCount > 1;
     return `
       <section class="api-business-auth-panel" data-configured="true">
-        <div class="api-business-auth-head"><div><span>业务鉴权</span><h3>${escapeHtml(auth.auth_type === 'api_key' ? 'API Key' : 'Bearer')} 已配置</h3></div>${apiStatusPill('安全保存在 MeterSphere 环境', 'success')}</div>
-        <div class="api-business-auth-facts">
-          <div><span>环境</span><strong>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</strong><small>${escapeHtml(auth.environment_id || '-')}</small></div>
-          <div><span>变量</span><strong>${escapeHtml(auth.variable_name || '-')}</strong><small>${escapeHtml(auth.auth_ref || '服务端引用')}</small></div>
-          <div><span>请求头</span><strong>${escapeHtml(auth.header_name || (auth.auth_type === 'bearer' ? 'Authorization' : '-'))}</strong><small>${escapeHtml(auth.updated_at || auth.configured_at || '-')}</small></div>
+        <div class="api-auth-summary">
+          <div class="api-business-auth-head">
+            <div><span>环境公共鉴权</span><h3>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</h3></div>
+            ${apiStatusPill(`${auth.auth_type === 'api_key' ? 'API Key' : 'Bearer'} 已配置`, 'success')}
+          </div>
+          <p>${reused ? `该环境已复用此鉴权，当前覆盖 ${usageCount} 个业务来源。` : '该环境下的接口执行会自动复用，无需每次提交。'}</p>
         </div>
-        <div class="api-business-auth-actions">
-          <button class="btn-sm" aria-label="更换业务鉴权" onclick="editApiBusinessAuth()">更换</button>
-          <button class="btn-sm danger ghost" onclick="clearApiBusinessAuth()">明确清除</button>
-        </div>
+        <details class="api-plan-tech-detail api-auth-detail">
+          <summary>管理公共鉴权</summary>
+          <div class="api-business-auth-facts">
+            <div><span>环境</span><strong>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</strong><small>${escapeHtml(auth.environment_id || '-')}</small></div>
+            <div><span>变量</span><strong>${escapeHtml(auth.variable_name || '-')}</strong><small>${escapeHtml(auth.auth_ref || '服务端引用')}</small></div>
+            <div><span>请求头</span><strong>${escapeHtml(auth.header_name || (auth.auth_type === 'bearer' ? 'Authorization' : '-'))}</strong><small>${escapeHtml(auth.updated_at || auth.configured_at || '-')}</small></div>
+          </div>
+          <div class="api-business-auth-actions">
+            <button class="btn-sm" aria-label="更换业务鉴权" onclick="editApiBusinessAuth()">更新鉴权</button>
+            <button class="btn-sm danger ghost" onclick="clearApiBusinessAuth()">清除公共鉴权</button>
+          </div>
+        </details>
       </section>
     `;
   }
   if (!apiBusinessAuthEditing) {
     return `
       <section class="api-business-auth-panel" data-configured="false">
-        <div class="api-business-auth-head"><div><span>业务鉴权</span><h3>尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
-        <p>密钥只写入当前来源绑定的 MeterSphere 环境变量，平台不回填明文。</p>
+        <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>当前环境尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
+        <p>配置一次后，同一 MeterSphere 项目和环境中的业务来源都会自动复用。</p>
         <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()" ${canEdit ? '' : 'disabled'}>配置鉴权</button>
       </section>
     `;
   }
   return `
     <section class="api-business-auth-panel is-editing" data-configured="${configured ? 'true' : 'false'}">
-      <div class="api-business-auth-head"><div><span>业务鉴权</span><h3>${configured ? '更换密钥' : '配置密钥'}</h3></div><small>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</small></div>
+      <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>${configured ? '更新密钥' : '配置密钥'}</h3></div><small>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</small></div>
       <div class="api-auth-segmented" role="group" aria-label="业务鉴权类型">
         <button type="button" data-auth-type="bearer" class="${apiBusinessAuthType === 'bearer' ? 'active' : ''}" onclick="setApiBusinessAuthType('bearer')">Bearer</button>
         <button type="button" data-auth-type="api_key" class="${apiBusinessAuthType === 'api_key' ? 'active' : ''}" onclick="setApiBusinessAuthType('api_key')">API Key</button>
@@ -1731,7 +2239,7 @@ function renderApiBusinessAuthPanel(context = {}) {
       </div>
       <div class="api-business-auth-actions">
         <button class="btn-sm" aria-label="取消更换业务鉴权" onclick="cancelApiBusinessAuthEdit()">取消</button>
-        <button class="btn-sm primary" onclick="saveApiBusinessAuth()">保存业务鉴权</button>
+        <button class="btn-sm primary" onclick="saveApiBusinessAuth()">保存公共鉴权</button>
       </div>
     </section>
   `;
@@ -1761,6 +2269,7 @@ function setApiBusinessAuthType(authType) {
 
 async function saveApiBusinessAuth() {
   const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
+  const expected = apiBusinessAuthExpectedState();
   const secretInput = document.getElementById('api-business-auth-secret');
   const secret = secretInput?.value || '';
   const headerName = apiBusinessAuthType === 'api_key'
@@ -1773,9 +2282,18 @@ async function saveApiBusinessAuth() {
   try {
     const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding`, {
       method: 'POST',
-      body: {auth_type: apiBusinessAuthType, header_name: headerName, secret}
+      body: {
+        auth_type: apiBusinessAuthType,
+        header_name: headerName,
+        secret,
+        ...expected
+      }
     });
     if (secretInput) secretInput.value = '';
+    if (!apiBusinessAuthContextMatches(sourceId, expected)) {
+      await refreshApiExecutionContext(true);
+      return;
+    }
     apiBusinessAuthEditing = false;
     const binding = data.binding || {};
     apiExecutionContext = {
@@ -1784,7 +2302,7 @@ async function saveApiBusinessAuth() {
       binding: {...(apiExecutionContext?.binding || {}), auth_binding: binding}
     };
     renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
-    showToast('✓ 业务鉴权已写入当前 MeterSphere 环境', 'success');
+    showToast('✓ 公共鉴权已写入当前 MeterSphere 环境', 'success');
     await refreshApiExecutionContext(true);
   } catch (error) {
     if (secretInput) secretInput.value = '';
@@ -1794,9 +2312,18 @@ async function saveApiBusinessAuth() {
 
 async function clearApiBusinessAuth() {
   const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
-  if (!sourceId || !confirm('确认清除当前来源在 MeterSphere 环境中的业务鉴权变量？清除后相关计划将不可执行。')) return;
+  const expected = apiBusinessAuthExpectedState();
+  const usageCount = Math.max(1, Number(apiBusinessAuthMetadata().usage_count || 1));
+  if (!sourceId || !confirm(`确认清除当前 MeterSphere 环境的公共鉴权？这会影响 ${usageCount} 个业务来源，相关计划将不可执行。`)) return;
   try {
-    const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding`, {method: 'DELETE'});
+    const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding`, {
+      method: 'DELETE',
+      body: expected
+    });
+    if (!apiBusinessAuthContextMatches(sourceId, expected)) {
+      await refreshApiExecutionContext(true);
+      return;
+    }
     const binding = data.binding || {configured: false};
     apiBusinessAuthEditing = false;
     apiExecutionContext = {
@@ -1949,7 +2476,7 @@ async function pollApiMeterSphereExecution(executionId, requestId = apiExecution
   apiExecutionPollController = controller;
   try {
     const data = await apiRequest(`/api-testing/metersphere/executions/${encodeURIComponent(executionId)}`, {signal: controller.signal});
-    if (controller !== apiExecutionPollController || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
+    if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
     const execution = data.execution || {};
     const active = document.getElementById('api-active-run');
     captureApiExecutionLogViewState(active);
@@ -1961,7 +2488,7 @@ async function pollApiMeterSphereExecution(executionId, requestId = apiExecution
     if (apiExecutionTerminal(execution)) await refreshApiExecutionContext(true);
     else scheduleApiExecutionPoll(execution, requestId, capturedScopeKey);
   } catch (e) {
-    if (controller !== apiExecutionPollController || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
+    if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
     apiExecutionPollTimer = setTimeout(() => pollApiMeterSphereExecution(executionId, requestId, capturedScopeKey), 5000);
   } finally {
     if (controller === apiExecutionPollController) apiExecutionPollController = null;
@@ -1982,6 +2509,7 @@ async function startApiMeterSphereExecution(planId) {
     const data = await apiRequest('/api-testing/metersphere/executions', { method: 'POST', body: { plan_id: planId, test_plan_id: '' } });
     const execution = data.execution || {};
     apiExecutionStartingPlanId = '';
+    stopApiExecutionPolling(true);
     apiExecutionActiveId = execution.execution_id || '';
     if (apiExecutionContext) {
       apiExecutionContext = {
@@ -2004,7 +2532,6 @@ async function startApiMeterSphereExecution(planId) {
       }
     }
     showToast('✓ MeterSphere 执行已排队', 'success');
-    apiExecutionPollRequestId += 1;
     scheduleApiExecutionPoll(execution, apiExecutionPollRequestId, apiProjectScopeKey());
   } catch (e) {
     apiExecutionStartingPlanId = '';
@@ -2330,15 +2857,18 @@ async function showApiReportsPage() {
   try {
     const query = new URLSearchParams();
     query.set('source_id', sourceId);
+    const businessLine = String(apiModuleSelectionState().businessLine || '').trim();
+    if (businessLine) query.set('business_line', businessLine);
     const data = await apiRequest(`/api-testing/reports?${query.toString()}`, {signal: controller.signal});
     if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
     apiTestingReports = data.reports || [];
     area.innerHTML = `
       <div class="api-testing-page">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_reports', reports: apiTestingReports})}</div>
         <div class="generation-record-head">
           <div class="workflow-kicker">REPORT · API</div>
           <h2>API 报告</h2>
-          <p>从 MeterSphere 回收执行结果后在这里统一归因。</p>
+          <p>${escapeHtml(businessLine || '当前业务')}的 MeterSphere 执行结果和失败归因。</p>
           <div class="generation-record-actions">
             <button class="btn-sm" onclick="showApiReportsPage()">刷新报告</button>
             <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
