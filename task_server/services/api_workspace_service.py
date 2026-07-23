@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from typing import Any, Dict
@@ -16,6 +17,7 @@ from task_server.services import api_source_service
 
 API_TESTING_DIR = os.getenv("API_TESTING_DIR", safe_join(LEARNING_DIR, "api-testing"))
 _BINDING_LOCK = threading.RLock()
+_HTTP_FIELD_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 
 
 def _now() -> str:
@@ -143,6 +145,18 @@ def get_api_auth_binding(source_id: str) -> Dict[str, Any]:
     return auth_binding
 
 
+def normalize_api_auth_header(auth_type: str, header_name: str) -> tuple[str, str]:
+    normalized_type = str(auth_type or "").strip().lower()
+    raw_header = str(header_name or "")
+    if normalized_type not in {"bearer", "api_key"}:
+        raise ValueError("认证类型仅支持 bearer 或 api_key")
+    if normalized_type == "bearer":
+        return normalized_type, "Authorization"
+    if not _HTTP_FIELD_NAME_RE.fullmatch(raw_header):
+        raise ValueError("API Key header 必须符合 RFC HTTP field-name")
+    return normalized_type, raw_header
+
+
 def save_api_auth_binding_metadata(
     source_id: str,
     *,
@@ -162,20 +176,10 @@ def save_api_auth_binding_metadata(
         selected_environment_id = str(environment_id or binding.get("environment_id") or "").strip()
         if selected_environment_id != str(binding.get("environment_id") or "").strip():
             raise ValueError("认证引用必须绑定当前 MeterSphere 环境")
-        normalized_type = str(auth_type or "").strip().lower()
-        normalized_header = str(header_name or "").strip()
-        if normalized_type not in {"bearer", "api_key"}:
-            raise ValueError("认证类型仅支持 bearer 或 api_key")
-        if normalized_type == "bearer":
-            normalized_header = "Authorization"
-        if normalized_type == "api_key" and (
-            "\r" in normalized_header
-            or "\n" in normalized_header
-            or any(ord(char) < 33 or ord(char) > 126 for char in normalized_header)
-        ):
-            raise ValueError("API Key header 必须是可打印 ASCII 名称")
-        if not normalized_header:
-            raise ValueError("认证 header 不能为空")
+        normalized_type, normalized_header = normalize_api_auth_header(
+            auth_type,
+            header_name,
+        )
         identity = f"{selected_source_id}:{selected_environment_id}"
         auth = {
             "auth_ref": str(auth_ref or f"api_auth_{_stable_hash(identity, 16)}").strip(),
@@ -254,6 +258,7 @@ __all__ = [
     "clear_api_auth_binding_metadata",
     "get_api_auth_binding",
     "get_api_workspace_binding",
+    "normalize_api_auth_header",
     "save_api_auth_binding_metadata",
     "save_api_workspace_binding",
 ]

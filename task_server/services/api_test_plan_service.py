@@ -340,42 +340,47 @@ def _ai_cases(snapshot: Dict[str, Any], endpoints: List[Dict[str, Any]], local_c
             output_defaults={"cases": [], "review": {}},
             timeout=180,
         )
-        cases = _normalize_ai_cases(result.get("cases"), endpoints, plan_id)
+        safe_result = api_case_contract_service.sanitize_sensitive_data(result)
+        safe_trace = api_case_contract_service.sanitize_sensitive_data(trace)
+        cases = _normalize_ai_cases(safe_result.get("cases"), endpoints, plan_id)
         if cases:
             cases = _ensure_positive_seed_coverage(cases, local_cases, plan_id)
+            cases = api_case_contract_service.sanitize_sensitive_data(cases)
             readiness = api_case_contract_service.summarize_api_case_readiness(cases)
             return {
                 "ok": True,
                 "cases": cases,
-                "review": result.get("review") or {},
-                "trace": trace,
-                "decision_trace": _decision_trace(
-                    trace,
+                "review": safe_result.get("review") or {},
+                "trace": safe_trace,
+                "decision_trace": api_case_contract_service.sanitize_sensitive_data(_decision_trace(
+                    safe_trace,
                     input_hash,
                     started_at,
                     started_monotonic,
                     len(cases),
                     readiness.get("needs_review_case_count", 0),
                     True,
-                ),
+                )),
             }
         error = "AI 未返回有效接口用例"
         return {
             "ok": False,
             "error": error,
-            "trace": trace,
-            "decision_trace": _decision_trace(
-                trace, input_hash, started_at, started_monotonic, 0, 0, False, error
-            ),
+            "trace": safe_trace,
+            "decision_trace": api_case_contract_service.sanitize_sensitive_data(_decision_trace(
+                safe_trace, input_hash, started_at, started_monotonic, 0, 0, False, error
+            )),
         }
     except Exception as exc:
+        safe_trace = api_case_contract_service.sanitize_sensitive_data(trace)
+        safe_error = api_case_contract_service.sanitize_sensitive_data(str(exc))
         return {
             "ok": False,
-            "error": str(exc),
-            "trace": trace,
-            "decision_trace": _decision_trace(
-                trace, input_hash, started_at, started_monotonic, 0, 0, False, str(exc)
-            ),
+            "error": safe_error,
+            "trace": safe_trace,
+            "decision_trace": api_case_contract_service.sanitize_sensitive_data(_decision_trace(
+                safe_trace, input_hash, started_at, started_monotonic, 0, 0, False, safe_error
+            )),
         }
 
 
@@ -710,17 +715,22 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
     endpoints = _selected_endpoints(snapshot.get("snapshot_id"), endpoint_ids or [])
     if not endpoints:
         raise ValueError("未选择可生成用例的接口")
+    safe_endpoints = [
+        api_case_contract_service.sanitize_endpoint_for_plan(endpoint)
+        for endpoint in endpoints
+    ]
     source_id = str(snapshot.get("source_id") or "").strip()
     workspace_binding = api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=True) if source_id else {}
     auth_binding = api_workspace_service.get_api_auth_binding(source_id) if source_id else {}
     plan_id = unique_millis_id("api_plan")
-    local_cases = _local_plan_cases(endpoints, plan_id)
+    local_cases = _local_plan_cases(safe_endpoints, plan_id)
     ai_enabled = safe_bool(os.getenv("API_TESTING_AI_ENABLED", "0"), False) if use_ai is None else bool(use_ai)
     selected_cases = local_cases
     ai_meta: Dict[str, Any] = {"enabled": ai_enabled, "used": False, "fallback_reason": ""}
     source = "local"
     if ai_enabled:
-        ai_result = _ai_cases(snapshot, endpoints, local_cases, plan_id, model_config)
+        ai_result = _ai_cases(snapshot, safe_endpoints, local_cases, plan_id, model_config)
+        ai_result = api_case_contract_service.sanitize_sensitive_data(ai_result)
         ai_meta.update({
             "used": bool(ai_result.get("ok")),
             "fallback_reason": "" if ai_result.get("ok") else str(ai_result.get("error") or "AI 生成失败"),
@@ -746,12 +756,13 @@ def generate_api_test_plan(snapshot_id: str, endpoint_ids: List[str] | None, mod
         "confirmed_at": "",
         "endpoint_count": len(endpoints),
         "case_count": len(selected_cases),
-        "endpoints": [api_case_contract_service.sanitize_endpoint_for_plan(endpoint) for endpoint in endpoints],
+        "endpoints": safe_endpoints,
         "cases": selected_cases,
         "ai": ai_meta,
         "auth_binding": auth_binding,
         "binding_fingerprint": str(workspace_binding.get("config_fingerprint") or ""),
     }
+    plan = api_case_contract_service.sanitize_sensitive_data(plan)
     plan = evaluate_api_plan(plan)
     write_json_file(_plan_path(plan_id), plan)
     _save_plan_index(plan)

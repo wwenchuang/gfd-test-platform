@@ -148,6 +148,43 @@ class ApiCaseContractChecks(unittest.TestCase):
         self.assertIn("request.path_params.credential", contract["readiness"]["missing"])
         self.assertIn("request.body.profile.apiKey", contract["readiness"]["missing"])
 
+    def test_business_metric_fields_with_sensitive_substrings_remain_executable(self):
+        endpoint = _endpoint(
+            parameters=[
+                {
+                    "name": "tokenCount",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "integer", "example": 3},
+                },
+                {
+                    "name": "cookieCount",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "integer", "default": 2},
+                },
+            ],
+            request_schema={
+                "type": "object",
+                "required": ["authorizationStatus", "tokenCount"],
+                "properties": {
+                    "authorizationStatus": {"type": "string", "example": "approved"},
+                    "tokenCount": {"type": "integer", "default": 4},
+                },
+            },
+            required_fields=[
+                "tokenCount", "cookieCount", "authorizationStatus",
+            ],
+        )
+
+        contract = api_case_contract_service.build_api_case_contract(endpoint, "positive")
+
+        self.assertEqual(contract["request"]["query"]["tokenCount"], 3)
+        self.assertEqual(contract["request"]["query"]["cookieCount"], 2)
+        self.assertEqual(contract["request"]["body"]["authorizationStatus"], "approved")
+        self.assertEqual(contract["request"]["body"]["tokenCount"], 4)
+        self.assertEqual(contract["readiness"]["state"], "executable")
+
 
     def test_positive_contract_uses_only_explicit_openapi_values(self):
         case = api_case_contract_service.build_api_case_contract(
@@ -590,6 +627,96 @@ class ApiPlanContractChecks(unittest.TestCase):
             self.assertNotIn(value, index)
             self.assertNotIn(value, json.dumps(returned, ensure_ascii=False))
             self.assertNotIn(value, json.dumps(handler.payload, ensure_ascii=False))
+
+    def test_ai_receives_only_safe_endpoints_and_echoed_output_is_sanitized(self):
+        document = _openapi_document()
+        operation = document["paths"]["/pets/{petId}"]["post"]
+        operation["parameters"].append({
+            "name": "X-API-Key",
+            "in": "header",
+            "required": True,
+            "schema": {"type": "string", "example": "raw-ai-header-secret"},
+        })
+        operation["requestBody"]["content"]["application/json"]["schema"]["properties"]["password"] = {
+            "type": "string", "default": "raw-ai-body-secret",
+        }
+        staged = self._activate(document)
+        endpoint_id = staged["revision"]["endpoints"][0]["endpoint_id"]
+        captured = {}
+        old_run_ai_skill = self.plan_service.run_ai_skill
+
+        def fake_run_ai_skill(_skill_name, payload, **kwargs):
+            captured["payload"] = copy.deepcopy(payload)
+            kwargs["runtime_trace"].update({
+                "providerId": "qwen_plus",
+                "model": "qwen3.8-plus",
+                "apiKey": "trace-output-secret",
+            })
+            return {
+                "cases": [{
+                    "case_id": "API-AI-SAFE",
+                    "endpoint_id": endpoint_id,
+                    "name": "安全 AI 用例",
+                    "type": "positive",
+                    "steps": ["Authorization: Bearer case-output-secret"],
+                }],
+                "review": {
+                    "echo": copy.deepcopy(payload),
+                    "authorization": "review-output-secret",
+                },
+            }
+
+        self.plan_service.run_ai_skill = fake_run_ai_skill
+        try:
+            plan = self.plan_service.generate_api_test_plan(
+                staged["revision_id"],
+                [],
+                use_ai=True,
+            )
+        finally:
+            self.plan_service.run_ai_skill = old_run_ai_skill
+
+        stored = Path(self.plan_service._plan_path(plan["plan_id"])).read_text(encoding="utf-8")
+        index = Path(self.plan_service._index_path()).read_text(encoding="utf-8")
+        returned = self.plan_service.get_api_test_plan(plan["plan_id"])
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.payload = {}
+
+            def _authorized(self):
+                return True
+
+            def _json(self, payload, _status=200):
+                self.payload = payload
+
+        handler = Handler()
+        router._get_api_testing_plan_detail(
+            handler,
+            {},
+            re.match(r"^/api/api-testing/plans/([^/]+)$", f"/api/api-testing/plans/{plan['plan_id']}"),
+        )
+        serialized_outputs = "\n".join((
+            json.dumps(plan, ensure_ascii=False),
+            stored,
+            index,
+            json.dumps(returned, ensure_ascii=False),
+            json.dumps(handler.payload, ensure_ascii=False),
+        ))
+
+        for secret in (
+            "raw-ai-header-secret",
+            "raw-ai-body-secret",
+        ):
+            self.assertNotIn(secret, json.dumps(captured["payload"], ensure_ascii=False))
+            self.assertNotIn(secret, serialized_outputs)
+        for secret in (
+            "trace-output-secret",
+            "review-output-secret",
+            "case-output-secret",
+        ):
+            self.assertNotIn(secret, serialized_outputs)
 
     def test_confirmed_plan_stops_when_current_auth_binding_is_cleared(self):
         staged = self._activate(_openapi_document())

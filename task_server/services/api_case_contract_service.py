@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
 
@@ -20,19 +21,55 @@ _SENSITIVE_HEADER_PARTS = (
     "password",
     "cookie",
 )
+_SENSITIVE_FIELD_EXACT = frozenset({
+    "authorization",
+    "apikey",
+    "accesskey",
+    "token",
+    "secret",
+    "signature",
+    "credential",
+    "credentials",
+    "password",
+    "passwd",
+    "cookie",
+})
+_SENSITIVE_FIELD_SUFFIXES = (
+    "apikey",
+    "accesskey",
+    "token",
+    "secret",
+    "credential",
+    "credentials",
+    "password",
+    "passwd",
+)
+_SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(authorization|x[-_]?api[-_]?key|api[-_]?key|access[-_]?token|"
+    r"refresh[-_]?token|token|secret|password|cookie)\b\s*[:=]\s*"
+    r"(?:bearer\s+)?[^\s,;}\]]+"
+)
 
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _normalized_name(name: Any) -> str:
+    return "".join(char for char in _text(name).lower() if char.isalnum())
+
+
 def is_sensitive_field_name(name: Any) -> bool:
-    normalized = "".join(char for char in _text(name).lower() if char.isalnum())
-    return bool(normalized) and any(part in normalized for part in _SENSITIVE_HEADER_PARTS)
+    normalized = _normalized_name(name)
+    return bool(normalized) and (
+        normalized in _SENSITIVE_FIELD_EXACT
+        or any(normalized.endswith(suffix) for suffix in _SENSITIVE_FIELD_SUFFIXES)
+    )
 
 
 def is_sensitive_header_name(name: Any) -> bool:
-    return is_sensitive_field_name(name)
+    normalized = _normalized_name(name)
+    return bool(normalized) and any(part in normalized for part in _SENSITIVE_HEADER_PARTS)
 
 
 def _explicit_value(schema: Any, owner: Any = None) -> Any:
@@ -121,7 +158,12 @@ def _request_parameters(endpoint: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, A
                 missing.append(f"request.parameters.{location or 'unknown'}.{name}")
             issues.append(f"unsupported_parameter_location:{location or 'unknown'}:{name}")
             continue
-        if is_sensitive_field_name(name):
+        sensitive = (
+            is_sensitive_header_name(name)
+            if location == "header"
+            else is_sensitive_field_name(name)
+        )
+        if sensitive:
             if parameter.get("required"):
                 missing.append(f"request.{request_keys[location]}.{name}")
             continue
@@ -279,12 +321,26 @@ def endpoint_requires_auth(endpoint: Dict[str, Any]) -> bool:
     return all(isinstance(requirement, dict) and bool(requirement) for requirement in security)
 
 
-def _sanitize_openapi_value(value: Any, field_name: str = "", inherited_sensitive: bool = False) -> Any:
-    sensitive = inherited_sensitive or is_sensitive_field_name(field_name)
+def _sanitize_text(value: str) -> str:
+    return _SENSITIVE_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}: [REDACTED]", value)
+
+
+def _sanitize_openapi_value(
+    value: Any,
+    field_name: str = "",
+    inherited_sensitive: bool = False,
+    field_context: str = "schema",
+) -> Any:
+    field_sensitive = (
+        is_sensitive_header_name(field_name)
+        if field_context == "header"
+        else is_sensitive_field_name(field_name)
+    )
+    sensitive = inherited_sensitive or field_sensitive
     if isinstance(value, list):
-        return [_sanitize_openapi_value(item, "", sensitive) for item in value]
+        return [_sanitize_openapi_value(item, "", sensitive, field_context) for item in value]
     if not isinstance(value, dict):
-        return copy.deepcopy(value)
+        return _sanitize_text(value) if isinstance(value, str) else copy.deepcopy(value)
     result: Dict[str, Any] = {}
     for key, nested in value.items():
         key_text = _text(key)
@@ -294,23 +350,35 @@ def _sanitize_openapi_value(value: Any, field_name: str = "", inherited_sensitiv
             continue
         if key_text == "properties" and isinstance(nested, dict):
             result[key_text] = {
-                str(name): _sanitize_openapi_value(schema, str(name), sensitive)
+                str(name): _sanitize_openapi_value(schema, str(name), sensitive, "schema")
                 for name, schema in nested.items()
             }
             continue
         if key_text == "parameters" and isinstance(nested, list):
-            result[key_text] = [
-                _sanitize_openapi_value(item, _text(item.get("name")) if isinstance(item, dict) else "", sensitive)
-                for item in nested
-            ]
+            parameters = []
+            for item in nested:
+                name = _text(item.get("name")) if isinstance(item, dict) else ""
+                location = _text(item.get("in")).lower() if isinstance(item, dict) else ""
+                parameters.append(_sanitize_openapi_value(
+                    item,
+                    name,
+                    sensitive,
+                    "header" if location == "header" else "schema",
+                ))
+            result[key_text] = parameters
             continue
-        result[key_text] = _sanitize_openapi_value(nested, key_text, sensitive)
+        result[key_text] = _sanitize_openapi_value(nested, key_text, sensitive, "schema")
     return result
+
+
+def sanitize_sensitive_data(value: Any) -> Any:
+    """Return a recursive public copy suitable for AI and local persistence."""
+    return _sanitize_openapi_value(value)
 
 
 def sanitize_endpoint_for_plan(endpoint: Dict[str, Any]) -> Dict[str, Any]:
     """Keep execution identity/schema shape while removing sensitive OpenAPI values."""
-    return _sanitize_openapi_value(endpoint if isinstance(endpoint, dict) else {})
+    return sanitize_sensitive_data(endpoint if isinstance(endpoint, dict) else {})
 
 
 def build_api_case_contract(
@@ -465,6 +533,7 @@ __all__ = [
     "endpoint_requires_auth",
     "is_sensitive_field_name",
     "normalize_api_case_contract",
+    "sanitize_sensitive_data",
     "sanitize_endpoint_for_plan",
     "summarize_api_case_readiness",
 ]
