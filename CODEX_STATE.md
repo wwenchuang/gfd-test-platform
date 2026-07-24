@@ -28,6 +28,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-24 真实回归：修复 YAML 遇到瞬时模型服务故障后未受限重试
+
+用户部署 `e958a1e` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784856833825-b1b81938`：
+
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`，4 个单图视觉批次全部真实送入 `qwen3.6-plus` 并完成；PLAN 生成 8 条业务分支，GENERATE_YAML 生成 6 条 executable / 12 个验收点，服务端校验和 6/6 Runner dry-run 均通过。
+- 首批 smoke 在固定 OPPO 串行执行：文档展示、照片展示成功；扫描展示因右侧「百度网盘」仍被裁切而失败。平台继续执行 remaining：文档、照片可达成功；扫描可达因 App 启动停在「资料库」而失败。两项均正确归类 `SCRIPT_ISSUE`，生成 2/2 可执行修复草稿且 scorer 均为 100。
+- 扫描可达修复在原设备成功；扫描展示修复已把模糊横向滑动替换为有界 `aiScroll`，但修复 job `job_1784858570579_00015` 遇到 `Request was aborted / Timeout after 300s`。Runner 以 `0.96` 置信度归类 `ENV_ISSUE / model_service`，明确不应继续修改 YAML。
+- Agent 最终 `FAILED / RERUN / 95%`。所有 dry-run、smoke、remaining 和 repair job 均为 `win-runner-01 / ecbfd645 / fixed`，没有向华为或第二台设备下发；失败与 Windows Runner、ADB、设备选择或 YAML scorer 无关。
+
+根因与通用修复：
+
+- `_tool_rerun()` 已允许首轮具体环境失败原样重试，但修复草稿 job 失败后只调用 `_agent_post_rerun_autonomy()` 查找可再次修改的脚本。高置信度 ENV_ISSUE 不生成新修复，因此已过门禁的修复 YAML 没有获得一次同设备瞬时故障重试。
+- `_tool_rerun()` 新增内部 `reuse_existing_yaml_only` 模式。只有本轮 `retry_sources` 能证明失败 job 是 `repair_draft` 的直接执行后代，且该 job 仍由具体环境证据归类为可原样重试的 `ENV_ISSUE` 时，才递归一次并复用失败子任务自己的 module/file；不会重新物化旧草稿、回退原始 YAML 或再次调用 AI。
+- 受限重试以失败修复 job 为 parent，沿用其 Runner、设备、device strategy 和临时修复 YAML；`repair_depth` 仍限制最多一个后续恢复轮次。普通环境重试再次失败、裸超时、SCRIPT_ISSUE、PRODUCT_BUG、UNKNOWN 均不能进入该路径。
+- `rerunProgressHistory / rerunAttempts / rerunSources` 保留 `原失败 -> 修复 job -> 环境重试 job` 完整链路和第一次环境失败，最终逻辑恢复仍要求同设备后代真实成功，不会用编排状态覆盖 Runner 事实。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check
+npm test
+```
+
+- 回归测试先稳定失败于“修复 YAML 环境失败后没有第二个子任务”，最小修复后通过；同时断言两个子任务使用同一修复 YAML、父子链正确、固定设备始终为 `ecbfd645`，最终 recovered。
+- 完整测试通过：后端 61、前端 72、AI Gateway 46、API 合同 43、恢复 12、MeterSphere 54、动态模型目录/回退、4 个 Skill fixture，以及桌面/移动端视觉回归。
+- 本轮未修改 Figma、生成收敛、scorer、Sonic、Runner、历史 YAML 或 API 测试功能。Codex 不 push；待用户手动 push / 部署后，再以完全相同输入发起完整 Agent 并监督到终态。
+
 ### 2026-07-24 真实回归：已验证的运行时叶子修正必须跨修复轮次复用
 
 用户部署最新代码后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784847819330-e550b0ba`：

@@ -7954,6 +7954,152 @@ def check_agent_failure_review_and_repair_guard():
             and mixed_progress.get("originalRetryCount") == 1,
             "Mixed rerun progress must preserve two real recoveries and one diagnosis-only product result",
         )
+
+        created_counter["value"] = 0
+        repaired_environment_creates = []
+        repaired_environment_jobs = [{
+            "job_id": "job-repair-source",
+            "status": "failed",
+            "module": "AI测试",
+            "file": "scan.yaml",
+            "target_task_name": "扫描入口",
+            "runner_id": "win-runner-01",
+            "target_runner_id": "win-runner-01",
+            "device_id": "ecbfd645",
+            "device_strategy": "fixed",
+            "attempt": 1,
+            "failure_type": "SCRIPT_ISSUE",
+        }]
+        job_service.load_jobs = lambda: list(repaired_environment_jobs)
+
+        def fake_repaired_environment_create(module, file_name, **kwargs):
+            created_counter["value"] += 1
+            job_id = f"job-repaired-environment-{created_counter['value']}"
+            repaired_environment_creates.append({"module": module, "file": file_name, **kwargs})
+            repaired_environment_jobs.append({
+                "job_id": job_id,
+                "status": "pending",
+                "module": module,
+                "file": file_name,
+                "target_task_name": kwargs.get("target_task_name") or "扫描入口",
+                "runner_id": kwargs.get("runner_id"),
+                "target_runner_id": kwargs.get("runner_id"),
+                "device_id": kwargs.get("device_id"),
+                "device_strategy": kwargs.get("device_strategy"),
+                "attempt": kwargs.get("attempt"),
+                "parent_job_id": kwargs.get("parent_job_id"),
+            })
+            return {"job_id": job_id, "created_at": "2026-07-24T10:00:00"}
+
+        def fake_repaired_environment_wait(job_ids, run, **kwargs):
+            job_id = job_ids[0]
+            job = next(item for item in repaired_environment_jobs if item.get("job_id") == job_id)
+            common = {
+                "job_id": job_id,
+                "module": job.get("module"),
+                "file": job.get("file"),
+                "taskName": "扫描入口",
+                "runner_id": "win-runner-01",
+                "device_id": "ecbfd645",
+                "report_url": f"/reports/{job_id}.html",
+            }
+            if job_id.endswith("-1"):
+                job.update({
+                    "status": "failed",
+                    "error": "AI call failed: Request was aborted",
+                    "failure_type": "ENV_ISSUE",
+                    "failure_review": {
+                        "category": "model_service",
+                        "confidence": 0.96,
+                        "reason": "模型服务请求被中止",
+                        "can_auto_repair": False,
+                    },
+                })
+                return {
+                    "completed": [],
+                    "failed": [{
+                        **common,
+                        "status": "failed",
+                        "error": "AI call failed: Request was aborted",
+                        "failureType": "ENV_ISSUE",
+                        "failureReview": job["failure_review"],
+                    }],
+                    "running": [],
+                    "timeout": [],
+                }
+            job["status"] = "success"
+            return {
+                "completed": [{**common, "status": "success"}],
+                "failed": [],
+                "running": [],
+                "timeout": [],
+            }
+
+        agent_service._agent_prepare_repair_rerun_targets = lambda *_args, **_kwargs: {
+            "hasRepairDrafts": True,
+            "draftCount": 1,
+            "targets": [{
+                "draftId": "repair-scan-environment",
+                "sourceJobId": "job-repair-source",
+                "sourceModule": "AI测试",
+                "sourceFile": "scan.yaml",
+                "sourceTaskName": "扫描入口",
+                "module": "AI_Agent_修复重跑_agent-static-repair-env",
+                "file": "scan-repair.yaml",
+                "path": "/tmp/scan-repair.yaml",
+                "taskNames": ["扫描入口"],
+                "sourceItem": {},
+                "sourceJob": repaired_environment_jobs[0],
+                "failureReason": "入口行右侧被截断",
+            }],
+            "skipped": [],
+        }
+        job_service.create_pending_job = fake_repaired_environment_create
+        job_service.wait_jobs_finished = fake_repaired_environment_wait
+        repaired_environment_run = {
+            "runId": "agent-static-repair-environment-retry",
+            "target": "入口回归",
+            "runnerId": "win-runner-01",
+            "deviceId": "ecbfd645",
+            "deviceStrategy": "fixed",
+            "artifacts": {"jobIds": ["job-repair-source"]},
+        }
+        repaired_environment_call = agent_service._tool_rerun(
+            repaired_environment_run,
+            failed_items_override=[{
+                "jobId": "job-repair-source",
+                "status": "failed",
+                "module": "AI测试",
+                "file": "scan.yaml",
+                "taskName": "扫描入口",
+                "failureType": "SCRIPT_ISSUE",
+                "failureReview": {"category": "script_issue", "confidence": 0.96, "canAutoRepair": True},
+            }],
+        )
+        repaired_environment_links = agent_service._agent_rerun_source_links(
+            repaired_environment_run.get("artifacts") or {}
+        )
+        require(
+            len(repaired_environment_creates) == 2
+            and repaired_environment_creates[0].get("parent_job_id") == "job-repair-source"
+            and repaired_environment_creates[1].get("parent_job_id") == "job-repaired-environment-1"
+            and all(item.get("module") == "AI_Agent_修复重跑_agent-static-repair-env" for item in repaired_environment_creates)
+            and all(item.get("file") == "scan-repair.yaml" for item in repaired_environment_creates),
+            "A repair YAML interrupted by concrete model-service evidence must be retried once from the failed repair child without regenerating or reverting the YAML",
+        )
+        require(
+            repaired_environment_call.get("status") == "SUCCESS"
+            and len(repaired_environment_run.get("artifacts", {}).get("rerunAttempts") or []) == 2
+            and {
+                (item.get("sourceJobId"), item.get("newJobId"))
+                for item in repaired_environment_links
+            } == {
+                ("job-repair-source", "job-repaired-environment-1"),
+                ("job-repaired-environment-1", "job-repaired-environment-2"),
+            }
+            and all(item.get("device_id") == "ecbfd645" for item in repaired_environment_creates),
+            "The bounded environment retry must preserve the fixed OPPO, the full recovery lineage, and the final recovered status",
+        )
     finally:
         job_service.load_jobs = old_load_jobs
         job_service.create_pending_job = old_create_pending_job

@@ -15254,7 +15254,7 @@ def _agent_mark_recovered_execution_steps(run, execution, report_refresh=None):
     run.pop("error", None)
 
 
-def _tool_rerun(run, failed_items_override=None, repair_depth=0):
+def _tool_rerun(run, failed_items_override=None, repair_depth=0, reuse_existing_yaml_only=False):
     """对失败任务重新创建 Runner job，并等待实际执行结果。"""
     call = {
         "callId": str(uuid.uuid4())[:8],
@@ -15282,7 +15282,11 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
         retry_sources = []
         skipped = []
         jobs = job_service.load_jobs()
-        repair_plan = _agent_prepare_repair_rerun_targets(run, failed_items, jobs)
+        repair_plan = (
+            {"hasRepairDrafts": False, "draftCount": 0, "targets": [], "skipped": []}
+            if reuse_existing_yaml_only
+            else _agent_prepare_repair_rerun_targets(run, failed_items, jobs)
+        )
         repair_targets = [item for item in (repair_plan.get("targets") or []) if isinstance(item, dict)]
         repair_source_ids = [
             str(item.get("sourceJobId") or "").strip()
@@ -15727,6 +15731,7 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             artifacts.setdefault("rerunAttempts", []).append({
                 "repairDepth": repair_depth,
                 "source": rerun_source,
+                "reuseExistingYamlOnly": bool(reuse_existing_yaml_only),
                 "createdJobIds": list(retried),
                 "completedCount": len(completed),
                 "failedCount": len(failed),
@@ -15836,13 +15841,33 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
             if (failed or timeout_jobs) and repair_depth < 1:
                 latest_failed = _normalize_agent_failed_items(list(failed) + list(timeout_jobs))
                 followup = _agent_post_rerun_autonomy(run, latest_failed, repair_depth=repair_depth)
+                repair_child_job_ids = {
+                    str(item.get("newJobId") or "").strip()
+                    for item in retry_sources
+                    if isinstance(item, dict)
+                    and str(item.get("source") or "").strip() == "repair_draft"
+                    and str(item.get("newJobId") or "").strip()
+                }
+                environment_retry_items = [
+                    item for item in latest_failed
+                    if _failed_job_id(item) in repair_child_job_ids
+                    and _agent_original_rerun_eligible(item)
+                    and _agent_repair_eligibility(item).get("failureType") == "ENV_ISSUE"
+                ]
+                followup["environmentRetryEligible"] = bool(environment_retry_items)
+                followup["environmentRetryJobIds"] = [
+                    _failed_job_id(item) for item in environment_retry_items if _failed_job_id(item)
+                ]
                 call["postRerunAutonomy"] = followup
-                if followup.get("repairGenerated"):
+                if followup.get("repairGenerated") or environment_retry_items:
                     followup["followupExecuted"] = True
                     followup_call = _tool_rerun(
                         run,
                         failed_items_override=latest_failed,
                         repair_depth=repair_depth + 1,
+                        reuse_existing_yaml_only=bool(
+                            environment_retry_items and not followup.get("repairGenerated")
+                        ),
                     )
                     followup["followupStatus"] = followup_call.get("status") if isinstance(followup_call, dict) else ""
                     followup["followupSummary"] = followup_call.get("outputSummary") if isinstance(followup_call, dict) else ""
@@ -15852,9 +15877,15 @@ def _tool_rerun(run, failed_items_override=None, repair_depth=0):
                     if followup.get("followupStatus") == "SUCCESS":
                         call["status"] = "SUCCESS"
                         call.pop("error", None)
-                        call["outputSummary"] = f"{summary}；AI 根据最新失败证据修复后在原设备验证成功"
+                        if environment_retry_items and not followup.get("repairGenerated"):
+                            call["outputSummary"] = f"{summary}；修复 YAML 遇到瞬时环境失败后在原设备重试成功"
+                        else:
+                            call["outputSummary"] = f"{summary}；AI 根据最新失败证据修复后在原设备验证成功"
                     else:
-                        call["outputSummary"] = f"{summary}；AI 已进行一次受限修复重跑，结果仍未通过"
+                        if environment_retry_items and not followup.get("repairGenerated"):
+                            call["outputSummary"] = f"{summary}；修复 YAML 已进行一次受限环境重试，结果仍未通过"
+                        else:
+                            call["outputSummary"] = f"{summary}；AI 已进行一次受限修复重跑，结果仍未通过"
     except Exception as e:
         call["status"] = "FAILED"
         call["error"] = str(e)
