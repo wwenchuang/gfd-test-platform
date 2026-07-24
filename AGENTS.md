@@ -31,7 +31,7 @@ Midscene Task Platform 是一个 AI 自动化测试平台，核心链路是：
 
 ## 已确定生产策略
 
-- Midscene 版本按 1.7.10 兼容处理。
+- Midscene 生产 Runner 按 1.10.7+ 处理；Qwen3.7 Plus 使用官方 `MIDSCENE_MODEL_FAMILY=qwen3`。
 - 小需求生成 3 条，中需求生成 5 条，大需求最多 8 条。
 - 首批冒烟最多 3 条。
 - 冒烟通过率大于等于 50% 才继续执行剩余用例。
@@ -68,7 +68,7 @@ AI 应参与：
 - 不要大规模重构 `router.py`。
 - 不要删除 `dag_safe` / `parallel_dag`。
 - 不要新增 `runner_fast` 或其他不存在的执行模式。
-- 不要新增 Midscene 1.7.10 不支持的 YAML action 或字段。
+- 不要新增当前生产 Midscene CLI 不支持的 YAML action 或字段。
 - 不要生成 `waitAfter.fast` / `fastProbe` 等非官方字段。
 - 不要批量修改历史基线 YAML，除非用户明确要求。
 - 不要用全局基线 profile 替代 Top3 相似成功基线。
@@ -115,4 +115,3 @@ python3 tests/ai_gateway_static_checks.py
 7. 最后给出提交文件和部署命令。
 
 如果工作区已有用户改动，必须保留，不能回滚。
-

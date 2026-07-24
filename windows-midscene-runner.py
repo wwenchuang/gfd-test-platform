@@ -19,7 +19,7 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.24-qwen3.7-midscene17-v2")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.24-qwen3.7-midscene110-v3")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -169,7 +169,7 @@ def ensure_android_sdk_env(env):
 def infer_midscene_model_family(model_name, configured_family=""):
     name = str(model_name or "").strip().lower()
     if "qwen3.7" in name:
-        return "qwen3.6"
+        return "qwen3"
     if "qwen3.6" in name:
         return "qwen3.6"
     if "qwen3.5" in name:

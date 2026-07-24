@@ -243,10 +243,10 @@ Get-Content D:\sonic\midscene_run\logs\windows-runner.err.log -Wait
 After the service starts, the Task page Runner status should show:
 
 - `last_seen` updated within 60 seconds.
-- `runner_version=2026.07.24-qwen3.7-midscene17-v2`.
-- Sonic execution detail shows `桥接版本：2026.07.24-qwen3.7-midscene17-v2`.
+- `runner_version=2026.07.24-qwen3.7-midscene110-v3`.
+- Sonic execution detail shows `桥接版本：2026.07.24-qwen3.7-midscene110-v3`.
 - `midscene_model_name=qwen3.7-plus`.
-- `midscene_model_family=qwen3.6` for Midscene 1.7.10 compatibility.
+- `midscene_model_family=qwen3`.
 - `yaml_dry_run` and `apk_install` capabilities.
 - device market name, Android version, resolution, and installed app version.
 
@@ -323,9 +323,9 @@ update both existing files before restarting:
 sed -i "s/^export DASHSCOPE_MODEL=.*/export DASHSCOPE_MODEL='qwen3.7-plus'/" /opt/midscene.env
 sed -i "s/^export DASHSCOPE_VL_MODEL=.*/export DASHSCOPE_VL_MODEL='qwen3.7-plus'/" /opt/midscene.env
 if grep -q '^export MIDSCENE_MODEL_FAMILY=' /opt/midscene.env; then
-  sed -i "s/^export MIDSCENE_MODEL_FAMILY=.*/export MIDSCENE_MODEL_FAMILY='qwen3.6'/" /opt/midscene.env
+  sed -i "s/^export MIDSCENE_MODEL_FAMILY=.*/export MIDSCENE_MODEL_FAMILY='qwen3'/" /opt/midscene.env
 else
-  printf "\\nexport MIDSCENE_MODEL_FAMILY='qwen3.6'\\n" >> /opt/midscene.env
+  printf "\\nexport MIDSCENE_MODEL_FAMILY='qwen3'\\n" >> /opt/midscene.env
 fi
 jq '.providers.qwen_plus.model = "qwen3.7-plus"' \
   /opt/ai-gateway/config/providers.json > /tmp/providers.json
@@ -337,7 +337,7 @@ systemctl restart midscene-task
 Copy the matching `windows-midscene-runner.py` to
 `D:\sonic\midscene_run\windows-midscene-runner.py` and restart the NSSM service.
 Verify `/api/health`, `/api/models`, and `/api/runners`; do not start a real
-device job until all three report `qwen3.7-plus / qwen3.6`.
+device job until all three report `qwen3.7-plus / qwen3`.
 
 The install script updates Python service files, `ai_skills`, the app copy of
 `task-manager.html`, and the Sonic reports Docker web copy when that container

@@ -2,7 +2,7 @@ import org.cloud.sonic.agent.bridge.android.AndroidDeviceBridgeTool
 import groovy.json.JsonSlurper
 
 // ================== Sonic 接入配置 ==================
-def bridgeVersion = "2026.07.24-qwen3.7-midscene17-v2"
+def bridgeVersion = "2026.07.24-qwen3.7-midscene110-v3"
 def bridgeTimeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
 def formatBridgeTime = { String pattern ->
     def formatter = new java.text.SimpleDateFormat(pattern)
@@ -276,7 +276,7 @@ def configuredMidsceneModelFamily = firstValue([
 ])
 def normalizedMidsceneModelName = (midsceneModelName ?: "").toLowerCase()
 def midsceneModelFamily = (
-    normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3.6" :
+    normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3" :
     normalizedMidsceneModelName.contains("qwen3.6") ? "qwen3.6" :
     normalizedMidsceneModelName.contains("qwen3.5") ? "qwen3.5" :
     normalizedMidsceneModelName.contains("qwen3-vl") ? "qwen3-vl" :

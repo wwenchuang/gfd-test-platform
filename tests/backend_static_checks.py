@@ -300,15 +300,15 @@ def check_midscene_model_family_protocol():
     require('DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")' in config_source, "Task Server default text model must be qwen3.7-plus")
     require('DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.7-plus")' in config_source, "Task Server default visual model must be qwen3.7-plus")
     require("DASHSCOPE_MODEL='qwen3.7-plus'" in deploy_env_source and "DASHSCOPE_VL_MODEL='qwen3.7-plus'" in deploy_env_source, "Deployment defaults must keep text and visual models on qwen3.7-plus")
-    require('bridgeVersion = "2026.07.24-qwen3.7-midscene17-v2"' in sonic_runner_source, "Sonic execution logs must expose the Qwen3.7/Midscene 1.7 compatibility bridge version")
+    require('bridgeVersion = "2026.07.24-qwen3.7-midscene110-v3"' in sonic_runner_source, "Sonic execution logs must expose the Qwen3.7/Midscene 1.10 bridge version")
     require(sonic_runner_source.count('"qwen3.7-plus"') >= 2, "Sonic fallback text and visual models must use qwen3.7-plus")
     require('builder.environment().put("MIDSCENE_MODEL_FAMILY", midsceneModelFamily)' in sonic_runner_source, "Sonic must pass the explicit current model family to Midscene")
-    require('normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3.6"' in sonic_runner_source, "Sonic must override stale qwen3 family settings for Qwen3.7 Plus on Midscene 1.7.10")
+    require('normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3"' in sonic_runner_source, "Sonic must use the official qwen3 family for Qwen3.7 Plus on Midscene 1.10+")
     require('builder.environment().put("MIDSCENE_USE_QWEN_VL"' not in sonic_runner_source, "Sonic must not force Qwen3.7 through the legacy Qwen2.5-VL switch")
     require(providers.get("providers", {}).get("qwen_plus", {}).get("model") == "qwen3.7-plus", "AI Gateway Qwen Plus route must use qwen3.7-plus")
 
-    require(runner_service.infer_midscene_model_family("qwen3.7-plus") == "qwen3.6", "Server must map qwen3.7-plus to the Midscene 1.7.10 accepted Qwen normalized-coordinate family")
-    require(runner_service.infer_midscene_model_family("qwen3.7-plus", "qwen2.5-vl") == "qwen3.6", "Known Qwen3.7 model names must override stale incompatible family settings with a Midscene 1.7.10 accepted family")
+    require(runner_service.infer_midscene_model_family("qwen3.7-plus") == "qwen3", "Server must map qwen3.7-plus to the official Midscene Qwen3 family")
+    require(runner_service.infer_midscene_model_family("qwen3.7-plus", "qwen2.5-vl") == "qwen3", "Known Qwen3.7 model names must override stale incompatible family settings with the official qwen3 family")
     require(runner_service.infer_midscene_model_family("qwen3.6-plus") == "qwen3.6", "Server must map qwen3.6-plus to the Midscene 1.7.10 normalized-coordinate family")
     require(runner_service.infer_midscene_model_family("qwen3.6-plus", "qwen2.5-vl") == "qwen3.6", "Known Qwen3.6 model names must override stale incompatible family settings")
     require(runner_service.infer_midscene_model_family("qwen2.5-vl-72b") == "qwen2.5-vl", "Server must keep true Qwen2.5-VL models on the pixel-coordinate family")
@@ -322,7 +322,7 @@ def check_midscene_model_family_protocol():
         os.environ["MIDSCENE_USE_QWEN_VL"] = "1"
         runtime = runner_service.midscene_runtime_env()
         require(runtime.get("MIDSCENE_MODEL_NAME") == "qwen3.7-plus", "Server runtime env must expose the configured Midscene model name")
-        require(runtime.get("MIDSCENE_MODEL_FAMILY") == "qwen3.6", "Server runtime env must explicitly expose the Midscene 1.7.10 accepted Qwen family")
+        require(runtime.get("MIDSCENE_MODEL_FAMILY") == "qwen3", "Server runtime env must explicitly expose the official Qwen3 family")
         require("MIDSCENE_USE_QWEN_VL" not in runtime, "Server must not declare Qwen3.7 as legacy qwen2.5-vl")
     finally:
         for key, value in old_env.items():
@@ -336,9 +336,9 @@ def check_midscene_model_family_protocol():
         spec = importlib.util.spec_from_file_location(module_name, ROOT / filename)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        require(module.infer_midscene_model_family("qwen3.7-plus", "qwen2.5-vl") == "qwen3.6", f"{filename} must map Qwen3.7 Plus to the Midscene 1.7.10 accepted Qwen family")
+        require(module.infer_midscene_model_family("qwen3.7-plus", "qwen2.5-vl") == "qwen3", f"{filename} must map Qwen3.7 Plus to the official Qwen3 family")
         require(module.infer_midscene_model_family("qwen3.6-plus", "qwen2.5-vl") == "qwen3.6", f"{filename} must reject a stale qwen2.5-vl family for a known Qwen3.6 model")
-        require("qwen3.7-midscene17-v2" in module.RUNNER_VERSION, f"{filename} must expose the Qwen3.7/Midscene 1.7 compatibility runner version in heartbeat")
+        require("qwen3.7-midscene110-v3" in module.RUNNER_VERSION, f"{filename} must expose the Qwen3.7/Midscene 1.10 runner version in heartbeat")
         original_runtime = module.task_runtime_env
         old_legacy = os.environ.get("MIDSCENE_USE_QWEN_VL")
         try:
@@ -347,12 +347,12 @@ def check_midscene_model_family_protocol():
                 "MIDSCENE_MODEL_API_KEY": "static-check-model-key",
                 "MIDSCENE_MODEL_BASE_URL": "https://example.invalid/v1",
                 "MIDSCENE_MODEL_NAME": "qwen3.7-plus",
-                "MIDSCENE_MODEL_FAMILY": "qwen3.6",
+                "MIDSCENE_MODEL_FAMILY": "qwen3",
                 "MIDSCENE_USE_QWEN_VL": "1",
             }
             runtime = module.midscene_env("ecbfd645")
             require(runtime.get("MIDSCENE_MODEL_NAME") == "qwen3.7-plus", f"{filename} must pass the Qwen3.7 Plus model to Midscene")
-            require(runtime.get("MIDSCENE_MODEL_FAMILY") == "qwen3.6", f"{filename} must pass the Midscene 1.7.10 accepted Qwen family to Midscene")
+            require(runtime.get("MIDSCENE_MODEL_FAMILY") == "qwen3", f"{filename} must pass the official Qwen3 family to Midscene")
             require("MIDSCENE_USE_QWEN_VL" not in runtime, f"{filename} must clear stale qwen2.5-vl switches when an explicit family is configured")
             require(runtime.get("ANDROID_SERIAL") == "ecbfd645", f"{filename} must preserve the selected Android device while applying model config")
         finally:
@@ -15133,7 +15133,7 @@ def main():
     require('line.strip() == "android: {}"' in runner_sources and 'lines[i] = "android:"' in runner_sources and 'lines.insert(i + 1, f"  deviceId: {device_id}")' in runner_sources, "Runner device injection must expand android: {} before adding deviceId to keep CLI YAML valid")
     require("def normalize_empty_cli_interface_config" in runner_sources and "text = normalize_empty_cli_interface_config(text)" in runner_sources, "Runner CLI normalization must preserve non-empty interface blocks")
     require('midscene_command.extend(["--android.deviceId", device_id])' in runner_sources, "Runner must apply the selected Android device through the official Midscene CLI override")
-    require('"2026.07.24-qwen3.7-midscene17-v2"' in runner_sources, "Runner heartbeat must expose the Qwen3.7/Midscene 1.7 compatibility version for deployment verification")
+    require('"2026.07.24-qwen3.7-midscene110-v3"' in runner_sources, "Runner heartbeat must expose the Qwen3.7/Midscene 1.10 version for deployment verification")
     require('"MIDSCENE_MODEL_FAMILY"' in runner_service_source and '"MIDSCENE_MODEL_API_KEY"' in runner_service_source and '"MIDSCENE_MODEL_BASE_URL"' in runner_service_source, "Server must publish the modern Midscene model configuration contract")
     require('"MIDSCENE_USE_QWEN_VL": "1"' not in runner_service_source, "Server must not declare a Qwen3 model through the legacy qwen2.5-vl switch")
     require("def infer_midscene_model_family" in runner_sources and '"midscene_model_family"' in runner_sources and 'env.pop(legacy_key, None)' in runner_sources, "Runners must infer, report, and enforce the explicit Midscene model family")

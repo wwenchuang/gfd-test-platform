@@ -715,10 +715,10 @@ def runtime_env_preview(env):
 
 
 def infer_midscene_model_family(model_name: str, configured_family: str = "") -> str:
-    """Return the Midscene 1.7.10 coordinate protocol for a configured model."""
+    """Return the Midscene coordinate protocol for a configured model."""
     name = str(model_name or "").strip().lower()
     if "qwen3.7" in name:
-        return "qwen3.6"
+        return "qwen3"
     if "qwen3.6" in name:
         return "qwen3.6"
     if "qwen3.5" in name:
