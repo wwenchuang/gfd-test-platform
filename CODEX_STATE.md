@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-24 真实回归：已验证的运行时叶子修正必须跨修复轮次复用
+
+用户部署最新代码后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784847819330-e550b0ba`：
+
+- PREPARE_SOURCE 正确解析 Figma `4 页 / 4 图 / 忽略 0`。4 张图按 `1/4` 至 `4/4` 分批真实送入 `qwen3.6-plus`，每批 1 张，耗时 `18 / 13 / 16 / 22` 秒，均一次完成、无 retry、无 fallback。
+- PLAN 生成 8 条业务分支；GENERATE_YAML 生成 6 条 executable、12 个验收点。最终收敛从 `11/12` 补齐到 `12/12`，6 条 YAML 均通过平台静态校验、scorer 和 Runner dry-run。扫描复印展示与可达任务均在固定 OPPO 上真实成功。
+- 首批文档展示成功；照片展示因 Figma 软证据中的「一寸照」与真机当前尺寸列表冲突而失败。AI 修复草稿在同一 Runner / OPPO 上将叶子有界修正为「5寸照片」并真实通过。
+- 修复通过后，平台继续串行执行 4 条 remaining；文档可达、扫描展示、扫描可达均成功，但照片可达仍携带原「一寸照」叶子而再次失败。全部正式 job 和 dry-run job 均为 `win-runner-01 / ecbfd645 / fixed`，没有向华为下发。7 份 HTML 报告均可访问且包含真实截图；Runner 未生成录屏产物。
+- Agent 最终为 `FAILED / RERUN / 95%`。第二次照片失败已正确归类 `SCRIPT_ISSUE / element_not_found`，但后续修复草稿虽再次提出「5寸照片」，因没有复用上一轮已接受的 baseline ID，被 `navigation_change_without_baseline_citation` 门禁拒绝。
+
+根因与通用修复：
+
+- `_tool_generate_repair()` 每轮都把 `accepted_runtime_leaf_overrides` 重置为空。已有逻辑只能在同一批多个失败任务间复用运行时叶子修正，无法在“首批失败修复成功 -> remaining 中同分支任务失败”的下一修复轮次继续使用已经验证的证据。
+- 新增 `_agent_verified_repair_leaf_overrides()`，仅当修复草稿未被拒绝、包含可执行修复 YAML 和有界叶子证据，且 `rerunSources` 能把原失败 job 唯一关联到 `rerunResult.completed` 中真实 `success` 的修复 job 时才恢复该修正。Agent 指定 Runner / 设备时，成功 job 还必须与其完全一致。
+- 失败、超时、未执行、不同 Runner / 设备、缺目标文字、缺 baseline ID 或空叶子的草稿均不能传播。恢复后的修正仍需通过现有同目标、原动作命中、当前分支 baseline 引用、精确断言保持、YAML 静态校验和 scorer 门禁；没有放宽导航、坐标、账号、授权或外部深层操作限制。
+- 真实线上 artifact 离线回放恢复唯一证据 `一寸照 -> 5寸照片 / targetText=百度网盘 / baseline=652583bdad841b93`。将线上失败的第 04 条 YAML 送入现有补丁门禁后，`requestCount=0 / gateOk=true / score=100`，真实 `aiTap` 序列为 `照片打印 -> 5寸照片 -> 百度网盘`，不再包含失效点击动作。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py  # 61/61
+```
+
+- 回归先稳定失败于“上一轮真实成功修正没有进入下一轮 repair 输入”，再由最小实现修复；测试同时证明另一个失败修复 job 的叶子不能传播。
+- 待用户手动 push / 部署后，使用完全相同输入和固定 OPPO 重新发起完整 Agent。预期即使同分支 remaining 再遇到相同失效叶子，也会直接使用已验证修正生成可执行草稿并在原设备完成有界重跑，不再因丢失 baseline 引用停在 95%。
+- 本轮不修改 Figma 解析、YAML scorer、Sonic、Runner、历史 YAML 或 API 测试功能。Codex 不 push，由用户手动 push / 部署。
+
 ### 2026-07-23 API 日常流程 V2：业务线、自动同步、环境公共鉴权与按接口审阅
 
 本轮按用户提供的生产演进文档、`docs/superpowers/specs/2026-07-23-api-daily-workflow-v2-design.md` 和对应实施计划收敛 API 日常工作流。产品取舍同时对照 Postman Workspace / Collection Run、Apifox 项目 / 环境变量 / 自动化测试及 MeterSphere 项目环境 / 接口测试的官方文档：用户默认只处理业务、范围、用例、执行和报告，source / revision / generation / trace / auth reference 继续保留为可展开技术证据。

@@ -14091,6 +14091,70 @@ def _agent_repair_patch_skill_candidate(
     }
 
 
+def _agent_verified_repair_leaf_overrides(run):
+    """Recover only leaf corrections whose repair descendants passed on the selected device."""
+    run = run if isinstance(run, dict) else {}
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    drafts = [
+        item for item in (artifacts.get("repairDrafts") or [])
+        if isinstance(item, dict)
+        and str(item.get("status") or "").strip().upper() not in ("REJECTED", "BLOCKED")
+        and _agent_repair_draft_fixed_yaml(item)
+    ]
+    links = [
+        item for item in (artifacts.get("rerunSources") or [])
+        if isinstance(item, dict)
+        and str(item.get("sourceJobId") or "").strip()
+        and str(item.get("newJobId") or "").strip()
+    ]
+    rerun_result = artifacts.get("rerunResult") if isinstance(artifacts.get("rerunResult"), dict) else {}
+    selected_runner_id = str(run.get("runnerId") or run.get("runner_id") or "").strip()
+    selected_device_id = str(run.get("deviceId") or run.get("device_id") or "").strip()
+    completed_by_id = {}
+    for item in rerun_result.get("completed") or []:
+        if not isinstance(item, dict) or str(item.get("status") or "").strip().lower() != "success":
+            continue
+        job_id = str(item.get("job_id") or item.get("jobId") or "").strip()
+        runner_id = str(item.get("runner_id") or item.get("runnerId") or "").strip()
+        device_id = str(item.get("device_id") or item.get("deviceId") or "").strip()
+        if not job_id:
+            continue
+        if selected_runner_id and runner_id != selected_runner_id:
+            continue
+        if selected_device_id and device_id != selected_device_id:
+            continue
+        completed_by_id[job_id] = item
+
+    verified_source_ids = {
+        str(link.get("sourceJobId") or "").strip()
+        for link in links
+        if str(link.get("newJobId") or "").strip() in completed_by_id
+    }
+    result = []
+    seen = set()
+    for draft in drafts:
+        source_job_id = str(draft.get("jobId") or draft.get("job_id") or "").strip()
+        if source_job_id not in verified_source_ids:
+            continue
+        for override in draft.get("sourceLeafRuntimeOverrides") or []:
+            if not isinstance(override, dict):
+                continue
+            from_leaf = str(override.get("fromLeaf") or "").strip()
+            to_leaf = str(override.get("toLeaf") or "").strip()
+            target_text = str(override.get("targetText") or "").strip()
+            baseline_ids = tuple(
+                str(item or "").strip()
+                for item in (override.get("baselineIds") or [])
+                if str(item or "").strip()
+            )
+            key = (from_leaf, to_leaf, target_text, baseline_ids)
+            if not from_leaf or not to_leaf or from_leaf == to_leaf or not target_text or not baseline_ids or key in seen:
+                continue
+            seen.add(key)
+            result.append(copy.deepcopy(override))
+    return result
+
+
 def _tool_generate_repair(run, failed_jobs_override=None):
     """只对 SCRIPT_ISSUE 类型生成可追溯的 YAML 修复草稿。"""
     call = {
@@ -14132,7 +14196,7 @@ def _tool_generate_repair(run, failed_jobs_override=None):
         ai_used_count = 0
         validation_passed_count = 0
         blocked_count = 0
-        accepted_runtime_leaf_overrides = []
+        accepted_runtime_leaf_overrides = _agent_verified_repair_leaf_overrides(run)
 
         try:
             from task_server.services import repair_service

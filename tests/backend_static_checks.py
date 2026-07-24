@@ -7217,6 +7217,128 @@ def check_agent_failure_review_and_repair_guard():
         and "点击「一寸照」规格" not in sibling_fixed_yaml,
         "A runtime-disproved leaf accepted for one failed task must be reusable for a sibling failed task before asking AI again",
     )
+    old_task_dir_for_verified_leaf = agent_service.TASK_DIR
+    old_gateway_for_verified_leaf = agent_service._ai_gateway_available
+    old_patch_skill_for_verified_leaf = agent_service._agent_repair_patch_skill_candidate
+    old_log_for_verified_leaf = agent_service._log_tool_call
+    old_upsert_for_verified_leaf = repair_service.upsert_repair_draft
+    old_keyframes_for_verified_leaf = agent_service._agent_failure_report_keyframes
+    old_baselines_for_verified_leaf = agent_service._agent_repair_baseline_examples
+    verified_leaf_inputs = []
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            (module_dir / "sibling.yaml").write_text(sibling_leaf_yaml, encoding="utf-8")
+            agent_service._ai_gateway_available = lambda: True
+            agent_service._log_tool_call = lambda *_args, **_kwargs: None
+            repair_service.upsert_repair_draft = lambda draft: dict(draft)
+            agent_service._agent_failure_report_keyframes = lambda *_args, **_kwargs: []
+            agent_service._agent_repair_baseline_examples = lambda *_args, **_kwargs: [runtime_leaf_baseline]
+
+            def capture_verified_leaf_overrides(*_args, **kwargs):
+                verified_leaf_inputs.extend(copy.deepcopy(kwargs.get("accepted_leaf_overrides") or []))
+                return {
+                    "response": {},
+                    "candidateGate": agent_service._agent_repair_patch_error_gate(
+                        "static_capture",
+                        "capture only",
+                    ),
+                    "requestCount": 0,
+                    "correctionAttempted": False,
+                    "correctionIssues": [],
+                    "attemptErrors": [],
+                    "patchPlan": {},
+                    "appliedPatches": [],
+                }
+
+            agent_service._agent_repair_patch_skill_candidate = capture_verified_leaf_overrides
+            verified_leaf_run = {
+                "runId": "agent-static-verified-leaf-carryover",
+                "target": "通用同分支后续用例",
+                "platform": "android",
+                "runnerId": "win-runner-01",
+                "deviceId": "device-fixed",
+                "deviceStrategy": "fixed",
+                "artifacts": {
+                    "failureAnalysis": {"failureType": "SCRIPT_ISSUE", "canAutoRepair": True},
+                    "repairDrafts": [{
+                        "draftId": "repair-verified",
+                        "jobId": "job-source-failed",
+                        "status": "WAIT_CONFIRM",
+                        "fixedYaml": sibling_leaf_yaml.replace("一寸照", "5寸照片"),
+                        "sourceLeafRuntimeOverrides": [{
+                            "fromLeaf": "一寸照",
+                            "toLeaf": "5寸照片",
+                            "targetText": "百度网盘",
+                            "baselineIds": ["base-photo-runtime-leaf"],
+                        }],
+                    }, {
+                        "draftId": "repair-unverified",
+                        "jobId": "job-other-failed",
+                        "status": "WAIT_CONFIRM",
+                        "fixedYaml": sibling_leaf_yaml.replace("一寸照", "6寸照片"),
+                        "sourceLeafRuntimeOverrides": [{
+                            "fromLeaf": "一寸照",
+                            "toLeaf": "6寸照片",
+                            "targetText": "百度网盘",
+                            "baselineIds": ["base-photo-runtime-leaf"],
+                        }],
+                    }],
+                    "rerunSources": [{
+                        "sourceJobId": "job-source-failed",
+                        "newJobId": "job-repair-passed",
+                    }, {
+                        "sourceJobId": "job-other-failed",
+                        "newJobId": "job-repair-failed",
+                    }],
+                    "rerunResult": {
+                        "completed": [{
+                            "job_id": "job-repair-passed",
+                            "status": "success",
+                            "runner_id": "win-runner-01",
+                            "device_id": "device-fixed",
+                        }],
+                        "failed": [{
+                            "job_id": "job-repair-failed",
+                            "status": "failed",
+                            "runner_id": "win-runner-01",
+                            "device_id": "device-fixed",
+                        }],
+                        "timeout": [],
+                    },
+                },
+            }
+            agent_service._tool_generate_repair(
+                verified_leaf_run,
+                failed_jobs_override=[{
+                    "jobId": "job-sibling-failed",
+                    "module": "AI_Agent_草稿",
+                    "file": "sibling.yaml",
+                    "taskName": "照片打印页-点击百度网盘入口唤起响应校验",
+                    "failureType": "SCRIPT_ISSUE",
+                    "canAutoRepair": True,
+                    "failureReason": "failed to locate element: 一寸照",
+                }],
+            )
+        require(
+            verified_leaf_inputs == [{
+                "fromLeaf": "一寸照",
+                "toLeaf": "5寸照片",
+                "targetText": "百度网盘",
+                "baselineIds": ["base-photo-runtime-leaf"],
+            }],
+            "A runtime leaf correction may carry into a later repair cycle only after its repair job passed on the selected Runner and device",
+        )
+    finally:
+        agent_service.TASK_DIR = old_task_dir_for_verified_leaf
+        agent_service._ai_gateway_available = old_gateway_for_verified_leaf
+        agent_service._agent_repair_patch_skill_candidate = old_patch_skill_for_verified_leaf
+        agent_service._log_tool_call = old_log_for_verified_leaf
+        repair_service.upsert_repair_draft = old_upsert_for_verified_leaf
+        agent_service._agent_failure_report_keyframes = old_keyframes_for_verified_leaf
+        agent_service._agent_repair_baseline_examples = old_baselines_for_verified_leaf
     off_home_yaml = """android:
   tasks:
     - name: 照片打印页-百度网盘入口UI展示及位置校验
