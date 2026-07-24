@@ -244,6 +244,7 @@ After the service starts, the Task page Runner status should show:
 
 - `last_seen` updated within 60 seconds.
 - `runner_version=2026.07.24-qwen3.7-v1`.
+- Sonic execution detail shows `桥接版本：2026.07.24-qwen3.7-v1`.
 - `midscene_model_name=qwen3.7-plus`.
 - `midscene_model_family=qwen3`.
 - `yaml_dry_run` and `apk_install` capabilities.

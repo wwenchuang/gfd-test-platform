@@ -2,7 +2,7 @@ import org.cloud.sonic.agent.bridge.android.AndroidDeviceBridgeTool
 import groovy.json.JsonSlurper
 
 // ================== Sonic 接入配置 ==================
-def bridgeVersion = "2026.07.15-bounded-ai-recovery-v1"
+def bridgeVersion = "2026.07.24-qwen3.7-v1"
 def bridgeTimeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
 def formatBridgeTime = { String pattern ->
     def formatter = new java.text.SimpleDateFormat(pattern)

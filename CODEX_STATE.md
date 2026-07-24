@@ -32,12 +32,15 @@
 
 用户指出此前只分析模型升级范围、没有实际更新 Runner。线上复核确认 `/api/health`、`/api/models` 和 `win-runner-01` 心跳仍分别报告 `qwen3.6-plus`、`qwen3.6`，Runner 版本仍为 `2026.07.10-model-family-v4`。
 
+补充线上复核：Sonic 测试套执行详情仍显示 `模型：qwen3.6-plus`。直接读取 `/api/sonic/runtime-env` 确认服务端返回的 `DASHSCOPE_MODEL / DASHSCOPE_VL_MODEL / MIDSCENE_MODEL_NAME` 均为 `qwen3.6-plus`、family 为 `qwen3.6`，并且这些值来自已成功加载的 `/opt/midscene.env`。因此 Sonic 不是自行回退或缓存旧模型，而是在按设计使用服务端仍未更新的生产配置。
+
 根因与修复：
 
 - 官方阿里云当前最新 Plus 为 `qwen3.7-plus`；3.8 只有 `qwen3.8-max-preview`，不存在 `qwen3.8-plus`。官方 Midscene 配置要求 `MIDSCENE_MODEL_NAME=qwen3.7-plus / MIDSCENE_MODEL_FAMILY=qwen3`。
 - Task Server 文本 / 视觉默认模型、部署环境样例、AI Gateway `qwen_plus` Provider、Windows / Mac Runner 回退模型和 Sonic 回退模型统一更新为 `qwen3.7-plus`。
 - 服务端和两个 Runner 新增 `qwen3.7-plus -> qwen3` family 映射；既有 `qwen3.6 -> qwen3.6`、`qwen3.5 -> qwen3.5` 和 Qwen2.5-VL 兼容分支保持不变。
 - Windows / Mac Runner 心跳版本提升为 `2026.07.24-qwen3.7-v1`。Sonic 改用现代 `MIDSCENE_MODEL_API_KEY / BASE_URL / NAME / FAMILY` 合同，并移除会把 Qwen3 误声明成 Qwen2.5-VL 的 `MIDSCENE_USE_QWEN_VL` 等旧开关。
+- Sonic Groovy `bridgeVersion` 同步提升为 `2026.07.24-qwen3.7-v1`，确保测试套执行详情和“刷新桥接脚本”版本校验能够明确识别本次模型升级；不能继续沿用旧 `2026.07.15-bounded-ai-recovery-v1` 标识。
 - `install-server.sh` 会保留线上已有 `/opt/midscene.env` 和 AI Gateway Provider 配置，因此部署文档明确要求同步更新现有环境文件和 `/opt/ai-gateway/config/providers.json`，再替换 Windows Runner 文件并重启 NSSM 服务。验收心跳必须为 `2026.07.24-qwen3.7-v1 / qwen3.7-plus / qwen3`。
 
 验证：

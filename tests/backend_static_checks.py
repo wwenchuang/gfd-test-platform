@@ -300,6 +300,7 @@ def check_midscene_model_family_protocol():
     require('DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")' in config_source, "Task Server default text model must be qwen3.7-plus")
     require('DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.7-plus")' in config_source, "Task Server default visual model must be qwen3.7-plus")
     require("DASHSCOPE_MODEL='qwen3.7-plus'" in deploy_env_source and "DASHSCOPE_VL_MODEL='qwen3.7-plus'" in deploy_env_source, "Deployment defaults must keep text and visual models on qwen3.7-plus")
+    require('bridgeVersion = "2026.07.24-qwen3.7-v1"' in sonic_runner_source, "Sonic execution logs must expose the Qwen3.7 bridge version")
     require(sonic_runner_source.count('"qwen3.7-plus"') >= 2, "Sonic fallback text and visual models must use qwen3.7-plus")
     require('builder.environment().put("MIDSCENE_MODEL_FAMILY", midsceneModelFamily)' in sonic_runner_source, "Sonic must pass the explicit current model family to Midscene")
     require('builder.environment().put("MIDSCENE_USE_QWEN_VL"' not in sonic_runner_source, "Sonic must not force Qwen3.7 through the legacy Qwen2.5-VL switch")
