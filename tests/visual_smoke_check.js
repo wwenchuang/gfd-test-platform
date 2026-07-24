@@ -276,7 +276,7 @@ function serve() {
     }
     if (url.pathname === '/api/models') {
       json(res, {ok: true, models: [
-        {id: 'qwen3.6-plus', name: 'qwen3.6-plus', group: 'Qwen', default: true},
+        {id: 'qwen3.7-plus', name: 'qwen3.7-plus', group: 'Qwen', default: true},
         {id: 'gpt-5-mini', name: 'gpt-5-mini', group: 'Highway'}
       ]});
       return;

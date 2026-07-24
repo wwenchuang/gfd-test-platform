@@ -223,8 +223,8 @@ def runtimeEnv = fetchRuntimeEnvFromTaskServer()
 // 模型环境只从 Task 服务端或 Agent/Sonic 参数继承，避免脚本中存放明文凭据。
 def fallbackDashscopeApiKey = ""
 def fallbackDashscopeBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-def fallbackDashscopeModel = "qwen3.6-plus"
-def fallbackDashscopeVlModel = "qwen3.6-plus"
+def fallbackDashscopeModel = "qwen3.7-plus"
+def fallbackDashscopeVlModel = "qwen3.7-plus"
 
 def appNameByPackage = [
     "com.kfb.model": "3D 打印",
@@ -268,6 +268,21 @@ def midsceneModelName = firstValue([
     fallbackDashscopeVlModel,
     fallbackDashscopeModel
 ])
+def configuredMidsceneModelFamily = firstValue([
+    runtimeEnv["MIDSCENE_MODEL_FAMILY"],
+    readBindingVar("MIDSCENE_MODEL_FAMILY"),
+    readGlobalParam("MIDSCENE_MODEL_FAMILY"),
+    System.getenv("MIDSCENE_MODEL_FAMILY")
+])
+def normalizedMidsceneModelName = (midsceneModelName ?: "").toLowerCase()
+def midsceneModelFamily = configuredMidsceneModelFamily ?: (
+    normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3" :
+    normalizedMidsceneModelName.contains("qwen3.6") ? "qwen3.6" :
+    normalizedMidsceneModelName.contains("qwen3.5") ? "qwen3.5" :
+    normalizedMidsceneModelName.contains("qwen3-vl") ? "qwen3-vl" :
+    normalizedMidsceneModelName.contains("qwen2.5-vl") ? "qwen2.5-vl" :
+    ""
+)
 def configuredMidsceneReplanningCycleLimit = firstValue([
     runtimeEnv["MIDSCENE_REPLANNING_CYCLE_LIMIT"],
     readBindingVar("MIDSCENE_REPLANNING_CYCLE_LIMIT"),
@@ -414,8 +429,19 @@ def configureMidsceneProcess = { ProcessBuilder builder, String replanningLimit 
     builder.environment().put("DASHSCOPE_BASE_URL", dashscopeBaseUrl)
     builder.environment().put("DASHSCOPE_VL_MODEL", runtimeEnv["DASHSCOPE_VL_MODEL"] ?: midsceneModelName)
     builder.environment().put("DASHSCOPE_MODEL", runtimeEnv["DASHSCOPE_MODEL"] ?: midsceneModelName)
+    builder.environment().put("MIDSCENE_MODEL_API_KEY", dashscopeApiKey)
+    builder.environment().put("MIDSCENE_MODEL_BASE_URL", dashscopeBaseUrl)
     builder.environment().put("MIDSCENE_MODEL_NAME", midsceneModelName)
-    builder.environment().put("MIDSCENE_USE_QWEN_VL", runtimeEnv["MIDSCENE_USE_QWEN_VL"] ?: "1")
+    if (midsceneModelFamily) {
+        builder.environment().put("MIDSCENE_MODEL_FAMILY", midsceneModelFamily)
+    }
+    [
+        "MIDSCENE_USE_QWEN_VL",
+        "MIDSCENE_USE_QWEN3_VL",
+        "MIDSCENE_USE_DOUBAO_VISION",
+        "MIDSCENE_USE_GEMINI",
+        "MIDSCENE_USE_VLM_UI_TARS"
+    ].each { legacyKey -> builder.environment().remove(legacyKey) }
     builder.environment().put("MIDSCENE_SKIP_CONFIG_CHECK", runtimeEnv["MIDSCENE_SKIP_CONFIG_CHECK"] ?: "1")
     builder.environment().put("MIDSCENE_REPLANNING_CYCLE_LIMIT", replanningLimit)
     builder.environment().put("NODE_TLS_REJECT_UNAUTHORIZED", runtimeEnv["NODE_TLS_REJECT_UNAUTHORIZED"] ?: "0")

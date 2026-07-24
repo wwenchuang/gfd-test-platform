@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-24 Qwen3.7 Plus 全链路与 Runner 同步
+
+用户指出此前只分析模型升级范围、没有实际更新 Runner。线上复核确认 `/api/health`、`/api/models` 和 `win-runner-01` 心跳仍分别报告 `qwen3.6-plus`、`qwen3.6`，Runner 版本仍为 `2026.07.10-model-family-v4`。
+
+根因与修复：
+
+- 官方阿里云当前最新 Plus 为 `qwen3.7-plus`；3.8 只有 `qwen3.8-max-preview`，不存在 `qwen3.8-plus`。官方 Midscene 配置要求 `MIDSCENE_MODEL_NAME=qwen3.7-plus / MIDSCENE_MODEL_FAMILY=qwen3`。
+- Task Server 文本 / 视觉默认模型、部署环境样例、AI Gateway `qwen_plus` Provider、Windows / Mac Runner 回退模型和 Sonic 回退模型统一更新为 `qwen3.7-plus`。
+- 服务端和两个 Runner 新增 `qwen3.7-plus -> qwen3` family 映射；既有 `qwen3.6 -> qwen3.6`、`qwen3.5 -> qwen3.5` 和 Qwen2.5-VL 兼容分支保持不变。
+- Windows / Mac Runner 心跳版本提升为 `2026.07.24-qwen3.7-v1`。Sonic 改用现代 `MIDSCENE_MODEL_API_KEY / BASE_URL / NAME / FAMILY` 合同，并移除会把 Qwen3 误声明成 Qwen2.5-VL 的 `MIDSCENE_USE_QWEN_VL` 等旧开关。
+- `install-server.sh` 会保留线上已有 `/opt/midscene.env` 和 AI Gateway Provider 配置，因此部署文档明确要求同步更新现有环境文件和 `/opt/ai-gateway/config/providers.json`，再替换 Windows Runner 文件并重启 NSSM 服务。验收心跳必须为 `2026.07.24-qwen3.7-v1 / qwen3.7-plus / qwen3`。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile windows-midscene-runner.py mac-midscene-runner.py task_server/config.py task_server/services/runner_service.py
+python3 tests/ai_gateway_static_checks.py
+python3 tests/frontend_static_checks.py
+git diff --check
+npm test
+```
+
+- 回归测试先稳定失败于 Task Server 仍默认 `qwen3.6-plus`，最小实现后通过。
+- 完整测试通过：后端 61、前端 72、AI Gateway 46、API 合同 43、恢复 12、MeterSphere 54、动态模型目录 / 回退、4 个 Skill fixture，以及桌面 / 移动端视觉回归。
+- 本轮未启动新的真机任务，未选择 OPPO 或华为设备；模型升级部署后应先做模型连通性和固定 OPPO 影子回归，再恢复百度网盘 Agent 完整回归。Codex 不 push，由用户手动替换 / 部署。
+
 ### 2026-07-24 真实回归：修复 YAML 遇到瞬时模型服务故障后未受限重试
 
 用户部署 `e958a1e` 后，以完全相同需求、Figma、`qwen3.6-plus`、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 发起完整 Agent `agent-1784856833825-b1b81938`：

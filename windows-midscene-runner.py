@@ -19,7 +19,7 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.10-model-family-v4")
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.24-qwen3.7-v1")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -168,6 +168,8 @@ def ensure_android_sdk_env(env):
 
 def infer_midscene_model_family(model_name, configured_family=""):
     name = str(model_name or "").strip().lower()
+    if "qwen3.7" in name:
+        return "qwen3"
     if "qwen3.6" in name:
         return "qwen3.6"
     if "qwen3.5" in name:
@@ -220,7 +222,7 @@ def midscene_env(device_id=""):
     env.setdefault("OPENAI_BASE_URL", env.get("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
     env.setdefault("MIDSCENE_MODEL_API_KEY", env.get("DASHSCOPE_API_KEY") or env.get("OPENAI_API_KEY", ""))
     env.setdefault("MIDSCENE_MODEL_BASE_URL", env.get("DASHSCOPE_BASE_URL") or env.get("OPENAI_BASE_URL", ""))
-    env.setdefault("MIDSCENE_MODEL_NAME", env.get("DASHSCOPE_VL_MODEL", "qwen3.6-plus"))
+    env.setdefault("MIDSCENE_MODEL_NAME", env.get("DASHSCOPE_VL_MODEL", "qwen3.7-plus"))
     model_family = infer_midscene_model_family(env.get("MIDSCENE_MODEL_NAME"), env.get("MIDSCENE_MODEL_FAMILY"))
     if model_family:
         env["MIDSCENE_MODEL_FAMILY"] = model_family

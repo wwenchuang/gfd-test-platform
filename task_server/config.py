@@ -210,8 +210,8 @@ JOB_TIMEOUT_SECONDS = int(os.getenv("MIDSCENE_JOB_TIMEOUT_SECONDS", "1800"))
 # ---------------------------------------------------------------------------
 DEFAULT_APP_PACKAGE = os.getenv("APP_PACKAGE", "com.kfb.model")
 DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.6-plus")
-DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.6-plus")
+DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")
+DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.7-plus")
 DEFAULT_REPLANNING_CYCLE_LIMIT = str(env_int("MIDSCENE_REPLANNING_CYCLE_LIMIT", 8))
 DEFAULT_FIGMA_API_BASE = "https://api.figma.com/v1"
 FIGMA_TIMEOUT_SECONDS = env_int("FIGMA_TIMEOUT_SECONDS", 90)
