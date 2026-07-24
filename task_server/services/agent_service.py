@@ -2665,6 +2665,7 @@ def _agent_text_has_concrete_environment_evidence(value):
         "dns resolution", "econnreset", "socket hang up", "http 502", "http 503", "http 504",
         "安装失败", "设备离线", "设备断开", "设备未授权", "runner 离线", "runner 断开",
         "模型服务", "模型请求中止", "网关不可用", "网关超时", "网络不可达", "连接拒绝",
+        "网络异常", "网络连接", "服务器响应问题", "业务页面未正常加载",
     )
     return any(term in text for term in concrete_terms)
 

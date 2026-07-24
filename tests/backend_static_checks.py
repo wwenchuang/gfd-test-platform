@@ -6051,6 +6051,25 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._agent_failed_item_has_concrete_environment_evidence({"stderrTail": "model request was aborted"}) is True,
         "Concrete model infrastructure evidence must remain locked as an environment failure",
     )
+    app_network_review = agent_service._normalize_failed_execution_item({
+        "jobId": "job-static-app-network-error",
+        "summaryText": "waitFor timeout: 当前页面显示网络异常，未找到百度网盘入口",
+        "failureReview": {
+            "category": "env_issue",
+            "confidence": 0.9,
+            "reason": "页面显示“网络异常”提示插画及文字，导致业务页面未正常加载",
+            "evidence": ["页面中间区域显示“网络异常”的提示插画及文字"],
+            "can_auto_repair": False,
+        },
+    })
+    require(
+        app_network_review.get("failureType") == "ENV_ISSUE",
+        "High-confidence app network error review must override script-like Midscene timeout text",
+    )
+    require(
+        agent_service._agent_original_rerun_eligible(app_network_review) is True,
+        "Concrete app network failures must be eligible for unchanged same-device retry instead of YAML repair",
+    )
     original_navigation = "android:\n  tasks:\n    - name: photo\n      flow:\n        - aiTap: 照片打印\n        - aiWaitFor: 目标入口可见\n"
     repaired_navigation = "android:\n  tasks:\n    - name: photo\n      flow:\n        - aiTap: 照片打印\n        - aiTap: 照片打印\n        - aiWaitFor: 目标入口可见\n"
     repaired_assertion = original_navigation.replace("目标入口可见", "页面已稳定")

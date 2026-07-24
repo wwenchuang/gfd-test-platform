@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-24 真实回归：App 页面网络异常必须按 ENV_ISSUE 原样重试
+
+用户要求重新发起百度网盘完整 Agent。已在最新线上环境直接创建 `agent-1784885083267-850c077f`，固定参数为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / singleDeviceOnly / com.xbxxhz.box`，模型为 `qwen3.7-plus`。
+
+线上结果：
+
+- PREPARE_SOURCE 成功解析 Figma `4 页 / 4 图 / 忽略 0`。
+- PLAN 阶段 4 个视觉批次全部真实完成，耗时 `15 / 16 / 12 / 11` 秒，生成 8 条业务分支计划。
+- GENERATE_YAML 生成 6 条 YAML、12 个场景，6/6 scorer 为 executable，6/6 dry-run 通过。
+- Runner 只使用 OPPO `ecbfd645`。首批 smoke 创建 2 个 job：照片打印可见性成功；文档打印可见性失败，报告复核显示页面出现“网络异常”提示，导致业务页面未正常加载。
+- Agent 终态为 `FAILED / COLLECT_REPORT / 95%`。平台没有继续 remaining，也没有创建同设备原样重试 job。
+
+根因与修复：
+
+- Runner 失败复核返回 `category=env_issue / confidence=0.9 / can_auto_repair=false`，证据为 App 页面“网络异常”。但 `_agent_text_has_concrete_environment_evidence()` 只识别 ADB、模型服务、网关、HTTP 5xx 等基础设施词，不识别中文 App 网络异常文案。
+- 因此 `_agent_job_failure_reasons()` 摘要中显示 ENV_ISSUE，但 `_normalize_failed_execution_item()` 认为缺少具体环境证据，回退为 SCRIPT_ISSUE，造成 `failureReview.category=env_issue` 与外层 `failureType=SCRIPT_ISSUE` 不一致，并阻断原 YAML 同设备重试。
+- 已补充通用环境证据词：`网络异常 / 网络连接 / 服务器响应问题 / 业务页面未正常加载`。这不是百度网盘硬编码；只影响高置信 env review 或原始日志明确含这些网络异常证据的失败归类。
+- 新增回归断言：高置信 App 网络异常复核必须覆盖脚本式 `waitFor timeout`，归一化为 `ENV_ISSUE`，并允许 `_agent_original_rerun_eligible()` 进入不改 YAML 的同设备原样重试。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+```
+
+本轮未修改 Figma 解析、YAML 生成收敛、scorer、Runner、Sonic 或历史 YAML；未向第二台设备下发。Codex 不 push，由用户手动部署后可再次用同一参数重跑，预期文档打印网络异常会按 ENV_ISSUE 原样重试，而不是错误进入脚本修复/停止。
+
 ### 2026-07-24 Qwen3.7 Plus 全链路与 Midscene 1.10.7 official family
 
 用户指出此前只分析模型升级范围、没有实际更新 Runner。线上复核确认 `/api/health`、`/api/models` 和 `win-runner-01` 心跳仍分别报告 `qwen3.6-plus`、`qwen3.6`，Runner 版本仍为 `2026.07.10-model-family-v4`。
