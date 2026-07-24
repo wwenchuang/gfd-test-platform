@@ -2165,7 +2165,7 @@ def test_groovy_ui_failure_recovery_is_bounded_ai_driven_and_generic():
     dispatch_pos = bridge.index("if (exitCode != 0 && currentAppPackage)")
     restore_pos = bridge.index("def restoreStartedAt", dispatch_pos)
 
-    assert 'bridgeVersion = "2026.07.24-qwen3.7-v1"' in bridge
+    assert 'bridgeVersion = "2026.07.24-qwen3.7-midscene17-v2"' in bridge
     assert 'System.getenv("MIDSCENE_REPLANNING_CYCLE_LIMIT"),\n    "8"' in bridge
     assert "Math.max(8, parsedMidsceneReplanningCycleLimit)" in bridge
     assert "失败后仅做状态恢复" in recovery_section
