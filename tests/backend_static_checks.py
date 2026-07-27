@@ -300,11 +300,12 @@ def check_midscene_model_family_protocol():
     require('DEFAULT_TEXT_MODEL = os.getenv("DASHSCOPE_MODEL", "qwen3.7-plus")' in config_source, "Task Server default text model must be qwen3.7-plus")
     require('DEFAULT_VL_MODEL = os.getenv("DASHSCOPE_VL_MODEL", "qwen3.7-plus")' in config_source, "Task Server default visual model must be qwen3.7-plus")
     require("DASHSCOPE_MODEL='qwen3.7-plus'" in deploy_env_source and "DASHSCOPE_VL_MODEL='qwen3.7-plus'" in deploy_env_source, "Deployment defaults must keep text and visual models on qwen3.7-plus")
-    require('bridgeVersion = "2026.07.24-qwen3.7-midscene110-v3"' in sonic_runner_source, "Sonic execution logs must expose the Qwen3.7/Midscene 1.10 bridge version")
+    require('bridgeVersion = "2026.07.26-qwen3.7-result-retry-v1"' in sonic_runner_source, "Sonic execution logs must expose the Qwen3.7/Midscene 1.10 bridge version")
     require(sonic_runner_source.count('"qwen3.7-plus"') >= 2, "Sonic fallback text and visual models must use qwen3.7-plus")
     require('builder.environment().put("MIDSCENE_MODEL_FAMILY", midsceneModelFamily)' in sonic_runner_source, "Sonic must pass the explicit current model family to Midscene")
     require('normalizedMidsceneModelName.contains("qwen3.7") ? "qwen3"' in sonic_runner_source, "Sonic must use the official qwen3 family for Qwen3.7 Plus on Midscene 1.10+")
     require('builder.environment().put("MIDSCENE_USE_QWEN_VL"' not in sonic_runner_source, "Sonic must not force Qwen3.7 through the legacy Qwen2.5-VL switch")
+    require('codePoint < 0x20' in sonic_runner_source and 'String.format("u%04x", codePoint)' in sonic_runner_source, "Sonic result callbacks must JSON-escape every control character, including ANSI log bytes")
     require(providers.get("providers", {}).get("qwen_plus", {}).get("model") == "qwen3.7-plus", "AI Gateway Qwen Plus route must use qwen3.7-plus")
 
     require(runner_service.infer_midscene_model_family("qwen3.7-plus") == "qwen3", "Server must map qwen3.7-plus to the official Midscene Qwen3 family")
@@ -338,7 +339,7 @@ def check_midscene_model_family_protocol():
         spec.loader.exec_module(module)
         require(module.infer_midscene_model_family("qwen3.7-plus", "qwen2.5-vl") == "qwen3", f"{filename} must map Qwen3.7 Plus to the official Qwen3 family")
         require(module.infer_midscene_model_family("qwen3.6-plus", "qwen2.5-vl") == "qwen3.6", f"{filename} must reject a stale qwen2.5-vl family for a known Qwen3.6 model")
-        require("qwen3.7-midscene110-v3" in module.RUNNER_VERSION, f"{filename} must expose the Qwen3.7/Midscene 1.10 runner version in heartbeat")
+        require("qwen3.7-result-retry-v1" in module.RUNNER_VERSION, f"{filename} must expose the Qwen3.7/Midscene 1.10 runner version in heartbeat")
         original_runtime = module.task_runtime_env
         old_legacy = os.environ.get("MIDSCENE_USE_QWEN_VL")
         try:
@@ -361,6 +362,18 @@ def check_midscene_model_family_protocol():
                 os.environ.pop("MIDSCENE_USE_QWEN_VL", None)
             else:
                 os.environ["MIDSCENE_USE_QWEN_VL"] = old_legacy
+
+
+def check_sonic_3d_baseline_regression_guards():
+    sign_yaml = (ROOT / "server-tasks" / "3D打印基线" / "标牌打印.yaml").read_text(encoding="utf-8")
+    zodiac_yaml = (ROOT / "server-tasks" / "3D打印基线" / "十二生肖印章打印.yaml").read_text(encoding="utf-8")
+    nameplate_yaml = (ROOT / "server-tasks" / "3D打印基线" / "姓名牌打印.yaml").read_text(encoding="utf-8")
+    bowling_yaml = (ROOT / "server-tasks" / "3D打印基线" / "OBJ保龄球打印.yaml").read_text(encoding="utf-8")
+    for case_name, source in (("标牌打印", sign_yaml), ("十二生肖印章打印", zodiac_yaml)):
+        require("已离开模型打印预览确认页" in source and "底部不再同时显示「取消打印」和「确认打印」按钮" in source, f"{case_name} must verify cancel-print exit by visible page controls")
+        require("已退出打印流程，页面出现返回按钮或回到模型详情相关页面" not in source, f"{case_name} must not rely on the unstable generic cancel-print assertion")
+    require("模型列表中出现「姓名牌」模型卡片" in nameplate_yaml and "可编辑模型列表中出现「姓名牌」模型卡片" not in nameplate_yaml, "Nameplate baseline must locate the visible card before validating the edit entry")
+    require("底部主按钮仍显示「去打印」" in bowling_yaml and "再次点击底部「去打印」" in bowling_yaml, "OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open")
 
 
 def check_agent_failure_ai_payload_has_primary_evidence():
@@ -2533,6 +2546,132 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             sibling_tail_missing_precondition_evidence.get("acceptanceCheckIds") or []
         ),
         "A verified source-page baseline must provide the precondition for sibling landing-tail convergence even when the AI source candidate omitted preconditions",
+    )
+    photo_tail_payload = {
+        "analysis": {
+            "requirement_points": [
+                "REQ-001 文档打印：点击网盘入口可达",
+                "REQ-002 照片打印：入口可见、同级、文案正确且点击后稳定可达",
+            ],
+            "requirement_acceptance_checks": [
+                {"id": "REQ-002-CHECK-01", "requirementId": "REQ-002", "branch": "照片打印", "kind": "visibility", "text": "校验网盘入口可见"},
+                {"id": "REQ-002-CHECK-02", "requirementId": "REQ-002", "branch": "照片打印", "kind": "relation", "text": "校验网盘入口与当前页面同级入口的层级和位置关系"},
+                {"id": "REQ-002-CHECK-03", "requirementId": "REQ-002", "branch": "照片打印", "kind": "copy", "text": "校验网盘入口使用需求约定的可见文案"},
+                {"id": "REQ-002-CHECK-04", "requirementId": "REQ-002", "branch": "照片打印", "kind": "reachability", "text": "点击「网盘」入口并校验目标页面稳定可达"},
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-DOC-LANDING",
+            "title": "文档打印网盘入口点击后首屏",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": ["REQ-001 文档打印：点击网盘入口可达"],
+            "steps": [
+                "进入文档打印页",
+                "点击「网盘」入口",
+                "等待网盘授权页或文件列表页稳定可见，无崩溃、无白屏",
+            ],
+            "assertions": ["网盘授权页或文件列表页稳定可见，无崩溃、无白屏"],
+            "ai_case_plan": {
+                "baselineId": "base-doc",
+                "baselineGrounded": True,
+                "baselineVerified": True,
+                "pathPlanApplied": True,
+            },
+        }, {
+            "case_id": "TC-PHOTO-SOURCE",
+            "title": "照片打印网盘入口展示",
+            "executionLevel": "executable",
+            "originExecutionLevel": "automatic",
+            "requirementRefs": [
+                "REQ-002 照片打印：入口可见、同级、文案正确且点击后稳定可达",
+            ],
+            "preconditions": ["App 首页"],
+            "steps": [
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「网盘」入口可见",
+            ],
+            "assertions": ["网盘入口可见、文案正确且与相册导入同级"],
+            "ai_case_plan": {
+                "baselineId": "base-photo",
+                "baselineGrounded": True,
+                "baselineVerified": True,
+                "pathPlanApplied": True,
+            },
+        }],
+        "manual_cases": [],
+    }
+    photo_tail_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        photo_tail_payload,
+        {"min_automation_cases": 2},
+    )
+    photo_tail_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(photo_tail_payload["cases"])]
+    photo_tail_baseline = ai_skill_service._compact_baseline_candidate({
+        "id": "base-photo",
+        "title": "照片规格页",
+        "aiSelectedBranchName": "照片打印",
+        "sourceKind": "verified_execution",
+        "verificationStatus": "execution_success",
+        "snippet": (
+            "# baseline.start_page: App 首页\n"
+            "- aiTap: 照片打印\n"
+            "- aiTap: 5寸照片\n"
+            "- aiWaitFor: 等待5寸照片页面加载完成\n"
+            "- aiTap: 相册导入"
+        ),
+    })
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def planner_omitting_photo_tail(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill in photo tail replay")
+            return {
+                "cases": [],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "模拟最终模型漏回照片可达性候选"},
+            }
+
+        ai_skill_service.run_ai_skill = planner_omitting_photo_tail
+        photo_tail_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "基础打印新增网盘入口",
+            "基础打印",
+            photo_tail_payload,
+            [photo_tail_baseline],
+            {"smokeCount": 2},
+            planning_context={
+                "pass": "coverage_convergence",
+                "portfolioAudit": photo_tail_audit,
+            },
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    photo_tail_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        photo_tail_payload,
+        photo_tail_plan,
+    )
+    photo_tail_case = next(
+        item for item in photo_tail_applied.get("cases") or []
+        if item.get("case_id") == "TC-PHOTO-SOURCE"
+    )
+    photo_tail_bounded = photo_tail_case.get("ai_case_plan", {}).get("boundedConvergence", {})
+    require(
+        photo_tail_plan.get("trace", {}).get("bounded_omission_recovered_case_ids")
+        == ["TC-PHOTO-SOURCE"]
+        and photo_tail_bounded.get("kind") == "bounded_landing"
+        and photo_tail_bounded.get("sourceCaseId") == "TC-PHOTO-SOURCE"
+        and photo_tail_bounded.get("tailSourceCaseId") == "TC-DOC-LANDING"
+        and photo_tail_bounded.get("sharedTargetTailBoundToBranchSource") is True
+        and "文档打印" not in " ".join(photo_tail_case.get("steps") or [])
+        and ai_skill_service.executable_yaml_portfolio_audit(
+            photo_tail_applied,
+            {"min_automation_cases": 2},
+        ).get("ok"),
+        "A current executable source-page candidate must be allowed to reuse a same-target sibling landing tail even when source UI assertions were already covered before convergence",
     )
     manual_conditional_tail_payload = json.loads(json.dumps(sibling_tail_missing_precondition_payload, ensure_ascii=False))
     leaking_document_tail = manual_conditional_tail_payload["cases"][0]
@@ -14118,6 +14257,7 @@ def main():
     check_report_image_context_uses_midscene_execution_refs()
     check_runner_inline_android_device_injection()
     check_midscene_model_family_protocol()
+    check_sonic_3d_baseline_regression_guards()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
     check_api_asset_service_openapi_import()
     check_api_test_plan_generation_is_confirmable()
@@ -15152,7 +15292,7 @@ def main():
     require('line.strip() == "android: {}"' in runner_sources and 'lines[i] = "android:"' in runner_sources and 'lines.insert(i + 1, f"  deviceId: {device_id}")' in runner_sources, "Runner device injection must expand android: {} before adding deviceId to keep CLI YAML valid")
     require("def normalize_empty_cli_interface_config" in runner_sources and "text = normalize_empty_cli_interface_config(text)" in runner_sources, "Runner CLI normalization must preserve non-empty interface blocks")
     require('midscene_command.extend(["--android.deviceId", device_id])' in runner_sources, "Runner must apply the selected Android device through the official Midscene CLI override")
-    require('"2026.07.24-qwen3.7-midscene110-v3"' in runner_sources, "Runner heartbeat must expose the Qwen3.7/Midscene 1.10 version for deployment verification")
+    require('"2026.07.26-qwen3.7-result-retry-v1"' in runner_sources, "Runner heartbeat must expose the Qwen3.7/Midscene 1.10 version for deployment verification")
     require('"MIDSCENE_MODEL_FAMILY"' in runner_service_source and '"MIDSCENE_MODEL_API_KEY"' in runner_service_source and '"MIDSCENE_MODEL_BASE_URL"' in runner_service_source, "Server must publish the modern Midscene model configuration contract")
     require('"MIDSCENE_USE_QWEN_VL": "1"' not in runner_service_source, "Server must not declare a Qwen3 model through the legacy qwen2.5-vl switch")
     require("def infer_midscene_model_family" in runner_sources and '"midscene_model_family"' in runner_sources and 'env.pop(legacy_key, None)' in runner_sources, "Runners must infer, report, and enforce the explicit Midscene model family")

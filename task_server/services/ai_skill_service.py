@@ -5877,7 +5877,7 @@ def _bounded_convergence_evidence(
                     requirement_refs = [requirement_point]
                     donor_requirement_ids.add(requirement_id)
             shared_target_tail = bool(
-                source_evidence_plan
+                (source_evidence_plan or source_case)
                 and requirement_id not in donor_requirement_ids
                 and str(
                     donor_compact.get("currentLevel")
@@ -8205,6 +8205,12 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 "acceptanceCheckIds": sorted(bounded_check_ids),
                 "requirementRefsInferredFromAcceptanceIntent": (
                     bounded_evidence.get("requirementRefsInferredFromAcceptanceIntent") is True
+                ),
+                "sharedTailBoundToBranchSource": (
+                    bounded_evidence.get("sharedTailBoundToBranchSource") is True
+                ),
+                "sharedTargetTailBoundToBranchSource": (
+                    bounded_evidence.get("sharedTargetTailBoundToBranchSource") is True
                 ),
                 "modelLevel": model_level,
                 "modelReason": model_reason,

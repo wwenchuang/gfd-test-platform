@@ -28,6 +28,60 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-27 真实回归：当前分支已覆盖展示维度时仍可复用同目标兄弟落地尾链
+
+用户同步新版 Sonic Bridge 后，线上核对已确认 `/api/sonic/bridge-groovy`、`win-runner-01` 与固定 OPPO `ecbfd645` 均为 `2026.07.26-qwen3.7-result-retry-v1 / qwen3.7-plus / qwen3`。随后按完全相同需求、Figma、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 创建百度网盘 Agent `agent-1785116321078-d5da9a1e`。
+
+线上结果：
+
+- PREPARE_SOURCE 成功解析 Figma `4 页 / 4 图 / 忽略 0`。
+- PLAN 阶段真实完成 4 个视觉批次，耗时 `15 / 20 / 20 / 24` 秒；业务计划覆盖文档打印、照片打印、扫描复印各展示与可达分支。
+- GENERATE_YAML 在最终覆盖门禁失败，未创建 Runner job。缺口为 `REQ-002 [acceptance:reachability] 照片打印：点击百度网盘入口并校验目标页面稳定可达`。
+- 平台门禁正确阻止不完整 YAML 下发；本次与 Windows Runner、ADB、Sonic 或 OPPO 无关。
+
+根因与修复：
+
+- 最终收敛的 `shared_target_tail` 证据只在当前分支先生成 `source_ui_assertion` 时才允许复用兄弟分支同目标 landing tail。
+- 线上照片打印分支的展示 / 同级 / 文案已经由当前 executable 来源页候选覆盖，缺口只剩 reachability，因此不会再产生 `source_ui_assertion`，导致同目标兄弟落地尾链无法进入有界证据矩阵，只能依赖模型二次补写；模型漏写后被最终门禁拦截。
+- `_bounded_convergence_evidence()` 现在允许在 `source_case` 已存在且来自当前分支可信 executable 来源页时，复用同目标兄弟 landing tail；兄弟分支仍只能提供点击目标后的首屏观察，不能提供当前分支导航。
+- 最终 `boundedConvergence` 元数据补充 `sharedTailBoundToBranchSource / sharedTargetTailBoundToBranchSource`，便于报告审计。
+- 仍保留全部约束：目标必须完全一致，当前分支导航必须来自自身可信基线 / 来源页，不能泄漏兄弟来源页，不能引入人工条件分支，仍需通过覆盖审计、基线、YAML、scorer、dry-run 与真实 Runner 门禁。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+git diff --check
+```
+
+回归测试新增“当前 executable 来源页已覆盖展示维度，但可达性缺口仍需同目标兄弟 tail”的照片打印场景。模拟最终模型漏回照片可达性候选时，平台会恢复 `TC-PHOTO-SOURCE` 为 `bounded_landing`，`sourceCaseId=TC-PHOTO-SOURCE / tailSourceCaseId=TC-DOC-LANDING`，最终 executable portfolio 覆盖全部验收维度。本轮未放宽覆盖门禁、scorer、坐标、账号、授权或深层外部操作限制；未修改历史 YAML。Codex 不 push，由用户部署后需重新跑同一百度网盘 Agent。
+
+### 2026-07-26 Sonic 套件失败后 Task 回传缺失必须显式补偿
+
+线上复核用户反馈的 Qwen3.7 Plus / Midscene 1.10.7 后 Sonic 套件记录：
+
+- 旧通过结果 `1135`：Sonic 与 Task 均为 `11/11`，耗时 `1:20:46`。
+- 新失败结果 `1159` 到 `1175`：Sonic 原始报告均显示 `send_msg_count=11 / receive_msg_count=11 / status=3`，但 Task 平台只收到 `3-10` 条结果，且收到项全是 `success`。
+- 最新活动桶 `sonic_suite_1784908812325_00008` 已有 progress，`last_running_case=十二生肖印章打印 / expected_total_count=11`，但 `results=0`、无 resultId，说明桥接脚本能发进度但最终结果未稳定入库。
+
+根因与修复：
+
+- Task 平台此前只等待 `SONIC_TASK_CALLBACK_GRACE_SECONDS=180` 秒；超时后会发送最终汇总，但没有把缺失用例补成明确的失败/未回传记录，导致页面看起来像“只执行了若干条成功”。
+- Sonic Bridge 的最终 `/api/sonic/result` 上报只有一次 curl，网络瞬断或 Task 短暂不可用会导致该用例只留下 progress，不留下 final result。
+- `sonic_suite_definition_meta_from_dto()` 现在保留 Sonic 测试套用例名；最终失败且缺少 Task 回调时，`ensure_sonic_suite_missing_result_placeholders()` 会把缺失项补成 `synthetic_missing_callback=true / status=failed`，并提示查看 Sonic 原始报告定位真实失败步骤。
+- `/api/sonic/suite-results` 返回层新增 `sonic_suite_project_for_display()`。对于只有 progress、长期无 final result 的活动桶，页面会看到“桥接脚本已回传运行进度，但未收到最终结果回传”的失败占位，而不是 0/11 空白记录。
+- `sonic-midscene-task-runner.groovy` 的 final result 归档增加 3 次重试；Bridge / Windows / Mac Runner 版本统一提升为 `2026.07.26-qwen3.7-result-retry-v1`，方便部署后核对。
+
+验证：
+
+```bash
+pytest -q tests/test_sonic_integration.py -k 'failed_sonic_completion_materializes_missing_task_callbacks_after_grace or stale_progress_only_sonic_suite_is_projected_as_missing_callback'
+python3 -m py_compile task_server/services/sonic_service.py task_server/router.py
+```
+
+离线回放线上 `1175`：Task 记录从 `8/11` 投影为 `11/11`，新增 3 条 `synthetic_missing_callback / failed`；progress-only 活动桶投影为 1 条 `十二生肖印章打印 failed`。本轮没有修改用户历史 YAML、scorer 规则或百度网盘 Agent 生成逻辑。Codex 不 push，由用户部署后需重新同步 Sonic Bridge/替换 Runner 文件并重启服务。
+
 ### 2026-07-24 真实回归：App 页面网络异常必须按 ENV_ISSUE 原样重试
 
 用户要求重新发起百度网盘完整 Agent。已在最新线上环境直接创建 `agent-1784885083267-850c077f`，固定参数为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / singleDeviceOnly / com.xbxxhz.box`，模型为 `qwen3.7-plus`。
@@ -71,9 +125,9 @@ python3 -m py_compile task_server/services/agent_service.py tests/backend_static
 - 官方阿里云当前最新 Plus 为 `qwen3.7-plus`；3.8 只有 `qwen3.8-max-preview`，不存在 `qwen3.8-plus`。Midscene 当前官方配置为 `MIDSCENE_MODEL_NAME=qwen3.7-plus / MIDSCENE_MODEL_FAMILY=qwen3`；旧 `qwen3.6` family 仅用于未升级的 1.7.x 兼容。
 - Task Server 文本 / 视觉默认模型、部署环境样例、AI Gateway `qwen_plus` Provider、Windows / Mac Runner 回退模型和 Sonic 回退模型统一更新为 `qwen3.7-plus`。
 - 服务端、Windows / Mac Runner 和 Sonic Bridge 将 `qwen3.7-plus` 的 Midscene family 映射为官方 `qwen3`，保留 `qwen3.6 -> qwen3.6`、`qwen3.5 -> qwen3.5` 和 Qwen2.5-VL 兼容分支。
-- Windows / Mac Runner 心跳版本提升为 `2026.07.24-qwen3.7-midscene110-v3`。Sonic 继续使用现代 `MIDSCENE_MODEL_API_KEY / BASE_URL / NAME / FAMILY` 合同，并移除会把 Qwen3 误声明成 Qwen2.5-VL 的 `MIDSCENE_USE_QWEN_VL` 等旧开关。
-- Sonic Groovy `bridgeVersion` 同步提升为 `2026.07.24-qwen3.7-midscene110-v3`，确保 Sonic 执行详情能区分 1.10.7 官方 family 版本和此前 1.7.x 兼容版本。
-- `install-server.sh` 会保留线上已有 `/opt/midscene.env` 和 AI Gateway Provider 配置，因此部署文档明确要求同步更新现有环境文件、把 `MIDSCENE_MODEL_FAMILY` 设为 `qwen3`、更新 `/opt/ai-gateway/config/providers.json`，再替换 Windows Runner 文件并重启 NSSM 服务。验收心跳必须为 `2026.07.24-qwen3.7-midscene110-v3 / qwen3.7-plus / qwen3`。
+- Windows / Mac Runner 心跳版本提升为 `2026.07.24-qwen3.7-midscene110-v3`，后续 Sonic 回传补偿修复中又统一提升为 `2026.07.26-qwen3.7-result-retry-v1`。Sonic 继续使用现代 `MIDSCENE_MODEL_API_KEY / BASE_URL / NAME / FAMILY` 合同，并移除会把 Qwen3 误声明成 Qwen2.5-VL 的 `MIDSCENE_USE_QWEN_VL` 等旧开关。
+- Sonic Groovy `bridgeVersion` 后续同步提升为 `2026.07.26-qwen3.7-result-retry-v1`，确保 Sonic 执行详情能区分 1.10.7 官方 family 版本和结果回传重试版本。
+- `install-server.sh` 会保留线上已有 `/opt/midscene.env` 和 AI Gateway Provider 配置，因此部署文档明确要求同步更新现有环境文件、把 `MIDSCENE_MODEL_FAMILY` 设为 `qwen3`、更新 `/opt/ai-gateway/config/providers.json`，再替换 Windows Runner 文件并重启 NSSM 服务。当前验收心跳必须为 `2026.07.26-qwen3.7-result-retry-v1 / qwen3.7-plus / qwen3`。
 
 验证：
 
