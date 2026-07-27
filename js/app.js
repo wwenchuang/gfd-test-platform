@@ -1244,7 +1244,7 @@ function pendingActionCardHtml(action) {
 }
 
 function currentTaskCardHtml(activeJobs=[]) {
-  const job = activeJobs.find(isRunnerExecutionJob) || normalizeJob(latestJobs.find(isRunnerExecutionJob) || {});
+  const job = activeJobs.find(isRunnerExecutionJob);
   if (!job?.job_id) return '<div class="job-meta">当前没有执行中的任务。</div>';
   const draft = job.repairDraft && Object.keys(job.repairDraft).length ? job.repairDraft : repairDrafts.find(item => (item.jobId || item.job_id) === job.job_id);
   const review = job.failureReview || {};

@@ -28,6 +28,24 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-27 前端：Runner 当前任务不能用最近完成任务伪装成占用
+
+用户部署最新代码后复核线上状态：`/api/health` 正常，模型为 `qwen3.7-plus`；`/api/sonic/bridge-groovy` 已返回 `2026.07.26-qwen3.7-result-retry-v1`；`win-runner-01` 心跳版本同为 `2026.07.26-qwen3.7-result-retry-v1`，能力上报 `midscene_model_name=qwen3.7-plus / midscene_model_family=qwen3`，固定 OPPO `ecbfd645` 在线。
+
+线上 `/api/jobs` 显示 active Runner job 为 `0`，`/api/runner/jobs/next?runner_id=win-runner-01&devices=ecbfd645` 返回 `job:null`。因此“手机仍被占用中”不是后端队列锁，也不是 Runner 可领取任务未清理。
+
+根因是前端 `currentTaskCardHtml(activeJobs)` 在没有 pending/running Runner job 时，会回退展示 `latestJobs.find(isRunnerExecutionJob)`，即最近一条已结束的 success/failed 任务。这会让“Runner 当前任务”区域看起来仍有任务占用设备。
+
+修复：`Runner 当前任务` 只展示真正的 active job；没有 active job 时显示“当前没有执行中的任务。”。同时递增 `js/app.js` cache key 到 `20260727-runner-active-task`，避免部署后浏览器继续加载旧逻辑。新增前端静态检查禁止再次用 `latestJobs.find(isRunnerExecutionJob)` 回退渲染当前任务。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+```
+
+本轮只修改前端展示与静态检查，不改 Runner、Sonic、Agent 生成逻辑或历史 YAML。Codex 不 push，由用户手动 push / 部署。
+
 ### 2026-07-27 真实回归：当前分支已验证入口页可直接生成有界首屏可达性
 
 用户部署 `b016c9d` 后，继续用完全相同需求、Figma、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus` 发起百度网盘 Agent `agent-1785123547381-b3be57ac`。
