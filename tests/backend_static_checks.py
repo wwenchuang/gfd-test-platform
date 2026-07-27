@@ -2673,6 +2673,70 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         ).get("ok"),
         "A current executable source-page candidate must be allowed to reuse a same-target sibling landing tail even when source UI assertions were already covered before convergence",
     )
+    photo_tail_unpromoted_payload = json.loads(json.dumps(photo_tail_payload, ensure_ascii=False))
+    photo_tail_unpromoted_payload["cases"][1].pop("executionLevel", None)
+    photo_tail_unpromoted_payload["cases"][1].pop("originExecutionLevel", None)
+    photo_tail_unpromoted_payload["cases"][1].pop("ai_case_plan", None)
+    photo_tail_unpromoted_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(photo_tail_unpromoted_payload["cases"])]
+    photo_tail_unpromoted_audit = {
+        "missingAcceptanceChecks": [
+            photo_tail_payload["analysis"]["requirement_acceptance_checks"][-1],
+        ],
+        "unresolvedAutomaticCaseIds": ["TC-PHOTO-SOURCE"],
+        "executableCaseIds": ["TC-DOC-LANDING"],
+        "executableCount": 1,
+        "targetExecutableCount": 2,
+    }
+    photo_tail_unpromoted_evidence = ai_skill_service._bounded_convergence_evidence(
+        photo_tail_unpromoted_payload,
+        photo_tail_unpromoted_records,
+        photo_tail_unpromoted_audit,
+        selected_baselines=[photo_tail_baseline],
+        manual_records=[],
+    ).get("TC-PHOTO-SOURCE") or {}
+    require(
+        photo_tail_unpromoted_evidence.get("kind") == "bounded_landing"
+        and photo_tail_unpromoted_evidence.get("sourceCaseId") == "TC-PHOTO-SOURCE"
+        and photo_tail_unpromoted_evidence.get("tailSourceCaseId") == "TC-DOC-LANDING"
+        and photo_tail_unpromoted_evidence.get("sharedTargetTailBoundToBranchSource") is True
+        and "照片打印" in " ".join(photo_tail_unpromoted_evidence.get("flow") or [])
+        and "文档打印" not in " ".join(photo_tail_unpromoted_evidence.get("flow") or []),
+        "A current branch source-page candidate that is not yet promoted to executable must still be able to bind a same-target sibling landing tail during final convergence",
+    )
+    photo_direct_tail_payload = json.loads(json.dumps(photo_tail_payload, ensure_ascii=False))
+    photo_direct_tail_payload["cases"] = [photo_direct_tail_payload["cases"][1]]
+    photo_direct_tail_records = [{
+        "raw": item,
+        "compact": ai_skill_service._compact_case_for_plan(item, index, origin_level="automatic"),
+    } for index, item in enumerate(photo_direct_tail_payload["cases"])]
+    photo_direct_tail_audit = {
+        "missingAcceptanceChecks": [
+            photo_tail_payload["analysis"]["requirement_acceptance_checks"][-1],
+        ],
+        "unresolvedAutomaticCaseIds": ["TC-PHOTO-SOURCE"],
+        "executableCaseIds": [],
+        "executableCount": 0,
+        "targetExecutableCount": 1,
+    }
+    photo_direct_tail_evidence = ai_skill_service._bounded_convergence_evidence(
+        photo_direct_tail_payload,
+        photo_direct_tail_records,
+        photo_direct_tail_audit,
+        selected_baselines=[photo_tail_baseline],
+        manual_records=[],
+    ).get("TC-PHOTO-SOURCE") or {}
+    require(
+        photo_direct_tail_evidence.get("kind") == "bounded_landing"
+        and photo_direct_tail_evidence.get("sourceCaseId") == "TC-PHOTO-SOURCE"
+        and photo_direct_tail_evidence.get("tailSourceCaseId") == "TC-PHOTO-SOURCE"
+        and photo_direct_tail_evidence.get("directVisibleTargetLanding") is True
+        and "点击「网盘」入口" in " ".join(photo_direct_tail_evidence.get("flow") or [])
+        and "网盘落地页" in photo_direct_tail_evidence.get("assertionTarget", ""),
+        "A current branch source-page candidate with a visible target may create a bounded first-landing reachability check when the model omitted a sibling landing tail",
+    )
     manual_conditional_tail_payload = json.loads(json.dumps(sibling_tail_missing_precondition_payload, ensure_ascii=False))
     leaking_document_tail = manual_conditional_tail_payload["cases"][0]
     leaking_document_tail["steps"][-1] = (

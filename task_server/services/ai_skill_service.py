@@ -5847,6 +5847,7 @@ def _bounded_convergence_evidence(
                 ((item or {}).get("raw") or {}).get("requirement_refs"),
             ]),
         ))
+        created_reachability_evidence = False
         for donor_record in ordered_donor_records:
             raw_case = (donor_record or {}).get("raw") or {}
             donor_case_id = str(((donor_record or {}).get("compact") or {}).get("case_id") or "").strip()
@@ -6283,7 +6284,210 @@ def _bounded_convergence_evidence(
                     if str(item.get("id") or "").strip()
                 ],
             }
+            created_reachability_evidence = True
             break
+        if created_reachability_evidence:
+            continue
+        if not branch_baseline:
+            continue
+        direct_source_record = None
+        direct_source_case = {}
+        if source_case:
+            direct_source_case = source_case
+            source_case_id = str(source_case.get("case_id") or "").strip()
+            direct_source_record = next((
+                item for item in source_candidate_records
+                if (item or {}).get("raw") is source_case
+                or str(((item or {}).get("compact") or {}).get("case_id") or "").strip() == source_case_id
+            ), None)
+        elif source_evidence_plan:
+            source_case_id = str(source_evidence_plan.get("sourceCaseId") or "").strip()
+            direct_source_record = next((
+                item for item in source_candidate_records
+                if str(((item or {}).get("compact") or {}).get("case_id") or "").strip()
+                == source_case_id
+            ), None)
+            direct_source_case = (direct_source_record or {}).get("raw") or {}
+        elif matching_automatic_records:
+            direct_source_record = matching_automatic_records[0]
+            direct_source_case = (direct_source_record or {}).get("raw") or {}
+        if (
+            not direct_source_record
+            or not direct_source_case
+            or _case_has_deep_external_action(direct_source_case)
+            or not _case_has_branch_execution_evidence(direct_source_case, branch)
+        ):
+            continue
+        targets = _acceptance_target_terms(check.get("text"))
+        if not targets:
+            continue
+        target_label = str(targets[0] or "").strip()
+        source_case_id = str(
+            ((direct_source_record or {}).get("compact") or {}).get("case_id")
+            or direct_source_case.get("case_id")
+            or ""
+        ).strip()
+        baseline_id = str(branch_baseline.get("id") or "").strip()
+        precondition = _bounded_candidate_precondition(direct_source_case, branch_baseline)
+        direct_source_plan = (
+            direct_source_case.get("ai_case_plan")
+            if isinstance(direct_source_case.get("ai_case_plan"), dict)
+            else {}
+        )
+        direct_source_level = str(
+            ((direct_source_record or {}).get("compact") or {}).get("currentLevel")
+            or direct_source_case.get("executionLevel")
+            or direct_source_case.get("execution_level")
+            or ""
+        ).strip().lower()
+        direct_source_origin = str(
+            ((direct_source_record or {}).get("compact") or {}).get("originLevel")
+            or direct_source_case.get("originExecutionLevel")
+            or direct_source_case.get("origin_execution_level")
+            or ""
+        ).strip().lower()
+        direct_source_trusted = bool(
+            any(direct_source_record is item for item in automatic_records)
+            and direct_source_level == "executable"
+            and direct_source_origin == "automatic"
+            and direct_source_plan.get("baselineGrounded") is True
+            and direct_source_plan.get("baselineVerified") is True
+            and direct_source_plan.get("pathPlanApplied") is True
+            and str(direct_source_plan.get("baselineId") or "").strip() == baseline_id
+        )
+        if not source_case_id or not baseline_id or not precondition or not direct_source_trusted:
+            continue
+        navigation_flow = _trusted_baseline_source_navigation_flow(
+            branch_baseline,
+            targets,
+            branch,
+        ) or normalize_text_list(direct_source_case.get("steps"))
+        click_index = _target_navigation_action_index(navigation_flow, targets)
+        if click_index >= 0:
+            navigation_flow = navigation_flow[:click_index]
+        navigation_flow, current_leaf_adapted = _adapt_trusted_navigation_to_candidate(
+            navigation_flow,
+            direct_source_case,
+            targets,
+            branch,
+        )
+        current_visual_evidence = _current_visual_page_evidence_for_case(
+            normalized,
+            direct_source_case,
+            source_case_id,
+            branch,
+            targets,
+        )
+        navigation_flow, visual_leaf_adapted = _adapt_trusted_navigation_to_visual_evidence(
+            navigation_flow,
+            current_visual_evidence,
+            branch,
+        )
+        navigation_flow = _ensure_trusted_home_start_guard(
+            navigation_flow,
+            branch_baseline,
+            precondition,
+        )
+        if (
+            len(navigation_flow) < 2
+            or _source_navigation_has_alternative_destinations(navigation_flow)
+        ):
+            continue
+        source_page_checks = [
+            item for item in requirement_missing_checks
+            if str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+        ] or [
+            item for item in ((normalized.get("analysis") or {}).get("requirement_acceptance_checks") or [])
+            if isinstance(item, dict)
+            and str(item.get("requirementId") or "").strip() == requirement_id
+            and str(item.get("kind") or "").strip().lower() in ("visibility", "relation", "copy")
+        ]
+        source_target_visible = bool(
+            current_visual_evidence
+            or any(case_covers_requirement_acceptance(direct_source_case, item) for item in source_page_checks)
+        )
+        if not source_target_visible:
+            continue
+        requirement_refs = normalize_text_list(
+            direct_source_case.get("requirementRefs")
+            or direct_source_case.get("requirement_refs")
+            or direct_source_case.get("coverage")
+        )[:8]
+        if requirement_id not in _acceptance_requirement_ids(requirement_refs):
+            requirement_point = requirement_point_by_id.get(requirement_id)
+            if requirement_point:
+                requirement_refs = [requirement_point]
+        if requirement_id not in _acceptance_requirement_ids(requirement_refs):
+            continue
+        source_wait = f"等待「{target_label}」入口可见"
+        landing_observation = (
+            f"等待进入{target_label}落地页页面区域或可识别提示页，未白屏、未崩溃"
+        )
+        landing_flow = [
+            f"点击「{target_label}」入口",
+            landing_observation,
+        ]
+        flow = list(navigation_flow)
+        source_wait_key = _navigation_action_target_key(source_wait)
+        if not any(source_wait_key and source_wait_key == _navigation_action_target_key(step) for step in flow):
+            flow.append(source_wait)
+        flow.extend(landing_flow)
+        assertion_target = (
+            f"进入{target_label}落地页页面区域或可识别提示页，未白屏、未崩溃"
+        )
+        probe = {
+            "steps": flow,
+            "assertions": [assertion_target],
+            "requirementRefs": requirement_refs,
+            "ai_case_plan": {"baselineGrounded": True, "pathPlanApplied": True},
+        }
+        if len(flow) > 8 or not _case_is_bounded_external_landing_check(probe):
+            continue
+        covered_checks = [
+            item for item in requirement_missing_checks
+            if case_covers_requirement_acceptance(probe, item)
+        ]
+        if str(check.get("id") or "").strip() not in {
+            str(item.get("id") or "").strip() for item in covered_checks
+        }:
+            continue
+        evidence_by_id[source_case_id] = {
+            "eligible": True,
+            "kind": "bounded_landing",
+            "title": (
+                f"{branch}{target_label}点击后首个可见页校验"
+                if branch and target_label else str(((direct_source_record or {}).get("compact") or {}).get("title") or "").strip()
+            ),
+            "sourceCaseId": source_case_id,
+            "tailSourceCaseId": source_case_id,
+            "source": "direct_visible_target_landing",
+            "directVisibleTargetLanding": True,
+            "sharedTailBoundToBranchSource": True,
+            "sharedTargetTailBoundToBranchSource": False,
+            "baselineId": baseline_id,
+            "precondition": precondition,
+            "flow": flow,
+            "assertionTarget": assertion_target,
+            "requirementRefs": requirement_refs,
+            "originLevel": str(((direct_source_record or {}).get("compact") or {}).get("originLevel") or ""),
+            "manualPromotionEligible": (
+                str(((direct_source_record or {}).get("compact") or {}).get("originLevel") or "").strip().lower()
+                == "manual"
+            ),
+            "currentLeafAdapted": current_leaf_adapted or visual_leaf_adapted,
+            "currentLeafSourceCaseId": source_case_id if (current_leaf_adapted or visual_leaf_adapted) else "",
+            "currentLeafEvidenceSource": (
+                current_visual_evidence.get("source") if visual_leaf_adapted else ("ai_candidate" if current_leaf_adapted else "")
+            ),
+            "currentLeafEvidence": current_visual_evidence if visual_leaf_adapted else {},
+            "landingEvidenceCaseIds": [source_case_id],
+            "conditionalTargetCanonicalized": False,
+            "acceptanceCheckIds": [
+                str(item.get("id") or "").strip()
+                for item in covered_checks
+                if str(item.get("id") or "").strip()
+            ],
+        }
     return evidence_by_id
 
 
@@ -8211,6 +8415,9 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 ),
                 "sharedTargetTailBoundToBranchSource": (
                     bounded_evidence.get("sharedTargetTailBoundToBranchSource") is True
+                ),
+                "directVisibleTargetLanding": (
+                    bounded_evidence.get("directVisibleTargetLanding") is True
                 ),
                 "modelLevel": model_level,
                 "modelReason": model_reason,

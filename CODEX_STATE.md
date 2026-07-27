@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-27 真实回归：当前分支已验证入口页可直接生成有界首屏可达性
+
+用户部署 `b016c9d` 后，继续用完全相同需求、Figma、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus` 发起百度网盘 Agent `agent-1785123547381-b3be57ac`。
+
+线上结果：
+
+- PREPARE_SOURCE 成功解析 Figma `4 页 / 4 图 / 忽略 0`。
+- PLAN 阶段 4 个 Figma 视觉批次全部真实送入模型并完成，生成 8 条业务分支；照片相关 Figma 图中可见「百度网盘」入口。
+- GENERATE_YAML 在最终覆盖门禁失败，未创建 Runner job。缺口为 `REQ-002 [acceptance:reachability] 照片打印：点击百度网盘入口并校验目标页面稳定可达`。
+- 失败与 Windows Runner、ADB、Sonic 或 OPPO 无关；固定 OPPO `ecbfd645` 未进入执行阶段。线上 Sonic Bridge 仍返回旧 `2026.07.24-qwen3.7-midscene110-v3`，只影响 Sonic 套件路径审计，不影响本次 RUNNER_JOB 生成失败。
+
+根因与修复：
+
+- 线上最终计划里照片打印已有可信来源页路径和展示 / 同级 / 文案断言，但模型漏掉了专门的“点击百度网盘后首屏稳定”用例。
+- 之前平台只会优先复用同目标兄弟分支 landing tail；当兄弟 tail 不存在或未被选中时，没有把“当前分支已 verified 到达目标入口页”转成有界首屏可达性用例。
+- `_bounded_convergence_evidence()` 现在新增直接来源页 fallback：只有当前来源用例本身为 `automatic / executable`，且 `baselineGrounded / baselineVerified / pathPlanApplied` 全部为真，并且来源页已覆盖目标入口可见证据时，才允许补生成 `点击目标入口 -> 等待目标落地页页面区域或可识别提示页，未白屏、未崩溃`。
+- 该 fallback 仍使用当前分支自己的已验证导航与可见文字，不使用坐标、不做授权登录、不选择文件、不进入第三方深层操作；manual 条件分支、未验证 baseline、前后缀/第二目标、泄漏兄弟来源页仍被原门禁拦截。
+- `boundedConvergence` 元数据新增 `directVisibleTargetLanding`，便于后续报告审计区分“兄弟 tail 复用”和“当前来源页直接首屏 landing”。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+```
+
+新增回归覆盖两类场景：当前分支未提升来源页仍可绑定同目标兄弟 landing tail；当前分支 automatic/executable/verified 来源页在没有兄弟 landing tail 时，可直接生成有界首屏可达性。原有负向用例继续保证不同目标、前后缀目标、第二目标、捐赠分支来源页泄漏、未验证 baseline 和人工条件分支不能通过。Codex 不 push；待用户部署后需重新跑同一百度网盘 Agent，预期 GENERATE_YAML 覆盖门禁不再因照片打印可达性缺口失败。
+
 ### 2026-07-27 真实回归：修复草稿补丁重复 sleep 锚点必须支持有界就近落地
 
 用户部署 `1819e03` 后，按完全相同需求、Figma、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus` 发起百度网盘 Agent `agent-1785120704925-a9061e69`。
