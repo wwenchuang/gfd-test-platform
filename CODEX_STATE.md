@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-27 真实回归：修复草稿补丁重复 sleep 锚点必须支持有界就近落地
+
+用户部署 `1819e03` 后，按完全相同需求、Figma、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus` 发起百度网盘 Agent `agent-1785120704925-a9061e69`。
+
+线上结果：
+
+- PREPARE_SOURCE 成功解析 Figma `4 页 / 4 图 / 忽略 0`。
+- PLAN 阶段 4 个视觉批次全部真实完成，生成 8 条业务分支。
+- GENERATE_YAML 成功生成 5 条 YAML，覆盖 12/12 验收点，5/5 executable 且 dry-run 通过；此前“照片打印可达性缺口”已解决。
+- Runner 只使用固定 OPPO `ecbfd645`。首批 smoke 共 3 条：文档文案/同级成功、文档可达成功、照片可达失败。未创建第二台设备任务。
+- 照片失败报告显示当前停在“照片打印聚合页”，页面包含照片打印、智能证件照等入口，但没有「5寸照片」规格；失败分类为 `SCRIPT_ISSUE / element_not_found / can_auto_repair=true`。
+- AI 修复方向正确：在首页「照片打印」后补充点击聚合页内「照片打印」大卡片，再等待规格页出现「5寸照片」。但补丁应用器因原 YAML 有 3 个 `- sleep: 300`，第二条 `replace_step` 被拒为 `修复补丁锚点不唯一`，最终只保存诊断草稿，没有生成可重跑 YAML。
+
+根因与修复：
+
+- `apply_task_repair_patches()` 对所有重复锚点一律失败，缺少“前一条补丁已经限定了局部上下文后，后一条低信息 sleep 锚点应在该游标之后就近解析”的能力。
+- 现在补丁应用器在每条成功补丁后记录相对游标。只有后续补丁锚点动作是 `sleep`，且操作是 `replace_step/remove_step` 时，才允许在游标之后选择最近的重复 sleep；业务动作、观察动作、单条重复锚点仍保持原来的不唯一拒绝。
+- 这不是百度网盘特例；只是让 AI 已生成的局部补丁可以在重复短等待场景中落地，同时继续禁止坐标、ADB、XPath、跨任务替换和未引用基线的主链路改写。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+```
+
+新增回归用例直接复现线上照片分支补丁：`insert_after 点击「照片打印」入口` 后，`replace_step - sleep: 300` 应替换插入位置后的第一个 sleep；原有“单条重复业务锚点必须拒绝”的断言仍保留。Codex 不 push；待用户部署后应重新跑同一百度网盘 Agent，预期失败照片分支会生成可应用修复 YAML 并进入同设备重跑。
+
 ### 2026-07-27 真实回归：当前分支已覆盖展示维度时仍可复用同目标兄弟落地尾链
 
 用户同步新版 Sonic Bridge 后，线上核对已确认 `/api/sonic/bridge-groovy`、`win-runner-01` 与固定 OPPO `ecbfd645` 均为 `2026.07.26-qwen3.7-result-retry-v1 / qwen3.7-plus / qwen3`。随后按完全相同需求、Figma、`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed` 创建百度网盘 Agent `agent-1785116321078-d5da9a1e`。

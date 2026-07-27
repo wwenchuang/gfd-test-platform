@@ -412,6 +412,7 @@ def apply_task_repair_patches(task_block, patches):
     flow_indent = re.match(r"^(\s*)flow\s*:", lines[flow_index]).group(1) + "  "
     flow_item_pattern = re.compile(r"^" + re.escape(flow_indent) + r"-\s+[A-Za-z][\w]*\s*:")
     applied = []
+    relative_anchor_cursor = None
 
     for patch in patches:
         if not isinstance(patch, dict):
@@ -432,8 +433,21 @@ def apply_task_repair_patches(task_block, patches):
         if not candidates:
             raise ValueError(f"修复补丁锚点未找到：{anchor}")
         if len(candidates) > 1:
-            raise ValueError(f"修复补丁锚点不唯一：{anchor}")
-        target = candidates[0]
+            anchor_action, _anchor_value = _repair_patch_anchor_parts(anchor)
+            relative_candidates = [
+                index for index in candidates
+                if relative_anchor_cursor is not None and index >= relative_anchor_cursor
+            ]
+            if (
+                anchor_action == "sleep"
+                and op in ("replace_step", "remove_step")
+                and relative_candidates
+            ):
+                target = relative_candidates[0]
+            else:
+                raise ValueError(f"修复补丁锚点不唯一：{anchor}")
+        else:
+            target = candidates[0]
         end = _repair_flow_item_end(lines, target)
         anchor_action, _anchor_value = _repair_patch_anchor_parts(lines[target])
         if op == "replace_step" and anchor_action not in REPAIR_PATCH_ACTIONS:
@@ -450,12 +464,16 @@ def apply_task_repair_patches(task_block, patches):
                 raise ValueError(f"修复补丁与锚点附近现有步骤重复：{anchor}")
         if op == "insert_after":
             lines = lines[:end] + patch_lines + lines[end:]
+            relative_anchor_cursor = end + len(patch_lines)
         elif op == "insert_before":
             lines = lines[:target] + patch_lines + lines[target:]
+            relative_anchor_cursor = target + len(patch_lines)
         elif op == "replace_step":
             lines = lines[:target] + patch_lines + lines[end:]
+            relative_anchor_cursor = target + len(patch_lines)
         else:
             lines = lines[:target] + lines[end:]
+            relative_anchor_cursor = target
         applied.append({
             "op": op,
             "anchor": anchor,

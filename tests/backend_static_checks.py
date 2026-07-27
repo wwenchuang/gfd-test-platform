@@ -6555,6 +6555,50 @@ def check_agent_failure_review_and_repair_guard():
     except ValueError as exc:
         ambiguous_rejected = "不唯一" in str(exc)
     require(ambiguous_rejected, "A repair patch with a repeated anchor must be rejected instead of mutating the first matching step")
+    sequential_patch_source = """android:
+  tasks:
+    - name: 照片打印二级入口修复
+      flow:
+        - launch: com.example.app
+        - aiWaitFor: App 首页加载完成，可见「照片打印」入口
+          timeout: 8000
+        - aiTap: 点击「照片打印」入口
+        - sleep: 300
+        - aiTap: 点击「5寸照片」规格
+        - sleep: 300
+        - aiWaitFor: 等待照片打印页面加载
+        - aiTap: 点击「百度网盘」入口
+        - sleep: 300
+"""
+    sequential_info = yaml_service.find_yaml_task_block(sequential_patch_source, "照片打印二级入口修复")
+    sequential_block, sequential_patches = repair_service.apply_task_repair_patches(
+        sequential_info["block"],
+        [{
+            "op": "insert_after",
+            "anchor": "- aiTap: 点击「照片打印」入口",
+            "lines": [
+                "- aiWaitFor: 等待照片打印聚合页加载完成，可见「照片打印」功能卡片",
+                "- aiTap: 点击页面左侧绿色的「照片打印」大卡片入口",
+                "- aiWaitFor: 等待照片打印规格选择页加载完成，可见「5寸照片」选项",
+            ],
+            "reason": "补充二级入口",
+        }, {
+            "op": "replace_step",
+            "anchor": "- sleep: 300",
+            "lines": [
+                "- aiWaitFor: 等待照片打印规格选择页加载完成，可见「5寸照片」选项",
+                "timeout: 8000",
+            ],
+            "reason": "替换插入位置后的短 sleep",
+        }],
+    )
+    require(
+        len(sequential_patches) == 2
+        and sequential_block.count("sleep: 300") == 2
+        and sequential_block.index("点击页面左侧绿色的「照片打印」大卡片入口") < sequential_block.index("点击「5寸照片」规格")
+        and sequential_block.count("等待照片打印规格选择页加载完成，可见「5寸照片」选项") >= 2,
+        "A repeated sleep anchor may be resolved relative to the previous applied patch instead of blocking a bounded repair",
+    )
     for prohibited_lines in (
         ["runAdbShell: input swipe 100 100 900 100"],
         ["aiTap: 企业云盘入口", "xpath: //*[@text='企业云盘']"],
