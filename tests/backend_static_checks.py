@@ -4906,6 +4906,92 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "同级并列" in str(semantic_scan.get("assertionTarget") or ""),
         "An executable AI result that only claims coverage in review must receive one same-model semantic correction before the gate",
     )
+    omitted_repair_calls = []
+    old_run_ai_skill = ai_skill_service.run_ai_skill
+    try:
+        def fake_omitted_relation_planner(skill_name, request, **_kwargs):
+            require(skill_name == "executable_yaml_planner", "Unexpected AI skill during omitted repair replay")
+            omitted_repair_calls.append(request)
+            if len(omitted_repair_calls) == 1:
+                return {
+                    "cases": [{
+                        "caseId": "TC-PHOTO",
+                        "baselineId": "base-photo",
+                        "precondition": "App 首页",
+                        "flow": ["等待首页", "点击照片打印", "校验百度网盘与相册导入同级并列"],
+                        "assertionTarget": "百度网盘与相册导入同级并列展示",
+                        "requirementRefs": [relation_points[0]],
+                        "batch": "smoke",
+                    }],
+                    "needs_review_cases": [],
+                    "draft_cases": [],
+                    "manual_cases": [{"caseId": "TC-SCAN", "reason": "模拟把扫描聚焦候选降级为人工"}],
+                    "review": {"planning_reason": "模拟降级扫描聚焦候选"},
+                }
+            require(
+                (request.get("responseContract") or {}).get("acceptanceRepairRetry") is True
+                and (request.get("responseContract") or {}).get("returnOnlyCandidateIds") == ["TC-SCAN"],
+                "A downgraded focused repairable executable must be retried before it is accepted as non-executable",
+            )
+            return {
+                "cases": [{
+                    "caseId": "TC-SCAN",
+                    "baselineId": "base-scan",
+                    "precondition": "App 首页",
+                    "flow": ["等待首页", "点击文件扫描/复印", "校验百度网盘与其他导入方式同级并列"],
+                    "assertionTarget": "百度网盘与其他导入方式在当前页面同级并列展示",
+                    "requirementRefs": [relation_points[1]],
+                    "batch": "smoke",
+                }],
+                "needs_review_cases": [],
+                "draft_cases": [],
+                "manual_cases": [],
+                "review": {"planning_reason": "补回扫描聚焦候选"},
+            }
+
+        ai_skill_service.run_ai_skill = fake_omitted_relation_planner
+        omitted_relation_plan = ai_skill_service.call_skill_executable_yaml_planner(
+            "兄弟分支关系收敛",
+            "基础打印",
+            relation_payload,
+            [
+                {"id": "base-photo", "title": "照片入口导航", "sourceKind": "verified_execution", "verificationStatus": "execution_success"},
+                {"id": "base-scan", "title": "扫描入口导航", "sourceKind": "verified_execution", "verificationStatus": "execution_success"},
+            ],
+            {"smokeCount": 2, "targetCaseCount": 2},
+            planning_context={"pass": "coverage_convergence", "portfolioAudit": relation_audit},
+        )
+    finally:
+        ai_skill_service.run_ai_skill = old_run_ai_skill
+    omitted_scan = next(
+        item for item in omitted_relation_plan.get("cases") or []
+        if item.get("caseId") == "TC-SCAN"
+    )
+    require(
+        len(omitted_repair_calls) == 2
+        and omitted_relation_plan.get("trace", {}).get("acceptance_repair_retry", {}).get("succeeded") is True
+        and "同级并列" in " ".join(omitted_scan.get("flow") or [])
+        and "TC-SCAN" not in set(omitted_relation_plan.get("trace", {}).get("bounded_omission_recovered_case_ids") or []),
+        "A focused executable downgraded by convergence AI must get one targeted semantic retry before final coverage gate",
+    )
+    spec_mismatch_yaml = """android:
+  tasks:
+    - name: 照片打印页(5寸规格)-百度网盘入口UI展示及层级校验
+      flow:
+        - aiWaitFor: App首页可见
+        - aiTap: 点击「照片打印」
+        - aiTap: 点击「一寸照」
+        - aiWaitFor: 「百度网盘」入口可见
+"""
+    repaired_spec_mismatch = yaml_service.repair_generated_yaml_executable_gate_issues(
+        spec_mismatch_yaml,
+    )
+    require(
+        repaired_spec_mismatch.get("changed") is True
+        and "点击「5寸照片」" in repaired_spec_mismatch.get("content", "")
+        and "点击「一寸照」" not in repaired_spec_mismatch.get("content", ""),
+        "Generated YAML must align a concrete photo-size title with the tapped visible photo-size leaf before Runner dispatch",
+    )
     preserved_contract_feedback = ai_skill_service._executable_plan_repair_feedback(
         {
             "cases": [{

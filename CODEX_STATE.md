@@ -4805,3 +4805,36 @@ npm test
 ```
 
 - 全量结果：undefined-name、后端 61 项、前端 69 项、AI Gateway 46 项、动态模型目录 / 回退检查、Skill 契约 3 个 fixture，以及桌面 / 移动端视觉回归全部通过。
+### 2026-07-27 百度网盘稳定性三连跑与生成稳定性修复
+
+在 `qwen3.7-plus / Midscene 1.10.7 / RUNNER_JOB / win-runner-01 / fixed ecbfd645` 下使用同一 `/tmp/baidu_agent_payload.json` 连续串行发起 3 次百度网盘 Agent：
+
+- 第 1 次 `agent-1785149713617-dd2d0263`：`FAILED / GENERATE_YAML / 30%`，未创建 Runner job。Figma 4/4 已真实送 AI 并完成；失败为最终 executable 覆盖门禁缺 `REQ-003 [relation] 扫描复印同级关系`。
+- 第 2 次 `agent-1785150055946-667265eb`：`FAILED / EXECUTION_PRECHECK / 45%`。生成侧已产出 YAML，但执行前体检时 `win-runner-01` 心跳超时离线；这是 Runner 环境问题，不是 YAML 或手机问题。
+- 第 3 次 `agent-1785150418137-fa892620`：`FAILED / COLLECT_REPORT / 95%`。仅使用 OPPO `ecbfd645`；Runner 因同一 Windows Runner 上华为日常任务占用导致 OPPO job 排队约 6 分钟，随后执行 2 条 smoke，1 成功 / 1 失败。失败 YAML 为 `02-照片打印页(5寸规格)-百度网盘入口UI展示及层级校验.yaml`，Runner 证据明确：脚本点击「一寸照」，但当前规格页可见的是「5寸照片、6寸照片、7寸照片、A4资料图片、A4生活照片」，任务目标为 5 寸规格。
+
+结论：
+
+- 此需求单次可通过，但三连跑不稳定。
+- 不稳定分为两类：生成收敛随机性，以及 Runner 环境/队列可用性。
+- Runner/队列问题本轮只记录，不混入 YAML 生成修复；生成侧先做两处通用最小修复。
+
+本轮修复：
+
+- `ai_skill_service._executable_plan_repair_feedback`：当覆盖收敛阶段平台已聚焦的 executable 修复候选被模型降级到 `manual / needs_review / draft`，先作为语义修复失败反馈进入同模型 `acceptanceRepairRetry`，要求模型针对该候选补齐 flow/assertionTarget；不能直接接受降级并让最终覆盖门禁随机失败。
+- `yaml_service.repair_generated_yaml_executable_gate_issues`：新增照片规格叶子一致性本地修复。若任务名明确为 5寸/6寸/一寸等照片规格，而生成 YAML 的 `aiTap` 点击了另一个照片规格叶子，会在入库/Runner 前按任务名修正，例如 `照片打印页(5寸规格)` 中的 `点击「一寸照」` 会修为 `点击「5寸照片」`。
+- 新增后端静态回归覆盖：聚焦 executable 被降级必须触发一次同模型语义重试；5寸规格 YAML 不得继续点击一寸照。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'  # 最小回归：照片规格修复 + 降级聚焦候选重试
+...
+PY
+```
+
+注意：
+
+- `python3 tests/backend_static_checks.py` 当前会先被用户历史 YAML 改动拦住：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`，该失败来自工作区已有 `server-tasks*/3D打印基线/OBJ保龄球打印.yaml` 改动，不属于本轮修改，未回滚。
+- 本轮不 push。用户 push/deploy 后需要再次使用同一 payload 串行跑稳定性验证；建议先暂停或隔离同 Runner 的华为日常任务，避免 OPPO 固定设备回归被同 Runner 队列占用。

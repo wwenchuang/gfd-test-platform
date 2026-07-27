@@ -7301,6 +7301,47 @@ def _executable_plan_repair_feedback(result, candidates):
                     "新增/证据/保留验收契约；review 中的覆盖声明不计入门禁"
                 ),
             })
+    non_executable_by_id = {}
+    for key in ("needs_review_cases", "draft_cases", "manual_cases"):
+        for raw_item in result.get(key) or []:
+            item = raw_item if isinstance(raw_item, dict) else {}
+            case_id = str(item.get("caseId") or item.get("case_id") or "").strip()
+            if case_id:
+                non_executable_by_id[case_id] = key
+    for case_id, group_name in non_executable_by_id.items():
+        candidate = candidates_by_id.get(case_id) or {}
+        if str(candidate.get("originLevel") or "automatic").strip().lower() == "manual":
+            continue
+        repair_checks = [
+            check for check in (
+                candidate.get("repairAcceptanceChecks")
+                or candidate.get("requiredAcceptanceChecks")
+                or []
+            )
+            if isinstance(check, dict)
+            and str(check.get("id") or "").strip()
+            and (
+                "repair" in normalize_text_list(check.get("contractRoles"))
+                or candidate.get("repairAcceptanceChecks")
+            )
+        ]
+        if not repair_checks:
+            continue
+        feedback.append({
+            "caseId": case_id,
+            "missingChecks": copy.deepcopy(repair_checks),
+            "missingPreservedCheckIds": [
+                str(check.get("id") or "").strip()
+                for check in repair_checks
+                if "preserve" in normalize_text_list(check.get("contractRoles"))
+            ],
+            "downgradedFromExecutableRepair": True,
+            "classificationGroup": group_name,
+            "reason": (
+                "模型把平台聚焦的 executable 修复候选降级为非 executable；该候选必须先经过"
+                "同模型语义重试，确认是否能补齐缺失验收，而不能直接放弃显式需求覆盖"
+            ),
+        })
     classified_candidate_ids = {
         str(item.get("caseId") or item.get("case_id") or "").strip()
         for key in ("cases", "needs_review_cases", "draft_cases", "manual_cases")

@@ -6078,6 +6078,49 @@ def _remove_redundant_generated_process_waits(flow: list, task_name: str) -> lis
     return changes
 
 
+_PHOTO_SIZE_LABELS = (
+    "1寸照片", "2寸照片", "3寸照片", "4寸照片", "5寸照片", "6寸照片", "7寸照片",
+    "一寸照", "二寸照", "小一寸", "大一寸", "小二寸", "大二寸",
+)
+_PHOTO_SIZE_ALIASES = {
+    "1": "1寸照片",
+    "2": "2寸照片",
+    "3": "3寸照片",
+    "4": "4寸照片",
+    "5": "5寸照片",
+    "6": "6寸照片",
+    "7": "7寸照片",
+    "一": "一寸照",
+    "二": "二寸照",
+}
+
+
+def _expected_photo_size_leaf_from_task_name(task_name: str) -> str:
+    text = str(task_name or "")
+    if "照片" not in text and "照" not in text:
+        return ""
+    match = re.search(r"([1-7])\s*寸(?:照片|规格|照)?", text)
+    if match:
+        return _PHOTO_SIZE_ALIASES.get(match.group(1), "")
+    match = re.search(r"([一二])\s*寸(?:照片|规格|照)?", text)
+    if match:
+        return _PHOTO_SIZE_ALIASES.get(match.group(1), "")
+    return ""
+
+
+def _repair_photo_size_leaf_tap_prompt(task_name: str, prompt: str) -> str:
+    expected = _expected_photo_size_leaf_from_task_name(task_name)
+    text = str(prompt or "")
+    if not expected or not text or expected in text:
+        return ""
+    if "照片" not in text and "照" not in text:
+        return ""
+    matched = next((label for label in _PHOTO_SIZE_LABELS if label in text), "")
+    if not matched or matched == expected:
+        return ""
+    return text.replace(matched, expected)
+
+
 def _repair_generated_post_launch_restart_ai_step(step: dict, next_step: dict = None) -> dict:
     """Remove redundant AI app restarts after deterministic launch guards."""
     if not isinstance(step, dict):
@@ -6227,6 +6270,20 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
             if "aiTap" not in step:
                 continue
             prompt = str(step.get("aiTap") or "").strip()
+            photo_size_replacement = _repair_photo_size_leaf_tap_prompt(
+                str(task.get("name") or f"tasks[{task_index}]"),
+                prompt,
+            )
+            if photo_size_replacement:
+                step["aiTap"] = photo_size_replacement
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    "changed": "photo size aiTap leaf aligned to task title",
+                    "prompt": prompt[:180],
+                    "replacement": photo_size_replacement[:180],
+                })
+                prompt = photo_size_replacement
             if prompt and prompt_is_conditional_action(prompt):
                 wait_prompt = conditional_action_to_wait_prompt(prompt)
                 step.pop("aiTap", None)
