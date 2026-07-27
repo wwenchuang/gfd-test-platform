@@ -2,7 +2,7 @@ import org.cloud.sonic.agent.bridge.android.AndroidDeviceBridgeTool
 import groovy.json.JsonSlurper
 
 // ================== Sonic 接入配置 ==================
-def bridgeVersion = "2026.07.24-qwen3.7-midscene110-v3"
+def bridgeVersion = "2026.07.26-qwen3.7-result-retry-v1"
 def bridgeTimeZone = java.util.TimeZone.getTimeZone("Asia/Shanghai")
 def formatBridgeTime = { String pattern ->
     def formatter = new java.text.SimpleDateFormat(pattern)
@@ -316,14 +316,33 @@ def encodeUrlPart = { String s ->
 }
 
 def escapeJson = { String s ->
-    (s ?: "")
-        .replace("\\", "\\\\")
-        .replace("\"", "\\\"")
-        .replace("\b", "\\b")
-        .replace("\f", "\\f")
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
+    def raw = s ?: ""
+    def builder = new StringBuilder()
+    for (int idx = 0; idx < raw.length(); idx++) {
+        char ch = raw.charAt(idx)
+        int codePoint = (int) ch
+        if (ch == "\\" as char) {
+            builder.append("\\\\")
+        } else if (ch == "\"" as char) {
+            builder.append("\\\"")
+        } else if (ch == "\b" as char) {
+            builder.append("\\b")
+        } else if (ch == "\f" as char) {
+            builder.append("\\f")
+        } else if (ch == "\n" as char) {
+            builder.append("\\n")
+        } else if (ch == "\r" as char) {
+            builder.append("\\r")
+        } else if (ch == "\t" as char) {
+            builder.append("\\t")
+        } else if (codePoint < 0x20) {
+            builder.append("\\")
+            builder.append(String.format("u%04x", codePoint))
+        } else {
+            builder.append(ch)
+        }
+    }
+    builder.toString()
 }
 
 def compactLog = { String s, int limit ->
@@ -748,11 +767,27 @@ def postResultToTaskManager = { String status, int exitCode, String output, Stri
             " -H \"Content-Type: application/json\"" +
             " -H \"x-token: ${runnerToken}\"" +
             " --data-binary \"@${payloadFile.absolutePath}\""
-        def result = runCmd(cmd, 25)
-        def resp = parseCurlResponse(result)
-        if (result.code != 0 || !(resp.httpCode ?: "").startsWith("2")) {
+        def result = null
+        def resp = [:]
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            result = runCmd(cmd, 25)
+            resp = parseCurlResponse(result)
+            if (result.code == 0 && (resp.httpCode ?: "").startsWith("2")) {
+                break
+            }
             def responseError = repairUtf8ReadAsGbk(compactLog(resp.body ?: result.stderr, 500))
-            androidStepHandler.log.sendStepLog(2, "Task结果归档失败", "Task 平台未确认执行结果，HTTP：${resp.httpCode ?: result.code}\n${responseError}")
+            androidStepHandler.log.sendStepLog(
+                2,
+                "Task结果归档重试",
+                "Task 平台未确认执行结果，第 ${attempt}/3 次失败，HTTP：${resp.httpCode ?: result.code}\n${responseError}"
+            )
+            if (attempt < 3) {
+                Thread.sleep(1000L * attempt)
+            }
+        }
+        if (result == null || result.code != 0 || !(resp.httpCode ?: "").startsWith("2")) {
+            def responseError = repairUtf8ReadAsGbk(compactLog(resp.body ?: result?.stderr, 500))
+            androidStepHandler.log.sendStepLog(2, "Task结果归档失败", "Task 平台最终未确认执行结果，HTTP：${resp.httpCode ?: result?.code}\n${responseError}")
             return
         }
         def response = [:]
