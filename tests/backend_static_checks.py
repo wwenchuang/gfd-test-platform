@@ -6273,13 +6273,42 @@ def check_agent_failure_review_and_repair_guard():
         agent_service._agent_original_rerun_eligible(app_network_review) is True,
         "Concrete app network failures must be eligible for unchanged same-device retry instead of YAML repair",
     )
+    sonic_install_overlay_review = agent_service._normalize_failed_execution_item({
+        "jobId": "job-static-sonic-install-overlay",
+        "stdoutTail": "failed to locate element: 点击「5寸照片」",
+        "failureReview": {
+            "category": "script_issue",
+            "failure_type": "element_not_found",
+            "confidence": 0.74,
+            "reason": "目标元素未定位到",
+            "evidence": [
+                "当前截图中未找到「5寸照片」相关元素。",
+                "页面显示的是 Sonic 应用的安装扫描界面，包含版本号、文件大小、来源提示及安装操作按钮，无照片尺寸选项。",
+            ],
+            "can_auto_repair": True,
+        },
+    })
+    require(
+        sonic_install_overlay_review.get("failureType") == "ENV_ISSUE",
+        "A Runner/Sonic install overlay stealing foreground focus must override script-like element-not-found review text",
+    )
+    require(
+        agent_service._agent_original_rerun_eligible(sonic_install_overlay_review) is True,
+        "Concrete non-tested-app foreground overlay evidence must be eligible for unchanged same-device retry",
+    )
     original_navigation = "android:\n  tasks:\n    - name: photo\n      flow:\n        - aiTap: 照片打印\n        - aiWaitFor: 目标入口可见\n"
     repaired_navigation = "android:\n  tasks:\n    - name: photo\n      flow:\n        - aiTap: 照片打印\n        - aiTap: 照片打印\n        - aiWaitFor: 目标入口可见\n"
+    repaired_scroll_navigation = "android:\n  tasks:\n    - name: photo\n      flow:\n        - aiTap: 照片打印\n        - aiScroll: 在相册导入、相机拍照和微信导入所在的横向入口区域\n          direction: right\n          distance: 400\n          scrollType: singleAction\n        - aiWaitFor: 目标入口可见\n"
     repaired_assertion = original_navigation.replace("目标入口可见", "页面已稳定")
     require(
         agent_service._agent_repair_navigation_signature(original_navigation)
         != agent_service._agent_repair_navigation_signature(repaired_navigation),
         "Navigation evidence gate must detect added parent/child actions from YAML rather than AI prose",
+    )
+    require(
+        agent_service._agent_repair_navigation_signature(original_navigation)
+        != agent_service._agent_repair_navigation_signature(repaired_scroll_navigation),
+        "Navigation evidence gate must detect added bounded aiScroll path exploration from YAML rather than AI prose",
     )
     require(
         agent_service._agent_repair_navigation_signature(original_navigation)
@@ -7187,10 +7216,22 @@ def check_agent_failure_review_and_repair_guard():
         any(item.get("code") == "navigation_missing_ready_wait" for item in startup_guard_gate.get("issues") or []),
         "A repair that adds navigation immediately after launch must receive one bounded AI correction for a visible start-page ready wait",
     )
+    scroll_original = original.replace(
+        "        - aiTap: 文档打印",
+        "        - aiWaitFor: 首页加载完成，文档打印入口可见\n        - aiTap: 文档打印",
+    )
+    scroll_horizontal_fix = scroll_original.replace(
+        "        - aiAssert: 百度网盘入口可见",
+        "        - aiScroll: 本地导入、相册导入、微信导入等入口所在的横向区域\n"
+        "          direction: right\n"
+        "          distance: 350\n"
+        "          scrollType: singleAction\n"
+        "        - aiAssert: 百度网盘入口可见，文案为“百度网盘”",
+    )
     unchanged_navigation_gate = agent_service._agent_repair_candidate_gate(
-        original,
+        scroll_original,
         {
-            "fixedYaml": horizontal_scroll_fix,
+            "fixedYaml": scroll_horizontal_fix,
             "analysis": "新增横向探索；保持原有导航路径和断言逻辑不变",
             "changes": ["在当前入口行增加一次有证据约束的横向滚动"],
         },
@@ -7200,8 +7241,8 @@ def check_agent_failure_review_and_repair_guard():
     require(
         unchanged_navigation_gate.get("ok") is True
         and unchanged_navigation_gate.get("navigationClaimed") is False
-        and unchanged_navigation_gate.get("navigationChanged") is False,
-        "A real aiScroll-only repair that explicitly preserves navigation must not be rejected as a navigation mutation claim",
+        and unchanged_navigation_gate.get("navigationChanged") is True,
+        "A real aiScroll-only repair must be recognized as bounded path exploration without being rejected as an unsupported navigation claim",
     )
     existing_horizontal_scroll = """android:
   tasks:

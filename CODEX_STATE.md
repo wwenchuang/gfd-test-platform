@@ -28,6 +28,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-27 真实回归：修复重跑需区分 Sonic 前台干扰，并承认 aiScroll 是有界路径探索
+
+用户部署 `cec73ce` 后继续跟踪百度网盘 Agent。线上最新 `agent-1785133117095-429ff947` 已终态 `FAILED / RERUN / 95%`，但失败位置已从生成门禁转移到真实执行后的修复编排：
+
+- PREPARE_SOURCE 成功解析 Figma `4 页 / 4 图 / 忽略 0`。
+- PLAN 阶段 4 个 Figma 视觉批次全部真实完成。
+- GENERATE_YAML 成功生成 `5 条 YAML / 12 个场景`，覆盖门禁通过。
+- VALIDATE_YAML 与 Runner dry-run 均通过。
+- Runner 只使用 `win-runner-01 / ecbfd645 / fixed`，未向第二台手机下发。
+- 真实执行 5 条原始用例中 3 条通过，2 条失败；AI 生成 2 个修复草稿，其中 1 个被平台门禁拒绝，1 个修复 YAML 重跑失败。
+
+本轮线上失败拆解：
+
+1. 照片打印原始失败是脚本路径问题：进入照片打印聚合页后直接找「5寸照片」。AI 修复草稿正确补了点击绿色「照片打印」卡片，再选「5寸照片」，且 YAML scorer 为 executable。
+2. 照片修复重跑失败帧显示页面突然变成 Sonic 应用安装扫描界面，包含版本号、文件大小、来源提示和安装按钮，不是小白学习打印业务页。失败复核仍标成 `script_issue / element_not_found / confidence 0.74`，导致平台没有把它当 ENV_ISSUE 原样重试。
+3. 扫描复印原始失败是横向导入入口行未探索到屏外「百度网盘」。AI 修复草稿新增了有界 `aiScroll`，但修复门禁的 navigation signature 只统计 `aiTap/ai/aiAction/aiAct`，没把 `aiScroll` 算作路径探索，误报 `navigation_claim_without_yaml_change` 并拒绝下发。
+
+修复：
+
+- 新增前台环境干扰识别：当失败证据明确显示被测 App 前台被 Sonic / 系统安装界面抢走，例如「Sonic 应用的安装扫描界面」「版本号、文件大小、来源提示」「安装操作按钮」，即使 AI 复核写成 script_issue，也归一化为 `ENV_ISSUE`，允许同设备复用当前修复 YAML 原样重试。
+- `_agent_failed_item_has_concrete_environment_evidence()` 现在会读取 failureReview evidence 中的前台干扰证据，避免 normalized item 丢失这类证据后无法进入 `_agent_original_rerun_eligible()`。
+- `_agent_repair_navigation_signature()` 将 `aiScroll` 纳入路径签名；新增或替换有界横向滚动会被识别为真实路径探索，不再被 `navigation_claim_without_yaml_change` 误拒。
+- 保留原约束：普通裸超时、低置信猜测、单纯元素找不到仍不自动转环境；重复同方向横滑仍会被 `duplicate_horizontal_scroll_repair` 拦截；导航变更缺可信基线、首个导航缺 ready wait 等原门禁仍有效。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check
+```
+
+本轮只修改 Agent 失败归因 / 修复门禁与对应回归测试，不修改 Figma 解析、YAML scorer、Runner、Sonic Bridge 或历史 YAML。Codex 不 push，由用户手动 push / 部署后，应使用完全相同参数重新跑百度网盘 Agent；预期扫描修复草稿不再被 `aiScroll` 误拒，照片修复重跑若再次遇到 Sonic 安装页应按 ENV_ISSUE 原样重试。
+
 ### 2026-07-27 前端：Runner 当前任务不能用最近完成任务伪装成占用
 
 用户部署最新代码后复核线上状态：`/api/health` 正常，模型为 `qwen3.7-plus`；`/api/sonic/bridge-groovy` 已返回 `2026.07.26-qwen3.7-result-retry-v1`；`win-runner-01` 心跳版本同为 `2026.07.26-qwen3.7-result-retry-v1`，能力上报 `midscene_model_name=qwen3.7-plus / midscene_model_family=qwen3`，固定 OPPO `ecbfd645` 在线。

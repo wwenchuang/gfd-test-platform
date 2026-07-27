@@ -2666,8 +2666,28 @@ def _agent_text_has_concrete_environment_evidence(value):
         "安装失败", "设备离线", "设备断开", "设备未授权", "runner 离线", "runner 断开",
         "模型服务", "模型请求中止", "网关不可用", "网关超时", "网络不可达", "连接拒绝",
         "网络异常", "网络连接", "服务器响应问题", "业务页面未正常加载",
+        "sonic 应用的安装扫描界面", "当前页面显示的是 sonic 应用", "sonic 应用",
+        "安装扫描界面", "安装操作按钮", "版本号、文件大小、来源提示",
+        "不属于被测 app", "非被测 app", "被测 app 已离开前台", "package installer",
     )
     return any(term in text for term in concrete_terms)
+
+
+def _agent_text_has_foreground_environment_evidence(value):
+    """Detect cases where Runner/tooling or system UI stole focus from the tested app."""
+    text = str(value or "").lower()
+    owner_terms = (
+        "sonic 应用", "sonic app", "不属于被测 app", "非被测 app",
+        "被测 app 已离开前台", "package installer",
+    )
+    install_ui_terms = (
+        "安装扫描界面", "安装操作按钮", "版本号、文件大小、来源提示",
+        "install button", "package installer",
+    )
+    return (
+        any(term in text for term in owner_terms)
+        and any(term in text for term in install_ui_terms)
+    )
 
 
 def _agent_failure_review_has_concrete_environment_evidence(review):
@@ -2685,8 +2705,13 @@ def _agent_failure_review_has_concrete_environment_evidence(review):
 def _agent_failed_item_has_concrete_environment_evidence(item):
     if not isinstance(item, dict):
         return False
-    if _agent_failure_review_has_concrete_environment_evidence(item.get("failureReview") or item.get("failure_review") or {}):
+    review = item.get("failureReview") or item.get("failure_review") or {}
+    if _agent_failure_review_has_concrete_environment_evidence(review):
         return True
+    if isinstance(review, dict):
+        review_text = json.dumps(review, ensure_ascii=False)
+        if _agent_text_has_foreground_environment_evidence(review_text):
+            return True
     raw = "\n".join(str(item.get(key) or "") for key in (
         "error", "failureReason", "stdoutTail", "stdout_tail", "stderrTail", "stderr_tail", "summaryText", "summary_text",
     ))
@@ -11690,6 +11715,8 @@ def _normalize_failed_execution_item(item, fallback=None):
         failure_type = review_failure_type
     elif trusted_review_type == "ENV_ISSUE" and _agent_failure_review_has_concrete_environment_evidence(failure_review):
         failure_type = review_failure_type
+    elif _agent_text_has_foreground_environment_evidence(json.dumps(failure_review, ensure_ascii=False)):
+        failure_type = "ENV_ISSUE"
     elif failure_type in ("", "UNKNOWN") and trusted_review_type and trusted_review_type != "ENV_ISSUE":
         failure_type = trusted_review_type
     if failure_type in ("", "UNKNOWN"):
@@ -12507,7 +12534,7 @@ def _agent_repair_navigation_signature(yaml_text):
     except Exception:
         return None
     signature = []
-    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct"}
+    navigation_actions = {"aiTap", "tap", "ai", "aiAction", "aiAct", "aiScroll"}
     for task in tasks:
         if not isinstance(task, dict):
             continue
@@ -13219,7 +13246,7 @@ def _agent_repair_candidate_gate(
     if fixed_yaml and navigation_claimed and not navigation_changed:
         add_issue(
             "navigation_claim_without_yaml_change",
-            "changes/analysis 声称修正导航，但 YAML 的 aiTap/ai/aiAction/aiAct 路径没有变化",
+            "changes/analysis 声称修正导航，但 YAML 的 aiTap/ai/aiAction/aiAct/aiScroll 路径没有变化",
         )
     if (
         fixed_yaml
