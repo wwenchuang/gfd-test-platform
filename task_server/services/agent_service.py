@@ -4232,6 +4232,52 @@ def _agent_plan_flow_out_of_source_scope(flow, matched_branch, constraint_flows,
     return any(term in flow_text for term in _AGENT_PHOTO_SUBSPEC_TERMS)
 
 
+def _agent_recover_missing_source_contract_flows(flows, required_flows):
+    """Append source-contract branches that AI omitted without fabricating a full plan."""
+    if not flows or not required_flows:
+        return [], []
+    combined = _normalize_business_flow_text(json.dumps(flows, ensure_ascii=False))
+    recovered = []
+    recovery_notes = []
+    existing_ids = {str(item.get("id") or "") for item in flows if isinstance(item, dict)}
+    next_index = len(flows) + 1
+    for required in required_flows:
+        if not isinstance(required, dict):
+            continue
+        branch = str(required.get("branch") or required.get("name") or "").strip()
+        if not branch or _agent_plan_branch_present(branch, combined):
+            continue
+        steps = _agent_plan_text_list(required.get("steps"), limit=10)
+        checks = _agent_plan_text_list(required.get("checks"), limit=8)
+        if not steps or not checks:
+            continue
+        flow_id = str(required.get("id") or f"FLOW-{next_index:03d}")[:40]
+        while flow_id in existing_ids:
+            next_index += 1
+            flow_id = f"FLOW-{next_index:03d}"
+        existing_ids.add(flow_id)
+        recovered_flow = {
+            "id": flow_id,
+            "name": str(required.get("name") or f"{branch}业务验收")[:100],
+            "branch": branch[:80],
+            "branchSource": "source_requirement_contract",
+            "contractBranchRecovery": True,
+            "preconditions": _agent_plan_text_list(required.get("preconditions"), limit=6),
+            "steps": steps,
+            "checks": checks,
+            "requirementRefs": [str(required.get("id") or branch)[:80]],
+            "evidence": ["source_requirement_contract", "ai_plan_branch_gap_recovery"],
+        }
+        recovered.append(recovered_flow)
+        recovery_notes.append({
+            "id": recovered_flow["id"],
+            "branch": branch,
+            "reason": "ai_omitted_explicit_source_branch",
+        })
+        combined = _normalize_business_flow_text(json.dumps(flows + recovered, ensure_ascii=False))
+    return recovered, recovery_notes
+
+
 def _agent_generated_yaml_ref_out_of_source_scope(run, ref, content=""):
     if not _agent_yaml_ref_is_generated(run, ref):
         return False
@@ -4312,6 +4358,13 @@ def _normalize_agent_business_plan(value, run, constraint):
     if not flows:
         issues.append("AI 计划没有业务分支")
 
+    recovered_flows, recovered_notes = _agent_recover_missing_source_contract_flows(
+        flows,
+        required_flows if source_contract else [],
+    )
+    if recovered_flows:
+        flows.extend(recovered_flows)
+
     combined = _normalize_business_flow_text(json.dumps(flows, ensure_ascii=False))
     missing_branches = []
     for item in required_flows:
@@ -4339,6 +4392,8 @@ def _normalize_agent_business_plan(value, run, constraint):
     }
     if dropped_out_of_scope:
         plan["droppedOutOfScopeFlows"] = dropped_out_of_scope
+    if recovered_notes:
+        plan["recoveredSourceContractFlows"] = recovered_notes
     return plan, []
 
 

@@ -3735,6 +3735,34 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             and "一寸照规格页" not in json.dumps(photo_aggregate_plan.get("businessFlows"), ensure_ascii=False),
             "Photo aggregate-page source branch must be retained while explicit photo spec-page branches are dropped",
         )
+        missing_photo_plan, missing_photo_issues = agent_service._normalize_agent_business_plan({
+            "objective": "基础打印新增百度网盘入口",
+            "businessFlows": [
+                {
+                    "id": "FLOW-001",
+                    "name": "文档打印百度网盘入口校验",
+                    "branch": "文档打印",
+                    "steps": ["首页", "点击文档打印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-003",
+                    "name": "扫描复印百度网盘入口校验",
+                    "branch": "扫描复印",
+                    "steps": ["首页", "点击扫描复印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+            ],
+        }, live_plan_run, candidate_constraint)
+        missing_photo_text = json.dumps(missing_photo_plan, ensure_ascii=False)
+        require(
+            missing_photo_plan
+            and not missing_photo_issues
+            and [item.get("branch") for item in missing_photo_plan.get("businessFlows") or []] == ["文档打印", "扫描复印", "照片打印"]
+            and "照片打印-百度网盘入口验收" in missing_photo_text
+            and "contractBranchRecovery" in missing_photo_text,
+            "If AI omits one explicit source branch, PLAN must recover the missing hard branch from the source contract instead of failing",
+        )
         blocked_spec_ref = agent_service._score_agent_yaml_ref_for_execution(live_plan_run, {
             "module": "AI_Agent_草稿",
             "file": "06-照片打印-一寸照规格页-百度网盘入口可见性校验.yaml",

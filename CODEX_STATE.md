@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 部署后复核：PLAN 仍可能删掉照片主分支，需从源需求合同补回硬分支
+
+用户部署后重新发起同一百度网盘 Agent。线上健康：Task 服务模型 `qwen3.7-plus`，Sonic Bridge 与 Windows Runner 均为 `2026.07.26-qwen3.7-result-retry-v1`，Runner 能力为 `midscene_model_name=qwen3.7-plus / midscene_model_family=qwen3`，固定 OPPO PHM110 `ecbfd645` ready；没有向第二台手机下发任务。
+
+新一轮 `agent-1785230004526-3a0655b3` 终态为 `FAILED / PLAN / 10%`，未创建 Runner job。PREPARE_SOURCE 已解析 Figma `4 页 / 4 图`，PLAN 内部两轮共 8 批视觉校准均真实执行，但最终失败为 `AI 业务规划失败：缺少需求业务分支：照片打印`。线上证据显示 `requirementCandidates` 中明明包含 `文档打印 / 照片打印 / 扫描复印` 三个分支，每个分支也带展示、同级、文案、可达四项验收。
+
+根因：
+
+- `_normalize_agent_business_plan()` 会丢弃 AI 输出中不属于源合同的软参考分支，但当 AI 输出漏掉某个显式源需求分支时，只记录 `缺少需求业务分支` 并让 PLAN 失败。
+- 对“首页三入口”这类硬合同需求，AI 可以补语义和路径，但不能删除源需求明确列出的业务入口；平台应补回缺失的源合同分支，再由后续 YAML 生成和覆盖门禁继续校验，而不是停在 PLAN。
+- 本次还观察到 PLAN 在同一步内重复执行两轮 Figma 视觉校准（共 8 批），说明视觉结果复用仍有耗时优化空间，但不是本轮失败的直接原因。
+
+修复：
+
+- 新增 `_agent_recover_missing_source_contract_flows()`：当 AI 已产出至少一个合法源分支、但遗漏其他显式源需求分支时，从 `requirementCoverageCandidates.businessFlows` 补回缺失分支。
+- 补回分支保留源合同的 steps/checks，标记 `contractBranchRecovery=True`、`branchSource=source_requirement_contract`，并记录 `recoveredSourceContractFlows`，后续报告可审计。
+- 如果 AI 完全没有业务分支，仍失败；不允许规则兜底冒充 AI 计划。
+- 新增回归测试：AI 只返回文档打印和扫描复印时，PLAN 必须补回照片打印硬分支，而不是报缺照片打印。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py
+```
+
+本轮只修改 `task_server/services/agent_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`；Codex 不 push。用户部署后应同参重新跑百度网盘 Agent，预期不再出现 `PLAN / 缺少需求业务分支：照片打印`。若进入 Runner 后仍失败，再按实际 YAML/报告分类处理，不要把 PLAN 问题和手机执行问题混在一起。
+
 ### 2026-07-28 e109573 部署后三轮复核：过滤过严误伤照片主分支，Runner gate 必须拦截规格页 YAML
 
 用户部署 `e109573` 后要求继续监控同一百度网盘需求。线上健康：Task 服务模型 `qwen3.7-plus`，AI Gateway 正常；Windows Runner / Sonic Bridge 均为 `2026.07.26-qwen3.7-result-retry-v1`；固定 OPPO PHM110 `ecbfd645` 在线，`com.xbxxhz.box` 版本 `4.45.0`，未向第二台手机下发百度网盘 Agent。
