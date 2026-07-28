@@ -28,6 +28,39 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 脑图-only 任务：生成用例结构阶段必须有界降级，不能等外层 1800 秒超时
+
+用户反馈任务「设备页、消息推送、打印设置优化需求文档」总是超时。线上 job 为 `gen_1785202398808_00029`，类型 `mindmap_only`，输入包含 2 个文件且带 Figma；终态为 `timeout / 50%`，最后阶段停在「生成用例结构」，耗时约 1800 秒后才由后台过期逻辑标记超时。该问题与百度网盘 RUNNER_JOB、Windows Runner、Sonic、ADB 或手机占用无关。
+
+根因：
+
+- `generate_mindmap_from_request()` 的结构生成阶段没有独立超时边界，外层只在读取/轮询 job 时被动执行 `expire_generate_job_if_stale()`。
+- 非 Agent 强制 AI 规划的 `mindmap_only` 路径中，skill pipeline 失败后会再进入 legacy `call_dashscope_cases()`，可能触发第二段长模型生成，用户只能看到 50% 阶段长时间不动。
+- 视觉 refinement 在结构阶段已经超时后仍可能继续消耗模型预算，导致后台任务更容易拖到总超时。
+
+修复：
+
+- 新增 `_mindmap_generate_structure_payload()`，把脑图结构生成阶段包进有界执行，默认 `MINDMAP_STRUCTURE_TIMEOUT_SECONDS=min(600, MINDMAP_JOB_TIMEOUT_SECONDS)` 且不低于 120 秒，可通过环境变量调整。
+- skill pipeline 或 legacy 结构生成超时/失败后，普通 `mindmap_only` 任务直接走本地需求解析和场景降级，不再启动第二次 legacy 大模型生成。
+- 若任务明确要求 Agent 核心 AI 规划，仍返回 `core_ai_failure`，避免把 AI 失败伪装成成功。
+- 降级结构会在 review 中标记 `mindmap_structure_fallback=true`、记录原因，并跳过后续视觉模型 refinement，避免继续拖慢。
+- 新增静态回归测试，确保 `mindmap_only` 在结构生成超时时不会再次调用 `call_dashscope_cases()`，并能返回可审阅的降级 cases。
+
+验证：
+
+```bash
+python3 -m py_compile task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_ai_skill_timeout_fallbacks_are_requirement_scoped()
+PY
+git diff --check -- task_server/services/yaml_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍需复核当前工作区其他历史改动对静态检查的影响；本轮只修改脑图生成服务、对应静态测试和状态文档。Codex 不 push，由用户手动 push / 部署。旧的 `gen_1785202398808_00029` 已超时不能恢复，部署后应从页面点「重试」重新生成。
+
+完整检查结果：`python3 tests/backend_static_checks.py` 仍失败于既有历史 YAML 断言 `OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`，本轮定向检查和语法检查均通过。
+
 ### 2026-07-28 百度网盘五轮稳定性回归：源页 copy/relation 合同需确定性保序补入
 
 用户要求同一百度网盘需求再执行 5 次，固定参数仍为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / singleDeviceOnly / qwen3.7-plus / com.xbxxhz.box`。五轮结果：

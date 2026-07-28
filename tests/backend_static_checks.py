@@ -12288,6 +12288,40 @@ def check_ai_skill_timeout_fallbacks_are_requirement_scoped():
     for forbidden in ["历史", "备份", "引导", "Frame", "节点"]:
         require(forbidden not in scenario_titles, f"Fallback scenarios must not use Figma/internal wording: {forbidden}")
 
+    original_build_mindmap = yaml_service.build_cases_payload_from_skills
+    original_legacy_mindmap = yaml_service.call_dashscope_cases
+    try:
+        def mindmap_structure_timeout(*_args, **_kwargs):
+            raise TimeoutError("scenario_designer timeout")
+
+        def forbidden_legacy_retry(*_args, **_kwargs):
+            raise AssertionError("mindmap-only timeout must not start a second legacy model generation")
+
+        yaml_service.build_cases_payload_from_skills = mindmap_structure_timeout
+        yaml_service.call_dashscope_cases = forbidden_legacy_retry
+        mindmap_fallback = yaml_service._mindmap_generate_structure_payload(
+            "设备页、消息推送、打印设置优化需求文档",
+            "AI测试",
+            ["设备页优化\n消息推送优化\n打印设置优化"],
+            mindmap_mode="full",
+            model_config={"providerId": "qwen_plus", "model": "qwen3.7-plus"},
+            app_package="com.xbxxhz.box",
+            app_name="小白学习打印",
+            require_ai_planning=False,
+            requirement_contract={},
+            job_id="",
+        )
+    finally:
+        yaml_service.build_cases_payload_from_skills = original_build_mindmap
+        yaml_service.call_dashscope_cases = original_legacy_mindmap
+    mindmap_fallback_review = mindmap_fallback.get("review") or {}
+    require(
+        mindmap_fallback_review.get("mindmap_structure_fallback") is True
+        and mindmap_fallback_review.get("visual_refine_skipped")
+        and mindmap_fallback.get("cases"),
+        "Mindmap-only structure timeout must become a local reviewable fallback instead of retrying another long model generation and expiring at 1800s",
+    )
+
     filtered = ai_skill_service._fallback_automation_filter_from_scenarios(
         "基础打印模块增加百度网盘入口",
         "基础打印",

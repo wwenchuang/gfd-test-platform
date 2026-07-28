@@ -51,6 +51,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import difflib
 import base64
 import copy
@@ -224,6 +225,9 @@ automatic_baseline_repair_enabled = _lazy("automatic_baseline_repair_enabled", "
 build_cases_payload_from_skills = _lazy("build_cases_payload_from_skills", "task_server.services.ai_skill_service")
 should_fast_path_baidu_entry_visibility = _lazy("should_fast_path_baidu_entry_visibility", "task_server.services.ai_skill_service")
 call_dashscope_cases = _lazy("call_dashscope_cases", "task_server.services.ai_skill_service")
+fallback_requirement_analysis = _lazy("_fallback_requirement_analysis", "task_server.services.ai_skill_service")
+fallback_scenarios_from_analysis = _lazy("_fallback_scenarios_from_analysis", "task_server.services.ai_skill_service")
+fallback_automation_filter_from_scenarios = _lazy("_fallback_automation_filter_from_scenarios", "task_server.services.ai_skill_service")
 call_dashscope_refine_cases = _lazy("call_dashscope_refine_cases", "task_server.services.ai_skill_service")
 ai_gateway_skill_content = _lazy("ai_gateway_skill_content", "task_server.services.ai_skill_service")
 dashscope_chat_content = _lazy("dashscope_chat_content", "task_server.services.ai_skill_service")
@@ -329,6 +333,7 @@ GENERATE_JOB_TERMINAL_STATUSES = {"success", "failed", "cancelled", "timeout"}
 GENERATE_JOB_TIMEOUT_SECONDS = max(300, env_int("MIDSCENE_GENERATE_JOB_TIMEOUT_SECONDS", JOB_TIMEOUT_SECONDS))
 AGENT_GENERATE_YAML_TIMEOUT_SECONDS = max(300, env_int("MIDSCENE_AGENT_GENERATE_YAML_TIMEOUT_SECONDS", 900))
 MINDMAP_JOB_TIMEOUT_SECONDS = max(300, env_int("MIDSCENE_MINDMAP_JOB_TIMEOUT_SECONDS", min(JOB_TIMEOUT_SECONDS, GENERATE_JOB_TIMEOUT_SECONDS)))
+MINDMAP_STRUCTURE_TIMEOUT_SECONDS = max(120, env_int("MIDSCENE_MINDMAP_STRUCTURE_TIMEOUT_SECONDS", min(600, MINDMAP_JOB_TIMEOUT_SECONDS)))
 FIGMA_PARSE_JOB_TIMEOUT_SECONDS = max(120, env_int("MIDSCENE_FIGMA_PARSE_JOB_TIMEOUT_SECONDS", min(900, GENERATE_JOB_TIMEOUT_SECONDS)))
 
 
@@ -9491,6 +9496,151 @@ def generation_failure_detail(error, job=None):
     }
 
 
+def _mindmap_run_structure_builder(builder, timeout_seconds=None):
+    timeout_seconds = max(
+        30,
+        safe_int(timeout_seconds or MINDMAP_STRUCTURE_TIMEOUT_SECONDS, MINDMAP_STRUCTURE_TIMEOUT_SECONDS),
+    )
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(builder)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError as exc:
+        future.cancel()
+        raise TimeoutError(f"脑图结构生成超过 {timeout_seconds}s 未返回") from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _mindmap_core_ai_failure_payload(title, module, error, stage="skill_pipeline"):
+    return {
+        "title": title,
+        "module": module,
+        "analysis": {},
+        "scenarios": [],
+        "cases": [],
+        "manual_cases": [],
+        "review": {
+            "skill_pipeline": "requirement_analyzer.v1",
+            "skill_pipeline_error": str(error),
+            "core_ai_failure": {
+                "stage": stage,
+                "reason": str(error)[:500],
+            },
+            "downstream_skipped": [
+                "scenario_designer", "automation_filter", "smoke_selector", "visual_grounder"
+            ],
+        },
+    }
+
+
+def _mindmap_local_structure_fallback_payload(
+    title,
+    module,
+    text_assets,
+    *,
+    mindmap_mode="full",
+    app_package="",
+    app_name="",
+    error="",
+):
+    analysis = fallback_requirement_analysis(title, module, text_assets, error=str(error))
+    targets = generation_volume_targets(analysis, mode="mindmap")
+    scenarios = fallback_scenarios_from_analysis(
+        title,
+        module,
+        analysis,
+        targets=targets,
+        error=str(error),
+    )
+    filtered = fallback_automation_filter_from_scenarios(
+        title,
+        module,
+        analysis,
+        scenarios,
+        targets=targets,
+        error=str(error),
+        app_package=app_package,
+        app_name=app_name,
+    )
+    payload = normalize_cases_payload({
+        "title": title,
+        "module": module,
+        "analysis": analysis,
+        "scenarios": scenarios,
+        "cases": filtered.get("cases") or [],
+        "manual_cases": filtered.get("manual_cases") or [],
+        "review": filtered.get("review") or {},
+    })
+    review = payload.setdefault("review", {})
+    review["mindmap_structure_fallback"] = True
+    review["mindmap_structure_fallback_reason"] = str(error)[:500]
+    review["mindmap_mode"] = mindmap_mode
+    review["skill_pipeline"] = "local_mindmap_structure_fallback"
+    review["visual_refine_skipped"] = (
+        "结构生成已超时并切换为本地降级脑图；为避免继续消耗模型预算，本轮跳过视觉校准。"
+    )
+    return payload
+
+
+def _mindmap_generate_structure_payload(
+    title,
+    module,
+    stage1_text_assets,
+    *,
+    mindmap_mode="full",
+    model_config=None,
+    app_package="",
+    app_name="",
+    require_ai_planning=False,
+    requirement_contract=None,
+    job_id=None,
+):
+    def build_with_skills():
+        return build_cases_payload_from_skills(
+            title,
+            module,
+            stage1_text_assets,
+            mode="mindmap",
+            model_config=model_config,
+            app_package=app_package,
+            app_name=app_name,
+            allow_entry_visibility_fast_path=not require_ai_planning,
+            require_ai_core=require_ai_planning,
+            requirement_contract=requirement_contract or {},
+        )
+
+    try:
+        if USE_AI_SKILL_PIPELINE:
+            return _mindmap_run_structure_builder(build_with_skills)
+        return _mindmap_run_structure_builder(lambda: call_dashscope_cases(
+            title,
+            module,
+            stage1_text_assets,
+            [],
+            model_config=model_config,
+        ))
+    except Exception as exc:
+        if job_id:
+            update_generate_job(
+                job_id,
+                progress=55,
+                step="生成用例结构降级",
+                message=f"脑图结构生成未在预算内完成，已切换本地降级：{str(exc)[:120]}",
+            )
+        if require_ai_planning:
+            return _mindmap_core_ai_failure_payload(title, module, exc)
+        return _mindmap_local_structure_fallback_payload(
+            title,
+            module,
+            stage1_text_assets,
+            mindmap_mode=mindmap_mode,
+            app_package=app_package,
+            app_name=app_name,
+            error=exc,
+        )
+
+
 
 def generate_mindmap_from_request(d, job_id=None):
     title = d.get("title") or "测试用例脑图"
@@ -9645,58 +9795,18 @@ def generate_mindmap_from_request(d, job_id=None):
             stage1_text_assets = list(stage1_text_assets) + [yaml_reference_text]
     if job_id:
         update_generate_job(job_id, progress=50, step="生成用例结构", message="正在生成场景、用例、边界和人工待准备事项")
-    if USE_AI_SKILL_PIPELINE:
-        try:
-            payload = build_cases_payload_from_skills(
-                title,
-                module,
-                stage1_text_assets,
-                mode="mindmap",
-                model_config=model_config,
-                app_package=app_package,
-                app_name=d.get("appName") or d.get("app_name") or "",
-                allow_entry_visibility_fast_path=not require_ai_planning,
-                require_ai_core=require_ai_planning,
-                requirement_contract=requirement_contract,
-            )
-        except Exception as e:
-            if require_ai_planning:
-                payload = {
-                    "title": title,
-                    "module": module,
-                    "analysis": {},
-                    "scenarios": [],
-                    "cases": [],
-                    "manual_cases": [],
-                    "review": {
-                        "skill_pipeline": "requirement_analyzer.v1",
-                        "skill_pipeline_error": str(e),
-                        "core_ai_failure": {
-                            "stage": "skill_pipeline",
-                            "reason": str(e)[:500],
-                        },
-                        "downstream_skipped": [
-                            "scenario_designer", "automation_filter", "smoke_selector", "visual_grounder"
-                        ],
-                    },
-                }
-            else:
-                payload = call_dashscope_cases(
-                    title,
-                    module,
-                    stage1_text_assets,
-                    [],
-                    model_config=model_config,
-                )
-                payload.setdefault("review", {})["skill_pipeline_error"] = str(e)
-    else:
-        payload = call_dashscope_cases(
-            title,
-            module,
-            stage1_text_assets,
-            [],
-            model_config=model_config,
-        )
+    payload = _mindmap_generate_structure_payload(
+        title,
+        module,
+        stage1_text_assets,
+        mindmap_mode=mindmap_mode,
+        model_config=model_config,
+        app_package=app_package,
+        app_name=d.get("appName") or d.get("app_name") or "",
+        require_ai_planning=require_ai_planning,
+        requirement_contract=requirement_contract,
+        job_id=job_id,
+    )
 
     review = payload.setdefault("review", {})
     review["mindmap_only"] = True
@@ -9748,6 +9858,11 @@ def generate_mindmap_from_request(d, job_id=None):
         review["visual_refine_skipped"] = (
             f"核心 AI 阶段 {core_ai_failure.get('stage') or 'unknown'} 未成功，"
             "本次尝试立即结束并交给 Agent 有界重试，不再调用视觉模型。"
+        )
+    elif review.get("mindmap_structure_fallback"):
+        review["visual_refine_skipped"] = (
+            review.get("visual_refine_skipped")
+            or "脑图结构已使用本地降级结果，本轮跳过视觉模型以避免后台任务再次超时。"
         )
     elif visual_text_assets or mindmap_visual_image_assets:
         if job_id:
