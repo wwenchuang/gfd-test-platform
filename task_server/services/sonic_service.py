@@ -3874,6 +3874,26 @@ def sonic_suite_key_for_job(job: dict, state: dict, now_ts: int) -> str:
             and (not last_ts or now_ts - last_ts <= sonic_suite_reopen_seconds())
         ):
             return active_key
+    natural = sonic_suite_natural_key(job)
+    candidates = []
+    for key, suite in (state.get("suites") or {}).items():
+        if not str(key).startswith("sonic_result_"):
+            continue
+        if suite.get("sent_at") and not suite.get("send_error"):
+            continue
+        if suite.get("completion_final_sent"):
+            continue
+        if suite.get("natural_key") and suite.get("natural_key") != natural:
+            continue
+        last_ts = _safe_int(suite.get("last_update_ts") or suite.get("created_ts"), 0)
+        if last_ts and now_ts - last_ts > sonic_suite_reopen_seconds():
+            continue
+        candidates.append((last_ts, key))
+    if candidates:
+        candidates.sort(reverse=True)
+        suite_key = candidates[0][1]
+        state.setdefault("active", {})[natural] = suite_key
+        return suite_key
     suite_key = unique_millis_id("sonic_suite")
     state.setdefault("active", {})[natural] = suite_key
     return suite_key

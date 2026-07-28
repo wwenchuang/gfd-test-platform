@@ -2172,6 +2172,35 @@ def test_completed_suite_is_not_reopened_by_later_run():
     assert midscene.sonic_suite_key_for_job(job, state, 1001) != "old-suite"
 
 
+def test_result_key_suite_is_reused_when_active_mapping_is_missing():
+    job = {
+        "source": "sonic",
+        "app_package": "com.kfb.model",
+        "sonic_suite_id": "8",
+        "sonic_suite_name": "3D测试自动",
+        "runner_id": "sonic",
+        "device_id": "UQG0220513008845",
+        "run_mode": "baseline",
+    }
+    natural_key = sonic_service.sonic_suite_natural_key(job)
+    state = {
+        "active": {},
+        "suites": {
+            "sonic_result_3_1217": {
+                "suite_key": "sonic_result_3_1217",
+                "natural_key": natural_key,
+                "created_ts": 1785233862,
+                "last_update_ts": 1785234647,
+                "results": [{"target_task_name": "模型导入-本地导入", "status": "success"}],
+                "notification_mode": "suite_completion",
+            }
+        },
+    }
+    suite_key = sonic_service.sonic_suite_key_for_job(job, state, 1785234729)
+    assert suite_key == "sonic_result_3_1217"
+    assert state["active"][natural_key] == "sonic_result_3_1217"
+
+
 def test_sync_case_adds_managed_case_to_bound_suite():
     calls = []
     original_request = midscene.sonic_request
