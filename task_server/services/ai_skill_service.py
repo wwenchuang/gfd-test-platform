@@ -7045,6 +7045,29 @@ def _safe_preserve_evidence(evidence, check, requirement_refs):
     }, check)
 
 
+def _synthesize_preserve_evidence_from_contract(check, requirement_refs):
+    check = check if isinstance(check, dict) else {}
+    kind = str(check.get("kind") or "").strip().lower()
+    if kind not in ("visibility", "relation", "copy"):
+        return ""
+    target = next((
+        str(item or "").strip()
+        for item in _acceptance_target_terms(check.get("text"))
+        if str(item or "").strip()
+    ), "")
+    if not target:
+        return ""
+    if kind == "copy":
+        evidence = f"校验「{target}」入口可见且文案为「{target}」"
+    elif kind == "relation":
+        evidence = f"校验「{target}」入口与当前页面同级入口并列展示"
+    else:
+        evidence = f"校验「{target}」入口可见"
+    if _safe_preserve_evidence(evidence, check, requirement_refs):
+        return evidence
+    return ""
+
+
 def _preserve_source_page_window(flow, target_click_index):
     prior_navigation_indexes = [
         index for index, step in enumerate(flow[:target_click_index])
@@ -7155,11 +7178,27 @@ def _merge_preserve_contract_into_flow(flow, requirement_refs, contract):
         ):
             covered_check_ids.append(check_id)
             continue
+        candidate_evidence = normalize_text_list(contract.get("candidateEvidence"))
         evidence = next((
             str(item or "").strip()
-            for item in (contract.get("candidateEvidence") or [])
+            for item in candidate_evidence
             if _safe_preserve_evidence(item, check, requirement_refs)
         ), "")
+        if not evidence:
+            target_evidence_is_unsafe = any(
+                any(
+                    str(target or "").strip()
+                    and str(target or "").strip() in str(item or "")
+                    for target in targets
+                )
+                and _preserve_evidence_is_intrinsically_unsafe(item)
+                for item in candidate_evidence
+            )
+            if not target_evidence_is_unsafe:
+                evidence = _synthesize_preserve_evidence_from_contract(
+                    check,
+                    requirement_refs,
+                )
         if not evidence or len(merged_flow) >= 8:
             missing_check_ids.append(check_id)
             continue

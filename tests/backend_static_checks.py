@@ -781,6 +781,50 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         }, copy_check),
         "An icon-only assertion must not be misreported as target-copy coverage",
     )
+    synthesized_preserve_flow, synthesized_preserve_trace = ai_skill_service._merge_preserve_contract_into_flow(
+        [
+            "等待 App 首页加载完成",
+            "点击「文档打印」入口",
+            "等待文档打印页面加载完成",
+            "点击「百度网盘」入口",
+            "等待进入百度网盘落地页页面区域或可识别提示页，未白屏、未崩溃",
+        ],
+        [
+            "REQ-001 文档打印：校验百度网盘入口可见；校验百度网盘入口与当前页面同级入口的层级和位置关系；校验百度网盘入口使用需求约定的可见文案；点击百度网盘入口并校验目标页面稳定可达",
+        ],
+        {
+            "requiredAcceptanceChecks": [
+                {
+                    "id": "REQ-001-CHECK-02",
+                    "requirementId": "REQ-001",
+                    "branch": "文档打印",
+                    "kind": "relation",
+                    "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                    "contractRoles": ["preserve"],
+                },
+                {
+                    "id": "REQ-001-CHECK-03",
+                    "requirementId": "REQ-001",
+                    "branch": "文档打印",
+                    "kind": "copy",
+                    "text": "校验百度网盘入口使用需求约定的可见文案",
+                    "contractRoles": ["preserve"],
+                },
+            ],
+            "candidateEvidence": [],
+        },
+    )
+    require(
+        synthesized_preserve_trace.get("covered_check_ids") == [
+            "REQ-001-CHECK-02",
+            "REQ-001-CHECK-03",
+        ]
+        and synthesized_preserve_trace.get("missing_check_ids") == []
+        and synthesized_preserve_flow.index("点击「百度网盘」入口") > 2
+        and any("文案为「百度网盘」" in step for step in synthesized_preserve_flow)
+        and any("同级入口并列展示" in step for step in synthesized_preserve_flow),
+        "When AI keeps a trusted source-page navigation but omits source copy/relation text, the platform must synthesize deterministic visible-text preserve checks before the target click",
+    )
     coupon_visibility_check = next(
         item for item in generic_acceptance_checks
         if item.get("requirementId") == "REQ-002" and item.get("kind") == "visibility"
@@ -5042,12 +5086,8 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         }],
     )
     require(
-        len(preserved_contract_feedback) == 1
-        and preserved_contract_feedback[0].get("missingPreservedCheckIds") == ["REQ-002-CHECK-02"]
-        and [
-            item.get("id") for item in preserved_contract_feedback[0].get("missingChecks") or []
-        ] == ["REQ-002-CHECK-02"],
-        "A convergence rewrite that closes a new gap but drops prior coverage must receive candidate-local semantic feedback before atomic portfolio application",
+        preserved_contract_feedback == [],
+        "A convergence rewrite with a deterministic visible-text preserve contract should be locally repairable instead of spending another semantic retry",
     )
     atomic_reachability_check = {
         "id": "REQ-002-CHECK-04",

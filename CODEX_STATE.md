@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 百度网盘五轮稳定性回归：源页 copy/relation 合同需确定性保序补入
+
+用户要求同一百度网盘需求再执行 5 次，固定参数仍为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / singleDeviceOnly / qwen3.7-plus / com.xbxxhz.box`。五轮结果：
+
+- `agent-1785202795460-a24697bd`：`FAILED / GENERATE_YAML / 30%`，缺 `REQ-003` 扫描复印 relation/copy，未创建 Runner job。
+- `agent-1785203147506-8d8238d4`：`FAILED / GENERATE_YAML / 30%`，已生成 4 条 executable YAML 且静态/scorer 通过，但最终覆盖门禁缺 `REQ-001` 文档 copy、`REQ-002` 照片 copy，未创建 Runner job。
+- `agent-1785203635283-09eaa995`：`DONE / DONE / 100%`，Runner 实际执行 5 条，`logicalPassed=5 / logicalFailed=0`，报告 5 条均 success。
+- `agent-1785204691502-c75795fa`：`FAILED / GENERATE_YAML / 30%`，缺 `REQ-001` 文档 relation，未创建 Runner job。
+- `agent-1785205041011-2a37a40d`：`FAILED / GENERATE_YAML / 30%`，缺文档/照片 reachability 和扫描 relation，未创建 Runner job。
+
+五轮均只绑定固定 OPPO `ecbfd645`，没有选择第二台设备。聚合结果为 `1/5` 通过；失败均发生在生成覆盖门禁，说明 Runner、Sonic、ADB 和手机不是本轮主因，门禁阻断不完整 YAML 是正确行为。
+
+根因与修复：
+
+- 失败批次的最终流通常已经能导航到对应业务入口页并点击「百度网盘」，但模型会随机漏掉点击前的源页展示合同，尤其是 `copy` 文案维度，偶发 `relation` 维度。
+- 原 preserve 合同只能复用候选已有的正向断言；当 AI 候选没有显式写出“文案为目标文字”或“同级入口并列展示”时，平台只能把该 check 记为缺失并触发最终覆盖失败。
+- 现在 `_merge_preserve_contract_into_flow()` 在已有目标点击、已有 `requirementRefs`、且合同为 `visibility / relation / copy` 时，可从显式验收点目标文字生成确定性源页断言，并插入到目标点击前，例如 `校验「百度网盘」入口可见且文案为「百度网盘」`、`校验「百度网盘」入口与当前页面同级入口并列展示`。
+- 护栏保留：如果候选证据里已有目标相关的负向、条件、跳转后或英文异常描述，不会用平台合成的正向证据覆盖；不放宽 scorer、覆盖门禁、坐标、账号授权、Runner 或 Sonic 规则。
+
+验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+git diff --check -- task_server/services/ai_skill_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被用户历史 OBJ 保龄球 YAML 拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮只修改 `ai_skill_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`；Codex 不 push。用户部署后建议再用相同参数跑 5 次观察生成门禁稳定性。
+
 ### 2026-07-28 百度网盘三轮稳定性回归：生成收敛与来源页路径修复仍需本地兜底
 
 用户部署 `445e777` 后要求同一百度网盘需求连续跑三次，固定参数仍为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus / com.xbxxhz.box`。三轮线上结果：
