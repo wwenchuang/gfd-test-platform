@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 部署后复核：PLAN 已越过照片分支，YAML 生成仍缺三分支 relation
+
+用户部署 `77b0c03` 后重新发起同一百度网盘 Agent：`agent-1785231613446-2c416b58`。线上健康：Task 服务模型 `qwen3.7-plus`，Sonic Bridge / Windows Runner 均为 `2026.07.26-qwen3.7-result-retry-v1`，固定 OPPO PHM110 `ecbfd645` ready；未向第二台手机下发。
+
+结果：
+
+- `PREPARE_SOURCE` 成功解析 Figma `4 页 / 4 图`。
+- `PLAN` 成功通过，证明 `77b0c03` 已解决“缺少需求业务分支：照片打印”。PLAN 输出 4 条业务分支，其中照片规格、全局一致性、异常处理等 Figma/AI 软扩展被 `droppedOutOfScopeFlows` 丢弃。
+- 任务终态为 `FAILED / GENERATE_YAML / 30%`，未创建 Runner job。最终覆盖门禁缺三个分支的 `acceptance:relation`：
+  - 文档打印 relation
+  - 照片打印 relation
+  - 扫描复印 relation
+
+根因：
+
+- 生成侧已有显式 `preserveContractByCaseId` 时可以在目标点击前补 `visibility/relation/copy`，但初始 YAML 生成候选不一定带这个 preserve contract。
+- 三个候选已经有同分支导航、目标入口点击、可见/文案和点击后稳定终态；缺的只是源需求合同中的“同级关系”断言。
+- 终态 assertion 里含 `未白屏/未崩溃`，不能作为 source-page preserve 证据，否则会被安全规则误当作目标相关负向证据。
+
+修复：
+
+- 新增 `_source_requirement_preserve_contract()`：在非 convergence pass、候选当前就是 `executable`、且 `requirementRefs` 精确映射单个源需求时，从 `requirement_acceptance_checks` 自动构建 relation-only preserve contract。
+- 新增 `_merge_preserve_contracts()`：合并显式 preserve contract 与隐式 source relation contract，不覆盖模型/平台已有合同。
+- 隐式合同只取点击前源页断言步骤作为 candidateEvidence，不读取点击后的终态 assertions。
+- 隐式合同只补 `relation`，不碰 visibility/copy；bounded convergence、manual promotion 和已有显式 preserve 逻辑保持原行为。
+- 新增三分支矩阵回归测试：文档打印、照片打印、扫描复印三个 executable 候选均缺 relation 时，`apply_executable_yaml_plan_to_payload()` 必须在目标点击前合成 `同级入口并列展示`，最终 portfolio gate 通过。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/ai_skill_service.py tests/backend_static_checks.py
+```
+
+本轮只修改 `task_server/services/ai_skill_service.py`、`tests/backend_static_checks.py` 和 `CODEX_STATE.md`；Codex 不 push。用户部署后应同参再跑百度网盘 Agent，预期不再出现 `GENERATE_YAML / 三分支 relation 缺失`，若进入 Runner 后失败再按真实报告分类处理。
+
 ### 2026-07-28 部署后复核：PLAN 仍可能删掉照片主分支，需从源需求合同补回硬分支
 
 用户部署后重新发起同一百度网盘 Agent。线上健康：Task 服务模型 `qwen3.7-plus`，Sonic Bridge 与 Windows Runner 均为 `2026.07.26-qwen3.7-result-retry-v1`，Runner 能力为 `midscene_model_name=qwen3.7-plus / midscene_model_family=qwen3`，固定 OPPO PHM110 `ecbfd645` ready；没有向第二台手机下发任务。

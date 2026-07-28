@@ -7029,6 +7029,66 @@ def _preserve_acceptance_contract(candidate):
     }
 
 
+def _merge_preserve_contracts(*contracts):
+    checks_by_id = {}
+    evidence = []
+    for contract in contracts:
+        if not isinstance(contract, dict):
+            continue
+        for check in contract.get("requiredAcceptanceChecks") or []:
+            if not isinstance(check, dict):
+                continue
+            check_id = str(check.get("id") or "").strip()
+            if not check_id:
+                continue
+            merged_check = copy.deepcopy(check)
+            roles = normalize_text_list(merged_check.get("contractRoles"))
+            if "preserve" not in roles:
+                roles.append("preserve")
+            merged_check["contractRoles"] = roles
+            checks_by_id.setdefault(check_id, merged_check)
+        evidence.extend(normalize_text_list(contract.get("candidateEvidence")))
+    if not checks_by_id:
+        return {}
+    return {
+        "requiredAcceptanceChecks": list(checks_by_id.values()),
+        "candidateEvidence": list(dict.fromkeys(evidence)),
+    }
+
+
+def _source_requirement_preserve_contract(requirement_refs, acceptance_checks, case=None):
+    """Build deterministic source-page preserve checks from one mapped requirement."""
+    requirement_ids = set(_acceptance_requirement_ids(requirement_refs))
+    if len(requirement_ids) != 1:
+        return {}
+    requirement_id = next(iter(requirement_ids))
+    checks = []
+    for check in acceptance_checks or []:
+        if not isinstance(check, dict):
+            continue
+        if str(check.get("requirementId") or "").strip() != requirement_id:
+            continue
+        if str(check.get("kind") or "").strip().lower() != "relation":
+            continue
+        preserve_check = copy.deepcopy(check)
+        roles = normalize_text_list(preserve_check.get("contractRoles"))
+        if "preserve" not in roles:
+            roles.append("preserve")
+        preserve_check["contractRoles"] = roles
+        checks.append(preserve_check)
+    if not checks:
+        return {}
+    case = case if isinstance(case, dict) else {}
+    evidence = [
+        step for step in normalize_text_list(case.get("steps"))
+        if _PRESERVE_ASSERTION_PREFIX_RE.match(step)
+    ]
+    return {
+        "requiredAcceptanceChecks": checks,
+        "candidateEvidence": list(dict.fromkeys(evidence)),
+    }
+
+
 def _preserve_evidence_is_intrinsically_unsafe(evidence):
     text = str(evidence or "").strip()
     outside_labels = _PRESERVE_QUOTED_LABEL_RE.sub("", text)
@@ -8754,7 +8814,19 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         if data_observation_grounded:
             dynamic_data_observation_grounded_count += 1
         final_preserve_trace = {}
-        platform_preserve_contract = preserve_contract_by_case_id.get(case_id)
+        implicit_preserve_contract = (
+            _source_requirement_preserve_contract(
+                requirement_refs,
+                acceptance_checks,
+                case,
+            )
+            if current_level == "executable" and not convergence_pass
+            else {}
+        )
+        platform_preserve_contract = _merge_preserve_contracts(
+            preserve_contract_by_case_id.get(case_id),
+            implicit_preserve_contract,
+        )
         if level == "executable" and isinstance(platform_preserve_contract, dict):
             planned_flow, final_preserve_trace = _merge_preserve_contract_into_flow(
                 planned_flow,

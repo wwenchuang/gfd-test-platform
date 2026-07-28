@@ -872,6 +872,123 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and any("同级入口并列展示" in step for step in capped_preserve_flow),
         "Preserve synthesis must evict low-value waits when the planner already used the 8-step execution budget",
     )
+    baidu_matrix_points = []
+    baidu_matrix_checks = []
+    baidu_matrix_cases = []
+    baidu_matrix_plan_cases = []
+    for index, branch in enumerate(("文档打印", "照片打印", "扫描复印"), start=1):
+        requirement_id = f"REQ-{index:03d}"
+        requirement_point = (
+            f"{requirement_id} {branch}：校验百度网盘入口可见；"
+            "校验百度网盘入口与当前页面同级入口的层级和位置关系；"
+            "校验百度网盘入口使用需求约定的可见文案；"
+            "点击百度网盘入口并校验目标页面稳定可达"
+        )
+        baidu_matrix_points.append(requirement_point)
+        baidu_matrix_checks.extend([
+            {
+                "id": f"{requirement_id}-CHECK-01",
+                "requirementId": requirement_id,
+                "branch": branch,
+                "kind": "visibility",
+                "text": "校验百度网盘入口可见",
+            },
+            {
+                "id": f"{requirement_id}-CHECK-02",
+                "requirementId": requirement_id,
+                "branch": branch,
+                "kind": "relation",
+                "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+            },
+            {
+                "id": f"{requirement_id}-CHECK-03",
+                "requirementId": requirement_id,
+                "branch": branch,
+                "kind": "copy",
+                "text": "校验百度网盘入口使用需求约定的可见文案",
+            },
+            {
+                "id": f"{requirement_id}-CHECK-04",
+                "requirementId": requirement_id,
+                "branch": branch,
+                "kind": "reachability",
+                "text": "点击百度网盘入口并校验目标页面稳定可达",
+            },
+        ])
+        case_id = f"TC-MATRIX-{index:03d}"
+        flow_without_relation = [
+            "等待 App 首页稳定显示",
+            f"点击「{branch}」入口",
+            f"等待{branch}页面加载完成",
+            "等待并校验「百度网盘」入口可见且文案为「百度网盘」",
+            "点击「百度网盘」入口",
+            "等待百度网盘相关页面、授权页或文件列表稳定可见，未白屏、未崩溃",
+        ]
+        baidu_matrix_cases.append({
+            "case_id": case_id,
+            "title": f"{branch}百度网盘入口展示文案及可达性校验",
+            "coverage": requirement_point,
+            "requirementRefs": [requirement_point],
+            "executionLevel": "executable",
+            "steps": flow_without_relation,
+            "assertions": ["百度网盘相关页面、授权页或文件列表稳定可见，未白屏、未崩溃"],
+        })
+        baidu_matrix_plan_cases.append({
+            "caseId": case_id,
+            "title": f"{branch}百度网盘入口展示文案及可达性校验",
+            "baselineId": f"base-matrix-{index}",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": flow_without_relation,
+            "assertionTarget": "百度网盘相关页面、授权页或文件列表稳定可见，未白屏、未崩溃",
+            "requirementRefs": [requirement_point],
+            "executableReason": "同分支成功路径可执行，需保留来源页显式验收",
+            "batch": "smoke" if index == 1 else "remaining",
+        })
+    baidu_matrix_payload = {
+        "analysis": {
+            "requirement_points": baidu_matrix_points,
+            "requirement_acceptance_checks": baidu_matrix_checks,
+        },
+        "cases": baidu_matrix_cases,
+        "manual_cases": [],
+    }
+    baidu_matrix_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": [f"base-matrix-{index}" for index in range(1, 4)],
+        "verifiedBaselineIds": [f"base-matrix-{index}" for index in range(1, 4)],
+        "selectedBaselines": [
+            {
+                "id": f"base-matrix-{index}",
+                "sourceKind": "verified_execution",
+                "verificationStatus": "execution_success",
+            }
+            for index in range(1, 4)
+        ],
+        "scopePlan": {"smokeCount": 3},
+        "cases": baidu_matrix_plan_cases,
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+    }
+    baidu_matrix_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        baidu_matrix_payload,
+        baidu_matrix_plan,
+    )
+    baidu_matrix_audit = ai_skill_service.executable_yaml_portfolio_audit(
+        baidu_matrix_applied,
+        {"min_automation_cases": 3},
+    )
+    require(
+        baidu_matrix_audit.get("ok")
+        and baidu_matrix_audit.get("missingAcceptanceCheckCount") == 0
+        and all(
+            any("同级入口并列展示" in step for step in case.get("steps") or [])
+            for case in baidu_matrix_applied.get("cases") or []
+            if str(case.get("executionLevel") or "").lower() == "executable"
+        ),
+        "Final Agent YAML application must synthesize missing source-page relation checks for every explicit source branch before the portfolio gate",
+    )
     scoped_baidu_points = ai_skill_service._baidu_netdisk_requirement_points({
         "requirement_points": [
             "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需完整覆盖三个业务入口中的展示、同级关系、文案及可达页面。",
