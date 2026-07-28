@@ -2055,11 +2055,15 @@ def sonic_suite_completion_stats(suite: dict) -> Optional[dict]:
         status = _safe_int(meta.get("status"), 0)
         status_text = str(meta.get("status_text") or meta.get("statusText") or "").lower()
         meta_success = sonic_result_meta_indicates_success(meta)
+        ignored_failed = 0
+        ignored_warning = 0
         if actual_total:
             actual_failed = actual.get("failed", 0)
             actual_warning = actual.get("warning", 0)
-            if meta_success and not actual_failed and not actual_warning:
+            if meta_success:
                 passed, failed_count, warning_count = total, 0, 0
+                ignored_failed = actual_failed
+                ignored_warning = actual_warning
             else:
                 passed = min(actual.get("passed", 0), total)
                 failed_count = min(actual_failed, max(0, total - passed))
@@ -2089,6 +2093,8 @@ def sonic_suite_completion_stats(suite: dict) -> Optional[dict]:
             "missing_task_callbacks_ignored_by_sonic_success": bool(
                 missing_callbacks and meta_success and not failed_count and not warning_count
             ),
+            "task_callback_failures_ignored_by_sonic_success": ignored_failed,
+            "task_callback_warnings_ignored_by_sonic_success": ignored_warning,
         }
     total = _safe_int(completion.get("total"), 0)
     passed = _safe_int(completion.get("passed"), 0)
@@ -2112,11 +2118,15 @@ def sonic_suite_completion_stats(suite: dict) -> Optional[dict]:
     if total > passed + failed_count + warning_count:
         warning_count += total - passed - failed_count - warning_count
     missing_callbacks = max(0, total - actual_total) if total else 0
+    ignored_failed = 0
+    ignored_warning = 0
     if total and actual_total:
         actual_failed = actual.get("failed", 0)
         actual_warning = actual.get("warning", 0)
-        if completion_success and not actual_failed and not actual_warning:
+        if completion_success:
             passed, failed_count, warning_count = total, 0, 0
+            ignored_failed = actual_failed
+            ignored_warning = actual_warning
         else:
             passed = min(actual.get("passed", 0), total)
             failed_count = min(actual_failed, max(0, total - passed))
@@ -2137,6 +2147,8 @@ def sonic_suite_completion_stats(suite: dict) -> Optional[dict]:
         "missing_task_callbacks_ignored_by_sonic_success": bool(
             missing_callbacks and completion_success and not failed_count and not warning_count
         ),
+        "task_callback_failures_ignored_by_sonic_success": ignored_failed,
+        "task_callback_warnings_ignored_by_sonic_success": ignored_warning,
     }
 
 
@@ -3634,6 +3646,24 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
                 ),
             },
         })
+    ignored_failures = _safe_int(stats.get("task_callback_failures_ignored_by_sonic_success"), 0)
+    ignored_warnings = _safe_int(stats.get("task_callback_warnings_ignored_by_sonic_success"), 0)
+    if ignored_failures or ignored_warnings:
+        detail = []
+        if ignored_failures:
+            detail.append(f"{ignored_failures} 条失败")
+        if ignored_warnings:
+            detail.append(f"{ignored_warnings} 条告警")
+        elements.append({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": (
+                    f"**回传提示：** Task 桥接回调曾返回{'、'.join(detail)}，"
+                    "但 Sonic 原始报告已通过且未返回失败内容，已按 Sonic 结果汇总"
+                ),
+            },
+        })
     extra = []
     if modules:
         extra.append("模块：" + "、".join(modules[:4]) + (" 等" if len(modules) > 4 else ""))
@@ -3656,7 +3686,8 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
                 "content": f"**Midscene 报告：** {pending_reports} 份仍在后台上传，汇总报告会自动补充链接",
             }
         })
-    failed_items = [item for item in results if item.get("status") == "failed"]
+    final_sonic_success = sonic_suite_sonic_result_indicates_success(suite)
+    failed_items = [] if final_sonic_success else [item for item in results if item.get("status") == "failed"]
     if failed_items:
         lines = []
         for item in failed_items[:5]:

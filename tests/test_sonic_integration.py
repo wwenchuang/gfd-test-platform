@@ -540,7 +540,7 @@ def test_sonic_suite_expected_total_uses_definition_and_result_meta():
         "sonic_suite_definition": {"expected_total_count": 3},
         "sonic_result_meta": {"send_msg_count": 5},
     }
-    stats = midscene.sonic_suite_display_stats(suite)
+    stats = sonic_service.sonic_suite_display_stats(suite)
     assert stats["total"] == 5
     assert stats["actual_total"] == 1
     assert stats["pending"] == 4
@@ -612,15 +612,50 @@ def test_sonic_completed_suite_reports_missing_task_callbacks():
             "status_text": "通过",
         },
     }
-    stats = midscene.sonic_suite_display_stats(suite)
+    stats = sonic_service.sonic_suite_display_stats(suite)
     assert stats["total"] == 2
     assert stats["passed"] == 2
     assert stats["warning"] == 0
     assert stats["pending"] == 0
     assert stats["missing_task_callbacks"] == 1
-    text = str(midscene.build_sonic_suite_summary_card(suite))
+    text = str(sonic_service.build_sonic_suite_summary_card(suite))
     assert "基线回归通过" in text
     assert "待回传" not in text
+
+
+def test_sonic_final_success_overrides_failed_task_callback_in_summary():
+    suite = {
+        "app_package": "com.kfb.model",
+        "run_mode": "baseline",
+        "results": [
+            {"status": "success", "module": "3D打印基线", "target_task_name": "模型生成记录"},
+            {
+                "status": "failed",
+                "module": "3D打印基线",
+                "target_task_name": "OBJ保龄球打印",
+                "error": "请查看详细报告",
+            },
+        ],
+        "sonic_result_meta": {
+            "finished": True,
+            "send_msg_count": 11,
+            "receive_msg_count": 11,
+            "expected_total_count": 11,
+            "status": 1,
+            "status_text": "通过",
+        },
+    }
+    stats = sonic_service.sonic_suite_display_stats(suite)
+    assert stats["total"] == 11
+    assert stats["passed"] == 11
+    assert stats["failed"] == 0
+    assert stats["task_callback_failures_ignored_by_sonic_success"] == 1
+    assert sonic_service.sonic_suite_effective_status(suite) == "success"
+    text = str(sonic_service.build_sonic_suite_summary_card(suite))
+    assert "基线回归通过" in text
+    assert "通过 11 / 失败 0 / 告警 0" in text
+    assert "Task 桥接回调曾返回1 条失败" in text
+    assert "失败明细" not in text
 
 
 def test_ai_model_abort_notification_is_not_labeled_baseline_failure():
