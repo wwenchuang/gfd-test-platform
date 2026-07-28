@@ -797,6 +797,115 @@ def _recover_stalled_tool_dispatch_step(run):
     return False, False
 
 
+def _recover_stale_runner_job_progress(run, stall_seconds=None):
+    """Finish RUN_SONIC when persisted Runner jobs are terminal but Agent progress is stale."""
+    if not isinstance(run, dict) or run.get("status") != "RUNNING":
+        return False, False
+    if str(run.get("currentStep") or "") != "RUN_SONIC":
+        return False, False
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    progress = artifacts.get("jobProgress") if isinstance(artifacts.get("jobProgress"), dict) else {}
+    if safe_int(progress.get("nonTerminal"), 0) <= 0:
+        return False, False
+    threshold = max(30, safe_int(
+        stall_seconds if stall_seconds is not None else os.getenv("MIDSCENE_AGENT_RUNNER_PROGRESS_STALE_SECONDS"),
+        300,
+    ))
+    last_ts = _agent_parse_time(run.get("updatedAt"))
+    if last_ts and time.time() - last_ts < threshold:
+        return False, False
+
+    job_ids = []
+    for jid in artifacts.get("jobIds") or []:
+        jid = str(jid or "").strip()
+        if jid and jid not in job_ids:
+            job_ids.append(jid)
+    for item in progress.get("jobs") or []:
+        if not isinstance(item, dict):
+            continue
+        jid = str(item.get("job_id") or item.get("jobId") or "").strip()
+        if jid and jid not in job_ids:
+            job_ids.append(jid)
+    if not job_ids:
+        return False, False
+
+    try:
+        from task_server.services import job_service
+        jobs = job_service.load_jobs(limit=None)
+    except Exception:
+        return False, False
+    by_id = {
+        str(job.get("job_id") or job.get("jobId") or ""): job
+        for job in jobs or []
+        if isinstance(job, dict)
+    }
+    known = [by_id.get(jid) for jid in job_ids]
+    if any(not item for item in known):
+        return False, False
+    terminal = {"success", "failed", "error", "timeout", "cancelled", "canceled"}
+    if any(str((item or {}).get("status") or "").lower() not in terminal for item in known):
+        return False, False
+
+    completed = []
+    failed = []
+    for jid, job in zip(job_ids, known):
+        status = str(job.get("status") or "").lower()
+        entry = copy.deepcopy(job)
+        entry["job_id"] = jid
+        entry["jobId"] = jid
+        if status == "success":
+            completed.append(entry)
+        else:
+            failed.append(entry)
+
+    phase = str(progress.get("phase") or "runner")
+    final_progress = {
+        "phase": phase,
+        "total": len(job_ids),
+        "completed": len(completed),
+        "failed": len(failed),
+        "running": 0,
+        "pending": 0,
+        "queued": 0,
+        "nonTerminal": 0,
+        "elapsed": safe_int(progress.get("elapsed"), 0),
+        "timeout": progress.get("timeout") or progress.get("timeoutSeconds") or 0,
+        "jobs": completed + failed,
+        "recoveredFromStaleRunnerProgress": True,
+    }
+    artifacts["jobProgress"] = final_progress
+    artifacts.setdefault("jobProgressByPhase", {})[phase] = final_progress
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    for step in run.get("steps") or []:
+        if not isinstance(step, dict) or step.get("step") != "RUN_SONIC" or step.get("status") != "RUNNING":
+            continue
+        calls = [item for item in (step.get("toolCalls") or []) if isinstance(item, dict)]
+        if calls:
+            calls[-1]["status"] = "SUCCESS"
+            calls[-1]["outputSummary"] = (
+                f"Runner job 已全部终态：成功 {len(completed)}，失败 {len(failed)}；"
+                "由真实 job 表恢复陈旧 Agent 进度。"
+            )
+        step["toolCalls"] = calls
+        step["status"] = "SUCCESS"
+        step["endedAt"] = now
+        step["durationMs"] = _compute_duration(step)
+        step["summary"] = f"Runner job 已全部终态：成功 {len(completed)}，失败 {len(failed)}"
+        step.setdefault("liveTrace", []).append({
+            "time": _trace_time_text(),
+            "message": "RUN_SONIC 进度长时间未刷新，已按真实 Runner job 终态自动恢复并继续后续步骤。",
+            "status": "SUCCESS",
+        })
+        del step["liveTrace"][:-30]
+        break
+    next_step = _agent_next_pending_step_name(run)
+    run["currentStep"] = next_step or "DONE"
+    run["updatedAt"] = now
+    _refresh_agent_run_progress(run)
+    return True, bool(next_step)
+
+
 def recover_stale_agent_runs(limit=None):
     """收敛服务重启/超时后遗留的 RUNNING Agent，避免 UI 假运行。"""
     resume_ids = []
@@ -809,6 +918,11 @@ def recover_stale_agent_runs(limit=None):
                 changed = True
             if _compact_agent_run_input_blobs(run):
                 changed = True
+            recovered, should_resume = _recover_stale_runner_job_progress(run)
+            if recovered:
+                changed = True
+            if should_resume and run.get("runId"):
+                resume_ids.append(run.get("runId"))
             recovered, should_resume = _recover_completed_running_step(run)
             if recovered:
                 changed = True
@@ -4079,33 +4193,39 @@ def _agent_plan_constraint_branch_match(flow, constraint_flows):
 
 _AGENT_PHOTO_SUBSPEC_TERMS = (
     "一寸照", "1寸", "证件照", "智能证件照", "照片拼版", "图片拼版",
+    "5寸", "6寸", "7寸", "A4资料图片", "A4生活照片", "规格页", "具体规格",
 )
 
 
-def _agent_plan_source_branch_text(branch, constraint_flows):
-    branch = str(branch or "").strip()
-    parts = []
-    for item in constraint_flows or []:
-        if not isinstance(item, dict):
-            continue
-        item_branch = str(item.get("branch") or item.get("name") or "").strip()
-        if item_branch != branch:
-            continue
-        parts.extend(_agent_plan_text_list([
-            item.get("name"),
-            item.get("branch"),
-            item.get("steps"),
-            item.get("checks"),
-        ], limit=20))
-    return _normalize_business_flow_text(json.dumps(parts, ensure_ascii=False))
+def _agent_plan_has_source_contract(constraint, constraint_flows):
+    if not constraint_flows:
+        return False
+    if not isinstance(constraint, dict):
+        return False
+    return bool(constraint.get("required") or constraint.get("strict") or constraint.get("candidateOnly"))
 
 
-def _agent_plan_flow_out_of_source_scope(flow, matched_branch, constraint_flows):
+def _agent_plan_source_requirement_text(run):
+    run = run if isinstance(run, dict) else {}
+    normalized = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
+    source_context = (run.get("artifacts") or {}).get("sourceContext") if isinstance(run.get("artifacts"), dict) else {}
+    parts = [
+        run.get("target"),
+        run.get("requirement"),
+        run.get("requirementText"),
+        normalized.get("requirementText"),
+        normalized.get("requirement"),
+        source_context.get("requirementText") if isinstance(source_context, dict) else "",
+    ]
+    return _normalize_business_flow_text(json.dumps([p for p in parts if p], ensure_ascii=False))
+
+
+def _agent_plan_flow_out_of_source_scope(flow, matched_branch, constraint_flows, run=None):
     """Drop AI-added leaf variants that are only visual soft references, not source branches."""
     matched_branch = str(matched_branch or "").strip()
     if matched_branch != "照片打印":
         return False
-    source_text = _agent_plan_source_branch_text(matched_branch, constraint_flows)
+    source_text = _agent_plan_source_requirement_text(run)
     if any(term in source_text for term in _AGENT_PHOTO_SUBSPEC_TERMS):
         return False
     flow_text = _normalize_business_flow_text(json.dumps(flow, ensure_ascii=False))
@@ -4122,6 +4242,7 @@ def _normalize_agent_business_plan(value, run, constraint):
     issues = []
     dropped_out_of_scope = []
     required_flows = _agent_plan_constraint_flows(constraint)
+    source_contract = _agent_plan_has_source_contract(constraint, required_flows)
     for index, item in enumerate(raw_flows[:8], start=1):
         if not isinstance(item, dict):
             continue
@@ -4143,6 +4264,14 @@ def _normalize_agent_business_plan(value, run, constraint):
             "evidence": _agent_plan_text_list(item.get("evidence"), limit=6),
         }
         matched_branch = _agent_plan_constraint_branch_match(normalized_flow, required_flows)
+        if source_contract and not matched_branch:
+            dropped_out_of_scope.append({
+                "id": normalized_flow.get("id"),
+                "name": normalized_flow.get("name"),
+                "branch": normalized_flow.get("branch"),
+                "reason": "not_in_source_requirement_contract",
+            })
+            continue
         if matched_branch:
             normalized_flow["branch"] = matched_branch[:80]
             normalized_flow["branchSource"] = "source_requirement_contract"
@@ -4150,6 +4279,7 @@ def _normalize_agent_business_plan(value, run, constraint):
                 normalized_flow,
                 matched_branch,
                 required_flows,
+                run,
             ):
                 dropped_out_of_scope.append({
                     "id": normalized_flow.get("id"),

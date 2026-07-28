@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 百度网盘部署后五轮稳定性：生成门禁改善但仍暴露照片规格扩展和 RUN_SONIC 陈旧快照
+
+用户部署 `a8c903f` 后要求同一百度网盘需求再跑 5 次。固定参数仍为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / singleDeviceOnly / qwen3.7-plus / com.xbxxhz.box`，只使用 OPPO PHM110 `ecbfd645`，没有向第二台手机下发百度网盘任务。线上健康检查：Task 服务 `qwen3.7-plus`，AI Gateway 正常，Sonic Bridge 与 Windows Runner 均为 `2026.07.26-qwen3.7-result-retry-v1`，Runner 能力上报 `midscene_model_name=qwen3.7-plus / midscene_model_family=qwen3`。
+
+五轮结果：
+
+- `agent-1785217751108-4f78cacb`：`FAILED / RERUN / 95%`。生成门禁通过并进入真实 Runner；最终修复重跑后仍失败。
+- `agent-1785218873459-08f1bdb5`：Agent 停在 `RUNNING / RUN_SONIC / 51%`，但 `/api/jobs` 显示其 OPPO Runner jobs 已全部终态：expanded 三条 success，另有 smoke「三入口百度网盘入口层级并列关系校验」failed。该轮暴露 Agent jobProgress 陈旧快照没有按真实 job 表收敛。
+- `agent-1785221202256-5867c40c`：`DONE / DONE / 100%`。
+- `agent-1785222050500-4de85a6a`：`DONE / DONE / 100%`。
+- `agent-1785223081078-58dd9fe6`：`FAILED / GENERATE_YAML / 30%`，最终覆盖门禁缺 `REQ-001` 文档打印 visibility/relation/copy/reachability，未创建 Runner job。AI 计划中有文档打印，但下游 executable YAML 被照片/扫描/全局探索分支挤占。
+
+结论：`a8c903f` 后 5 轮中 `GENERATE_YAML` 覆盖失败从之前的多轮复现降到 1/5，但仍未稳定；真实执行链路另有 1 轮 Agent 状态收敛失败。主要新根因：
+
+1. 只过滤了 `一寸照/证件照/拼版` 等照片子规格，仍允许 `5寸/6寸/7寸/A4/规格页` 这类 AI/Figma 软参考进入硬执行业务分支。需求明确是首页三入口，不应把照片打印扩成具体规格页。
+2. strict source business contract 下，AI 追加的「全局一致性」「异常处理」「入口位置探索」等无法唯一归属到源业务入口的流，会挤占最多 8 条生成预算，导致文档打印主链偶发没有 executable YAML。
+3. Agent `RUN_SONIC` 进度快照可能停在旧的 `running`，但真实 Runner job 已 success/failed。读取 Agent 时需要用 persisted jobs 终态恢复陈旧快照，并继续后续 `COLLECT_REPORT`。
+
+修复：
+
+- `_AGENT_PHOTO_SUBSPEC_TERMS` 扩展到 `5寸/6寸/7寸/A4资料图片/A4生活照片/规格页/具体规格`；是否允许规格页只看用户需求文本是否明确提到，不再被 Figma/AI 软参考放行。
+- `_normalize_agent_business_plan()` 在存在 source business contract 时，丢弃无法唯一匹配源分支的 AI 追加流，保留文档打印、照片打印、扫描复印三条主链。
+- 新增 `_recover_stale_runner_job_progress()` 并接入 `recover_stale_agent_runs()`：当 RUN_SONIC 的 `jobProgress.nonTerminal > 0` 已陈旧，而真实 job 表中相关 job 全部终态时，自动恢复进度、补齐 RUN_SONIC tool call 成功状态并继续后续步骤。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍预计会被既有 OBJ 保龄球 YAML 断言拦截；本轮未修改 Runner、Sonic、scorer、Figma 解析或历史 YAML。Codex 不 push，用户部署后建议同参再跑 5 次，预期不再出现照片规格硬分支、全局/异常流挤占三入口主链，以及 RUN_SONIC 陈旧快照卡死。
+
 ### 2026-07-28 百度网盘五轮复跑：生成合同仍受 8 步预算影响，Figma 子规格不能变成硬执行分支
 
 用户部署后要求同一百度网盘需求再跑 5 次，固定参数为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus / com.xbxxhz.box`。五轮均只指定固定 OPPO `ecbfd645`，没有同时选择两台手机；线上服务健康，Task 模型为 `qwen3.7-plus`，Sonic Bridge 为 `2026.07.26-qwen3.7-result-retry-v1`。

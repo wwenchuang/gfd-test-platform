@@ -452,7 +452,7 @@ def check_agent_failure_ai_payload_has_primary_evidence():
 
 
 def check_agent_ai_owned_plan_and_evidence_loop():
-    from task_server.services import agent_service, ai_skill_service, yaml_baseline_cache, yaml_service
+    from task_server.services import agent_service, ai_skill_service, job_service, yaml_baseline_cache, yaml_service
     from task_server.services.yaml_execution_plan import classify_generated_yaml_failure_bucket
 
     preview = agent_service.preview_agent_plan({
@@ -3640,7 +3640,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                     "id": "FLOW-002",
                     "name": "照片打印百度网盘入口校验",
                     "branch": "照片打印",
-                    "steps": ["首页", "点击照片打印", "选择5寸照片", "校验百度网盘"],
+                    "steps": ["首页", "点击照片打印", "校验百度网盘"],
                     "checks": ["百度网盘入口可见、同级、文案、可达"],
                 },
                 {
@@ -3652,6 +3652,27 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 },
                 {
                     "id": "FLOW-004",
+                    "name": "照片打印页(5寸规格)-百度网盘入口展示校验",
+                    "branch": "照片打印",
+                    "steps": ["首页", "点击照片打印", "选择5寸照片", "校验百度网盘"],
+                    "checks": ["5寸照片页面展示百度网盘入口"],
+                },
+                {
+                    "id": "FLOW-005",
+                    "name": "三入口百度网盘文案一致性校验",
+                    "branch": "基础打印-全局",
+                    "steps": ["分别进入文档打印、照片打印、扫描复印", "比对百度网盘文案"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-006",
+                    "name": "未安装百度App环境下点击入口反馈",
+                    "branch": "基础打印-异常处理",
+                    "steps": ["进入任意打印页", "点击百度网盘", "观察安装或授权提示"],
+                    "checks": ["不白屏不崩溃"],
+                },
+                {
+                    "id": "FLOW-007",
                     "name": "照片打印页(一寸照)-百度网盘入口展示校验",
                     "branch": "照片打印",
                     "steps": ["首页", "点击照片打印", "选择一寸照", "校验百度网盘"],
@@ -3665,6 +3686,66 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             and len(scoped_plan.get("businessFlows") or []) == 3
             and "一寸照" not in json.dumps(scoped_plan.get("businessFlows"), ensure_ascii=False),
             "Source-scoped three-entry Baidu requirements must drop AI-added Figma-only photo sub-spec flows before downstream YAML generation",
+        )
+        scoped_plan_text = json.dumps(scoped_plan.get("businessFlows"), ensure_ascii=False)
+        require(
+            "5寸" not in scoped_plan_text
+            and "基础打印-全局" not in scoped_plan_text
+            and "异常处理" not in scoped_plan_text,
+            "Strict source-scoped business plans must drop AI-added photo size, global consistency, and environment exception flows",
+        )
+        old_stale_load_jobs = job_service.load_jobs
+        try:
+            job_service.load_jobs = lambda *args, **kwargs: [{
+                "job_id": "job-static-stale-runner",
+                "status": "success",
+                "target_task_name": "扫描复印页-滚动查找百度网盘入口校验",
+                "runner_id": "win-runner-01",
+                "device_id": "ecbfd645",
+                "progress": 100,
+                "progress_message": "执行结束，正在清理 App 状态",
+            }]
+            stale_runner_run = {
+                "runId": "agent-static-stale-runner",
+                "status": "RUNNING",
+                "currentStep": "RUN_SONIC",
+                "updatedAt": "2026-07-28T14:22:19",
+                "steps": [
+                    {"step": "RUN_SONIC", "status": "RUNNING", "toolCalls": [{"status": "RUNNING"}], "liveTrace": []},
+                    {"step": "COLLECT_REPORT", "status": "PENDING"},
+                ],
+                "artifacts": {
+                    "jobIds": ["job-static-stale-runner"],
+                    "jobProgress": {
+                        "phase": "expanded-1",
+                        "total": 1,
+                        "running": 1,
+                        "nonTerminal": 1,
+                        "jobs": [{"job_id": "job-static-stale-runner", "status": "running"}],
+                    },
+                    "jobProgressByPhase": {
+                        "expanded-1": {
+                            "phase": "expanded-1",
+                            "total": 1,
+                            "running": 1,
+                            "nonTerminal": 1,
+                            "jobs": [{"job_id": "job-static-stale-runner", "status": "running"}],
+                        }
+                    },
+                },
+            }
+            recovered, should_resume = agent_service._recover_stale_runner_job_progress(
+                stale_runner_run,
+                stall_seconds=0,
+            )
+        finally:
+            job_service.load_jobs = old_stale_load_jobs
+        require(
+            recovered
+            and should_resume
+            and stale_runner_run["artifacts"]["jobProgress"]["nonTerminal"] == 0
+            and stale_runner_run["steps"][0]["toolCalls"][-1]["status"] == "SUCCESS",
+            "Agent recovery must reconcile stale RUN_SONIC progress from persisted Runner job terminal states",
         )
         require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
         require(live_plan.get("source") == "platform_mindmap_ai" and live_plan.get("mindmapTrace", {}).get("preparedFigmaReused"), "Agent PLAN must expose MM and prepared-Figma provenance")
