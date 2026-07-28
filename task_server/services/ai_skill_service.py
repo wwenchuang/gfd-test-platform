@@ -6288,8 +6288,6 @@ def _bounded_convergence_evidence(
             break
         if created_reachability_evidence:
             continue
-        if not branch_baseline:
-            continue
         direct_source_record = None
         direct_source_case = {}
         if source_case:
@@ -6327,13 +6325,24 @@ def _bounded_convergence_evidence(
             or direct_source_case.get("case_id")
             or ""
         ).strip()
-        baseline_id = str(branch_baseline.get("id") or "").strip()
-        precondition = _bounded_candidate_precondition(direct_source_case, branch_baseline)
         direct_source_plan = (
             direct_source_case.get("ai_case_plan")
             if isinstance(direct_source_case.get("ai_case_plan"), dict)
             else {}
         )
+        baseline_id = str(
+            (branch_baseline or {}).get("id")
+            or direct_source_plan.get("baselineId")
+            or direct_source_plan.get("baseline_id")
+            or ""
+        ).strip()
+        direct_baseline = branch_baseline if branch_baseline else {
+            "id": baseline_id,
+            "startPage": "App 首页",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+        }
+        precondition = _bounded_candidate_precondition(direct_source_case, direct_baseline)
         direct_source_level = str(
             ((direct_source_record or {}).get("compact") or {}).get("currentLevel")
             or direct_source_case.get("executionLevel")
@@ -6353,7 +6362,11 @@ def _bounded_convergence_evidence(
             and direct_source_plan.get("baselineGrounded") is True
             and direct_source_plan.get("baselineVerified") is True
             and direct_source_plan.get("pathPlanApplied") is True
-            and str(direct_source_plan.get("baselineId") or "").strip() == baseline_id
+            and baseline_id
+            and (
+                not branch_baseline
+                or str(direct_source_plan.get("baselineId") or "").strip() == baseline_id
+            )
         )
         if not source_case_id or not baseline_id or not precondition or not direct_source_trusted:
             continue
@@ -6361,7 +6374,8 @@ def _bounded_convergence_evidence(
             branch_baseline,
             targets,
             branch,
-        ) or normalize_text_list(direct_source_case.get("steps"))
+        ) if branch_baseline else []
+        navigation_flow = navigation_flow or normalize_text_list(direct_source_case.get("steps"))
         click_index = _target_navigation_action_index(navigation_flow, targets)
         if click_index >= 0:
             navigation_flow = navigation_flow[:click_index]
@@ -6385,7 +6399,7 @@ def _bounded_convergence_evidence(
         )
         navigation_flow = _ensure_trusted_home_start_guard(
             navigation_flow,
-            branch_baseline,
+            direct_baseline,
             precondition,
         )
         if (

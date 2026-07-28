@@ -28,6 +28,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 百度网盘三轮稳定性回归：生成收敛与来源页路径修复仍需本地兜底
+
+用户部署 `445e777` 后要求同一百度网盘需求连续跑三次，固定参数仍为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus / com.xbxxhz.box`。三轮线上结果：
+
+- `agent-1785199399440-33f07aea`：`FAILED / GENERATE_YAML / 30%`，Figma `4/4` 已真实送入并完成，未创建 Runner job。最终覆盖门禁缺 `REQ-002 [acceptance:reachability] 照片打印：点击百度网盘入口并校验目标页面稳定可达`。
+- `agent-1785199781970-f975ebc6`：`DONE / 100%`，实际 Runner 尝试 `6`，报告状态 `5 success / 1 failed`；失败为照片可达性原始 YAML 缺少“照片打印聚合页 -> 绿色照片打印大卡片”中间导航，AI 修复重跑通过，逻辑汇总为修复后通过。
+- `agent-1785200654960-d9d7cb95`：`FAILED / RERUN / 95%`，实际 Runner 尝试 `7`，报告状态 `4 success / 3 failed`；扫描展示 YAML 把“向右滚动直到百度网盘入口可见”写成 `aiWaitFor`，不会触发滚动；照片展示 YAML 也缺照片打印聚合页中间导航。修复重跑解决其中 1 条，但后续 expanded 仍有 2 条失败。
+
+三轮均只使用固定 OPPO `ecbfd645`；没有创建第二台手机任务。Figma 解析 / 视觉校准均为 `4 页 / 4 图`。
+
+根因与修复：
+
+1. 生成收敛 direct visible target fallback 仍硬依赖 selected Top3 baseline 中存在当前分支 baseline。线上第一轮新需求路径 `matchedCases=[]`，如果 Top3 漏掉照片分支，即使来源候选自身已 `automatic / executable / baselineGrounded / baselineVerified / pathPlanApplied`，平台也不会生成有界首屏可达性候选。现在 direct fallback 不再依赖 selected baseline；只要当前来源候选自身带可信 baseline 元数据、当前分支导航可验证且目标可见，就允许生成同分支有界 landing，用自身来源页作为 tail，不借用其他分支导航。
+2. YAML 本地修复只处理“照片尺寸点错”，没有处理“首页进入照片打印后直接点 5寸照片”的缺中间层路径。现在照片打印任务在具体尺寸 leaf 前，若缺少聚合页内绿色「照片打印」大卡片，会插入 `等待照片打印聚合页加载完成 -> 点击页面左侧绿色的「照片打印」大卡片入口 -> sleep`。
+3. YAML 本地修复只处理“等待前缺 aiScroll”，没有处理模型把滚动动作本身写成 `aiWaitFor`。现在 `aiWaitFor: 在导入源区域向右滚动直到「目标」入口可见` 会被改成官方 `aiScroll`，带 `direction:right / distance:400 / scrollType:singleAction`，并保留后续目标入口等待/断言。
+
+验证：
+
+```bash
+python3 -m py_compile task_server/services/ai_skill_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+checks.check_yaml_static_validation_and_patterns()
+PY
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被用户历史改动的 OBJ 保龄球 YAML 拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮未修改历史 YAML、Runner、Sonic、scorer 或设备选择逻辑；Codex 不 push，用户部署后应重新跑同一百度网盘 Agent 稳定性验证。
+
 ### 2026-07-27 真实回归：修复重跑需区分 Sonic 前台干扰，并承认 aiScroll 是有界路径探索
 
 用户部署 `cec73ce` 后继续跟踪百度网盘 Agent。线上最新 `agent-1785133117095-429ff947` 已终态 `FAILED / RERUN / 95%`，但失败位置已从生成门禁转移到真实执行后的修复编排：

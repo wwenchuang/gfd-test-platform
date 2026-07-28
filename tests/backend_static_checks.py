@@ -2737,6 +2737,22 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and "网盘落地页" in photo_direct_tail_evidence.get("assertionTarget", ""),
         "A current branch source-page candidate with a visible target may create a bounded first-landing reachability check when the model omitted a sibling landing tail",
     )
+    photo_direct_without_selected_baseline = ai_skill_service._bounded_convergence_evidence(
+        photo_direct_tail_payload,
+        photo_direct_tail_records,
+        photo_direct_tail_audit,
+        selected_baselines=[],
+        manual_records=[],
+    ).get("TC-PHOTO-SOURCE") or {}
+    require(
+        photo_direct_without_selected_baseline.get("kind") == "bounded_landing"
+        and photo_direct_without_selected_baseline.get("sourceCaseId") == "TC-PHOTO-SOURCE"
+        and photo_direct_without_selected_baseline.get("tailSourceCaseId") == "TC-PHOTO-SOURCE"
+        and photo_direct_without_selected_baseline.get("directVisibleTargetLanding") is True
+        and "照片打印" in " ".join(photo_direct_without_selected_baseline.get("flow") or [])
+        and "文档打印" not in " ".join(photo_direct_without_selected_baseline.get("flow") or []),
+        "A verified current branch source-page candidate must still create direct bounded reachability when Top3 selected baselines omitted that branch",
+    )
     manual_conditional_tail_payload = json.loads(json.dumps(sibling_tail_missing_precondition_payload, ensure_ascii=False))
     leaking_document_tail = manual_conditional_tail_payload["cases"][0]
     leaking_document_tail["steps"][-1] = (
@@ -10956,6 +10972,30 @@ def check_yaml_static_validation_and_patterns():
         dry_run_midscene_yaml(photo_entry_yaml, app_package="com.xbxxhz.box").get("ok") is True,
         "Mock dry-run must not mistake photo/album entry display checks for unstable image upload flows",
     )
+    photo_missing_subentry_yaml = """android:
+  tasks:
+    - name: 照片打印页-点击百度网盘入口跳转稳定性校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 被测 App 首页已加载完成，首页核心功能入口可见
+        - aiTap: 点击「照片打印」入口
+        - sleep: 300
+        - aiTap: 点击「5寸照片」规格
+        - sleep: 300
+        - aiWaitFor: 等待页面加载完成
+        - aiTap: 点击「百度网盘」入口
+        - aiWaitFor: 百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开
+"""
+    photo_missing_subentry_repair = repair_generated_yaml_executable_gate_issues(photo_missing_subentry_yaml)
+    photo_missing_subentry_content = photo_missing_subentry_repair.get("content", "")
+    require(
+        photo_missing_subentry_repair.get("changed")
+        and "等待照片打印聚合页加载完成" in photo_missing_subentry_content
+        and "绿色「照片打印」大卡片入口" in photo_missing_subentry_content
+        and photo_missing_subentry_content.index("绿色「照片打印」大卡片入口") < photo_missing_subentry_content.index("点击「5寸照片」规格")
+        and dry_run_midscene_yaml(photo_missing_subentry_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated photo-size YAML must insert the sibling-baseline sub-entry before tapping a concrete photo size",
+    )
     fallback_steps, fallback_assertions = ai_skill_service._fallback_steps_for_scenario({
         "feature": "普通证件照",
         "requirement_point": "普通证件照导入方式中展示百度网盘入口，点击后进入百度网盘导入或授权流程。",
@@ -11053,6 +11093,29 @@ def check_yaml_static_validation_and_patterns():
         and "企业云盘" in scan_missing_scroll_content
         and dry_run_midscene_yaml(scan_missing_scroll_content, app_package="com.xbxxhz.box").get("ok") is True,
         "Generated scan import checks must add bounded horizontal aiScroll before waiting for a target that may be clipped off-screen",
+    )
+    scan_waitfor_scroll_yaml = """android:
+  tasks:
+    - name: 扫描复印页-百度网盘入口UI展示校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，可见「扫描复印」入口
+        - aiTap: 点击「扫描复印」入口
+        - sleep: 300
+        - aiWaitFor: 在导入源区域向右滚动直到「百度网盘」入口可见
+        - aiWaitFor: 校验「百度网盘」入口可见，文案正确，与同级入口并列
+        - aiAssert: 扫描复印页「百度网盘」入口可见，文案为“百度网盘”，与其他导入入口视觉层级一致
+"""
+    scan_waitfor_scroll_repair = repair_generated_yaml_executable_gate_issues(scan_waitfor_scroll_yaml)
+    scan_waitfor_scroll_content = scan_waitfor_scroll_repair.get("content", "")
+    require(
+        scan_waitfor_scroll_repair.get("changed")
+        and "aiWaitFor: 在导入源区域向右滚动" not in scan_waitfor_scroll_content
+        and "- aiScroll:" in scan_waitfor_scroll_content
+        and "direction: right" in scan_waitfor_scroll_content
+        and "aiWaitFor: 校验「百度网盘」入口可见" in scan_waitfor_scroll_content
+        and dry_run_midscene_yaml(scan_waitfor_scroll_content, app_package="com.xbxxhz.box").get("ok") is True,
+        "Generated scan import YAML must convert action-like aiWaitFor scroll prompts into official aiScroll plus target wait",
     )
     service_static_repair = repair_generated_yaml_static_errors(assertion_tap_yaml, app_package="com.xbxxhz.box", max_attempts=0)
     require(

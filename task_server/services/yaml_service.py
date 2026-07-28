@@ -6121,6 +6121,130 @@ def _repair_photo_size_leaf_tap_prompt(task_name: str, prompt: str) -> str:
     return text.replace(matched, expected)
 
 
+def _generated_tap_is_photo_print_entry(prompt: str) -> bool:
+    compact = _compact_text(prompt)
+    if not compact or "照片打印" not in compact:
+        return False
+    if any(label in compact for label in _PHOTO_SIZE_LABELS):
+        return False
+    if any(word in compact for word in ("普通证件照", "智能证件照", "照片拼版", "百度网盘")):
+        return False
+    return any(word in compact for word in ("点击", "进入", "入口", "icon", "卡片", "tab", "导航"))
+
+
+def _generated_tap_is_photo_size_leaf(prompt: str) -> bool:
+    text = str(prompt or "")
+    return bool(text and any(label in text for label in _PHOTO_SIZE_LABELS))
+
+
+def _flow_has_photo_print_subentry_between(flow: list, start: int, end: int) -> bool:
+    for step in flow[start:end]:
+        if not isinstance(step, dict):
+            continue
+        prompt = str(step.get("aiTap") or "")
+        compact = _compact_text(prompt)
+        if (
+            "照片打印" in compact
+            and not _generated_tap_is_photo_size_leaf(prompt)
+            and any(word in compact for word in ("大卡片", "功能卡片", "绿色", "左侧", "页面内", "聚合页"))
+        ):
+            return True
+    return False
+
+
+def _repair_generated_photo_size_subentry_path(flow: list, task_name: str) -> list:
+    """Insert the photo-print aggregation sub-entry before concrete size leaves."""
+    if not isinstance(flow, list):
+        return []
+    task_compact = _compact_text(task_name)
+    if "照片打印" not in task_compact:
+        return []
+    first_entry_index = -1
+    first_size_index = -1
+    for index, step in enumerate(flow):
+        if not isinstance(step, dict):
+            continue
+        prompt = str(step.get("aiTap") or "")
+        if first_entry_index < 0 and _generated_tap_is_photo_print_entry(prompt):
+            first_entry_index = index
+            continue
+        if first_entry_index >= 0 and _generated_tap_is_photo_size_leaf(prompt):
+            first_size_index = index
+            break
+    if first_entry_index < 0 or first_size_index <= first_entry_index:
+        return []
+    if _flow_has_photo_print_subentry_between(flow, first_entry_index + 1, first_size_index):
+        return []
+    insert_at = first_entry_index + 1
+    flow[insert_at:insert_at] = [
+        {
+            "aiWaitFor": "等待照片打印聚合页加载完成，可见绿色「照片打印」大卡片入口",
+            "timeout": DEFAULT_WAITFOR_TIMEOUT_MS,
+        },
+        {"aiTap": "点击页面左侧绿色的「照片打印」大卡片入口"},
+        {"sleep": 300},
+    ]
+    return [{
+        "task": task_name,
+        "afterFlowIndex": first_entry_index + 1,
+        "changed": "insert photo print aggregation sub-entry before photo size leaf",
+        "replacement": "等待照片打印聚合页 -> 点击绿色照片打印大卡片",
+    }]
+
+
+def _action_like_wait_scroll_target(prompt: str) -> str:
+    text = str(prompt or "").strip()
+    compact = _compact_text(text)
+    if not compact:
+        return ""
+    if not any(word in compact for word in ("滚动", "滑动", "横滑", "向右")):
+        return ""
+    if not any(word in compact for word in ("直到", "找到", "入口可见", "进入视野", "展示")):
+        return ""
+    quoted = re.search(r"[「『“‘\"']([^」』”’\"']{1,60})[」』”’\"']", text)
+    if quoted:
+        return quoted.group(1).strip()
+    match = re.search(r"直到([^，。；;]{1,40}?)(?:入口)?(?:可见|出现|展示|进入视野)", text)
+    if match:
+        return match.group(1).strip()
+    return "目标"
+
+
+def _repair_generated_action_like_wait_scroll(flow: list, index: int, task_name: str) -> list:
+    if not isinstance(flow, list) or index < 0 or index >= len(flow):
+        return []
+    step = flow[index]
+    if not isinstance(step, dict) or "aiWaitFor" not in step:
+        return []
+    target = _action_like_wait_scroll_target(step.get("aiWaitFor"))
+    if not target:
+        return []
+    original = str(step.get("aiWaitFor") or "")
+    step.clear()
+    step.update({
+        "aiScroll": "在包含“本地导入”、“相册导入”、“微信导入”的横向导入栏区域中部操作，避开屏幕左右边缘",
+        "direction": "right",
+        "distance": 400,
+        "scrollType": "singleAction",
+    })
+    insert_after = [{"sleep": 500}]
+    next_step = flow[index + 1] if index + 1 < len(flow) and isinstance(flow[index + 1], dict) else None
+    next_text = _compact_text(_generated_step_observable_text(next_step))
+    if target != "目标" and target not in next_text:
+        insert_after.append({
+            "aiWaitFor": f"校验「{target}」入口可见，文案正确，与同级入口并列",
+            "timeout": DEFAULT_WAITFOR_TIMEOUT_MS,
+        })
+    flow[index + 1:index + 1] = insert_after
+    return [{
+        "task": task_name,
+        "flowIndex": index + 1,
+        "changed": "action-like aiWaitFor scroll -> official aiScroll",
+        "prompt": original[:180],
+        "replacement": "aiScroll right over visible import entry row",
+    }]
+
+
 def _repair_generated_post_launch_restart_ai_step(step: dict, next_step: dict = None) -> dict:
     """Remove redundant AI app restarts after deterministic launch guards."""
     if not isinstance(step, dict):
@@ -6195,6 +6319,15 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                     "prompt": prompt[:180],
                     "replacement": "input keyevent 3",
                 })
+
+            action_like_scroll_repair = _repair_generated_action_like_wait_scroll(
+                flow,
+                step_index - 1,
+                task.get("name") or f"tasks[{task_index}]",
+            )
+            if action_like_scroll_repair:
+                changes.extend(action_like_scroll_repair)
+                continue
 
             next_step = flow[step_index] if step_index < len(flow) and isinstance(flow[step_index], dict) else None
             restart_repair = _repair_generated_post_launch_restart_ai_step(step, next_step) if deterministic_launch_seen else {}
@@ -6325,6 +6458,11 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
                 "prompt": prompt[:180],
                 "waitFor": wait_prompt[:180],
             })
+
+        changes.extend(_repair_generated_photo_size_subentry_path(
+            flow,
+            task.get("name") or f"tasks[{task_index}]",
+        ))
 
         changes.extend(_remove_redundant_generated_process_waits(
             flow,
