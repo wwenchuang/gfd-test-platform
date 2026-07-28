@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import html as html_lib
 import json
@@ -2254,6 +2255,167 @@ def sonic_suite_display_stats(suite: dict) -> dict:
     return stats
 
 
+def sonic_suite_result_display_name(item: dict) -> str:
+    item = item or {}
+    value = (
+        item.get("target_task_name")
+        or item.get("current_task_name")
+        or item.get("task_name")
+        or item.get("caseName")
+        or item.get("file")
+        or item.get("case_id")
+        or ""
+    )
+    value = str(value or "").strip()
+    if value.endswith(".yaml"):
+        value = value[:-5]
+    return value
+
+
+def sonic_suite_expected_case_names(suite: dict) -> list:
+    suite = suite or {}
+    definition = suite.get("sonic_suite_definition") or {}
+    candidates = []
+    for value in (
+        definition.get("case_names"),
+        definition.get("caseNames"),
+        suite.get("expected_case_names"),
+        suite.get("case_names"),
+    ):
+        if isinstance(value, list):
+            candidates.extend([str(item or "").strip() for item in value])
+    for key in ("testCases", "test_cases", "cases", "caseList", "case_list"):
+        value = definition.get(key)
+        if isinstance(value, list):
+            candidates.extend(sonic_suite_case_names_from_dto({key: value}))
+    names = []
+    for item in candidates:
+        if item and item not in names:
+            names.append(item)
+    return names
+
+
+def sonic_suite_missing_case_names(suite: dict, missing_count: int) -> list:
+    expected_names = sonic_suite_expected_case_names(suite)
+    seen = {
+        sonic_suite_result_display_name(item)
+        for item in ((suite or {}).get("results") or [])
+        if sonic_suite_result_display_name(item)
+    }
+    missing = [name for name in expected_names if name and name not in seen]
+    if len(missing) >= missing_count:
+        return missing[:missing_count]
+    for idx in range(len(missing) + 1, missing_count + 1):
+        fallback = f"未回传用例 {idx}"
+        if fallback not in missing:
+            missing.append(fallback)
+    return missing[:missing_count]
+
+
+def sonic_suite_missing_callback_result(
+    suite: dict,
+    name: str,
+    index: int,
+    reason: str,
+    status: str = "failed",
+) -> dict:
+    suite_key = _clean_id((suite or {}).get("suite_key") or "sonic_suite", "sonic_suite")
+    module = ""
+    for item in (suite or {}).get("results") or []:
+        module = item.get("module") or ""
+        if module:
+            break
+    module = module or (suite or {}).get("module") or (suite or {}).get("sonic_suite_name") or ""
+    return {
+        "job_id": f"{suite_key}_missing_callback_{index}",
+        "case_id": "",
+        "module": sonic_notify_clean_text(module),
+        "file": "",
+        "target_task_name": sonic_notify_clean_text(name or f"未回传用例 {index}"),
+        "current_task_name": sonic_notify_clean_text(name or f"未回传用例 {index}"),
+        "status": status,
+        "run_mode": (suite or {}).get("run_mode") or "baseline",
+        "runner_id": (suite or {}).get("runner_id") or "sonic",
+        "device_id": (suite or {}).get("device_id") or "",
+        "report_url": "",
+        "sonic_report_url": (suite or {}).get("sonic_report_url") or ((suite or {}).get("sonic_result_meta") or {}).get("sonic_report_url") or "",
+        "sonic_suite_id": (suite or {}).get("sonic_suite_id") or "",
+        "sonic_suite_name": (suite or {}).get("sonic_suite_name") or "",
+        "suite_started_at": (suite or {}).get("suite_started_at") or "",
+        "suite_expected_total": sonic_suite_expected_total(suite),
+        "error": reason,
+        "stderr_tail": reason,
+        "progress_message": reason,
+        "completed_task_count": 0,
+        "total_task_count": 1,
+        "created_at": (suite or {}).get("last_update_at") or (suite or {}).get("created_at") or "",
+        "started_at": "",
+        "finished_at": (suite or {}).get("completion_ts") or "",
+        "synthetic_missing_callback": True,
+    }
+
+
+def ensure_sonic_suite_missing_result_placeholders(suite: dict, now_ts: Optional[int] = None) -> dict:
+    if not suite:
+        return suite
+    if sonic_suite_can_wait_for_missing_task_callbacks(suite, now_ts):
+        return suite
+    stats = sonic_suite_display_stats(suite)
+    missing_count = _safe_int(stats.get("missing_task_callbacks") or stats.get("pending"), 0)
+    if not missing_count:
+        return suite
+    if stats.get("missing_task_callbacks_ignored_by_sonic_success"):
+        return suite
+    if not sonic_suite_finished_in_sonic(suite):
+        return suite
+    results = list(suite.get("results") or [])
+    existing_synthetic = len([item for item in results if item.get("synthetic_missing_callback")])
+    needed = max(0, missing_count - existing_synthetic)
+    if not needed:
+        return suite
+    reason = (
+        "Sonic 原始报告已结束且本套件失败，但 Task 平台未收到该用例最终结果回传；"
+        "已按缺失回调补偿为失败，请查看 Sonic 原始报告定位实际失败步骤。"
+    )
+    start_index = len(results) + 1
+    for offset, name in enumerate(sonic_suite_missing_case_names(suite, needed), start=0):
+        results.append(sonic_suite_missing_callback_result(suite, name, start_index + offset, reason, "failed"))
+    suite["results"] = results
+    suite["missing_task_callbacks_materialized"] = True
+    suite["missing_task_callbacks_materialized_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    return suite
+
+
+def sonic_suite_project_for_display(suite: dict, now_ts: Optional[int] = None) -> dict:
+    projected = copy.deepcopy(suite or {})
+    now_ts = now_ts or int(time.time())
+    ensure_sonic_suite_missing_result_placeholders(projected, now_ts)
+    if projected.get("results"):
+        return projected
+    expected = sonic_suite_expected_total(projected)
+    last_case = str(projected.get("last_running_case") or "").strip()
+    last_job_id = str(projected.get("last_running_job_id") or "").strip()
+    last_ts = _safe_int(projected.get("last_update_ts") or projected.get("created_ts"), 0)
+    stale = bool(last_ts and now_ts - last_ts >= sonic_task_callback_grace_seconds())
+    if expected and last_job_id and stale:
+        reason = (
+            "Sonic 桥接脚本已回传运行进度，但超过等待窗口仍未收到最终结果回传；"
+            "请查看 Sonic 原始报告或该用例 Groovy 步骤日志。"
+        )
+        projected["bridge_result_missing"] = True
+        projected["bridge_result_missing_reason"] = reason
+        projected["results"] = [
+            sonic_suite_missing_callback_result(
+                projected,
+                last_case or "未收到最终结果回传",
+                1,
+                reason,
+                "failed",
+            )
+        ]
+    return projected
+
+
 def sonic_suite_effective_status(suite: dict) -> str:
     completion = (suite or {}).get("sonic_completion") or {}
     if completion.get("finished") and completion.get("status") == "interrupted":
@@ -2307,6 +2469,15 @@ def sonic_suite_failure_category(item: dict) -> dict:
         "model service",
         "model-provider",
         "model provider",
+        "request was aborted",
+        "request aborted",
+        "request was cancelled",
+        "request canceled",
+        "too many requests",
+        "rate limit",
+        "serviceunavailable",
+        "service unavailable",
+        "modelservingerror",
         "qwen",
         "dashscope",
         "openai",
@@ -2573,15 +2744,44 @@ def sonic_count_suite_cases(dto: dict) -> int:
     return _safe_int(dto.get("caseCount") or dto.get("case_count") or dto.get("totalCase") or dto.get("total_case"), 0)
 
 
+def sonic_suite_case_name_from_dto(item: dict) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("name", "caseName", "case_name", "title", "task_name", "taskName"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def sonic_suite_case_names_from_dto(dto: dict) -> list:
+    if not isinstance(dto, dict):
+        return []
+    names = []
+    for key in ("testCases", "test_cases", "cases", "caseList", "case_list"):
+        value = dto.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            name = sonic_suite_case_name_from_dto(item)
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def sonic_suite_definition_meta_from_dto(dto: dict, source: str = "") -> dict:
     count = sonic_count_suite_cases(dto)
-    return {
+    meta = {
         "source": source,
         "suite_id": _safe_int(dto.get("id"), 0) if isinstance(dto, dict) else 0,
         "suite_name": dto.get("name", "") if isinstance(dto, dict) else "",
         "expected_total_count": count,
         "case_count": count,
     }
+    case_names = sonic_suite_case_names_from_dto(dto)
+    if case_names:
+        meta["case_names"] = case_names
+    return meta
 
 
 def lookup_sonic_suite_definition_for_suite(suite: dict) -> dict:
@@ -3060,35 +3260,13 @@ def migrate_sonic_suite_to_result_key(state: dict, suite_key: str, suite: dict) 
 
 def sonic_suite_same_result_already_sent(state: dict, suite_key: str, suite: dict) -> str:
     suite = suite or {}
-    project_id = _safe_int(
-        suite.get("sonic_project_id")
-        or (suite.get("sonic_result_meta") or {}).get("project_id")
-        or (suite.get("sonic_result_meta") or {}).get("projectId"),
-        0,
-    )
-    result_id = _safe_int(
-        suite.get("sonic_result_id")
-        or (suite.get("sonic_result_meta") or {}).get("result_id")
-        or (suite.get("sonic_result_meta") or {}).get("resultId"),
-        0,
-    )
+    project_id, result_id = sonic_suite_project_result_ids(suite)
     if not project_id or not result_id:
         return ""
     for key, other in (state.get("suites") or {}).items():
         if key == suite_key:
             continue
-        other_project_id = _safe_int(
-            other.get("sonic_project_id")
-            or (other.get("sonic_result_meta") or {}).get("project_id")
-            or (other.get("sonic_result_meta") or {}).get("projectId"),
-            0,
-        )
-        other_result_id = _safe_int(
-            other.get("sonic_result_id")
-            or (other.get("sonic_result_meta") or {}).get("result_id")
-            or (other.get("sonic_result_meta") or {}).get("resultId"),
-            0,
-        )
+        other_project_id, other_result_id = sonic_suite_project_result_ids(other)
         if (
             other_project_id == project_id
             and other_result_id == result_id
@@ -3097,6 +3275,102 @@ def sonic_suite_same_result_already_sent(state: dict, suite_key: str, suite: dic
         ):
             return key
     return ""
+
+
+def sonic_suite_project_result_ids(suite: dict) -> Tuple[int, int]:
+    suite = suite or {}
+    meta = suite.get("sonic_result_meta") or {}
+    project_id = _safe_int(
+        suite.get("sonic_project_id")
+        or suite.get("project_id")
+        or suite.get("projectId")
+        or meta.get("project_id")
+        or meta.get("projectId"),
+        0,
+    )
+    result_id = _safe_int(
+        suite.get("sonic_result_id")
+        or suite.get("result_id")
+        or suite.get("resultId")
+        or meta.get("result_id")
+        or meta.get("resultId")
+        or meta.get("id"),
+        0,
+    )
+    return project_id, result_id
+
+
+def sonic_suite_feishu_send_identity(suite: dict, webhook_fingerprint: str = "") -> str:
+    project_id, result_id = sonic_suite_project_result_ids(suite)
+    if not project_id or not result_id:
+        return ""
+    fingerprint = str(webhook_fingerprint or (suite or {}).get("feishu_webhook_fingerprint") or "").strip()
+    return f"sonic_result:{project_id}:{result_id}:{fingerprint or 'unknown_webhook'}"
+
+
+def sonic_suite_feishu_send_registry(state: dict) -> dict:
+    registry = state.setdefault("feishu_sent", {})
+    if not isinstance(registry, dict):
+        registry = {}
+        state["feishu_sent"] = registry
+    return registry
+
+
+def claim_sonic_suite_feishu_send(
+    state: dict,
+    suite_key: str,
+    suite: dict,
+    webhook_fingerprint: str,
+    now_ts: Optional[int] = None,
+) -> Tuple[bool, str, dict]:
+    identity = sonic_suite_feishu_send_identity(suite, webhook_fingerprint)
+    if not identity:
+        return True, "", {}
+    now_ts = _safe_int(now_ts, int(time.time()))
+    registry = sonic_suite_feishu_send_registry(state)
+    record = registry.get(identity) if isinstance(registry.get(identity), dict) else {}
+    if record.get("sent_at") and not record.get("send_error"):
+        return False, identity, record
+    started_ts = _safe_int(record.get("send_started_ts"), 0)
+    if record.get("send_in_progress") and started_ts and now_ts - started_ts < 120:
+        return False, identity, record
+    project_id, result_id = sonic_suite_project_result_ids(suite)
+    registry[identity] = {
+        "suite_key": suite_key,
+        "sonic_project_id": project_id,
+        "sonic_result_id": result_id,
+        "webhook_fingerprint": webhook_fingerprint or "",
+        "send_in_progress": True,
+        "send_started_ts": now_ts,
+        "send_error": "",
+    }
+    return True, identity, registry[identity]
+
+
+def finish_sonic_suite_feishu_send(
+    state: dict,
+    identity: str,
+    suite_key: str,
+    suite: dict,
+    send_error: str = "",
+) -> None:
+    if not identity:
+        return
+    registry = sonic_suite_feishu_send_registry(state)
+    record = registry.get(identity) if isinstance(registry.get(identity), dict) else {}
+    project_id, result_id = sonic_suite_project_result_ids(suite)
+    record.update({
+        "suite_key": suite_key,
+        "sonic_project_id": project_id,
+        "sonic_result_id": result_id,
+        "webhook_fingerprint": (suite or {}).get("feishu_webhook_fingerprint", ""),
+        "send_in_progress": False,
+        "send_started_ts": 0,
+        "send_error": send_error or "",
+    })
+    if not send_error:
+        record["sent_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    registry[identity] = record
 
 
 def mark_sonic_suite_completed_from_result_meta(suite: dict) -> dict:
@@ -3980,6 +4254,7 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
     sonic_suite_definition = {}
     sonic_suite_definition_error = ""
     expected_total_count = 0
+    feishu_send_identity = ""
     try:
         suite = _attach_sonic_suite_definition_from_api(suite_key, suite)
         sonic_suite_definition = suite.get("sonic_suite_definition") or {}
@@ -4108,6 +4383,25 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
             })
             schedule_sonic_suite_summary(suite_key, delay=delay)
             return
+        before_count = len(suite.get("results") or [])
+        suite = ensure_sonic_suite_missing_result_placeholders(suite, now_ts)
+        if len(suite.get("results") or []) > before_count:
+            with cfg.SONIC_SUITE_LOCK:
+                state = load_sonic_suite_results()
+                latest = (state.get("suites") or {}).get(suite_key) or suite
+                latest.update({
+                    "results": suite.get("results") or [],
+                    "missing_task_callbacks_materialized": True,
+                    "missing_task_callbacks_materialized_at": suite.get("missing_task_callbacks_materialized_at") or time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                state.setdefault("suites", {})[suite_key] = latest
+                save_sonic_suite_results(state)
+                suite = latest
+            _append_notify_log("suite_missing_task_callbacks_materialized", {
+                "suite_key": suite_key,
+                "added": len(suite.get("results") or []) - before_count,
+                "expected_total_count": sonic_suite_expected_total(suite),
+            })
         suite = _attach_sonic_report_from_api(suite_key, suite)
         sonic_report_url = suite.get("sonic_report_url") or ""
         sonic_report_lookup = suite.get("sonic_report_lookup") or {}
@@ -4139,6 +4433,40 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
                     "sonic_result_id": suite.get("sonic_result_id"),
                 })
                 return
+            claimed, feishu_send_identity, existing_send = claim_sonic_suite_feishu_send(
+                state,
+                suite_key,
+                suite,
+                suite.get("feishu_webhook_fingerprint", ""),
+                now_ts=int(time.time()),
+            )
+            if not claimed:
+                latest = (state.get("suites") or {}).get(suite_key) or suite
+                latest.update({
+                    "send_in_progress": False,
+                    "send_started_ts": 0,
+                    "notification_suppressed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "notification_suppressed_reason": "同一 Sonic resultId 已进入飞书发送登记，跳过重复发送",
+                    "duplicate_feishu_send_identity": feishu_send_identity,
+                    "duplicate_of": existing_send.get("suite_key", ""),
+                })
+                state.setdefault("suites", {})[suite_key] = latest
+                save_sonic_suite_results(state)
+                cfg.SONIC_SUITE_TIMERS.pop(suite_key, None)
+                _append_notify_log("suite_summary_duplicate_feishu_send_suppressed", {
+                    "suite_key": suite_key,
+                    "duplicate_of": existing_send.get("suite_key", ""),
+                    "feishu_send_identity": feishu_send_identity,
+                    "sonic_project_id": suite.get("sonic_project_id"),
+                    "sonic_result_id": suite.get("sonic_result_id"),
+                    "send_in_progress": bool(existing_send.get("send_in_progress")),
+                    "sent_at": existing_send.get("sent_at", ""),
+                })
+                return
+            latest = (state.get("suites") or {}).get(suite_key) or suite
+            latest["feishu_send_identity"] = feishu_send_identity
+            state.setdefault("suites", {})[suite_key] = latest
+            save_sonic_suite_results(state)
         try:
             suite_report_url = write_sonic_suite_summary_report(suite)
             suite["suite_report_url"] = suite_report_url
@@ -4190,7 +4518,9 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
         ):
             suite["completion_final_sent"] = True
         suite["feishu"] = resp
+        suite["feishu_send_identity"] = feishu_send_identity or suite.get("feishu_send_identity", "")
         state.setdefault("suites", {})[suite_key] = suite
+        finish_sonic_suite_feishu_send(state, suite["feishu_send_identity"], suite_key, suite, send_error=send_error)
         save_sonic_suite_results(state)
         cfg.SONIC_SUITE_TIMERS.pop(suite_key, None)
     _append_notify_log(
@@ -4210,10 +4540,68 @@ def send_sonic_suite_summary_if_quiet(suite_key: str) -> None:
 # Sonic 执行
 # ---------------------------------------------------------------------------
 
-def sonic_force_run_suite(suite_id: Any) -> dict:
+def sonic_recent_active_suite_result(suite_id: Any, guard_seconds: Optional[int] = None) -> dict:
+    """Return a recent unfinished Sonic result for the same suite, if any."""
+    suite_id_int = _safe_int(suite_id, 0)
+    if not suite_id_int:
+        return {}
+    if guard_seconds is None:
+        guard_seconds = _safe_int(getattr(cfg, "SONIC_SUITE_RUN_GUARD_SECONDS", 7200), 7200)
+    try:
+        detail = _sonic_suite_detail(suite_id_int)
+        project_id = _safe_int(detail.get("projectId") or detail.get("project_id"), 0)
+        suite_name = str(detail.get("name") or detail.get("suiteName") or "").strip()
+        if not project_id:
+            return {}
+        now_ts = int(time.time())
+        for item in sonic_list_results(project_id, page=1, page_size=20):
+            if not isinstance(item, dict):
+                continue
+            item_suite_id = _safe_int(item.get("suiteId") or item.get("suite_id"), 0)
+            item_suite_name = str(item.get("suiteName") or item.get("suite_name") or "").strip()
+            if item_suite_id:
+                if item_suite_id != suite_id_int:
+                    continue
+            elif suite_name and item_suite_name and item_suite_name != suite_name:
+                continue
+            else:
+                continue
+            if item.get("endTime") or item.get("end_time"):
+                continue
+            status_text = str(item.get("status") if item.get("status") is not None else "").strip().lower()
+            if status_text not in ("0", "running", "run", "in_progress", ""):
+                continue
+            create_ts = _parse_time(str(item.get("createTime") or item.get("create_time") or ""))
+            if guard_seconds > 0 and create_ts and now_ts - create_ts > guard_seconds:
+                continue
+            return {
+                "id": item.get("id"),
+                "suiteId": item_suite_id or suite_id_int,
+                "suiteName": item_suite_name or suite_name,
+                "projectId": project_id,
+                "createTime": item.get("createTime") or item.get("create_time") or "",
+                "receiveMsgCount": item.get("receiveMsgCount") or item.get("receive_msg_count"),
+                "sendMsgCount": item.get("sendMsgCount") or item.get("send_msg_count"),
+                "status": item.get("status"),
+            }
+    except Exception:
+        return {}
+    return {}
+
+
+def sonic_force_run_suite(suite_id: Any, force: bool = False) -> dict:
     """触发 Sonic 测试套强制执行，返回 resultId。"""
     if not suite_id:
         return {"ok": False, "error": "suiteId 为空"}
+    if not force:
+        active = sonic_recent_active_suite_result(suite_id)
+        if active:
+            return {
+                "ok": False,
+                "code": "suite_running",
+                "error": f"Sonic 测试套仍有运行中的结果：{active.get('id')}，请等待完成后再触发，或确认后使用 force。",
+                "active_result": active,
+            }
     try:
         resp = sonic_request("GET", "/testSuites/runSuite", params={"id": suite_id}, timeout=30)
         data = _sonic_response_data(resp)
@@ -5373,6 +5761,8 @@ __all__ = [
     "sonic_suite_has_complete_result_cycle",
     "sonic_suite_case_stats",
     "sonic_suite_display_stats",
+    "sonic_suite_project_for_display",
+    "ensure_sonic_suite_missing_result_placeholders",
     "sonic_suite_effective_status",
     "sonic_suite_finished_in_sonic",
     "sonic_suite_result_line",
@@ -5403,6 +5793,10 @@ __all__ = [
     "merge_sonic_suite_results",
     "sonic_suite_result_key_from_meta",
     "migrate_sonic_suite_to_result_key",
+    "sonic_suite_project_result_ids",
+    "sonic_suite_feishu_send_identity",
+    "claim_sonic_suite_feishu_send",
+    "finish_sonic_suite_feishu_send",
     "mark_sonic_suite_completed_from_result_meta",
     # Report
     "write_sonic_suite_summary_report",

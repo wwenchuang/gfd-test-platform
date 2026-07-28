@@ -13,6 +13,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from task_server.services import sonic_service
+
 SPEC = importlib.util.spec_from_file_location("midscene_upload", ROOT / "midscene-upload.py")
 midscene = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(midscene)
@@ -763,6 +765,50 @@ def test_sonic_result_id_derives_fixed_report_url_without_lookup():
             assert "未匹配到 Sonic 测试结果" not in html
     finally:
         midscene.REPORT_DIR = old_report_dir
+
+
+def test_sonic_force_run_suite_blocks_recent_active_same_suite_result():
+    old_request = sonic_service.sonic_request
+    calls = []
+    recent = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 60))
+
+    def fake_request(method, path, params=None, body=None, timeout=20):
+        calls.append((method, path, params or {}))
+        if path == "/testSuites":
+            return {"code": 2000, "data": {"id": 8, "projectId": 3, "name": "3D测试自动"}}
+        if path == "/results/list":
+            return {
+                "code": 2000,
+                "data": {
+                    "content": [
+                        {
+                            "id": 1203,
+                            "projectId": 3,
+                            "suiteId": 8,
+                            "suiteName": "3D测试自动",
+                            "createTime": recent,
+                            "endTime": None,
+                            "status": 0,
+                            "receiveMsgCount": 5,
+                            "sendMsgCount": 11,
+                        }
+                    ]
+                },
+            }
+        if path == "/testSuites/runSuite":
+            raise AssertionError("runSuite must not be called while the same suite is active")
+        raise AssertionError(f"unexpected Sonic request: {method} {path}")
+
+    try:
+        sonic_service.sonic_request = fake_request
+        result = sonic_service.sonic_force_run_suite(8)
+    finally:
+        sonic_service.sonic_request = old_request
+
+    assert result["ok"] is False
+    assert result["code"] == "suite_running"
+    assert result["active_result"]["id"] == 1203
+    assert not any(path == "/testSuites/runSuite" for _, path, _ in calls)
 
 
 def test_feishu_reason_does_not_emit_irrecoverable_mojibake():
@@ -1519,6 +1565,94 @@ def test_suite_summary_send_claim_blocks_concurrent_duplicate_notification():
     assert state["suites"]["suite-final"]["sent_at"]
 
 
+def test_suite_summary_feishu_registry_blocks_same_result_from_different_keys():
+    now_ts = int(time.time()) - 300
+
+    def suite_payload(key, completion_received=True, with_result_meta=False):
+        suite = {
+            "suite_key": key,
+            "source": "sonic",
+            "run_mode": "baseline",
+            "notification_mode": "suite_completion",
+            "created_ts": now_ts,
+            "last_update_ts": now_ts,
+            "completion_received": completion_received,
+            "app_package": "com.kfb.model",
+            "app": {"package": "com.kfb.model", "name": "智小白3D"},
+            "sonic_project_id": 3,
+            "sonic_result_id": 1207,
+            "expected_total_count": 1,
+            "results": [{"job_id": f"{key}-job", "target_task_name": "OBJ保龄球打印", "status": "success"}],
+        }
+        if with_result_meta:
+            suite["sonic_result_meta"] = {
+                "project_id": 3,
+                "result_id": 1207,
+                "finished": True,
+                "status": 1,
+                "expected_total_count": 1,
+            }
+        return suite
+
+    state = {
+        "active": {},
+        "suites": {
+            "sonic_result_3_1207": suite_payload("sonic_result_3_1207"),
+            "suite-fallback-1207": suite_payload("suite-fallback-1207", completion_received=False, with_result_meta=True),
+        },
+    }
+    sent = []
+    logged = []
+    original_load = sonic_service.load_sonic_suite_results
+    original_save = sonic_service.save_sonic_suite_results
+    original_webhook = sonic_service._task_app_feishu_webhook_meta
+    original_definition = sonic_service._attach_sonic_suite_definition_from_api
+    original_result_meta = sonic_service._attach_sonic_result_meta_from_api
+    original_report_meta = sonic_service._attach_sonic_report_from_api
+    original_write = sonic_service.write_sonic_suite_summary_report
+    original_post = sonic_service._post_feishu_card
+    original_log = sonic_service._append_notify_log
+    try:
+        sonic_service.load_sonic_suite_results = lambda: state
+        sonic_service.save_sonic_suite_results = lambda payload: state.update(payload)
+        sonic_service._task_app_feishu_webhook_meta = lambda app: {
+            "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/example",
+            "source": "test",
+            "fingerprint": "webhookfp",
+        }
+        sonic_service._attach_sonic_suite_definition_from_api = lambda suite_key, suite: suite
+        sonic_service._attach_sonic_result_meta_from_api = lambda suite_key, suite: suite
+        sonic_service._attach_sonic_report_from_api = lambda suite_key, suite: suite
+        sonic_service.write_sonic_suite_summary_report = lambda suite: "http://task/reports/suite.html"
+
+        def post_once(webhook, card):
+            sent.append((webhook, card))
+            sonic_service.send_sonic_suite_summary_if_quiet("suite-fallback-1207")
+            return {"ok": True}
+
+        sonic_service._post_feishu_card = post_once
+        sonic_service._append_notify_log = lambda event, *args, **kwargs: logged.append(event)
+        sonic_service.send_sonic_suite_summary_if_quiet("sonic_result_3_1207")
+    finally:
+        sonic_service.load_sonic_suite_results = original_load
+        sonic_service.save_sonic_suite_results = original_save
+        sonic_service._task_app_feishu_webhook_meta = original_webhook
+        sonic_service._attach_sonic_suite_definition_from_api = original_definition
+        sonic_service._attach_sonic_result_meta_from_api = original_result_meta
+        sonic_service._attach_sonic_report_from_api = original_report_meta
+        sonic_service.write_sonic_suite_summary_report = original_write
+        sonic_service._post_feishu_card = original_post
+        sonic_service._append_notify_log = original_log
+        sonic_service.cfg.SONIC_SUITE_TIMERS.pop("sonic_result_3_1207", None)
+        sonic_service.cfg.SONIC_SUITE_TIMERS.pop("suite-fallback-1207", None)
+
+    assert len(sent) == 1
+    identity = "sonic_result:3:1207:webhookfp"
+    assert state["feishu_sent"][identity]["sent_at"]
+    assert state["feishu_sent"][identity]["send_in_progress"] is False
+    assert "suite_summary_duplicate_feishu_send_suppressed" in logged
+
+
 def test_suite_summary_waiting_for_expected_results_releases_send_claim():
     state = {
         "active": {},
@@ -1576,6 +1710,117 @@ def test_suite_summary_waiting_for_expected_results_releases_send_claim():
     assert scheduled == ["suite-wait-more"]
     assert suite["send_in_progress"] is False
     assert suite["send_started_ts"] == 0
+
+
+def test_failed_sonic_completion_materializes_missing_task_callbacks_after_grace():
+    old_ts = int(time.time()) - 240
+    state = {
+        "active": {},
+        "suites": {
+            "sonic_result_3_1175": {
+                "suite_key": "sonic_result_3_1175",
+                "source": "sonic",
+                "run_mode": "baseline",
+                "notification_mode": "suite_completion",
+                "completion_received": True,
+                "completion_ts": old_ts,
+                "app_package": "com.kfb.model",
+                "app": {"package": "com.kfb.model", "name": "智小白3D"},
+                "expected_total_count": 3,
+                "sonic_result_meta": {
+                    "project_id": 3,
+                    "result_id": 1175,
+                    "suite_id": 8,
+                    "suite_name": "3D测试自动",
+                    "status": 3,
+                    "send_msg_count": 3,
+                    "receive_msg_count": 3,
+                    "expected_total_count": 3,
+                    "finished": True,
+                    "sonic_report_url": "http://sonic/Home/3/ResultDetail/1175",
+                },
+                "sonic_suite_definition": {
+                    "expected_total_count": 3,
+                    "case_count": 3,
+                    "case_names": ["模型生成记录", "姓名牌打印", "OBJ保龄球打印"],
+                },
+                "results": [
+                    {"job_id": "sonic_job_1", "target_task_name": "模型生成记录", "status": "success"}
+                ],
+            }
+        },
+    }
+    captured = []
+    sent = []
+    original_load = sonic_service.load_sonic_suite_results
+    original_save = sonic_service.save_sonic_suite_results
+    original_webhook = sonic_service._task_app_feishu_webhook_meta
+    original_definition = sonic_service._attach_sonic_suite_definition_from_api
+    original_result_meta = sonic_service._attach_sonic_result_meta_from_api
+    original_report_meta = sonic_service._attach_sonic_report_from_api
+    original_write = sonic_service.write_sonic_suite_summary_report
+    original_post = sonic_service._post_feishu_card
+    original_log = sonic_service._append_notify_log
+    try:
+        sonic_service.load_sonic_suite_results = lambda: state
+        sonic_service.save_sonic_suite_results = lambda payload: state.update(payload)
+        sonic_service._task_app_feishu_webhook_meta = lambda app: {"webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/example"}
+        sonic_service._attach_sonic_suite_definition_from_api = lambda suite_key, suite: suite
+        sonic_service._attach_sonic_result_meta_from_api = lambda suite_key, suite: suite
+        sonic_service._attach_sonic_report_from_api = lambda suite_key, suite: suite
+        sonic_service.write_sonic_suite_summary_report = lambda suite: captured.append(json.loads(json.dumps(suite))) or "http://task/reports/sonic_result_3_1175-summary.html"
+        sonic_service._post_feishu_card = lambda webhook, card: sent.append(card) or {"ok": True}
+        sonic_service._append_notify_log = lambda *args, **kwargs: None
+        sonic_service.send_sonic_suite_summary_if_quiet("sonic_result_3_1175")
+    finally:
+        sonic_service.load_sonic_suite_results = original_load
+        sonic_service.save_sonic_suite_results = original_save
+        sonic_service._task_app_feishu_webhook_meta = original_webhook
+        sonic_service._attach_sonic_suite_definition_from_api = original_definition
+        sonic_service._attach_sonic_result_meta_from_api = original_result_meta
+        sonic_service._attach_sonic_report_from_api = original_report_meta
+        sonic_service.write_sonic_suite_summary_report = original_write
+        sonic_service._post_feishu_card = original_post
+        sonic_service._append_notify_log = original_log
+        sonic_service.cfg.SONIC_SUITE_TIMERS.pop("sonic_result_3_1175", None)
+
+    assert len(sent) == 1
+    suite = state["suites"]["sonic_result_3_1175"]
+    assert suite["completion_final_sent"] is True
+    assert len(suite["results"]) == 3
+    missing = [item for item in suite["results"] if item.get("synthetic_missing_callback")]
+    assert [item["target_task_name"] for item in missing] == ["姓名牌打印", "OBJ保龄球打印"]
+    assert {item["status"] for item in missing} == {"failed"}
+    assert captured and len(captured[0]["results"]) == 3
+
+
+def test_stale_progress_only_sonic_suite_is_projected_as_missing_callback():
+    old_ts = int(time.time()) - 240
+    suite = {
+        "suite_key": "sonic_suite_progress_only",
+        "source": "sonic",
+        "run_mode": "baseline",
+        "notification_mode": "suite_completion",
+        "created_ts": old_ts,
+        "last_update_ts": old_ts,
+        "app_package": "com.kfb.model",
+        "app": {"package": "com.kfb.model", "name": "智小白3D"},
+        "sonic_suite_id": "8",
+        "sonic_suite_name": "3D测试自动",
+        "expected_total_count": 2,
+        "last_running_job_id": "sonic_1785039783525",
+        "last_running_case": "十二生肖印章打印",
+        "results": [],
+    }
+
+    projected = sonic_service.sonic_suite_project_for_display(suite, now_ts=int(time.time()))
+
+    assert projected is not suite
+    assert projected["bridge_result_missing"] is True
+    assert len(projected["results"]) == 1
+    assert projected["results"][0]["status"] == "failed"
+    assert projected["results"][0]["target_task_name"] == "十二生肖印章打印"
+    assert "未收到最终结果回传" in projected["results"][0]["error"]
 
 
 def test_pending_suite_summary_timers_restore_on_server_startup():
@@ -2165,7 +2410,7 @@ def test_groovy_ui_failure_recovery_is_bounded_ai_driven_and_generic():
     dispatch_pos = bridge.index("if (exitCode != 0 && currentAppPackage)")
     restore_pos = bridge.index("def restoreStartedAt", dispatch_pos)
 
-    assert 'bridgeVersion = "2026.07.24-qwen3.7-midscene110-v3"' in bridge
+    assert 'bridgeVersion = "2026.07.26-qwen3.7-result-retry-v1"' in bridge
     assert 'System.getenv("MIDSCENE_REPLANNING_CYCLE_LIMIT"),\n    "8"' in bridge
     assert "Math.max(8, parsedMidsceneReplanningCycleLimit)" in bridge
     assert "失败后仅做状态恢复" in recovery_section
@@ -2546,6 +2791,7 @@ if __name__ == "__main__":
     test_ai_model_abort_notification_is_not_labeled_baseline_failure()
     test_suite_summary_report_renders_missing_task_callbacks_as_rows()
     test_sonic_result_id_derives_fixed_report_url_without_lookup()
+    test_sonic_force_run_suite_blocks_recent_active_same_suite_result()
     test_feishu_reason_does_not_emit_irrecoverable_mojibake()
     test_feishu_reason_recovers_reversible_utf8_as_gbk_text()
     test_feishu_webhook_rejects_multiline_export_pollution()
@@ -2566,7 +2812,10 @@ if __name__ == "__main__":
     test_finished_result_api_completion_sends_once()
     test_legacy_mixed_completion_is_not_sent_after_upgrade()
     test_suite_summary_send_claim_blocks_concurrent_duplicate_notification()
+    test_suite_summary_feishu_registry_blocks_same_result_from_different_keys()
     test_suite_summary_waiting_for_expected_results_releases_send_claim()
+    test_failed_sonic_completion_materializes_missing_task_callbacks_after_grace()
+    test_stale_progress_only_sonic_suite_is_projected_as_missing_callback()
     test_pending_suite_summary_timers_restore_on_server_startup()
     test_late_case_result_after_final_summary_starts_new_suite_bucket()
     test_background_midscene_report_attaches_without_creating_new_suite_result()

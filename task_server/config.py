@@ -269,6 +269,10 @@ ENABLE_AUTOMATIC_BASELINE_REPAIR = env_int("MIDSCENE_ENABLE_AUTO_BASELINE_REPAIR
 # Sonic emits one authoritative completion event for a suite. Case result posts
 # enrich Task details, but must not produce partial Feishu summaries first.
 SONIC_NOTIFY_ON_SUITE_COMPLETION_ONLY = env_int("SONIC_NOTIFY_ON_SUITE_COMPLETION_ONLY", 1) != 0
+# Prevent accidental duplicate Sonic suite runs while a recent result for the
+# same suite is still active. Old Sonic results can remain "running" forever
+# after device-busy timeouts, so the guard is intentionally time-bounded.
+SONIC_SUITE_RUN_GUARD_SECONDS = env_int("SONIC_SUITE_RUN_GUARD_SECONDS", 2 * 60 * 60)
 # Sonic 2.7.2 stores the authoritative suite lifecycle in /results/list.
 # Case callbacks only enrich details; final Feishu summaries are keyed by
 # resultId and sent once after Sonic marks the result finished.

@@ -10747,15 +10747,7 @@ def sonic_force_run_suite(suite_id):
         return {"ok": False, "error": "suiteId 为空"}
     try:
         from task_server.services import sonic_service
-        resp = sonic_service.sonic_request("GET", "/testSuites/runSuite", params={"id": suite_id}, timeout=30)
-        data = sonic_service.sonic_response_data(resp)
-        if data and isinstance(data, dict):
-            result_id = data.get("id") or data.get("resultId") or data.get("result_id")
-            return {"ok": True, "resultId": result_id, "data": data}
-        # Sonic可能直接返回 resultId 作为整数
-        if isinstance(data, (int, str)) and data:
-            return {"ok": True, "resultId": data}
-        return {"ok": True, "resultId": None, "raw": resp}
+        return sonic_service.sonic_force_run_suite(suite_id)
     except Exception as e:
         return {"ok": False, "error": str(e)[:500]}
 
