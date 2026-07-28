@@ -11777,6 +11777,100 @@ def check_yaml_static_validation_and_patterns():
         )
     finally:
         agent_service.TASK_DIR = old_agent_task_dir
+    old_agent_task_dir = agent_service.TASK_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.TASK_DIR = temp_dir
+            module_dir = Path(temp_dir) / "AI_Agent_草稿"
+            module_dir.mkdir()
+            photo_spec_yaml = """android:
+  tasks:
+    - name: 照片打印页(5寸)-百度网盘入口可见性及文案校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习打印首页已加载
+        - aiTap: 照片打印
+        - aiTap: 5寸照片
+        - aiWaitFor: 5寸照片页面展示百度网盘入口
+        - aiAssert: 5寸照片页面百度网盘入口可见，文案为百度网盘
+"""
+            photo_spec_path = module_dir / "03-photo-spec.yaml"
+            photo_spec_path.write_text(photo_spec_yaml, encoding="utf-8")
+            doc_yaml = """android:
+  tasks:
+    - name: 文档打印页-百度网盘入口可见性及文案校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习打印首页已加载
+        - aiTap: 文档打印
+        - aiWaitFor: 文档打印页面展示百度网盘入口
+        - aiAssert: 文档打印页面百度网盘入口可见，文案为百度网盘，与同级入口并列
+"""
+            doc_path = module_dir / "01-doc.yaml"
+            doc_path.write_text(doc_yaml, encoding="utf-8")
+            baidu_run = {
+                "scope": "regression",
+                "target": "基础打印新增百度网盘入口",
+                "requirement": "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需完整覆盖三个业务入口中的展示、同级关系、文案及可达页面。",
+                "artifacts": {
+                    "sourceContext": {
+                        "requirementText": "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需完整覆盖三个业务入口中的展示、同级关系、文案及可达页面。",
+                    },
+                    "generationPipeline": {"source": "ui_yaml_pipeline"},
+                    "generatedCases": {
+                        "analysis": {
+                            "requirement_points": [
+                                "REQ-001 文档打印：校验百度网盘入口可见；校验百度网盘入口与当前页面同级入口的层级和位置关系；校验百度网盘入口使用需求约定的可见文案",
+                                "REQ-002 照片打印：校验百度网盘入口可见；校验百度网盘入口与当前页面同级入口的层级和位置关系；校验百度网盘入口使用需求约定的可见文案",
+                            ],
+                            "requirement_acceptance_checks": [
+                                {"id": "REQ-001-CHECK-01", "requirementId": "REQ-001", "branch": "文档打印", "kind": "visibility", "text": "校验百度网盘入口可见"},
+                                {"id": "REQ-001-CHECK-02", "requirementId": "REQ-001", "branch": "文档打印", "kind": "relation", "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系"},
+                                {"id": "REQ-001-CHECK-03", "requirementId": "REQ-001", "branch": "文档打印", "kind": "copy", "text": "校验百度网盘入口使用需求约定的可见文案"},
+                                {"id": "REQ-002-CHECK-01", "requirementId": "REQ-002", "branch": "照片打印", "kind": "visibility", "text": "校验百度网盘入口可见"},
+                                {"id": "REQ-002-CHECK-02", "requirementId": "REQ-002", "branch": "照片打印", "kind": "relation", "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系"},
+                                {"id": "REQ-002-CHECK-03", "requirementId": "REQ-002", "branch": "照片打印", "kind": "copy", "text": "校验百度网盘入口使用需求约定的可见文案"},
+                            ],
+                        },
+                        "cases": [{"case_id": "TC-001"}, {"case_id": "TC-002"}],
+                    },
+                },
+            }
+            refs, err = agent_service._confirm_agent_yaml_files(
+                baidu_run,
+                baidu_run["artifacts"],
+                [
+                    {
+                        "module": "AI_Agent_草稿",
+                        "file": "01-doc.yaml",
+                        "path": str(doc_path),
+                        "executionLevel": "executable",
+                        "score": 100,
+                        "scopeReview": {"matchedRequirementIds": ["REQ-001"]},
+                    },
+                    {
+                        "module": "AI_Agent_草稿",
+                        "file": "03-photo-spec.yaml",
+                        "path": str(photo_spec_path),
+                        "executionLevel": "executable",
+                        "score": 100,
+                        "scopeReview": {"matchedRequirementIds": ["REQ-002"]},
+                    },
+                ],
+            )
+            gap = agent_service._agent_generated_yaml_coverage_gap(baidu_run, refs)
+            non_executable_text = "；".join(baidu_run["artifacts"].get("yamlValidation", {}).get("nonExecutable") or [])
+        require(
+            not err
+            and [ref.get("file") for ref in refs] == ["01-doc.yaml"]
+            and "03-photo-spec.yaml" in non_executable_text
+            and "照片规格页/子规格分支" in non_executable_text
+            and any("REQ-002" in item and "[acceptance:copy]" in item for item in gap.get("missingRequirementPoints") or [])
+            and any("REQ-002" in item and "[acceptance:relation]" in item for item in gap.get("missingRequirementPoints") or []),
+            "Agent generation confirmation must use the same generated-scope gate as execution precheck before claiming coverage",
+        )
+    finally:
+        agent_service.TASK_DIR = old_agent_task_dir
     selected, blocked = rank_executable_yaml_refs([
         {"file": "fallback-1.yaml", "executableScore": {
             **executable_score,

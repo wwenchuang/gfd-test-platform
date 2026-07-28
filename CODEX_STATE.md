@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 系统化收紧：生成确认、验证和预检必须共用有效 YAML 覆盖口径
+
+用户部署 `1307c68` 后同参重新发起百度网盘 Agent：`agent-1785233673106-bed83f3b`。线上健康正常：Task 服务、AI Gateway、Sonic Bridge 和 Windows Runner 均可用，Runner 为 `2026.07.26-qwen3.7-result-retry-v1`，模型为 `qwen3.7-plus`，固定 OPPO PHM110 `ecbfd645` 在线；未向第二台手机下发。
+
+本轮真实结果：
+
+- `PREPARE_SOURCE` 成功复用 Figma `4 页 / 4 图`，4 批视觉判断均完成。
+- `PLAN` 通过，包含文档打印、照片打印、扫描复印主链。
+- `GENERATE_YAML` 表面成功，生成 6 条 YAML。
+- `VALIDATE_YAML` 重新 dry-run/scorer 后隔离 1 条：`03-照片打印页(5寸)-百度网盘入口可见性及文案校验.yaml`，原因是命中照片规格页/子规格分支，而源需求只要求“照片打印”业务入口。
+- `EXECUTION_PRECHECK` 失败，真正缺口为 `REQ-002 [acceptance:relation]` 和 `REQ-002 [acceptance:copy]`。未创建 Runner job；这不是手机、ADB、Runner 或 Sonic 问题。
+
+根因：
+
+- `GENERATE_YAML` 成功口径使用 pipeline 原始返回数量和初始分类，仍把照片 5寸规格页当作有效生成。
+- `VALIDATE_YAML`/预检阶段会使用更严格的 generated scope/scorer，把 5寸规格页隔离，但当时只做后置阻断，没有把“隔离后有效 YAML 集”作为唯一覆盖依据。
+- 结果是同一次任务里出现“生成阶段说 6 个 YAML 可执行通过，执行前才发现 5 个有效 YAML 且照片打印缺 copy/relation”的状态错位。
+
+修复：
+
+- `_confirm_agent_yaml_files()` 在正式确认生成 YAML 时直接应用 `_agent_generated_yaml_ref_out_of_source_scope()`，生成产物只要命中照片规格页/子规格且源需求未明确要求规格，就立刻降为 `needs_review`，不会进入 `yamlRefs` 或 Runner 候选。
+- 正式 refs 明确标记 `source=generated / generated=True / validationMode=generated`，后续验证和预检使用同一身份判断。
+- `_tool_validate_yaml()` 在隔离 YAML 后立即基于剩余 `passed_refs` 调用 `_agent_generated_yaml_coverage_gap()`；如果完整回归硬覆盖被破坏，`VALIDATE_YAML` 直接失败并记录 `coverageGap`，不再拖到 `EXECUTION_PRECHECK` 才失败。
+- 新增回归：文档打印有效 YAML + 照片打印 5寸规格 YAML 的混合结果中，照片规格 YAML 必须被隔离，最终覆盖缺口必须明确报告 `REQ-002 [acceptance:copy]` 和 `REQ-002 [acceptance:relation]`。
+
+验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_yaml_static_validation_and_patterns()
+PY
+```
+
+补充验证：本地合成混合场景输出 `refs=['01-doc.yaml']`，`03-photo-spec.yaml` 被记录为 `needs_review`，coverage gap 包含 `REQ-002 [acceptance:relation]` 和 `REQ-002 [acceptance:copy]`。
+
+完整 `python3 tests/backend_static_checks.py` 仍被既有 OBJ 保龄球历史 YAML 断言拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改 Runner、Sonic、scorer、router 或历史 YAML；Codex 不 push。用户部署后应同参重新跑百度网盘 Agent，预期不会再出现 `GENERATE_YAML` 先成功、`EXECUTION_PRECHECK` 才发现照片规格隔离后覆盖缺口的错位；若仍缺照片打印主链，应继续修“源业务入口级候选合成”，不要让 Figma 规格页替代源合同。
+
 ### 2026-07-28 部署后复核：PLAN 已越过照片分支，YAML 生成仍缺三分支 relation
 
 用户部署 `77b0c03` 后重新发起同一百度网盘 Agent：`agent-1785231613446-2c416b58`。线上健康：Task 服务模型 `qwen3.7-plus`，Sonic Bridge / Windows Runner 均为 `2026.07.26-qwen3.7-result-retry-v1`，固定 OPPO PHM110 `ecbfd645` ready；未向第二台手机下发。

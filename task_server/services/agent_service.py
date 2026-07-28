@@ -1797,6 +1797,27 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
         if declared_level and level_rank.get(declared_level, 1) < level_rank.get(effective_level, 1):
             effective_level = declared_level
         scope_review = item.get("scopeReview") if isinstance(item.get("scopeReview"), dict) else {}
+        scope_ref = {
+            "type": "file",
+            "source": item.get("source") or "generated",
+            "generated": True,
+            "module": module,
+            "file": file_name or os.path.basename(path),
+            "path": path,
+            "content": content,
+        }
+        if _agent_generated_yaml_ref_out_of_source_scope(run, scope_ref, content):
+            scope_reason = "生成 YAML 命中照片规格页/子规格分支，但当前源需求只要求照片打印业务入口，禁止自动下发 Runner"
+            scope_review = {
+                **scope_review,
+                "ok": False,
+                "reasons": [
+                    str(reason)
+                    for reason in list(scope_review.get("reasons") or []) + [scope_reason]
+                    if str(reason or "").strip()
+                ][:8],
+                "rule": "当前源需求的照片打印只作为业务入口；Figma/AI 软参考中的尺寸、证件照、规格页不能成为自动执行分支。",
+            }
         if scope_review and scope_review.get("ok") is False and effective_level == "executable":
             effective_level = "needs_review"
         high_replan_without_baseline = (
@@ -1856,6 +1877,9 @@ def _confirm_agent_yaml_files(run, artifacts, file_items):
             continue
         refs.append({
             "type": "file",
+            "source": "generated",
+            "generated": True,
+            "validationMode": "generated",
             "module": module,
             "file": result["file"],
             "path": path,
@@ -10344,6 +10368,22 @@ def _tool_validate_yaml(run):
             "autoRepairs": [row.get("autoRepair") for row in repaired_results],
         }
         _sync_agent_generated_case_groups(artifacts, results)
+        coverage_gap = (
+            _agent_generated_yaml_coverage_gap(run, passed_refs)
+            if _agent_is_generated_yaml_run(run) and passed_refs
+            else {}
+        )
+        if coverage_gap:
+            artifacts.setdefault("generationPipeline", {})["coverageGap"] = coverage_gap
+            artifacts["yamlValidation"]["coverageGap"] = coverage_gap
+            coverage_issues = [
+                str(item).strip()
+                for item in (coverage_gap.get("reasons") or [])
+                if str(item or "").strip()
+            ]
+            for issue in coverage_issues:
+                if issue not in artifacts["yamlValidation"]["issues"]:
+                    artifacts["yamlValidation"]["issues"].append(issue)
         if failed_results and not passed_refs:
             call["status"] = "FAILED"
             call["error"] = issues[0][:300] if issues else "YAML dry-run 全部未通过"
@@ -10352,6 +10392,17 @@ def _tool_validate_yaml(run):
                 "没有可继续下发 Runner 的 YAML。",
                 ["查看 dry-run 错误", "重新生成 YAML", "人工编辑 YAML 草稿", "保存为正式 YAML 后再执行"],
                 failedYaml=failed_results[0].get("path") or failed_results[0].get("type") if failed_results else "",
+            ))
+        elif coverage_gap:
+            call["status"] = "FAILED"
+            call["error"] = "YAML 隔离后完整回归覆盖不完整：" + "；".join(
+                coverage_gap.get("reasons") or []
+            )[:300]
+            attach_diagnosis(call, make_diagnosis(
+                "YAML 隔离后完整回归覆盖不完整",
+                "部分生成 YAML 被 scope/scorer/dry-run 隔离后，剩余正式 YAML 不能覆盖所有硬需求验收。",
+                ["按缺失 REQ 重新生成或收敛 YAML", "修正被隔离 YAML 的业务入口层路径", "确认没有用 Figma 子规格页替代源业务入口"],
+                coverageGap=coverage_gap,
             ))
         elif failed_results:
             call["status"] = "PARTIAL_FAILED"
