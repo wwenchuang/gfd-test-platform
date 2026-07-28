@@ -28,6 +28,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 百度网盘五轮复跑：生成合同仍受 8 步预算影响，Figma 子规格不能变成硬执行分支
+
+用户部署后要求同一百度网盘需求再跑 5 次，固定参数为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus / com.xbxxhz.box`。五轮均只指定固定 OPPO `ecbfd645`，没有同时选择两台手机；线上服务健康，Task 模型为 `qwen3.7-plus`，Sonic Bridge 为 `2026.07.26-qwen3.7-result-retry-v1`。
+
+五轮结果：
+
+- `agent-1785209684874-8cdf7e63`：`DONE / DONE / 100%`，Runner 报告 complete。
+- `agent-1785210573013-bf963d35`：`FAILED / COLLECT_REPORT / 96%`，5 个真实执行报告中 1 个失败。失败用例为「文档打印页-百度网盘入口层级关系校验」，脚本在文档打印页等待「相册导入」，AI 复核误归为 `PRODUCT_BUG`，实际更像同级参照物跨分支污染。
+- `agent-1785211452176-e61aae3b`：`FAILED / GENERATE_YAML / 30%`，生成覆盖门禁缺 `REQ-002 [acceptance:copy] 照片打印：校验百度网盘入口使用需求约定的可见文案`，未创建 Runner job。
+- `agent-1785211967559-f13bac71`：`FAILED / GENERATE_YAML / 30%`，生成覆盖门禁缺 `REQ-001 [acceptance:relation] 文档打印：校验百度网盘入口与当前页面同级入口的层级和位置关系`，未创建 Runner job。
+- `agent-1785212361360-7f49bf95`：`FAILED / RERUN / 95%`，首批 smoke 选择了「照片打印页(一寸照)-百度网盘入口展示校验」，当前 APP 可见规格只有 5寸/6寸/7寸/A4 等，修复重跑仍失败。该一寸照来自 Figma 软参考/AI 扩展，不是本需求硬门禁要求的三个首页业务入口。
+
+根因与修复：
+
+1. `_merge_preserve_contract_into_flow()` 最多保留 8 步。线上部分候选已有 8 步时，即使平台能确定合成「文案为百度网盘」或「同级入口并列展示」，也会因预算已满而标记 missing，导致 copy/relation 门禁随机失败。现在 preserve 插入只会在源页窗口内腾挪低价值步骤：优先删除空步骤、`sleep`，其次删除不含业务/目标文字的泛化加载等待；不会删除业务点击、目标点击或已有断言。
+2. 明确“三个业务入口：文档打印、照片打印、扫描复印”的百度网盘需求，不能被 Figma 软参考扩展成证件照、一寸照、照片拼版等执行分支。现在 `_baidu_netdisk_requirement_points()` 在识别到三入口范围时只产出这三支；Agent PLAN 归一化阶段也会丢弃 AI 追加的照片子规格流，除非源需求合同本身明确提到这些子规格。
+
+验证：
+
+```bash
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+git diff --check -- task_server/services/agent_service.py task_server/services/ai_skill_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍失败于既有历史 YAML 断言 `OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改 Runner、Sonic、scorer、Figma 解析或历史 YAML；Codex 不 push。用户部署后建议同参再跑 5 次，重点观察是否仍出现 copy/relation 30% 门禁缺口，以及 smoke 是否还会选到一寸照/证件照子规格。
+
 ### 2026-07-28 脑图-only 任务：生成用例结构阶段必须有界降级，不能等外层 1800 秒超时
 
 用户反馈任务「设备页、消息推送、打印设置优化需求文档」总是超时。线上 job 为 `gen_1785202398808_00029`，类型 `mindmap_only`，输入包含 2 个文件且带 Figma；终态为 `timeout / 50%`，最后阶段停在「生成用例结构」，耗时约 1800 秒后才由后台过期逻辑标记超时。该问题与百度网盘 RUNNER_JOB、Windows Runner、Sonic、ADB 或手机占用无关。

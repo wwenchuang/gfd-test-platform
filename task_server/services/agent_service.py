@@ -4077,6 +4077,41 @@ def _agent_plan_constraint_branch_match(flow, constraint_flows):
     return ""
 
 
+_AGENT_PHOTO_SUBSPEC_TERMS = (
+    "一寸照", "1寸", "证件照", "智能证件照", "照片拼版", "图片拼版",
+)
+
+
+def _agent_plan_source_branch_text(branch, constraint_flows):
+    branch = str(branch or "").strip()
+    parts = []
+    for item in constraint_flows or []:
+        if not isinstance(item, dict):
+            continue
+        item_branch = str(item.get("branch") or item.get("name") or "").strip()
+        if item_branch != branch:
+            continue
+        parts.extend(_agent_plan_text_list([
+            item.get("name"),
+            item.get("branch"),
+            item.get("steps"),
+            item.get("checks"),
+        ], limit=20))
+    return _normalize_business_flow_text(json.dumps(parts, ensure_ascii=False))
+
+
+def _agent_plan_flow_out_of_source_scope(flow, matched_branch, constraint_flows):
+    """Drop AI-added leaf variants that are only visual soft references, not source branches."""
+    matched_branch = str(matched_branch or "").strip()
+    if matched_branch != "照片打印":
+        return False
+    source_text = _agent_plan_source_branch_text(matched_branch, constraint_flows)
+    if any(term in source_text for term in _AGENT_PHOTO_SUBSPEC_TERMS):
+        return False
+    flow_text = _normalize_business_flow_text(json.dumps(flow, ensure_ascii=False))
+    return any(term in flow_text for term in _AGENT_PHOTO_SUBSPEC_TERMS)
+
+
 def _normalize_agent_business_plan(value, run, constraint):
     if not isinstance(value, dict):
         return None, ["AI 计划不是 JSON 对象"]
@@ -4085,6 +4120,7 @@ def _normalize_agent_business_plan(value, run, constraint):
         return None, ["businessFlows 必须是数组"]
     flows = []
     issues = []
+    dropped_out_of_scope = []
     required_flows = _agent_plan_constraint_flows(constraint)
     for index, item in enumerate(raw_flows[:8], start=1):
         if not isinstance(item, dict):
@@ -4110,6 +4146,18 @@ def _normalize_agent_business_plan(value, run, constraint):
         if matched_branch:
             normalized_flow["branch"] = matched_branch[:80]
             normalized_flow["branchSource"] = "source_requirement_contract"
+            if _agent_plan_flow_out_of_source_scope(
+                normalized_flow,
+                matched_branch,
+                required_flows,
+            ):
+                dropped_out_of_scope.append({
+                    "id": normalized_flow.get("id"),
+                    "name": normalized_flow.get("name"),
+                    "branch": matched_branch,
+                    "reason": "source_contract_does_not_include_photo_subspec",
+                })
+                continue
         flows.append(normalized_flow)
     if not flows:
         issues.append("AI 计划没有业务分支")
@@ -4139,6 +4187,8 @@ def _normalize_agent_business_plan(value, run, constraint):
         "unknowns": _agent_plan_text_list(value.get("unknowns"), limit=10),
         "executionStrategy": value.get("executionStrategy") if isinstance(value.get("executionStrategy"), dict) else {},
     }
+    if dropped_out_of_scope:
+        plan["droppedOutOfScopeFlows"] = dropped_out_of_scope
     return plan, []
 
 

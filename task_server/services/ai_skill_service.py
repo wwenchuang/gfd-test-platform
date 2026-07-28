@@ -2471,8 +2471,23 @@ def _baidu_netdisk_requirement_points(analysis):
     ))
     click_flow = any(word in blob for word in (
         "点击触发", "点击后", "跳转", "授权", "登录", "文件选择", "导入文件",
-        "进入百度网盘", "百度网盘导入", "WebView", "SDK",
+        "进入百度网盘", "百度网盘导入", "WebView", "SDK", "可达", "可达页面",
     ))
+    explicit_home_three_entries = (
+        all(term in blob for term in ("文档打印", "照片打印", "扫描复印"))
+        and any(term in blob for term in ("三个业务入口", "三大业务入口", "首页", "基础打印"))
+    )
+    if explicit_home_three_entries:
+        suffix = (
+            "展示百度网盘入口，并校验入口可见、同级关系、文案及点击后页面稳定可达。"
+            if click_flow
+            else "展示百度网盘入口，并校验入口可见、同级关系及文案。"
+        )
+        return [
+            ("文档打印", f"文档打印页{suffix}"),
+            ("照片打印", f"照片打印页{suffix}"),
+            ("扫描复印", f"扫描复印页{suffix}"),
+        ]
     if not click_flow:
         return [
             ("文档打印", "文档打印首页展示百度网盘入口，并校验入口位于本地文档之后及同级并列关系。"),
@@ -7077,6 +7092,43 @@ def _preserve_source_page_window(flow, target_click_index):
     return source_start, target_click_index
 
 
+def _preserve_evict_low_value_step_for_insert(flow, source_start, source_end):
+    """Free one planner step for a required source-page assertion."""
+    if not isinstance(flow, list):
+        return None
+    for index in range(source_start, source_end):
+        step = str(flow[index] or "").strip()
+        compact = re.sub(r"\s+", "", step).lower()
+        if not compact:
+            return {
+                "index": index,
+                "step": flow.pop(index),
+                "reason": "blank_step",
+            }
+        if re.fullmatch(r"(?:sleep|等待)?[:：]?\d{2,5}(?:ms|毫秒)?", compact) or compact.startswith("sleep"):
+            return {
+                "index": index,
+                "step": flow.pop(index),
+                "reason": "low_value_sleep",
+            }
+    for index in range(source_start, source_end):
+        step = str(flow[index] or "").strip()
+        compact = re.sub(r"\s+", "", step)
+        if (
+            _PRESERVE_ASSERTION_PREFIX_RE.match(step)
+            or _navigation_action_target_key(step)
+            or any(term in step for term in ("百度网盘", "文档打印", "照片打印", "扫描复印", "复印扫描"))
+        ):
+            continue
+        if any(term in compact for term in ("等待页面加载完成", "等待加载完成", "页面加载完成", "加载完成")):
+            return {
+                "index": index,
+                "step": flow.pop(index),
+                "reason": "generic_load_wait",
+            }
+    return None
+
+
 def _merge_preserve_contract_into_flow(flow, requirement_refs, contract):
     """Place trusted source-page assertions before the same target click."""
     merged_flow = normalize_text_list(flow)[:8]
@@ -7199,9 +7251,29 @@ def _merge_preserve_contract_into_flow(flow, requirement_refs, contract):
                     check,
                     requirement_refs,
                 )
-        if not evidence or len(merged_flow) >= 8:
+        if not evidence:
             missing_check_ids.append(check_id)
             continue
+        evicted = None
+        if len(merged_flow) >= 8:
+            evicted = _preserve_evict_low_value_step_for_insert(
+                merged_flow,
+                source_start,
+                source_end,
+            )
+            if not evicted:
+                missing_check_ids.append(check_id)
+                continue
+            removed.append({
+                "checkId": check_id,
+                "step": evicted.get("step"),
+                "reason": evicted.get("reason") or "make_room_for_preserve",
+            })
+            target_click_index = _target_navigation_action_index(merged_flow, targets)
+            source_start, source_end = _preserve_source_page_window(
+                merged_flow,
+                target_click_index,
+            )
         preservation_step = (
             evidence
             if _PRESERVE_ASSERTION_PREFIX_RE.match(evidence)

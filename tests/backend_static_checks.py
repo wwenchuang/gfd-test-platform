@@ -825,6 +825,62 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and any("同级入口并列展示" in step for step in synthesized_preserve_flow),
         "When AI keeps a trusted source-page navigation but omits source copy/relation text, the platform must synthesize deterministic visible-text preserve checks before the target click",
     )
+    capped_preserve_flow, capped_preserve_trace = ai_skill_service._merge_preserve_contract_into_flow(
+        [
+            "等待 App 首页加载完成",
+            "点击「文档打印」入口",
+            "sleep 300",
+            "等待文档打印页面加载完成",
+            "sleep 300",
+            "等待「本地文档」入口可见",
+            "点击「百度网盘」入口",
+            "等待进入百度网盘落地页页面区域或可识别提示页，未白屏、未崩溃",
+        ],
+        [
+            "REQ-001 文档打印：校验百度网盘入口可见；校验百度网盘入口与当前页面同级入口的层级和位置关系；校验百度网盘入口使用需求约定的可见文案；点击百度网盘入口并校验目标页面稳定可达",
+        ],
+        {
+            "requiredAcceptanceChecks": [
+                {
+                    "id": "REQ-001-CHECK-02",
+                    "requirementId": "REQ-001",
+                    "branch": "文档打印",
+                    "kind": "relation",
+                    "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                    "contractRoles": ["preserve"],
+                },
+                {
+                    "id": "REQ-001-CHECK-03",
+                    "requirementId": "REQ-001",
+                    "branch": "文档打印",
+                    "kind": "copy",
+                    "text": "校验百度网盘入口使用需求约定的可见文案",
+                    "contractRoles": ["preserve"],
+                },
+            ],
+            "candidateEvidence": [],
+        },
+    )
+    require(
+        capped_preserve_trace.get("covered_check_ids") == [
+            "REQ-001-CHECK-02",
+            "REQ-001-CHECK-03",
+        ]
+        and capped_preserve_trace.get("missing_check_ids") == []
+        and len(capped_preserve_flow) <= 8
+        and any("文案为「百度网盘」" in step for step in capped_preserve_flow)
+        and any("同级入口并列展示" in step for step in capped_preserve_flow),
+        "Preserve synthesis must evict low-value waits when the planner already used the 8-step execution budget",
+    )
+    scoped_baidu_points = ai_skill_service._baidu_netdisk_requirement_points({
+        "requirement_points": [
+            "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需完整覆盖三个业务入口中的展示、同级关系、文案及可达页面。",
+        ],
+    })
+    require(
+        [feature for feature, _point in scoped_baidu_points] == ["文档打印", "照片打印", "扫描复印"],
+        "Baidu netdisk entrance requirements scoped to three homepage business entries must not expand Figma-only photo sub-specifications into executable branches",
+    )
     coupon_visibility_check = next(
         item for item in generic_acceptance_checks
         if item.get("requirementId") == "REQ-002" and item.get("kind") == "visibility"
@@ -3569,6 +3625,46 @@ def check_agent_ai_owned_plan_and_evidence_loop():
                 candidate_constraint.get("businessFlows") or [],
             ) == "",
             "Cross-branch AI flows must not be forced into one source branch when multiple branches match",
+        )
+        scoped_plan, scoped_plan_issues = agent_service._normalize_agent_business_plan({
+            "objective": "基础打印新增百度网盘入口",
+            "businessFlows": [
+                {
+                    "id": "FLOW-001",
+                    "name": "文档打印百度网盘入口校验",
+                    "branch": "文档打印",
+                    "steps": ["首页", "点击文档打印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-002",
+                    "name": "照片打印百度网盘入口校验",
+                    "branch": "照片打印",
+                    "steps": ["首页", "点击照片打印", "选择5寸照片", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-003",
+                    "name": "扫描复印百度网盘入口校验",
+                    "branch": "扫描复印",
+                    "steps": ["首页", "点击扫描复印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-004",
+                    "name": "照片打印页(一寸照)-百度网盘入口展示校验",
+                    "branch": "照片打印",
+                    "steps": ["首页", "点击照片打印", "选择一寸照", "校验百度网盘"],
+                    "checks": ["一寸照页面展示百度网盘入口"],
+                },
+            ],
+        }, live_plan_run, candidate_constraint)
+        require(
+            scoped_plan
+            and not scoped_plan_issues
+            and len(scoped_plan.get("businessFlows") or []) == 3
+            and "一寸照" not in json.dumps(scoped_plan.get("businessFlows"), ensure_ascii=False),
+            "Source-scoped three-entry Baidu requirements must drop AI-added Figma-only photo sub-spec flows before downstream YAML generation",
         )
         require(live_plan.get("model") == "qwen3.6-plus", "Agent PLAN must retain the actual model provenance")
         require(live_plan.get("source") == "platform_mindmap_ai" and live_plan.get("mindmapTrace", {}).get("preparedFigmaReused"), "Agent PLAN must expose MM and prepared-Figma provenance")
