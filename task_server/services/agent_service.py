@@ -4232,6 +4232,26 @@ def _agent_plan_flow_out_of_source_scope(flow, matched_branch, constraint_flows,
     return any(term in flow_text for term in _AGENT_PHOTO_SUBSPEC_TERMS)
 
 
+def _agent_generated_yaml_ref_out_of_source_scope(run, ref, content=""):
+    if not _agent_yaml_ref_is_generated(run, ref):
+        return False
+    source_text = _agent_plan_source_requirement_text(run)
+    if any(term in source_text for term in _AGENT_PHOTO_SUBSPEC_TERMS):
+        return False
+    material = {
+        "module": ref.get("module"),
+        "file": ref.get("file"),
+        "name": ref.get("name"),
+        "targetTaskName": ref.get("targetTaskName"),
+        "taskName": ref.get("taskName"),
+        "content": content,
+    }
+    text = _normalize_business_flow_text(json.dumps(material, ensure_ascii=False))
+    if not _agent_plan_branch_present("照片打印", text):
+        return False
+    return any(term in text for term in _AGENT_PHOTO_SUBSPEC_TERMS)
+
+
 def _normalize_agent_business_plan(value, run, constraint):
     if not isinstance(value, dict):
         return None, ["AI 计划不是 JSON 对象"]
@@ -5605,6 +5625,30 @@ def _score_agent_yaml_ref_for_execution(run, ref):
         score["ok"] = False
         score["scopeReview"] = scope_review
         score["reasons"] = [str(item) for item in reasons if str(item or "").strip()][:8]
+    if _agent_generated_yaml_ref_out_of_source_scope(run, ref, content):
+        score = dict(score)
+        task_scores = [dict(task) for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+        reasons = list(score.get("reasons") or [])
+        reasons.append("生成 YAML 命中照片规格页/子规格分支，但当前源需求只要求照片打印业务入口，禁止自动下发 Runner")
+        score["score"] = min(int(score.get("score") or 0), 74)
+        score["executionLevel"] = "needs_review"
+        score["level"] = "needs_review"
+        score["ok"] = False
+        score["smokeCandidate"] = False
+        score["reasons"] = [str(item) for item in reasons if str(item or "").strip()][:8]
+        scope_review = {
+            **scope_review,
+            "ok": False,
+            "reasons": [str(item) for item in list(scope_review.get("reasons") or []) + [reasons[-1]] if str(item or "").strip()][:8],
+            "rule": "当前源需求的照片打印只作为业务入口；Figma/AI 软参考中的尺寸、证件照、规格页不能成为自动执行分支。",
+        }
+        score["scopeReview"] = scope_review
+        for task in task_scores:
+            task["smokeCandidate"] = False
+            task["executionLevel"] = "needs_review"
+            task["level"] = "needs_review"
+        if task_scores:
+            score["taskScores"] = task_scores
     level = score.get("level") or score.get("executionLevel") or ref.get("executionLevel") or ""
     task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
     manual_hint = bool(
@@ -5632,6 +5676,8 @@ def _score_agent_yaml_ref_for_execution(run, ref):
         level = "needs_review"
     runner_candidate = bool(
         not manual_hint
+        and level == "executable"
+        and score.get("ok") is not False
         and (
             ref.get("smoke")
             or ref.get("is_smoke")

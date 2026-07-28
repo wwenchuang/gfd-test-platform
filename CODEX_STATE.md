@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-28 e109573 部署后三轮复核：过滤过严误伤照片主分支，Runner gate 必须拦截规格页 YAML
+
+用户部署 `e109573` 后要求继续监控同一百度网盘需求。线上健康：Task 服务模型 `qwen3.7-plus`，AI Gateway 正常；Windows Runner / Sonic Bridge 均为 `2026.07.26-qwen3.7-result-retry-v1`；固定 OPPO PHM110 `ecbfd645` 在线，`com.xbxxhz.box` 版本 `4.45.0`，未向第二台手机下发百度网盘 Agent。
+
+串行复核结果：
+
+- `agent-1785226338172-9b19ad5e`：`FAILED / GENERATE_YAML / 30%`，缺 `REQ-003 [acceptance:relation] 扫描复印：校验百度网盘入口与当前页面同级入口的层级和位置关系`，未创建 Runner job。
+- `agent-1785226764687-be17749f`：`FAILED / PLAN / 10%`，错误 `AI 业务规划失败：缺少需求业务分支：照片打印`。这是 `e109573` 的照片规格过滤过严导致“照片打印聚合页”主分支也被误删。
+- `agent-1785227311247-99c07935`：进入 Runner 后 `FAILED / COLLECT_REPORT / 95%`，3 个 smoke 全失败；其中一个下发 YAML 为 `照片打印-一寸照规格页-百度网盘入口可见性校验`。业务 plan 中已丢弃了一寸照 flow，但 YAML 生成阶段仍从 Figma 视觉软证据补回规格页，runner gate 未拦截。
+
+根因：
+
+1. `_AGENT_PHOTO_SUBSPEC_TERMS` 加入 `规格页` 后，AI 计划里「照片打印聚合页」如果描述包含“规格选择前页面”等上下文，可能被误判为照片子规格，从而误删照片打印主分支。
+2. 业务 plan 过滤只作用于 PLAN；YAML 生成阶段仍可能基于 Figma 视觉证据产出 `一寸照/5寸/规格页` 用例，且 scorer 100 后被 runner gate 下发。
+3. `runnerCandidate` 计算只看 ref 或 score 的 smokeCandidate，没有要求最终 score 仍为 `executable`，导致 scope 降级为 `needs_review` 后仍可能保留 runnerCandidate。
+
+修复：
+
+- 增加回归测试，明确「照片打印聚合页-百度网盘入口」必须保留，而「照片打印-一寸照规格页」必须丢弃。
+- 新增 `_agent_generated_yaml_ref_out_of_source_scope()`：generated YAML 的 module/file/name/content 命中照片规格页/子规格，且用户源需求没有明确提到该规格时，降级为 `needs_review`，并写入 scopeReview reason，禁止自动下发 Runner。
+- `_score_agent_yaml_ref_for_execution()` 的 `runnerCandidate` 现在必须满足最终 `level == executable` 且 `score.ok is not False`，避免 ref 自带 smokeCandidate 绕过 scope 降级。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍失败于既有 OBJ 保龄球 YAML 断言：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改 Runner、Sonic、scorer、Figma 解析或历史 YAML；Codex 不 push。用户部署后建议先同参跑 3 次观察是否仍有 `一寸照/5寸/规格页` 自动下发，确认无误再跑 5 次稳定性。
+
 ### 2026-07-28 百度网盘部署后五轮稳定性：生成门禁改善但仍暴露照片规格扩展和 RUN_SONIC 陈旧快照
 
 用户部署 `a8c903f` 后要求同一百度网盘需求再跑 5 次。固定参数仍为 `RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / singleDeviceOnly / qwen3.7-plus / com.xbxxhz.box`，只使用 OPPO PHM110 `ecbfd645`，没有向第二台手机下发百度网盘任务。线上健康检查：Task 服务 `qwen3.7-plus`，AI Gateway 正常，Sonic Bridge 与 Windows Runner 均为 `2026.07.26-qwen3.7-result-retry-v1`，Runner 能力上报 `midscene_model_name=qwen3.7-plus / midscene_model_family=qwen3`。

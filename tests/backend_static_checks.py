@@ -3694,6 +3694,69 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             and "异常处理" not in scoped_plan_text,
             "Strict source-scoped business plans must drop AI-added photo size, global consistency, and environment exception flows",
         )
+        photo_aggregate_plan, photo_aggregate_issues = agent_service._normalize_agent_business_plan({
+            "objective": "基础打印新增百度网盘入口",
+            "businessFlows": [
+                {
+                    "id": "FLOW-001",
+                    "name": "文档打印百度网盘入口校验",
+                    "branch": "文档打印",
+                    "steps": ["首页", "点击文档打印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-002",
+                    "name": "照片打印聚合页-百度网盘入口可见性及位置校验",
+                    "branch": "照片打印",
+                    "steps": ["首页", "点击照片打印", "进入照片打印聚合页", "校验百度网盘"],
+                    "checks": ["照片打印聚合页展示百度网盘入口"],
+                },
+                {
+                    "id": "FLOW-003",
+                    "name": "扫描复印百度网盘入口校验",
+                    "branch": "扫描复印",
+                    "steps": ["首页", "点击扫描复印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、可达"],
+                },
+                {
+                    "id": "FLOW-004",
+                    "name": "照片打印-一寸照规格页-百度网盘入口可见性校验",
+                    "branch": "照片打印",
+                    "steps": ["首页", "点击照片打印", "选择一寸照规格页", "校验百度网盘"],
+                    "checks": ["一寸照规格页展示百度网盘入口"],
+                },
+            ],
+        }, live_plan_run, candidate_constraint)
+        photo_aggregate_text = json.dumps(photo_aggregate_plan, ensure_ascii=False)
+        require(
+            photo_aggregate_plan
+            and not photo_aggregate_issues
+            and "照片打印聚合页-百度网盘入口可见性及位置校验" in photo_aggregate_text
+            and "一寸照规格页" not in json.dumps(photo_aggregate_plan.get("businessFlows"), ensure_ascii=False),
+            "Photo aggregate-page source branch must be retained while explicit photo spec-page branches are dropped",
+        )
+        blocked_spec_ref = agent_service._score_agent_yaml_ref_for_execution(live_plan_run, {
+            "module": "AI_Agent_草稿",
+            "file": "06-照片打印-一寸照规格页-百度网盘入口可见性校验.yaml",
+            "source": "generated",
+            "generated": True,
+            "smokeCandidate": True,
+            "content": """android:
+  tasks:
+    - name: 照片打印-一寸照规格页-百度网盘入口可见性校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App首页已加载完成
+        - aiTap: 点击「照片打印」
+        - aiTap: 点击「一寸照」规格页
+        - aiAssert: 「百度网盘」入口可见
+""",
+        })
+        require(
+            blocked_spec_ref.get("executionLevel") == "needs_review"
+            and blocked_spec_ref.get("runnerCandidate") is False,
+            "Generated photo spec-page YAML must be blocked from Runner when the source requirement only names the photo-print entry",
+        )
         old_stale_load_jobs = job_service.load_jobs
         try:
             job_service.load_jobs = lambda *args, **kwargs: [{
