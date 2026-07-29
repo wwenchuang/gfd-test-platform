@@ -2817,6 +2817,93 @@ def _post_auth_logout(handler, qs):
 
 # ── API Testing ─────────────────────────────────────────────────────
 
+def _api_testing_apifox_discovery_credentials(data):
+    from task_server.services import api_source_service
+
+    source_id = str(data.get("source_id") or data.get("sourceId") or "").strip()
+    if source_id:
+        source = api_source_service.get_api_source(source_id, masked=False)
+        if not source:
+            raise LookupError("API source 不存在")
+        if str(source.get("source_type") or "") != "apifox":
+            raise ValueError("该 API source 不是 Apifox 来源")
+        access_token = str(source.get("access_token") or "").strip()
+        if not access_token:
+            raise ValueError("该 Apifox 来源尚未配置访问令牌")
+        return (
+            access_token,
+            str(source.get("base_url") or "https://api.apifox.com").strip(),
+        )
+
+    access_token = str(
+        data.get("access_token") or data.get("accessToken") or ""
+    ).strip()
+    if not access_token:
+        raise ValueError("请输入 Apifox 访问令牌")
+    return (
+        access_token,
+        str(
+            data.get("base_url")
+            or data.get("baseUrl")
+            or "https://api.apifox.com"
+        ).strip(),
+    )
+
+
+@route_post("/api/api-testing/apifox/discovery/projects")
+def _post_api_testing_apifox_discovery_projects(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import apifox_discovery_service
+
+    try:
+        data = handler._body()
+        if not isinstance(data, dict):
+            raise ValueError("请求体必须为 JSON 对象")
+        access_token, base_url = _api_testing_apifox_discovery_credentials(data)
+        result = apifox_discovery_service.discover_projects(
+            access_token,
+            base_url=base_url,
+        )
+        handler._json({"ok": True, **result})
+    except LookupError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+    except apifox_discovery_service.ApifoxDiscoveryError as exc:
+        handler._json(exc.as_dict(), exc.http_status)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post("/api/api-testing/apifox/discovery/project-context")
+def _post_api_testing_apifox_discovery_project_context(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import apifox_discovery_service
+
+    try:
+        data = handler._body()
+        if not isinstance(data, dict):
+            raise ValueError("请求体必须为 JSON 对象")
+        project_id = str(
+            data.get("project_id") or data.get("projectId") or ""
+        ).strip()
+        if not project_id:
+            raise ValueError("请选择 Apifox 项目")
+        access_token, base_url = _api_testing_apifox_discovery_credentials(data)
+        result = apifox_discovery_service.discover_project_context(
+            access_token,
+            project_id,
+            base_url=base_url,
+        )
+        handler._json({"ok": True, **result})
+    except LookupError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+    except apifox_discovery_service.ApifoxDiscoveryError as exc:
+        handler._json(exc.as_dict(), exc.http_status)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 @route_post("/api/api-testing/sources")
 def _post_api_testing_sources(handler, qs):
     if _require_user_auth(handler):

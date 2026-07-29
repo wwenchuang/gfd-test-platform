@@ -11,6 +11,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from task_server.services import apifox_discovery_service as discovery
+from task_server.services import api_source_service
 
 
 class ApifoxDiscoveryServiceChecks(unittest.TestCase):
@@ -243,6 +245,195 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
         self.assertEqual(504, raised.exception.http_status)
         isolated_homes = [path for path in self._homes() if path != Path.home()]
         self.assertTrue(all(not path.exists() for path in isolated_homes))
+
+
+class _RouteHandler:
+    def __init__(self, body=None, authorized=True):
+        self.body = body or {}
+        self.authorized = authorized
+        self.responses = []
+
+    def _authorized(self):
+        return self.authorized
+
+    def _body(self):
+        return self.body
+
+    def _json(self, payload, status=200):
+        self.responses.append((status, payload))
+
+
+class ApifoxDiscoveryRouteChecks(unittest.TestCase):
+    def setUp(self):
+        self.previous_source_dir = api_source_service.API_TESTING_DIR
+        self.source_dir = tempfile.mkdtemp(prefix="apifox_discovery_routes_")
+        api_source_service.API_TESTING_DIR = self.source_dir
+
+    def tearDown(self):
+        api_source_service.API_TESTING_DIR = self.previous_source_dir
+        shutil.rmtree(self.source_dir, ignore_errors=True)
+
+    @staticmethod
+    def _projects():
+        return {
+            "capability": {
+                "available": True,
+                "version": "2.2.8",
+                "minimum_version": "2.2.6",
+            },
+            "projects": [{
+                "id": "5904970",
+                "name": "3D 接口",
+                "description": "打印业务",
+                "team": {"id": "12", "name": "功夫豆"},
+            }],
+        }
+
+    @staticmethod
+    def _project_context():
+        return {
+            "capability": {
+                "available": True,
+                "version": "2.2.8",
+                "minimum_version": "2.2.6",
+            },
+            "project": {
+                "id": "5904970",
+                "name": "3D 接口",
+                "description": "打印业务",
+                "team": {"id": "12", "name": "功夫豆"},
+            },
+            "branches": [
+                {"id": "", "name": "主分支（默认）", "is_default": True},
+            ],
+            "environments": [
+                {"id": "", "name": "不绑定环境", "is_default": True},
+            ],
+        }
+
+    def test_discovery_routes_require_user_authentication(self):
+        from task_server import router
+
+        for path in (
+            "/api/api-testing/apifox/discovery/projects",
+            "/api/api-testing/apifox/discovery/project-context",
+        ):
+            handler = _RouteHandler(authorized=False)
+            router.POST_ROUTES[path](handler, {})
+            self.assertEqual(401, handler.responses[-1][0])
+
+    def test_project_route_uses_direct_write_only_token(self):
+        from task_server import router
+
+        captured = {}
+
+        def fake_discover_projects(access_token, **kwargs):
+            captured["access_token"] = access_token
+            captured.update(kwargs)
+            return self._projects()
+
+        handler = _RouteHandler({
+            "access_token": "test-only-direct-token",
+            "base_url": "https://api.apifox.com",
+        })
+        with mock.patch.object(
+            discovery,
+            "discover_projects",
+            side_effect=fake_discover_projects,
+        ):
+            router.POST_ROUTES[
+                "/api/api-testing/apifox/discovery/projects"
+            ](handler, {})
+
+        status, payload = handler.responses[-1]
+        self.assertEqual(200, status)
+        self.assertEqual("test-only-direct-token", captured["access_token"])
+        self.assertEqual("https://api.apifox.com", captured["base_url"])
+        self.assertEqual("3D 接口", payload["projects"][0]["name"])
+        self.assertNotIn("test-only-direct-token", json.dumps(payload, ensure_ascii=False))
+
+    def test_project_context_route_reuses_stored_source_credentials(self):
+        from task_server import router
+
+        source = api_source_service.save_api_source({
+            "name": "3D 接口",
+            "base_url": "https://api.apifox.example.test",
+            "project_id": "5904970",
+            "access_token": "test-only-stored-token",
+        })
+        captured = {}
+
+        def fake_discover_context(access_token, project_id, **kwargs):
+            captured["access_token"] = access_token
+            captured["project_id"] = project_id
+            captured.update(kwargs)
+            return self._project_context()
+
+        handler = _RouteHandler({
+            "source_id": source["source_id"],
+            "project_id": "5904970",
+        })
+        with mock.patch.object(
+            discovery,
+            "discover_project_context",
+            side_effect=fake_discover_context,
+        ):
+            router.POST_ROUTES[
+                "/api/api-testing/apifox/discovery/project-context"
+            ](handler, {})
+
+        status, payload = handler.responses[-1]
+        self.assertEqual(200, status)
+        self.assertEqual("test-only-stored-token", captured["access_token"])
+        self.assertEqual("5904970", captured["project_id"])
+        self.assertEqual("https://api.apifox.example.test", captured["base_url"])
+        self.assertEqual("主分支（默认）", payload["branches"][0]["name"])
+        self.assertNotIn("test-only-stored-token", json.dumps(payload, ensure_ascii=False))
+
+    def test_discovery_routes_validate_source_credentials_and_project(self):
+        from task_server import router
+
+        missing_source = _RouteHandler({"source_id": "missing-source"})
+        router.POST_ROUTES[
+            "/api/api-testing/apifox/discovery/projects"
+        ](missing_source, {})
+        self.assertEqual(404, missing_source.responses[-1][0])
+
+        missing_credentials = _RouteHandler()
+        router.POST_ROUTES[
+            "/api/api-testing/apifox/discovery/projects"
+        ](missing_credentials, {})
+        self.assertEqual(400, missing_credentials.responses[-1][0])
+
+        missing_project = _RouteHandler({"access_token": "test-only-token"})
+        router.POST_ROUTES[
+            "/api/api-testing/apifox/discovery/project-context"
+        ](missing_project, {})
+        self.assertEqual(400, missing_project.responses[-1][0])
+
+    def test_discovery_error_preserves_safe_status_and_manual_fallback(self):
+        from task_server import router
+
+        handler = _RouteHandler({"access_token": "test-only-bad-token"})
+        error = discovery.ApifoxDiscoveryError(
+            "AUTH_FAILED",
+            "Apifox 访问令牌无效或已过期",
+            401,
+        )
+        with mock.patch.object(
+            discovery,
+            "discover_projects",
+            side_effect=error,
+        ):
+            router.POST_ROUTES[
+                "/api/api-testing/apifox/discovery/projects"
+            ](handler, {})
+
+        status, payload = handler.responses[-1]
+        self.assertEqual(401, status)
+        self.assertEqual("AUTH_FAILED", payload["code"])
+        self.assertTrue(payload["manual_fallback"])
+        self.assertNotIn("test-only-bad-token", json.dumps(payload, ensure_ascii=False))
 
 
 if __name__ == "__main__":

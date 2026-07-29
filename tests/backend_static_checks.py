@@ -15228,6 +15228,8 @@ def check_api_testing_routes_registered():
     ):
         require(path in router.GET_ROUTES, f"Missing API testing GET route: {path}")
     for path in (
+        "/api/api-testing/apifox/discovery/projects",
+        "/api/api-testing/apifox/discovery/project-context",
         "/api/api-testing/openapi/import",
         "/api/api-testing/sources",
         "/api/api-testing/plans/generate",
