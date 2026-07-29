@@ -14412,6 +14412,69 @@ def check_agent_failure_analysis_uses_runner_phase_failures_before_coverage_warn
         agent_service._ai_gateway_available = old_ai_gateway_available
 
 
+def check_agent_plan_timeout_degrades_to_source_contract():
+    from task_server.services import agent_service, yaml_service
+
+    old_log_tool_call = agent_service._log_tool_call
+    old_probe_agent_ai_health = agent_service._probe_agent_ai_health
+    old_run_agent_call_with_hard_timeout = agent_service._run_agent_call_with_hard_timeout
+    old_update_generate_job = yaml_service.update_generate_job
+    try:
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._probe_agent_ai_health = lambda _run: {"ready": True}
+        agent_service._run_agent_call_with_hard_timeout = (
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError("scenario_designer 卡在 50%"))
+        )
+        yaml_service.update_generate_job = lambda *args, **kwargs: {"ok": True, "job_id": args[0] if args else ""}
+        run = {
+            "runId": "agent-static-plan-timeout",
+            "target": "基础打印新增百度网盘入口",
+            "requirement": "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需覆盖展示、同级关系、文案及可达页面。",
+            "normalizedInput": {
+                "requirementText": "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需覆盖展示、同级关系、文案及可达页面。",
+            },
+            "model": "qwen3.7-plus",
+            "aiModel": "qwen3.7-plus",
+            "steps": [{"step": "PLAN", "status": "PENDING", "toolCalls": [], "liveTrace": []}],
+            "artifacts": {
+                "sourceContext": {
+                    "target": "基础打印新增百度网盘入口",
+                    "figmaUsedPages": [{"name": "首页"}],
+                    "figmaImageAssets": [{"name": "首页.png"}],
+                    "figmaImageCount": 1,
+                },
+                "requirementCoverageCandidates": {
+                    "required": False,
+                    "strict": False,
+                    "candidateOnly": True,
+                    "businessFlows": [
+                        {"id": "FLOW-001", "branch": "文档打印", "steps": ["进入首页", "进入文档打印"], "checks": ["校验百度网盘入口可见", "点击百度网盘入口并校验目标页面稳定可达"]},
+                        {"id": "FLOW-002", "branch": "照片打印", "steps": ["进入首页", "进入照片打印"], "checks": ["校验百度网盘入口可见", "点击百度网盘入口并校验目标页面稳定可达"]},
+                        {"id": "FLOW-003", "branch": "扫描复印", "steps": ["进入首页", "进入扫描复印"], "checks": ["校验百度网盘入口可见", "点击百度网盘入口并校验目标页面稳定可达"]},
+                    ],
+                },
+            },
+        }
+        call = agent_service._tool_agent_plan(run)
+        plan = run["artifacts"].get("plan") or {}
+        branches = [item.get("branch") for item in (plan.get("businessFlows") or [])]
+        require(call.get("status") == "SUCCESS", "PLAN timeout should degrade to source contract instead of hanging or failing")
+        require(plan.get("planTimeoutFallback") and plan.get("fallbackUsed"), "PLAN timeout fallback must be explicitly marked")
+        require(
+            branches == ["文档打印", "照片打印", "扫描复印"],
+            "PLAN timeout fallback must preserve source business branches",
+        )
+        require(
+            plan.get("qualityGate", {}).get("passed"),
+            "Explicit PLAN timeout fallback must pass plan grounding gate as degraded evidence",
+        )
+    finally:
+        agent_service._log_tool_call = old_log_tool_call
+        agent_service._probe_agent_ai_health = old_probe_agent_ai_health
+        agent_service._run_agent_call_with_hard_timeout = old_run_agent_call_with_hard_timeout
+        yaml_service.update_generate_job = old_update_generate_job
+
+
 def check_agent_execution_gate_repairs_before_smoke_selection():
     from task_server.services import agent_service
 
@@ -16449,6 +16512,8 @@ def main():
     require("AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS" in agent_source, "Agent PLAN must have its own bounded MM planning timeout instead of relying only on shared job expiry")
     require("_run_agent_call_with_hard_timeout" in agent_source and "executor.shutdown(wait=False, cancel_futures=True)" in agent_source, "Agent hard timeout wrapper must stop waiting for stuck planning calls without blocking on executor shutdown")
     require("generate_mindmap_from_request(" in agent_source and "_run_agent_call_with_hard_timeout(" in agent_source and "PLAN AI业务规划" in agent_source, "Agent PLAN must wrap platform mindmap generation in a hard timeout")
+    require('safe_int(os.getenv("MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS"), 240)' in agent_source and "min(600" in agent_source, "Agent PLAN timeout default must stay bounded and not regress to long 900s waits")
+    require("def _agent_plan_timeout_fallback" in agent_source and '"planTimeoutFallback": True' in agent_source and '"plan_timeout_degraded_source_contract"' in agent_source, "Agent PLAN timeout must degrade to an explicit source-contract plan instead of hanging")
     yaml_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     require('agent_config.setdefault("screenshotShrinkFactor", 2)' in yaml_source, "Android Runner temporary YAML must pre-shrink mobile screenshots for stable Midscene coordinate mapping")
     require("quality_eval" in yaml_source and "evaluate_baseline_template_matching" in yaml_source, "YAML generation review must include template matcher quality eval")

@@ -141,8 +141,8 @@ AGENT_GENERATED_RUNNER_EXPAND_BATCH_LIMIT = max(
     ),
 )
 AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS = max(
-    300,
-    safe_int(os.getenv("MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS"), 900),
+    120,
+    min(600, safe_int(os.getenv("MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS"), 240)),
 )
 
 
@@ -3235,9 +3235,16 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             for item in business_flows
         )
         ai_generated = bool(payload.get("aiGenerated"))
-        trusted_source = str(payload.get("source") or "") == "platform_mindmap_ai"
-        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only and ai_generated and trusted_source
-        if not ai_generated or not trusted_source:
+        plan_timeout_fallback = bool(payload.get("planTimeoutFallback")) and bool(payload.get("fallbackUsed"))
+        trusted_source = str(payload.get("source") or "") in (
+            "platform_mindmap_ai",
+            "plan_timeout_degraded_source_contract",
+        )
+        ai_or_degraded = ai_generated or plan_timeout_fallback
+        passed = bool(steps) and bool(business_flows) and not missing_branches and not generic_only and ai_or_degraded and trusted_source
+        if plan_timeout_fallback and passed:
+            reason = "PLAN AI 超时，已明确标记并使用源需求合同降级计划继续验证"
+        elif not ai_or_degraded or not trusted_source:
             reason = "PLAN 必须来自平台 MM skills 的真实 AI 结果，规则兜底不能冒充成功"
         elif missing_branches:
             reason = "AI 计划缺少需求业务分支：" + "、".join(missing_branches)
@@ -3255,6 +3262,7 @@ def _evaluate_agent_quality_gate(run, stage, payload):
             missingBranches=missing_branches,
             aiGenerated=ai_generated,
             fallbackUsed=bool(payload.get("fallbackUsed")),
+            planTimeoutFallback=plan_timeout_fallback,
             businessFlowKeywords=flow_keywords,
         )
     if stage == "case_retrieval":
@@ -4791,6 +4799,97 @@ def _agent_business_plan_from_mindmap(run, mindmap_result, requirement_candidate
     return normalized_plan, []
 
 
+def _agent_plan_timeout_fallback(run, source_context, requirement_candidates, reason):
+    """Build a clearly marked source-contract plan when MM planning times out."""
+    required_flows = _agent_plan_constraint_flows(requirement_candidates)
+    if not required_flows:
+        return None, ["PLAN AI 超时且没有可用的源需求业务入口合同，不能降级生成"]
+    fallback_flows = []
+    for index, item in enumerate(required_flows[:8], start=1):
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("branch") or item.get("name") or f"业务入口 {index}").strip()
+        steps = _agent_plan_text_list(item.get("steps") or item.get("flow"), limit=10)
+        checks = _agent_plan_text_list(item.get("checks") or item.get("assertions"), limit=8)
+        if len(steps) < 2:
+            steps = ["进入首页", f"进入{branch}"]
+        if not checks:
+            checks = ["校验目标入口可见", "校验目标入口文案", "点击目标入口并校验页面稳定可达"]
+        fallback_flows.append({
+            "id": str(item.get("id") or f"FLOW-{index:03d}")[:40],
+            "name": str(item.get("name") or f"{branch}-源需求合同降级验收")[:100],
+            "branch": branch[:80],
+            "preconditions": _agent_plan_text_list(item.get("preconditions"), limit=6),
+            "steps": steps,
+            "checks": checks,
+            "requirementRefs": _agent_plan_text_list(item.get("requirementRefs") or item.get("requirement_refs"), limit=8),
+            "evidence": ["source_requirement_contract", "plan_timeout_degraded"],
+        })
+    normalized_plan, issues = _normalize_agent_business_plan({
+        "objective": str(run.get("target") or source_context.get("target") or "AI Agent 业务计划")[:300],
+        "businessFlows": fallback_flows,
+        "coverage": [],
+        "assumptions": ["PLAN AI 业务规划超时，平台使用源需求合同生成降级业务计划继续验证"],
+        "unknowns": [],
+        "executionStrategy": {},
+    }, run, requirement_candidates)
+    if not normalized_plan:
+        return None, issues or ["源需求合同降级计划未通过业务分支校验"]
+    all_flow_ids = [item.get("id") for item in normalized_plan.get("businessFlows") or []]
+    normalized_plan.update({
+        "version": "agent-business-plan-v3",
+        "source": "plan_timeout_degraded_source_contract",
+        "aiGenerated": False,
+        "fallbackUsed": True,
+        "planTimeoutFallback": True,
+        "degraded": True,
+        "timeoutReason": str(reason or "")[:500],
+        "providerId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+        "model": run.get("aiModel") or run.get("model") or "",
+        "executionStrategy": {
+            "smokeFlowIds": all_flow_ids[:3],
+            "remainingFlowIds": all_flow_ids[3:],
+            "reason": "PLAN AI 子调用超时后使用源需求合同降级；后续 YAML/Runner 结果仍按真实证据判定",
+        },
+        "mindmapTrace": {
+            "caseSetId": "",
+            "skillPipeline": "plan_timeout_degraded_source_contract",
+            "scenarioCount": len(normalized_plan.get("businessFlows") or []),
+            "caseCount": 0,
+            "visualBatches": "",
+            "visualBatchesDone": 0,
+            "visualBatchesTotal": 0,
+            "visualBatchesAttempted": 0,
+            "visualBatchResults": [],
+            "visualImagesGrounded": 0,
+            "visualAttempted": False,
+            "visualCompleted": False,
+            "visualStatus": "skipped_after_plan_timeout",
+            "visualSoftReference": True,
+            "preparedFigmaReused": bool(source_context.get("figmaImageAssets") or source_context.get("figmaUsedPages")),
+            "trustedBaselines": [],
+        },
+        "goalAnalysis": {
+            "businessGoals": [item.get("branch") for item in (normalized_plan.get("businessFlows") or []) if item.get("branch")],
+            "entryPoints": [item.get("branch") for item in (normalized_plan.get("businessFlows") or []) if item.get("branch")],
+            "requirementPoints": [],
+            "confidence": "degraded",
+            "readiness": "degraded_after_plan_timeout",
+            "aiSource": "source_requirement_contract_fallback",
+        },
+        "visualReference": {
+            "figmaPageCount": len(source_context.get("figmaUsedPages") or []),
+            "figmaImageCount": int(source_context.get("figmaImageCount") or len(source_context.get("figmaImageAssets") or [])),
+            "sentToAiForJudgement": False,
+            "aiJudgementCompleted": False,
+            "aiJudgementStatus": "skipped_after_plan_timeout",
+            "hardGate": False,
+            "error": "",
+        },
+    })
+    return normalized_plan, []
+
+
 def _agent_mindmap_plan_request(run, source_context, attempt=1, validation_issues=None):
     source_text = _agent_plan_requirement_text(run)
     files = _agent_source_files_for_generation(run)
@@ -4903,6 +5002,34 @@ def _tool_agent_plan(run):
                     error=str(exc),
                     timeout_seconds=AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
                 )
+                plan, plan_issues = _agent_plan_timeout_fallback(
+                    run,
+                    source_context,
+                    requirement_candidates,
+                    str(exc),
+                )
+                if plan:
+                    mindmap_result = {
+                        "case_set_id": progress_job_id,
+                        "summary": {
+                            "degraded": True,
+                            "reason": str(exc)[:500],
+                        },
+                        "cases": {},
+                    }
+                    update_generate_job(
+                        progress_job_id,
+                        status="success",
+                        ok=True,
+                        progress=100,
+                        step="AI 业务规划超时降级完成",
+                        message=(
+                            f"PLAN AI 超时，已使用源需求合同降级生成 "
+                            f"{len(plan.get('businessFlows') or [])} 条业务分支"
+                        ),
+                        timeout_seconds=AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS,
+                    )
+                    break
                 raise
             finally:
                 stop_event.set()
@@ -4987,19 +5114,27 @@ def _tool_agent_plan(run):
         strict_constraint = _ensure_business_flow_constraint(run)
         plan["businessFlowConstraint"] = _compact_business_flow_constraint(strict_constraint)
         call["status"] = "SUCCESS"
-        call["outputSummary"] = (
-            f"平台 MM skills 已生成 {len(plan.get('businessFlows') or [])} 条 AI 业务分支计划；"
-            f"Figma {plan.get('visualReference', {}).get('figmaPageCount', 0)} 页/"
-            f"{plan.get('visualReference', {}).get('figmaImageCount', 0)} 图为软参考"
-        )
+        if plan.get("planTimeoutFallback"):
+            call["outputSummary"] = (
+                f"PLAN AI 超时，已使用源需求合同降级生成 {len(plan.get('businessFlows') or [])} 条业务分支；"
+                f"Figma {plan.get('visualReference', {}).get('figmaPageCount', 0)} 页/"
+                f"{plan.get('visualReference', {}).get('figmaImageCount', 0)} 图仅作为已解析软参考"
+            )
+        else:
+            call["outputSummary"] = (
+                f"平台 MM skills 已生成 {len(plan.get('businessFlows') or [])} 条 AI 业务分支计划；"
+                f"Figma {plan.get('visualReference', {}).get('figmaPageCount', 0)} 页/"
+                f"{plan.get('visualReference', {}).get('figmaImageCount', 0)} 图为软参考"
+            )
         _record_agent_ai_decision(
             run,
             "plan",
             "platform_mindmap_ai",
-            True,
+            not bool(plan.get("planTimeoutFallback")),
             call["outputSummary"],
             flowCount=len(plan.get("businessFlows") or []),
             model=plan.get("model") or "",
+            planTimeoutFallback=bool(plan.get("planTimeoutFallback")),
         )
     except Exception as exc:
         call["status"] = "FAILED"

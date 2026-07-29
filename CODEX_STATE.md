@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Agent PLAN 卡在“生成用例结构 50%”：收紧超时并降级到源需求合同计划
+
+用户部署后同参重跑百度网盘 Agent：`agent-1785306176144-e170a6ef`。线上健康正常，固定 Runner/设备为 `win-runner-01 / ecbfd645`，模型 `qwen3.7-plus`。本轮未到 Runner，也未创建手机任务；卡点在 `PLAN`：
+
+- `PREPARE_SOURCE` 成功，Figma `4 页 / 4 图` 已真实解析。
+- `PLAN` liveTrace 停在 `生成用例结构（50%）：正在生成场景、用例、边界和人工待准备事项`。
+- `PLAN` 没有 toolCalls 落盘，说明平台 MM skills 内部的场景/用例生成子调用长时间未返回。
+
+修复：
+
+- `AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS` 默认从 900 秒收紧到 240 秒，并封顶 600 秒，避免 PLAN 长时间假卡死。
+- 新增 `_agent_plan_timeout_fallback()`：当 MM planning 超时时，如果源需求中已有业务入口合同，则生成显式标记的降级计划：`source=plan_timeout_degraded_source_contract`、`fallbackUsed=true`、`planTimeoutFallback=true`、`aiGenerated=false`。
+- 质量门禁允许这种“已明确标记的 PLAN 超时降级计划”继续进入后续 YAML 生成，但不会把它冒充为 MM skills 正常 AI 计划。
+- PLAN 输出文案区分正常 AI 计划和超时降级计划；AI decision 记录里 `success=false` 并带 `planTimeoutFallback=true`。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_plan_timeout_degrades_to_source_contract()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被既有 OBJ 保龄球历史 YAML 断言拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改历史 YAML、Runner、Sonic 或 scorer。部署后建议取消/忽略旧的卡住 Agent，重新同参跑百度网盘；预期如果 PLAN 子调用再次超过 240 秒，会显示“PLAN AI 超时，已使用源需求合同降级生成 3 条业务分支”，继续进入 YAML/Runner，而不是停在 50%。
+
 ### 2026-07-29 Apifox 项目选择后上下文读取失败
 
 用户截图中“读取 Apifox 资产”能列出项目，但选择 `3D / 5904970` 后失败，前端提示 `Apifox CLI 返回了无法识别的数据`。线上复核确认：
