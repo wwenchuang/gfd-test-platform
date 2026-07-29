@@ -386,7 +386,7 @@ def test_baseline_flows_recover_restored_print_preview_before_home_actions():
             )
 
 
-def test_print_flows_return_home_after_cancel_cleanup():
+def test_print_flows_stop_after_cancel_cleanup_without_returning_home():
     for relative_path in (
         "server-tasks/3D打印基线/模型导入-微信导入.yaml",
         "server-tasks-all/3D打印基线/模型导入-微信导入.yaml",
@@ -402,21 +402,33 @@ def test_print_flows_return_home_after_cancel_cleanup():
         "server-tasks-all/3D打印基线/十二生肖印章打印.yaml",
     ):
         texts = [_step_text(step) for step in _load_flow(relative_path)]
-        require(
-            any("取消后回首页" in item and "已取消模型处理" in item and "不要点击「重新编辑」" in item for item in texts),
-            f"{relative_path} must return home after cancelled print processing so the next case starts cleanly",
+        cleanup_index = next(
+            (
+                i
+                for i, item in enumerate(texts)
+                if "取消清理" in item or "取消确认" in item or item.strip() == "取消打印"
+            ),
+            -1,
         )
         require(
-            any("取消后二次回首页" in item and "模型打印编辑" in item and "不要点击「下一步」" in item for item in texts),
-            f"{relative_path} must leave the print edit page when returning from an already-cancelled preview lands there",
+            cleanup_index != -1,
+            f"{relative_path} must still cancel or stop print processing before ending",
+        )
+        tail_texts = texts[cleanup_index:]
+        forbidden_home_cleanup_labels = (
+            "取消后回首页",
+            "取消后二次回首页",
+            "取消后三次回首页",
+            "收尾首页确认",
+            "收尾返回",
         )
         require(
-            any("取消后三次回首页" in item and "模型详情" in item and "不要点击「去打印」" in item for item in texts),
-            f"{relative_path} must leave a model detail page with a go-print button after cancelled print cleanup",
+            not any(label in item for item in tail_texts for label in forbidden_home_cleanup_labels),
+            f"{relative_path} must not return to App home after the main print flow because each case restarts the app",
         )
         require(
-            any("收尾首页确认" in item and "模型打印预览" in item and "模型导入" in item for item in texts),
-            f"{relative_path} must confirm the print preview is gone before force-stopping",
+            any("am force-stop com.kfb.model" in item for item in tail_texts),
+            f"{relative_path} must still force-stop the app after the main flow finishes",
         )
 
 
@@ -426,4 +438,4 @@ if __name__ == "__main__":
     test_local_import_accepts_android_file_picker_and_cancel_guard()
     test_wechat_import_uses_bounded_cancel_cleanup()
     test_baseline_flows_recover_restored_print_preview_before_home_actions()
-    test_print_flows_return_home_after_cancel_cleanup()
+    test_print_flows_stop_after_cancel_cleanup_without_returning_home()
