@@ -117,6 +117,23 @@ let apiAssetActiveSyncId = '';
 let apiAssetSyncPollTimer = null;
 let apiAssetSettingsOpen = false;
 let apiSourceCredentialEditing = false;
+let apiSourceDiscoveryRequestId = 0;
+let apiSourceDiscoveryState = {
+  sourceKey: '',
+  status: 'idle',
+  projects: [],
+  project: null,
+  branches: [],
+  environments: [],
+  error: '',
+  errorCode: '',
+  manual: false,
+  manualSuggested: false,
+  search: '',
+  retryTarget: 'projects',
+  pendingProjectId: '',
+  fresh: false
+};
 let apiAssetContextRequestId = 0;
 let apiAssetRequestController = null;
 let apiPlanRequestController = null;

@@ -32,6 +32,14 @@ def main():
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     api_testing_js = (JS_DIR / "api-testing.js").read_text(encoding="utf-8")
     state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
+    project_selector_start = api_testing_js.index("function renderApiProjectSelector")
+    project_selector_end = api_testing_js.index(
+        "function renderApiSourceSummary",
+        project_selector_start,
+    )
+    project_selector_function = api_testing_js[
+        project_selector_start:project_selector_end
+    ]
     require("<title>功夫豆测试平台</title>" in html, "Browser title must use 功夫豆测试平台")
     require("Midscene Task 管理平台" not in html and "Midscene Task 管理" not in html, "Old product title must not appear in the UI")
     require('<span class="header-logo">⚡</span>' not in html and '<div class="login-logo">⚡' not in html, "Old lightning emoji brand logo must not be used")
@@ -97,12 +105,46 @@ def main():
         "API asset technical log expansion must persist on the details toggle event",
     )
     require(
-        "api-source-environment-id" in api_testing_js
+        "api-source-environment-select" in api_testing_js
+        and "api-source-environment-id" in api_testing_js
         and "environment_id:" in api_testing_js
         and "apiAssetSelectedRevisionId" in state_js
         and "selectApiAssetRevision" in api_testing_js
         and "apiAssetSyncPhaseText" in api_testing_js,
-        "API assets must expose optional environments, explicit revision selection, and readable sync phases",
+        "API assets must select named environments, retain manual ID fallback, and expose readable revisions/sync phases",
+    )
+    require(
+        "/api-testing/apifox/discovery/projects" in api_testing_js
+        and "/api-testing/apifox/discovery/project-context" in api_testing_js
+        and "读取 Apifox 资产" in api_testing_js,
+        "New Apifox sources must discover projects and context by name",
+    )
+    require(
+        "apiSourceDisplayName" in api_testing_js
+        and "provider_metadata" in api_testing_js
+        and "source.project_id" not in project_selector_function,
+        "Project selector must prefer provider names and stop appending raw IDs",
+    )
+    require(
+        "无法读取？手动连接" in api_testing_js
+        and 'id="api-source-manual-fields"' in api_testing_js
+        and "<details" in api_testing_js,
+        "Manual project, branch, and environment IDs must remain an explicit fallback",
+    )
+    require(
+        "api-source-project-search" in api_testing_js
+        and "api-source-project-results" in api_testing_js
+        and "api-source-branch-select" in api_testing_js
+        and "api-source-environment-select" in api_testing_js,
+        "Apifox discovery must support project search and named branch/environment selection",
+    )
+    require(
+        "loading_projects" in api_testing_js
+        and "loading_context" in api_testing_js
+        and "retryApiSourceDiscovery" in api_testing_js
+        and "handleApiSourceTokenInput" in api_testing_js
+        and "apiSourceDiscoveryState" in state_js,
+        "Apifox discovery must expose stable loading/error states and invalidate stale token results",
     )
     require(
         "apiTestingProjectScope" in state_js
@@ -608,7 +650,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260723-api-project-modules" in html and "js/agent-workbench.js?v=20260729-agent-report-outcomes" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260723-api-daily-workflow-v2" in html and "js/api-testing.js?v=20260723-api-daily-workflow-v2" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Agent report outcome grouping and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/agent-workbench.js?v=20260729-agent-report-outcomes" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260729-apifox-discovery" in html and "js/api-testing.js?v=20260729-apifox-discovery" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Apifox discovery and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

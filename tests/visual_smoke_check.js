@@ -5,7 +5,9 @@ const { chromium } = require('playwright');
 
 const ROOT = path.resolve(__dirname, '..');
 const HTML = path.join(ROOT, 'task-manager.html');
-const ARTIFACTS = path.join(__dirname, 'artifacts');
+const ARTIFACTS = process.env.VISUAL_ARTIFACTS_DIR
+  ? path.resolve(process.env.VISUAL_ARTIFACTS_DIR)
+  : path.join(__dirname, 'artifacts');
 
 function json(res, body) {
   const payload = JSON.stringify(body);
@@ -455,15 +457,73 @@ function serve() {
       json(res, {ok: true});
       return;
     }
+    if (url.pathname === '/api/api-testing/apifox/discovery/projects' && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        if (!body.access_token && !body.source_id) {
+          json(res, {ok: false, error: '请输入 Apifox 访问令牌'});
+          return;
+        }
+        json(res, {
+          ok: true,
+          capability: {available: true, version: '2.2.8', minimum_version: '2.2.6'},
+          projects: [{
+            id: '5904970',
+            name: '3D 接口',
+            description: '打印业务接口',
+            team: {id: '12', name: '功夫豆'},
+          }, {
+            id: '5904971',
+            name: '账户中心',
+            description: '登录与账号业务',
+            team: {id: '12', name: '功夫豆'},
+          }],
+        });
+      });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/apifox/discovery/project-context' && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        const projectName = body.project_id === '5904971' ? '账户中心' : '3D 接口';
+        json(res, {
+          ok: true,
+          capability: {available: true, version: '2.2.8', minimum_version: '2.2.6'},
+          project: {
+            id: body.project_id,
+            name: projectName,
+            description: projectName === '账户中心' ? '登录与账号业务' : '打印业务接口',
+            team: {id: '12', name: '功夫豆'},
+          },
+          branches: [
+            {id: '', name: '主分支（默认）', is_default: true},
+            {id: '88', name: '测试分支', is_default: false},
+          ],
+          environments: [
+            {id: '', name: '不绑定环境', is_default: true},
+            {id: '99', name: 'APP 测试环境', is_default: false},
+          ],
+        });
+      });
+      return;
+    }
     if (url.pathname === '/api/api-testing/sources' && req.method === 'GET') {
       json(res, {
         ok: true,
         sources: [{
           source_id: 'api-source-visual-001',
           source_type: 'apifox',
-          name: '3D 接口',
+          name: '旧来源名称',
           project_id: '5904970',
           branch_id: '',
+          environment_id: '',
+          provider_metadata: {
+            project_name: '3D 接口',
+            project_description: '打印业务接口',
+            team_id: '12',
+            team_name: '功夫豆',
+            branch_name: '主分支（默认）',
+            environment_name: '不绑定环境',
+            discovery_source: 'apifox_cli',
+          },
           credential_configured: true,
           configured: true,
           sync_enabled: true,
@@ -484,6 +544,14 @@ function serve() {
           name: '账户中心',
           project_id: '5904971',
           branch_id: '',
+          environment_id: '',
+          provider_metadata: {
+            project_name: '账户中心',
+            team_name: '功夫豆',
+            branch_name: '主分支（默认）',
+            environment_name: '不绑定环境',
+            discovery_source: 'apifox_cli',
+          },
           credential_configured: true,
           configured: true,
           sync_enabled: true,
@@ -1195,6 +1263,22 @@ async function anyVisible(locator) {
     await page.locator('button[aria-label="新增 Apifox 项目"]').click();
     if (!await page.locator('#api-source-settings-panel:not([hidden])').isVisible()) throw new Error('Add project action must open an empty source draft');
     if (await page.locator('#api-source-project-id').inputValue()) throw new Error('New project draft must not inherit an existing Apifox project id');
+    if (await page.locator('#api-source-project-id').isVisible()) throw new Error('New project draft must keep raw project ids inside the collapsed manual fallback');
+    await page.locator('#api-source-token').fill('visual-apifox-token');
+    await page.locator('#api-source-discovery-button').click();
+    await page.waitForSelector('.api-source-project-option');
+    await page.locator('#api-source-project-search').fill('账户');
+    if (await page.locator('.api-source-project-option').count() !== 1) throw new Error('Apifox project search must filter by the visible project name');
+    if (!/账户中心/.test(await visibleText(page, '.api-source-project-option'))) throw new Error('Apifox project result must show the provider project name');
+    if (/5904971/.test(await visibleText(page, '#api-source-discovery-state'))) throw new Error('Apifox project discovery must not expose raw ids as primary text');
+    await page.locator('.api-source-project-option').click();
+    await page.waitForSelector('#api-source-branch-select');
+    const branchLabels = await page.locator('#api-source-branch-select option').allTextContents();
+    const environmentLabels = await page.locator('#api-source-environment-select option').allTextContents();
+    if (!branchLabels.some(value => /测试分支/.test(value))) throw new Error(`Named Apifox branches are missing: ${branchLabels}`);
+    if (!environmentLabels.some(value => /APP 测试环境/.test(value))) throw new Error(`Named Apifox environments are missing: ${environmentLabels}`);
+    if (await page.locator('#api-source-manual-fallback').evaluate(el => el.open)) throw new Error('Successful discovery must keep manual ids collapsed');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-source-discovery.png'), fullPage: true});
     await page.locator('button[aria-label="取消新增 Apifox 项目"]').click();
     if (!await page.locator('.api-source-actions .btn-sm.primary').isVisible()) throw new Error('Apifox sync must remain the primary asset action while an automatic sync is running');
     for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_execution: '▶️', api_reports: '📊'})) {
@@ -1922,6 +2006,7 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'metersphere-execution-mobile.png'),
         path.join(ARTIFACTS, 'metersphere-settings.png'),
         path.join(ARTIFACTS, 'metersphere-settings-mobile.png'),
+        path.join(ARTIFACTS, 'api-source-discovery.png'),
         path.join(ARTIFACTS, 'api-source-settings.png'),
         path.join(ARTIFACTS, 'api-source-settings-mobile.png'),
         path.join(ARTIFACTS, 'api-project-switch.png'),

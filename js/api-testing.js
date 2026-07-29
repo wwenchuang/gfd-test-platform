@@ -221,7 +221,7 @@ function renderApiWorkflowStepper(context = {}) {
   return `
     <nav class="api-workflow-stepper" aria-label="API 测试流程">
       <div class="api-workflow-context">
-        <div><span>当前测试</span><strong>${escapeHtml(source.name || '选择 Apifox 项目')}${businessLine ? ` · ${escapeHtml(businessLine)}` : ''}</strong></div>
+        <div><span>当前测试</span><strong>${escapeHtml(apiSourceDisplayName(source) || '选择 Apifox 项目')}${businessLine ? ` · ${escapeHtml(businessLine)}` : ''}</strong></div>
         <small>${revisionTime ? `接口更新于 ${escapeHtml(revisionTime)}` : '按步骤完成一次接口回归'}</small>
       </div>
       <ol class="api-workflow-desktop-steps">${stepMarkup}</ol>
@@ -574,9 +574,185 @@ function selectedApiAssetSource() {
   return apiTestingSources.find(item => String(item.source_id || '') === String(apiAssetSelectedSourceId || '')) || apiTestingSources[0] || null;
 }
 
+function apiSourceDisplayName(source = {}) {
+  const metadata = source.provider_metadata || {};
+  return metadata.project_name || source.name || source.source_id || 'API 项目';
+}
+
+function apiSourceDiscoveryKey(source = {}) {
+  if (apiTestingSourceDraftMode) return '__new_apifox_source__';
+  return String(source.source_id || '__empty_apifox_source__');
+}
+
+function resetApiSourceDiscoveryState(source = {}) {
+  apiSourceDiscoveryRequestId += 1;
+  const metadata = source.provider_metadata || {};
+  const projectId = String(source.project_id || '');
+  const branchId = String(source.branch_id || '');
+  const environmentId = String(source.environment_id || '');
+  const project = projectId ? {
+    id: projectId,
+    name: metadata.project_name || source.name || '已配置项目',
+    description: metadata.project_description || '',
+    team: {
+      id: metadata.team_id || '',
+      name: metadata.team_name || ''
+    }
+  } : null;
+  apiSourceDiscoveryState = {
+    sourceKey: apiSourceDiscoveryKey(source),
+    status: project ? 'ready' : 'idle',
+    projects: [],
+    project,
+    branches: project ? [{
+      id: branchId,
+      name: metadata.branch_name || (branchId ? '已配置分支' : '主分支（默认）'),
+      is_default: !branchId
+    }] : [],
+    environments: project ? [{
+      id: environmentId,
+      name: metadata.environment_name || (environmentId ? '已配置环境' : '不绑定环境'),
+      is_default: !environmentId
+    }] : [],
+    error: '',
+    errorCode: '',
+    manual: false,
+    manualSuggested: false,
+    search: '',
+    retryTarget: 'projects',
+    pendingProjectId: '',
+    fresh: false
+  };
+}
+
+function ensureApiSourceDiscoveryState(source = {}) {
+  if (apiSourceDiscoveryState.sourceKey !== apiSourceDiscoveryKey(source)) {
+    resetApiSourceDiscoveryState(source);
+  }
+}
+
+function apiSourceDiscoveryBusy() {
+  return ['loading_projects', 'loading_context'].includes(apiSourceDiscoveryState.status);
+}
+
+function apiSourceCanConfigure(source = {}) {
+  return !!(
+    source.source_id
+    || apiSourceDiscoveryState.status === 'ready'
+    || apiSourceDiscoveryState.manual
+  );
+}
+
+function apiSourceNamedOptions(items, selectedId) {
+  return (items || []).map(item => `
+    <option value="${escapeHtml(item.id || '')}" ${String(item.id || '') === String(selectedId || '') ? 'selected' : ''}>
+      ${escapeHtml(item.name || '未命名选项')}
+    </option>
+  `).join('');
+}
+
+function apiSourceProjectResultsHtml() {
+  const query = String(apiSourceDiscoveryState.search || '').trim().toLocaleLowerCase();
+  const projects = (apiSourceDiscoveryState.projects || []).filter(project => {
+    if (!query) return true;
+    return [
+      project.name,
+      project.description,
+      project.team?.name
+    ].some(value => String(value || '').toLocaleLowerCase().includes(query));
+  });
+  if (!projects.length) {
+    return '<div class="api-source-discovery-state empty"><strong>未找到匹配项目</strong></div>';
+  }
+  return projects.map(project => `
+    <button type="button" class="api-source-project-option" onclick="selectApiSourceDiscoveredProject(${jsArg(project.id)})">
+      <span><strong>${escapeHtml(project.name || '未命名项目')}</strong><small>${escapeHtml(project.team?.name || '未标注团队')}</small></span>
+      ${project.description ? `<em>${escapeHtml(project.description)}</em>` : ''}
+      <b>选择</b>
+    </button>
+  `).join('');
+}
+
+function renderApiSourceDiscoveryState(source = {}) {
+  const state = apiSourceDiscoveryState;
+  if (state.status === 'loading_projects') {
+    return '<div class="api-source-discovery-state loading"><span class="spinner"></span><strong>正在读取项目列表</strong></div>';
+  }
+  if (state.status === 'loading_context') {
+    return '<div class="api-source-discovery-state loading"><span class="spinner"></span><strong>正在读取分支和环境</strong></div>';
+  }
+  if (state.status === 'error') {
+    return `
+      <div class="api-source-discovery-state error">
+        <div><strong>读取失败</strong><span>${escapeHtml(state.error || 'Apifox 资产读取失败')}</span></div>
+        <div class="api-source-discovery-state-actions">
+          <button type="button" class="btn-sm" onclick="retryApiSourceDiscovery()">重试</button>
+          <button type="button" class="btn-sm" onclick="openApiSourceManualFallback()">手动连接</button>
+        </div>
+      </div>
+    `;
+  }
+  if (state.status === 'project_selection') {
+    return `
+      <div class="api-source-project-picker">
+        <label><span>选择项目</span><input id="api-source-project-search" type="search" value="${escapeHtml(state.search || '')}" placeholder="搜索项目或团队" oninput="filterApiSourceProjects(this.value)"></label>
+        <div id="api-source-project-results" class="api-source-project-results">${apiSourceProjectResultsHtml()}</div>
+      </div>
+    `;
+  }
+  if (state.status === 'ready' && state.project) {
+    const branchId = String(source.branch_id || state.branches?.[0]?.id || '');
+    const environmentId = String(source.environment_id || state.environments?.[0]?.id || '');
+    return `
+      <div class="api-source-selected-project">
+        <div><span>项目</span><strong>${escapeHtml(state.project.name || '未命名项目')}</strong><small>${escapeHtml(state.project.team?.name || '未标注团队')}</small></div>
+        ${state.projects.length ? '<button type="button" class="btn-sm" onclick="showApiSourceProjectSelection()">更换项目</button>' : ''}
+      </div>
+      <div class="api-source-context-grid">
+        <label><span>分支</span><select id="api-source-branch-select">${apiSourceNamedOptions(state.branches, branchId)}</select></label>
+        <label><span>环境</span><select id="api-source-environment-select">${apiSourceNamedOptions(state.environments, environmentId)}</select></label>
+      </div>
+    `;
+  }
+  return '<div class="api-source-discovery-state idle"><strong>等待读取 Apifox 项目</strong></div>';
+}
+
+function renderApiSourceCredentialControl(source = {}) {
+  const credentialConfigured = source.credential_configured === true;
+  const credentialEditorOpen = !credentialConfigured || apiSourceCredentialEditing;
+  return `
+    <div class="api-source-field api-source-token-field">
+      <span>访问令牌</span>
+      <div id="api-source-credential-saved" class="api-source-credential-saved" ${credentialEditorOpen ? 'hidden' : ''}>
+        <div class="api-source-credential-state"><span aria-hidden="true">✓</span><div><strong>已安全保存</strong><small>密钥仅保存在服务端</small></div></div>
+        <button type="button" class="btn-sm" aria-label="更换 Apifox 访问令牌" onclick="editApiSourceCredential()">更换</button>
+      </div>
+      <div id="api-source-token-editor" class="api-source-token-editor" ${credentialEditorOpen ? '' : 'hidden'}>
+        <input id="api-source-token" type="password" value="" autocomplete="new-password" aria-label="Apifox 访问令牌" placeholder="${credentialConfigured ? '输入新的 Apifox Access Token' : '输入 Apifox Access Token'}" oninput="handleApiSourceTokenInput()">
+        ${credentialConfigured ? '<button type="button" class="btn-sm" aria-label="取消更换 Apifox 访问令牌" onclick="cancelApiSourceCredentialEdit()">取消</button>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderApiSourceManualFallback(source = {}) {
+  const metadata = source.provider_metadata || {};
+  return `
+    <details id="api-source-manual-fallback" class="api-source-manual-fallback" ${apiSourceDiscoveryState.manual ? 'open' : ''} ontoggle="toggleApiSourceManualFallback(this.open)">
+      <summary><span>无法读取？手动连接</span><small>技术兜底</small></summary>
+      <div id="api-source-manual-fields" class="api-source-manual-fields">
+        <label><span>来源名称</span><input id="api-source-name" value="${escapeHtml(source.name || metadata.project_name || 'Apifox 接口')}" placeholder="例如：3D 接口"></label>
+        <label><span>项目 ID</span><input id="api-source-project-id" value="${escapeHtml(source.project_id || '')}" inputmode="numeric" placeholder="Project ID"></label>
+        <label><span>分支 ID（可选）</span><input id="api-source-branch-id" value="${escapeHtml(source.branch_id || '')}" placeholder="默认主分支"></label>
+        <label><span>环境 ID（可选）</span><input id="api-source-environment-id" value="${escapeHtml(source.environment_id || '')}" inputmode="numeric" placeholder="Environment ID"></label>
+      </div>
+    </details>
+  `;
+}
+
 function renderApiProjectSelector(sources, selectedId) {
   const options = (sources || []).map(source => {
-    const label = `${source.name || source.source_id || 'API 项目'} · ${source.project_id || '未配置项目 ID'}`;
+    const label = apiSourceDisplayName(source);
     return `<option value="${escapeHtml(source.source_id || '')}" ${String(source.source_id || '') === String(selectedId || '') ? 'selected' : ''}>${escapeHtml(label)}</option>`;
   }).join('');
   return `<div class="api-project-switcher"><select class="api-project-select" aria-label="选择 Apifox 项目" onchange="selectApiAssetSource(this.value)">${options}</select><button class="btn-sm icon-only api-project-add" type="button" title="新增 Apifox 项目" aria-label="新增 Apifox 项目" onclick="startApiSourceDraft()">＋</button></div>`;
@@ -613,52 +789,233 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
 }
 
 function renderApiSourceSettings(source = {}) {
-  const credentialConfigured = source.credential_configured === true;
-  const credentialEditorOpen = !credentialConfigured || apiSourceCredentialEditing;
+  ensureApiSourceDiscoveryState(source);
   const scope = source.sync_scope || { mode: 'all', module_paths: [] };
   const scopeState = apiModuleSelectionState();
   const selectedModules = apiTestingSourceDraftMode ? [] : (scopeState.selectedModules.size ? Array.from(scopeState.selectedModules) : (scope.module_paths || []));
   const selectedSummary = selectedModules.length ? selectedModules.join('、') : '尚未选择模块';
+  const canConfigure = apiSourceCanConfigure(source);
+  const discoveryActionLabel = source.source_id ? '重新读取 Apifox 资产' : '读取 Apifox 资产';
   return `
     <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>${apiTestingSourceDraftMode ? '新增 Apifox 项目' : '只读同步设置'}</h3></div><button class="btn-sm icon-only" title="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" aria-label="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" onclick="${apiTestingSourceDraftMode ? 'cancelApiSourceDraft()' : 'toggleApiSourceSettings(false)'}">×</button></div>
-    <div class="api-source-settings-grid">
-      <label><span>来源名称</span><input id="api-source-name" value="${escapeHtml(source.name || 'Apifox 接口')}" placeholder="例如：3D 接口"></label>
-      <label><span>项目 ID</span><input id="api-source-project-id" value="${escapeHtml(source.project_id || '')}" inputmode="numeric" placeholder="Apifox 项目设置中的 Project ID"></label>
-      <label><span>分支 ID（可选）</span><input id="api-source-branch-id" value="${escapeHtml(source.branch_id || '')}" placeholder="默认主分支"></label>
-      <label><span>环境 ID（可选）</span><input id="api-source-environment-id" value="${escapeHtml(source.environment_id || '')}" inputmode="numeric" placeholder="导出指定环境的服务地址"></label>
-      <label><span>同步周期（分钟）</span><input id="api-source-interval" type="number" min="15" max="1440" step="15" value="${escapeHtml(source.sync_interval_minutes || 60)}"></label>
-      <div class="api-source-field api-source-token-field">
-        <span>访问令牌</span>
-        <div id="api-source-credential-saved" class="api-source-credential-saved" ${credentialEditorOpen ? 'hidden' : ''}>
-          <div class="api-source-credential-state"><span aria-hidden="true">✓</span><div><strong>已安全保存</strong><small>密钥仅保存在服务端</small></div></div>
-          <button type="button" class="btn-sm" aria-label="更换 Apifox 访问令牌" onclick="editApiSourceCredential()">更换</button>
-        </div>
-        <div id="api-source-token-editor" class="api-source-token-editor" ${credentialEditorOpen ? '' : 'hidden'}>
-          <input id="api-source-token" type="password" value="" autocomplete="new-password" aria-label="Apifox 访问令牌" placeholder="${credentialConfigured ? '输入新的 Apifox Access Token' : '输入 Apifox Access Token'}">
-          ${credentialConfigured ? '<button type="button" class="btn-sm" aria-label="取消更换 Apifox 访问令牌" onclick="cancelApiSourceCredentialEdit()">取消</button>' : ''}
-        </div>
+    <div class="api-source-discovery">
+      <div class="api-source-discovery-action">
+        ${renderApiSourceCredentialControl(source)}
+        <button id="api-source-discovery-button" type="button" class="btn-sm primary" onclick="discoverApiSourceProjects()" ${apiSourceDiscoveryBusy() ? 'disabled' : ''}>${escapeHtml(discoveryActionLabel)}</button>
       </div>
-      <label class="api-source-toggle"><input id="api-source-sync-enabled" type="checkbox" ${source.sync_enabled !== false ? 'checked' : ''}><span>启用定时同步</span></label>
+      <div id="api-source-discovery-state">${renderApiSourceDiscoveryState(source)}</div>
     </div>
-    <div class="api-source-scope" data-api-source-scope>
-      <span>同步范围</span>
-      <div class="api-segmented-control" role="group" aria-label="Apifox 同步范围">
-        <button type="button" class="${scope.mode !== 'selected' ? 'active' : ''}" data-sync-scope="all" onclick="setApiSourceSyncScopeMode('all')">全部模块</button>
-        <button type="button" class="${scope.mode === 'selected' ? 'active' : ''}" data-sync-scope="selected" onclick="setApiSourceSyncScopeMode('selected')">已选模块</button>
+    ${renderApiSourceManualFallback(source)}
+    <div id="api-source-sync-configuration" class="api-source-sync-configuration ${canConfigure ? '' : 'hidden'}">
+      <div class="api-source-settings-grid">
+        <label><span>同步周期（分钟）</span><input id="api-source-interval" type="number" min="15" max="1440" step="15" value="${escapeHtml(source.sync_interval_minutes || 60)}"></label>
+        <label class="api-source-toggle"><input id="api-source-sync-enabled" type="checkbox" ${source.sync_enabled !== false ? 'checked' : ''}><span>启用定时同步</span></label>
       </div>
-      <small id="api-source-selected-modules">${escapeHtml(selectedSummary)}</small>
-    </div>
-    <div class="api-source-settings-actions">
-      ${source.credential_configured ? '<button class="btn-sm danger" onclick="clearApiSourceCredential()">清除当前令牌</button>' : ''}
-      <button class="btn-sm primary" onclick="saveApiSourceConfig()">保存设置</button>
+      <div class="api-source-scope" data-api-source-scope>
+        <span>同步范围</span>
+        <div class="api-segmented-control" role="group" aria-label="Apifox 同步范围">
+          <button type="button" class="${scope.mode !== 'selected' ? 'active' : ''}" data-sync-scope="all" onclick="setApiSourceSyncScopeMode('all')">全部模块</button>
+          <button type="button" class="${scope.mode === 'selected' ? 'active' : ''}" data-sync-scope="selected" onclick="setApiSourceSyncScopeMode('selected')">已选模块</button>
+        </div>
+        <small id="api-source-selected-modules">${escapeHtml(selectedSummary)}</small>
+      </div>
+      <div class="api-source-settings-actions">
+        ${source.credential_configured ? '<button class="btn-sm danger" onclick="clearApiSourceCredential()">清除当前令牌</button>' : ''}
+        <button id="api-source-save-button" class="btn-sm primary" onclick="saveApiSourceConfig()" ${canConfigure ? '' : 'disabled'}>保存设置</button>
+      </div>
     </div>
   `;
+}
+
+function currentApiSourceSettingsSource() {
+  return apiTestingSourceDraftMode ? {} : (selectedApiAssetSource() || {});
+}
+
+function refreshApiSourceDiscoveryUi(source = currentApiSourceSettingsSource()) {
+  const stateRegion = document.getElementById('api-source-discovery-state');
+  if (stateRegion) stateRegion.innerHTML = renderApiSourceDiscoveryState(source);
+  const discoveryButton = document.getElementById('api-source-discovery-button');
+  if (discoveryButton) {
+    discoveryButton.disabled = apiSourceDiscoveryBusy();
+    discoveryButton.textContent = apiSourceDiscoveryBusy()
+      ? '正在读取'
+      : (source.source_id ? '重新读取 Apifox 资产' : '读取 Apifox 资产');
+  }
+  const canConfigure = apiSourceCanConfigure(source);
+  document.getElementById('api-source-sync-configuration')?.classList.toggle('hidden', !canConfigure);
+  const saveButton = document.getElementById('api-source-save-button');
+  if (saveButton) saveButton.disabled = !canConfigure;
+}
+
+function apiSourceDiscoveryCredentialPayload(source = currentApiSourceSettingsSource()) {
+  const token = document.getElementById('api-source-token')?.value.trim() || '';
+  if (token) return { access_token: token };
+  if (source.source_id) return { source_id: source.source_id };
+  throw new Error('请输入 Apifox 访问令牌');
+}
+
+function setApiSourceDiscoveryError(error, retryTarget, projectId = '') {
+  apiSourceDiscoveryState.status = 'error';
+  apiSourceDiscoveryState.error = error?.message || 'Apifox 资产读取失败';
+  apiSourceDiscoveryState.errorCode = error?.code || '';
+  apiSourceDiscoveryState.manualSuggested = true;
+  apiSourceDiscoveryState.retryTarget = retryTarget || 'projects';
+  apiSourceDiscoveryState.pendingProjectId = projectId || '';
+  apiSourceDiscoveryState.fresh = false;
+  refreshApiSourceDiscoveryUi();
+}
+
+function handleApiSourceTokenInput() {
+  const source = currentApiSourceSettingsSource();
+  const token = document.getElementById('api-source-token')?.value || '';
+  const manual = apiSourceDiscoveryState.manual;
+  if (!token.trim() && source.credential_configured) {
+    resetApiSourceDiscoveryState(source);
+  } else {
+    resetApiSourceDiscoveryState({});
+    apiSourceDiscoveryState.sourceKey = apiSourceDiscoveryKey(source);
+  }
+  apiSourceDiscoveryState.manual = manual;
+  refreshApiSourceDiscoveryUi(source);
+}
+
+function filterApiSourceProjects(value) {
+  apiSourceDiscoveryState.search = String(value || '');
+  const results = document.getElementById('api-source-project-results');
+  if (results) results.innerHTML = apiSourceProjectResultsHtml();
+}
+
+function showApiSourceProjectSelection() {
+  apiSourceDiscoveryState.status = 'project_selection';
+  apiSourceDiscoveryState.project = null;
+  apiSourceDiscoveryState.branches = [];
+  apiSourceDiscoveryState.environments = [];
+  apiSourceDiscoveryState.fresh = false;
+  refreshApiSourceDiscoveryUi();
+  document.getElementById('api-source-project-search')?.focus();
+}
+
+function toggleApiSourceManualFallback(open) {
+  apiSourceDiscoveryState.manual = !!open;
+  const source = currentApiSourceSettingsSource();
+  const canConfigure = apiSourceCanConfigure(source);
+  document.getElementById('api-source-sync-configuration')?.classList.toggle('hidden', !canConfigure);
+  const saveButton = document.getElementById('api-source-save-button');
+  if (saveButton) saveButton.disabled = !canConfigure;
+}
+
+function openApiSourceManualFallback() {
+  const details = document.getElementById('api-source-manual-fallback');
+  apiSourceDiscoveryState.manual = true;
+  if (details) details.open = true;
+  toggleApiSourceManualFallback(true);
+  document.getElementById('api-source-project-id')?.focus();
+}
+
+async function discoverApiSourceProjects() {
+  const source = currentApiSourceSettingsSource();
+  let credentials;
+  try {
+    credentials = apiSourceDiscoveryCredentialPayload(source);
+  } catch (error) {
+    showToast(error.message, 'error');
+    document.getElementById('api-source-token')?.focus();
+    return;
+  }
+  const requestId = ++apiSourceDiscoveryRequestId;
+  apiSourceDiscoveryState.status = 'loading_projects';
+  apiSourceDiscoveryState.projects = [];
+  apiSourceDiscoveryState.project = null;
+  apiSourceDiscoveryState.branches = [];
+  apiSourceDiscoveryState.environments = [];
+  apiSourceDiscoveryState.error = '';
+  apiSourceDiscoveryState.errorCode = '';
+  apiSourceDiscoveryState.retryTarget = 'projects';
+  apiSourceDiscoveryState.pendingProjectId = '';
+  apiSourceDiscoveryState.fresh = false;
+  refreshApiSourceDiscoveryUi(source);
+  try {
+    const data = await apiRequest('/api-testing/apifox/discovery/projects', {
+      method: 'POST',
+      body: credentials,
+      timeoutMs: 30000
+    });
+    if (requestId !== apiSourceDiscoveryRequestId || apiSourceDiscoveryState.sourceKey !== apiSourceDiscoveryKey(source)) return;
+    apiSourceDiscoveryState.status = 'project_selection';
+    apiSourceDiscoveryState.projects = data.projects || [];
+    apiSourceDiscoveryState.search = '';
+    refreshApiSourceDiscoveryUi(source);
+    document.getElementById('api-source-project-search')?.focus();
+  } catch (error) {
+    if (requestId !== apiSourceDiscoveryRequestId) return;
+    setApiSourceDiscoveryError(error, 'projects');
+  }
+}
+
+async function loadApiSourceProjectContext(projectId) {
+  const source = currentApiSourceSettingsSource();
+  const selectedProject = (apiSourceDiscoveryState.projects || []).find(
+    item => String(item.id || '') === String(projectId || '')
+  ) || apiSourceDiscoveryState.project;
+  let credentials;
+  try {
+    credentials = apiSourceDiscoveryCredentialPayload(source);
+  } catch (error) {
+    setApiSourceDiscoveryError(error, 'context', projectId);
+    return;
+  }
+  const requestId = ++apiSourceDiscoveryRequestId;
+  apiSourceDiscoveryState.status = 'loading_context';
+  apiSourceDiscoveryState.project = selectedProject || null;
+  apiSourceDiscoveryState.error = '';
+  apiSourceDiscoveryState.errorCode = '';
+  apiSourceDiscoveryState.retryTarget = 'context';
+  apiSourceDiscoveryState.pendingProjectId = String(projectId || '');
+  apiSourceDiscoveryState.fresh = false;
+  refreshApiSourceDiscoveryUi(source);
+  try {
+    const data = await apiRequest('/api-testing/apifox/discovery/project-context', {
+      method: 'POST',
+      body: { ...credentials, project_id: String(projectId || '') },
+      timeoutMs: 35000
+    });
+    if (requestId !== apiSourceDiscoveryRequestId || apiSourceDiscoveryState.sourceKey !== apiSourceDiscoveryKey(source)) return;
+    apiSourceDiscoveryState.status = 'ready';
+    apiSourceDiscoveryState.project = data.project || selectedProject || null;
+    apiSourceDiscoveryState.branches = data.branches || [];
+    apiSourceDiscoveryState.environments = data.environments || [];
+    apiSourceDiscoveryState.error = '';
+    apiSourceDiscoveryState.errorCode = '';
+    apiSourceDiscoveryState.pendingProjectId = '';
+    apiSourceDiscoveryState.fresh = true;
+    refreshApiSourceDiscoveryUi(source);
+  } catch (error) {
+    if (requestId !== apiSourceDiscoveryRequestId) return;
+    apiSourceDiscoveryState.project = selectedProject || null;
+    setApiSourceDiscoveryError(error, 'context', projectId);
+  }
+}
+
+async function selectApiSourceDiscoveredProject(projectId) {
+  await loadApiSourceProjectContext(projectId);
+}
+
+async function retryApiSourceDiscovery() {
+  if (
+    apiSourceDiscoveryState.retryTarget === 'context'
+    && apiSourceDiscoveryState.pendingProjectId
+  ) {
+    await loadApiSourceProjectContext(apiSourceDiscoveryState.pendingProjectId);
+    return;
+  }
+  await discoverApiSourceProjects();
 }
 
 function startApiSourceDraft() {
   apiTestingSourceDraftMode = true;
   apiAssetSettingsOpen = true;
   apiSourceCredentialEditing = false;
+  resetApiSourceDiscoveryState({});
   const panel = document.getElementById('api-source-settings-panel');
   if (panel) {
     panel.innerHTML = renderApiSourceSettings({ sync_scope: { mode: 'all', module_paths: [] } });
@@ -669,6 +1026,7 @@ function startApiSourceDraft() {
 function cancelApiSourceDraft() {
   apiTestingSourceDraftMode = false;
   apiSourceCredentialEditing = false;
+  resetApiSourceDiscoveryState({});
   toggleApiSourceSettings(false);
 }
 
@@ -708,6 +1066,9 @@ function cancelApiSourceCredentialEdit() {
   if (input) input.value = '';
   if (saved) saved.hidden = false;
   if (editor) editor.hidden = true;
+  const source = currentApiSourceSettingsSource();
+  resetApiSourceDiscoveryState(source);
+  refreshApiSourceDiscoveryUi(source);
 }
 
 function renderApiAssetSync(sync) {
@@ -982,6 +1343,7 @@ function toggleApiSourceSettings(open = null) {
   if (!apiAssetSettingsOpen) {
     apiSourceCredentialEditing = false;
     apiTestingSourceDraftMode = false;
+    resetApiSourceDiscoveryState({});
   }
   const panel = document.getElementById('api-source-settings-panel');
   if (panel) {
@@ -995,6 +1357,7 @@ async function selectApiAssetSource(sourceId) {
   apiAssetSelectedSourceId = sourceId || '';
   apiSourceCredentialEditing = false;
   apiTestingSourceDraftMode = false;
+  resetApiSourceDiscoveryState(selectedApiAssetSource() || {});
   apiAssetSelectedRevisionId = '';
   apiAssetRevisionPinned = false;
   apiAssetActiveSyncId = '';
@@ -1035,19 +1398,48 @@ function abortApiProjectScopeRequests() {
 async function saveApiSourceConfig(clearCredentials = false) {
   const source = apiTestingSourceDraftMode ? {} : (selectedApiAssetSource() || {});
   const token = document.getElementById('api-source-token')?.value.trim() || '';
+  const manual = document.getElementById('api-source-manual-fallback')?.open === true;
   const scopeMode = document.querySelector('[data-sync-scope].active')?.dataset.syncScope || 'all';
   const selectedModules = apiSourceSelectedModulePaths(source);
   if (scopeMode === 'selected' && !selectedModules.length) {
     showToast('请选择至少一个同步模块', 'error');
     return;
   }
+  if (!clearCredentials && !source.credential_configured && !token) {
+    showToast('请输入 Apifox 访问令牌', 'error');
+    document.getElementById('api-source-token')?.focus();
+    return;
+  }
+  if (!clearCredentials && token && !manual && !apiSourceDiscoveryState.fresh) {
+    showToast('更换令牌后请先读取 Apifox 资产', 'error');
+    return;
+  }
+  const discoveredProject = apiSourceDiscoveryState.project || null;
+  const branchSelect = document.getElementById('api-source-branch-select');
+  const environmentSelect = document.getElementById('api-source-environment-select');
+  const projectId = manual
+    ? (document.getElementById('api-source-project-id')?.value.trim() || '')
+    : String(discoveredProject?.id || source.project_id || '');
+  const branchId = manual
+    ? (document.getElementById('api-source-branch-id')?.value.trim() || '')
+    : String(branchSelect ? branchSelect.value : (source.branch_id || ''));
+  const environmentId = manual
+    ? (document.getElementById('api-source-environment-id')?.value.trim() || '')
+    : String(environmentSelect ? environmentSelect.value : (source.environment_id || ''));
+  if (!projectId) {
+    showToast(manual ? '请填写 Apifox 项目 ID' : '请先选择 Apifox 项目', 'error');
+    return;
+  }
+  const sourceName = manual
+    ? (document.getElementById('api-source-name')?.value.trim() || 'Apifox 接口')
+    : (discoveredProject?.name || apiSourceDisplayName(source));
   const payload = {
     source_id: source.source_id || undefined,
     source_type: 'apifox',
-    name: document.getElementById('api-source-name')?.value.trim() || 'Apifox 接口',
-    project_id: document.getElementById('api-source-project-id')?.value.trim() || '',
-    branch_id: document.getElementById('api-source-branch-id')?.value.trim() || '',
-    environment_id: document.getElementById('api-source-environment-id')?.value.trim() || '',
+    name: sourceName,
+    project_id: projectId,
+    branch_id: branchId,
+    environment_id: environmentId,
     sync_interval_minutes: Number(document.getElementById('api-source-interval')?.value || 60),
     sync_enabled: !!document.getElementById('api-source-sync-enabled')?.checked,
     sync_scope: { mode: scopeMode, module_paths: scopeMode === 'selected' ? selectedModules : [] },
@@ -1055,11 +1447,30 @@ async function saveApiSourceConfig(clearCredentials = false) {
     clear_credentials: !!clearCredentials
   };
   if (token) payload.access_token = token;
+  if (!manual && apiSourceDiscoveryState.fresh && discoveredProject) {
+    const selectedBranch = (apiSourceDiscoveryState.branches || []).find(
+      item => String(item.id || '') === branchId
+    );
+    const selectedEnvironment = (apiSourceDiscoveryState.environments || []).find(
+      item => String(item.id || '') === environmentId
+    );
+    payload.provider_metadata = {
+      project_name: discoveredProject.name || '',
+      project_description: discoveredProject.description || '',
+      team_id: discoveredProject.team?.id || '',
+      team_name: discoveredProject.team?.name || '',
+      branch_name: selectedBranch?.name || '主分支（默认）',
+      environment_name: selectedEnvironment?.name || '不绑定环境',
+      discovered_at: new Date().toISOString(),
+      discovery_source: 'apifox_cli'
+    };
+  }
   try {
     const data = await apiRequest('/api-testing/sources', { method: 'POST', body: payload });
     apiAssetSelectedSourceId = data.source?.source_id || apiAssetSelectedSourceId;
     apiTestingSourceDraftMode = false;
     apiSourceCredentialEditing = false;
+    resetApiSourceDiscoveryState(data.source || {});
     if (!source.source_id) {
       apiAssetSelectedRevisionId = '';
       apiAssetRevisionPinned = false;
