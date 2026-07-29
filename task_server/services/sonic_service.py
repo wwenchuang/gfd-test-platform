@@ -2902,6 +2902,19 @@ def sonic_result_timestamp(result: dict) -> int:
     )
 
 
+def sonic_suite_first_callback_ts(suite: dict) -> int:
+    values = []
+    for item in (suite or {}).get("results") or []:
+        ts = (
+            _parse_time((item or {}).get("started_at"))
+            or _parse_time((item or {}).get("created_at"))
+            or _parse_time((item or {}).get("finished_at"))
+        )
+        if ts:
+            values.append(ts)
+    return min(values) if values else 0
+
+
 def _format_duration_seconds(seconds: int) -> str:
     seconds = _safe_int(seconds, 0)
     if seconds <= 0:
@@ -2997,6 +3010,10 @@ def sonic_score_result_for_suite(result: dict, suite: dict, project_id: int) -> 
     result_id = _safe_int(result.get("id"), 0)
     if not result_id:
         return -1
+    first_callback_ts = sonic_suite_first_callback_ts(suite)
+    result_end_ts = _parse_time(result.get("endTime") or result.get("end_time"))
+    if first_callback_ts and result_end_ts and result_end_ts < first_callback_ts - 60:
+        return -1
     expected_suite_id = sonic_suite_config_id(suite)
     result_suite_id = _safe_int(result.get("suiteId") or result.get("suite_id"), 0)
     if expected_suite_id and result_suite_id and expected_suite_id != result_suite_id:
@@ -3034,6 +3051,10 @@ def sonic_score_result_for_suite(result: dict, suite: dict, project_id: int) -> 
 def sonic_score_result_meta_for_suite(result: dict, suite: dict, project_id: int) -> int:
     result_id = _safe_int(result.get("id"), 0)
     if not result_id:
+        return -1
+    first_callback_ts = sonic_suite_first_callback_ts(suite)
+    result_end_ts = _parse_time(result.get("endTime") or result.get("end_time"))
+    if first_callback_ts and result_end_ts and result_end_ts < first_callback_ts - 60:
         return -1
     expected_suite_id = sonic_suite_config_id(suite)
     result_suite_id = _safe_int(result.get("suiteId") or result.get("suite_id"), 0)

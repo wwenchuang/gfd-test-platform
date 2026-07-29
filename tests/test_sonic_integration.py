@@ -802,6 +802,52 @@ def test_sonic_result_id_derives_fixed_report_url_without_lookup():
         midscene.REPORT_DIR = old_report_dir
 
 
+def test_sonic_result_meta_rejects_result_ended_before_first_task_callback():
+    def ts(value: str) -> int:
+        return int(time.mktime(time.strptime(value, "%Y-%m-%d %H:%M:%S")))
+
+    suite = {
+        "created_ts": ts("2026-07-29 09:48:06"),
+        "last_update_ts": ts("2026-07-29 09:51:10"),
+        "sonic_suite_id": "8",
+        "sonic_suite_name": "3D测试自动",
+        "results": [
+            {
+                "job_id": "sonic_1",
+                "status": "success",
+                "created_at": "2026-07-29 09:48:06",
+                "started_at": "2026-07-29 09:48:05",
+                "finished_at": "2026-07-29 09:48:05",
+            }
+        ],
+    }
+    previous_result = {
+        "id": 1226,
+        "projectId": 3,
+        "suiteId": 8,
+        "suiteName": "3D测试自动",
+        "status": 3,
+        "sendMsgCount": 11,
+        "receiveMsgCount": 11,
+        "createTime": "2026-07-29 09:04:34",
+        "endTime": "2026-07-29 09:40:35",
+    }
+    current_running_result = {
+        "id": 1227,
+        "projectId": 3,
+        "suiteId": 8,
+        "suiteName": "3D测试自动",
+        "status": 0,
+        "sendMsgCount": 11,
+        "receiveMsgCount": 4,
+        "createTime": "2026-07-29 09:41:31",
+        "endTime": "",
+    }
+
+    assert sonic_service.sonic_score_result_meta_for_suite(previous_result, suite, 3) == -1
+    assert sonic_service.sonic_score_result_meta_for_suite(current_running_result, suite, 3) > 0
+
+
 def test_sonic_force_run_suite_blocks_recent_active_same_suite_result():
     old_request = sonic_service.sonic_request
     calls = []
