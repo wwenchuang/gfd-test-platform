@@ -2637,8 +2637,10 @@ def _fallback_baidu_feature_kind(scenario):
         return "smart_id_photo"
     if any(term in text for term in ("证件照", "一寸照", "1寸")):
         return "id_photo"
-    if any(term in text for term in ("普通照片", "照片打印", "5寸照片")):
+    if any(term in text for term in ("普通照片", "5寸照片")):
         return "photo"
+    if "照片打印" in text:
+        return "photo_entry"
     if any(term in text for term in ("扫描复印", "复印扫描", "扫描仪扫描")):
         return "scan"
     return ""
@@ -2665,12 +2667,14 @@ def _fallback_steps_for_scenario(scenario, app_context=None):
                 "等待「百度网盘」入口可见",
             ])
             assertion = "文档打印页面展示「百度网盘」入口，入口与「本地文档」同级且位于其后"
-        elif feature_kind in ("photo", "id_photo", "smart_id_photo", "photo_collage"):
+        elif feature_kind in ("photo_entry", "photo", "id_photo", "smart_id_photo", "photo_collage"):
             steps.extend([
                 "点击首页或底部导航中名称为「照片打印」的入口",
-                "等待照片打印页面加载完成，并看到普通照片、证件照或照片拼版入口",
+                "等待照片打印页面加载完成，并看到「百度网盘」入口或导入方式区域",
             ])
-            if feature_kind == "photo":
+            if feature_kind == "photo_entry":
+                target_page = "照片打印"
+            elif feature_kind == "photo":
                 steps.append("点击名称为「5寸照片」的普通照片打印入口")
                 target_page = "普通照片打印"
             elif feature_kind == "smart_id_photo":
@@ -2682,11 +2686,14 @@ def _fallback_steps_for_scenario(scenario, app_context=None):
             else:
                 steps.append("点击名称为「照片拼版」或「图片拼版」的入口")
                 target_page = "照片拼版"
-            steps.extend([
-                f"等待{target_page}导入页面加载完成，并看到导入方式区域",
-                "等待「百度网盘」入口可见",
-            ])
-            assertion = f"{target_page}导入页面展示「百度网盘」入口，且与其他导入方式同级显示"
+            if feature_kind != "photo_entry":
+                steps.extend([
+                    f"等待{target_page}导入页面加载完成，并看到导入方式区域",
+                    "等待「百度网盘」入口可见",
+                ])
+            else:
+                steps.append("等待「百度网盘」入口可见")
+            assertion = f"{target_page}页面展示「百度网盘」入口，且与其他导入方式同级显示"
         elif feature_kind == "scan":
             steps.extend([
                 "点击首页中名称为「扫描复印」或「扫描仪扫描」的入口",
@@ -8396,6 +8403,107 @@ def _planner_flow_reaches_required_branch(
     return any(_navigation_action_target_key(step) for step in flow)
 
 
+_PHOTO_ENTRY_SUBSPEC_TERMS = (
+    "5寸照片", "6寸照片", "7寸照片", "A4照片", "一寸照", "1寸照", "二寸照", "2寸照",
+    "证件照", "智能证件照", "照片拼版", "图片拼版", "普通照片",
+)
+
+
+def _source_contract_requires_photo_entry(requirement_refs, acceptance_checks):
+    requirement_ids = set(_acceptance_requirement_ids(requirement_refs))
+    ref_text = "\n".join(normalize_text_list(requirement_refs))
+    if requirement_ids:
+        mapped_checks = [
+            check for check in (acceptance_checks or [])
+            if isinstance(check, dict)
+            and str(check.get("requirementId") or "").strip() in requirement_ids
+        ]
+    else:
+        mapped_checks = [
+            check for check in (acceptance_checks or [])
+            if isinstance(check, dict)
+            and str(check.get("branch") or "").strip()
+            and str(check.get("branch") or "").strip() in ref_text
+        ]
+    if not mapped_checks:
+        return False
+    mapped_kinds = {
+        str(check.get("kind") or "").strip().lower()
+        for check in mapped_checks
+        if isinstance(check, dict)
+    }
+    if not mapped_kinds.intersection({"relation", "copy", "reachability"}):
+        return False
+    source_text = "\n".join(normalize_text_list([
+        requirement_refs,
+        [
+            check.get("branch")
+            for check in mapped_checks
+            if isinstance(check, dict)
+        ],
+        [
+            check.get("text")
+            for check in mapped_checks
+            if isinstance(check, dict)
+        ],
+    ]))
+    if "照片打印" not in source_text:
+        return False
+    return not any(term in source_text for term in _PHOTO_ENTRY_SUBSPEC_TERMS)
+
+
+def _canonicalize_photo_entry_source_flow(flow, requirement_refs, acceptance_checks):
+    """Keep explicit photo-printing source contracts on the business entry page."""
+    normalized = normalize_text_list(flow)[:8]
+    if not _source_contract_requires_photo_entry(requirement_refs, acceptance_checks):
+        return normalized, False
+    changed = False
+    canonical_wait = "等待照片打印页面加载完成，并看到「百度网盘」入口或导入方式区域"
+    cleaned = []
+    for raw_step in normalized:
+        step = str(raw_step or "").strip()
+        if not step:
+            continue
+        has_subspec = any(term in step for term in _PHOTO_ENTRY_SUBSPEC_TERMS)
+        if not has_subspec:
+            cleaned.append(step)
+            continue
+        if _navigation_action_target_key(step):
+            changed = True
+            continue
+        if any(marker in step for marker in ("等待", "页面", "导入", "入口", "加载")):
+            if not cleaned or cleaned[-1] != canonical_wait:
+                cleaned.append(canonical_wait)
+            changed = True
+            continue
+        changed = True
+    if not cleaned:
+        return normalized, False
+    branch_key = _navigation_action_target_key("点击「照片打印」")
+    target_key = _navigation_action_target_key("点击「百度网盘」")
+    branch_index = next((
+        index for index, step in enumerate(cleaned)
+        if _navigation_target_keys_match(_navigation_action_target_key(step), branch_key)
+    ), -1)
+    target_index = next((
+        index for index, step in enumerate(cleaned)
+        if _navigation_target_keys_match(_navigation_action_target_key(step), target_key)
+    ), len(cleaned))
+    if branch_index >= 0 and not any(
+        index > branch_index
+        and index < target_index
+        and "照片打印" in str(step or "")
+        and any(marker in str(step or "") for marker in ("等待", "加载", "可见", "导入"))
+        for index, step in enumerate(cleaned)
+    ):
+        cleaned.insert(branch_index + 1, canonical_wait)
+        changed = True
+    if len(cleaned) > 8:
+        cleaned = cleaned[:8]
+        changed = True
+    return cleaned, changed
+
+
 def apply_executable_yaml_plan_to_payload(payload, plan):
     """Apply the AI planner's grounded classification and path plan."""
     normalized = normalize_cases_payload(payload)
@@ -8531,6 +8639,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
     manual_reclassification_canonicalized_count = 0
     runner_eligibility_guard_count = 0
     convergence_repair_restore_count = 0
+    photo_entry_source_canonicalized_count = 0
     unclassified_focused_automatic_ids = set()
     applied_counts = {"executable": 0, "needs_review": 0, "draft": 0, "manual": 0}
     for record in candidate_records:
@@ -8807,6 +8916,17 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
                 current_visual_evidence,
             ):
                 visual_variant_hint_refreshed_count += 1
+        planned_flow, photo_entry_source_canonicalized = (
+            _canonicalize_photo_entry_source_flow(
+                planned_flow,
+                requirement_refs,
+                acceptance_checks,
+            )
+            if not convergence_pass
+            else (planned_flow, False)
+        )
+        if photo_entry_source_canonicalized:
+            photo_entry_source_canonicalized_count += 1
         unsupported_assertion_literals = _unsupported_dynamic_ui_literals(assertion_target, normalized)
         planned_flow, data_observation_grounded, unsupported_flow_literals = (
             _ground_planner_terminal_observation(planned_flow, assertion_target, normalized)
@@ -8969,6 +9089,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             current_visual_evidence = {}
             trusted_baseline_navigation_adapted = False
             visual_leaf_adapted = False
+            photo_entry_source_canonicalized = False
             data_observation_grounded = False
             unsupported_flow_literals = []
             unsupported_assertion_literals = []
@@ -9047,6 +9168,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
             "boundedConvergence": copy.deepcopy(item.get("boundedConvergence") or {}),
             "trustedBaselineNavigationAdapted": trusted_baseline_navigation_adapted,
             "currentVisualLeafAdapted": visual_leaf_adapted,
+            "photoEntrySourceCanonicalized": photo_entry_source_canonicalized,
             "currentVisualLeafEvidence": copy.deepcopy(current_visual_evidence),
             "dynamicDataObservationGrounded": data_observation_grounded,
             "preservedAcceptanceContract": {
@@ -9316,6 +9438,7 @@ def apply_executable_yaml_plan_to_payload(payload, plan):
         "trusted_baseline_navigation_adapted_count": trusted_baseline_navigation_adapted_count,
         "current_visual_leaf_adapted_count": current_visual_leaf_adapted_count,
         "visual_variant_hint_refreshed_count": visual_variant_hint_refreshed_count,
+        "photo_entry_source_canonicalized_count": photo_entry_source_canonicalized_count,
         "dynamic_data_observation_grounded_count": dynamic_data_observation_grounded_count,
         "dynamic_data_guard_count": dynamic_data_guard_count,
         "preserve_contract_applied_count": preserve_contract_applied_count,

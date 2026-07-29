@@ -998,6 +998,117 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         [feature for feature, _point in scoped_baidu_points] == ["文档打印", "照片打印", "扫描复印"],
         "Baidu netdisk entrance requirements scoped to three homepage business entries must not expand Figma-only photo sub-specifications into executable branches",
     )
+    scoped_photo_steps, scoped_photo_assertions = ai_skill_service._fallback_steps_for_scenario({
+        "feature": "照片打印",
+        "scenario": "照片打印百度网盘入口展示与点击验证",
+        "requirement_point": scoped_baidu_points[1][1],
+        "business_path": "进入照片打印 -> 查看目标入口 -> 点击入口 -> 校验进入后续流程",
+    })
+    scoped_photo_text = "\n".join(scoped_photo_steps + scoped_photo_assertions)
+    require(
+        "照片打印" in scoped_photo_text
+        and "百度网盘" in scoped_photo_text
+        and not any(term in scoped_photo_text for term in ("5寸照片", "一寸照", "证件照", "照片拼版")),
+        "Fallback Baidu photo entry flow must stay on the explicit photo-printing business entry instead of expanding to photo sub-specification pages",
+    )
+    photo_spec_plan_payload = {
+        "analysis": {
+            "requirement_points": [scoped_baidu_points[1][1]],
+            "requirement_acceptance_checks": [
+                {
+                    "id": "REQ-002-CHECK-01",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "visibility",
+                    "text": "校验百度网盘入口可见",
+                },
+                {
+                    "id": "REQ-002-CHECK-02",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "relation",
+                    "text": "校验百度网盘入口与当前页面同级入口的层级和位置关系",
+                },
+                {
+                    "id": "REQ-002-CHECK-03",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "copy",
+                    "text": "校验百度网盘入口使用需求约定的可见文案",
+                },
+                {
+                    "id": "REQ-002-CHECK-04",
+                    "requirementId": "REQ-002",
+                    "branch": "照片打印",
+                    "kind": "reachability",
+                    "text": "点击百度网盘入口并校验目标页面稳定可达",
+                },
+            ],
+        },
+        "cases": [{
+            "case_id": "TC-PHOTO-SOURCE",
+            "title": "照片打印页-百度网盘入口可见性及点击可达性校验",
+            "coverage": scoped_baidu_points[1][1],
+            "requirementRefs": [scoped_baidu_points[1][1]],
+            "executionLevel": "executable",
+            "steps": [
+                "等待 App 首页稳定显示",
+                "点击「照片打印」入口",
+                "点击「5寸照片」",
+                "等待「百度网盘」入口可见",
+                "点击「百度网盘」入口",
+            ],
+            "assertions": ["点击百度网盘入口后进入百度网盘相关页面或出现可识别提示"],
+        }],
+        "manual_cases": [],
+    }
+    photo_spec_plan = {
+        "authoritative": True,
+        "allowedBaselineIds": ["base-photo"],
+        "verifiedBaselineIds": ["base-photo"],
+        "selectedBaselines": [{
+            "id": "base-photo",
+            "sourceKind": "verified_execution",
+            "verificationStatus": "execution_success",
+        }],
+        "scopePlan": {"smokeCount": 1},
+        "cases": [{
+            "caseId": "TC-PHOTO-SOURCE",
+            "title": "照片打印页-百度网盘入口可见性及点击可达性校验",
+            "baselineId": "base-photo",
+            "baselineGrounded": True,
+            "precondition": "App 首页",
+            "flow": [
+                "点击首页或底部导航中名称为「照片打印」的入口",
+                "等待照片打印页面加载完成，并看到普通照片、证件照或照片拼版入口",
+                "点击名称为「5寸照片」的普通照片打印入口",
+                "等待照片打印页面加载完成",
+                "等待「百度网盘」入口可见",
+                "点击「百度网盘」入口",
+                "等待百度网盘相关页面、授权页或文件列表稳定可见，未白屏、未崩溃",
+            ],
+            "assertionTarget": "点击百度网盘入口后进入百度网盘相关页面或出现可识别提示，未白屏、未闪退、未停留在原入口页",
+            "requirementRefs": [scoped_baidu_points[1][1]],
+            "executableReason": "同分支成功路径可执行",
+            "batch": "smoke",
+        }],
+        "needs_review_cases": [],
+        "draft_cases": [],
+        "manual_cases": [],
+    }
+    photo_spec_applied = ai_skill_service.apply_executable_yaml_plan_to_payload(
+        photo_spec_plan_payload,
+        photo_spec_plan,
+    )
+    photo_case = (photo_spec_applied.get("cases") or [])[0]
+    photo_flow_text = "\n".join(photo_case.get("steps") or [])
+    require(
+        str(photo_case.get("executionLevel") or "").lower() == "executable"
+        and "照片打印" in photo_flow_text
+        and "百度网盘" in photo_flow_text
+        and not any(term in photo_flow_text for term in ("5寸照片", "一寸照", "证件照", "照片拼版")),
+        "Agent YAML plan application must canonicalize explicit photo-printing source contracts and strip historical photo sub-specification navigation",
+    )
     coupon_visibility_check = next(
         item for item in generic_acceptance_checks
         if item.get("requirementId") == "REQ-002" and item.get("kind") == "visibility"

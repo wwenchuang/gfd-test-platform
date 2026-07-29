@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 百度网盘回归：照片打印源入口不能被历史规格页路径污染
+
+用户部署后继续同参跟踪百度网盘 Agent：`agent-1785288442468-ae2880c5`。线上健康正常：Task 服务、AI Gateway、Sonic Bridge、Windows Runner 均可用；Runner 为 `win-runner-01`，固定 OPPO PHM110 `ecbfd645` 在线，模型 `qwen3.7-plus`。本轮未创建 Runner job，因此失败仍在生成阶段，与手机、ADB、Runner 或 Sonic 无关。
+
+真实结果：
+
+- `PREPARE_SOURCE` 成功，Figma `4 页 / 4 图`。
+- `PLAN` 成功，4 张 Figma 图分 4 批完成视觉判断。
+- `GENERATE_YAML` 生成 6 个 YAML，静态校验和 scorer 都显示 executable。
+- 最终只确认 4 个 YAML：文档打印 2 个、扫描复印 2 个；照片打印两个 YAML 都没有进入 `artifacts.yamlRefs`。
+- 被剔除的照片 YAML 内容实际包含 `点击「5寸照片」` / `选择「5寸照片」规格`，命中“源需求未要求照片规格页”的 generated scope gate，因此阻断是正确的。
+
+根因：
+
+- `_fallback_baidu_feature_kind()` 把源需求里的“照片打印”直接归类为普通照片，`_fallback_steps_for_scenario()` 随后自动追加 `点击名称为「5寸照片」的普通照片打印入口`。
+- AI 计划即使借用 verified 照片基线，也可能把历史基线里的 `5寸/一寸/证件照/拼版` 规格页步骤带进当前“照片打印主入口”需求。
+- 下游 generated scope gate 正确拦截了错误规格页 YAML，但生成应用阶段没有提前把路径拉回源合同，导致每次生成后才被剔除并表现为 `6 -> 4` 覆盖缺口。
+
+修复：
+
+- “照片打印”现在作为 `photo_entry` 主业务入口处理；只有源需求明确写 `普通照片/5寸/证件照/拼版` 等规格时，fallback 才进入具体规格页。
+- 新增 `_canonicalize_photo_entry_source_flow()`：非 convergence 首轮生成中，如果 requirement refs / acceptance checks 指向“照片打印”源入口，且源验收没有声明具体规格，则剔除历史规格页导航，保留照片打印页级的百度网盘入口可见、同级、文案和点击可达路径。
+- 该规范化只在非 `coverage_convergence` 生效，避免误伤已有“5寸照片”等视觉叶子页的有界修复用例。
+- `ai_case_plan.photoEntrySourceCanonicalized` 和 review 计数会记录是否发生过源入口规范化，便于后续排查。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+python3 -m py_compile task_server/services/ai_skill_service.py tests/backend_static_checks.py
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被既有 OBJ 保龄球历史 YAML 断言拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改历史 YAML、Runner、Sonic、scorer 或 router；Codex 不 push。用户部署后应同参重新跑百度网盘 Agent，预期照片打印 YAML 不再包含 `5寸照片/一寸照/证件照/照片拼版` 规格页导航，也不再因照片规格页被门禁剔除而出现 `6 -> 4`。
+
 ### 2026-07-29 Runner 报告结果分组：失败、通过、未完成必须明显区分
 
 用户指出 Agent 的 Runner 报告页把执行报告和执行 YAML 混成文本列表，不容易看出哪些用例成功、哪些失败。这里的产品原则是：不是每条用例都必须通过，报告应展示真实执行结果，而不是把失败用例隐藏在“complete / 执行 6 / 失败 0”的摘要里。
