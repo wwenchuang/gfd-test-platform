@@ -4675,7 +4675,7 @@
   }
   .report-summary-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 8px;
     margin-bottom: 12px;
   }
@@ -4694,6 +4694,139 @@
   .report-summary-grid strong {
     font-size: 16px;
     color: var(--text);
+  }
+  .report-summary-grid > div.metric-success {
+    border-color: rgba(52, 211, 153, .32);
+  }
+  .report-summary-grid > div.metric-success strong {
+    color: #34d399;
+  }
+  .report-summary-grid > div.metric-danger {
+    border-color: rgba(251, 113, 133, .38);
+  }
+  .report-summary-grid > div.metric-danger strong {
+    color: #fb7185;
+  }
+  .report-summary-grid > div.metric-warn {
+    border-color: rgba(251, 191, 36, .34);
+  }
+  .report-summary-grid > div.metric-warn strong {
+    color: #fbbf24;
+  }
+  .agent-report-outcomes {
+    display: grid;
+    gap: 10px;
+    margin: 0 0 12px;
+  }
+  .agent-report-outcome-section {
+    border: 1px solid var(--border2);
+    border-radius: 8px;
+    padding: 10px;
+    background: rgba(15, 23, 42, .58);
+  }
+  .agent-report-outcome-section.danger {
+    border-color: rgba(251, 113, 133, .4);
+    background: rgba(127, 29, 29, .14);
+  }
+  .agent-report-outcome-section.success {
+    border-color: rgba(52, 211, 153, .28);
+  }
+  .agent-report-outcome-section.warn {
+    border-color: rgba(251, 191, 36, .35);
+  }
+  .agent-report-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .agent-report-section-head strong {
+    color: var(--text);
+    font-size: 13px;
+  }
+  .agent-report-section-head span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .agent-report-job-list {
+    display: grid;
+    gap: 7px;
+  }
+  .agent-report-job-card {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+    border: 1px solid rgba(148, 163, 184, .2);
+    border-radius: 7px;
+    padding: 8px;
+    background: rgba(2, 6, 23, .48);
+  }
+  .agent-report-job-card.failed {
+    border-color: rgba(251, 113, 133, .38);
+    background: rgba(127, 29, 29, .16);
+  }
+  .agent-report-job-card.success {
+    border-color: rgba(52, 211, 153, .22);
+  }
+  .agent-report-status-pill {
+    display: inline-flex;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 3px 7px;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--text);
+    background: rgba(148, 163, 184, .16);
+    white-space: nowrap;
+  }
+  .agent-report-status-pill.success {
+    color: #34d399;
+    background: rgba(16, 185, 129, .16);
+  }
+  .agent-report-status-pill.failed {
+    color: #fecdd3;
+    background: rgba(244, 63, 94, .2);
+  }
+  .agent-report-status-pill.running,
+  .agent-report-status-pill.pending {
+    color: #fde68a;
+    background: rgba(245, 158, 11, .16);
+  }
+  .agent-report-job-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+  .agent-report-job-main b {
+    color: var(--text);
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+  .agent-report-job-main span,
+  .agent-report-job-main em,
+  .agent-report-job-main small {
+    color: var(--muted);
+    font-style: normal;
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .agent-report-job-main small {
+    color: #fecdd3;
+  }
+  .agent-report-job-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 12px;
+    border: 1px solid rgba(34, 211, 238, .28);
+    border-radius: 6px;
+    padding: 3px 7px;
+    white-space: nowrap;
+  }
+  .agent-report-job-link:hover {
+    text-decoration: underline;
   }
   .report-empty {
     border: 1px dashed var(--border2);

@@ -1551,6 +1551,115 @@ function agentCaseSubLabel(item = {}) {
   ].filter(Boolean).join(' · ');
 }
 
+function agentReportJobKey(item = {}) {
+  return String(
+    item.jobId || item.job_id ||
+    [item.module || '', item.file || item.name || item.path || '', item.taskName || item.task_name || item.target_task_name || ''].join('|')
+  ).trim();
+}
+
+function agentReportStatusKind(item = {}) {
+  const raw = String(
+    item.status || item.result || item.state || item.runStatus || item.run_status || item.job_status || ''
+  ).trim().toLowerCase();
+  const text = String([
+    raw,
+    item.error || item.failureReason || item.failure_reason || item.resultReason || item.result_reason || '',
+  ].filter(Boolean).join(' ')).toLowerCase();
+  if (/(success|passed|pass|complete|completed|done|ok)/.test(raw)) return 'success';
+  if (/(failed|fail|error|timeout|timed_out|cancelled|canceled)/.test(text)) return 'failed';
+  if (/(running|assigned|executing|processing)/.test(raw)) return 'running';
+  if (/(pending|queued|waiting|created|creating)/.test(raw)) return 'pending';
+  return 'unknown';
+}
+
+function agentReportStatusLabel(item = {}) {
+  const kind = agentReportStatusKind(item);
+  if (kind === 'success') return '通过';
+  if (kind === 'failed') return agentJobStatusText(item.status || item.result || 'failed');
+  if (kind === 'running') return '执行中';
+  if (kind === 'pending') return '未完成';
+  return agentJobStatusText(item.status || item.result || '');
+}
+
+function agentReportFailureReason(item = {}) {
+  return String(
+    item.failureReason || item.failure_reason ||
+    item.error || item.errorMessage || item.error_message ||
+    item.resultReason || item.result_reason ||
+    item.stderrTail || item.stderr_tail || ''
+  ).trim();
+}
+
+function normalizeAgentReportJobs(report = {}, normalizedReport = null) {
+  const normalized = normalizedReport || normalizeAgentReportArtifacts(report);
+  const byKey = new Map();
+  const merge = (item = {}, extra = {}) => {
+    if (!item || typeof item !== 'object') return;
+    const key = agentReportJobKey(item) || agentReportJobKey(extra);
+    if (!key) return;
+    const current = byKey.get(key) || {};
+    byKey.set(key, {...current, ...item, ...extra});
+  };
+  (Array.isArray(report.jobStatuses) ? report.jobStatuses : []).forEach(item => merge(item));
+  (normalized.executionReports || []).forEach(item => merge(item, {reportUrl: item.reportUrl || item.report_url || ''}));
+  (normalized.yamlExecutionRefs || []).forEach(item => merge(item));
+  (Array.isArray(report.failedJobs) ? report.failedJobs : []).forEach(item => merge(item, {status: item.status || 'failed', failed: true}));
+  return Array.from(byKey.values()).sort((a, b) => {
+    const order = {failed: 0, running: 1, pending: 2, unknown: 3, success: 4};
+    return (order[agentReportStatusKind(a)] ?? 9) - (order[agentReportStatusKind(b)] ?? 9);
+  });
+}
+
+function agentReportOutcomeGroups(jobs = []) {
+  const groups = {failed: [], success: [], active: [], unknown: []};
+  jobs.forEach(job => {
+    const kind = agentReportStatusKind(job);
+    if (kind === 'failed') groups.failed.push(job);
+    else if (kind === 'success') groups.success.push(job);
+    else if (kind === 'running' || kind === 'pending') groups.active.push(job);
+    else groups.unknown.push(job);
+  });
+  return groups;
+}
+
+function renderAgentReportJobCard(job = {}) {
+  const kind = agentReportStatusKind(job);
+  const label = agentCaseLabel(job);
+  const subLabel = agentCaseSubLabel(job);
+  const reportUrl = job.reportUrl || job.report_url || '';
+  const reason = agentReportFailureReason(job);
+  const failureType = job.failureType || job.failure_type || job.category || '';
+  return `
+    <div class="agent-report-job-card ${kind}">
+      <span class="agent-report-status-pill ${kind}">${escapeHtml(agentReportStatusLabel(job))}</span>
+      <div class="agent-report-job-main">
+        <b>${escapeHtml(label)}</b>
+        ${subLabel ? `<span>${escapeHtml(subLabel)}</span>` : ''}
+        ${failureType ? `<em>${escapeHtml(failureTypeText(failureType) || failureType)}</em>` : ''}
+        ${reason ? `<small>${escapeHtml(reason.slice(0, 260))}</small>` : ''}
+      </div>
+      ${reportUrl ? `<a href="${escapeHtml(reportUrl)}" target="_blank" class="agent-report-job-link">报告</a>` : ''}
+    </div>
+  `;
+}
+
+function renderAgentReportOutcomeSection(title, jobs = [], tone = '') {
+  if (!jobs.length) return '';
+  return `
+    <section class="agent-report-outcome-section ${tone}">
+      <div class="agent-report-section-head">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(jobs.length)} 条</span>
+      </div>
+      <div class="agent-report-job-list">
+        ${jobs.slice(0, 12).map(item => renderAgentReportJobCard(item)).join('')}
+      </div>
+      ${jobs.length > 12 ? `<p>还有 ${escapeHtml(jobs.length - 12)} 条结果，可在执行报告页继续查看。</p>` : ''}
+    </section>
+  `;
+}
+
 function agentArtifactsOf(runOrArtifacts = {}) {
   const value = runOrArtifacts || {};
   return value.artifacts && typeof value.artifacts === 'object' ? value.artifacts : value;
@@ -1709,22 +1818,36 @@ function renderReportDetail(step, artifacts) {
   const normalizedReport = normalizeAgentReportArtifacts(report);
   const reports = normalizedReport.executionReports;
   const yamlRefs = normalizedReport.yamlExecutionRefs;
+  const reportJobs = normalizeAgentReportJobs(report, normalizedReport);
+  const outcomeGroups = agentReportOutcomeGroups(reportJobs);
   const jobStatuses = report.jobStatuses || [];
   const failedJobs = report.failedJobs || [];
   const mindmap = agentMindmapInfo(artifacts);
   const status = report.status || 'unknown';
+  const totalJobs = reportJobs.length || Math.max(reports.length, yamlRefs.length, jobStatuses.length);
+  const activeCount = outcomeGroups.active.length;
+  const unknownCount = outcomeGroups.unknown.length;
   let html = '<div class="report-detail rich-report">';
   html += `
     <div class="report-summary-grid">
-      <div><span>状态</span><strong>${escapeHtml(agentJobStatusText(status))}</strong></div>
-      <div><span>执行报告</span><strong>${reports.length}</strong></div>
-      <div><span>任务状态</span><strong>${jobStatuses.length}</strong></div>
-      <div><span>失败</span><strong>${failedJobs.length}</strong></div>
+      <div><span>报告状态</span><strong>${escapeHtml(agentJobStatusText(status))}</strong></div>
+      <div><span>执行用例</span><strong>${escapeHtml(totalJobs)}</strong></div>
+      <div class="metric-success"><span>通过</span><strong>${escapeHtml(outcomeGroups.success.length)}</strong></div>
+      <div class="metric-danger"><span>失败</span><strong>${escapeHtml(outcomeGroups.failed.length || failedJobs.length)}</strong></div>
+      <div class="metric-warn"><span>未完成 / 待判定</span><strong>${escapeHtml(activeCount + unknownCount)}</strong></div>
     </div>
   `;
+  if (reportJobs.length > 0) {
+    html += '<div class="agent-report-outcomes">';
+    html += renderAgentReportOutcomeSection('失败用例', outcomeGroups.failed, 'danger');
+    html += renderAgentReportOutcomeSection('执行中 / 未完成', outcomeGroups.active, 'warn');
+    html += renderAgentReportOutcomeSection('待判定结果', outcomeGroups.unknown, 'neutral');
+    html += renderAgentReportOutcomeSection('通过用例', outcomeGroups.success, 'success');
+    html += '</div>';
+  }
   if (reports.length > 0) {
     html += '<div class="report-links">';
-    html += '<div class="section-title">执行报告</div>';
+    html += '<div class="section-title">HTML 报告</div>';
     for (const r of reports.slice(0, 10)) {
       const label = agentCaseLabel(r);
       const subLabel = agentCaseSubLabel(r);

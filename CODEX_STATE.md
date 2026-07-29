@@ -28,6 +28,26 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Runner 报告结果分组：失败、通过、未完成必须明显区分
+
+用户指出 Agent 的 Runner 报告页把执行报告和执行 YAML 混成文本列表，不容易看出哪些用例成功、哪些失败。这里的产品原则是：不是每条用例都必须通过，报告应展示真实执行结果，而不是把失败用例隐藏在“complete / 执行 6 / 失败 0”的摘要里。
+
+修复：
+
+- `renderReportDetail()` 新增 Runner job 结果归一化，不再只按 HTML 报告链接和 YAML 文件列表展示。
+- 新增 `normalizeAgentReportJobs()`、`agentReportOutcomeGroups()`：合并 `jobStatuses / executionReports / yamlExecutionRefs / failedJobs`，按状态分为失败、通过、执行中/未完成、待判定。
+- 页面顶部摘要改为 `报告状态 / 执行用例 / 通过 / 失败 / 未完成或待判定`，避免把报告生成状态误读成用例全通过。
+- 报告正文新增分组区块：`失败用例` 红色优先展示，`通过用例` 绿色展示，`执行中 / 未完成` 和 `待判定结果` 单独展示；每条显示状态、任务名、YAML/Job、失败类型、失败原因和报告链接。
+- 更新前端缓存版本：`css/app.css?v=20260729-agent-report-outcomes`、`js/agent-workbench.js?v=20260729-agent-report-outcomes`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+python3 -m py_compile tests/frontend_static_checks.py
+git diff --check -- js/agent-workbench.js css/app.css task-manager.html tests/frontend_static_checks.py
+```
+
 ### 2026-07-29 百度网盘回归：严格源合同按主分支优先，防止 AI 扩展流挤掉照片打印
 
 用户部署后重新发起同一百度网盘 Agent：`agent-1785284860060-ca243ee3`。线上健康正常：Task 服务 / AI Gateway / Sonic Bridge / Windows Runner 可用，Runner 为 `win-runner-01`，固定 OPPO PHM110 `ecbfd645`，模型 `qwen3.7-plus`；未创建 Runner job，因此本轮失败与手机、ADB、Runner 或 Sonic 执行无关。
