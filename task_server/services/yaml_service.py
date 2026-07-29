@@ -313,6 +313,16 @@ def executable_yaml_convergence_decision(before, proposed):
     }
 
 
+def _yaml_portfolio_zero_executable(portfolio):
+    portfolio = portfolio if isinstance(portfolio, dict) else {}
+    executable_count = safe_int(portfolio.get("executableCount"), 0)
+    executable_case_ids = [
+        item for item in (portfolio.get("executableCaseIds") or [])
+        if str(item or "").strip()
+    ]
+    return executable_count <= 0 and not executable_case_ids
+
+
 def case_ui_design_meta_path(case_set_id):
     return safe_join(case_ui_design_dir(case_set_id), "meta.json")
 
@@ -8355,11 +8365,16 @@ def generate_ui_yaml_from_request(d, job_id=None):
         )
         review = payload.setdefault("review", {})
         review["executable_yaml_portfolio_final"] = final_executable_portfolio
+        hard_blocked = _yaml_portfolio_zero_executable(final_executable_portfolio)
         review["executable_yaml_portfolio_gate"] = {
-            "passed": bool(final_executable_portfolio.get("ok")),
+            "passed": not hard_blocked,
+            "coverageComplete": bool(final_executable_portfolio.get("ok")),
+            "softAllowed": True,
+            "hardBlocked": _yaml_portfolio_zero_executable(final_executable_portfolio),
             "rule": (
                 "AI 负责选择和补齐可执行组合；平台只在最终转换前检查显式需求映射、"
-                "至少一条 executable 和分类终态；3/5/8 仅作为规划目标，不为凑数放宽可执行性。"
+                "至少一条 executable 和分类终态；覆盖缺口记录为报告告警，"
+                "只有 0 条可执行 YAML 才阻断进入 Runner；3/5/8 仅作为规划目标，不为凑数放宽可执行性。"
             ),
             "reasons": final_executable_portfolio.get("reasons") or [],
             "advisories": final_executable_portfolio.get("advisories") or [],
@@ -8368,10 +8383,20 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "targetShortfall": final_executable_portfolio.get("targetShortfall") or 0,
             "missingRequirementPoints": final_executable_portfolio.get("missingRequirementPoints") or [],
         }
-        if not final_executable_portfolio.get("ok"):
+        if hard_blocked:
             payload["id"] = case_set_id
             payload["module"] = module
             write_json_file(cases_path(case_set_id), payload)
+            reason_text = "；".join(final_executable_portfolio.get("reasons") or []) or "没有可执行 YAML"
+            if job_id:
+                update_generate_job(
+                    job_id,
+                    progress=78,
+                    step="最终覆盖门禁",
+                    message=reason_text[:500],
+                )
+            raise ValueError(f"最终可执行 YAML 不足，不能进入执行：{reason_text}")
+        if not final_executable_portfolio.get("ok"):
             missing = final_executable_portfolio.get("missingRequirementPoints") or []
             reason_text = "；".join(final_executable_portfolio.get("reasons") or []) or "最终可执行覆盖不完整"
             if missing:
@@ -8380,10 +8405,9 @@ def generate_ui_yaml_from_request(d, job_id=None):
                 update_generate_job(
                     job_id,
                     progress=78,
-                    step="最终覆盖门禁",
+                    step="最终覆盖告警",
                     message=reason_text[:500],
                 )
-            raise ValueError(f"最终可执行 YAML 覆盖门禁未通过：{reason_text}")
     if deterministic_entry_visibility:
         review = payload.setdefault("review", {})
         review["smoke_selector_final_skipped"] = "确定性入口可见性短链路已完成本地首批冒烟选择"

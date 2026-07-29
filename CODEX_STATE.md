@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Agent 生成门禁产品口径：覆盖缺口是告警，零可执行才阻断
+
+用户明确产品原则：冒烟或后续用例不一定都能生成、也不一定都要通过；这些本来就是测试结果，应进入报告区分成功/失败/未生成，而不是在生成阶段要求全绿。上一轮百度网盘线上 Agent `agent-1785292186788-8c36b5fe` 已生成 6 个 YAML、确认 5 个，真正剩余只是照片打印展示 YAML 注释中的旧基线词 `一寸照` 被 scope gate 误判，以及缺口被硬门禁阻断，导致没有进入 Runner。
+
+修复：
+
+- `_agent_generated_yaml_ref_out_of_source_scope()` 只扫描可执行 YAML 正文，忽略 `# baseline.repair_hint` 等注释，避免注释里的历史规格页词污染照片打印主入口 YAML。
+- Agent `GENERATE_YAML` 阶段有可执行 YAML 时不再因完整覆盖缺口抛错；缺口写入 `generationPipeline.coverageGap`、`yamlValidation.coverageIncomplete` 和 `qualityReport.warnings`。
+- `VALIDATE_YAML` 阶段只在全部 YAML 都 dry-run/scorer 不通过时失败；部分 YAML 被隔离时返回成功并保留 `quarantinedYamlRefs`，后续只下发通过的 YAML。
+- `EXECUTION_PRECHECK` 中 `generated_yaml_coverage_gate` 从 blocker 改为 warning；真正阻断仍包括无 YAML、无已确认正式 YAML、无可下发 Runner YAML、Runner/设备/Token 等环境问题。
+- `yaml_service` 最终 portfolio gate 保留 AI 收敛和 executable scorer，但新增 `coverageComplete / softAllowed / hardBlocked`。只有 0 条 executable YAML 时抛出 `最终可执行 YAML 不足，不能进入执行`；覆盖未满时记录 `最终覆盖告警` 并继续。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_yaml_static_validation_and_patterns()
+PY
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_ai_yaml_generation_decision_chain_static()
+PY
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py tests/backend_static_checks.py
+```
+
+部署后应同参重跑百度网盘 Agent。预期只要有可执行 YAML，就会进入 Runner；缺失的覆盖、被隔离的 YAML、真实执行失败都应在报告里分组展示，不再把“测试用例失败/未覆盖”混同为“生成链路失败”。Codex 不 push。
+
 ### 2026-07-29 百度网盘回归：照片打印源入口不能被历史规格页路径污染
 
 用户部署后继续同参跟踪百度网盘 Agent：`agent-1785288442468-ae2880c5`。线上健康正常：Task 服务、AI Gateway、Sonic Bridge、Windows Runner 均可用；Runner 为 `win-runner-01`，固定 OPPO PHM110 `ecbfd645` 在线，模型 `qwen3.7-plus`。本轮未创建 Runner job，因此失败仍在生成阶段，与手机、ADB、Runner 或 Sonic 无关。

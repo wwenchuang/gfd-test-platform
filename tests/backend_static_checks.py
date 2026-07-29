@@ -12009,6 +12009,19 @@ def check_yaml_static_validation_and_patterns():
 """
             doc_path = module_dir / "01-doc.yaml"
             doc_path.write_text(doc_yaml, encoding="utf-8")
+            photo_main_with_comment_yaml = """# baseline.repair_hint: 当前帧为「一寸照」规格编辑页，Runner 应验证照片打印聚合页。
+android:
+  tasks:
+    - name: 照片打印页-百度网盘入口可见性及文案校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习打印首页已加载
+        - aiTap: 照片打印
+        - aiWaitFor: 照片打印页面展示百度网盘入口
+        - aiAssert: 照片打印页面百度网盘入口可见，文案为百度网盘，与同级入口并列
+"""
+            photo_main_comment_path = module_dir / "02-photo-main-comment.yaml"
+            photo_main_comment_path.write_text(photo_main_with_comment_yaml, encoding="utf-8")
             baidu_run = {
                 "scope": "regression",
                 "target": "基础打印新增百度网盘入口",
@@ -12051,6 +12064,14 @@ def check_yaml_static_validation_and_patterns():
                     },
                     {
                         "module": "AI_Agent_草稿",
+                        "file": "02-photo-main-comment.yaml",
+                        "path": str(photo_main_comment_path),
+                        "executionLevel": "executable",
+                        "score": 100,
+                        "scopeReview": {"matchedRequirementIds": ["REQ-002"]},
+                    },
+                    {
+                        "module": "AI_Agent_草稿",
                         "file": "03-photo-spec.yaml",
                         "path": str(photo_spec_path),
                         "executionLevel": "executable",
@@ -12063,12 +12084,11 @@ def check_yaml_static_validation_and_patterns():
             non_executable_text = "；".join(baidu_run["artifacts"].get("yamlValidation", {}).get("nonExecutable") or [])
         require(
             not err
-            and [ref.get("file") for ref in refs] == ["01-doc.yaml"]
+            and [ref.get("file") for ref in refs] == ["01-doc.yaml", "02-photo-main-comment.yaml"]
             and "03-photo-spec.yaml" in non_executable_text
             and "照片规格页/子规格分支" in non_executable_text
-            and any("REQ-002" in item and "[acceptance:copy]" in item for item in gap.get("missingRequirementPoints") or [])
-            and any("REQ-002" in item and "[acceptance:relation]" in item for item in gap.get("missingRequirementPoints") or []),
-            "Agent generation confirmation must use the same generated-scope gate as execution precheck before claiming coverage",
+            and not gap,
+            "Agent generation confirmation must ignore comment-only baseline hints, keep valid source-entry YAML, and still quarantine real photo subspec YAML",
         )
     finally:
         agent_service.TASK_DIR = old_agent_task_dir
@@ -14054,7 +14074,18 @@ def check_ai_yaml_generation_decision_chain_static():
     require("call_skill_executable_yaml_planner" in yaml_service_source, "YAML generation must call AI executable YAML planner")
     require("build_ai_generation_decision_context_text" in yaml_service_source and "AI 生成决策计划" in yaml_service_source, "YAML prompt must include the AI decision plan context")
     require("ai_decision_trace" in yaml_service_source and "executable_yaml_planner_review" in yaml_service_source, "YAML generation review must expose AI decision trace and planner review")
-    require("executable_yaml_portfolio_audit" in yaml_service_source and '"pass": "coverage_convergence"' in yaml_service_source and 'step="最终覆盖收敛"' in yaml_service_source and 'step="最终覆盖门禁"' in yaml_service_source and 'convergence_plan.get("evidenceFallback") is True' in yaml_service_source and "最终可执行 YAML 覆盖门禁未通过" in yaml_service_source, "YAML generation must run one AI convergence pass, apply only validated evidence fallback when that pass is unavailable, and hard-stop incomplete final coverage before conversion")
+    require(
+        "executable_yaml_portfolio_audit" in yaml_service_source
+        and '"pass": "coverage_convergence"' in yaml_service_source
+        and 'step="最终覆盖收敛"' in yaml_service_source
+        and 'step="最终覆盖告警"' in yaml_service_source
+        and '"coverageComplete": bool(final_executable_portfolio.get("ok"))' in yaml_service_source
+        and '"softAllowed": True' in yaml_service_source
+        and '"hardBlocked": _yaml_portfolio_zero_executable(final_executable_portfolio)' in yaml_service_source
+        and "最终可执行 YAML 不足，不能进入执行" in yaml_service_source
+        and 'convergence_plan.get("evidenceFallback") is True' in yaml_service_source,
+        "YAML generation must keep AI convergence but treat incomplete coverage as a warning when executable YAML exists, blocking only zero-executable portfolios",
+    )
     require("improve_case_coverage(" in yaml_service_source and "model_config=model_config" in yaml_service_source, "Coverage repair must receive selected model config")
 
     require("def call_skill_baseline_reranker" in ai_skill_source, "AI skill service must expose baseline reranker")

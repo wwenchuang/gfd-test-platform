@@ -4422,13 +4422,17 @@ def _agent_generated_yaml_ref_out_of_source_scope(run, ref, content=""):
     source_text = _agent_plan_source_requirement_text(run)
     if any(term in source_text for term in _AGENT_PHOTO_SUBSPEC_TERMS):
         return False
+    executable_content = "\n".join(
+        line for line in str(content or "").splitlines()
+        if not line.lstrip().startswith("#")
+    )
     material = {
         "module": ref.get("module"),
         "file": ref.get("file"),
         "name": ref.get("name"),
         "targetTaskName": ref.get("targetTaskName"),
         "taskName": ref.get("taskName"),
-        "content": content,
+        "content": executable_content,
     }
     text = _normalize_business_flow_text(json.dumps(material, ensure_ascii=False))
     if not _agent_plan_branch_present("照片打印", text):
@@ -9953,7 +9957,7 @@ def _build_agent_quality_report(run, generation_result, yaml_file_items=None, ya
     if yaml_file_count <= 0 or executable_task_count <= 0:
         blockers.append("没有可执行 YAML 文件或 android/ios tasks 为空。")
     if auto_case_count > yaml_file_count:
-        blockers.append(f"自动化用例 {auto_case_count} 条，但只生成 {yaml_file_count} 个 YAML 文件，完整回归覆盖不完整。")
+        warnings.append(f"自动化用例 {auto_case_count} 条，但只生成 {yaml_file_count} 个 YAML 文件；缺口将进入报告，不阻断可执行 YAML 下发。")
     groups = (artifacts.get("generationPipeline") or {}).get("generatedCaseGroups") if isinstance(artifacts.get("generationPipeline"), dict) else {}
     reported_missing_case_points = [str(item) for item in _as_list(coverage.get("missing_case_points")) if str(item).strip()]
     missing_case_points, mapped_requirement_ids = _agent_unresolved_coverage_points(coverage, yaml_items, groups)
@@ -10201,21 +10205,27 @@ def _tool_generate_yaml(run):
                     if coverage_gap:
                         artifacts.setdefault("generationPipeline", {})["coverageGap"] = coverage_gap
                         quality = artifacts.setdefault("qualityReport", {})
-                        blockers = [str(item).strip() for item in _as_list(quality.get("blockers")) if str(item).strip()]
-                        quality["status"] = "blocked"
-                        quality["statusText"] = "阻断"
-                        quality["blockers"] = (blockers + coverage_gap.get("reasons", []))[:20]
-                        raise ValueError("完整回归生成结果覆盖不完整：" + "；".join(coverage_gap.get("reasons") or []))
+                        warnings = [str(item).strip() for item in _as_list(quality.get("warnings")) if str(item).strip()]
+                        quality["status"] = "warn"
+                        quality["statusText"] = "覆盖缺口"
+                        quality["coverageIncomplete"] = True
+                        quality["warnings"] = (warnings + coverage_gap.get("reasons", []))[:20]
                     check = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
                     if err:
                         raise ValueError(err)
-                    artifacts["yamlValidation"] = {**check, "autoConfirmed": True}
+                    artifacts["yamlValidation"] = {
+                        **check,
+                        "autoConfirmed": True,
+                        "coverageIncomplete": bool(coverage_gap),
+                        "coverageGap": coverage_gap or check.get("coverageGap") or {},
+                    }
                     call["status"] = "SUCCESS"
                     call["outputSummary"] = (
                         "已调用需求解析/脑图生成/Figma解析/YAML生成主链按用例拆分生成 YAML，"
                         f"用例 {pipeline_result.get('caseCount') or len(refs)} 条，"
                         f"场景 {pipeline_result.get('scenarioCount') or 0} 个，"
                         f"YAML 文件 {len(refs)} 个；可执行校验通过，已自动确认进入下一步"
+                        + ("；存在覆盖缺口，已记录为报告告警" if coverage_gap else "")
                     )
                     call["artifactRefs"] = [
                         *[str(item.get("path") or "") for item in refs[:20]],
@@ -10494,6 +10504,7 @@ def _tool_validate_yaml(run):
         if coverage_gap:
             artifacts.setdefault("generationPipeline", {})["coverageGap"] = coverage_gap
             artifacts["yamlValidation"]["coverageGap"] = coverage_gap
+            artifacts["yamlValidation"]["coverageIncomplete"] = True
             coverage_issues = [
                 str(item).strip()
                 for item in (coverage_gap.get("reasons") or [])
@@ -10511,31 +10522,22 @@ def _tool_validate_yaml(run):
                 ["查看 dry-run 错误", "重新生成 YAML", "人工编辑 YAML 草稿", "保存为正式 YAML 后再执行"],
                 failedYaml=failed_results[0].get("path") or failed_results[0].get("type") if failed_results else "",
             ))
-        elif coverage_gap:
-            call["status"] = "FAILED"
-            call["error"] = "YAML 隔离后完整回归覆盖不完整：" + "；".join(
-                coverage_gap.get("reasons") or []
-            )[:300]
-            attach_diagnosis(call, make_diagnosis(
-                "YAML 隔离后完整回归覆盖不完整",
-                "部分生成 YAML 被 scope/scorer/dry-run 隔离后，剩余正式 YAML 不能覆盖所有硬需求验收。",
-                ["按缺失 REQ 重新生成或收敛 YAML", "修正被隔离 YAML 的业务入口层路径", "确认没有用 Figma 子规格页替代源业务入口"],
-                coverageGap=coverage_gap,
-            ))
         elif failed_results:
-            call["status"] = "PARTIAL_FAILED"
+            call["status"] = "SUCCESS"
             call["partialFailed"] = True
             call["quarantinedYamlRefs"] = quarantined_refs
             call["outputSummary"] = (
                 f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过；"
-                f"{len(failed_results)} 个已隔离，不阻断后续执行"
+                f"{len(failed_results)} 个已隔离为报告告警，不阻断后续执行"
                 + (f"；自动修复 {len(repaired_results)} 个" if repaired_results else "")
+                + ("；存在覆盖缺口，已记录为报告告警" if coverage_gap else "")
             )
         else:
             call["status"] = "SUCCESS"
             call["outputSummary"] = (
                 f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过"
                 + (f"；自动修复 {len(repaired_results)} 个" if repaired_results else "")
+                + ("；存在覆盖缺口，已记录为报告告警" if coverage_gap else "")
             )
         if not call.get("outputSummary"):
             call["outputSummary"] = f"dry-run 校验 {len(refs)} 个 YAML，{ok_count} 个通过" + (f"；问题：{'; '.join(issues[:3])}" if issues else "")
@@ -10673,11 +10675,13 @@ def _tool_execution_precheck(run):
         coverage_gap = _agent_generated_yaml_coverage_gap(run, refs)
         if coverage_gap:
             artifacts.setdefault("generationPipeline", {})["coverageGap"] = coverage_gap
+            artifacts.setdefault("yamlValidation", {})["coverageGap"] = coverage_gap
+            artifacts.setdefault("yamlValidation", {})["coverageIncomplete"] = True
             add(
                 "generated_yaml_coverage_gate",
                 False,
                 "；".join(coverage_gap.get("reasons") or [])[:500],
-                "blocker",
+                "warning",
             )
 
         dry_run_refs = selected_refs if execution_gate.get("enabled") and selected_refs else refs
