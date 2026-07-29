@@ -80,6 +80,54 @@ def _sync_interval(value: Any) -> int:
     return max(MIN_SYNC_INTERVAL_MINUTES, min(MAX_SYNC_INTERVAL_MINUTES, interval))
 
 
+def _bounded_text(value: Any, limit: int) -> str:
+    return str(value or "").strip()[:limit]
+
+
+def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    discovery_source = _bounded_text(
+        raw.get("discovery_source", raw.get("discoverySource")),
+        40,
+    )
+    if discovery_source not in {"apifox_cli", "openapi_info"}:
+        discovery_source = ""
+    return {
+        "project_name": _bounded_text(
+            raw.get("project_name", raw.get("projectName")),
+            200,
+        ),
+        "project_description": _bounded_text(
+            raw.get("project_description", raw.get("projectDescription")),
+            500,
+        ),
+        "team_id": _bounded_text(raw.get("team_id", raw.get("teamId")), 100),
+        "team_name": _bounded_text(raw.get("team_name", raw.get("teamName")), 200),
+        "branch_name": _bounded_text(
+            raw.get("branch_name", raw.get("branchName")),
+            200,
+        ),
+        "environment_name": _bounded_text(
+            raw.get("environment_name", raw.get("environmentName")),
+            200,
+        ),
+        "discovered_at": _bounded_text(
+            raw.get("discovered_at", raw.get("discoveredAt")),
+            40,
+        ),
+        "discovery_source": discovery_source,
+    }
+
+
+def _merge_provider_metadata(current: Any, changes: Any) -> Dict[str, Any]:
+    merged = normalize_provider_metadata(current)
+    incoming = normalize_provider_metadata(changes)
+    for key, value in incoming.items():
+        if value:
+            merged[key] = value
+    return merged
+
+
 def normalized_sync_scope(value: Any) -> Dict[str, Any]:
     raw = value if isinstance(value, dict) else {}
     mode = str(raw.get("mode") or "all").strip().lower()
@@ -190,6 +238,7 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     public.pop("token", None)
     public["credential_configured"] = bool(token)
     public["configured"] = bool(public.get("project_id") and token) if public.get("source_type") == "apifox" else True
+    public["provider_metadata"] = normalize_provider_metadata(public.get("provider_metadata"))
     public["sync_scope"] = normalized_sync_scope(public.get("sync_scope"))
     public["module_catalog"] = public.get("module_catalog") if isinstance(public.get("module_catalog"), list) else []
     public["scope_fingerprint"] = str(public.get("scope_fingerprint") or "")
@@ -274,14 +323,26 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
     sync_enabled_default = source_type == "apifox"
     scope_input = payload.get("sync_scope", payload.get("syncScope", current.get("sync_scope")))
     sync_scope = normalized_sync_scope(scope_input)
+    provider_input_present = "provider_metadata" in payload or "providerMetadata" in payload
+    provider_input = payload.get("provider_metadata", payload.get("providerMetadata"))
+    provider_metadata = (
+        normalize_provider_metadata(provider_input)
+        if provider_input_present
+        else normalize_provider_metadata(current.get("provider_metadata"))
+    )
+    default_name = (
+        provider_metadata.get("project_name")
+        or ("Apifox 接口" if source_type == "apifox" else "OpenAPI 上传")
+    )
     source = {
         "source_id": source_id,
         "source_type": source_type,
-        "name": str(payload.get("name", current.get("name") or ("Apifox 接口" if source_type == "apifox" else "OpenAPI 上传"))).strip(),
+        "name": str(payload.get("name", current.get("name") or default_name)).strip(),
         "base_url": base_url,
         "project_id": str(payload.get("project_id", payload.get("projectId", current.get("project_id", ""))) or "").strip(),
         "branch_id": str(payload.get("branch_id", payload.get("branchId", current.get("branch_id", ""))) or "").strip(),
         "environment_id": str(payload.get("environment_id", payload.get("environmentId", current.get("environment_id", ""))) or "").strip(),
+        "provider_metadata": provider_metadata,
         "credential_mode": "access_token" if source_type == "apifox" else "none",
         "access_token": access_token,
         "sync_enabled": safe_bool(payload.get("sync_enabled", payload.get("syncEnabled", current.get("sync_enabled"))), sync_enabled_default),
@@ -349,6 +410,7 @@ def update_api_source_discovery_state(
     module_catalog: List[Dict[str, Any]],
     scope_fingerprint: str,
     *,
+    provider_metadata: Any = None,
     expected_config_fingerprint: str = "",
 ) -> Dict[str, Any]:
     with _SOURCE_LOCK:
@@ -359,6 +421,11 @@ def update_api_source_discovery_state(
             raise ApiSourceConfigDriftError("API source configuration changed during synchronization")
         source["module_catalog"] = [dict(item) for item in module_catalog if isinstance(item, dict)]
         source["scope_fingerprint"] = str(scope_fingerprint or "")
+        if provider_metadata is not None:
+            source["provider_metadata"] = _merge_provider_metadata(
+                source.get("provider_metadata"),
+                provider_metadata,
+            )
         source["updated_at"] = _now()
         source["config_source"] = "file"
         _write_source(source)
@@ -373,6 +440,7 @@ __all__ = [
     "get_api_source",
     "list_api_sources",
     "save_api_source",
+    "normalize_provider_metadata",
     "normalized_sync_scope",
     "locked_api_source_config",
     "update_api_source_discovery_state",

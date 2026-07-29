@@ -118,6 +118,26 @@ class ApiModuleScopeChecks(unittest.TestCase):
         self.assertTrue(source["sync_schedule"]["next_check_at"])
         self.assertEqual("", source["sync_schedule"]["last_success_at"])
 
+    def test_provider_metadata_is_display_only_for_source_fingerprint(self):
+        source = api_source_service.save_api_source({
+            "name": "项目 A",
+            "project_id": "1",
+            "access_token": "secret",
+        })
+        raw = api_source_service.get_api_source(source["source_id"], masked=False)
+        enriched = {
+            **raw,
+            "provider_metadata": {
+                "project_name": "项目 A 中文名",
+                "discovery_source": "apifox_cli",
+            },
+        }
+
+        self.assertEqual(
+            api_source_service.source_config_fingerprint(raw),
+            api_source_service.source_config_fingerprint(enriched),
+        )
+
     def test_business_lines_are_derived_from_first_module_segment(self):
         summary = api_module_service.business_line_summary([
             {"module_path": "家用业务/app接口/我的"},

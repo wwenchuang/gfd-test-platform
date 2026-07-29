@@ -257,6 +257,21 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
         source_adapter = adapter or ApifoxSourceAdapter()
         fetched = source_adapter.fetch_openapi(source, timeout=30)
         full_document = fetched.get("document") or {}
+        provider_metadata_update = {}
+        provider_metadata = api_source_service.normalize_provider_metadata(
+            source.get("provider_metadata")
+        )
+        info_title = str(
+            ((full_document.get("info") or {}).get("title") or "")
+            if isinstance(full_document, dict)
+            else ""
+        ).strip()
+        if info_title and not provider_metadata.get("project_name"):
+            provider_metadata_update = {
+                "project_name": info_title,
+                "discovered_at": _now(),
+                "discovery_source": "openapi_info",
+            }
         catalog = api_module_service.module_catalog(full_document)
         scope = api_source_service.normalized_sync_scope(source.get("sync_scope"))
         scoped_document = (
@@ -319,6 +334,7 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
                     source_id,
                     catalog,
                     scope_fingerprint,
+                    provider_metadata=provider_metadata_update,
                     expected_config_fingerprint=expected_config_fingerprint,
                 )
             return result
@@ -344,6 +360,7 @@ def run_api_source_sync(sync_id: str, adapter: Any = None) -> Dict[str, Any]:
                 source_id,
                 catalog,
                 scope_fingerprint,
+                provider_metadata=provider_metadata_update,
                 expected_config_fingerprint=expected_config_fingerprint,
             )
         summary = dict(diff.get("summary") or {})

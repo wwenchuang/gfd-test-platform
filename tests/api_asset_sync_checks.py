@@ -133,6 +133,29 @@ class ApiSourceConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source_type"):
             self.service.save_api_source({"source_type": "unknown", "name": "Bad"})
 
+    def test_discovered_provider_metadata_is_public_and_defaults_the_source_name(self):
+        source = self.service.save_api_source({
+            "source_type": "apifox",
+            "project_id": "5904970",
+            "access_token": "secret-apifox-token",
+            "provider_metadata": {
+                "project_name": "3D 接口",
+                "project_description": "打印业务",
+                "team_id": "12",
+                "team_name": "功夫豆",
+                "branch_name": "主分支（默认）",
+                "environment_name": "APP 测试环境",
+                "discovered_at": "2026-07-29T10:00:00Z",
+                "discovery_source": "apifox_cli",
+            },
+        })
+
+        self.assertEqual("3D 接口", source["name"])
+        self.assertEqual("3D 接口", source["provider_metadata"]["project_name"])
+        self.assertEqual("功夫豆", source["provider_metadata"]["team_name"])
+        self.assertEqual("apifox_cli", source["provider_metadata"]["discovery_source"])
+        self.assertNotIn("secret-apifox-token", json.dumps(source, ensure_ascii=False))
+
     def test_config_and_sync_state_updates_do_not_overwrite_each_other(self):
         saved = self.service.save_api_source({
             "source_type": "apifox",
@@ -696,6 +719,31 @@ class ApiSyncServiceTests(unittest.TestCase):
         self.assertNotIn("secret-apifox-token", failed["error"])
         asset = self.asset_service.get_api_asset(first["asset_id"])
         self.assertEqual(active_revision_id, asset["active_revision_id"])
+
+    def test_sync_backfills_missing_project_name_from_openapi_info(self):
+        synced = self._run(_SequenceApifoxAdapter([_openapi_document()]))
+
+        source = self.source_service.get_api_source(self.source["source_id"], masked=True)
+        self.assertEqual("succeeded", synced["status"])
+        self.assertEqual("3D", source["provider_metadata"]["project_name"])
+        self.assertEqual("openapi_info", source["provider_metadata"]["discovery_source"])
+
+    def test_sync_does_not_overwrite_cli_discovered_project_name(self):
+        self.source = self.source_service.save_api_source({
+            "source_id": self.source["source_id"],
+            "provider_metadata": {
+                "project_name": "Apifox 真实项目名",
+                "team_name": "功夫豆",
+                "discovery_source": "apifox_cli",
+            },
+        })
+
+        synced = self._run(_SequenceApifoxAdapter([_openapi_document()]))
+
+        source = self.source_service.get_api_source(self.source["source_id"], masked=True)
+        self.assertEqual("succeeded", synced["status"])
+        self.assertEqual("Apifox 真实项目名", source["provider_metadata"]["project_name"])
+        self.assertEqual("apifox_cli", source["provider_metadata"]["discovery_source"])
 
     def test_discovery_failure_before_activation_keeps_the_previous_active_revision(self):
         first = self._run(_SequenceApifoxAdapter([_openapi_document(response_type="string")]))
