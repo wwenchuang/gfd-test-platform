@@ -28,6 +28,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 API 资产页改成三段式工作台
+
+用户反馈接口资产管理页面混乱，已通过 Apifox 读取到项目、分支和环境后仍容易被下方手动 ID 表单干扰，且页面没有清晰表达“接口资产 -> AI 用例 -> API 基线 -> MeterSphere 执行”的工作流。
+
+参考：
+
+- Postman Collections：用左侧集合/文件夹组织请求，并在工作区打开集合或请求。
+- Apifox 场景用例：接口资产进入场景编排后再运行并生成报告。
+- MeterSphere 接口测试：使用树状多级模块管理接口列表，并进入接口自动化/执行。
+
+修复：
+
+- `API 资产` 页新增项目上下文条 `api-asset-context-bar`，把 Apifox 项目、连接状态、自动同步、最近成功、下次检查和同步动作收在一块。
+- 模块工作区从“两列模块树+接口表”升级为三段式 `api-asset-workbench-grid`：左侧模块树、中间接口筛选/选择、右侧动作面板。
+- 新增右侧 `api-asset-action-panel`，展示当前模块、范围接口数、已选接口数、单次上限，并直接承接“生成 AI 用例 / 查看 API 基线 / MeterSphere 执行”。
+- 单个接口勾选和当前列表全选后会刷新右侧动作面板统计，不再只刷新顶部 stepper。
+- 窄屏下三段式工作台自动收成单列，右侧动作面板变为底部流程面板，避免接口表被压窄。
+- 前端缓存版本更新为 `20260729-api-asset-workbench`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py  # 72 passed
+node --check js/api-testing.js
+git diff --check -- js/api-testing.js css/round5.css task-manager.html tests/frontend_static_checks.py
+```
+
+本轮没有修改 Apifox 同步后端、AI 用例生成、API 基线数据模型、MeterSphere 执行接口、Agent、Runner、Sonic 或历史 YAML。
+
 ### 2026-07-29 Apifox 已选项目仍要求手填 Project ID
 
 用户截图显示新增 Apifox 项目时，项目 `3D`、分支 `main`、环境 `生产环境（新）-腾讯云` 已经通过发现结果显示出来，但点击保存仍提示 `请填写 Apifox 项目 ID`。

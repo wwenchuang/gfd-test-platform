@@ -54,6 +54,13 @@
   color: var(--text2);
   margin: 0 0 14px;
 }
+.api-asset-context-bar {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: rgba(13, 28, 50, .72);
+}
 .api-source-status-row,
 .api-source-identity,
 .api-source-actions,
@@ -624,12 +631,19 @@
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
+.api-asset-workbench-grid.api-module-workspace {
+  grid-template-columns: minmax(220px, .3fr) minmax(0, 1fr) minmax(260px, .34fr);
+}
 .api-module-pane,
-.api-module-endpoints {
+.api-module-endpoints,
+.api-asset-action-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+}
+.api-module-pane,
+.api-module-endpoints {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 .api-module-pane {
   border-right: 1px solid var(--border);
@@ -733,6 +747,102 @@
 }
 .api-module-endpoint-scroll .api-endpoint-table {
   min-width: 680px;
+}
+.api-asset-action-panel {
+  align-content: start;
+  gap: 12px;
+  border-left: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(0, 214, 224, .05), rgba(13, 28, 50, .22));
+  padding: 12px;
+}
+.api-asset-action-head,
+.api-asset-action-scope,
+.api-asset-action-note,
+.api-asset-action-detail {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-asset-action-head span,
+.api-asset-action-scope span,
+.api-asset-action-note span,
+.api-asset-action-detail summary {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-asset-action-head strong {
+  color: var(--accent);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.api-asset-action-scope {
+  border: 1px solid var(--border);
+  background: rgba(4, 13, 27, .62);
+  padding: 10px;
+}
+.api-asset-action-scope strong,
+.api-asset-action-note strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.api-asset-action-scope small {
+  color: var(--text3);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.api-asset-action-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-asset-action-metrics span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--surface2);
+}
+.api-asset-action-metrics strong {
+  font-family: var(--mono);
+  font-size: 15px;
+}
+.api-asset-action-metrics small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-asset-action-buttons {
+  display: grid;
+  gap: 8px;
+}
+.api-asset-action-buttons .btn-sm {
+  width: 100%;
+  justify-content: center;
+}
+.api-asset-action-note {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.api-asset-action-detail {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.api-asset-action-detail summary {
+  cursor: pointer;
+}
+.api-asset-action-detail div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.api-asset-action-detail code {
+  max-width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  padding: 2px 5px;
+  overflow-wrap: anywhere;
+  font-size: 10px;
 }
 .api-endpoint-scroll {
   width: 100%;
@@ -2363,6 +2473,17 @@
   }
   .api-two-column {
     grid-template-columns: 1fr;
+  }
+  .api-asset-workbench-grid.api-module-workspace {
+    grid-template-columns: 1fr;
+  }
+  .api-module-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .api-asset-action-panel {
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
   .api-plan-layout {
     grid-template-columns: 1fr;

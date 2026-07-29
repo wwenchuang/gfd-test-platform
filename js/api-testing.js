@@ -441,6 +441,7 @@ function toggleApiEndpointById(endpointId, checked) {
   if (checked) state.endpointIds.add(String(endpointId));
   else state.endpointIds.delete(String(endpointId));
   syncApiEndpointCheckboxStates();
+  refreshApiAssetActionPanel();
   updateApiWorkflowStepper();
 }
 
@@ -458,6 +459,7 @@ function toggleApiEndpointSelection(checked) {
     else state.endpointIds.delete(String(input.value));
   });
   syncApiEndpointCheckboxStates();
+  refreshApiAssetActionPanel();
   updateApiWorkflowStepper();
 }
 
@@ -772,23 +774,25 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const running = ['queued', 'running'].includes(status);
   const primaryLabel = status === 'failed' ? '重试同步' : '立即同步';
   return `
-    <div class="api-source-status-row">
-      <div class="api-source-identity">
-        ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
-        ${apiStatusPill(configured ? '已连接' : '待配置', configured ? 'success' : 'warn')}
-        <span>${source?.credential_configured ? '访问凭据已安全保存' : '需要配置 Apifox 项目和访问令牌'}</span>
+    <div class="api-asset-context-bar">
+      <div class="api-source-status-row">
+        <div class="api-source-identity">
+          ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
+          ${apiStatusPill(configured ? '已连接' : '待配置', configured ? 'success' : 'warn')}
+          <span>${source?.credential_configured ? '访问凭据已安全保存' : '需要配置 Apifox 项目和访问令牌'}</span>
+        </div>
+        <div class="api-source-actions">
+          <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在同步' : primaryLabel)}</button>
+          <button class="btn-sm icon-only" title="刷新接口资产" aria-label="刷新接口资产" onclick="refreshApiAssetWorkspace(true)">↻</button>
+          <button class="btn-sm icon-only" title="Apifox 来源设置" aria-label="Apifox 来源设置" onclick="toggleApiSourceSettings()">⚙</button>
+        </div>
       </div>
-      <div class="api-source-actions">
-        <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在同步' : primaryLabel)}</button>
-        <button class="btn-sm icon-only" title="刷新接口资产" aria-label="刷新接口资产" onclick="refreshApiAssetWorkspace(true)">↻</button>
-        <button class="btn-sm icon-only" title="Apifox 来源设置" aria-label="Apifox 来源设置" onclick="toggleApiSourceSettings()">⚙</button>
+      <div class="api-source-facts">
+        <span><small>自动同步</small><strong>${schedule.mode === 'automatic' ? '已开启' : '未开启'}</strong></span>
+        <span><small>最近成功</small><strong>${escapeHtml(schedule.last_success_at || source?.last_success_at || '等待首次同步')}</strong></span>
+        <span><small>下次检查</small><strong>${escapeHtml(schedule.next_check_at || '手动同步')}</strong></span>
+        <span><small>当前状态</small><strong>${escapeHtml(apiAssetSyncStatusText(status))}</strong></span>
       </div>
-    </div>
-    <div class="api-source-facts">
-      <span><small>自动同步</small><strong>${schedule.mode === 'automatic' ? '已开启' : '未开启'}</strong></span>
-      <span><small>最近成功</small><strong>${escapeHtml(schedule.last_success_at || source?.last_success_at || '等待首次同步')}</strong></span>
-      <span><small>下次检查</small><strong>${escapeHtml(schedule.next_check_at || '手动同步')}</strong></span>
-      <span><small>当前状态</small><strong>${escapeHtml(apiAssetSyncStatusText(status))}</strong></span>
     </div>
     ${source?.last_error ? `<div class="api-inline-error">${escapeHtml(source.last_error)}</div>` : ''}
   `;
@@ -1207,6 +1211,53 @@ function renderApiModuleEndpointTable() {
     ? renderApiAssetTable(endpoints, { emptyText: '当前模块没有符合筛选条件的接口。' })
     : apiTestingEmpty('请从左侧选择一个模块，再查看接口。');
   syncApiEndpointCheckboxStates();
+  refreshApiAssetActionPanel();
+}
+
+function renderApiAssetActionPanelContent(source = selectedApiAssetSource() || {}) {
+  const state = apiModuleSelectionState();
+  const selectedCount = selectedApiPlanEndpointIds().length;
+  const activeCount = apiActiveModuleEndpoints().length;
+  const moduleName = state.activeModulePath ? state.activeModulePath.split('/').pop() : '未选择模块';
+  const selectedModules = Array.from(state.selectedModules || []);
+  return `
+    <div class="api-asset-action-head">
+      <span>下一步</span>
+      <strong>资产 -> AI 用例 -> 基线 -> 执行</strong>
+    </div>
+    <div class="api-asset-action-scope">
+      <span>当前范围</span>
+      <strong>${escapeHtml(moduleName)}</strong>
+      <small>${escapeHtml(state.activeModulePath || '请先从左侧选择一个模块')}</small>
+    </div>
+    <div class="api-asset-action-metrics">
+      <span><strong>${escapeHtml(activeCount)}</strong><small>范围接口</small></span>
+      <span><strong>${escapeHtml(selectedCount)}</strong><small>已选接口</small></span>
+      <span><strong>${escapeHtml(API_PLAN_MAX_ENDPOINTS)}</strong><small>单次上限</small></span>
+    </div>
+    <div class="api-asset-action-buttons">
+      <button class="btn-sm ai" onclick="showApiPlanPage()" ${selectedCount ? '' : 'disabled'}>生成 AI 用例</button>
+      <button class="btn-sm" onclick="showApiBaselinesPage()">查看 API 基线</button>
+      <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
+    </div>
+    <div class="api-asset-action-note">
+      <strong>${escapeHtml(apiSourceDisplayName(source) || '未选择 Apifox 项目')}</strong>
+      <span>${selectedCount ? '已选接口会带入 AI 用例计划。' : '先在中间列表勾选接口，再进入 AI 用例计划。'}</span>
+    </div>
+    <details class="api-asset-action-detail">
+      <summary>已选模块范围</summary>
+      <div>${selectedModules.length ? selectedModules.map(item => `<code>${escapeHtml(item)}</code>`).join('') : '<span>尚未保存模块范围</span>'}</div>
+    </details>
+  `;
+}
+
+function renderApiAssetActionPanel(source = selectedApiAssetSource() || {}) {
+  return `<aside id="api-asset-action-panel" class="api-asset-action-panel">${renderApiAssetActionPanelContent(source)}</aside>`;
+}
+
+function refreshApiAssetActionPanel() {
+  const panel = document.getElementById('api-asset-action-panel');
+  if (panel) panel.innerHTML = renderApiAssetActionPanelContent();
 }
 
 function renderApiModuleWorkspace() {
@@ -1228,7 +1279,7 @@ function renderApiModuleWorkspace() {
         ${businessLines.map(item => `<option value="${escapeHtml(item.name)}" ${item.name === businessLine ? 'selected' : ''}>${escapeHtml(item.name)} · ${escapeHtml(item.endpointCount)} 个接口</option>`).join('')}
       </select>
     </div>
-    <div class="api-module-workspace">
+    <div class="api-module-workspace api-asset-workbench-grid">
       <section class="api-module-pane">
         <div class="api-module-pane-head"><strong>${escapeHtml(businessLine || '业务')}模块</strong><span>${escapeHtml(apiModuleRows(source, businessEndpoints).length)} 个</span></div>
         <div class="api-module-tree-scroll">${renderApiModuleTree(source, businessEndpoints)}</div>
@@ -1241,6 +1292,7 @@ function renderApiModuleWorkspace() {
         </div>
         <div id="api-module-endpoint-table" class="api-module-endpoint-scroll"></div>
       </section>
+      ${renderApiAssetActionPanel(source)}
     </div>`;
   renderApiModuleEndpointTable();
   syncApiModuleCheckboxStates();
