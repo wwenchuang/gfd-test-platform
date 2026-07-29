@@ -1895,37 +1895,50 @@ def generation_volume_targets(analysis, mode="full"):
 
 
 def generation_targets_for_scope(analysis, mode="full", scope_plan=None):
-    """Use one platform-clamped 3/5/8 plan across the generation pipeline."""
+    """Use separated plan and automation targets across the generation pipeline."""
     targets = dict(generation_volume_targets(analysis, mode=mode))
     scope_plan = scope_plan if isinstance(scope_plan, dict) else {}
     if not scope_plan or not scope_plan.get("targetCaseCount"):
         return targets
     target_count, _ = _clamp_scope_size(
         scope_plan.get("targetCaseCount"),
-        targets.get("target_automation_cases") or 3,
+        targets.get("target_automation_cases") or 5,
     )
     point_count = len(normalize_text_list((analysis or {}).get("requirement_points")))
-    requirement_floor = 3 if point_count <= 2 else (5 if point_count <= 5 else 8)
+    requirement_floor = 5 if point_count <= 2 else (8 if point_count <= 5 else 12)
     target_count, size = _clamp_scope_size(max(target_count, requirement_floor), target_count)
     smoke_count = max(1, min(3, safe_int(scope_plan.get("smokeCount"), 3)))
+    default_plan_counts = {
+        "small": (5, 5, 8),
+        "medium": (10, 10, 20),
+        "large": (20, 20, 50),
+    }
+    min_plan_cases, target_plan_cases, max_plan_cases = default_plan_counts.get(size, default_plan_counts["small"])
+    if scope_plan.get("targetPlanCaseCount") not in (None, ""):
+        requested_plan = safe_int(scope_plan.get("targetPlanCaseCount"), target_plan_cases)
+        target_plan_cases = max(min_plan_cases, min(max_plan_cases, requested_plan))
     scenario_counts = {
-        3: (3, 5),
         5: (5, 8),
-        8: (8, 12),
+        8: (10, 20),
+        12: (20, 50),
     }
     min_scenarios, target_scenarios = scenario_counts[target_count]
     targets.update({
         "size": size,
+        "min_plan_cases": min_plan_cases,
+        "target_plan_cases": target_plan_cases,
+        "max_plan_cases": max_plan_cases,
         "min_automation_cases": target_count,
         "target_automation_cases": target_count,
         "max_automation_cases": target_count,
+        "max_cases": target_count,
         "smoke_cases": smoke_count,
         "smoke_max_cases": 3,
         "min_scenarios": min_scenarios,
         "target_scenarios": target_scenarios,
         "scope_plan_applied": True,
         "scope_requirement_floor": requirement_floor,
-        "scope_plan_reason": str(scope_plan.get("reason") or "AI 范围规划经平台 3/5/8 规则收敛"),
+        "scope_plan_reason": str(scope_plan.get("reason") or "AI 范围规划经平台计划池/自动化池分层规则收敛"),
     })
     return targets
 
@@ -2978,7 +2991,7 @@ def call_skill_automation_filter(
             "assertion_required": True,
             "assertion_density": "每条自动化用例只写 1 条最终业务结果断言；过程校验写入 steps 的等待/检查动作，不要把每个验收点都塞进 assertions",
             "scope_guard": "每条 cases 必须映射当前 analysis.requirement_points/business_goals；需求未提到的历史记录、缓存、慢加载、超时、干扰、重复点击、防抖、旧入口不存在等扩展场景只能进入 manual_cases/needs_review，不得作为自动执行 YAML。",
-            "smoke_selection": "smoke=true 必须基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。冒烟候选池小需求通常 3 条以内，中大需求最多 5-8 条；Runner 首批自动下发最多 3 条。"
+            "smoke_selection": "smoke=true 必须基于当前需求主链显式筛选；不要把 P1、入口、展示、基础等规则候选自动当成冒烟。自动化 YAML 池按需求收敛到 5/8/12 条，Runner 首批自动下发最多 3 条。"
         }
     }
     def fallback(error):
@@ -4034,18 +4047,19 @@ def call_skill_baseline_reranker(
 
 def _clamp_scope_size(value, fallback=3):
     raw = safe_int(value, fallback)
-    if raw <= 3:
-        return 3, "small"
     if raw <= 5:
-        return 5, "medium"
-    return 8, "large"
+        return 5, "small"
+    if raw <= 8:
+        return 8, "medium"
+    return 12, "large"
 
 
 def call_skill_execution_scope_planner(title, module, text_assets, selected_baselines, model_config=None):
-    """Let AI suggest generation scope, while platform clamps to 3/5/8 and smoke<=3."""
+    """Let AI suggest generation scope, while platform separates plan pool and Runner automation."""
     local_targets = generation_volume_targets({"requirement_points": normalize_text_list(text_assets)}, mode="full")
-    fallback_count = safe_int(local_targets.get("target_automation_cases"), 3)
-    target_count, size = _clamp_scope_size(fallback_count, 3)
+    fallback_count = safe_int(local_targets.get("target_automation_cases"), 5)
+    target_count, size = _clamp_scope_size(fallback_count, 5)
+    target_plan_count = safe_int(local_targets.get("target_plan_cases"), 5)
     model_runtime_trace = {}
     trace = {
         "enabled": True,
@@ -4058,7 +4072,8 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         "requirementText": "\n\n".join(normalize_text_list(text_assets))[:8000],
         "selectedBaselines": [_compact_baseline_candidate(item, idx) for idx, item in enumerate(selected_baselines or [])],
         "platformLimits": {
-            "caseCounts": [3, 5, 8],
+            "automationCaseCounts": [5, 8, 12],
+            "planCaseRanges": {"small": [5, 8], "medium": [10, 20], "large": [20, 50]},
             "maxSmokeCount": 3,
             "continueThreshold": 0.5,
         },
@@ -4076,15 +4091,23 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         )
         trace.update(_model_config_trace(model_config, model_runtime_trace))
         target_count, size = _clamp_scope_size(result.get("targetCaseCount"), target_count)
+        plan_bounds = {
+            "small": (5, 8),
+            "medium": (10, 20),
+            "large": (20, 50),
+        }.get(size, (5, 8))
+        requested_plan_count = safe_int(result.get("targetPlanCaseCount"), target_plan_count)
+        target_plan_count = max(plan_bounds[0], min(plan_bounds[1], requested_plan_count))
         smoke_count = max(1, min(3, safe_int(result.get("smokeCount"), min(3, target_count))))
         plan = {
             "size": size,
+            "targetPlanCaseCount": target_plan_count,
             "targetCaseCount": target_count,
             "smokeCount": smoke_count,
             "continueThreshold": 0.5,
             "reason": result.get("reason") or "AI 根据需求规模和相似基线规划生成范围",
             "businessFlow": normalize_text_list(result.get("businessFlow") or result.get("business_flow"))[:8],
-            "trace": {**trace, "targetCaseCount": target_count, "smokeCount": smoke_count},
+            "trace": {**trace, "targetPlanCaseCount": target_plan_count, "targetCaseCount": target_count, "smokeCount": smoke_count},
         }
         return plan
     except Exception as exc:
@@ -4092,10 +4115,11 @@ def call_skill_execution_scope_planner(title, module, text_assets, selected_base
         trace.update({"fallback": True, "error": str(exc)})
         return {
             "size": size,
+            "targetPlanCaseCount": target_plan_count,
             "targetCaseCount": target_count,
             "smokeCount": min(3, target_count),
             "continueThreshold": 0.5,
-            "reason": "AI 范围规划失败，回退平台 3/5/8 规则",
+            "reason": "AI 范围规划失败，回退平台计划池/自动化池分层规则",
             "businessFlow": [],
             "trace": trace,
         }
@@ -10200,7 +10224,7 @@ def build_case_generation_prompt(title, module, text_assets):
 10. assertions 必须表达"业务意图 + UI 可见信号"，避免抽象断言，也避免过严断言。除非需求明确要求完全一致，否则不要断言动态列表第几条、动态推荐内容、数量、时间、百分比、随机资源名，也不要写"与设计稿一致/模块排列顺序一致"这类 Runner 无法独立判断的断言。
 10.1 每条自动化 case 的 steps 建议 3-6 条，assertions 建议 1-3 条；不要把多个业务分支塞进同一条 YAML。
 10.2 智小白 3D AI建模当前入口以真机为准：底部中间 Tab/首页卡片进入 AI建模；不要在首页三维创作区查找旧的"文字输入"入口；标牌/趣味印章等横向入口必须包含横向滑动步骤；"大家都在做"、骨架屏、缩放控件、固定推荐内容等动态或历史稿信号不得作为自动化必过断言。
-11. 当前平台采用可执行优先策略：小需求自动化目标 3 条，中需求 5 条，大需求最多 8 条；不要为了数量重复路径或扩展无关页面。其他覆盖点进入 manual_cases 或 draft，不要强行自动化。
+11. 当前平台采用完整计划与自动化分层策略：完整测试计划按小需求 5-8 条、中需求 10-20 条、大需求 20-50 条展开；自动化 YAML 池按小需求 5 条、中需求 8 条、大需求最多 12 条收敛；Runner 首批最多下发 3 条。不要为了数量重复路径或扩展无关页面，其他覆盖点进入 manual_cases 或 draft，不要强行自动化。
 12. 不要输出 YAML。
 
 输出格式：

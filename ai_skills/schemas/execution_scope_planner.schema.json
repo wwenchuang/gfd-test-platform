@@ -3,6 +3,7 @@
   "required": ["size", "targetCaseCount", "smokeCount", "reason"],
   "properties": {
     "size": {"type": "string"},
+    "targetPlanCaseCount": {"type": "integer"},
     "targetCaseCount": {"type": "integer"},
     "smokeCount": {"type": "integer"},
     "continueThreshold": {"type": "number"},

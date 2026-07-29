@@ -16929,6 +16929,59 @@ def _tool_generate_summary(run):
             conclusion = "部分通过"
         elif execution.get("outcome") == "not_executed" and report.get("status") == "missing":
             conclusion = "报告缺失"
+        generation_pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+        validation = artifacts.get("yamlValidation") if isinstance(artifacts.get("yamlValidation"), dict) else {}
+        coverage_gap = (
+            generation_pipeline.get("coverageGap")
+            if isinstance(generation_pipeline.get("coverageGap"), dict)
+            else validation.get("coverageGap") if isinstance(validation.get("coverageGap"), dict) else {}
+        )
+        missing_points = [
+            str(item).strip()
+            for item in (coverage_gap.get("missingRequirementPoints") or [])
+            if str(item or "").strip()
+        ]
+        coverage_reasons = [
+            str(item).strip()
+            for item in (coverage_gap.get("reasons") or [])
+            if str(item or "").strip()
+        ]
+        coverage_incomplete = bool(
+            validation.get("coverageIncomplete")
+            or coverage_gap.get("ok") is False
+            or missing_points
+            or coverage_reasons
+        )
+        coverage_status = {
+            "status": "incomplete" if coverage_incomplete else "complete",
+            "label": "覆盖不完整" if coverage_incomplete else "覆盖完整",
+            "missingCount": len(missing_points),
+            "missingRequirementPoints": missing_points[:30],
+            "reasons": coverage_reasons[:10],
+            "caseCount": _safe_int_local(coverage_gap.get("caseCount"), _safe_int_local(generation_pipeline.get("caseCount"), 0)),
+            "yamlCount": _safe_int_local(coverage_gap.get("yamlCount"), _safe_int_local(generation_pipeline.get("yamlFileCount"), 0)),
+            "requirementPointCount": _safe_int_local(coverage_gap.get("requirementPointCount"), 0),
+        }
+        recovery = artifacts.get("recovery") if isinstance(artifacts.get("recovery"), dict) else {}
+        recovered_count = _safe_int_local(execution.get("recoveredCount"), 0)
+        if not recovered_count and recovery.get("recovered"):
+            recovered_count = len([item for item in (recovery.get("sourceJobIds") or recovery.get("recoveredJobIds") or []) if str(item or "").strip()])
+        status_breakdown = {
+            "finalConclusion": conclusion,
+            "originalExecution": {
+                "attempted": _safe_int_local(execution.get("originalAttemptCount"), _safe_int_local(execution.get("attemptedCount"), 0)),
+                "passed": _safe_int_local(execution.get("logicalPassedCount"), 0),
+                "failed": _safe_int_local(execution.get("failedCount"), 0),
+                "timeout": _safe_int_local(execution.get("timeoutCount"), 0),
+                "running": _safe_int_local(execution.get("runningCount"), 0),
+            },
+            "repairValidation": {
+                "rerun": _safe_int_local(execution.get("rerunAttemptCount"), 0),
+                "recovered": recovered_count,
+                "unresolved": len(execution.get("unresolvedFailedJobIds") or []),
+            },
+            "coverage": coverage_status,
+        }
         next_actions = []
         if active_failed_execution_items or execution.get("logicalFailedCount") or execution.get("logicalTimeoutCount"):
             next_actions.extend(["打开失败任务报告或 Runner 日志", "确认是脚本问题后生成修复草稿", "修复后重跑失败用例"])
@@ -16946,6 +16999,8 @@ def _tool_generate_summary(run):
             "conclusion": conclusion,
             "execution": execution,
             "orchestration": orchestration,
+            "statusBreakdown": status_breakdown,
+            "coverageStatus": coverage_status,
             "totalSteps": len(steps),
             "completed": completed,
             "failed": failed,
@@ -16984,7 +17039,8 @@ def _tool_generate_summary(run):
                 f"Runner：{execution.get('label')}，通过 {execution.get('passedCount', 0)}，"
                 f"失败尝试 {execution.get('failedCount', 0)}，修复后通过 {execution.get('recoveredCount', 0)}，"
                 f"超时 {execution.get('timeoutCount', 0)}；"
-                f"Agent：{orchestration_label}，{completed}/{len(steps)} 步骤成功"
+                f"Agent：{orchestration_label}，{completed}/{len(steps)} 步骤成功；"
+                f"覆盖：{coverage_status.get('label')}"
             ),
         }
         if _ai_gateway_available():

@@ -8,19 +8,22 @@
 
 ## 平台约束
 
-1. 小需求：targetCaseCount=3。
-2. 中需求：targetCaseCount=5。
-3. 大需求：targetCaseCount=8。
-4. smokeCount 只能是 1 到 3。
-5. continueThreshold 固定 0.5。
-6. 不要为了数量扩展无关页面、历史记录、旧入口、第三方授权和长链路。
-7. 如果需求只是入口展示/位置/同级并列，应该判断为 small 或 medium，不要生成大量外部点击链路。
+1. 小需求：targetPlanCaseCount=5，targetCaseCount=5。
+2. 中需求：targetPlanCaseCount=10，targetCaseCount=8。
+3. 大需求：targetPlanCaseCount=20，targetCaseCount=12。
+4. targetPlanCaseCount 表示完整测试计划规模，平台允许小需求 5-8 条、中需求 10-20 条、大需求 20-50 条。
+5. targetCaseCount 表示进入自动化 YAML 池的稳定子集，只能是 5、8、12。
+6. smokeCount 只能是 1 到 3，Runner 首批自动下发最多 3 条。
+7. continueThreshold 固定 0.5。
+8. 不要为了数量扩展无关页面、历史记录、旧入口、第三方授权和长链路。
+9. 如果需求只是入口展示/位置/同级并列，应该判断为 small 或 medium，不要生成大量外部点击链路。
 
 ## 输出 JSON
 
 {
   "size": "small",
-  "targetCaseCount": 3,
+  "targetPlanCaseCount": 5,
+  "targetCaseCount": 5,
   "smokeCount": 3,
   "continueThreshold": 0.5,
   "reason": "为什么这样规划",

@@ -426,19 +426,22 @@ def generation_volume_targets(analysis, mode="full"):
     point_count = len(points)
     complexity = point_count + min(len(risks), 4) + min(len(visible), 3)
     if point_count <= 2 and complexity <= 5:
-        min_cases = target_cases = max_cases = 3
-        min_scenarios, target_scenarios = 3, 5
+        min_cases = target_cases = max_cases = 5
+        min_plan_cases, target_plan_cases, max_plan_cases = 5, 5, 8
+        min_scenarios, target_scenarios = 5, 8
         size = "small"
     elif point_count <= 5 and complexity <= 9:
-        min_cases = target_cases = max_cases = 5
-        min_scenarios, target_scenarios = 5, 8
+        min_cases = target_cases = max_cases = 8
+        min_plan_cases, target_plan_cases, max_plan_cases = 10, 10, 20
+        min_scenarios, target_scenarios = 10, 20
         size = "medium"
     else:
-        min_cases = target_cases = max_cases = 8
-        min_scenarios, target_scenarios = 8, 12
+        min_cases = target_cases = max_cases = 12
+        min_plan_cases, target_plan_cases, max_plan_cases = 20, 20, 50
+        min_scenarios, target_scenarios = 20, 50
         size = "large"
     if blockers:
-        target_cases = max(3, min(target_cases, max_cases))
+        target_cases = max(5, min(target_cases, max_cases))
     if mode in {"mindmap", "compact_mindmap"}:
         min_cases = target_cases = max_cases = min(max_cases, target_cases)
         min_scenarios = max(min_scenarios, min(target_scenarios, point_count * 2 or 3))
@@ -448,9 +451,13 @@ def generation_volume_targets(analysis, mode="full"):
         "mode": mode,
         "size": size,
         "requirement_point_count": point_count,
+        "min_plan_cases": min_plan_cases,
+        "target_plan_cases": target_plan_cases,
+        "max_plan_cases": max_plan_cases,
         "min_automation_cases": min_cases,
         "target_automation_cases": target_cases,
         "max_automation_cases": max_cases,
+        "max_cases": max_cases,
         "smoke_cases": smoke_cases,
         "smoke_max_cases": 3,
         "continue_threshold": 0.5,
@@ -458,8 +465,9 @@ def generation_volume_targets(analysis, mode="full"):
         "target_scenarios": target_scenarios,
         "manual_cases_not_counted": True,
         "guidance": (
-            "按需求规模控制自动化 YAML 数量：小需求 3 条，中需求 5 条，大需求最多 8 条；不要为了数量重复同一路径。"
-            "冒烟固定 3 条；Runner 首批自动下发最多 3 条。"
+            "完整测试计划和 Runner 自动化分层控制：小需求计划 5-8 条、中需求 10-20 条、大需求 20-50 条；"
+            "自动化 YAML 池按小/中/大收敛到 5/8/12 条，不要为了数量重复同一路径。"
+            "冒烟候选可多于首批，但 Runner 首批自动下发最多 3 条。"
             "首批冒烟用于证明 YAML 能下发、能执行、能产生日志；脚本/YAML/定位/超时类问题会暂停扩展，"
             "产品断言失败会记录为测试结果，不等同于 YAML 不可执行。"
             "无法稳定自动化的场景进入 manual_cases，但不计入自动化 cases 数。"

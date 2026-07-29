@@ -7755,14 +7755,15 @@ def generate_ui_yaml_from_request(d, job_id=None):
             )
         except Exception as scope_error:
             local_targets = generation_volume_targets({"requirement_points": stage1_text_assets}, mode="full")
-            target_count = safe_int(local_targets.get("target_automation_cases"), 3)
-            target_count = 3 if target_count <= 3 else (5 if target_count <= 5 else 8)
+            target_count = safe_int(local_targets.get("target_automation_cases"), 5)
+            target_count = 5 if target_count <= 5 else (8 if target_count <= 8 else 12)
             execution_scope_plan = {
-                "size": "small" if target_count <= 3 else ("medium" if target_count <= 5 else "large"),
+                "size": "small" if target_count <= 5 else ("medium" if target_count <= 8 else "large"),
+                "targetPlanCaseCount": safe_int(local_targets.get("target_plan_cases"), 5),
                 "targetCaseCount": target_count,
                 "smokeCount": min(3, target_count),
                 "continueThreshold": 0.5,
-                "reason": "AI 范围规划失败，回退平台 3/5/8 规则",
+                "reason": "AI 范围规划失败，回退平台计划池/自动化池分层规则",
                 "businessFlow": [],
                 "trace": {"enabled": True, "fallback": True, "error": str(scope_error)},
             }
@@ -8374,7 +8375,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
             "rule": (
                 "AI 负责选择和补齐可执行组合；平台只在最终转换前检查显式需求映射、"
                 "至少一条 executable 和分类终态；覆盖缺口记录为报告告警，"
-                "只有 0 条可执行 YAML 才阻断进入 Runner；3/5/8 仅作为规划目标，不为凑数放宽可执行性。"
+                "只有 0 条可执行 YAML 才阻断进入 Runner；完整计划规模和 5/8/12 自动化目标仅作为规划目标，不为凑数放宽可执行性。"
             ),
             "reasons": final_executable_portfolio.get("reasons") or [],
             "advisories": final_executable_portfolio.get("advisories") or [],

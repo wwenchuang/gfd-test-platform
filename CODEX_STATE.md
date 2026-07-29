@@ -5525,3 +5525,41 @@ PY
 
 - `python3 tests/backend_static_checks.py` 当前会先被用户历史 YAML 改动拦住：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`，该失败来自工作区已有 `server-tasks*/3D打印基线/OBJ保龄球打印.yaml` 改动，不属于本轮修改，未回滚。
 - 本轮不 push。用户 push/deploy 后需要再次使用同一 payload 串行跑稳定性验证；建议先暂停或隔离同 Runner 的华为日常任务，避免 OPPO 固定设备回归被同 Runner 队列占用。
+
+### 2026-07-29 百度网盘线上回归与报告/生成规模分层修复
+
+用户部署后，使用相同百度网盘需求、Figma、`qwen3.7-plus`、`RUNNER_JOB`、`win-runner-01`、固定 OPPO `ecbfd645` 发起回归：
+
+- Agent：`agent-1785314432310-22a73563`
+- 终态：`DONE / 100%`
+- Figma：4 页 / 4 图全部解析并进入 AI 规划。
+- 计划：AI 识别 3 个业务入口分支：文档打印、照片打印、扫描复印。
+- 生成：7 条 case / 7 个 YAML，静态 YAML 均 `ok=true`；Runner 前实际下发 5 个正式任务。
+- Runner：5 个正式 job 全部 `success`，均使用固定设备 `ecbfd645`；未出现第二台手机或 dry-run 误计为真机通过。
+- 仍有覆盖缺口：`REQ-002 照片打印` 的展示、同级、文案、可达性未进入最终执行覆盖。当前线上总结仍给出执行结论“通过”，但没有把“执行全过”和“覆盖不完整”拆开展示，容易误读。
+
+本轮本地修复：
+
+- 生成规模分层：完整测试计划和自动化 YAML 池拆开。小需求计划 5-8 / 自动化 5，中需求计划 10-20 / 自动化 8，大需求计划 20-50 / 自动化 12；Runner 首批仍最多 3 条，后续分批执行。
+- `generation_volume_targets()` 与 `generation_targets_for_scope()` 增加 `targetPlanCaseCount / min_plan_cases / max_plan_cases`，保留 `targetCaseCount` 作为自动化 YAML 目标，不再把“完整测试用例数量”和“首批自动执行数量”混在一起。
+- `execution_scope_planner` schema/prompt、`scenario_designer`、`automation_filter`、`coverage_auditor`、`smoke_selector`、`executable_yaml_planner` 统一新口径：完整计划 5-50，自动化池 5/8/12，首批 Runner 1-3。
+- Agent 总结新增 `summary.statusBreakdown` 与 `summary.coverageStatus`：分别展示最终结论、原始执行、修复验证和覆盖缺口。原始失败尝试会保留，修复验证通过且无逻辑失败时最终标签可显示“修复后通过”，不会被旧失败 job 覆盖成“部分通过”。
+- 前端最终报告新增“结果拆分”卡片，明确显示“原始执行 / 修复验证 / 覆盖缺口”；覆盖缺口列出缺失需求点，避免用户从技术日志里反推。
+
+已验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_generation_volume_targets_modes()
+checks.check_agent_summary_splits_repair_and_coverage_status()
+checks.check_ai_yaml_generation_decision_chain_static()
+print('ai yaml decision checks ok')
+PY
+python3 -m py_compile task_server/services/case_service.py task_server/services/ai_skill_service.py task_server/services/yaml_service.py task_server/services/agent_service.py tests/backend_static_checks.py
+node --check js/agent-workbench.js
+python3 tests/frontend_static_checks.py
+git diff --check -- task_server/services/agent_service.py task_server/services/case_service.py task_server/services/ai_skill_service.py task_server/services/yaml_service.py ai_skills/prompts/execution_scope_planner.v1.md ai_skills/prompts/scenario_designer.v1.md ai_skills/prompts/automation_filter.v1.md ai_skills/prompts/coverage_auditor.v1.md ai_skills/prompts/smoke_selector.v1.md ai_skills/prompts/executable_yaml_planner.v1.md ai_skills/schemas/execution_scope_planner.schema.json js/agent-workbench.js tests/backend_static_checks.py tests/frontend_static_checks.py
+```
+
+全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点为 `OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。

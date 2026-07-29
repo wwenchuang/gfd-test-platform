@@ -2259,6 +2259,45 @@ function renderRunnerExecutionGateSummary(artifacts = {}) {
   `;
 }
 
+function renderAgentStatusBreakdown(summary, artifacts) {
+  const statusBreakdown = (summary && summary.statusBreakdown && typeof summary.statusBreakdown === 'object') ? summary.statusBreakdown : {};
+  const coverageStatus = (summary && summary.coverageStatus && typeof summary.coverageStatus === 'object')
+    ? summary.coverageStatus
+    : (statusBreakdown.coverage && typeof statusBreakdown.coverage === 'object') ? statusBreakdown.coverage : {};
+  const generationPipeline = (artifacts && artifacts.generationPipeline && typeof artifacts.generationPipeline === 'object') ? artifacts.generationPipeline : {};
+  const validation = (artifacts && artifacts.yamlValidation && typeof artifacts.yamlValidation === 'object') ? artifacts.yamlValidation : {};
+  const coverageGap = (generationPipeline.coverageGap && typeof generationPipeline.coverageGap === 'object')
+    ? generationPipeline.coverageGap
+    : (validation.coverageGap && typeof validation.coverageGap === 'object') ? validation.coverageGap : {};
+  const original = (statusBreakdown.originalExecution && typeof statusBreakdown.originalExecution === 'object') ? statusBreakdown.originalExecution : {};
+  const repair = (statusBreakdown.repairValidation && typeof statusBreakdown.repairValidation === 'object') ? statusBreakdown.repairValidation : {};
+  const missingPoints = Array.isArray(coverageStatus.missingRequirementPoints)
+    ? coverageStatus.missingRequirementPoints
+    : Array.isArray(coverageGap.missingRequirementPoints) ? coverageGap.missingRequirementPoints : [];
+  const coverageReasons = Array.isArray(coverageStatus.reasons)
+    ? coverageStatus.reasons
+    : Array.isArray(coverageGap.reasons) ? coverageGap.reasons : [];
+  const coverageLabel = coverageStatus.label || (coverageStatus.status === 'incomplete' || missingPoints.length ? '覆盖不完整' : '覆盖完整');
+  const finalConclusion = statusBreakdown.finalConclusion || summary?.conclusion || '-';
+  return `
+    <section class="final-report-panel final-report-wide final-report-status-breakdown">
+      <strong>结果拆分</strong>
+      <div class="report-summary-grid final-report-metrics">
+        <div><span>最终结论</span><strong>${escapeHtml(finalConclusion)}</strong></div>
+        <div><span>原始执行</span><strong>${escapeHtml(`${Number(original.passed || 0)} 通过 / ${Number(original.failed || 0)} 失败`)}</strong></div>
+        <div><span>修复验证</span><strong>${escapeHtml(`${Number(repair.recovered || 0)} 已恢复 / ${Number(repair.unresolved || 0)} 未恢复`)}</strong></div>
+        <div><span>覆盖缺口</span><strong>${escapeHtml(coverageLabel)}</strong></div>
+      </div>
+      ${missingPoints.length ? `
+        <div class="final-report-file-list compact">
+          ${missingPoints.slice(0, 8).map(item => `<span><b>缺口</b><em>${escapeHtml(item)}</em></span>`).join('')}
+        </div>
+      ` : ''}
+      ${coverageReasons.length ? `<p>${escapeHtml(coverageReasons[0])}</p>` : ''}
+    </section>
+  `;
+}
+
 function renderAgentSummaryArtifact(run) {
   const artifacts = (run && run.artifacts) || {};
   const summary = artifacts.summary || {};
@@ -2326,6 +2365,9 @@ function renderAgentSummaryArtifact(run) {
   const attemptedCount = runnerEvidenceJobs.length
     ? runnerEvidenceJobs.length
     : (Number(execution.attemptedCount) || (passedCount + failedCount + timeoutCount + runningCount));
+  const logicalFailedCount = Number(execution.logicalFailedCount ?? summary.logicalFailedJobCount ?? failedCount) || 0;
+  const logicalTimeoutCount = Number(execution.logicalTimeoutCount ?? summary.timeoutJobCount ?? timeoutCount) || 0;
+  const recoveredCount = Number(execution.recoveredCount ?? summary.recoveredJobCount ?? 0) || 0;
   const failedStepCount = Number(orchestration.failedStepCount ?? steps.filter(step => ['FAILED', 'PARTIAL_FAILED'].includes(String(step.status || '').toUpperCase())).length) || 0;
   const runStatus = String(run?.status || orchestration.runStatus || '').toUpperCase();
   const orchestrationBlocked = orchestration.state === 'blocked' || orchestration.state === 'cancelled' || failedStepCount > 0 || ['FAILED', 'CANCELLED'].includes(runStatus);
@@ -2333,6 +2375,7 @@ function renderAgentSummaryArtifact(run) {
   let resultLabel = execution.label || summary.conclusion || '-';
   if (runnerEvidenceJobs.length) {
     if (runningCount) resultLabel = '执行中';
+    else if (recoveredCount && !logicalFailedCount && !logicalTimeoutCount) resultLabel = execution.label || '修复后通过';
     else if (failedCount || timeoutCount) resultLabel = passedCount ? '部分通过' : '未通过';
     else if (passedCount) resultLabel = '通过';
     else resultLabel = '未执行';
@@ -2373,6 +2416,7 @@ function renderAgentSummaryArtifact(run) {
         <div><span>脚本 / 环境 / 待归因</span><strong>${escapeHtml(brokenCount + unknownFailedCount)}</strong></div>
         <div><span>超时 / 运行中</span><strong>${escapeHtml(timeoutCount + runningCount)}</strong></div>
       </div>
+      ${renderAgentStatusBreakdown(summary, artifacts)}
       ${renderGeneratedExecutionLevelSummary(artifacts)}
       ${renderRunnerExecutionGateSummary(artifacts)}
       <div class="final-report-layout">

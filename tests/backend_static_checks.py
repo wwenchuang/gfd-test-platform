@@ -4700,7 +4700,7 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         and target_shortfall_audit.get("targetMet") is False
         and target_shortfall_audit.get("targetShortfall") == 4
         and target_shortfall_audit.get("advisories"),
-        "A complete executable portfolio must report a 3/5/8 target shortfall without manufacturing low-value cases or failing the gate",
+        "A complete executable portfolio must report a 5/8/12 target shortfall without manufacturing low-value cases or failing the gate",
     )
 
     classified_payload = {
@@ -14017,17 +14017,100 @@ def check_generation_volume_targets_modes():
     }
     full = case_service.generation_volume_targets(analysis, mode="full")
     mindmap = case_service.generation_volume_targets(analysis, mode="mindmap")
-    require(full["target_automation_cases"] == 8 and full["max_automation_cases"] == 8, "Large generation must cap automation YAML at 8")
+    require(
+        full["target_plan_cases"] >= 20
+        and full["max_plan_cases"] == 50
+        and full["target_automation_cases"] == 12
+        and full["max_automation_cases"] == 12,
+        "Large generation must separate 20-50 test plan cases from the 12-case automation YAML pool",
+    )
     require(mindmap["mode"] == "mindmap", "Generation targets must record the selected mode")
     small = case_service.generation_volume_targets({"requirement_points": ["入口"]}, mode="full")
     medium = case_service.generation_volume_targets({"requirement_points": ["入口", "列表", "详情"]}, mode="full")
     large = case_service.generation_volume_targets({"requirement_points": [str(i) for i in range(6)]}, mode="full")
     require(
-        (small["target_automation_cases"], medium["target_automation_cases"], large["target_automation_cases"]) == (3, 5, 8),
-        "Generated automation YAML quantity must converge to 3/5/8 by requirement size",
+        (small["target_plan_cases"], medium["target_plan_cases"], large["target_plan_cases"]) == (5, 10, 20),
+        "Full test plan quantity must scale separately from Runner automation",
+    )
+    require(
+        (small["target_automation_cases"], medium["target_automation_cases"], large["target_automation_cases"]) == (5, 8, 12),
+        "Generated automation YAML quantity must converge to 5/8/12 by requirement size",
     )
     require(small["smoke_cases"] == medium["smoke_cases"] == large["smoke_cases"] == 3, "Generated first smoke batch must stay fixed at 3")
     require(large["continue_threshold"] == 0.5 and large["smoke_max_cases"] == 3, "Generated execution gate must keep fixed 50% threshold and smoke cap 3")
+
+
+def check_agent_summary_splits_repair_and_coverage_status():
+    from task_server.services import agent_service
+
+    old_log_tool_call = agent_service._log_tool_call
+    old_ai_gateway_available = agent_service._ai_gateway_available
+    try:
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._ai_gateway_available = lambda: False
+        run = {
+            "runId": "agent-static-summary-breakdown",
+            "target": "基础打印新增百度网盘入口",
+            "mode": "FULL_AUTO",
+            "riskLevel": "LOW",
+            "steps": [
+                {"step": "PREPARE_SOURCE", "status": "SUCCESS"},
+                {"step": "RUN_SONIC", "status": "SUCCESS"},
+                {"step": "GENERATE_SUMMARY", "status": "PENDING"},
+            ],
+            "artifacts": {
+                "generationPipeline": {
+                    "coverageGap": {
+                        "missingRequirementPoints": ["REQ-002 照片打印入口可达性"],
+                        "reasons": ["仍未覆盖的需求点：REQ-002 照片打印入口可达性"],
+                    }
+                },
+                "yamlValidation": {"coverageIncomplete": True},
+                "report": {
+                    "status": "failed",
+                    "failedJobs": [{
+                        "jobId": "job-original-failed",
+                        "status": "failed",
+                        "file": "01-doc.yaml",
+                        "taskName": "文档打印入口校验",
+                        "failureType": "SCRIPT_ISSUE",
+                    }],
+                },
+                "jobProgressByPhase": {
+                    "smoke": {"jobs": [{
+                        "job_id": "job-original-failed",
+                        "status": "failed",
+                        "file": "01-doc.yaml",
+                        "task_name": "文档打印入口校验",
+                        "failure_type": "SCRIPT_ISSUE",
+                    }]},
+                    "安全重跑": {"jobs": [{
+                        "job_id": "job-recovered",
+                        "status": "success",
+                        "source_job_ids": ["job-original-failed"],
+                        "file": "01-doc.yaml",
+                        "task_name": "文档打印入口校验",
+                    }]},
+                },
+                "recovery": {
+                    "recovered": True,
+                    "sourceJobIds": ["job-original-failed"],
+                    "recoveryJobIds": ["job-recovered"],
+                },
+            },
+        }
+        call = agent_service._tool_generate_summary(run)
+        summary = run["artifacts"].get("summary") or {}
+        status_breakdown = summary.get("statusBreakdown") or {}
+        coverage_status = summary.get("coverageStatus") or {}
+        require(call.get("status") in ("SUCCESS", "SKIPPED"), "Summary generation should complete without AI Gateway")
+        require(status_breakdown.get("finalConclusion") == summary.get("conclusion"), "Summary must expose final conclusion separately")
+        require(status_breakdown.get("originalExecution", {}).get("failed") >= 1, "Summary must preserve original failed attempts")
+        require(status_breakdown.get("repairValidation", {}).get("recovered") >= 1, "Summary must show repair recovery count")
+        require(coverage_status.get("missingCount") == 1 and coverage_status.get("status") == "incomplete", "Summary must expose ungenerated coverage gaps")
+    finally:
+        agent_service._log_tool_call = old_log_tool_call
+        agent_service._ai_gateway_available = old_ai_gateway_available
 
 
 def check_ai_gateway_fallback_and_skill_static():
@@ -14094,7 +14177,7 @@ def check_ai_yaml_generation_decision_chain_static():
     require("def call_skill_executable_yaml_planner" in ai_skill_source, "AI skill service must expose executable YAML planner")
     require("def apply_executable_yaml_plan_to_payload" in ai_skill_source, "Executable YAML planner output must be applied to generated payload")
     require("path_mapping_guard_count" in ai_skill_source and "pathMappingGuarded" in ai_skill_source and "def executable_yaml_portfolio_audit" in ai_skill_source, "Executable planning must reject cross-requirement path swaps and audit the final portfolio")
-    require('"targetShortfall"' in ai_skill_source and "数量目标不作为硬门禁" in ai_skill_source, "Executable coverage must report 3/5/8 target shortfalls without forcing low-value Runner cases")
+    require('"targetShortfall"' in ai_skill_source and "数量目标不作为硬门禁" in ai_skill_source, "Executable coverage must report 5/8/12 target shortfalls without forcing low-value Runner cases")
     require("def compact_visual_grounder_base_payload" in ai_skill_source and "def merge_visual_grounder_payload" in ai_skill_source and "visual_input_compaction" in ai_skill_source, "Visual grounding must compact repeated history while preserving and merging design evidence")
     require("MIDSCENE_AI_SKILLS_STRICT_MODEL" in ai_skill_source and "AI_SKILLS_STRICT_MODEL" in ai_skill_source, "AI skills must support strict selected-model mode")
     require("model_trace" in ai_skill_source and "providerId" in ai_skill_source, "AI skill reviews must record provider/model trace")
@@ -14104,7 +14187,7 @@ def check_ai_yaml_generation_decision_chain_static():
         and "targets=current_targets" in ai_skill_source,
         "Coverage auditor must receive model config and the authoritative scope targets during the repair loop",
     )
-    require("当前平台采用可执行优先策略" in ai_skill_source, "Legacy quantity-driven prompt must be replaced with executable-first 3/5/8 guidance")
+    require("当前平台采用完整计划与自动化分层策略" in ai_skill_source, "Legacy quantity-driven prompt must be replaced with layered 5/8/12 automation guidance")
     require("每个需求功能点通常至少生成 2-4 条自动化用例" not in ai_skill_source, "Legacy 2-4 cases per requirement prompt must not reappear")
     require("display_only" in ai_skill_source and "点击后进入百度网盘相关流程" in ai_skill_source, "Baidu Netdisk display-only requirements must be separated from click/auth flows")
 
@@ -15771,7 +15854,7 @@ def main():
         "generation_targets_for_scope" in ai_skill_service_source
         and "generation_scope_plan=execution_scope_plan" in yaml_service_source
         and "targets=planned_generation_targets" in yaml_service_source,
-        "The platform-clamped 3/5/8 scope plan must govern generation, coverage audit and final smoke selection",
+        "The platform-clamped complete-plan and 5/8/12 automation scope must govern generation, coverage audit and final smoke selection",
     )
     require(
         "base_payload = normalize_cases_payload(base_payload)" in ai_skill_service_source
