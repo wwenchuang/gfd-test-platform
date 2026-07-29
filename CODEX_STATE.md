@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 百度网盘回归：严格源合同按主分支优先，防止 AI 扩展流挤掉照片打印
+
+用户部署后重新发起同一百度网盘 Agent：`agent-1785284860060-ca243ee3`。线上健康正常：Task 服务 / AI Gateway / Sonic Bridge / Windows Runner 可用，Runner 为 `win-runner-01`，固定 OPPO PHM110 `ecbfd645`，模型 `qwen3.7-plus`；未创建 Runner job，因此本轮失败与手机、ADB、Runner 或 Sonic 执行无关。
+
+真实结果：
+
+- `PREPARE_SOURCE` 成功解析 Figma `4 页 / 4 图`。
+- `PLAN` 成功，4 张 Figma 图分 4 批完成视觉校准。
+- `GENERATE_YAML` 失败，终态 `FAILED / GENERATE_YAML / 30%`。
+- 失败信息：生成自动化用例 6 条，但只确认 YAML 4 个；缺口为 `REQ-002 照片打印` 的 visibility / relation / copy / reachability 全部 4 项。
+
+根因：
+
+- 上一轮修复已阻止照片规格页/子规格页冒充“照片打印”主入口，这是正确的。
+- 但 AI PLAN 仍可能输出 `文档打印主链、扫描复印主链、文档打印扩展流、扫描复印扩展流`，照片打印再由源合同恢复补回，排序靠后。
+- YAML 生成和收敛预算会先消耗在重复的文档/扫描扩展流上，最终没有确认到照片打印主入口 YAML。
+
+修复：
+
+- 新增 `_agent_prioritize_source_contract_flows()`：严格源需求合同下，每个源业务入口只保留一个最佳主分支，并按源合同顺序输出。
+- 新增 `_agent_source_contract_flow_score()`：优先选择包含目标入口、可见/同级/文案/可达验收的主链；降低“若/可能/需记录/产品确认/缺失风险/多语言/特殊字符/异常处理”等扩展或人工风险流权重。
+- 重复源分支不进入 downstream `businessFlows`，但会保留在 `droppedOutOfScopeFlows` 审计中，避免静默丢弃。
+- 回归测试复现线上 PLAN 形态：文档、扫描、文档扩展、扫描扩展，照片靠源合同恢复；期望最终 `businessFlows` 为 `文档打印 / 照片打印 / 扫描复印`，扩展流不进入 YAML 生成预算。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_ai_owned_plan_and_evidence_loop()
+PY
+```
+
+后续部署后应同参重新跑百度网盘 Agent，预期不再因 AI 扩展流挤占预算而缺整条照片打印 REQ-002。若进入 Runner 后失败，再按真实 Runner 报告分类处理。
+
 ### 2026-07-28 系统化收紧：生成确认、验证和预检必须共用有效 YAML 覆盖口径
 
 用户部署 `1307c68` 后同参重新发起百度网盘 Agent：`agent-1785233673106-bed83f3b`。线上健康正常：Task 服务、AI Gateway、Sonic Bridge 和 Windows Runner 均可用，Runner 为 `2026.07.26-qwen3.7-result-retry-v1`，模型为 `qwen3.7-plus`，固定 OPPO PHM110 `ecbfd645` 在线；未向第二台手机下发。

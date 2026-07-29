@@ -4302,6 +4302,78 @@ def _agent_recover_missing_source_contract_flows(flows, required_flows):
     return recovered, recovery_notes
 
 
+def _agent_source_contract_flow_score(flow):
+    flow = flow if isinstance(flow, dict) else {}
+    text = _normalize_business_flow_text(json.dumps(flow, ensure_ascii=False))
+    score = 0
+    if "百度网盘" in text:
+        score += 30
+    for group in (
+        ("可见", "展示"),
+        ("同级", "层级", "位置", "并列"),
+        ("文案", "文字"),
+        ("可达", "跳转", "点击后", "稳定"),
+    ):
+        if any(term in text for term in group):
+            score += 10
+    if flow.get("contractBranchRecovery"):
+        score += 8
+    score += min(len(flow.get("steps") or []), 6)
+    score += min(len(flow.get("checks") or []), 4)
+    for risky in ("若", "如果", "可能", "需记录", "产品确认", "缺失风险", "多语言", "特殊字符", "字体大小", "异常处理", "未安装"):
+        if risky in text:
+            score -= 12
+    return score
+
+
+def _agent_prioritize_source_contract_flows(flows, required_flows):
+    """Keep one primary flow per source branch so AI extensions cannot consume YAML budget."""
+    if not flows or not required_flows:
+        return flows, []
+    required_branches = []
+    for item in required_flows:
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("branch") or item.get("name") or "").strip()
+        if branch and branch not in required_branches:
+            required_branches.append(branch)
+    if len(required_branches) < 2:
+        return flows, []
+
+    by_branch = {branch: [] for branch in required_branches}
+    passthrough = []
+    for index, flow in enumerate(flows):
+        if not isinstance(flow, dict):
+            continue
+        branch = str(flow.get("branch") or flow.get("name") or "").strip()
+        if branch in by_branch:
+            by_branch[branch].append((index, flow))
+        else:
+            passthrough.append(flow)
+
+    ordered = []
+    dropped = []
+    for branch in required_branches:
+        candidates = by_branch.get(branch) or []
+        if not candidates:
+            continue
+        best_index, best_flow = max(
+            candidates,
+            key=lambda pair: (_agent_source_contract_flow_score(pair[1]), -pair[0]),
+        )
+        ordered.append(best_flow)
+        for index, flow in candidates:
+            if index == best_index:
+                continue
+            dropped.append({
+                "id": flow.get("id"),
+                "name": flow.get("name"),
+                "branch": branch,
+                "reason": "duplicate_source_contract_branch",
+            })
+    return ordered + passthrough, dropped
+
+
 def _agent_generated_yaml_ref_out_of_source_scope(run, ref, content=""):
     if not _agent_yaml_ref_is_generated(run, ref):
         return False
@@ -4388,6 +4460,9 @@ def _normalize_agent_business_plan(value, run, constraint):
     )
     if recovered_flows:
         flows.extend(recovered_flows)
+    if source_contract:
+        flows, duplicate_notes = _agent_prioritize_source_contract_flows(flows, required_flows)
+        dropped_out_of_scope.extend(duplicate_notes)
 
     combined = _normalize_business_flow_text(json.dumps(flows, ensure_ascii=False))
     missing_branches = []

@@ -3875,10 +3875,57 @@ def check_agent_ai_owned_plan_and_evidence_loop():
         require(
             missing_photo_plan
             and not missing_photo_issues
-            and [item.get("branch") for item in missing_photo_plan.get("businessFlows") or []] == ["文档打印", "扫描复印", "照片打印"]
+            and [item.get("branch") for item in missing_photo_plan.get("businessFlows") or []] == ["文档打印", "照片打印", "扫描复印"]
             and "照片打印-百度网盘入口验收" in missing_photo_text
             and "contractBranchRecovery" in missing_photo_text,
-            "If AI omits one explicit source branch, PLAN must recover the missing hard branch from the source contract instead of failing",
+            "If AI omits one explicit source branch, PLAN must recover and order the missing hard branch from the source contract instead of failing",
+        )
+        production_gap_plan, production_gap_issues = agent_service._normalize_agent_business_plan({
+            "objective": "基础打印新增百度网盘入口",
+            "businessFlows": [
+                {
+                    "id": "FLOW-001",
+                    "name": "文档打印页-百度网盘入口正常展示与跳转",
+                    "branch": "文档打印",
+                    "steps": ["App首页", "点击「文档打印」", "校验「百度网盘」入口可见且文案正确", "点击入口", "校验跳转成功无白屏"],
+                    "checks": ["「百度网盘」入口可见，文案符合需求，点击后进入相关页面或出现可识别提示，未白屏、未闪退"],
+                },
+                {
+                    "id": "FLOW-003",
+                    "name": "扫描复印页-百度网盘入口滚动查找与跳转稳定性",
+                    "branch": "扫描复印",
+                    "steps": ["App首页", "点击「扫描复印」", "向右滚动找到「百度网盘」入口", "点击入口", "校验跳转成功"],
+                    "checks": ["通过滚动能找到入口，点击后进入相关页面或出现提示，无白屏崩溃"],
+                },
+                {
+                    "id": "FLOW-006",
+                    "name": "文档打印页-百度网盘入口文案多语言/特殊字符适配",
+                    "branch": "文档打印",
+                    "steps": ["切换系统语言或字体大小", "进入文档打印页", "检查「百度网盘」文案显示"],
+                    "checks": ["文案无截断、无乱码，在不同字体大小下仍清晰可见"],
+                },
+                {
+                    "id": "FLOW-007",
+                    "name": "扫描复印页-百度网盘入口UI缺失风险确认",
+                    "branch": "扫描复印",
+                    "steps": ["进入扫描复印页", "全面滚动检查所有区域", "确认是否有百度网盘入口"],
+                    "checks": ["若Figma未定义，则可能缺失；需记录实际表现并与产品确认是否为Bug"],
+                },
+            ],
+        }, live_plan_run, candidate_constraint)
+        production_gap_text = json.dumps(production_gap_plan, ensure_ascii=False)
+        production_gap_flows_text = json.dumps(
+            (production_gap_plan or {}).get("businessFlows") or [],
+            ensure_ascii=False,
+        )
+        require(
+            production_gap_plan
+            and not production_gap_issues
+            and [item.get("branch") for item in production_gap_plan.get("businessFlows") or []] == ["文档打印", "照片打印", "扫描复印"]
+            and "FLOW-006" not in production_gap_flows_text
+            and "FLOW-007" not in production_gap_flows_text
+            and "照片打印-百度网盘入口验收" in production_gap_text,
+            "Strict source contracts must order recovered hard branches before duplicate AI extension flows so YAML generation cannot lose the photo-print branch",
         )
         blocked_spec_ref = agent_service._score_agent_yaml_ref_for_execution(live_plan_run, {
             "module": "AI_Agent_草稿",
