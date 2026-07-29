@@ -1172,6 +1172,33 @@ def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
     return confirmed
 
 
+def update_api_test_plan_cases(
+    plan_id: str,
+    cases: List[Dict[str, Any]],
+    *,
+    source_id: str = "",
+) -> Dict[str, Any]:
+    plan = get_api_test_plan(plan_id, source_id=source_id)
+    if not plan:
+        raise ValueError("API 测试计划不存在")
+    if plan.get("status") != "draft":
+        raise ValueError("只有 AI 生成的 draft 候选可编辑，已采纳基线请重新生成候选")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("用例列表不能为空")
+    sanitized_cases = [
+        case for case in api_case_contract_service.sanitize_sensitive_data(cases)
+        if isinstance(case, dict)
+    ]
+    if not sanitized_cases:
+        raise ValueError("用例列表不能为空")
+    plan["cases"] = sanitized_cases
+    plan["updated_at"] = _now()
+    evaluated = evaluate_api_plan(plan)
+    write_json_file(_plan_path(plan_id), evaluated)
+    _save_plan_index(evaluated)
+    return evaluated
+
+
 def list_api_test_plans(limit: int = 20, source_id: str = "") -> List[Dict[str, Any]]:
     index = read_json_file(_index_path(), default=[]) or []
     if not isinstance(index, list):
@@ -1240,6 +1267,7 @@ __all__ = [
     "executable_api_cases",
     "generate_api_test_plan",
     "confirm_api_test_plan",
+    "update_api_test_plan_cases",
     "get_api_test_plan",
     "list_api_test_plans",
     "list_full_api_test_plans",

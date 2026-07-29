@@ -1785,6 +1785,37 @@
 .api-case-row-state .status-pill {
   width: fit-content;
 }
+.api-case-row-state .btn-sm {
+  width: fit-content;
+  min-height: 28px;
+}
+.api-plan-case-editor {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--accent2);
+  background: rgba(0, 229, 255, 0.06);
+}
+.api-plan-case-editor label {
+  display: grid;
+  gap: 6px;
+}
+.api-plan-case-editor label > span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-plan-case-editor textarea {
+  width: 100%;
+  min-height: 240px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--text);
+  padding: 10px;
+  font: 11px/1.5 var(--mono);
+}
 .api-plan-review-pagination {
   display: flex;
   align-items: center;
@@ -2066,6 +2097,36 @@
   padding: 12px 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
+}
+.api-report-active-runs {
+  border-left: 3px solid var(--accent);
+}
+.api-report-run-list {
+  display: grid;
+  gap: 10px;
+}
+.api-report-run-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-report-run-card > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.api-report-run-card span,
+.api-report-run-card small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-report-run-card strong,
+.api-report-run-card small {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .api-business-auth-panel > p {
   margin: 0;

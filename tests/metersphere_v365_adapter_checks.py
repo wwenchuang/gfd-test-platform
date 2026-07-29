@@ -945,6 +945,8 @@ class MeterSphereV365CaseUpsertChecks(unittest.TestCase):
 
         remote_case = remote.cases[first["remote_case_ids"]["API-001"]]
         request = remote_case["request"]
+        self.assertEqual(remote_case["status"], "COMPLETED")
+        self.assertNotIn(remote_case["status"], {"PROCESSING", "UNDERWAY"})
         self.assertEqual(request["method"], "POST")
         self.assertEqual(request["path"], "/pets/{petId}")
         self.assertEqual(request["rest"][0]["key"], "petId")
@@ -1267,6 +1269,8 @@ class MeterSphereV365ScenarioChecks(unittest.TestCase):
         self.assertEqual(self.remote.scenario_add_calls, 1)
         self.assertEqual(self.remote.scenario_update_calls, 0)
         scenario = self.remote.scenarios[first["scenario_id"]]
+        self.assertEqual(scenario["status"], "COMPLETED")
+        self.assertNotIn(scenario["status"], {"PROCESSING", "UNDERWAY"})
         self.assertEqual(scenario["environmentId"], "env-a")
         self.assertEqual(len(scenario["steps"]), 1)
         self.assertEqual(scenario["steps"][0]["stepType"], "API_CASE")

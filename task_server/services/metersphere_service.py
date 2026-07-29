@@ -2534,6 +2534,30 @@ def _pull_metersphere_report_with_config(
             if not fetched.get("ok"):
                 return fetched
             raw = sanitize_metersphere_data(fetched)
+    report_state = str(
+        (raw or {}).get("status")
+        or (raw or {}).get("state")
+        or (raw or {}).get("resultStatus")
+        or ""
+    ).strip()
+    normalized_report_state = _normalize_remote_run_state(report_state)
+    remote = (raw or {}).get("remote") if isinstance((raw or {}).get("remote"), dict) else {}
+    exec_state = str(remote.get("exec_status") or remote.get("execStatus") or "").strip().upper()
+    if (
+        report_state
+        and normalized_report_state == "running"
+    ) or (
+        exec_state
+        and exec_state not in {"COMPLETED", "STOPPED"}
+        and normalized_report_state == "running"
+    ):
+        return {
+            "ok": False,
+            "report_not_ready": True,
+            "status": "running",
+            "run_id": str(run_id or ""),
+            "error": "MeterSphere 执行仍在进行中，暂不能生成最终 API 报告",
+        }
     execution_snapshot = execution if isinstance(execution, dict) else {}
     report = api_report_service.normalize_metersphere_report(
         run_id,

@@ -914,7 +914,7 @@ class MeterSphereV365Adapter:
             "name": self._case_name(marker, case),
             "projectId": str(self.config.get("project_id") or ""),
             "priority": str(case.get("priority") or "P1")[:50],
-            "status": "PROCESSING",
+            "status": "COMPLETED",
             "apiDefinitionId": str(definition.get("id") or ""),
             "tags": ["midscene-managed", f"mtp:{marker[5:-1]}"],
             "environmentId": str(self.config.get("environment_id") or ""),
@@ -1283,7 +1283,7 @@ class MeterSphereV365Adapter:
         payload = {
             "name": f"{marker} {str(plan.get('name') or plan_id)}"[:255],
             "priority": "P0",
-            "status": "UNDERWAY",
+            "status": "COMPLETED",
             "projectId": str(self.config.get("project_id") or ""),
             "moduleId": module_id,
             "description": "Managed by midscene-task-platform",

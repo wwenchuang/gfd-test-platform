@@ -262,10 +262,13 @@ class ApiReportOwnershipChecks(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp(prefix="api_report_ownership_checks_")
         self.old_report_dir = api_report_service.API_TESTING_DIR
+        self.old_metersphere_dir = metersphere_service.API_TESTING_DIR
         api_report_service.API_TESTING_DIR = self.temp_dir
+        metersphere_service.API_TESTING_DIR = self.temp_dir
 
     def tearDown(self):
         api_report_service.API_TESTING_DIR = self.old_report_dir
+        metersphere_service.API_TESTING_DIR = self.old_metersphere_dir
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_report_persists_execution_and_binding_context(self):
@@ -464,7 +467,50 @@ class ApiReportOwnershipChecks(unittest.TestCase):
             })
 
         self.assertEqual([(7, "source-a", "家用业务")], calls)
-        self.assertEqual(({"ok": True, "reports": []}, 200), handler.responses[0])
+        payload, status = handler.responses[0]
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        self.assertEqual([], payload["reports"])
+        self.assertIn("active_runs", payload)
+        self.assertIn("recent_runs", payload)
+
+    def test_reports_route_includes_running_executions_for_live_monitoring(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self):
+                self.responses = []
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        metersphere_service._save_execution(
+            execution_record(
+                "execution-live",
+                "running",
+                current_phase="metersphere_run",
+                run_id="remote-run-live",
+            )
+        )
+        final_report = api_report_service.normalize_metersphere_report(
+            "remote-run-old",
+            {"summary": {"total": 7, "passed": 7, "failed": 0}},
+            plan_id="plan-old",
+            source_id="source-a",
+        )
+        api_report_service.save_api_report(final_report)
+
+        route = router.GET_ROUTES["/api/api-testing/reports"]
+        handler = Handler()
+        route(handler, {"source_id": "source-a"})
+
+        payload, status = handler.responses[0]
+        self.assertEqual(200, status)
+        self.assertEqual(1, len(payload["reports"]))
+        self.assertEqual("passed", payload["reports"][0]["status"])
+        self.assertEqual(1, len(payload["active_runs"]))
+        self.assertEqual("execution-live", payload["active_runs"][0]["execution_id"])
+        self.assertEqual("running", payload["active_runs"][0]["status"])
 
 
 if __name__ == "__main__":

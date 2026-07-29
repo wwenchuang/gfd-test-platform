@@ -21,6 +21,9 @@ let apiExecutionBindingIntentId = 0;
 let apiExecutionBindingIntent = null;
 let apiReportRequestId = 0;
 let apiReportRequestController = null;
+let apiReportPollTimer = null;
+let apiTestingReportContext = null;
+let apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
 const API_PLAN_MAX_ENDPOINTS = 60;
 let apiAssetBusinessLines = [];
 const apiPlanReviewStateByPlan = new Map();
@@ -45,6 +48,8 @@ function abortApiReportRequests() {
   apiReportRequestController?.abort();
   apiReportRequestController = null;
   apiReportRequestId += 1;
+  if (apiReportPollTimer) clearTimeout(apiReportPollTimer);
+  apiReportPollTimer = null;
 }
 
 function beginApiExecutionBindingIntent(projectId, environmentId = '') {
@@ -167,7 +172,7 @@ function apiWorkflowNextAction(context = {}) {
   const selectedCount = selectedApiPlanEndpointIds().length;
   const plans = context.plans || apiTestingPlans || [];
   const generation = context.generation || apiPlanGenerationCurrent || {};
-  const execution = context.execution || (apiExecutionContext?.active_runs || [])[0] || {};
+  const execution = context.execution || (apiExecutionContext?.active_runs || [])[0] || (apiTestingReportContext?.active_runs || [])[0] || {};
   const reports = context.reports || apiTestingReports || [];
   if (!source.configured) return {step: 'assets', label: '选择业务', handler: 'showApiAssetsPage()'};
   if (!endpoints.length) return {step: 'assets', label: '同步接口', handler: 'showApiAssetsPage()'};
@@ -2328,9 +2333,84 @@ function rerenderApiPlanReview() {
   if (target && apiTestingCurrentPlan) target.innerHTML = renderApiPlanEndpointGroups(apiTestingCurrentPlan);
 }
 
-function renderApiPlanCaseRow(item) {
+function apiPlanCaseKey(item = {}) {
+  return String(item.case_id || item.id || item.name || '').trim();
+}
+
+function editApiPlanCase(planId, caseId) {
+  if (!apiTestingCurrentPlan || String(apiTestingCurrentPlan.plan_id || '') !== String(planId || '')) return;
+  const target = (apiTestingCurrentPlan.cases || []).find(item => apiPlanCaseKey(item) === String(caseId || ''));
+  if (!target) {
+    showToast('未找到要编辑的用例', 'error');
+    return;
+  }
+  apiPlanCaseEditor = {
+    planId: String(planId || ''),
+    caseId: String(caseId || ''),
+    text: JSON.stringify(target, null, 2),
+  };
+  rerenderApiPlanReview();
+}
+
+function cancelApiPlanCaseEdit() {
+  apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
+  rerenderApiPlanReview();
+}
+
+function updateApiPlanCaseEditText(value) {
+  apiPlanCaseEditor.text = String(value || '');
+}
+
+async function saveApiPlanCaseEdit(planId, caseId) {
+  if (!apiTestingCurrentPlan || String(apiTestingCurrentPlan.plan_id || '') !== String(planId || '')) return;
+  let edited;
+  try {
+    edited = JSON.parse(apiPlanCaseEditor.text || '{}');
+  } catch (e) {
+    showToast('用例 JSON 格式不正确', 'error');
+    return;
+  }
+  const cases = (apiTestingCurrentPlan.cases || []).map(item => (
+    apiPlanCaseKey(item) === String(caseId || '') ? edited : item
+  ));
+  try {
+    const data = await apiRequest(`/api-testing/plans/${encodeURIComponent(planId)}/cases`, {
+      method: 'POST',
+      body: { source_id: currentApiExecutionSourceId(), cases },
+    });
+    apiTestingCurrentPlan = data.plan || null;
+    apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
+    showToast('✓ 已保存 AI draft 用例修改，并重新校验可执行性', 'success');
+    const target = document.getElementById('api-plan-result');
+    if (target && apiTestingCurrentPlan) target.innerHTML = renderApiPlanDetail(apiTestingCurrentPlan);
+  } catch (e) {
+    showToast(e.message || '保存用例失败', 'error');
+  }
+}
+
+function renderApiPlanCaseEditor(plan, item) {
+  const caseId = apiPlanCaseKey(item);
+  if (
+    plan?.status !== 'draft'
+    || apiPlanCaseEditor.planId !== String(plan?.plan_id || '')
+    || apiPlanCaseEditor.caseId !== caseId
+  ) return '';
+  return `
+    <div class="api-plan-case-editor">
+      <label><span>编辑 AI 生成用例 JSON</span><textarea oninput="updateApiPlanCaseEditText(this.value)" spellcheck="false">${escapeHtml(apiPlanCaseEditor.text || '')}</textarea></label>
+      <div class="generation-record-actions">
+        <button type="button" class="btn-sm" onclick="cancelApiPlanCaseEdit()">取消</button>
+        <button type="button" class="btn-sm primary" onclick="saveApiPlanCaseEdit(${jsArg(plan.plan_id)}, ${jsArg(caseId)})">保存并重新校验</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderApiPlanCaseRow(item, plan = {}) {
   const executable = (item.readiness || {}).state === 'executable';
   const missing = (item.readiness || {}).missing || [];
+  const caseId = apiPlanCaseKey(item);
+  const canEdit = plan.status === 'draft';
   return `
     <article class="api-case-row">
       <div class="api-case-row-name">
@@ -2342,7 +2422,9 @@ function renderApiPlanCaseRow(item) {
       <div class="api-case-row-state">
         ${apiStatusPill(executable ? '可执行' : '待补数据', executable ? 'success' : 'warn')}
         ${missing.length ? `<small>${escapeHtml(missing.join('；'))}</small>` : ''}
+        ${canEdit ? `<button type="button" class="btn-sm ghost" onclick="editApiPlanCase(${jsArg(plan.plan_id)}, ${jsArg(caseId)})">编辑</button>` : ''}
       </div>
+      ${renderApiPlanCaseEditor(plan, item)}
     </article>
   `;
 }
@@ -2387,7 +2469,7 @@ function renderApiPlanEndpointGroups(plan) {
             <div class="api-case-group-counts"><span>${escapeHtml(group.cases.length)} 条用例</span><strong>${escapeHtml(group.executableCount)} 可执行</strong>${group.needsReviewCount ? `<em>${escapeHtml(group.needsReviewCount)} 待补</em>` : ''}</div>
           </summary>
           <div class="api-case-group-meta"><span>${escapeHtml(group.module || '未分组')}</span>${group.changed ? apiStatusPill('本版变更', 'warn') : ''}</div>
-          <div class="api-case-group-cases">${group.cases.map(renderApiPlanCaseRow).join('')}</div>
+          <div class="api-case-group-cases">${group.cases.map(item => renderApiPlanCaseRow(item, plan)).join('')}</div>
         </details>
       `;
     }).join('') : apiTestingEmpty('当前筛选没有匹配的接口用例。')}</div>
@@ -3526,6 +3608,8 @@ async function showApiReportsPage() {
   const area = setApiTestingPage('api_reports', 'API 报告', '查看 MeterSphere 执行结果和接口失败归因。');
   if (!area) return;
   apiReportRequestController?.abort();
+  if (apiReportPollTimer) clearTimeout(apiReportPollTimer);
+  apiReportPollTimer = null;
   const controller = new AbortController();
   const requestId = ++apiReportRequestId;
   apiReportRequestController = controller;
@@ -3544,10 +3628,11 @@ async function showApiReportsPage() {
     if (businessLine) query.set('business_line', businessLine);
     const data = await apiRequest(`/api-testing/reports?${query.toString()}`, {signal: controller.signal});
     if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
-    apiTestingReports = data.reports || [];
+    apiTestingReportContext = { reports: data.reports || [], active_runs: data.active_runs || [], recent_runs: data.recent_runs || [] };
+    apiTestingReports = apiTestingReportContext.reports;
     area.innerHTML = `
       <div class="api-testing-page">
-        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_reports', reports: apiTestingReports})}</div>
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_reports', reports: apiTestingReports, execution: (apiTestingReportContext.active_runs || [])[0] || {}})}</div>
         <div class="generation-record-head">
           <div class="workflow-kicker">REPORT · API</div>
           <h2>API 报告</h2>
@@ -3557,17 +3642,68 @@ async function showApiReportsPage() {
             <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
           </div>
         </div>
+        ${renderApiReportActiveRuns(apiTestingReportContext.active_runs || [])}
         <section class="api-panel">
-          ${apiTestingReports.length ? `<table class="report-table"><thead><tr><th>报告</th><th>状态</th><th>总数</th><th>通过</th><th>失败</th><th>时间</th></tr></thead><tbody>${apiTestingReports.map(row => `
-            <tr><td>${escapeHtml(row.report_id || row.run_id || '-')}</td><td>${apiStatusPill(row.status, row.status === 'passed' ? 'success' : 'danger')}</td><td>${escapeHtml(row.total || 0)}</td><td>${escapeHtml(row.passed || 0)}</td><td>${escapeHtml(row.failed || 0)}</td><td>${escapeHtml(row.created_at || '-')}</td></tr>
-          `).join('')}</tbody></table>` : apiTestingEmpty('暂无 API 报告。')}
+          <div class="api-section-heading"><div><span>历史报告</span><h3>已完成执行</h3></div><small>${escapeHtml(apiTestingReports.length)} 份报告</small></div>
+          ${apiTestingReports.length ? `<table class="report-table"><thead><tr><th>报告</th><th>状态</th><th>总数</th><th>通过</th><th>失败</th><th>时间</th></tr></thead><tbody>${apiTestingReports.map(renderApiReportRow).join('')}</tbody></table>` : apiTestingEmpty((apiTestingReportContext.active_runs || []).length ? '当前执行尚未生成最终报告。' : '暂无 API 报告。')}
         </section>
       </div>
     `;
+    scheduleApiReportPoll(apiTestingReportContext.active_runs || []);
   } catch(e) {
     if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
     area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 报告读取失败')}</div>`;
   } finally {
     if (controller === apiReportRequestController) apiReportRequestController = null;
   }
+}
+
+function apiReportStatusTone(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (['passed', 'succeeded', 'success'].includes(normalized)) return 'success';
+  if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(normalized)) return 'danger';
+  return 'warn';
+}
+
+function renderApiReportRow(row = {}) {
+  return `
+    <tr>
+      <td>${escapeHtml(row.report_id || row.run_id || '-')}</td>
+      <td>${apiStatusPill(apiExecutionStateText(row.status), apiReportStatusTone(row.status))}</td>
+      <td>${escapeHtml(row.total || 0)}</td>
+      <td>${escapeHtml(row.passed || 0)}</td>
+      <td>${escapeHtml(row.failed || 0)}</td>
+      <td>${escapeHtml(row.created_at || '-')}</td>
+    </tr>
+  `;
+}
+
+function renderApiReportActiveRuns(activeRuns = []) {
+  if (!activeRuns.length) return '';
+  return `
+    <section class="api-panel api-report-active-runs">
+      <div class="api-section-heading">
+        <div><span>实时执行</span><h3>MeterSphere 仍在执行中</h3></div>
+        <button class="btn-sm primary" onclick="showApiExecutionPage()">查看实时执行</button>
+      </div>
+      <div class="api-report-run-list">${activeRuns.map(run => {
+        const stats = run.stats || {};
+        return `
+          <article class="api-report-run-card">
+            <div><span>计划</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || 'MeterSphere 执行')}</strong><small>execution_id ${escapeHtml(run.execution_id || '-')}</small></div>
+            <div><span>状态</span><strong>${escapeHtml(apiExecutionStateText(run.status))}</strong><small>${escapeHtml(run.current_phase || '-')} · 已运行 ${escapeHtml(apiDurationText(run.duration_seconds))}</small></div>
+            <div><span>远端统计</span><strong>${escapeHtml(stats.total || 0)} / ${escapeHtml(stats.passed || 0)} / ${escapeHtml(stats.failed || 0)}</strong><small>总数 / 通过 / 失败</small></div>
+            <div><span>报告</span><strong>${escapeHtml(run.report_status || '等待生成')}</strong><small>最后更新 ${escapeHtml(run.updated_at || '-')}</small></div>
+          </article>
+        `;
+      }).join('')}</div>
+    </section>
+  `;
+}
+
+function scheduleApiReportPoll(activeRuns = []) {
+  if (apiReportPollTimer) clearTimeout(apiReportPollTimer);
+  apiReportPollTimer = null;
+  if (!activeRuns.length || activeWorkflow !== 'api_reports') return;
+  apiReportPollTimer = setTimeout(() => showApiReportsPage(), 5000);
 }

@@ -15640,7 +15640,6 @@ def check_api_testing_routes_registered():
     )
     for expected_pattern in (
         r"^/api/api-testing/plans/([^/]+)$",
-        r"^/api/api-testing/plans/([^/]+)/cases$",
         r"^/api/api-testing/syncs/([^/]+)$",
         r"^/api/api-testing/assets/([^/]+)/revisions$",
         r"^/api/api-testing/assets/([^/]+)/diff$",
@@ -15650,6 +15649,13 @@ def check_api_testing_routes_registered():
             any(pattern.pattern == expected_pattern for pattern, _handler in router._GET_REGEX_ROUTES),
             f"Missing API testing GET route: {expected_pattern}",
         )
+    require(
+        any(
+            pattern.pattern == r"^/api/api-testing/plans/([^/]+)/cases$"
+            for pattern, _handler in router._POST_REGEX_ROUTES
+        ),
+        "Missing API plan draft case update route",
+    )
     require(
         any(
             pattern.pattern == r"^/api/api-testing/sources/([^/]+)/sync$"

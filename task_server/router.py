@@ -2770,16 +2770,32 @@ def _get_api_testing_metersphere_execution(handler, qs, match):
 
 @route_get("/api/api-testing/reports")
 def _get_api_testing_reports(handler, qs):
-    from task_server.services import api_report_service
+    from task_server.services import api_report_service, metersphere_service
+    source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
+    business_line = str(
+        qs.get("business_line") or qs.get("businessLine") or ""
+    ).strip()
+    executions = metersphere_service.list_metersphere_executions(limit=50)
+    if source_id:
+        executions = [
+            item for item in executions
+            if str(item.get("source_id") or "").strip() == source_id
+        ]
     handler._json({
         "ok": True,
         "reports": api_report_service.list_api_reports(
             limit=safe_int(qs.get("limit"), 20) or 20,
-            source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
-            business_line=str(
-                qs.get("business_line") or qs.get("businessLine") or ""
-            ).strip(),
+            source_id=source_id,
+            business_line=business_line,
         ),
+        "active_runs": [
+            item for item in executions
+            if str(item.get("status") or "") not in metersphere_service.TERMINAL_EXECUTION_STATES
+        ],
+        "recent_runs": [
+            item for item in executions
+            if str(item.get("status") or "") in metersphere_service.TERMINAL_EXECUTION_STATES
+        ][:20],
     })
 
 
@@ -3250,6 +3266,24 @@ def _post_api_testing_plans_confirm(handler, qs):
     try:
         d = handler._body()
         plan = api_test_plan_service.confirm_api_test_plan(str(d.get("plan_id") or d.get("planId") or "").strip())
+        handler._json({"ok": True, "plan": plan})
+    except Exception as e:
+        handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post_regex(r"^/api/api-testing/plans/([^/]+)/cases$")
+def _post_api_testing_plan_cases(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_test_plan_service
+    plan_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    try:
+        d = handler._body()
+        plan = api_test_plan_service.update_api_test_plan_cases(
+            plan_id,
+            d.get("cases") or [],
+            source_id=str(d.get("source_id") or d.get("sourceId") or "").strip(),
+        )
         handler._json({"ok": True, "plan": plan})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)

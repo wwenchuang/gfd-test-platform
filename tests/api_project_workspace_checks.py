@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shutil
@@ -1587,6 +1588,35 @@ class ApiPlanGenerationChecks(unittest.TestCase):
                 [self.endpoints[-1]["endpoint_id"]],
                 ["家用业务/app接口/目标模块"],
                 spawn=False,
+            )
+
+    def test_draft_plan_cases_can_be_edited_and_re_evaluated_before_confirmation(self):
+        plan = api_test_plan_service.generate_api_test_plan(
+            self.revision_id,
+            self.endpoint_ids(1),
+            use_ai=False,
+            source_id="api_source_a",
+            module_paths=["家用业务/app接口/目标模块"],
+        )
+        cases = copy.deepcopy(plan["cases"])
+        cases[0]["name"] = "人工审阅后保留的 AI 用例"
+        cases[0]["assertions"] = [{"type": "status", "operator": "in", "expected": [200, 201]}]
+
+        edited = api_test_plan_service.update_api_test_plan_cases(
+            plan["plan_id"],
+            cases,
+            source_id="api_source_a",
+        )
+        confirmed = api_test_plan_service.confirm_api_test_plan(plan["plan_id"])
+
+        self.assertEqual("人工审阅后保留的 AI 用例", edited["cases"][0]["name"])
+        self.assertEqual(1, edited["execution_readiness"]["executable_case_count"])
+        self.assertEqual("confirmed", confirmed["status"])
+        with self.assertRaisesRegex(ValueError, "draft"):
+            api_test_plan_service.update_api_test_plan_cases(
+                plan["plan_id"],
+                cases,
+                source_id="api_source_a",
             )
 
     def test_required_ai_failure_is_partial_without_local_plan(self):
