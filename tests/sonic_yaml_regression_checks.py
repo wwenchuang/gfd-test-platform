@@ -314,6 +314,14 @@ def test_local_import_accepts_android_file_picker_and_cancel_guard():
             "已退出打印流程，页面出现返回按钮或回到模型导入相关页面" not in text,
             f"{relative_path} must not use the overly broad import exit assertion",
         )
+        require(
+            any("本地导入收尾" in item and "不要点击「下一步」" in item for item in texts),
+            f"{relative_path} must leave the model edit page without entering the print flow",
+        )
+        require(
+            any("App 首页已加载完成" in item and "模型导入" in item for item in texts[-5:]),
+            f"{relative_path} must verify it returned to the app home before force-stopping",
+        )
 
 
 def test_wechat_import_uses_bounded_cancel_cleanup():
@@ -357,8 +365,49 @@ def test_wechat_import_uses_bounded_cancel_cleanup():
         )
 
 
+def test_baseline_flows_recover_restored_print_preview_before_home_actions():
+    for base in ("server-tasks", "server-tasks-all"):
+        for path in (ROOT / base / "3D打印基线").glob("*.yaml"):
+            relative_path = str(path.relative_to(ROOT))
+            texts = [_step_text(step) for step in _load_flow(relative_path)]
+            first_home_wait = next((i for i, item in enumerate(texts) if "App 首页已加载完成" in item), len(texts))
+            startup_texts = texts[:first_home_wait]
+            require(
+                any("启动恢复" in item and "已取消模型处理" in item and "不要点击「重新编辑」" in item for item in startup_texts),
+                f"{relative_path} must recover if launch restores an already-cancelled print preview",
+            )
+
+
+def test_print_flows_return_home_after_cancel_cleanup():
+    for relative_path in (
+        "server-tasks/3D打印基线/模型导入-微信导入.yaml",
+        "server-tasks-all/3D打印基线/模型导入-微信导入.yaml",
+        "server-tasks/3D打印基线/OBJ保龄球打印.yaml",
+        "server-tasks-all/3D打印基线/OBJ保龄球打印.yaml",
+        "server-tasks/3D打印基线/普通印章打印.yaml",
+        "server-tasks-all/3D打印基线/普通印章打印.yaml",
+        "server-tasks/3D打印基线/姓名牌打印.yaml",
+        "server-tasks-all/3D打印基线/姓名牌打印.yaml",
+        "server-tasks/3D打印基线/标牌打印.yaml",
+        "server-tasks-all/3D打印基线/标牌打印.yaml",
+        "server-tasks/3D打印基线/十二生肖印章打印.yaml",
+        "server-tasks-all/3D打印基线/十二生肖印章打印.yaml",
+    ):
+        texts = [_step_text(step) for step in _load_flow(relative_path)]
+        require(
+            any("取消后回首页" in item and "已取消模型处理" in item and "不要点击「重新编辑」" in item for item in texts),
+            f"{relative_path} must return home after cancelled print processing so the next case starts cleanly",
+        )
+        require(
+            any("收尾首页确认" in item and "模型打印预览" in item and "模型导入" in item for item in texts),
+            f"{relative_path} must confirm the print preview is gone before force-stopping",
+        )
+
+
 if __name__ == "__main__":
     test_obj_bowling_uses_observed_go_print_button_instead_of_hard_next_step()
     test_stamp_flows_exit_print_preview_with_repeated_cancel_guard()
     test_local_import_accepts_android_file_picker_and_cancel_guard()
     test_wechat_import_uses_bounded_cancel_cleanup()
+    test_baseline_flows_recover_restored_print_preview_before_home_actions()
+    test_print_flows_return_home_after_cancel_cleanup()
