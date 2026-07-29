@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 API AI 用例可见性与 3D 用户登录 token 获取
+
+用户澄清 `token` 指的是 3D 项目业务接口调用所需的用户登录 token，不是平台登录 token，也不是 Apifox Access Token。平台应优先通过业务“用户登录接口”获取 token，而不是只让用户手动粘贴。
+
+修复：
+
+- `AI 用例计划` 生成区新增 `AI 生成结果` 摘要。AI 批次生成 draft 后可直接点 `查看生成用例`，不再需要用户猜测要去候选列表点开。
+- 用例详情顶部新增 `api-plan-case-origin-banner`，明确区分 `AI 生成结果` draft 与已采纳的 `API 基线用例`，并显示业务鉴权是否已绑定。
+- 环境公共鉴权编辑区新增默认模式 `登录接口获取`：填写用户登录接口 URL、请求体 JSON、token JSON 路径（默认 `data.token`），后端临时调用登录接口取 token。
+- 新增后端路由 `/api/api-testing/sources/{source_id}/auth-binding/from-login`，成功获取 token 后复用现有 `save_api_auth_binding` 写入 MeterSphere 环境变量。
+- 登录请求体、登录密码、返回的业务 token 不写入本地文件，也不回显给前端；平台本地仍只保存变量名、header、环境/项目和指纹元数据。手动粘贴业务 token 保留为兜底。
+- 前端缓存版本更新为 `20260729-api-login-auth`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py  # 72 passed
+node --check js/api-testing.js
+python3 tests/api_project_workspace_checks.py  # 47 passed
+python3 -m py_compile task_server/router.py task_server/services/metersphere_service.py tests/api_project_workspace_checks.py
+git diff --check -- js/api-testing.js css/round5.css task-manager.html tests/frontend_static_checks.py task_server/router.py task_server/services/metersphere_service.py tests/api_project_workspace_checks.py CODEX_STATE.md
+```
+
+注意：本轮是一次性通过登录接口获取 token 并写入 MeterSphere 环境变量。尚未实现“保存登录配方并定时刷新 token”；如后续 token 过期频繁，应单独做加密存储/定时刷新设计。
+
 ### 2026-07-29 API 资产页改成三段式工作台
 
 用户反馈接口资产管理页面混乱，已通过 Apifox 读取到项目、分支和环境后仍容易被下方手动 ID 表单干扰，且页面没有清晰表达“接口资产 -> AI 用例 -> API 基线 -> MeterSphere 执行”的工作流。

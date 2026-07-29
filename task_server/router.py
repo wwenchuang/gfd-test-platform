@@ -3084,6 +3084,50 @@ def _post_api_testing_source_auth_binding(handler, qs, match):
         handler._json({"ok": False, "error": str(exc)}, 400)
 
 
+@route_post_regex(r"^/api/api-testing/sources/([^/]+)/auth-binding/from-login$")
+def _post_api_testing_source_auth_binding_from_login(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, metersphere_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    try:
+        data = handler._body()
+        binding = metersphere_service.save_api_auth_binding_from_login(
+            source_id,
+            data,
+            expected_project_id=str(
+                data.get("expected_project_id") or data.get("expectedProjectId") or ""
+            ).strip(),
+            expected_environment_id=str(
+                data.get("expected_environment_id")
+                or data.get("expectedEnvironmentId")
+                or ""
+            ).strip(),
+            expected_binding_version=(
+                data.get("expected_binding_version")
+                if "expected_binding_version" in data
+                else data.get("expectedBindingVersion")
+                if "expectedBindingVersion" in data
+                else None
+            ),
+            expected_profile_version=(
+                data.get("expected_profile_version")
+                if "expected_profile_version" in data
+                else data.get("expectedProfileVersion")
+                if "expectedProfileVersion" in data
+                else None
+            ),
+        )
+        handler._json({"ok": True, "binding": binding})
+    except metersphere_service.MeterSphereAuthConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 @route_delete_regex(r"^/api/api-testing/sources/([^/]+)/auth-binding$")
 def _delete_api_testing_source_auth_binding(handler, qs, match):
     if _require_user_auth(handler):

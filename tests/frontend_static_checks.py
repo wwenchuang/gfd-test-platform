@@ -207,6 +207,20 @@ def main():
         and "资产 -> AI 用例 -> 基线 -> 执行" in api_testing_js,
         "API asset management must use a MeterSphere-style context bar, asset tree, endpoint list, and action panel",
     )
+    require(
+        "openGeneratedApiPlan" in api_testing_js
+        and "查看生成用例" in api_testing_js
+        and "api-plan-generated-summary" in api_testing_js
+        and "AI 生成结果" in api_testing_js
+        and "api-plan-case-origin-banner" in api_testing_js
+        and "业务用户登录 token" in api_testing_js
+        and "api-business-auth-login-url" in api_testing_js
+        and "api-business-auth-login-body" in api_testing_js
+        and "auth-binding/from-login" in api_testing_js
+        and "MeterSphere 环境变量" in api_testing_js
+        and "平台本地只保存变量名和指纹" in api_testing_js,
+        "API AI generation and credential storage must be discoverable from the UI",
+    )
     require("apiLogExpandedKeys" in html and "runId + eventId" in html, "API execution logs must preserve expanded state by stable keys")
     require(
         "/api-testing/metersphere/execution-context" in api_testing_js
@@ -691,7 +705,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260729-api-asset-workbench" in html and "js/api-testing.js?v=20260729-api-asset-workbench" in html and "js/agent-status.js?v=20260729-api-baselines" in html, "Frontend cache versions must include Apifox discovery, API baselines, API asset workbench, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260729-api-login-auth" in html and "js/api-testing.js?v=20260729-api-login-auth" in html and "js/agent-status.js?v=20260729-api-baselines" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

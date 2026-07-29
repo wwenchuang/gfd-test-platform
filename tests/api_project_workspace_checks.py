@@ -708,6 +708,58 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         )
         self.assertNotIn("runtime-secret", local_text)
 
+    def test_auth_secret_can_be_fetched_from_business_login_without_persisting_it(self):
+        self._create_sources(1)
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+
+        class Adapter:
+            def __init__(self):
+                self.calls = []
+
+            def upsert_environment_variable(self, environment_id, key, value, description):
+                self.calls.append((environment_id, key, value, description))
+                return {"ok": True, "configured": True, "environment_id": environment_id, "variable_name": key}
+
+        adapter = Adapter()
+        login_calls = []
+
+        def fake_login_fetcher(request):
+            login_calls.append(request)
+            return {"code": 0, "data": {"token": "business-login-token"}}
+
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = lambda config: (adapter, {"version": "v3.6.5-lts"}, True)
+        try:
+            result = metersphere_service.save_api_auth_binding_from_login(
+                "api_source_a",
+                {
+                    "login_url": "https://example.test/api/user/login",
+                    "method": "POST",
+                    "body": {"username": "3d-user", "password": "3d-password"},
+                    "token_path": "data.token",
+                    "auth_type": "bearer",
+                    "header_name": "Authorization",
+                },
+                login_fetcher=fake_login_fetcher,
+            )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertTrue(result["configured"])
+        self.assertEqual(adapter.calls[0][2], "business-login-token")
+        self.assertEqual(login_calls[0]["url"], "https://example.test/api/user/login")
+        self.assertEqual(login_calls[0]["body"]["username"], "3d-user")
+        local_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in Path(self.temp_dir).rglob("*")
+            if path.is_file()
+        )
+        self.assertNotIn("business-login-token", local_text)
+        self.assertNotIn("3d-password", local_text)
+        self.assertNotIn("business-login-token", json.dumps(result, ensure_ascii=False))
+
     def test_auth_service_uses_one_remote_variable_for_shared_environment(self):
         self._create_sources(2)
         connection_identity = metersphere_service._api_auth_connection_identity(
@@ -1119,6 +1171,69 @@ class ApiWorkspaceRouteAuthChecks(unittest.TestCase):
             calls[0][1],
         )
         self.assertEqual(calls[0][1], calls[1][1])
+
+    def test_auth_binding_from_login_route_forwards_login_config_without_returning_token(self):
+        from task_server import router
+
+        class Handler:
+            def __init__(self, authorized, body):
+                self.authorized = authorized
+                self.body = body
+                self.responses = []
+
+            def _authorized(self):
+                return self.authorized
+
+            def _body(self):
+                return self.body
+
+            def _json(self, payload, status=200):
+                self.responses.append((payload, status))
+
+        pattern = r"^/api/api-testing/sources/([^/]+)/auth-binding/from-login$"
+        post = next(fn for matcher, fn in router._POST_REGEX_ROUTES if matcher.pattern == pattern)
+        match = re.match(pattern, "/api/api-testing/sources/api_source_a/auth-binding/from-login")
+        unauthenticated = Handler(False, {"login_url": "https://example.test/login"})
+        post(unauthenticated, {}, match)
+        self.assertEqual(unauthenticated.responses, [({"ok": False, "error": "Unauthorized"}, 401)])
+
+        original_save = metersphere_service.save_api_auth_binding_from_login
+        calls = []
+        metersphere_service.save_api_auth_binding_from_login = lambda source_id, login_config, **kwargs: calls.append(
+            (source_id, login_config, kwargs)
+        ) or {
+            "auth_ref": "api_auth_a",
+            "configured": True,
+            "variable_name": "MTP_API_AUTH_A",
+        }
+        try:
+            authenticated = Handler(True, {
+                "login_url": "https://example.test/login",
+                "body": {"username": "3d-user", "password": "3d-password"},
+                "token_path": "data.token",
+                "expected_project_id": "ms_project_a",
+                "expected_environment_id": "ms_env_a",
+                "expected_binding_version": "binding-version-a",
+                "expected_profile_version": "profile-version-a",
+            })
+            post(authenticated, {}, match)
+        finally:
+            metersphere_service.save_api_auth_binding_from_login = original_save
+
+        self.assertTrue(authenticated.responses[0][0]["binding"]["configured"])
+        self.assertEqual("api_source_a", calls[0][0])
+        self.assertEqual("https://example.test/login", calls[0][1]["login_url"])
+        self.assertEqual("3d-user", calls[0][1]["body"]["username"])
+        self.assertEqual(
+            {
+                "expected_project_id": "ms_project_a",
+                "expected_environment_id": "ms_env_a",
+                "expected_binding_version": "binding-version-a",
+                "expected_profile_version": "profile-version-a",
+            },
+            calls[0][2],
+        )
+        self.assertNotIn("3d-password", json.dumps(authenticated.responses, ensure_ascii=False))
 
     def test_auth_binding_route_returns_conflict_without_downgrading_to_bad_request(self):
         from task_server import router

@@ -1327,6 +1327,41 @@
   color: var(--text3);
   font-size: 10px;
 }
+.api-plan-generated-summary,
+.api-plan-case-origin-banner {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: rgba(0, 214, 224, .06);
+}
+.api-plan-generated-summary > div,
+.api-plan-case-origin-banner > span,
+.api-plan-case-origin-banner > small {
+  min-width: 0;
+}
+.api-plan-generated-summary > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+.api-plan-generated-summary strong,
+.api-plan-case-origin-banner strong {
+  font-size: 12px;
+}
+.api-plan-generated-summary span,
+.api-plan-case-origin-banner span,
+.api-plan-case-origin-banner small {
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.api-plan-generated-summary > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .api-generation-stages {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2104,7 +2139,8 @@
   color: var(--text3);
   font-size: 10px;
 }
-.api-business-auth-form input {
+.api-business-auth-form input,
+.api-business-auth-form textarea {
   width: 100%;
   min-width: 0;
   min-height: 36px;
@@ -2113,6 +2149,15 @@
   background: var(--surface2);
   color: var(--text);
   padding: 7px 9px;
+}
+.api-business-auth-form textarea {
+  min-height: 86px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.api-business-auth-body {
+  grid-column: 1 / -1;
 }
 .api-readiness-missing {
   display: flex;

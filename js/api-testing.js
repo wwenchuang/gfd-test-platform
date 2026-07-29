@@ -10,6 +10,7 @@ const apiPlanGenerationExpandedKeys = new Set(JSON.parse(localStorage.getItem('a
 const apiPlanGenerationScrollPositions = new Map();
 let apiBusinessAuthEditing = false;
 let apiBusinessAuthType = 'bearer';
+let apiBusinessAuthSourceMode = 'login';
 let apiExecutionPollRequestId = 0;
 let apiExecutionPollController = null;
 let apiExecutionBindingLookupRequestId = 0;
@@ -1750,6 +1751,7 @@ function renderApiPlanGeneration(generation) {
   if (!generation?.generation_id) return apiTestingEmpty('选择接口后，点击“生成 AI 用例”开始。');
   const batches = generation.batches || [];
   const events = generation.events || [];
+  const generatedBatches = batches.filter(batch => String(batch.plan_id || '').trim());
   const failedCount = Number(generation.failed_batches || batches.filter(batch => batch.status === 'failed').length);
   const retryable = ['partial', 'failed'].includes(generation.status) && failedCount > 0;
   const logKey = apiPlanGenerationLogKey(generation.generation_id);
@@ -1781,6 +1783,12 @@ function renderApiPlanGeneration(generation) {
           <span>${index < stageIndex ? '✓' : index + 1}</span><strong>${escapeHtml(stage)}</strong>
         </li>
       `).join('')}</ol>
+      ${generatedBatches.length ? `
+        <div class="api-plan-generated-summary">
+          <div><strong>AI 生成结果</strong><span>${escapeHtml(generatedBatches.length)} 个候选计划已生成，先审阅用例明细，再采纳为 API 基线。</span></div>
+          <div>${generatedBatches.map((batch, index) => `<button class="btn-sm ai" onclick="openGeneratedApiPlan(${jsArg(batch.plan_id)})">查看生成用例 ${escapeHtml(batch.batch_index || index + 1)}</button>`).join('')}</div>
+        </div>
+      ` : ''}
       ${generation.error ? `<div class="api-inline-error">${escapeHtml(generation.error)}</div>` : ''}
       ${retryable ? `<div class="generation-record-actions"><button class="btn-sm ai" onclick="retryApiPlanGeneration(${jsArg(generation.generation_id)})">重试失败批次</button><span>已成功内容保持不变。</span></div>` : ''}
       <details class="api-plan-tech-detail api-generation-log-detail" data-api-generation-log-key="${escapeHtml(logKey)}" ${logOpen ? 'open' : ''} ontoggle="toggleApiPlanGenerationLog(${jsArg(generation.generation_id)}, this.open)">
@@ -1800,7 +1808,7 @@ function renderApiPlanGeneration(generation) {
               <strong class="api-plan-batch-count">${escapeHtml(batch.endpoint_count || 0)}</strong>
               ${apiStatusPill(apiPlanBatchStatusText(batch.status), apiPlanGenerationStatusClass(batch.status))}
               <div class="api-plan-batch-result">${batch.plan_id
-                ? `<code>${escapeHtml(batch.plan_id)}</code><button class="btn-sm ghost" onclick="openApiTestPlan(${jsArg(batch.plan_id)})">查看计划</button>`
+                ? `<code>${escapeHtml(batch.plan_id)}</code><button class="btn-sm ghost" onclick="openGeneratedApiPlan(${jsArg(batch.plan_id)})">查看生成用例</button>`
                 : `<span>${escapeHtml(batch.error || (batch.status === 'running' ? '等待 AI 返回' : '尚未生成计划'))}</span>`}</div>
             </div>
           `;
@@ -1812,6 +1820,10 @@ function renderApiPlanGeneration(generation) {
       </details>
     </article>
   `;
+}
+
+function openGeneratedApiPlan(planId) {
+  return openApiTestPlan(planId);
 }
 
 function updateApiPlanGeneration(generation) {
@@ -2415,6 +2427,11 @@ function renderApiPlanDetail(plan) {
   }
   return `
     <div class="api-plan-detail-head"><div><span>${plan.status === 'confirmed' ? '基线用例' : '候选审阅'}</span><h3>${escapeHtml(plan.name || 'API 用例计划')}</h3></div>${isStale ? apiStatusPill('接口已变化', 'danger') : apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}</div>
+    <div class="api-plan-case-origin-banner" data-source="${escapeHtml(plan.source || '')}">
+      <strong>${plan.status === 'confirmed' ? 'API 基线用例' : 'AI 生成结果'}</strong>
+      <span>${plan.status === 'confirmed' ? '该计划已采纳为基线，可进入 MeterSphere 执行。' : '这是 AI 生成的 draft 候选，请先按接口审阅用例明细；确认后点“采纳为基线”。'}</span>
+      <small>${escapeHtml(sourceText)} · 业务鉴权 ${plan.auth_binding?.configured ? '已绑定 MeterSphere 环境变量' : '未配置业务用户登录 token'}</small>
+    </div>
     <div class="review-stats compact api-plan-readiness">
       <div class="review-stat"><strong>${escapeHtml(plan.endpoint_count || 0)}</strong><span>接口</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.case_count || cases.length)}</strong><span>用例</span></div>
@@ -2813,7 +2830,7 @@ function renderApiBusinessAuthPanel(context = {}) {
             <div><span>环境公共鉴权</span><h3>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</h3></div>
             ${apiStatusPill(`${auth.auth_type === 'api_key' ? 'API Key' : 'Bearer'} 已配置`, 'success')}
           </div>
-          <p>${reused ? `该环境已复用此鉴权，当前覆盖 ${usageCount} 个业务来源。` : '该环境下的接口执行会自动复用，无需每次提交。'}</p>
+          <p>${reused ? `该环境已复用此鉴权，当前覆盖 ${usageCount} 个业务来源。` : '该环境下的接口执行会自动复用，无需每次提交。'} token 写入 MeterSphere 环境变量，平台本地只保存变量名和指纹。</p>
         </div>
         <details class="api-plan-tech-detail api-auth-detail">
           <summary>管理公共鉴权</summary>
@@ -2834,21 +2851,32 @@ function renderApiBusinessAuthPanel(context = {}) {
     return `
       <section class="api-business-auth-panel" data-configured="false">
         <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>当前环境尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
-        <p>配置一次后，同一 MeterSphere 项目和环境中的业务来源都会自动复用。</p>
-        <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()" ${canEdit ? '' : 'disabled'}>配置鉴权</button>
+        <p>优先通过 3D 项目的用户登录接口获取 token，再写入 MeterSphere 环境变量；平台本地只保存变量名和指纹。</p>
+        <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()" ${canEdit ? '' : 'disabled'}>配置登录接口</button>
       </section>
     `;
   }
   return `
     <section class="api-business-auth-panel is-editing" data-configured="${configured ? 'true' : 'false'}">
-      <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>${configured ? '更新密钥' : '配置密钥'}</h3></div><small>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</small></div>
+      <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>${configured ? '更新业务用户登录 token' : '配置业务用户登录 token'}</h3></div><small>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</small></div>
+      <p>推荐从用户登录接口实时获取 token。登录账号密码只用于本次请求，返回 token 只转写到 MeterSphere 环境变量。</p>
+      <div class="api-auth-segmented" role="group" aria-label="业务 token 获取方式">
+        <button type="button" data-auth-source-mode="login" class="${apiBusinessAuthSourceMode === 'login' ? 'active' : ''}" onclick="setApiBusinessAuthSourceMode('login')">登录接口获取</button>
+        <button type="button" data-auth-source-mode="manual" class="${apiBusinessAuthSourceMode === 'manual' ? 'active' : ''}" onclick="setApiBusinessAuthSourceMode('manual')">手动粘贴兜底</button>
+      </div>
       <div class="api-auth-segmented" role="group" aria-label="业务鉴权类型">
         <button type="button" data-auth-type="bearer" class="${apiBusinessAuthType === 'bearer' ? 'active' : ''}" onclick="setApiBusinessAuthType('bearer')">Bearer</button>
         <button type="button" data-auth-type="api_key" class="${apiBusinessAuthType === 'api_key' ? 'active' : ''}" onclick="setApiBusinessAuthType('api_key')">API Key</button>
       </div>
       <div class="api-business-auth-form">
         ${apiBusinessAuthType === 'api_key' ? `<label><span>API Key Header</span><input id="api-business-auth-header" autocomplete="off" value="${escapeHtml(auth.auth_type === 'api_key' ? auth.header_name || '' : '')}" placeholder="X-API-Key"></label>` : ''}
-        <label><span>新密钥</span><input id="api-business-auth-secret" type="password" autocomplete="new-password" value="" placeholder="输入后仅发送一次"></label>
+        ${apiBusinessAuthSourceMode === 'login' ? `
+          <label><span>用户登录接口</span><input id="api-business-auth-login-url" autocomplete="off" value="" placeholder="https://3d.example.com/api/user/login"></label>
+          <label><span>Token JSON 路径</span><input id="api-business-auth-token-path" autocomplete="off" value="data.token" placeholder="data.token"></label>
+          <label class="api-business-auth-body"><span>登录请求体 JSON</span><textarea id="api-business-auth-login-body" autocomplete="off" spellcheck="false" placeholder='{"username":"test","password":"******"}'></textarea></label>
+        ` : `
+          <label><span>业务 token</span><input id="api-business-auth-secret" type="password" autocomplete="new-password" value="" placeholder="输入后仅发送一次"></label>
+        `}
       </div>
       <div class="api-business-auth-actions">
         <button class="btn-sm" aria-label="取消更换业务鉴权" onclick="cancelApiBusinessAuthEdit()">取消</button>
@@ -2867,6 +2895,7 @@ function editApiBusinessAuth() {
   const auth = apiBusinessAuthMetadata();
   apiBusinessAuthEditing = true;
   apiBusinessAuthType = auth.auth_type === 'api_key' ? 'api_key' : 'bearer';
+  apiBusinessAuthSourceMode = 'login';
   renderApiBusinessAuthInHeader();
 }
 
@@ -2880,6 +2909,11 @@ function setApiBusinessAuthType(authType) {
   renderApiBusinessAuthInHeader();
 }
 
+function setApiBusinessAuthSourceMode(mode) {
+  apiBusinessAuthSourceMode = mode === 'manual' ? 'manual' : 'login';
+  renderApiBusinessAuthInHeader();
+}
+
 async function saveApiBusinessAuth() {
   const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
   const expected = apiBusinessAuthExpectedState();
@@ -2888,21 +2922,57 @@ async function saveApiBusinessAuth() {
   const headerName = apiBusinessAuthType === 'api_key'
     ? document.getElementById('api-business-auth-header')?.value.trim() || ''
     : 'Authorization';
-  if (!sourceId || !secret) {
-    showToast(!sourceId ? '请先选择 API 来源' : '请输入新的业务鉴权密钥', 'error');
+  const loginUrl = document.getElementById('api-business-auth-login-url')?.value.trim() || '';
+  const tokenPath = document.getElementById('api-business-auth-token-path')?.value.trim() || 'data.token';
+  const loginBodyText = document.getElementById('api-business-auth-login-body')?.value.trim() || '{}';
+  if (!sourceId) {
+    showToast('请先选择 API 来源', 'error');
     return;
   }
+  if (apiBusinessAuthSourceMode === 'manual' && !secret) {
+    showToast('请输入业务用户登录 token', 'error');
+    return;
+  }
+  if (apiBusinessAuthSourceMode === 'login' && !loginUrl) {
+    showToast('请填写用户登录接口 URL', 'error');
+    return;
+  }
+  let loginBody = {};
+  if (apiBusinessAuthSourceMode === 'login') {
+    try {
+      loginBody = JSON.parse(loginBodyText || '{}');
+    } catch (_) {
+      showToast('登录请求体必须是合法 JSON', 'error');
+      return;
+    }
+  }
   try {
-    const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding`, {
-      method: 'POST',
-      body: {
+    const path = apiBusinessAuthSourceMode === 'login'
+      ? `/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding/from-login`
+      : `/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding`;
+    const body = apiBusinessAuthSourceMode === 'login'
+      ? {
+        login_url: loginUrl,
+        method: 'POST',
+        body: loginBody,
+        token_path: tokenPath,
+        auth_type: apiBusinessAuthType,
+        header_name: headerName,
+        ...expected
+      }
+      : {
         auth_type: apiBusinessAuthType,
         header_name: headerName,
         secret,
         ...expected
-      }
+      };
+    const data = await apiRequest(path, {
+      method: 'POST',
+      body
     });
     if (secretInput) secretInput.value = '';
+    const loginBodyInput = document.getElementById('api-business-auth-login-body');
+    if (loginBodyInput) loginBodyInput.value = '';
     if (!apiBusinessAuthContextMatches(sourceId, expected)) {
       await refreshApiExecutionContext(true);
       return;
@@ -2915,7 +2985,7 @@ async function saveApiBusinessAuth() {
       binding: {...(apiExecutionContext?.binding || {}), auth_binding: binding}
     };
     renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
-    showToast('✓ 公共鉴权已写入当前 MeterSphere 环境', 'success');
+    showToast(apiBusinessAuthSourceMode === 'login' ? '✓ 已通过登录接口获取 token 并写入 MeterSphere 环境' : '✓ 公共鉴权已写入当前 MeterSphere 环境', 'success');
     await refreshApiExecutionContext(true);
   } catch (error) {
     if (secretInput) secretInput.value = '';

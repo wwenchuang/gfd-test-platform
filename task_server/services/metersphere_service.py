@@ -10,6 +10,7 @@ import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List
 
@@ -860,6 +861,107 @@ def save_api_auth_binding(
                 variable_name=variable_name,
                 environment_id=environment_id,
             )
+
+
+def _json_path_value(data: Any, path: str) -> Any:
+    current = data
+    for part in [item for item in str(path or "").strip().split(".") if item]:
+      if isinstance(current, dict):
+          current = current.get(part)
+      elif isinstance(current, list) and part.isdigit():
+          current = current[int(part)]
+      else:
+          return None
+    return current
+
+
+def _extract_business_login_token(data: Any, token_path: str = "") -> str:
+    paths = [
+        str(token_path or "").strip(),
+        "data.token",
+        "data.access_token",
+        "data.accessToken",
+        "token",
+        "access_token",
+        "accessToken",
+    ]
+    for path in [item for item in paths if item]:
+        value = _json_path_value(data, path)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise ValueError("登录接口未返回可识别的 token")
+
+
+def _default_business_login_fetcher(request: Dict[str, Any]) -> Dict[str, Any]:
+    url = str(request.get("url") or "").strip()
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("登录接口 URL 必须是 HTTP(S) 地址")
+    method = str(request.get("method") or "POST").strip().upper()
+    if method not in {"GET", "POST"}:
+        raise ValueError("登录接口只支持 GET 或 POST")
+    headers = {
+        str(key): str(value)
+        for key, value in (request.get("headers") or {}).items()
+        if str(key or "").strip() and str(value or "").strip()
+    }
+    body = request.get("body")
+    data = None
+    if method != "GET":
+        headers.setdefault("Content-Type", "application/json; charset=utf-8")
+        data = json.dumps(body if body is not None else {}, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=max(3, min(30, int(request.get("timeout_seconds") or 10)))) as response:
+            text = response.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        raise ValueError(f"登录接口返回 HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        raise ValueError("登录接口调用失败") from exc
+    try:
+        parsed_body = json.loads(text)
+    except Exception as exc:
+        raise ValueError("登录接口未返回 JSON") from exc
+    if not isinstance(parsed_body, dict):
+        raise ValueError("登录接口返回 JSON 必须是对象")
+    return parsed_body
+
+
+def save_api_auth_binding_from_login(
+    source_id: str,
+    login_config: Dict[str, Any],
+    *,
+    login_fetcher=None,
+    expected_project_id: str = "",
+    expected_environment_id: str = "",
+    expected_binding_version: str | None = None,
+    expected_profile_version: str | None = None,
+) -> Dict[str, Any]:
+    """Fetch a business login token once, then store it in MeterSphere env vars."""
+    cfg = login_config if isinstance(login_config, dict) else {}
+    login_url = str(cfg.get("login_url") or cfg.get("loginUrl") or "").strip()
+    if not login_url:
+        raise ValueError("请填写业务用户登录接口 URL")
+    request = {
+        "url": login_url,
+        "method": str(cfg.get("method") or "POST").strip().upper(),
+        "headers": cfg.get("headers") if isinstance(cfg.get("headers"), dict) else {},
+        "body": cfg.get("body") if "body" in cfg else {},
+        "timeout_seconds": cfg.get("timeout_seconds") or cfg.get("timeoutSeconds") or 10,
+    }
+    fetcher = login_fetcher or _default_business_login_fetcher
+    response = fetcher(request)
+    token = _extract_business_login_token(response, str(cfg.get("token_path") or cfg.get("tokenPath") or "data.token"))
+    return save_api_auth_binding(
+        source_id,
+        str(cfg.get("auth_type") or cfg.get("authType") or "bearer").strip(),
+        str(cfg.get("header_name") or cfg.get("headerName") or "Authorization").strip(),
+        token,
+        expected_project_id=expected_project_id,
+        expected_environment_id=expected_environment_id,
+        expected_binding_version=expected_binding_version,
+        expected_profile_version=expected_profile_version,
+    )
 
 
 def _validate_api_auth_expectations(
@@ -2463,6 +2565,7 @@ __all__ = [
     "clear_api_auth_binding",
     "save_metersphere_config",
     "save_api_auth_binding",
+    "save_api_auth_binding_from_login",
     "metersphere_config",
     "metersphere_health",
     "sanitize_metersphere_data",
