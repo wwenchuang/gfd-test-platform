@@ -48,6 +48,19 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                 args = sys.argv[1:]
                 home = pathlib.Path.home()
 
+                def emit(payload):
+                    text = json.dumps(payload, ensure_ascii=False)
+                    if mode == "prefixed_json" and args[:2] in (
+                        ["project", "get"],
+                        ["branch", "list"],
+                        ["environment", "list"],
+                    ):
+                        print("提示：正在读取 Apifox 资产")
+                        print(text)
+                        print("提示：读取完成")
+                    else:
+                        print(text)
+
                 with args_log.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(args, ensure_ascii=False) + "\\n")
                 with homes_log.open("a", encoding="utf-8") as handle:
@@ -80,7 +93,7 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                     if mode == "invalid_json":
                         print("{{broken")
                     else:
-                        print(json.dumps({{
+                        emit({{
                             "success": True,
                             "data": [{{
                                 "id": 5904970,
@@ -88,9 +101,9 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                                 "description": "打印业务",
                                 "team": {{"id": 12, "name": "功夫豆"}},
                             }}],
-                        }}, ensure_ascii=False))
+                        }})
                 elif args[:2] == ["project", "get"]:
-                    print(json.dumps({{
+                    emit({{
                         "success": True,
                         "data": {{
                             "id": 5904970,
@@ -98,17 +111,26 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                             "description": "打印业务",
                             "team": {{"id": 12, "name": "功夫豆"}},
                         }},
-                    }}, ensure_ascii=False))
+                    }})
                 elif args[:2] == ["branch", "list"]:
-                    print(json.dumps({{
+                    emit({{
                         "success": True,
                         "data": [{{"id": 88, "name": "测试分支"}}],
-                    }}, ensure_ascii=False))
+                    }})
                 elif args[:2] == ["environment", "list"]:
-                    print(json.dumps({{
+                    if mode == "large_json":
+                        emit({{
+                            "success": True,
+                            "data": [
+                                {{"id": index, "name": "环境" + str(index), "baseUrls": {{"default": "127.0.0.1:" + str(8000 + index)}}}}
+                                for index in range(200)
+                            ],
+                        }})
+                        raise SystemExit(0)
+                    emit({{
                         "success": True,
                         "data": [{{"id": 99, "name": "APP 测试环境"}}],
-                    }}, ensure_ascii=False))
+                    }})
                 else:
                     print(json.dumps({{
                         "success": False,
@@ -199,6 +221,36 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
             ],
             self._argv(),
         )
+
+    def test_project_context_accepts_cli_json_with_prompt_noise(self):
+        self._set_mode("prefixed_json")
+
+        result = discovery.discover_project_context(
+            self.token,
+            "5904970",
+            cli_bin=str(self.cli_path),
+            timeout_seconds=5,
+        )
+
+        self.assertEqual("3D 接口", result["project"]["name"])
+        self.assertEqual("测试分支", result["branches"][1]["name"])
+        self.assertEqual("APP 测试环境", result["environments"][1]["name"])
+        self.assertNotIn(self.token, json.dumps(result, ensure_ascii=False))
+
+    def test_project_context_does_not_truncate_large_cli_json(self):
+        self._set_mode("large_json")
+
+        result = discovery.discover_project_context(
+            self.token,
+            "5904970",
+            cli_bin=str(self.cli_path),
+            timeout_seconds=5,
+        )
+
+        self.assertEqual("3D 接口", result["project"]["name"])
+        self.assertGreaterEqual(len(result["environments"]), 200)
+        self.assertEqual("环境199", result["environments"][-1]["name"])
+        self.assertNotIn(self.token, json.dumps(result, ensure_ascii=False))
 
     def test_unsupported_cli_version_has_a_stable_safe_error(self):
         self._set_mode("old_version")

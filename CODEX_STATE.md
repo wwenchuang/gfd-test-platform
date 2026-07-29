@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Apifox 项目选择后上下文读取失败
+
+用户截图中“读取 Apifox 资产”能列出项目，但选择 `3D / 5904970` 后失败，前端提示 `Apifox CLI 返回了无法识别的数据`。线上复核确认：
+
+- 生产 `8091 / 8088` 健康，Task 服务模型为 `qwen3.7-plus`，AI skills 完整。
+- 生产 `apifox-cli` 已为 `2.2.8`，项目列表接口可通过已保存 source token 读取 17 个项目。
+- 失败发生在项目上下文读取阶段，不是 token、CLI 安装或项目权限问题。
+- 用同一 token 直接跑真实 CLI 只读命令时，`project list / project get / branch list / environment list` 均返回合法 JSON；其中 `environment list` 对 `5904970` 返回约 10KB。
+
+根因：
+
+- `apifox_discovery_service._run_cli()` 对成功 stdout 也复用了 `_safe_error_text()`，该函数会把文本截断到 4000 字符。
+- 小输出的项目列表、项目详情、分支列表能解析；环境列表超过 4000 字符后被截断成半截 JSON，于是 `_run_json_cli()` 抛 `INVALID_RESPONSE`，页面显示读取失败。
+
+修复：
+
+- 成功 stdout 改为只脱敏、不截断；错误路径仍保持 4000 字符上限，避免把大量 CLI 输出或敏感内容带给前端。
+- JSON 解析增加有限容错：允许 stdout 前后有 Apifox CLI 提示/告警，但仍必须解析出完整 JSON 对象并继续校验 `success/data`。
+- 新增两条回归：大环境列表不能截断；CLI 提示语包裹 JSON 时仍能读取项目详情、分支和环境名称。
+
+验证：
+
+```bash
+python3 -m unittest tests.apifox_discovery_checks.ApifoxDiscoveryServiceChecks.test_project_context_does_not_truncate_large_cli_json tests.apifox_discovery_checks.ApifoxDiscoveryServiceChecks.test_project_context_accepts_cli_json_with_prompt_noise
+python3 tests/apifox_discovery_checks.py       # 14 passed
+python3 tests/api_asset_sync_checks.py         # 40 passed
+python3 tests/api_project_workspace_checks.py  # 45 passed
+python3 -m py_compile task_server/services/apifox_discovery_service.py tests/apifox_discovery_checks.py
+```
+
+部署后应重新在页面选择 `3D / 5904970`，预期分支和环境下拉能显示 Apifox 中文名称，不再因环境列表过大失败。
+
 ### 2026-07-29 Apifox CLI 首次部署超时
 
 部署日志中的 npm `deprecated` 来自官方 `apifox-cli@2.2.8` 的旧依赖，不是安装失败原因；实际失败是 `install-server.sh` 的 180 秒总时限向 npm 发送 `SIGTERM`。实测该 CLI 连同非可选依赖约 78MB / 214 个包，缓存命中时安装约 6-7 秒，项目、分支和环境只读命令均可正常运行，因此生产失败点是首次下载未在 180 秒内完成。

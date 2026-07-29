@@ -55,10 +55,15 @@ def _safe_text(value: Any, limit: int = 500) -> str:
 
 
 def _safe_error_text(value: Any, token: str = "") -> str:
+    text = _redact_text(value, token)
+    return text[:4000]
+
+
+def _redact_text(value: Any, token: str = "") -> str:
     text = str(value or "")
     if token:
         text = text.replace(token, "<redacted>")
-    return text[:4000]
+    return text
 
 
 def _normalize_base_url(value: Any) -> str:
@@ -183,7 +188,32 @@ def _run_cli(
             token,
             missing_project=missing_project,
         )
-    return _safe_error_text(result.stdout, token)
+    return _redact_text(result.stdout, token)
+
+
+def _load_cli_json(output: str, token: str) -> Any:
+    text = _redact_text(output, token).strip()
+    decoder = json.JSONDecoder()
+    try:
+        return decoder.decode(text)
+    except (TypeError, ValueError):
+        pass
+    for index, char in enumerate(text):
+        if char not in "{[":
+            continue
+        try:
+            payload, end = decoder.raw_decode(text[index:])
+        except ValueError:
+            continue
+        trailing = text[index + end :].strip()
+        if trailing and not trailing.startswith(("提示", "warning", "Warning")):
+            continue
+        return payload
+    raise ApifoxDiscoveryError(
+        "INVALID_RESPONSE",
+        "Apifox CLI 返回了无法识别的数据，请使用手动连接",
+        503,
+    )
 
 
 def _run_json_cli(
@@ -201,14 +231,7 @@ def _run_json_cli(
         token=token,
         missing_project=missing_project,
     )
-    try:
-        payload = json.loads(output)
-    except (TypeError, ValueError) as exc:
-        raise ApifoxDiscoveryError(
-            "INVALID_RESPONSE",
-            "Apifox CLI 返回了无法识别的数据，请使用手动连接",
-            503,
-        ) from exc
+    payload = _load_cli_json(output, token)
     if not isinstance(payload, dict):
         raise ApifoxDiscoveryError(
             "INVALID_RESPONSE",
