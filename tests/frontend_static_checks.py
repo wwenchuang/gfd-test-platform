@@ -140,6 +140,12 @@ def main():
         "Apifox discovery must support project search and named branch/environment selection",
     )
     require(
+        "useDiscoveredSelection" in api_testing_js
+        and "const manual = !useDiscoveredSelection && manualFallbackOpen" in api_testing_js
+        and "if (useDiscoveredSelection)" in api_testing_js,
+        "Expanded Apifox manual fallback must not override a freshly discovered project selection",
+    )
+    require(
         "loading_projects" in api_testing_js
         and "loading_context" in api_testing_js
         and "retryApiSourceDiscovery" in api_testing_js

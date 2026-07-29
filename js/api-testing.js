@@ -1404,7 +1404,10 @@ function abortApiProjectScopeRequests() {
 async function saveApiSourceConfig(clearCredentials = false) {
   const source = apiTestingSourceDraftMode ? {} : (selectedApiAssetSource() || {});
   const token = document.getElementById('api-source-token')?.value.trim() || '';
-  const manual = document.getElementById('api-source-manual-fallback')?.open === true;
+  const manualFallbackOpen = document.getElementById('api-source-manual-fallback')?.open === true;
+  const discoveredProject = apiSourceDiscoveryState.project || null;
+  const useDiscoveredSelection = !!(apiSourceDiscoveryState.fresh && discoveredProject);
+  const manual = !useDiscoveredSelection && manualFallbackOpen;
   const scopeMode = document.querySelector('[data-sync-scope].active')?.dataset.syncScope || 'all';
   const selectedModules = apiSourceSelectedModulePaths(source);
   if (scopeMode === 'selected' && !selectedModules.length) {
@@ -1420,18 +1423,17 @@ async function saveApiSourceConfig(clearCredentials = false) {
     showToast('更换令牌后请先读取 Apifox 资产', 'error');
     return;
   }
-  const discoveredProject = apiSourceDiscoveryState.project || null;
   const branchSelect = document.getElementById('api-source-branch-select');
   const environmentSelect = document.getElementById('api-source-environment-select');
-  const projectId = manual
-    ? (document.getElementById('api-source-project-id')?.value.trim() || '')
-    : String(discoveredProject?.id || source.project_id || '');
-  const branchId = manual
-    ? (document.getElementById('api-source-branch-id')?.value.trim() || '')
-    : String(branchSelect ? branchSelect.value : (source.branch_id || ''));
-  const environmentId = manual
-    ? (document.getElementById('api-source-environment-id')?.value.trim() || '')
-    : String(environmentSelect ? environmentSelect.value : (source.environment_id || ''));
+  const projectId = useDiscoveredSelection
+    ? String(discoveredProject?.id || source.project_id || '')
+    : (manual ? (document.getElementById('api-source-project-id')?.value.trim() || '') : String(source.project_id || ''));
+  const branchId = useDiscoveredSelection
+    ? String(branchSelect ? branchSelect.value : (source.branch_id || ''))
+    : (manual ? (document.getElementById('api-source-branch-id')?.value.trim() || '') : String(source.branch_id || ''));
+  const environmentId = useDiscoveredSelection
+    ? String(environmentSelect ? environmentSelect.value : (source.environment_id || ''))
+    : (manual ? (document.getElementById('api-source-environment-id')?.value.trim() || '') : String(source.environment_id || ''));
   if (!projectId) {
     showToast(manual ? '请填写 Apifox 项目 ID' : '请先选择 Apifox 项目', 'error');
     return;
@@ -1453,7 +1455,7 @@ async function saveApiSourceConfig(clearCredentials = false) {
     clear_credentials: !!clearCredentials
   };
   if (token) payload.access_token = token;
-  if (!manual && apiSourceDiscoveryState.fresh && discoveredProject) {
+  if (useDiscoveredSelection) {
     const selectedBranch = (apiSourceDiscoveryState.branches || []).find(
       item => String(item.id || '') === branchId
     );

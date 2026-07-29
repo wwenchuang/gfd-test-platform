@@ -39,6 +39,7 @@ function serve() {
   let apiPlanGenerationPollCount = 0;
   let apiPlanGenerationRetried = false;
   let meterSelection = {project_id: 'project-interface', environment_id: 'env-qa'};
+  const sourceRequestBodies = [];
   const bindingRequestBodies = [];
   const authRequestBodies = [];
   const reportSourceQueries = [];
@@ -601,6 +602,34 @@ function serve() {
       });
       return;
     }
+    if (url.pathname === '/api/api-testing/sources' && req.method === 'POST') {
+      readJsonBody(req).then(body => {
+        sourceRequestBodies.push(body);
+        json(res, {
+          ok: true,
+          source: {
+            source_id: body.source_id || 'api-source-visual-created',
+            source_type: 'apifox',
+            name: body.name || body.provider_metadata?.project_name || 'Apifox 接口',
+            project_id: body.project_id || '',
+            branch_id: body.branch_id || '',
+            environment_id: body.environment_id || '',
+            provider_metadata: body.provider_metadata || {},
+            credential_configured: true,
+            configured: true,
+            sync_enabled: body.sync_enabled !== false,
+            sync_interval_minutes: body.sync_interval_minutes || 60,
+            last_success_at: '',
+            last_sync_status: 'queued',
+            last_error: '',
+            sync_scope: body.sync_scope || {mode: 'all', module_paths: []},
+            module_catalog: [],
+          },
+          sync: {sync_id: 'api-sync-created', status: 'queued'},
+        });
+      });
+      return;
+    }
     if (url.pathname === '/api/api-testing/assets' && req.method === 'GET') {
       const sourceId = url.searchParams.get('source_id') || 'api-source-visual-001';
       const modulePaths = sourceId === 'api-source-visual-002'
@@ -1155,6 +1184,7 @@ function serve() {
         server,
         url: `http://127.0.0.1:${address.port}/task-manager.html`,
         getFileReadCount: () => fileReadCount,
+        getSourceRequestBodies: () => sourceRequestBodies.map(item => ({...item})),
         getBindingRequestBodies: () => bindingRequestBodies.map(item => ({...item})),
         getAuthRequestBodies: () => authRequestBodies.map(item => ({...item})),
         getReportSourceQueries: () => [...reportSourceQueries],
@@ -1177,7 +1207,7 @@ async function anyVisible(locator) {
 
 (async () => {
   fs.mkdirSync(ARTIFACTS, {recursive: true});
-  const {server, url, getFileReadCount, getBindingRequestBodies, getAuthRequestBodies, getReportSourceQueries} = await serve();
+  const {server, url, getFileReadCount, getSourceRequestBodies, getBindingRequestBodies, getAuthRequestBodies, getReportSourceQueries} = await serve();
   const browser = await chromium.launch({headless: true});
   try {
     const page = await browser.newPage({viewport: {width: 1440, height: 900}});
@@ -1325,8 +1355,25 @@ async function anyVisible(locator) {
     if (!branchLabels.some(value => /测试分支/.test(value))) throw new Error(`Named Apifox branches are missing: ${branchLabels}`);
     if (!environmentLabels.some(value => /APP 测试环境/.test(value))) throw new Error(`Named Apifox environments are missing: ${environmentLabels}`);
     if (await page.locator('#api-source-manual-fallback').evaluate(el => el.open)) throw new Error('Successful discovery must keep manual ids collapsed');
+    await page.locator('#api-source-environment-select').selectOption('99');
+    await page.locator('#api-source-manual-fallback summary').click();
+    if (!await page.locator('#api-source-project-id').isVisible()) throw new Error('Manual fallback must still be available as a technical fallback');
+    await page.locator('#api-source-save-button').click();
+    for (let attempt = 0; attempt < 20 && !getSourceRequestBodies().length; attempt += 1) {
+      await page.waitForTimeout(100);
+    }
+    const savedSourceRequests = getSourceRequestBodies();
+    const latestSourceRequest = savedSourceRequests[savedSourceRequests.length - 1] || {};
+    if (latestSourceRequest.project_id !== '5904971') throw new Error(`Discovered project must be saved even when manual fallback is expanded: ${JSON.stringify(latestSourceRequest)}`);
+    if (latestSourceRequest.environment_id !== '99') throw new Error(`Named discovered environment must be saved instead of empty manual ID: ${JSON.stringify(latestSourceRequest)}`);
+    if (!/账户中心/.test(latestSourceRequest.provider_metadata?.project_name || '')) throw new Error(`Provider project name must be preserved: ${JSON.stringify(latestSourceRequest)}`);
     await page.screenshot({path: path.join(ARTIFACTS, 'api-source-discovery.png'), fullPage: true});
-    await page.locator('button[aria-label="取消新增 Apifox 项目"]').click();
+    const draftCancel = page.locator('button[aria-label="取消新增 Apifox 项目"]');
+    if (await draftCancel.count()) {
+      await draftCancel.click();
+    } else {
+      await page.locator('button[aria-label="关闭设置"]').click();
+    }
     if (!await page.locator('.api-source-actions .btn-sm.primary').isVisible()) throw new Error('Apifox sync must remain the primary asset action while an automatic sync is running');
     for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_baselines: '🧪', api_execution: '▶️', api_reports: '📊'})) {
       const iconText = await page.locator(`.workflow-step[data-workflow="${workflow}"] .workflow-index`).textContent();

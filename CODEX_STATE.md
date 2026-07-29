@@ -28,6 +28,32 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Apifox 已选项目仍要求手填 Project ID
+
+用户截图显示新增 Apifox 项目时，项目 `3D`、分支 `main`、环境 `生产环境（新）-腾讯云` 已经通过发现结果显示出来，但点击保存仍提示 `请填写 Apifox 项目 ID`。
+
+根因：
+
+- 前端保存逻辑把 `#api-source-manual-fallback.open` 直接当成“手动模式”。
+- 成功发现项目后，如果用户展开了“无法读取？手动连接”兜底区域，保存就会改读下面的手动 `Project ID / Environment ID` 输入框。
+- 这些手动输入框本来是技术兜底，不应该覆盖上方已经成功读取的 Apifox 项目、分支和环境。
+
+修复：
+
+- `saveApiSourceConfig()` 新增 `useDiscoveredSelection`：只要当前有新鲜的 Apifox discovery 项目，就优先保存发现到的 `project_id / branch_id / environment_id` 和 provider metadata。
+- “手动连接”展开只表示兜底表单可见；只有没有有效发现结果时，才走手动 ID 字段。
+- 视觉 smoke 增加覆盖：成功选择 Apifox 项目后，故意展开手动兜底且不填 Project ID，再保存，要求 POST payload 仍为发现到的项目和命名环境。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py  # 72 passed
+node --check js/api-testing.js
+VISUAL_ARTIFACTS_DIR=/tmp/midscene-api-manual-fallback-green npm run test:visual
+```
+
+视觉 smoke 已越过新增 Apifox 保存断言，确认 payload 使用发现到的 `project_id=5904971 / environment_id=99 / provider_metadata.project_name=账户中心`；但完整脚本后半段在既有 Agent 最终摘要断言 `Final summary must preserve successful smoke outcomes...` 失败，该断言与本轮 Apifox 来源保存逻辑无关，未在本轮修改 Agent 报告模块。
+
 ### 2026-07-29 Agent PLAN 卡在“生成用例结构 50%”：收紧超时并降级到源需求合同计划
 
 用户部署后同参重跑百度网盘 Agent：`agent-1785306176144-e170a6ef`。线上健康正常，固定 Runner/设备为 `win-runner-01 / ecbfd645`，模型 `qwen3.7-plus`。本轮未到 Runner，也未创建手机任务；卡点在 `PLAN`：
