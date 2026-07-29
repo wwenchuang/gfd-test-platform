@@ -28,6 +28,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Agent 报告展示：dry-run 不能算真机通过，旧失败分析不能覆盖 Runner 事实
+
+用户指出上一条百度网盘执行记录看起来“没有在手机上跑测试用例，最后是通过的”。复查线上最新记录 `agent-1785294560275-bd1e04c4`：
+
+- `smoke-dry-run` 有 2 个 success job，这是 YAML dry-run，不是真机测试通过。
+- `smoke` 有 1 个真实 Runner job，在固定 `win-runner-01 / ecbfd645` 上执行，状态为 failed，并带 HTML report URL。
+- `summary.execution` 已经正确记录 `未通过 / attempted=1 / failed=1 / productFailed=1`。
+- 旧 `failureAnalysis` 仍保留 `NONE / 全部执行成功`，会误导失败页或旧 UI 展示。
+
+修复：
+
+- `collectAgentReportProgressJobs()` 现在跳过 `smoke-dry-run` / dry-run phase，报告页只统计真实 Runner 执行阶段。
+- 最终报告页使用 `normalizeAgentReportJobs(report, normalizedReport, artifacts)` 聚合出的真实 Runner job 优先覆盖旧 summary/report 计数；存在 failed job 时显示 `未通过`，不再显示 `通过`。
+- 报告链接从真实 Runner job 的 `report_url` 兜底，旧 `report.executionReports` 为空时仍可打开 HTML 报告。
+- 失败分析页如果发现真实 failed job，但旧 `failureAnalysis` 写着 `NONE / 全部执行成功`，会用 Runner failureReview / error 覆盖展示，不再显示无失败。
+- 前端缓存版本更新到 `js/agent-workbench.js?v=20260729-agent-report-progress`，避免浏览器继续使用旧报告逻辑。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/agent-workbench.js
+git diff --check -- js/agent-workbench.js tests/frontend_static_checks.py task-manager.html
+```
+
+部署后预期：百度网盘历史记录和新记录都不会把 dry-run 成功当作手机测试通过；如果只有 dry-run 没有真实 Runner job，应显示未执行/待判定；如果真实 Runner job failed，应显示未通过并展示失败用例和报告链接。
+
 ### 2026-07-29 Apifox 名称发现、AI 候选与独立 API 基线
 
 本轮只收敛 API 测试工作流，没有修改 UI Agent、Midscene YAML、Runner、Sonic 或历史用例。设计对照 Apifox 的 AI 候选采纳、场景测试和合同校验，以及 Postman 的 OpenAPI 同步集合与独立 Collection Run：AI 生成内容先作为候选，平台校验后采纳为稳定基线；接口版本变化时保留旧基线并标记影响，不静默改写。

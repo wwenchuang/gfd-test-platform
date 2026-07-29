@@ -1591,11 +1591,27 @@ function agentReportFailureReason(item = {}) {
   ).trim();
 }
 
+function isAgentDryRunPhase(phase = '') {
+  return /dry[-_\s]*run/i.test(String(phase || ''));
+}
+
+function agentReportFailureType(item = {}) {
+  const review = item.failureReview || item.failure_review || {};
+  const raw = String(item.failureType || item.failure_type || '').toUpperCase();
+  if (raw) return raw;
+  const category = String(review.category || '').toLowerCase();
+  if (category === 'product_bug') return 'PRODUCT_BUG';
+  if (category === 'env_issue') return 'ENV_ISSUE';
+  if (category === 'script_issue') return 'SCRIPT_ISSUE';
+  return '';
+}
+
 function collectAgentReportProgressJobs(artifacts = {}) {
   const jobs = [];
   const addProgressJobs = (progress = {}, phaseKey = '') => {
     if (!progress || typeof progress !== 'object') return;
     const phase = String(progress.phase || phaseKey || '').trim();
+    if (isAgentDryRunPhase(phase)) return;
     (Array.isArray(progress.jobs) ? progress.jobs : []).forEach(job => {
       if (!job || typeof job !== 'object') return;
       const jobId = job.jobId || job.job_id || job.id || '';
@@ -1609,6 +1625,7 @@ function collectAgentReportProgressJobs(artifacts = {}) {
         file: job.file || job.yamlFile || job.yaml_file || job.yamlPath || job.yaml_path || '',
         taskName: job.taskName || job.task_name || job.targetTaskName || job.target_task_name || job.currentTaskName || job.current_task_name || '',
         status: job.status || job.state || job.result || '',
+        failureType: job.failureType || job.failure_type || agentReportFailureType(job),
       });
     });
   };
@@ -2252,8 +2269,16 @@ function renderAgentSummaryArtifact(run) {
   const failure = artifacts.failureAnalysis || {};
   const normalizedReport = normalizeAgentReportArtifacts(report);
   const reports = normalizedReport.executionReports;
-  const failedJobs = report.failedJobs || [];
-  const timeoutJobs = report.timeoutJobs || [];
+  const runnerEvidenceJobs = normalizeAgentReportJobs(report, normalizedReport, artifacts);
+  const runnerOutcomeGroups = agentReportOutcomeGroups(runnerEvidenceJobs);
+  const failedJobsForSummary = runnerEvidenceJobs.length ? runnerOutcomeGroups.failed : (report.failedJobs || []);
+  const reportLinksForSummary = reports.length
+    ? reports
+    : runnerEvidenceJobs.filter(item => item.reportUrl || item.report_url || isAgentHtmlReport(item));
+  const failedJobs = failedJobsForSummary;
+  const timeoutJobs = runnerEvidenceJobs.length
+    ? runnerOutcomeGroups.failed.filter(item => /timeout|timed_out/i.test(String(item.status || item.result || '')))
+    : (report.timeoutJobs || []);
   const yamlRefs = normalizedReport.yamlExecutionRefs;
   const jobStatuses = report.jobStatuses || [];
   const steps = Array.isArray(run?.steps) ? run.steps : [];
@@ -2270,27 +2295,48 @@ function renderAgentSummaryArtifact(run) {
     const status = String(item.status || '').toLowerCase();
     return status !== 'timeout' && (!id || !timeoutIds.has(id));
   }).length;
-  const passedCount = Number(execution.passedCount ?? summary.passedJobCount ?? report.successJobs?.length ?? ((gate.smokePassedCount || 0) + (gate.expandedCompletedCount || 0))) || 0;
-  const failedCount = Number(execution.failedCount ?? (failedJobs.length ? reportFailedOnly : summary.failedJobCount) ?? 0) || 0;
-  const timeoutCount = Number(execution.timeoutCount ?? (timeoutJobs.length ? timeoutJobs.length : summary.timeoutJobCount) ?? 0) || 0;
-  const runningCount = Number(execution.runningCount ?? (report.runningJobs?.length || summary.runningJobCount) ?? 0) || 0;
+  const passedCount = runnerEvidenceJobs.length
+    ? runnerOutcomeGroups.success.length
+    : (Number(execution.passedCount ?? summary.passedJobCount ?? report.successJobs?.length ?? ((gate.smokePassedCount || 0) + (gate.expandedCompletedCount || 0))) || 0);
+  const failedCount = runnerEvidenceJobs.length
+    ? runnerOutcomeGroups.failed.length
+    : (Number(execution.failedCount ?? (failedJobs.length ? reportFailedOnly : summary.failedJobCount) ?? 0) || 0);
+  const timeoutCount = runnerEvidenceJobs.length
+    ? timeoutJobs.length
+    : (Number(execution.timeoutCount ?? (timeoutJobs.length ? timeoutJobs.length : summary.timeoutJobCount) ?? 0) || 0);
+  const runningCount = runnerEvidenceJobs.length
+    ? runnerOutcomeGroups.active.length
+    : (Number(execution.runningCount ?? (report.runningJobs?.length || summary.runningJobCount) ?? 0) || 0);
   const reportFailureTypes = failedJobs.reduce((counts, item) => {
-    const type = String(item.failureType || item.failure_type || '').toUpperCase();
+    const type = agentReportFailureType(item);
     if (type === 'PRODUCT_BUG') counts.product += 1;
     else if (['SCRIPT_ISSUE', 'ENV_ISSUE'].includes(type)) counts.broken += 1;
     else if (String(item.status || '').toLowerCase() !== 'timeout') counts.unknown += 1;
     return counts;
   }, {product: 0, broken: 0, unknown: 0});
-  const productFailedCount = Number(execution.productFailedCount ?? summary.productFailedJobCount ?? reportFailureTypes.product) || 0;
-  const brokenCount = Number(execution.brokenCount ?? summary.brokenJobCount ?? reportFailureTypes.broken) || 0;
-  const unknownFailedCount = Number(execution.unknownFailedCount ?? summary.unknownFailedJobCount ?? reportFailureTypes.unknown) || 0;
-  const attemptedCount = Number(execution.attemptedCount) || (passedCount + failedCount + timeoutCount + runningCount);
+  const productFailedCount = runnerEvidenceJobs.length
+    ? reportFailureTypes.product
+    : (Number(execution.productFailedCount ?? summary.productFailedJobCount ?? reportFailureTypes.product) || 0);
+  const brokenCount = runnerEvidenceJobs.length
+    ? reportFailureTypes.broken
+    : (Number(execution.brokenCount ?? summary.brokenJobCount ?? reportFailureTypes.broken) || 0);
+  const unknownFailedCount = runnerEvidenceJobs.length
+    ? reportFailureTypes.unknown
+    : (Number(execution.unknownFailedCount ?? summary.unknownFailedJobCount ?? reportFailureTypes.unknown) || 0);
+  const attemptedCount = runnerEvidenceJobs.length
+    ? runnerEvidenceJobs.length
+    : (Number(execution.attemptedCount) || (passedCount + failedCount + timeoutCount + runningCount));
   const failedStepCount = Number(orchestration.failedStepCount ?? steps.filter(step => ['FAILED', 'PARTIAL_FAILED'].includes(String(step.status || '').toUpperCase())).length) || 0;
   const runStatus = String(run?.status || orchestration.runStatus || '').toUpperCase();
   const orchestrationBlocked = orchestration.state === 'blocked' || orchestration.state === 'cancelled' || failedStepCount > 0 || ['FAILED', 'CANCELLED'].includes(runStatus);
   const orchestrationLabel = orchestration.label || (runStatus === 'CANCELLED' ? '编排已取消' : (orchestrationBlocked ? '编排阻断' : '编排完成'));
   let resultLabel = execution.label || summary.conclusion || '-';
-  if (!execution.label) {
+  if (runnerEvidenceJobs.length) {
+    if (runningCount) resultLabel = '执行中';
+    else if (failedCount || timeoutCount) resultLabel = passedCount ? '部分通过' : '未通过';
+    else if (passedCount) resultLabel = '通过';
+    else resultLabel = '未执行';
+  } else if (!execution.label) {
     if (!attemptedCount && orchestrationBlocked) resultLabel = '未执行';
     else if (passedCount && (failedCount || timeoutCount || orchestrationBlocked)) resultLabel = '部分通过';
     else if (passedCount && !failedCount && !timeoutCount) resultLabel = '通过';
@@ -2350,13 +2396,14 @@ function renderAgentSummaryArtifact(run) {
       <div class="final-report-layout">
         <section class="final-report-panel">
           <strong>报告链接</strong>
-          ${reports.length ? `<div class="final-report-links">${reports.slice(0, 6).map(item => {
+          ${reportLinksForSummary.length ? `<div class="final-report-links">${reportLinksForSummary.slice(0, 6).map(item => {
             const label = agentCaseLabel(item);
             const subLabel = agentCaseSubLabel(item);
-            return item.reportUrl
-              ? `<a href="${escapeHtml(item.reportUrl)}" target="_blank" class="report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || '打开执行报告')}</span></a>`
+            const reportUrl = item.reportUrl || item.report_url || '';
+            return reportUrl
+              ? `<a href="${escapeHtml(reportUrl)}" target="_blank" class="report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || '打开执行报告')}</span></a>`
               : `<span class="report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || item.localPath || '-')}</span></span>`;
-          }).join('')}</div>${reports.length > 6 ? `<p>还有 ${escapeHtml(reports.length - 6)} 份报告，可在执行报告页继续查看。</p>` : ''}` : '<p>暂无 HTML 报告链接。</p>'}
+          }).join('')}</div>${reportLinksForSummary.length > 6 ? `<p>还有 ${escapeHtml(reportLinksForSummary.length - 6)} 份报告，可在执行报告页继续查看。</p>` : ''}` : '<p>暂无 HTML 报告链接。</p>'}
         </section>
         <section class="final-report-panel">
           <strong>下一步建议</strong>
@@ -2760,7 +2807,12 @@ function renderAnalysisDetail(step, artifacts, run = null) {
   const analysis = storedAnalysis && typeof storedAnalysis === 'object'
     ? storedAnalysis
     : (storedAnalysis ? {conclusion: String(storedAnalysis)} : {});
-  const failedItems = (artifacts || {}).failedExecutionItems || [];
+  const report = (artifacts || {}).report || {};
+  const normalizedReport = normalizeAgentReportArtifacts(report);
+  const runnerFailedItems = agentReportOutcomeGroups(
+    normalizeAgentReportJobs(report, normalizedReport, artifacts || {})
+  ).failed;
+  const failedItems = runnerFailedItems.length ? runnerFailedItems : ((artifacts || {}).failedExecutionItems || []);
   const diagnosis = (artifacts || {}).diagnosis || (step && step.diagnosis) || {};
   const runError = agentCompactDisplayText(run && run.error, 420);
   const evidence = analysis.evidence && typeof analysis.evidence === 'object' ? analysis.evidence : {};
@@ -2769,9 +2821,19 @@ function renderAnalysisDetail(step, artifacts, run = null) {
   const baselines = Array.isArray(evidence.baselineExamples) ? evidence.baselineExamples : [];
   const aiEvidence = Array.isArray(analysis.aiEvidence) ? analysis.aiEvidence : [];
   const nextActions = Array.isArray(diagnosis.nextActions) ? diagnosis.nextActions.filter(Boolean) : [];
-  const typeMeta = agentFailureTypeMeta(analysis.failureType);
+  const staleSuccessAnalysis = failedItems.length && (
+    String(analysis.failureType || '').toUpperCase() === 'NONE' ||
+    /全部执行成功|所有用例执行通过|无失败任务/.test(String(analysis.summary || analysis.conclusion || ''))
+  );
+  const effectiveFailureType = staleSuccessAnalysis
+    ? (agentReportFailureType(failedItems[0]) || 'UNKNOWN')
+    : analysis.failureType;
+  const typeMeta = agentFailureTypeMeta(effectiveFailureType);
   const conclusion = agentCompactDisplayText(
-    analysis.conclusion || diagnosis.rootCause || runError || analysis.summary || '尚未形成明确根因。'
+    (staleSuccessAnalysis
+      ? (agentReportFailureReason(failedItems[0]) || diagnosis.rootCause || 'Runner 已记录失败任务，旧失败分析结果已被真实执行证据覆盖。')
+      : (analysis.conclusion || diagnosis.rootCause || runError || analysis.summary))
+      || '尚未形成明确根因。'
   );
   const impact = agentCompactDisplayText(
     diagnosis.impact || (failedItems.length
