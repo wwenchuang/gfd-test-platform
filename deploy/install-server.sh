@@ -12,6 +12,7 @@ WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
 NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
 APIFOX_CLI_VERSION="${APIFOX_CLI_VERSION:-2.2.8}"
+APIFOX_CLI_INSTALL_TIMEOUT_SECONDS="${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS:-600}"
 APIFOX_NPM_REGISTRY="${APIFOX_NPM_REGISTRY:-https://registry.npmmirror.com/}"
 APIFOX_NPM_FALLBACK_REGISTRY="${APIFOX_NPM_FALLBACK_REGISTRY:-https://registry.npmjs.org/}"
 
@@ -103,9 +104,23 @@ PY
 install_apifox_cli() {
   local registry="$1"
   local install_target="apifox-cli@${APIFOX_CLI_VERSION}"
-  local install_args=(npm install -g "${install_target}" --registry="${registry}" --omit=optional --no-audit --no-fund)
+  local install_args=(
+    npm install -g "${install_target}"
+    --registry="${registry}"
+    --prefer-offline
+    --omit=optional
+    --ignore-scripts
+    --fetch-retries=1
+    --fetch-timeout=60000
+    --fetch-retry-mintimeout=1000
+    --fetch-retry-maxtimeout=5000
+    --no-audit
+    --no-fund
+    --progress=false
+    --loglevel=error
+  )
   if command -v timeout >/dev/null 2>&1; then
-    timeout 180 "${install_args[@]}"
+    timeout "${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS}" "${install_args[@]}"
   else
     "${install_args[@]}"
   fi
@@ -120,10 +135,22 @@ elif ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 14 ?
   echo "警告：Node.js 版本低于 14，跳过 Apifox CLI 安装；API 来源手动连接仍可使用。"
 else
   echo "正在安装 Apifox CLI ${APIFOX_CLI_VERSION}（用于只读发现项目、分支和环境名称）..."
-  if ! install_apifox_cli "${APIFOX_NPM_REGISTRY}" \
-    && [ "${APIFOX_NPM_REGISTRY}" != "${APIFOX_NPM_FALLBACK_REGISTRY}" ]; then
-    echo "Apifox CLI 镜像源安装失败，改用 npm 官方源重试..."
-    install_apifox_cli "${APIFOX_NPM_FALLBACK_REGISTRY}" || true
+  install_status=0
+  if install_apifox_cli "${APIFOX_NPM_REGISTRY}"; then
+    :
+  else
+    install_status=$?
+    if [ "${install_status}" -eq 124 ]; then
+      echo "Apifox CLI 下载在 ${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS} 秒内未完成；已保留 npm 缓存，不再重复切源安装。"
+      echo "提示：网络恢复后重新执行本安装脚本，npm 会优先复用已下载内容。"
+    elif [ "${APIFOX_NPM_REGISTRY}" != "${APIFOX_NPM_FALLBACK_REGISTRY}" ]; then
+      echo "Apifox CLI 镜像源快速失败，改用 npm 官方源重试..."
+      if install_apifox_cli "${APIFOX_NPM_FALLBACK_REGISTRY}"; then
+        install_status=0
+      else
+        install_status=$?
+      fi
+    fi
   fi
   APIFOX_CLI_BIN_RESOLVED="$(command -v apifox || true)"
   if apifox_cli_usable "${APIFOX_CLI_BIN_RESOLVED}"; then

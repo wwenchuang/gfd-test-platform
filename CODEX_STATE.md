@@ -28,6 +28,27 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Apifox CLI 首次部署超时
+
+部署日志中的 npm `deprecated` 来自官方 `apifox-cli@2.2.8` 的旧依赖，不是安装失败原因；实际失败是 `install-server.sh` 的 180 秒总时限向 npm 发送 `SIGTERM`。实测该 CLI 连同非可选依赖约 78MB / 214 个包，缓存命中时安装约 6-7 秒，项目、分支和环境只读命令均可正常运行，因此生产失败点是首次下载未在 180 秒内完成。
+
+修复：
+
+- 首次安装上限改为可配置的 `APIFOX_CLI_INSTALL_TIMEOUT_SECONDS`，默认 600 秒。
+- npm 优先复用已下载缓存，跳过发现功能不需要的可选数据库驱动和生命周期脚本，并限制单次网络请求重试与等待。
+- 只有镜像源快速失败时才切换 npm 官方源；若已经达到总时限，则保留缓存且不再从头等待第二轮。
+- 降低 npm 安装日志噪声；CLI 安装失败仍不阻断平台部署，手动连接继续可用。
+
+验证：
+
+```bash
+python3 tests/apifox_discovery_checks.py       # 12 passed
+python3 tests/api_asset_sync_checks.py         # 40 passed
+python3 tests/api_project_workspace_checks.py  # 45 passed
+bash -n deploy/install-server.sh
+git diff --check
+```
+
 ### 2026-07-29 Agent 报告展示：dry-run 不能算真机通过，旧失败分析不能覆盖 Runner 事实
 
 用户指出上一条百度网盘执行记录看起来“没有在手机上跑测试用例，最后是通过的”。复查线上最新记录 `agent-1785294560275-bd1e04c4`：

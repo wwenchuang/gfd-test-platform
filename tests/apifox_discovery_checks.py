@@ -268,8 +268,17 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
         )
 
         self.assertIn('APIFOX_CLI_VERSION="${APIFOX_CLI_VERSION:-2.2.8}"', install_source)
+        self.assertIn(
+            'APIFOX_CLI_INSTALL_TIMEOUT_SECONDS="${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS:-600}"',
+            install_source,
+        )
         self.assertIn('apifox-cli@${APIFOX_CLI_VERSION}', install_source)
         self.assertIn("apifox_cli_usable", install_source)
+        self.assertIn("--prefer-offline", install_source)
+        self.assertIn("--ignore-scripts", install_source)
+        self.assertIn("--fetch-retries=1", install_source)
+        self.assertIn('if [ "${install_status}" -eq 124 ]; then', install_source)
+        self.assertIn("不再重复切源安装", install_source)
         self.assertIn("手动连接仍可使用", install_source)
         self.assertIn("export APIFOX_CLI_BIN='apifox'", env_source)
 
