@@ -177,7 +177,7 @@ function apiWorkflowNextAction(context = {}) {
   const confirmed = plans.find(plan => plan.status === 'confirmed' && (plan.revision_state || {}).state !== 'stale');
   if (['queued', 'running'].includes(execution.status)) return {step: 'execution', label: '查看执行进度', handler: 'showApiExecutionPage()'};
   if (reports.length) return {step: 'reports', label: '查看报告', handler: 'showApiReportsPage()'};
-  if (confirmed) return {step: 'execution', label: '推送并执行', handler: 'showApiExecutionPage()'};
+  if (confirmed) return {step: 'execution', label: '执行 API 基线', handler: 'showApiExecutionPage()'};
   return {step: 'plan', label: selectedCount ? '生成 AI 用例' : '选择接口', handler: selectedCount ? 'showApiPlanPage()' : 'showApiAssetsPage()'};
 }
 
@@ -189,6 +189,7 @@ function renderApiWorkflowStepper(context = {}) {
   let activeStep = ({
     api_assets: 'assets',
     api_plan: 'plan',
+    api_baselines: 'review',
     api_execution: 'execution',
     api_reports: 'execution',
   })[workflow] || 'assets';
@@ -249,8 +250,8 @@ function apiSelectedEndpointIds() {
 }
 
 function apiPlanStatusText(status) {
-  const map = { draft: '草稿', confirmed: '已确认', pushed: '已推送' };
-  return map[status] || status || '草稿';
+  const map = { draft: '候选', confirmed: '基线', pushed: '已推送' };
+  return map[status] || status || '候选';
 }
 
 function apiCaseAssertionText(assertion) {
@@ -281,7 +282,7 @@ function apiPlanReadinessReason(plan) {
   if (revision.state === 'stale') return revision.reason || '接口版本已变化，请重新生成计划';
   if ((readiness.missing || []).length) return `待补：${readiness.missing[0]}`;
   if (!readiness.executable_case_count) return '当前计划没有可执行用例';
-  if (plan?.status !== 'confirmed') return '确认计划后可进入执行';
+  if (plan?.status !== 'confirmed') return '采纳为基线后可进入执行';
   return '';
 }
 
@@ -314,6 +315,7 @@ async function showApiTestingDashboard() {
           <div class="generation-record-actions">
             <button class="btn-sm primary" onclick="showApiAssetsPage()">接口资产</button>
             <button class="btn-sm ai" onclick="showApiPlanPage()">AI 用例计划</button>
+            <button class="btn-sm" onclick="showApiBaselinesPage()">API 基线</button>
             <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
             <button class="btn-sm" onclick="showApiReportsPage()">API 报告</button>
           </div>
@@ -750,12 +752,16 @@ function renderApiSourceManualFallback(source = {}) {
   `;
 }
 
-function renderApiProjectSelector(sources, selectedId) {
+function renderApiProjectSelector(sources, selectedId, context = 'assets') {
   const options = (sources || []).map(source => {
     const label = apiSourceDisplayName(source);
     return `<option value="${escapeHtml(source.source_id || '')}" ${String(source.source_id || '') === String(selectedId || '') ? 'selected' : ''}>${escapeHtml(label)}</option>`;
   }).join('');
-  return `<div class="api-project-switcher"><select class="api-project-select" aria-label="选择 Apifox 项目" onchange="selectApiAssetSource(this.value)">${options}</select><button class="btn-sm icon-only api-project-add" type="button" title="新增 Apifox 项目" aria-label="新增 Apifox 项目" onclick="startApiSourceDraft()">＋</button></div>`;
+  const changeHandler = context === 'baselines' ? 'selectApiBaselineSource' : 'selectApiAssetSource';
+  const addButton = context === 'baselines'
+    ? ''
+    : '<button class="btn-sm icon-only api-project-add" type="button" title="新增 Apifox 项目" aria-label="新增 Apifox 项目" onclick="startApiSourceDraft()">＋</button>';
+  return `<div class="api-project-switcher"><select class="api-project-select" aria-label="选择 Apifox 项目" onchange="${changeHandler}(this.value)">${options}</select>${addButton}</div>`;
 }
 
 function renderApiSourceSummary(source, latestSync, snapshot = {}) {
@@ -1931,8 +1937,12 @@ function renderApiPlanScopeSummary() {
   `;
 }
 
+function apiCandidatePlans(plans = apiTestingPlans) {
+  return (plans || []).filter(plan => plan.status !== 'confirmed');
+}
+
 async function showApiPlanPage() {
-  const area = setApiTestingPage('api_plan', 'AI 用例计划', '从已选接口生成、审阅并确认可执行用例。');
+  const area = setApiTestingPage('api_plan', 'AI 用例计划', '从已选接口生成候选用例，通过平台校验后采纳为基线。');
   if (!area) return;
   if (apiPlanRequestController) apiPlanRequestController.abort();
   const controller = new AbortController();
@@ -1968,13 +1978,14 @@ async function showApiPlanPage() {
       || apiPlanGenerationCurrent.asset_revision_id !== apiTestingCurrentSnapshotId
     )) apiPlanGenerationCurrent = null;
     const source = selectedApiAssetSource() || {};
+    const candidatePlans = apiCandidatePlans();
     area.innerHTML = `
       <div class="api-testing-page api-plan-workspace">
         <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_plan', source, snapshot: assets.snapshot})}</div>
         <div class="generation-record-head">
           <div class="workflow-kicker">AI PLAN · API CASES</div>
           <h2>AI 用例计划</h2>
-          <p>先确认本次业务范围，再由 AI 设计用例，平台校验后只把可执行内容送入 MeterSphere。</p>
+          <p>AI 负责设计候选用例，平台校验合同与执行数据；采纳后进入独立 API 基线。</p>
           <div class="generation-record-actions">
             <button class="btn-sm ai api-plan-generate-action" onclick="generateApiTestPlan()" ${selectedApiPlanEndpointIds().length ? '' : 'disabled'}>生成 AI 用例</button>
             <button class="btn-sm" onclick="showApiAssetsPage()">调整接口范围</button>
@@ -1988,10 +1999,10 @@ async function showApiPlanPage() {
           <div class="api-plan-review-column">
             <section class="api-panel" id="api-plan-generation-region">${renderApiPlanGeneration(apiPlanGenerationCurrent)}</section>
             <section class="api-panel" id="api-plan-list-region">
-              <div class="api-section-heading"><div><span>待处理</span><h3>用例草稿</h3></div><small>${apiTestingPlans.length} 个计划</small></div>
-              ${renderApiPlanList(apiTestingPlans)}
+              <div class="api-section-heading"><div><span>待处理</span><h3>候选计划</h3></div><small>${candidatePlans.length} 个计划</small></div>
+              ${renderApiPlanList(candidatePlans)}
             </section>
-            <section class="api-panel" id="api-plan-result">${apiTestingEmpty('选择一个草稿，按接口审阅用例。')}</section>
+            <section class="api-panel" id="api-plan-result">${apiTestingEmpty('选择一个候选，按接口审阅用例。')}</section>
           </div>
         </div>
       </div>
@@ -2052,7 +2063,7 @@ function renderApiPlanFacts(plan) {
 }
 
 function renderApiPlanList(plans) {
-  if (!plans.length) return apiTestingEmpty('当前来源暂无计划草稿。');
+  if (!plans.length) return apiTestingEmpty('当前来源暂无待处理候选。');
   return `<div class="api-plan-card-list">${plans.map(plan => {
     const stale = (plan.revision_state || {}).state === 'stale';
     const needsReview = Number(plan.needs_review_case_count || 0);
@@ -2068,7 +2079,7 @@ function renderApiPlanList(plans) {
           <span><strong>${escapeHtml(executable)}</strong> 条可执行</span>
           <span class="${needsReview ? 'warn' : ''}"><strong>${escapeHtml(needsReview)}</strong> 条待补</span>
         </div>
-        <button type="button" class="btn-sm ghost api-plan-review-action" onclick="openApiTestPlan(${jsArg(plan.plan_id)})">审阅用例</button>
+        <button type="button" class="btn-sm ghost api-plan-review-action" onclick="openApiTestPlan(${jsArg(plan.plan_id)})">审阅候选</button>
         <details class="api-plan-tech-detail"><summary>技术详情</summary>${renderApiPlanFacts(plan)}</details>
       </article>
     `;
@@ -2085,7 +2096,8 @@ async function refreshApiPlanCards(capturedScopeKey = apiPlanGenerationScopeKey(
     apiTestingPlans = await loadApiPlanDetails(response.plans || [], sourceId, controller);
     if (activeWorkflow !== 'api_plan' || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
     const target = document.getElementById('api-plan-list-region');
-    if (target) target.innerHTML = `<div class="api-section-heading"><div><span>待处理</span><h3>用例草稿</h3></div><small>${apiTestingPlans.length} 个计划</small></div>${renderApiPlanList(apiTestingPlans)}`;
+    const candidatePlans = apiCandidatePlans();
+    if (target) target.innerHTML = `<div class="api-section-heading"><div><span>待处理</span><h3>候选计划</h3></div><small>${candidatePlans.length} 个计划</small></div>${renderApiPlanList(candidatePlans)}`;
   } catch (_) {
     // Generation remains visible even when the secondary plan-list refresh fails.
   }
@@ -2339,7 +2351,7 @@ function renderApiPlanDetail(plan) {
   if (isStale) {
     primaryAction = `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按最新接口重新生成</button>`;
   } else if (plan.status === 'draft' && canConfirm) {
-    primaryAction = `<button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})">确认可执行用例</button>`;
+    primaryAction = `<button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})">采纳为基线</button>`;
   } else if (plan.status === 'draft') {
     primaryAction = `<button class="btn-sm primary" onclick="setApiPlanReviewFilter('needs_review')">查看待补数据</button>`;
   } else if (canExecute) {
@@ -2348,7 +2360,7 @@ function renderApiPlanDetail(plan) {
     primaryAction = `<button class="btn-sm" disabled title="${escapeHtml(actionReason)}">${escapeHtml(actionReason || '当前不可执行')}</button>`;
   }
   return `
-    <div class="api-plan-detail-head"><div><span>用例审阅</span><h3>${escapeHtml(plan.name || 'API 用例计划')}</h3></div>${isStale ? apiStatusPill('接口已变化', 'danger') : apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}</div>
+    <div class="api-plan-detail-head"><div><span>${plan.status === 'confirmed' ? '基线用例' : '候选审阅'}</span><h3>${escapeHtml(plan.name || 'API 用例计划')}</h3></div>${isStale ? apiStatusPill('接口已变化', 'danger') : apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}</div>
     <div class="review-stats compact api-plan-readiness">
       <div class="review-stat"><strong>${escapeHtml(plan.endpoint_count || 0)}</strong><span>接口</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.case_count || cases.length)}</strong><span>用例</span></div>
@@ -2395,11 +2407,147 @@ async function confirmApiTestPlan(planId) {
   try {
     const data = await apiRequest('/api-testing/plans/confirm', { method: 'POST', body: { plan_id: planId } });
     apiTestingCurrentPlan = data.plan || null;
-    const target = document.getElementById('api-plan-result');
-    if (target) target.innerHTML = renderApiPlanDetail(apiTestingCurrentPlan || {});
-    showToast('✓ API 用例计划已确认', 'success');
+    showToast('✓ 已采纳为 API 基线', 'success');
+    await showApiBaselinesPage();
   } catch(e) {
-    showToast(e.message || '确认失败', 'error');
+    showToast(e.message || '采纳基线失败', 'error');
+  }
+}
+
+function confirmedApiBaselines(plans = apiTestingPlans) {
+  return (plans || []).filter(plan => plan.status === 'confirmed');
+}
+
+function renderApiBaselineList(plans) {
+  if (!plans.length) {
+    return `<div class="api-execution-empty"><strong>当前项目还没有 API 基线</strong><button class="btn-sm ai" onclick="showApiPlanPage()">生成 AI 候选</button></div>`;
+  }
+  return `<div class="api-baseline-list">${plans.map(plan => {
+    const revision = plan.revision_state || {};
+    const stale = revision.state === 'stale';
+    const modules = (plan.module_paths || []).join('、') || '未记录模块';
+    const executable = Number(plan.executable_case_count || 0);
+    const needsReview = Number(plan.needs_review_case_count || 0);
+    return `
+      <article class="api-baseline-row ${stale ? 'is-stale' : ''}" data-api-baseline-plan-id="${escapeHtml(plan.plan_id || '')}">
+        <div class="api-baseline-identity">
+          <div><strong>${escapeHtml(plan.name || plan.plan_id)}</strong>${apiStatusPill(stale ? '待更新' : '可执行', stale ? 'danger' : 'success')}</div>
+          <span>${escapeHtml(modules)}</span>
+          <small>采纳于 ${escapeHtml(plan.confirmed_at || plan.created_at || '-')}</small>
+        </div>
+        <div class="api-baseline-metrics">
+          <span><strong>${escapeHtml(String(Number(plan.endpoint_count || 0)))}</strong>接口</span>
+          <span><strong>${escapeHtml(String(executable))}</strong>可执行用例</span>
+          <span><strong>${escapeHtml(String(needsReview))}</strong>待补</span>
+        </div>
+        <div class="api-baseline-actions">
+          <button class="btn-sm" onclick="openApiBaselinePlan(${jsArg(plan.plan_id)})">查看用例</button>
+          ${stale
+            ? `<button class="btn-sm ai" onclick="regenerateApiBaseline(${jsArg(plan.plan_id)})">按最新接口重新生成</button>`
+            : `<button class="btn-sm primary" onclick="openApiBaselineExecution(${jsArg(plan.plan_id)})">进入执行</button>`}
+        </div>
+        <details class="api-plan-tech-detail">
+          <summary>版本与影响</summary>
+          <div class="api-baseline-tech">
+            <span>Revision <code>${escapeHtml(revision.planned_revision_id || plan.asset_revision_id || plan.snapshot_id || '-')}</code></span>
+            <span>${stale ? escapeHtml(revision.reason || '接口版本已变化') : '当前接口版本有效'}</span>
+            ${stale ? `<span>受影响 ${escapeHtml((revision.affected_case_ids || []).length)} 条用例</span>` : ''}
+          </div>
+        </details>
+      </article>
+    `;
+  }).join('')}</div>`;
+}
+
+async function showApiBaselinesPage() {
+  const area = setApiTestingPage('api_baselines', 'API 基线', '查看已采纳、可独立执行并绑定接口版本的基线计划。');
+  if (!area) return;
+  if (apiPlanRequestController) apiPlanRequestController.abort();
+  const controller = new AbortController();
+  const requestId = ++apiPlanPageRequestId;
+  apiPlanRequestController = controller;
+  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 基线...')}</div>`;
+  try {
+    const sourceResponse = await apiRequest('/api-testing/sources', { signal: controller.signal });
+    if (controller !== apiPlanRequestController || requestId !== apiPlanPageRequestId || activeWorkflow !== 'api_baselines') return;
+    apiTestingSources = sourceResponse.sources || [];
+    let sourceId = apiTestingProjectScope.sourceId || apiAssetSelectedSourceId;
+    if (!apiTestingSources.some(source => String(source.source_id || '') === String(sourceId || ''))) {
+      sourceId = String(apiTestingSources[0]?.source_id || '');
+    }
+    apiAssetSelectedSourceId = sourceId;
+    apiTestingProjectScope = { sourceId, revisionId: '' };
+    const planResponse = await apiRequest(`/api-testing/plans${sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''}`, { signal: controller.signal });
+    if (controller !== apiPlanRequestController || requestId !== apiPlanPageRequestId || activeWorkflow !== 'api_baselines') return;
+    apiTestingPlans = planResponse.plans || [];
+    const baselines = confirmedApiBaselines();
+    const activeRevisionId = baselines
+      .map(plan => String((plan.revision_state || {}).active_revision_id || ''))
+      .find(Boolean) || '';
+    apiTestingProjectScope = { sourceId, revisionId: activeRevisionId };
+    const staleCount = baselines.filter(plan => (plan.revision_state || {}).state === 'stale').length;
+    const executableCount = baselines.reduce((total, plan) => total + Number(plan.executable_case_count || 0), 0);
+    const source = selectedApiAssetSource() || {};
+    area.innerHTML = `
+      <div class="api-testing-page api-baseline-workspace">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_baselines', source, plans: baselines})}</div>
+        <div class="generation-record-head api-baseline-head">
+          <div class="workflow-kicker">ADOPTED SUITES · REVISION BOUND</div>
+          <h2>API 基线</h2>
+          <p>已通过平台合同校验并采纳的计划；接口变化后保留历史基线并明确标记影响。</p>
+          <div class="generation-record-actions">
+            ${renderApiProjectSelector(apiTestingSources, sourceId, 'baselines')}
+            <button class="btn-sm ai" onclick="showApiPlanPage()">生成 AI 候选</button>
+            <button class="btn-sm" onclick="showApiExecutionPage()">基线执行</button>
+          </div>
+        </div>
+        <div class="api-baseline-summary">
+          <span><small>基线套</small><strong>${escapeHtml(String(baselines.length))}</strong></span>
+          <span><small>当前有效</small><strong>${escapeHtml(String(baselines.length - staleCount))}</strong></span>
+          <span><small>待更新</small><strong>${escapeHtml(String(staleCount))}</strong></span>
+          <span><small>可执行用例</small><strong>${escapeHtml(String(executableCount))}</strong></span>
+        </div>
+        <section class="api-baseline-section">
+          <div class="api-section-heading"><div><span>${escapeHtml(apiSourceDisplayName(source))}</span><h3>已采纳基线</h3></div><small>${escapeHtml(baselines.length)} 个计划</small></div>
+          ${renderApiBaselineList(baselines)}
+        </section>
+      </div>
+    `;
+  } catch (error) {
+    if (controller !== apiPlanRequestController || requestId !== apiPlanPageRequestId || activeWorkflow !== 'api_baselines') return;
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || 'API 基线读取失败')}</div>`;
+  } finally {
+    if (controller === apiPlanRequestController) apiPlanRequestController = null;
+  }
+}
+
+async function selectApiBaselineSource(sourceId) {
+  abortApiProjectScopeRequests();
+  apiAssetSelectedSourceId = String(sourceId || '');
+  apiTestingProjectScope = { sourceId: apiAssetSelectedSourceId, revisionId: '' };
+  await showApiBaselinesPage();
+}
+
+async function openApiBaselinePlan(planId) {
+  await showApiPlanPage();
+  if (activeWorkflow === 'api_plan') await openApiTestPlan(planId);
+}
+
+async function regenerateApiBaseline(planId) {
+  await showApiPlanPage();
+  if (activeWorkflow !== 'api_plan') return;
+  await openApiTestPlan(planId);
+  if (String(apiTestingCurrentPlan?.plan_id || '') === String(planId || '')) {
+    await regenerateApiPlan(planId);
+  }
+}
+
+async function openApiBaselineExecution(planId) {
+  await showApiExecutionPage();
+  const row = document.querySelector(`[data-api-execution-plan-id="${CSS.escape(String(planId || ''))}"]`);
+  if (row) {
+    row.classList.add('is-focused');
+    row.scrollIntoView({behavior: 'smooth', block: 'center'});
   }
 }
 
@@ -2461,7 +2609,7 @@ function apiSelectOptions(items, selectedId, emptyText) {
 async function showApiExecutionPage() {
   stopApiExecutionPolling(true);
   apiBusinessAuthEditing = false;
-  const area = setApiTestingPage('api_execution', 'MeterSphere 执行', '从已确认计划推送用例，跟踪 MeterSphere 真实运行并同步报告。');
+  const area = setApiTestingPage('api_execution', 'MeterSphere 执行', '按 API 基线单独推送用例，跟踪 MeterSphere 真实运行并同步报告。');
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-execution-console">
@@ -2469,8 +2617,8 @@ async function showApiExecutionPage() {
       <section id="api-execution-header" class="api-execution-header">${apiTestingEmpty('正在检查 MeterSphere...')}</section>
       <section id="api-active-run" class="api-active-run" hidden></section>
       <section class="api-execution-plans-section">
-        <div class="api-section-heading"><div><span>日常执行</span><h2>已确认计划</h2></div><small id="api-plan-count">0 个计划</small></div>
-        <div id="api-execution-plans">${apiTestingEmpty('正在读取已确认计划...')}</div>
+        <div class="api-section-heading"><div><span>基线执行</span><h2>API 基线</h2></div><small id="api-plan-count">0 个计划</small></div>
+        <div id="api-execution-plans">${apiTestingEmpty('正在读取 API 基线...')}</div>
       </section>
       <div id="api-ms-settings-backdrop" class="api-settings-backdrop" onclick="closeApiMeterSphereSettings()" hidden></div>
       <aside id="api-ms-settings-drawer" class="api-settings-drawer" aria-label="MeterSphere 设置" aria-hidden="true">
@@ -2754,8 +2902,8 @@ function apiExecutionEmptyAction(context) {
   const reason = context.empty_reason || '';
   if (reason === 'no_assets') return { text: '尚未导入接口', action: '去导入接口', handler: 'showApiAssetsPage()' };
   if (reason === 'no_plans') return { text: '尚未生成 API 用例计划', action: '去生成计划', handler: 'showApiPlanPage()' };
-  if (reason === 'unconfirmed_plans') return { text: '有待确认计划', action: '去确认计划', handler: 'showApiPlanPage()' };
-  if (reason === 'no_executable_plans') return { text: '已确认计划仍缺测试数据', action: '查看计划', handler: 'showApiPlanPage()' };
+  if (reason === 'unconfirmed_plans') return { text: 'AI 候选尚未采纳为基线', action: '去审阅候选', handler: 'showApiPlanPage()' };
+  if (reason === 'no_executable_plans') return { text: 'API 基线仍缺测试数据', action: '查看基线', handler: 'showApiBaselinesPage()' };
   return { text: 'MeterSphere 尚未满足执行条件', action: '完成 MeterSphere 配置', handler: 'openApiMeterSphereSettings()' };
 }
 
@@ -2775,10 +2923,10 @@ function renderApiExecutionPlans(plans, context = {}) {
     const passRate = latest.stats?.total ? `${Math.round((latest.stats.passed || 0) * 100 / latest.stats.total)}%` : '-';
     const disabledReason = starting ? '正在创建执行' : (metadata.stale ? '元数据已过期' : (revision.state === 'stale' ? '接口版本已变化，请重新生成计划' : ((planReadiness.missing || readiness.missing || [])[0] || (plan.active_run ? '当前计划正在执行' : '暂不可执行'))));
     return `
-      <article class="api-execution-plan-row">
+      <article class="api-execution-plan-row" data-api-execution-plan-id="${escapeHtml(plan.plan_id || '')}">
         <div class="api-plan-identity">
           <strong>${escapeHtml(plan.name || plan.plan_id)}</strong>
-          <span>${escapeHtml(plan.endpoint_count || 0)} 个接口 · 可执行 ${escapeHtml(plan.executable_case_count || 0)} / 待补 ${escapeHtml(plan.needs_review_case_count || 0)} · 确认于 ${escapeHtml(plan.confirmed_at || '-')}</span>
+          <span>${escapeHtml(plan.endpoint_count || 0)} 个接口 · 可执行 ${escapeHtml(plan.executable_case_count || 0)} / 待补 ${escapeHtml(plan.needs_review_case_count || 0)} · 采纳于 ${escapeHtml(plan.confirmed_at || '-')}</span>
         </div>
         <div class="api-plan-binding"><span>MeterSphere 计划</span><strong>${escapeHtml(plan.test_plan_name || plan.test_plan_id || '首次执行时创建或选择')}</strong></div>
         <div class="api-plan-latest"><span>最近运行</span><strong>${escapeHtml(apiExecutionStateText(latest.status))} · 通过率 ${escapeHtml(passRate)}</strong><small>${escapeHtml(latest.started_at || latest.created_at || '暂无历史')} · 耗时 ${escapeHtml(apiDurationText(latest.duration_seconds))}</small></div>

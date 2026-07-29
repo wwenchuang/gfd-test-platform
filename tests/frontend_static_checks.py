@@ -50,12 +50,13 @@ def main():
     # Sidebar has 6 nav groups with sub-items
     require(html.count('class="nav-group"') == 6, "Sidebar must include six nav groups (Agent/用例/接口测试/执行/报告/配置)")
     require('data-nav-group="agent"' in html and 'data-nav-group="cases"' in html and 'data-nav-group="api-testing"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/api-testing/run/report/settings")
-    for workflow in ("api_dashboard", "api_assets", "api_plan", "api_execution", "api_reports"):
+    for workflow in ("api_dashboard", "api_assets", "api_plan", "api_baselines", "api_execution", "api_reports"):
         require(f'data-workflow="{workflow}"' in html, f"Sidebar missing API testing workflow: {workflow}")
     for workflow, icon in {
         "api_dashboard": "🧭",
         "api_assets": "🔗",
         "api_plan": "🧠",
+        "api_baselines": "🧪",
         "api_execution": "▶️",
         "api_reports": "📊",
     }.items():
@@ -154,6 +155,26 @@ def main():
         and "renderApiModuleTree" in api_testing_js
         and "apiModuleSelectionState" in api_testing_js,
         "API asset workspace must keep source/revision scoped selection and render project/module controls",
+    )
+    require(
+        "showApiBaselinesPage" in html
+        and "renderApiBaselineList" in api_testing_js
+        and "apiCandidatePlans" in api_testing_js
+        and "api_baselines:" in html
+        and "activeWorkflow === 'api_baselines'" in html
+        and "采纳为基线" in api_testing_js
+        and "API 基线" in api_testing_js,
+        "Confirmed AI plans must be adopted and rendered in a separate API baseline workspace",
+    )
+    require(
+        "plan.status === 'confirmed'" in api_testing_js
+        and "api-baseline-row" in api_testing_js
+        and ".api-baseline-summary" in html
+        and ".api-execution-plan-row.is-focused" in html
+        and "active_revision_id" in api_testing_js
+        and "按最新接口重新生成" in api_testing_js
+        and "进入执行" in api_testing_js,
+        "API baselines must retain confirmed-plan execution and stale revision recovery",
     )
     require(
         "sourceId}:${revisionId" in api_testing_js
@@ -651,7 +672,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/agent-workbench.js?v=20260729-agent-report-outcomes" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260729-apifox-discovery" in html and "js/api-testing.js?v=20260729-apifox-discovery" in html and "js/agent-status.js?v=20260702-agent-artifacts" in html, "Frontend cache versions must include Apifox discovery and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-outcomes" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260729-api-baselines" in html and "js/api-testing.js?v=20260729-api-baselines" in html and "js/agent-status.js?v=20260729-api-baselines" in html, "Frontend cache versions must include Apifox discovery, API baselines, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

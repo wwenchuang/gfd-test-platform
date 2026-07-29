@@ -166,6 +166,41 @@ function serve() {
       readiness: {state: 'needs_review', missing: ['request.body.productId'], issues: []},
     }],
   });
+  const apiBaselinePlan = (stale = false) => {
+    const plan = apiPlan();
+    const executableCaseCount = stale ? 7 : 24;
+    return {
+      ...plan,
+      plan_id: stale ? 'api-plan-visual-baseline-stale' : 'api-plan-visual-001',
+      name: stale ? '订单接口历史基线' : '账号接口日常回归',
+      status: 'confirmed',
+      module_paths: stale ? ['订单业务/订单查询'] : ['家用业务/app接口/我的'],
+      endpoint_count: stale ? 4 : 12,
+      case_count: executableCaseCount,
+      executable_case_count: executableCaseCount,
+      needs_review_case_count: 0,
+      confirmed_at: stale ? '2026-07-20 16:10:00' : '2026-07-22 09:30:00',
+      revision_state: stale ? {
+        state: 'stale',
+        planned_revision_id: 'api-revision-visual-000',
+        active_revision_id: 'api-revision-visual-001',
+        reason: '订单响应结构已变化，请按最新接口重新生成',
+        affected_case_ids: ['API-ORDER-001', 'API-ORDER-002'],
+      } : {
+        state: 'fresh',
+        planned_revision_id: 'api-revision-visual-001',
+        active_revision_id: 'api-revision-visual-001',
+      },
+      execution_readiness: {
+        state: stale ? 'stale' : 'ready',
+        executable_case_count: executableCaseCount,
+        needs_review_case_count: 0,
+        can_confirm: false,
+        can_execute: !stale,
+        missing: stale ? ['接口版本已变化'] : [],
+      },
+    };
+  };
   const apiPlanGeneration = (generationId = 'api-generation-visual-001') => {
     const late = generationId === 'api-generation-late';
     const completed = !apiPlanGenerationRetried && apiPlanGenerationPollCount >= 3;
@@ -660,7 +695,9 @@ function serve() {
         execution_readiness: {...plan.execution_readiness, can_confirm: false, can_execute: false},
         binding_state: {state: 'mismatched', current_fingerprint: 'binding-visual-002', planned_fingerprint: 'binding-visual-001'},
       };
-      json(res, {ok: true, plans: [plan, stalePlan].map(item => ({
+      const baselinePlan = apiBaselinePlan();
+      const staleBaselinePlan = apiBaselinePlan(true);
+      json(res, {ok: true, plans: [plan, stalePlan, baselinePlan, staleBaselinePlan].map(item => ({
         plan_id: item.plan_id,
         name: item.name,
         status: item.status,
@@ -673,12 +710,14 @@ function serve() {
         execution_binding: item.execution_binding,
         auth_binding: item.auth_binding,
         binding_state: item.binding_state,
+        endpoint_count: item.endpoint_count,
         case_count: item.case_count,
         executable_case_count: item.executable_case_count,
         needs_review_case_count: item.needs_review_case_count,
         execution_readiness: item.execution_readiness,
         revision_state: item.revision_state,
         created_at: '2026-07-22 09:30:00',
+        confirmed_at: item.confirmed_at || '',
       }))});
       return;
     }
@@ -705,6 +744,14 @@ function serve() {
           binding_state: {state: 'mismatched', current_fingerprint: 'binding-visual-002', planned_fingerprint: 'binding-visual-001'},
         },
       });
+      return;
+    }
+    if (url.pathname === '/api/api-testing/plans/api-plan-visual-001' && req.method === 'GET') {
+      json(res, {ok: true, plan: apiBaselinePlan()});
+      return;
+    }
+    if (url.pathname === '/api/api-testing/plans/api-plan-visual-baseline-stale' && req.method === 'GET') {
+      json(res, {ok: true, plan: apiBaselinePlan(true)});
       return;
     }
     if (url.pathname === '/api/api-testing/syncs/api-sync-visual-001' && req.method === 'GET') {
@@ -1281,7 +1328,7 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'api-source-discovery.png'), fullPage: true});
     await page.locator('button[aria-label="取消新增 Apifox 项目"]').click();
     if (!await page.locator('.api-source-actions .btn-sm.primary').isVisible()) throw new Error('Apifox sync must remain the primary asset action while an automatic sync is running');
-    for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_execution: '▶️', api_reports: '📊'})) {
+    for (const [workflow, icon] of Object.entries({api_dashboard: '🧭', api_assets: '🔗', api_plan: '🧠', api_baselines: '🧪', api_execution: '▶️', api_reports: '📊'})) {
       const iconText = await page.locator(`.workflow-step[data-workflow="${workflow}"] .workflow-index`).textContent();
       if ((iconText || '').trim() !== icon) throw new Error(`API sidebar icon mismatch for ${workflow}: ${iconText}`);
     }
@@ -1410,13 +1457,13 @@ async function anyVisible(locator) {
     const stalePlanTechnicalText = await visibleText(page, '#api-plan-result');
     if (!/3D 接口/.test(stalePlanTechnicalText) || !/api-revision-visual-001/.test(stalePlanTechnicalText) || !/家用业务/.test(stalePlanTechnicalText) || !/qwen3\.8-plus/.test(stalePlanTechnicalText)) throw new Error('Expanded plan details must show source, revision, modules, and AI trace from backend facts');
     if (!/接口业务/.test(stalePlanTechnicalText) || !/API_BEARER_TOKEN/.test(stalePlanTechnicalText)) throw new Error('Expanded plan details must show execution binding and public auth metadata');
-    if (await page.locator('#api-plan-result button:has-text("确认可执行用例")').count()) throw new Error('A stale plan must not be confirmable');
+    if (await page.locator('#api-plan-result button:has-text("采纳为基线")').count()) throw new Error('A stale plan must not be adoptable');
     if (!await page.locator('#api-plan-result button:has-text("按最新接口重新生成")').isVisible()) throw new Error('A stale plan must offer regeneration');
     await page.locator('.api-plan-list-button[data-plan-id="api-plan-visual-ready"]').click();
     await page.waitForSelector('#api-plan-result .api-plan-readiness');
     let planText = await visibleText(page, '#api-plan-result');
     if (!/可执行/.test(planText) || !/待补数据/.test(planText) || !/request\.body\.productId/.test(planText)) throw new Error('API plan detail must expose readiness counts and missing data');
-    if (!await page.locator('#api-plan-result button:has-text("确认可执行用例")').isVisible()) throw new Error('A partial plan with executable cases must remain confirmable');
+    if (!await page.locator('#api-plan-result button:has-text("采纳为基线")').isVisible()) throw new Error('A partial plan with executable cases must remain adoptable');
     if (await page.locator('#api-plan-result button:has-text("进入执行")').count()) throw new Error('A draft plan must not expose an execution action');
     const pointsGroup = page.locator('#api-plan-result .api-case-group[data-endpoint-key="GET /points"]');
     if (!await pointsGroup.evaluate(el => el.open)) await pointsGroup.locator('summary').click();
@@ -1464,9 +1511,31 @@ async function anyVisible(locator) {
     await page.screenshot({path: path.join(ARTIFACTS, 'api-plan-readiness-mobile.png'), fullPage: true});
     await page.setViewportSize({width: 1440, height: 900});
 
-    await page.click('.workflow-step[data-workflow="api_execution"]');
+    await page.click('.workflow-step[data-workflow="api_baselines"]');
+    await page.waitForSelector('.api-baseline-workspace');
+    const baselineText = await visibleText(page, '.api-baseline-workspace');
+    if (!/账号接口日常回归/.test(baselineText) || !/订单接口历史基线/.test(baselineText)) throw new Error('API baseline workspace must list adopted plans');
+    if (/积分兑换接口回归|旧版本登录接口回归/.test(baselineText)) throw new Error('API baseline workspace must not mix in AI candidates');
+    if (!/3D 接口/.test(baselineText) || /旧来源名称/.test(baselineText)) throw new Error('API baseline workspace must use the discovered Apifox project name');
+    if (await page.locator('.api-baseline-row').count() !== 2) throw new Error('API baseline workspace must render only confirmed plans');
+    if (!/^12\s+接口\s+24\s+可执行用例\s+0\s+待补$/.test((await visibleText(page, '.api-baseline-row:not(.is-stale) .api-baseline-metrics')).replace(/\s+/g, ' ').trim())) throw new Error('API baseline metrics must display zero values explicitly');
+    if (!await page.locator('.api-baseline-row.is-stale button:has-text("按最新接口重新生成")').isVisible()) throw new Error('A stale API baseline must expose regeneration');
+    if (!await page.locator('.api-baseline-row:not(.is-stale) button:has-text("进入执行")').isVisible()) throw new Error('A fresh API baseline must expose execution');
+    await page.locator('.api-baseline-row.is-stale .api-plan-tech-detail > summary').click();
+    if (!/受影响 2 条用例/.test(await visibleText(page, '.api-baseline-row.is-stale'))) throw new Error('A stale API baseline must show its revision impact');
+    const apiBaselineDesktopOverflow = await page.locator('.api-baseline-workspace').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (apiBaselineDesktopOverflow) throw new Error('API baseline workspace overflows horizontally on desktop');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-baselines.png'), fullPage: true});
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForTimeout(100);
+    const apiBaselineMobileOverflow = await page.locator('.api-baseline-workspace').evaluate(el => el.scrollWidth > el.clientWidth + 1);
+    if (apiBaselineMobileOverflow) throw new Error('API baseline workspace overflows horizontally on mobile');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-baselines-mobile.png'), fullPage: true});
+    await page.setViewportSize({width: 1440, height: 900});
+    await page.locator('.api-baseline-row[data-api-baseline-plan-id="api-plan-visual-001"] button:has-text("进入执行")').click();
     await page.waitForSelector('.api-execution-console');
     await page.waitForSelector('text=账号接口日常回归');
+    if (!await page.locator('.api-execution-plan-row[data-api-execution-plan-id="api-plan-visual-001"]').evaluate(el => el.classList.contains('is-focused'))) throw new Error('Entering execution from a baseline must focus the matching plan');
     if (!/接口业务/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere business must render from execution-context data');
     if (!/QA 环境/.test(await visibleText(page, '#api-execution-header'))) throw new Error('MeterSphere environment must render from execution-context data');
     if (!await page.locator('.api-business-auth-panel').isVisible()) throw new Error('Environment-shared business authentication panel is missing');
@@ -2017,6 +2086,8 @@ async function anyVisible(locator) {
         path.join(ARTIFACTS, 'api-assets-sync-mobile.png'),
         path.join(ARTIFACTS, 'api-plan-readiness.png'),
         path.join(ARTIFACTS, 'api-plan-readiness-mobile.png'),
+        path.join(ARTIFACTS, 'api-baselines.png'),
+        path.join(ARTIFACTS, 'api-baselines-mobile.png'),
         path.join(ARTIFACTS, 'api-batch-review.png'),
         path.join(ARTIFACTS, 'api-batch-review-mobile.png'),
         path.join(ARTIFACTS, 'api-business-auth.png'),

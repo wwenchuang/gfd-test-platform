@@ -77,23 +77,26 @@ const WORKFLOW_SECTIONS = {
   api_dashboard: {
     index: '2',
     title: 'API 工作台',
-    subtitle: '接口资产、AI 用例计划、MeterSphere 执行和报告闭环',
-    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，确认 AI 用例计划后推送 MeterSphere 执行。',
+    subtitle: '接口资产、AI 候选、API 基线、MeterSphere 执行和报告闭环',
+    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，审阅 AI 候选并采纳为基线后推送 MeterSphere 执行。',
     cards: [
       { title: '同步接口资产', text: '服务端只读同步 Apifox OpenAPI，内容变化时生成不可变版本并分析影响。', actions: [
         { label: '打开接口资产', cls: 'primary', fn: 'showApiAssetsPage()' }
       ]},
-      { title: '生成 API 用例计划', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言草稿。', actions: [
+      { title: '生成 AI 候选', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言候选。', actions: [
         { label: 'AI 用例计划', cls: 'ai', fn: 'showApiPlanPage()' }
       ]},
-      { title: 'MeterSphere 执行', text: '保存连接配置后，推送确认过的用例并触发 MeterSphere 测试计划。', actions: [
+      { title: '维护 API 基线', text: '集中查看已采纳计划、接口版本状态和受影响用例，按单套基线进入执行。', actions: [
+        { label: 'API 基线', fn: 'showApiBaselinesPage()' }
+      ]},
+      { title: 'MeterSphere 执行', text: '保存连接配置后，推送已采纳基线并触发 MeterSphere 测试计划。', actions: [
         { label: '执行配置', fn: 'showApiExecutionPage()' }
       ]},
       { title: '统一 API 报告', text: '回收 MeterSphere 报告并按鉴权、环境、测试数据、断言和接口缺陷分类。', actions: [
         { label: 'API 报告', fn: 'showApiReportsPage()' }
       ]}
     ],
-    checklist: ['Apifox 首次同步与无变化同步先跑通', '推送前必须人工确认', 'Apifox 和 MeterSphere token 只在服务端保存']
+    checklist: ['Apifox 首次同步与无变化同步先跑通', 'AI 候选经平台校验后采纳为基线', 'Apifox 和 MeterSphere token 只在服务端保存']
   },
   api_assets: {
     index: '2',
@@ -106,8 +109,16 @@ const WORKFLOW_SECTIONS = {
   api_plan: {
     index: '2',
     title: 'AI 用例计划',
-    subtitle: '生成并确认可推送 MeterSphere 的 API 用例草稿',
-    help: 'AI 用例计划默认是草稿，确认后才能推送 MeterSphere。',
+    subtitle: '生成并审阅可采纳的 API 用例候选',
+    help: 'AI 用例默认是候选，通过平台校验并采纳为基线后才能推送 MeterSphere。',
+    cards: [],
+    checklist: []
+  },
+  api_baselines: {
+    index: '2',
+    title: 'API 基线',
+    subtitle: '维护已采纳、绑定接口版本的可执行计划',
+    help: '基线保留采纳时的接口版本；接口发生变化时标记受影响范围，不会静默改写。',
     cards: [],
     checklist: []
   },

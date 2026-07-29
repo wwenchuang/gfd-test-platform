@@ -248,6 +248,10 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showApiPlanPage();
     return;
   }
+  if (sectionKey === 'api_baselines' && typeof showApiBaselinesPage === 'function') {
+    showApiBaselinesPage();
+    return;
+  }
   if (sectionKey === 'api_execution' && typeof showApiExecutionPage === 'function') {
     showApiExecutionPage();
     return;

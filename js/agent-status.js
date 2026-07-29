@@ -1723,6 +1723,7 @@ const CONTEXT_TOOLBAR_MAP = {
   api_dashboard:    { module: 'api',      icon: 'API', title: '接口测试', refreshLabel: '刷新', refreshFn: 'showApiTestingDashboard()' },
   api_assets:       { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
   api_plan:         { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新计划', refreshFn: 'showApiPlanPage()' },
+  api_baselines:    { module: 'api',      icon: '✓', title: '接口测试', refreshLabel: '刷新基线', refreshFn: 'showApiBaselinesPage()' },
   api_execution:    { module: 'api',      icon: 'MS', title: '接口测试', refreshLabel: '刷新执行', refreshFn: 'showApiExecutionPage()' },
   api_reports:      { module: 'api',      icon: 'RPT', title: '接口测试', refreshLabel: '刷新报告', refreshFn: 'showApiReportsPage()' },
   // 报告 模块
@@ -1842,6 +1843,11 @@ async function activateWorkflow(sectionKey) {
   }
   if (activeWorkflow === 'api_plan') {
     showApiPlanPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_baselines') {
+    showApiBaselinesPage();
     toggleLibrary(false);
     return;
   }
