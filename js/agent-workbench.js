@@ -1591,7 +1591,35 @@ function agentReportFailureReason(item = {}) {
   ).trim();
 }
 
-function normalizeAgentReportJobs(report = {}, normalizedReport = null) {
+function collectAgentReportProgressJobs(artifacts = {}) {
+  const jobs = [];
+  const addProgressJobs = (progress = {}, phaseKey = '') => {
+    if (!progress || typeof progress !== 'object') return;
+    const phase = String(progress.phase || phaseKey || '').trim();
+    (Array.isArray(progress.jobs) ? progress.jobs : []).forEach(job => {
+      if (!job || typeof job !== 'object') return;
+      const jobId = job.jobId || job.job_id || job.id || '';
+      const reportUrl = job.reportUrl || job.report_url || job.htmlReportUrl || job.html_report_url || '';
+      jobs.push({
+        ...job,
+        jobId,
+        reportUrl,
+        phase: job.phase || phase,
+        module: job.module || job.moduleName || job.module_name || '',
+        file: job.file || job.yamlFile || job.yaml_file || job.yamlPath || job.yaml_path || '',
+        taskName: job.taskName || job.task_name || job.targetTaskName || job.target_task_name || job.currentTaskName || job.current_task_name || '',
+        status: job.status || job.state || job.result || '',
+      });
+    });
+  };
+  addProgressJobs(artifacts.jobProgress || {}, artifacts.jobProgress?.phase || 'runner');
+  Object.entries(artifacts.jobProgressByPhase || {}).forEach(([phaseKey, progress]) => {
+    addProgressJobs(progress, phaseKey);
+  });
+  return jobs;
+}
+
+function normalizeAgentReportJobs(report = {}, normalizedReport = null, artifacts = {}) {
   const normalized = normalizedReport || normalizeAgentReportArtifacts(report);
   const byKey = new Map();
   const merge = (item = {}, extra = {}) => {
@@ -1605,6 +1633,7 @@ function normalizeAgentReportJobs(report = {}, normalizedReport = null) {
   (normalized.executionReports || []).forEach(item => merge(item, {reportUrl: item.reportUrl || item.report_url || ''}));
   (normalized.yamlExecutionRefs || []).forEach(item => merge(item));
   (Array.isArray(report.failedJobs) ? report.failedJobs : []).forEach(item => merge(item, {status: item.status || 'failed', failed: true}));
+  collectAgentReportProgressJobs(artifacts).forEach(item => merge(item));
   return Array.from(byKey.values()).sort((a, b) => {
     const order = {failed: 0, running: 1, pending: 2, unknown: 3, success: 4};
     return (order[agentReportStatusKind(a)] ?? 9) - (order[agentReportStatusKind(b)] ?? 9);
@@ -1818,19 +1847,27 @@ function renderReportDetail(step, artifacts) {
   const normalizedReport = normalizeAgentReportArtifacts(report);
   const reports = normalizedReport.executionReports;
   const yamlRefs = normalizedReport.yamlExecutionRefs;
-  const reportJobs = normalizeAgentReportJobs(report, normalizedReport);
+  const reportJobs = normalizeAgentReportJobs(report, normalizedReport, artifacts || {});
   const outcomeGroups = agentReportOutcomeGroups(reportJobs);
   const jobStatuses = report.jobStatuses || [];
   const failedJobs = report.failedJobs || [];
   const mindmap = agentMindmapInfo(artifacts);
-  const status = report.status || 'unknown';
+  const reportLinks = reports.length
+    ? reports
+    : reportJobs.filter(item => item.reportUrl || item.report_url || isAgentHtmlReport(item));
+  const status = String(report.status || '').trim().toLowerCase();
+  const derivedStatus = status && status !== 'unknown'
+    ? status
+    : (outcomeGroups.failed.length ? 'failed'
+      : (outcomeGroups.active.length ? 'running'
+        : (outcomeGroups.success.length && !outcomeGroups.unknown.length ? 'complete' : 'unknown')));
   const totalJobs = reportJobs.length || Math.max(reports.length, yamlRefs.length, jobStatuses.length);
   const activeCount = outcomeGroups.active.length;
   const unknownCount = outcomeGroups.unknown.length;
   let html = '<div class="report-detail rich-report">';
   html += `
     <div class="report-summary-grid">
-      <div><span>报告状态</span><strong>${escapeHtml(agentJobStatusText(status))}</strong></div>
+      <div><span>报告状态</span><strong>${escapeHtml(agentJobStatusText(derivedStatus))}</strong></div>
       <div><span>执行用例</span><strong>${escapeHtml(totalJobs)}</strong></div>
       <div class="metric-success"><span>通过</span><strong>${escapeHtml(outcomeGroups.success.length)}</strong></div>
       <div class="metric-danger"><span>失败</span><strong>${escapeHtml(outcomeGroups.failed.length || failedJobs.length)}</strong></div>
@@ -1845,14 +1882,15 @@ function renderReportDetail(step, artifacts) {
     html += renderAgentReportOutcomeSection('通过用例', outcomeGroups.success, 'success');
     html += '</div>';
   }
-  if (reports.length > 0) {
+  if (reportLinks.length > 0) {
     html += '<div class="report-links">';
     html += '<div class="section-title">HTML 报告</div>';
-    for (const r of reports.slice(0, 10)) {
+    for (const r of reportLinks.slice(0, 10)) {
       const label = agentCaseLabel(r);
       const subLabel = agentCaseSubLabel(r);
-      if (r.reportUrl) {
-        html += `<a href="${escapeHtml(r.reportUrl)}" target="_blank" class="report-link report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || '打开执行报告')}</span></a>`;
+      const reportUrl = r.reportUrl || r.report_url || '';
+      if (reportUrl) {
+        html += `<a href="${escapeHtml(reportUrl)}" target="_blank" class="report-link report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || '打开执行报告')}</span></a>`;
       } else {
         html += `<span class="report-local report-case-link"><b>${escapeHtml(label)}</b><span>${escapeHtml(subLabel || r.localPath || '-')}</span></span>`;
       }

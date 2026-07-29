@@ -467,6 +467,7 @@ def main():
     require("renderAgentReportArtifact" in html and "renderAgentSummaryArtifact" in html and "executionReports" in html and "yamlExecutionRefs" in html, "Agent report/summary artifacts must render as readable rich cards")
     require("agentCaseLabel" in html and "report-case-link" in html and "生成时参考的历史步骤" in html, "Agent reports must show the concrete case name and YAML reference examples")
     require("normalizeAgentReportJobs" in html and "agentReportOutcomeGroups" in html and "失败用例" in html and "通过用例" in html and "未完成 / 待判定" in html, "Agent Runner report must separate failed, passed, running, and unknown case outcomes")
+    require("collectAgentReportProgressJobs" in html and "normalizeAgentReportJobs(report, normalizedReport, artifacts" in html and "artifacts.jobProgressByPhase" in html and "report_url" in html, "Agent Runner report must aggregate live Runner jobs and report URLs from jobProgressByPhase")
     require(".agent-report-job-card.failed" in html and ".agent-report-status-pill.success" in html and "metric-danger" in html, "Agent Runner report outcomes must have distinct visual states for failed and passed cases")
     require("agentInputSummaryFromRun" in html and "agentInputSummaryHtml" in html and "本次输入资料" in html, "Agent history/detail pages must show the original target, Figma, files, and execution input")
     require("agent-input-chips" in html and "采用的 Figma 页面" in html and "上传资料" in html, "Agent input summary must be readable in cards instead of only showing runId")

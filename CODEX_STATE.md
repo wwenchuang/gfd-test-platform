@@ -28,6 +28,26 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Agent 报告页：Runner 阶段进度必须作为真实报告来源
+
+用户截图显示 Agent 已进入完成态，但“Runner 报告”仍显示 `unknown`，执行用例、通过、失败和未完成统计为空，并提示“当前没有 Runner 回传的 HTML 报告链接”。同一线上 Agent 产物中实际已经存在 `jobProgressByPhase.smoke.jobs`，包含固定 OPPO 上执行失败的 Runner job 和 `report_url`，因此这是前端报告聚合口径问题，不是 Runner 没执行。
+
+修复：
+
+- 新增 `collectAgentReportProgressJobs()`，把 `artifacts.jobProgress` 和 `artifacts.jobProgressByPhase[*].jobs` 纳入报告数据源。
+- `normalizeAgentReportJobs()` 现在会合并阶段进度中的 `jobId/status/taskName/file/report_url`，并继续去重、分组为失败/通过/执行中/待判定。
+- `renderReportDetail()` 在 `report.status=unknown` 时按真实 job 结果推导报告状态；存在 failed job 时显示失败，不再显示 unknown。
+- HTML 报告链接不再只看 `report.executionReports`，也会从阶段进度 job 的 `report_url` 生成链接，避免误提示“没有 Runner 回传的 HTML 报告链接”。
+- 前端静态检查新增约束：Agent Runner report 必须从 `jobProgressByPhase` 聚合 live Runner jobs 和 report URLs。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+```
+
+部署后预期：百度网盘 Agent 若 Runner smoke 失败，报告页应显示 `执行用例 1 / 通过 0 / 失败 1 / 未完成 0`，失败用例区展示对应 YAML/job，并提供 Runner HTML 报告链接。
+
 ### 2026-07-29 百度网盘真实 Runner 回归：生成门禁已放开，报告归因需以 Runner 失败为准
 
 用户部署 `d9234f5` 后同参重跑百度网盘 Agent。线上健康：Task 服务模型 `qwen3.7-plus`，Figma token 可用，AI skills 完整；固定 Runner 为 `win-runner-01`，固定设备只使用 OPPO PHM110 `ecbfd645`，App `com.xbxxhz.box` 版本 `4.45.0`。
