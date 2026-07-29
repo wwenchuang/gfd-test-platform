@@ -3081,7 +3081,7 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
         flows.append(indent + "- runAdbShell: " + yaml_text("input keyevent 3"))
     flows.extend([
         indent + "- runAdbShell: " + yaml_text("am force-stop " + app_package),
-        indent + "- runAdbShell: " + yaml_text("monkey -p " + app_package + " -c android.intent.category.LAUNCHER 1"),
+        indent + "- runAdbShell: " + yaml_text("monkey -p " + app_package + " -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true"),
         indent + "- sleep: 800",
         indent + "- launch: " + app_package,
     ])

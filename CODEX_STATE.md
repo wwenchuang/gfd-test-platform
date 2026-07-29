@@ -28,6 +28,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 API 报告实时状态、AI draft 编辑与 MeterSphere 用例状态
+
+用户发现平台 `API 报告` 页显示历史 `passed`，但 MeterSphere 侧任务仍可见进行中；同时 AI 生成的接口用例只能看不能改，无法实时知晓接口执行状态。
+
+根因：
+
+- `/api/api-testing/reports` 只返回已保存的最终报告，前端报告页只渲染 reports 表格；当同一 source 有 running execution 时，页面会把上一份历史报告当成当前状态。
+- 手动/自动拉 MeterSphere 报告时没有统一拦截“远端明确仍 running”的结果，存在过早生成最终报告的风险。
+- MeterSphere v3.6.5 adapter 推送接口用例时固定写 `status=PROCESSING`，推送场景时固定写 `status=UNDERWAY`；MeterSphere 中文 UI 会把这类用例生命周期状态显示为“进行中”，这不是执行结果。
+- API plan draft 没有保存修改接口，用户无法在采纳为基线前修正 AI 生成用例。
+
+修复：
+
+- `/api/api-testing/reports` 新增 `active_runs` / `recent_runs`，报告页先显示“实时执行”卡片，再显示历史报告；有 active run 时每 5 秒自动刷新，并提供“查看实时执行”入口。
+- `_pull_metersphere_report_with_config()` 对明确 running 的报告返回 `report_not_ready`，不保存最终 API report；已归因为 failed 的 provider terminal fallback 仍允许同步失败报告。
+- 新增 `/api/api-testing/plans/{plan_id}/cases`：只允许编辑 draft 候选，保存后重新执行 `evaluate_api_plan()`，可执行/待补数量由平台重新计算；已采纳基线不能直接改。
+- 前端 AI 用例明细行新增 `编辑`，打开 JSON 编辑器后可保存并重新校验。
+- MeterSphere v3.6.5 adapter 推送 API case / scenario 的 lifecycle `status` 改为 `COMPLETED`，避免远端用例列表一直显示“进行中”；真实执行状态仍只来自 report `execStatus/status`。
+- 前端缓存版本更新为 `20260729-api-live-reports`。
+
+验证：
+
+```bash
+python3 tests/api_runtime_recovery_checks.py        # 13 passed
+python3 tests/api_project_workspace_checks.py       # 48 passed
+python3 tests/metersphere_v365_adapter_checks.py    # 54 passed
+python3 tests/frontend_static_checks.py             # 72 passed
+node --check js/api-testing.js
+python3 -m py_compile task_server/router.py task_server/services/api_test_plan_service.py task_server/services/metersphere_service.py task_server/services/metersphere_v365_adapter.py tests/api_runtime_recovery_checks.py tests/api_project_workspace_checks.py tests/metersphere_v365_adapter_checks.py
+git diff --check -- js/api-testing.js css/round5.css task-manager.html task_server/router.py task_server/services/api_test_plan_service.py task_server/services/metersphere_service.py task_server/services/metersphere_v365_adapter.py tests/api_runtime_recovery_checks.py tests/api_project_workspace_checks.py tests/metersphere_v365_adapter_checks.py tests/frontend_static_checks.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+注意：MeterSphere 里已存在的旧 `PROCESSING/UNDERWAY` 用例需要下一次平台推送/更新后才会变为 `COMPLETED`；本次修复不会主动批量修改远端历史用例。
+
 ### 2026-07-29 API AI 用例可见性与 3D 用户登录 token 获取
 
 用户澄清 `token` 指的是 3D 项目业务接口调用所需的用户登录 token，不是平台登录 token，也不是 Apifox Access Token。平台应优先通过业务“用户登录接口”获取 token，而不是只让用户手动粘贴。
@@ -5625,6 +5659,19 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 ```
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+
+补充线上验证：
+
+- 用户部署 `418b56d` 后按同一参数发起 5 次稳定性回归；前 2 次均在首批冒烟阶段失败，随后停止剩余批次并取消第 3 次，避免继续占用设备。
+- 第 1 次 `agent-1785322101458-7921cd44`：生成 6 case / 6 YAML / 覆盖缺口 0；首批 2 条均 failed。
+- 第 2 次 `agent-1785322826602-6578b083`：生成 5 case / 4 YAML；首批 3 条均 failed，覆盖缺 `REQ-002 照片打印可达性`。
+- 失败 job 的 Runner 复检明确指向 `RunAdbShell command returned stderr`，命令为 `monkey -p com.xbxxhz.box -c android.intent.category.LAUNCHER 1`；这是新增 launcher 兜底自身向 stderr 输出导致 Midscene 判失败，不是百度网盘入口产品失败。
+- 第 3 次 `agent-1785323652680-46e54341` 在 `PREPARE_SOURCE` 后被手动取消，未进入 Runner。
+
+跟进修复：
+
+- 将 launcher 兜底改为静默命令：`monkey -p <package> -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true`。它只辅助把 App 拉前台，不允许 monkey stderr 使 YAML 失败；后续仍保留 Midscene 官方 `launch`。
+- 后端检查同步要求 silent launcher fallback，避免再次生成会被 Midscene 因 stderr 硬失败的启动守卫。
 
 ### 2026-07-29 百度网盘回归后：启动守卫与照片横滑稳定性修复
 

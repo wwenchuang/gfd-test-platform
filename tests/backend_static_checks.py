@@ -296,9 +296,9 @@ def check_xiaobai_launch_guard_uses_adb_launcher_fallback():
     guard_text = "\n".join(launch_guard_flow("        ", "com.xbxxhz.box"))
     require(
         "am force-stop com.xbxxhz.box" in guard_text
-        and "monkey -p com.xbxxhz.box -c android.intent.category.LAUNCHER 1" in guard_text
+        and "monkey -p com.xbxxhz.box -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true" in guard_text
         and "launch: com.xbxxhz.box" in guard_text,
-        "Xiaobai generated YAML needs an ADB launcher fallback between force-stop and Midscene launch so Runner does not keep testing the OPPO home screen",
+        "Xiaobai generated YAML needs a silent ADB launcher fallback between force-stop and Midscene launch so Runner does not keep testing the OPPO home screen or fail on monkey stderr",
     )
 
 
@@ -15640,6 +15640,7 @@ def check_api_testing_routes_registered():
     )
     for expected_pattern in (
         r"^/api/api-testing/plans/([^/]+)$",
+        r"^/api/api-testing/plans/([^/]+)/cases$",
         r"^/api/api-testing/syncs/([^/]+)$",
         r"^/api/api-testing/assets/([^/]+)/revisions$",
         r"^/api/api-testing/assets/([^/]+)/diff$",
