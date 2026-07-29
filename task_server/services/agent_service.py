@@ -4228,6 +4228,10 @@ _AGENT_PHOTO_SUBSPEC_TERMS = (
     "5寸", "6寸", "7寸", "A4资料图片", "A4生活照片", "规格页", "具体规格",
 )
 
+_AGENT_PHOTO_REPRESENTATIVE_PATH_TERMS = (
+    "5寸", "6寸", "7寸", "A4资料图片", "A4生活照片", "普通照片",
+)
+
 
 def _agent_plan_has_source_contract(constraint, constraint_flows):
     if not constraint_flows:
@@ -4445,7 +4449,44 @@ def _agent_generated_yaml_ref_out_of_source_scope(run, ref, content=""):
     text = _normalize_business_flow_text(json.dumps(material, ensure_ascii=False))
     if not _agent_plan_branch_present("照片打印", text):
         return False
-    return any(term in text for term in _AGENT_PHOTO_SUBSPEC_TERMS)
+    if not any(term in text for term in _AGENT_PHOTO_SUBSPEC_TERMS):
+        return False
+    if _agent_generated_photo_subspec_is_representative_path(executable_content, text):
+        return False
+    return True
+
+
+def _agent_generated_photo_subspec_is_representative_path(content, normalized_text=""):
+    """Allow a bounded ordinary-photo path when it only reaches the Baidu target."""
+    raw_content = str(content or "")
+    text = normalized_text or _normalize_business_flow_text(raw_content)
+    if "百度网盘" not in text:
+        return False
+    if any(term in text for term in ("证件照", "智能证件照", "照片拼版", "图片拼版", "一寸照", "1寸")):
+        return False
+    if not any(term in text for term in _AGENT_PHOTO_REPRESENTATIVE_PATH_TERMS):
+        return False
+    if "照片打印" not in text:
+        return False
+    flow_evidence = _agent_yaml_flow_evidence(raw_content)
+    flow_text = _normalize_business_flow_text("\n".join(flow_evidence) or raw_content)
+    if not (
+        _agent_plan_branch_present("照片打印", flow_text)
+        and "百度网盘" in flow_text
+        and any(marker in flow_text for marker in ("aiTap", "点击"))
+    ):
+        return False
+    assertion_lines = [
+        str(line).strip()
+        for line in raw_content.splitlines()
+        if "aiAssert" in line
+    ]
+    assertion_text = _normalize_business_flow_text("\n".join(assertion_lines))
+    if not assertion_text:
+        return False
+    if any(term in assertion_text for term in _AGENT_PHOTO_SUBSPEC_TERMS):
+        return False
+    return "百度网盘" in assertion_text
 
 
 def _normalize_agent_business_plan(value, run, constraint):
@@ -12442,6 +12483,9 @@ def _agent_rerun_source_links(artifacts):
     for progress in list(artifacts.get("rerunProgressHistory") or []) + [artifacts.get("rerunProgress")]:
         if isinstance(progress, dict):
             sources.extend(progress.get("sources") or [])
+    for attempt in artifacts.get("rerunAttempts") or []:
+        if isinstance(attempt, dict):
+            sources.extend(attempt.get("sources") or [])
     sources.extend(artifacts.get("rerunSources") or [])
     links = []
     seen = set()
@@ -16777,6 +16821,16 @@ def _agent_runner_execution_summary(run):
                 return True
         return False
 
+    def count_job_statuses(job_ids):
+        result = {key: 0 for key in ("passed", "failed", "timeout", "running", "cancelled", "unknown")}
+        for job_id in unique_job_ids(job_ids):
+            status = status_by_job_id.get(job_id, "unknown")
+            result[status if status in result else "unknown"] += 1
+        return result
+
+    original_raw_counts = count_job_statuses(original_job_ids)
+    rerun_raw_counts = count_job_statuses(rerun_job_ids)
+
     logical_counts = {key: 0 for key in ("passed", "failed", "timeout", "running", "cancelled", "unknown")}
     recovered_job_ids = []
     unresolved_failed_job_ids = []
@@ -16841,6 +16895,18 @@ def _agent_runner_execution_summary(run):
         "logicalFailedCount": logical_counts["failed"],
         "logicalTimeoutCount": logical_counts["timeout"],
         "logicalRunningCount": logical_counts["running"],
+        "originalPassedCount": original_raw_counts["passed"],
+        "originalFailedCount": original_raw_counts["failed"],
+        "originalTimeoutCount": original_raw_counts["timeout"],
+        "originalRunningCount": original_raw_counts["running"],
+        "originalCancelledCount": original_raw_counts["cancelled"],
+        "originalUnknownCount": original_raw_counts["unknown"],
+        "rerunPassedCount": rerun_raw_counts["passed"],
+        "rerunFailedCount": rerun_raw_counts["failed"],
+        "rerunTimeoutCount": rerun_raw_counts["timeout"],
+        "rerunRunningCount": rerun_raw_counts["running"],
+        "rerunCancelledCount": rerun_raw_counts["cancelled"],
+        "rerunUnknownCount": rerun_raw_counts["unknown"],
         "recoveredCount": len(recovered_job_ids),
         "recoveredJobIds": recovered_job_ids[:100],
         "unresolvedFailedJobIds": unresolved_failed_job_ids[:100],
@@ -16970,15 +17036,27 @@ def _tool_generate_summary(run):
             "finalConclusion": conclusion,
             "originalExecution": {
                 "attempted": _safe_int_local(execution.get("originalAttemptCount"), _safe_int_local(execution.get("attemptedCount"), 0)),
+                "passed": _safe_int_local(execution.get("originalPassedCount"), 0),
+                "failed": _safe_int_local(execution.get("originalFailedCount"), 0),
+                "timeout": _safe_int_local(execution.get("originalTimeoutCount"), 0),
+                "running": _safe_int_local(execution.get("originalRunningCount"), 0),
+                "unknown": _safe_int_local(execution.get("originalUnknownCount"), 0),
+            },
+            "finalExecution": {
+                "attempted": _safe_int_local(execution.get("logicalAttemptCount"), 0),
                 "passed": _safe_int_local(execution.get("logicalPassedCount"), 0),
-                "failed": _safe_int_local(execution.get("failedCount"), 0),
-                "timeout": _safe_int_local(execution.get("timeoutCount"), 0),
-                "running": _safe_int_local(execution.get("runningCount"), 0),
+                "failed": _safe_int_local(execution.get("logicalFailedCount"), 0),
+                "timeout": _safe_int_local(execution.get("logicalTimeoutCount"), 0),
+                "running": _safe_int_local(execution.get("logicalRunningCount"), 0),
             },
             "repairValidation": {
                 "rerun": _safe_int_local(execution.get("rerunAttemptCount"), 0),
                 "recovered": recovered_count,
-                "unresolved": len(execution.get("unresolvedFailedJobIds") or []),
+                "unresolved": _safe_int_local(execution.get("logicalFailedCount"), 0)
+                + _safe_int_local(execution.get("logicalTimeoutCount"), 0),
+                "passed": _safe_int_local(execution.get("rerunPassedCount"), 0),
+                "failed": _safe_int_local(execution.get("rerunFailedCount"), 0),
+                "timeout": _safe_int_local(execution.get("rerunTimeoutCount"), 0),
             },
             "coverage": coverage_status,
         }

@@ -2270,6 +2270,7 @@ function renderAgentStatusBreakdown(summary, artifacts) {
     ? generationPipeline.coverageGap
     : (validation.coverageGap && typeof validation.coverageGap === 'object') ? validation.coverageGap : {};
   const original = (statusBreakdown.originalExecution && typeof statusBreakdown.originalExecution === 'object') ? statusBreakdown.originalExecution : {};
+  const finalExecution = (statusBreakdown.finalExecution && typeof statusBreakdown.finalExecution === 'object') ? statusBreakdown.finalExecution : {};
   const repair = (statusBreakdown.repairValidation && typeof statusBreakdown.repairValidation === 'object') ? statusBreakdown.repairValidation : {};
   const missingPoints = Array.isArray(coverageStatus.missingRequirementPoints)
     ? coverageStatus.missingRequirementPoints
@@ -2286,6 +2287,7 @@ function renderAgentStatusBreakdown(summary, artifacts) {
         <div><span>最终结论</span><strong>${escapeHtml(finalConclusion)}</strong></div>
         <div><span>原始执行</span><strong>${escapeHtml(`${Number(original.passed || 0)} 通过 / ${Number(original.failed || 0)} 失败`)}</strong></div>
         <div><span>修复验证</span><strong>${escapeHtml(`${Number(repair.recovered || 0)} 已恢复 / ${Number(repair.unresolved || 0)} 未恢复`)}</strong></div>
+        <div><span>最终执行</span><strong>${escapeHtml(`${Number(finalExecution.passed || 0)} 通过 / ${Number(finalExecution.failed || 0)} 失败`)}</strong></div>
         <div><span>覆盖缺口</span><strong>${escapeHtml(coverageLabel)}</strong></div>
       </div>
       ${missingPoints.length ? `

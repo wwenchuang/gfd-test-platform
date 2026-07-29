@@ -14113,6 +14113,113 @@ def check_agent_summary_splits_repair_and_coverage_status():
         agent_service._ai_gateway_available = old_ai_gateway_available
 
 
+def check_agent_summary_keeps_original_and_rerun_counts_separate():
+    from task_server.services import agent_service
+
+    old_log_tool_call = agent_service._log_tool_call
+    old_ai_gateway_available = agent_service._ai_gateway_available
+    try:
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._ai_gateway_available = lambda: False
+        run = {
+            "runId": "agent-static-summary-count-split",
+            "target": "基础打印新增百度网盘入口",
+            "mode": "FULL_AUTO",
+            "steps": [{"step": "RUN_SONIC", "status": "PARTIAL_FAILED"}],
+            "artifacts": {
+                "jobIds": ["job-original-pass-1", "job-original-pass-2", "job-original-fail-1", "job-original-fail-2"],
+                "rerunAttempts": [{
+                    "createdJobIds": ["job-rerun-recovered", "job-rerun-still-failed"],
+                    "sources": [
+                        {"sourceJobId": "job-original-fail-1", "newJobId": "job-rerun-recovered"},
+                        {"sourceJobId": "job-original-fail-2", "newJobId": "job-rerun-still-failed"},
+                    ],
+                }],
+                "jobProgressByPhase": {
+                    "smoke": {"jobs": [
+                        {"job_id": "job-original-pass-1", "status": "success"},
+                        {"job_id": "job-original-fail-1", "status": "failed", "failure_type": "SCRIPT_ISSUE"},
+                    ]},
+                    "expanded-1": {"jobs": [
+                        {"job_id": "job-original-pass-2", "status": "success"},
+                        {"job_id": "job-original-fail-2", "status": "failed", "failure_type": "SCRIPT_ISSUE"},
+                    ]},
+                    "安全重跑": {"jobs": [
+                        {"job_id": "job-rerun-recovered", "status": "success"},
+                        {"job_id": "job-rerun-still-failed", "status": "failed", "failure_type": "SCRIPT_ISSUE"},
+                    ]},
+                },
+            },
+        }
+        agent_service._tool_generate_summary(run)
+        summary = run["artifacts"].get("summary") or {}
+        breakdown = summary.get("statusBreakdown") or {}
+        original = breakdown.get("originalExecution") or {}
+        final_result = breakdown.get("finalExecution") or {}
+        repair = breakdown.get("repairValidation") or {}
+        require(
+            original.get("attempted") == 4
+            and original.get("passed") == 2
+            and original.get("failed") == 2,
+            "Original execution counts must report only first-pass Runner jobs, not repair rerun attempts",
+        )
+        require(
+            final_result.get("passed") == 3
+            and final_result.get("failed") == 1,
+            "Final execution counts must collapse repaired source failures into the logical result",
+        )
+        require(
+            repair.get("rerun") == 2
+            and repair.get("recovered") == 1
+            and repair.get("unresolved") == 1,
+            "Repair validation must count unresolved logical failures, not both original and rerun failed job ids",
+        )
+    finally:
+        agent_service._log_tool_call = old_log_tool_call
+        agent_service._ai_gateway_available = old_ai_gateway_available
+
+
+def check_agent_allows_photo_print_representative_baidu_path():
+    from task_server.services import agent_service
+
+    run = {
+        "target": "基础打印新增百度网盘入口",
+        "requirement": "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需完整覆盖三个业务入口中的展示、同级关系、文案及可达页面。",
+        "normalizedInput": {
+            "requirementText": "基础打印的入口在首页：文档打印、照片打印、扫描复印。百度网盘入口是新增能力，需完整覆盖三个业务入口中的展示、同级关系、文案及可达页面。",
+        },
+        "artifacts": {},
+    }
+    representative_yaml = """
+android:
+  tasks:
+    - name: 照片打印页-百度网盘入口展示文案及可达性校验
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: App 首页加载完成，可见「文档打印」「照片打印」「扫描复印」入口
+        - aiTap: 点击「照片打印」入口
+        - aiWaitFor: 照片打印页面加载完成，可见「5寸照片」「6寸照片」等普通照片入口
+        - aiTap: 点击「5寸照片」
+        - aiWaitFor: 照片打印导入页面加载完成，可见「本地导入」「相册导入」「百度网盘」入口
+        - aiAssert: 「百度网盘」入口可见，文案为“百度网盘”，与同级导入入口并列显示
+        - aiTap: 点击「百度网盘」入口
+        - aiWaitFor: 百度网盘授权页、登录页、文件选择页、空状态页或提示页已打开
+"""
+    subspec_assertion_yaml = representative_yaml.replace(
+        "「百度网盘」入口可见，文案为“百度网盘”，与同级导入入口并列显示",
+        "5寸照片规格页已正确展示，并且百度网盘入口可见",
+    )
+    ref = {"type": "file", "source": "generated", "module": "AI_Agent_草稿", "file": "02-照片打印百度网盘.yaml"}
+    require(
+        not agent_service._agent_generated_yaml_ref_out_of_source_scope(run, ref, representative_yaml),
+        "Photo printing may use one ordinary photo representative path when the asserted target remains Baidu Netdisk",
+    )
+    require(
+        agent_service._agent_generated_yaml_ref_out_of_source_scope(run, ref, subspec_assertion_yaml),
+        "Generated YAML must remain out of scope when it asserts the photo subspec itself as a requirement",
+    )
+
+
 def check_ai_gateway_fallback_and_skill_static():
     gateway_source = (ROOT / "ai-gateway" / "server.js").read_text(encoding="utf-8")
     router_config = (ROOT / "ai-gateway" / "config" / "model-router.json").read_text(encoding="utf-8")
@@ -15975,6 +16082,8 @@ def main():
     check_execution_adapter_prompt_center_delay()
     check_mindmap_compact_mode()
     check_generation_volume_targets_modes()
+    check_agent_summary_keeps_original_and_rerun_counts_separate()
+    check_agent_allows_photo_print_representative_baidu_path()
     check_ai_gateway_fallback_and_skill_static()
     check_ai_yaml_generation_decision_chain_static()
     require("匹配全部用例（兜底模式）" not in agent_service_source, "Agent match must not fallback to all cases when AI/source is unclear")

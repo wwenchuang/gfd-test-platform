@@ -5588,3 +5588,40 @@ git diff --check -- task_server/services/agent_service.py task_server/services/c
 ```
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点为 `OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+
+### 2026-07-29 百度网盘回归后：覆盖/报告口径再收敛
+
+用户部署后重新回归百度网盘需求：
+
+- Agent：`agent-1785317041976-0f031217`
+- 终态：`FAILED / RERUN / 95%`
+- 模型：`qwen3.7-plus`
+- 设备：只使用固定 OPPO `ecbfd645`。
+- Figma：4 页 / 4 图解析成功。
+- PLAN：240 秒超时后明确降级为源需求合同计划，保留文档打印、照片打印、扫描复印 3 条业务分支；视觉批次未完整跑完。
+- 生成：6 条 case / 10 个场景 / 4 个确认 YAML；覆盖缺口仍集中在 `REQ-002 照片打印` 的展示、同级、文案、可达性。
+- Runner：原始正式 job 4 个，2 成功 / 2 失败；修复重跑 2 个，1 成功 / 1 失败；最终逻辑结果为 3 通过 / 1 未解决失败。
+
+本轮修复：
+
+- 报告汇总新增并使用三套独立口径：`originalExecution` 只统计首轮正式 Runner job，`repairValidation` 只统计修复重跑与恢复情况，`finalExecution` 统计按修复链折叠后的最终逻辑结果。避免把修复重跑失败混入“原始执行失败数”，也避免“原始失败”和“修复后通过”在同一卡片里互相打架。
+- 前端“结果拆分”卡片增加“最终执行”，并继续展示“原始执行 / 修复验证 / 覆盖缺口”，让用户能直接看出哪些是原始失败、哪些是修复验证后仍未恢复。
+- 照片打印源需求只要求业务入口时，仍禁止证件照、智能证件照、照片拼版等子业务被当成需求分支；但允许一条普通照片代表路径作为到达百度网盘入口的中间导航，前提是最终目标和断言仍只验收“百度网盘”入口/落地页，不验收 5寸/6寸等规格本身。这样能补照片入口可达性，不再因为过度拦截导致照片分支完全缺席。
+- `rerunAttempts.sources` 也纳入 source -> repair job 链路识别，避免只在 `rerunProgress` 中存在时才计算 recovered。
+
+已验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_summary_keeps_original_and_rerun_counts_separate()
+checks.check_agent_allows_photo_print_representative_baidu_path()
+print('new checks ok')
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+node --check js/agent-workbench.js
+python3 tests/frontend_static_checks.py
+git diff --check -- task_server/services/agent_service.py js/agent-workbench.js tests/backend_static_checks.py
+```
+
+全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
