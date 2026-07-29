@@ -376,6 +376,10 @@ def test_baseline_flows_recover_restored_print_preview_before_home_actions():
                 any("启动恢复" in item and "已取消模型处理" in item and "不要点击「重新编辑」" in item for item in startup_texts),
                 f"{relative_path} must recover if launch restores an already-cancelled print preview",
             )
+            require(
+                any("启动二次恢复" in item and "模型打印编辑" in item and "不要点击「下一步」" in item for item in startup_texts),
+                f"{relative_path} must continue recovering when the cancelled preview returns to the print edit page",
+            )
 
 
 def test_print_flows_return_home_after_cancel_cleanup():
@@ -397,6 +401,10 @@ def test_print_flows_return_home_after_cancel_cleanup():
         require(
             any("取消后回首页" in item and "已取消模型处理" in item and "不要点击「重新编辑」" in item for item in texts),
             f"{relative_path} must return home after cancelled print processing so the next case starts cleanly",
+        )
+        require(
+            any("取消后二次回首页" in item and "模型打印编辑" in item and "不要点击「下一步」" in item for item in texts),
+            f"{relative_path} must leave the print edit page when returning from an already-cancelled preview lands there",
         )
         require(
             any("收尾首页确认" in item and "模型打印预览" in item and "模型导入" in item for item in texts),
