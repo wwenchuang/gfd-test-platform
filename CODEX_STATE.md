@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 Apifox 名称发现、AI 候选与独立 API 基线
+
+本轮只收敛 API 测试工作流，没有修改 UI Agent、Midscene YAML、Runner、Sonic 或历史用例。设计对照 Apifox 的 AI 候选采纳、场景测试和合同校验，以及 Postman 的 OpenAPI 同步集合与独立 Collection Run：AI 生成内容先作为候选，平台校验后采纳为稳定基线；接口版本变化时保留旧基线并标记影响，不静默改写。
+
+实现：
+
+- 新增隔离的官方 Apifox CLI 只读发现边界。Token 通过 stdin 输入，CLI 使用一次性 HOME，响应和错误均脱敏；可读取项目中文名、团队、分支和环境名称，失败时明确回退到手动连接。
+- API source 持久化 `provider_metadata`，来源选择器和设置页优先展示 Apifox 返回的中文名称；新增项目改为先输入 Token 搜索项目，再选择命名分支/环境，原始 ID 收进“无法读取？手动连接”。
+- 新增认证发现接口 `/api/api-testing/apifox/discovery/projects` 和 `/api/api-testing/apifox/discovery/project-context`，既支持新 Token，也支持已有 source 的服务端凭据，响应不返回 Token。
+- AI 用例页只展示 `draft` 候选，确认动作改为“采纳为基线”。新增独立“API 基线”工作区，直接投影现有 `confirmed` 计划，不复制记录、不新增状态；展示项目、模块、接口数、可执行数、采纳时间、版本新鲜度和受影响用例，并可查看、按新版本再生成或定位到 MeterSphere 执行。
+- `install-server.sh` 固定安装官方 `apifox-cli@2.2.8`，校验 Node/CLI 版本，国内镜像失败后回退 npm 官方源；失败只告警，手动连接仍可用。根据真实 `2.2.8 --help`，分支读取补齐必填的 `branch list --type all`。
+
+验证：
+
+```bash
+python3 tests/api_asset_sync_checks.py                 # 40 passed
+python3 tests/api_project_workspace_checks.py          # 45 passed
+python3 tests/apifox_discovery_checks.py               # 12 passed
+python3 tests/frontend_static_checks.py                # 72 passed
+VISUAL_ARTIFACTS_DIR=/tmp/midscene-api-baseline-visual-4 npm run test:visual
+bash -n deploy/install-server.sh
+```
+
+Playwright 已验证桌面/移动端候选与基线隔离、过期影响、无横向溢出、数值 0 显示，以及从基线进入执行后定位对应计划。本机没有保存生产 Apifox 凭据，未把聊天 Token 放入命令或文件；部署后应使用页面已保存凭据做一次只读项目/分支/环境发现，并建议轮换曾在聊天中暴露的 Token。
+
 ### 2026-07-29 Agent 报告页：Runner 阶段进度必须作为真实报告来源
 
 用户截图显示 Agent 已进入完成态，但“Runner 报告”仍显示 `unknown`，执行用例、通过、失败和未完成统计为空，并提示“当前没有 Runner 回传的 HTML 报告链接”。同一线上 Agent 产物中实际已经存在 `jobProgressByPhase.smoke.jobs`，包含固定 OPPO 上执行失败的 Runner job 和 `report_url`，因此这是前端报告聚合口径问题，不是 Runner 没执行。

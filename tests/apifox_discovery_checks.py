@@ -186,6 +186,19 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
             result["environments"],
         )
         self.assertNotIn(self.token, json.dumps(result, ensure_ascii=False))
+        self.assertIn(
+            [
+                "branch",
+                "list",
+                "--project",
+                "5904970",
+                "--type",
+                "all",
+                "--api-base-url",
+                discovery.DEFAULT_BASE_URL,
+            ],
+            self._argv(),
+        )
 
     def test_unsupported_cli_version_has_a_stable_safe_error(self):
         self._set_mode("old_version")
@@ -245,6 +258,20 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
         self.assertEqual(504, raised.exception.http_status)
         isolated_homes = [path for path in self._homes() if path != Path.home()]
         self.assertTrue(all(not path.exists() for path in isolated_homes))
+
+    def test_server_installer_provisions_the_pinned_cli_without_blocking_deploy(self):
+        install_source = (ROOT / "deploy" / "install-server.sh").read_text(
+            encoding="utf-8"
+        )
+        env_source = (ROOT / "deploy" / "midscene.env.example").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('APIFOX_CLI_VERSION="${APIFOX_CLI_VERSION:-2.2.8}"', install_source)
+        self.assertIn('apifox-cli@${APIFOX_CLI_VERSION}', install_source)
+        self.assertIn("apifox_cli_usable", install_source)
+        self.assertIn("手动连接仍可使用", install_source)
+        self.assertIn("export APIFOX_CLI_BIN='apifox'", env_source)
 
 
 class _RouteHandler:

@@ -424,7 +424,7 @@ def discover_project_context(
                 404,
             )
         branch_values = _run_json_cli(
-            [cli_path, "branch", "list", *common],
+            [cli_path, "branch", "list", "--project", target_project_id, "--type", "all", "--api-base-url", normalized_base_url],
             env=env,
             deadline=deadline,
             token=token,
