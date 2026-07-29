@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-29 百度网盘真实 Runner 回归：生成门禁已放开，报告归因需以 Runner 失败为准
+
+用户部署 `d9234f5` 后同参重跑百度网盘 Agent。线上健康：Task 服务模型 `qwen3.7-plus`，Figma token 可用，AI skills 完整；固定 Runner 为 `win-runner-01`，固定设备只使用 OPPO PHM110 `ecbfd645`，App `com.xbxxhz.box` 版本 `4.45.0`。
+
+回归结果：
+
+- `agent-1785293444965-9d3b6aeb`：生成链路已越过旧硬门禁，确认 4 个 executable YAML，coverage gap 记录为 warning；但 `EXECUTION_PRECHECK` 时 Windows Runner 心跳超过 60 秒窗口，被判 `Runner 不在线`，未创建 Runner job。
+- `agent-1785294071956-8364b2df`：生成 5 个 executable YAML，coverage gap 为 warning；同样在预检时命中 Runner 心跳短暂离线，未创建 Runner job。
+- `agent-1785294560275-bd1e04c4`：成功越过预检并创建真实 Runner job。Runner dry-run 阶段 2/2 通过；首批 smoke 只执行固定 OPPO 上的 `01-文档打印页-百度网盘入口可见性及文案校验.yaml`，job `job_1785294978690_00008` 失败并上传 HTML 报告。
+- 真实失败报告显示页面被“喜欢哪个免费拿”活动弹窗遮挡，背景可见文档打印/照片打印等入口，但未看到“百度网盘”入口；这是 Runner 真实测试失败结果，不应再被归为生成失败。
+
+发现的新问题：
+
+- `jobProgressByPhase.smoke.jobs` 中已经有 failed job，但 `_agent_failed_execution_items()` 没把该来源纳入失败源，导致 `ANALYZE_FAILURE` 误写 `failureType=NONE / 全部执行成功`。
+- `yamlValidation.issues` 中包含 coverage warning，`DIAGNOSE_FAILURE` 将其误判为 `YAML 强校验未通过`。这与用户确认的产品口径冲突：覆盖缺口是告警，真实 Runner 失败才是本轮执行结果。
+
+修复：
+
+- `_agent_failed_execution_items()` 现在从 `jobProgressByPhase` 收集 `failed/error/timeout/cancelled` Runner job，作为 report/jobResult 之外的失败源。
+- `_tool_diagnose_failure()` 优先诊断真实 Runner failed job；当 `coverageIncomplete/coverageGap` 存在时，会从 YAML validation issues 中剔除覆盖告警，避免误报“YAML 强校验未通过”。
+- 新增回归测试：构造 coverage warning + smoke failed job，要求失败归因必须识别 Runner job，且诊断 rootCause 不能是 `YAML 强校验未通过`。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_failure_analysis_uses_runner_phase_failures_before_coverage_warnings()
+PY
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_yaml_validate_partial_quarantine()
+checks.check_agent_quarantine_refs_do_not_reenter_precheck()
+checks.check_agent_execution_gate_repairs_before_smoke_selection()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+```
+
+后续部署后建议继续同参回归。预期：生成阶段仍可带 coverage warning 进入 Runner；如果文档打印 smoke 失败，报告/诊断应显示真实 Runner failed job 和 HTML 报告，不再显示“全部通过”或“YAML 强校验未通过”。Runner 心跳偶发超过 60 秒窗口的问题仍需单独观察；这不属于本轮生成门禁修复。
+
 ### 2026-07-29 Agent 生成门禁产品口径：覆盖缺口是告警，零可执行才阻断
 
 用户明确产品原则：冒烟或后续用例不一定都能生成、也不一定都要通过；这些本来就是测试结果，应进入报告区分成功/失败/未生成，而不是在生成阶段要求全绿。上一轮百度网盘线上 Agent `agent-1785292186788-8c36b5fe` 已生成 6 个 YAML、确认 5 个，真正剩余只是照片打印展示 YAML 注释中的旧基线词 `一寸照` 被 scope gate 误判，以及缺口被硬门禁阻断，导致没有进入 Runner。

@@ -12233,6 +12233,24 @@ def _agent_failed_execution_items(run):
     if job_result:
         raw_items.extend(job_result.get("failed") or [])
         raw_items.extend(job_result.get("timeout") or [])
+    progress_by_phase = artifacts.get("jobProgressByPhase") if isinstance(artifacts.get("jobProgressByPhase"), dict) else {}
+    for phase, progress in progress_by_phase.items():
+        if not isinstance(progress, dict):
+            continue
+        for job in progress.get("jobs") or []:
+            if not isinstance(job, dict):
+                continue
+            status = str(job.get("status") or "").strip().lower()
+            if status not in ("failed", "error", "timeout", "cancelled"):
+                continue
+            raw_items.append({
+                **job,
+                "jobId": job.get("jobId") or job.get("job_id") or "",
+                "phase": phase,
+                "taskName": job.get("taskName") or job.get("target_task_name") or job.get("current_task_name") or "",
+                "stderrTail": job.get("stderrTail") or job.get("stderr_tail") or "",
+                "stdoutTail": job.get("stdoutTail") or job.get("stdout_tail") or "",
+            })
 
     # If report collection did not run yet, fall back to persisted job records.
     try:
@@ -16877,14 +16895,34 @@ def _tool_diagnose_failure(run):
             diagnosis = existing
         else:
             failed_steps = [s for s in run.get("steps", []) if str(s.get("status")).upper() in ("FAILED", "PARTIAL_FAILED")]
+            failed_execution_items = artifacts.get("failedExecutionItems") or _agent_failed_execution_items(run)
             sync_failed = ((artifacts.get("sonicSync") or {}).get("failed") or [])
             validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
-            if validation.get("issues"):
+            validation_issues = [
+                str(item).strip()
+                for item in (validation.get("issues") or [])
+                if str(item or "").strip()
+            ]
+            if validation.get("coverageIncomplete") or validation.get("coverageGap"):
+                coverage_reasons = set(str(item).strip() for item in ((validation.get("coverageGap") or {}).get("reasons") or []) if str(item or "").strip())
+                validation_issues = [
+                    item for item in validation_issues
+                    if item not in coverage_reasons and "只生成/确认 YAML" not in item and "仍未覆盖的需求点" not in item
+                ]
+            if failed_execution_items:
+                first = failed_execution_items[0]
+                diagnosis = make_diagnosis(
+                    first.get("failureReason") or first.get("error") or "Runner 用例执行失败",
+                    "Runner 已产生真实失败结果，应按测试报告继续分析，而不是回退为 YAML 生成失败。",
+                    ["打开失败任务报告", "确认弹窗/页面状态/脚本断言是否符合预期", "按失败类型生成修复草稿或记录产品缺陷"],
+                    failedJob=first,
+                )
+            elif validation_issues:
                 diagnosis = make_diagnosis(
                     "YAML 强校验未通过",
                     "不能同步 Sonic 或执行测试。",
                     ["重新生成 YAML", "人工编辑 YAML 草稿", "确认 android/ios.tasks 非空"],
-                    failedYaml=validation.get("issues", [])[:5],
+                    failedYaml=validation_issues[:5],
                 )
             elif sync_failed:
                 err = str(sync_failed[0].get("error") or "")

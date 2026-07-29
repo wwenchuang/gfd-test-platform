@@ -14358,6 +14358,60 @@ android:
     require(len(refs) == 1 and refs[0].get("file") == "02-good.yaml", "Quarantined generatedYamlPath must not be re-added to executable YAML refs")
 
 
+def check_agent_failure_analysis_uses_runner_phase_failures_before_coverage_warnings():
+    from task_server.services import agent_service
+
+    old_log_tool_call = agent_service._log_tool_call
+    old_ai_gateway_available = agent_service._ai_gateway_available
+    try:
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._ai_gateway_available = lambda: False
+        run = {
+            "runId": "agent-static-runner-phase-failure",
+            "target": "基础打印新增百度网盘入口",
+            "artifacts": {
+                "yamlValidation": {
+                    "ok": True,
+                    "issues": ["生成自动化用例 7 条，但只生成/确认 YAML 5 个"],
+                    "coverageIncomplete": True,
+                    "coverageGap": {"reasons": ["覆盖缺口告警"]},
+                },
+                "jobProgressByPhase": {
+                    "smoke": {
+                        "jobs": [{
+                            "job_id": "job-smoke-failed",
+                            "status": "failed",
+                            "module": "AI_Agent_草稿",
+                            "file": "01-doc.yaml",
+                            "device_id": "ecbfd645",
+                            "runner_id": "win-runner-01",
+                            "target_task_name": "文档打印页-百度网盘入口可见性及文案校验",
+                            "error": "页面弹窗遮挡，未看到百度网盘入口",
+                            "report_url": "http://example.test/report.html",
+                        }],
+                    },
+                },
+            },
+        }
+        failed_items = agent_service._agent_failed_execution_items(run)
+        analyze_call = agent_service._tool_analyze_failure(run)
+        diagnosis_call = agent_service._tool_diagnose_failure(run)
+        analysis = run["artifacts"].get("failureAnalysis") or {}
+        diagnosis = run["artifacts"].get("diagnosis") or {}
+        require(
+            len(failed_items) == 1
+            and failed_items[0].get("jobId") == "job-smoke-failed"
+            and analyze_call.get("status") == "SUCCESS"
+            and analysis.get("failureType") != "NONE"
+            and diagnosis_call.get("status") == "SUCCESS"
+            and diagnosis.get("rootCause") != "YAML 强校验未通过",
+            "Agent failure analysis must use failed Runner phase jobs before treating coverage warnings as YAML validation failures",
+        )
+    finally:
+        agent_service._log_tool_call = old_log_tool_call
+        agent_service._ai_gateway_available = old_ai_gateway_available
+
+
 def check_agent_execution_gate_repairs_before_smoke_selection():
     from task_server.services import agent_service
 
@@ -15756,6 +15810,7 @@ def main():
     check_agent_yaml_validate_partial_quarantine()
     check_agent_yaml_validate_auto_repairs_missing_wait()
     check_agent_quarantine_refs_do_not_reenter_precheck()
+    check_agent_failure_analysis_uses_runner_phase_failures_before_coverage_warnings()
     check_agent_execution_gate_repairs_before_smoke_selection()
     check_agent_runner_failure_reason_summary()
     check_agent_failure_ai_payload_has_primary_evidence()
