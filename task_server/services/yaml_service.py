@@ -3081,6 +3081,8 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
         flows.append(indent + "- runAdbShell: " + yaml_text("input keyevent 3"))
     flows.extend([
         indent + "- runAdbShell: " + yaml_text("am force-stop " + app_package),
+        indent + "- runAdbShell: " + yaml_text("monkey -p " + app_package + " -c android.intent.category.LAUNCHER 1"),
+        indent + "- sleep: 800",
         indent + "- launch: " + app_package,
     ])
     if mode == "strict" or evidence_needs_popup_guard(evidence_text):
@@ -4648,6 +4650,16 @@ def _horizontal_scroll_safe_target(target):
     return target.rstrip("，。；; ") + "；从该横向区域中部起手，避开屏幕左右边缘"
 
 
+def _photo_import_scroll_safe_target(target="", context=""):
+    """Return the stable visible-anchor target for Xiaobai photo import rows."""
+    combined = _compact_text(" ".join([str(target or ""), str(context or "")]))
+    if "照片打印" not in combined:
+        return ""
+    if not any(word in combined for word in ("导入", "功能入口", "规格页", "百度网盘", "相册", "相机")):
+        return ""
+    return "照片打印页包含“相册导入”“相机拍照”等同级入口的横向导入方式区域中部，避开屏幕左右边缘"
+
+
 def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
     """将横向 icon 区域自然语言滑动幂等规范为一次官方 aiScroll。"""
     if not block:
@@ -4699,7 +4711,7 @@ def normalize_horizontal_icon_scrolls_in_task_block(block, evidence_text=""):
             for word in ("横向", "水平", "icon", "图标", "我的学习", "功能", "horizontal")
         )
         if target_hint:
-            safe_target = _horizontal_scroll_safe_target(target)
+            safe_target = _photo_import_scroll_safe_target(target, evidence_text) or _horizontal_scroll_safe_target(target)
             already_normalized = (
                 re.search(r"\bscrollType\s*:\s*['\"]?singleAction", child_text)
                 and re.search(r"\bdirection\s*:\s*['\"]?right", child_text)
@@ -6235,9 +6247,13 @@ def _repair_generated_action_like_wait_scroll(flow: list, index: int, task_name:
     if not target:
         return []
     original = str(step.get("aiWaitFor") or "")
+    scroll_target = (
+        _photo_import_scroll_safe_target("横向导入方式区域", task_name)
+        or "在包含“本地导入”、“相册导入”、“微信导入”的横向导入栏区域中部操作，避开屏幕左右边缘"
+    )
     step.clear()
     step.update({
-        "aiScroll": "在包含“本地导入”、“相册导入”、“微信导入”的横向导入栏区域中部操作，避开屏幕左右边缘",
+        "aiScroll": scroll_target,
         "direction": "right",
         "distance": 400,
         "scrollType": "singleAction",
@@ -6258,6 +6274,35 @@ def _repair_generated_action_like_wait_scroll(flow: list, index: int, task_name:
         "prompt": original[:180],
         "replacement": "aiScroll right over visible import entry row",
     }]
+
+
+def _repair_generated_photo_import_scroll_step(step: dict, task_name: str) -> dict:
+    """Normalize photo import row scrolls to a visible-anchor single action."""
+    if not isinstance(step, dict) or "aiScroll" not in step:
+        return {}
+    target = str(step.get("aiScroll") or "").strip()
+    safe_target = _photo_import_scroll_safe_target(target, task_name)
+    if not safe_target:
+        return {}
+    changed = target != safe_target
+    if step.get("direction") != "right":
+        step["direction"] = "right"
+        changed = True
+    if safe_int(step.get("distance"), 0) != 400:
+        step["distance"] = 400
+        changed = True
+    if step.get("scrollType") != "singleAction":
+        step["scrollType"] = "singleAction"
+        changed = True
+    if step.get("aiScroll") != safe_target:
+        step["aiScroll"] = safe_target
+    if not changed:
+        return {}
+    return {
+        "changed": "photo import horizontal aiScroll anchored to visible import row",
+        "prompt": target[:180],
+        "replacement": safe_target[:180],
+    }
 
 
 def _repair_generated_post_launch_restart_ai_step(step: dict, next_step: dict = None) -> dict:
@@ -6343,6 +6388,17 @@ def repair_generated_yaml_executable_gate_issues(yaml_text: str) -> dict:
             if action_like_scroll_repair:
                 changes.extend(action_like_scroll_repair)
                 continue
+
+            photo_scroll_repair = _repair_generated_photo_import_scroll_step(
+                step,
+                task.get("name") or f"tasks[{task_index}]",
+            )
+            if photo_scroll_repair:
+                changes.append({
+                    "task": task.get("name") or f"tasks[{task_index}]",
+                    "flowIndex": step_index,
+                    **photo_scroll_repair,
+                })
 
             next_step = flow[step_index] if step_index < len(flow) and isinstance(flow[step_index], dict) else None
             restart_repair = _repair_generated_post_launch_restart_ai_step(step, next_step) if deterministic_launch_seen else {}

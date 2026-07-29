@@ -290,6 +290,18 @@ def check_runner_inline_android_device_injection():
         require(yaml.safe_load(inline).get("android") == {"deviceId": "ecbfd645"}, f"{filename} must expand inline empty Android config before injecting deviceId")
 
 
+def check_xiaobai_launch_guard_uses_adb_launcher_fallback():
+    from task_server.services.yaml_service import launch_guard_flow
+
+    guard_text = "\n".join(launch_guard_flow("        ", "com.xbxxhz.box"))
+    require(
+        "am force-stop com.xbxxhz.box" in guard_text
+        and "monkey -p com.xbxxhz.box -c android.intent.category.LAUNCHER 1" in guard_text
+        and "launch: com.xbxxhz.box" in guard_text,
+        "Xiaobai generated YAML needs an ADB launcher fallback between force-stop and Midscene launch so Runner does not keep testing the OPPO home screen",
+    )
+
+
 def check_midscene_model_family_protocol():
     from task_server.services import runner_service
 
@@ -14701,6 +14713,45 @@ android:
     )
 
 
+def check_photo_baidu_scroll_repair_uses_visible_photo_import_anchors():
+    from task_server.services.yaml_service import repair_generated_yaml_executable_gate_issues
+
+    photo_reach_yaml = """
+android:
+  tasks:
+    - name: "照片打印页-点击百度网盘入口可达性校验"
+      flow:
+        - runAdbShell: "input keyevent 3"
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "被测 App 首页已加载完成，首页核心功能入口可见"
+        - aiTap: "点击「照片打印」入口"
+        - sleep: 300
+        - aiTap: "点击「5寸照片」规格卡片"
+        - sleep: 300
+        - aiScroll: "在照片打印规格页的功能入口区域，从屏幕中部向右侧水平滑动，以展示更多导入方式选项"
+          direction: "right"
+          distance: 300
+          scrollType: "singleAction"
+        - aiWaitFor: "等待照片打印页面加载完成，并看到「百度网盘」入口或导入方式区域"
+        - aiTap: "点击「百度网盘」入口"
+        - aiWaitFor: "等待出现百度网盘授权页、登录页、文件列表页或提示页任一稳定信号"
+          timeout: 60000
+        - aiAssert: "点击后进入百度网盘相关页面或出现可识别提示，未白屏、未闪退"
+"""
+    repaired = repair_generated_yaml_executable_gate_issues(photo_reach_yaml)
+    content = repaired.get("content") or ""
+    require(repaired.get("changed"), "Photo Baidu reachability YAML should be locally repaired before Runner rerun")
+    require(
+        "相册导入" in content
+        and "相机拍照" in content
+        and "横向导入方式区域中部" in content
+        and "distance: 400" in content
+        and content.count("aiScroll:") == 1,
+        "Photo Baidu horizontal repair must use visible photo import anchors and keep one bounded official aiScroll",
+    )
+
+
 def check_agent_summary_separates_runner_outcomes_from_orchestration():
     from task_server.services import agent_service
 
@@ -15648,6 +15699,7 @@ def main():
     check_automation_filter_invalid_json_self_repair()
     check_report_image_context_uses_midscene_execution_refs()
     check_runner_inline_android_device_injection()
+    check_xiaobai_launch_guard_uses_adb_launcher_fallback()
     check_midscene_model_family_protocol()
     check_sonic_3d_baseline_regression_guards()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
@@ -16065,6 +16117,7 @@ def main():
     check_agent_quarantine_refs_do_not_reenter_precheck()
     check_agent_failure_analysis_uses_runner_phase_failures_before_coverage_warnings()
     check_agent_execution_gate_repairs_before_smoke_selection()
+    check_photo_baidu_scroll_repair_uses_visible_photo_import_anchors()
     check_agent_runner_failure_reason_summary()
     check_agent_failure_ai_payload_has_primary_evidence()
     check_agent_ai_owned_plan_and_evidence_loop()
@@ -16738,7 +16791,7 @@ def main():
         require((ROOT / module_path).exists(), f"Backend service skeleton missing: {module_path}")
     storage_source = (ROOT / "task_server" / "storage.py").read_text(encoding="utf-8")
     require("write_json_atomic" in storage_source and "os.replace(tmp, target)" in storage_source, "Storage skeleton must provide atomic JSON writes")
-    print({"ok": True, "file": str(MODULE), "checks": 61})
+    print({"ok": True, "file": str(MODULE), "checks": 63})
 
 
 if __name__ == "__main__":

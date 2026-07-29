@@ -5625,3 +5625,45 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 ```
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+
+### 2026-07-29 百度网盘回归后：启动守卫与照片横滑稳定性修复
+
+用户部署后再次使用相同百度网盘需求、Figma、`qwen3.7-plus`、`RUNNER_JOB`、`win-runner-01`、固定 OPPO `ecbfd645` 发起回归：
+
+- Agent：`agent-1785319838926-88b7cbec`
+- 终态：`FAILED / RERUN / 95%`
+- Figma：4 页 / 4 图解析成功。
+- PLAN：AI 超时后使用源需求合同降级计划，仍保留文档打印、照片打印、扫描复印 3 个业务入口。
+- 生成：6 条 case / 6 个 YAML，覆盖缺口 `0`；说明覆盖生成问题本轮已收敛。
+- Runner：原始正式 job 6 个，4 成功 / 2 失败；修复重跑 1 个，0 成功 / 1 失败；所有正式 job 均使用固定设备 `ecbfd645`，未混用第二台手机。
+- 失败集中在照片打印：一条失败报告显示当前截图停在 OPPO 桌面，未进入 App 首页；另一条失败为照片页横向导入入口未稳定滑到「百度网盘」。平台归因为 `SCRIPT_ISSUE`，没有生成产品缺陷。
+
+本轮修复：
+
+- `launch_guard_flow()` 在 `am force-stop <package>` 后增加一次 Android launcher 兜底：`monkey -p <package> -c android.intent.category.LAUNCHER 1`，再保留 Midscene `launch`。目标是避免 Runner 偶发仍停在 OPPO 桌面时继续执行首页断言。
+- 照片打印页横向导入栏修复改为可见锚点：包含「相册导入」「相机拍照」等同级入口的横向导入方式区域中部，避开屏幕左右边缘。
+- 本地 executable gate 会把照片打印百度网盘相关的 `aiScroll` 统一为一次官方 `aiScroll`：`direction: right`、`distance: 400`、`scrollType: singleAction`，不追加第二次横滑、不使用坐标或 ADB swipe。
+- 新增后端回归检查：小白学习打印启动守卫必须包含 ADB launcher fallback；照片打印百度网盘可达性修复必须使用照片导入可见锚点且只保留一次有界横滑。
+
+已验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_xiaobai_launch_guard_uses_adb_launcher_fallback()
+checks.check_photo_baidu_scroll_repair_uses_visible_photo_import_anchors()
+print('new checks ok')
+PY
+python3 -m py_compile task_server/services/yaml_service.py tests/backend_static_checks.py
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_runner_inline_android_device_injection()
+checks.check_xiaobai_launch_guard_uses_adb_launcher_fallback()
+checks.check_photo_baidu_scroll_repair_uses_visible_photo_import_anchors()
+checks.check_agent_execution_gate_repairs_before_smoke_selection()
+print('targeted checks ok')
+PY
+git diff --check -- task_server/services/yaml_service.py tests/backend_static_checks.py
+```
+
+全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
