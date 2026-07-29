@@ -63,6 +63,18 @@ PY
 
 后续部署后应同参重新跑百度网盘 Agent，预期不再因 AI 扩展流挤占预算而缺整条照片打印 REQ-002。若进入 Runner 后失败，再按真实 Runner 报告分类处理。
 
+补充线上复跑 `agent-1785285990355-e3e9bfa1`：
+
+- 部署后同参重新跑，PLAN 已按 `文档打印 / 照片打印 / 扫描复印` 输出，说明主分支排序修复生效。
+- 任务仍在 `GENERATE_YAML / 30%` 失败，未创建 Runner job。
+- 新证据显示照片主分支只保留了“展示/同级/文案”，另一个“照片打印点击百度网盘入口跳转稳定性”flow 因 Figma 5寸/一寸规格页软证据污染，被 `source_contract_does_not_include_photo_subspec` 丢弃；结果 REQ-002 的 reachability 以及整条照片硬覆盖仍无法确认。
+
+补充修复：
+
+- 新增 `_agent_merge_required_acceptance_into_flows()`：严格源合同下，最终保留的每个源分支都合并源需求合同的硬验收 checks 和 refs。
+- 这样 AI 可提供路径/视觉语义，但不能因为把 reachability 拆到被丢弃的照片规格 flow 而丢失源合同四项硬验收。
+- 新增回归：照片聚合主 flow 只含展示/同级/文案，照片规格 flow 含点击稳定可达且被丢弃时，最终保留的照片主 flow 必须仍包含“点击百度网盘入口并校验目标页面稳定可达”，且不带 `5寸` 规格页。
+
 ### 2026-07-28 系统化收紧：生成确认、验证和预检必须共用有效 YAML 覆盖口径
 
 用户部署 `1307c68` 后同参重新发起百度网盘 Agent：`agent-1785233673106-bed83f3b`。线上健康正常：Task 服务、AI Gateway、Sonic Bridge 和 Windows Runner 均可用，Runner 为 `2026.07.26-qwen3.7-result-retry-v1`，模型为 `qwen3.7-plus`，固定 OPPO PHM110 `ecbfd645` 在线；未向第二台手机下发。

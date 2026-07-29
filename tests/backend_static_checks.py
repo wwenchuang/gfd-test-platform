@@ -3852,6 +3852,49 @@ def check_agent_ai_owned_plan_and_evidence_loop():
             and "一寸照规格页" not in json.dumps(photo_aggregate_plan.get("businessFlows"), ensure_ascii=False),
             "Photo aggregate-page source branch must be retained while explicit photo spec-page branches are dropped",
         )
+        photo_split_acceptance_plan, photo_split_acceptance_issues = agent_service._normalize_agent_business_plan({
+            "objective": "基础打印新增百度网盘入口",
+            "businessFlows": [
+                {
+                    "id": "FLOW-001",
+                    "name": "文档打印页-百度网盘入口正常展示与跳转",
+                    "branch": "文档打印",
+                    "steps": ["App首页", "点击文档打印", "校验百度网盘", "点击百度网盘入口"],
+                    "checks": ["百度网盘入口可见、同级、文案、点击后稳定可达"],
+                },
+                {
+                    "id": "FLOW-002",
+                    "name": "照片打印聚合页-百度网盘入口正常展示",
+                    "branch": "照片打印",
+                    "steps": ["App首页", "点击照片打印", "进入照片打印聚合页", "校验百度网盘入口可见且与相册/相机入口同级"],
+                    "checks": ["百度网盘入口可见，文案准确，与相册/相机同级"],
+                },
+                {
+                    "id": "FLOW-003",
+                    "name": "照片打印页-点击百度网盘入口跳转稳定性校验",
+                    "branch": "照片打印",
+                    "steps": ["App首页", "点击照片打印", "进入5寸照片页", "点击百度网盘入口", "校验跳转稳定"],
+                    "checks": ["5寸照片页点击百度网盘入口后稳定可达"],
+                },
+                {
+                    "id": "FLOW-004",
+                    "name": "扫描复印页-百度网盘入口滚动查找与展示校验",
+                    "branch": "扫描复印",
+                    "steps": ["App首页", "点击扫描复印", "校验百度网盘"],
+                    "checks": ["百度网盘入口可见、同级、文案、点击后稳定可达"],
+                },
+            ],
+        }, live_plan_run, candidate_constraint)
+        photo_split_flows = (photo_split_acceptance_plan or {}).get("businessFlows") or []
+        photo_split_flow = next((item for item in photo_split_flows if item.get("branch") == "照片打印"), {})
+        photo_split_text = json.dumps(photo_split_flow, ensure_ascii=False)
+        require(
+            photo_split_acceptance_plan
+            and not photo_split_acceptance_issues
+            and "5寸" not in photo_split_text
+            and "点击百度网盘入口并校验目标页面稳定可达" in photo_split_text,
+            "When AI splits a hard source branch across an aggregate flow and a dropped photo-spec reachability flow, source acceptance checks must be merged back into the retained branch",
+        )
         missing_photo_plan, missing_photo_issues = agent_service._normalize_agent_business_plan({
             "objective": "基础打印新增百度网盘入口",
             "businessFlows": [

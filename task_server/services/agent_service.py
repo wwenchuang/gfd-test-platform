@@ -4374,6 +4374,48 @@ def _agent_prioritize_source_contract_flows(flows, required_flows):
     return ordered + passthrough, dropped
 
 
+def _agent_merge_required_acceptance_into_flows(flows, required_flows):
+    if not flows or not required_flows:
+        return flows
+    required_by_branch = {}
+    for item in required_flows:
+        if not isinstance(item, dict):
+            continue
+        branch = str(item.get("branch") or item.get("name") or "").strip()
+        if branch and branch not in required_by_branch:
+            required_by_branch[branch] = item
+    if not required_by_branch:
+        return flows
+
+    merged = []
+    for flow in flows:
+        if not isinstance(flow, dict):
+            continue
+        branch = str(flow.get("branch") or flow.get("name") or "").strip()
+        required = required_by_branch.get(branch)
+        if not required:
+            merged.append(flow)
+            continue
+        next_flow = copy.deepcopy(flow)
+        checks = _agent_plan_text_list(next_flow.get("checks") or next_flow.get("assertions"), limit=12)
+        for check in _agent_plan_text_list(required.get("checks") or required.get("assertions"), limit=12):
+            if check and check not in checks:
+                checks.append(check)
+        next_flow["checks"] = checks[:12]
+        req_refs = _agent_plan_text_list(next_flow.get("requirementRefs") or next_flow.get("requirement_refs"), limit=12)
+        for ref in _agent_plan_text_list(required.get("requirementRefs") or required.get("requirement_refs") or required.get("id"), limit=6):
+            if ref and ref not in req_refs:
+                req_refs.append(ref)
+        next_flow["requirementRefs"] = req_refs[:12]
+        if checks != _agent_plan_text_list(flow.get("checks") or flow.get("assertions"), limit=12):
+            evidence = _agent_plan_text_list(next_flow.get("evidence"), limit=8)
+            if "source_requirement_acceptance_contract" not in evidence:
+                evidence.append("source_requirement_acceptance_contract")
+            next_flow["evidence"] = evidence[:8]
+        merged.append(next_flow)
+    return merged
+
+
 def _agent_generated_yaml_ref_out_of_source_scope(run, ref, content=""):
     if not _agent_yaml_ref_is_generated(run, ref):
         return False
@@ -4462,6 +4504,7 @@ def _normalize_agent_business_plan(value, run, constraint):
         flows.extend(recovered_flows)
     if source_contract:
         flows, duplicate_notes = _agent_prioritize_source_contract_flows(flows, required_flows)
+        flows = _agent_merge_required_acceptance_into_flows(flows, required_flows)
         dropped_out_of_scope.extend(duplicate_notes)
 
     combined = _normalize_business_flow_text(json.dumps(flows, ensure_ascii=False))
