@@ -1189,6 +1189,98 @@ def create_agent_run(payload):
     return run
 
 
+def _agent_retry_payload_from_run(run):
+    run = run if isinstance(run, dict) else {}
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    source_context = artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}
+    normalized = run.get("normalizedInput") if isinstance(run.get("normalizedInput"), dict) else {}
+    source_inputs = (
+        normalized.get("sourceInputs")
+        if isinstance(normalized.get("sourceInputs"), dict)
+        else run.get("sourceInputs") if isinstance(run.get("sourceInputs"), dict) else {}
+    )
+    source_refs = copy.deepcopy(run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {})
+    retry_source_run_id = str(run.get("runId") or "").strip()
+    if retry_source_run_id:
+        source_refs["retryOfRunId"] = retry_source_run_id
+    requirement_text = (
+        normalized.get("requirementText")
+        or source_inputs.get("requirementText")
+        or source_context.get("requirementText")
+        or run.get("requirementText")
+        or run.get("requirement")
+        or ""
+    )
+    figma_url = (
+        normalized.get("figmaUrl")
+        or source_inputs.get("figmaUrl")
+        or source_context.get("figmaUrl")
+        or source_refs.get("figmaUrl")
+        or source_refs.get("figma_url")
+        or ""
+    )
+    payload = {
+        "goal": run.get("target") or run.get("goal") or normalized.get("text") or "",
+        "target": run.get("target") or run.get("goal") or normalized.get("text") or "",
+        "mode": run.get("mode") or "AUTO_SAFE",
+        "appName": run.get("appName") or "",
+        "appPackage": run.get("appPackage") or run.get("app_package") or "",
+        "platform": run.get("platform") or "android",
+        "scope": run.get("scope") or "smoke",
+        "executionMode": run.get("executionMode") or run.get("execution_mode") or "RUNNER_JOB",
+        "runnerId": run.get("runnerId") or normalized.get("runnerId") or "",
+        "deviceId": run.get("deviceId") or normalized.get("deviceId") or "",
+        "deviceStrategy": run.get("deviceStrategy") or normalized.get("deviceStrategy") or "",
+        "sourceType": run.get("sourceType") or normalized.get("sourceType") or "manual",
+        "sourceRefs": source_refs,
+        "sourceInputs": copy.deepcopy(source_inputs),
+        "requirementText": requirement_text,
+        "figmaUrl": figma_url,
+        "model": run.get("model") or "",
+        "aiModel": run.get("aiModel") or run.get("model") or "",
+        "modelProviderId": run.get("modelProviderId") or run.get("aiProviderId") or "",
+    }
+    if normalized.get("files"):
+        payload["files"] = copy.deepcopy(normalized.get("files") or [])
+    if normalized.get("images"):
+        payload["images"] = copy.deepcopy(normalized.get("images") or [])
+    if retry_source_run_id:
+        payload["retryOfRunId"] = retry_source_run_id
+    return payload
+
+
+def retry_agent_run(run_id):
+    """Create a new Agent run from a terminal run's original inputs."""
+    run_id = str(run_id or "").strip()
+    source_run = next((run for run in load_agent_runs() if run.get("runId") == run_id), None)
+    if not source_run:
+        return {"ok": False, "status": 404, "error": "Agent Run 不存在"}
+    if str(source_run.get("status") or "").upper() not in ("DONE", "FINISH", "FAILED", "CANCELLED"):
+        return {"ok": False, "status": 409, "error": "只有已结束的 Agent 记录可以重试"}
+    payload = _agent_retry_payload_from_run(source_run)
+    if not str(payload.get("goal") or payload.get("target") or "").strip():
+        return {"ok": False, "status": 400, "error": "原 Agent 记录缺少测试目标，无法重试"}
+    new_run = create_agent_run(payload)
+    retry_meta = {
+        "sourceRunId": run_id,
+        "sourceStatus": source_run.get("status") or "",
+        "sourceCreatedAt": source_run.get("createdAt") or "",
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    new_run["retryOfRunId"] = run_id
+    artifacts = new_run.setdefault("artifacts", {})
+    artifacts["retrySource"] = retry_meta
+    with AGENT_RUN_LOCK:
+        runs = load_agent_runs()
+        for index, item in enumerate(runs):
+            if item.get("runId") == new_run.get("runId"):
+                runs[index] = new_run
+                break
+        save_agent_runs(runs[:200])
+    advanced = advance_agent_run(new_run["runId"]) or new_run
+    return {"ok": True, "run": advanced, "sourceRunId": run_id}
+
+
 def advance_agent_run(run_id):
     """推进 Agent 运行状态机。
 

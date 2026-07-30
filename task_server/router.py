@@ -54,6 +54,7 @@ from task_server.services.agent_service import (
     get_agent_run,
     list_agent_runs,
     load_agent_runs,
+    retry_agent_run,
 )
 from task_server.services.case_service import (
     automatic_baseline_repair_enabled,
@@ -169,6 +170,7 @@ from task_server.services.sonic_service import (
     sonic_suite_app_info,
     sonic_suite_id_for_app,
     sonic_suite_name_for_app,
+    sonic_suite_project_for_display,
     sonic_token,
     sonic_token_fingerprint,
     sonic_token_source,
@@ -1017,7 +1019,7 @@ def _get_sonic_status(handler, qs):
 @route_get("/api/sonic/suite-results")
 def _get_sonic_suite_results(handler, qs):
     data = load_sonic_suite_results()
-    suites = list((data.get("suites") or {}).values())
+    suites = [sonic_suite_project_for_display(item) for item in (data.get("suites") or {}).values()]
     suites.sort(key=lambda item: safe_int(item.get("last_update_ts") or item.get("created_ts"), 0), reverse=True)
     limit = max(1, min(100, safe_int(qs.get("limit"), 30)))
     handler._json({"ok": True, "suites": suites[:limit], "active": data.get("active") or {}})
@@ -5639,6 +5641,17 @@ def _post_agent_runs_cancel(handler, qs, match):
         handler._json({"ok": False, "error": "Agent Run 不存在"}, 404)
         return
     handler._json({"ok": True, "run": run})
+
+
+@route_post_regex(r"^/api/agent-runs/([^/]+)/retry$")
+def _post_agent_runs_retry(handler, qs, match):
+    run_id = urllib.parse.unquote(match.group(1))
+    result = retry_agent_run(run_id)
+    if not result.get("ok"):
+        status = int(result.pop("status", 400) or 400)
+        handler._json(result, status)
+        return
+    handler._json(result)
 
 
 # ── Agent Context ───────────────────────────────────────────────────

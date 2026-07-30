@@ -954,6 +954,7 @@ function agentRunCardHtml(run, options = {}) {
   const status = resultMeta.hasReportResult ? resultMeta.label : agentStatusText(run.status);
   const canCancel = !agentRunIsTerminal(run);
   const canDelete = agentRunIsTerminal(run);
+  const canRetry = agentRunIsTerminal(run);
   const pill = agentRunPillClass(run);
   const cardStatus = agentRunCardStatusClass(run);
   const progress = agentRunProgressPct(run);
@@ -979,6 +980,7 @@ function agentRunCardHtml(run, options = {}) {
         <button class="btn-sm" onclick="openAgentRunTrace(${jsArg(run.runId || '')})">查看轨迹</button>
         ${resultMeta.hasReportResult ? `<button class="btn-sm primary" onclick="openAgentRunReport(${jsArg(run.runId || '')})">查看报告</button>` : ''}
         ${options.confirm ? `<button class="btn-sm success" onclick="openAgentRunTrace(${jsArg(run.runId || '')}, 'dashboard')">处理确认</button>` : ''}
+        ${canRetry ? `<button class="btn-sm" onclick="retryAgentRunById(${jsArg(run.runId || '')})">重试</button>` : ''}
         ${canCancel ? `<button class="btn-sm danger" onclick="cancelAgentRunById(${jsArg(run.runId || '')})">取消运行</button>` : ''}
         ${canDelete ? `<button class="btn-sm danger" onclick="deleteAgentRunById(${jsArg(run.runId || '')})">删除记录</button>` : ''}
       </div>
@@ -1119,6 +1121,31 @@ async function openAgentRunTrace(runId, workflow = 'agent') {
 async function openAgentRunReport(runId) {
   agentActiveTab = 'report';
   await openAgentRunTrace(runId, 'agent');
+}
+
+async function retryAgentRunById(runId) {
+  if (!runId) return;
+  if (!confirm(`确认重试 Agent 任务 ${runId}？\n会使用原始输入重新创建一个新运行，旧记录和旧报告会保留。`)) return;
+  try {
+    const data = await apiRequest(`/agent-runs/${encodeURIComponent(runId)}/retry`, {
+      method: 'POST',
+      body: { sourceRunId: runId }
+    });
+    const retryRun = normalizeAgentRun(data.run || data);
+    if (!retryRun?.runId) {
+      showToast('重试已提交，但没有返回新运行编号', 'warn');
+      await loadAgentRuns({ limit: 50, force: true });
+      return;
+    }
+    agentCurrentRun = retryRun;
+    AppState.currentAgentRun = retryRun;
+    mergeAgentRun(retryRun, 50);
+    startAgentPolling(retryRun.runId);
+    showToast(`✓ 已创建重试任务：${retryRun.runId}`, 'success');
+    await openAgentRunTrace(retryRun.runId, 'agent');
+  } catch(e) {
+    showToast(e.message || '重试 Agent 失败', 'error');
+  }
 }
 
 function renderAgentPageAfterRunUpdate() {

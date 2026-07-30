@@ -15133,6 +15133,64 @@ def check_agent_history_list_exposes_report_summary():
     )
 
 
+def check_agent_run_retry_clones_inputs_without_artifacts():
+    from task_server import storage
+    from task_server.services import agent_service
+
+    old_agent_runs_file = agent_service.AGENT_RUNS_FILE
+    old_start_worker = agent_service._start_agent_worker
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_file = os.path.join(temp_dir, "agent-runs.json")
+            agent_service.AGENT_RUNS_FILE = run_file
+            agent_service._start_agent_worker = lambda *_args, **_kwargs: None
+            storage.write_json_file(run_file, {"runs": [{
+                "runId": "agent-static-retry-source",
+                "status": "DONE",
+                "mode": "FULL_AUTO",
+                "target": "基础打印新增百度网盘入口",
+                "appName": "小白学习打印",
+                "appPackage": "com.xbxxhz.box",
+                "platform": "android",
+                "scope": "regression",
+                "executionMode": "RUNNER_JOB",
+                "runnerId": "win-runner-01",
+                "deviceId": "ecbfd645",
+                "deviceStrategy": "fixed",
+                "sourceType": "figma",
+                "sourceRefs": {"figmaUrl": "https://figma.example/file"},
+                "normalizedInput": {
+                    "text": "基础打印新增百度网盘入口",
+                    "figmaUrl": "https://figma.example/file",
+                    "requirementText": "覆盖文档打印、照片打印、扫描复印",
+                    "sourceInputs": {
+                        "figmaUrl": "https://figma.example/file",
+                        "requirementText": "覆盖文档打印、照片打印、扫描复印",
+                    },
+                },
+                "model": "qwen3.7-plus",
+                "aiModel": "qwen3.7-plus",
+                "artifacts": {
+                    "report": {"status": "failed"},
+                    "summary": {"conclusion": "部分通过"},
+                },
+            }]})
+            result = agent_service.retry_agent_run("agent-static-retry-source")
+            require(result.get("ok") is True and result.get("run", {}).get("runId"), "Retry must create a new Agent run")
+            retry_run = result.get("run") or {}
+            require(retry_run.get("retryOfRunId") == "agent-static-retry-source", "Retry run must point back to the source run")
+            require(retry_run.get("target") == "基础打印新增百度网盘入口", "Retry run must preserve the original target")
+            require(retry_run.get("runnerId") == "win-runner-01" and retry_run.get("deviceId") == "ecbfd645", "Retry run must preserve fixed Runner/device binding")
+            require(retry_run.get("aiModel") == "qwen3.7-plus", "Retry run must preserve the selected AI model")
+            require((retry_run.get("sourceRefs") or {}).get("figmaUrl") == "https://figma.example/file", "Retry run must preserve Figma source refs")
+            require((retry_run.get("sourceRefs") or {}).get("retryOfRunId") == "agent-static-retry-source", "Retry source must be visible in sourceRefs")
+            retry_artifacts = retry_run.get("artifacts") or {}
+            require(retry_artifacts.get("report") is None and retry_artifacts.get("summary") is None, "Retry run must not inherit old report or summary artifacts")
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_agent_runs_file
+        agent_service._start_agent_worker = old_start_worker
+
+
 def check_api_asset_service_openapi_import():
     from task_server.services import api_asset_service
 
@@ -15875,6 +15933,7 @@ def main():
     check_sonic_3d_baseline_regression_guards()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
     check_agent_history_list_exposes_report_summary()
+    check_agent_run_retry_clones_inputs_without_artifacts()
     check_api_asset_service_openapi_import()
     check_api_test_plan_generation_is_confirmable()
     check_metersphere_config_masks_secrets()
