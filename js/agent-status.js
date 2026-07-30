@@ -222,29 +222,35 @@ function agentRunPhaseTotals(phases, matcher) {
 }
 
 function agentRunExecutionBuckets(result) {
-  const smoke = agentRunPhaseTotals(result.phases, name => name.includes('smoke') || name.includes('冒烟') || name.includes('首批'));
-  if (!smoke.attempted && result.smokeAttempted) {
-    smoke.attempted = result.smokeAttempted;
-    smoke.passed = result.smokePassed;
-    smoke.failed = result.smokeFailed;
-    smoke.timeout = result.smokeTimeout;
+  const smoke = {
+    attempted: result.smokeAttempted,
+    passed: result.smokePassed,
+    failed: result.smokeFailed,
+    timeout: result.smokeTimeout,
+    running: 0,
+    cancelled: 0,
+    unknown: 0
+  };
+  if (!smoke.attempted) {
+    Object.assign(smoke, agentRunPhaseTotals(result.phases, name => name.includes('smoke') || name.includes('冒烟') || name.includes('首批')));
   }
-  const remaining = agentRunPhaseTotals(result.phases, name => (
-    !name.includes('smoke')
-    && !name.includes('冒烟')
-    && !name.includes('首批')
-    && !name.includes('重跑')
-    && !name.includes('repair')
-    && !name.includes('rerun')
-    && !name.includes('恢复')
-  ));
-  if (!remaining.attempted && result.total > smoke.attempted) {
-    remaining.attempted = Math.max(0, result.total - smoke.attempted);
-    remaining.passed = Math.max(0, result.passed - smoke.passed);
-    remaining.failed = Math.max(0, result.failed - smoke.failed);
-    remaining.timeout = Math.max(0, result.timeout - smoke.timeout);
-    remaining.running = result.running;
-  }
+  smoke.attempted = Math.min(Math.max(0, smoke.attempted), result.total || smoke.attempted);
+  smoke.passed = Math.min(Math.max(0, smoke.passed), smoke.attempted);
+  smoke.failed = Math.min(Math.max(0, smoke.failed), Math.max(0, smoke.attempted - smoke.passed));
+  smoke.timeout = Math.min(Math.max(0, smoke.timeout), Math.max(0, smoke.attempted - smoke.passed - smoke.failed));
+  const remainingAttempted = Math.max(0, result.total - smoke.attempted);
+  const remainingPassed = Math.min(Math.max(0, result.passed - smoke.passed), remainingAttempted);
+  const remainingFailed = Math.min(Math.max(0, result.failed - smoke.failed), Math.max(0, remainingAttempted - remainingPassed));
+  const remainingTimeout = Math.min(Math.max(0, result.timeout - smoke.timeout), Math.max(0, remainingAttempted - remainingPassed - remainingFailed));
+  const remaining = {
+    attempted: remainingAttempted,
+    passed: remainingPassed,
+    failed: remainingFailed,
+    timeout: remainingTimeout,
+    running: Math.min(Math.max(0, result.running), Math.max(0, remainingAttempted - remainingPassed - remainingFailed - remainingTimeout)),
+    cancelled: 0,
+    unknown: 0
+  };
   return { smoke, remaining };
 }
 
@@ -276,7 +282,7 @@ function agentRunResultSummaryHtml(run) {
   const remainingText = buckets.remaining.attempted ? `${buckets.remaining.passed}/${buckets.remaining.attempted}` : '-';
   const remainingDetail = buckets.remaining.attempted
     ? [`失败 ${buckets.remaining.failed}`, buckets.remaining.timeout ? `超时 ${buckets.remaining.timeout}` : '', buckets.remaining.running ? `执行中 ${buckets.remaining.running}` : ''].filter(Boolean).join(' / ')
-    : '无剩余批次';
+    : '无后续批次';
   const orchestration = [
     result.runStatus ? `Agent ${agentStatusText(result.runStatus)}` : '',
     result.smokeAllFailed ? '冒烟全失败' : ''
@@ -290,7 +296,7 @@ function agentRunResultSummaryHtml(run) {
       <div class="agent-run-metrics">
         ${agentRunMetricHtml('用例', generatedText, generatedDetail)}
         ${agentRunMetricHtml('冒烟', smokeText, smokeDetail)}
-        ${agentRunMetricHtml('剩余', remainingText, remainingDetail)}
+        ${agentRunMetricHtml('后续用例', remainingText, remainingDetail)}
       </div>
     </div>
   `;
