@@ -48,7 +48,7 @@
 - 前端 AI 用例明细行新增 `编辑`，打开 JSON 编辑器后可保存并重新校验。
 - AI draft 编辑器升级为结构化表单：默认按用例名称、优先级、请求方法/路径、执行计划、路径参数、Query、Header、Body 入参和校验断言分区编辑；原始 JSON 收进“高级”折叠区作为兜底，保存接口和后端数据模型不变。
 - 未配置环境公共鉴权时，“配置登录接口”不再因为上下文缺失而静默 disabled；点击会进入登录接口表单，若还没绑定 MeterSphere 业务/环境则给出明确提示。视觉 smoke 已覆盖默认登录接口模式和手动 token 兜底模式。
-- MeterSphere 环境变量写入后可能读回掩码值而非明文 token；认证变量校验改为“更新接口成功 + 变量存在 + enabled + 非空”，仍不在平台本地持久化业务 token。
+- MeterSphere 环境变量写入后可能读回掩码值、空值，甚至完全隐藏 secret 变量；认证变量 upsert 校验改为以 MeterSphere update 接口成功为准，若读回能看到变量则额外要求 enabled。独立 verify/delete 仍保持严格读取，不在平台本地持久化业务 token。
 - MeterSphere v3.6.5 adapter 推送 API case / scenario 的 lifecycle `status` 改为 `COMPLETED`，避免远端用例列表一直显示“进行中”；真实执行状态仍只来自 report `execStatus/status`。
 - 前端缓存版本更新为 `20260730-api-auth-click`。
 

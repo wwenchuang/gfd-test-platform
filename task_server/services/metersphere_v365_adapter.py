@@ -460,8 +460,9 @@ class MeterSphereV365Adapter:
                 if str(item.get("key") or "").strip() == variable_name
             ), {})
             configured = (
-                bool(verified)
-                and self._enabled(verified)
+                self._enabled(verified)
+                if verified
+                else True
             )
             return self._environment_summary(verified_environment, variable_name, configured)
 
