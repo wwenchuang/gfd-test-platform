@@ -3031,6 +3031,24 @@ function apiBusinessAuthEnvironmentName(context, auth) {
   return environment?.name || context.binding?.environment_name || auth.environment_name || auth.environment_id || '未选择环境';
 }
 
+function apiBusinessAuthProjectName(context = {}, auth = {}) {
+  const projectId = auth.project_id || context.binding?.project_id || context.selection?.project_id || '';
+  const project = (context.businesses || []).find(item => String(item.id || '') === String(projectId || ''));
+  return project?.name || context.binding?.project_name || auth.project_name || projectId || '未选择业务';
+}
+
+function renderApiBusinessAuthTarget(context = {}, auth = {}) {
+  const projectName = apiBusinessAuthProjectName(context, auth);
+  const environmentName = apiBusinessAuthEnvironmentName(context, auth);
+  return `
+    <div class="api-business-auth-target">
+      <div><span>绑定业务</span><strong>${escapeHtml(projectName)}</strong><small>${escapeHtml(auth.project_id || context.binding?.project_id || context.selection?.project_id || '-')}</small></div>
+      <div><span>绑定环境</span><strong>${escapeHtml(environmentName)}</strong><small>${escapeHtml(auth.environment_id || context.binding?.environment_id || context.selection?.environment_id || '-')}</small></div>
+      <div><span>Token 标记</span><strong>${escapeHtml(auth.variable_name || '保存后生成环境变量')}</strong><small>${escapeHtml(auth.auth_ref || '按业务和环境自动匹配')}</small></div>
+    </div>
+  `;
+}
+
 function renderApiBusinessAuthPanel(context = {}) {
   const auth = apiBusinessAuthMetadata(context);
   const configured = auth.configured === true;
@@ -3048,6 +3066,7 @@ function renderApiBusinessAuthPanel(context = {}) {
           </div>
           <p>${reused ? `该环境已复用此鉴权，当前覆盖 ${usageCount} 个业务来源。` : '该环境下的接口执行会自动复用，无需每次提交。'} token 写入 MeterSphere 环境变量，平台本地只保存变量名和指纹。</p>
         </div>
+        ${renderApiBusinessAuthTarget(context, auth)}
         <details class="api-plan-tech-detail api-auth-detail">
           <summary>管理公共鉴权</summary>
           <div class="api-business-auth-facts">
@@ -3068,6 +3087,7 @@ function renderApiBusinessAuthPanel(context = {}) {
       <section class="api-business-auth-panel" data-configured="false">
         <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>当前环境尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
         <p>优先通过 3D 项目的用户登录接口获取 token，再写入 MeterSphere 环境变量；平台本地只保存变量名和指纹。</p>
+        ${renderApiBusinessAuthTarget(context, auth)}
         <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()">配置登录接口</button>
         ${canEdit ? '' : `<small class="api-business-auth-hint">请先选择当前来源的 MeterSphere 业务和环境。</small>`}
       </section>
@@ -3077,6 +3097,7 @@ function renderApiBusinessAuthPanel(context = {}) {
     <section class="api-business-auth-panel is-editing" data-configured="${configured ? 'true' : 'false'}">
       <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>${configured ? '更新业务用户登录 token' : '配置业务用户登录 token'}</h3></div><small>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</small></div>
       <p>推荐从用户登录接口实时获取 token。登录账号密码只用于本次请求，返回 token 只转写到 MeterSphere 环境变量。</p>
+      ${renderApiBusinessAuthTarget(context, auth)}
       <div class="api-auth-segmented" role="group" aria-label="业务 token 获取方式">
         <button type="button" data-auth-source-mode="login" class="${apiBusinessAuthSourceMode === 'login' ? 'active' : ''}" onclick="setApiBusinessAuthSourceMode('login')">登录接口获取</button>
         <button type="button" data-auth-source-mode="manual" class="${apiBusinessAuthSourceMode === 'manual' ? 'active' : ''}" onclick="setApiBusinessAuthSourceMode('manual')">手动粘贴兜底</button>

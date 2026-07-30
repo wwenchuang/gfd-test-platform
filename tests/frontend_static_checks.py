@@ -461,11 +461,20 @@ def main():
     )
     require(
         "apiBusinessAuthExpectedState" in api_testing_js
+        and "renderApiBusinessAuthTarget" in api_testing_js
+        and "apiBusinessAuthProjectName" in api_testing_js
         and "expected_project_id" in api_testing_js
         and "expected_environment_id" in api_testing_js
         and "expected_binding_version" in api_testing_js
         and "expected_profile_version" in api_testing_js,
         "Environment authentication writes must carry the visible binding and profile CAS identity",
+    )
+    require(
+        "绑定业务" in api_testing_js
+        and "绑定环境" in api_testing_js
+        and "Token 标记" in api_testing_js
+        and "api-business-auth-target" in api_testing_js,
+        "Business authentication must visibly mark the project, environment, and token variable it is bound to",
     )
     require(
         "captureApiPlanGenerationLogViewState" in api_testing_js
@@ -734,7 +743,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-auth-click" in html and "js/api-testing.js?v=20260730-api-auth-click" in html and "js/agent-status.js?v=20260730-agent-history-report-card" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, API auth click feedback, Agent report-card status, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-auth-target" in html and "js/api-testing.js?v=20260730-api-auth-target" in html and "js/agent-status.js?v=20260730-agent-history-report-card" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, API auth target feedback, Agent report-card status, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

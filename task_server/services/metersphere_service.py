@@ -1358,6 +1358,15 @@ def _metersphere_execution_context_with_config(
             "primary_action": "查看实时进度",
         }
         empty_reason = ""
+    from task_server.services import api_workspace_service
+
+    auth_binding = (
+        api_workspace_service.get_api_auth_binding(selected_source_id)
+        if selected_source_id
+        else {}
+    )
+    if auth_binding:
+        binding = {**binding, "auth_binding": auth_binding}
     return {
         "ok": True,
         "connection": connection,
@@ -1366,6 +1375,7 @@ def _metersphere_execution_context_with_config(
             "environment_id": str(cfg.get("environment_id") or "").strip(),
         },
         "source_id": selected_source_id,
+        "auth_binding": auth_binding,
         "binding": binding,
         "businesses": projects_result.get("items") or [],
         "environments": environments_result.get("items") or [],

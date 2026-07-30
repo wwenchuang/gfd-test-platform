@@ -2199,6 +2199,33 @@
   color: var(--text3);
   font-size: 11px;
 }
+.api-business-auth-target {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-business-auth-target > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 10px;
+  background: rgba(13, 28, 50, .72);
+}
+.api-business-auth-target span,
+.api-business-auth-target small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-business-auth-target strong {
+  min-width: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.api-business-auth-target small {
+  overflow-wrap: anywhere;
+}
 .api-auth-detail {
   border-top: 1px solid var(--border);
   padding-top: 8px;
@@ -2840,6 +2867,7 @@
     flex-wrap: wrap;
   }
   .api-plan-fact-grid,
+  .api-business-auth-target,
   .api-business-auth-facts {
     grid-template-columns: 1fr;
   }

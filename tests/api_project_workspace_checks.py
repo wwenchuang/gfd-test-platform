@@ -761,6 +761,63 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         self.assertNotIn("3d-password", local_text)
         self.assertNotIn("business-login-token", json.dumps(result, ensure_ascii=False))
 
+    def test_execution_context_marks_current_project_environment_auth_profile(self):
+        self._create_sources(1)
+        connection_identity = metersphere_service._api_auth_connection_identity(
+            metersphere_service._load_raw_config()
+        )
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a",
+            "ms_project_3d",
+            "ms_env_app",
+            project_name="3D业务",
+            environment_name="APP测试环境",
+            connection_identity=connection_identity,
+        )
+        auth = api_workspace_service.save_api_auth_binding_metadata(
+            "api_source_a",
+            auth_type="bearer",
+            header_name="Authorization",
+            variable_name="MTP_API_AUTH_3D_APP",
+        )
+
+        class Adapter:
+            def list_projects(self):
+                return [{"id": "ms_project_3d", "name": "3D业务", "enabled": True}]
+
+            def list_environments(self, project_id):
+                self.project_id = project_id
+                return [
+                    {
+                        "id": "ms_env_app",
+                        "name": "APP测试环境",
+                        "project_id": "ms_project_3d",
+                        "enabled": True,
+                    }
+                ]
+
+        adapter = Adapter()
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = (
+            lambda config: (adapter, {"version": "v3.6.5-lts", "capabilities": {}}, True)
+        )
+        try:
+            context = metersphere_service.metersphere_execution_context(
+                source_id="api_source_a",
+            )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertEqual("ms_project_3d", adapter.project_id)
+        self.assertEqual("3D业务", context["binding"]["project_name"])
+        self.assertEqual("APP测试环境", context["binding"]["environment_name"])
+        self.assertEqual(auth["auth_ref"], context["auth_binding"]["auth_ref"])
+        self.assertEqual("MTP_API_AUTH_3D_APP", context["auth_binding"]["variable_name"])
+        self.assertEqual(auth["auth_ref"], context["binding"]["auth_binding"]["auth_ref"])
+        self.assertEqual("", context["config"]["token"])
+        self.assertEqual("", context["config"]["secret_key"])
+        self.assertNotIn("test-token", json.dumps(context, ensure_ascii=False))
+
     def test_auth_service_uses_one_remote_variable_for_shared_environment(self):
         self._create_sources(2)
         connection_identity = metersphere_service._api_auth_connection_identity(

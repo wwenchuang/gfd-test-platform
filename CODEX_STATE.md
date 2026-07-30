@@ -28,6 +28,25 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 API 业务 token 按项目/环境标记并回传执行上下文
+
+用户指出 3D 项目的用户登录 token 没有明确“放到哪个项目使用哪个 token”，页面也看不出当前公共鉴权绑定范围。
+
+修复：
+
+- MeterSphere 执行上下文现在返回当前 API source 对应的 `auth_binding`，并嵌入 `binding.auth_binding`，前端不用再只靠本地临时状态判断鉴权是否存在。
+- API 执行区的环境公共鉴权面板新增“绑定业务 / 绑定环境 / Token 标记”三项，展示 MeterSphere 项目、环境、变量名和服务端引用；不同项目/环境会按已有 profile 隔离或复用，不把真实业务 token 写入代码库或本地元数据。
+- 前端缓存版本更新为 `20260730-api-auth-target`。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_project_workspace_checks.ApiWorkspaceBindingChecks.test_execution_context_marks_current_project_environment_auth_profile
+python3 tests/api_project_workspace_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+```
+
 ### 2026-07-30 Agent 服务重启后 RUNNING 步骤恢复
 
 用户指出百度网盘 Agent 第二次卡在 `PLAN` 可能是服务端重启导致，不应长期停在旧的 RUNNING 状态。
