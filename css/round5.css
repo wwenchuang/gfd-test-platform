@@ -1634,6 +1634,45 @@
   font-size: 9px;
   overflow-wrap: anywhere;
 }
+.api-plan-binding-drift-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 1px;
+  align-items: stretch;
+  margin-top: 10px;
+  border: 1px solid rgba(234, 179, 8, 0.32);
+  background: rgba(234, 179, 8, 0.16);
+}
+.api-plan-binding-drift-panel > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  background: rgba(20, 20, 12, 0.7);
+}
+.api-plan-binding-drift-panel span {
+  color: var(--warn);
+  font-size: 10px;
+  font-weight: 800;
+}
+.api-plan-binding-drift-panel strong,
+.api-plan-binding-drift-panel small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-plan-binding-drift-panel strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.api-plan-binding-drift-panel small {
+  color: var(--text2);
+  font-size: 10px;
+}
+.api-plan-binding-drift-panel .btn-sm {
+  align-self: center;
+  margin: 8px;
+  white-space: nowrap;
+}
 .api-plan-detail-head {
   margin-bottom: 10px;
 }
@@ -2948,7 +2987,8 @@
   }
   .api-plan-fact-grid,
   .api-business-auth-target,
-  .api-business-auth-facts {
+  .api-business-auth-facts,
+  .api-plan-binding-drift-panel {
     grid-template-columns: 1fr;
   }
   .api-plan-generation-method {

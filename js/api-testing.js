@@ -2192,6 +2192,47 @@ function apiPlanAuthFact(plan) {
   };
 }
 
+function apiPlanCurrentBindingFact() {
+  const context = apiPlanBindingContext || {};
+  const binding = context.binding || {};
+  const auth = context.auth_binding || binding.auth_binding || {};
+  return {binding, auth};
+}
+
+function renderApiPlanBindingDriftPanel(plan = {}) {
+  const drift = plan.binding_drift || [];
+  if (!drift.includes('workspace_binding_drift') && !drift.includes('auth_binding_drift')) return '';
+  const plannedBinding = apiPlanBindingFact(plan);
+  const {binding: currentBinding, auth: currentAuth} = apiPlanCurrentBindingFact();
+  const currentProject = currentBinding.project_name || currentBinding.project_id || '未绑定';
+  const currentEnvironment = currentBinding.environment_name || currentBinding.environment_id || '-';
+  const authConfigured = currentAuth.configured === true;
+  const authLabel = authConfigured ? (currentAuth.variable_name || currentAuth.auth_ref || '已配置') : '当前环境未配置业务 token';
+  const authDetail = authConfigured
+    ? `${currentAuth.header_name || 'Authorization'} · ${currentAuth.auth_ref || '服务端引用'}`
+    : '请先在 MeterSphere 执行页配置业务用户登录 token';
+  return `
+    <section class="api-plan-binding-drift-panel">
+      <div>
+        <span>计划生成时绑定</span>
+        <strong>${escapeHtml(plannedBinding.label)}</strong>
+        <small>${escapeHtml(plannedBinding.detail)}</small>
+      </div>
+      <div>
+        <span>当前执行绑定</span>
+        <strong>${escapeHtml(currentProject)}</strong>
+        <small>${escapeHtml(currentEnvironment)}</small>
+      </div>
+      <div>
+        <span>当前业务 token</span>
+        <strong>${escapeHtml(authLabel)}</strong>
+        <small>${escapeHtml(authDetail)}</small>
+      </div>
+      <button type="button" class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按当前绑定重新生成</button>
+    </section>
+  `;
+}
+
 function renderApiPlanFacts(plan) {
   const revision = plan.asset_revision_id || plan.revision_id || plan.snapshot_id || (plan.revision_state || {}).planned_revision_id || '-';
   const aiTrace = apiPlanAiTrace(plan);
@@ -2709,6 +2750,8 @@ function renderApiPlanDetail(plan) {
   let primaryAction = '';
   if (isStale) {
     primaryAction = `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按最新接口重新生成</button>`;
+  } else if (bindingDrift.length) {
+    primaryAction = `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按当前绑定重新生成</button>`;
   } else if (plan.status === 'draft' && canConfirm) {
     primaryAction = `<button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})">采纳为基线</button>`;
   } else if (plan.status === 'draft') {
@@ -2737,6 +2780,7 @@ function renderApiPlanDetail(plan) {
     </div>
     ${missing.length ? `<div class="api-readiness-missing api-plan-missing-actions"><strong>仍需补充：</strong>${Array.from(missingSummary, ([name, count]) => `<button type="button" onclick="setApiPlanMissingCategory(${jsArg(name)})">${escapeHtml(name)} ${escapeHtml(count)} 项</button>`).join('')}</div>` : ''}
     ${bindingDrift.length ? `<div class="api-stale-warning">执行绑定已变化：${escapeHtml(bindingDrift.join('、'))}</div>` : ''}
+    ${renderApiPlanBindingDriftPanel(plan)}
     ${isStale ? `<div class="api-stale-warning">${escapeHtml(actionReason)}</div>` : ''}
     <div class="generation-record-actions api-plan-primary-action">${primaryAction}</div>
     <details class="api-plan-tech-detail api-plan-facts-detail"><summary>来源、AI 与执行绑定</summary>${renderApiPlanFacts(plan)}<div class="api-plan-scope-facts"><span>Plan <code>${escapeHtml(plan.plan_id || '-')}</code></span></div></details>

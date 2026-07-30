@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 API 计划绑定漂移时展示当前绑定和 token 变量
+
+用户截图中 AI 用例计划详情停在 `workspace_binding_drift`，并显示“未配置业务用户登录 token”，但用户已经配置过 3D 项目的业务 token，页面无法解释为什么卡住、token 保存在哪里。
+
+线上复核：
+
+- 使用 `admin / sonic2026` 登录生产 API 成功；`wangwc / gfd178` 对当前平台登录接口返回账号密码错误。
+- 当前 3D source：`api_source_1785310905647_00002`。
+- 当前 MeterSphere 执行绑定：
+  - 业务：`3D业务 / 772578717212672`
+  - 环境：`线上环境 / 727704900321280`
+  - 当前绑定 fingerprint：`f800487afa81e9e0`
+- 当前业务 token 已配置，但不是明文保存在平台：
+  - `auth_ref=api_auth_bea1481536cf572b`
+  - `variable_name=MTP_API_AUTH_BEA1481536CF`
+  - 平台本地只保存变量名、绑定范围和指纹；真实 token 已转写到 MeterSphere 当前环境变量。
+- 截图中的候选计划 `api_plan_1785372704395_00006` 是在当前绑定/鉴权之前生成的：
+  - 计划记录的 `binding_fingerprint=3e4e713a590d0517`
+  - 计划记录的 `auth_binding={}`
+  - 当前绑定已变为 `f800487afa81e9e0`
+  - 因此平台按设计标记 `workspace_binding_drift`，阻止旧候选直接采纳/执行。
+
+修复：
+
+- API 计划详情新增 `api-plan-binding-drift-panel`。
+- 当存在 `workspace_binding_drift` 或 `auth_binding_drift` 时，页面同时展示：
+  - 计划生成时绑定
+  - 当前执行绑定
+  - 当前业务 token 的 MeterSphere 变量名/服务端引用
+- 阻断状态下主按钮从“查看待补数据”改为“按当前绑定重新生成”，引导用户用当前 3D 业务/线上环境/token 重新生成候选计划。
+- 仍不展示真实业务 token 明文。
+- 前端缓存版本更新为 `20260730-api-binding-drift-panel`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+git diff --check -- js/api-testing.js css/round5.css task-manager.html tests/frontend_static_checks.py
+```
+
 ### 2026-07-30 Apifox 环境配置快照与 MeterSphere 环境变量同步
 
 用户希望把 Apifox 上的环境配置信息同步到 MeterSphere，减少手填环境 ID、变量和 token 的混乱。
