@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from task_server.services import (
+    apifox_discovery_service,
     api_asset_service,
     api_execution_service,
     api_plan_generation_service,
@@ -197,6 +198,61 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertTrue(payload["ok"])
         self.assertEqual(source["source_id"], payload["source"]["source_id"])
+
+    def test_workbench_persists_apifox_environment_snapshot_once(self):
+        from task_server.services import api_workbench_service
+
+        old_discover = apifox_discovery_service.discover_project_context
+        calls = []
+
+        def fake_discover(access_token, project_id, **kwargs):
+            calls.append({
+                "access_token": access_token,
+                "project_id": project_id,
+                "preferred_environment_id": kwargs.get("preferred_environment_id"),
+            })
+            return {
+                "project": {"id": project_id, "name": "3D", "team": {"id": "team-1", "name": "功夫豆"}},
+                "branches": [{"id": "", "name": "主分支（默认）", "is_default": True}],
+                "environments": [{
+                    "id": "33831678",
+                    "name": "生产环境（新）-腾讯云",
+                    "environment_snapshot": {
+                        "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                        "variables": [{"name": "Authorization", "value": "secret-token"}],
+                    },
+                }],
+            }
+
+        apifox_discovery_service.discover_project_context = fake_discover
+        try:
+            source = api_source_service.save_api_source({
+                "source_type": "apifox",
+                "name": "3D",
+                "project_id": "5904970",
+                "environment_id": "33831678",
+                "access_token": "secret-apifox-token",
+                "sync_enabled": False,
+                "environment_snapshot": {},
+            })
+
+            first = api_workbench_service.api_testing_workbench(source["source_id"])
+            raw = api_source_service.get_api_source(source["source_id"], masked=False)
+            second = api_workbench_service.api_testing_workbench(source["source_id"])
+
+            self.assertEqual(1, len(calls))
+            self.assertEqual("https://print.wisebeginner3d.com/app", raw["environment_snapshot"]["base_urls"][0]["url"])
+            self.assertEqual("生产环境（新）-腾讯云", raw["provider_metadata"]["environment_name"])
+            self.assertEqual("3D", first["source"]["project_name"])
+            self.assertEqual("3D", second["source"]["project_name"])
+            self.assertEqual(
+                "https://print.wisebeginner3d.com/app",
+                second["source"]["environment_snapshot"]["base_urls"][0]["url"],
+            )
+            self.assertNotIn("secret-apifox-token", json.dumps(second, ensure_ascii=False))
+            self.assertNotIn("secret-token", json.dumps(second, ensure_ascii=False))
+        finally:
+            apifox_discovery_service.discover_project_context = old_discover
 
 
 if __name__ == "__main__":

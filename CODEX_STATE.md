@@ -6125,6 +6125,36 @@ git diff --check -- task_server/services/api_workbench_service.py task_server/ro
 - 本轮没有暂存或回滚用户历史 dirty 文件，包括 prompt、Runner、scorer、部署文档和截图 artifacts。
 - 页面上仍保留“高级资产管理”等入口，目的是给异常同步/手动 OpenAPI 上传留后门；主路径已经是一页完成。
 
+### 2026-07-30 API 工作台：Apifox 环境配置发现后立即固化
+
+用户指出：Apifox 拉下来的环境配置不应只临时展示，否则每次进入 API 工作台还要重新刷新。
+
+根因：
+
+- 旧链路只有在 `POST /api/api-testing/sources` 保存 source 时才会写入 `environment_snapshot`。
+- `POST /api/api-testing/apifox/discovery/project-context` 是只读发现；已有 source 读取项目/分支/环境后，没有把 base_url 和变量快照写回 source。
+- API 工作台的“同步 Apifox 快照”只同步 OpenAPI，不保证同步前先刷新并保存 Apifox 环境配置。
+
+本轮修复：
+
+- `api_workbench_service` 新增 `persist_apifox_project_context()`：把 Apifox discovery 读到的项目名、团队、分支名、环境名、base_url 和环境变量快照写回已有 source。
+- 新增 `refresh_apifox_environment_snapshot()`：当本地 source 缺少可执行 `base_url` 时，工作台首次进入会自动发现一次并保存；后续进入直接读本地快照，不重复请求 Apifox。
+- `api_testing_workbench()` 在本地环境快照缺失时自动补齐一次。
+- `update_apifox_snapshot()` 在启动 OpenAPI 同步前先强制刷新并保存环境快照。
+- `POST /api/api-testing/apifox/discovery/project-context` 在请求带 `source_id` 时会直接持久化发现结果，并返回 `persisted_source`。
+- 新增测试覆盖“首次进入工作台自动保存 Apifox 环境快照，第二次进入不再重复 discovery”，同时验证 Apifox token 和业务 token 不泄露到响应。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/api_workbench_service.py task_server/router.py tests/api_workbench_checks.py
+python3 tests/api_workbench_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/api_workbench_service.py task_server/router.py tests/api_workbench_checks.py CODEX_STATE.md
+```
+
 ### 2026-07-29 百度网盘回归后：启动守卫与照片横滑稳定性修复
 
 用户部署后再次使用相同百度网盘需求、Figma、`qwen3.7-plus`、`RUNNER_JOB`、`win-runner-01`、固定 OPPO `ecbfd645` 发起回归：

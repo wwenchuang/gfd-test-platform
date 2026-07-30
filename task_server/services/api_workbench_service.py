@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from task_server.services import (
     api_asset_service,
     api_case_contract_service,
+    apifox_discovery_service,
     api_execution_service,
     api_module_service,
     api_report_service,
@@ -77,6 +78,112 @@ def _source_summary(source: Dict[str, Any]) -> Dict[str, Any]:
             "sensitive_variable_count": _safe_int(environment_snapshot.get("sensitive_variable_count"), 0),
         },
     }
+
+
+def _environment_has_base_url(source: Dict[str, Any]) -> bool:
+    snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    base_urls = snapshot.get("base_urls") if isinstance(snapshot.get("base_urls"), list) else []
+    return any(str((item if isinstance(item, dict) else {}).get("url") or "").strip() for item in base_urls)
+
+
+def _select_named_option(rows: List[Dict[str, Any]], target_id: str) -> Dict[str, Any]:
+    selected_id = str(target_id or "").strip()
+    if selected_id:
+        exact = next((item for item in rows if str(item.get("id") or "").strip() == selected_id), {})
+        if exact:
+            return exact
+    return rows[0] if rows else {}
+
+
+def _select_environment(rows: List[Dict[str, Any]], target_id: str) -> Dict[str, Any]:
+    selected_id = str(target_id or "").strip()
+    if selected_id:
+        exact = next((item for item in rows if str(item.get("id") or "").strip() == selected_id), {})
+        if exact:
+            return exact
+    with_base_url = next((
+        item for item in rows
+        if _environment_has_base_url({"environment_snapshot": item.get("environment_snapshot")})
+    ), {})
+    return with_base_url or (rows[0] if rows else {})
+
+
+def persist_apifox_project_context(
+    source_id: str,
+    context: Dict[str, Any],
+    *,
+    branch_id: str = "",
+    environment_id: str = "",
+) -> Dict[str, Any]:
+    """Persist discovered Apifox project/environment metadata into an existing source."""
+    selected_source_id = str(source_id or "").strip()
+    source = api_source_service.get_api_source(selected_source_id, masked=False)
+    if not source or str(source.get("source_type") or "") != "apifox":
+        return {}
+    project = context.get("project") if isinstance(context.get("project"), dict) else {}
+    branches = [item for item in (context.get("branches") or []) if isinstance(item, dict)]
+    environments = [item for item in (context.get("environments") or []) if isinstance(item, dict)]
+    selected_branch = _select_named_option(branches, branch_id or str(source.get("branch_id") or ""))
+    selected_environment = _select_environment(
+        environments,
+        environment_id or str(source.get("environment_id") or ""),
+    )
+    environment_snapshot = selected_environment.get("environment_snapshot")
+    if not isinstance(environment_snapshot, dict):
+        environment_snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    metadata = {
+        **(source.get("provider_metadata") if isinstance(source.get("provider_metadata"), dict) else {}),
+        "project_name": str(project.get("name") or source.get("name") or "").strip(),
+        "project_description": str(project.get("description") or "").strip(),
+        "team_id": str(((project.get("team") or {}) if isinstance(project.get("team"), dict) else {}).get("id") or "").strip(),
+        "team_name": str(((project.get("team") or {}) if isinstance(project.get("team"), dict) else {}).get("name") or "").strip(),
+        "branch_name": str(selected_branch.get("name") or "").strip(),
+        "environment_name": str(selected_environment.get("name") or "").strip(),
+        "discovery_source": "apifox_cli",
+    }
+    payload = {
+        "source_id": selected_source_id,
+        "source_type": "apifox",
+        "name": str(project.get("name") or source.get("name") or "Apifox 接口").strip(),
+        "base_url": str(source.get("base_url") or "https://api.apifox.com").strip(),
+        "project_id": str(project.get("id") or source.get("project_id") or "").strip(),
+        "branch_id": str(selected_branch.get("id") if selected_branch else source.get("branch_id") or "").strip(),
+        "environment_id": str(selected_environment.get("id") if selected_environment else source.get("environment_id") or "").strip(),
+        "provider_metadata": metadata,
+        "environment_snapshot": environment_snapshot,
+        "sync_enabled": bool(source.get("sync_enabled")),
+        "sync_interval_minutes": source.get("sync_interval_minutes") or 60,
+        "sync_scope": source.get("sync_scope") or {},
+    }
+    return api_source_service.save_api_source(payload)
+
+
+def refresh_apifox_environment_snapshot(source_id: str, *, force: bool = False) -> Dict[str, Any]:
+    """Fetch and persist Apifox environment metadata once when local cache is missing."""
+    selected_source_id = str(source_id or "").strip()
+    source = api_source_service.get_api_source(selected_source_id, masked=False)
+    if (
+        not source
+        or str(source.get("source_type") or "") != "apifox"
+        or not str(source.get("access_token") or "").strip()
+        or not str(source.get("project_id") or "").strip()
+    ):
+        return api_source_service.get_api_source(selected_source_id, masked=True) if selected_source_id else {}
+    if not force and _environment_has_base_url(source):
+        return api_source_service.get_api_source(selected_source_id, masked=True)
+    context = apifox_discovery_service.discover_project_context(
+        str(source.get("access_token") or "").strip(),
+        str(source.get("project_id") or "").strip(),
+        base_url=str(source.get("base_url") or "https://api.apifox.com").strip(),
+        preferred_environment_id=str(source.get("environment_id") or "").strip(),
+        timeout_seconds=25.0,
+    )
+    return persist_apifox_project_context(
+        selected_source_id,
+        context,
+        branch_id=str(source.get("branch_id") or "").strip(),
+        environment_id=str(source.get("environment_id") or "").strip(),
+    )
 
 
 def _asset_for_source(source_id: str) -> Dict[str, Any]:
@@ -221,6 +328,14 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     sources = [_source_summary(source) for source in api_source_service.list_api_sources()]
     source = _selected_source(source_id)
     selected_source_id = str(source.get("source_id") or "").strip()
+    if selected_source_id and not _environment_has_base_url(source):
+        try:
+            refreshed = refresh_apifox_environment_snapshot(selected_source_id)
+            if refreshed:
+                source = refreshed
+                sources = [_source_summary(item) for item in api_source_service.list_api_sources()]
+        except Exception:
+            pass
     asset, revision = _active_revision_for_source(selected_source_id) if selected_source_id else ({}, {})
     endpoints = [
         _endpoint_summary(endpoint)
@@ -263,6 +378,10 @@ def update_apifox_snapshot(source_id: str) -> Dict[str, Any]:
         selected_source_id = str(source.get("source_id") or "").strip()
     if not selected_source_id or not api_source_service.get_api_source(selected_source_id, masked=True):
         raise ValueError("API source 不存在，请先连接 Apifox 项目")
+    try:
+        refresh_apifox_environment_snapshot(selected_source_id, force=True)
+    except Exception:
+        pass
     sync = api_sync_service.start_api_source_sync(
         selected_source_id,
         spawn=True,
@@ -294,5 +413,7 @@ def debug_api_case(source_id: str, plan_id: str, case_id: str) -> Dict[str, Any]
 __all__ = [
     "api_testing_workbench",
     "debug_api_case",
+    "persist_apifox_project_context",
+    "refresh_apifox_environment_snapshot",
     "update_apifox_snapshot",
 ]

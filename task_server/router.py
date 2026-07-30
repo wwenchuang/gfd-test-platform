@@ -2972,6 +2972,21 @@ def _post_api_testing_apifox_discovery_project_context(handler, qs):
                 data.get("environment_id") or data.get("environmentId") or ""
             ).strip(),
         )
+        source_id = str(data.get("source_id") or data.get("sourceId") or "").strip()
+        if source_id:
+            try:
+                from task_server.services import api_workbench_service
+
+                persisted = api_workbench_service.persist_apifox_project_context(
+                    source_id,
+                    result,
+                    branch_id=str(data.get("branch_id") or data.get("branchId") or "").strip(),
+                    environment_id=str(data.get("environment_id") or data.get("environmentId") or "").strip(),
+                )
+                if persisted:
+                    result["persisted_source"] = persisted
+            except Exception as exc:
+                result["persist_error"] = str(exc)
         handler._json({"ok": True, **result})
     except LookupError as exc:
         handler._json({"ok": False, "error": str(exc)}, 404)
