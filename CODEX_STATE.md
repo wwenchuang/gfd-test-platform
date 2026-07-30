@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 Agent 历史卡片非冒烟统计
+
+用户发现 Agent 运行记录卡片里“非冒烟”显示 `无非冒烟用例`，但同一任务实际已执行扩展/remaining 用例。
+
+根因：
+
+- 列表接口只返回 `reportSummary`，不返回完整 `artifacts.generatedYamlExecutionPlan`。
+- `reportSummary.smokeAttempted` 之前来自 `execution.phases` 聚合，`smoke`、`首批冒烟`、`安全重跑`、`recovered-expanded-*` 等 phase 被重复归入冒烟，导致 `smokeAttempted` 膨胀到接近或等于总用例数。
+- 前端卡片再用 `总数 - 冒烟数` 倒推非冒烟，因此被挤成 0。
+
+修复：
+
+- 后端 `_agent_run_report_summary()` 新增执行计划桶统计：优先读取 `generatedYamlExecutionPlan.counts.selectedSmoke / deferredExecutable`。
+- `smokeResult` 提供原始冒烟结果；如果失败冒烟后续同设备修复重跑通过，则把恢复结果计入最终冒烟通过。
+- 新增 `nonSmokeAttempted / nonSmokePassed / nonSmokeFailed / nonSmokeTimeout / nonSmokeRunning` 字段，列表接口可以直接给历史卡片使用。
+- 前端 `agent-status.js` 优先使用后端 `nonSmoke*` 字段，不再只靠总数减冒烟倒推。
+- `task-manager.html` 更新 `agent-status.js` 缓存版本为 `20260730-agent-history-non-smoke-buckets`。
+
+用刚才两条真实百度网盘 run 验证新摘要：
+
+- `agent-1785392436290-ea2c1fcc`：总 6，4 过 2 失；冒烟 2，1 过 1 失；非冒烟 4，3 过 1 失。
+- `agent-1785393789859-8146e48e`：总 6，5 过 1 失；冒烟 3，3 过 0 失；非冒烟 3，2 过 1 失。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_report_summary_keeps_non_smoke_buckets()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/agent-status.js
+git diff --check -- task_server/services/agent_service.py js/agent-status.js task-manager.html tests/backend_static_checks.py tests/frontend_static_checks.py
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被既有 OBJ 保龄球历史 YAML 断言拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改历史 YAML。
+
 ### 2026-07-30 API draft 单条调试，不必先采纳为基线
 
 用户反馈：

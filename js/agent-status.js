@@ -134,6 +134,12 @@ function agentRunResultSource(run) {
       smokePassed: execution.smokePassedCount || 0,
       smokeFailed: execution.smokeFailedCount || 0,
       smokeTimeout: execution.smokeTimeoutCount || 0,
+      smokeRunning: execution.smokeRunningCount || 0,
+      nonSmokeAttempted: execution.nonSmokeAttemptCount || 0,
+      nonSmokePassed: execution.nonSmokePassedCount || 0,
+      nonSmokeFailed: execution.nonSmokeFailedCount || 0,
+      nonSmokeTimeout: execution.nonSmokeTimeoutCount || 0,
+      nonSmokeRunning: execution.nonSmokeRunningCount || 0,
       phases: execution.phases || [],
       reportStatus: (artifacts.report || {}).status || '',
       orchestrationLabel: (summary.orchestration || {}).label || '',
@@ -157,6 +163,12 @@ function agentRunResultMeta(run) {
   const smokePassed = Number(result.smokePassed || 0);
   const smokeFailed = Number(result.smokeFailed || 0);
   const smokeTimeout = Number(result.smokeTimeout || 0);
+  const smokeRunning = Number(result.smokeRunning || 0);
+  const nonSmokeAttempted = Number(result.nonSmokeAttempted || 0);
+  const nonSmokePassed = Number(result.nonSmokePassed || 0);
+  const nonSmokeFailed = Number(result.nonSmokeFailed || 0);
+  const nonSmokeTimeout = Number(result.nonSmokeTimeout || 0);
+  const nonSmokeRunning = Number(result.nonSmokeRunning || 0);
   const rawOutcome = String(result.outcome || '').toLowerCase();
   const label = result.conclusion || result.label || '';
   const hasReportResult = Boolean(result.hasExecution || attempted || passed || failed || timeout || running || label || rawOutcome);
@@ -190,6 +202,12 @@ function agentRunResultMeta(run) {
     smokePassed,
     smokeFailed,
     smokeTimeout,
+    smokeRunning,
+    nonSmokeAttempted,
+    nonSmokePassed,
+    nonSmokeFailed,
+    nonSmokeTimeout,
+    nonSmokeRunning,
     phases: Array.isArray(result.phases) ? result.phases : [],
     score,
     details,
@@ -231,6 +249,7 @@ function agentRunExecutionBuckets(result) {
     cancelled: 0,
     unknown: 0
   };
+  const explicitRemaining = Number(result.nonSmokeAttempted || 0) > 0;
   if (!smoke.attempted) {
     Object.assign(smoke, agentRunPhaseTotals(result.phases, name => name.includes('smoke') || name.includes('冒烟') || name.includes('首批')));
   }
@@ -238,16 +257,24 @@ function agentRunExecutionBuckets(result) {
   smoke.passed = Math.min(Math.max(0, smoke.passed), smoke.attempted);
   smoke.failed = Math.min(Math.max(0, smoke.failed), Math.max(0, smoke.attempted - smoke.passed));
   smoke.timeout = Math.min(Math.max(0, smoke.timeout), Math.max(0, smoke.attempted - smoke.passed - smoke.failed));
-  const remainingAttempted = Math.max(0, result.total - smoke.attempted);
-  const remainingPassed = Math.min(Math.max(0, result.passed - smoke.passed), remainingAttempted);
-  const remainingFailed = Math.min(Math.max(0, result.failed - smoke.failed), Math.max(0, remainingAttempted - remainingPassed));
-  const remainingTimeout = Math.min(Math.max(0, result.timeout - smoke.timeout), Math.max(0, remainingAttempted - remainingPassed - remainingFailed));
+  const remainingAttempted = explicitRemaining ? Math.max(0, result.nonSmokeAttempted) : Math.max(0, result.total - smoke.attempted);
+  const remainingPassed = explicitRemaining
+    ? Math.min(Math.max(0, result.nonSmokePassed), remainingAttempted)
+    : Math.min(Math.max(0, result.passed - smoke.passed), remainingAttempted);
+  const remainingFailed = explicitRemaining
+    ? Math.min(Math.max(0, result.nonSmokeFailed), Math.max(0, remainingAttempted - remainingPassed))
+    : Math.min(Math.max(0, result.failed - smoke.failed), Math.max(0, remainingAttempted - remainingPassed));
+  const remainingTimeout = explicitRemaining
+    ? Math.min(Math.max(0, result.nonSmokeTimeout), Math.max(0, remainingAttempted - remainingPassed - remainingFailed))
+    : Math.min(Math.max(0, result.timeout - smoke.timeout), Math.max(0, remainingAttempted - remainingPassed - remainingFailed));
   const remaining = {
     attempted: remainingAttempted,
     passed: remainingPassed,
     failed: remainingFailed,
     timeout: remainingTimeout,
-    running: Math.min(Math.max(0, result.running), Math.max(0, remainingAttempted - remainingPassed - remainingFailed - remainingTimeout)),
+    running: explicitRemaining
+      ? Math.min(Math.max(0, result.nonSmokeRunning), Math.max(0, remainingAttempted - remainingPassed - remainingFailed - remainingTimeout))
+      : Math.min(Math.max(0, result.running), Math.max(0, remainingAttempted - remainingPassed - remainingFailed - remainingTimeout)),
     cancelled: 0,
     unknown: 0
   };

@@ -13847,6 +13847,58 @@ def check_agent_orphaned_running_step_after_restart_requeues():
     require("服务重启" in plan_step.get("summary", ""), "Restart recovery must explain why the step was requeued")
 
 
+def check_agent_report_summary_keeps_non_smoke_buckets():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-non-smoke-buckets",
+        "status": "DONE",
+        "artifacts": {
+            "summary": {
+                "conclusion": "部分通过",
+                "execution": {
+                    "outcome": "partial",
+                    "label": "部分通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 6,
+                    "logicalPassedCount": 5,
+                    "logicalFailedCount": 1,
+                    "smokeAttemptCount": 6,
+                    "smokePassedCount": 2,
+                    "smokeFailedCount": 4,
+                    "phases": [
+                        {"phase": "smoke", "passed": 1, "failed": 2},
+                        {"phase": "recovered-expanded-1", "passed": 2, "failed": 1},
+                        {"phase": "安全重跑", "passed": 2, "failed": 0},
+                    ],
+                },
+                "orchestration": {"runStatus": "DONE", "label": "编排完成"},
+            },
+            "generationPipeline": {"caseCount": 6, "automationCaseCount": 6, "yamlFileCount": 6},
+            "generatedYamlExecutionPlan": {
+                "counts": {"total": 6, "selectedSmoke": 3, "deferredExecutable": 3},
+                "smokeResult": {"total": 3, "passed": 1, "failed": 2, "timeout": 0},
+                "recoveredExpandedResult": {"created": 3, "passed": 2, "failed": 1, "timeout": 0},
+            },
+            "rerunResult": {"createdCount": 2, "completedCount": 2, "failedCount": 0, "timeoutCount": 0},
+            "report": {"status": "failed"},
+        },
+    }
+    summary = agent_service._agent_run_report_summary(run)
+    require(
+        summary.get("smokeAttempted") == 3
+        and summary.get("smokePassed") == 3
+        and summary.get("smokeFailed") == 0,
+        "Agent report summary must not inflate smoke counts with rerun/expanded phases",
+    )
+    require(
+        summary.get("nonSmokeAttempted") == 3
+        and summary.get("nonSmokePassed") == 2
+        and summary.get("nonSmokeFailed") == 1,
+        "Agent report summary must expose remaining non-smoke buckets for history cards",
+    )
+
+
 def check_agent_cancel_cascades_runner_jobs():
     from task_server.services import agent_service, job_service
 
@@ -16417,6 +16469,7 @@ def main():
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
     check_agent_orphaned_running_step_after_restart_requeues()
+    check_agent_report_summary_keeps_non_smoke_buckets()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()

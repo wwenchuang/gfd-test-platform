@@ -7494,6 +7494,75 @@ def _agent_run_with_input_summary(run, detailed=False):
     return enriched
 
 
+def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passed, failed, timeout, running):
+    """Build user-facing smoke/non-smoke buckets from the execution plan."""
+    if not isinstance(artifacts, dict):
+        return {}
+    plan = artifacts.get("generatedYamlExecutionPlan")
+    if not isinstance(plan, dict):
+        return {}
+    counts = plan.get("counts") if isinstance(plan.get("counts"), dict) else {}
+    smoke_total = _safe_int_local(counts.get("selectedSmoke"), 0)
+    non_smoke_total = _safe_int_local(counts.get("deferredExecutable"), 0)
+    plan_total = _safe_int_local(counts.get("total"), 0)
+    if not smoke_total:
+        selected = plan.get("selected") if isinstance(plan.get("selected"), list) else []
+        smoke_total = len(selected)
+    if not non_smoke_total:
+        deferred = plan.get("deferred") if isinstance(plan.get("deferred"), list) else []
+        non_smoke_total = len(deferred)
+    if not plan_total:
+        plan_total = smoke_total + non_smoke_total
+    if plan_total and smoke_total and not non_smoke_total:
+        non_smoke_total = max(0, plan_total - smoke_total)
+    if not smoke_total and not non_smoke_total:
+        return {}
+
+    smoke_result = plan.get("smokeResult") if isinstance(plan.get("smokeResult"), dict) else {}
+    rerun_result = artifacts.get("rerunResult") if isinstance(artifacts.get("rerunResult"), dict) else {}
+    smoke_timeout = _safe_int_local(smoke_result.get("timeout"), 0)
+    smoke_running = _safe_int_local(smoke_result.get("running"), 0)
+    smoke_passed = _safe_int_local(smoke_result.get("passed"), 0)
+    smoke_failed = _safe_int_local(smoke_result.get("failed"), 0)
+    repaired_passed = _safe_int_local(rerun_result.get("completedCount"), 0)
+    repaired_failed = _safe_int_local(rerun_result.get("failedCount"), 0)
+    repaired_timeout = _safe_int_local(rerun_result.get("timeoutCount"), 0)
+    if repaired_passed:
+        recovered_from_smoke = min(repaired_passed, max(0, smoke_total - smoke_passed - smoke_timeout))
+        smoke_passed += recovered_from_smoke
+        smoke_failed = max(0, smoke_failed - recovered_from_smoke)
+    if repaired_failed or repaired_timeout:
+        smoke_failed = min(smoke_total, smoke_failed + repaired_failed)
+        smoke_timeout = min(max(0, smoke_total - smoke_passed - smoke_failed), smoke_timeout + repaired_timeout)
+
+    smoke_passed = min(max(0, smoke_passed), smoke_total)
+    smoke_failed = min(max(0, smoke_failed), max(0, smoke_total - smoke_passed))
+    smoke_timeout = min(max(0, smoke_timeout), max(0, smoke_total - smoke_passed - smoke_failed))
+    smoke_running = min(max(0, smoke_running), max(0, smoke_total - smoke_passed - smoke_failed - smoke_timeout))
+
+    non_smoke_attempted = max(0, total - smoke_total) if total else non_smoke_total
+    if non_smoke_total:
+        non_smoke_attempted = min(non_smoke_total, non_smoke_attempted or non_smoke_total)
+    non_smoke_passed = min(max(0, passed - smoke_passed), non_smoke_attempted)
+    non_smoke_failed = min(max(0, failed - smoke_failed), max(0, non_smoke_attempted - non_smoke_passed))
+    non_smoke_timeout = min(max(0, timeout - smoke_timeout), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
+    non_smoke_running = min(max(0, running - smoke_running), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed - non_smoke_timeout))
+
+    return {
+        "smokeAttempted": smoke_total,
+        "smokePassed": smoke_passed,
+        "smokeFailed": smoke_failed,
+        "smokeTimeout": smoke_timeout,
+        "smokeRunning": smoke_running,
+        "nonSmokeAttempted": non_smoke_attempted,
+        "nonSmokePassed": non_smoke_passed,
+        "nonSmokeFailed": non_smoke_failed,
+        "nonSmokeTimeout": non_smoke_timeout,
+        "nonSmokeRunning": non_smoke_running,
+        "executionBucketsSource": "generatedYamlExecutionPlan",
+    }
+
+
 def _agent_run_report_summary(run):
     if not isinstance(run, dict):
         return {}
@@ -7560,7 +7629,20 @@ def _agent_run_report_summary(run):
         and not bool(execution.get("smokeAllFailed"))
     ):
         projected_run_status = "DONE"
-    return {
+    bucket_counts = _agent_report_execution_buckets_from_plan(
+        artifacts,
+        execution,
+        attempted,
+        passed,
+        failed,
+        timeout,
+        running,
+    )
+    smoke_attempted = bucket_counts.get("smokeAttempted") if bucket_counts else _safe_int_local(execution.get("smokeAttemptCount"), 0)
+    smoke_passed = bucket_counts.get("smokePassed") if bucket_counts else _safe_int_local(execution.get("smokePassedCount"), 0)
+    smoke_failed = bucket_counts.get("smokeFailed") if bucket_counts else _safe_int_local(execution.get("smokeFailedCount"), 0)
+    smoke_timeout = bucket_counts.get("smokeTimeout") if bucket_counts else _safe_int_local(execution.get("smokeTimeoutCount"), 0)
+    result = {
         "conclusion": summary.get("conclusion") or execution.get("label") or "",
         "outcome": execution.get("outcome") or "",
         "label": execution.get("label") or summary.get("conclusion") or "",
@@ -7573,10 +7655,10 @@ def _agent_run_report_summary(run):
         "failed": failed,
         "timeout": timeout,
         "running": running,
-        "smokeAttempted": _safe_int_local(execution.get("smokeAttemptCount"), 0),
-        "smokePassed": _safe_int_local(execution.get("smokePassedCount"), 0),
-        "smokeFailed": _safe_int_local(execution.get("smokeFailedCount"), 0),
-        "smokeTimeout": _safe_int_local(execution.get("smokeTimeoutCount"), 0),
+        "smokeAttempted": smoke_attempted,
+        "smokePassed": smoke_passed,
+        "smokeFailed": smoke_failed,
+        "smokeTimeout": smoke_timeout,
         "smokeAllFailed": bool(execution.get("smokeAllFailed")),
         "phases": phase_rows[:12],
         "reportStatus": report.get("status") or "",
@@ -7584,6 +7666,18 @@ def _agent_run_report_summary(run):
         "orchestrationLabel": orchestration.get("label") or "",
         "runStatus": projected_run_status,
     }
+    for key in (
+        "smokeRunning",
+        "nonSmokeAttempted",
+        "nonSmokePassed",
+        "nonSmokeFailed",
+        "nonSmokeTimeout",
+        "nonSmokeRunning",
+        "executionBucketsSource",
+    ):
+        if key in bucket_counts:
+            result[key] = bucket_counts[key]
+    return result
 
 
 def _agent_runner_outcome_allows_done(run):
