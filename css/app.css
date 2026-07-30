@@ -1907,6 +1907,15 @@
     justify-content: space-between;
     gap: 10px;
     padding-top: 2px;
+    min-width: 0;
+  }
+  .agent-run-card-head .muted {
+    flex: 0 0 auto;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
   }
   .agent-run-title {
     color: var(--accent);

@@ -268,21 +268,18 @@ function agentRunResultSummaryHtml(run) {
   const result = agentRunResultMeta(run);
   if (!result.hasReportResult) return '';
   const buckets = agentRunExecutionBuckets(result);
-  const generatedText = result.generatedCases
-    ? `${result.generatedCases} 条`
-    : (result.automationCases || result.generatedYaml ? `${result.automationCases || result.generatedYaml} 条` : '-');
-  const generatedDetail = [
-    result.automationCases ? `自动化 ${result.automationCases}` : '',
-    result.generatedYaml ? `YAML ${result.generatedYaml}` : ''
-  ].filter(Boolean).join(' / ');
-  const smokeText = buckets.smoke.attempted ? `${buckets.smoke.passed}/${buckets.smoke.attempted}` : '-';
-  const smokeDetail = buckets.smoke.attempted
-    ? [`失败 ${buckets.smoke.failed}`, buckets.smoke.timeout ? `超时 ${buckets.smoke.timeout}` : ''].filter(Boolean).join(' / ')
+  const totalText = result.total ? `${result.total} 条` : '-';
+  const totalDetail = result.total
+    ? [`通过 ${result.passed}`, result.failed ? `失败 ${result.failed}` : '失败 0', result.timeout ? `超时 ${result.timeout}` : ''].filter(Boolean).join(' / ')
     : '未执行';
-  const remainingText = buckets.remaining.attempted ? `${buckets.remaining.passed}/${buckets.remaining.attempted}` : '-';
+  const smokeText = buckets.smoke.attempted ? `${buckets.smoke.attempted} 条` : '-';
+  const smokeDetail = buckets.smoke.attempted
+    ? [`通过 ${buckets.smoke.passed}`, buckets.smoke.failed ? `失败 ${buckets.smoke.failed}` : '失败 0', buckets.smoke.timeout ? `超时 ${buckets.smoke.timeout}` : ''].filter(Boolean).join(' / ')
+    : '未执行';
+  const remainingText = buckets.remaining.attempted ? `${buckets.remaining.attempted} 条` : '-';
   const remainingDetail = buckets.remaining.attempted
-    ? [`失败 ${buckets.remaining.failed}`, buckets.remaining.timeout ? `超时 ${buckets.remaining.timeout}` : '', buckets.remaining.running ? `执行中 ${buckets.remaining.running}` : ''].filter(Boolean).join(' / ')
-    : '无后续批次';
+    ? [`通过 ${buckets.remaining.passed}`, buckets.remaining.failed ? `失败 ${buckets.remaining.failed}` : '失败 0', buckets.remaining.timeout ? `超时 ${buckets.remaining.timeout}` : '', buckets.remaining.running ? `执行中 ${buckets.remaining.running}` : ''].filter(Boolean).join(' / ')
+    : '无非冒烟用例';
   const orchestration = [
     result.runStatus ? `Agent ${agentStatusText(result.runStatus)}` : '',
     result.smokeAllFailed ? '冒烟全失败' : ''
@@ -294,9 +291,9 @@ function agentRunResultSummaryHtml(run) {
         ${orchestration ? `<span>${escapeHtml(orchestration)}</span>` : ''}
       </div>
       <div class="agent-run-metrics">
-        ${agentRunMetricHtml('用例', generatedText, generatedDetail)}
+        ${agentRunMetricHtml('总用例', totalText, totalDetail)}
         ${agentRunMetricHtml('冒烟', smokeText, smokeDetail)}
-        ${agentRunMetricHtml('后续用例', remainingText, remainingDetail)}
+        ${agentRunMetricHtml('非冒烟', remainingText, remainingDetail)}
       </div>
     </div>
   `;
@@ -358,6 +355,11 @@ function mergeAgentRun(run, limit = 50) {
 
 function agentRunDisplayTime(run) {
   return String(run?.createdAt || run?.created_at || run?.startedAt || run?.updatedAt || '').replace('T', ' ').slice(0, 19);
+}
+
+function agentRunDisplayTimeCompact(run) {
+  const full = agentRunDisplayTime(run);
+  return full.length >= 16 ? full.slice(5, 16) : full;
 }
 
 function agentRunProgressPct(run) {
@@ -960,7 +962,7 @@ function agentRunCardHtml(run, options = {}) {
     <div class="workflow-card agent-run-history-card ${escapeHtml(cardStatus)}">
       <div class="agent-run-card-head">
         <span class="status-pill ${escapeHtml(pill)}">${escapeHtml(status)}</span>
-        <span class="muted mono">${escapeHtml(agentRunDisplayTime(run))}</span>
+        <span class="muted mono" title="${escapeHtml(agentRunDisplayTime(run))}">${escapeHtml(agentRunDisplayTimeCompact(run))}</span>
       </div>
       <div class="agent-run-title">${escapeHtml(String(target).slice(0, 80))}</div>
       ${agentRunResultSummaryHtml(run)}
