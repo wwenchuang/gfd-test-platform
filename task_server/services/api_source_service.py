@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 import urllib.parse
@@ -22,6 +23,10 @@ DEFAULT_APIFOX_SOURCE_ID = "api_source_apifox_default"
 MIN_SYNC_INTERVAL_MINUTES = 15
 MAX_SYNC_INTERVAL_MINUTES = 1440
 _SOURCE_LOCK = threading.RLock()
+_SENSITIVE_NAME_RE = re.compile(
+    r"(token|secret|password|passwd|pwd|authorization|cookie|session|apikey|api_key|accesskey|private)",
+    re.IGNORECASE,
+)
 
 
 class ApiSourceConfigDriftError(RuntimeError):
@@ -145,6 +150,67 @@ def normalized_sync_scope(value: Any) -> Dict[str, Any]:
     }
 
 
+def _looks_sensitive_name(name: Any) -> bool:
+    return bool(_SENSITIVE_NAME_RE.search(str(name or "")))
+
+
+def _snapshot_base_url_rows(value: Any) -> List[Dict[str, str]]:
+    rows = value if isinstance(value, list) else []
+    result: List[Dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(rows, start=1):
+        raw = item if isinstance(item, dict) else {}
+        name = _bounded_text(
+            raw.get("name", raw.get("key", raw.get("scope"))),
+            120,
+        ) or f"baseUrl{index}"
+        url = _bounded_text(raw.get("url", raw.get("value")), 1000)
+        if not url:
+            continue
+        key = (name, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"name": name, "url": url})
+    return result[:50]
+
+
+def _snapshot_variable_rows(value: Any) -> List[Dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    result: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in rows:
+        raw = item if isinstance(item, dict) else {}
+        name = _bounded_text(raw.get("name", raw.get("key")), 160)
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        sensitive = bool(raw.get("sensitive")) or _looks_sensitive_name(name)
+        result.append({
+            "name": name,
+            "value": "" if sensitive else _bounded_text(raw.get("value"), 2000),
+            "sensitive": sensitive,
+            "scope": _bounded_text(raw.get("scope"), 80) or "environment",
+        })
+    return result[:200]
+
+
+def normalize_environment_snapshot(value: Any) -> Dict[str, Any]:
+    """Return a safe public Apifox environment snapshot without secret values."""
+    raw = value if isinstance(value, dict) else {}
+    base_urls = _snapshot_base_url_rows(raw.get("base_urls", raw.get("baseUrls")))
+    variables = _snapshot_variable_rows(raw.get("variables"))
+    if not base_urls and not variables:
+        return {}
+    sensitive_count = sum(1 for item in variables if item.get("sensitive"))
+    return {
+        "base_urls": base_urls,
+        "variables": variables,
+        "variable_count": len(variables),
+        "sensitive_variable_count": sensitive_count,
+    }
+
+
 def source_config_fingerprint(source: Dict[str, Any]) -> str:
     """Return a stable, non-reversible identity for sync-relevant source config."""
     scope = normalized_sync_scope((source or {}).get("sync_scope"))
@@ -239,6 +305,7 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     public["credential_configured"] = bool(token)
     public["configured"] = bool(public.get("project_id") and token) if public.get("source_type") == "apifox" else True
     public["provider_metadata"] = normalize_provider_metadata(public.get("provider_metadata"))
+    public["environment_snapshot"] = normalize_environment_snapshot(public.get("environment_snapshot"))
     public["sync_scope"] = normalized_sync_scope(public.get("sync_scope"))
     public["module_catalog"] = public.get("module_catalog") if isinstance(public.get("module_catalog"), list) else []
     public["scope_fingerprint"] = str(public.get("scope_fingerprint") or "")
@@ -330,6 +397,12 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
         if provider_input_present
         else normalize_provider_metadata(current.get("provider_metadata"))
     )
+    environment_snapshot = normalize_environment_snapshot(
+        payload.get(
+            "environment_snapshot",
+            payload.get("environmentSnapshot", current.get("environment_snapshot")),
+        )
+    )
     default_name = (
         provider_metadata.get("project_name")
         or ("Apifox 接口" if source_type == "apifox" else "OpenAPI 上传")
@@ -343,6 +416,7 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
         "branch_id": str(payload.get("branch_id", payload.get("branchId", current.get("branch_id", ""))) or "").strip(),
         "environment_id": str(payload.get("environment_id", payload.get("environmentId", current.get("environment_id", ""))) or "").strip(),
         "provider_metadata": provider_metadata,
+        "environment_snapshot": environment_snapshot,
         "credential_mode": "access_token" if source_type == "apifox" else "none",
         "access_token": access_token,
         "sync_enabled": safe_bool(payload.get("sync_enabled", payload.get("syncEnabled", current.get("sync_enabled"))), sync_enabled_default),
@@ -440,6 +514,7 @@ __all__ = [
     "get_api_source",
     "list_api_sources",
     "save_api_source",
+    "normalize_environment_snapshot",
     "normalize_provider_metadata",
     "normalized_sync_scope",
     "locked_api_source_config",

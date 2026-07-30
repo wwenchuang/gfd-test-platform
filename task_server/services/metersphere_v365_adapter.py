@@ -347,10 +347,10 @@ class MeterSphereV365Adapter:
     @staticmethod
     def _environment_variable_key(key: Any) -> str:
         name = str(key or "").strip()
-        if not name.startswith("MTP_API_AUTH_"):
+        if not name.startswith(("MTP_API_AUTH_", "MTP_APIFOX_")):
             raise MeterSphereV365ContractError(
                 "environment_variable_not_owned",
-                "只能更新平台管理的 MeterSphere 认证环境变量",
+                "只能更新平台管理的 MeterSphere 环境变量",
             )
         return name
 

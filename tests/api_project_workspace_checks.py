@@ -761,6 +761,73 @@ class ApiWorkspaceBindingChecks(unittest.TestCase):
         self.assertNotIn("3d-password", local_text)
         self.assertNotIn("business-login-token", json.dumps(result, ensure_ascii=False))
 
+    def test_apifox_environment_snapshot_syncs_only_safe_values_to_metersphere(self):
+        api_source_service.save_api_source({
+            "source_id": "api_source_a",
+            "name": "项目 A",
+            "project_id": "apifox_a",
+            "access_token": "token-a",
+            "environment_snapshot": {
+                "base_urls": [
+                    {"name": "default", "url": "https://app-api.example.test"},
+                ],
+                "variables": [
+                    {"name": "tenantId", "value": "tenant-3d"},
+                    {"name": "accessToken", "value": "secret-runtime-token"},
+                ],
+            },
+        })
+        api_workspace_service.save_api_workspace_binding(
+            "api_source_a", "ms_project_a", "ms_env_a",
+        )
+
+        class Adapter:
+            def __init__(self):
+                self.calls = []
+
+            def upsert_environment_variable(self, environment_id, key, value, description):
+                self.calls.append((environment_id, key, value, description))
+                return {
+                    "ok": True,
+                    "configured": True,
+                    "environment_id": environment_id,
+                    "variable_name": key,
+                }
+
+        adapter = Adapter()
+        old_probe = metersphere_service._v365_adapter_probe
+        metersphere_service._v365_adapter_probe = (
+            lambda config: (adapter, {"version": "v3.6.5-lts"}, True)
+        )
+        try:
+            result = metersphere_service.sync_apifox_environment_to_metersphere(
+                "api_source_a"
+            )
+        finally:
+            metersphere_service._v365_adapter_probe = old_probe
+
+        self.assertEqual("ms_env_a", adapter.calls[0][0])
+        self.assertEqual(
+            {
+                "MTP_APIFOX_BASE_URL_DEFAULT",
+                "MTP_APIFOX_VAR_TENANTID",
+            },
+            {call[1] for call in adapter.calls},
+        )
+        self.assertEqual(
+            {"https://app-api.example.test", "tenant-3d"},
+            {call[2] for call in adapter.calls},
+        )
+        self.assertEqual(2, result["synced"])
+        self.assertEqual(1, result["skipped_sensitive"])
+        self.assertNotIn("secret-runtime-token", json.dumps(result, ensure_ascii=False))
+        local_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in Path(self.temp_dir).rglob("*")
+            if path.is_file()
+        )
+        self.assertNotIn("secret-runtime-token", local_text)
+
     def test_execution_context_marks_current_project_environment_auth_profile(self):
         self._create_sources(1)
         connection_identity = metersphere_service._api_auth_connection_identity(

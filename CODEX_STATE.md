@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 Apifox 环境配置快照与 MeterSphere 环境变量同步
+
+用户希望把 Apifox 上的环境配置信息同步到 MeterSphere，减少手填环境 ID、变量和 token 的混乱。
+
+参考 MeterSphere v3.x 官方环境管理文档：项目环境支持环境变量、HTTP 配置、请求头、前后置、断言等；其中环境变量可在请求体和脚本中通过 `${变量名}` 引用。因此本轮采用“来源环境快照 + 显式写入 MeterSphere 环境变量”的保守方案，不把 Apifox 环境值直接摊进每条 API 用例。
+
+修复：
+
+- Apifox CLI 项目上下文读取现在会为每个非默认环境返回脱敏 `environment_snapshot`，包含 `base_urls`、`variables`、`variable_count`、`sensitive_variable_count`。
+- API source 保存时持久化选中环境的安全快照；`token / secret / password / cookie / authorization / accessToken` 等敏感变量只保留名称、计数和 `sensitive=true`，值置空，不写入本地文件或前端响应。
+- 新增 `POST /api/api-testing/sources/{source_id}/environment-sync`：要求当前 API source 已绑定 MeterSphere 项目和环境，只把非敏感 base URL 和变量写入 MeterSphere 环境变量。
+- MeterSphere v3.6.5 adapter 允许平台管理变量前缀从仅 `MTP_API_AUTH_*` 扩展到 `MTP_API_AUTH_* / MTP_APIFOX_*`，仍拒绝修改用户自建的非平台变量。
+- 同步变量命名：
+  - `MTP_APIFOX_BASE_URL_*`：Apifox 环境服务地址。
+  - `MTP_APIFOX_VAR_*`：Apifox 普通环境变量。
+- API 资产设置面板新增“Apifox 环境配置”卡片，按“服务地址 / 环境变量”分区展示，并提供“同步到 MeterSphere 环境”按钮；敏感变量显示“敏感值未同步”。
+- 前端缓存版本更新为 `20260730-apifox-env-snapshot`。
+
+未做：
+
+- 未自动覆盖 MeterSphere HTTP 配置、全局请求头、前置/后置脚本或数据库/HOST 配置；这些属于更高风险的环境导入能力，应单独按 MeterSphere 环境导入模型设计。
+- 未自动同步 Apifox 敏感变量值；业务用户 token 仍走现有“环境公共鉴权”通道，避免把运行密钥混入来源资产。
+
+验证：
+
+```bash
+python3 -m unittest tests.apifox_discovery_checks.ApifoxDiscoveryServiceChecks.test_project_context_includes_safe_environment_snapshot tests.api_asset_sync_checks.ApiSourceConfigTests.test_environment_snapshot_is_public_and_redacted tests.api_project_workspace_checks.ApiWorkspaceBindingChecks.test_apifox_environment_snapshot_syncs_only_safe_values_to_metersphere tests.metersphere_v365_adapter_checks.MeterSphereV365EnvironmentVariableChecks.test_environment_variable_upsert_allows_platform_apifox_prefix
+python3 -m py_compile task_server/services/api_source_service.py task_server/services/apifox_discovery_service.py task_server/services/metersphere_service.py task_server/services/metersphere_v365_adapter.py task_server/router.py tests/api_project_workspace_checks.py tests/api_asset_sync_checks.py tests/apifox_discovery_checks.py tests/metersphere_v365_adapter_checks.py
+python3 tests/apifox_discovery_checks.py
+python3 tests/api_asset_sync_checks.py
+python3 tests/api_project_workspace_checks.py
+python3 tests/metersphere_v365_adapter_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+git diff --check -- task_server/services/api_source_service.py task_server/services/apifox_discovery_service.py task_server/services/metersphere_service.py task_server/services/metersphere_v365_adapter.py task_server/router.py js/api-testing.js css/round5.css task-manager.html tests/api_asset_sync_checks.py tests/apifox_discovery_checks.py tests/api_project_workspace_checks.py tests/metersphere_v365_adapter_checks.py tests/frontend_static_checks.py docs/superpowers/plans/2026-07-30-apifox-environment-snapshot.md
+```
+
 ### 2026-07-30 API 业务 token 按项目/环境标记并回传执行上下文
 
 用户指出 3D 项目的用户登录 token 没有明确“放到哪个项目使用哪个 token”，页面也看不出当前公共鉴权绑定范围。

@@ -688,6 +688,46 @@ class MeterSphereV365EnvironmentVariableChecks(unittest.TestCase):
             [item["key"] for item in remote.environment["config"]["commonVariables"]],
         )
 
+    def test_environment_variable_upsert_allows_platform_apifox_prefix(self):
+        class Remote:
+            def __init__(self):
+                self.environment = {
+                    "id": "env-a",
+                    "projectId": "project-a",
+                    "name": "测试环境",
+                    "description": "",
+                    "config": {"commonVariables": []},
+                }
+
+            def request(self, method, path, payload=None, timeout=30, **_kwargs):
+                if method == "GET" and path == "/project/environment/get/env-a":
+                    return {"ok": True, "data": copy.deepcopy(self.environment)}
+                return {"ok": False, "error": f"unexpected {method} {path}"}
+
+            def multipart(self, method, path, request, timeout=30, **_kwargs):
+                if method == "POST" and path == "/project/environment/update":
+                    self.environment = copy.deepcopy(request)
+                    return {"ok": True, "data": {"id": "env-a"}}
+                return {"ok": False, "error": f"unexpected multipart {method} {path}"}
+
+        remote = Remote()
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a", "environment_id": "env-a"},
+            remote.request,
+            request_multipart=remote.multipart,
+        )
+
+        saved = adapter.upsert_environment_variable(
+            "env-a", "MTP_APIFOX_BASE_URL_DEFAULT", "https://api.example.test", "Apifox environment",
+        )
+
+        self.assertTrue(saved["configured"])
+        self.assertEqual("MTP_APIFOX_BASE_URL_DEFAULT", saved["variable_name"])
+        self.assertEqual(
+            "MTP_APIFOX_BASE_URL_DEFAULT",
+            remote.environment["config"]["commonVariables"][0]["key"],
+        )
+
     def test_environment_variable_upsert_accepts_masked_readback(self):
         class Remote:
             def __init__(self):

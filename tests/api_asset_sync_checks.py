@@ -156,6 +156,35 @@ class ApiSourceConfigTests(unittest.TestCase):
         self.assertEqual("apifox_cli", source["provider_metadata"]["discovery_source"])
         self.assertNotIn("secret-apifox-token", json.dumps(source, ensure_ascii=False))
 
+    def test_environment_snapshot_is_public_and_redacted(self):
+        source = self.service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D 接口",
+            "project_id": "5904970",
+            "environment_id": "99",
+            "access_token": "secret-apifox-token",
+            "environment_snapshot": {
+                "base_urls": [
+                    {"name": "default", "url": "https://app-api.example.test"},
+                ],
+                "variables": [
+                    {"name": "tenantId", "value": "tenant-3d", "scope": "environment"},
+                    {"name": "accessToken", "value": "secret-runtime-token", "scope": "environment"},
+                ],
+            },
+        })
+
+        snapshot = source["environment_snapshot"]
+
+        self.assertEqual("https://app-api.example.test", snapshot["base_urls"][0]["url"])
+        self.assertEqual(2, snapshot["variable_count"])
+        self.assertEqual(1, snapshot["sensitive_variable_count"])
+        self.assertEqual("tenant-3d", snapshot["variables"][0]["value"])
+        self.assertEqual("", snapshot["variables"][1]["value"])
+        self.assertTrue(snapshot["variables"][1]["sensitive"])
+        self.assertNotIn("secret-apifox-token", json.dumps(source, ensure_ascii=False))
+        self.assertNotIn("secret-runtime-token", json.dumps(source, ensure_ascii=False))
+
     def test_config_and_sync_state_updates_do_not_overwrite_each_other(self):
         saved = self.service.save_api_source({
             "source_type": "apifox",

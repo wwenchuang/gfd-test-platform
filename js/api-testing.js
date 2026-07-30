@@ -622,7 +622,8 @@ function resetApiSourceDiscoveryState(source = {}) {
     environments: project ? [{
       id: environmentId,
       name: metadata.environment_name || (environmentId ? '已配置环境' : '不绑定环境'),
-      is_default: !environmentId
+      is_default: !environmentId,
+      environment_snapshot: source.environment_snapshot || {}
     }] : [],
     error: '',
     errorCode: '',
@@ -659,6 +660,58 @@ function apiSourceNamedOptions(items, selectedId) {
       ${escapeHtml(item.name || '未命名选项')}
     </option>
   `).join('');
+}
+
+function apiSourceSelectedDiscoveryEnvironment(source = {}) {
+  const selectedId = String(document.getElementById('api-source-environment-select')?.value || source.environment_id || '');
+  return (apiSourceDiscoveryState.environments || []).find(
+    item => String(item.id || '') === selectedId
+  ) || {};
+}
+
+function apiSourceEnvironmentSnapshot(source = {}) {
+  const selectedEnvironment = apiSourceSelectedDiscoveryEnvironment(source);
+  return selectedEnvironment.environment_snapshot || source.environment_snapshot || {};
+}
+
+function renderApiSourceEnvironmentSnapshot(source = {}) {
+  const snapshot = apiSourceEnvironmentSnapshot(source);
+  const baseUrls = Array.isArray(snapshot.base_urls) ? snapshot.base_urls : [];
+  const variables = Array.isArray(snapshot.variables) ? snapshot.variables : [];
+  const variableCount = Number(snapshot.variable_count ?? variables.length ?? 0);
+  const sensitiveCount = Number(snapshot.sensitive_variable_count ?? variables.filter(item => item?.sensitive).length ?? 0);
+  const canSync = !!(source.source_id && (baseUrls.length || variables.length));
+  const baseUrlRows = baseUrls.length ? baseUrls.map(item => `
+    <li><span>${escapeHtml(item.name || 'default')}</span><code>${escapeHtml(item.url || '')}</code></li>
+  `).join('') : '<li class="muted">未读取到环境服务地址</li>';
+  const variableRows = variables.length ? variables.slice(0, 12).map(item => `
+    <li>
+      <span>${escapeHtml(item.name || '未命名变量')}</span>
+      <code>${item.sensitive ? '敏感值未同步' : escapeHtml(item.value || '空值')}</code>
+    </li>
+  `).join('') : '<li class="muted">未读取到普通环境变量</li>';
+  const hiddenCount = Math.max(0, variables.length - 12);
+  return `
+    <section id="api-source-environment-snapshot" class="api-source-environment-snapshot">
+      <div class="api-source-environment-head">
+        <div>
+          <span>APIFOX 环境配置</span>
+          <h4>Apifox 环境配置</h4>
+          <small>${baseUrls.length} 个服务地址 · ${variableCount} 个变量 · ${sensitiveCount} 个敏感值未同步</small>
+        </div>
+        <button type="button" class="btn-sm primary" onclick="syncApiSourceEnvironmentToMeterSphere()" ${canSync ? '' : 'disabled'}>同步到 MeterSphere 环境</button>
+      </div>
+      <div class="api-source-environment-grid">
+        <div><strong>服务地址</strong><ul>${baseUrlRows}</ul></div>
+        <div><strong>环境变量</strong><ul>${variableRows}${hiddenCount ? `<li class="muted">另有 ${hiddenCount} 个变量未展开</li>` : ''}</ul></div>
+      </div>
+    </section>
+  `;
+}
+
+function refreshApiSourceEnvironmentSnapshotPreview(source = currentApiSourceSettingsSource()) {
+  const node = document.getElementById('api-source-environment-snapshot');
+  if (node) node.outerHTML = renderApiSourceEnvironmentSnapshot(source);
 }
 
 function apiSourceProjectResultsHtml() {
@@ -720,7 +773,7 @@ function renderApiSourceDiscoveryState(source = {}) {
       </div>
       <div class="api-source-context-grid">
         <label><span>分支</span><select id="api-source-branch-select">${apiSourceNamedOptions(state.branches, branchId)}</select></label>
-        <label><span>环境</span><select id="api-source-environment-select">${apiSourceNamedOptions(state.environments, environmentId)}</select></label>
+        <label><span>环境</span><select id="api-source-environment-select" onchange="refreshApiSourceEnvironmentSnapshotPreview()">${apiSourceNamedOptions(state.environments, environmentId)}</select></label>
       </div>
     `;
   }
@@ -822,6 +875,7 @@ function renderApiSourceSettings(source = {}) {
       <div id="api-source-discovery-state">${renderApiSourceDiscoveryState(source)}</div>
     </div>
     ${renderApiSourceManualFallback(source)}
+    ${renderApiSourceEnvironmentSnapshot(source)}
     <div id="api-source-sync-configuration" class="api-source-sync-configuration ${canConfigure ? '' : 'hidden'}">
       <div class="api-source-settings-grid">
         <label><span>同步周期（分钟）</span><input id="api-source-interval" type="number" min="15" max="1440" step="15" value="${escapeHtml(source.sync_interval_minutes || 60)}"></label>
@@ -861,6 +915,7 @@ function refreshApiSourceDiscoveryUi(source = currentApiSourceSettingsSource()) 
   document.getElementById('api-source-sync-configuration')?.classList.toggle('hidden', !canConfigure);
   const saveButton = document.getElementById('api-source-save-button');
   if (saveButton) saveButton.disabled = !canConfigure;
+  refreshApiSourceEnvironmentSnapshotPreview(source);
 }
 
 function apiSourceDiscoveryCredentialPayload(source = currentApiSourceSettingsSource()) {
@@ -1530,6 +1585,9 @@ async function saveApiSourceConfig(clearCredentials = false) {
       discovered_at: new Date().toISOString(),
       discovery_source: 'apifox_cli'
     };
+    payload.environment_snapshot = selectedEnvironment?.environment_snapshot || {};
+  } else {
+    payload.environment_snapshot = source.environment_snapshot || {};
   }
   try {
     const data = await apiRequest('/api-testing/sources', { method: 'POST', body: payload });
@@ -1560,6 +1618,25 @@ async function saveApiSourceConfig(clearCredentials = false) {
 async function clearApiSourceCredential() {
   if (!confirm('确认清除服务端保存的 Apifox 令牌？清除后同步会停止。')) return;
   await saveApiSourceConfig(true);
+}
+
+async function syncApiSourceEnvironmentToMeterSphere() {
+  const source = selectedApiAssetSource() || {};
+  const sourceId = source.source_id || '';
+  if (!sourceId) {
+    showToast('请先保存 Apifox 来源', 'error');
+    return;
+  }
+  try {
+    const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/environment-sync`, {
+      method: 'POST'
+    });
+    const sync = data.sync || {};
+    showToast(`✓ 已同步 ${sync.synced || 0} 个 Apifox 环境变量到 MeterSphere`, 'success');
+    await refreshApiAssetWorkspace(true);
+  } catch (error) {
+    showToast(error.message || 'Apifox 环境同步到 MeterSphere 失败', 'error');
+  }
 }
 
 async function startApiAssetSync() {

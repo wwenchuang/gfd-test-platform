@@ -2990,6 +2990,24 @@ def _post_api_testing_source_sync(handler, qs, match):
         handler._json({"ok": False, "error": str(exc)}, 400)
 
 
+@route_post_regex(r"^/api/api-testing/sources/([^/]+)/environment-sync$")
+def _post_api_testing_source_environment_sync(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service, metersphere_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    if not api_source_service.get_api_source(source_id, masked=True):
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    try:
+        sync = metersphere_service.sync_apifox_environment_to_metersphere(source_id)
+        handler._json({"ok": True, "sync": sync})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+    except metersphere_service.MeterSphereV365ContractError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 @route_post_regex(r"^/api/api-testing/sources/([^/]+)/execution-binding$")
 def _post_api_testing_source_execution_binding(handler, qs, match):
     if _require_user_auth(handler):

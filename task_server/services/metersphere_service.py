@@ -799,6 +799,130 @@ def _api_auth_header(auth_type: str, header_name: str) -> tuple[str, str]:
     return api_workspace_service.normalize_api_auth_header(auth_type, header_name)
 
 
+def _apifox_variable_suffix(value: Any, fallback: str) -> str:
+    suffix = re.sub(r"[^A-Za-z0-9_]+", "_", str(value or "")).strip("_").upper()
+    suffix = suffix or str(fallback or "VALUE").strip().upper()
+    suffix = re.sub(r"[^A-Z0-9_]+", "_", suffix).strip("_") or "VALUE"
+    if suffix[0].isdigit():
+        suffix = f"V_{suffix}"
+    return suffix[:48]
+
+
+def _apifox_environment_sync_items(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    raw = snapshot if isinstance(snapshot, dict) else {}
+    items: List[Dict[str, str]] = []
+    skipped_sensitive = 0
+    skipped_empty = 0
+    used: set[str] = set()
+
+    def add_item(variable_name: str, value: Any, description: str, source_name: str, source_type: str) -> None:
+        nonlocal skipped_empty
+        candidate = variable_name
+        counter = 2
+        while candidate in used:
+            candidate = f"{variable_name[:55]}_{counter}"
+            counter += 1
+        clean_value = str(value or "").strip()
+        if not clean_value:
+            skipped_empty += 1
+            return
+        used.add(candidate)
+        items.append({
+            "variable_name": candidate,
+            "value": clean_value,
+            "description": description,
+            "source_name": str(source_name or ""),
+            "source_type": source_type,
+        })
+
+    for index, item in enumerate(raw.get("base_urls") if isinstance(raw.get("base_urls"), list) else [], start=1):
+        row = item if isinstance(item, dict) else {}
+        suffix = _apifox_variable_suffix(row.get("name"), f"BASE_URL_{index}")
+        add_item(
+            f"MTP_APIFOX_BASE_URL_{suffix}",
+            row.get("url"),
+            f"Apifox environment base URL: {row.get('name') or suffix}",
+            row.get("name") or suffix,
+            "base_url",
+        )
+    for item in raw.get("variables") if isinstance(raw.get("variables"), list) else []:
+        row = item if isinstance(item, dict) else {}
+        if row.get("sensitive"):
+            skipped_sensitive += 1
+            continue
+        suffix = _apifox_variable_suffix(row.get("name"), "VAR")
+        add_item(
+            f"MTP_APIFOX_VAR_{suffix}",
+            row.get("value"),
+            f"Apifox environment variable: {row.get('name') or suffix}",
+            row.get("name") or suffix,
+            "variable",
+        )
+    return {
+        "items": items,
+        "skipped_sensitive": skipped_sensitive,
+        "skipped_empty": skipped_empty,
+    }
+
+
+def sync_apifox_environment_to_metersphere(source_id: str) -> Dict[str, Any]:
+    """Synchronize safe Apifox environment values into the bound MeterSphere environment."""
+    from task_server.services import api_source_service, api_workspace_service
+
+    selected_source_id = str(source_id or "").strip()
+    if not selected_source_id:
+        raise ValueError("source_id 不能为空")
+    source = api_source_service.get_api_source(selected_source_id, masked=False)
+    if not source:
+        raise ValueError("API source 不存在")
+    snapshot = api_source_service.normalize_environment_snapshot(
+        source.get("environment_snapshot")
+    )
+    if not snapshot:
+        raise ValueError("当前 Apifox 来源没有可同步的环境配置")
+    sync_plan = _apifox_environment_sync_items(snapshot)
+    items = sync_plan["items"]
+    if not items:
+        raise ValueError("Apifox 环境配置没有可同步的非敏感变量")
+    with _CONNECTION_CONFIG_LOCK:
+        with api_workspace_service.workspace_binding_transaction():
+            cfg, binding = _binding_config(selected_source_id, allow_legacy=True)
+            project_id = str(binding.get("project_id") or "").strip()
+            environment_id = str(binding.get("environment_id") or "").strip()
+            if not project_id or not environment_id:
+                raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+            adapter, _probe, supported = _v365_adapter_probe(cfg)
+            if not supported:
+                raise ValueError("MeterSphere v3.6.5 实时校验不可用")
+            mappings = []
+            for item in items:
+                remote = adapter.upsert_environment_variable(
+                    environment_id,
+                    item["variable_name"],
+                    item["value"],
+                    item["description"],
+                )
+                if not remote.get("configured"):
+                    raise ValueError("MeterSphere 环境变量写入后校验失败")
+                mappings.append({
+                    "source_type": item["source_type"],
+                    "source_name": item["source_name"],
+                    "variable_name": item["variable_name"],
+                    "environment_id": str(remote.get("environment_id") or environment_id),
+                })
+            return sanitize_metersphere_data({
+                "ok": True,
+                "source_id": selected_source_id,
+                "project_id": project_id,
+                "environment_id": environment_id,
+                "synced": len(mappings),
+                "skipped_sensitive": sync_plan["skipped_sensitive"],
+                "skipped_empty": sync_plan["skipped_empty"],
+                "mappings": mappings,
+                "updated_at": _now(),
+            })
+
+
 def save_api_auth_binding(
     source_id: str,
     auth_type: str,
@@ -2600,6 +2724,7 @@ __all__ = [
     "save_metersphere_config",
     "save_api_auth_binding",
     "save_api_auth_binding_from_login",
+    "sync_apifox_environment_to_metersphere",
     "metersphere_config",
     "metersphere_health",
     "sanitize_metersphere_data",

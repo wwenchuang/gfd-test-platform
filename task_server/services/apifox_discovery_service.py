@@ -18,6 +18,10 @@ MINIMUM_CLI_VERSION_TEXT = ".".join(str(item) for item in MINIMUM_CLI_VERSION)
 DEFAULT_CLI_BIN = "apifox"
 DEFAULT_BASE_URL = "https://api.apifox.com"
 _VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+_SENSITIVE_NAME_RE = re.compile(
+    r"(token|secret|password|passwd|pwd|authorization|cookie|session|apikey|api_key|accesskey|private)",
+    re.IGNORECASE,
+)
 _ENV_ALLOWLIST = (
     "PATH",
     "LANG",
@@ -338,12 +342,98 @@ def _named_options(values: Any, *, kind: str) -> List[Dict[str, Any]]:
         if kind == "branch" and _is_default_branch(raw):
             continue
         seen.add(item_id)
-        result.append({
+        option = {
             "id": item_id,
             "name": _safe_text(raw.get("name"), 200) or f"未命名{'分支' if kind == 'branch' else '环境'}",
             "is_default": False,
-        })
+        }
+        if kind == "environment":
+            option["environment_snapshot"] = _environment_snapshot(raw)
+        result.append(option)
     return result
+
+
+def _base_url_rows(value: Any) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    seen = set()
+    if isinstance(value, dict):
+        iterable = value.items()
+    elif isinstance(value, list):
+        iterable = []
+        for index, item in enumerate(value):
+            raw = item if isinstance(item, dict) else {}
+            iterable.append((
+                raw.get("name") or raw.get("key") or raw.get("id") or f"url{index + 1}",
+                raw.get("url") or raw.get("value") or raw.get("baseUrl"),
+            ))
+    else:
+        iterable = []
+    for name, url in iterable:
+        clean_url = _safe_text(url, 500)
+        if not clean_url or clean_url in seen:
+            continue
+        seen.add(clean_url)
+        result.append({
+            "name": _safe_text(name, 100) or "default",
+            "url": clean_url,
+        })
+        if len(result) >= 20:
+            break
+    return result
+
+
+def _environment_variable_rows(value: Any) -> List[Dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    result: List[Dict[str, Any]] = []
+    seen = set()
+    for item in rows:
+        raw = item if isinstance(item, dict) else {}
+        name = _safe_text(
+            raw.get("name")
+            or raw.get("key")
+            or raw.get("variableName")
+            or raw.get("variable_name"),
+            100,
+        )
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        sensitive = bool(
+            raw.get("sensitive")
+            or raw.get("secret")
+            or raw.get("private")
+            or _SENSITIVE_NAME_RE.search(name)
+        )
+        result.append({
+            "name": name,
+            "value": "" if sensitive else _safe_text(raw.get("value"), 1000),
+            "sensitive": sensitive,
+            "scope": _safe_text(raw.get("scope") or raw.get("type") or "environment", 40) or "environment",
+        })
+        if len(result) >= 200:
+            break
+    return result
+
+
+def _environment_snapshot(raw: Dict[str, Any]) -> Dict[str, Any]:
+    base_urls = _base_url_rows(
+        raw.get("baseUrls")
+        or raw.get("base_urls")
+        or raw.get("baseUrl")
+        or raw.get("base_url")
+    )
+    variables = _environment_variable_rows(
+        raw.get("variables")
+        or raw.get("variableList")
+        or raw.get("environmentVariables")
+        or raw.get("commonVariables")
+    )
+    return {
+        "base_urls": base_urls,
+        "variables": variables,
+        "variable_count": len(variables),
+        "sensitive_variable_count": sum(1 for item in variables if item.get("sensitive")),
+    }
 
 
 def _discovery_session(
@@ -465,7 +555,7 @@ def discover_project_context(
             *_named_options(branch_values, kind="branch"),
         ]
         environments = [
-            {"id": "", "name": "不绑定环境", "is_default": True},
+            {"id": "", "name": "不绑定环境", "is_default": True, "environment_snapshot": {}},
             *_named_options(environment_values, kind="environment"),
         ]
         return {
