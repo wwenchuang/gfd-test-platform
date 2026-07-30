@@ -30,7 +30,7 @@ except ImportError:
     metersphere_v365_adapter = None
 
 from task_server.services import metersphere_service
-from task_server.services import api_report_service, api_source_service, api_test_plan_service, api_workspace_service
+from task_server.services import api_asset_service, api_report_service, api_source_service, api_test_plan_service, api_workspace_service
 
 
 class MeterSphereV365AuthChecks(unittest.TestCase):
@@ -1602,6 +1602,7 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp(prefix="metersphere_v365_service_")
         self.old_service_dir = metersphere_service.API_TESTING_DIR
         self.old_report_dir = api_report_service.API_TESTING_DIR
+        self.old_asset_dir = api_asset_service.API_TESTING_DIR
         self.old_source_dir = api_source_service.API_TESTING_DIR
         self.old_workspace_dir = api_workspace_service.API_TESTING_DIR
         self.old_request = metersphere_service._request_json
@@ -1609,6 +1610,7 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         self.old_list_plans = api_test_plan_service.list_api_test_plans
         metersphere_service.API_TESTING_DIR = self.temp_dir
         api_report_service.API_TESTING_DIR = self.temp_dir
+        api_asset_service.API_TESTING_DIR = self.temp_dir
         api_source_service.API_TESTING_DIR = self.temp_dir
         api_workspace_service.API_TESTING_DIR = self.temp_dir
         self.remote = _ScenarioRemote()
@@ -1648,6 +1650,7 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
     def tearDown(self):
         metersphere_service.API_TESTING_DIR = self.old_service_dir
         api_report_service.API_TESTING_DIR = self.old_report_dir
+        api_asset_service.API_TESTING_DIR = self.old_asset_dir
         api_source_service.API_TESTING_DIR = self.old_source_dir
         api_workspace_service.API_TESTING_DIR = self.old_workspace_dir
         metersphere_service._request_json = self.old_request
@@ -1677,6 +1680,29 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
         config.update(overrides)
         return config
 
+    def _stage_pet_revision(self):
+        revision = api_asset_service.stage_api_revision(
+            "api_source_pets",
+            "宠物项目",
+            {
+                "openapi": "3.0.1",
+                "info": {"title": "宠物项目"},
+                "paths": {
+                    "/pets/{petId}": {
+                        "post": {
+                            "x-apifox-folder": "宠物业务/接口",
+                            "responses": {"200": {"description": "ok"}},
+                        },
+                    },
+                },
+            },
+            source_type="apifox",
+        )
+        api_asset_service.activate_api_revision(
+            revision["asset_id"], revision["revision_id"]
+        )
+        return revision
+
     def _start_source_execution(self, run_id="run-source-a"):
         api_source_service.save_api_source({
             "source_id": "api_source_pets",
@@ -1684,6 +1710,7 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
             "project_id": "apifox-pets",
             "access_token": "test-token",
         })
+        revision = self._stage_pet_revision()
         binding = api_workspace_service.save_api_workspace_binding(
             "api_source_pets", "project-a", "env-a",
             project_name="业务A", environment_name="测试环境",
@@ -1692,6 +1719,10 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
             ),
         )
         self.plan["source_id"] = "api_source_pets"
+        self.plan["asset_id"] = revision["asset_id"]
+        self.plan["asset_revision_id"] = revision["revision_id"]
+        self.plan["execution_binding_id"] = binding["binding_id"]
+        self.plan["binding_fingerprint"] = binding["config_fingerprint"]
         old_spawn = metersphere_service._spawn_execution_worker
         metersphere_service._spawn_execution_worker = lambda _execution_id: None
         try:
@@ -1708,6 +1739,119 @@ class MeterSphereV365ServiceIntegrationChecks(unittest.TestCase):
                 phase["state"] = "running"
         metersphere_service._save_execution(record)
         return record, binding
+
+    def test_draft_case_debug_creates_isolated_single_case_execution(self):
+        api_source_service.save_api_source({
+            "source_id": "api_source_pets",
+            "name": "宠物项目",
+            "project_id": "apifox-pets",
+            "access_token": "test-token",
+        })
+        revision = self._stage_pet_revision()
+        binding = api_workspace_service.save_api_workspace_binding(
+            "api_source_pets", "project-a", "env-a",
+            project_name="业务A", environment_name="测试环境",
+            connection_identity=metersphere_service._api_auth_connection_identity(
+                metersphere_service._load_raw_config()
+            ),
+        )
+        self.plan["source_id"] = "api_source_pets"
+        self.plan["asset_id"] = revision["asset_id"]
+        self.plan["asset_revision_id"] = revision["revision_id"]
+        self.plan["status"] = "draft"
+        self.plan["execution_binding_id"] = binding["binding_id"]
+        self.plan["binding_fingerprint"] = binding["config_fingerprint"]
+        api_test_plan_service.get_api_test_plan = lambda plan_id: (
+            copy.deepcopy(self.plan) if plan_id == self.plan["plan_id"] else {}
+        )
+        old_spawn = metersphere_service._spawn_execution_worker
+        metersphere_service._spawn_execution_worker = lambda _execution_id: None
+        try:
+            execution = metersphere_service.start_metersphere_case_debug(
+                self.plan["plan_id"], "API-001"
+            )
+        finally:
+            metersphere_service._spawn_execution_worker = old_spawn
+
+        record = metersphere_service._load_execution(execution["execution_id"])
+        self.assertEqual("debug_case", execution["run_mode"])
+        self.assertEqual("API-001", execution["debug_case_id"])
+        self.assertEqual(self.plan["plan_id"], execution["source_plan_id"])
+        self.assertNotEqual(self.plan["plan_id"], execution["plan_id"])
+        self.assertEqual(binding["binding_id"], record["binding_id"])
+        self.assertEqual("API-001", record["debug_case_id"])
+
+    def test_draft_case_debug_rejects_non_executable_case(self):
+        self.plan["status"] = "draft"
+        self.plan["cases"][0]["readiness"] = {"state": "needs_review", "missing": ["request.body.name"]}
+        api_test_plan_service.get_api_test_plan = lambda plan_id: (
+            copy.deepcopy(self.plan) if plan_id == self.plan["plan_id"] else {}
+        )
+
+        with self.assertRaisesRegex(
+            metersphere_service.MeterSphereExecutionValidationError,
+            "不可执行",
+        ):
+            metersphere_service.start_metersphere_case_debug(self.plan["plan_id"], "API-001")
+
+    def test_draft_case_debug_worker_runs_without_confirmed_baseline(self):
+        api_source_service.save_api_source({
+            "source_id": "api_source_pets",
+            "name": "宠物项目",
+            "project_id": "apifox-pets",
+            "access_token": "test-token",
+        })
+        revision = self._stage_pet_revision()
+        binding = api_workspace_service.save_api_workspace_binding(
+            "api_source_pets", "project-a", "env-a",
+            project_name="业务A", environment_name="测试环境",
+            connection_identity=metersphere_service._api_auth_connection_identity(
+                metersphere_service._load_raw_config()
+            ),
+        )
+        self.plan.update({
+            "source_id": "api_source_pets",
+            "asset_id": revision["asset_id"],
+            "asset_revision_id": revision["revision_id"],
+            "status": "draft",
+            "execution_binding_id": binding["binding_id"],
+            "binding_fingerprint": binding["config_fingerprint"],
+        })
+        api_test_plan_service.get_api_test_plan = lambda plan_id: (
+            copy.deepcopy(self.plan) if plan_id == self.plan["plan_id"] else {}
+        )
+        api_test_plan_service.list_api_test_plans = lambda limit=20: [{
+            "plan_id": self.plan["plan_id"],
+            "name": self.plan["name"],
+            "status": "draft",
+            "case_count": 1,
+            "endpoint_count": 1,
+            "executable_case_count": 1,
+            "needs_review_case_count": 0,
+            "source_id": "api_source_pets",
+            "revision_state": {"state": "fresh"},
+            "execution_readiness": {"can_execute": False, "executable_case_count": 1},
+        }]
+        old_spawn = metersphere_service._spawn_execution_worker
+        metersphere_service._spawn_execution_worker = lambda _execution_id: None
+        try:
+            execution = metersphere_service.start_metersphere_case_debug(
+                self.plan["plan_id"], "API-001"
+            )
+        finally:
+            metersphere_service._spawn_execution_worker = old_spawn
+
+        metersphere_service._run_metersphere_execution(execution["execution_id"])
+
+        record = metersphere_service._load_execution(execution["execution_id"])
+        self.assertEqual("running", record["status"])
+        self.assertEqual("debug_case", record["run_mode"])
+        self.assertTrue(record["run_id"])
+        self.assertTrue(record["plan_id"].startswith("api_debug_"))
+        self.assertEqual(record["plan_id"], record["execution_plan_snapshot"]["plan_id"])
+        self.assertEqual(self.plan["plan_id"], record["source_plan_id"])
+        self.assertEqual(1, self.remote.scenario_add_calls)
+        self.assertEqual(1, len(self.remote.last_trigger_payload.get("steps") or []))
 
     def _run_worker_during_connection_change(self, **changes):
         execution, _binding = self._start_source_execution()

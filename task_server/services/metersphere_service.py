@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import hashlib
 import inspect
@@ -1708,6 +1709,71 @@ def _execution_plan(plan_id: str) -> Dict[str, Any]:
     return plan
 
 
+def _api_case_id(case: Dict[str, Any]) -> str:
+    return str(case.get("case_id") or case.get("id") or "").strip()
+
+
+def _debug_plan_id(plan_id: str, case_id: str) -> str:
+    digest = hashlib.sha256(f"{plan_id}:{case_id}".encode("utf-8")).hexdigest()[:18]
+    return clean_id(f"api_debug_{digest}", "api_debug")
+
+
+def _debug_case_execution_plan(plan_id: str, case_id: str) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    selected_plan_id = str(plan_id or "").strip()
+    selected_case_id = str(case_id or "").strip()
+    if not selected_plan_id:
+        raise MeterSphereExecutionValidationError("plan_id 不能为空")
+    if not selected_case_id:
+        raise MeterSphereExecutionValidationError("case_id 不能为空")
+    plan = api_test_plan_service.get_api_test_plan(selected_plan_id)
+    if not plan:
+        raise MeterSphereExecutionValidationError("API 测试计划不存在")
+    if (plan.get("revision_state") or {}).get("state") == "stale":
+        raise MeterSphereExecutionValidationError("API 测试计划已过期，请按当前接口版本重新生成")
+    binding_drift = plan.get("binding_drift") or []
+    if "auth_binding_drift" in binding_drift:
+        raise MeterSphereExecutionValidationError("API 测试计划认证绑定已变更，请重新生成")
+    if "workspace_binding_drift" in binding_drift:
+        raise MeterSphereExecutionValidationError("API 测试计划 MeterSphere 绑定已变更，请重新生成")
+    executable_cases = api_test_plan_service.executable_api_cases(plan)
+    selected_case = next(
+        (case for case in executable_cases if _api_case_id(case) == selected_case_id),
+        {},
+    )
+    if not selected_case:
+        raise MeterSphereExecutionValidationError("所选 API 用例不可执行，请先补齐待补数据")
+    endpoint_id = str(selected_case.get("endpoint_id") or "").strip()
+    endpoints = [
+        copy.deepcopy(endpoint)
+        for endpoint in (plan.get("endpoints") or [])
+        if str(endpoint.get("endpoint_id") or "").strip() == endpoint_id
+    ]
+    if not endpoints:
+        raise MeterSphereExecutionValidationError("所选 API 用例缺少接口合同，不能调试")
+    debug_plan = copy.deepcopy(plan)
+    debug_plan_id = _debug_plan_id(selected_plan_id, selected_case_id)
+    debug_plan.update({
+        "plan_id": debug_plan_id,
+        "source_plan_id": selected_plan_id,
+        "source_plan_name": str(plan.get("name") or selected_plan_id),
+        "name": f"{plan.get('name') or selected_plan_id} / 单条调试 / {selected_case.get('name') or selected_case_id}",
+        "status": "debug",
+        "endpoints": endpoints,
+        "cases": [copy.deepcopy(selected_case)],
+        "case_count": 1,
+        "endpoint_count": 1,
+        "executable_case_count": 1,
+        "needs_review_case_count": 0,
+        "execution_readiness": {"state": "ready", "can_execute": True, "executable_case_count": 1, "missing": []},
+        "debug": {
+            "run_mode": "debug_case",
+            "source_plan_id": selected_plan_id,
+            "case_id": selected_case_id,
+        },
+    })
+    return plan, debug_plan, copy.deepcopy(selected_case)
+
+
 def _plan_binding_context(plan: Dict[str, Any]) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
     source_id = _plan_source_id(plan)
     if not source_id:
@@ -1829,6 +1895,60 @@ def start_metersphere_execution(plan_id: str, test_plan_id: str = "") -> Dict[st
     return _public_execution(record)
 
 
+def start_metersphere_case_debug(plan_id: str, case_id: str) -> Dict[str, Any]:
+    source_plan, debug_plan, selected_case = _debug_case_execution_plan(plan_id, case_id)
+    source_id, _cfg, binding = _plan_binding_context(source_plan)
+    debug_plan_id = str(debug_plan.get("plan_id") or "")
+    with _EXECUTION_LOCK:
+        active = _active_execution_for_plan(debug_plan_id)
+        if active:
+            raise MeterSphereExecutionConflict(
+                f"调试用例已有未结束运行：{active.get('execution_id')}"
+            )
+        execution_id = unique_millis_id("ms_execution")
+        record = {
+            "execution_id": execution_id,
+            "plan_id": debug_plan_id,
+            "source_plan_id": str(source_plan.get("plan_id") or plan_id or ""),
+            "debug_case_id": str(case_id or ""),
+            "run_mode": "debug_case",
+            "source_id": source_id,
+            "binding_id": str(binding.get("binding_id") or ""),
+            "project_id": str(binding.get("project_id") or _cfg.get("project_id") or ""),
+            "environment_id": str(binding.get("environment_id") or _cfg.get("environment_id") or ""),
+            "binding_fingerprint": str(binding.get("config_fingerprint") or ""),
+            "connection_fingerprint": _connection_fingerprint(_cfg) if source_id else "",
+            "plan_name": f"单条调试：{selected_case.get('name') or case_id}",
+            "test_plan_id": "",
+            "status": "queued",
+            "current_phase": "push_cases",
+            "created_at": _now(),
+            "started_at": "",
+            "updated_at": _now(),
+            "finished_at": "",
+            "push_id": "",
+            "run_id": "",
+            "report_id": "",
+            "remote_status": "waiting",
+            "report_status": "waiting",
+            "stats": {"total": 1, "passed": 0, "failed": 0},
+            "phases": _new_execution_phases(),
+            "events": [],
+            "unchanged_polls": 0,
+            "status_poll_failures": 0,
+            "error": "",
+            "execution_plan_snapshot": sanitize_metersphere_data(debug_plan),
+        }
+        _append_execution_event(record, "push_cases", "waiting", "单条调试已排队", {
+            "source_plan_id": record["source_plan_id"],
+            "debug_case_id": record["debug_case_id"],
+            "debug_plan_id": debug_plan_id,
+        })
+        _save_execution(record)
+        _spawn_execution_worker(execution_id)
+    return _public_execution(record)
+
+
 def _spawn_execution_worker(execution_id: str) -> None:
     selected_execution_id = str(execution_id or "").strip()
     with _EXECUTION_LOCK:
@@ -1920,6 +2040,17 @@ def _run_metersphere_execution(execution_id: str) -> None:
                 "can_execute": False,
                 "missing": ["MeterSphere source 绑定已变更，请重新发起执行"],
             }
+        if (
+            record.get("run_mode") == "debug_case"
+            and set(readiness.get("missing") or []) <= {"已确认 API 用例计划"}
+        ):
+            readiness = {
+                **readiness,
+                "state": "ready",
+                "can_execute": True,
+                "missing": [],
+                "primary_action": "调试单条",
+            }
     except Exception as exc:
         context = {}
         readiness = {
@@ -1941,21 +2072,36 @@ def _run_metersphere_execution(execution_id: str) -> None:
         _append_execution_event(record, "push_cases", "running", "实时执行条件校验通过，开始推送确认用例")
         _save_execution(record)
 
+    plan_snapshot = (
+        record.get("execution_plan_snapshot")
+        if isinstance(record.get("execution_plan_snapshot"), dict)
+        else {}
+    )
+    snapshot_cfg = _execution_config(record) if plan_snapshot else {}
     push_result = (
-        push_plan_to_metersphere(
+        _push_plan_with_config(
             str(record.get("plan_id") or ""),
-            config={
-                "project_id": str(record.get("project_id") or ""),
-                "environment_id": str(record.get("environment_id") or ""),
-            },
-            expected_source_id=source_id,
-            expected_binding_fingerprint=str(record.get("binding_fingerprint") or ""),
-            expected_connection_fingerprint=str(
-                record.get("connection_fingerprint") or ""
-            ),
+            plan_snapshot,
+            snapshot_cfg,
+            request_config=snapshot_cfg,
         )
-        if source_id
-        else push_plan_to_metersphere(str(record.get("plan_id") or ""))
+        if plan_snapshot
+        else (
+            push_plan_to_metersphere(
+                str(record.get("plan_id") or ""),
+                config={
+                    "project_id": str(record.get("project_id") or ""),
+                    "environment_id": str(record.get("environment_id") or ""),
+                },
+                expected_source_id=source_id,
+                expected_binding_fingerprint=str(record.get("binding_fingerprint") or ""),
+                expected_connection_fingerprint=str(
+                    record.get("connection_fingerprint") or ""
+                ),
+            )
+            if source_id
+            else push_plan_to_metersphere(str(record.get("plan_id") or ""))
+        )
     )
     with _EXECUTION_LOCK:
         record = _load_execution(execution_id)
@@ -1975,23 +2121,33 @@ def _run_metersphere_execution(execution_id: str) -> None:
         _save_execution(record)
 
     run_result = (
-        create_metersphere_run(
+        _create_run_with_config(
             str(record.get("plan_id") or ""),
             str(record.get("test_plan_id") or ""),
-            config={
-                "project_id": str(record.get("project_id") or ""),
-                "environment_id": str(record.get("environment_id") or ""),
-            },
-            expected_source_id=source_id,
-            expected_binding_fingerprint=str(record.get("binding_fingerprint") or ""),
-            expected_connection_fingerprint=str(
-                record.get("connection_fingerprint") or ""
-            ),
+            plan_snapshot,
+            snapshot_cfg,
+            request_config=snapshot_cfg,
         )
-        if source_id
-        else create_metersphere_run(
-            str(record.get("plan_id") or ""),
-            str(record.get("test_plan_id") or ""),
+        if plan_snapshot
+        else (
+            create_metersphere_run(
+                str(record.get("plan_id") or ""),
+                str(record.get("test_plan_id") or ""),
+                config={
+                    "project_id": str(record.get("project_id") or ""),
+                    "environment_id": str(record.get("environment_id") or ""),
+                },
+                expected_source_id=source_id,
+                expected_binding_fingerprint=str(record.get("binding_fingerprint") or ""),
+                expected_connection_fingerprint=str(
+                    record.get("connection_fingerprint") or ""
+                ),
+            )
+            if source_id
+            else create_metersphere_run(
+                str(record.get("plan_id") or ""),
+                str(record.get("test_plan_id") or ""),
+            )
         )
     )
     with _EXECUTION_LOCK:
@@ -2734,6 +2890,7 @@ __all__ = [
     "metersphere_execution_context",
     "recover_metersphere_executions",
     "start_metersphere_execution",
+    "start_metersphere_case_debug",
     "get_metersphere_execution",
     "list_metersphere_executions",
     "push_plan_to_metersphere",

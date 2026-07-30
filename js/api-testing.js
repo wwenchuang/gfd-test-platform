@@ -20,6 +20,7 @@ let apiExecutionBindingSaveRequestId = 0;
 let apiExecutionBindingSaveController = null;
 let apiExecutionBindingIntentId = 0;
 let apiExecutionBindingIntent = null;
+let apiCaseDebugStartingKey = '';
 let apiReportRequestId = 0;
 let apiReportRequestController = null;
 let apiReportPollTimer = null;
@@ -2278,8 +2279,8 @@ function renderApiPlanReviewGuide(plan = {}) {
       </div>
       <ul>
         <li>确认请求方法、路径、入参、鉴权变量和响应断言是否符合业务接口合同。</li>
-        <li>待补数据不是失败；可以编辑 draft 用例补齐参数、Body 或断言。</li>
-        <li>可执行项满足本次范围后再采纳为基线，采纳后才能进入 MeterSphere 执行。</li>
+        <li>待补数据不是失败；可以编辑 draft 用例补齐参数、Body 或断言，也可以先调试单条可执行用例。</li>
+        <li>可执行项满足本次范围后再采纳为基线，采纳后才能进入 MeterSphere 正式回归执行。</li>
       </ul>
     </section>
   `;
@@ -2715,6 +2716,12 @@ function renderApiPlanCaseRow(item, plan = {}) {
   const missing = (item.readiness || {}).missing || [];
   const caseId = apiPlanCaseKey(item);
   const canEdit = plan.status === 'draft';
+  const debugKey = `${plan.plan_id || ''}::${caseId}`;
+  const debugStarting = apiCaseDebugStartingKey === debugKey;
+  const canDebug = executable
+    && plan.status === 'draft'
+    && (plan.revision_state || {}).state !== 'stale'
+    && !(plan.binding_drift || []).length;
   return `
     <article class="api-case-row">
       <div class="api-case-row-name">
@@ -2726,11 +2733,37 @@ function renderApiPlanCaseRow(item, plan = {}) {
       <div class="api-case-row-state">
         ${apiStatusPill(executable ? '可执行' : '待补数据', executable ? 'success' : 'warn')}
         ${missing.length ? `<small>${escapeHtml(missing.join('；'))}</small>` : ''}
+        ${canDebug ? `<button type="button" class="btn-sm primary api-case-debug-action" onclick="debugApiPlanCase(${jsArg(plan.plan_id)}, ${jsArg(caseId)})" ${debugStarting ? 'disabled' : ''}>${debugStarting ? '调试提交中' : '调试单条'}</button>` : ''}
         ${canEdit ? `<button type="button" class="btn-sm ghost" onclick="editApiPlanCase(${jsArg(plan.plan_id)}, ${jsArg(caseId)})">编辑</button>` : ''}
       </div>
       ${renderApiPlanCaseEditor(plan, item)}
     </article>
   `;
+}
+
+async function debugApiPlanCase(planId, caseId) {
+  const debugKey = `${planId || ''}::${caseId || ''}`;
+  if (apiCaseDebugStartingKey) {
+    showToast('正在创建单条调试，请勿重复提交', 'warn');
+    return;
+  }
+  apiCaseDebugStartingKey = debugKey;
+  rerenderApiPlanReview();
+  try {
+    const data = await apiRequest('/api-testing/metersphere/executions/debug-case', {
+      method: 'POST',
+      body: {plan_id: planId, case_id: caseId}
+    });
+    const execution = data.execution || {};
+    showToast('✓ 单条调试已排队', 'success');
+    apiExecutionActiveId = execution.execution_id || '';
+    await showApiExecutionPage();
+  } catch (e) {
+    showToast(e.message || '单条调试启动失败', 'error');
+    if (activeWorkflow === 'api_plan') rerenderApiPlanReview();
+  } finally {
+    apiCaseDebugStartingKey = '';
+  }
 }
 
 function renderApiPlanEndpointGroups(plan) {
@@ -3493,9 +3526,10 @@ function apiExecutionTerminal(execution) {
 
 function renderApiActiveRun(execution) {
   const phases = execution.phases || [];
+  const runMode = execution.run_mode === 'debug_case' ? '单条调试' : '基线回归';
   return `
     <div class="api-active-run-head">
-      <div><span>当前运行</span><h2>${escapeHtml(execution.plan_name || execution.plan_id || 'MeterSphere 执行')}</h2></div>
+      <div><span>${escapeHtml(runMode)}</span><h2>${escapeHtml(execution.plan_name || execution.plan_id || 'MeterSphere 执行')}</h2></div>
       ${apiStatusPill(apiExecutionStateText(execution.status), execution.status === 'failed' ? 'danger' : (execution.status === 'succeeded' ? 'success' : 'warn'))}
     </div>
     <div class="api-run-meta"><span>execution_id <code>${escapeHtml(execution.execution_id || '-')}</code></span><span>run_id <code>${escapeHtml(execution.run_id || '等待触发')}</code></span><span>已运行 ${escapeHtml(apiDurationText(execution.duration_seconds))}</span><span>最后更新 ${escapeHtml(execution.updated_at || '-')}</span></div>

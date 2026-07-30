@@ -28,6 +28,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 API draft 单条调试，不必先采纳为基线
+
+用户反馈：
+
+- 在 AI 生成的 draft 候选详情里，想先单个调试可执行用例，不希望必须先“采纳为基线”才能运行。
+
+设计边界：
+
+- 正式 MeterSphere 回归执行仍必须基于 `confirmed` API 基线，原有整计划执行门禁不放松。
+- draft 中已被平台校验为 `executable` 的单条 API 用例，可以走“单条调试”。
+- 单条调试不会把 draft 采纳为基线，也不会覆盖正式基线场景；它创建隔离的临时 debug plan id 和 MeterSphere 场景 binding。
+- 待补数据、接口版本过期、业务/环境/token 绑定漂移的 draft 用例仍不能调试。
+
+修复：
+
+- 后端新增 `metersphere_service.start_metersphere_case_debug(plan_id, case_id)`：
+  - 校验原始 plan 存在、未过期、无 binding drift。
+  - 只允许 `readiness.state=executable` 的 case。
+  - 生成 `api_debug_*` 临时 plan snapshot，仅包含所选 case 和对应 endpoint。
+  - 执行记录标记 `run_mode=debug_case`、`source_plan_id`、`debug_case_id`。
+- 执行 worker 支持 `execution_plan_snapshot`：
+  - 有 snapshot 时直接推送/运行临时计划，不要求该 plan 写入 API plan 索引。
+  - 仅精确绕开“已确认 API 用例计划”这个回归门槛；MeterSphere 连接、业务、环境、source binding 仍实时校验。
+- 新增路由 `POST /api/api-testing/metersphere/executions/debug-case`。
+- 前端 draft 用例明细中，`executable` 用例显示 `调试单条` 按钮；点击后创建调试执行并跳到 MeterSphere 实时执行页。
+- 实时执行卡新增 `run_mode === 'debug_case'` 显示为 `单条调试`，正式执行仍显示为 `基线回归`。
+- 前端缓存版本更新为 `20260730-api-draft-case-debug`。
+
+验证：
+
+```bash
+python3 tests/metersphere_v365_adapter_checks.py
+python3 tests/api_project_workspace_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 -m py_compile task_server/services/metersphere_service.py task_server/router.py tests/metersphere_v365_adapter_checks.py
+git diff --check -- task_server/services/metersphere_service.py task_server/router.py js/api-testing.js task-manager.html tests/frontend_static_checks.py tests/metersphere_v365_adapter_checks.py CODEX_STATE.md
+```
+
 ### 2026-07-30 API AI 用例生成入口、审阅目标与绑定漂移下一步说明
 
 用户反馈：

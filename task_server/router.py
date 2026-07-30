@@ -3361,6 +3361,22 @@ def _post_api_testing_metersphere_executions(handler, qs):
         handler._json({"ok": False, "error": str(exc)}, 400)
 
 
+@route_post("/api/api-testing/metersphere/executions/debug-case")
+def _post_api_testing_metersphere_case_debug(handler, qs):
+    from task_server.services import metersphere_service
+    d = handler._body()
+    try:
+        execution = metersphere_service.start_metersphere_case_debug(
+            str(d.get("plan_id") or d.get("planId") or "").strip(),
+            str(d.get("case_id") or d.get("caseId") or "").strip(),
+        )
+        handler._json({"ok": True, "execution": execution}, 202)
+    except metersphere_service.MeterSphereExecutionConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+    except metersphere_service.MeterSphereExecutionValidationError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 @route_post("/api/api-testing/reports/pull")
 def _post_api_testing_reports_pull(handler, qs):
     from task_server.services import metersphere_service
