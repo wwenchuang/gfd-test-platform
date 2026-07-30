@@ -5660,6 +5660,31 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-07-30 Agent 报告结论策略：冒烟非全失败不再折成整单失败
+
+用户确认：冒烟不一定全部通过，后续测试用例本来就可能暴露失败；除非冒烟全失败，最终结论不要做成失败。
+
+本轮修复：
+
+- Runner 汇总在 job 明细不完整时，会使用 `jobProgressByPhase` 阶段聚合补齐缺失状态。例如阶段聚合显示首批冒烟 `completed=1 / failed=1`，但 Bridge/报告只回传失败 job 明细时，平台会把缺失的成功计入结果，并替换正式 job 台账里的 `unknown` 占位，避免重复计数。
+- 新增冒烟阶段结论规则：只有当存在冒烟尝试、冒烟成功数为 0、冒烟无运行中任务且冒烟失败/超时/取消数大于 0 时，最终 Runner 结果才允许是 `failed / 未通过`。
+- 如果冒烟不是全失败，即使扩展用例、修复用例或后续可执行用例仍有失败，最终结论为 `partial / 部分通过`；失败用例、失败类型、未恢复 job 和后续修复建议仍继续展示，不会被吞掉。
+- 汇总结果新增 `smokeAttemptCount`、`smokePassedCount`、`smokeFailedCount`、`smokeTimeoutCount`、`smokeAllFailed`，便于前端和排障直接说明为什么最终结论是部分通过还是未通过。
+
+已验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_summary_separates_runner_outcomes_from_orchestration()
+print('summary check ok')
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+
 补充线上验证：
 
 - 用户部署 `418b56d` 后按同一参数发起 5 次稳定性回归；前 2 次均在首批冒烟阶段失败，随后停止剩余批次并取消第 3 次，避免继续占用设备。

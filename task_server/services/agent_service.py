@@ -16578,6 +16578,7 @@ def _agent_runner_execution_summary(run):
     )
     records = {}
     phase_fallback = []
+    phase_aggregates = {}
 
     def unique_job_ids(values):
         result = []
@@ -16694,20 +16695,25 @@ def _agent_runner_execution_summary(run):
         phase_text = str(progress.get("phase") or phase_name or "runner").strip()
         if "dry-run" in phase_text.lower() or "dry run" in phase_text.lower():
             continue
-        jobs = [item for item in (progress.get("jobs") or []) if isinstance(item, dict)]
-        if jobs:
-            add_items(jobs, "", "phase_progress", 10, phase_text)
-            continue
         timeout_count = _safe_int_local(progress.get("timeoutCount"), 0)
         if not timeout_count and progress.get("agentWaitTimeout"):
             timeout_count = _safe_int_local(progress.get("timeout"), 0)
-        phase_fallback.append({
+        aggregate_row = {
             "phase": phase_text,
             "passed": _safe_int_local(progress.get("completed"), 0),
             "failed": _safe_int_local(progress.get("failed"), 0),
             "timeout": timeout_count,
             "running": _safe_int_local(progress.get("running"), 0),
-        })
+            "cancelled": _safe_int_local(progress.get("cancelled") or progress.get("canceled"), 0),
+            "unknown": _safe_int_local(progress.get("unknown"), 0),
+        }
+        if any(aggregate_row.get(status, 0) for status in ("passed", "failed", "timeout", "running", "cancelled", "unknown")):
+            phase_aggregates[phase_text] = aggregate_row
+        jobs = [item for item in (progress.get("jobs") or []) if isinstance(item, dict)]
+        if jobs:
+            add_items(jobs, "", "phase_progress", 10, phase_text)
+            continue
+        phase_fallback.append(dict(aggregate_row))
 
     add_items(job_result.get("completed"), "success", "job_result", 20)
     add_items(job_result.get("failed"), "failed", "job_result", 20)
@@ -16782,6 +16788,47 @@ def _agent_runner_execution_summary(run):
             "unknown": 0,
         }
 
+    if records:
+        for phase, aggregate in phase_aggregates.items():
+            phase_row = phase_counts.setdefault(
+                phase,
+                {"phase": phase, "passed": 0, "failed": 0, "timeout": 0, "running": 0, "cancelled": 0, "unknown": 0},
+            )
+            for status in ("passed", "failed", "timeout", "running", "cancelled", "unknown"):
+                shortfall = max(0, _safe_int_local(aggregate.get(status), 0) - _safe_int_local(phase_row.get(status), 0))
+                if not shortfall:
+                    continue
+                counts[status] = counts.get(status, 0) + shortfall
+                phase_row[status] = phase_row.get(status, 0) + shortfall
+                if status in ("passed", "failed", "timeout", "cancelled") and counts.get("unknown", 0):
+                    unknown_replacement = min(counts.get("unknown", 0), shortfall)
+                    counts["unknown"] -= unknown_replacement
+                    runner_row = phase_counts.get("Runner") if isinstance(phase_counts.get("Runner"), dict) else {}
+                    if runner_row:
+                        runner_row["unknown"] = max(0, _safe_int_local(runner_row.get("unknown"), 0) - unknown_replacement)
+                if status == "failed":
+                    failure_counts["unknown"] += shortfall
+
+    def is_smoke_phase(phase):
+        phase_text = str(phase or "").strip()
+        phase_lower = phase_text.lower()
+        return "smoke" in phase_lower or "冒烟" in phase_text or "首批" in phase_text
+
+    smoke_counts = {key: 0 for key in ("passed", "failed", "timeout", "running", "cancelled", "unknown")}
+    for row in phase_counts.values():
+        if not is_smoke_phase(row.get("phase")):
+            continue
+        for status in smoke_counts:
+            smoke_counts[status] += _safe_int_local(row.get(status), 0)
+    smoke_attempted_count = sum(smoke_counts.values())
+    smoke_failed_like_count = smoke_counts["failed"] + smoke_counts["timeout"] + smoke_counts["cancelled"]
+    smoke_all_failed = bool(
+        smoke_attempted_count
+        and smoke_counts["passed"] == 0
+        and smoke_counts["running"] == 0
+        and smoke_failed_like_count > 0
+    )
+
     # Older runs may only have smoke/expanded gate totals. They are still real
     # Runner outcomes and must remain visible in the final report.
     if not records and not phase_fallback:
@@ -16844,6 +16891,11 @@ def _agent_runner_execution_summary(run):
             logical_counts[status if status in logical_counts else "unknown"] += 1
             if status in ("failed", "timeout", "cancelled"):
                 unresolved_failed_job_ids.append(job_id)
+        if smoke_counts["passed"] > logical_counts["passed"]:
+            aggregate_passed_delta = smoke_counts["passed"] - logical_counts["passed"]
+            logical_counts["passed"] += aggregate_passed_delta
+            unknown_replacement = min(logical_counts["unknown"], aggregate_passed_delta)
+            logical_counts["unknown"] -= unknown_replacement
     else:
         logical_counts = dict(counts)
         unresolved_failed_job_ids = [
@@ -16873,7 +16925,10 @@ def _agent_runner_execution_summary(run):
     elif logical_counts["passed"] and (logical_adverse_count or remaining_deferred_count):
         outcome, label = "partial", "部分通过"
     elif logical_adverse_count:
-        outcome, label = "failed", "未通过"
+        if smoke_attempted_count and not smoke_all_failed:
+            outcome, label = "partial", "部分通过"
+        else:
+            outcome, label = "failed", "未通过"
     elif logical_counts["passed"]:
         outcome, label = "passed", "修复后通过" if recovered_job_ids else "通过"
     else:
@@ -16895,6 +16950,11 @@ def _agent_runner_execution_summary(run):
         "logicalFailedCount": logical_counts["failed"],
         "logicalTimeoutCount": logical_counts["timeout"],
         "logicalRunningCount": logical_counts["running"],
+        "smokeAttemptCount": smoke_attempted_count,
+        "smokePassedCount": smoke_counts["passed"],
+        "smokeFailedCount": smoke_counts["failed"],
+        "smokeTimeoutCount": smoke_counts["timeout"],
+        "smokeAllFailed": smoke_all_failed,
         "originalPassedCount": original_raw_counts["passed"],
         "originalFailedCount": original_raw_counts["failed"],
         "originalTimeoutCount": original_raw_counts["timeout"],

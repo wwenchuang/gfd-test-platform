@@ -14815,6 +14815,103 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
     require(summary.get("conclusion") == "部分通过", "Final summary must expose partial Runner success")
     require((summary.get("orchestration") or {}).get("label") == "编排阻断", "Final summary must separately expose Agent orchestration blocking")
 
+    smoke_not_all_failed_run = {
+        "runId": "agent-static-smoke-partial-expanded-failed",
+        "status": "FAILED",
+        "target": "基础打印新增百度网盘入口",
+        "steps": [
+            {"step": "RUN_TASK", "status": "PARTIAL_FAILED", "summary": "扩展任务失败"},
+            {"step": "GENERATE_SUMMARY", "status": "RUNNING"},
+        ],
+        "artifacts": {
+            "jobIds": ["smoke-pass", "smoke-fail", "expanded-fail"],
+            "jobProgressByPhase": {
+                "首批冒烟": {
+                    "phase": "首批冒烟",
+                    "completed": 1,
+                    "failed": 1,
+                    "jobs": [
+                        {"job_id": "smoke-fail", "status": "failed", "failureType": "SCRIPT_ISSUE"},
+                    ],
+                },
+                "扩展执行": {
+                    "phase": "扩展执行",
+                    "completed": 0,
+                    "failed": 1,
+                    "jobs": [
+                        {"job_id": "expanded-fail", "status": "failed", "failureType": "ENV_ISSUE"},
+                    ],
+                },
+            },
+            "report": {
+                "status": "failed",
+                "failedJobs": [
+                    {"jobId": "smoke-fail", "status": "failed", "failureType": "SCRIPT_ISSUE"},
+                    {"jobId": "expanded-fail", "status": "failed", "failureType": "ENV_ISSUE"},
+                ],
+            },
+        },
+    }
+    smoke_partial_execution = agent_service._agent_runner_execution_summary(smoke_not_all_failed_run)
+    require(
+        smoke_partial_execution.get("outcome") == "partial"
+        and smoke_partial_execution.get("label") == "部分通过"
+        and smoke_partial_execution.get("logicalPassedCount") == 1
+        and smoke_partial_execution.get("logicalFailedCount") == 2,
+        "Final Runner outcome must stay partial when smoke is not all failed, even if later executable cases fail",
+    )
+    require(
+        smoke_partial_execution.get("attemptedCount") == 3
+        and smoke_partial_execution.get("unknownCount") == 0,
+        "Phase aggregate success must replace the missing formal job status instead of creating an extra attempt",
+    )
+    try:
+        agent_service._ai_gateway_available = lambda: False
+        agent_service._log_tool_call = lambda *_args, **_kwargs: None
+        agent_service._tool_generate_summary(smoke_not_all_failed_run)
+    finally:
+        agent_service._ai_gateway_available = old_health
+        agent_service._log_tool_call = old_log
+    smoke_partial_summary = (smoke_not_all_failed_run.get("artifacts") or {}).get("summary") or {}
+    require(
+        smoke_partial_summary.get("conclusion") == "部分通过"
+        and (smoke_partial_summary.get("execution") or {}).get("outcome") == "partial",
+        "Summary conclusion must not be failed unless every smoke case failed",
+    )
+
+    smoke_all_failed_run = {
+        "runId": "agent-static-smoke-all-failed",
+        "status": "FAILED",
+        "target": "基础打印新增百度网盘入口",
+        "steps": [
+            {"step": "RUN_TASK", "status": "FAILED", "summary": "冒烟全失败"},
+            {"step": "GENERATE_SUMMARY", "status": "RUNNING"},
+        ],
+        "artifacts": {
+            "jobIds": ["smoke-fail-1", "smoke-timeout-1"],
+            "jobProgressByPhase": {
+                "首批冒烟": {
+                    "phase": "首批冒烟",
+                    "jobs": [
+                        {"job_id": "smoke-fail-1", "status": "failed", "failureType": "SCRIPT_ISSUE"},
+                        {"job_id": "smoke-timeout-1", "status": "timeout"},
+                    ],
+                },
+            },
+            "report": {
+                "status": "failed",
+                "failedJobs": [{"jobId": "smoke-fail-1", "status": "failed", "failureType": "SCRIPT_ISSUE"}],
+                "timeoutJobs": [{"jobId": "smoke-timeout-1", "status": "timeout"}],
+            },
+        },
+    }
+    smoke_failed_execution = agent_service._agent_runner_execution_summary(smoke_all_failed_run)
+    require(
+        smoke_failed_execution.get("outcome") == "failed"
+        and smoke_failed_execution.get("label") == "未通过",
+        "Final Runner outcome may be failed only when all smoke attempts failed or timed out",
+    )
+
     from task_server.services import job_service
     old_load_jobs = job_service.load_jobs
     try:
