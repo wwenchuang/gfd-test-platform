@@ -7317,6 +7317,59 @@ def _agent_run_with_input_summary(run, detailed=False):
     return enriched
 
 
+def _agent_run_report_summary(run):
+    if not isinstance(run, dict):
+        return {}
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    summary = artifacts.get("summary") if isinstance(artifacts.get("summary"), dict) else {}
+    execution = summary.get("execution") if isinstance(summary.get("execution"), dict) else {}
+    orchestration = summary.get("orchestration") if isinstance(summary.get("orchestration"), dict) else {}
+    report = artifacts.get("report") if isinstance(artifacts.get("report"), dict) else {}
+    if not summary and not execution and not report:
+        return {}
+
+    attempted = _safe_int_local(
+        execution.get("logicalAttemptCount"),
+        _safe_int_local(execution.get("attemptedCount"), 0),
+    )
+    passed = _safe_int_local(
+        execution.get("logicalPassedCount"),
+        _safe_int_local(execution.get("passedCount"), 0),
+    )
+    failed = _safe_int_local(
+        execution.get("logicalFailedCount"),
+        _safe_int_local(execution.get("failedCount"), 0),
+    )
+    timeout = _safe_int_local(
+        execution.get("logicalTimeoutCount"),
+        _safe_int_local(execution.get("timeoutCount"), 0),
+    )
+    running = _safe_int_local(
+        execution.get("logicalRunningCount"),
+        _safe_int_local(execution.get("runningCount"), 0),
+    )
+    return {
+        "conclusion": summary.get("conclusion") or execution.get("label") or "",
+        "outcome": execution.get("outcome") or "",
+        "label": execution.get("label") or summary.get("conclusion") or "",
+        "hasExecution": bool(execution.get("hasExecution") or attempted or passed or failed or timeout or running),
+        "attempted": attempted,
+        "passed": passed,
+        "failed": failed,
+        "timeout": timeout,
+        "running": running,
+        "smokeAttempted": _safe_int_local(execution.get("smokeAttemptCount"), 0),
+        "smokePassed": _safe_int_local(execution.get("smokePassedCount"), 0),
+        "smokeFailed": _safe_int_local(execution.get("smokeFailedCount"), 0),
+        "smokeTimeout": _safe_int_local(execution.get("smokeTimeoutCount"), 0),
+        "smokeAllFailed": bool(execution.get("smokeAllFailed")),
+        "reportStatus": report.get("status") or "",
+        "orchestrationState": orchestration.get("state") or "",
+        "orchestrationLabel": orchestration.get("label") or "",
+        "runStatus": orchestration.get("runStatus") or run.get("status") or "",
+    }
+
+
 def _agent_source_material_context(run):
     normalized = _agent_normalized_input(run)
     source_inputs = _agent_source_inputs(run)
@@ -17825,6 +17878,7 @@ def list_agent_runs(limit: int = 20) -> List[Dict[str, Any]]:
             "updatedAt": run.get("updatedAt", ""),
             "error": run.get("error"),
             "summary": run.get("summary") or last_step.get("summary") or last_step.get("error"),
+            "reportSummary": _agent_run_report_summary(run),
             "inputSummary": _agent_input_summary(run, detailed=False),
             "pendingConfirmations": run.get("pendingConfirmations") or [],
         })

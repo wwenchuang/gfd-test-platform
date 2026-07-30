@@ -15066,6 +15066,47 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
     require((no_runner_summary.get("execution") or {}).get("attemptedCount") == 0, "A pre-dispatch failure must not invent Runner attempts")
 
 
+def check_agent_history_list_exposes_report_summary():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-history-partial",
+        "status": "FAILED",
+        "currentStep": "COLLECT_REPORT",
+        "target": "基础打印新增百度网盘入口",
+        "createdAt": "2026-07-30T09:03:19",
+        "updatedAt": "2026-07-30T09:27:00",
+        "artifacts": {
+            "summary": {
+                "conclusion": "部分通过",
+                "execution": {
+                    "outcome": "partial",
+                    "label": "部分通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 6,
+                    "logicalPassedCount": 5,
+                    "logicalFailedCount": 1,
+                    "logicalTimeoutCount": 0,
+                    "smokePassedCount": 2,
+                    "smokeAllFailed": False,
+                },
+                "orchestration": {"state": "blocked", "label": "编排阻断", "runStatus": "FAILED"},
+            },
+            "report": {"status": "failed"},
+        },
+    }
+    summary = agent_service._agent_run_report_summary(run)
+    require(
+        summary.get("conclusion") == "部分通过"
+        and summary.get("outcome") == "partial"
+        and summary.get("passed") == 5
+        and summary.get("failed") == 1
+        and summary.get("attempted") == 6
+        and summary.get("smokeAllFailed") is False,
+        "Agent history cards must receive compact final report results instead of only top-level FAILED",
+    )
+
+
 def check_api_asset_service_openapi_import():
     from task_server.services import api_asset_service
 
@@ -15807,6 +15848,7 @@ def main():
     check_midscene_model_family_protocol()
     check_sonic_3d_baseline_regression_guards()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
+    check_agent_history_list_exposes_report_summary()
     check_api_asset_service_openapi_import()
     check_api_test_plan_generation_is_confirmable()
     check_metersphere_config_masks_secrets()

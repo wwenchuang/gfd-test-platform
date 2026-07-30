@@ -5687,6 +5687,45 @@ git diff --check -- task_server/services/agent_service.py tests/backend_static_c
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-07-30 Agent 历史卡片改为展示最终报告结果
+
+用户部署 `4d2bd17` 后要求先跑 2 次百度网盘回归，并指出历史记录卡片不能因为顶层 Agent 状态是 `FAILED` 就显示整单“失败”：如果 6 条用例通过 5 条，这应该是一目了然的“部分通过”。
+
+线上两次同参回归：
+
+- `agent-1785373399306-03d0dbb8`：`6 case / 6 YAML`，固定 `win-runner-01 / ecbfd645`；终态仍为 `FAILED / COLLECT_REPORT`，原因是收集到 6 个报告中 1 个失败；但最终报告 `conclusion=部分通过`，`outcome=partial`，逻辑结果 `5 passed / 1 failed`，冒烟非全失败。
+- `agent-1785374850885-2b33c869`：`6 case / 6 YAML`，固定 `win-runner-01 / ecbfd645`；终态同样为 `FAILED / COLLECT_REPORT`，最终报告 `conclusion=部分通过`，逻辑结果 `5 passed / 1 failed`；首批冒烟 `2/2` 通过，扩展第 1 批 `3 passed / 1 failed`。
+
+根因：
+
+- `/api/agent-runs` 历史列表为轻量摘要，只返回顶层 `status/currentStep/error/summary/inputSummary`，不返回 `artifacts.summary.execution`。
+- 前端历史卡片只能看到 `status=FAILED`，因此卡片顶部和标题颜色都按失败渲染，用户看不到真实执行报告已经是 `部分通过 5/6`。
+
+本轮修复：
+
+- 后端 `list_agent_runs()` 新增 `reportSummary` 轻量字段，从 `artifacts.summary.execution` 提取最终报告结果：`conclusion/outcome/attempted/passed/failed/timeout/running/smokeAllFailed/orchestrationLabel` 等。
+- 前端历史卡片新增 `agentRunResultMeta()`：如果存在 `reportSummary`，卡片主状态优先显示最终报告结论；只有没有报告结果时才回退显示顶层 Agent 编排状态。
+- 历史卡片新增结果条：例如 `5/6 通过 · 1 失败`，辅助行显示 `编排：编排阻断 · Agent：失败`，避免把编排失败和测试结果混成一个红色“失败”。
+- 新增 `查看报告` 按钮，点击后直接打开该 Agent 并切到 `报告` 产物页签；原 `查看轨迹` 保留。
+- 新增 `.agent-run-history-card.partial` 与 `.status-pill.partial` 样式，部分通过用琥珀色，不再使用失败红色。
+- 更新 `task-manager.html` 静态资源版本为 `20260730-agent-history-report-card`。
+
+已验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_history_list_exposes_report_summary()
+checks.check_agent_summary_separates_runner_outcomes_from_orchestration()
+print('backend agent checks ok')
+PY
+node --check js/agent-status.js
+python3 tests/frontend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py tests/frontend_static_checks.py
+```
+
+全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+
 补充线上验证：
 
 - 用户部署 `418b56d` 后按同一参数发起 5 次稳定性回归；前 2 次均在首批冒烟阶段失败，随后停止剩余批次并取消第 3 次，避免继续占用设备。

@@ -66,6 +66,12 @@ function agentRunElapsedText(run) {
 }
 
 function agentRunProgressColor(run) {
+  const result = agentRunResultMeta(run);
+  if (result.hasReportResult) {
+    if (result.outcome === 'passed') return 'var(--success)';
+    if (result.outcome === 'partial') return 'var(--warn)';
+    if (result.outcome === 'failed') return 'var(--danger)';
+  }
   const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return 'var(--success)';
   if (status === 'FAILED' || status === 'CANCELLED') return 'var(--danger)';
@@ -74,6 +80,12 @@ function agentRunProgressColor(run) {
 }
 
 function agentRunPillClass(run) {
+  const result = agentRunResultMeta(run);
+  if (result.hasReportResult) {
+    if (result.outcome === 'passed') return 'success';
+    if (result.outcome === 'partial') return 'partial';
+    if (result.outcome === 'failed') return 'failed';
+  }
   const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return 'success';
   if (status === 'FAILED' || status === 'CANCELLED') return 'warn';
@@ -82,6 +94,12 @@ function agentRunPillClass(run) {
 }
 
 function agentRunCardStatusClass(run) {
+  const result = agentRunResultMeta(run);
+  if (result.hasReportResult) {
+    if (result.outcome === 'passed') return 'success';
+    if (result.outcome === 'partial') return 'partial';
+    if (result.outcome === 'failed') return 'failed';
+  }
   const status = agentRunStatus(run);
   if (status === 'DONE' || status === 'FINISH') return 'success';
   if (status === 'FAILED') return 'failed';
@@ -89,6 +107,84 @@ function agentRunCardStatusClass(run) {
   if (/WAIT_CONFIRM/.test(status)) return 'waiting';
   if (status === 'RUNNING') return 'running';
   return 'pending';
+}
+
+function agentRunResultSource(run) {
+  const artifacts = (run && run.artifacts) || {};
+  const summary = artifacts.summary || {};
+  const execution = summary.execution || {};
+  if (run?.reportSummary && Object.keys(run.reportSummary).length) return run.reportSummary;
+  if (summary && Object.keys(summary).length) {
+    return {
+      conclusion: summary.conclusion || execution.label || '',
+      outcome: execution.outcome || '',
+      label: execution.label || summary.conclusion || '',
+      hasExecution: execution.hasExecution,
+      attempted: execution.logicalAttemptCount || execution.attemptedCount || 0,
+      passed: execution.logicalPassedCount || execution.passedCount || 0,
+      failed: execution.logicalFailedCount || execution.failedCount || 0,
+      timeout: execution.logicalTimeoutCount || execution.timeoutCount || 0,
+      running: execution.logicalRunningCount || execution.runningCount || 0,
+      smokeAllFailed: execution.smokeAllFailed,
+      smokePassed: execution.smokePassedCount || 0,
+      reportStatus: (artifacts.report || {}).status || '',
+      orchestrationLabel: (summary.orchestration || {}).label || '',
+      runStatus: (summary.orchestration || {}).runStatus || run?.status || ''
+    };
+  }
+  return {};
+}
+
+function agentRunResultMeta(run) {
+  const result = agentRunResultSource(run);
+  const attempted = Number(result.attempted || 0);
+  const passed = Number(result.passed || 0);
+  const failed = Number(result.failed || 0);
+  const timeout = Number(result.timeout || 0);
+  const running = Number(result.running || 0);
+  const rawOutcome = String(result.outcome || '').toLowerCase();
+  const label = result.conclusion || result.label || '';
+  const hasReportResult = Boolean(result.hasExecution || attempted || passed || failed || timeout || running || label || rawOutcome);
+  const total = attempted || (passed + failed + timeout + running);
+  const score = total ? `${passed}/${total} 通过` : '';
+  const details = [
+    score,
+    failed ? `${failed} 失败` : '',
+    timeout ? `${timeout} 超时` : '',
+    running ? `${running} 执行中` : ''
+  ].filter(Boolean).join(' · ');
+  const outcome = rawOutcome || (failed || timeout ? (passed ? 'partial' : 'failed') : (passed ? 'passed' : ''));
+  return {
+    hasReportResult,
+    outcome,
+    label: label || (hasReportResult ? '执行结果' : agentStatusText(run?.status)),
+    total,
+    passed,
+    failed,
+    timeout,
+    running,
+    score,
+    details,
+    smokeAllFailed: Boolean(result.smokeAllFailed),
+    orchestrationLabel: result.orchestrationLabel || '',
+    runStatus: result.runStatus || run?.status || ''
+  };
+}
+
+function agentRunResultSummaryHtml(run) {
+  const result = agentRunResultMeta(run);
+  if (!result.hasReportResult) return '';
+  const orchestration = [
+    result.orchestrationLabel ? `编排：${result.orchestrationLabel}` : '',
+    result.runStatus ? `Agent：${agentStatusText(result.runStatus)}` : '',
+    result.smokeAllFailed ? '冒烟全失败' : ''
+  ].filter(Boolean).join(' · ');
+  return `
+    <div class="agent-run-result">
+      <strong>${escapeHtml(result.details || result.label)}</strong>
+      ${orchestration ? `<span>${escapeHtml(orchestration)}</span>` : ''}
+    </div>
+  `;
 }
 
 function normalizeAgentRun(run) {
@@ -705,7 +801,8 @@ function agentRunCardHtml(run, options = {}) {
   const riskDetail = agentRiskDetailFrom(run, riskConfirmation);
   const mode = agentModeText(run.mode || run.options?.mode || '-');
   const target = run.target || run.options?.goal || run.goal || '未命名任务';
-  const status = agentStatusText(run.status);
+  const resultMeta = agentRunResultMeta(run);
+  const status = resultMeta.hasReportResult ? resultMeta.label : agentStatusText(run.status);
   const canCancel = !agentRunIsTerminal(run);
   const canDelete = agentRunIsTerminal(run);
   const pill = agentRunPillClass(run);
@@ -725,11 +822,13 @@ function agentRunCardHtml(run, options = {}) {
       </div>
       ${agentInputSummaryHtml(run, { compact: true })}
       <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
+      ${agentRunResultSummaryHtml(run)}
       <div class="agent-run-summary">${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</div>
       ${agentRiskDetailHtml(riskDetail, { compact: true })}
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
       <div class="workflow-card-actions">
         <button class="btn-sm" onclick="openAgentRunTrace(${jsArg(run.runId || '')})">查看轨迹</button>
+        ${resultMeta.hasReportResult ? `<button class="btn-sm primary" onclick="openAgentRunReport(${jsArg(run.runId || '')})">查看报告</button>` : ''}
         ${options.confirm ? `<button class="btn-sm success" onclick="openAgentRunTrace(${jsArg(run.runId || '')}, 'dashboard')">处理确认</button>` : ''}
         ${canCancel ? `<button class="btn-sm danger" onclick="cancelAgentRunById(${jsArg(run.runId || '')})">取消运行</button>` : ''}
         ${canDelete ? `<button class="btn-sm danger" onclick="deleteAgentRunById(${jsArg(run.runId || '')})">删除记录</button>` : ''}
@@ -866,6 +965,11 @@ async function selectAgentRun(runId) {
 async function openAgentRunTrace(runId, workflow = 'agent') {
   await selectAgentRun(runId);
   activateWorkflow(workflow);
+}
+
+async function openAgentRunReport(runId) {
+  agentActiveTab = 'report';
+  await openAgentRunTrace(runId, 'agent');
 }
 
 function renderAgentPageAfterRunUpdate() {

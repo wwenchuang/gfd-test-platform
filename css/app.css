@@ -1870,6 +1870,16 @@
     gap: 8px;
     grid-row: 2;
   }
+  .status-pill.partial {
+    border-color: rgba(251, 191, 36, .75);
+    color: var(--warn);
+    background: rgba(251, 191, 36, .1);
+  }
+  .status-pill.failed {
+    border-color: rgba(251, 113, 133, .75);
+    color: var(--danger);
+    background: rgba(251, 113, 133, .1);
+  }
   .agent-run-history-card {
     position: relative;
     gap: 12px;
@@ -1887,6 +1897,7 @@
     background: rgba(34, 211, 238, .72);
   }
   .agent-run-history-card.success::before { background: rgba(52, 211, 153, .78); }
+  .agent-run-history-card.partial::before { background: rgba(251, 191, 36, .86); }
   .agent-run-history-card.failed::before,
   .agent-run-history-card.cancelled::before { background: rgba(251, 113, 133, .86); }
   .agent-run-history-card.waiting::before { background: rgba(251, 191, 36, .86); }
@@ -1905,6 +1916,7 @@
     overflow-wrap: anywhere;
   }
   .agent-run-history-card.success .agent-run-title { color: #34d399; }
+  .agent-run-history-card.partial .agent-run-title { color: #fbbf24; }
   .agent-run-history-card.failed .agent-run-title,
   .agent-run-history-card.cancelled .agent-run-title { color: #fb7185; }
   .agent-run-history-card.waiting .agent-run-title { color: #fbbf24; }
@@ -1947,6 +1959,32 @@
     background: rgba(2, 6, 23, .36);
     font-size: 12px;
     line-height: 1.45;
+  }
+  .agent-run-result {
+    display: grid;
+    gap: 3px;
+    border: 1px solid rgba(251, 191, 36, .28);
+    border-radius: 8px;
+    padding: 8px 9px;
+    background: rgba(251, 191, 36, .08);
+  }
+  .agent-run-result strong {
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.25;
+  }
+  .agent-run-result span {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .agent-run-history-card.success .agent-run-result {
+    border-color: rgba(52, 211, 153, .28);
+    background: rgba(52, 211, 153, .08);
+  }
+  .agent-run-history-card.failed .agent-run-result {
+    border-color: rgba(251, 113, 133, .32);
+    background: rgba(251, 113, 133, .08);
   }
   .agent-input-summary {
     display: grid;
