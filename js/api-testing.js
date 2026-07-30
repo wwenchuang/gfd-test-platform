@@ -104,7 +104,7 @@ function setApiTestingPage(workflow, title, help) {
     abortApiExecutionBindingRequests();
   }
   if (workflow !== 'api_assets') stopApiAssetSyncPolling();
-  if (workflow !== 'api_plan') stopApiPlanGenerationPolling(true);
+  if (!['api_plan', 'api_dashboard'].includes(workflow)) stopApiPlanGenerationPolling(true);
   if (workflow !== 'api_reports') abortApiReportRequests();
   activeWorkflow = workflow;
   renderWorkflowNav();
@@ -311,53 +311,297 @@ async function loadApiTestingOverview() {
   return data;
 }
 
+async function loadApiTestingWorkbench(sourceId = currentApiExecutionSourceId()) {
+  const query = new URLSearchParams();
+  if (sourceId) query.set('source_id', sourceId);
+  const data = await apiRequest(`/api-testing/workbench${query.toString() ? `?${query}` : ''}`);
+  const source = data.source || {};
+  const snapshot = data.snapshot || {};
+  const scope = data.scope || {};
+  const cases = data.cases || {};
+  apiTestingOverview = data;
+  apiTestingSources = data.sources || [];
+  apiTestingEndpoints = scope.endpoints || [];
+  apiAssetBusinessLines = scope.business_lines || [];
+  apiTestingPlans = [...(cases.drafts || []), ...(cases.baselines || [])];
+  apiTestingReports = data.reports || [];
+  apiTestingSyncs = data.syncs || [];
+  apiExecutionContext = {
+    ...(data.execution || {}),
+    source_id: source.source_id || '',
+    source,
+    plans: cases.baselines || [],
+  };
+  apiAssetSelectedSourceId = source.source_id || apiAssetSelectedSourceId || '';
+  apiTestingCurrentSnapshotId = snapshot.revision_id || snapshot.snapshot_id || '';
+  apiTestingProjectScope = {sourceId: apiAssetSelectedSourceId, revisionId: apiTestingCurrentSnapshotId};
+  return data;
+}
+
+function apiWorkbenchSourceOptions(sources = [], selectedId = '') {
+  if (!sources.length) return '<option value="">尚未连接 Apifox 项目</option>';
+  return sources.map(source => `
+    <option value="${escapeHtml(source.source_id || '')}" ${String(source.source_id || '') === String(selectedId || '') ? 'selected' : ''}>
+      ${escapeHtml(source.name || source.project_name || source.source_id || 'API 项目')}
+    </option>
+  `).join('');
+}
+
+function apiWorkbenchConnectionText(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const execution = workbench.execution || {};
+  const connection = execution.connection || {};
+  if (!source.source_id) return {label: '未连接', tone: 'warn', detail: '先连接 Apifox 项目并同步接口资产'};
+  if (snapshot.state !== 'ready') return {label: '待同步', tone: 'warn', detail: snapshot.message || '本地还没有接口快照'};
+  if (connection.state !== 'connected') return {label: '环境待配置', tone: 'warn', detail: 'Apifox 环境缺少可执行 base_url'};
+  return {label: '可执行', tone: 'success', detail: connection.base_url || '环境已就绪'};
+}
+
+function apiWorkbenchFlattenModules(nodes = [], result = []) {
+  (nodes || []).forEach(node => {
+    if (!node || typeof node !== 'object') return;
+    result.push(node);
+    apiWorkbenchFlattenModules(node.children || [], result);
+  });
+  return result;
+}
+
+function apiWorkbenchCandidateModules(workbench = {}) {
+  const roots = workbench.scope?.modules?.roots || [];
+  return apiWorkbenchFlattenModules(roots)
+    .filter(item => Number(item.endpoint_count || 0) > 0)
+    .sort((left, right) => {
+      const leftDepth = Number(left.depth || String(left.path || '').split('/').length);
+      const rightDepth = Number(right.depth || String(right.path || '').split('/').length);
+      return leftDepth - rightDepth
+        || Number(right.endpoint_count || 0) - Number(left.endpoint_count || 0)
+        || String(left.path || '').localeCompare(String(right.path || ''), 'zh-Hans-CN');
+    })
+    .slice(0, 12);
+}
+
+function apiWorkbenchEndpointCountForPath(path) {
+  const normalized = apiNormalizeModulePath(path);
+  return apiTestingEndpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), normalized)).length;
+}
+
+function renderApiWorkbenchModules(workbench = {}) {
+  const modules = apiWorkbenchCandidateModules(workbench);
+  if (!modules.length) return apiTestingEmpty('当前快照还没有可生成用例的模块。');
+  return `
+    <div class="api-workbench-module-grid">
+      ${modules.map(module => {
+        const count = apiWorkbenchEndpointCountForPath(module.path);
+        const disabled = count <= 0;
+        const capped = count > API_PLAN_MAX_ENDPOINTS;
+        return `
+          <article class="api-workbench-module-card">
+            <div><strong>${escapeHtml(module.name || module.path || '未分组')}</strong><span>${escapeHtml(module.path || '')}</span></div>
+            <small>${escapeHtml(count)} 个接口${capped ? `，单批最多 ${API_PLAN_MAX_ENDPOINTS}` : ''}</small>
+            <button class="btn-sm ai" ${disabled ? 'disabled' : ''} onclick="apiWorkbenchGenerateModule(${jsArg(module.path)})">${capped ? '选前 60 个生成' : '生成 AI 用例'}</button>
+          </article>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderApiWorkbenchSourceCard(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const status = apiWorkbenchConnectionText(workbench);
+  const sourceEnv = apiSourceEnvironmentSummary(source);
+  return `
+    <section class="api-workbench-hero">
+      <div class="api-workbench-title">
+        <span>API WORKBENCH</span>
+        <h2>API 测试工作台</h2>
+        <p>Apifox 只负责接口资产和环境来源；平台本地保存快照，AI 生成用例，原生执行器实时跑接口并产出报告。</p>
+      </div>
+      <div class="api-workbench-controls">
+        <label><span>当前项目</span><select onchange="apiWorkbenchSelectSource(this.value)">${apiWorkbenchSourceOptions(workbench.sources || [], source.source_id)}</select></label>
+        <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>同步 Apifox 快照</button>
+        <button class="btn-sm" onclick="showApiTestingDashboard()">刷新</button>
+      </div>
+      <div class="api-workbench-summary-strip">
+        <div>${apiStatusPill(status.label, status.tone)}<strong>${escapeHtml(status.detail)}</strong><span>当前状态</span></div>
+        <div><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong><span>接口快照 · ${escapeHtml(snapshot.created_at || source.last_success_at || '-')}</span></div>
+        <div><strong>${escapeHtml(source.environment_name || sourceEnv.environmentName || '未选择环境')}</strong><span>${escapeHtml(sourceEnv.baseUrl || 'base_url 待同步')}</span></div>
+        <div><strong>${escapeHtml(source.environment_snapshot?.variable_count || 0)}</strong><span>环境变量，敏感 ${escapeHtml(source.environment_snapshot?.sensitive_variable_count || 0)}</span></div>
+      </div>
+    </section>
+  `;
+}
+
+function renderApiWorkbenchCaseCard(workbench = {}) {
+  const cases = workbench.cases || {};
+  const draft = cases.latest_draft || {};
+  const baseline = cases.latest_baseline || {};
+  const activeRun = (workbench.execution?.active_runs || [])[0] || {};
+  const latestRun = activeRun.execution_id ? activeRun : ((workbench.execution?.recent_runs || [])[0] || {});
+  const latestReport = (workbench.reports || [])[0] || {};
+  return `
+    <section class="api-panel api-workbench-case-panel">
+      <div class="api-section-heading">
+        <div><span>用例与执行</span><h3>从 AI 候选到本地基线</h3></div>
+        <small>${escapeHtml(cases.draft_count || 0)} 个候选 · ${escapeHtml(cases.baseline_count || 0)} 个基线</small>
+      </div>
+      <div class="api-workbench-stage-grid">
+        ${renderApiWorkbenchPlanTile('AI 候选', draft, 'openApiWorkbenchPlan', '查看/编辑用例')}
+        ${renderApiWorkbenchPlanTile('API 基线', baseline, 'openApiWorkbenchPlan', baseline.plan_id ? '查看基线' : '暂无基线')}
+        ${renderApiWorkbenchRunTile(latestRun)}
+        ${renderApiWorkbenchReportTile(latestReport)}
+      </div>
+      <div id="api-plan-generation-region" class="api-workbench-generation">${renderApiPlanGeneration(apiPlanGenerationCurrent)}</div>
+      <section id="api-plan-result" class="api-workbench-plan-detail">${apiTestingEmpty(draft.plan_id ? '点击候选卡片查看 AI 生成的用例明细。' : '先从下方模块生成 AI 用例。')}</section>
+    </section>
+  `;
+}
+
+function renderApiWorkbenchPlanTile(title, plan = {}, handlerName, actionText) {
+  const hasPlan = !!plan.plan_id;
+  return `
+    <article class="api-workbench-stage-card">
+      <span>${escapeHtml(title)}</span>
+      <strong>${hasPlan ? escapeHtml(plan.name || plan.plan_id) : '未生成'}</strong>
+      <small>${hasPlan ? `${escapeHtml(plan.case_count || 0)} 条用例 · ${escapeHtml(plan.executable_case_count || 0)} 可执行` : '等待选择模块后生成'}</small>
+      <button class="btn-sm ${title === 'AI 候选' ? 'ai' : 'primary'}" ${hasPlan ? '' : 'disabled'} onclick="${handlerName}(${jsArg(plan.plan_id || '')})">${escapeHtml(actionText)}</button>
+    </article>
+  `;
+}
+
+function renderApiWorkbenchRunTile(run = {}) {
+  const stats = run.stats || {};
+  const running = run.execution_id && !apiExecutionTerminal(run);
+  return `
+    <article class="api-workbench-stage-card">
+      <span>执行</span>
+      <strong>${run.execution_id ? escapeHtml(apiExecutionStateText(run.status)) : '未执行'}</strong>
+      <small>${run.execution_id ? `${escapeHtml(stats.completed || 0)}/${escapeHtml(stats.total || 0)} 完成 · ${escapeHtml(stats.failed || 0)} 失败` : '采纳基线后可执行全量或单条调试'}</small>
+      <button class="btn-sm primary" ${run.execution_id ? '' : 'disabled'} onclick="showApiExecutionPage()">${running ? '看实时日志' : '看执行详情'}</button>
+    </article>
+  `;
+}
+
+function renderApiWorkbenchReportTile(report = {}) {
+  return `
+    <article class="api-workbench-stage-card">
+      <span>报告</span>
+      <strong>${report.report_id ? escapeHtml(apiExecutionStateText(report.status)) : '未生成'}</strong>
+      <small>${report.report_id ? `${escapeHtml(report.passed || 0)} 通过 · ${escapeHtml(report.failed || 0)} 失败` : '执行结束后自动生成失败分析'}</small>
+      <button class="btn-sm" ${report.report_id ? '' : 'disabled'} onclick="apiSelectedReportId=${jsArg(report.report_id || '')}; showApiReportsPage()">查看报告</button>
+    </article>
+  `;
+}
+
+function renderApiWorkbenchAssetCard(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const sync = (workbench.syncs || [])[0] || {};
+  return `
+    <section class="api-panel api-workbench-asset-panel">
+      <div class="api-section-heading">
+        <div><span>接口资产</span><h3>本地快照与生成范围</h3></div>
+        <small>${escapeHtml(snapshot.title || source.name || 'API 项目')}</small>
+      </div>
+      <div class="api-workbench-asset-facts">
+        <div><span>来源</span><strong>${escapeHtml(source.project_name || source.name || '-')}</strong></div>
+        <div><span>本地版本</span><strong>${escapeHtml(snapshot.created_at || '-')}</strong></div>
+        <div><span>同步状态</span><strong>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</strong></div>
+        <div><span>接口数</span><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong></div>
+      </div>
+      <div class="api-workbench-actions-row">
+        <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>更新本地快照</button>
+        <button class="btn-sm" onclick="showApiAssetsPage()">高级资产管理</button>
+      </div>
+      <div class="api-workbench-section-title"><span>选择一个模块生成 AI 用例</span><small>不必手填 ID，超过 ${API_PLAN_MAX_ENDPOINTS} 个接口会自动取当前模块前 ${API_PLAN_MAX_ENDPOINTS} 个</small></div>
+      ${renderApiWorkbenchModules(workbench)}
+      <details class="api-workbench-tech-detail">
+        <summary>高级信息</summary>
+        <div>Source ${escapeHtml(source.source_id || '-')} · Revision ${escapeHtml(snapshot.revision_id || snapshot.snapshot_id || '-')} · Project ${escapeHtml(source.project_id || '-')} · Environment ${escapeHtml(source.environment_id || '-')}</div>
+      </details>
+    </section>
+  `;
+}
+
 async function showApiTestingDashboard() {
   const area = setApiTestingPage('api_dashboard', 'API 工作台', 'Apifox 接口资产、AI 用例计划、平台原生执行和 API 报告闭环。');
   if (!area) return;
-  area.innerHTML = `<div class="generation-records">${apiTestingEmpty('正在读取 API 测试状态...')}</div>`;
+  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 工作台...')}</div>`;
   try {
-    const data = await loadApiTestingOverview();
-    const summary = data.summary || {};
+    const data = await loadApiTestingWorkbench();
     area.innerHTML = `
-      <div class="api-testing-page">
-        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_dashboard', reports: apiTestingReports})}</div>
-        <div class="generation-record-head">
-          <div class="workflow-kicker">API TESTING · Apifox / Native Runner</div>
-          <h2>API 工作台</h2>
-          <p>从 Apifox 只读同步接口版本和环境，AI 生成用例后由平台直接执行并生成报告。</p>
-          <div class="generation-record-actions">
-            <button class="btn-sm primary" onclick="showApiAssetsPage()">接口资产</button>
-            <button class="btn-sm ai" onclick="showApiPlanPage()">AI 用例计划</button>
-            <button class="btn-sm" onclick="showApiBaselinesPage()">API 基线</button>
-            <button class="btn-sm" onclick="showApiExecutionPage()">API 执行</button>
-            <button class="btn-sm" onclick="showApiReportsPage()">API 报告</button>
-          </div>
-        </div>
-        <div class="review-stats compact api-stat-grid">
-          <div class="review-stat"><strong>${summary.snapshot_count || 0}</strong><span>接口快照</span></div>
-          <div class="review-stat"><strong>${summary.endpoint_count || 0}</strong><span>接口数</span></div>
-          <div class="review-stat"><strong>${summary.plan_count || 0}</strong><span>用例计划</span></div>
-          <div class="review-stat"><strong>原生</strong><span>执行器</span></div>
-        </div>
-        <div class="api-two-column">
-          <section class="api-panel">
-            <h3>最近接口资产</h3>
-            ${apiTestingSnapshots.length ? `<table class="assets-table"><thead><tr><th>快照</th><th>接口</th><th>时间</th></tr></thead><tbody>${apiTestingSnapshots.map(row => `
-              <tr><td>${escapeHtml(row.title || row.name || '-')}</td><td>${escapeHtml(row.endpoint_count || 0)}</td><td>${escapeHtml(row.created_at || '-')}</td></tr>
-            `).join('')}</tbody></table>` : apiTestingEmpty('暂无 OpenAPI 快照。')}
-          </section>
-          <section class="api-panel">
-            <h3>最近计划 / 报告</h3>
-            ${apiTestingPlans.length ? `<div class="api-list">${apiTestingPlans.map(plan => `
-              <div class="api-list-row"><strong>${escapeHtml(plan.name || plan.plan_id)}</strong><span>${apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')} ${escapeHtml(plan.case_count || 0)} 条</span></div>
-            `).join('')}</div>` : apiTestingEmpty('暂无 API 用例计划。')}
-          </section>
-        </div>
+      <div class="api-testing-page api-workbench-page">
+        ${renderApiWorkbenchSourceCard(data)}
+        ${renderApiWorkbenchCaseCard(data)}
+        ${renderApiWorkbenchAssetCard(data)}
       </div>
     `;
   } catch(e) {
-    area.innerHTML = `<div class="generation-records">${apiTestingEmpty(e.message || 'API 工作台读取失败')}</div>`;
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 工作台读取失败')}</div>`;
   }
+}
+
+async function apiWorkbenchSelectSource(sourceId) {
+  apiAssetSelectedSourceId = String(sourceId || '');
+  apiTestingProjectScope = {sourceId: apiAssetSelectedSourceId, revisionId: ''};
+  await showApiTestingDashboard();
+}
+
+async function apiWorkbenchUpdateSnapshot() {
+  const sourceId = apiTestingProjectScope.sourceId || apiAssetSelectedSourceId;
+  if (!sourceId) {
+    showToast('请先连接 Apifox 项目', 'error');
+    return;
+  }
+  try {
+    const data = await apiRequest('/api-testing/snapshots/update', {
+      method: 'POST',
+      body: {source_id: sourceId}
+    });
+    const sync = data.sync || {};
+    showToast(sync.created ? '✓ Apifox 快照同步已排队' : '✓ Apifox 快照同步已存在', 'success');
+    await showApiTestingDashboard();
+    if (sync.sync_id && !apiAssetSyncTerminal(sync)) {
+      setTimeout(() => {
+        if (activeWorkflow === 'api_dashboard') showApiTestingDashboard();
+      }, Math.max(1500, Number(sync.poll_after_ms || 2000)));
+    }
+  } catch (error) {
+    showToast(error.message || 'Apifox 快照同步失败', 'error');
+  }
+}
+
+async function apiWorkbenchGenerateModule(modulePath) {
+  const normalized = apiNormalizeModulePath(modulePath);
+  const endpoints = apiTestingEndpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), normalized));
+  if (!endpoints.length) {
+    showToast('该模块没有可生成的接口', 'error');
+    return;
+  }
+  const state = apiModuleSelectionState();
+  state.endpointIds.clear();
+  endpoints.slice(0, API_PLAN_MAX_ENDPOINTS).forEach(endpoint => {
+    if (endpoint.endpoint_id) state.endpointIds.add(String(endpoint.endpoint_id));
+  });
+  state.selectedModules.clear();
+  state.selectedModules.add(normalized);
+  state.activeModulePath = normalized;
+  if (endpoints.length > API_PLAN_MAX_ENDPOINTS) {
+    showToast(`模块接口较多，本次先选前 ${API_PLAN_MAX_ENDPOINTS} 个生成`, 'warn');
+  }
+  await startApiPlanGeneration();
+}
+
+async function openApiWorkbenchPlan(planId) {
+  const target = document.getElementById('api-plan-result');
+  if (!target) {
+    await showApiPlanPage();
+    if (activeWorkflow === 'api_plan') await openApiTestPlan(planId);
+    return;
+  }
+  await openApiTestPlan(planId);
 }
 
 function apiProjectScopeKey(sourceId = apiTestingProjectScope.sourceId, revisionId = apiTestingProjectScope.revisionId) {
@@ -1991,12 +2235,12 @@ function apiPlanResponseIsCurrent(controller, requestId, capturedScopeKey) {
   return controller === apiPlanGenerationController
     && requestId === apiPlanGenerationRequestId
     && capturedScopeKey === apiPlanGenerationScopeKey()
-    && activeWorkflow === 'api_plan';
+    && ['api_plan', 'api_dashboard'].includes(activeWorkflow);
 }
 
 function scheduleApiPlanGenerationPoll(generation, requestId = apiPlanGenerationRequestId, capturedScopeKey = apiPlanGenerationScopeKey()) {
   stopApiPlanGenerationPolling();
-  if (!generation?.generation_id || apiPlanGenerationTerminal(generation) || activeWorkflow !== 'api_plan') return;
+  if (!generation?.generation_id || apiPlanGenerationTerminal(generation) || !['api_plan', 'api_dashboard'].includes(activeWorkflow)) return;
   const delay = Math.max(50, Number(generation.poll_after_ms || 1000));
   apiPlanGenerationPollTimer = setTimeout(
     () => pollApiPlanGeneration(generation.generation_id, requestId, capturedScopeKey),
@@ -2005,7 +2249,7 @@ function scheduleApiPlanGenerationPoll(generation, requestId = apiPlanGeneration
 }
 
 async function pollApiPlanGeneration(generationId, requestId = apiPlanGenerationRequestId, capturedScopeKey = apiPlanGenerationScopeKey()) {
-  if (activeWorkflow !== 'api_plan' || requestId !== apiPlanGenerationRequestId || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
+  if (!['api_plan', 'api_dashboard'].includes(activeWorkflow) || requestId !== apiPlanGenerationRequestId || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
   if (apiPlanGenerationController) apiPlanGenerationController.abort();
   const controller = new AbortController();
   apiPlanGenerationController = controller;
@@ -2383,14 +2627,14 @@ function renderApiPlanList(plans) {
 }
 
 async function refreshApiPlanCards(capturedScopeKey = apiPlanGenerationScopeKey()) {
-  if (activeWorkflow !== 'api_plan' || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
+  if (!['api_plan', 'api_dashboard'].includes(activeWorkflow) || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
   const sourceId = apiTestingProjectScope.sourceId;
   const controller = new AbortController();
   try {
     const response = await apiRequest(`/api-testing/plans${sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''}`, { signal: controller.signal });
-    if (activeWorkflow !== 'api_plan' || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
+    if (!['api_plan', 'api_dashboard'].includes(activeWorkflow) || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
     apiTestingPlans = await loadApiPlanDetails(response.plans || [], sourceId, controller);
-    if (activeWorkflow !== 'api_plan' || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
+    if (!['api_plan', 'api_dashboard'].includes(activeWorkflow) || capturedScopeKey !== apiPlanGenerationScopeKey()) return;
     const target = document.getElementById('api-plan-list-region');
     const candidatePlans = apiCandidatePlans();
     if (target) target.innerHTML = `<div class="api-section-heading"><div><span>待处理</span><h3>候选计划</h3></div><small>${candidatePlans.length} 个计划</small></div>${renderApiPlanList(candidatePlans)}`;
@@ -2408,11 +2652,11 @@ async function openApiTestPlan(planId) {
   try {
     const query = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : '';
     const data = await apiRequest(`/api-testing/plans/${encodeURIComponent(planId)}${query}`);
-    if (requestId !== apiPlanPageRequestId || capturedScopeKey !== apiPlanGenerationScopeKey() || activeWorkflow !== 'api_plan') return;
+    if (requestId !== apiPlanPageRequestId || capturedScopeKey !== apiPlanGenerationScopeKey() || !['api_plan', 'api_dashboard'].includes(activeWorkflow)) return;
     apiTestingCurrentPlan = data.plan || null;
     if (target) target.innerHTML = renderApiPlanDetail(apiTestingCurrentPlan || {});
   } catch (error) {
-    if (requestId !== apiPlanPageRequestId || capturedScopeKey !== apiPlanGenerationScopeKey() || activeWorkflow !== 'api_plan') return;
+    if (requestId !== apiPlanPageRequestId || capturedScopeKey !== apiPlanGenerationScopeKey() || !['api_plan', 'api_dashboard'].includes(activeWorkflow)) return;
     if (target) target.innerHTML = `<h3>读取失败</h3>${apiTestingEmpty(error.message || '计划详情读取失败')}`;
     showToast(error.message || '计划详情读取失败', 'error');
   }
@@ -2804,9 +3048,9 @@ async function debugApiPlanCase(planId, caseId) {
   apiCaseDebugStartingKey = debugKey;
   rerenderApiPlanReview();
   try {
-    const data = await apiRequest('/api-testing/executions/debug-case', {
+    const data = await apiRequest('/api-testing/cases/debug', {
       method: 'POST',
-      body: {plan_id: planId, case_id: caseId}
+      body: {source_id: apiTestingProjectScope.sourceId || apiAssetSelectedSourceId, plan_id: planId, case_id: caseId}
     });
     const execution = data.execution || {};
     showToast('✓ 单条调试已排队', 'success');
@@ -2814,7 +3058,7 @@ async function debugApiPlanCase(planId, caseId) {
     await showApiExecutionPage();
   } catch (e) {
     showToast(e.message || '单条调试启动失败', 'error');
-    if (activeWorkflow === 'api_plan') rerenderApiPlanReview();
+    if (['api_plan', 'api_dashboard'].includes(activeWorkflow)) rerenderApiPlanReview();
   } finally {
     apiCaseDebugStartingKey = '';
   }
@@ -2956,7 +3200,8 @@ async function confirmApiTestPlan(planId) {
     const data = await apiRequest('/api-testing/plans/confirm', { method: 'POST', body: { plan_id: planId } });
     apiTestingCurrentPlan = data.plan || null;
     showToast('✓ 已采纳为 API 基线', 'success');
-    await showApiBaselinesPage();
+    if (activeWorkflow === 'api_dashboard') await showApiTestingDashboard();
+    else await showApiBaselinesPage();
   } catch(e) {
     showToast(e.message || '采纳基线失败', 'error');
   }

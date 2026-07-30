@@ -6084,6 +6084,47 @@ python3 -m py_compile task_server/services/agent_service.py tests/backend_static
 - 将 launcher 兜底改为静默命令：`monkey -p <package> -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true`。它只辅助把 App 拉前台，不允许 monkey stderr 使 YAML 失败；后续仍保留 Midscene 官方 `launch`。
 - 后端检查同步要求 silent launcher fallback，避免再次生成会被 Midscene 因 stderr 硬失败的启动守卫。
 
+### 2026-07-30 API 测试工作台：Apifox 资产快照 + 平台原生执行的一页流
+
+用户确认按“方案 B”收敛 API 测试流程：Apifox 只负责接口资产和环境来源，平台本地保存快照，后续 AI 用例生成、编辑/单条调试、采纳基线、执行和报告都由平台原生链路完成，页面要更简洁，不再让用户按 MeterSphere 式流程一步步跳。
+
+本轮参考的成熟做法：
+
+- Postman Collection Runner：围绕请求集合、环境和运行报告组织工作流，单次执行记录请求结果和断言明细。
+- Apifox 环境变量：环境变量作为可复用占位符，base_url、Header、Token 等由环境注入，不应让用户反复手填 ID。
+- Playwright Trace/Report 思路：失败时保留可回放证据和逐步报告，执行状态与失败分析分开展示。
+
+本轮实现：
+
+- 新增 `task_server/services/api_workbench_service.py`：统一聚合 source、活动 Apifox/OpenAPI 快照、模块/接口、AI draft、已采纳基线、原生执行上下文、运行报告和同步记录；返回给前端前统一脱敏，不暴露 Apifox token 或业务 token。
+- 新增 `GET /api/api-testing/workbench`：前端 API 工作台只读取这一份状态，不再到处拼 assets/plans/reports/context。
+- 新增 `POST /api/api-testing/snapshots/update`：工作台直接触发 Apifox 快照更新。
+- 新增 `POST /api/api-testing/cases/debug`：语义化单条调试入口，仍复用原生 API runner，draft 可执行用例不需要先采纳为基线即可调试。
+- 左侧接口测试导航收敛为 `API 工作台` 和 `报告历史`；旧资产/计划/基线/执行页面函数保留为高级入口和兼容入口，不再作为主流程导航。
+- `showApiTestingDashboard()` 改为单页工作台：顶部项目/环境/快照状态，四个阶段卡片（AI 候选、API 基线、执行、报告），模块卡片一键生成 AI 用例，生成批次和计划详情直接在工作台内展示。
+- AI 生成轮询、生成结果打开、计划详情渲染支持在 `api_dashboard` 内运行；用户点击“生成 AI 用例”后能看到排队、批次、日志和生成结果。
+- CSS 增加工作台状态条、阶段卡片、模块卡片、快照事实区和高级信息折叠样式。
+- `tests/frontend_static_checks.py` 的 API 导航契约改为“单页工作台 + 报告历史”，并继续检查旧功能通过工作台入口可达。
+- 修正 `tests/backend_static_checks.py` 里过期的 Agent 报告检查：当前双状态策略允许非全失败 Runner 结果不阻断 Agent 编排，但必须保留 success/failed 两类 HTML 报告证据并标记 `nonBlockingRunnerFailures=true`。
+- 新增 `tests/api_workbench_checks.py`，覆盖工作台 facade、鉴权、路由注册、敏感信息脱敏。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/api_workbench_service.py task_server/services/api_execution_service.py task_server/services/api_source_service.py task_server/services/api_asset_service.py task_server/services/api_test_plan_service.py task_server/router.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+python3 tests/api_workbench_checks.py
+python3 tests/api_native_execution_checks.py
+node --check js/api-testing.js
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/api_workbench_service.py task_server/router.py js/api-testing.js css/round5.css task-manager.html tests/api_workbench_checks.py tests/frontend_static_checks.py
+```
+
+注意：
+
+- 本轮没有暂存或回滚用户历史 dirty 文件，包括 prompt、Runner、scorer、部署文档和截图 artifacts。
+- 页面上仍保留“高级资产管理”等入口，目的是给异常同步/手动 OpenAPI 上传留后门；主路径已经是一页完成。
+
 ### 2026-07-29 百度网盘回归后：启动守卫与照片横滑稳定性修复
 
 用户部署后再次使用相同百度网盘需求、Figma、`qwen3.7-plus`、`RUNNER_JOB`、`win-runner-01`、固定 OPPO `ecbfd645` 发起回归：

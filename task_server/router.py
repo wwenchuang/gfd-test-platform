@@ -2469,6 +2469,15 @@ def _get_api_testing_overview(handler, qs):
     })
 
 
+@route_get("/api/api-testing/workbench")
+def _get_api_testing_workbench(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_workbench_service
+    source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
+    handler._json(api_workbench_service.api_testing_workbench(source_id))
+
+
 @route_get("/api/api-testing/assets")
 def _get_api_testing_assets(handler, qs):
     from task_server.services import api_asset_service, api_module_service
@@ -3041,6 +3050,22 @@ def _post_api_testing_source_sync(handler, qs, match):
         handler._json({"ok": False, "error": str(exc)}, 400)
 
 
+@route_post("/api/api-testing/snapshots/update")
+def _post_api_testing_snapshot_update(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_workbench_service
+    try:
+        data = handler._body()
+        result = api_workbench_service.update_apifox_snapshot(
+            str(data.get("source_id") or data.get("sourceId") or "").strip()
+        )
+        sync = result.get("sync") if isinstance(result.get("sync"), dict) else {}
+        handler._json(result, 202 if sync.get("created") else 200)
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 @route_post_regex(r"^/api/api-testing/sources/([^/]+)/environment-sync$")
 def _post_api_testing_source_environment_sync(handler, qs, match):
     if _require_user_auth(handler):
@@ -3278,6 +3303,25 @@ def _post_api_testing_plan_cases(handler, qs, match):
         handler._json({"ok": True, "plan": plan})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
+
+
+@route_post("/api/api-testing/cases/debug")
+def _post_api_testing_workbench_case_debug(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_execution_service, api_workbench_service
+    data = handler._body()
+    try:
+        result = api_workbench_service.debug_api_case(
+            str(data.get("source_id") or data.get("sourceId") or "").strip(),
+            str(data.get("plan_id") or data.get("planId") or "").strip(),
+            str(data.get("case_id") or data.get("caseId") or "").strip(),
+        )
+        handler._json(result, 202)
+    except api_execution_service.ApiExecutionConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+    except (api_execution_service.ApiExecutionValidationError, ValueError) as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
 
 
 @route_post("/api/api-testing/executions")

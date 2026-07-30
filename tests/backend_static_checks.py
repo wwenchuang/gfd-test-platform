@@ -9206,11 +9206,15 @@ def check_agent_failure_review_and_repair_guard():
         terminal_reports = report_run.get("artifacts", {}).get("report", {}).get("executionReports") or []
         terminal_refs = report_run.get("artifacts", {}).get("report", {}).get("yamlExecutionRefs") or []
         require(
-            report_call.get("status") == "PARTIAL_FAILED"
+            report_call.get("status") in ("SUCCESS", "PARTIAL_FAILED")
+            and (
+                report_call.get("status") == "PARTIAL_FAILED"
+                or report_call.get("nonBlockingRunnerFailures") is True
+            )
             and {item.get("status") for item in terminal_reports} == {"success", "failed"}
             and len(terminal_reports) == 2
             and len(terminal_refs) == 2,
-            "Report collection must retain both passed and failed terminal HTML reports instead of hiding failure evidence",
+            "Report collection must retain both passed and failed terminal HTML reports even when non-blocking runner failures no longer fail the orchestration",
         )
     finally:
         job_service.load_jobs = old_load_jobs
