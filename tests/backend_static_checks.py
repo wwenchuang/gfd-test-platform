@@ -14878,6 +14878,10 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
         and (smoke_partial_summary.get("execution") or {}).get("outcome") == "partial",
         "Summary conclusion must not be failed unless every smoke case failed",
     )
+    require(
+        agent_service._agent_runner_outcome_should_fail_run(smoke_not_all_failed_run) is False,
+        "A partial Runner result must not fail the Agent run when smoke did not all fail",
+    )
 
     smoke_all_failed_run = {
         "runId": "agent-static-smoke-all-failed",
@@ -14910,6 +14914,10 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
         smoke_failed_execution.get("outcome") == "failed"
         and smoke_failed_execution.get("label") == "未通过",
         "Final Runner outcome may be failed only when all smoke attempts failed or timed out",
+    )
+    require(
+        agent_service._agent_runner_outcome_should_fail_run(smoke_all_failed_run) is True,
+        "An Agent run may still fail when every smoke case failed or timed out",
     )
 
     from task_server.services import job_service
@@ -14976,10 +14984,10 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
             "Final report must expose both actual attempt count and preserved pass/broken counts",
         )
         require(
-            retry_orchestration.get("runStatus") == "FAILED"
+            retry_orchestration.get("runStatus") == "DONE"
             and retry_orchestration.get("observedRunStatus") == "RUNNING"
             and retry_orchestration.get("statusProjectedAtSummary") is True,
-            "Summary generation must project the deterministic final Agent state instead of persisting a stale RUNNING status",
+            "Summary generation must project non-smoke Runner failures as report-only partial results instead of failing the Agent run",
         )
 
         job_service.load_jobs = lambda: [
@@ -15077,6 +15085,11 @@ def check_agent_history_list_exposes_report_summary():
         "createdAt": "2026-07-30T09:03:19",
         "updatedAt": "2026-07-30T09:27:00",
         "artifacts": {
+            "generationPipeline": {
+                "caseCount": 20,
+                "automationCaseCount": 6,
+                "yamlFileCount": 6,
+            },
             "summary": {
                 "conclusion": "部分通过",
                 "execution": {
@@ -15089,6 +15102,10 @@ def check_agent_history_list_exposes_report_summary():
                     "logicalTimeoutCount": 0,
                     "smokePassedCount": 2,
                     "smokeAllFailed": False,
+                    "phases": [
+                        {"phase": "smoke", "passed": 2, "failed": 0},
+                        {"phase": "expanded-1", "passed": 3, "failed": 1},
+                    ],
                 },
                 "orchestration": {"state": "blocked", "label": "编排阻断", "runStatus": "FAILED"},
             },
@@ -15102,8 +15119,17 @@ def check_agent_history_list_exposes_report_summary():
         and summary.get("passed") == 5
         and summary.get("failed") == 1
         and summary.get("attempted") == 6
+        and summary.get("generatedCases") == 20
+        and summary.get("automationCases") == 6
+        and summary.get("generatedYaml") == 6
         and summary.get("smokeAllFailed") is False,
-        "Agent history cards must receive compact final report results instead of only top-level FAILED",
+        "Agent history cards must receive compact final report results, generation counts and phase summaries instead of only top-level FAILED",
+    )
+    require(summary.get("runStatus") == "DONE", "History cards must project partial Runner results as a completed Agent record")
+    require(
+        len(summary.get("phases") or []) == 2
+        and (summary.get("phases") or [])[1].get("passed") == 3,
+        "Agent history report summary must expose smoke and remaining phase counts for readable cards",
     )
 
 

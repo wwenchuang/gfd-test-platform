@@ -1962,11 +1962,17 @@
   }
   .agent-run-result {
     display: grid;
-    gap: 3px;
+    gap: 8px;
     border: 1px solid rgba(251, 191, 36, .28);
     border-radius: 8px;
     padding: 8px 9px;
     background: rgba(251, 191, 36, .08);
+  }
+  .agent-run-result-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
   }
   .agent-run-result strong {
     color: var(--text);
@@ -1978,9 +1984,47 @@
     font-size: 11px;
     line-height: 1.35;
   }
+  .agent-run-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .agent-run-metric {
+    min-width: 0;
+    border: 1px solid rgba(148, 163, 184, .14);
+    border-radius: 7px;
+    padding: 6px 7px;
+    background: rgba(2, 6, 23, .34);
+  }
+  .agent-run-metric span {
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.2;
+  }
+  .agent-run-metric strong {
+    display: block;
+    margin-top: 3px;
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.15;
+  }
+  .agent-run-metric em {
+    display: block;
+    margin-top: 3px;
+    color: var(--muted);
+    font-size: 10px;
+    font-style: normal;
+    line-height: 1.25;
+    min-height: 13px;
+  }
   .agent-run-history-card.success .agent-run-result {
     border-color: rgba(52, 211, 153, .28);
     background: rgba(52, 211, 153, .08);
+  }
+  .agent-run-history-card.partial .agent-run-result {
+    border-color: rgba(251, 191, 36, .36);
+    background: rgba(251, 191, 36, .08);
   }
   .agent-run-history-card.failed .agent-run-result {
     border-color: rgba(251, 113, 133, .32);
@@ -1995,6 +2039,51 @@
     border-radius: 8px;
     padding: 8px;
     background: rgba(2, 12, 27, .48);
+  }
+  details.agent-input-summary.compact {
+    display: block;
+  }
+  .agent-input-summary.compact.collapsed summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 900;
+  }
+  .agent-input-summary.compact.collapsed summary::-webkit-details-marker {
+    display: none;
+  }
+  .agent-input-summary.compact.collapsed summary::after {
+    content: "展开";
+    flex: 0 0 auto;
+    border: 1px solid rgba(34, 211, 238, .24);
+    border-radius: 999px;
+    padding: 2px 7px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+  }
+  .agent-input-summary.compact.collapsed[open] summary::after {
+    content: "收起";
+  }
+  .agent-input-summary.compact.collapsed summary em {
+    min-width: 0;
+    color: var(--muted);
+    font-size: 11px;
+    font-style: normal;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agent-input-summary.compact.collapsed .agent-input-chips,
+  .agent-input-summary.compact.collapsed .agent-input-line,
+  .agent-input-summary.compact.collapsed .agent-input-run-line {
+    margin-top: 8px;
   }
   .agent-input-summary-title {
     color: var(--text);
@@ -2019,6 +2108,14 @@
     color: var(--text2);
     font-size: 12px;
     line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+  .agent-input-run-line {
+    display: grid;
+    gap: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.35;
     overflow-wrap: anywhere;
   }
   .agent-run-history-card .workflow-card-actions {

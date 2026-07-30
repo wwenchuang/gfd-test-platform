@@ -7325,6 +7325,10 @@ def _agent_run_report_summary(run):
     execution = summary.get("execution") if isinstance(summary.get("execution"), dict) else {}
     orchestration = summary.get("orchestration") if isinstance(summary.get("orchestration"), dict) else {}
     report = artifacts.get("report") if isinstance(artifacts.get("report"), dict) else {}
+    generation_pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    generated_cases = artifacts.get("generatedCases") if isinstance(artifacts.get("generatedCases"), dict) else {}
+    generated_case_list = generated_cases.get("cases") if isinstance(generated_cases.get("cases"), list) else []
+    yaml_files = artifacts.get("yamlFiles") if isinstance(artifacts.get("yamlFiles"), list) else []
     if not summary and not execution and not report:
         return {}
 
@@ -7348,11 +7352,45 @@ def _agent_run_report_summary(run):
         execution.get("logicalRunningCount"),
         _safe_int_local(execution.get("runningCount"), 0),
     )
+    generated_case_count = _safe_int_local(
+        generation_pipeline.get("caseCount"),
+        len(generated_case_list),
+    )
+    generated_yaml_count = _safe_int_local(
+        generation_pipeline.get("yamlFileCount"),
+        len(yaml_files),
+    )
+    automation_case_count = _safe_int_local(
+        generation_pipeline.get("automationCaseCount"),
+        generated_case_count,
+    )
+    phase_rows = []
+    for phase in execution.get("phases") or []:
+        if not isinstance(phase, dict):
+            continue
+        phase_rows.append({
+            "phase": str(phase.get("phase") or "").strip(),
+            "passed": _safe_int_local(phase.get("passed"), 0),
+            "failed": _safe_int_local(phase.get("failed"), 0),
+            "timeout": _safe_int_local(phase.get("timeout"), 0),
+            "running": _safe_int_local(phase.get("running"), 0),
+            "cancelled": _safe_int_local(phase.get("cancelled"), 0),
+            "unknown": _safe_int_local(phase.get("unknown"), 0),
+        })
+    projected_run_status = orchestration.get("runStatus") or run.get("status") or ""
+    if (
+        str(execution.get("outcome") or "").strip().lower() in ("passed", "partial")
+        and not bool(execution.get("smokeAllFailed"))
+    ):
+        projected_run_status = "DONE"
     return {
         "conclusion": summary.get("conclusion") or execution.get("label") or "",
         "outcome": execution.get("outcome") or "",
         "label": execution.get("label") or summary.get("conclusion") or "",
         "hasExecution": bool(execution.get("hasExecution") or attempted or passed or failed or timeout or running),
+        "generatedCases": generated_case_count,
+        "automationCases": automation_case_count,
+        "generatedYaml": generated_yaml_count,
         "attempted": attempted,
         "passed": passed,
         "failed": failed,
@@ -7363,11 +7401,55 @@ def _agent_run_report_summary(run):
         "smokeFailed": _safe_int_local(execution.get("smokeFailedCount"), 0),
         "smokeTimeout": _safe_int_local(execution.get("smokeTimeoutCount"), 0),
         "smokeAllFailed": bool(execution.get("smokeAllFailed")),
+        "phases": phase_rows[:12],
         "reportStatus": report.get("status") or "",
         "orchestrationState": orchestration.get("state") or "",
         "orchestrationLabel": orchestration.get("label") or "",
-        "runStatus": orchestration.get("runStatus") or run.get("status") or "",
+        "runStatus": projected_run_status,
     }
+
+
+def _agent_runner_outcome_allows_done(run):
+    execution = _agent_runner_execution_summary(run)
+    if not execution.get("hasExecution"):
+        return False
+    outcome = str(execution.get("outcome") or "").strip().lower()
+    if outcome not in ("passed", "partial"):
+        return False
+    return not bool(execution.get("smokeAllFailed"))
+
+
+def _agent_runner_outcome_should_fail_run(run):
+    execution = _agent_runner_execution_summary(run)
+    if not execution.get("hasExecution"):
+        return False
+    return str(execution.get("outcome") or "").strip().lower() == "failed" and bool(execution.get("smokeAllFailed"))
+
+
+def _agent_failed_steps_should_fail_run(run, failed_steps=None):
+    failed_steps = failed_steps if failed_steps is not None else [
+        step for step in (run.get("steps") or [])
+        if str((step or {}).get("status") or "").upper() in ("FAILED", "PARTIAL_FAILED")
+    ]
+    if not failed_steps:
+        return False
+    if not _agent_runner_outcome_allows_done(run):
+        return True
+    non_blocking_after_execution = {
+        "RUN_SONIC",
+        "COLLECT_REPORT",
+        "ANALYZE_FAILURE",
+        "DIAGNOSE_FAILURE",
+        "GENERATE_REPAIR",
+        "GENERATE_BUG_DRAFT",
+        "RERUN",
+        "LEARN_FROM_RESULT",
+        "GENERATE_SUMMARY",
+    }
+    return any(
+        str((step or {}).get("step") or "").strip().upper() not in non_blocking_after_execution
+        for step in failed_steps
+    )
 
 
 def _agent_source_material_context(run):
@@ -12866,8 +12948,13 @@ def _tool_collect_report(run):
         artifacts["failedExecutionItems"] = _agent_failed_execution_items(run)
         run["artifacts"] = artifacts
 
+        non_blocking_runner_failures = (
+            report_status == "failed"
+            and _agent_runner_outcome_allows_done(run)
+            and not _agent_runner_outcome_should_fail_run(run)
+        )
         if report_status in ("failed", "waiting", "missing"):
-            call["status"] = "PARTIAL_FAILED"
+            call["status"] = "SUCCESS" if non_blocking_runner_failures else "PARTIAL_FAILED"
             if report_status == "waiting":
                 call["error"] = f"{len(running_jobs)} 个 Runner 任务仍在运行，最终报告尚未生成"
                 attach_diagnosis(call, make_diagnosis(
@@ -12883,6 +12970,14 @@ def _tool_collect_report(run):
                     "无法确认用例执行结果，不能作为有效回归结论。",
                     ["检查 Runner 报告上传", "查看 job stdout/stderr", "必要时重跑该用例"],
                 ))
+            elif non_blocking_runner_failures:
+                execution = _agent_runner_execution_summary(run)
+                call["outputSummary"] = (
+                    f"收集到 {len(execution_reports)} 个执行报告，最终结果部分通过："
+                    f"{execution.get('logicalPassedCount', 0)}/{execution.get('logicalAttemptCount', 0)} 通过；"
+                    "失败用例保留在报告中，不升级为 Agent 失败"
+                )
+                call["nonBlockingRunnerFailures"] = True
             else:
                 call["error"] = "存在失败或超时的 Runner 任务"
                 attach_diagnosis(call, make_diagnosis(
@@ -12894,7 +12989,7 @@ def _tool_collect_report(run):
                 ))
         else:
             call["status"] = "SUCCESS"
-        call["outputSummary"] = f"收集到 {len(execution_reports)} 个执行报告，{len(job_statuses)} 个任务状态"
+        call["outputSummary"] = call.get("outputSummary") or f"收集到 {len(execution_reports)} 个执行报告，{len(job_statuses)} 个任务状态"
         if failed_jobs:
             call["outputSummary"] += f"（{len(failed_jobs)} 个失败）"
         if running_jobs:
@@ -17052,7 +17147,8 @@ def _tool_generate_summary(run):
         artifacts = run.setdefault("artifacts", {})
         steps = run.get("steps", [])
         completed = sum(1 for s in steps if s.get("status") == "SUCCESS")
-        failed = sum(1 for s in steps if str(s.get("status")).upper() in ("FAILED", "PARTIAL_FAILED"))
+        failed_steps = [s for s in steps if str(s.get("status")).upper() in ("FAILED", "PARTIAL_FAILED")]
+        failed = len(failed_steps)
         skipped = sum(1 for s in steps if s.get("status") == "SKIPPED")
         report = artifacts.get("report") or {}
         failure = artifacts.get("failureAnalysis") or {}
@@ -17072,10 +17168,12 @@ def _tool_generate_summary(run):
         if execution.get("outcome") == "passed" and not unresolved_failed_job_ids:
             active_failed_execution_items = []
         observed_run_status = str(run.get("status") or "").strip().upper()
+        failed_steps_block_run = _agent_failed_steps_should_fail_run(run, failed_steps)
+        observed_failed_blocks_run = observed_run_status == "FAILED" and not _agent_runner_outcome_allows_done(run)
         if observed_run_status == "CANCELLED":
             run_status = "CANCELLED"
             orchestration_state, orchestration_label = "cancelled", "编排已取消"
-        elif failed or observed_run_status == "FAILED":
+        elif failed_steps_block_run or observed_failed_blocks_run:
             run_status = "FAILED"
             orchestration_state, orchestration_label = "blocked", "编排阻断"
         else:
@@ -17092,6 +17190,8 @@ def _tool_generate_summary(run):
             "statusProjectedAtSummary": observed_run_status != run_status,
             "completedStepCount": completed,
             "failedStepCount": failed,
+            "blockingFailedStepCount": len(failed_steps) if failed_steps_block_run else 0,
+            "nonBlockingFailedStepCount": 0 if failed_steps_block_run else failed,
             "skippedStepCount": skipped,
             "failedSteps": [
                 {
@@ -17786,7 +17886,11 @@ def _execute_agent_steps(run_id):
             s for s in run.get("steps", [])
             if str(s.get("status")).upper() in ("FAILED", "PARTIAL_FAILED")
         ]
-        if failed_steps and run.get("status") not in ("CANCELLED", "WAIT_CONFIRM"):
+        if (
+            failed_steps
+            and run.get("status") not in ("CANCELLED", "WAIT_CONFIRM")
+            and _agent_failed_steps_should_fail_run(run, failed_steps)
+        ):
             run["status"] = "FAILED"
             run["currentStep"] = failed_steps[-1].get("step") or "FAILED"
             run["progress"] = min(_safe_int_local(run.get("progress"), 0), 99)

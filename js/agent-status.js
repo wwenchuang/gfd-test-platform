@@ -115,6 +115,7 @@ function agentRunResultSource(run) {
   const execution = summary.execution || {};
   if (run?.reportSummary && Object.keys(run.reportSummary).length) return run.reportSummary;
   if (summary && Object.keys(summary).length) {
+    const generation = artifacts.generationPipeline || {};
     return {
       conclusion: summary.conclusion || execution.label || '',
       outcome: execution.outcome || '',
@@ -125,8 +126,15 @@ function agentRunResultSource(run) {
       failed: execution.logicalFailedCount || execution.failedCount || 0,
       timeout: execution.logicalTimeoutCount || execution.timeoutCount || 0,
       running: execution.logicalRunningCount || execution.runningCount || 0,
+      generatedCases: generation.caseCount || summary.generatedCases || execution.generatedCases || 0,
+      automationCases: generation.automationCaseCount || summary.automationCases || execution.automationCases || 0,
+      generatedYaml: generation.yamlFileCount || summary.generatedYaml || execution.generatedYaml || 0,
       smokeAllFailed: execution.smokeAllFailed,
+      smokeAttempted: execution.smokeAttemptCount || 0,
       smokePassed: execution.smokePassedCount || 0,
+      smokeFailed: execution.smokeFailedCount || 0,
+      smokeTimeout: execution.smokeTimeoutCount || 0,
+      phases: execution.phases || [],
       reportStatus: (artifacts.report || {}).status || '',
       orchestrationLabel: (summary.orchestration || {}).label || '',
       runStatus: (summary.orchestration || {}).runStatus || run?.status || ''
@@ -142,6 +150,13 @@ function agentRunResultMeta(run) {
   const failed = Number(result.failed || 0);
   const timeout = Number(result.timeout || 0);
   const running = Number(result.running || 0);
+  const generatedCases = Number(result.generatedCases || 0);
+  const automationCases = Number(result.automationCases || 0);
+  const generatedYaml = Number(result.generatedYaml || 0);
+  const smokeAttempted = Number(result.smokeAttempted || 0);
+  const smokePassed = Number(result.smokePassed || 0);
+  const smokeFailed = Number(result.smokeFailed || 0);
+  const smokeTimeout = Number(result.smokeTimeout || 0);
   const rawOutcome = String(result.outcome || '').toLowerCase();
   const label = result.conclusion || result.label || '';
   const hasReportResult = Boolean(result.hasExecution || attempted || passed || failed || timeout || running || label || rawOutcome);
@@ -154,6 +169,11 @@ function agentRunResultMeta(run) {
     running ? `${running} 执行中` : ''
   ].filter(Boolean).join(' · ');
   const outcome = rawOutcome || (failed || timeout ? (passed ? 'partial' : 'failed') : (passed ? 'passed' : ''));
+  const projectedRunStatus = (
+    (outcome === 'passed' || outcome === 'partial')
+    && !result.smokeAllFailed
+    && String(result.runStatus || run?.status || '').toUpperCase() === 'FAILED'
+  ) ? 'DONE' : (result.runStatus || run?.status || '');
   return {
     hasReportResult,
     outcome,
@@ -163,28 +183,125 @@ function agentRunResultMeta(run) {
     failed,
     timeout,
     running,
+    generatedCases,
+    automationCases,
+    generatedYaml,
+    smokeAttempted,
+    smokePassed,
+    smokeFailed,
+    smokeTimeout,
+    phases: Array.isArray(result.phases) ? result.phases : [],
     score,
     details,
     smokeAllFailed: Boolean(result.smokeAllFailed),
     orchestrationLabel: result.orchestrationLabel || '',
-    runStatus: result.runStatus || run?.status || ''
+    runStatus: projectedRunStatus
   };
+}
+
+function agentRunPhaseTotals(phases, matcher) {
+  const totals = { attempted: 0, passed: 0, failed: 0, timeout: 0, running: 0, cancelled: 0, unknown: 0 };
+  (Array.isArray(phases) ? phases : []).forEach(phase => {
+    const name = String(phase?.phase || '').toLowerCase();
+    if (!matcher(name, phase)) return;
+    const passed = Number(phase.passed || 0);
+    const failed = Number(phase.failed || 0);
+    const timeout = Number(phase.timeout || 0);
+    const running = Number(phase.running || 0);
+    const cancelled = Number(phase.cancelled || 0);
+    const unknown = Number(phase.unknown || 0);
+    totals.passed += passed;
+    totals.failed += failed;
+    totals.timeout += timeout;
+    totals.running += running;
+    totals.cancelled += cancelled;
+    totals.unknown += unknown;
+    totals.attempted += passed + failed + timeout + running + cancelled + unknown;
+  });
+  return totals;
+}
+
+function agentRunExecutionBuckets(result) {
+  const smoke = agentRunPhaseTotals(result.phases, name => name.includes('smoke') || name.includes('冒烟') || name.includes('首批'));
+  if (!smoke.attempted && result.smokeAttempted) {
+    smoke.attempted = result.smokeAttempted;
+    smoke.passed = result.smokePassed;
+    smoke.failed = result.smokeFailed;
+    smoke.timeout = result.smokeTimeout;
+  }
+  const remaining = agentRunPhaseTotals(result.phases, name => (
+    !name.includes('smoke')
+    && !name.includes('冒烟')
+    && !name.includes('首批')
+    && !name.includes('重跑')
+    && !name.includes('repair')
+    && !name.includes('rerun')
+    && !name.includes('恢复')
+  ));
+  if (!remaining.attempted && result.total > smoke.attempted) {
+    remaining.attempted = Math.max(0, result.total - smoke.attempted);
+    remaining.passed = Math.max(0, result.passed - smoke.passed);
+    remaining.failed = Math.max(0, result.failed - smoke.failed);
+    remaining.timeout = Math.max(0, result.timeout - smoke.timeout);
+    remaining.running = result.running;
+  }
+  return { smoke, remaining };
+}
+
+function agentRunMetricHtml(label, value, detail = '') {
+  return `
+    <div class="agent-run-metric">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      ${detail ? `<em>${escapeHtml(detail)}</em>` : ''}
+    </div>
+  `;
 }
 
 function agentRunResultSummaryHtml(run) {
   const result = agentRunResultMeta(run);
   if (!result.hasReportResult) return '';
+  const buckets = agentRunExecutionBuckets(result);
+  const generatedText = result.generatedCases
+    ? `${result.generatedCases} 条`
+    : (result.automationCases || result.generatedYaml ? `${result.automationCases || result.generatedYaml} 条` : '-');
+  const generatedDetail = [
+    result.automationCases ? `自动化 ${result.automationCases}` : '',
+    result.generatedYaml ? `YAML ${result.generatedYaml}` : ''
+  ].filter(Boolean).join(' / ');
+  const smokeText = buckets.smoke.attempted ? `${buckets.smoke.passed}/${buckets.smoke.attempted}` : '-';
+  const smokeDetail = buckets.smoke.attempted
+    ? [`失败 ${buckets.smoke.failed}`, buckets.smoke.timeout ? `超时 ${buckets.smoke.timeout}` : ''].filter(Boolean).join(' / ')
+    : '未执行';
+  const remainingText = buckets.remaining.attempted ? `${buckets.remaining.passed}/${buckets.remaining.attempted}` : '-';
+  const remainingDetail = buckets.remaining.attempted
+    ? [`失败 ${buckets.remaining.failed}`, buckets.remaining.timeout ? `超时 ${buckets.remaining.timeout}` : '', buckets.remaining.running ? `执行中 ${buckets.remaining.running}` : ''].filter(Boolean).join(' / ')
+    : '无剩余批次';
   const orchestration = [
-    result.orchestrationLabel ? `编排：${result.orchestrationLabel}` : '',
-    result.runStatus ? `Agent：${agentStatusText(result.runStatus)}` : '',
+    result.runStatus ? `Agent ${agentStatusText(result.runStatus)}` : '',
     result.smokeAllFailed ? '冒烟全失败' : ''
   ].filter(Boolean).join(' · ');
   return `
     <div class="agent-run-result">
-      <strong>${escapeHtml(result.details || result.label)}</strong>
-      ${orchestration ? `<span>${escapeHtml(orchestration)}</span>` : ''}
+      <div class="agent-run-result-head">
+        <strong>${escapeHtml(result.details || result.label)}</strong>
+        ${orchestration ? `<span>${escapeHtml(orchestration)}</span>` : ''}
+      </div>
+      <div class="agent-run-metrics">
+        ${agentRunMetricHtml('用例', generatedText, generatedDetail)}
+        ${agentRunMetricHtml('冒烟', smokeText, smokeDetail)}
+        ${agentRunMetricHtml('剩余', remainingText, remainingDetail)}
+      </div>
     </div>
   `;
+}
+
+function agentRunCardMessage(run, lastStep, resultMeta) {
+  const text = String(lastStep?.summary || run?.summary || run?.error || '').trim();
+  if (!text) return '';
+  if (resultMeta?.hasReportResult && /没有\s*PRODUCT_BUG|跳过缺陷草稿|不存在缺陷草稿/.test(text)) return '';
+  if (resultMeta?.hasReportResult && text.length > 90) return '';
+  return text;
 }
 
 function normalizeAgentRun(run) {
@@ -670,6 +787,30 @@ function agentInputSummaryHtml(run = {}, options = {}) {
   const figmaPages = Array.isArray(summary.figmaUsedPages) ? summary.figmaUsedPages : [];
   const hasDetails = summary.requirementTextPreview || summary.figmaUrl || files.length || figmaPages.length;
   if (compact) {
+    if (options.collapsed) {
+      const compactFacts = [
+        summary.sourceTypeText || '',
+        summary.figmaPageCount ? `Figma ${summary.figmaPageCount} 页` : '',
+        summary.figmaUiImageCount ? `UI 图 ${summary.figmaUiImageCount}` : '',
+        summary.requirementFileCount ? `文档 ${summary.requirementFileCount}` : '',
+        summary.screenshotCount ? `截图 ${summary.screenshotCount}` : ''
+      ].filter(Boolean).join(' · ');
+      return `
+        <details class="agent-input-summary compact collapsed">
+          <summary>
+            <span>本次输入</span>
+            <em>${escapeHtml(compactFacts || '直接输入')}</em>
+          </summary>
+          <div class="agent-input-chips">${badges.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>
+          ${summary.requirementTextPreview ? `<div class="agent-input-line">${escapeHtml(summary.requirementTextPreview.slice(0, 180))}${summary.requirementTextPreview.length > 180 ? '...' : ''}</div>` : ''}
+          <div class="agent-input-run-line">
+            <span>运行编号：${escapeHtml(run.runId || '-')}</span>
+            <span>设备：${escapeHtml(summary.deviceStrategy === 'auto' ? '自动选择' : [summary.runnerId, summary.deviceId].filter(Boolean).join(' / ') || '-')}</span>
+            <span>模型：${escapeHtml(summary.model || '-')}</span>
+          </div>
+        </details>
+      `;
+    }
     return `
       <div class="agent-input-summary compact">
         <div class="agent-input-summary-title">本次输入</div>
@@ -808,6 +949,7 @@ function agentRunCardHtml(run, options = {}) {
   const pill = agentRunPillClass(run);
   const cardStatus = agentRunCardStatusClass(run);
   const progress = agentRunProgressPct(run);
+  const cardMessage = agentRunCardMessage(run, lastStep, resultMeta);
   return `
     <div class="workflow-card agent-run-history-card ${escapeHtml(cardStatus)}">
       <div class="agent-run-card-head">
@@ -815,15 +957,14 @@ function agentRunCardHtml(run, options = {}) {
         <span class="muted mono">${escapeHtml(agentRunDisplayTime(run))}</span>
       </div>
       <div class="agent-run-title">${escapeHtml(String(target).slice(0, 80))}</div>
-      <div class="agent-run-meta">
-        <span>运行编号：<b>${escapeHtml(run.runId || '-')}</b></span>
-        <span>模式：${escapeHtml(mode)}</span>
-        <span>当前步骤：${escapeHtml(agentStepLabel(run.currentStep))}</span>
-      </div>
-      ${agentInputSummaryHtml(run, { compact: true })}
-      <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
       ${agentRunResultSummaryHtml(run)}
-      <div class="agent-run-summary">${escapeHtml(lastStep.summary || run.summary || run.error || '暂无摘要')}</div>
+      <div class="agent-run-progress"><div style="width:${Math.max(0, Math.min(100, progress))}%;background:${escapeHtml(agentRunProgressColor(run))};"></div></div>
+      <div class="agent-run-meta">
+        <span>模式：${escapeHtml(mode)}</span>
+        <span>步骤：${escapeHtml(agentStepLabel(run.currentStep))}</span>
+      </div>
+      ${agentInputSummaryHtml(run, { compact: true, collapsed: true })}
+      ${cardMessage ? `<div class="agent-run-summary">${escapeHtml(cardMessage)}</div>` : ''}
       ${agentRiskDetailHtml(riskDetail, { compact: true })}
       ${confirmations.length ? `<div class="generate-hint warn">待确认 ${confirmations.length} 项：${escapeHtml(confirmations.map(item => item.title || item.type || '确认项').join('、'))}</div>` : ''}
       <div class="workflow-card-actions">
