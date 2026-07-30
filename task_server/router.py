@@ -2864,6 +2864,57 @@ def _api_testing_apifox_discovery_credentials(data):
     )
 
 
+def _api_testing_fill_apifox_environment_snapshot(data):
+    """Best-effort backfill for saved Apifox sources missing the selected environment."""
+    if not isinstance(data, dict):
+        return data
+    source_type = str(data.get("source_type") or data.get("sourceType") or "apifox").strip().lower()
+    if source_type != "apifox":
+        return data
+    environment_id = str(data.get("environment_id") or data.get("environmentId") or "").strip()
+    project_id = str(data.get("project_id") or data.get("projectId") or "").strip()
+    if not project_id or not environment_id:
+        return data
+    snapshot = data.get("environment_snapshot", data.get("environmentSnapshot"))
+    if isinstance(snapshot, dict) and snapshot.get("base_urls"):
+        return data
+
+    from task_server.services import apifox_discovery_service
+
+    access_token, base_url = _api_testing_apifox_discovery_credentials(data)
+    context = apifox_discovery_service.discover_project_context(
+        access_token,
+        project_id,
+        base_url=base_url,
+        preferred_environment_id=environment_id,
+        timeout_seconds=25.0,
+    )
+    selected_environment = next(
+        (
+            item for item in context.get("environments") or []
+            if str((item or {}).get("id") or "") == environment_id
+        ),
+        {},
+    )
+    environment_snapshot = selected_environment.get("environment_snapshot")
+    if isinstance(environment_snapshot, dict) and environment_snapshot.get("base_urls"):
+        data["environment_snapshot"] = environment_snapshot
+    provider_metadata = data.get("provider_metadata", data.get("providerMetadata"))
+    if not isinstance(provider_metadata, dict):
+        provider_metadata = {}
+    project = context.get("project") if isinstance(context.get("project"), dict) else {}
+    metadata = dict(provider_metadata)
+    metadata.setdefault("project_name", str(project.get("name") or "").strip())
+    metadata.setdefault("project_description", str(project.get("description") or "").strip())
+    metadata.setdefault("team_id", str(((project.get("team") or {}) if isinstance(project.get("team"), dict) else {}).get("id") or "").strip())
+    metadata.setdefault("team_name", str(((project.get("team") or {}) if isinstance(project.get("team"), dict) else {}).get("name") or "").strip())
+    metadata.setdefault("environment_name", str(selected_environment.get("name") or environment_id).strip())
+    metadata.setdefault("discovered_at", time.strftime("%Y-%m-%dT%H:%M:%S"))
+    metadata.setdefault("discovery_source", "apifox_cli")
+    data["provider_metadata"] = metadata
+    return data
+
+
 @route_post("/api/api-testing/apifox/discovery/projects")
 def _post_api_testing_apifox_discovery_projects(handler, qs):
     if _require_user_auth(handler):
@@ -2941,6 +2992,7 @@ def _post_api_testing_sources(handler, qs):
             if previous
             else ""
         )
+        data = _api_testing_fill_apifox_environment_snapshot(data)
         source = api_source_service.save_api_source(data)
         current = api_source_service.get_api_source(
             str(source.get("source_id") or ""),

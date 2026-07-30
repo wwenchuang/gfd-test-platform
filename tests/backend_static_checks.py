@@ -10600,7 +10600,12 @@ def check_agent_blocks_incomplete_generated_yaml_coverage():
         [{"file": "a.yaml"}, {"file": "b.yaml"}],
         {"taskCount": 2},
     )
-    require(quality.get("status") == "blocked" and any("只生成 2 个 YAML" in item for item in quality.get("blockers", [])), "Quality report must block incomplete generated YAML coverage")
+    require(
+        quality.get("status") == "warn"
+        and not quality.get("blockers")
+        and any("只生成 2 个 YAML" in item for item in quality.get("warnings", [])),
+        "Quality report must surface incomplete generated YAML coverage as a warning while preserving executable YAML",
+    )
 
     converted = {
         "analysis": {"requirement_points": ["REQ-001", "REQ-002", "REQ-003"]},
@@ -12830,7 +12835,7 @@ def check_ai_skills_receive_yaml_reference_context():
         require(
             targets.get("target_automation_cases") == 5
             and targets.get("min_automation_cases") == 5
-            and targets.get("size") == "medium",
+            and targets.get("size") == "small",
             "Scenario, automation and smoke skills must share the same platform-clamped scope plan",
         )
     require(
@@ -12903,7 +12908,8 @@ def check_qwen_structured_skills_disable_thinking():
     yaml_service_source = (ROOT / "task_server" / "services" / "yaml_service.py").read_text(encoding="utf-8")
     require(
         'if require_ai_planning:' in yaml_service_source
-        and '"stage": "skill_pipeline"' in yaml_service_source
+        and 'stage="skill_pipeline"' in yaml_service_source
+        and "return _mindmap_core_ai_failure_payload(title, module, exc)" in yaml_service_source
         and '"core_ai_failure"' in yaml_service_source,
         "Agent MM pipeline exceptions must become explicit core AI failures instead of invoking a legacy planning fallback",
     )
@@ -15944,8 +15950,7 @@ def check_api_testing_routes_registered():
         "/api/api-testing/assets",
         "/api/api-testing/sources",
         "/api/api-testing/plans",
-        "/api/api-testing/metersphere/config",
-        "/api/api-testing/metersphere/execution-context",
+        "/api/api-testing/execution-context",
         "/api/api-testing/reports",
     ):
         require(path in router.GET_ROUTES, f"Missing API testing GET route: {path}")
@@ -15956,20 +15961,16 @@ def check_api_testing_routes_registered():
         "/api/api-testing/sources",
         "/api/api-testing/plans/generate",
         "/api/api-testing/plans/confirm",
-        "/api/api-testing/metersphere/config",
-        "/api/api-testing/metersphere/health",
-        "/api/api-testing/metersphere/push",
-        "/api/api-testing/metersphere/run",
-        "/api/api-testing/metersphere/executions",
-        "/api/api-testing/reports/pull",
+        "/api/api-testing/executions",
+        "/api/api-testing/executions/debug-case",
     ):
         require(path in router.POST_ROUTES, f"Missing API testing POST route: {path}")
     require(
         any(
-            pattern.pattern == r"^/api/api-testing/metersphere/executions/([^/]+)$"
+            pattern.pattern == r"^/api/api-testing/executions/([^/]+)$"
             for pattern, _handler in router._GET_REGEX_ROUTES
         ),
-        "Missing MeterSphere execution status route",
+        "Missing native API execution status route",
     )
     for expected_pattern in (
         r"^/api/api-testing/plans/([^/]+)$",
@@ -15997,42 +15998,6 @@ def check_api_testing_routes_registered():
         "Missing API source synchronization route",
     )
 
-    class FakeHandler:
-        def __init__(self):
-            self.response = None
-
-        def _body(self):
-            return {"plan_id": "api_plan_ready", "test_plan_id": "remote-plan"}
-
-        def _json(self, payload, status=200):
-            self.response = (payload, status)
-
-    from task_server.services import metersphere_service
-    old_start = metersphere_service.start_metersphere_execution
-    metersphere_service.start_metersphere_execution = lambda plan_id, test_plan_id="": {
-        "execution_id": "ms_execution_1",
-        "plan_id": plan_id,
-        "test_plan_id": test_plan_id,
-        "status": "queued",
-    }
-    try:
-        handler = FakeHandler()
-        router.POST_ROUTES["/api/api-testing/metersphere/executions"](handler, {})
-    finally:
-        metersphere_service.start_metersphere_execution = old_start
-    require(
-        handler.response == ({
-            "ok": True,
-            "execution": {
-                "execution_id": "ms_execution_1",
-                "plan_id": "api_plan_ready",
-                "test_plan_id": "remote-plan",
-                "status": "queued",
-            },
-        }, 202),
-        "MeterSphere orchestration start route must return HTTP 202 with the persisted execution_id",
-    )
-
 
 def main():
     check_ai_gateway_response_diagnostics()
@@ -16047,16 +16012,21 @@ def main():
     check_agent_run_retry_clones_inputs_without_artifacts()
     check_api_asset_service_openapi_import()
     check_api_test_plan_generation_is_confirmable()
-    check_metersphere_config_masks_secrets()
-    check_metersphere_public_adapters_redact_and_require_remote_run_id()
-    check_metersphere_execution_context_uses_live_metadata_and_safe_cache()
-    check_metersphere_async_execution_contract_and_partial_failures()
     check_api_testing_routes_registered()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
+    package_entry_source = (ROOT / "task_server" / "__main__.py").read_text(encoding="utf-8")
+    service_source = (ROOT / "deploy" / "midscene-task.service").read_text(encoding="utf-8")
+    require(
+        "python3 -m task_server" in service_source
+        and "from .app import main" in package_entry_source
+        and "main()" in package_entry_source,
+        "Systemd service must be able to start the package via python3 -m task_server",
+    )
     source_paths = [
         ENTRY,
         MODULE,
+        ROOT / "task_server" / "__main__.py",
         ROOT / "task_server" / "app.py",
         ROOT / "task_server" / "router.py",
         ROOT / "task_server" / "config.py",

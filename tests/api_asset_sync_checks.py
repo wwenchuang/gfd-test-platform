@@ -1149,6 +1149,73 @@ class ApiSourceRouteTests(unittest.TestCase):
             api_source_service.API_TESTING_DIR = old_dir
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    def test_source_save_backfills_selected_apifox_environment_snapshot(self):
+        from task_server import router
+        from task_server.services import apifox_discovery_service, api_source_service
+
+        old_dir = api_source_service.API_TESTING_DIR
+        old_discover = apifox_discovery_service.discover_project_context
+        temp_dir = tempfile.mkdtemp(prefix="api_source_env_backfill_")
+        api_source_service.API_TESTING_DIR = temp_dir
+        calls = []
+
+        def fake_discover(access_token, project_id, **kwargs):
+            calls.append({
+                "access_token": access_token,
+                "project_id": project_id,
+                "preferred_environment_id": kwargs.get("preferred_environment_id"),
+            })
+            return {
+                "project": {"id": project_id, "name": "3D"},
+                "environments": [{
+                    "id": "33831678",
+                    "name": "生产环境（新）-腾讯云",
+                    "environment_snapshot": {
+                        "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                        "variables": [],
+                    },
+                }],
+            }
+
+        apifox_discovery_service.discover_project_context = fake_discover
+        try:
+            saved = api_source_service.save_api_source({
+                "source_type": "apifox",
+                "name": "3D",
+                "project_id": "5904970",
+                "access_token": "secret-apifox-token",
+                "sync_enabled": False,
+            })
+            handler = _RouteHandler({
+                "source_id": saved["source_id"],
+                "source_type": "apifox",
+                "name": "3D",
+                "project_id": "5904970",
+                "environment_id": "33831678",
+                "sync_enabled": False,
+            })
+
+            router.POST_ROUTES["/api/api-testing/sources"](handler, {})
+
+            status, payload = handler.responses[-1]
+            raw = api_source_service.get_api_source(saved["source_id"], masked=False)
+            self.assertEqual(200, status)
+            self.assertEqual([{
+                "access_token": "secret-apifox-token",
+                "project_id": "5904970",
+                "preferred_environment_id": "33831678",
+            }], calls)
+            self.assertEqual(
+                [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                raw["environment_snapshot"]["base_urls"],
+            )
+            self.assertEqual("生产环境（新）-腾讯云", raw["provider_metadata"]["environment_name"])
+            self.assertNotIn("secret-apifox-token", str(payload))
+        finally:
+            apifox_discovery_service.discover_project_context = old_discover
+            api_source_service.API_TESTING_DIR = old_dir
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def test_source_routes_require_user_authentication(self):
         from task_server import router
 

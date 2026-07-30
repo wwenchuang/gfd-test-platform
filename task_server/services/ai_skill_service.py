@@ -2489,6 +2489,7 @@ def _baidu_netdisk_requirement_points(analysis):
     explicit_home_three_entries = (
         all(term in blob for term in ("文档打印", "照片打印", "扫描复印"))
         and any(term in blob for term in ("三个业务入口", "三大业务入口", "首页", "基础打印"))
+        and not any(term in blob for term in ("普通照片", "普通证件照", "智能证件照", "照片拼版", "图片拼版"))
     )
     if explicit_home_three_entries:
         suffix = (

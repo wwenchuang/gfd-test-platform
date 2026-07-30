@@ -1,5 +1,7 @@
-"""允许 python3 -m task_server 启动服务"""
-from task_server.app import main
+"""Module entrypoint for ``python -m task_server``."""
+
+from .app import main
+
 
 if __name__ == "__main__":
     main()

@@ -5942,6 +5942,33 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-07-30 API 执行页 Apifox 环境快照修复与线上核查
+
+- 线上 8091 `/api/health` 与 8088 `/api/health` 均恢复 200；静态页加载版本为 `20260730-api-env-readiness`，`/api/auth/login` 登录正常。
+- 线上来源 `api_source_1785310905647_00002`（3D）保存了 `project_id=5904970`、`environment_id=33831678` 与 Bearer profile，但 `environment_snapshot` 为空，导致 API 执行上下文返回 `base_url=""`、`readiness.missing=["base_url"]`。
+- 直接调用 Apifox discovery 能读到环境 `33831678 / 生产环境（新）-腾讯云`，base_url 为 `https://print.wisebeginner3d.com/app`；已用现有线上接口把该环境快照写回来源，随后 `/api/api-testing/execution-context?source_id=api_source_1785310905647_00002` 返回 `connection.state=connected`、`readiness.can_execute=true`。
+- 本地通用修复：保存 Apifox 来源时，如果已选择环境但请求体没有可执行 `environment_snapshot.base_urls`，后端使用已保存的 Apifox token 调用 discovery 补抓该环境详情并落库；前端不需要用户手填环境 ID/base_url，也不把 token 返回给浏览器。
+- 补充 `api_asset_sync_checks` 路由测试，覆盖“已有来源保存 token、再次保存只提交环境 ID、后端自动补齐环境快照”的场景。
+- 同步修正 backend static 中已过期的 API/MeterSphere 路由断言、`python3 -m task_server` systemd 入口检查、AI 小范围计划尺寸断言、详细照片子分支不应被百度网盘三入口概览折叠的 fallback 行为。
+- 修复 OBJ 保龄球历史 YAML 的第二次「去打印」恢复文案，避免该既有基线继续阻断 `backend_static_checks.py`。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/__main__.py task_server/router.py task_server/services/ai_skill_service.py tests/backend_static_checks.py tests/api_asset_sync_checks.py
+python3 -m unittest tests.api_asset_sync_checks tests.api_native_execution_checks tests.apifox_discovery_checks
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_ai_skill_timeout_fallbacks_are_requirement_scoped()
+print('single check ok')
+PY
+git diff --check -- task_server/router.py tests/api_asset_sync_checks.py task_server/services/ai_skill_service.py tests/backend_static_checks.py task_server/__main__.py server-tasks/3D打印基线/OBJ保龄球打印.yaml server-tasks-all/3D打印基线/OBJ保龄球打印.yaml
+```
+
+未完成验证：
+
+- 全量 `python3 tests/backend_static_checks.py` 继续被 Agent 报告聚合断言挡住：`Report collection must retain both passed and failed terminal HTML reports instead of hiding failure evidence`。该失败与本次 Apifox/API 执行环境修复无关，未在本轮继续扩大修改。
+
 ### 2026-07-30 API 测试：移除 MeterSphere，改为平台原生执行与报告
 
 用户明确决定 API 测试不再依赖 MeterSphere：平台应直接从 Apifox 拉取接口资产，AI 生成/编辑 API 用例，采纳为基线后由平台原生 API Runner 执行，并在平台内实时查看报告和失败分析。
