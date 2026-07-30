@@ -716,6 +716,50 @@ function renderApiSourceEnvironmentSnapshot(source = {}) {
   `;
 }
 
+function apiSourceEnvironmentSummary(source = {}) {
+  const snapshot = source.environment_snapshot || {};
+  const baseUrls = Array.isArray(snapshot.base_urls) ? snapshot.base_urls : [];
+  const variables = Array.isArray(snapshot.variables) ? snapshot.variables : [];
+  const firstBaseUrl = baseUrls.find(item => String(item?.url || '').trim()) || {};
+  return {
+    baseUrls,
+    variables,
+    baseUrl: String(firstBaseUrl.url || '').trim(),
+    baseUrlName: String(firstBaseUrl.name || '').trim(),
+    variableCount: Number(snapshot.variable_count ?? variables.length ?? 0),
+    sensitiveCount: Number(snapshot.sensitive_variable_count ?? variables.filter(item => item?.sensitive).length ?? 0),
+  };
+}
+
+function renderApiSourceEnvironmentCompact(source = {}) {
+  const metadata = source.provider_metadata || {};
+  const summary = apiSourceEnvironmentSummary(source);
+  return `
+    <div class="api-source-env-compact">
+      <div>
+        <span>Apifox 项目</span>
+        <strong>${escapeHtml(apiSourceDisplayName(source))}</strong>
+        <small>${escapeHtml(metadata.team_name || source.project_id || '-')}</small>
+      </div>
+      <div>
+        <span>当前环境</span>
+        <strong>${escapeHtml(metadata.environment_name || source.environment_id || '未选择环境')}</strong>
+        <small>${escapeHtml(summary.baseUrlName || 'baseUrl')}</small>
+      </div>
+      <div class="${summary.baseUrl ? '' : 'warn'}">
+        <span>服务地址</span>
+        <strong>${escapeHtml(summary.baseUrl || '未读取到 base_url')}</strong>
+        <small>${summary.baseUrl ? '执行时使用该地址' : '请重新读取 Apifox 环境'}</small>
+      </div>
+      <div>
+        <span>环境变量</span>
+        <strong>${escapeHtml(summary.variableCount)} 个</strong>
+        <small>${escapeHtml(summary.sensitiveCount)} 个敏感值不展示</small>
+      </div>
+    </div>
+  `;
+}
+
 function refreshApiSourceEnvironmentSnapshotPreview(source = currentApiSourceSettingsSource()) {
   const node = document.getElementById('api-source-environment-snapshot');
   if (node) node.outerHTML = renderApiSourceEnvironmentSnapshot(source);
@@ -838,21 +882,22 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const schedule = source?.sync_schedule || {};
   const syncDisabled = !configured || ['queued', 'running'].includes(status);
   const running = ['queued', 'running'].includes(status);
-  const primaryLabel = status === 'failed' ? '重试同步' : '立即同步';
+  const primaryLabel = status === 'failed' ? '重试读取' : '重新读取 Apifox 资产';
   return `
     <div class="api-asset-context-bar">
       <div class="api-source-status-row">
         <div class="api-source-identity">
           ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
           ${apiStatusPill(configured ? '已连接' : '待配置', configured ? 'success' : 'warn')}
-          <span>${source?.credential_configured ? '访问凭据已安全保存' : '需要配置 Apifox 项目和访问令牌'}</span>
+          <span>${source?.credential_configured ? '访问凭据已安全保存；重新读取会同步接口、环境和 base_url' : '需要配置 Apifox 项目和访问令牌'}</span>
         </div>
         <div class="api-source-actions">
-          <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在同步' : primaryLabel)}</button>
+          <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在读取' : primaryLabel)}</button>
           <button class="btn-sm icon-only" title="刷新接口资产" aria-label="刷新接口资产" onclick="refreshApiAssetWorkspace(true)">↻</button>
           <button class="btn-sm icon-only" title="Apifox 来源设置" aria-label="Apifox 来源设置" onclick="toggleApiSourceSettings()">⚙</button>
         </div>
       </div>
+      ${renderApiSourceEnvironmentCompact(source || {})}
       <div class="api-source-facts">
         <span><small>自动同步</small><strong>${schedule.mode === 'automatic' ? '已开启' : '未开启'}</strong></span>
         <span><small>最近成功</small><strong>${escapeHtml(schedule.last_success_at || source?.last_success_at || '等待首次同步')}</strong></span>
@@ -1054,7 +1099,11 @@ async function loadApiSourceProjectContext(projectId) {
   try {
     const data = await apiRequest('/api-testing/apifox/discovery/project-context', {
       method: 'POST',
-      body: { ...credentials, project_id: String(projectId || '') },
+      body: {
+        ...credentials,
+        project_id: String(projectId || ''),
+        environment_id: source.environment_id || ''
+      },
       timeoutMs: 35000
     });
     if (requestId !== apiSourceDiscoveryRequestId || apiSourceDiscoveryState.sourceKey !== apiSourceDiscoveryKey(source)) return;
@@ -3179,9 +3228,12 @@ function renderApiExecutionHeader(context) {
   const readiness = context.readiness || {};
   const metadata = context.metadata || {};
   const selection = context.selection || {};
+  const source = context.source || {};
+  const sourceEnv = apiSourceEnvironmentSummary(source);
   const selectedEnvironments = (context.environments || []).filter(item => !selection.project_id || !item.project_id || String(item.project_id) === String(selection.project_id));
   const connectionClass = connection.state === 'connected' ? 'success' : (connection.state === 'disconnected' ? 'danger' : 'warn');
   const missing = readiness.missing || [];
+  const missingBaseUrl = missing.includes('base_url');
   return `
     <div class="api-execution-status-row">
       <div class="api-connection-summary">
@@ -3193,15 +3245,38 @@ function renderApiExecutionHeader(context) {
         <button class="btn-sm icon-only" title="刷新执行数据" aria-label="刷新执行数据" onclick="refreshApiExecutionContext(true)">↻</button>
       </div>
     </div>
-    <div class="api-execution-selectors">
-      <label><span>业务</span><select class="api-execution-project-select" onchange="changeApiExecutionProject(this.value)">${apiSelectOptions(context.businesses, selection.project_id, '选择业务')}</select></label>
-      <label><span>环境</span><select class="api-execution-environment-select" onchange="changeApiExecutionEnvironment(this.value)" ${selection.project_id ? '' : 'disabled'}>${apiSelectOptions(selectedEnvironments, selection.environment_id, '选择环境')}</select></label>
-      <div class="api-readiness-fact">
-        <span>${metadata.stale ? '过期缓存，仅供查看' : '实时数据'}</span>
-        <strong>${escapeHtml(readiness.primary_action || '-')}</strong>
+    <div class="api-execution-env-card">
+      <div class="api-execution-env-main">
+        <div>
+          <span>执行环境</span>
+          <strong>${escapeHtml(apiBusinessAuthEnvironmentName(context, context.auth_binding || {}))}</strong>
+          <small>${escapeHtml(connection.base_url || sourceEnv.baseUrl || (missingBaseUrl ? 'Apifox 环境未返回 base_url' : '-'))}</small>
+        </div>
+        <div class="api-execution-env-actions">
+          <button class="btn-sm" onclick="showApiAssetsPage()">重新读取 Apifox 环境</button>
+          <button class="btn-sm primary" onclick="refreshApiExecutionContext(true)">刷新状态</button>
+        </div>
       </div>
+      <div class="api-execution-env-facts">
+        <div><span>业务</span><strong>${escapeHtml(apiBusinessAuthProjectName(context, context.auth_binding || {}))}</strong></div>
+        <div><span>Base URL</span><strong>${escapeHtml(connection.base_url || sourceEnv.baseUrl || '缺失')}</strong></div>
+        <div><span>变量</span><strong>${escapeHtml(sourceEnv.variableCount)} 个</strong><small>${escapeHtml(sourceEnv.sensitiveCount)} 个敏感</small></div>
+        <div><span>执行状态</span><strong>${escapeHtml(readiness.primary_action || '-')}</strong></div>
+      </div>
+      ${missingBaseUrl ? `<div class="api-env-action-required"><strong>需要先拉取 Apifox 环境</strong><span>当前环境没有可执行的 base_url。请回到“接口资产”，选择 Apifox 环境并点击“重新读取 Apifox 资产”。</span></div>` : ''}
     </div>
-    ${missing.length ? `<div class="api-readiness-missing"><strong>还缺：</strong>${missing.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
+    <details class="api-execution-selector-detail">
+      <summary>切换业务或环境</summary>
+      <div class="api-execution-selectors">
+        <label><span>业务</span><select class="api-execution-project-select" onchange="changeApiExecutionProject(this.value)">${apiSelectOptions(context.businesses, selection.project_id, '选择业务')}</select></label>
+        <label><span>环境</span><select class="api-execution-environment-select" onchange="changeApiExecutionEnvironment(this.value)" ${selection.project_id ? '' : 'disabled'}>${apiSelectOptions(selectedEnvironments, selection.environment_id, '选择环境')}</select></label>
+        <div class="api-readiness-fact">
+          <span>${metadata.stale ? '过期缓存，仅供查看' : '实时数据'}</span>
+          <strong>${escapeHtml(readiness.primary_action || '-')}</strong>
+        </div>
+      </div>
+    </details>
+    ${missing.length && !missingBaseUrl ? `<div class="api-readiness-missing"><strong>还缺：</strong>${missing.map(item => `<span>${escapeHtml(item)}</span>`).join('')}</div>` : ''}
     ${metadata.stale ? `<div class="api-stale-warning">业务或环境来自过期缓存。完成一次实时校验前，执行按钮保持禁用。</div>` : ''}
     ${renderApiBusinessAuthPanel(context)}
   `;

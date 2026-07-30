@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 Apifox 环境 base_url 读取与 API 页面环境优先展示
+
+用户反馈：
+
+- API 资产和 API 执行页仍然混乱，最核心诉求是“能正常拉取 Apifox 的环境”。
+- 执行页显示 `base_url` 缺失，导致不知道下一步该怎么处理。
+
+线上复核：
+
+- 生产 `/api/api-testing/sources` 中两个 Apifox source 均显示 `last_sync_status=succeeded`。
+- 但 `environment_snapshot.base_urls=[]`，其中 `3D / 生产环境（新）-腾讯云` 也没有 base_url。
+- 因此问题不是前端单纯没展示，而是后端只读取了 Apifox `environment list`，没有按官方 CLI 文档补读 `environment get <envId>` 的环境详情。
+
+参考与判断：
+
+- Apifox CLI 官方文档说明 `environment list` 用于列出项目环境，`environment get` 用于查看特定环境配置详情（前置 URL / Base URL 等）。
+- Postman、Insomnia、Hoppscotch 等成熟 API 工具都把 Environment 作为执行上下文，先明确 base URL、变量和敏感值状态，再进入执行和报告。
+- 本轮不再保留 MeterSphere 执行概念；页面只围绕 Apifox source、当前环境、base_url、变量数和原生执行 readiness 展示。
+
+修复：
+
+- `apifox_discovery_service.discover_project_context()` 新增 `preferred_environment_id`。
+- 环境数量不多时批量调用 `apifox environment get <envId>` 补全详情；环境很多时优先补当前已选环境，避免大项目读取过慢。
+- 环境快照解析兼容 `baseUrls / baseUrl / servers / serverList / services / serviceList / hosts`，变量兼容数组和对象 map。
+- 仍按敏感字段规则脱敏，不把 token/secret/password/cookie/authorization 明文写入本地或前端。
+- API 资产页顶部新增紧凑环境卡：Apifox 项目、当前环境、服务地址、环境变量数。
+- API 执行页把“执行环境”提升为主卡，缺 `base_url` 时明确提示回接口资产重新读取 Apifox 环境；业务/环境切换降级为折叠高级项。
+- 前端缓存版本更新为 `20260730-api-env-readiness`。
+
+验证：
+
+```bash
+python3 tests/apifox_discovery_checks.py
+python3 tests/api_asset_sync_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 -m py_compile task_server/services/apifox_discovery_service.py task_server/router.py tests/apifox_discovery_checks.py tests/frontend_static_checks.py
+git diff --check -- task_server/services/apifox_discovery_service.py task_server/router.py js/api-testing.js css/round5.css task-manager.html tests/apifox_discovery_checks.py tests/frontend_static_checks.py
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被既有 OBJ 保龄球历史 YAML 断言拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮未修改历史 YAML。
+
 ### 2026-07-30 Agent 历史卡片非冒烟统计
 
 用户发现 Agent 运行记录卡片里“非冒烟”显示 `无非冒烟用例`，但同一任务实际已执行扩展/remaining 用例。

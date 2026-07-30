@@ -148,6 +148,36 @@
   overflow-wrap: anywhere;
   font-size: 12px;
 }
+.api-source-env-compact {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.5);
+}
+.api-source-env-compact > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+}
+.api-source-env-compact > div:last-child {
+  border-right: 0;
+}
+.api-source-env-compact > div.warn {
+  border-left: 3px solid var(--warning);
+  background: rgba(255, 197, 61, 0.06);
+}
+.api-source-env-compact span,
+.api-source-env-compact small {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-source-env-compact strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .api-asset-revision-picker select {
   width: 100%;
   min-width: 0;
@@ -2316,6 +2346,79 @@
 .api-readiness-fact strong {
   font-size: 12px;
 }
+.api-execution-env-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  background: rgba(15, 23, 42, 0.44);
+}
+.api-execution-env-main {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+.api-execution-env-main > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.api-execution-env-main span,
+.api-execution-env-facts span,
+.api-execution-env-facts small,
+.api-env-action-required span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-execution-env-main strong {
+  font-size: 16px;
+}
+.api-execution-env-main small,
+.api-execution-env-facts strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-execution-env-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.api-execution-env-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+}
+.api-execution-env-facts > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-right: 1px solid var(--border);
+}
+.api-execution-env-facts > div:last-child {
+  border-right: 0;
+}
+.api-env-action-required {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 197, 61, 0.35);
+  background: rgba(255, 197, 61, 0.08);
+}
+.api-execution-selector-detail {
+  margin-top: 10px;
+  color: var(--text3);
+}
+.api-execution-selector-detail > summary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: 11px;
+}
 .api-business-auth-panel {
   display: grid;
   gap: 10px;
@@ -3301,8 +3404,24 @@
     grid-column: auto;
   }
   .api-source-facts,
-  .api-asset-revision-bar {
+  .api-asset-revision-bar,
+  .api-source-env-compact,
+  .api-execution-env-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .api-source-env-compact > div:nth-child(2n),
+  .api-execution-env-facts > div:nth-child(2n) {
+    border-right: 0;
+  }
+  .api-execution-env-main {
+    flex-direction: column;
+  }
+  .api-execution-env-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .api-execution-env-actions .btn-sm {
+    flex: 1;
   }
   .api-source-settings-grid {
     grid-template-columns: 1fr;

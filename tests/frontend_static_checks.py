@@ -79,7 +79,7 @@ def main():
         "API assets must use server-side sources and backend-timed asynchronous synchronization",
     )
     require(
-        ("同步 Apifox" in api_testing_js or "立即同步" in api_testing_js)
+        ("同步 Apifox" in api_testing_js or "重新读取 Apifox 资产" in api_testing_js)
         and "上传 OpenAPI JSON" in api_testing_js
         and "api-source-token" in api_testing_js
         and 'type="password"' in api_testing_js,
@@ -526,13 +526,25 @@ def main():
     require(
         "renderApiSourceEnvironmentSnapshot" in api_testing_js
         and "useApiSourceEnvironmentSnapshot" in api_testing_js
+        and "apiSourceEnvironmentSummary" in api_testing_js
+        and "renderApiSourceEnvironmentCompact" in api_testing_js
         and "environment_snapshot" in api_testing_js
         and "/environment-sync" in api_testing_js
         and "Apifox 环境配置" in api_testing_js
+        and "未读取到 base_url" in api_testing_js
         and "使用该环境执行" in api_testing_js
         and "敏感值未同步" in api_testing_js
         and "api-source-environment-snapshot" in api_testing_js,
-        "API source workspace must display the Apifox environment snapshot for native execution without sensitive values",
+        "API source workspace must display a compact Apifox environment snapshot for native execution without sensitive values",
+    )
+    require(
+        "api-execution-env-card" in api_testing_js
+        and "重新读取 Apifox 环境" in api_testing_js
+        and "api-env-action-required" in api_testing_js
+        and "需要先拉取 Apifox 环境" in api_testing_js
+        and "切换业务或环境" in api_testing_js
+        and "api-execution-selector-detail" in api_testing_js,
+        "Native API execution must make Apifox environment readiness the primary execution precondition",
     )
     require(
         "captureApiPlanGenerationLogViewState" in api_testing_js
@@ -801,7 +813,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-draft-case-debug" in html and "js/api-testing.js?v=20260730-native-api-execution" in html and "js/agent-status.js?v=20260730-agent-history-non-smoke-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, Agent report-card non-smoke buckets, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-env-readiness" in html and "js/api-testing.js?v=20260730-api-env-readiness" in html and "js/agent-status.js?v=20260730-agent-history-non-smoke-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, Agent report-card non-smoke buckets, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

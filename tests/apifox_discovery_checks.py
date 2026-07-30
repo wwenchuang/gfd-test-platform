@@ -127,6 +127,15 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                             ],
                         }})
                         raise SystemExit(0)
+                    if mode == "list_without_environment_detail":
+                        emit({{
+                            "success": True,
+                            "data": [{{
+                                "id": 99,
+                                "name": "APP 测试环境"
+                            }}],
+                        }})
+                        raise SystemExit(0)
                     emit({{
                         "success": True,
                         "data": [{{
@@ -138,6 +147,22 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                                 {{"name": "accessToken", "value": "secret-runtime-token"}},
                             ],
                         }}],
+                    }})
+                elif args[:2] == ["environment", "get"]:
+                    emit({{
+                        "success": True,
+                        "data": {{
+                            "id": 99,
+                            "name": "APP 测试环境",
+                            "serverList": [
+                                {{"name": "default", "url": "https://app-api.example.test"}},
+                                {{"name": "upload", "url": "https://upload.example.test"}}
+                            ],
+                            "variables": {{
+                                "tenantId": "tenant-3d",
+                                "accessToken": "secret-runtime-token"
+                            }},
+                        }},
                     }})
                 else:
                     print(json.dumps({{
@@ -269,6 +294,40 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
         self.assertEqual("tenant-3d", snapshot["variables"][0]["value"])
         self.assertEqual("", snapshot["variables"][1]["value"])
         self.assertTrue(snapshot["variables"][1]["sensitive"])
+        self.assertNotIn("secret-runtime-token", json.dumps(snapshot, ensure_ascii=False))
+
+    def test_project_context_enriches_environment_detail_from_get(self):
+        self._set_mode("list_without_environment_detail")
+
+        result = discovery.discover_project_context(
+            self.token,
+            "5904970",
+            cli_bin=str(self.cli_path),
+            timeout_seconds=5,
+        )
+
+        snapshot = result["environments"][1]["environment_snapshot"]
+        self.assertEqual(
+            [
+                {"name": "default", "url": "https://app-api.example.test"},
+                {"name": "upload", "url": "https://upload.example.test"},
+            ],
+            snapshot["base_urls"],
+        )
+        self.assertEqual(2, snapshot["variable_count"])
+        self.assertEqual(1, snapshot["sensitive_variable_count"])
+        self.assertIn(
+            [
+                "environment",
+                "get",
+                "99",
+                "--project",
+                "5904970",
+                "--api-base-url",
+                discovery.DEFAULT_BASE_URL,
+            ],
+            self._argv(),
+        )
         self.assertNotIn("secret-runtime-token", json.dumps(snapshot, ensure_ascii=False))
 
     def test_project_context_accepts_cli_json_with_prompt_noise(self):

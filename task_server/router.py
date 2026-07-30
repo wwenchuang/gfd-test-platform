@@ -2908,6 +2908,9 @@ def _post_api_testing_apifox_discovery_project_context(handler, qs):
             access_token,
             project_id,
             base_url=base_url,
+            preferred_environment_id=str(
+                data.get("environment_id") or data.get("environmentId") or ""
+            ).strip(),
         )
         handler._json({"ok": True, **result})
     except LookupError as exc:

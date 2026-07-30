@@ -361,14 +361,24 @@ def _base_url_rows(value: Any) -> List[Dict[str, str]]:
     elif isinstance(value, list):
         iterable = []
         for index, item in enumerate(value):
+            if isinstance(item, str):
+                iterable.append((f"url{index + 1}", item))
+                continue
             raw = item if isinstance(item, dict) else {}
             iterable.append((
-                raw.get("name") or raw.get("key") or raw.get("id") or f"url{index + 1}",
-                raw.get("url") or raw.get("value") or raw.get("baseUrl"),
+                raw.get("name") or raw.get("key") or raw.get("id") or raw.get("title") or f"url{index + 1}",
+                raw.get("url")
+                or raw.get("value")
+                or raw.get("baseUrl")
+                or raw.get("base_url")
+                or raw.get("server")
+                or raw.get("host"),
             ))
     else:
         iterable = []
     for name, url in iterable:
+        if isinstance(url, dict):
+            url = url.get("url") or url.get("value") or url.get("baseUrl") or url.get("base_url")
         clean_url = _safe_text(url, 500)
         if not clean_url or clean_url in seen:
             continue
@@ -383,7 +393,13 @@ def _base_url_rows(value: Any) -> List[Dict[str, str]]:
 
 
 def _environment_variable_rows(value: Any) -> List[Dict[str, Any]]:
-    rows = value if isinstance(value, list) else []
+    if isinstance(value, dict):
+        rows = [
+            {"name": key, "value": item.get("value") if isinstance(item, dict) else item}
+            for key, item in value.items()
+        ]
+    else:
+        rows = value if isinstance(value, list) else []
     result: List[Dict[str, Any]] = []
     seen = set()
     for item in rows:
@@ -421,6 +437,11 @@ def _environment_snapshot(raw: Dict[str, Any]) -> Dict[str, Any]:
         or raw.get("base_urls")
         or raw.get("baseUrl")
         or raw.get("base_url")
+        or raw.get("servers")
+        or raw.get("serverList")
+        or raw.get("services")
+        or raw.get("serviceList")
+        or raw.get("hosts")
     )
     variables = _environment_variable_rows(
         raw.get("variables")
@@ -434,6 +455,75 @@ def _environment_snapshot(raw: Dict[str, Any]) -> Dict[str, Any]:
         "variable_count": len(variables),
         "sensitive_variable_count": sum(1 for item in variables if item.get("sensitive")),
     }
+
+
+def _merge_environment_detail(raw: Dict[str, Any], detail: Any) -> Dict[str, Any]:
+    if not isinstance(detail, dict):
+        return raw
+    merged = dict(raw)
+    for key, value in detail.items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    nested = (
+        detail.get("environment")
+        or detail.get("config")
+        or detail.get("setting")
+        or detail.get("settings")
+    )
+    if isinstance(nested, dict):
+        for key, value in nested.items():
+            if value not in (None, "", [], {}):
+                merged[key] = value
+    return merged
+
+
+def _enrich_environment_options(
+    values: Any,
+    *,
+    cli_path: str,
+    env: Dict[str, str],
+    deadline: float,
+    token: str,
+    project_id: str,
+    normalized_base_url: str,
+    preferred_environment_id: str = "",
+) -> List[Dict[str, Any]]:
+    rows = values if isinstance(values, list) else []
+    ids = [
+        _safe_text((item if isinstance(item, dict) else {}).get("id", (item if isinstance(item, dict) else {}).get("environmentId")), 100)
+        for item in rows
+    ]
+    ids = [item for item in ids if item]
+    preferred = _safe_text(preferred_environment_id, 100)
+    should_enrich_all = len(ids) <= 30
+    enrich_ids = set(ids if should_enrich_all else ([preferred] if preferred in ids else []))
+    enriched_rows: List[Dict[str, Any]] = []
+    for item in rows:
+        raw = item if isinstance(item, dict) else {}
+        item_id = _safe_text(raw.get("id", raw.get("environmentId")), 100)
+        if item_id in enrich_ids:
+            try:
+                detail = _run_json_cli(
+                    [
+                        cli_path,
+                        "environment",
+                        "get",
+                        item_id,
+                        "--project",
+                        project_id,
+                        "--api-base-url",
+                        normalized_base_url,
+                    ],
+                    env=env,
+                    deadline=deadline,
+                    token=token,
+                    missing_project=True,
+                )
+                raw = _merge_environment_detail(raw, detail)
+            except ApifoxDiscoveryError:
+                raw = dict(raw)
+        enriched_rows.append(raw)
+    return _named_options(enriched_rows, kind="environment")
 
 
 def _discovery_session(
@@ -509,6 +599,7 @@ def discover_project_context(
     base_url: str = DEFAULT_BASE_URL,
     timeout_seconds: float = 25.0,
     cli_bin: Optional[str] = None,
+    preferred_environment_id: str = "",
 ) -> Dict[str, Any]:
     target_project_id = _safe_text(project_id, 100)
     if not target_project_id:
@@ -556,7 +647,16 @@ def discover_project_context(
         ]
         environments = [
             {"id": "", "name": "不绑定环境", "is_default": True, "environment_snapshot": {}},
-            *_named_options(environment_values, kind="environment"),
+            *_enrich_environment_options(
+                environment_values,
+                cli_path=cli_path,
+                env=env,
+                deadline=deadline,
+                token=token,
+                project_id=target_project_id,
+                normalized_base_url=normalized_base_url,
+                preferred_environment_id=preferred_environment_id,
+            ),
         ]
         return {
             "capability": capability,
