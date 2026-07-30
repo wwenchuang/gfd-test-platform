@@ -281,7 +281,7 @@ def _local_cases_for_endpoint(endpoint: Dict[str, Any], plan_id: str, offset: in
             "P0",
             [
                 f"按 OpenAPI 定义准备 {endpoint_text} 的合法请求参数",
-                "使用当前 MeterSphere 环境变量发送请求",
+                "使用当前平台 API 执行环境发送请求",
                 "保存响应体用于断言",
             ],
             _response_assertion_texts(endpoint),
@@ -1161,7 +1161,7 @@ def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
     if "auth_binding_drift" in binding_drift:
         raise ValueError("API 测试计划认证绑定已变更，请重新生成")
     if "workspace_binding_drift" in binding_drift:
-        raise ValueError("API 测试计划 MeterSphere 绑定已变更，请重新生成")
+        raise ValueError("API 测试计划执行环境已变更，请重新生成")
     if not (evaluated.get("execution_readiness") or {}).get("can_confirm"):
         raise ValueError("API 测试计划没有可执行用例，请先补齐必填测试数据")
     plan["status"] = "confirmed"

@@ -1,4 +1,4 @@
-// API testing workspace: OpenAPI assets -> AI plan drafts -> MeterSphere execution -> reports.
+// API testing workspace: OpenAPI assets -> AI plan drafts -> native API execution -> reports.
 
 let apiPlanPageRequestId = 0;
 let apiPlanGenerationRequestId = 0;
@@ -25,6 +25,8 @@ let apiReportRequestId = 0;
 let apiReportRequestController = null;
 let apiReportPollTimer = null;
 let apiTestingReportContext = null;
+let apiSelectedReportId = '';
+let apiSelectedReportDetail = null;
 let apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
 const API_PLAN_MAX_ENDPOINTS = 60;
 let apiAssetBusinessLines = [];
@@ -122,6 +124,10 @@ function setApiTestingPage(workflow, title, help) {
 
 function apiStatusPill(text, cls = '') {
   return `<span class="status-pill ${escapeHtml(cls)}">${escapeHtml(text || '-')}</span>`;
+}
+
+function apiJsString(value) {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '');
 }
 
 function apiTestingEmpty(text) {
@@ -306,25 +312,24 @@ async function loadApiTestingOverview() {
 }
 
 async function showApiTestingDashboard() {
-  const area = setApiTestingPage('api_dashboard', 'API 工作台', 'OpenAPI 导入、AI 用例计划、MeterSphere 执行和 API 报告闭环。');
+  const area = setApiTestingPage('api_dashboard', 'API 工作台', 'Apifox 接口资产、AI 用例计划、平台原生执行和 API 报告闭环。');
   if (!area) return;
   area.innerHTML = `<div class="generation-records">${apiTestingEmpty('正在读取 API 测试状态...')}</div>`;
   try {
     const data = await loadApiTestingOverview();
     const summary = data.summary || {};
-    const ms = data.metersphere || {};
     area.innerHTML = `
       <div class="api-testing-page">
         <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_dashboard', reports: apiTestingReports})}</div>
         <div class="generation-record-head">
-          <div class="workflow-kicker">API TESTING · OpenAPI / MeterSphere</div>
+          <div class="workflow-kicker">API TESTING · Apifox / Native Runner</div>
           <h2>API 工作台</h2>
-          <p>从 Apifox 只读同步 OpenAPI 版本和差异，确认用例计划后再进入 MeterSphere。</p>
+          <p>从 Apifox 只读同步接口版本和环境，AI 生成用例后由平台直接执行并生成报告。</p>
           <div class="generation-record-actions">
             <button class="btn-sm primary" onclick="showApiAssetsPage()">接口资产</button>
             <button class="btn-sm ai" onclick="showApiPlanPage()">AI 用例计划</button>
             <button class="btn-sm" onclick="showApiBaselinesPage()">API 基线</button>
-            <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
+            <button class="btn-sm" onclick="showApiExecutionPage()">API 执行</button>
             <button class="btn-sm" onclick="showApiReportsPage()">API 报告</button>
           </div>
         </div>
@@ -332,7 +337,7 @@ async function showApiTestingDashboard() {
           <div class="review-stat"><strong>${summary.snapshot_count || 0}</strong><span>接口快照</span></div>
           <div class="review-stat"><strong>${summary.endpoint_count || 0}</strong><span>接口数</span></div>
           <div class="review-stat"><strong>${summary.plan_count || 0}</strong><span>用例计划</span></div>
-          <div class="review-stat"><strong>${ms.configured ? '已配置' : '未配置'}</strong><span>MeterSphere</span></div>
+          <div class="review-stat"><strong>原生</strong><span>执行器</span></div>
         </div>
         <div class="api-two-column">
           <section class="api-panel">
@@ -701,7 +706,7 @@ function renderApiSourceEnvironmentSnapshot(source = {}) {
           <h4>Apifox 环境配置</h4>
           <small>${baseUrls.length} 个服务地址 · ${variableCount} 个变量 · ${sensitiveCount} 个敏感值未同步</small>
         </div>
-        <button type="button" class="btn-sm primary" onclick="syncApiSourceEnvironmentToMeterSphere()" ${canSync ? '' : 'disabled'}>同步到 MeterSphere 环境</button>
+        <button type="button" class="btn-sm primary" onclick="useApiSourceEnvironmentSnapshot()" ${canSync ? '' : 'disabled'}>使用该环境执行</button>
       </div>
       <div class="api-source-environment-grid">
         <div><strong>服务地址</strong><ul>${baseUrlRows}</ul></div>
@@ -1301,7 +1306,7 @@ function renderApiAssetActionPanelContent(source = selectedApiAssetSource() || {
     <div class="api-asset-action-buttons">
       <button class="btn-sm ai" onclick="launchApiPlanGenerationFromAssets()" ${selectedCount ? '' : 'disabled'}>进入 AI 用例计划</button>
       <button class="btn-sm" onclick="showApiBaselinesPage()">查看 API 基线</button>
-      <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
+      <button class="btn-sm" onclick="showApiExecutionPage()">API 执行</button>
     </div>
     <div class="api-asset-generation-feedback">
       <strong>生成任务尚未开始</strong>
@@ -1637,7 +1642,7 @@ async function clearApiSourceCredential() {
   await saveApiSourceConfig(true);
 }
 
-async function syncApiSourceEnvironmentToMeterSphere() {
+async function useApiSourceEnvironmentSnapshot() {
   const source = selectedApiAssetSource() || {};
   const sourceId = source.source_id || '';
   if (!sourceId) {
@@ -1649,10 +1654,10 @@ async function syncApiSourceEnvironmentToMeterSphere() {
       method: 'POST'
     });
     const sync = data.sync || {};
-    showToast(`✓ 已同步 ${sync.synced || 0} 个 Apifox 环境变量到 MeterSphere`, 'success');
+    showToast(sync.message || '✓ API 执行将直接使用当前 Apifox 环境快照', 'success');
     await refreshApiAssetWorkspace(true);
   } catch (error) {
-    showToast(error.message || 'Apifox 环境同步到 MeterSphere 失败', 'error');
+    showToast(error.message || 'Apifox 环境读取失败', 'error');
   }
 }
 
@@ -2231,7 +2236,7 @@ function renderApiPlanBindingDriftPanel(plan = {}) {
   const authLabel = authConfigured ? (currentAuth.variable_name || currentAuth.auth_ref || '已配置') : '当前环境未配置业务 token';
   const authDetail = authConfigured
     ? `${currentAuth.header_name || 'Authorization'} · ${currentAuth.auth_ref || '服务端引用'}`
-    : '请先在 MeterSphere 执行页配置业务用户登录 token';
+    : '请先在 API 执行页配置业务用户登录 token';
   return `
     <section class="api-plan-binding-drift-panel">
       <div>
@@ -2280,7 +2285,7 @@ function renderApiPlanReviewGuide(plan = {}) {
       <ul>
         <li>确认请求方法、路径、入参、鉴权变量和响应断言是否符合业务接口合同。</li>
         <li>待补数据不是失败；可以编辑 draft 用例补齐参数、Body 或断言，也可以先调试单条可执行用例。</li>
-        <li>可执行项满足本次范围后再采纳为基线，采纳后才能进入 MeterSphere 正式回归执行。</li>
+        <li>可执行项满足本次范围后再采纳为基线，采纳后才能进入平台 API 回归执行。</li>
       </ul>
     </section>
   `;
@@ -2750,7 +2755,7 @@ async function debugApiPlanCase(planId, caseId) {
   apiCaseDebugStartingKey = debugKey;
   rerenderApiPlanReview();
   try {
-    const data = await apiRequest('/api-testing/metersphere/executions/debug-case', {
+    const data = await apiRequest('/api-testing/executions/debug-case', {
       method: 'POST',
       body: {plan_id: planId, case_id: caseId}
     });
@@ -2850,8 +2855,8 @@ function renderApiPlanDetail(plan) {
     <div class="api-plan-detail-head"><div><span>${plan.status === 'confirmed' ? '基线用例' : '候选审阅'}</span><h3>${escapeHtml(plan.name || 'API 用例计划')}</h3></div>${isStale ? apiStatusPill('接口已变化', 'danger') : apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}</div>
     <div class="api-plan-case-origin-banner" data-source="${escapeHtml(plan.source || '')}">
       <strong>${plan.status === 'confirmed' ? 'API 基线用例' : 'AI 生成结果'}</strong>
-      <span>${plan.status === 'confirmed' ? '该计划已采纳为基线，可进入 MeterSphere 执行。' : '这是 AI 生成的 draft 候选，请先按接口审阅用例明细；确认后点“采纳为基线”。'}</span>
-      <small>${escapeHtml(sourceText)} · 业务鉴权 ${plan.auth_binding?.configured ? '已绑定 MeterSphere 环境变量' : '未配置业务用户登录 token'}</small>
+      <span>${plan.status === 'confirmed' ? '该计划已采纳为基线，可进入平台 API 执行。' : '这是 AI 生成的 draft 候选，请先按接口审阅用例明细；确认后点“采纳为基线”。'}</span>
+      <small>${escapeHtml(sourceText)} · 业务鉴权 ${plan.auth_binding?.configured ? '已绑定平台安全 profile' : '未配置业务用户登录 token'}</small>
     </div>
     ${renderApiPlanReviewGuide(plan)}
     <div class="review-stats compact api-plan-readiness">
@@ -3103,21 +3108,17 @@ function apiSelectOptions(items, selectedId, emptyText) {
 async function showApiExecutionPage() {
   stopApiExecutionPolling(true);
   apiBusinessAuthEditing = false;
-  const area = setApiTestingPage('api_execution', 'MeterSphere 执行', '按 API 基线单独推送用例，跟踪 MeterSphere 真实运行并同步报告。');
+  const area = setApiTestingPage('api_execution', 'API 执行', '平台直接执行 Apifox/AI 生成的接口用例，实时查看日志和报告。');
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-execution-console">
       <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_execution'})}</div>
-      <section id="api-execution-header" class="api-execution-header">${apiTestingEmpty('正在检查 MeterSphere...')}</section>
+      <section id="api-execution-header" class="api-execution-header">${apiTestingEmpty('正在检查 API 执行环境...')}</section>
       <section id="api-active-run" class="api-active-run" hidden></section>
       <section class="api-execution-plans-section">
         <div class="api-section-heading"><div><span>基线执行</span><h2>API 基线</h2></div><small id="api-plan-count">0 个计划</small></div>
         <div id="api-execution-plans">${apiTestingEmpty('正在读取 API 基线...')}</div>
       </section>
-      <div id="api-ms-settings-backdrop" class="api-settings-backdrop" onclick="closeApiMeterSphereSettings()" hidden></div>
-      <aside id="api-ms-settings-drawer" class="api-settings-drawer" aria-label="MeterSphere 设置" aria-hidden="true">
-        <div id="api-ms-settings-content"></div>
-      </aside>
     </div>
   `;
   await refreshApiExecutionContext(true);
@@ -3134,7 +3135,7 @@ async function refreshApiExecutionContext(force = false) {
     const query = new URLSearchParams();
     if (force) query.set('force', '1');
     if (sourceId) query.set('source_id', sourceId);
-    const data = await apiRequest(`/api-testing/metersphere/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal });
+    const data = await apiRequest(`/api-testing/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal });
     if (requestId !== apiExecutionContextRequestId || controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution' || capturedScopeKey !== apiProjectScopeKey()) return;
     stopApiExecutionPolling(true);
     apiExecutionContext = data;
@@ -3149,7 +3150,7 @@ async function refreshApiExecutionContext(force = false) {
   } catch (e) {
     if (controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution' || capturedScopeKey !== apiProjectScopeKey()) return;
     const header = document.getElementById('api-execution-header');
-    if (header) header.innerHTML = `<div class="api-inline-error">${escapeHtml(e.message || 'MeterSphere 执行上下文读取失败')}</div>`;
+    if (header) header.innerHTML = `<div class="api-inline-error">${escapeHtml(e.message || 'API 执行上下文读取失败')}</div>`;
   } finally {
     if (controller === apiExecutionRequestController) apiExecutionRequestController = null;
   }
@@ -3170,7 +3171,7 @@ function renderApiExecutionDynamic(context, activeRun) {
     active.innerHTML = activeRun ? renderApiActiveRun(activeRun) : '';
   }
   restoreApiExecutionLogViewState(active);
-  if (apiExecutionSettingsOpen) renderApiMeterSphereSettings(context);
+  apiExecutionSettingsOpen = false;
 }
 
 function renderApiExecutionHeader(context) {
@@ -3190,12 +3191,11 @@ function renderApiExecutionHeader(context) {
       </div>
       <div class="api-icon-actions">
         <button class="btn-sm icon-only" title="刷新执行数据" aria-label="刷新执行数据" onclick="refreshApiExecutionContext(true)">↻</button>
-        <button class="btn-sm icon-only" title="MeterSphere 设置" aria-label="MeterSphere 设置" onclick="openApiMeterSphereSettings()">⚙</button>
       </div>
     </div>
     <div class="api-execution-selectors">
-      <label><span>业务</span><select class="api-execution-project-select" onchange="changeApiMeterSphereProject(this.value)">${apiSelectOptions(context.businesses, selection.project_id, '选择业务')}</select></label>
-      <label><span>环境</span><select class="api-execution-environment-select" onchange="changeApiMeterSphereEnvironment(this.value)" ${selection.project_id ? '' : 'disabled'}>${apiSelectOptions(selectedEnvironments, selection.environment_id, '选择环境')}</select></label>
+      <label><span>业务</span><select class="api-execution-project-select" onchange="changeApiExecutionProject(this.value)">${apiSelectOptions(context.businesses, selection.project_id, '选择业务')}</select></label>
+      <label><span>环境</span><select class="api-execution-environment-select" onchange="changeApiExecutionEnvironment(this.value)" ${selection.project_id ? '' : 'disabled'}>${apiSelectOptions(selectedEnvironments, selection.environment_id, '选择环境')}</select></label>
       <div class="api-readiness-fact">
         <span>${metadata.stale ? '过期缓存，仅供查看' : '实时数据'}</span>
         <strong>${escapeHtml(readiness.primary_action || '-')}</strong>
@@ -3271,7 +3271,7 @@ function renderApiBusinessAuthPanel(context = {}) {
             <div><span>环境公共鉴权</span><h3>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</h3></div>
             ${apiStatusPill(`${auth.auth_type === 'api_key' ? 'API Key' : 'Bearer'} 已配置`, 'success')}
           </div>
-          <p>${reused ? `该环境已复用此鉴权，当前覆盖 ${usageCount} 个业务来源。` : '该环境下的接口执行会自动复用，无需每次提交。'} token 写入 MeterSphere 环境变量，平台本地只保存变量名和指纹。</p>
+          <p>${reused ? `该环境已复用此鉴权，当前覆盖 ${usageCount} 个业务来源。` : '该环境下的接口执行会自动复用，无需每次提交。'} token 保存为平台安全 profile，前端只显示变量名和指纹。</p>
         </div>
         ${renderApiBusinessAuthTarget(context, auth)}
         <details class="api-plan-tech-detail api-auth-detail">
@@ -3293,17 +3293,17 @@ function renderApiBusinessAuthPanel(context = {}) {
     return `
       <section class="api-business-auth-panel" data-configured="false">
         <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>当前环境尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
-        <p>优先通过 3D 项目的用户登录接口获取 token，再写入 MeterSphere 环境变量；平台本地只保存变量名和指纹。</p>
+        <p>优先通过 3D 项目的用户登录接口获取 token，再保存为平台安全 profile；前端只显示变量名和指纹。</p>
         ${renderApiBusinessAuthTarget(context, auth)}
         <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()">配置登录接口</button>
-        ${canEdit ? '' : `<small class="api-business-auth-hint">请先选择当前来源的 MeterSphere 业务和环境。</small>`}
+        ${canEdit ? '' : `<small class="api-business-auth-hint">请先选择当前来源的业务和环境。</small>`}
       </section>
     `;
   }
   return `
     <section class="api-business-auth-panel is-editing" data-configured="${configured ? 'true' : 'false'}">
       <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>${configured ? '更新业务用户登录 token' : '配置业务用户登录 token'}</h3></div><small>${escapeHtml(apiBusinessAuthEnvironmentName(context, auth))}</small></div>
-      <p>推荐从用户登录接口实时获取 token。登录账号密码只用于本次请求，返回 token 只转写到 MeterSphere 环境变量。</p>
+      <p>推荐从用户登录接口实时获取 token。登录账号密码只用于本次请求，返回 token 只保存到平台后端 profile。</p>
       ${renderApiBusinessAuthTarget(context, auth)}
       <div class="api-auth-segmented" role="group" aria-label="业务 token 获取方式">
         <button type="button" data-auth-source-mode="login" class="${apiBusinessAuthSourceMode === 'login' ? 'active' : ''}" onclick="setApiBusinessAuthSourceMode('login')">登录接口获取</button>
@@ -3340,7 +3340,7 @@ function editApiBusinessAuth() {
   const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
   const selectedEnvironmentId = apiExecutionContext?.selection?.environment_id || apiExecutionContext?.binding?.environment_id || '';
   if (!sourceId || !selectedEnvironmentId) {
-    showToast('请先选择当前来源的 MeterSphere 业务和环境', 'error');
+    showToast('请先选择当前来源的业务和环境', 'error');
     return;
   }
   const auth = apiBusinessAuthMetadata();
@@ -3436,7 +3436,7 @@ async function saveApiBusinessAuth() {
       binding: {...(apiExecutionContext?.binding || {}), auth_binding: binding}
     };
     renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
-    showToast(apiBusinessAuthSourceMode === 'login' ? '✓ 已通过登录接口获取 token 并写入 MeterSphere 环境' : '✓ 公共鉴权已写入当前 MeterSphere 环境', 'success');
+    showToast(apiBusinessAuthSourceMode === 'login' ? '✓ 已通过登录接口获取 token 并保存到平台' : '✓ 公共鉴权已保存到平台', 'success');
     await refreshApiExecutionContext(true);
   } catch (error) {
     if (secretInput) secretInput.value = '';
@@ -3448,7 +3448,7 @@ async function clearApiBusinessAuth() {
   const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
   const expected = apiBusinessAuthExpectedState();
   const usageCount = Math.max(1, Number(apiBusinessAuthMetadata().usage_count || 1));
-  if (!sourceId || !confirm(`确认清除当前 MeterSphere 环境的公共鉴权？这会影响 ${usageCount} 个业务来源，相关计划将不可执行。`)) return;
+  if (!sourceId || !confirm(`确认清除当前 API 环境的公共鉴权？这会影响 ${usageCount} 个业务来源，相关计划将不可执行。`)) return;
   try {
     const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(sourceId)}/auth-binding`, {
       method: 'DELETE',
@@ -3479,7 +3479,7 @@ function apiExecutionEmptyAction(context) {
   if (reason === 'no_plans') return { text: '尚未生成 API 用例计划', action: '去生成计划', handler: 'showApiPlanPage()' };
   if (reason === 'unconfirmed_plans') return { text: 'AI 候选尚未采纳为基线', action: '去审阅候选', handler: 'showApiPlanPage()' };
   if (reason === 'no_executable_plans') return { text: 'API 基线仍缺测试数据', action: '查看基线', handler: 'showApiBaselinesPage()' };
-  return { text: 'MeterSphere 尚未满足执行条件', action: '完成 MeterSphere 配置', handler: 'openApiMeterSphereSettings()' };
+  return { text: 'API 执行环境尚未满足条件', action: '检查环境与 token', handler: 'refreshApiExecutionContext(true)' };
 }
 
 function renderApiExecutionPlans(plans, context = {}) {
@@ -3503,15 +3503,13 @@ function renderApiExecutionPlans(plans, context = {}) {
           <strong>${escapeHtml(plan.name || plan.plan_id)}</strong>
           <span>${escapeHtml(plan.endpoint_count || 0)} 个接口 · 可执行 ${escapeHtml(plan.executable_case_count || 0)} / 待补 ${escapeHtml(plan.needs_review_case_count || 0)} · 采纳于 ${escapeHtml(plan.confirmed_at || '-')}</span>
         </div>
-        <div class="api-plan-binding"><span>MeterSphere 计划</span><strong>${escapeHtml(plan.test_plan_name || plan.test_plan_id || '首次执行时创建或选择')}</strong></div>
+        <div class="api-plan-binding"><span>执行器</span><strong>平台原生 API Runner</strong></div>
         <div class="api-plan-latest"><span>最近运行</span><strong>${escapeHtml(apiExecutionStateText(latest.status))} · 通过率 ${escapeHtml(passRate)}</strong><small>${escapeHtml(latest.started_at || latest.created_at || '暂无历史')} · 耗时 ${escapeHtml(apiDurationText(latest.duration_seconds))}</small></div>
         <div class="api-plan-actions">
-          <button class="btn-sm primary" onclick="startApiMeterSphereExecution(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''} title="${escapeHtml(disabled ? disabledReason : '推送确认用例并执行')}">推送并执行</button>
+          <button class="btn-sm primary" onclick="startApiExecution(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''} title="${escapeHtml(disabled ? disabledReason : '执行 API 基线')}">执行测试</button>
           <details class="api-plan-menu"><summary title="更多操作" aria-label="更多操作">⋯</summary><div>
-            <button onclick="pushApiPlanToMeterSphere(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''}>仅推送</button>
-            <button onclick="startApiMeterSphereExecution(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''}>重新执行</button>
+            <button onclick="startApiExecution(${jsArg(plan.plan_id)})" ${disabled ? 'disabled' : ''}>重新执行</button>
             <button onclick="showApiReportsPage()">查看历史</button>
-            <button onclick="openMeterSphereFromContext()">打开 MeterSphere</button>
           </div></details>
         </div>
         ${disabled ? `<div class="api-plan-disabled-reason">${escapeHtml(disabledReason)}</div>` : ''}
@@ -3529,7 +3527,7 @@ function renderApiActiveRun(execution) {
   const runMode = execution.run_mode === 'debug_case' ? '单条调试' : '基线回归';
   return `
     <div class="api-active-run-head">
-      <div><span>${escapeHtml(runMode)}</span><h2>${escapeHtml(execution.plan_name || execution.plan_id || 'MeterSphere 执行')}</h2></div>
+      <div><span>${escapeHtml(runMode)}</span><h2>${escapeHtml(execution.plan_name || execution.plan_id || 'API 执行')}</h2></div>
       ${apiStatusPill(apiExecutionStateText(execution.status), execution.status === 'failed' ? 'danger' : (execution.status === 'succeeded' ? 'success' : 'warn'))}
     </div>
     <div class="api-run-meta"><span>execution_id <code>${escapeHtml(execution.execution_id || '-')}</code></span><span>run_id <code>${escapeHtml(execution.run_id || '等待触发')}</code></span><span>已运行 ${escapeHtml(apiDurationText(execution.duration_seconds))}</span><span>最后更新 ${escapeHtml(execution.updated_at || '-')}</span></div>
@@ -3601,16 +3599,16 @@ function scheduleApiExecutionPoll(execution, requestId = apiExecutionPollRequest
   stopApiExecutionPolling();
   if (!execution?.execution_id || apiExecutionTerminal(execution) || activeWorkflow !== 'api_execution') return;
   const delay = Math.max(1000, Number(execution.poll_after_ms || 3000));
-  apiExecutionPollTimer = setTimeout(() => pollApiMeterSphereExecution(execution.execution_id, requestId, capturedScopeKey), delay);
+  apiExecutionPollTimer = setTimeout(() => pollApiExecution(execution.execution_id, requestId, capturedScopeKey), delay);
 }
 
-async function pollApiMeterSphereExecution(executionId, requestId = apiExecutionPollRequestId, capturedScopeKey = apiProjectScopeKey()) {
+async function pollApiExecution(executionId, requestId = apiExecutionPollRequestId, capturedScopeKey = apiProjectScopeKey()) {
   if (activeWorkflow !== 'api_execution' || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey()) return;
   if (apiExecutionPollController) apiExecutionPollController.abort();
   const controller = new AbortController();
   apiExecutionPollController = controller;
   try {
-    const data = await apiRequest(`/api-testing/metersphere/executions/${encodeURIComponent(executionId)}`, {signal: controller.signal});
+    const data = await apiRequest(`/api-testing/executions/${encodeURIComponent(executionId)}`, {signal: controller.signal});
     if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
     const execution = data.execution || {};
     const active = document.getElementById('api-active-run');
@@ -3624,13 +3622,13 @@ async function pollApiMeterSphereExecution(executionId, requestId = apiExecution
     else scheduleApiExecutionPoll(execution, requestId, capturedScopeKey);
   } catch (e) {
     if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
-    apiExecutionPollTimer = setTimeout(() => pollApiMeterSphereExecution(executionId, requestId, capturedScopeKey), 5000);
+    apiExecutionPollTimer = setTimeout(() => pollApiExecution(executionId, requestId, capturedScopeKey), 5000);
   } finally {
     if (controller === apiExecutionPollController) apiExecutionPollController = null;
   }
 }
 
-async function startApiMeterSphereExecution(planId) {
+async function startApiExecution(planId) {
   if (apiExecutionStartingPlanId) {
     showToast('正在创建执行，请勿重复提交', 'warn');
     return;
@@ -3641,7 +3639,7 @@ async function startApiMeterSphereExecution(planId) {
     planRoot.innerHTML = renderApiExecutionPlans(apiExecutionContext.plans || [], apiExecutionContext);
   }
   try {
-    const data = await apiRequest('/api-testing/metersphere/executions', { method: 'POST', body: { plan_id: planId, test_plan_id: '' } });
+    const data = await apiRequest('/api-testing/executions', { method: 'POST', body: { plan_id: planId } });
     const execution = data.execution || {};
     apiExecutionStartingPlanId = '';
     stopApiExecutionPolling(true);
@@ -3666,30 +3664,16 @@ async function startApiMeterSphereExecution(planId) {
         active.innerHTML = renderApiActiveRun(execution);
       }
     }
-    showToast('✓ MeterSphere 执行已排队', 'success');
+    showToast('✓ API 执行已排队', 'success');
     scheduleApiExecutionPoll(execution, apiExecutionPollRequestId, apiProjectScopeKey());
   } catch (e) {
     apiExecutionStartingPlanId = '';
-    showToast(e.message || 'MeterSphere 执行启动失败', 'error');
+    showToast(e.message || 'API 执行启动失败', 'error');
     await refreshApiExecutionContext(true);
   }
 }
 
-async function runApiPlanInMeterSphere(planId) {
-  return startApiMeterSphereExecution(planId);
-}
-
-async function pushApiPlanToMeterSphere(planId) {
-  try {
-    await apiRequest('/api-testing/metersphere/push', { method: 'POST', body: { plan_id: planId } });
-    showToast('✓ 已推送 MeterSphere', 'success');
-    await refreshApiExecutionContext(true);
-  } catch (e) {
-    showToast(e.message || '推送失败', 'error');
-  }
-}
-
-async function loadApiMeterSphereProjectEnvironments(projectId, intent = null) {
+async function loadApiExecutionProjectEnvironments(projectId, intent = null) {
   const sourceId = currentApiExecutionSourceId();
   if (!sourceId || !projectId) return [];
   const bindingIntent = intent || beginApiExecutionBindingIntent(projectId);
@@ -3724,15 +3708,15 @@ async function loadApiMeterSphereProjectEnvironments(projectId, intent = null) {
   }
 }
 
-async function changeApiMeterSphereProject(projectId) {
+async function changeApiExecutionProject(projectId) {
   if (!projectId) {
-    showToast('请选择 MeterSphere 业务', 'error');
+    showToast('请选择业务', 'error');
     renderApiBusinessAuthInHeader();
     return;
   }
   const intent = beginApiExecutionBindingIntent(projectId);
   try {
-    const environments = await loadApiMeterSphereProjectEnvironments(projectId, intent);
+    const environments = await loadApiExecutionProjectEnvironments(projectId, intent);
     if (!environments || !apiExecutionBindingIntentIsCurrent(intent)) return;
     const environmentId = (environments[0] || {}).id || '';
     if (!environmentId) {
@@ -3749,13 +3733,13 @@ async function changeApiMeterSphereProject(projectId) {
   }
 }
 
-async function changeApiMeterSphereEnvironment(environmentId) {
+async function changeApiExecutionEnvironment(environmentId) {
   const projectId = document.querySelector('.api-execution-project-select')?.value || apiExecutionContext?.selection?.project_id || '';
   const intent = beginApiExecutionBindingIntent(projectId, environmentId);
   await saveApiSourceExecutionBinding(projectId, environmentId, intent);
 }
 
-async function updateApiMeterSphereSelection(selection) {
+async function updateApiExecutionSelection(selection) {
   const current = apiExecutionContext?.selection || {};
   const projectId = selection.project_id || current.project_id || '';
   const environmentId = selection.environment_id || current.environment_id || '';
@@ -3795,7 +3779,7 @@ async function reloadApiExecutionBindingAfterConflict(intent, controller, reques
 async function saveApiSourceExecutionBinding(projectId, environmentId, intent = null) {
   const sourceId = currentApiExecutionSourceId();
   if (!sourceId || !projectId || !environmentId) {
-    showToast('请选择当前来源的 MeterSphere 业务和环境', 'error');
+    showToast('请选择当前来源的业务和环境', 'error');
     return;
   }
   const bindingIntent = intent || beginApiExecutionBindingIntent(projectId, environmentId);
@@ -3853,129 +3837,8 @@ async function saveApiSourceExecutionBinding(projectId, environmentId, intent = 
   }
 }
 
-function openMeterSphereFromContext() {
-  const url = apiExecutionContext?.connection?.base_url || '';
-  if (!url) return openApiMeterSphereSettings();
-  window.open(url, '_blank', 'noopener');
-}
-
-function openApiMeterSphereSettings() {
-  apiExecutionSettingsOpen = true;
-  const drawer = document.getElementById('api-ms-settings-drawer');
-  const backdrop = document.getElementById('api-ms-settings-backdrop');
-  if (drawer) {
-    drawer.classList.add('open');
-    drawer.setAttribute('aria-hidden', 'false');
-  }
-  if (backdrop) backdrop.hidden = false;
-  renderApiMeterSphereSettings(apiExecutionContext || {});
-}
-
-function closeApiMeterSphereSettings() {
-  apiExecutionSettingsOpen = false;
-  const drawer = document.getElementById('api-ms-settings-drawer');
-  const backdrop = document.getElementById('api-ms-settings-backdrop');
-  if (drawer) {
-    drawer.classList.remove('open');
-    drawer.setAttribute('aria-hidden', 'true');
-  }
-  if (backdrop) backdrop.hidden = true;
-}
-
-function renderApiMeterSphereSettings(context) {
-  const target = document.getElementById('api-ms-settings-content');
-  if (!target) return;
-  const config = context.config || {};
-  const selection = context.selection || {};
-  const authMode = config.auth_mode === 'access_key' ? 'access_key' : 'token';
-  target.innerHTML = `
-    <div class="api-settings-head"><div><span>MeterSphere</span><h2>连接与执行设置</h2></div><button class="btn-sm icon-only" title="关闭设置" aria-label="关闭设置" onclick="closeApiMeterSphereSettings()">×</button></div>
-    <div id="api-ms-status" class="generate-status"></div>
-    <section class="api-settings-group"><h3>服务地址</h3><label><span>MeterSphere 地址</span><input id="api-ms-base-url" value="${escapeHtml(config.base_url || '')}" placeholder="https://metersphere.example.com"></label><label><span>连接检查路径</span><input id="api-ms-health-path" value="${escapeHtml(config.health_path || '/api/health')}"></label><button class="btn-sm" onclick="testApiMeterSphereHealth()">连接检查</button></section>
-    <section class="api-settings-group"><h3>认证方式</h3><div class="api-ms-auth-mode"><label><input type="radio" name="api-ms-auth-mode" value="access_key" ${authMode === 'access_key' ? 'checked' : ''} onchange="syncApiMeterSphereAuthFields()"> Access Key</label><label><input type="radio" name="api-ms-auth-mode" value="token" ${authMode === 'token' ? 'checked' : ''} onchange="syncApiMeterSphereAuthFields()"> Token</label></div><div id="api-ms-auth-access" class="api-auth-fields"><label><span>Access Key</span><input id="api-ms-access-key" type="password" autocomplete="new-password" placeholder="${config.access_key_configured ? '已配置，留空保持' : '输入 Access Key'}"></label><label><span>Secret Key</span><input id="api-ms-secret-key" type="password" autocomplete="new-password" placeholder="${config.secret_key_configured ? '已配置，留空保持' : '输入 Secret Key'}"></label></div><div id="api-ms-auth-token" class="api-auth-fields"><label><span>Token</span><input id="api-ms-token" type="password" autocomplete="new-password" placeholder="${config.token_configured ? '已配置，留空保持' : '输入 Token'}"></label></div><button class="btn-sm danger ghost" onclick="clearApiMeterSphereAuth()">清除当前认证</button></section>
-    <section class="api-settings-group"><h3>业务与环境</h3><label><span>Workspace ID</span><input id="api-ms-workspace" value="${escapeHtml(config.workspace_id || '')}"></label><label><span>业务</span><select id="api-ms-project">${apiSelectOptions(context.businesses, selection.project_id, '选择业务')}</select></label><label><span>环境</span><select id="api-ms-env">${apiSelectOptions(context.environments, selection.environment_id, '选择环境')}</select></label></section>
-    <section class="api-settings-group"><h3>接口适配</h3><div class="api-settings-subhead">业务与环境读取</div><label><span>业务列表路径</span><input id="api-ms-project-list-path" value="${escapeHtml(config.project_list_path || '')}" placeholder="/project/list"></label><label><span>环境列表路径</span><input id="api-ms-environment-list-path" value="${escapeHtml(config.environment_list_path || '')}" placeholder="支持 {project_id}"></label><div class="api-settings-subhead">执行与报告</div><label><span>用例推送路径</span><input id="api-ms-case-path" value="${escapeHtml(config.case_push_path || '')}"></label><label><span>计划执行路径</span><input id="api-ms-run-path" value="${escapeHtml(config.plan_run_path || '')}"></label><label><span>运行状态路径</span><input id="api-ms-status-path" value="${escapeHtml(config.run_status_path || '')}" placeholder="支持 {run_id}"></label><label><span>报告查询路径</span><input id="api-ms-report-path" value="${escapeHtml(config.report_path || '')}" placeholder="支持 {run_id}"></label></section>
-    <div class="api-settings-actions"><button class="btn-sm" onclick="closeApiMeterSphereSettings()">取消</button><button class="btn-sm primary" onclick="saveApiMeterSphereConfig()">保存并重新检查</button></div>
-  `;
-  syncApiMeterSphereAuthFields();
-}
-
-function syncApiMeterSphereAuthFields() {
-  const mode = document.querySelector('input[name="api-ms-auth-mode"]:checked')?.value || 'token';
-  document.getElementById('api-ms-auth-access')?.classList.toggle('hidden', mode !== 'access_key');
-  document.getElementById('api-ms-auth-token')?.classList.toggle('hidden', mode !== 'token');
-}
-
-function collectApiMeterSphereConfig() {
-  return {
-    base_url: document.getElementById('api-ms-base-url')?.value.trim() || '',
-    auth_mode: document.querySelector('input[name="api-ms-auth-mode"]:checked')?.value || 'token',
-    token: document.getElementById('api-ms-token')?.value.trim() || '',
-    access_key: document.getElementById('api-ms-access-key')?.value.trim() || '',
-    secret_key: document.getElementById('api-ms-secret-key')?.value.trim() || '',
-    workspace_id: document.getElementById('api-ms-workspace')?.value.trim() || '',
-    project_id: document.getElementById('api-ms-project')?.value || '',
-    environment_id: document.getElementById('api-ms-env')?.value || '',
-    health_path: document.getElementById('api-ms-health-path')?.value.trim() || '/api/health',
-    project_list_path: document.getElementById('api-ms-project-list-path')?.value.trim() || '',
-    environment_list_path: document.getElementById('api-ms-environment-list-path')?.value.trim() || '',
-    case_push_path: document.getElementById('api-ms-case-path')?.value.trim() || '',
-    plan_run_path: document.getElementById('api-ms-run-path')?.value.trim() || '',
-    run_status_path: document.getElementById('api-ms-status-path')?.value.trim() || '',
-    report_path: document.getElementById('api-ms-report-path')?.value.trim() || ''
-  };
-}
-
-async function saveApiMeterSphereConfig() {
-  const status = document.getElementById('api-ms-status');
-  try {
-    await apiRequest('/api-testing/metersphere/config', { method: 'POST', body: collectApiMeterSphereConfig() });
-    if (status) {
-      status.className = 'generate-status show success';
-      status.textContent = '配置已保存，正在重新检查连接和执行能力';
-    }
-    showToast('✓ MeterSphere 配置已保存', 'success');
-    closeApiMeterSphereSettings();
-    await refreshApiExecutionContext(true);
-  } catch (e) {
-    if (status) {
-      status.className = 'generate-status show error';
-      status.textContent = e.message || '保存失败';
-    }
-  }
-}
-
-async function clearApiMeterSphereAuth() {
-  const mode = document.querySelector('input[name="api-ms-auth-mode"]:checked')?.value || 'token';
-  if (!confirm(`确认清除当前 ${mode === 'access_key' ? 'Access Key / Secret Key' : 'Token'}？`)) return;
-  const clearSecrets = mode === 'access_key' ? ['access_key', 'secret_key'] : ['token'];
-  try {
-    await apiRequest('/api-testing/metersphere/config', { method: 'POST', body: { clear_secrets: clearSecrets } });
-    showToast('✓ 当前认证已清除', 'success');
-    await refreshApiExecutionContext(true);
-  } catch (e) {
-    showToast(e.message || '清除认证失败', 'error');
-  }
-}
-
-async function testApiMeterSphereHealth() {
-  const status = document.getElementById('api-ms-status');
-  try {
-    const data = await apiRequest('/api-testing/metersphere/health', { method: 'POST' });
-    if (status) {
-      status.className = 'generate-status show success';
-      status.textContent = `连接成功 · ${data.result?.elapsed_ms || 0}ms`;
-    }
-  } catch (e) {
-    if (status) {
-      status.className = 'generate-status show error';
-      status.textContent = e.message || '连接失败';
-    }
-  }
-}
-
 async function showApiReportsPage() {
-  const area = setApiTestingPage('api_reports', 'API 报告', '查看 MeterSphere 执行结果和接口失败归因。');
+  const area = setApiTestingPage('api_reports', 'API 报告', '查看平台 API 执行结果和接口失败归因。');
   if (!area) return;
   apiReportRequestController?.abort();
   if (apiReportPollTimer) clearTimeout(apiReportPollTimer);
@@ -4000,24 +3863,29 @@ async function showApiReportsPage() {
     if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
     apiTestingReportContext = { reports: data.reports || [], active_runs: data.active_runs || [], recent_runs: data.recent_runs || [] };
     apiTestingReports = apiTestingReportContext.reports;
+    if (apiSelectedReportId && !apiTestingReports.some(row => row.report_id === apiSelectedReportId)) apiSelectedReportId = '';
+    if (!apiSelectedReportId && apiTestingReports[0]?.report_id) apiSelectedReportId = apiTestingReports[0].report_id;
+    apiSelectedReportDetail = apiSelectedReportId ? await loadApiReportDetail(apiSelectedReportId, sourceId) : null;
+    if (!apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey)) return;
     area.innerHTML = `
       <div class="api-testing-page">
         <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_reports', reports: apiTestingReports, execution: (apiTestingReportContext.active_runs || [])[0] || {}})}</div>
         <div class="generation-record-head">
           <div class="workflow-kicker">REPORT · API</div>
           <h2>API 报告</h2>
-          <p>${escapeHtml(businessLine || '当前业务')}的 MeterSphere 执行结果和失败归因。</p>
+          <p>${escapeHtml(businessLine || '当前业务')}的平台 API 执行结果和失败归因。</p>
           <div class="generation-record-actions">
             <button class="btn-sm" onclick="showApiReportsPage()">刷新报告</button>
-            <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
+            <button class="btn-sm" onclick="showApiExecutionPage()">API 执行</button>
           </div>
         </div>
         ${renderApiReportActiveRuns(apiTestingReportContext.active_runs || [])}
         ${renderApiReportRecentRuns(apiTestingReportContext.recent_runs || [])}
         <section class="api-panel">
           <div class="api-section-heading"><div><span>历史报告</span><h3>已完成执行</h3></div><small>${escapeHtml(apiTestingReports.length)} 份报告</small></div>
-          ${apiTestingReports.length ? `<table class="report-table"><thead><tr><th>报告</th><th>状态</th><th>总数</th><th>通过</th><th>失败</th><th>时间</th></tr></thead><tbody>${apiTestingReports.map(renderApiReportRow).join('')}</tbody></table>` : apiTestingEmpty((apiTestingReportContext.active_runs || []).length ? '当前执行尚未生成最终报告。' : '暂无 API 报告。')}
+          ${apiTestingReports.length ? `<table class="report-table api-report-history-table"><thead><tr><th>报告</th><th>状态</th><th>总数</th><th>通过</th><th>失败</th><th>时间</th></tr></thead><tbody>${apiTestingReports.map(renderApiReportRow).join('')}</tbody></table>` : apiTestingEmpty((apiTestingReportContext.active_runs || []).length ? '当前执行尚未生成最终报告。' : '暂无 API 报告。')}
         </section>
+        ${renderApiReportDetail(apiSelectedReportDetail)}
       </div>
     `;
     scheduleApiReportPoll(apiTestingReportContext.active_runs || []);
@@ -4029,6 +3897,24 @@ async function showApiReportsPage() {
   }
 }
 
+async function loadApiReportDetail(reportId, sourceId = currentApiExecutionSourceId()) {
+  const selectedReportId = String(reportId || '').trim();
+  if (!selectedReportId) return null;
+  const query = new URLSearchParams();
+  if (sourceId) query.set('source_id', sourceId);
+  try {
+    const data = await apiRequest(`/api-testing/reports/${encodeURIComponent(selectedReportId)}?${query.toString()}`);
+    return data.report || null;
+  } catch (e) {
+    return { report_id: selectedReportId, load_error: e.message || '报告详情读取失败' };
+  }
+}
+
+async function selectApiReport(reportId) {
+  apiSelectedReportId = String(reportId || '').trim();
+  await showApiReportsPage();
+}
+
 function apiReportStatusTone(status) {
   const normalized = String(status || '').toLowerCase();
   if (['passed', 'succeeded', 'success'].includes(normalized)) return 'success';
@@ -4037,8 +3923,10 @@ function apiReportStatusTone(status) {
 }
 
 function renderApiReportRow(row = {}) {
+  const reportId = row.report_id || row.run_id || '';
+  const selectedClass = reportId && reportId === apiSelectedReportId ? 'is-selected' : '';
   return `
-    <tr>
+    <tr class="${escapeHtml(selectedClass)}" onclick="selectApiReport('${apiJsString(reportId)}')">
       <td>${escapeHtml(row.report_id || row.run_id || '-')}</td>
       <td>${apiStatusPill(apiExecutionStateText(row.status), apiReportStatusTone(row.status))}</td>
       <td>${escapeHtml(row.total || 0)}</td>
@@ -4049,21 +3937,127 @@ function renderApiReportRow(row = {}) {
   `;
 }
 
+function apiReportSummaryValue(summary = {}, key, fallback = 0) {
+  return summary && summary[key] !== undefined && summary[key] !== null ? summary[key] : fallback;
+}
+
+function renderApiReportDetail(report) {
+  if (!report) return '';
+  if (report.load_error) {
+    return `<section class="api-panel api-report-detail-panel">${apiTestingEmpty(report.load_error)}</section>`;
+  }
+  const summary = report.summary || {};
+  const environment = report.environment || {};
+  const results = Array.isArray(report.results) ? report.results : [];
+  const failedResults = results.filter(item => item.status !== 'passed');
+  return `
+    <section class="api-panel api-report-detail-panel">
+      <div class="api-section-heading">
+        <div><span>报告详情</span><h3>${escapeHtml(report.report_id || 'API 报告')}</h3></div>
+        <small>${escapeHtml(report.created_at || '-')}</small>
+      </div>
+      <div class="api-report-summary-cards">
+        ${renderApiReportMetric('总用例', apiReportSummaryValue(summary, 'total'), '')}
+        ${renderApiReportMetric('通过', apiReportSummaryValue(summary, 'passed'), 'success')}
+        ${renderApiReportMetric('失败', apiReportSummaryValue(summary, 'failed'), 'danger')}
+        ${renderApiReportMetric('跳过', apiReportSummaryValue(summary, 'skipped'), 'warn')}
+        ${renderApiReportMetric('通过率', `${apiReportSummaryValue(summary, 'pass_rate', 0)}%`, '')}
+      </div>
+      <div class="api-report-environment-grid">
+        ${renderApiReportEnvItem('BASE_URL', environment.base_url || '-')}
+        ${renderApiReportEnvItem('业务', environment.project_name || environment.project_id || '-')}
+        ${renderApiReportEnvItem('环境', environment.environment_name || environment.environment_id || '-')}
+        ${renderApiReportEnvItem('鉴权', environment.auth_variable || '未配置')}
+        ${renderApiReportEnvItem('耗时', apiDurationText(summary.duration_seconds || 0))}
+      </div>
+      ${failedResults.length ? renderApiReportFailureAnalysis(report.failure_analysis || {}, failedResults) : ''}
+      <div class="api-section-heading compact"><div><span>测试明细</span><h3>请求、响应和断言</h3></div><small>${escapeHtml(results.length)} 条</small></div>
+      <div class="api-report-case-list">${results.map(renderApiReportCase).join('') || apiTestingEmpty('报告中暂无用例明细')}</div>
+    </section>
+  `;
+}
+
+function renderApiReportMetric(label, value, tone = '') {
+  return `
+    <div class="api-report-metric ${escapeHtml(tone)}">
+      <strong>${escapeHtml(value)}</strong>
+      <span>${escapeHtml(label)}</span>
+    </div>
+  `;
+}
+
+function renderApiReportEnvItem(label, value) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || '-')}</strong></div>`;
+}
+
+function renderApiReportFailureAnalysis(analysis = {}, failedResults = []) {
+  const byType = analysis.by_type || {};
+  const typeSummary = Object.keys(byType).length
+    ? Object.entries(byType).map(([type, count]) => `${type}: ${count}`).join(' · ')
+    : `${failedResults.length} 条失败`;
+  return `
+    <div class="api-report-failure-box">
+      <div><span>失败分析</span><strong>${escapeHtml(typeSummary)}</strong></div>
+      <ul>${failedResults.slice(0, 5).map(item => {
+        const failure = item.analysis || {};
+        return `<li><strong>${escapeHtml(item.name || item.case_id || '-')}</strong><span>${escapeHtml(failure.summary || item.error || failure.failure_type || '接口校验失败')}</span></li>`;
+      }).join('')}</ul>
+    </div>
+  `;
+}
+
+function renderApiReportCase(item = {}) {
+  const request = item.request || {};
+  const response = item.response || {};
+  const analysis = item.analysis || {};
+  const statusTone = apiReportStatusTone(item.status);
+  const assertionFailures = (item.assertions || []).filter(row => row && row.passed === false);
+  const suggestions = Array.isArray(analysis.suggestions) ? analysis.suggestions : [];
+  const evidence = Array.isArray(analysis.evidence) ? analysis.evidence : [];
+  return `
+    <article class="api-report-case ${escapeHtml(statusTone)}">
+      <div class="api-report-case-main">
+        <div><span>${escapeHtml(item.case_id || '-')}</span><strong>${escapeHtml(item.name || '-')}</strong><small>${escapeHtml(item.endpoint || '')}</small></div>
+        <div>${apiStatusPill(String(item.status || '-').toUpperCase(), statusTone)}<small>${escapeHtml(item.duration_ms || 0)} ms</small></div>
+        <div><span>请求</span><strong>${escapeHtml(request.method || '-')} ${escapeHtml(apiReportShortUrl(request.url || ''))}</strong></div>
+        <div><span>HTTP</span><strong>${escapeHtml(response.status_code || '-')}</strong></div>
+      </div>
+      ${item.status === 'passed' ? '' : `
+        <div class="api-report-case-analysis">
+          <div><span>类型</span><strong>${escapeHtml(analysis.failure_type || 'API_OR_PRODUCT_ISSUE')}</strong></div>
+          <div><span>证据</span>${evidence.length ? evidence.map(value => `<code>${escapeHtml(value)}</code>`).join('') : `<code>${escapeHtml(item.error || '无错误文本')}</code>`}</div>
+          <div><span>断言</span>${assertionFailures.length ? assertionFailures.map(row => `<code>${escapeHtml(row.message || row.type || '断言失败')}</code>`).join('') : '<code>未命中断言</code>'}</div>
+          <div><span>建议</span>${suggestions.map(value => `<p>${escapeHtml(value)}</p>`).join('') || '<p>检查接口响应和测试数据。</p>'}</div>
+        </div>
+      `}
+    </article>
+  `;
+}
+
+function apiReportShortUrl(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    return `${parsed.pathname}${parsed.search}`;
+  } catch (e) {
+    return String(url || '');
+  }
+}
+
 function renderApiReportActiveRuns(activeRuns = []) {
   if (!activeRuns.length) return '';
   return `
     <section class="api-panel api-report-active-runs">
       <div class="api-section-heading">
-        <div><span>实时执行</span><h3>MeterSphere 仍在执行中</h3></div>
+        <div><span>实时执行</span><h3>平台 API Runner 正在执行</h3></div>
         <button class="btn-sm primary" onclick="showApiExecutionPage()">查看实时执行</button>
       </div>
       <div class="api-report-run-list">${activeRuns.map(run => {
         const stats = run.stats || {};
         return `
           <article class="api-report-run-card">
-            <div><span>计划</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || 'MeterSphere 执行')}</strong><small>execution_id ${escapeHtml(run.execution_id || '-')}</small></div>
+            <div><span>计划</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || 'API 执行')}</strong><small>execution_id ${escapeHtml(run.execution_id || '-')}</small></div>
             <div><span>状态</span><strong>${escapeHtml(apiExecutionStateText(run.status))}</strong><small>${escapeHtml(run.current_phase || '-')} · 已运行 ${escapeHtml(apiDurationText(run.duration_seconds))}</small></div>
-            <div><span>远端统计</span><strong>${escapeHtml(stats.total || 0)} / ${escapeHtml(stats.passed || 0)} / ${escapeHtml(stats.failed || 0)}</strong><small>总数 / 通过 / 失败</small></div>
+            <div><span>执行统计</span><strong>${escapeHtml(stats.total || 0)} / ${escapeHtml(stats.passed || 0)} / ${escapeHtml(stats.failed || 0)}</strong><small>总数 / 通过 / 失败</small></div>
             <div><span>报告</span><strong>${escapeHtml(run.report_status || '等待生成')}</strong><small>最后更新 ${escapeHtml(run.updated_at || '-')}</small></div>
           </article>
         `;
@@ -4089,8 +4083,8 @@ function renderApiReportRecentRuns(recentRuns = []) {
           : (run.report_status || '未生成报告');
         return `
           <article class="api-report-run-card terminal">
-            <div><span>计划</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || 'MeterSphere 执行')}</strong><small>execution_id ${escapeHtml(run.execution_id || '-')}</small></div>
-            <div><span>执行编排</span><strong>${apiStatusPill(apiExecutionStateText(run.status), runTone)}</strong><small>远端 ${escapeHtml(run.remote_status || '-')} · ${escapeHtml(run.error || '无错误摘要')}</small></div>
+            <div><span>计划</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || 'API 执行')}</strong><small>execution_id ${escapeHtml(run.execution_id || '-')}</small></div>
+            <div><span>执行编排</span><strong>${apiStatusPill(apiExecutionStateText(run.status), runTone)}</strong><small>${escapeHtml(run.error || '无错误摘要')}</small></div>
             <div><span>接口结果</span><strong>${escapeHtml(stats.total || 0)} / ${escapeHtml(stats.passed || 0)} / ${escapeHtml(stats.failed || 0)}</strong><small>总数 / 通过 / 失败</small></div>
             <div><span>报告同步</span><strong>${apiStatusPill(apiExecutionStateText(run.report_status), reportTone)}</strong><small>${escapeHtml(reportText)} · ${escapeHtml(run.updated_at || '-')}</small></div>
           </article>

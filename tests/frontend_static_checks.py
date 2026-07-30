@@ -205,7 +205,7 @@ def main():
         and "renderApiAssetActionPanel" in api_testing_js
         and "refreshApiAssetActionPanel" in api_testing_js
         and "资产 -> AI 用例 -> 基线 -> 执行" in api_testing_js,
-        "API asset management must use a MeterSphere-style context bar, asset tree, endpoint list, and action panel",
+        "API asset management must use a context bar, asset tree, endpoint list, and action panel",
     )
     require(
         "launchApiPlanGenerationFromAssets" in api_testing_js
@@ -225,50 +225,50 @@ def main():
         and "api-business-auth-login-url" in api_testing_js
         and "api-business-auth-login-body" in api_testing_js
         and "auth-binding/from-login" in api_testing_js
-        and "MeterSphere 环境变量" in api_testing_js
-        and "平台本地只保存变量名和指纹" in api_testing_js,
+        and "平台安全 profile" in api_testing_js
+        and "前端只显示变量名和指纹" in api_testing_js,
         "API AI generation and credential storage must be discoverable from the UI",
     )
     require("apiLogExpandedKeys" in html and "runId + eventId" in html, "API execution logs must preserve expanded state by stable keys")
     require(
-        "/api-testing/metersphere/execution-context" in api_testing_js
-        and "/api-testing/metersphere/executions" in api_testing_js,
-        "MeterSphere daily execution UI must use the aggregate context and asynchronous execution contracts",
+        "/api-testing/execution-context" in api_testing_js
+        and "/api-testing/executions" in api_testing_js,
+        "Native API execution UI must use the aggregate context and asynchronous execution contracts",
     )
     require(
         "poll_after_ms" in api_testing_js
-        and "pollApiMeterSphereExecution" in api_testing_js
+        and "pollApiExecution" in api_testing_js
         and "setTimeout" in api_testing_js,
-        "MeterSphere execution polling must use the backend-provided interval",
+        "Native API execution polling must use the backend-provided interval",
     )
     require(
         "captureApiExecutionLogViewState" in api_testing_js
         and "restoreApiExecutionLogViewState" in api_testing_js
         and "apiLogScrollPositions" in api_testing_js
         and "api-log-content" in api_testing_js,
-        "MeterSphere technical logs must preserve expansion and scroll position during polling",
+        "API technical logs must preserve expansion and scroll position during polling",
     )
     require(
         "apiExecutionStartingPlanId" in state_js
         and "正在创建执行" in api_testing_js
         and "active_run: execution" in api_testing_js,
-        "MeterSphere start must disable the submitted plan immediately and keep it disabled while the run is active",
+        "API execution start must disable the submitted plan immediately and keep it disabled while the run is active",
     )
     require(
         "row.run_id || row.execution_id || runId" in api_testing_js,
-        "MeterSphere log keys must remain stable when the real run id first appears",
+        "API log keys must remain stable when the real run id first appears",
     )
     require(
         "apiDurationText" in api_testing_js
         and "duration_seconds" in api_testing_js
         and "耗时" in api_testing_js,
-        "MeterSphere active phases and latest runs must display backend-derived duration",
+        "API active phases and latest runs must display backend-derived duration",
     )
     require(
         "暂无执行日志" in api_testing_js
         and "runId: 'local'" not in api_testing_js
-        and "等待保存 MeterSphere 配置" not in api_testing_js,
-        "MeterSphere logs must show a real empty state instead of fabricated local events",
+        and "等待保存执行配置" not in api_testing_js,
+        "API logs must show a real empty state instead of fabricated local events",
     )
     require(
         "metadata.stale" in api_testing_js
@@ -346,8 +346,8 @@ def main():
         "A finished execution report must be the next action before another execution",
     )
     poll_source = api_testing_js.split(
-        "async function pollApiMeterSphereExecution", 1
-    )[1].split("async function startApiMeterSphereExecution", 1)[0]
+        "async function pollApiExecution", 1
+    )[1].split("async function startApiExecution", 1)[0]
     require(
         poll_source.count("executionId !== apiExecutionActiveId") >= 2,
         "Execution polling must reject a replaced execution before and after the request",
@@ -406,12 +406,12 @@ def main():
     )
     require(
         "saveApiSourceExecutionBinding" in api_testing_js
-        and "loadApiMeterSphereProjectEnvironments" in api_testing_js
+        and "loadApiExecutionProjectEnvironments" in api_testing_js
         and "/execution-binding" in api_testing_js
         and "project_id=${encodeURIComponent(projectId)}" in api_testing_js
         and "project_id:" in api_testing_js
         and "environment_id:" in api_testing_js,
-        "MeterSphere business changes must load live project environments before saving the selected source binding",
+        "Native API business changes must load live project environments before saving the selected source binding",
     )
     require(
         "apiExecutionBindingSaveRequestId" in api_testing_js
@@ -422,7 +422,7 @@ def main():
         and "client_session_id:" in api_testing_js
         and "client_intent_id:" in api_testing_js
         and "signal: controller.signal" in api_testing_js,
-        "MeterSphere binding saves must reject stale responses and send optimistic concurrency identity",
+        "Native API binding saves must reject stale responses and send optimistic concurrency identity",
     )
     require(
         "apiReportRequestId" in api_testing_js
@@ -433,6 +433,17 @@ def main():
         "API reports must be source scoped and reject responses from an older source request",
     )
     require(
+        "loadApiReportDetail" in api_testing_js
+        and "/api-testing/reports/${encodeURIComponent(selectedReportId)}" in api_testing_js
+        and "renderApiReportDetail" in api_testing_js
+        and "api-report-summary-cards" in api_testing_js
+        and "api-report-environment-grid" in api_testing_js
+        and "renderApiReportFailureAnalysis" in api_testing_js
+        and "renderApiReportCase" in api_testing_js
+        and "请求、响应和断言" in api_testing_js,
+        "API reports must expose mature report details: summary, environment, cases, and failure analysis",
+    )
+    require(
         "apiReportPollTimer" in api_testing_js
         and "renderApiReportActiveRuns" in api_testing_js
         and "renderApiReportRecentRuns" in api_testing_js
@@ -441,7 +452,7 @@ def main():
         and "查看实时执行" in api_testing_js
         and "最近执行记录" in api_testing_js
         and "api-report-active-runs" in api_testing_js,
-        "API reports must expose running and recent MeterSphere executions instead of showing only stale terminal reports",
+        "API reports must expose running and recent native executions instead of showing only stale terminal reports",
     )
     require(
         "editApiPlanCase" in api_testing_js
@@ -460,11 +471,11 @@ def main():
     require(
         "debugApiPlanCase" in api_testing_js
         and "apiCaseDebugStartingKey" in api_testing_js
-        and "/api-testing/metersphere/executions/debug-case" in api_testing_js
+        and "/api-testing/executions/debug-case" in api_testing_js
         and "调试单条" in api_testing_js
         and "单条调试" in api_testing_js
         and "run_mode === 'debug_case'" in api_testing_js,
-        "Executable draft API cases must support isolated single-case MeterSphere debugging before baseline adoption",
+        "Executable draft API cases must support isolated single-case native debugging before baseline adoption",
     )
     require(
         "renderApiBusinessAuthPanel" in api_testing_js
@@ -473,7 +484,7 @@ def main():
         and "/auth-binding" in api_testing_js
         and "api-business-auth-panel" in api_testing_js
         and "api-business-auth-hint" in api_testing_js
-        and "请先选择当前来源的 MeterSphere 业务和环境" in api_testing_js
+        and "请先选择当前来源的业务和环境" in api_testing_js
         and 'autocomplete="new-password"' in api_testing_js,
         "Business authentication must use a separate source binding panel and explain missing execution binding instead of silently disabling clicks",
     )
@@ -482,7 +493,7 @@ def main():
         and "api-auth-summary" in api_testing_js
         and "auth.reused" in api_testing_js
         and "usage_count" in api_testing_js,
-        "MeterSphere execution must present reusable environment authentication instead of source-specific repeated entry",
+        "Native API execution must present reusable environment authentication instead of source-specific repeated entry",
     )
     require(
         "apiBusinessAuthExpectedState" in api_testing_js
@@ -510,18 +521,18 @@ def main():
         and "下一步：重新生成，不需要逐条编辑" in api_testing_js
         and "重新校验业务 token、环境变量和可执行数据" in api_testing_js
         and "api-plan-binding-drift-panel" in api_testing_js,
-        "Plan review must explain workspace binding drift and show the current MeterSphere auth variable instead of looking stuck",
+        "Plan review must explain workspace binding drift and show the current native API auth variable instead of looking stuck",
     )
     require(
         "renderApiSourceEnvironmentSnapshot" in api_testing_js
-        and "syncApiSourceEnvironmentToMeterSphere" in api_testing_js
+        and "useApiSourceEnvironmentSnapshot" in api_testing_js
         and "environment_snapshot" in api_testing_js
         and "/environment-sync" in api_testing_js
         and "Apifox 环境配置" in api_testing_js
-        and "同步到 MeterSphere 环境" in api_testing_js
+        and "使用该环境执行" in api_testing_js
         and "敏感值未同步" in api_testing_js
         and "api-source-environment-snapshot" in api_testing_js,
-        "API source workspace must display the synchronized Apifox environment snapshot without sensitive values",
+        "API source workspace must display the Apifox environment snapshot for native execution without sensitive values",
     )
     require(
         "captureApiPlanGenerationLogViewState" in api_testing_js
@@ -539,15 +550,14 @@ def main():
         "Stored API plan summaries must open their source-scoped server-backed executable contract detail",
     )
     require(
-        "api-ms-settings-drawer" in api_testing_js
-        and "api-ms-auth-mode" in api_testing_js
-        and "Access Key" in api_testing_js
-        and "Token" in api_testing_js,
-        "MeterSphere credentials and advanced paths must live in a controlled settings drawer",
+        "/api-testing/metersphere" not in api_testing_js
+        and "api-ms-settings-drawer" not in api_testing_js
+        and "MeterSphere 设置" not in api_testing_js,
+        "Native API execution frontend must not keep MeterSphere routes or settings drawers",
     )
     require(
         "3D业务" not in api_testing_js and "3D业务" not in (ROOT / "task-manager.html").read_text(encoding="utf-8"),
-        "Production frontend must not hardcode a MeterSphere business name",
+        "Production frontend must not hardcode an API business name",
     )
     require("Agent 工作台" in html, "Dashboard must serve as the Agent workbench entry")
     require(("AI修复" in html or "AI 修复" in html) and 'data-workflow="repair"' in html, "Sidebar must expose independent AI repair entry")
@@ -791,7 +801,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-draft-case-debug" in html and "js/api-testing.js?v=20260730-api-draft-case-debug" in html and "js/agent-status.js?v=20260730-agent-history-non-smoke-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, API draft case debugging, Agent report-card non-smoke buckets, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-draft-case-debug" in html and "js/api-testing.js?v=20260730-native-api-execution" in html and "js/agent-status.js?v=20260730-agent-history-non-smoke-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, Agent report-card non-smoke buckets, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

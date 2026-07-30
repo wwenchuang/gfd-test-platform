@@ -5899,6 +5899,44 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-07-30 API 测试：移除 MeterSphere，改为平台原生执行与报告
+
+用户明确决定 API 测试不再依赖 MeterSphere：平台应直接从 Apifox 拉取接口资产，AI 生成/编辑 API 用例，采纳为基线后由平台原生 API Runner 执行，并在平台内实时查看报告和失败分析。
+
+本轮设计取舍：
+
+- 不再保留 MeterSphere 配置、推送、执行、报告拉取路由；运行时代码里的 `/api-testing/metersphere/*` 与 MeterSphere 设置抽屉已清除。
+- Apifox 环境快照作为执行环境来源：业务/环境选择直接来自 source provider metadata 和环境 base_url，不再要求用户手填项目/环境 ID。
+- 业务 token 保存为平台安全 profile：前端只显示变量名、指纹、绑定业务和环境；真实 secret 只在服务端执行时读取。
+- 原生执行新增异步执行记录：`queued/running/succeeded/failed`、阶段、事件、统计、单条调试和基线执行统一走 `/api/api-testing/executions*`。
+- 报告参考成熟测试平台的信息架构：摘要卡、环境信息、逐接口请求/响应/断言、失败分类和建议。失败分析先用确定性规则生成，后续可在同一结构上增加 AI 深度归因按钮，避免模型超时影响基础报告生成。
+
+新增/调整文件：
+
+- 新增 `task_server/services/api_execution_service.py`：平台原生 API 执行、单条调试、业务 token 登录获取/保存、执行上下文。
+- 删除 `task_server/services/metersphere_service.py`、`task_server/services/metersphere_v365_adapter.py`、`tests/metersphere_v365_adapter_checks.py`。
+- `task_server/router.py` API 执行/报告路由改为原生执行，并新增 `GET /api/api-testing/reports/{report_id}`。
+- `js/api-testing.js` 报告页支持点击历史报告加载详情，展示摘要、环境、失败分析、请求/响应/断言明细。
+- `css/round5.css` 增加 API 报告详情卡片、环境网格、失败分析和明细样式。
+- 新增 `tests/api_native_execution_checks.py` 覆盖原生执行上下文、服务端 token 边界、失败报告结构。
+
+已验证：
+
+```bash
+python3 tests/api_native_execution_checks.py
+python3 tests/frontend_static_checks.py
+python3 -m py_compile task_server/services/api_execution_service.py task_server/services/api_workspace_service.py task_server/services/api_test_plan_service.py task_server/services/api_plan_generation_service.py task_server/services/api_report_service.py task_server/router.py task_server/app.py tests/api_native_execution_checks.py
+node --check js/api-testing.js
+node --check js/api.js
+rg -n "MeterSphere|metersphere|MeterSphe|api-testing/metersphere|pollApiMeterSphere|loadApiMeterSphere" task_server js css task-manager.html
+```
+
+当前注意：
+
+- 运行时代码已无 MeterSphere 引用。
+- `tests/api_project_workspace_checks.py`、`tests/api_runtime_recovery_checks.py`、`tests/api_case_contract_checks.py`、`tests/backend_static_checks.py`、`tests/visual_smoke_check.js` 仍有历史 MeterSphere 专项契约；它们不是运行时代码，但后续若恢复全量 CI，需要继续删改为原生 API 契约或从旧适配器 CI 集合中移除。
+- 本轮未暂存/未回滚用户历史 dirty 文件。
+
 ### 2026-07-30 Agent 报告结论策略：冒烟非全失败不再折成整单失败
 
 用户确认：冒烟不一定全部通过，后续测试用例本来就可能暴露失败；除非冒烟全失败，最终结论不要做成失败。

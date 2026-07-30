@@ -108,10 +108,10 @@ def classify_api_failure(item: Dict[str, Any]) -> Dict[str, str]:
     text = " ".join(str(item.get(key) or "") for key in ("name", "error", "message", "reason", "status")).lower()
     if any(word in text for word in ("401", "403", "unauthorized", "forbidden", "token", "鉴权", "未授权")):
         failure_type = "AUTH_ISSUE"
-        suggestion = "检查 MeterSphere 环境变量中的鉴权 token、登录前置步骤或接口权限配置。"
+        suggestion = "检查平台 API 执行 profile 中的鉴权 token、登录前置步骤或接口权限配置。"
     elif any(word in text for word in ("timeout", "timed out", "connection", "dns", "network", "超时", "连接")):
         failure_type = "ENV_ISSUE"
-        suggestion = "先确认测试环境、域名、网络连通性和 MeterSphere 执行节点。"
+        suggestion = "先确认测试环境、域名、网络连通性和平台 API Runner。"
     elif any(word in text for word in ("assert", "断言", "expected", "schema", "jsonpath")):
         failure_type = "ASSERTION_ISSUE"
         suggestion = "复核 OpenAPI 响应定义与真实响应，必要时调整断言。"
@@ -124,7 +124,7 @@ def classify_api_failure(item: Dict[str, Any]) -> Dict[str, str]:
     return {"failure_type": failure_type, "suggestion": suggestion}
 
 
-def normalize_metersphere_report(
+def normalize_api_execution_report(
     run_id: str,
     raw_report: Dict[str, Any] | None = None,
     plan_id: str = "",
@@ -261,7 +261,7 @@ __all__ = [
     "API_TESTING_DIR",
     "classify_api_failure",
     "get_api_report",
-    "normalize_metersphere_report",
+    "normalize_api_execution_report",
     "save_api_report",
     "list_api_reports",
 ]

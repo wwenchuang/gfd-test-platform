@@ -2440,7 +2440,7 @@ def _get_tasks(handler, qs):
 
 @route_get("/api/api-testing/overview")
 def _get_api_testing_overview(handler, qs):
-    from task_server.services import api_asset_service, api_report_service, api_source_service, api_test_plan_service, metersphere_service
+    from task_server.services import api_asset_service, api_report_service, api_source_service, api_test_plan_service
     snapshots = api_asset_service.list_api_snapshots(limit=5)
     assets = api_asset_service.list_api_assets(limit=5)
     sources = api_source_service.list_api_sources()
@@ -2465,7 +2465,7 @@ def _get_api_testing_overview(handler, qs):
         "reports": reports,
         "sources": sources,
         "assets": assets,
-        "metersphere": metersphere_service.metersphere_config(masked=True),
+        "execution_provider": "native_api",
     })
 
 
@@ -2595,7 +2595,7 @@ def _get_api_testing_sync(handler, qs, match):
 def _get_api_testing_source_execution_binding(handler, qs, match):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service, api_workspace_service, metersphere_service
+    from task_server.services import api_execution_service, api_source_service, api_workspace_service
     source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
@@ -2604,37 +2604,30 @@ def _get_api_testing_source_execution_binding(handler, qs, match):
         qs.get("project_id") or qs.get("projectId") or ""
     ).strip()
     if requested_project_id:
-        try:
-            options = metersphere_service.metersphere_project_options(
-                source_id,
-                requested_project_id,
-                force=safe_bool(qs.get("force") or qs.get("refresh"), False),
-            )
-        except (
-            metersphere_service.MeterSphereV365ContractError,
-            ValueError,
-        ) as exc:
-            handler._json({"ok": False, "error": str(exc)}, 400)
-            return
+        context = api_execution_service.api_execution_context(
+            source_id=source_id,
+            force=safe_bool(qs.get("force") or qs.get("refresh"), False),
+        )
         handler._json({
             "ok": True,
             "source_id": source_id,
             "binding": api_workspace_service.get_api_workspace_binding(
                 source_id,
-                allow_legacy=True,
+                allow_legacy=False,
             ),
-            **options,
+            "projects": context.get("businesses") or [],
+            "environments": context.get("environments") or [],
             "selected_project_id": requested_project_id,
         })
         return
-    context = metersphere_service.metersphere_execution_context(
+    context = api_execution_service.api_execution_context(
         force=safe_bool(qs.get("force") or qs.get("refresh"), False),
         source_id=source_id,
     )
     handler._json({
         "ok": True,
         "source_id": source_id,
-        "binding": api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=True),
+        "binding": api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=False),
         "context": context,
     })
 
@@ -2738,46 +2731,49 @@ def _get_api_testing_plan_generation(handler, qs, match):
     handler._json({"ok": True, "generation": generation})
 
 
-@route_get("/api/api-testing/metersphere/config")
-def _get_api_testing_metersphere_config(handler, qs):
-    from task_server.services import metersphere_service
-    handler._json({"ok": True, "config": metersphere_service.metersphere_config(masked=True)})
-
-
-@route_get("/api/api-testing/metersphere/execution-context")
-def _get_api_testing_metersphere_execution_context(handler, qs):
+@route_get("/api/api-testing/execution-context")
+def _get_api_testing_execution_context(handler, qs):
     if _require_user_auth(handler):
         return
-    from task_server.services import metersphere_service
-    context = metersphere_service.metersphere_execution_context(
+    from task_server.services import api_execution_service
+    context = api_execution_service.api_execution_context(
         force=safe_bool(qs.get("force") or qs.get("refresh"), False),
         source_id=str(qs.get("source_id") or qs.get("sourceId") or "").strip(),
     )
     handler._json(context)
 
 
-@route_get_regex(r"^/api/api-testing/metersphere/executions/([^/]+)$")
-def _get_api_testing_metersphere_execution(handler, qs, match):
-    from task_server.services import metersphere_service
+@route_get_regex(r"^/api/api-testing/executions/([^/]+)$")
+def _get_api_testing_execution(handler, qs, match):
+    from task_server.services import api_execution_service
     execution_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     try:
-        execution = metersphere_service.get_metersphere_execution(
-            execution_id,
-            refresh=not safe_bool(qs.get("cached"), False),
-        )
+        execution = api_execution_service.get_api_execution(execution_id)
         handler._json({"ok": True, "execution": execution})
-    except metersphere_service.MeterSphereExecutionNotFound as exc:
+    except api_execution_service.ApiExecutionNotFound as exc:
         handler._json({"ok": False, "error": str(exc)}, 404)
+
+
+@route_get_regex(r"^/api/api-testing/reports/([^/]+)$")
+def _get_api_testing_report_detail(handler, qs, match):
+    from task_server.services import api_report_service
+    report_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
+    report = api_report_service.get_api_report(report_id, source_id=source_id)
+    if not report:
+        handler._json({"ok": False, "error": "API 报告不存在"}, 404)
+        return
+    handler._json({"ok": True, "report": report})
 
 
 @route_get("/api/api-testing/reports")
 def _get_api_testing_reports(handler, qs):
-    from task_server.services import api_report_service, metersphere_service
+    from task_server.services import api_execution_service, api_report_service
     source_id = str(qs.get("source_id") or qs.get("sourceId") or "").strip()
     business_line = str(
         qs.get("business_line") or qs.get("businessLine") or ""
     ).strip()
-    executions = metersphere_service.list_metersphere_executions(limit=50)
+    executions = api_execution_service.list_api_executions(limit=50)
     if source_id:
         executions = [
             item for item in executions
@@ -2792,11 +2788,11 @@ def _get_api_testing_reports(handler, qs):
         ),
         "active_runs": [
             item for item in executions
-            if str(item.get("status") or "") not in metersphere_service.TERMINAL_EXECUTION_STATES
+            if str(item.get("status") or "") not in api_execution_service.TERMINAL_EXECUTION_STATES
         ],
         "recent_runs": [
             item for item in executions
-            if str(item.get("status") or "") in metersphere_service.TERMINAL_EXECUTION_STATES
+            if str(item.get("status") or "") in api_execution_service.TERMINAL_EXECUTION_STATES
         ][:20],
     })
 
@@ -2994,25 +2990,27 @@ def _post_api_testing_source_sync(handler, qs, match):
 def _post_api_testing_source_environment_sync(handler, qs, match):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service, metersphere_service
+    from task_server.services import api_source_service
     source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
         return
-    try:
-        sync = metersphere_service.sync_apifox_environment_to_metersphere(source_id)
-        handler._json({"ok": True, "sync": sync})
-    except ValueError as exc:
-        handler._json({"ok": False, "error": str(exc)}, 400)
-    except metersphere_service.MeterSphereV365ContractError as exc:
-        handler._json({"ok": False, "error": str(exc)}, 400)
+    handler._json({
+        "ok": True,
+        "sync": {
+            "provider": "native_api",
+            "source_id": source_id,
+            "status": "skipped",
+            "message": "平台原生 API 执行直接使用 Apifox 环境快照，不需要同步到第三方执行平台。",
+        },
+    })
 
 
 @route_post_regex(r"^/api/api-testing/sources/([^/]+)/execution-binding$")
 def _post_api_testing_source_execution_binding(handler, qs, match):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service, api_workspace_service, metersphere_service
+    from task_server.services import api_source_service, api_workspace_service
     source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
@@ -3035,32 +3033,25 @@ def _post_api_testing_source_execution_binding(handler, qs, match):
         if "client_intent_id" in data
         else data.get("clientIntentId")
     )
-    cfg = metersphere_service._load_raw_config()
-    cfg["project_id"] = project_id
-    cfg["environment_id"] = environment_id
-    adapter, probe, supported = metersphere_service._v365_adapter_probe(cfg)
-    if not supported:
-        handler._json({"ok": False, "error": "MeterSphere v3.6.5 实时校验不可用"}, 400)
+    source = api_source_service.get_api_source(source_id, masked=True)
+    metadata = source.get("provider_metadata") if isinstance(source.get("provider_metadata"), dict) else {}
+    environment_snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    base_urls = environment_snapshot.get("base_urls") if isinstance(environment_snapshot.get("base_urls"), list) else []
+    environment = next((item for item in base_urls if isinstance(item, dict) and str(item.get("name") or "") == environment_id), {})
+    if not project_id:
+        handler._json({"ok": False, "error": "请选择 API 执行业务"}, 400)
         return
-    try:
-        projects = adapter.list_projects()
-        project = next((item for item in projects if item.get("id") == project_id), {})
-        environments = adapter.list_environments(project_id)
-        environment = next((item for item in environments if item.get("id") == environment_id), {})
-    except (metersphere_service.MeterSphereV365ContractError, ValueError) as exc:
-        handler._json({"ok": False, "error": str(exc)}, 400)
-        return
-    if not project or not environment:
-        handler._json({"ok": False, "error": "MeterSphere 项目或环境不存在、已停用或不匹配"}, 400)
+    if not environment_id:
+        handler._json({"ok": False, "error": "请选择 API 执行环境"}, 400)
         return
     try:
         binding = api_workspace_service.save_api_workspace_binding(
             source_id,
             project_id,
             environment_id,
-            project_name=str(project.get("name") or ""),
-            environment_name=str(environment.get("name") or ""),
-            connection_identity=metersphere_service._api_auth_connection_identity(cfg),
+            project_name=str(metadata.get("project_name") or source.get("name") or project_id),
+            environment_name=str(environment.get("name") or metadata.get("environment_name") or environment_id),
+            connection_identity="platform-native-api",
             expected_binding_fingerprint=expected_binding_fingerprint,
             client_session_id=client_session_id,
             client_intent_id=client_intent_id,
@@ -3071,51 +3062,27 @@ def _post_api_testing_source_execution_binding(handler, qs, match):
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
         return
-    handler._json({"ok": True, "binding": binding, "version": probe.get("version") or ""})
+    handler._json({"ok": True, "binding": binding, "version": "native_api"})
 
 
 @route_post_regex(r"^/api/api-testing/sources/([^/]+)/auth-binding$")
 def _post_api_testing_source_auth_binding(handler, qs, match):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service, metersphere_service
+    from task_server.services import api_execution_service, api_source_service
     source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
         return
     try:
         data = handler._body()
-        binding = metersphere_service.save_api_auth_binding(
+        binding = api_execution_service.save_api_auth_binding(
             source_id,
             str(data.get("auth_type") or data.get("authType") or "").strip(),
             str(data.get("header_name") or data.get("headerName") or "").strip(),
             str(data.get("secret") or ""),
-            expected_project_id=str(
-                data.get("expected_project_id") or data.get("expectedProjectId") or ""
-            ).strip(),
-            expected_environment_id=str(
-                data.get("expected_environment_id")
-                or data.get("expectedEnvironmentId")
-                or ""
-            ).strip(),
-            expected_binding_version=(
-                data.get("expected_binding_version")
-                if "expected_binding_version" in data
-                else data.get("expectedBindingVersion")
-                if "expectedBindingVersion" in data
-                else None
-            ),
-            expected_profile_version=(
-                data.get("expected_profile_version")
-                if "expected_profile_version" in data
-                else data.get("expectedProfileVersion")
-                if "expectedProfileVersion" in data
-                else None
-            ),
         )
         handler._json({"ok": True, "binding": binding})
-    except metersphere_service.MeterSphereAuthConflict as exc:
-        handler._json({"ok": False, "error": str(exc)}, 409)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 
@@ -3124,42 +3091,18 @@ def _post_api_testing_source_auth_binding(handler, qs, match):
 def _post_api_testing_source_auth_binding_from_login(handler, qs, match):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service, metersphere_service
+    from task_server.services import api_execution_service, api_source_service
     source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
         return
     try:
         data = handler._body()
-        binding = metersphere_service.save_api_auth_binding_from_login(
+        binding = api_execution_service.save_api_auth_binding_from_login(
             source_id,
             data,
-            expected_project_id=str(
-                data.get("expected_project_id") or data.get("expectedProjectId") or ""
-            ).strip(),
-            expected_environment_id=str(
-                data.get("expected_environment_id")
-                or data.get("expectedEnvironmentId")
-                or ""
-            ).strip(),
-            expected_binding_version=(
-                data.get("expected_binding_version")
-                if "expected_binding_version" in data
-                else data.get("expectedBindingVersion")
-                if "expectedBindingVersion" in data
-                else None
-            ),
-            expected_profile_version=(
-                data.get("expected_profile_version")
-                if "expected_profile_version" in data
-                else data.get("expectedProfileVersion")
-                if "expectedProfileVersion" in data
-                else None
-            ),
         )
         handler._json({"ok": True, "binding": binding})
-    except metersphere_service.MeterSphereAuthConflict as exc:
-        handler._json({"ok": False, "error": str(exc)}, 409)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 
@@ -3168,41 +3111,14 @@ def _post_api_testing_source_auth_binding_from_login(handler, qs, match):
 def _delete_api_testing_source_auth_binding(handler, qs, match):
     if _require_user_auth(handler):
         return
-    from task_server.services import api_source_service, metersphere_service
+    from task_server.services import api_source_service, api_workspace_service
     source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
     if not api_source_service.get_api_source(source_id, masked=True):
         handler._json({"ok": False, "error": "API source 不存在"}, 404)
         return
     try:
-        data = handler._body()
-        binding = metersphere_service.clear_api_auth_binding(
-            source_id,
-            expected_project_id=str(
-                data.get("expected_project_id") or data.get("expectedProjectId") or ""
-            ).strip(),
-            expected_environment_id=str(
-                data.get("expected_environment_id")
-                or data.get("expectedEnvironmentId")
-                or ""
-            ).strip(),
-            expected_binding_version=(
-                data.get("expected_binding_version")
-                if "expected_binding_version" in data
-                else data.get("expectedBindingVersion")
-                if "expectedBindingVersion" in data
-                else None
-            ),
-            expected_profile_version=(
-                data.get("expected_profile_version")
-                if "expected_profile_version" in data
-                else data.get("expectedProfileVersion")
-                if "expectedProfileVersion" in data
-                else None
-            ),
-        )
+        binding = api_workspace_service.clear_api_auth_binding_metadata(source_id)
         handler._json({"ok": True, "binding": binding})
-    except metersphere_service.MeterSphereAuthConflict as exc:
-        handler._json({"ok": False, "error": str(exc)}, 409)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 
@@ -3309,84 +3225,35 @@ def _post_api_testing_plan_cases(handler, qs, match):
         handler._json({"ok": False, "error": str(e)}, 400)
 
 
-@route_post("/api/api-testing/metersphere/config")
-def _post_api_testing_metersphere_config(handler, qs):
-    from task_server.services import metersphere_service
+@route_post("/api/api-testing/executions")
+def _post_api_testing_executions(handler, qs):
+    from task_server.services import api_execution_service
+    data = handler._body()
     try:
-        config = metersphere_service.save_metersphere_config(handler._body())
-        handler._json({"ok": True, "config": config})
-    except Exception as e:
-        handler._json({"ok": False, "error": str(e)}, 400)
-
-
-@route_post("/api/api-testing/metersphere/health")
-def _post_api_testing_metersphere_health(handler, qs):
-    from task_server.services import metersphere_service
-    result = metersphere_service.metersphere_health()
-    handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
-
-
-@route_post("/api/api-testing/metersphere/push")
-def _post_api_testing_metersphere_push(handler, qs):
-    from task_server.services import metersphere_service
-    d = handler._body()
-    result = metersphere_service.push_plan_to_metersphere(str(d.get("plan_id") or d.get("planId") or "").strip())
-    handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
-
-
-@route_post("/api/api-testing/metersphere/run")
-def _post_api_testing_metersphere_run(handler, qs):
-    from task_server.services import metersphere_service
-    d = handler._body()
-    result = metersphere_service.create_metersphere_run(
-        str(d.get("plan_id") or d.get("planId") or "").strip(),
-        str(d.get("test_plan_id") or d.get("testPlanId") or "").strip(),
-    )
-    handler._json({"ok": bool(result.get("ok")), "result": result}, 200 if result.get("ok") else 400)
-
-
-@route_post("/api/api-testing/metersphere/executions")
-def _post_api_testing_metersphere_executions(handler, qs):
-    from task_server.services import metersphere_service
-    d = handler._body()
-    try:
-        execution = metersphere_service.start_metersphere_execution(
-            str(d.get("plan_id") or d.get("planId") or "").strip(),
-            str(d.get("test_plan_id") or d.get("testPlanId") or "").strip(),
+        execution = api_execution_service.start_api_execution(
+            str(data.get("plan_id") or data.get("planId") or "").strip(),
         )
         handler._json({"ok": True, "execution": execution}, 202)
-    except metersphere_service.MeterSphereExecutionConflict as exc:
+    except api_execution_service.ApiExecutionConflict as exc:
         handler._json({"ok": False, "error": str(exc)}, 409)
-    except metersphere_service.MeterSphereExecutionValidationError as exc:
+    except api_execution_service.ApiExecutionValidationError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
 
 
-@route_post("/api/api-testing/metersphere/executions/debug-case")
-def _post_api_testing_metersphere_case_debug(handler, qs):
-    from task_server.services import metersphere_service
-    d = handler._body()
+@route_post("/api/api-testing/executions/debug-case")
+def _post_api_testing_case_debug(handler, qs):
+    from task_server.services import api_execution_service
+    data = handler._body()
     try:
-        execution = metersphere_service.start_metersphere_case_debug(
-            str(d.get("plan_id") or d.get("planId") or "").strip(),
-            str(d.get("case_id") or d.get("caseId") or "").strip(),
+        execution = api_execution_service.start_api_case_debug(
+            str(data.get("plan_id") or data.get("planId") or "").strip(),
+            str(data.get("case_id") or data.get("caseId") or "").strip(),
         )
         handler._json({"ok": True, "execution": execution}, 202)
-    except metersphere_service.MeterSphereExecutionConflict as exc:
+    except api_execution_service.ApiExecutionConflict as exc:
         handler._json({"ok": False, "error": str(exc)}, 409)
-    except metersphere_service.MeterSphereExecutionValidationError as exc:
+    except api_execution_service.ApiExecutionValidationError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
-
-
-@route_post("/api/api-testing/reports/pull")
-def _post_api_testing_reports_pull(handler, qs):
-    from task_server.services import metersphere_service
-    d = handler._body()
-    result = metersphere_service.pull_metersphere_report(
-        str(d.get("run_id") or d.get("runId") or "").strip(),
-        raw_report=d.get("raw_report") or d.get("rawReport") or None,
-        execution_id=str(d.get("execution_id") or d.get("executionId") or "").strip(),
-    )
-    handler._json({"ok": bool(result.get("ok")), "result": result, "report": result.get("report")}, 200 if result.get("ok") else 400)
 
 
 # ── 修复草稿保存 ────────────────────────────────────────────────────

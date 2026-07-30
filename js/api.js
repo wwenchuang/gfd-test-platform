@@ -77,8 +77,8 @@ const WORKFLOW_SECTIONS = {
   api_dashboard: {
     index: '2',
     title: 'API 工作台',
-    subtitle: '接口资产、AI 候选、API 基线、MeterSphere 执行和报告闭环',
-    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，审阅 AI 候选并采纳为基线后推送 MeterSphere 执行。',
+    subtitle: '接口资产、AI 候选、API 基线、平台执行和报告闭环',
+    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，审阅 AI 候选并采纳为基线后由平台原生执行。',
     cards: [
       { title: '同步接口资产', text: '服务端只读同步 Apifox OpenAPI，内容变化时生成不可变版本并分析影响。', actions: [
         { label: '打开接口资产', cls: 'primary', fn: 'showApiAssetsPage()' }
@@ -89,14 +89,14 @@ const WORKFLOW_SECTIONS = {
       { title: '维护 API 基线', text: '集中查看已采纳计划、接口版本状态和受影响用例，按单套基线进入执行。', actions: [
         { label: 'API 基线', fn: 'showApiBaselinesPage()' }
       ]},
-      { title: 'MeterSphere 执行', text: '保存连接配置后，推送已采纳基线并触发 MeterSphere 测试计划。', actions: [
-        { label: '执行配置', fn: 'showApiExecutionPage()' }
+      { title: 'API 执行', text: '选择 Apifox 环境和业务鉴权后，平台直接执行已采纳 API 基线。', actions: [
+        { label: '执行测试', fn: 'showApiExecutionPage()' }
       ]},
-      { title: '统一 API 报告', text: '回收 MeterSphere 报告并按鉴权、环境、测试数据、断言和接口缺陷分类。', actions: [
+      { title: '统一 API 报告', text: '展示平台执行报告，并按鉴权、环境、测试数据、断言和接口缺陷分类。', actions: [
         { label: 'API 报告', fn: 'showApiReportsPage()' }
       ]}
     ],
-    checklist: ['Apifox 首次同步与无变化同步先跑通', 'AI 候选经平台校验后采纳为基线', 'Apifox 和 MeterSphere token 只在服务端保存']
+    checklist: ['Apifox 首次同步与无变化同步先跑通', 'AI 候选经平台校验后采纳为基线', 'Apifox 和业务 token 只在服务端保存']
   },
   api_assets: {
     index: '2',
@@ -110,7 +110,7 @@ const WORKFLOW_SECTIONS = {
     index: '2',
     title: 'AI 用例计划',
     subtitle: '生成并审阅可采纳的 API 用例候选',
-    help: 'AI 用例默认是候选，通过平台校验并采纳为基线后才能推送 MeterSphere。',
+    help: 'AI 用例默认是候选，通过平台校验并采纳为基线后才能进入平台 API 执行。',
     cards: [],
     checklist: []
   },
@@ -124,17 +124,17 @@ const WORKFLOW_SECTIONS = {
   },
   api_execution: {
     index: '2',
-    title: 'MeterSphere 执行',
-    subtitle: '配置 MeterSphere、推送用例、触发执行',
-    help: 'MeterSphere 是接口测试执行和测试管理引擎；平台只负责串联和报告归因。',
+    title: 'API 执行',
+    subtitle: '选择环境、配置鉴权、触发执行',
+    help: '平台原生 API Runner 直接执行基线和单条调试用例，并实时写入日志和报告。',
     cards: [],
     checklist: []
   },
   api_reports: {
     index: '2',
     title: 'API 报告',
-    subtitle: '统一展示 MeterSphere 执行结果和 AI 归因',
-    help: '报告从 MeterSphere 回收，平台按接口缺陷、环境、鉴权、测试数据和断言问题分类。',
+    subtitle: '统一展示平台 API 执行结果和 AI 归因',
+    help: '报告由平台执行器生成，平台按接口缺陷、环境、鉴权、测试数据和断言问题分类。',
     cards: [],
     checklist: []
   },

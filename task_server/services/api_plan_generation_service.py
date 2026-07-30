@@ -148,7 +148,7 @@ def _validated_generation_scope(
         allow_legacy=True,
     )
     if not workspace_binding:
-        raise ValueError("请先绑定当前 source 的 MeterSphere 项目和环境")
+        raise ValueError("请先选择当前 source 的 API 执行业务和环境")
     return {
         "source": source,
         "revision": revision,

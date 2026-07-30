@@ -1,4 +1,4 @@
-"""Non-secret MeterSphere execution bindings scoped to one API source."""
+"""Platform API execution bindings scoped to one API source."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def _auth_profile_identity(
     environment_id: str,
 ) -> str:
     return ":".join((
-        "metersphere",
+        "native_api",
         str(connection_identity or "legacy").strip(),
         str(project_id or "").strip(),
         str(environment_id or "").strip(),
@@ -74,7 +74,7 @@ def _config_fingerprint(
     connection_identity: str = "",
 ) -> str:
     payload = json.dumps({
-        "provider": "metersphere",
+        "provider": "native_api",
         "connection_identity": str(connection_identity or "").strip(),
         "project_id": str(project_id),
         "environment_id": str(environment_id),
@@ -352,7 +352,7 @@ def save_api_workspace_binding(
     client_session_id: str = "",
     client_intent_id: Any = None,
 ) -> Dict[str, Any]:
-    """Persist a source-specific MeterSphere selection without connection secrets."""
+    """Persist a source-specific platform API execution environment."""
     selected_source_id = str(source_id or "").strip()
     selected_project_id = str(project_id or "").strip()
     selected_environment_id = str(environment_id or "").strip()
@@ -360,9 +360,9 @@ def save_api_workspace_binding(
     if not selected_source_id:
         raise ValueError("source_id 不能为空")
     if not selected_project_id:
-        raise ValueError("MeterSphere project_id 不能为空")
+        raise ValueError("API 执行业务不能为空")
     if not selected_environment_id:
-        raise ValueError("MeterSphere environment_id 不能为空")
+        raise ValueError("API 执行环境不能为空")
     incoming_guard = _client_write_guard(client_session_id, client_intent_id)
     with _BINDING_LOCK:
         current = _load_binding(selected_source_id)
@@ -387,20 +387,20 @@ def save_api_workspace_binding(
             and not newer_same_client_intent
         ):
             raise ApiWorkspaceBindingConflict(
-                "MeterSphere 执行绑定已由当前页面的更新选择覆盖"
+                "API 执行绑定已由当前页面的更新选择覆盖"
             )
         if expected_binding_fingerprint is not None:
             expected = str(expected_binding_fingerprint or "").strip()
             current_token = _binding_compare_token(current)
             if expected != current_token and not newer_same_client_intent:
                 raise ApiWorkspaceBindingConflict(
-                    "MeterSphere 执行绑定已由其他请求更新"
+                    "API 执行绑定已由其他请求更新"
                 )
         now = _now()
         binding = {
             "binding_id": _binding_id(selected_source_id),
             "source_id": selected_source_id,
-            "provider": "metersphere",
+            "provider": "native_api",
             "connection_identity": selected_connection_identity,
             "project_id": selected_project_id,
             "project_name": str(project_name or "").strip(),
@@ -542,6 +542,7 @@ def save_api_auth_binding_metadata(
     *,
     auth_type: str,
     header_name: str,
+    secret_value: str = "",
     auth_ref: str = "",
     variable_name: str = "",
     environment_id: str = "",
@@ -552,14 +553,16 @@ def save_api_auth_binding_metadata(
     with _BINDING_LOCK:
         binding = _load_binding(selected_source_id)
         if not binding:
-            raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+            binding = get_api_workspace_binding(selected_source_id, allow_legacy=False)
+        if not binding:
+            raise ValueError("请先选择当前 API 来源的执行环境")
         selected_environment_id = str(environment_id or binding.get("environment_id") or "").strip()
         if selected_environment_id != str(binding.get("environment_id") or "").strip():
-            raise ValueError("认证引用必须绑定当前 MeterSphere 环境")
+            raise ValueError("认证引用必须绑定当前 API 执行环境")
         project_id = str(binding.get("project_id") or "").strip()
         connection_identity = str(binding.get("connection_identity") or "").strip()
         if not project_id:
-            raise ValueError("请先绑定当前来源的 MeterSphere 项目和环境")
+            raise ValueError("请先选择当前 API 来源的执行业务")
         normalized_type, normalized_header = normalize_api_auth_header(
             auth_type,
             header_name,
@@ -575,6 +578,7 @@ def save_api_auth_binding_metadata(
             "auth_type": normalized_type,
             "header_name": normalized_header,
             "variable_name": str(variable_name or f"MTP_API_AUTH_{_stable_hash(identity, 12).upper()}").strip(),
+            "secret": str(secret_value or ""),
             "connection_identity": connection_identity,
             "project_id": project_id,
             "environment_id": selected_environment_id,
@@ -660,29 +664,65 @@ def get_api_workspace_binding(source_id: str, allow_legacy: bool = True) -> Dict
         return {}
     with _BINDING_LOCK:
         binding = _load_binding(selected_source_id)
-        if binding:
+        if binding and str(binding.get("provider") or "") == "native_api":
             return _public_workspace_binding(binding)
+        source = api_source_service.get_api_source(selected_source_id, masked=True)
+        if source:
+            metadata = source.get("provider_metadata") if isinstance(source.get("provider_metadata"), dict) else {}
+            environment_snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+            base_urls = environment_snapshot.get("base_urls") if isinstance(environment_snapshot.get("base_urls"), list) else []
+            first_base = next((item for item in base_urls if isinstance(item, dict) and str(item.get("url") or "").strip()), {})
+            project_id = str(source.get("project_id") or selected_source_id).strip()
+            environment_id = str(source.get("environment_id") or first_base.get("name") or "default").strip()
+            return save_api_workspace_binding(
+                selected_source_id,
+                project_id,
+                environment_id,
+                project_name=str(metadata.get("project_name") or source.get("name") or selected_source_id),
+                environment_name=str(metadata.get("environment_name") or first_base.get("name") or environment_id),
+                connection_identity="platform-native-api",
+                verified_at="",
+            )
         if not allow_legacy:
             return {}
         sources = api_source_service.list_api_sources()
         if len(sources) != 1 or str(sources[0].get("source_id") or "") != selected_source_id:
             return {}
-        # The legacy selection is only a one-source migration path. It is never copied
-        # into a second source and connection credentials remain outside this store.
-        from task_server.services import metersphere_service
-
-        config = metersphere_service._load_raw_config()
-        project_id = str(config.get("project_id") or "").strip()
-        environment_id = str(config.get("environment_id") or "").strip()
-        if not project_id or not environment_id:
-            return {}
         return save_api_workspace_binding(
             selected_source_id,
-            project_id,
-            environment_id,
-            connection_identity=metersphere_service._api_auth_connection_identity(config),
+            str(sources[0].get("project_id") or selected_source_id),
+            str(sources[0].get("environment_id") or "default"),
+            project_name=str(sources[0].get("name") or selected_source_id),
+            environment_name=str((sources[0].get("provider_metadata") or {}).get("environment_name") or "默认环境"),
+            connection_identity="platform-native-api",
             verified_at="",
         )
+
+
+def get_api_auth_secret(source_id: str) -> Dict[str, Any]:
+    selected_source_id = str(source_id or "").strip()
+    if not selected_source_id:
+        return {}
+    with _BINDING_LOCK:
+        binding = _load_binding(selected_source_id)
+        if not binding:
+            binding = get_api_workspace_binding(selected_source_id, allow_legacy=False)
+        project_id = str(binding.get("project_id") or "").strip()
+        environment_id = str(binding.get("environment_id") or "").strip()
+        connection_identity = str(binding.get("connection_identity") or "").strip()
+        if not project_id or not environment_id:
+            return {}
+        profile = _load_auth_profile(connection_identity, project_id, environment_id)
+        if not profile.get("configured") or not str(profile.get("secret") or ""):
+            return {}
+        public = _public_auth_profile(
+            profile,
+            connection_identity=connection_identity,
+            project_id=project_id,
+            environment_id=environment_id,
+        )
+        public["secret"] = str(profile.get("secret") or "")
+        return public
 
 
 __all__ = [
@@ -690,6 +730,7 @@ __all__ = [
     "ApiWorkspaceBindingConflict",
     "clear_api_auth_binding_metadata",
     "get_environment_auth_profile",
+    "get_api_auth_secret",
     "get_api_auth_binding",
     "get_api_workspace_binding",
     "migrate_legacy_connection_identity",

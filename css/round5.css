@@ -2361,6 +2361,166 @@
 .api-report-run-card.terminal {
   background: rgba(255, 197, 61, 0.04);
 }
+.api-report-history-table tbody tr {
+  cursor: pointer;
+}
+.api-report-history-table tbody tr.is-selected {
+  background: rgba(0, 229, 255, 0.08);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.api-report-detail-panel {
+  display: grid;
+  gap: 14px;
+}
+.api-report-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+.api-report-metric {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-report-metric strong {
+  font-size: 22px;
+  font-family: var(--mono);
+  color: var(--text);
+}
+.api-report-metric span {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-report-metric.success { border-top: 3px solid var(--success); }
+.api-report-metric.danger { border-top: 3px solid var(--danger); }
+.api-report-metric.warn { border-top: 3px solid var(--warning); }
+.api-report-environment-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, 0.42);
+}
+.api-report-environment-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+}
+.api-report-environment-grid > div:last-child {
+  border-right: 0;
+}
+.api-report-environment-grid span,
+.api-report-case span,
+.api-report-failure-box span {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-report-environment-grid strong,
+.api-report-case strong {
+  overflow-wrap: anywhere;
+}
+.api-report-failure-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 197, 61, 0.28);
+  background: rgba(255, 197, 61, 0.08);
+}
+.api-report-failure-box ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.api-report-failure-box li {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+.api-section-heading.compact {
+  margin-top: 4px;
+}
+.api-report-case-list {
+  display: grid;
+  gap: 10px;
+}
+.api-report-case {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+.api-report-case.danger {
+  border-left: 3px solid var(--danger);
+}
+.api-report-case.warn {
+  border-left: 3px solid var(--warning);
+}
+.api-report-case.success {
+  border-left: 3px solid var(--success);
+}
+.api-report-case-main {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(80px, 0.35fr) minmax(220px, 1.2fr) minmax(70px, 0.25fr);
+  gap: 12px;
+  align-items: start;
+}
+.api-report-case-main > div,
+.api-report-case-analysis > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-report-case small {
+  color: var(--text3);
+  overflow-wrap: anywhere;
+}
+.api-report-case-analysis {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.3fr) minmax(220px, 1fr) minmax(180px, 0.8fr) minmax(260px, 1.2fr);
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.api-report-case-analysis code {
+  display: block;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, 0.4);
+  color: var(--text2);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.api-report-case-analysis p {
+  margin: 0;
+  color: var(--text2);
+  line-height: 1.5;
+}
+@media (max-width: 1100px) {
+  .api-report-summary-cards,
+  .api-report-environment-grid,
+  .api-report-case-main,
+  .api-report-case-analysis {
+    grid-template-columns: 1fr;
+  }
+  .api-report-environment-grid > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .api-report-environment-grid > div:last-child {
+    border-bottom: 0;
+  }
+  .api-report-failure-box li {
+    grid-template-columns: 1fr;
+  }
+}
 .api-business-auth-panel > p {
   margin: 0;
   color: var(--text3);
