@@ -208,6 +208,14 @@ def main():
         "API asset management must use a MeterSphere-style context bar, asset tree, endpoint list, and action panel",
     )
     require(
+        "launchApiPlanGenerationFromAssets" in api_testing_js
+        and "api-asset-generation-feedback" in api_testing_js
+        and "进入 AI 用例计划" in api_testing_js
+        and "生成任务尚未开始" in api_testing_js
+        and "点击“生成 AI 用例”后才会调用 AI" in api_testing_js,
+        "API asset AI generation entry must make the launch and real generation state visible",
+    )
+    require(
         "openGeneratedApiPlan" in api_testing_js
         and "查看生成用例" in api_testing_js
         and "api-plan-generated-summary" in api_testing_js
@@ -320,6 +328,14 @@ def main():
         and "setApiPlanMissingCategory" in api_testing_js
         and "resolvedScopeKey" in api_testing_js,
         "Plan review state must be plan-scoped, support missing-category filtering, and resolve direct navigation scope",
+    )
+    require(
+        "renderApiPlanReviewGuide" in api_testing_js
+        and "审阅目标" in api_testing_js
+        and "确认请求方法、路径、入参、鉴权变量和响应断言" in api_testing_js
+        and "可以编辑 draft 用例" in api_testing_js
+        and "可执行项满足本次范围后再采纳为基线" in api_testing_js,
+        "API plan review must explain why review exists and how to turn AI drafts into baselines",
     )
     workflow_action_source = api_testing_js.split(
         "function apiWorkflowNextAction", 1
@@ -482,6 +498,8 @@ def main():
         and "当前执行绑定" in api_testing_js
         and "当前业务 token" in api_testing_js
         and "按当前绑定重新生成" in api_testing_js
+        and "下一步：重新生成，不需要逐条编辑" in api_testing_js
+        and "重新校验业务 token、环境变量和可执行数据" in api_testing_js
         and "api-plan-binding-drift-panel" in api_testing_js,
         "Plan review must explain workspace binding drift and show the current MeterSphere auth variable instead of looking stuck",
     )
@@ -763,7 +781,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-binding-drift-panel" in html and "js/api-testing.js?v=20260730-api-binding-drift-panel" in html and "js/agent-status.js?v=20260730-agent-history-report-card" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, API binding drift panel, Agent report-card status, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-plan-launch-feedback" in html and "js/api-testing.js?v=20260730-api-plan-launch-feedback" in html and "js/agent-status.js?v=20260730-agent-history-report-card" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, API plan launch feedback, Agent report-card status, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

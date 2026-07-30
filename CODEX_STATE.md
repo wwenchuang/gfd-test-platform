@@ -28,6 +28,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 API AI 用例生成入口、审阅目标与绑定漂移下一步说明
+
+用户反馈：
+
+- 在 API 资产页点击“生成 AI 用例”后，不知道有没有真正生成。
+- 进入候选计划后，不清楚“审阅”的目的以及应该怎么审阅。
+- `workspace_binding_drift` 页面虽然展示了计划生成时绑定、当前执行绑定和当前业务 token，但用户仍不清楚怎样才能走到下一步。
+
+根因：
+
+- API 资产页右侧按钮文案是“生成 AI 用例”，但实际行为只是执行 `showApiPlanPage()`，把已选接口带入 AI 用例计划页；真正调用 AI 的动作发生在计划页的“生成 AI 用例”按钮。
+- 候选详情把“审阅候选”作为内部流程名展示，但没有说明审阅是采纳前门禁，也没有列出用户需要核对的请求、入参、鉴权和断言。
+- `workspace_binding_drift` 本质是旧候选绑定失效，应按当前绑定重新生成，不应让用户误以为要逐条编辑旧候选用例。
+
+修复：
+
+- API 资产页右侧按钮从“生成 AI 用例”改为“进入 AI 用例计划”，并新增 `api-asset-generation-feedback`，明确“生成任务尚未开始，点击计划页的生成按钮后才会调用 AI”。
+- 从资产页进入计划页时显示 `api-plan-launch-notice`，提示已带入接口数量、生成尚未开始、后续会在同一区域展示排队/批次/日志/结果。
+- 候选详情新增 `api-plan-review-guide`，说明审阅目标是“把 AI draft 变成可执行基线”，并列出三项检查：请求方法/路径/入参/鉴权变量/响应断言、待补数据处理、可执行项满足范围后再采纳。
+- 绑定漂移面板新增 `api-plan-drift-guide`，明确下一步是“按当前绑定重新生成，不需要逐条编辑”，重新生成后平台会重新校验业务 token、环境变量和可执行数据。
+- 前端缓存版本更新为 `20260730-api-plan-launch-feedback`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+git diff --check -- js/api-testing.js css/round5.css task-manager.html tests/frontend_static_checks.py CODEX_STATE.md
+```
+
 ### 2026-07-30 API 计划绑定漂移时展示当前绑定和 token 变量
 
 用户截图中 AI 用例计划详情停在 `workspace_binding_drift`，并显示“未配置业务用户登录 token”，但用户已经配置过 3D 项目的业务 token，页面无法解释为什么卡住、token 保存在哪里。

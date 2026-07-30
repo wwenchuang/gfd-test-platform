@@ -5,6 +5,7 @@ let apiPlanGenerationRequestId = 0;
 let apiPlanGenerationController = null;
 let apiPlanGenerationPollTimer = null;
 let apiPlanGenerationCurrent = null;
+let apiPlanLaunchNotice = null;
 let apiPlanBindingContext = null;
 const apiPlanGenerationExpandedKeys = new Set(JSON.parse(localStorage.getItem('api_plan_generation_expanded_keys') || '[]'));
 const apiPlanGenerationScrollPositions = new Map();
@@ -1297,13 +1298,17 @@ function renderApiAssetActionPanelContent(source = selectedApiAssetSource() || {
       <span><strong>${escapeHtml(API_PLAN_MAX_ENDPOINTS)}</strong><small>单次上限</small></span>
     </div>
     <div class="api-asset-action-buttons">
-      <button class="btn-sm ai" onclick="showApiPlanPage()" ${selectedCount ? '' : 'disabled'}>生成 AI 用例</button>
+      <button class="btn-sm ai" onclick="launchApiPlanGenerationFromAssets()" ${selectedCount ? '' : 'disabled'}>进入 AI 用例计划</button>
       <button class="btn-sm" onclick="showApiBaselinesPage()">查看 API 基线</button>
       <button class="btn-sm" onclick="showApiExecutionPage()">MeterSphere 执行</button>
     </div>
+    <div class="api-asset-generation-feedback">
+      <strong>生成任务尚未开始</strong>
+      <span>${selectedCount ? '已选接口会带入计划页；点击“生成 AI 用例”后才会调用 AI。' : '先勾选接口，再进入计划页发起 AI 生成。'}</span>
+    </div>
     <div class="api-asset-action-note">
       <strong>${escapeHtml(apiSourceDisplayName(source) || '未选择 Apifox 项目')}</strong>
-      <span>${selectedCount ? '已选接口会带入 AI 用例计划。' : '先在中间列表勾选接口，再进入 AI 用例计划。'}</span>
+      <span>${selectedCount ? '下一页可以查看生成进度、AI 批次和候选用例。' : '先在中间列表勾选接口，再进入 AI 用例计划。'}</span>
     </div>
     <details class="api-asset-action-detail">
       <summary>已选模块范围</summary>
@@ -1319,6 +1324,17 @@ function renderApiAssetActionPanel(source = selectedApiAssetSource() || {}) {
 function refreshApiAssetActionPanel() {
   const panel = document.getElementById('api-asset-action-panel');
   if (panel) panel.innerHTML = renderApiAssetActionPanelContent();
+}
+
+async function launchApiPlanGenerationFromAssets() {
+  const endpointCount = selectedApiPlanEndpointIds().length;
+  if (!endpointCount) {
+    showToast('请先选择接口，再进入 AI 用例计划', 'error');
+    return;
+  }
+  apiPlanLaunchNotice = { endpointCount, createdAt: new Date().toLocaleTimeString() };
+  showToast('已带入当前接口范围，进入 AI 用例计划后可发起生成', 'success');
+  await showApiPlanPage();
 }
 
 function renderApiModuleWorkspace() {
@@ -1982,6 +1998,9 @@ async function startApiPlanGeneration() {
     showToast('请选择 1-60 个接口生成计划', 'error');
     return;
   }
+  apiPlanLaunchNotice = null;
+  const launchNotice = document.querySelector('.api-plan-launch-notice');
+  if (launchNotice) launchNotice.remove();
   stopApiPlanGenerationPolling(true);
   const requestId = ++apiPlanGenerationRequestId;
   const capturedScopeKey = apiPlanGenerationScopeKey();
@@ -2145,6 +2164,7 @@ async function showApiPlanPage() {
             ${renderApiPlanScopeSummary()}
           </section>
           <div class="api-plan-review-column">
+            ${renderApiPlanLaunchNotice()}
             <section class="api-panel" id="api-plan-generation-region">${renderApiPlanGeneration(apiPlanGenerationCurrent)}</section>
             <section class="api-panel" id="api-plan-list-region">
               <div class="api-section-heading"><div><span>待处理</span><h3>候选计划</h3></div><small>${candidatePlans.length} 个计划</small></div>
@@ -2229,6 +2249,38 @@ function renderApiPlanBindingDriftPanel(plan = {}) {
         <small>${escapeHtml(authDetail)}</small>
       </div>
       <button type="button" class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按当前绑定重新生成</button>
+      <div class="api-plan-drift-guide">
+        <strong>下一步：重新生成，不需要逐条编辑</strong>
+        <span>这个候选是在旧绑定下生成的；按当前绑定重新生成后，平台会重新校验业务 token、环境变量和可执行数据。</span>
+      </div>
+    </section>
+  `;
+}
+
+function renderApiPlanLaunchNotice() {
+  if (!apiPlanLaunchNotice) return '';
+  return `
+    <section class="api-plan-launch-notice">
+      <strong>已带入 ${escapeHtml(apiPlanLaunchNotice.endpointCount || 0)} 个接口</strong>
+      <span>生成任务尚未开始；点击“生成 AI 用例”后才会调用 AI，并在这里显示排队、批次、日志和生成结果。</span>
+      <small>${escapeHtml(apiPlanLaunchNotice.createdAt || '')}</small>
+    </section>
+  `;
+}
+
+function renderApiPlanReviewGuide(plan = {}) {
+  if (plan.status === 'confirmed') return '';
+  return `
+    <section class="api-plan-review-guide">
+      <div>
+        <span>审阅目标</span>
+        <strong>把 AI draft 变成可执行基线</strong>
+      </div>
+      <ul>
+        <li>确认请求方法、路径、入参、鉴权变量和响应断言是否符合业务接口合同。</li>
+        <li>待补数据不是失败；可以编辑 draft 用例补齐参数、Body 或断言。</li>
+        <li>可执行项满足本次范围后再采纳为基线，采纳后才能进入 MeterSphere 执行。</li>
+      </ul>
     </section>
   `;
 }
@@ -2768,6 +2820,7 @@ function renderApiPlanDetail(plan) {
       <span>${plan.status === 'confirmed' ? '该计划已采纳为基线，可进入 MeterSphere 执行。' : '这是 AI 生成的 draft 候选，请先按接口审阅用例明细；确认后点“采纳为基线”。'}</span>
       <small>${escapeHtml(sourceText)} · 业务鉴权 ${plan.auth_binding?.configured ? '已绑定 MeterSphere 环境变量' : '未配置业务用户登录 token'}</small>
     </div>
+    ${renderApiPlanReviewGuide(plan)}
     <div class="review-stats compact api-plan-readiness">
       <div class="review-stat"><strong>${escapeHtml(plan.endpoint_count || 0)}</strong><span>接口</span></div>
       <div class="review-stat"><strong>${escapeHtml(plan.case_count || cases.length)}</strong><span>用例</span></div>
