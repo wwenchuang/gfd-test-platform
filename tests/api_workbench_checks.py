@@ -107,6 +107,22 @@ class ApiWorkbenchChecks(unittest.TestCase):
             },
         }
 
+    def _generated_openapi(self, endpoint_count=25):
+        return {
+            "openapi": "3.0.1",
+            "info": {"title": "3D 家用业务", "version": "1.0.0"},
+            "paths": {
+                f"/print3d/api/v1/generated/{index}": {
+                    "get": {
+                        "tags": ["家用业务/app接口/生成模块"],
+                        "summary": f"生成接口 {index}",
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                }
+                for index in range(endpoint_count)
+            },
+        }
+
     def _seed_workbench(self):
         source = api_source_service.save_api_source({
             "source_type": "apifox",
@@ -253,6 +269,88 @@ class ApiWorkbenchChecks(unittest.TestCase):
             self.assertNotIn("secret-token", json.dumps(second, ensure_ascii=False))
         finally:
             apifox_discovery_service.discover_project_context = old_discover
+
+    def test_workbench_module_summary_uses_server_counts_and_endpoint_ids(self):
+        from task_server.services import api_workbench_service
+
+        source, revision, _plan, _confirmed = self._seed_workbench()
+
+        workbench = api_workbench_service.api_testing_workbench(source["source_id"])
+        modules = workbench["scope"]["modules"]["roots"]
+        household = next(item for item in modules if item["path"] == "家用业务")
+
+        self.assertEqual(2, household["endpoint_count"])
+        self.assertEqual(
+            sorted(item["endpoint_id"] for item in revision["endpoints"]),
+            sorted(household["endpoint_ids"]),
+        )
+        self.assertLessEqual(len(household["endpoint_ids"]), 60)
+
+    def test_stale_running_batch_becomes_retryable_without_losing_successes(self):
+        source = api_source_service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D",
+            "project_id": "5904970",
+            "access_token": "secret-apifox-token",
+            "sync_enabled": False,
+        })
+        api_workspace_service.save_api_workspace_binding(
+            source["source_id"],
+            "api_project_3d",
+            "api_env_dev",
+        )
+        staged = api_asset_service.stage_api_revision(
+            source["source_id"],
+            "3D",
+            self._generated_openapi(25),
+            source_type="apifox",
+        )
+        api_asset_service.activate_api_revision(
+            staged["asset_id"],
+            staged["revision_id"],
+        )
+        endpoint_ids = [
+            item["endpoint_id"]
+            for item in staged["revision"]["endpoints"]
+        ]
+        generation = api_plan_generation_service.start_api_plan_generation(
+            source["source_id"],
+            staged["revision_id"],
+            endpoint_ids,
+            ["家用业务/app接口"],
+            spawn=False,
+        )
+        record = api_plan_generation_service.get_api_plan_generation(
+            generation["generation_id"]
+        )
+        record["status"] = "running"
+        record["running_batch_timeout_seconds"] = 300
+        record["started_at"] = "2026-07-30 10:00:00"
+        record["updated_at"] = "2026-07-30 10:01:00"
+        record["batches"][0]["status"] = "succeeded"
+        record["batches"][0]["plan_id"] = "existing-plan-1"
+        record["batches"][0]["started_at"] = "2026-07-30 10:00:00"
+        record["batches"][0]["finished_at"] = "2026-07-30 10:01:00"
+        record["batches"][1]["status"] = "running"
+        record["batches"][1]["started_at"] = "2026-07-30 10:01:00"
+        record["batches"][2]["status"] = "queued"
+        api_plan_generation_service._write_generation(record)
+        original_now = api_plan_generation_service._now
+        api_plan_generation_service._now = lambda: "2026-07-30 10:20:00"
+        try:
+            recovered = api_plan_generation_service.get_api_plan_generation(
+                generation["generation_id"]
+            )
+        finally:
+            api_plan_generation_service._now = original_now
+
+        self.assertEqual("partial", recovered["status"])
+        self.assertEqual("succeeded", recovered["batches"][0]["status"])
+        self.assertEqual("existing-plan-1", recovered["batches"][0]["plan_id"])
+        self.assertEqual("failed", recovered["batches"][1]["status"])
+        self.assertTrue(recovered["batches"][1]["recoverable"])
+        self.assertEqual("queued", recovered["batches"][2]["status"])
+        self.assertIn("超时", recovered["batches"][1]["error"])
 
 
 if __name__ == "__main__":

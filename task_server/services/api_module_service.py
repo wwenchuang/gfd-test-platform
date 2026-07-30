@@ -116,6 +116,7 @@ def module_summary(endpoints: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             continue
         endpoint_count += 1
         module_path = normalize_module_path(endpoint.get("module_path") or endpoint.get("module")) or "未分组"
+        endpoint_id = str(endpoint.get("endpoint_id") or "").strip()
         parts = module_path.split("/")
         for index in range(1, len(parts) + 1):
             path = "/".join(parts[:index])
@@ -126,9 +127,12 @@ def module_summary(endpoints: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
                 "parent_path": parent_path,
                 "depth": index,
                 "endpoint_count": 0,
+                "endpoint_ids": [],
                 "children": [],
             })
             node["endpoint_count"] += 1
+            if endpoint_id and len(node["endpoint_ids"]) < 60:
+                node["endpoint_ids"].append(endpoint_id)
     for path, node in nodes.items():
         if node["parent_path"]:
             nodes[node["parent_path"]]["children"].append(node)

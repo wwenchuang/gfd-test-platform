@@ -29,7 +29,9 @@ let apiSelectedReportId = '';
 let apiSelectedReportDetail = null;
 let apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
 const API_PLAN_MAX_ENDPOINTS = 60;
+const API_PLAN_AI_BATCH_SIZE = 12;
 let apiAssetBusinessLines = [];
+let apiWorkbenchCurrent = null;
 const apiPlanReviewStateByPlan = new Map();
 const apiExecutionBindingClientSessionId = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -320,6 +322,7 @@ async function loadApiTestingWorkbench(sourceId = currentApiExecutionSourceId())
   const scope = data.scope || {};
   const cases = data.cases || {};
   apiTestingOverview = data;
+  apiWorkbenchCurrent = data;
   apiTestingSources = data.sources || [];
   apiTestingEndpoints = scope.endpoints || [];
   apiAssetBusinessLines = scope.business_lines || [];
@@ -381,9 +384,47 @@ function apiWorkbenchCandidateModules(workbench = {}) {
     .slice(0, 12);
 }
 
-function apiWorkbenchEndpointCountForPath(path) {
-  const normalized = apiNormalizeModulePath(path);
-  return apiTestingEndpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), normalized)).length;
+function apiWorkbenchEndpointCountForModule(module = {}) {
+  return Number(module.endpoint_count || 0);
+}
+
+function apiWorkbenchModuleByPath(modulePath, workbench = apiWorkbenchCurrent) {
+  const normalized = apiNormalizeModulePath(modulePath);
+  return apiWorkbenchFlattenModules(workbench?.scope?.modules?.roots || [])
+    .find(item => apiNormalizeModulePath(item.path) === normalized) || null;
+}
+
+function apiWorkbenchEndpointIdsForModule(modulePath) {
+  const module = apiWorkbenchModuleByPath(modulePath);
+  const serverIds = (module?.endpoint_ids || []).map(String).filter(Boolean);
+  if (serverIds.length) return serverIds.slice(0, API_PLAN_MAX_ENDPOINTS);
+  const normalized = apiNormalizeModulePath(modulePath);
+  return apiTestingEndpoints
+    .filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), normalized))
+    .map(endpoint => String(endpoint.endpoint_id || ''))
+    .filter(Boolean)
+    .slice(0, API_PLAN_MAX_ENDPOINTS);
+}
+
+function apiWorkbenchSuggestedChildModules(module = {}) {
+  return (module.children || [])
+    .filter(item => Number(item.endpoint_count || 0) > 0)
+    .sort((left, right) => Number(right.endpoint_count || 0) - Number(left.endpoint_count || 0))
+    .slice(0, 3)
+    .map(item => `${item.name || item.path}（${item.endpoint_count}）`);
+}
+
+function apiWorkbenchConfirmLargeModuleGeneration(module = {}, selectedCount = 0) {
+  const total = apiWorkbenchEndpointCountForModule(module);
+  if (total <= API_PLAN_MAX_ENDPOINTS) return true;
+  const batchCount = Math.ceil(selectedCount / API_PLAN_AI_BATCH_SIZE);
+  const suggestions = apiWorkbenchSuggestedChildModules(module);
+  const suggestionText = suggestions.length
+    ? `\n建议优先选择子模块：${suggestions.join('、')}`
+    : '\n建议优先选择更小的子模块或在高级资产管理中搜索接口。';
+  return confirm(
+    `当前模块共有 ${total} 个接口，本次只会选择前 ${selectedCount} 个，预计拆成 ${batchCount} 个 AI 批次串行生成。${suggestionText}\n\n继续生成吗？`
+  );
 }
 
 function renderApiWorkbenchModules(workbench = {}) {
@@ -392,14 +433,18 @@ function renderApiWorkbenchModules(workbench = {}) {
   return `
     <div class="api-workbench-module-grid">
       ${modules.map(module => {
-        const count = apiWorkbenchEndpointCountForPath(module.path);
-        const disabled = count <= 0;
+        const count = apiWorkbenchEndpointCountForModule(module);
+        const endpointIds = (module.endpoint_ids || []).filter(Boolean);
+        const selectedCount = Math.min(count, endpointIds.length || API_PLAN_MAX_ENDPOINTS);
+        const disabled = count <= 0 || selectedCount <= 0;
         const capped = count > API_PLAN_MAX_ENDPOINTS;
+        const suggestions = apiWorkbenchSuggestedChildModules(module);
         return `
           <article class="api-workbench-module-card">
             <div><strong>${escapeHtml(module.name || module.path || '未分组')}</strong><span>${escapeHtml(module.path || '')}</span></div>
-            <small>${escapeHtml(count)} 个接口${capped ? `，单批最多 ${API_PLAN_MAX_ENDPOINTS}` : ''}</small>
-            <button class="btn-sm ai" ${disabled ? 'disabled' : ''} onclick="apiWorkbenchGenerateModule(${jsArg(module.path)})">${capped ? '选前 60 个生成' : '生成 AI 用例'}</button>
+            <small>${escapeHtml(count)} 个接口${capped ? `，本次选择 ${selectedCount} 个 · ${Math.ceil(selectedCount / API_PLAN_AI_BATCH_SIZE)} 批` : ''}</small>
+            ${capped && suggestions.length ? `<small>建议：${escapeHtml(suggestions.join('、'))}</small>` : ''}
+            <button class="btn-sm ai" ${disabled ? 'disabled' : ''} onclick="apiWorkbenchGenerateModule(${jsArg(module.path)})">${capped ? '确认范围后生成' : '生成 AI 用例'}</button>
           </article>
         `;
       }).join('')}
@@ -575,21 +620,24 @@ async function apiWorkbenchUpdateSnapshot() {
 
 async function apiWorkbenchGenerateModule(modulePath) {
   const normalized = apiNormalizeModulePath(modulePath);
-  const endpoints = apiTestingEndpoints.filter(endpoint => apiModulePathMatches(apiEndpointModulePath(endpoint), normalized));
-  if (!endpoints.length) {
+  const module = apiWorkbenchModuleByPath(normalized);
+  const endpointIds = apiWorkbenchEndpointIdsForModule(normalized);
+  const totalCount = apiWorkbenchEndpointCountForModule(module || {});
+  if (!endpointIds.length) {
     showToast('该模块没有可生成的接口', 'error');
+    return;
+  }
+  if (!apiWorkbenchConfirmLargeModuleGeneration(module || {path: normalized, endpoint_count: endpointIds.length}, endpointIds.length)) {
     return;
   }
   const state = apiModuleSelectionState();
   state.endpointIds.clear();
-  endpoints.slice(0, API_PLAN_MAX_ENDPOINTS).forEach(endpoint => {
-    if (endpoint.endpoint_id) state.endpointIds.add(String(endpoint.endpoint_id));
-  });
+  endpointIds.forEach(endpointId => state.endpointIds.add(String(endpointId)));
   state.selectedModules.clear();
   state.selectedModules.add(normalized);
   state.activeModulePath = normalized;
-  if (endpoints.length > API_PLAN_MAX_ENDPOINTS) {
-    showToast(`模块接口较多，本次先选前 ${API_PLAN_MAX_ENDPOINTS} 个生成`, 'warn');
+  if (totalCount > API_PLAN_MAX_ENDPOINTS) {
+    showToast(`已按平台上限选择 ${endpointIds.length} 个接口，建议后续按子模块补充`, 'warn');
   }
   await startApiPlanGeneration();
 }

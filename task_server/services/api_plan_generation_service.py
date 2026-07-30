@@ -23,6 +23,10 @@ MAX_ENDPOINTS = 60
 AI_BATCH_SIZE = 12
 POLL_AFTER_MS = 1000
 TERMINAL_STATES = {"succeeded", "partial", "failed", "cancelled"}
+RUNNING_BATCH_TIMEOUT_SECONDS = max(
+    120,
+    int(os.environ.get("MIDSCENE_API_PLAN_GENERATION_BATCH_TIMEOUT_SECONDS", "600") or "600"),
+)
 
 _GENERATION_LOCK = threading.RLock()
 _RUNNING_GENERATIONS: set[str] = set()
@@ -31,6 +35,16 @@ _SCHEDULED_GENERATIONS: set[str] = set()
 
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_time_seconds(value: Any) -> float:
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        return time.mktime(time.strptime(text, "%Y-%m-%d %H:%M:%S"))
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
 
 def _generation_path(generation_id: str) -> str:
@@ -164,7 +178,48 @@ def _validated_generation_scope(
 
 def get_api_plan_generation(generation_id: str) -> Dict[str, Any]:
     record = read_json_file(_generation_path(generation_id), default={}) or {}
-    return _safe(record) if isinstance(record, dict) else {}
+    if not isinstance(record, dict):
+        return {}
+    recovered = _recover_stale_running_batches(record)
+    return _safe(recovered)
+
+
+def _recover_stale_running_batches(record: Dict[str, Any]) -> Dict[str, Any]:
+    if record.get("status") != "running":
+        return record
+    timeout_seconds = int(
+        record.get("running_batch_timeout_seconds")
+        or RUNNING_BATCH_TIMEOUT_SECONDS
+    )
+    now_text = _now()
+    now_seconds = _parse_time_seconds(now_text)
+    if not now_seconds:
+        return record
+    changed = False
+    for batch in record.get("batches") or []:
+        if not isinstance(batch, dict) or batch.get("status") != "running":
+            continue
+        started_seconds = _parse_time_seconds(batch.get("started_at"))
+        if not started_seconds or now_seconds - started_seconds < timeout_seconds:
+            continue
+        batch["status"] = "failed"
+        batch["plan_id"] = ""
+        batch["finished_at"] = now_text
+        batch["error_code"] = "ai_batch_timeout"
+        batch["error"] = f"AI 批次超时：超过 {timeout_seconds}s 未返回，已标记为可重试"
+        batch["recoverable"] = True
+        _append_event(
+            record,
+            "failed",
+            batch["error"],
+            batch_index=int(batch.get("batch_index") or 0),
+        )
+        changed = True
+    if not changed:
+        return record
+    record["recoverable"] = True
+    record["error_code"] = "ai_batch_timeout"
+    return _finalize_generation(record)
 
 
 def _generation_records() -> List[Dict[str, Any]]:
@@ -248,6 +303,7 @@ def start_api_plan_generation(
         "failed_batches": 0,
         "retry_count": 0,
         "poll_after_ms": POLL_AFTER_MS,
+        "running_batch_timeout_seconds": RUNNING_BATCH_TIMEOUT_SECONDS,
         "created_at": now,
         "started_at": "",
         "updated_at": now,
@@ -332,11 +388,14 @@ def run_api_plan_generation(
         for position in range(len(record.get("batches") or [])):
             with _GENERATION_LOCK:
                 record = get_api_plan_generation(selected_generation_id)
+                if not record or record.get("status") in TERMINAL_STATES:
+                    break
                 batch = record["batches"][position]
                 if batch.get("status") != "queued":
                     continue
                 batch["status"] = "running"
                 batch["attempts"] = int(batch.get("attempts") or 0) + 1
+                batch_attempt = int(batch["attempts"])
                 batch["started_at"] = _now()
                 batch["finished_at"] = ""
                 batch["error"] = ""
@@ -365,7 +424,14 @@ def run_api_plan_generation(
                     raise ValueError("AI 批次未返回 plan_id")
                 with _GENERATION_LOCK:
                     record = get_api_plan_generation(selected_generation_id)
+                    if not record or record.get("status") in TERMINAL_STATES:
+                        break
                     batch = record["batches"][position]
+                    if (
+                        batch.get("status") != "running"
+                        or int(batch.get("attempts") or 0) != batch_attempt
+                    ):
+                        continue
                     batch["status"] = "succeeded"
                     batch["plan_id"] = plan_id
                     batch["finished_at"] = _now()
@@ -380,7 +446,14 @@ def run_api_plan_generation(
             except Exception as exc:
                 with _GENERATION_LOCK:
                     record = get_api_plan_generation(selected_generation_id)
+                    if not record or record.get("status") in TERMINAL_STATES:
+                        break
                     batch = record["batches"][position]
+                    if (
+                        batch.get("status") != "running"
+                        or int(batch.get("attempts") or 0) != batch_attempt
+                    ):
+                        continue
                     batch["status"] = "failed"
                     batch["plan_id"] = ""
                     batch["finished_at"] = _now()
@@ -394,6 +467,8 @@ def run_api_plan_generation(
                     _save_transition(record)
         with _GENERATION_LOCK:
             record = get_api_plan_generation(selected_generation_id)
+            if not record or record.get("status") in TERMINAL_STATES:
+                return record
             return get_api_plan_generation(
                 _finalize_generation(record)["generation_id"]
             )
@@ -507,6 +582,9 @@ def retry_api_plan_generation(
             batch["started_at"] = ""
             batch["finished_at"] = ""
             batch["error"] = ""
+            batch.pop("error_code", None)
+            batch.pop("recoverable", None)
+        _RUNNING_GENERATIONS.discard(selected_generation_id)
         record["status"] = "queued"
         record["failed_batches"] = 0
         record["retry_count"] = int(record.get("retry_count") or 0) + 1
@@ -524,6 +602,7 @@ __all__ = [
     "API_TESTING_DIR",
     "MAX_ENDPOINTS",
     "POLL_AFTER_MS",
+    "RUNNING_BATCH_TIMEOUT_SECONDS",
     "TERMINAL_STATES",
     "get_api_plan_generation",
     "recover_api_plan_generations",

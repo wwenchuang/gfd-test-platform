@@ -398,6 +398,18 @@ def main():
         "Plan generation must submit its exact source scope and render backend batch plan ids",
     )
     require(
+        "apiWorkbenchEndpointCountForModule" in api_testing_js
+        and "module.endpoint_count" in api_testing_js
+        and "apiWorkbenchEndpointCountForPath(module.path)" not in api_testing_js,
+        "API workbench module cards must use server module endpoint counts instead of truncated endpoint samples",
+    )
+    require(
+        "apiWorkbenchConfirmLargeModuleGeneration" in api_testing_js
+        and "建议优先选择子模块" in api_testing_js
+        and "Math.ceil(selectedCount / API_PLAN_AI_BATCH_SIZE)" in api_testing_js,
+        "Large API modules must show generation cost and recommended child scopes before AI starts",
+    )
+    require(
         "apiPlanGenerationScopeKey" in api_testing_js
         and "apiPlanGenerationRequestId" in api_testing_js
         and "apiPlanGenerationController" in api_testing_js
@@ -821,7 +833,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-workbench" in html and "js/api-testing.js?v=20260730-api-workbench" in html and "js/agent-status.js?v=20260730-agent-history-non-smoke-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench, Agent report-card non-smoke buckets, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-workbench" in html and "js/api-testing.js?v=20260730-api-workbench-scope-recovery" in html and "js/agent-status.js?v=20260730-agent-history-non-smoke-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, Agent report-card non-smoke buckets, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

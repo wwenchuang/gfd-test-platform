@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 原生 API 工作台模块生成范围与 AI 批次卡住恢复
+
+用户反馈：
+
+- API 工作台流程仍然不够明朗，模块卡片有些显示不出具体接口数量。
+- 从大模块生成 AI 用例时页面停在“生成中 / 5 批”，不知道是不是卡住。
+- 用户希望借鉴 Postman / Apifox / Bruno / Hoppscotch 等成熟 API 工具的做法：接口资产和环境先固化成本地快照，执行流程尽量直接，AI 参与用例设计和失败分析，但用户不需要反复手填 ID 或依赖 MeterSphere。
+
+线上排查：
+
+- 当前卡住的 generation `api_plan_generation_1785409431686_00008` 选择了 60 个接口，按 12 个一批拆成 5 批串行生成。
+- 第 1 批已成功生成计划，第 2 批长时间停在 running，后续批次 queued。
+- 模块卡片计数不准的根因是前端用截断后的 `scope.endpoints` 样本倒推数量；工作台只加载前 300 个接口，无法代表完整 Apifox 快照中的 986 个接口。
+
+修复：
+
+- `api_module_service.module_summary()` 给每个模块节点返回服务端真实 `endpoint_count`，并附带最多 60 个 `endpoint_ids` 作为当前模块可直接生成的范围。
+- API 工作台模块卡片改用服务端 `module.endpoint_count`，不再从前端截断样本倒推数量。
+- 大模块生成前显示本次会选择多少接口、拆成几批 AI 串行生成，并建议优先选择最多 3 个子模块，避免用户误以为“点一下就全量生成 986 个接口”。
+- 生成时直接使用服务端模块节点的 `endpoint_ids`，不需要用户填写 ID，也不会因为前端只加载 300 个接口而选不全当前模块的前 60 个。
+- `api_plan_generation_service` 新增 running 批次超时恢复：
+  - 默认 600 秒，可用 `MIDSCENE_API_PLAN_GENERATION_BATCH_TIMEOUT_SECONDS` 调整。
+  - 超时 running 批次会标记为 `failed / ai_batch_timeout / recoverable`。
+  - 已成功批次的 `plan_id` 保留，重试只重试失败批次。
+  - 如果迟到的 AI 返回发生在超时恢复之后，worker 不会覆盖已恢复的终态。
+- `task-manager.html` 更新 `api-testing.js` 缓存版本为 `20260730-api-workbench-scope-recovery`。
+
+验证：
+
+```bash
+python3 tests/api_workbench_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 -m py_compile task_server/services/api_module_service.py task_server/services/api_plan_generation_service.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/backend_static_checks.py
+```
+
 ### 2026-07-30 Apifox 环境 base_url 读取与 API 页面环境优先展示
 
 用户反馈：
