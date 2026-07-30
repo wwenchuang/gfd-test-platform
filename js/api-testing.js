@@ -2361,8 +2361,115 @@ function updateApiPlanCaseEditText(value) {
   apiPlanCaseEditor.text = String(value || '');
 }
 
+function apiPlanCaseEditorObject() {
+  try {
+    const parsed = JSON.parse(apiPlanCaseEditor.text || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function apiPlanCaseEditorJson(value) {
+  return JSON.stringify(value && typeof value === 'object' ? value : {}, null, 2);
+}
+
+function apiPlanCaseEditorLines(value) {
+  if (Array.isArray(value)) return value.map(item => (typeof item === 'string' ? item : apiCaseAssertionText(item))).join('\n');
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  return String(value);
+}
+
+function apiPlanCaseEditorStatusText(assertions = []) {
+  const status = Array.isArray(assertions) ? assertions.find(item => item && typeof item === 'object' && item.type === 'status') : null;
+  const expected = status?.expected;
+  if (Array.isArray(expected)) return expected.join(', ');
+  if (expected == null) return '';
+  return String(expected);
+}
+
+function apiPlanCaseEditorStatusValues(value) {
+  return String(value || '')
+    .split(/[\s,，/]+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => (/^\d+$/.test(item) ? Number(item) : item));
+}
+
+function apiPlanCaseEditorReadJson(root, selector, fallback = {}) {
+  const input = root.querySelector(selector);
+  const text = String(input?.value || '').trim();
+  if (!text) return fallback && typeof fallback === 'object' ? fallback : {};
+  return JSON.parse(text);
+}
+
+function apiPlanCaseEditorReadLines(root, selector) {
+  const input = root.querySelector(selector);
+  return String(input?.value || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+function buildApiPlanCaseFromEditorForm(root) {
+  const current = apiPlanCaseEditorObject();
+  const request = current.request && typeof current.request === 'object' ? {...current.request} : {};
+  const value = selector => String(root.querySelector(selector)?.value || '').trim();
+  const assertionLines = apiPlanCaseEditorReadLines(root, '[data-case-field="assertion_texts"]');
+  const statusValues = apiPlanCaseEditorStatusValues(value('[data-case-field="assertions.status"]'));
+  const assertions = (Array.isArray(current.assertions) ? current.assertions : [])
+    .filter(item => !(item && typeof item === 'object' && item.type === 'status'));
+  if (statusValues.length) assertions.unshift({type: 'status', operator: 'in', expected: statusValues});
+  const edited = {
+    ...current,
+    name: value('[data-case-field="name"]') || current.name,
+    type: value('[data-case-field="type"]') || current.type || 'positive',
+    priority: value('[data-case-field="priority"]') || current.priority || 'P0',
+    steps: apiPlanCaseEditorReadLines(root, '[data-case-field="steps"]'),
+    assertion_texts: assertionLines,
+    request: {
+      ...request,
+      method: value('[data-case-field="request.method"]') || request.method,
+      path: value('[data-case-field="request.path"]') || request.path,
+      path_params: apiPlanCaseEditorReadJson(root, '[data-case-json-field="request.path_params"]', request.path_params || {}),
+      query: apiPlanCaseEditorReadJson(root, '[data-case-json-field="request.query"]', request.query || {}),
+      headers: apiPlanCaseEditorReadJson(root, '[data-case-json-field="request.headers"]', request.headers || {}),
+      body: apiPlanCaseEditorReadJson(root, '[data-case-json-field="request.body"]', request.body || {}),
+    },
+  };
+  edited.assertions = assertions.length ? assertions : assertionLines;
+  return edited;
+}
+
+function updateApiPlanCaseEditorFromForm(root) {
+  if (!root) return false;
+  const error = root.querySelector('[data-case-editor-error]');
+  const raw = root.querySelector('[data-case-raw-json]');
+  try {
+    const edited = buildApiPlanCaseFromEditorForm(root);
+    apiPlanCaseEditor.text = JSON.stringify(edited, null, 2);
+    if (raw) raw.value = apiPlanCaseEditor.text;
+    if (error) {
+      error.hidden = true;
+      error.textContent = '';
+    }
+    return true;
+  } catch (e) {
+    if (error) {
+      error.hidden = false;
+      error.textContent = `请求入参 JSON 格式不正确：${e.message || e}`;
+    }
+    return false;
+  }
+}
+
 async function saveApiPlanCaseEdit(planId, caseId) {
   if (!apiTestingCurrentPlan || String(apiTestingCurrentPlan.plan_id || '') !== String(planId || '')) return;
+  const editorRoot = Array.from(document.querySelectorAll('.api-plan-case-editor')).find(root => (
+    root.dataset.planId === String(planId || '') && root.dataset.caseId === String(caseId || '')
+  ));
+  if (editorRoot && !updateApiPlanCaseEditorFromForm(editorRoot)) return;
   let edited;
   try {
     edited = JSON.parse(apiPlanCaseEditor.text || '{}');
@@ -2395,9 +2502,36 @@ function renderApiPlanCaseEditor(plan, item) {
     || apiPlanCaseEditor.planId !== String(plan?.plan_id || '')
     || apiPlanCaseEditor.caseId !== caseId
   ) return '';
+  const current = apiPlanCaseEditorObject();
+  const request = current.request && typeof current.request === 'object' ? current.request : {};
+  const formInput = 'oninput="updateApiPlanCaseEditorFromForm(this.closest(\'.api-plan-case-editor\'))"';
+  const assertionText = current.assertion_texts?.length ? apiPlanCaseEditorLines(current.assertion_texts) : apiPlanCaseEditorLines(current.assertions || []);
+  const statusText = apiPlanCaseEditorStatusText(current.assertions || []);
   return `
-    <div class="api-plan-case-editor">
-      <label><span>编辑 AI 生成用例 JSON</span><textarea oninput="updateApiPlanCaseEditText(this.value)" spellcheck="false">${escapeHtml(apiPlanCaseEditor.text || '')}</textarea></label>
+    <div class="api-plan-case-editor" data-plan-id="${escapeHtml(plan.plan_id || '')}" data-case-id="${escapeHtml(caseId)}">
+      <div class="api-plan-case-editor-head">
+        <div><strong>编辑 AI 生成用例</strong><span>按计划、入参和校验修改；保存后平台会重新校验可执行性。</span></div>
+        ${apiStatusPill('Draft', 'warn')}
+      </div>
+      <div class="api-plan-case-form-grid">
+        <label><span>用例名称</span><input data-case-field="name" value="${escapeHtml(current.name || '')}" ${formInput}></label>
+        <label><span>优先级</span><input data-case-field="priority" value="${escapeHtml(current.priority || 'P0')}" ${formInput}></label>
+        <label><span>类型</span><input data-case-field="type" value="${escapeHtml(current.type || 'positive')}" ${formInput}></label>
+        <label><span>请求方法</span><input data-case-field="request.method" value="${escapeHtml(request.method || '')}" ${formInput}></label>
+        <label><span>HTTP 状态码</span><input data-case-field="assertions.status" value="${escapeHtml(statusText || '200')}" placeholder="200, 201" ${formInput}></label>
+        <label class="wide"><span>请求路径</span><input data-case-field="request.path" value="${escapeHtml(request.path || current.endpoint || '')}" ${formInput}></label>
+        <label class="wide"><span>执行计划</span><textarea data-case-field="steps" ${formInput} spellcheck="false">${escapeHtml(apiPlanCaseEditorLines(current.steps || []))}</textarea></label>
+        <label><span>路径参数 JSON</span><textarea data-case-json-field="request.path_params" ${formInput} spellcheck="false">${escapeHtml(apiPlanCaseEditorJson(request.path_params))}</textarea></label>
+        <label><span>Query JSON</span><textarea data-case-json-field="request.query" ${formInput} spellcheck="false">${escapeHtml(apiPlanCaseEditorJson(request.query))}</textarea></label>
+        <label><span>Header JSON</span><textarea data-case-json-field="request.headers" ${formInput} spellcheck="false">${escapeHtml(apiPlanCaseEditorJson(request.headers))}</textarea></label>
+        <label class="wide"><span>请求入参 Body JSON</span><textarea data-case-json-field="request.body" ${formInput} spellcheck="false">${escapeHtml(apiPlanCaseEditorJson(request.body))}</textarea></label>
+        <label class="wide"><span>校验断言</span><textarea data-case-field="assertion_texts" ${formInput} spellcheck="false">${escapeHtml(assertionText)}</textarea></label>
+      </div>
+      <p class="api-plan-case-editor-error" data-case-editor-error hidden></p>
+      <details class="api-plan-case-raw-json">
+        <summary>高级：原始 JSON</summary>
+        <textarea data-case-raw-json oninput="updateApiPlanCaseEditText(this.value)" spellcheck="false">${escapeHtml(apiPlanCaseEditor.text || '')}</textarea>
+      </details>
       <div class="generation-record-actions">
         <button type="button" class="btn-sm" onclick="cancelApiPlanCaseEdit()">取消</button>
         <button type="button" class="btn-sm primary" onclick="saveApiPlanCaseEdit(${jsArg(plan.plan_id)}, ${jsArg(caseId)})">保存并重新校验</button>

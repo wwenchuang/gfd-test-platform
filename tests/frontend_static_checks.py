@@ -431,8 +431,15 @@ def main():
         "editApiPlanCase" in api_testing_js
         and "saveApiPlanCaseEdit" in api_testing_js
         and "api-plan-case-editor" in api_testing_js
+        and "api-plan-case-form-grid" in api_testing_js
+        and "updateApiPlanCaseEditorFromForm" in api_testing_js
+        and "请求入参" in api_testing_js
+        and "HTTP 状态码" in api_testing_js
+        and "apiPlanCaseEditorStatusValues" in api_testing_js
+        and "校验断言" in api_testing_js
+        and "高级：原始 JSON" in api_testing_js
         and "/api-testing/plans/${encodeURIComponent(planId)}/cases" in api_testing_js,
-        "AI generated API draft cases must be editable before adoption as baselines",
+        "AI generated API draft cases must expose structured editable fields before adoption as baselines",
     )
     require(
         "renderApiBusinessAuthPanel" in api_testing_js
@@ -723,7 +730,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260730-api-run-history" in html and "js/api-testing.js?v=20260730-api-run-history" in html and "js/agent-status.js?v=20260729-api-baselines" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260729-agent-report-outcomes" in html and "css/round5.css?v=20260730-api-case-form" in html and "js/api-testing.js?v=20260730-api-case-form" in html and "js/agent-status.js?v=20260729-api-baselines" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

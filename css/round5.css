@@ -1793,28 +1793,73 @@
   grid-column: 1 / -1;
   display: grid;
   gap: 10px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--accent2);
   background: rgba(0, 229, 255, 0.06);
+}
+.api-plan-case-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.api-plan-case-editor-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.api-plan-case-editor-head strong {
+  font-size: 13px;
+}
+.api-plan-case-editor-head span {
+  color: var(--text3);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.api-plan-case-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 .api-plan-case-editor label {
   display: grid;
   gap: 6px;
+  min-width: 0;
+}
+.api-plan-case-editor label.wide {
+  grid-column: 1 / -1;
 }
 .api-plan-case-editor label > span {
   color: var(--text3);
   font-size: 10px;
 }
+.api-plan-case-editor input,
 .api-plan-case-editor textarea {
   width: 100%;
-  min-height: 240px;
-  resize: vertical;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--surface2);
   color: var(--text);
-  padding: 10px;
+  padding: 8px 10px;
+}
+.api-plan-case-editor input {
+  min-height: 34px;
+  font: 11px/1.4 var(--font);
+}
+.api-plan-case-editor textarea {
+  min-height: 90px;
+  resize: vertical;
   font: 11px/1.5 var(--mono);
+}
+.api-plan-case-raw-json textarea {
+  min-height: 220px;
+  margin-top: 8px;
+}
+.api-plan-case-editor-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.5;
 }
 .api-plan-review-pagination {
   display: flex;
@@ -2811,6 +2856,9 @@
     white-space: normal;
   }
   .api-case-row {
+    grid-template-columns: 1fr;
+  }
+  .api-plan-case-form-grid {
     grid-template-columns: 1fr;
   }
   .api-plan-primary-action {

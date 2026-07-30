@@ -1536,6 +1536,18 @@ async function anyVisible(locator) {
     await page.waitForSelector('#api-plan-result .api-plan-readiness');
     if (await page.locator('#api-plan-result input[aria-label="搜索接口或用例"]').inputValue() !== 'points') throw new Error('Plan-scoped review search was not restored');
     await page.locator('#api-plan-result input[aria-label="搜索接口或用例"]').fill('');
+    const exchangeGroup = page.locator('#api-plan-result .api-case-group[data-endpoint-key="POST /exchange"]');
+    if (!await exchangeGroup.evaluate(el => el.open)) await exchangeGroup.locator('summary').click();
+    await exchangeGroup.locator('button:has-text("编辑")').click();
+    await page.waitForSelector('#api-plan-result .api-plan-case-form-grid');
+    const caseEditorText = await visibleText(page, '#api-plan-result .api-plan-case-editor');
+    if (!/编辑 AI 生成用例/.test(caseEditorText) || !/执行计划/.test(caseEditorText) || !/请求入参 Body JSON/.test(caseEditorText) || !/HTTP 状态码/.test(caseEditorText) || !/校验断言/.test(caseEditorText) || !/高级：原始 JSON/.test(caseEditorText)) throw new Error('API draft editor must expose structured plan, input, assertion fields and keep raw JSON as advanced fallback');
+    await page.locator('#api-plan-result .api-plan-case-editor [data-case-field="assertions.status"]').fill('200, 201');
+    const editedCaseJson = await page.locator('#api-plan-result .api-plan-case-editor [data-case-raw-json]').inputValue();
+    const editedCase = JSON.parse(editedCaseJson);
+    const editedStatus = (editedCase.assertions || []).find(item => item && item.type === 'status');
+    if (!editedStatus || !Array.isArray(editedStatus.expected) || !editedStatus.expected.includes(201)) throw new Error('Editing the status field must update the structured status assertion JSON');
+    await page.screenshot({path: path.join(ARTIFACTS, 'api-case-editor.png'), fullPage: true});
     await page.screenshot({path: path.join(ARTIFACTS, 'api-plan-readiness.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
     await page.waitForTimeout(100);

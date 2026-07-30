@@ -46,8 +46,9 @@
 - `_pull_metersphere_report_with_config()` 对明确 running 的报告返回 `report_not_ready`，不保存最终 API report；已归因为 failed 的 provider terminal fallback 仍允许同步失败报告。
 - 新增 `/api/api-testing/plans/{plan_id}/cases`：只允许编辑 draft 候选，保存后重新执行 `evaluate_api_plan()`，可执行/待补数量由平台重新计算；已采纳基线不能直接改。
 - 前端 AI 用例明细行新增 `编辑`，打开 JSON 编辑器后可保存并重新校验。
+- AI draft 编辑器升级为结构化表单：默认按用例名称、优先级、请求方法/路径、执行计划、路径参数、Query、Header、Body 入参和校验断言分区编辑；原始 JSON 收进“高级”折叠区作为兜底，保存接口和后端数据模型不变。
 - MeterSphere v3.6.5 adapter 推送 API case / scenario 的 lifecycle `status` 改为 `COMPLETED`，避免远端用例列表一直显示“进行中”；真实执行状态仍只来自 report `execStatus/status`。
-- 前端缓存版本更新为 `20260729-api-live-reports`。
+- 前端缓存版本更新为 `20260730-api-case-form`。
 
 验证：
 
