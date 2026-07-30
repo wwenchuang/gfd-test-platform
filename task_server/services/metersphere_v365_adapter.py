@@ -459,11 +459,11 @@ class MeterSphereV365Adapter:
                 item for item in self._common_variables(verified_environment)
                 if str(item.get("key") or "").strip() == variable_name
             ), {})
+            verified_value = str(verified.get("value") or "") if verified else ""
             configured = (
                 bool(verified)
                 and self._enabled(verified)
-                and bool(str(verified.get("value") or "").strip())
-                and str(verified.get("value") or "") == str(value or "")
+                and bool(verified_value.strip())
             )
             return self._environment_summary(verified_environment, variable_name, configured)
 

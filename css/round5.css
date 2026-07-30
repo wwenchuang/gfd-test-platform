@@ -2185,6 +2185,10 @@
   font-size: 11px;
   line-height: 1.5;
 }
+.api-business-auth-hint {
+  color: var(--warning);
+  font-size: 10px;
+}
 .api-auth-summary {
   display: grid;
   gap: 7px;

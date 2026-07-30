@@ -3068,7 +3068,8 @@ function renderApiBusinessAuthPanel(context = {}) {
       <section class="api-business-auth-panel" data-configured="false">
         <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>当前环境尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
         <p>优先通过 3D 项目的用户登录接口获取 token，再写入 MeterSphere 环境变量；平台本地只保存变量名和指纹。</p>
-        <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()" ${canEdit ? '' : 'disabled'}>配置登录接口</button>
+        <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()">配置登录接口</button>
+        ${canEdit ? '' : `<small class="api-business-auth-hint">请先选择当前来源的 MeterSphere 业务和环境。</small>`}
       </section>
     `;
   }
@@ -3108,6 +3109,12 @@ function renderApiBusinessAuthInHeader() {
 }
 
 function editApiBusinessAuth() {
+  const sourceId = apiExecutionContext?.source_id || apiTestingProjectScope.sourceId;
+  const selectedEnvironmentId = apiExecutionContext?.selection?.environment_id || apiExecutionContext?.binding?.environment_id || '';
+  if (!sourceId || !selectedEnvironmentId) {
+    showToast('请先选择当前来源的 MeterSphere 业务和环境', 'error');
+    return;
+  }
   const auth = apiBusinessAuthMetadata();
   apiBusinessAuthEditing = true;
   apiBusinessAuthType = auth.auth_type === 'api_key' ? 'api_key' : 'bearer';

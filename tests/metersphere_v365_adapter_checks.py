@@ -688,6 +688,44 @@ class MeterSphereV365EnvironmentVariableChecks(unittest.TestCase):
             [item["key"] for item in remote.environment["config"]["commonVariables"]],
         )
 
+    def test_environment_variable_upsert_accepts_masked_readback(self):
+        class Remote:
+            def __init__(self):
+                self.environment = {
+                    "id": "env-a",
+                    "projectId": "project-a",
+                    "name": "测试环境",
+                    "description": "",
+                    "config": {"commonVariables": []},
+                }
+
+            def request(self, method, path, payload=None, timeout=30, **_kwargs):
+                if method == "GET" and path == "/project/environment/get/env-a":
+                    return {"ok": True, "data": copy.deepcopy(self.environment)}
+                return {"ok": False, "error": f"unexpected {method} {path}"}
+
+            def multipart(self, method, path, request, timeout=30, **_kwargs):
+                if method == "POST" and path == "/project/environment/update":
+                    masked = copy.deepcopy(request)
+                    masked["config"]["commonVariables"][-1]["value"] = "******"
+                    self.environment = masked
+                    return {"ok": True, "data": {"id": "env-a"}}
+                return {"ok": False, "error": f"unexpected multipart {method} {path}"}
+
+        remote = Remote()
+        adapter = metersphere_v365_adapter.MeterSphereV365Adapter(
+            {"project_id": "project-a", "environment_id": "env-a"},
+            remote.request,
+            request_multipart=remote.multipart,
+        )
+
+        saved = adapter.upsert_environment_variable(
+            "env-a", "MTP_API_AUTH_MASKED", "runtime-secret", "Midscene API authentication",
+        )
+
+        self.assertTrue(saved["configured"])
+        self.assertNotIn("runtime-secret", json.dumps(saved, ensure_ascii=False))
+
     def test_environment_detail_from_another_project_is_rejected(self):
         class Remote:
             def request(self, method, path, payload=None, timeout=30, **_kwargs):

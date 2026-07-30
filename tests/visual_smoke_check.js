@@ -1637,6 +1637,8 @@ async function anyVisible(locator) {
     ) throw new Error(`Binding save did not send optimistic concurrency identity: ${JSON.stringify(bindingBodies)}`);
     await page.screenshot({path: path.join(ARTIFACTS, 'metersphere-project-binding.png'), fullPage: true});
     await page.locator('button[aria-label="配置业务鉴权"]').click();
+    if (!await page.locator('#api-business-auth-login-url').isVisible()) throw new Error('Business auth edit must open the login-interface token form by default');
+    await page.locator('button[data-auth-source-mode="manual"]').click();
     if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Business auth replacement must always open with an empty secret');
     await page.locator('button[data-auth-type="api_key"]').click();
     if (!await page.locator('#api-business-auth-header').isVisible()) throw new Error('API Key mode must expose a conditional header field');
@@ -1656,6 +1658,8 @@ async function anyVisible(locator) {
     await page.locator('.api-business-auth-panel .api-auth-detail > summary').click();
     if (!/API_KEY/.test(await visibleText(page, '.api-business-auth-panel'))) throw new Error('Saved public auth metadata must remain available in management details');
     await page.locator('button[aria-label="更换业务鉴权"]').click();
+    if (!await page.locator('#api-business-auth-login-url').isVisible()) throw new Error('Business auth replacement must also default to login-interface token mode');
+    await page.locator('button[data-auth-source-mode="manual"]').click();
     if (await page.locator('#api-business-auth-secret').inputValue()) throw new Error('Saved business auth secret was rehydrated into the replacement field');
     await page.locator('button[aria-label="取消更换业务鉴权"]').click();
     await page.screenshot({path: path.join(ARTIFACTS, 'api-business-auth.png'), fullPage: true});
