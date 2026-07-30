@@ -3643,6 +3643,7 @@ async function showApiReportsPage() {
           </div>
         </div>
         ${renderApiReportActiveRuns(apiTestingReportContext.active_runs || [])}
+        ${renderApiReportRecentRuns(apiTestingReportContext.recent_runs || [])}
         <section class="api-panel">
           <div class="api-section-heading"><div><span>历史报告</span><h3>已完成执行</h3></div><small>${escapeHtml(apiTestingReports.length)} 份报告</small></div>
           ${apiTestingReports.length ? `<table class="report-table"><thead><tr><th>报告</th><th>状态</th><th>总数</th><th>通过</th><th>失败</th><th>时间</th></tr></thead><tbody>${apiTestingReports.map(renderApiReportRow).join('')}</tbody></table>` : apiTestingEmpty((apiTestingReportContext.active_runs || []).length ? '当前执行尚未生成最终报告。' : '暂无 API 报告。')}
@@ -3694,6 +3695,34 @@ function renderApiReportActiveRuns(activeRuns = []) {
             <div><span>状态</span><strong>${escapeHtml(apiExecutionStateText(run.status))}</strong><small>${escapeHtml(run.current_phase || '-')} · 已运行 ${escapeHtml(apiDurationText(run.duration_seconds))}</small></div>
             <div><span>远端统计</span><strong>${escapeHtml(stats.total || 0)} / ${escapeHtml(stats.passed || 0)} / ${escapeHtml(stats.failed || 0)}</strong><small>总数 / 通过 / 失败</small></div>
             <div><span>报告</span><strong>${escapeHtml(run.report_status || '等待生成')}</strong><small>最后更新 ${escapeHtml(run.updated_at || '-')}</small></div>
+          </article>
+        `;
+      }).join('')}</div>
+    </section>
+  `;
+}
+
+function renderApiReportRecentRuns(recentRuns = []) {
+  if (!recentRuns.length) return '';
+  return `
+    <section class="api-panel api-report-recent-runs">
+      <div class="api-section-heading">
+        <div><span>最近执行记录</span><h3>编排状态与接口报告分开看</h3></div>
+        <small>${escapeHtml(recentRuns.length)} 条</small>
+      </div>
+      <div class="api-report-run-list">${recentRuns.slice(0, 8).map(run => {
+        const stats = run.stats || {};
+        const reportTone = apiReportStatusTone(run.report_status);
+        const runTone = apiReportStatusTone(run.status);
+        const reportText = run.report_id
+          ? `报告 ${run.report_id}`
+          : (run.report_status || '未生成报告');
+        return `
+          <article class="api-report-run-card terminal">
+            <div><span>计划</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || 'MeterSphere 执行')}</strong><small>execution_id ${escapeHtml(run.execution_id || '-')}</small></div>
+            <div><span>执行编排</span><strong>${apiStatusPill(apiExecutionStateText(run.status), runTone)}</strong><small>远端 ${escapeHtml(run.remote_status || '-')} · ${escapeHtml(run.error || '无错误摘要')}</small></div>
+            <div><span>接口结果</span><strong>${escapeHtml(stats.total || 0)} / ${escapeHtml(stats.passed || 0)} / ${escapeHtml(stats.failed || 0)}</strong><small>总数 / 通过 / 失败</small></div>
+            <div><span>报告同步</span><strong>${apiStatusPill(apiExecutionStateText(run.report_status), reportTone)}</strong><small>${escapeHtml(reportText)} · ${escapeHtml(run.updated_at || '-')}</small></div>
           </article>
         `;
       }).join('')}</div>

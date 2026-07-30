@@ -2101,6 +2101,9 @@
 .api-report-active-runs {
   border-left: 3px solid var(--accent);
 }
+.api-report-recent-runs {
+  border-left: 3px solid var(--warning);
+}
 .api-report-run-list {
   display: grid;
   gap: 10px;
@@ -2127,6 +2130,9 @@
 .api-report-run-card small {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.api-report-run-card.terminal {
+  background: rgba(255, 197, 61, 0.04);
 }
 .api-business-auth-panel > p {
   margin: 0;
