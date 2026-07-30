@@ -28,6 +28,37 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-30 Agent 服务重启后 RUNNING 步骤恢复
+
+用户指出百度网盘 Agent 第二次卡在 `PLAN` 可能是服务端重启导致，不应长期停在旧的 RUNNING 状态。
+
+根因：
+
+- Agent 后台执行器是进程内线程；服务重启后线程必然丢失，但持久化 run 仍可能保留 `status=RUNNING`、当前 step `RUNNING`。
+- 既有 `recover_stale_agent_runs()` 已能处理 Runner job 终态恢复、已返回 toolCall 的步骤补齐、工具调用前卡住重排，以及 `GENERATE_YAML` 后台生成 job 失联。
+- 本次百度网盘卡点属于“工具已开始调用、但服务重启后没有 active worker 接管”的 `PLAN` 运行态，既有恢复条件没有覆盖。
+
+修复：
+
+- 新增 `AGENT_RESTART_REQUEUE_STEPS`，只允许没有外部执行副作用的 Agent 步骤在服务重启后重新排队：`PREPARE_SOURCE / PLAN / IMPACT_ANALYSIS / CASE_RETRIEVAL / MATCH_CASES / VALIDATE_YAML / RISK_REVIEW / EXECUTION_PRECHECK / COLLECT_REPORT / ANALYZE_FAILURE / DIAGNOSE_FAILURE / GENERATE_REPAIR / GENERATE_BUG_DRAFT / LEARN_FROM_RESULT / GENERATE_SUMMARY`。
+- 新增 `_recover_orphaned_running_step_after_restart()`：当 run 仍为 `RUNNING`、当前进程没有 active worker、RUNNING step 启动时间早于当前服务进程启动时间，且超过短暂保护窗口时，把该 step 重置为 `PENDING` 并启动 worker 继续执行。
+- `RUN_SONIC / RERUN / SYNC_SONIC` 不做盲重排，避免重复下发 Runner/Sonic/手机任务；`RUN_SONIC` 仍按真实 job 表终态恢复，`GENERATE_YAML` 仍按生成 job 状态恢复。
+- 恢复动作会写入 step liveTrace、run logs 和 `artifacts.restartRecoveries`，前端可以看到“服务重启恢复”的原因。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
+checks.check_agent_orphaned_running_step_after_restart_requeues()
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py
+```
+
+完整 `python3 tests/backend_static_checks.py` 仍被既有 OBJ 保龄球历史 YAML 断言拦截：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`。本轮不修改历史 YAML。
+
 ### 2026-07-29 API 报告实时状态、AI draft 编辑与 MeterSphere 用例状态
 
 用户发现平台 `API 报告` 页显示历史 `passed`，但 MeterSphere 侧任务仍可见进行中；同时 AI 生成的接口用例只能看不能改，无法实时知晓接口执行状态。

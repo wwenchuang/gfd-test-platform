@@ -13788,6 +13788,65 @@ def check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads():
     require("重新排队" in stalled_step.get("summary", ""), "Requeued stalled tool dispatch must explain the recovery")
 
 
+def check_agent_orphaned_running_step_after_restart_requeues():
+    from task_server.services import agent_service
+
+    source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
+    require(
+        "def _recover_orphaned_running_step_after_restart" in source
+        and "_recover_orphaned_running_step_after_restart(run)" in source,
+        "Agent recovery must requeue orphaned RUNNING planning steps after service restart",
+    )
+    require(
+        "AGENT_RESTART_REQUEUE_STEPS" in source
+        and '"RUN_SONIC"' not in source.split("AGENT_RESTART_REQUEUE_STEPS", 1)[1].split("}", 1)[0],
+        "Restart requeue must be limited to idempotent planning/build steps and must not duplicate Runner execution",
+    )
+
+    old_ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 900))
+    original_started = agent_service.AGENT_SERVICE_STARTED_TS
+    with agent_service.AGENT_ACTIVE_WORKERS_LOCK:
+        original_workers = set(agent_service.AGENT_ACTIVE_WORKERS)
+        agent_service.AGENT_ACTIVE_WORKERS.clear()
+    agent_service.AGENT_SERVICE_STARTED_TS = time.time() - 60
+    run = {
+        "runId": "agent-static-plan-orphan",
+        "status": "RUNNING",
+        "currentStep": "PLAN",
+        "progress": 6,
+        "updatedAt": old_ts,
+        "steps": [
+            {"step": "PREPARE_SOURCE", "status": "SUCCESS"},
+            {
+                "step": "PLAN",
+                "status": "RUNNING",
+                "startedAt": old_ts,
+                "summary": "",
+                "toolCalls": [],
+                "liveTrace": [
+                    {"time": old_ts, "message": "开始执行 PLAN", "status": "RUNNING"},
+                    {"time": old_ts, "message": "准备调用工具：_tool_agent_plan", "status": "RUNNING"},
+                    {"time": old_ts, "message": "调用工具：_tool_agent_plan", "status": "RUNNING"},
+                    {"time": old_ts, "message": "生成用例结构（50%）：正在生成场景、用例、边界和人工待准备事项", "status": "RUNNING"},
+                ],
+            },
+            {"step": "IMPACT_ANALYSIS", "status": "PENDING"},
+        ],
+    }
+    try:
+        recovered, should_resume = agent_service._recover_orphaned_running_step_after_restart(run)
+    finally:
+        agent_service.AGENT_SERVICE_STARTED_TS = original_started
+        with agent_service.AGENT_ACTIVE_WORKERS_LOCK:
+            agent_service.AGENT_ACTIVE_WORKERS.clear()
+            agent_service.AGENT_ACTIVE_WORKERS.update(original_workers)
+
+    plan_step = run["steps"][1]
+    require(recovered is True and should_resume is True, "Orphaned PLAN after restart must request worker resume")
+    require(plan_step.get("status") == "PENDING" and plan_step.get("startedAt") is None, "Orphaned PLAN must be reset to pending")
+    require("服务重启" in plan_step.get("summary", ""), "Restart recovery must explain why the step was requeued")
+
+
 def check_agent_cancel_cascades_runner_jobs():
     from task_server.services import agent_service, job_service
 
@@ -16357,6 +16416,7 @@ def main():
     check_agent_figma_context_defaults()
     check_agent_high_risk_confirm_resumes_precheck()
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
+    check_agent_orphaned_running_step_after_restart_requeues()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()

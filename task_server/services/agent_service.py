@@ -105,6 +105,24 @@ AUTO_AGENT_RISK_KEYWORDS = AGENT_RISK_KEYWORDS
 
 AGENT_SERVICE_STARTED_TS = time.time()
 
+AGENT_RESTART_REQUEUE_STEPS = {
+    "PREPARE_SOURCE",
+    "PLAN",
+    "IMPACT_ANALYSIS",
+    "CASE_RETRIEVAL",
+    "MATCH_CASES",
+    "VALIDATE_YAML",
+    "RISK_REVIEW",
+    "EXECUTION_PRECHECK",
+    "COLLECT_REPORT",
+    "ANALYZE_FAILURE",
+    "DIAGNOSE_FAILURE",
+    "GENERATE_REPAIR",
+    "GENERATE_BUG_DRAFT",
+    "LEARN_FROM_RESULT",
+    "GENERATE_SUMMARY",
+}
+
 AGENT_DEFAULT_BUSINESS_FLOW = ["进入稳定起点", "执行核心业务动作", "校验业务结果"]
 
 AGENT_PLATFORM_LIFECYCLE_STEPS = [
@@ -797,6 +815,68 @@ def _recover_stalled_tool_dispatch_step(run):
     return False, False
 
 
+def _recover_orphaned_running_step_after_restart(run):
+    """Requeue idempotent RUNNING steps whose worker was lost across restart."""
+    if not isinstance(run, dict) or run.get("status") != "RUNNING":
+        return False, False
+    run_id = str(run.get("runId") or "").strip()
+    if not run_id:
+        return False, False
+    with AGENT_ACTIVE_WORKERS_LOCK:
+        if run_id in AGENT_ACTIVE_WORKERS:
+            return False, False
+
+    current_step = str(run.get("currentStep") or "").strip()
+    now_ts = time.time()
+    stall_seconds = max(30, safe_int(os.getenv("MIDSCENE_AGENT_RESTART_REQUEUE_SECONDS"), 60))
+    for step in run.get("steps") or []:
+        if not isinstance(step, dict) or step.get("status") != "RUNNING":
+            continue
+        step_name = str(step.get("step") or current_step or "").strip()
+        if step_name not in AGENT_RESTART_REQUEUE_STEPS:
+            continue
+        started_ts = _agent_parse_time(step.get("startedAt") or run.get("updatedAt"))
+        if not started_ts or started_ts >= AGENT_SERVICE_STARTED_TS - 5:
+            continue
+        last_ts = _latest_step_trace_ts(step) or started_ts
+        if last_ts and now_ts - last_ts < stall_seconds:
+            continue
+
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+        previous_trace = list(step.get("liveTrace") or [])[-12:]
+        step["status"] = "PENDING"
+        step["summary"] = "服务重启后后台执行器已丢失，已自动重新排队"
+        step["startedAt"] = None
+        step["endedAt"] = None
+        step["durationMs"] = 0
+        step["toolCalls"] = []
+        step["liveTrace"] = previous_trace + [{
+            "time": _trace_time_text(),
+            "message": "检测到服务重启后当前步骤没有活动执行器，已按幂等步骤恢复策略重新排队并继续执行。",
+            "status": "PENDING",
+        }]
+        del step["liveTrace"][:-30]
+        run["currentStep"] = step_name
+        run["updatedAt"] = now
+        artifacts = run.setdefault("artifacts", {})
+        recoveries = artifacts.setdefault("restartRecoveries", [])
+        recoveries.append({
+            "step": step_name,
+            "requeuedAt": now,
+            "reason": "service_restart_worker_lost",
+            "serviceStartedAt": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(AGENT_SERVICE_STARTED_TS)),
+        })
+        del recoveries[:-20]
+        run.setdefault("logs", []).append({
+            "time": now,
+            "message": f"{step_name} 服务重启恢复：后台执行器丢失，已重新排队",
+        })
+        del run["logs"][:-200]
+        _refresh_agent_run_progress(run)
+        return True, True
+    return False, False
+
+
 def _recover_stale_runner_job_progress(run, stall_seconds=None):
     """Finish RUN_SONIC when persisted Runner jobs are terminal but Agent progress is stale."""
     if not isinstance(run, dict) or run.get("status") != "RUNNING":
@@ -929,6 +1009,11 @@ def recover_stale_agent_runs(limit=None):
             if should_resume and run.get("runId"):
                 resume_ids.append(run.get("runId"))
             recovered, should_resume = _recover_stalled_tool_dispatch_step(run)
+            if recovered:
+                changed = True
+            if should_resume and run.get("runId"):
+                resume_ids.append(run.get("runId"))
+            recovered, should_resume = _recover_orphaned_running_step_after_restart(run)
             if recovered:
                 changed = True
             if should_resume and run.get("runId"):
