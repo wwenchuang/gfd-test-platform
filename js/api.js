@@ -106,9 +106,25 @@ const WORKFLOW_SECTIONS = {
     cards: [],
     checklist: []
   },
+  api_sync: {
+    index: '2',
+    title: '同步中心',
+    subtitle: '只读同步 Apifox 项目、环境和接口',
+    help: 'Apifox 只作为资产来源；同步结果保存为平台本地快照，差异用于影响分析和后续 AI 更新建议。',
+    cards: [],
+    checklist: []
+  },
+  api_environment: {
+    index: '2',
+    title: '环境配置',
+    subtitle: '维护 Base URL、变量和业务鉴权',
+    help: '从 Apifox 拉下来的环境可以本地修改；业务 token 保存到平台安全 profile，不反写 Apifox。',
+    cards: [],
+    checklist: []
+  },
   api_plan: {
     index: '2',
-    title: 'AI 用例计划',
+    title: 'AI测试设计',
     subtitle: '生成并审阅可采纳的 API 用例候选',
     help: 'AI 用例默认是候选，通过平台校验并采纳为基线后才能进入平台 API 执行。',
     cards: [],
@@ -124,15 +140,23 @@ const WORKFLOW_SECTIONS = {
   },
   api_execution: {
     index: '2',
-    title: 'API 执行',
+    title: '调试执行',
     subtitle: '选择环境、配置鉴权、触发执行',
     help: '平台原生 API Runner 直接执行基线和单条调试用例，并实时写入日志和报告。',
     cards: [],
     checklist: []
   },
+  api_execution_history: {
+    index: '2',
+    title: '执行记录',
+    subtitle: '查看 API Runner 日志和最近执行状态',
+    help: '执行记录展示真实请求、响应、断言和报告入口，不再依赖第三方平台状态。',
+    cards: [],
+    checklist: []
+  },
   api_reports: {
     index: '2',
-    title: 'API 报告',
+    title: '测试报告',
     subtitle: '统一展示平台 API 执行结果和 AI 归因',
     help: '报告由平台执行器生成，平台按接口缺陷、环境、鉴权、测试数据和断言问题分类。',
     cards: [],

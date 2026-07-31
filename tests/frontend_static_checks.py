@@ -50,26 +50,32 @@ def main():
     # Sidebar has 6 nav groups with sub-items
     require(html.count('class="nav-group"') == 6, "Sidebar must include six nav groups (Agent/用例/接口测试/执行/报告/配置)")
     require('data-nav-group="agent"' in html and 'data-nav-group="cases"' in html and 'data-nav-group="api-testing"' in html and 'data-nav-group="run"' in html and 'data-nav-group="report"' in html and 'data-nav-group="settings"' in html, "Sidebar nav groups must include agent/cases/api-testing/run/report/settings")
-    for workflow in ("api_dashboard", "api_reports"):
+    for workflow in (
+        "api_dashboard",
+        "api_assets",
+        "api_sync",
+        "api_environment",
+        "api_plan",
+        "api_execution",
+        "api_execution_history",
+        "api_reports",
+    ):
         require(f'data-workflow="{workflow}"' in html, f"Sidebar missing API testing workflow: {workflow}")
     for workflow, icon in {
-        "api_dashboard": "🧭",
-        "api_reports": "📊",
+        "api_dashboard": "API",
+        "api_assets": "OAS",
+        "api_sync": "S",
+        "api_environment": "EN",
+        "api_plan": "AI",
+        "api_execution": "RUN",
+        "api_execution_history": "LOG",
+        "api_reports": "RPT",
     }.items():
         require(
             f'data-workflow="{workflow}"' in html and f'aria-hidden="true">{icon}</span>' in html,
             f"API testing workflow must use its semantic sidebar icon: {workflow}",
         )
-    for workflow in ("api_assets", "api_plan", "api_baselines", "api_execution"):
-        require(
-            f'data-workflow="{workflow}"' not in HTML.read_text(encoding="utf-8"),
-            f"API testing workflow must be collapsed into the workbench instead of sidebar: {workflow}",
-        )
-    for abbreviation in ("API", "OAS", "AI", "MS", "RPT"):
-        require(
-            f'<span class="workflow-index">{abbreviation}</span>' not in html,
-            f"API testing sidebar must not use the {abbreviation} text placeholder",
-        )
+    require('data-workflow="api_baselines"' not in html, "API baseline maintenance must stay inside AI design instead of adding another sidebar step")
     require("js/api-testing.js" in html, "API testing frontend module must be loaded")
     require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
     require(
@@ -302,11 +308,12 @@ def main():
         and "apiWorkflowNextAction" in api_testing_js
         and "completedSteps" in api_testing_js
         and "api-workflow-stepper" in api_testing_js
-        and "选择业务" in api_testing_js
+        and "项目资产" in api_testing_js
         and "同步接口" in api_testing_js
-        and "生成用例" in api_testing_js
-        and "审阅确认" in api_testing_js
-        and "执行报告" in api_testing_js,
+        and "环境配置" in api_testing_js
+        and "AI设计" in api_testing_js
+        and "调试执行" in api_testing_js
+        and "测试报告" in api_testing_js,
         "Every API page must expose one human-readable daily workflow and next action",
     )
     require(
@@ -617,6 +624,31 @@ def main():
         "Native API execution frontend must not keep MeterSphere routes or settings drawers",
     )
     require(
+        "接口自动化" in html
+        and 'data-workflow="api_dashboard"' in html
+        and 'data-workflow="api_assets"' in html
+        and 'data-workflow="api_sync"' in html
+        and 'data-workflow="api_environment"' in html
+        and 'data-workflow="api_plan"' in html
+        and 'data-workflow="api_execution"' in html
+        and 'data-workflow="api_execution_history"' in html
+        and 'data-workflow="api_reports"' in html
+        and "AI测试设计" in html
+        and "环境配置" in html
+        and "执行记录" in html,
+        "API automation sidebar must expose the simplified native flow from Apifox assets through AI design, execution logs, and reports",
+    )
+    require(
+        "showApiSyncCenterPage" in api_testing_js
+        and "showApiEnvironmentPage" in api_testing_js
+        and "showApiExecutionHistoryPage" in api_testing_js
+        and "API同步中心" in api_testing_js
+        and "环境配置" in api_testing_js
+        and "执行记录" in api_testing_js
+        and "只影响本地执行，不回写 Apifox" in api_testing_js,
+        "API native flow must provide focused sync, environment, and execution-record pages instead of hiding everything in advanced screens",
+    )
+    require(
         "3D业务" not in api_testing_js and "3D业务" not in (ROOT / "task-manager.html").read_text(encoding="utf-8"),
         "Production frontend must not hardcode an API business name",
     )
@@ -862,7 +894,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-agent-history-full-time" in html and "css/round5.css?v=20260731-api-live-log-sources" in html and "js/api-testing.js?v=20260731-api-live-log-sources" in html and "js/agent-status.js?v=20260731-agent-history-full-time" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, Agent report-card readable final score/full timestamp, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-native-center" in html and "js/navigation.js?v=20260731-api-native-center" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-agent-history-full-time" in html and "css/round5.css?v=20260731-api-native-center" in html and "js/api-testing.js?v=20260731-api-native-center" in html and "js/agent-status.js?v=20260731-api-native-center" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

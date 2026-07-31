@@ -2053,9 +2053,12 @@ const CONTEXT_TOOLBAR_MAP = {
   // 接口测试 模块
   api_dashboard:    { module: 'api',      icon: 'API', title: '接口测试', refreshLabel: '刷新', refreshFn: 'showApiTestingDashboard()' },
   api_assets:       { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
-  api_plan:         { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新计划', refreshFn: 'showApiPlanPage()' },
+  api_sync:         { module: 'api',      icon: 'SYNC', title: '接口测试', refreshLabel: '刷新同步', refreshFn: 'showApiSyncCenterPage()' },
+  api_environment:  { module: 'api',      icon: 'ENV', title: '接口测试', refreshLabel: '刷新环境', refreshFn: 'showApiEnvironmentPage()' },
+  api_plan:         { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新设计', refreshFn: 'showApiPlanPage()' },
   api_baselines:    { module: 'api',      icon: '✓', title: '接口测试', refreshLabel: '刷新基线', refreshFn: 'showApiBaselinesPage()' },
-  api_execution:    { module: 'api',      icon: 'MS', title: '接口测试', refreshLabel: '刷新执行', refreshFn: 'showApiExecutionPage()' },
+  api_execution:    { module: 'api',      icon: 'RUN', title: '接口测试', refreshLabel: '刷新执行', refreshFn: 'showApiExecutionPage()' },
+  api_execution_history: { module: 'api', icon: 'LOG', title: '接口测试', refreshLabel: '刷新记录', refreshFn: 'showApiExecutionHistoryPage()' },
   api_reports:      { module: 'api',      icon: 'RPT', title: '接口测试', refreshLabel: '刷新报告', refreshFn: 'showApiReportsPage()' },
   // 报告 模块
   reports:          { module: 'report',   icon: '📊', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
@@ -2172,6 +2175,16 @@ async function activateWorkflow(sectionKey) {
     toggleLibrary(false);
     return;
   }
+  if (activeWorkflow === 'api_sync') {
+    showApiSyncCenterPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_environment') {
+    showApiEnvironmentPage();
+    toggleLibrary(false);
+    return;
+  }
   if (activeWorkflow === 'api_plan') {
     showApiPlanPage();
     toggleLibrary(false);
@@ -2184,6 +2197,11 @@ async function activateWorkflow(sectionKey) {
   }
   if (activeWorkflow === 'api_execution') {
     showApiExecutionPage();
+    toggleLibrary(false);
+    return;
+  }
+  if (activeWorkflow === 'api_execution_history') {
+    showApiExecutionHistoryPage();
     toggleLibrary(false);
     return;
   }

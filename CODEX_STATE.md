@@ -28,6 +28,56 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 API 自动化中心第一阶段产品重构
+
+用户提供方案文档并明确希望：
+
+- Apifox 只作为接口资产来源。
+- 平台负责 API 资产管理、环境配置、AI 测试设计、原生执行、执行日志和测试报告。
+- 不接 MeterSphere，不回写 Apifox。
+- 当前操作过于费事，需要更简洁明了。
+
+判断：
+
+- 文档中的 `api_project/api_environment/api_definition/api_case/api_execution/api_sync_record` 是长期数据模型方向。
+- 当前仓库已经有本地 JSON 持久化、Apifox source/sync/revision、AI plan、原生 API Runner、report 等能力；本轮不适合再并行新增一套数据库目录。
+- 第一阶段应先做产品路径重构：把已有能力按用户心智组织成“API 自动化中心”，减少隐藏入口和内部概念。
+
+修复：
+
+- 左侧“接口测试”改为“接口自动化”，暴露 8 个清晰入口：
+  - API 工作台
+  - 接口资产
+  - 同步中心
+  - 环境配置
+  - AI测试设计
+  - 调试执行
+  - 执行记录
+  - 测试报告
+- 新增聚焦页：
+  - `showApiSyncCenterPage()`：查看 Apifox 同步状态、差异统计、影响计划和同步日志。
+  - `showApiEnvironmentPage()`：集中维护 Base URL、环境变量、本地环境快照和业务鉴权，明确“不回写 Apifox”。
+  - `showApiExecutionHistoryPage()`：查看 API Runner 真实执行记录、请求响应、断言和报告入口。
+- 流程条改为日常语言：
+  - 项目资产 → 同步接口 → 环境配置 → AI设计 → 调试执行 → 测试报告。
+  - 旧的“审阅确认 / 执行报告”不再作为主路径文案。
+- 保留已有 API 基线页面能力，但不再作为左侧一级入口；基线维护从 AI 测试设计内部进入。
+- 同步中心复用本地 Apifox source/sync/revision，不新增 MeterSphere，不反写 Apifox。
+- 环境配置页保存本地环境快照后留在当前页，业务 token 保存后刷新当前鉴权摘要。
+- 前端缓存版本更新为 `20260731-api-native-center`。
+
+验证：
+
+```bash
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js && node --check js/agent-status.js
+python3 tests/frontend_static_checks.py
+python3 tests/api_workbench_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/api_asset_sync_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task-manager.html js/api-testing.js js/api.js js/navigation.js js/agent-status.js css/round5.css tests/frontend_static_checks.py
+```
+
 ### 2026-07-31 Agent 历史卡片最终结果统计去重
 
 用户反馈：

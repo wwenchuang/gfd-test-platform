@@ -244,6 +244,14 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showApiAssetsPage();
     return;
   }
+  if (sectionKey === 'api_sync' && typeof showApiSyncCenterPage === 'function') {
+    showApiSyncCenterPage();
+    return;
+  }
+  if (sectionKey === 'api_environment' && typeof showApiEnvironmentPage === 'function') {
+    showApiEnvironmentPage();
+    return;
+  }
   if (sectionKey === 'api_plan' && typeof showApiPlanPage === 'function') {
     showApiPlanPage();
     return;
@@ -254,6 +262,10 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
   }
   if (sectionKey === 'api_execution' && typeof showApiExecutionPage === 'function') {
     showApiExecutionPage();
+    return;
+  }
+  if (sectionKey === 'api_execution_history' && typeof showApiExecutionHistoryPage === 'function') {
+    showApiExecutionHistoryPage();
     return;
   }
   if (sectionKey === 'api_reports' && typeof showApiReportsPage === 'function') {

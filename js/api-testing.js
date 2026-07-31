@@ -106,7 +106,7 @@ function setApiTestingPage(workflow, title, help) {
     stopApiExecutionPolling(true);
     abortApiExecutionBindingRequests();
   }
-  if (workflow !== 'api_assets') stopApiAssetSyncPolling();
+  if (!['api_assets', 'api_sync'].includes(workflow)) stopApiAssetSyncPolling();
   if (!['api_plan', 'api_dashboard'].includes(workflow)) stopApiPlanGenerationPolling(true);
   if (workflow !== 'api_reports') abortApiReportRequests();
   activeWorkflow = workflow;
@@ -185,8 +185,9 @@ function apiWorkflowNextAction(context = {}) {
   const generation = context.generation || apiPlanGenerationCurrent || {};
   const execution = context.execution || (apiExecutionContext?.active_runs || [])[0] || (apiTestingReportContext?.active_runs || [])[0] || {};
   const reports = context.reports || apiTestingReports || [];
-  if (!source.configured) return {step: 'assets', label: '选择业务', handler: 'showApiAssetsPage()'};
+  if (!source.configured) return {step: 'assets', label: '选择项目', handler: 'showApiAssetsPage()'};
   if (!endpoints.length) return {step: 'assets', label: '同步接口', handler: 'showApiAssetsPage()'};
+  if (!apiSourceEnvironmentSummary(source).baseUrl) return {step: 'environment', label: '配置环境', handler: 'showApiEnvironmentPage()'};
   if (!selectedCount && !plans.length) return {step: 'assets', label: '选择模块和接口', handler: 'showApiAssetsPage()'};
   if (['queued', 'running'].includes(generation.status)) return {step: 'plan', label: '查看生成进度', handler: 'showApiPlanPage()'};
   const draft = plans.find(plan => plan.status === 'draft');
@@ -205,27 +206,33 @@ function renderApiWorkflowStepper(context = {}) {
   const endpoints = context.endpoints || apiTestingEndpoints || [];
   let activeStep = ({
     api_assets: 'assets',
+    api_sync: 'sync',
+    api_environment: 'environment',
     api_plan: 'plan',
-    api_baselines: 'review',
+    api_baselines: 'plan',
     api_execution: 'execution',
-    api_reports: 'execution',
+    api_execution_history: 'execution',
+    api_reports: 'reports',
   })[workflow] || 'assets';
   if (workflow === 'api_assets' && source.configured && !endpoints.length) activeStep = 'sync';
-  if (workflow === 'api_plan' && (apiTestingCurrentPlan || plans.some(plan => plan.status === 'draft'))) activeStep = 'review';
+  if (workflow === 'api_plan' && (apiTestingCurrentPlan || plans.some(plan => plan.status === 'draft'))) activeStep = 'plan';
   const steps = [
-    {id: 'assets', label: '选择业务', handler: 'showApiAssetsPage()'},
-    {id: 'sync', label: '同步接口', handler: 'showApiAssetsPage()'},
-    {id: 'plan', label: '生成用例', handler: 'showApiPlanPage()'},
-    {id: 'review', label: '审阅确认', handler: 'showApiPlanPage()'},
-    {id: 'execution', label: '执行报告', handler: 'showApiExecutionPage()'},
+    {id: 'assets', label: '项目资产', handler: 'showApiAssetsPage()'},
+    {id: 'sync', label: '同步接口', handler: 'showApiSyncCenterPage()'},
+    {id: 'environment', label: '环境配置', handler: 'showApiEnvironmentPage()'},
+    {id: 'plan', label: 'AI设计', handler: 'showApiPlanPage()'},
+    {id: 'execution', label: '调试执行', handler: 'showApiExecutionPage()'},
+    {id: 'reports', label: '测试报告', handler: 'showApiReportsPage()'},
   ];
   const action = apiWorkflowNextAction(context);
   const completedSteps = new Set();
   if (source.configured) completedSteps.add('assets');
   if (endpoints.length) completedSteps.add('sync');
+  if (apiSourceEnvironmentSummary(source).baseUrl) completedSteps.add('environment');
   if (plans.length || apiPlanGenerationCurrent?.status === 'succeeded') completedSteps.add('plan');
-  if (plans.some(plan => plan.status === 'confirmed')) completedSteps.add('review');
+  if ((context.execution || {}).status || (apiExecutionContext?.active_runs || []).length) completedSteps.add('execution');
   if ((context.reports || apiTestingReports || []).length) completedSteps.add('execution');
+  if ((context.reports || apiTestingReports || []).length) completedSteps.add('reports');
   const businessLine = currentApiBusinessLine();
   const revisionTime = context.revisionTime || context.snapshot?.created_at || '';
   const stepMarkup = steps.map((step, index) => {
@@ -453,6 +460,14 @@ function renderApiWorkbenchModules(workbench = {}) {
   `;
 }
 
+async function refreshCurrentApiNativePage() {
+  if (activeWorkflow === 'api_sync') return showApiSyncCenterPage();
+  if (activeWorkflow === 'api_environment') return showApiEnvironmentPage();
+  if (activeWorkflow === 'api_assets') return refreshApiAssetWorkspace(true);
+  if (activeWorkflow === 'api_execution_history') return showApiExecutionHistoryPage();
+  return showApiTestingDashboard();
+}
+
 function renderApiWorkbenchSourceCard(workbench = {}) {
   const source = workbench.source || {};
   const snapshot = workbench.snapshot || {};
@@ -592,7 +607,7 @@ async function showApiTestingDashboard() {
 async function apiWorkbenchSelectSource(sourceId) {
   apiAssetSelectedSourceId = String(sourceId || '');
   apiTestingProjectScope = {sourceId: apiAssetSelectedSourceId, revisionId: ''};
-  await showApiTestingDashboard();
+  await refreshCurrentApiNativePage();
 }
 
 async function apiWorkbenchUpdateSnapshot() {
@@ -608,14 +623,149 @@ async function apiWorkbenchUpdateSnapshot() {
     });
     const sync = data.sync || {};
     showToast(sync.created ? '✓ Apifox 快照同步已排队' : '✓ Apifox 快照同步已存在', 'success');
-    await showApiTestingDashboard();
+    await refreshCurrentApiNativePage();
     if (sync.sync_id && !apiAssetSyncTerminal(sync)) {
       setTimeout(() => {
-        if (activeWorkflow === 'api_dashboard') showApiTestingDashboard();
+        if (['api_dashboard', 'api_sync', 'api_assets', 'api_environment'].includes(activeWorkflow)) refreshCurrentApiNativePage();
       }, Math.max(1500, Number(sync.poll_after_ms || 2000)));
     }
   } catch (error) {
     showToast(error.message || 'Apifox 快照同步失败', 'error');
+  }
+}
+
+function renderApiSyncCenter(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const sync = (workbench.syncs || [])[0] || {};
+  const summary = sync.summary || {};
+  return `
+    <section class="api-panel api-sync-center-panel">
+      <div class="api-section-heading">
+        <div><span>API同步中心</span><h3>Apifox 只读同步到本地</h3></div>
+        <div class="api-workbench-actions-row">
+          <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>立即同步</button>
+          <button class="btn-sm" onclick="showApiAssetsPage()">接口资产</button>
+        </div>
+      </div>
+      <div class="api-sync-overview-grid">
+        <div><span>项目</span><strong>${escapeHtml(apiSourceDisplayName(source) || '未连接')}</strong><small>${escapeHtml(source.project_id || '-')}</small></div>
+        <div><span>最后同步</span><strong>${escapeHtml(source.last_success_at || snapshot.last_sync_at || '尚未同步')}</strong><small>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</small></div>
+        <div><span>接口快照</span><strong>${escapeHtml(snapshot.endpoint_count || 0)} 个接口</strong><small>${escapeHtml(snapshot.created_at || '本地暂无版本')}</small></div>
+        <div><span>影响计划</span><strong>${escapeHtml(summary.affected_plans || 0)} 个</strong><small>同步只影响本地执行，不回写 Apifox</small></div>
+      </div>
+      <div class="api-sync-diff-grid">
+        <div><strong>${escapeHtml(summary.added || 0)}</strong><span>新增接口</span></div>
+        <div><strong>${escapeHtml(summary.changed || 0)}</strong><span>修改接口</span></div>
+        <div><strong>${escapeHtml(summary.removed || 0)}</strong><span>删除接口</span></div>
+        <div><strong>${escapeHtml(summary.unchanged || 0)}</strong><span>未变化</span></div>
+      </div>
+      <div id="api-assets-sync">${sync.sync_id ? renderApiAssetSync(sync) : apiTestingEmpty('暂无同步记录。连接 Apifox 项目后点击“立即同步”。')}</div>
+    </section>
+  `;
+}
+
+async function showApiSyncCenterPage() {
+  stopApiAssetSyncPolling();
+  const area = setApiTestingPage('api_sync', 'API同步中心', 'Apifox 只作为接口资产来源；平台本地保存项目、环境、接口和差异。');
+  if (!area) return;
+  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取同步中心...')}</div>`;
+  try {
+    const data = await loadApiTestingWorkbench();
+    const latestSync = (data.syncs || [])[0] || {};
+    if (latestSync.sync_id) apiAssetActiveSyncId = latestSync.sync_id;
+    area.innerHTML = `
+      <div class="api-testing-page api-native-center-page">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_sync', source: data.source || {}, snapshot: data.snapshot || {}})}</div>
+        ${renderSavedApiSourceShelf(data.sources || [], data.source?.source_id || '', 'workbench')}
+        ${renderApiSyncCenter(data)}
+      </div>
+    `;
+    scheduleApiAssetSyncPoll(latestSync);
+  } catch (error) {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || '同步中心读取失败')}</div>`;
+  }
+}
+
+function renderApiEnvironmentCenter(workbench = {}) {
+  const source = workbench.source || {};
+  const execution = {
+    ...(workbench.execution || {}),
+    source_id: source.source_id || '',
+    source,
+  };
+  apiExecutionContext = execution;
+  return `
+    <section class="api-panel api-environment-center-panel">
+      <div class="api-section-heading">
+        <div><span>环境配置</span><h3>Base URL、变量和业务鉴权</h3></div>
+        <small>只影响本地执行，不回写 Apifox</small>
+      </div>
+      ${renderApiSourceEnvironmentCompact(source)}
+      ${renderApiSourceEnvironmentSnapshot(source)}
+      <div id="api-environment-auth-panel">${renderApiBusinessAuthPanel(execution)}</div>
+    </section>
+  `;
+}
+
+async function showApiEnvironmentPage() {
+  const area = setApiTestingPage('api_environment', '环境配置', '维护本地执行环境、Base URL、变量和业务 token；不反写 Apifox。');
+  if (!area) return;
+  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取环境配置...')}</div>`;
+  try {
+    const data = await loadApiTestingWorkbench();
+    area.innerHTML = `
+      <div class="api-testing-page api-native-center-page">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_environment', source: data.source || {}, snapshot: data.snapshot || {}})}</div>
+        ${renderSavedApiSourceShelf(data.sources || [], data.source?.source_id || '', 'workbench')}
+        ${renderApiEnvironmentCenter(data)}
+      </div>
+    `;
+  } catch (error) {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || '环境配置读取失败')}</div>`;
+  }
+}
+
+function renderApiExecutionHistory(workbench = {}) {
+  const execution = workbench.execution || {};
+  const activeRuns = execution.active_runs || [];
+  const recentRuns = execution.recent_runs || [];
+  return `
+    <section class="api-panel api-execution-history-panel">
+      <div class="api-section-heading">
+        <div><span>执行记录</span><h3>请求、响应、断言和报告入口</h3></div>
+        <div class="api-workbench-actions-row">
+          <button class="btn-sm primary" onclick="showApiExecutionPage()">调试执行</button>
+          <button class="btn-sm" onclick="showApiReportsPage()">测试报告</button>
+        </div>
+      </div>
+      ${activeRuns.length || recentRuns.length
+        ? `${renderApiReportActiveRuns(activeRuns)}${renderApiReportRecentRuns(recentRuns)}`
+        : apiTestingEmpty('暂无执行记录。采纳 AI 用例为基线后，可在“调试执行”中运行。')}
+    </section>
+  `;
+}
+
+async function showApiExecutionHistoryPage() {
+  const area = setApiTestingPage('api_execution_history', '执行记录', '查看平台 API Runner 的真实执行日志、请求响应和报告入口。');
+  if (!area) return;
+  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取执行记录...')}</div>`;
+  try {
+    const data = await loadApiTestingWorkbench();
+    area.innerHTML = `
+      <div class="api-testing-page api-native-center-page">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_execution_history', source: data.source || {}, snapshot: data.snapshot || {}, execution: (data.execution?.active_runs || [])[0] || {}})}</div>
+        ${renderSavedApiSourceShelf(data.sources || [], data.source?.source_id || '', 'workbench')}
+        ${renderApiExecutionHistory(data)}
+      </div>
+    `;
+    if ((data.execution?.active_runs || []).length) {
+      setTimeout(() => {
+        if (activeWorkflow === 'api_execution_history') showApiExecutionHistoryPage();
+      }, 5000);
+    }
+  } catch (error) {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || '执行记录读取失败')}</div>`;
   }
 }
 
@@ -873,9 +1023,13 @@ function stopApiAssetSyncPolling() {
   apiAssetSyncPollTimer = null;
 }
 
+function apiAssetSyncWorkflowActive() {
+  return ['api_assets', 'api_sync'].includes(activeWorkflow);
+}
+
 function scheduleApiAssetSyncPoll(sync) {
   stopApiAssetSyncPolling();
-  if (!sync?.sync_id || apiAssetSyncTerminal(sync) || activeWorkflow !== 'api_assets') return;
+  if (!sync?.sync_id || apiAssetSyncTerminal(sync) || !apiAssetSyncWorkflowActive()) return;
   const delay = Math.max(500, Number(sync.poll_after_ms || 1000));
   apiAssetSyncPollTimer = setTimeout(() => pollApiAssetSync(sync.sync_id), delay);
 }
@@ -1093,7 +1247,8 @@ async function saveApiEnvironmentSnapshotEdit() {
     apiEnvironmentSnapshotEditing = false;
     if (data.source?.source_id) apiAssetSelectedSourceId = data.source.source_id;
     showToast(data.message || '✓ 本地环境快照已保存', 'success');
-    await refreshApiAssetWorkspace(true);
+    if (activeWorkflow === 'api_environment') await showApiEnvironmentPage();
+    else await refreshApiAssetWorkspace(true);
   } catch (error) {
     showToast(error.message || '本地环境快照保存失败', 'error');
   }
@@ -1261,7 +1416,9 @@ function renderApiProjectSelector(sources, selectedId, context = 'assets') {
 
 function renderSavedApiSourceShelf(sources = [], selectedId = '', context = 'assets') {
   const rows = (sources || []).filter(source => source && source.source_id);
-  const selectHandler = context === 'execution' ? 'selectApiExecutionSource' : 'selectApiAssetSource';
+  const selectHandler = context === 'execution'
+    ? 'selectApiExecutionSource'
+    : (context === 'workbench' ? 'apiWorkbenchSelectSource' : 'selectApiAssetSource');
   if (!rows.length) {
     return `
       <section class="api-saved-source-shelf">
@@ -2131,7 +2288,8 @@ async function useApiSourceEnvironmentSnapshot() {
     });
     const sync = data.sync || {};
     showToast(sync.message || '✓ API 执行将直接使用当前 Apifox 环境快照', 'success');
-    await refreshApiAssetWorkspace(true);
+    if (activeWorkflow === 'api_environment') await showApiEnvironmentPage();
+    else await refreshApiAssetWorkspace(true);
   } catch (error) {
     showToast(error.message || 'Apifox 环境读取失败', 'error');
   }
@@ -2160,10 +2318,10 @@ async function startApiAssetSync() {
 }
 
 async function pollApiAssetSync(syncId) {
-  if (!syncId || activeWorkflow !== 'api_assets') return;
+  if (!syncId || !apiAssetSyncWorkflowActive()) return;
   try {
     const data = await apiRequest(`/api-testing/syncs/${encodeURIComponent(syncId)}`);
-    if (activeWorkflow !== 'api_assets' || syncId !== apiAssetActiveSyncId) return;
+    if (!apiAssetSyncWorkflowActive() || syncId !== apiAssetActiveSyncId) return;
     const sync = data.sync || {};
     captureApiAssetSyncViewState(document.getElementById('api-assets-sync'));
     const region = document.getElementById('api-assets-sync');
@@ -2171,7 +2329,8 @@ async function pollApiAssetSync(syncId) {
     restoreApiAssetSyncViewState(region);
     if (apiAssetSyncTerminal(sync)) {
       stopApiAssetSyncPolling();
-      await refreshApiAssetWorkspace(true);
+      if (activeWorkflow === 'api_sync') await showApiSyncCenterPage();
+      else await refreshApiAssetWorkspace(true);
     } else {
       scheduleApiAssetSyncPoll(sync);
     }
@@ -2187,7 +2346,7 @@ async function pollApiAssetSync(syncId) {
       error.textContent = `${e.message || '同步状态读取失败'}，3 秒后重试`;
     }
     stopApiAssetSyncPolling();
-    if (activeWorkflow === 'api_assets' && syncId === apiAssetActiveSyncId) {
+    if (apiAssetSyncWorkflowActive() && syncId === apiAssetActiveSyncId) {
       apiAssetSyncPollTimer = setTimeout(() => pollApiAssetSync(syncId), 3000);
     }
   }
@@ -3805,7 +3964,7 @@ function renderApiBusinessAuthPanel(context = {}) {
     return `
       <section class="api-business-auth-panel" data-configured="false">
         <div class="api-business-auth-head"><div><span>环境公共鉴权</span><h3>当前环境尚未配置</h3></div>${apiStatusPill('执行前必需', 'warn')}</div>
-        <p>优先通过 3D 项目的用户登录接口获取 token，再保存为平台安全 profile；前端只显示变量名和指纹。</p>
+        <p>优先通过业务系统的用户登录接口获取 token，再保存为平台安全 profile；前端只显示变量名和指纹。</p>
         ${renderApiBusinessAuthTarget(context, auth)}
         <button class="btn-sm primary" aria-label="配置业务鉴权" onclick="editApiBusinessAuth()">配置登录接口</button>
         ${canEdit ? '' : `<small class="api-business-auth-hint">请先选择当前来源的业务和环境。</small>`}
@@ -3846,6 +4005,8 @@ function renderApiBusinessAuthPanel(context = {}) {
 function renderApiBusinessAuthInHeader() {
   const header = document.getElementById('api-execution-header');
   if (header && apiExecutionContext) header.innerHTML = renderApiExecutionHeader(apiExecutionContext);
+  const environmentPanel = document.getElementById('api-environment-auth-panel');
+  if (environmentPanel && apiExecutionContext) environmentPanel.innerHTML = renderApiBusinessAuthPanel(apiExecutionContext);
 }
 
 function editApiBusinessAuth() {
@@ -3947,6 +4108,12 @@ async function saveApiBusinessAuth() {
       auth_binding: binding,
       binding: {...(apiExecutionContext?.binding || {}), auth_binding: binding}
     };
+    if (activeWorkflow === 'api_environment') {
+      renderApiBusinessAuthInHeader();
+      showToast(apiBusinessAuthSourceMode === 'login' ? '✓ 已通过登录接口获取 token 并保存到平台' : '✓ 公共鉴权已保存到平台', 'success');
+      await showApiEnvironmentPage();
+      return;
+    }
     renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
     showToast(apiBusinessAuthSourceMode === 'login' ? '✓ 已通过登录接口获取 token 并保存到平台' : '✓ 公共鉴权已保存到平台', 'success');
     await refreshApiExecutionContext(true);
@@ -3977,6 +4144,12 @@ async function clearApiBusinessAuth() {
       auth_binding: binding,
       binding: {...(apiExecutionContext?.binding || {}), auth_binding: binding}
     };
+    if (activeWorkflow === 'api_environment') {
+      renderApiBusinessAuthInHeader();
+      showToast('✓ 当前业务鉴权已清除', 'success');
+      await showApiEnvironmentPage();
+      return;
+    }
     renderApiExecutionDynamic(apiExecutionContext, (apiExecutionContext.active_runs || [])[0] || null);
     showToast('✓ 当前业务鉴权已清除', 'success');
     await refreshApiExecutionContext(true);

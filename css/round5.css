@@ -33,6 +33,51 @@
   display: grid;
   gap: 16px;
 }
+.api-native-center-page {
+  width: min(1280px, 100%);
+  display: grid;
+  gap: 14px;
+}
+.api-sync-center-panel,
+.api-environment-center-panel,
+.api-execution-history-panel {
+  display: grid;
+  gap: 14px;
+}
+.api-sync-overview-grid,
+.api-sync-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-sync-overview-grid > div,
+.api-sync-diff-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface2);
+}
+.api-sync-overview-grid span,
+.api-sync-diff-grid span {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-sync-overview-grid strong,
+.api-sync-diff-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-sync-overview-grid small {
+  color: var(--text2);
+  overflow-wrap: anywhere;
+}
+.api-sync-diff-grid strong {
+  color: var(--accent);
+  font-size: 24px;
+}
 .api-workbench-hero {
   display: grid;
   gap: 14px;
@@ -3048,6 +3093,10 @@
     flex-direction: column;
   }
   .api-saved-source-list {
+    grid-template-columns: 1fr;
+  }
+  .api-sync-overview-grid,
+  .api-sync-diff-grid {
     grid-template-columns: 1fr;
   }
 }
