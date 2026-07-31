@@ -33,6 +33,165 @@
   display: grid;
   gap: 16px;
 }
+.api-command-center {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(0, 229, 255, .28);
+  border-top: 3px solid var(--accent);
+  background:
+    linear-gradient(180deg, rgba(13, 28, 50, .78), rgba(5, 12, 24, .74));
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .22);
+}
+.api-command-main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.api-primary-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.api-compact-project-grid,
+.api-compact-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.api-compact-project-grid article,
+.api-compact-metrics article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(15, 23, 42, .46);
+}
+.api-compact-project-grid strong,
+.api-compact-metrics strong {
+  overflow-wrap: anywhere;
+}
+.api-compact-project-grid span,
+.api-compact-metrics span,
+.api-compact-metrics small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-compact-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.api-compact-metrics article {
+  padding: 9px 10px;
+}
+.api-compact-metrics strong {
+  color: var(--accent);
+  font-size: 20px;
+  line-height: 1;
+}
+.api-next-actions {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(168, 85, 247, .34);
+  background: rgba(39, 18, 74, .22);
+}
+.api-next-actions > div {
+  display: grid;
+  gap: 4px;
+}
+.api-next-actions > div span {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+.api-next-actions > div strong {
+  font-size: 18px;
+}
+.api-next-actions article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, .18);
+  background: rgba(2, 6, 23, .22);
+}
+.api-next-actions p {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+}
+.api-next-actions b {
+  color: var(--text);
+}
+.api-next-actions p span {
+  color: var(--text2);
+  line-height: 1.45;
+}
+.api-workflow-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.api-workflow-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: 10px 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, .52);
+}
+.api-workflow-card > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(148, 163, 184, .28);
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.api-workflow-card.ready > span {
+  border-color: rgba(16, 185, 129, .55);
+  color: var(--success);
+}
+.api-workflow-card.warn > span {
+  border-color: rgba(245, 158, 11, .6);
+  color: var(--warning);
+}
+.api-workflow-card div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-workflow-card strong,
+.api-workflow-card b,
+.api-workflow-card small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-workflow-card b {
+  color: var(--accent);
+}
+.api-workflow-card small {
+  color: var(--text2);
+  line-height: 1.45;
+}
+.api-workflow-card .btn-sm {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.api-clean-snapshot {
+  gap: 16px;
+}
 .api-native-center-page {
   width: min(1280px, 100%);
   display: grid;
@@ -3159,6 +3318,15 @@
   line-height: 1.5;
 }
 @media (max-width: 1100px) {
+  .api-command-center,
+  .api-workflow-strip,
+  .api-compact-project-grid,
+  .api-compact-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .api-next-actions {
+    grid-column: 1 / -1;
+  }
   .api-workbench-summary-strip,
   .api-workbench-stage-grid,
   .api-workbench-metrics,
@@ -3767,6 +3935,21 @@
   }
 }
 @media (max-width: 700px) {
+  .api-command-center,
+  .api-workflow-strip,
+  .api-compact-project-grid,
+  .api-compact-metrics,
+  .api-next-actions article {
+    grid-template-columns: 1fr;
+  }
+  .api-command-center,
+  .api-next-actions,
+  .api-workflow-card {
+    padding: 12px;
+  }
+  .api-primary-action-row .btn-sm {
+    flex: 1 1 100%;
+  }
   .api-testing-page {
     padding: 12px;
   }

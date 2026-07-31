@@ -28,6 +28,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 API 工作台命令中心 UI 重排
+
+用户反馈：
+
+- API 自动化页面信息太密集，不够直接，也不够好看。
+- 希望参考 APIAuto 这类轻量工具的“少入口、强操作、可恢复”思路，而不是把同步状态、技术 ID、执行细节全部堆到首屏。
+
+修复：
+
+- API 工作台首屏从多段信息堆叠改为三层结构：
+  - `api-command-center`：当前项目、连接状态、环境、接口快照、关键指标和主操作。
+  - `api-next-actions`：只告诉用户下一步该做什么，并给出直接按钮。
+  - `api-workflow-card` 四步流程：连接 Apifox、固化资产、AI 测试设计、本地执行报告。
+- 接口快照区改为 `api-clean-snapshot`：
+  - 默认只展示来源、版本、同步状态、接口数和业务模块生成入口。
+  - Source/Revision/Project/Environment、同步详情和待处理变化折叠到“高级信息”。
+- 首屏主按钮收敛为：
+  - 更新资产 / 连接 Apifox
+  - AI 生成测试
+  - 开始测试
+- 新增响应式样式：
+  - 桌面两列命令中心。
+  - 中屏两列卡片。
+  - 手机单列，按钮铺满，避免文字挤压。
+- 前端缓存版本更新为 `20260731-api-command-ui`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+git diff --check -- js/api-testing.js css/round5.css task-manager.html tests/frontend_static_checks.py
+```
+
 ### 2026-07-31 Apifox 环境快照与平台级访问凭据
 
 用户反馈：

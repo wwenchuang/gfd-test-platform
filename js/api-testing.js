@@ -478,7 +478,7 @@ function renderApiWorkbenchMetrics(workbench = {}) {
     ['今日执行', metrics.today_executions ?? 0, '本地执行记录'],
   ];
   return `
-    <section class="api-workbench-metrics" aria-label="API 工作台指标">
+    <section class="api-workbench-metrics api-compact-metrics" aria-label="API 工作台指标">
       ${cards.map(([label, value, hint]) => `
         <article>
           <span>${escapeHtml(label)}</span>
@@ -487,6 +487,64 @@ function renderApiWorkbenchMetrics(workbench = {}) {
         </article>
       `).join('')}
     </section>
+  `;
+}
+
+function renderApiWorkbenchPrimaryActions(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const cases = workbench.cases || {};
+  const hasSnapshot = Number(snapshot.endpoint_count || 0) > 0;
+  const hasBaseline = !!cases.latest_baseline?.plan_id;
+  return `
+    <div class="api-primary-action-row">
+      <button class="btn-sm primary" onclick="${source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()'}">
+        ${source.source_id ? '更新资产' : '连接 Apifox'}
+      </button>
+      <button class="btn-sm ai" onclick="document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})" ${hasSnapshot ? '' : 'disabled'}>
+        AI 生成测试
+      </button>
+      <button class="btn-sm" onclick="showApiExecutionPage()" ${hasBaseline ? '' : 'disabled'}>
+        开始测试
+      </button>
+    </div>
+  `;
+}
+
+function renderApiWorkbenchNextActions(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const cases = workbench.cases || {};
+  const execution = workbench.execution || {};
+  const activeRun = (execution.active_runs || [])[0] || {};
+  const endpointCount = Number(snapshot.endpoint_count || 0);
+  const actions = [];
+  if (!source.source_id) {
+    actions.push(['连接 Apifox 项目', '保存项目、环境和接口快照，后续同事可直接复用。', 'showApiAssetsPage()', '连接']);
+  } else if (!endpointCount) {
+    actions.push(['更新本地接口快照', '从 Apifox 拉取接口和环境配置，固化为平台本地资产。', 'apiWorkbenchUpdateSnapshot()', '更新']);
+  } else if (!cases.latest_draft?.plan_id && !cases.latest_baseline?.plan_id) {
+    actions.push(['选择模块生成测试', '从下方模块卡片选择范围，AI 会按接口合同生成测试资产草稿。', "document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})", '选择模块']);
+  } else if (!cases.latest_baseline?.plan_id) {
+    actions.push(['审阅 AI 草稿', '确认请求入参、断言和可执行项后保存为测试资产。', `openApiWorkbenchPlan(${jsArg(cases.latest_draft?.plan_id || '')})`, '审阅']);
+  } else if (activeRun.execution_id) {
+    actions.push(['查看实时执行', '本地执行器正在跑接口，可查看请求、响应、断言和日志。', 'showApiExecutionHistoryPage()', '看日志']);
+  } else {
+    actions.push(['开始本地执行', '使用当前环境快照和业务 token 执行已保存测试资产。', 'showApiExecutionPage()', '执行']);
+  }
+  if ((workbench.pending_changes || []).length) {
+    actions.push(['处理接口变化', '最近同步发现接口变化，建议先复核受影响测试资产。', 'showApiAssetsPage()', '查看变化']);
+  }
+  return `
+    <aside class="api-next-actions">
+      <div><span>下一步</span><strong>${escapeHtml(actions[0]?.[0] || '当前可直接执行')}</strong></div>
+      ${actions.slice(0, 2).map(([title, detail, action, label]) => `
+        <article>
+          <p><b>${escapeHtml(title)}</b><span>${escapeHtml(detail)}</span></p>
+          <button class="btn-sm" onclick="${action}">${escapeHtml(label)}</button>
+        </article>
+      `).join('')}
+    </aside>
   `;
 }
 
@@ -541,23 +599,87 @@ function renderApiWorkbenchSourceCard(workbench = {}) {
   const status = apiWorkbenchConnectionText(workbench);
   const sourceEnv = apiSourceEnvironmentSummary(source);
   return `
-    <section class="api-workbench-hero">
-      <div class="api-workbench-title">
-        <span>API WORKBENCH</span>
-        <h2>API 测试工作台</h2>
-        <p>Apifox 只负责接口资产和环境来源；平台本地保存快照，AI 生成用例，原生执行器实时跑接口并产出报告。</p>
+    <section class="api-command-center">
+      <div class="api-command-main">
+        <div class="api-workbench-title">
+          <span>API 工作台</span>
+          <h2>${escapeHtml(source.project_name || source.name || '接口自动化')}</h2>
+          <p>Apifox 提供接口和环境来源；平台保存本地快照，AI 生成测试资产，本地执行器输出实时日志和报告。</p>
+        </div>
+        <div class="api-workbench-controls">
+          <label><span>当前项目</span><select onchange="apiWorkbenchSelectSource(this.value)">${apiWorkbenchSourceOptions(workbench.sources || [], source.source_id)}</select></label>
+          ${renderApiWorkbenchPrimaryActions(workbench)}
+        </div>
+        <div class="api-compact-project-grid">
+          <article>${apiStatusPill(status.label, status.tone)}<strong>${escapeHtml(status.detail)}</strong><span>连接状态</span></article>
+          <article><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong><span>接口快照 · ${escapeHtml(snapshot.created_at || source.last_success_at || '尚未同步')}</span></article>
+          <article><strong>${escapeHtml(source.environment_name || sourceEnv.environmentName || '未选择环境')}</strong><span>${escapeHtml(sourceEnv.baseUrl || 'base_url 待同步')}</span></article>
+          <article><strong>${escapeHtml(source.environment_snapshot?.variable_count || 0)}</strong><span>环境变量 · 敏感 ${escapeHtml(source.environment_snapshot?.sensitive_variable_count || 0)}</span></article>
+        </div>
+        ${renderApiWorkbenchMetrics(workbench)}
       </div>
-      <div class="api-workbench-controls">
-        <label><span>当前项目</span><select onchange="apiWorkbenchSelectSource(this.value)">${apiWorkbenchSourceOptions(workbench.sources || [], source.source_id)}</select></label>
-        <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>检查 Apifox 更新</button>
-        <button class="btn-sm" onclick="showApiTestingDashboard()">刷新</button>
-      </div>
-      <div class="api-workbench-summary-strip">
-        <div>${apiStatusPill(status.label, status.tone)}<strong>${escapeHtml(status.detail)}</strong><span>当前状态</span></div>
-        <div><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong><span>接口快照 · ${escapeHtml(snapshot.created_at || source.last_success_at || '-')}</span></div>
-        <div><strong>${escapeHtml(source.environment_name || sourceEnv.environmentName || '未选择环境')}</strong><span>${escapeHtml(sourceEnv.baseUrl || 'base_url 待同步')}</span></div>
-        <div><strong>${escapeHtml(source.environment_snapshot?.variable_count || 0)}</strong><span>环境变量，敏感 ${escapeHtml(source.environment_snapshot?.sensitive_variable_count || 0)}</span></div>
-      </div>
+      ${renderApiWorkbenchNextActions(workbench)}
+    </section>
+  `;
+}
+
+function renderApiWorkbenchFlowCards(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const cases = workbench.cases || {};
+  const latestRun = ((workbench.execution || {}).active_runs || [])[0]
+    || ((workbench.execution || {}).recent_runs || [])[0]
+    || {};
+  const latestReport = (workbench.reports || [])[0] || {};
+  const cards = [
+    {
+      title: '连接 Apifox',
+      state: source.source_id ? '已连接' : '待连接',
+      detail: source.source_id ? `${source.project_name || source.name || 'API 项目'} · ${source.credential_configured ? '凭据已保存' : '凭据待配置'}` : '保存一次后，同事可直接使用本地项目。',
+      action: source.source_id ? 'showApiAssetsPage()' : 'showApiAssetsPage()',
+      label: source.source_id ? '查看资产' : '连接',
+      tone: source.source_id ? 'ready' : 'todo',
+    },
+    {
+      title: '固化资产',
+      state: snapshot.endpoint_count ? `${snapshot.endpoint_count} 个接口` : '待同步',
+      detail: snapshot.endpoint_count ? `本地版本 ${snapshot.created_at || '-'}` : '从 Apifox 拉取接口和环境后固化。',
+      action: source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()',
+      label: snapshot.endpoint_count ? '更新快照' : '同步',
+      tone: snapshot.endpoint_count ? 'ready' : 'todo',
+    },
+    {
+      title: 'AI 测试设计',
+      state: cases.latest_baseline?.plan_id ? '已保存测试资产' : (cases.latest_draft?.plan_id ? '草稿待审阅' : '待生成'),
+      detail: cases.latest_baseline?.plan_id
+        ? `${cases.latest_baseline.case_count || 0} 条用例 · ${cases.latest_baseline.executable_case_count || 0} 可执行`
+        : (cases.latest_draft?.plan_id ? '确认入参和断言后保存为测试资产。' : '从模块卡片选择范围后生成。'),
+      action: cases.latest_draft?.plan_id
+        ? `openApiWorkbenchPlan(${jsArg(cases.latest_draft.plan_id)})`
+        : "document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})",
+      label: cases.latest_draft?.plan_id ? '审阅用例' : '选择模块',
+      tone: cases.latest_baseline?.plan_id ? 'ready' : (cases.latest_draft?.plan_id ? 'warn' : 'todo'),
+    },
+    {
+      title: '本地执行报告',
+      state: latestRun.execution_id ? apiExecutionStateText(latestRun.status) : (latestReport.report_id ? apiExecutionStateText(latestReport.status) : '未执行'),
+      detail: latestReport.report_id
+        ? `${latestReport.passed || 0} 通过 · ${latestReport.failed || 0} 失败`
+        : '执行时展示实时日志，结束后沉淀报告和失败分析。',
+      action: latestRun.execution_id ? 'showApiExecutionHistoryPage()' : 'showApiExecutionPage()',
+      label: latestRun.execution_id ? '看日志' : '执行测试',
+      tone: latestReport.report_id || latestRun.execution_id ? 'ready' : 'todo',
+    },
+  ];
+  return `
+    <section class="api-workflow-strip" aria-label="API 自动化流程">
+      ${cards.map((card, index) => `
+        <article class="api-workflow-card ${card.tone}">
+          <span>${String(index + 1).padStart(2, '0')}</span>
+          <div><strong>${escapeHtml(card.title)}</strong><b>${escapeHtml(card.state)}</b><small>${escapeHtml(card.detail)}</small></div>
+          <button class="btn-sm" onclick="${card.action}">${escapeHtml(card.label)}</button>
+        </article>
+      `).join('')}
     </section>
   `;
 }
@@ -628,10 +750,13 @@ function renderApiWorkbenchAssetCard(workbench = {}) {
   const snapshot = workbench.snapshot || {};
   const sync = (workbench.syncs || [])[0] || {};
   return `
-    <section class="api-panel api-workbench-asset-panel">
+    <section id="api-workbench-module-section" class="api-panel api-workbench-asset-panel api-clean-snapshot">
       <div class="api-section-heading">
-        <div><span>接口资产</span><h3>本地快照与生成范围</h3></div>
-        <small>${escapeHtml(snapshot.title || source.name || 'API 项目')}</small>
+        <div><span>接口快照</span><h3>选择模块生成测试资产</h3></div>
+        <div class="api-workbench-actions-row">
+          <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>更新本地快照</button>
+          <button class="btn-sm" onclick="showApiAssetsPage()">高级资产管理</button>
+        </div>
       </div>
       <div class="api-workbench-asset-facts">
         <div><span>来源</span><strong>${escapeHtml(source.project_name || source.name || '-')}</strong></div>
@@ -639,15 +764,16 @@ function renderApiWorkbenchAssetCard(workbench = {}) {
         <div><span>同步状态</span><strong>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</strong></div>
         <div><span>接口数</span><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong></div>
       </div>
-      <div class="api-workbench-actions-row">
-        <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>更新本地快照</button>
-        <button class="btn-sm" onclick="showApiAssetsPage()">接口资产</button>
-      </div>
-      <div class="api-workbench-section-title"><span>选择一个模块生成测试资产</span><small>不必手填 ID，超过 ${API_PLAN_MAX_ENDPOINTS} 个接口会自动取当前模块前 ${API_PLAN_MAX_ENDPOINTS} 个</small></div>
+      <div class="api-workbench-section-title"><span>业务模块</span><small>选择模块即可生成；超过 ${API_PLAN_MAX_ENDPOINTS} 个接口会自动截取当前模块前 ${API_PLAN_MAX_ENDPOINTS} 个</small></div>
       ${renderApiWorkbenchModules(workbench)}
       <details class="api-workbench-tech-detail">
         <summary>高级信息</summary>
-        <div>Source ${escapeHtml(source.source_id || '-')} · Revision ${escapeHtml(snapshot.revision_id || snapshot.snapshot_id || '-')} · Project ${escapeHtml(source.project_id || '-')} · Environment ${escapeHtml(source.environment_id || '-')}</div>
+        <div>
+          Source ${escapeHtml(source.source_id || '-')} · Revision ${escapeHtml(snapshot.revision_id || snapshot.snapshot_id || '-')} ·
+          Project ${escapeHtml(source.project_id || '-')} · Environment ${escapeHtml(source.environment_id || '-')}
+        </div>
+        ${renderApiWorkbenchSyncState(workbench)}
+        ${renderApiWorkbenchPendingChanges(workbench)}
       </details>
     </section>
   `;
@@ -662,10 +788,7 @@ async function showApiTestingDashboard() {
     area.innerHTML = `
       <div class="api-testing-page api-workbench-page">
         ${renderApiWorkbenchSourceCard(data)}
-        ${renderApiWorkbenchMetrics(data)}
-        ${renderApiWorkbenchSyncState(data)}
-        ${renderApiWorkbenchPendingChanges(data)}
-        ${renderApiWorkbenchCaseCard(data)}
+        ${renderApiWorkbenchFlowCards(data)}
         ${renderApiWorkbenchAssetCard(data)}
       </div>
     `;
