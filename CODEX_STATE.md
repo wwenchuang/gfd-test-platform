@@ -48,7 +48,8 @@
 - `_agent_run_report_summary()` 在有执行计划桶时，用 `smoke + nonSmoke` 的唯一用例最终桶重算 `attempted/passed/failed/timeout/running`。
 - 修复后通过且无最终失败时，将卡片使用的 `reportStatus` 投影为 `success`，避免旧原始报告 failed 覆盖最终结论。
 - `agent-status.js` 前端兜底优先使用 smoke/non-smoke 桶计算总数，不再直接展示重复 phase 导致的原始 `passed/attempted`。
-- `task-manager.html` 更新缓存版本为 `20260731-agent-history-final-buckets`。
+- Agent 历史卡片主结果改为 `通过 N 条 / 共 M 条`，避免 `4/4 通过` 这类比例写法不够直观。
+- `task-manager.html` 更新缓存版本为 `20260731-agent-history-readable-score`。
 
 验证：
 

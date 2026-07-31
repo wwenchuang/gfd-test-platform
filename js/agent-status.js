@@ -189,7 +189,7 @@ function agentRunResultMeta(run) {
   const label = result.conclusion || result.label || '';
   const hasReportResult = Boolean(result.hasExecution || attempted || rawPassed || rawFailed || rawTimeout || rawRunning || label || rawOutcome);
   const total = attempted || (passed + failed + timeout + running);
-  const score = total ? `${passed}/${total} 通过` : '';
+  const score = total ? `通过 ${passed} 条 / 共 ${total} 条` : '';
   const details = [
     score,
     failed ? `${failed} 失败` : '',
