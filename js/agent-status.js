@@ -1014,7 +1014,7 @@ function agentRunCardHtml(run, options = {}) {
     <div class="workflow-card agent-run-history-card ${escapeHtml(cardStatus)}">
       <div class="agent-run-card-head">
         <span class="status-pill ${escapeHtml(pill)}">${escapeHtml(status)}</span>
-        <span class="muted mono" title="${escapeHtml(agentRunDisplayTime(run))}">${escapeHtml(agentRunDisplayTimeCompact(run))}</span>
+        <span class="agent-run-card-time muted mono" title="${escapeHtml(agentRunDisplayTime(run))}">${escapeHtml(agentRunDisplayTime(run))}</span>
       </div>
       <div class="agent-run-title">${escapeHtml(String(target).slice(0, 80))}</div>
       ${agentRunResultSummaryHtml(run)}

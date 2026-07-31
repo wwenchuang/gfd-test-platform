@@ -49,7 +49,8 @@
 - 修复后通过且无最终失败时，将卡片使用的 `reportStatus` 投影为 `success`，避免旧原始报告 failed 覆盖最终结论。
 - `agent-status.js` 前端兜底优先使用 smoke/non-smoke 桶计算总数，不再直接展示重复 phase 导致的原始 `passed/attempted`。
 - Agent 历史卡片主结果改为 `通过 N 条 / 共 M 条`，避免 `4/4 通过` 这类比例写法不够直观。
-- `task-manager.html` 更新缓存版本为 `20260731-agent-history-readable-score`。
+- Agent 历史卡片时间直接展示完整 `YYYY-MM-DD HH:mm:ss`，首行改为弹性布局，避免右上角时间被截断。
+- `task-manager.html` 更新缓存版本为 `20260731-agent-history-full-time`。
 
 验证：
 

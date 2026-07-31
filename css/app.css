@@ -1902,25 +1902,25 @@
   .agent-run-history-card.cancelled::before { background: rgba(251, 113, 133, .86); }
   .agent-run-history-card.waiting::before { background: rgba(251, 191, 36, .86); }
   .agent-run-card-head {
-    display: block;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
     position: relative;
     padding-top: 2px;
-    padding-right: 78px;
     min-height: 23px;
     min-width: 0;
   }
-  .agent-run-card-head .muted {
-    position: absolute;
-    top: 4px;
-    right: 0;
-    max-width: none;
+  .agent-run-card-time {
+    flex: 0 0 auto;
+    max-width: 100%;
     overflow: visible;
     text-overflow: clip;
     white-space: nowrap;
     text-align: right;
     font-size: 11px;
-    line-height: 1;
-    z-index: 1;
+    line-height: 1.5;
   }
   .agent-run-title {
     color: var(--accent);
