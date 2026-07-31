@@ -226,7 +226,7 @@ def api_execution_context(source_id: str = "", force: bool = False) -> Dict[str,
         primary = "执行测试"
     else:
         state = "ready_no_plan"
-        primary = "生成并采纳 API 基线"
+        primary = "生成并保存测试资产"
     empty_reason = ""
     if not source:
         empty_reason = "no_assets"
@@ -752,9 +752,9 @@ def _start_execution(plan: Dict[str, Any], cases: List[Dict[str, Any]], run_mode
 def start_api_execution(plan_id: str) -> Dict[str, Any]:
     plan = api_test_plan_service.get_api_test_plan(str(plan_id or "").strip())
     if not plan:
-        raise ApiExecutionValidationError("API 基线不存在")
+        raise ApiExecutionValidationError("测试资产不存在")
     if plan.get("status") != "confirmed":
-        raise ApiExecutionValidationError("正式执行必须先采纳为 API 基线")
+        raise ApiExecutionValidationError("正式执行前请先保存为测试资产")
     cases = api_test_plan_service.executable_api_cases(plan)
     return _start_execution(plan, cases, "baseline")
 

@@ -28,6 +28,61 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 API 工作台六入口产品化收敛
+
+用户要求严格按上传文档重构接口测试模块：
+
+- Apifox 只作为只读接口资产和环境来源。
+- 平台负责本地资产快照、环境配置、AI 测试设计、本地执行、执行日志和报告。
+- 不再把 MeterSphere 作为 API 主流程入口。
+- 页面要简洁、中文化、便于同事直接使用。
+
+参考判断：
+
+- 参考 Bruno / Yaak 这类轻量 API 客户端，核心不是堆平台能力，而是 local-first、本地快照、清晰环境变量和低学习成本。
+- 参考测试报告实践，执行结果需要能按 run/report 快速追踪，请求、响应、断言、耗时、失败分析必须留痕。
+
+修复：
+
+- API 自动化左侧一级入口收敛为 6 个：
+  - API 工作台
+  - 接口资产
+  - 测试设计
+  - 执行记录
+  - 测试报告
+  - 环境配置
+- 移除 API 侧旧 `同步中心 / 调试执行 / API 基线` 一级入口；旧路由只保留兼容跳转：
+  - `api_sync -> 接口资产`
+  - `api_baselines -> 测试设计`
+  - `api_execution -> 执行记录`
+- API 工作台新增 5 个核心指标：
+  - API接口总数
+  - 已覆盖接口
+  - 覆盖率
+  - 待处理变化
+  - 今日执行
+- Workbench 后端补齐 `metrics / sync_state / pending_changes`，从本地 source、revision、plan、execution、sync 记录汇总，不依赖第三方执行平台。
+- 修复 `_execution_summary()` 返回位置错误，避免 workbench 指标计算拿到 `None`。
+- 文案统一从“AI 用例计划 / 采纳为基线 / API 基线”调整为“测试设计 / 保存为测试资产 / 已保存测试资产”。
+- 环境配置页仍使用现有 `/environment-snapshot` 后端保存能力，但前端从 JSON textarea 改成结构化表格：
+  - 服务地址可新增、删除、编辑名称和 Base URL。
+  - 环境变量可新增、删除、编辑变量名/变量值，并标记敏感。
+  - 保存的是平台本地执行副本，不反写 Apifox；敏感变量继续由服务端脱敏。
+- 前端缓存版本更新为 `20260731-api-product-workbench`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+python3 tests/api_workbench_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/api_asset_sync_checks.py
+python3 -m py_compile task_server/services/api_workbench_service.py task_server/services/api_execution_service.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js && node --check js/agent-status.js
+python3 tests/backend_static_checks.py
+git diff --check -- task-manager.html js/api-testing.js js/api.js js/navigation.js js/agent-status.js css/app.css css/round5.css task_server/services/api_workbench_service.py task_server/services/api_execution_service.py tests/frontend_static_checks.py tests/api_workbench_checks.py
+```
+
 ### 2026-07-31 API 自动化中心第一阶段产品重构
 
 用户提供方案文档并明确希望：

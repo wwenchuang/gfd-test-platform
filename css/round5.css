@@ -152,6 +152,83 @@
   color: var(--text3);
   font-size: 11px;
 }
+.api-workbench-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+.api-workbench-metrics article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 13px 14px;
+  border: 1px solid rgba(0, 229, 255, .28);
+  background: linear-gradient(180deg, rgba(15, 23, 42, .82), rgba(8, 15, 30, .72));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.api-workbench-metrics span,
+.api-workbench-metrics small,
+.api-workbench-sync-grid span,
+.api-workbench-sync-grid small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-workbench-metrics strong {
+  color: var(--accent);
+  font-size: 26px;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+.api-workbench-sync-state,
+.api-workbench-pending {
+  display: grid;
+  gap: 12px;
+}
+.api-workbench-sync-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 1fr 1fr;
+  gap: 1px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-workbench-sync-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px;
+  background: rgba(15, 23, 42, .7);
+}
+.api-workbench-sync-grid strong {
+  overflow-wrap: anywhere;
+}
+.api-pending-change-list {
+  display: grid;
+  gap: 10px;
+}
+.api-pending-change-list article {
+  display: grid;
+  grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, .32);
+  background: rgba(245, 158, 11, .08);
+}
+.api-pending-change-list article > div {
+  display: grid;
+  gap: 5px;
+}
+.api-pending-change-list span {
+  color: var(--warn);
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 700;
+}
+.api-pending-change-list p {
+  margin: 0;
+  color: var(--text2);
+  line-height: 1.5;
+}
 .api-workbench-case-panel,
 .api-workbench-asset-panel {
   display: grid;
@@ -916,26 +993,67 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
-.api-env-editor-grid label {
+.api-env-form-table {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   min-width: 0;
-  color: var(--text2);
-  font-size: 11px;
+  padding: 12px;
+  border: 1px solid rgba(80, 140, 180, 0.24);
+  background: rgba(12, 28, 50, 0.56);
 }
-.api-env-editor-grid textarea {
-  min-height: 220px;
-  resize: vertical;
-  padding: 10px;
-  border: 1px solid rgba(0, 224, 255, 0.34);
-  background: rgba(2, 6, 23, 0.62);
+.api-env-form-table header,
+.api-env-form-row,
+.api-env-form-head {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+.api-env-form-table header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(80, 140, 180, 0.22);
+}
+.api-env-form-table header strong {
+  font-size: 13px;
+}
+.api-env-form-head,
+.api-env-form-row {
+  grid-template-columns: minmax(90px, .35fr) minmax(0, 1fr) auto;
+}
+.api-env-form-table [data-api-env-variable-list] .api-env-form-row,
+.api-env-form-table:nth-child(2) .api-env-form-head {
+  grid-template-columns: minmax(120px, .35fr) minmax(0, 1fr) 76px auto;
+}
+.api-env-form-head {
+  color: var(--text3);
+  font-size: 10px;
+}
+.api-env-form-row + .api-env-form-row {
+  padding-top: 8px;
+  border-top: 1px solid rgba(80, 140, 180, 0.16);
+}
+.api-env-form-row input[type="text"],
+.api-env-form-row input:not([type]) {
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(0, 224, 255, 0.24);
+  border-radius: 3px;
+  background: rgba(2, 6, 23, 0.58);
   color: var(--text);
-  font: 12px/1.55 var(--mono);
+  font-size: 12px;
   outline: none;
 }
-.api-env-editor-grid textarea:focus {
+.api-env-form-row input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.14);
+}
+.api-env-sensitive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text2);
+  font-size: 11px;
+  white-space: nowrap;
 }
 .api-env-editor-hint {
   margin: 10px 0 0;
@@ -3043,6 +3161,8 @@
 @media (max-width: 1100px) {
   .api-workbench-summary-strip,
   .api-workbench-stage-grid,
+  .api-workbench-metrics,
+  .api-workbench-sync-grid,
   .api-workbench-asset-facts {
     grid-template-columns: 1fr;
   }
@@ -3062,6 +3182,9 @@
   .api-workbench-section-title small {
     text-align: left;
   }
+  .api-pending-change-list article {
+    grid-template-columns: 1fr;
+  }
   .api-report-summary-cards,
   .api-report-environment-grid,
   .api-report-failure-group-list,
@@ -3078,6 +3201,13 @@
     border-bottom: 0;
   }
   .api-report-failure-box li {
+    grid-template-columns: 1fr;
+  }
+  .api-env-form-head {
+    display: none;
+  }
+  .api-env-form-row,
+  .api-env-form-table [data-api-env-variable-list] .api-env-form-row {
     grid-template-columns: 1fr;
   }
   .api-source-environment-actions {

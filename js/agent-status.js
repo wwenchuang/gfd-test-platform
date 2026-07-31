@@ -1994,7 +1994,13 @@ async function loadPreflightDashboard(live=false) {
 }
 
 function setActiveWorkflow(sectionKey, options = {}) {
-  activeWorkflow = WORKFLOW_SECTIONS[sectionKey] ? sectionKey : 'dashboard';
+  const legacyApiWorkflowMap = {
+    api_sync: 'api_assets',
+    api_baselines: 'api_plan',
+    api_execution: 'api_execution_history',
+  };
+  const normalizedSection = legacyApiWorkflowMap[sectionKey] || sectionKey;
+  activeWorkflow = WORKFLOW_SECTIONS[normalizedSection] ? normalizedSection : 'dashboard';
   updateWorkbenchPanelMode();
   renderWorkflowNav();
   const section = WORKFLOW_SECTIONS[activeWorkflow];
@@ -2053,11 +2059,11 @@ const CONTEXT_TOOLBAR_MAP = {
   // 接口测试 模块
   api_dashboard:    { module: 'api',      icon: 'API', title: '接口测试', refreshLabel: '刷新', refreshFn: 'showApiTestingDashboard()' },
   api_assets:       { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
-  api_sync:         { module: 'api',      icon: 'SYNC', title: '接口测试', refreshLabel: '刷新同步', refreshFn: 'showApiSyncCenterPage()' },
+  api_sync:         { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
   api_environment:  { module: 'api',      icon: 'ENV', title: '接口测试', refreshLabel: '刷新环境', refreshFn: 'showApiEnvironmentPage()' },
   api_plan:         { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新设计', refreshFn: 'showApiPlanPage()' },
-  api_baselines:    { module: 'api',      icon: '✓', title: '接口测试', refreshLabel: '刷新基线', refreshFn: 'showApiBaselinesPage()' },
-  api_execution:    { module: 'api',      icon: 'RUN', title: '接口测试', refreshLabel: '刷新执行', refreshFn: 'showApiExecutionPage()' },
+  api_baselines:    { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新设计', refreshFn: 'showApiPlanPage()' },
+  api_execution:    { module: 'api',      icon: 'LOG', title: '接口测试', refreshLabel: '刷新记录', refreshFn: 'showApiExecutionHistoryPage()' },
   api_execution_history: { module: 'api', icon: 'LOG', title: '接口测试', refreshLabel: '刷新记录', refreshFn: 'showApiExecutionHistoryPage()' },
   api_reports:      { module: 'api',      icon: 'RPT', title: '接口测试', refreshLabel: '刷新报告', refreshFn: 'showApiReportsPage()' },
   // 报告 模块
@@ -2176,7 +2182,7 @@ async function activateWorkflow(sectionKey) {
     return;
   }
   if (activeWorkflow === 'api_sync') {
-    showApiSyncCenterPage();
+    showApiAssetsPage();
     toggleLibrary(false);
     return;
   }
@@ -2191,12 +2197,12 @@ async function activateWorkflow(sectionKey) {
     return;
   }
   if (activeWorkflow === 'api_baselines') {
-    showApiBaselinesPage();
+    showApiPlanPage();
     toggleLibrary(false);
     return;
   }
   if (activeWorkflow === 'api_execution') {
-    showApiExecutionPage();
+    showApiExecutionHistoryPage();
     toggleLibrary(false);
     return;
   }

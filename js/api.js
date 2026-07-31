@@ -77,40 +77,32 @@ const WORKFLOW_SECTIONS = {
   api_dashboard: {
     index: '2',
     title: 'API 工作台',
-    subtitle: '接口资产、AI 用例、环境配置、平台执行和报告闭环',
-    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，审阅 AI 候选并确认后由平台原生执行。',
+    subtitle: '本地接口资产、AI 测试设计、执行记录和报告闭环',
+    help: 'Apifox 只作为只读来源；平台保存本地快照、测试资产、执行日志和失败分析。',
     cards: [
-      { title: '同步接口资产', text: '服务端只读同步 Apifox OpenAPI，内容变化时生成不可变版本并分析影响。', actions: [
+      { title: '接口资产', text: '查看本地保存的 Apifox 快照、接口数量、模块和变化影响。需要更新时再检查 Apifox。', actions: [
         { label: '打开接口资产', cls: 'primary', fn: 'showApiAssetsPage()' }
       ]},
-      { title: 'AI 用例设计', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言候选，先审阅再确认。', actions: [
-        { label: '进入 AI 测试设计', cls: 'ai', fn: 'showApiPlanPage()' }
+      { title: '测试设计', text: 'AI 按接口合同、业务模块和风险点生成测试资产，生成后可编辑、保存和执行。', actions: [
+        { label: '进入测试设计', cls: 'ai', fn: 'showApiPlanPage()' }
       ]},
       { title: '配置执行环境', text: '维护 Base URL、变量和业务鉴权，只保存为平台本地执行配置，不回写 Apifox。', actions: [
         { label: '环境配置', fn: 'showApiEnvironmentPage()' }
       ]},
-      { title: 'API 执行', text: '选择环境和业务鉴权后，平台直接执行已确认的 API 用例。', actions: [
-        { label: '执行测试', fn: 'showApiExecutionPage()' }
+      { title: '执行记录', text: '查看本地执行器的实时日志、请求、响应、断言和单次任务结果。', actions: [
+        { label: '执行记录', fn: 'showApiExecutionHistoryPage()' }
       ]},
-      { title: '统一 API 报告', text: '展示平台执行报告，并按鉴权、环境、测试数据、断言和接口缺陷分类。', actions: [
-        { label: 'API 报告', fn: 'showApiReportsPage()' }
+      { title: '测试报告', text: '按执行摘要、失败原因、请求响应和处理建议查看平台生成的 API 报告。', actions: [
+        { label: '测试报告', fn: 'showApiReportsPage()' }
       ]}
     ],
-    checklist: ['Apifox 首次同步与无变化同步先跑通', 'AI 候选经平台校验后采纳为基线', 'Apifox 和业务 token 只在服务端保存']
+    checklist: ['Apifox 来源只读，本地快照可复用', 'AI 草稿确认后保存为测试资产', '业务 token 只在服务端安全保存']
   },
   api_assets: {
     index: '2',
     title: '接口资产',
-    subtitle: '同步和查看 OpenAPI 接口版本',
-    help: '接口资产默认从 Apifox 只读同步；这里展示活动版本、schema 差异、受影响计划和同步日志。',
-    cards: [],
-    checklist: []
-  },
-  api_sync: {
-    index: '2',
-    title: '同步中心',
-    subtitle: '只读同步 Apifox 项目、环境和接口',
-    help: 'Apifox 只作为资产来源；同步结果保存为平台本地快照，差异用于影响分析和后续 AI 更新建议。',
+    subtitle: '本地保存的 Apifox 接口快照',
+    help: '接口资产从 Apifox 只读同步到平台本地；平时直接使用本地快照，需要更新时手动检查。',
     cards: [],
     checklist: []
   },
@@ -124,32 +116,16 @@ const WORKFLOW_SECTIONS = {
   },
   api_plan: {
     index: '2',
-    title: 'AI测试设计',
-    subtitle: '生成并审阅可采纳的 API 用例候选',
-    help: 'AI 用例默认是候选，通过平台校验并采纳为基线后才能进入平台 API 执行。',
-    cards: [],
-    checklist: []
-  },
-  api_baselines: {
-    index: '2',
-    title: 'API 基线',
-    subtitle: '维护已采纳、绑定接口版本的可执行计划',
-    help: '基线保留采纳时的接口版本；接口发生变化时标记受影响范围，不会静默改写。',
-    cards: [],
-    checklist: []
-  },
-  api_execution: {
-    index: '2',
-    title: '调试执行',
-    subtitle: '选择环境、配置鉴权、触发执行',
-    help: '平台原生 API Runner 直接执行基线和单条调试用例，并实时写入日志和报告。',
+    title: '测试设计',
+    subtitle: 'AI 生成、编辑并保存 API 测试资产',
+    help: 'AI 生成的是可审阅草稿；通过平台校验并确认后保存为可执行测试资产。',
     cards: [],
     checklist: []
   },
   api_execution_history: {
     index: '2',
     title: '执行记录',
-    subtitle: '查看 API Runner 日志和最近执行状态',
+    subtitle: '查看本地执行日志和最近执行状态',
     help: '执行记录展示真实请求、响应、断言和报告入口，不再依赖第三方平台状态。',
     cards: [],
     checklist: []

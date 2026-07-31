@@ -7,6 +7,7 @@ it gives the frontend one stable payload for the day-to-day API workflow.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List
 
 from task_server.services import (
@@ -273,6 +274,11 @@ def _plan_summary(plan: Dict[str, Any]) -> Dict[str, Any]:
             for item in (plan.get("module_paths") or [])
             if str(item or "").strip()
         ],
+        "selected_endpoint_keys": [
+            str(item)
+            for item in (plan.get("selected_endpoint_keys") or [])
+            if str(item or "").strip()
+        ],
         "latest_run": latest_run,
         "active_run": active_run,
         "can_execute": bool(readiness.get("can_execute")) and not active_run,
@@ -323,6 +329,120 @@ def _execution_summary(source_id: str) -> Dict[str, Any]:
     }
 
 
+def _sync_status_text(status: str, *, has_source: bool, has_snapshot: bool) -> str:
+    value = str(status or "").strip().lower()
+    if not has_source:
+        return "未连接"
+    if value in {"queued", "running"}:
+        return "同步中"
+    if value in {"succeeded", "no_change"}:
+        return "同步完成"
+    if value == "failed":
+        return "同步失败"
+    if has_snapshot:
+        return "已就绪"
+    return "待同步"
+
+
+def _latest_sync(syncs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return syncs[0] if syncs else {}
+
+
+def _pending_change_count(sync: Dict[str, Any]) -> int:
+    summary = sync.get("summary") if isinstance(sync.get("summary"), dict) else {}
+    return (
+        _safe_int(summary.get("added"), 0)
+        + _safe_int(summary.get("changed"), 0)
+        + _safe_int(summary.get("removed"), 0)
+    )
+
+
+def _pending_changes(sync: Dict[str, Any]) -> List[Dict[str, Any]]:
+    summary = sync.get("summary") if isinstance(sync.get("summary"), dict) else {}
+    rows: List[Dict[str, Any]] = []
+    change_specs = [
+        ("added", "新增接口", "为新增接口生成成功流、鉴权和异常测试资产"),
+        ("changed", "接口结构变化", "重新审阅入参、响应断言和受影响测试资产"),
+        ("removed", "接口删除", "确认下线范围并停用关联测试资产"),
+    ]
+    affected = _safe_int(summary.get("affected_plans"), 0)
+    for key, label, suggestion in change_specs:
+        count = _safe_int(summary.get(key), 0)
+        if not count:
+            continue
+        rows.append({
+            "type": key,
+            "title": label,
+            "count": count,
+            "affected_tests": affected,
+            "ai_suggestion": suggestion,
+            "sync_id": str(sync.get("sync_id") or ""),
+            "diff_id": str(sync.get("diff_id") or ""),
+        })
+    return rows
+
+
+def _coverage_metrics(
+    endpoints: List[Dict[str, Any]],
+    plans_payload: Dict[str, Any],
+    execution: Dict[str, Any],
+    sync: Dict[str, Any],
+) -> Dict[str, Any]:
+    endpoint_keys = {
+        str(endpoint.get("endpoint_key") or "").strip()
+        for endpoint in endpoints
+        if str(endpoint.get("endpoint_key") or "").strip()
+    }
+    covered_keys = set()
+    for plan in plans_payload.get("baselines") or []:
+        for key in plan.get("selected_endpoint_keys") or []:
+            normalized = str(key or "").strip()
+            if normalized and (not endpoint_keys or normalized in endpoint_keys):
+                covered_keys.add(normalized)
+    total = len(endpoints)
+    covered = len(covered_keys)
+    today = time.strftime("%Y-%m-%d")
+    executions = list(execution.get("active_runs") or []) + list(execution.get("recent_runs") or [])
+    today_executions = len([
+        item for item in executions
+        if str(item.get("created_at") or "").startswith(today)
+    ])
+    return {
+        "total_endpoints": total,
+        "covered_endpoints": min(covered, total),
+        "coverage_rate": round((min(covered, total) / total) * 100) if total else 0,
+        "pending_changes": _pending_change_count(sync),
+        "today_executions": today_executions,
+    }
+
+
+def _sync_state(
+    source: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    sync: Dict[str, Any],
+) -> Dict[str, Any]:
+    has_source = bool(source.get("source_id"))
+    has_snapshot = str(snapshot.get("state") or "") == "ready"
+    status = str(sync.get("status") or source.get("last_sync_status") or "").strip()
+    summary = sync.get("summary") if isinstance(sync.get("summary"), dict) else {}
+    return {
+        "project": str(source.get("project_name") or source.get("name") or "未连接"),
+        "status": _sync_status_text(status, has_source=has_source, has_snapshot=has_snapshot),
+        "status_raw": status,
+        "last_sync_at": str(source.get("last_success_at") or snapshot.get("last_sync_at") or sync.get("finished_at") or sync.get("updated_at") or ""),
+        "interface_count": _safe_int(snapshot.get("endpoint_count"), 0) or _safe_int(sync.get("scoped_endpoint_count"), 0),
+        "pending_changes": _pending_change_count(sync),
+        "added": _safe_int(summary.get("added"), 0),
+        "changed": _safe_int(summary.get("changed"), 0),
+        "removed": _safe_int(summary.get("removed"), 0),
+        "affected_tests": _safe_int(summary.get("affected_plans"), 0),
+        "action_label": "检查更新" if has_source else "连接 Apifox",
+        "source_id": str(source.get("source_id") or ""),
+        "sync_id": str(sync.get("sync_id") or ""),
+        "error": str(sync.get("error") or source.get("last_error") or ""),
+    }
+
+
 def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     """Return the complete simplified API workbench state for one source."""
     sources = [_source_summary(source) for source in api_source_service.list_api_sources()]
@@ -344,27 +464,34 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     ]
     reports = api_report_service.list_api_reports(limit=10, source_id=selected_source_id)
     syncs = api_sync_service.list_api_syncs(limit=10, source_id=selected_source_id) if selected_source_id else []
+    latest_sync = _latest_sync(syncs)
+    plans_payload = _plans_for_source(selected_source_id) if selected_source_id else {
+        "drafts": [],
+        "baselines": [],
+        "latest_draft": {},
+        "latest_baseline": {},
+        "draft_count": 0,
+        "baseline_count": 0,
+    }
+    execution_payload = _execution_summary(selected_source_id)
+    snapshot_payload = _snapshot_summary(revision, asset)
     return {
         "ok": True,
         "mode": "native_api_workbench",
         "source": _source_summary(source),
         "sources": sources,
-        "snapshot": _snapshot_summary(revision, asset),
+        "snapshot": snapshot_payload,
+        "metrics": _coverage_metrics(endpoints, plans_payload, execution_payload, latest_sync),
+        "sync_state": _sync_state(_source_summary(source), snapshot_payload, latest_sync),
+        "pending_changes": _pending_changes(latest_sync),
         "scope": {
             "endpoint_count": len(endpoints),
             "endpoints": endpoints[:300],
             "modules": api_module_service.module_summary(revision.get("endpoints") or []),
             "business_lines": api_module_service.business_line_summary(revision.get("endpoints") or []),
         },
-        "cases": _plans_for_source(selected_source_id) if selected_source_id else {
-            "drafts": [],
-            "baselines": [],
-            "latest_draft": {},
-            "latest_baseline": {},
-            "draft_count": 0,
-            "baseline_count": 0,
-        },
-        "execution": _execution_summary(selected_source_id),
+        "cases": plans_payload,
+        "execution": execution_payload,
         "reports": reports,
         "syncs": syncs,
     }
