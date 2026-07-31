@@ -64,6 +64,37 @@ python3 tests/backend_static_checks.py
 git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
 ```
 
+### 2026-07-31 API 自动化侧边栏图标、步骤条崩溃与本地快照先渲染
+
+用户指出 API 自动化左侧菜单仍是 `API/OAS/AI/DBG/RUN/LOG/RPT/EN` 文字块，不符合文档里“用图标帮助新同事快速识别入口”的要求；同时线上 `环境配置` 和 `测试设计` 页面出现 `selectedCount is not defined`，工作台进入时仍像每次都要重新刷新。
+
+根因：
+
+- 侧边栏实际仍使用文字 badge，静态检查也错误地把文字 badge 当作合格“图标”。
+- `renderApiWorkflowStepper()` 用 `selectedCount` 判断“在线调试”步骤是否完成，但这个变量只在其它函数内部定义，切到 `环境配置` / `测试设计` 时会直接抛前端运行时错误。
+- `API 工作台` 与 `环境配置` 每次进入都先展示 loading，再等待 `/api/api-testing/workbench` 返回；已有本地快照没有参与首屏渲染，所以用户感觉“每次都刷新”。
+
+修复：
+
+- `task-manager.html` 将 API 自动化菜单换成可见图标：`🏠 API 工作台`、`📦 接口资产`、`✨ AI测试设计`、`🧪 在线调试`、`▶️ 自动回归`、`📜 执行记录`、`📊 测试报告`、`⚙️ 环境配置`。
+- 前端静态资源版本递增到 `20260731-api-studio-icons-cache-v2`，避免浏览器继续使用旧的 `api-testing.js`。
+- `renderApiWorkflowStepper()` 在函数内定义 `selectedCount`，消除 `selectedCount is not defined`。
+- `api-testing.js` 增加 `api_testing_workbench_cache_v1` 本地快照缓存：`API 工作台` 和 `环境配置` 先渲染上一次成功保存的快照，再后台刷新服务端权威数据；刷新失败时保留快照并提示。
+- `tests/frontend_static_checks.py` 改为校验真实图标、禁止 API 自动化菜单再用文字 badge，并覆盖 `selectedCount` 定义和本地快照先渲染。
+
+已验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+python3 tests/api_workbench_checks.py && python3 tests/api_native_execution_checks.py
+git diff --check -- task-manager.html js/api-testing.js tests/frontend_static_checks.py CODEX_STATE.md
+PORT=8099 TASK_APP_ENV=dev TASK_ADMIN_USER=admin TASK_ADMIN_PASSWORD=sonic2026 TASK_SESSION_SECRET=local-dev-secret MIDSCENE_RUNNER_TOKEN=local-runner-token SONIC_CALLBACK_TOKEN=local-sonic-token TASK_DIR=/tmp/midscene-local/tasks REPORT_DIR=/tmp/midscene-local/reports LEARNING_DIR=/tmp/midscene-local/learning ASSET_DIR=/tmp/midscene-local/assets CASE_DIR=/tmp/midscene-local/cases GENERATE_JOB_DIR=/tmp/midscene-local/generate KNOWLEDGE_DIR=/tmp/midscene-local/knowledge python3 -m task_server
+curl -i http://127.0.0.1:8099/api/health
+```
+
+本地浏览器已用 `admin / sonic2026` 登录 `http://127.0.0.1:8099/task-manager.html`，实际点击 `API 工作台`、`AI测试设计`、`环境配置`，图标展示正常，前端控制台没有 `selectedCount` 错误。
+
 ### 2026-07-31 Agent 同需求优先复用历史全通过 YAML 种子
 
 用户连续回归“基础打印新增百度网盘入口”后发现同一需求每次结果不一样：明明已有成功记录，后续运行仍重新 PLAN / 重新生成 YAML，导致生成数量、冒烟选择和通过率波动。

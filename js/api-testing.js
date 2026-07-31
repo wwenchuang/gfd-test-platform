@@ -31,6 +31,7 @@ let apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
 let apiEnvironmentSnapshotEditing = false;
 const API_PLAN_MAX_ENDPOINTS = 60;
 const API_PLAN_AI_BATCH_SIZE = 12;
+const API_WORKBENCH_CACHE_KEY = 'api_testing_workbench_cache_v1';
 let apiAssetBusinessLines = [];
 let apiWorkbenchCurrent = null;
 let apiApifoxCredential = {};
@@ -211,6 +212,7 @@ function renderApiWorkflowStepper(context = {}) {
   const source = context.source || selectedApiAssetSource() || {};
   const plans = context.plans || apiTestingPlans || [];
   const endpoints = context.endpoints || apiTestingEndpoints || [];
+  const selectedCount = selectedApiPlanEndpointIds().length;
   let activeStep = ({
     api_dashboard: 'dashboard',
     api_assets: 'assets',
@@ -227,7 +229,7 @@ function renderApiWorkflowStepper(context = {}) {
   const steps = [
     {id: 'dashboard', label: '工作台', handler: 'showApiTestingDashboard()'},
     {id: 'assets', label: '接口资产', handler: 'showApiAssetsPage()'},
-    {id: 'plan', label: '测试设计', handler: 'showApiPlanPage()'},
+    {id: 'plan', label: 'AI测试设计', handler: 'showApiPlanPage()'},
     {id: 'debug', label: '在线调试', handler: 'showApiDebugPage()'},
     {id: 'regression', label: '自动回归', handler: 'showApiRegressionPage()'},
     {id: 'history', label: '执行记录', handler: 'showApiExecutionHistoryPage()'},
@@ -337,6 +339,12 @@ async function loadApiTestingWorkbench(sourceId = currentApiExecutionSourceId())
   const query = new URLSearchParams();
   if (sourceId) query.set('source_id', sourceId);
   const data = await apiRequest(`/api-testing/workbench${query.toString() ? `?${query}` : ''}`);
+  hydrateApiTestingWorkbench(data);
+  persistApiTestingWorkbenchCache(data);
+  return data;
+}
+
+function hydrateApiTestingWorkbench(data = {}) {
   const source = data.source || {};
   const snapshot = data.snapshot || {};
   const scope = data.scope || {};
@@ -360,6 +368,34 @@ async function loadApiTestingWorkbench(sourceId = currentApiExecutionSourceId())
   apiTestingCurrentSnapshotId = snapshot.revision_id || snapshot.snapshot_id || '';
   apiTestingProjectScope = {sourceId: apiAssetSelectedSourceId, revisionId: apiTestingCurrentSnapshotId};
   return data;
+}
+
+function apiTestingWorkbenchCacheKey(sourceId = currentApiExecutionSourceId()) {
+  return String(sourceId || apiWorkbenchCurrent?.source?.source_id || 'default');
+}
+
+function readApiTestingWorkbenchCache(sourceId = currentApiExecutionSourceId()) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(API_WORKBENCH_CACHE_KEY) || '{}');
+    const key = apiTestingWorkbenchCacheKey(sourceId);
+    return cached[key]?.data || cached.default?.data || null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function persistApiTestingWorkbenchCache(data = {}) {
+  const sourceId = data.source?.source_id || 'default';
+  if (!data.ok || !sourceId) return;
+  try {
+    const cached = JSON.parse(localStorage.getItem(API_WORKBENCH_CACHE_KEY) || '{}');
+    const row = {savedAt: new Date().toISOString(), data};
+    cached[sourceId] = row;
+    cached.default = row;
+    localStorage.setItem(API_WORKBENCH_CACHE_KEY, JSON.stringify(cached));
+  } catch (_error) {
+    // Cache is only an instant-render hint; service state remains authoritative.
+  }
 }
 
 function apiWorkbenchSourceOptions(sources = [], selectedId = '') {
@@ -915,23 +951,34 @@ function renderApiWorkbenchAssetCard(workbench = {}) {
   `;
 }
 
+function renderApiWorkbenchPage(data = {}) {
+  return `
+    <div class="api-testing-page api-workbench-page">
+      ${renderApiWorkbenchSourceCard(data)}
+      ${renderApiWorkbenchSyncAndRisk(data)}
+      ${renderApiWorkbenchRecentTasks(data)}
+      ${renderApiWorkbenchFlowCards(data)}
+      ${renderApiWorkbenchAssetCard(data)}
+    </div>
+  `;
+}
+
 async function showApiTestingDashboard() {
   const area = setApiTestingPage('api_dashboard', 'API 工作台', 'Apifox 接口资产、AI 测试设计、本地执行和 API 报告闭环。');
   if (!area) return;
-  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 工作台...')}</div>`;
+  const cached = readApiTestingWorkbenchCache();
+  if (cached) {
+    hydrateApiTestingWorkbench(cached);
+    area.innerHTML = renderApiWorkbenchPage(cached);
+  } else {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 工作台...')}</div>`;
+  }
   try {
     const data = await loadApiTestingWorkbench();
-    area.innerHTML = `
-      <div class="api-testing-page api-workbench-page">
-        ${renderApiWorkbenchSourceCard(data)}
-        ${renderApiWorkbenchSyncAndRisk(data)}
-        ${renderApiWorkbenchRecentTasks(data)}
-        ${renderApiWorkbenchFlowCards(data)}
-        ${renderApiWorkbenchAssetCard(data)}
-      </div>
-    `;
+    area.innerHTML = renderApiWorkbenchPage(data);
   } catch(e) {
-    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 工作台读取失败')}</div>`;
+    if (!cached) area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 工作台读取失败')}</div>`;
+    else showToast(e.message || 'API 工作台刷新失败，已展示本地快照', 'warn');
   }
 }
 
@@ -1021,21 +1068,32 @@ function renderApiEnvironmentCenter(workbench = {}) {
   `;
 }
 
+function renderApiEnvironmentPage(data = {}) {
+  return `
+    <div class="api-testing-page api-native-center-page">
+      <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_environment', source: data.source || {}, snapshot: data.snapshot || {}})}</div>
+      ${renderSavedApiSourceShelf(data.sources || [], data.source?.source_id || '', 'workbench')}
+      ${renderApiEnvironmentCenter(data)}
+    </div>
+  `;
+}
+
 async function showApiEnvironmentPage() {
   const area = setApiTestingPage('api_environment', '环境配置', '维护本地执行环境、Base URL、变量和业务 token；不反写 Apifox。');
   if (!area) return;
-  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取环境配置...')}</div>`;
+  const cached = readApiTestingWorkbenchCache();
+  if (cached) {
+    hydrateApiTestingWorkbench(cached);
+    area.innerHTML = renderApiEnvironmentPage(cached);
+  } else {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取环境配置...')}</div>`;
+  }
   try {
     const data = await loadApiTestingWorkbench();
-    area.innerHTML = `
-      <div class="api-testing-page api-native-center-page">
-        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_environment', source: data.source || {}, snapshot: data.snapshot || {}})}</div>
-        ${renderSavedApiSourceShelf(data.sources || [], data.source?.source_id || '', 'workbench')}
-        ${renderApiEnvironmentCenter(data)}
-      </div>
-    `;
+    area.innerHTML = renderApiEnvironmentPage(data);
   } catch (error) {
-    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || '环境配置读取失败')}</div>`;
+    if (!cached) area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || '环境配置读取失败')}</div>`;
+    else showToast(error.message || '环境配置刷新失败，已展示本地快照', 'warn');
   }
 }
 
@@ -3363,7 +3421,7 @@ function apiCandidatePlans(plans = apiTestingPlans) {
 }
 
 async function showApiPlanPage() {
-  const area = setApiTestingPage('api_plan', '测试设计', '从已选接口生成 AI 草稿，通过平台校验后保存为测试资产。');
+  const area = setApiTestingPage('api_plan', 'AI测试设计', '从已选接口生成 AI 草稿，通过平台校验后保存为测试资产。');
   if (!area) return;
   if (apiPlanRequestController) apiPlanRequestController.abort();
   const controller = new AbortController();
