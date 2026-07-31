@@ -28,6 +28,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Agent 报告按唯一用例展示部分通过和缺陷类型
+
+用户质疑连续回归后结果越来越差。基于最近 3 次“基础打印新增百度网盘入口”线上回归：
+
+- dry-run 误阻断未再复现，Runner 真实 dry-run 均能产出明确结果。
+- 真实失败主要是部分用例失败，尤其照片打印入口展示；这不应把整个 Agent 结论渲染成“失败”。
+- 列表接口已有 `reportSummary`，但详情接口没有，前端刷新单条后会回退到原始 execution 字段。
+- 原始 execution 里同时保留 `smoke` / `首批冒烟`、`expanded-1` / `扩展第1批`，直接展示会出现重复 phase 视角。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - `get_agent_run()` 详情返回补齐与列表一致的 `reportSummary`。
+  - `reportSummary.reportStatus` 对 `partial` 结果投影为 `partial`，不再透传底层 HTML report 的 `failed`。
+  - `reportSummary.phases` 压缩重复 phase 别名，用户层只保留唯一 `smoke` / `expanded-N` / `repair` 视角。
+  - `reportSummary` 暴露 `productFailed`、`scriptFailed`、`unknownFailed`，用于区分产品缺陷、脚本问题和未判定失败。
+- `js/agent-status.js`
+  - Agent 历史卡片总用例明细显示“产品缺陷 / 脚本问题 / 未判定”，不再把所有失败混成同一种失败。
+- `tests/backend_static_checks.py`
+  - 新增 5 条计划用例、2 冒烟、3 非冒烟的线上形态回归测试，覆盖详情接口和 phase 去重。
+- `tests/frontend_static_checks.py`
+  - 新增卡片失败类型展示静态检查。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_history_list_exposes_report_summary()
+print('targeted backend check passed')
+PY
+python3 tests/frontend_static_checks.py
+node --check js/agent-status.js
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py js/agent-status.js tests/frontend_static_checks.py
+```
+
 ### 2026-07-31 API 工作台命令中心 UI 重排
 
 用户反馈：

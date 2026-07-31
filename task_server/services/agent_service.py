@@ -1066,7 +1066,11 @@ def get_agent_run(run_id):
     """获取单个 Agent 运行详情。"""
     runs = recover_stale_agent_runs()
     run = next((r for r in runs if r.get("runId") == run_id), None)
-    return _agent_run_with_input_summary(run, detailed=True) if run else None
+    if not run:
+        return None
+    enriched = _agent_run_with_input_summary(run, detailed=True)
+    enriched["reportSummary"] = _agent_run_report_summary(run)
+    return enriched
 
 
 def _agent_cancel_progress_job(run_id, reason="用户取消"):
@@ -7590,6 +7594,56 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
     }
 
 
+def _agent_report_phase_key(phase):
+    phase_text = str(phase or "").strip()
+    if not phase_text:
+        return ""
+    phase_lower = phase_text.lower()
+    if any(term in phase_lower for term in ("dry-run", "dry_run", "dryrun")):
+        return ""
+    if "smoke" in phase_lower or "冒烟" in phase_text or "首批" in phase_text:
+        return "smoke"
+    match = re.search(r"expanded[-_\s]*(\d+)", phase_lower)
+    if match:
+        return f"expanded-{match.group(1)}"
+    match = re.search(r"扩展第\s*(\d+)\s*批", phase_text)
+    if match:
+        return f"expanded-{match.group(1)}"
+    if any(term in phase_lower for term in ("repair", "rerun")) or any(term in phase_text for term in ("修复", "重跑")):
+        return "repair"
+    return phase_text
+
+
+def _agent_compact_report_phase_rows(phase_rows):
+    """Collapse duplicate Runner phase aliases for user-facing summaries."""
+    compacted = {}
+    order = []
+    for row in phase_rows or []:
+        if not isinstance(row, dict):
+            continue
+        key = _agent_report_phase_key(row.get("phase"))
+        if not key:
+            continue
+        if key not in compacted:
+            compacted[key] = {
+                "phase": key,
+                "passed": 0,
+                "failed": 0,
+                "timeout": 0,
+                "running": 0,
+                "cancelled": 0,
+                "unknown": 0,
+            }
+            order.append(key)
+        target = compacted[key]
+        for status in ("passed", "failed", "timeout", "running", "cancelled", "unknown"):
+            target[status] = max(
+                _safe_int_local(target.get(status), 0),
+                _safe_int_local(row.get(status), 0),
+            )
+    return [compacted[key] for key in order]
+
+
 def _agent_run_report_summary(run):
     if not isinstance(run, dict):
         return {}
@@ -7650,6 +7704,7 @@ def _agent_run_report_summary(run):
             "cancelled": _safe_int_local(phase.get("cancelled"), 0),
             "unknown": _safe_int_local(phase.get("unknown"), 0),
         })
+    phase_rows = _agent_compact_report_phase_rows(phase_rows)
     projected_run_status = orchestration.get("runStatus") or run.get("status") or ""
     if (
         str(execution.get("outcome") or "").strip().lower() in ("passed", "partial")
@@ -7675,9 +7730,15 @@ def _agent_run_report_summary(run):
         failed = _safe_int_local(bucket_counts.get("smokeFailed"), 0) + _safe_int_local(bucket_counts.get("nonSmokeFailed"), 0)
         timeout = _safe_int_local(bucket_counts.get("smokeTimeout"), 0) + _safe_int_local(bucket_counts.get("nonSmokeTimeout"), 0)
         running = _safe_int_local(bucket_counts.get("smokeRunning"), 0) + _safe_int_local(bucket_counts.get("nonSmokeRunning"), 0)
-    report_status = str(report.get("status") or "").strip()
-    if str(execution.get("outcome") or "").strip().lower() == "passed" and not failed and not timeout and not running:
+    raw_report_status = str(report.get("status") or "").strip()
+    report_status = raw_report_status
+    execution_outcome = str(execution.get("outcome") or "").strip().lower()
+    if execution_outcome == "passed" and not failed and not timeout and not running:
         report_status = "success"
+    elif execution_outcome == "partial" and not bool(execution.get("smokeAllFailed")):
+        report_status = "partial"
+    elif execution_outcome == "running":
+        report_status = "running"
     result = {
         "conclusion": summary.get("conclusion") or execution.get("label") or "",
         "outcome": execution.get("outcome") or "",
@@ -7696,8 +7757,12 @@ def _agent_run_report_summary(run):
         "smokeFailed": smoke_failed,
         "smokeTimeout": smoke_timeout,
         "smokeAllFailed": bool(execution.get("smokeAllFailed")),
+        "productFailed": _safe_int_local(execution.get("productFailedCount"), 0),
+        "scriptFailed": _safe_int_local(execution.get("brokenCount"), 0),
+        "unknownFailed": _safe_int_local(execution.get("unknownFailedCount"), 0),
         "phases": phase_rows[:12],
         "reportStatus": report_status,
+        "rawReportStatus": raw_report_status,
         "orchestrationState": orchestration.get("state") or "",
         "orchestrationLabel": orchestration.get("label") or "",
         "runStatus": projected_run_status,

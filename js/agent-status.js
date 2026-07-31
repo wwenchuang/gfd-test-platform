@@ -143,6 +143,9 @@ function agentRunResultSource(run) {
       nonSmokeFailed: execution.nonSmokeFailedCount || 0,
       nonSmokeTimeout: execution.nonSmokeTimeoutCount || 0,
       nonSmokeRunning: execution.nonSmokeRunningCount || 0,
+      productFailed: execution.productFailedCount || 0,
+      scriptFailed: execution.brokenCount || 0,
+      unknownFailed: execution.unknownFailedCount || 0,
       phases: execution.phases || [],
       reportStatus: (artifacts.report || {}).status || '',
       orchestrationLabel: (summary.orchestration || {}).label || '',
@@ -175,6 +178,9 @@ function agentRunResultMeta(run) {
   const nonSmokeFailed = Number(result.nonSmokeFailed || 0);
   const nonSmokeTimeout = Number(result.nonSmokeTimeout || 0);
   const nonSmokeRunning = Number(result.nonSmokeRunning || 0);
+  const productFailed = Number(result.productFailed || 0);
+  const scriptFailed = Number(result.scriptFailed || 0);
+  const unknownFailed = Number(result.unknownFailed || 0);
   const bucketAttempted = smokeAttempted + nonSmokeAttempted;
   const bucketPassed = smokePassed + nonSmokePassed;
   const bucketFailed = smokeFailed + nonSmokeFailed;
@@ -227,6 +233,9 @@ function agentRunResultMeta(run) {
     nonSmokeFailed,
     nonSmokeTimeout,
     nonSmokeRunning,
+    productFailed,
+    scriptFailed,
+    unknownFailed,
     phases: Array.isArray(result.phases) ? result.phases : [],
     score,
     details,
@@ -313,13 +322,28 @@ function agentRunMetricHtml(label, value, detail = '') {
   `;
 }
 
+function agentRunFailureDetail(result, fallbackFailed = 0) {
+  const productFailed = Number(result.productFailed || 0);
+  const scriptFailed = Number(result.scriptFailed || 0);
+  const unknownFailed = Number(result.unknownFailed || 0);
+  const classified = productFailed + scriptFailed + unknownFailed;
+  const unclassified = Math.max(0, Number(fallbackFailed || 0) - classified);
+  return [
+    productFailed ? `产品缺陷 ${productFailed}` : '',
+    scriptFailed ? `脚本问题 ${scriptFailed}` : '',
+    unknownFailed ? `未判定 ${unknownFailed}` : '',
+    unclassified ? `失败 ${unclassified}` : ''
+  ].filter(Boolean).join(' / ');
+}
+
 function agentRunResultSummaryHtml(run) {
   const result = agentRunResultMeta(run);
   if (!result.hasReportResult) return '';
   const buckets = agentRunExecutionBuckets(result);
   const totalText = result.total ? `${result.total} 条` : '-';
+  const totalFailureDetail = agentRunFailureDetail(result, result.failed);
   const totalDetail = result.total
-    ? [`通过 ${result.passed}`, result.failed ? `失败 ${result.failed}` : '失败 0', result.timeout ? `超时 ${result.timeout}` : ''].filter(Boolean).join(' / ')
+    ? [`通过 ${result.passed}`, totalFailureDetail || '失败 0', result.timeout ? `超时 ${result.timeout}` : ''].filter(Boolean).join(' / ')
     : '未执行';
   const smokeText = buckets.smoke.attempted ? `${buckets.smoke.attempted} 条` : '-';
   const smokeDetail = buckets.smoke.attempted

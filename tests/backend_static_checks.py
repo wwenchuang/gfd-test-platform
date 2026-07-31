@@ -15407,6 +15407,104 @@ def check_agent_runner_dry_run_timeout_does_not_block_formal_dispatch():
 def check_agent_history_list_exposes_report_summary():
     from task_server.services import agent_service
 
+    run_with_duplicate_phases = {
+        "runId": "agent-static-history-final-buckets",
+        "status": "DONE",
+        "currentStep": "DONE",
+        "target": "基础打印新增百度网盘入口",
+        "createdAt": "2026-07-31T15:00:00",
+        "updatedAt": "2026-07-31T15:22:00",
+        "artifacts": {
+            "generationPipeline": {
+                "caseCount": 5,
+                "automationCaseCount": 5,
+                "yamlFileCount": 5,
+            },
+            "summary": {
+                "conclusion": "部分通过",
+                "execution": {
+                    "outcome": "partial",
+                    "label": "部分通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 5,
+                    "logicalPassedCount": 4,
+                    "logicalFailedCount": 1,
+                    "logicalTimeoutCount": 0,
+                    "logicalRunningCount": 0,
+                    "smokeAttemptCount": 4,
+                    "smokePassedCount": 2,
+                    "smokeFailedCount": 2,
+                    "smokeTimeoutCount": 0,
+                    "smokeAllFailed": False,
+                    "productFailedCount": 1,
+                    "brokenCount": 0,
+                    "unknownFailedCount": 0,
+                    "phases": [
+                        {"phase": "smoke", "passed": 1, "failed": 1},
+                        {"phase": "expanded-1", "passed": 3, "failed": 0},
+                        {"phase": "首批冒烟", "passed": 1, "failed": 1},
+                        {"phase": "扩展第1批", "passed": 3, "failed": 0},
+                    ],
+                },
+                "orchestration": {"state": "completed", "label": "编排完成", "runStatus": "DONE"},
+            },
+            "generatedYamlExecutionPlan": {
+                "counts": {"total": 5, "selectedSmoke": 2, "deferredExecutable": 3},
+                "smokeResult": {"total": 2, "passed": 1, "failed": 1, "timeout": 0},
+                "expandedResult": {"created": 3, "passed": 3, "failed": 0, "timeout": 0},
+            },
+            "report": {"status": "failed"},
+        },
+    }
+    duplicate_summary = agent_service._agent_run_report_summary(run_with_duplicate_phases)
+    require(
+        duplicate_summary.get("attempted") == 5
+        and duplicate_summary.get("passed") == 4
+        and duplicate_summary.get("failed") == 1
+        and duplicate_summary.get("smokeAttempted") == 2
+        and duplicate_summary.get("smokePassed") == 1
+        and duplicate_summary.get("smokeFailed") == 1
+        and duplicate_summary.get("nonSmokeAttempted") == 3
+        and duplicate_summary.get("nonSmokePassed") == 3
+        and duplicate_summary.get("nonSmokeFailed") == 0,
+        "Agent report summary must count unique planned cases, not duplicate dry-run/formal or Chinese phase aliases",
+    )
+    require(
+        duplicate_summary.get("reportStatus") == "partial"
+        and duplicate_summary.get("productFailed") == 1
+        and duplicate_summary.get("scriptFailed") == 0
+        and duplicate_summary.get("unknownFailed") == 0,
+        "Partial Agent runs with product defects must not expose the raw HTML report failed status as the card state",
+    )
+    phase_names = [row.get("phase") for row in duplicate_summary.get("phases") or []]
+    require(
+        phase_names == ["smoke", "expanded-1"],
+        "Agent report phases must collapse duplicate smoke/expanded aliases before they reach cards or detail pages",
+    )
+
+    old_runs_file = agent_service.AGENT_RUNS_FILE
+    old_started_ts = agent_service.AGENT_SERVICE_STARTED_TS
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agent_service.AGENT_RUNS_FILE = os.path.join(temp_dir, "agent-runs.json")
+            agent_service.AGENT_SERVICE_STARTED_TS = time.time()
+            agent_service.save_agent_runs([run_with_duplicate_phases])
+            list_rows = agent_service.list_agent_runs(limit=5)
+            detail = agent_service.get_agent_run("agent-static-history-final-buckets")
+        list_summary = (list_rows[0] if list_rows else {}).get("reportSummary") or {}
+        detail_summary = (detail or {}).get("reportSummary") or {}
+        require(
+            list_summary
+            and detail_summary
+            and detail_summary == list_summary
+            and detail_summary.get("smokeAttempted") == 2
+            and detail_summary.get("nonSmokePassed") == 3,
+            "Agent detail endpoint must expose the same compact reportSummary as the history list so refreshes do not fall back to raw execution counts",
+        )
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_runs_file
+        agent_service.AGENT_SERVICE_STARTED_TS = old_started_ts
+
     run = {
         "runId": "agent-static-history-partial",
         "status": "FAILED",
