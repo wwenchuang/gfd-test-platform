@@ -50,6 +50,8 @@
   - 新增 `_agent_unique_failure_class_counts()`，按唯一 `failed` 数把 `productFailed/scriptFailed/unknownFailed` 互斥封顶。
 - `js/agent-status.js`
   - `agentRunFailureDetail()` 前端也按总失败数封顶，兼容历史记录或旧服务返回的过量分类。
+- `task-manager.html`
+  - `agent-status.js` 版本号更新为 `20260731-agent-failure-buckets`，避免浏览器继续使用旧卡片统计逻辑。
 - `tests/backend_static_checks.py`
   - 新增线上形态回归：总失败 2、原始分类脚本 3/未判定 3 时，用户层必须展示脚本 2、未判定 0。
 
