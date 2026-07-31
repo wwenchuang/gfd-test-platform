@@ -6304,6 +6304,16 @@
     font-size: 0;
   }
   .nav-group-title::after { display: none; }
+  .nav-group[data-nav-group="api-testing"] {
+    margin: 0;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  .nav-group[data-nav-group="api-testing"] > .nav-group-title {
+    padding: 5px 0 2px;
+  }
   .workflow-step {
     justify-content: center;
     min-height: 42px;
@@ -6314,6 +6324,16 @@
     width: 32px;
     height: 32px;
     margin: 0;
+  }
+  .nav-group[data-nav-group="api-testing"] > .workflow-step {
+    grid-template-columns: 1fr;
+    min-height: 42px;
+    padding: 5px;
+  }
+  .nav-group[data-nav-group="api-testing"] .workflow-index {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
   }
   .main { min-width: 0; }
   .toolbar { padding: 9px; }

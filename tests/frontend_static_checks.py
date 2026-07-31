@@ -80,6 +80,12 @@ def main():
             f"API testing workflow must use its semantic sidebar icon: {workflow}",
         )
     require('data-workflow="api_baselines"' not in html, "API baseline maintenance must stay inside AI design instead of adding another sidebar step")
+    require(
+        '.nav-group[data-nav-group="api-testing"]' in html
+        and 'API Runner' in html
+        and '.nav-group[data-nav-group="api-testing"] > .workflow-step.active::before' in html,
+        "API automation sidebar group must have a distinct grouped visual treatment",
+    )
     require("step: 'review'" not in api_testing_js, "API workflow next action must only return step ids rendered by the simplified stepper")
     require(
         "showApiBaselinesPage()" not in api_dashboard_guide
@@ -904,7 +910,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-native-center" in html and "js/navigation.js?v=20260731-api-native-center" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-agent-history-full-time" in html and "css/round5.css?v=20260731-api-native-center" in html and "js/api-testing.js?v=20260731-api-native-center" in html and "js/agent-status.js?v=20260731-api-native-center" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-native-center" in html and "js/navigation.js?v=20260731-api-native-center" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-api-sidebar-polish" in html and "css/round5.css?v=20260731-api-native-center" in html and "js/api-testing.js?v=20260731-api-native-center" in html and "js/agent-status.js?v=20260731-api-native-center" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html
