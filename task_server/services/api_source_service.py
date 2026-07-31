@@ -27,6 +27,76 @@ _SENSITIVE_NAME_RE = re.compile(
     r"(token|secret|password|passwd|pwd|authorization|cookie|session|apikey|api_key|accesskey|private)",
     re.IGNORECASE,
 )
+_BASE_URL_SOURCE_KEYS = (
+    "base_urls",
+    "baseUrls",
+    "baseUrl",
+    "base_url",
+    "services",
+    "serviceList",
+    "service_list",
+    "servers",
+    "serverList",
+    "server_list",
+    "hosts",
+)
+_BASE_URL_VALUE_KEYS = (
+    "url",
+    "value",
+    "currentValue",
+    "current_value",
+    "localValue",
+    "local_value",
+    "defaultValue",
+    "default_value",
+    "baseUrl",
+    "base_url",
+    "server",
+    "host",
+)
+_VARIABLE_SOURCE_KEYS = (
+    "variables",
+    "variableList",
+    "variable_list",
+    "environmentVariables",
+    "environment_variables",
+    "commonVariables",
+    "common_variables",
+    "values",
+    "valueList",
+    "value_list",
+    "parameters",
+    "parameterList",
+    "parameter_list",
+    "globalParameters",
+    "global_parameters",
+    "globalParameterList",
+    "global_parameter_list",
+    "globals",
+)
+_VARIABLE_NAME_KEYS = (
+    "name",
+    "key",
+    "variableName",
+    "variable_name",
+    "parameterName",
+    "parameter_name",
+    "title",
+    "id",
+)
+_VARIABLE_VALUE_KEYS = (
+    "value",
+    "currentValue",
+    "current_value",
+    "localValue",
+    "local_value",
+    "defaultValue",
+    "default_value",
+    "initialValue",
+    "initial_value",
+    "example",
+    "content",
+)
 
 
 class ApiSourceConfigDriftError(RuntimeError):
@@ -47,6 +117,10 @@ def _source_path(source_id: str) -> str:
 
 def _index_path() -> str:
     return _api_path("sources", "index.json")
+
+
+def _apifox_credential_path() -> str:
+    return _api_path("credentials", "apifox.json")
 
 
 def _env_source() -> Dict[str, Any]:
@@ -87,6 +161,27 @@ def _sync_interval(value: Any) -> int:
 
 def _bounded_text(value: Any, limit: int) -> str:
     return str(value or "").strip()[:limit]
+
+
+def _is_blank(value: Any) -> bool:
+    return value in (None, "", [], {})
+
+
+def _first_present(raw: Dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in raw:
+            return raw.get(key)
+    return None
+
+
+def _field_value(raw: Any, keys: tuple[str, ...]) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    value = _first_present(raw, keys)
+    if isinstance(value, dict):
+        nested = _field_value(value, keys)
+        return nested if nested is not None else value
+    return value
 
 
 def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
@@ -155,51 +250,198 @@ def _looks_sensitive_name(name: Any) -> bool:
 
 
 def _snapshot_base_url_rows(value: Any) -> List[Dict[str, str]]:
-    rows = value if isinstance(value, list) else []
     result: List[Dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for index, item in enumerate(rows, start=1):
-        raw = item if isinstance(item, dict) else {}
-        name = _bounded_text(
-            raw.get("name", raw.get("key", raw.get("scope"))),
-            120,
-        ) or f"baseUrl{index}"
-        url = _bounded_text(raw.get("url", raw.get("value")), 1000)
-        if not url:
-            continue
-        key = (name, url)
+
+    def add_row(name: Any, url: Any) -> None:
+        if isinstance(url, dict):
+            url = _field_value(url, _BASE_URL_VALUE_KEYS)
+        clean_name = _bounded_text(name, 120) or f"baseUrl{len(result) + 1}"
+        clean_url = _bounded_text(url, 1000)
+        if not clean_url:
+            return
+        key = (clean_name, clean_url)
         if key in seen:
-            continue
+            return
         seen.add(key)
-        result.append({"name": name, "url": url})
+        result.append({"name": clean_name, "url": clean_url})
+
+    def consume(candidate: Any, fallback_name: str = "") -> None:
+        if len(result) >= 50 or _is_blank(candidate):
+            return
+        if isinstance(candidate, str):
+            add_row(fallback_name or f"baseUrl{len(result) + 1}", candidate)
+            return
+        if isinstance(candidate, list):
+            for index, item in enumerate(candidate, start=1):
+                consume(item, f"baseUrl{index}")
+                if len(result) >= 50:
+                    break
+            return
+        if isinstance(candidate, dict):
+            url = _field_value(candidate, _BASE_URL_VALUE_KEYS)
+            if url is not None and url is not candidate:
+                add_row(
+                    candidate.get("name")
+                    or candidate.get("key")
+                    or candidate.get("scope")
+                    or candidate.get("id")
+                    or candidate.get("title")
+                    or fallback_name,
+                    url,
+                )
+                return
+            for key, item in candidate.items():
+                consume(item, _bounded_text(key, 120))
+                if len(result) >= 50:
+                    break
+
+    consume(value)
     return result[:50]
 
 
 def _snapshot_variable_rows(value: Any) -> List[Dict[str, Any]]:
-    rows = value if isinstance(value, list) else []
     result: List[Dict[str, Any]] = []
     seen: set[str] = set()
-    for item in rows:
+
+    def append_row(item: Any, fallback_name: str = "") -> None:
+        if len(result) >= 200:
+            return
         raw = item if isinstance(item, dict) else {}
-        name = _bounded_text(raw.get("name", raw.get("key")), 160)
+        name = _bounded_text(_field_value(raw, _VARIABLE_NAME_KEYS) or fallback_name, 160)
         if not name or name in seen:
-            continue
+            return
         seen.add(name)
-        sensitive = bool(raw.get("sensitive")) or _looks_sensitive_name(name)
+        sensitive = bool(
+            raw.get("sensitive")
+            or raw.get("secret")
+            or raw.get("private")
+            or raw.get("isSensitive")
+            or raw.get("isSecret")
+            or raw.get("isPrivate")
+            or _looks_sensitive_name(name)
+        )
+        variable_value = _field_value(raw, _VARIABLE_VALUE_KEYS)
+        if variable_value is raw:
+            variable_value = ""
         result.append({
             "name": name,
-            "value": "" if sensitive else _bounded_text(raw.get("value"), 2000),
+            "value": "" if sensitive else _bounded_text(variable_value, 2000),
             "sensitive": sensitive,
-            "scope": _bounded_text(raw.get("scope"), 80) or "environment",
+            "scope": _bounded_text(raw.get("scope") or raw.get("type"), 80) or "environment",
         })
+
+    def consume(candidate: Any, fallback_name: str = "") -> None:
+        if len(result) >= 200 or _is_blank(candidate):
+            return
+        if isinstance(candidate, dict):
+            has_variable_shape = any(key in candidate for key in (*_VARIABLE_NAME_KEYS, *_VARIABLE_VALUE_KEYS))
+            if has_variable_shape:
+                append_row(candidate, fallback_name)
+                return
+            for key, item in candidate.items():
+                if isinstance(item, dict):
+                    merged = dict(item)
+                    merged.setdefault("name", key)
+                    append_row(merged, key)
+                else:
+                    append_row({"name": key, "value": item}, key)
+                if len(result) >= 200:
+                    break
+            return
+        if isinstance(candidate, list):
+            for item in candidate:
+                consume(item, fallback_name)
+                if len(result) >= 200:
+                    break
+
+    consume(value)
     return result[:200]
+
+
+def _environment_snapshot_sources(raw: Dict[str, Any], keys: tuple[str, ...]) -> List[Any]:
+    return [
+        raw.get(key)
+        for key in keys
+        if key in raw and not _is_blank(raw.get(key))
+    ]
+
+
+def _read_apifox_credential() -> Dict[str, Any]:
+    value = read_json_file(_apifox_credential_path(), default={}) or {}
+    return value if isinstance(value, dict) else {}
+
+
+def _public_apifox_credential(value: Dict[str, Any]) -> Dict[str, Any]:
+    raw = value if isinstance(value, dict) else {}
+    token = str(raw.get("access_token") or "").strip()
+    return {
+        "credential_configured": bool(token),
+        "base_url": _bounded_text(raw.get("base_url") or "https://api.apifox.com", 500),
+        "credential_label": "Apifox 访问令牌" if token else "",
+        "updated_at": _bounded_text(raw.get("updated_at"), 40),
+    }
+
+
+def get_apifox_credential(masked: bool = True) -> Dict[str, Any]:
+    credential = _read_apifox_credential()
+    if not credential:
+        return _public_apifox_credential({}) if masked else {}
+    return _public_apifox_credential(credential) if masked else dict(credential)
+
+
+def save_apifox_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Apifox 凭据必须是对象")
+    current = _read_apifox_credential()
+    clear = safe_bool(payload.get("clear_credentials", payload.get("clearCredentials")), False)
+    token_input = str(
+        payload.get("access_token") or payload.get("accessToken") or payload.get("token") or ""
+    ).strip()
+    base_url = _validate_base_url(
+        payload.get("base_url", payload.get("baseUrl", current.get("base_url") or "https://api.apifox.com"))
+    )
+    if clear:
+        credential = {"base_url": base_url, "access_token": "", "updated_at": _now()}
+    else:
+        access_token = token_input or str(current.get("access_token") or "").strip()
+        if not access_token:
+            raise ValueError("请输入 Apifox 访问令牌")
+        credential = {"base_url": base_url, "access_token": access_token, "updated_at": _now()}
+    write_json_file(_apifox_credential_path(), credential)
+    try:
+        os.chmod(_apifox_credential_path(), 0o600)
+    except OSError:
+        pass
+    return _public_apifox_credential(credential)
+
+
+def apply_saved_apifox_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach the global Apifox credential when a new source omits a token."""
+    data = dict(payload or {})
+    source_type = str(data.get("source_type") or data.get("sourceType") or "apifox").strip().lower()
+    if source_type != "apifox":
+        return data
+    has_token = bool(str(data.get("access_token") or data.get("accessToken") or data.get("token") or "").strip())
+    if has_token:
+        return data
+    requested_id = str(data.get("source_id") or data.get("sourceId") or "").strip()
+    if requested_id and str(_raw_source(requested_id).get("access_token") or "").strip():
+        return data
+    credential = get_apifox_credential(masked=False)
+    token = str(credential.get("access_token") or "").strip()
+    if not token:
+        return data
+    data["access_token"] = token
+    data.setdefault("base_url", credential.get("base_url") or "https://api.apifox.com")
+    return data
 
 
 def normalize_environment_snapshot(value: Any) -> Dict[str, Any]:
     """Return a safe public Apifox environment snapshot without secret values."""
     raw = value if isinstance(value, dict) else {}
-    base_urls = _snapshot_base_url_rows(raw.get("base_urls", raw.get("baseUrls")))
-    variables = _snapshot_variable_rows(raw.get("variables"))
+    base_urls = _snapshot_base_url_rows(_environment_snapshot_sources(raw, _BASE_URL_SOURCE_KEYS))
+    variables = _snapshot_variable_rows(_environment_snapshot_sources(raw, _VARIABLE_SOURCE_KEYS))
     if not base_urls and not variables:
         return {}
     sensitive_count = sum(1 for item in variables if item.get("sensitive"))
@@ -511,8 +753,11 @@ __all__ = [
     "API_TESTING_DIR",
     "ApiSourceConfigDriftError",
     "DEFAULT_APIFOX_SOURCE_ID",
+    "apply_saved_apifox_credential",
+    "get_apifox_credential",
     "get_api_source",
     "list_api_sources",
+    "save_apifox_credential",
     "save_api_source",
     "normalize_environment_snapshot",
     "normalize_provider_metadata",

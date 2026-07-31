@@ -22,6 +22,76 @@ _SENSITIVE_NAME_RE = re.compile(
     r"(token|secret|password|passwd|pwd|authorization|cookie|session|apikey|api_key|accesskey|private)",
     re.IGNORECASE,
 )
+_BASE_URL_VALUE_KEYS = (
+    "url",
+    "value",
+    "currentValue",
+    "current_value",
+    "localValue",
+    "local_value",
+    "defaultValue",
+    "default_value",
+    "baseUrl",
+    "base_url",
+    "server",
+    "host",
+)
+_VARIABLE_NAME_KEYS = (
+    "name",
+    "key",
+    "variableName",
+    "variable_name",
+    "parameterName",
+    "parameter_name",
+    "title",
+    "id",
+)
+_VARIABLE_VALUE_KEYS = (
+    "value",
+    "currentValue",
+    "current_value",
+    "localValue",
+    "local_value",
+    "defaultValue",
+    "default_value",
+    "initialValue",
+    "initial_value",
+    "example",
+    "content",
+)
+_VARIABLE_SOURCE_KEYS = (
+    "variables",
+    "variableList",
+    "variable_list",
+    "environmentVariables",
+    "environment_variables",
+    "commonVariables",
+    "common_variables",
+    "values",
+    "valueList",
+    "value_list",
+    "parameters",
+    "parameterList",
+    "parameter_list",
+    "globalParameters",
+    "global_parameters",
+    "globalParameterList",
+    "global_parameter_list",
+    "globals",
+)
+_BASE_URL_SOURCE_KEYS = (
+    "baseUrls",
+    "base_urls",
+    "baseUrl",
+    "base_url",
+    "services",
+    "serviceList",
+    "service_list",
+    "servers",
+    "serverList",
+    "server_list",
+    "hosts",
+)
 _ENV_ALLOWLIST = (
     "PATH",
     "LANG",
@@ -56,6 +126,27 @@ class ApifoxDiscoveryError(RuntimeError):
 
 def _safe_text(value: Any, limit: int = 500) -> str:
     return str(value or "").strip()[:limit]
+
+
+def _first_present(raw: Dict[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        if key in raw:
+            return raw.get(key)
+    return None
+
+
+def _field_value(raw: Any, keys: Sequence[str]) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    value = _first_present(raw, keys)
+    if isinstance(value, dict):
+        nested = _field_value(value, keys)
+        return nested if nested is not None else value
+    return value
+
+
+def _is_blank(value: Any) -> bool:
+    return value in (None, "", [], {})
 
 
 def _safe_error_text(value: Any, token: str = "") -> str:
@@ -356,99 +447,124 @@ def _named_options(values: Any, *, kind: str) -> List[Dict[str, Any]]:
 def _base_url_rows(value: Any) -> List[Dict[str, str]]:
     result: List[Dict[str, str]] = []
     seen = set()
-    if isinstance(value, dict):
-        iterable = value.items()
-    elif isinstance(value, list):
-        iterable = []
-        for index, item in enumerate(value):
-            if isinstance(item, str):
-                iterable.append((f"url{index + 1}", item))
-                continue
-            raw = item if isinstance(item, dict) else {}
-            iterable.append((
-                raw.get("name") or raw.get("key") or raw.get("id") or raw.get("title") or f"url{index + 1}",
-                raw.get("url")
-                or raw.get("value")
-                or raw.get("baseUrl")
-                or raw.get("base_url")
-                or raw.get("server")
-                or raw.get("host"),
-            ))
-    else:
-        iterable = []
-    for name, url in iterable:
+
+    def add_row(name: Any, url: Any) -> None:
         if isinstance(url, dict):
-            url = url.get("url") or url.get("value") or url.get("baseUrl") or url.get("base_url")
+            url = _field_value(url, _BASE_URL_VALUE_KEYS)
         clean_url = _safe_text(url, 500)
         if not clean_url or clean_url in seen:
-            continue
+            return
         seen.add(clean_url)
         result.append({
             "name": _safe_text(name, 100) or "default",
             "url": clean_url,
         })
-        if len(result) >= 20:
-            break
+
+    def consume(candidate: Any, fallback_name: str = "default") -> None:
+        if len(result) >= 20 or _is_blank(candidate):
+            return
+        if isinstance(candidate, str):
+            add_row(fallback_name, candidate)
+            return
+        if isinstance(candidate, list):
+            for index, item in enumerate(candidate, start=1):
+                consume(item, f"url{index}")
+                if len(result) >= 20:
+                    break
+            return
+        if isinstance(candidate, dict):
+            url = _field_value(candidate, _BASE_URL_VALUE_KEYS)
+            if url is not None and url is not candidate:
+                name = (
+                    candidate.get("name")
+                    or candidate.get("key")
+                    or candidate.get("id")
+                    or candidate.get("title")
+                    or fallback_name
+                )
+                add_row(name, url)
+                return
+            for key, item in candidate.items():
+                consume(item, _safe_text(key, 100) or fallback_name)
+
+    consume(value)
     return result
 
 
 def _environment_variable_rows(value: Any) -> List[Dict[str, Any]]:
-    if isinstance(value, dict):
-        rows = [
-            {"name": key, "value": item.get("value") if isinstance(item, dict) else item}
-            for key, item in value.items()
-        ]
-    else:
-        rows = value if isinstance(value, list) else []
     result: List[Dict[str, Any]] = []
     seen = set()
-    for item in rows:
+
+    def append_row(item: Any, fallback_name: str = "") -> None:
+        if len(result) >= 200:
+            return
         raw = item if isinstance(item, dict) else {}
         name = _safe_text(
-            raw.get("name")
-            or raw.get("key")
-            or raw.get("variableName")
-            or raw.get("variable_name"),
+            _field_value(raw, _VARIABLE_NAME_KEYS) or fallback_name,
             100,
         )
         if not name or name in seen:
-            continue
+            return
         seen.add(name)
         sensitive = bool(
             raw.get("sensitive")
             or raw.get("secret")
             or raw.get("private")
+            or raw.get("isSensitive")
+            or raw.get("isSecret")
+            or raw.get("isPrivate")
             or _SENSITIVE_NAME_RE.search(name)
         )
+        value = _field_value(raw, _VARIABLE_VALUE_KEYS)
+        if value is raw:
+            value = ""
         result.append({
             "name": name,
-            "value": "" if sensitive else _safe_text(raw.get("value"), 1000),
+            "value": "" if sensitive else _safe_text(value, 1000),
             "sensitive": sensitive,
             "scope": _safe_text(raw.get("scope") or raw.get("type") or "environment", 40) or "environment",
         })
-        if len(result) >= 200:
-            break
+
+    def consume(candidate: Any, fallback_name: str = "") -> None:
+        if len(result) >= 200 or _is_blank(candidate):
+            return
+        if isinstance(candidate, dict):
+            has_variable_shape = any(key in candidate for key in (*_VARIABLE_NAME_KEYS, *_VARIABLE_VALUE_KEYS))
+            if has_variable_shape:
+                append_row(candidate, fallback_name)
+                return
+            for key, item in candidate.items():
+                if isinstance(item, dict):
+                    merged = dict(item)
+                    merged.setdefault("name", key)
+                    append_row(merged, key)
+                else:
+                    append_row({"name": key, "value": item}, key)
+                if len(result) >= 200:
+                    break
+            return
+        if isinstance(candidate, list):
+            for item in candidate:
+                consume(item, fallback_name)
+                if len(result) >= 200:
+                    break
+
+    consume(value)
     return result
 
 
 def _environment_snapshot(raw: Dict[str, Any]) -> Dict[str, Any]:
-    base_urls = _base_url_rows(
-        raw.get("baseUrls")
-        or raw.get("base_urls")
-        or raw.get("baseUrl")
-        or raw.get("base_url")
-        or raw.get("servers")
-        or raw.get("serverList")
-        or raw.get("services")
-        or raw.get("serviceList")
-        or raw.get("hosts")
-    )
-    variables = _environment_variable_rows(
-        raw.get("variables")
-        or raw.get("variableList")
-        or raw.get("environmentVariables")
-        or raw.get("commonVariables")
-    )
+    source = raw if isinstance(raw, dict) else {}
+    base_urls = _base_url_rows([
+        source.get(key)
+        for key in _BASE_URL_SOURCE_KEYS
+        if key in source and not _is_blank(source.get(key))
+    ])
+    variables = _environment_variable_rows([
+        source.get(key)
+        for key in _VARIABLE_SOURCE_KEYS
+        if key in source and not _is_blank(source.get(key))
+    ])
     return {
         "base_urls": base_urls,
         "variables": variables,

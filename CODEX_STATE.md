@@ -28,6 +28,56 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Apifox 环境快照与平台级访问凭据
+
+用户反馈：
+
+- Apifox Token 每次新增项目都要重新填，其他同事不知道怎么操作。
+- 从 Apifox 拉下来的环境配置不完整，常见表现是服务地址能看到但环境变量数量为 0 或缺少实际变量。
+- 希望参考 APIAuto 这类轻量接口工具，不再把 API 流程做成复杂外部平台编排。
+
+判断：
+
+- Apifox 应继续只作为只读资产来源；平台自己保存项目、环境快照、AI 用例、执行日志和报告。
+- 令牌应该是平台级 Apifox 凭据，新建项目默认复用；单个 source 如需更换仍可局部覆盖。
+- 环境快照解析不能只认 `variables[].value`，需要兼容 Apifox/CLI 可能出现的 `currentValue`、`localValue`、`defaultValue`、`values`、`parameters`、`globalParameters`、`services`、`serverList` 等字段。
+- 敏感变量只能保存名称和敏感标记，不能保存或返回明文值。
+
+修复：
+
+- `apifox_discovery_service.py`
+  - Apifox 环境解析改为多字段合并，不再只取第一个 truthy 字段。
+  - 服务地址兼容 `services/serviceList/servers/serverList/hosts/baseUrls` 及 `url/value/currentValue/localValue/defaultValue/baseUrl`。
+  - 环境变量兼容 `variables/values/parameters/globalParameters` 等来源及多种值字段。
+- `api_source_service.py`
+  - 本地 `environment_snapshot` 归一化复用同一类字段兼容规则。
+  - 新增平台级 Apifox 凭据保存能力，凭据文件仅服务端保存，公开 payload 只返回 `credential_configured/base_url/updated_at`。
+  - 保存新 Apifox source 时，如未提交 token 且平台凭据已保存，则自动复用平台凭据；已有 source 自己的 token 不会被全局凭据覆盖。
+- `router.py`
+  - 新增登录保护接口：
+    - `GET /api/api-testing/apifox/credential`
+    - `POST /api/api-testing/apifox/credential`
+  - Apifox 项目发现接口在请求体没有 token/source_id 时自动使用平台级凭据。
+- `api_workbench_service.py` / `js/api-testing.js`
+  - Workbench payload 暴露脱敏后的 `apifox_credential` 状态。
+  - 新增项目面板显示“平台令牌已保存”，允许直接读取 Apifox 项目。
+  - Token 输入框新增“单独保存令牌”，保存后不回填明文。
+- 前端缓存版本更新为 `20260731-apifox-credential-env`。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_asset_sync_checks.ApiSourceConfigTests.test_environment_snapshot_accepts_apifox_cli_variable_aliases tests.api_asset_sync_checks.ApiSourceConfigTests.test_global_apifox_credential_is_write_only_and_reusable tests.api_asset_sync_checks.ApifoxDiscoverySnapshotTests.test_environment_snapshot_merges_cli_environment_detail_shapes tests.api_asset_sync_checks.ApiSourceRouteTests.test_apifox_credential_route_is_write_only_and_used_by_discovery tests.api_asset_sync_checks.ApiSourceRouteTests.test_source_save_uses_saved_apifox_credential_for_new_project
+python3 tests/api_asset_sync_checks.py
+python3 tests/api_workbench_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/frontend_static_checks.py
+python3 -m py_compile task_server/services/apifox_discovery_service.py task_server/services/api_source_service.py task_server/services/api_workbench_service.py task_server/router.py tests/api_asset_sync_checks.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/apifox_discovery_service.py task_server/services/api_source_service.py task_server/services/api_workbench_service.py task_server/router.py js/api-testing.js task-manager.html tests/api_asset_sync_checks.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+```
+
 ### 2026-07-31 Runner dry-run 超时不再硬阻断 Agent 正式执行
 
 用户反馈连续回归后失败越来越多。线上 3 次百度网盘 Agent 回归显示：

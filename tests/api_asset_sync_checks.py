@@ -185,6 +185,53 @@ class ApiSourceConfigTests(unittest.TestCase):
         self.assertNotIn("secret-apifox-token", json.dumps(source, ensure_ascii=False))
         self.assertNotIn("secret-runtime-token", json.dumps(source, ensure_ascii=False))
 
+    def test_environment_snapshot_accepts_apifox_cli_variable_aliases(self):
+        snapshot = self.service.normalize_environment_snapshot({
+            "services": [
+                {"name": "default", "baseUrl": "https://print.wisebeginner3d.com/app"},
+                {"name": "备用地址", "currentValue": "https://backup.example.test/app"},
+            ],
+            "variables": [
+                {"name": "tenantId", "currentValue": "tenant-3d", "scope": "environment"},
+            ],
+            "values": [
+                {"key": "platform", "localValue": "ZXB", "scope": "local"},
+            ],
+            "parameters": [
+                {"parameterName": "appId", "defaultValue": "print3d"},
+            ],
+            "globalParameters": [
+                {"key": "Authorization", "currentValue": "Bearer secret-token"},
+            ],
+        })
+
+        variables = {item["name"]: item for item in snapshot["variables"]}
+
+        self.assertEqual(2, len(snapshot["base_urls"]))
+        self.assertEqual("https://backup.example.test/app", snapshot["base_urls"][1]["url"])
+        self.assertEqual("tenant-3d", variables["tenantId"]["value"])
+        self.assertEqual("ZXB", variables["platform"]["value"])
+        self.assertEqual("print3d", variables["appId"]["value"])
+        self.assertEqual("", variables["Authorization"]["value"])
+        self.assertTrue(variables["Authorization"]["sensitive"])
+        self.assertEqual(4, snapshot["variable_count"])
+        self.assertEqual(1, snapshot["sensitive_variable_count"])
+
+    def test_global_apifox_credential_is_write_only_and_reusable(self):
+        saved = self.service.save_apifox_credential({
+            "access_token": "secret-global-apifox-token",
+            "base_url": "https://api.apifox.com",
+        })
+        public = self.service.get_apifox_credential()
+        raw = self.service.get_apifox_credential(masked=False)
+
+        self.assertTrue(saved["credential_configured"])
+        self.assertTrue(public["credential_configured"])
+        self.assertNotIn("access_token", public)
+        self.assertNotIn("secret-global-apifox-token", json.dumps(public, ensure_ascii=False))
+        self.assertEqual("secret-global-apifox-token", raw["access_token"])
+        self.assertEqual("https://api.apifox.com", raw["base_url"])
+
     def test_config_and_sync_state_updates_do_not_overwrite_each_other(self):
         saved = self.service.save_api_source({
             "source_type": "apifox",
@@ -357,6 +404,48 @@ class ApifoxAdapterTests(unittest.TestCase):
             adapter.fetch_openapi({"access_token": "token"})
         with self.assertRaisesRegex(ApifoxRequestError, "令牌"):
             adapter.fetch_openapi({"project_id": "5904970"})
+
+
+class ApifoxDiscoverySnapshotTests(unittest.TestCase):
+    def test_environment_snapshot_merges_cli_environment_detail_shapes(self):
+        from task_server.services import apifox_discovery_service
+
+        snapshot = apifox_discovery_service._environment_snapshot({
+            "services": [
+                {"name": "default", "baseUrl": "https://print.wisebeginner3d.com/app"},
+            ],
+            "serverList": [
+                {"key": "preview", "currentValue": "https://preview.example.test/app"},
+            ],
+            "variables": [
+                {"name": "tenantId", "currentValue": "tenant-3d", "scope": "environment"},
+            ],
+            "values": [
+                {"key": "platform", "localValue": "ZXB", "scope": "local"},
+            ],
+            "parameters": [
+                {"parameterName": "appId", "defaultValue": "print3d"},
+            ],
+            "globalParameters": [
+                {"key": "Authorization", "currentValue": "Bearer secret-token"},
+            ],
+        })
+
+        variables = {item["name"]: item for item in snapshot["variables"]}
+
+        self.assertEqual(
+            [
+                {"name": "default", "url": "https://print.wisebeginner3d.com/app"},
+                {"name": "preview", "url": "https://preview.example.test/app"},
+            ],
+            snapshot["base_urls"],
+        )
+        self.assertEqual("tenant-3d", variables["tenantId"]["value"])
+        self.assertEqual("ZXB", variables["platform"]["value"])
+        self.assertEqual("print3d", variables["appId"]["value"])
+        self.assertEqual("", variables["Authorization"]["value"])
+        self.assertTrue(variables["Authorization"]["sensitive"])
+        self.assertEqual(4, snapshot["variable_count"])
 
 
 def _openapi_document(response_type="string", path="/items", operation_id="listItems", provider_id=""):
@@ -1213,6 +1302,85 @@ class ApiSourceRouteTests(unittest.TestCase):
             self.assertNotIn("secret-apifox-token", str(payload))
         finally:
             apifox_discovery_service.discover_project_context = old_discover
+            api_source_service.API_TESTING_DIR = old_dir
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_apifox_credential_route_is_write_only_and_used_by_discovery(self):
+        from task_server import router
+        from task_server.services import apifox_discovery_service, api_source_service
+
+        old_dir = api_source_service.API_TESTING_DIR
+        old_discover = apifox_discovery_service.discover_projects
+        temp_dir = tempfile.mkdtemp(prefix="api_source_global_credential_")
+        api_source_service.API_TESTING_DIR = temp_dir
+        calls = []
+
+        def fake_discover(access_token, **kwargs):
+            calls.append({"access_token": access_token, "base_url": kwargs.get("base_url")})
+            return {"projects": [{"id": "5904970", "name": "3D", "team": {}}], "capability": {"available": True}}
+
+        apifox_discovery_service.discover_projects = fake_discover
+        try:
+            self.assertIn("/api/api-testing/apifox/credential", router.GET_ROUTES)
+            self.assertIn("/api/api-testing/apifox/credential", router.POST_ROUTES)
+
+            save_handler = _RouteHandler({
+                "access_token": "secret-global-apifox-token",
+                "base_url": "https://api.apifox.com",
+            })
+            router.POST_ROUTES["/api/api-testing/apifox/credential"](save_handler, {})
+
+            self.assertEqual(200, save_handler.responses[-1][0])
+            self.assertTrue(save_handler.responses[-1][1]["credential"]["credential_configured"])
+            self.assertNotIn("secret-global-apifox-token", str(save_handler.responses[-1][1]))
+
+            get_handler = _RouteHandler()
+            router.GET_ROUTES["/api/api-testing/apifox/credential"](get_handler, {})
+
+            self.assertEqual(200, get_handler.responses[-1][0])
+            self.assertNotIn("secret-global-apifox-token", str(get_handler.responses[-1][1]))
+
+            discovery_handler = _RouteHandler({})
+            router.POST_ROUTES["/api/api-testing/apifox/discovery/projects"](discovery_handler, {})
+
+            self.assertEqual(200, discovery_handler.responses[-1][0])
+            self.assertEqual([{
+                "access_token": "secret-global-apifox-token",
+                "base_url": "https://api.apifox.com",
+            }], calls)
+        finally:
+            apifox_discovery_service.discover_projects = old_discover
+            api_source_service.API_TESTING_DIR = old_dir
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_source_save_uses_saved_apifox_credential_for_new_project(self):
+        from task_server import router
+        from task_server.services import api_source_service
+
+        old_dir = api_source_service.API_TESTING_DIR
+        temp_dir = tempfile.mkdtemp(prefix="api_source_saved_credential_")
+        api_source_service.API_TESTING_DIR = temp_dir
+        try:
+            api_source_service.save_apifox_credential({
+                "access_token": "secret-global-apifox-token",
+                "base_url": "https://api.apifox.com",
+            })
+            handler = _RouteHandler({
+                "source_type": "apifox",
+                "name": "3D",
+                "project_id": "5904970",
+                "sync_enabled": False,
+            })
+
+            router.POST_ROUTES["/api/api-testing/sources"](handler, {})
+
+            self.assertEqual(200, handler.responses[-1][0])
+            source = handler.responses[-1][1]["source"]
+            raw = api_source_service.get_api_source(source["source_id"], masked=False)
+            self.assertTrue(source["credential_configured"])
+            self.assertEqual("secret-global-apifox-token", raw["access_token"])
+            self.assertNotIn("secret-global-apifox-token", str(handler.responses[-1][1]))
+        finally:
             api_source_service.API_TESTING_DIR = old_dir
             shutil.rmtree(temp_dir, ignore_errors=True)
 

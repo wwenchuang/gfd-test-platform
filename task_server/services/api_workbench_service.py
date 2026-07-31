@@ -480,6 +480,7 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
         "mode": "native_api_workbench",
         "source": _source_summary(source),
         "sources": sources,
+        "apifox_credential": api_source_service.get_apifox_credential(masked=True),
         "snapshot": snapshot_payload,
         "metrics": _coverage_metrics(endpoints, plans_payload, execution_payload, latest_sync),
         "sync_state": _sync_state(_source_summary(source), snapshot_payload, latest_sync),

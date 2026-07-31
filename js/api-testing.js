@@ -33,6 +33,7 @@ const API_PLAN_MAX_ENDPOINTS = 60;
 const API_PLAN_AI_BATCH_SIZE = 12;
 let apiAssetBusinessLines = [];
 let apiWorkbenchCurrent = null;
+let apiApifoxCredential = {};
 const apiPlanReviewStateByPlan = new Map();
 const apiExecutionBindingClientSessionId = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -330,6 +331,7 @@ async function loadApiTestingWorkbench(sourceId = currentApiExecutionSourceId())
   const cases = data.cases || {};
   apiTestingOverview = data;
   apiWorkbenchCurrent = data;
+  apiApifoxCredential = data.apifox_credential || apiApifoxCredential || {};
   apiTestingSources = data.sources || [];
   apiTestingEndpoints = scope.endpoints || [];
   apiAssetBusinessLines = scope.business_lines || [];
@@ -1463,17 +1465,21 @@ function renderApiSourceDiscoveryState(source = {}) {
 }
 
 function renderApiSourceCredentialControl(source = {}) {
-  const credentialConfigured = source.credential_configured === true;
+  const globalCredential = !source.source_id && apiApifoxCredential?.credential_configured === true;
+  const credentialConfigured = source.credential_configured === true || globalCredential;
   const credentialEditorOpen = !credentialConfigured || apiSourceCredentialEditing;
+  const savedTitle = globalCredential ? '平台令牌已保存' : '已安全保存';
+  const savedHint = globalCredential ? '新增项目会自动复用服务端令牌' : '密钥仅保存在服务端';
   return `
     <div class="api-source-field api-source-token-field">
       <span>访问令牌</span>
       <div id="api-source-credential-saved" class="api-source-credential-saved" ${credentialEditorOpen ? 'hidden' : ''}>
-        <div class="api-source-credential-state"><span aria-hidden="true">✓</span><div><strong>已安全保存</strong><small>密钥仅保存在服务端</small></div></div>
+        <div class="api-source-credential-state"><span aria-hidden="true">✓</span><div><strong>${escapeHtml(savedTitle)}</strong><small>${escapeHtml(savedHint)}</small></div></div>
         <button type="button" class="btn-sm" aria-label="更换 Apifox 访问令牌" onclick="editApiSourceCredential()">更换</button>
       </div>
       <div id="api-source-token-editor" class="api-source-token-editor" ${credentialEditorOpen ? '' : 'hidden'}>
         <input id="api-source-token" type="password" value="" autocomplete="new-password" aria-label="Apifox 访问令牌" placeholder="${credentialConfigured ? '输入新的 Apifox Access Token' : '输入 Apifox Access Token'}" oninput="handleApiSourceTokenInput()">
+        <button type="button" class="btn-sm" onclick="saveApiGlobalApifoxCredential()">单独保存令牌</button>
         ${credentialConfigured ? '<button type="button" class="btn-sm" aria-label="取消更换 Apifox 访问令牌" onclick="cancelApiSourceCredentialEdit()">取消</button>' : ''}
       </div>
     </div>
@@ -1642,7 +1648,39 @@ function apiSourceDiscoveryCredentialPayload(source = currentApiSourceSettingsSo
   const token = document.getElementById('api-source-token')?.value.trim() || '';
   if (token) return { access_token: token };
   if (source.source_id) return { source_id: source.source_id };
+  if (apiApifoxCredential?.credential_configured) return {};
   throw new Error('请输入 Apifox 访问令牌');
+}
+
+function apiSourceHasReusableCredential(source = currentApiSourceSettingsSource()) {
+  return source.credential_configured === true || apiApifoxCredential?.credential_configured === true;
+}
+
+async function saveApiGlobalApifoxCredential() {
+  const input = document.getElementById('api-source-token');
+  const token = input?.value.trim() || '';
+  if (!token) {
+    showToast('请输入 Apifox 访问令牌', 'error');
+    input?.focus();
+    return;
+  }
+  try {
+    const data = await apiRequest('/api-testing/apifox/credential', {
+      method: 'POST',
+      body: { access_token: token }
+    });
+    apiApifoxCredential = data.credential || {};
+    if (input) input.value = '';
+    apiSourceCredentialEditing = false;
+    const source = currentApiSourceSettingsSource();
+    resetApiSourceDiscoveryState(source);
+    const panel = document.getElementById('api-source-settings-panel');
+    if (panel) panel.innerHTML = renderApiSourceSettings(source);
+    refreshApiSourceDiscoveryUi(source);
+    showToast('✓ Apifox 令牌已单独保存', 'success');
+  } catch (error) {
+    showToast(error.message || 'Apifox 令牌保存失败', 'error');
+  }
 }
 
 function setApiSourceDiscoveryError(error, retryTarget, projectId = '') {
@@ -1660,7 +1698,7 @@ function handleApiSourceTokenInput() {
   const source = currentApiSourceSettingsSource();
   const token = document.getElementById('api-source-token')?.value || '';
   const manual = apiSourceDiscoveryState.manual;
-  if (!token.trim() && source.credential_configured) {
+  if (!token.trim() && apiSourceHasReusableCredential(source)) {
     resetApiSourceDiscoveryState(source);
   } else {
     resetApiSourceDiscoveryState({});
@@ -2275,7 +2313,7 @@ async function saveApiSourceConfig(clearCredentials = false) {
     showToast('请选择至少一个同步模块', 'error');
     return;
   }
-  if (!clearCredentials && !source.credential_configured && !token) {
+  if (!clearCredentials && !apiSourceHasReusableCredential(source) && !token) {
     showToast('请输入 Apifox 访问令牌', 'error');
     document.getElementById('api-source-token')?.focus();
     return;

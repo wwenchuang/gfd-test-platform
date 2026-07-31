@@ -2862,7 +2862,14 @@ def _api_testing_apifox_discovery_credentials(data):
         data.get("access_token") or data.get("accessToken") or ""
     ).strip()
     if not access_token:
-        raise ValueError("请输入 Apifox 访问令牌")
+        credential = api_source_service.get_apifox_credential(masked=False)
+        access_token = str(credential.get("access_token") or "").strip()
+        if not access_token:
+            raise ValueError("请输入 Apifox 访问令牌")
+        return (
+            access_token,
+            str(credential.get("base_url") or "https://api.apifox.com").strip(),
+        )
     return (
         access_token,
         str(
@@ -2871,6 +2878,31 @@ def _api_testing_apifox_discovery_credentials(data):
             or "https://api.apifox.com"
         ).strip(),
     )
+
+
+@route_get("/api/api-testing/apifox/credential")
+def _get_api_testing_apifox_credential(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service
+
+    handler._json({"ok": True, "credential": api_source_service.get_apifox_credential(masked=True)})
+
+
+@route_post("/api/api-testing/apifox/credential")
+def _post_api_testing_apifox_credential(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service
+
+    try:
+        data = handler._body()
+        if not isinstance(data, dict):
+            raise ValueError("请求体必须为 JSON 对象")
+        credential = api_source_service.save_apifox_credential(data)
+        handler._json({"ok": True, "credential": credential})
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
 
 
 def _api_testing_fill_apifox_environment_snapshot(data):
@@ -3003,6 +3035,9 @@ def _post_api_testing_sources(handler, qs):
     from task_server.services import api_source_service, api_sync_service
     try:
         data = handler._body()
+        if not isinstance(data, dict):
+            raise ValueError("请求体必须为 JSON 对象")
+        data = api_source_service.apply_saved_apifox_credential(data)
         source_id = str(
             data.get("source_id") or data.get("sourceId") or ""
         ).strip()

@@ -169,6 +169,10 @@ class ApiWorkbenchChecks(unittest.TestCase):
         from task_server.services import api_workbench_service
 
         source, revision, plan, confirmed = self._seed_workbench()
+        api_source_service.save_apifox_credential({
+            "access_token": "secret-global-apifox-token",
+            "base_url": "https://api.apifox.com",
+        })
 
         workbench = api_workbench_service.api_testing_workbench(source["source_id"])
         text = json.dumps(workbench, ensure_ascii=False)
@@ -188,11 +192,13 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertEqual(50, workbench["metrics"]["coverage_rate"])
         self.assertEqual(0, workbench["metrics"]["pending_changes"])
         self.assertEqual(0, workbench["metrics"]["today_executions"])
+        self.assertTrue(workbench["apifox_credential"]["credential_configured"])
         self.assertEqual("3D", workbench["sync_state"]["project"])
         self.assertEqual(2, workbench["sync_state"]["interface_count"])
         self.assertIn(workbench["sync_state"]["status"], {"待同步", "已就绪", "同步完成", "未连接"})
         self.assertIsInstance(workbench["pending_changes"], list)
         self.assertNotIn("secret-apifox-token", text)
+        self.assertNotIn("secret-global-apifox-token", text)
         self.assertNotIn("secret-runtime-token", text)
 
     def test_workbench_route_is_registered_and_requires_auth(self):
