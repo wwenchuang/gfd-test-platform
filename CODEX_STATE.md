@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Agent 历史成功种子继续增量生成
+
+用户确认“复用之前成功的”不应该导致同需求后续完全不再生成新用例；历史成功 YAML 应作为稳定保底，但仍要尽量新增覆盖。
+
+根因：
+
+- `CASE_RETRIEVAL` 命中同目标、同 Figma、同包名的历史全通过 Agent 后，会把历史 YAML 写入 `yamlRefs`。
+- `GENERATE_YAML` 看到已有 confirmed file refs 后直接 `SKIPPED`，导致后续不会再调用需求/Figma/YAML 主链生成增量用例。
+- 这个策略降低了波动，但把“稳定种子”误当成了“生成终点”。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - 历史成功 YAML 仍作为执行下限保留在 `historicalSuccessSeedRefs`。
+  - `GENERATE_YAML` 首次看到历史种子时继续调用 AI YAML 主链生成增量 YAML。
+  - 新增 YAML 必须继续通过 `_confirm_agent_yaml_files` 的 executable 门禁，不能绕过静态校验、scorer、覆盖告警或 Runner 分批策略。
+  - 合并结果按路径去重：历史种子在前，新增 executable YAML 追加。
+  - 增量生成失败时不清空历史种子，记录 `incrementalGenerationError`，继续用历史成功种子进入 dry-run / Runner。
+- `tests/backend_static_checks.py`
+  - 覆盖历史种子命中后仍会调用增量生成。
+  - 覆盖增量失败时历史种子仍保留为稳定执行下限。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_new_requirement_reuses_historical_success_seed()
+checks.check_agent_historical_seed_survives_incremental_generation_failure()
+print('targeted historical seed incremental checks passed')
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
 ### 2026-07-31 Agent 同需求优先复用历史全通过 YAML 种子
 
 用户连续回归“基础打印新增百度网盘入口”后发现同一需求每次结果不一样：明明已有成功记录，后续运行仍重新 PLAN / 重新生成 YAML，导致生成数量、冒烟选择和通过率波动。

@@ -15706,14 +15706,131 @@ android:
                 and agent_service._agent_is_generated_yaml_run(current_run),
                 "Historical success seed must keep generated-YAML smoke gating active instead of becoming an ungated baseline match",
             )
-            call = agent_service._tool_generate_yaml(current_run)
+
+            generated_path = os.path.join(seed_dir, "新增照片打印百度网盘入口补充校验.yaml")
+            storage.write_text_file(generated_path, """
+android:
+  tasks:
+    - name: "照片打印百度网盘入口新增补充校验"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "首页已加载完成"
+        - aiTap: "照片打印"
+        - aiWaitFor: "照片打印页展示百度网盘入口"
+        - aiAssert: "百度网盘入口可见且文案正确"
+""")
+            original_pipeline = agent_service._agent_generate_yaml_from_ui_pipeline
+            calls = []
+            try:
+                def fake_pipeline(run, source_context, source_text):
+                    calls.append((run.get("runId"), source_context.get("sourceType"), source_text))
+                    run.setdefault("artifacts", {}).setdefault("generationPipeline", {}).update({
+                        "source": "ui_yaml_pipeline",
+                        "caseCount": 20,
+                        "automationCaseCount": 4,
+                        "yamlFileCount": 1,
+                    })
+                    return [{
+                        "module": "AI Agent 草稿",
+                        "file": os.path.basename(generated_path),
+                        "path": generated_path,
+                        "executionLevel": "executable",
+                        "score": 95,
+                    }], {
+                        "caseCount": 20,
+                        "scenarioCount": 4,
+                        "summaryFiles": {},
+                    }
+
+                agent_service._agent_generate_yaml_from_ui_pipeline = fake_pipeline
+                call = agent_service._tool_generate_yaml(current_run)
+            finally:
+                agent_service._agent_generate_yaml_from_ui_pipeline = original_pipeline
+            merged_refs = (current_run.get("artifacts") or {}).get("yamlRefs") or []
             require(
-                call.get("status") == "SKIPPED"
-                and "历史成功" in call.get("outputSummary", ""),
-                "Generate YAML must skip fresh AI generation when historical success seed refs are already applied",
+                calls
+                and call.get("status") == "SUCCESS"
+                and "历史成功种子" in call.get("outputSummary", "")
+                and "新增生成 1 个" in call.get("outputSummary", "")
+                and len(merged_refs) == 4
+                and sum(1 for ref in merged_refs if ref.get("historySeed")) == 3
+                and any(ref.get("path") == generated_path for ref in merged_refs),
+                "Generate YAML must keep historical success seeds and still attempt incremental AI YAML generation for same requirement reruns",
             )
     finally:
         agent_service.AGENT_RUNS_FILE = old_runs_file
+
+
+def check_agent_historical_seed_survives_incremental_generation_failure():
+    from task_server import storage
+    from task_server.services import agent_service
+
+    old_runs_file = agent_service.AGENT_RUNS_FILE
+    original_pipeline = agent_service._agent_generate_yaml_from_ui_pipeline
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            seed_dir = os.path.join(temp_dir, "midscene-tasks", "AI Agent 草稿")
+            os.makedirs(seed_dir, exist_ok=True)
+            seed_path = os.path.join(seed_dir, "文档打印百度网盘入口.yaml")
+            storage.write_text_file(seed_path, """
+android:
+  tasks:
+    - name: "文档打印百度网盘入口历史成功种子"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "首页已加载完成"
+        - aiTap: "文档打印"
+        - aiWaitFor: "文档打印页展示百度网盘入口"
+        - aiAssert: "百度网盘入口可见且文案正确"
+""")
+            run = {
+                "runId": "agent-static-history-seed-incremental-failure",
+                "status": "RUNNING",
+                "currentStep": "GENERATE_YAML",
+                "target": "基础打印新增百度网盘入口",
+                "appPackage": "com.xbxxhz.box",
+                "sourceType": "figma",
+                "sourceRefs": {"figmaUrl": "https://www.figma.com/design/sAG0XUT4oGsx1qrOostnxA/增加百度网盘入口?node-id=0-1"},
+                "scope": "regression",
+                "artifacts": {
+                    "sourceContext": {
+                        "sourceType": "figma",
+                        "figmaUrl": "https://www.figma.com/design/sAG0XUT4oGsx1qrOostnxA/增加百度网盘入口?node-id=0-1",
+                        "requirementText": "覆盖文档打印、照片打印、扫描复印三个入口的百度网盘展示、同级、文案、可达性",
+                    }
+                },
+            }
+            seed_refs = [{
+                "type": "file",
+                "source": "generated",
+                "generated": True,
+                "validationMode": "historical_success_seed",
+                "module": "AI Agent 草稿",
+                "file": os.path.basename(seed_path),
+                "path": seed_path,
+                "confirmed": True,
+                "executionLevel": "executable",
+                "historySeed": True,
+                "historySeedRunId": "agent-static-history-seed-passed",
+            }]
+            agent_service.AGENT_RUNS_FILE = os.path.join(temp_dir, "agent-runs.json")
+            agent_service._apply_agent_historical_success_seed(run, seed_refs)
+            agent_service._agent_generate_yaml_from_ui_pipeline = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("AI 增量生成超时"))
+            call = agent_service._tool_generate_yaml(run)
+            artifacts = run.get("artifacts") or {}
+            refs = artifacts.get("yamlRefs") or []
+            pipeline = artifacts.get("generationPipeline") or {}
+            require(
+                call.get("status") == "SUCCESS"
+                and "保留历史成功种子" in call.get("outputSummary", "")
+                and len(refs) == 1
+                and refs[0].get("path") == seed_path
+                and pipeline.get("incrementalGenerationError"),
+                "Historical success seed must survive incremental generation failure and continue as the stable execution floor",
+            )
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_runs_file
+        agent_service._agent_generate_yaml_from_ui_pipeline = original_pipeline
 
 
 def check_agent_run_retry_clones_inputs_without_artifacts():
@@ -16910,6 +17027,7 @@ def main():
     check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
     check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
     check_agent_new_requirement_reuses_historical_success_seed()
+    check_agent_historical_seed_survives_incremental_generation_failure()
     check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()

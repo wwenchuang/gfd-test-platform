@@ -5850,6 +5850,8 @@ def normalize_yaml_refs(run):
                 "smoke": bool(item.get("smoke")),
                 "smokeCandidate": bool(item.get("smoke")),
                 "runnerCandidate": bool(item.get("runnerCandidate")),
+                "historySeed": bool(item.get("historySeed")),
+                "historySeedRunId": item.get("historySeedRunId") or "",
             }
             if ref["path"] and not (ref["module"] and ref["file"]):
                 ref["module"], ref["file"] = _task_dir_for_path(ref["path"])
@@ -6189,6 +6191,225 @@ def _apply_agent_historical_success_seed(run, seed_refs):
     return artifacts.get("yamlRefs") or refs
 
 
+def _agent_seed_path_key(ref):
+    path = str((ref or {}).get("path") or "").strip() if isinstance(ref, dict) else ""
+    if not path:
+        return ""
+    try:
+        return os.path.normpath(path)
+    except Exception:
+        return path
+
+
+def _agent_current_historical_seed_refs(run, refs=None):
+    if not isinstance(run, dict):
+        return []
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    seed_refs = artifacts.get("historicalSuccessSeedRefs") if isinstance(artifacts.get("historicalSuccessSeedRefs"), list) else []
+    seed_by_path = {
+        _agent_seed_path_key(ref): dict(ref)
+        for ref in seed_refs
+        if isinstance(ref, dict) and _agent_seed_path_key(ref)
+    }
+    candidates = refs if isinstance(refs, list) else artifacts.get("yamlRefs")
+    for ref in candidates or []:
+        if not isinstance(ref, dict):
+            continue
+        path_key = _agent_seed_path_key(ref)
+        if not path_key:
+            continue
+        if ref.get("historySeed") or ref.get("validationMode") == "historical_success_seed":
+            seed_by_path.setdefault(path_key, dict(ref))
+    normalized = []
+    for ref in seed_by_path.values():
+        path = str(ref.get("path") or "").strip()
+        if not path:
+            continue
+        module = str(ref.get("module") or "").strip()
+        file_name = str(ref.get("file") or "").strip()
+        if not (module and file_name):
+            module, file_name = _task_dir_for_path(path)
+        normalized.append({
+            **ref,
+            "type": "file",
+            "source": "generated",
+            "generated": True,
+            "validationMode": "historical_success_seed",
+            "module": module,
+            "file": file_name or os.path.basename(path),
+            "path": path,
+            "content": "",
+            "confirmed": True,
+            "runnerCandidate": bool(ref.get("runnerCandidate", True)),
+            "historySeed": True,
+        })
+    return normalized
+
+
+def _agent_merge_historical_seed_and_incremental_refs(seed_refs, incremental_refs):
+    merged = []
+    seen_paths = set()
+
+    def add(ref, history_seed=False):
+        if not isinstance(ref, dict):
+            return False
+        path = str(ref.get("path") or "").strip()
+        if not path:
+            return False
+        key = _agent_seed_path_key(ref)
+        if key in seen_paths:
+            return False
+        module = str(ref.get("module") or "").strip()
+        file_name = str(ref.get("file") or "").strip()
+        if not (module and file_name):
+            module, file_name = _task_dir_for_path(path)
+        item = {
+            **ref,
+            "type": "file",
+            "source": "generated",
+            "generated": True,
+            "module": module,
+            "file": file_name or os.path.basename(path),
+            "path": path,
+            "content": "",
+            "confirmed": True,
+        }
+        if history_seed:
+            item["validationMode"] = "historical_success_seed"
+            item["historySeed"] = True
+        else:
+            item["validationMode"] = item.get("validationMode") or "generated"
+            item["historySeed"] = False
+        merged.append(item)
+        seen_paths.add(key)
+        return True
+
+    for ref in seed_refs or []:
+        add(ref, history_seed=True)
+    added_incremental = 0
+    for ref in incremental_refs or []:
+        if add(ref, history_seed=False):
+            added_incremental += 1
+    return merged, added_incremental
+
+
+def _agent_restore_historical_seed_execution_floor(run, seed_refs):
+    applied_refs = _apply_agent_historical_success_seed(run, seed_refs)
+    artifacts = run.setdefault("artifacts", {})
+    pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    artifacts["generationPipeline"] = {
+        **pipeline,
+        "source": "historical_success_seed",
+        "reusedHistoricalSuccessSeed": True,
+        "historicalSeedIncrementalAttempted": True,
+        "historicalSeedYamlFileCount": len(applied_refs),
+        "incrementalYamlFileCount": 0,
+        "yamlFileCount": len(applied_refs),
+    }
+    return applied_refs
+
+
+def _tool_generate_yaml_with_historical_seed_increment(run, call, artifacts, seed_refs, source_context, source_text):
+    seed_run_id = (seed_refs[0] or {}).get("historySeedRunId") if seed_refs and isinstance(seed_refs[0], dict) else ""
+    pipeline = artifacts.setdefault("generationPipeline", {})
+    pipeline["historicalSeedIncrementalAttempted"] = True
+    try:
+        yaml_file_items, pipeline_result = _agent_generate_yaml_from_ui_pipeline(run, source_context, source_text)
+        incremental_refs, err = _confirm_agent_yaml_files(run, artifacts, yaml_file_items)
+        if not incremental_refs:
+            raise ValueError(err or "AI 增量生成未产出 executable YAML")
+        merged_refs, added_incremental = _agent_merge_historical_seed_and_incremental_refs(seed_refs, incremental_refs)
+        if not merged_refs:
+            merged_refs = _agent_restore_historical_seed_execution_floor(run, seed_refs)
+            added_incremental = 0
+        paths = [ref.get("path") for ref in merged_refs if ref.get("path")]
+        artifacts["historicalSuccessSeedRefs"] = [dict(ref) for ref in seed_refs]
+        artifacts["yamlRefs"] = merged_refs
+        artifacts["generatedYaml"] = ""
+        artifacts["generatedYamlPath"] = paths[0] if paths else ""
+        artifacts["generatedYamlPaths"] = paths
+        artifacts["draftConfirmed"] = True
+        artifacts["requiresConfirm"] = False
+        pipeline = artifacts.setdefault("generationPipeline", {})
+        pipeline["source"] = "historical_success_seed_plus_incremental"
+        pipeline["reusedHistoricalSuccessSeed"] = True
+        pipeline["historicalSeedIncrementalAttempted"] = True
+        pipeline["historicalSeedRunId"] = seed_run_id
+        pipeline["historicalSeedYamlFileCount"] = len(seed_refs)
+        pipeline["incrementalYamlFileCount"] = added_incremental
+        pipeline["yamlFileCount"] = len(merged_refs)
+        pipeline["caseCount"] = max(_safe_int_local(pipeline.get("caseCount"), 0), _safe_int_local((pipeline_result or {}).get("caseCount"), 0), len(merged_refs))
+        pipeline["automationCaseCount"] = max(_safe_int_local(pipeline.get("automationCaseCount"), 0), len(merged_refs))
+        pipeline["incrementalGenerationWarning"] = err or ""
+        validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
+        gate = validation.get("executionGate") if isinstance(validation.get("executionGate"), dict) else {}
+        artifacts["yamlValidation"] = {
+            **validation,
+            "ok": True,
+            "issues": [],
+            "autoConfirmed": True,
+            "historicalSeedIncremental": True,
+            "historicalSeedCount": len(seed_refs),
+            "incrementalGeneratedCount": added_incremental,
+            "splitFileCount": len(merged_refs),
+            "executionGate": {
+                **gate,
+                "executableCount": max(_safe_int_local(gate.get("executableCount"), 0), len(merged_refs)),
+                "taskCount": len(merged_refs),
+            },
+        }
+        coverage_gap = _agent_generated_yaml_coverage_gap(run, merged_refs)
+        if coverage_gap:
+            pipeline["coverageGap"] = coverage_gap
+            quality = artifacts.setdefault("qualityReport", {})
+            warnings = [str(item).strip() for item in _as_list(quality.get("warnings")) if str(item).strip()]
+            quality["status"] = "warn"
+            quality["statusText"] = "覆盖缺口"
+            quality["coverageIncomplete"] = True
+            quality["warnings"] = (warnings + coverage_gap.get("reasons", []))[:20]
+            artifacts["yamlValidation"]["coverageIncomplete"] = True
+            artifacts["yamlValidation"]["coverageGap"] = coverage_gap
+        call["status"] = "SUCCESS"
+        if added_incremental:
+            call["outputSummary"] = (
+                f"已保留历史成功种子 {len(seed_refs)} 个，并新增生成 {added_incremental} 个 YAML，"
+                f"合计 {len(merged_refs)} 个可执行 YAML；继续进入 dry-run 和 Runner 分批执行"
+            )
+        else:
+            call["outputSummary"] = (
+                f"已保留历史成功种子 {len(seed_refs)} 个；AI 增量未产生新的可执行 YAML，"
+                "继续使用稳定种子进入 dry-run 和 Runner 分批执行"
+            )
+        call["artifactRefs"] = [str(path or "") for path in paths[:20]]
+        return _finish_agent_tool_call(call, run)
+    except Exception as e:
+        pipeline_error = str(e)[:500]
+        applied_refs = _agent_restore_historical_seed_execution_floor(run, seed_refs)
+        artifacts = run.setdefault("artifacts", {})
+        pipeline = artifacts.setdefault("generationPipeline", {})
+        pipeline["incrementalGenerationError"] = pipeline_error
+        pipeline["incrementalGenerationErrorType"] = e.__class__.__name__
+        pipeline["incrementalGenerationErrorTrace"] = traceback.format_exc()[-5000:]
+        validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
+        artifacts["yamlValidation"] = {
+            **validation,
+            "ok": True,
+            "issues": [],
+            "autoConfirmed": True,
+            "historicalSeedIncremental": False,
+            "historicalSeedCount": len(applied_refs),
+            "incrementalGeneratedCount": 0,
+            "incrementalGenerationError": pipeline_error,
+        }
+        call["status"] = "SUCCESS"
+        call["outputSummary"] = (
+            f"增量生成失败，保留历史成功种子 {len(applied_refs)} 个继续进入 dry-run 和 Runner；"
+            f"增量错误：{pipeline_error[:160]}"
+        )
+        call["artifactRefs"] = [str(ref.get("path") or "") for ref in applied_refs[:20]]
+        return _finish_agent_tool_call(call, run)
+
+
 AGENT_TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
 AGENT_FOLLOWUP_ACTIONS = {"aiWaitFor", "sleep", "aiAssert", "ai", "aiAction"}
 AGENT_ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
@@ -6394,7 +6615,7 @@ def validate_agent_yaml_content(yaml_text):
 def _agent_is_generated_yaml_run(run):
     artifacts = (run or {}).setdefault("artifacts", {})
     pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
-    if pipeline.get("source") in ("ui_yaml_pipeline", "agent_generate_yaml", "historical_success_seed"):
+    if pipeline.get("source") in ("ui_yaml_pipeline", "agent_generate_yaml", "historical_success_seed", "historical_success_seed_plus_incremental"):
         return True
     if pipeline.get("reusedHistoricalSuccessSeed") or artifacts.get("historicalSuccessSeedRefs"):
         return True
@@ -11126,14 +11347,34 @@ def _tool_generate_yaml(run):
     }
     try:
         artifacts = run.setdefault("artifacts", {})
+        source_context = artifacts.get("sourceContext") or {}
+        source_type = str(source_context.get("sourceType") or run.get("sourceType") or "manual").lower()
+        source_text = _build_source_text(source_context)
         refs = normalize_yaml_refs(run)
         file_refs = [item for item in refs if item.get("type") == "file" and item.get("confirmed")]
         if file_refs:
+            historical_seed = _agent_current_historical_seed_refs(run, refs)
+            pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+            if historical_seed and not pipeline.get("historicalSeedIncrementalAttempted"):
+                return _tool_generate_yaml_with_historical_seed_increment(
+                    run,
+                    call,
+                    artifacts,
+                    historical_seed,
+                    source_context,
+                    source_text,
+                )
             call["status"] = "SKIPPED"
-            historical_seed = artifacts.get("historicalSuccessSeedRefs") if isinstance(artifacts.get("historicalSuccessSeedRefs"), list) else []
             if historical_seed:
                 seed_run_id = (historical_seed[0] or {}).get("historySeedRunId") if isinstance(historical_seed[0], dict) else ""
-                call["outputSummary"] = f"命中历史成功 Agent {seed_run_id} 的 {len(file_refs)} 个可复用 YAML，跳过重新生成"
+                incremental_count = _safe_int_local(pipeline.get("incrementalYamlFileCount"), 0)
+                if pipeline.get("historicalSeedIncrementalAttempted"):
+                    call["outputSummary"] = (
+                        f"已完成历史成功种子复用与增量尝试：种子 {len(historical_seed)} 个，"
+                        f"新增 {incremental_count} 个，当前 {len(file_refs)} 个可复用 YAML"
+                    )
+                else:
+                    call["outputSummary"] = f"命中历史成功 Agent {seed_run_id} 的 {len(file_refs)} 个可复用 YAML，跳过重新生成"
             else:
                 call["outputSummary"] = f"已有 {len(file_refs)} 个可复用 YAML，跳过生成"
             artifacts["generatedYaml"] = None
@@ -11141,9 +11382,6 @@ def _tool_generate_yaml(run):
             call["durationMs"] = _compute_duration(call)
             _log_tool_call(call, run.get("runId", ""))
             return call
-        source_context = artifacts.get("sourceContext") or {}
-        source_type = str(source_context.get("sourceType") or run.get("sourceType") or "manual").lower()
-        source_text = _build_source_text(source_context)
         try:
             prompt_ctx = get_prompt_center().enrich({
                 **(run if isinstance(run, dict) else {}),
