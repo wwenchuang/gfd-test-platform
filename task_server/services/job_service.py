@@ -98,9 +98,9 @@ def _parse_time(value: Optional[str]) -> float:
         return 0.0
 
 
-def _read_jobs_raw() -> List[Dict[str, Any]]:
-    """直接从存储读取 jobs 列表，使用 TTL 缓存。"""
-    data = read_json_cached(JOBS_FILE, default=[])
+def _read_jobs_raw(use_cache: bool = True) -> List[Dict[str, Any]]:
+    """直接从存储读取 jobs 列表；等待 Runner 回传时可绕过 TTL 缓存。"""
+    data = read_json_cached(JOBS_FILE, default=[]) if use_cache else read_json_file(JOBS_FILE, default=[])
     if not isinstance(data, list):
         return []
     # 过滤掉非 dict 元素，避免脏数据导致下游崩溃
@@ -1153,7 +1153,7 @@ def wait_jobs_finished(
             break
 
         with JOB_LOCK:
-            jobs = _read_jobs_raw()
+            jobs = _read_jobs_raw(use_cache=False)
 
         completed: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
@@ -1224,7 +1224,7 @@ def wait_jobs_finished(
     # Runner 之后仍可能回传 success/failed；这里保留原 job 状态，避免前端出现
     # “先失败、后成功”的假性翻转。
     with JOB_LOCK:
-        jobs = _read_jobs_raw()
+        jobs = _read_jobs_raw(use_cache=False)
 
     timeout_jobs: List[Dict[str, Any]] = []
     for jid in job_ids:

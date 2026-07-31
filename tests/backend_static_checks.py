@@ -15761,6 +15761,54 @@ android:
         agent_service.AGENT_RUNS_FILE = old_runs_file
 
 
+def check_runner_wait_reads_fresh_job_state_during_agent_rerun():
+    from task_server import storage
+    from task_server.services import job_service
+
+    old_jobs_file = job_service.JOBS_FILE
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jobs_file = os.path.join(temp_dir, "jobs.json")
+            job_service.JOBS_FILE = jobs_file
+            running_job = {
+                "job_id": "job-static-cache-rerun",
+                "status": "running",
+                "module": "AI Agent 修复重跑",
+                "file": "baidu-repair.yaml",
+                "runner_id": "win-runner-01",
+                "target_runner_id": "win-runner-01",
+                "device_id": "ecbfd645",
+                "updated_at": "2026-07-31 22:08:07",
+            }
+            storage.write_json_file(jobs_file, [running_job])
+            job_service._read_jobs_raw()
+            success_job = {
+                **running_job,
+                "status": "success",
+                "progress": 100,
+                "report_url": "/reports/baidu-repair.html",
+                "updated_at": "2026-07-31 22:09:07",
+            }
+            Path(jobs_file).write_text(json.dumps([success_job], ensure_ascii=False), encoding="utf-8")
+            run = {"runId": "agent-static-rerun-cache", "artifacts": {}, "steps": []}
+            result = job_service.wait_jobs_finished(
+                ["job-static-cache-rerun"],
+                run,
+                timeout=1,
+                interval=0.05,
+                phase="安全重跑-同设备串行",
+            )
+            require(
+                len(result.get("completed") or []) == 1
+                and not result.get("timeout")
+                and (run.get("artifacts", {}).get("jobProgress") or {}).get("completed") == 1,
+                "Agent rerun job waiting must read fresh persisted Runner job state instead of stale cached running state",
+            )
+    finally:
+        job_service.JOBS_FILE = old_jobs_file
+        storage.invalidate_json_cache()
+
+
 def check_agent_historical_seed_survives_incremental_generation_failure():
     from task_server import storage
     from task_server.services import agent_service
@@ -17027,6 +17075,7 @@ def main():
     check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
     check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
     check_agent_new_requirement_reuses_historical_success_seed()
+    check_runner_wait_reads_fresh_job_state_during_agent_rerun()
     check_agent_historical_seed_survives_incremental_generation_failure()
     check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
     check_agent_cancel_cascades_runner_jobs()

@@ -28,6 +28,48 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Agent RERUN 等待 Runner 结果绕过 stale jobs 缓存
+
+本次按用户要求再次回归“基础打印新增百度网盘入口”：
+
+- Agent：`agent-1785505293000-b3421dd4`
+- 固定设备：`win-runner-01 / ecbfd645 / OPPO PHM110`
+- 模型：`qwen3.7-plus`
+- 结果验证到 `d35f7bd` 新策略已生效：
+  - `CASE_RETRIEVAL` 命中历史全通过 Agent `agent-1785461191470-63ea62f9`。
+  - `GENERATE_YAML` 没有直接跳过，而是进入增量生成。
+  - 最终 `generationPipeline.source=historical_success_seed_plus_incremental`。
+  - 历史种子 4 个，新增 YAML 6 个，合计 10 个 executable YAML。
+  - 冒烟 3 条、剩余 7 条；dry-run 首批 3/3 通过，expanded dry-run 5/5 通过。
+  - 实际 Runner job 均为 `win-runner-01 / ecbfd645`。
+
+新发现：
+
+- Runner 原始 `/api/jobs` 已显示修复重跑 job `job_1785506827493_00027` 为 `success`。
+- 但 Agent 仍停在 `RERUN / 81%`，`artifacts.jobProgress` 还保留旧的 `running` snapshot，且未写出 `rerunResult`。
+- 这是 Agent 等待 Runner job 期间读取 jobs 状态被缓存污染的问题：等待线程可能读到 stale `running` 状态，而真实 job 文件已经被 Runner 回传写成 `success`。
+
+修复：
+
+- `task_server/services/job_service.py`
+  - `_read_jobs_raw()` 增加 `use_cache` 参数，普通列表仍使用 TTL 缓存。
+  - `wait_jobs_finished()` 在轮询和超时最终统计时强制 `use_cache=False`，直接读最新 jobs 文件。
+  - 保持现有 Runner 执行、报告回传、超时分类语义不变，只修复 Agent 等待状态回收。
+- `tests/backend_static_checks.py`
+  - 新增回归：先把 jobs 缓存灌成 `running`，再模拟另一个入口直接写文件为 `success`，`wait_jobs_finished()` 必须读到 fresh success 并推进 jobProgress。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_runner_wait_reads_fresh_job_state_during_agent_rerun()
+print('fresh job state wait check passed')
+PY
+python3 -m py_compile task_server/services/job_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+```
+
 ### 2026-07-31 Apifox 环境变量分组展开与本地值优先
 
 用户发现 Apifox 的环境变量里有 `Authorization`、`Biz`、`ZXBToken`、`ZXBManToken` 等参数，但平台只显示 `cookie/query/header/body` 这类分组名，真实变量没有同步出来。
