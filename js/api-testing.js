@@ -34,6 +34,7 @@ const API_PLAN_AI_BATCH_SIZE = 12;
 let apiAssetBusinessLines = [];
 let apiWorkbenchCurrent = null;
 let apiApifoxCredential = {};
+let apiAssetDetailTab = 'definition';
 const apiPlanReviewStateByPlan = new Map();
 const apiExecutionBindingClientSessionId = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -88,7 +89,7 @@ function apiExecutionBindingIntentIsCurrent(intent) {
 function apiExecutionBindingResponseIsCurrent(controller, requestId, intent) {
   return controller === apiExecutionBindingSaveController
     && requestId === apiExecutionBindingSaveRequestId
-    && activeWorkflow === 'api_execution'
+    && apiExecutionWorkflowActive()
     && apiExecutionBindingIntentIsCurrent(intent)
     && intent.projectId === String(apiExecutionBindingIntent?.projectId || '')
     && intent.environmentId === String(apiExecutionBindingIntent?.environmentId || '');
@@ -102,8 +103,12 @@ function apiReportResponseIsCurrent(controller, requestId, sourceId, scopeKey) {
     && scopeKey === apiProjectScopeKey();
 }
 
+function apiExecutionWorkflowActive() {
+  return ['api_execution', 'api_regression'].includes(activeWorkflow);
+}
+
 function setApiTestingPage(workflow, title, help) {
-  if (workflow !== 'api_execution') {
+  if (!['api_execution', 'api_regression'].includes(workflow)) {
     stopApiExecutionPolling(true);
     abortApiExecutionBindingRequests();
   }
@@ -122,7 +127,7 @@ function setApiTestingPage(workflow, title, help) {
   if (helper) helper.textContent = help || '';
   const info = document.getElementById('file-info');
   if (info) info.textContent = title;
-  updateToolbarState('接口测试');
+  updateToolbarState('接口自动化');
   return area;
 }
 
@@ -171,6 +176,7 @@ function selectApiBusinessLine(name) {
   const state = apiModuleSelectionState();
   state.businessLine = String(name || '');
   state.activeModulePath = '';
+  state.activeEndpointId = '';
   state.search = '';
   state.method = '';
   state.endpointIds.clear();
@@ -196,7 +202,7 @@ function apiWorkflowNextAction(context = {}) {
   const confirmed = plans.find(plan => plan.status === 'confirmed' && (plan.revision_state || {}).state !== 'stale');
   if (['queued', 'running'].includes(execution.status)) return {step: 'history', label: '查看执行记录', handler: 'showApiExecutionHistoryPage()'};
   if (reports.length) return {step: 'reports', label: '查看报告', handler: 'showApiReportsPage()'};
-  if (confirmed) return {step: 'history', label: '执行测试', handler: 'showApiExecutionPage()'};
+  if (confirmed) return {step: 'regression', label: '开始回归', handler: 'showApiRegressionPage()'};
   return {step: 'plan', label: selectedCount ? '生成测试资产' : '选择接口', handler: selectedCount ? 'showApiPlanPage()' : 'showApiAssetsPage()'};
 }
 
@@ -210,19 +216,23 @@ function renderApiWorkflowStepper(context = {}) {
     api_assets: 'assets',
     api_environment: 'environment',
     api_plan: 'plan',
+    api_debug: 'debug',
+    api_regression: 'regression',
     api_baselines: 'plan',
-    api_execution: 'history',
+    api_execution: 'regression',
     api_execution_history: 'history',
     api_reports: 'reports',
   })[workflow] || 'dashboard';
   if (workflow === 'api_plan' && (apiTestingCurrentPlan || plans.some(plan => plan.status === 'draft'))) activeStep = 'plan';
   const steps = [
     {id: 'dashboard', label: '工作台', handler: 'showApiTestingDashboard()'},
-    {id: 'assets', label: '项目资产', handler: 'showApiAssetsPage()'},
-    {id: 'environment', label: '环境配置', handler: 'showApiEnvironmentPage()'},
+    {id: 'assets', label: '接口资产', handler: 'showApiAssetsPage()'},
     {id: 'plan', label: '测试设计', handler: 'showApiPlanPage()'},
+    {id: 'debug', label: '在线调试', handler: 'showApiDebugPage()'},
+    {id: 'regression', label: '自动回归', handler: 'showApiRegressionPage()'},
     {id: 'history', label: '执行记录', handler: 'showApiExecutionHistoryPage()'},
     {id: 'reports', label: '测试报告', handler: 'showApiReportsPage()'},
+    {id: 'environment', label: '环境配置', handler: 'showApiEnvironmentPage()'},
   ];
   const action = apiWorkflowNextAction(context);
   const completedSteps = new Set();
@@ -230,6 +240,8 @@ function renderApiWorkflowStepper(context = {}) {
   if (source.configured) completedSteps.add('assets');
   if (apiSourceEnvironmentSummary(source).baseUrl) completedSteps.add('environment');
   if (plans.length || apiPlanGenerationCurrent?.status === 'succeeded') completedSteps.add('plan');
+  if (selectedCount || plans.length) completedSteps.add('debug');
+  if ((context.execution || {}).status || (apiExecutionContext?.active_runs || []).length) completedSteps.add('regression');
   if ((context.execution || {}).status || (apiExecutionContext?.active_runs || []).length) completedSteps.add('history');
   if ((context.reports || apiTestingReports || []).length) completedSteps.add('history');
   if ((context.reports || apiTestingReports || []).length) completedSteps.add('reports');
@@ -468,25 +480,45 @@ async function refreshCurrentApiNativePage() {
   return showApiTestingDashboard();
 }
 
+function apiWorkbenchCoverageRate(metrics = {}) {
+  if (metrics.coverage_rate !== undefined && metrics.coverage_rate !== null) {
+    return `${metrics.coverage_rate}%`;
+  }
+  const total = Number(metrics.total_endpoints || 0);
+  const covered = Number(metrics.covered_endpoints || 0);
+  return total > 0 ? `${Math.round((covered / total) * 1000) / 10}%` : '0%';
+}
+
 function renderApiWorkbenchMetrics(workbench = {}) {
   const metrics = workbench.metrics || {};
   const cards = [
-    ['API接口总数', metrics.total_endpoints ?? 0, '本地快照接口'],
-    ['已覆盖接口', metrics.covered_endpoints ?? 0, '已保存测试资产'],
-    ['覆盖率', `${metrics.coverage_rate ?? 0}%`, '按接口去重'],
-    ['待处理变化', metrics.pending_changes ?? 0, '来自最近同步差异'],
-    ['今日执行', metrics.today_executions ?? 0, '本地执行记录'],
+    ['API接口总数', metrics.total_endpoints ?? 0, '本地快照接口', 'NET'],
+    ['测试覆盖率', apiWorkbenchCoverageRate(metrics), `${metrics.covered_endpoints ?? 0} 个接口已覆盖`, 'CHK'],
+    ['待处理变化', metrics.pending_changes ?? 0, '来自最近同步差异', 'ALT'],
+    ['今日执行', metrics.today_executions ?? 0, '本地执行记录', 'RUN'],
   ];
   return `
-    <section class="api-workbench-metrics api-compact-metrics" aria-label="API 工作台指标">
-      ${cards.map(([label, value, hint]) => `
+    <section class="api-workbench-metrics api-overview-cards" aria-label="API 工作台指标">
+      ${cards.map(([label, value, hint, icon]) => `
         <article>
+          <i aria-hidden="true">${escapeHtml(icon)}</i>
           <span>${escapeHtml(label)}</span>
           <strong>${escapeHtml(value)}</strong>
           <small>${escapeHtml(hint)}</small>
         </article>
       `).join('')}
     </section>
+  `;
+}
+
+function renderApiWorkbenchEnvironmentOption(source = {}) {
+  const sourceEnv = apiSourceEnvironmentSummary(source);
+  const envName = source.provider_metadata?.environment_name || source.environment_name || source.environment_id || '未选择环境';
+  const baseUrl = sourceEnv.baseUrl || 'base_url 待同步';
+  return `
+    <label><span>环境</span><select aria-label="当前执行环境" onchange="showApiEnvironmentPage()">
+      <option>${escapeHtml(envName)} · ${escapeHtml(baseUrl)}</option>
+    </select></label>
   `;
 }
 
@@ -570,6 +602,101 @@ function renderApiWorkbenchSyncState(workbench = {}) {
   `;
 }
 
+function renderApiWorkbenchRiskCard(workbench = {}) {
+  const metrics = workbench.metrics || {};
+  const source = workbench.source || {};
+  const sourceEnv = apiSourceEnvironmentSummary(source);
+  const reports = workbench.reports || [];
+  const latestReport = reports[0] || {};
+  const uncovered = Math.max(0, Number(metrics.total_endpoints || 0) - Number(metrics.covered_endpoints || 0));
+  const risks = [];
+  if ((workbench.pending_changes || []).length) risks.push(`${workbench.pending_changes.length} 类接口变化需要复核测试资产`);
+  if (uncovered > 0) risks.push(`${uncovered} 个接口还没有测试覆盖`);
+  if (!sourceEnv.baseUrl) risks.push('当前环境缺少 Base URL，执行前需要补齐');
+  if (Number(latestReport.failed || 0) > 0) risks.push(`最近报告有 ${latestReport.failed} 条失败，建议先看失败分析`);
+  if (!risks.length) risks.push('本地快照、环境和测试资产当前无明显阻塞');
+  return `
+    <section class="api-panel api-workbench-risk-card">
+      <div class="api-section-heading">
+        <div><span>AI 风险提醒</span><h3>先处理影响执行成功率的问题</h3></div>
+        <button class="btn-sm ai" onclick="showApiPlanPage()">进入测试设计</button>
+      </div>
+      <ol class="api-risk-list">
+        ${risks.slice(0, 5).map((item, index) => `<li><span>${String(index + 1).padStart(2, '0')}</span><strong>${escapeHtml(item)}</strong></li>`).join('')}
+      </ol>
+    </section>
+  `;
+}
+
+function renderApiWorkbenchSyncAndRisk(workbench = {}) {
+  return `<div class="api-sync-ai-grid">${renderApiWorkbenchSyncState(workbench)}${renderApiWorkbenchRiskCard(workbench)}</div>`;
+}
+
+function apiWorkbenchRecentTaskRows(workbench = {}) {
+  const rows = [];
+  (workbench.execution?.active_runs || []).forEach(run => rows.push({
+    time: run.updated_at || run.started_at || run.created_at || '-',
+    type: '自动回归',
+    name: run.plan_name || run.plan_id || run.execution_id || '接口回归',
+    status: apiExecutionStateText(run.status),
+    rate: '执行中',
+  }));
+  (workbench.execution?.recent_runs || []).slice(0, 4).forEach(run => {
+    const stats = run.stats || {};
+    const total = Number(stats.total || 0);
+    const passed = Number(stats.passed || 0);
+    rows.push({
+      time: run.updated_at || run.finished_at || run.created_at || '-',
+      type: '执行记录',
+      name: run.plan_name || run.plan_id || run.execution_id || '接口执行',
+      status: apiExecutionStateText(run.status),
+      rate: total ? `${Math.round((passed / total) * 1000) / 10}%` : '-',
+    });
+  });
+  (workbench.syncs || []).slice(0, 2).forEach(sync => rows.push({
+    time: sync.finished_at || sync.started_at || sync.created_at || '-',
+    type: '接口同步',
+    name: sync.source_name || sync.sync_id || 'Apifox 快照',
+    status: apiAssetSyncStatusText(sync.status),
+    rate: `${sync.summary?.unchanged || 0} 未变`,
+  }));
+  const draft = workbench.cases?.latest_draft || {};
+  if (draft.plan_id) rows.push({
+    time: draft.updated_at || draft.created_at || '-',
+    type: 'AI生成测试',
+    name: draft.name || draft.plan_id,
+    status: apiPlanStatusText(draft.status),
+    rate: `${draft.case_count || 0} 条`,
+  });
+  return rows.slice(0, 6);
+}
+
+function renderApiWorkbenchRecentTasks(workbench = {}) {
+  const rows = apiWorkbenchRecentTaskRows(workbench);
+  return `
+    <section class="api-panel api-recent-task-panel">
+      <div class="api-section-heading">
+        <div><span>最近执行记录</span><h3>同步、AI 生成和本地执行放在一起看</h3></div>
+        <button class="btn-sm" onclick="showApiExecutionHistoryPage()">全部记录</button>
+      </div>
+      ${rows.length ? `
+        <table class="api-recent-task-table">
+          <thead><tr><th>时间</th><th>类型</th><th>名称</th><th>状态</th><th>成功率/摘要</th></tr></thead>
+          <tbody>${rows.map(row => `
+            <tr>
+              <td>${escapeHtml(row.time)}</td>
+              <td>${escapeHtml(row.type)}</td>
+              <td>${escapeHtml(row.name)}</td>
+              <td>${escapeHtml(row.status)}</td>
+              <td>${escapeHtml(row.rate)}</td>
+            </tr>
+          `).join('')}</tbody>
+        </table>
+      ` : apiTestingEmpty('暂无最近任务。先同步接口资产或生成测试资产。')}
+    </section>
+  `;
+}
+
 function renderApiWorkbenchPendingChanges(workbench = {}) {
   const changes = workbench.pending_changes || [];
   return `
@@ -595,30 +722,29 @@ function renderApiWorkbenchPendingChanges(workbench = {}) {
 
 function renderApiWorkbenchSourceCard(workbench = {}) {
   const source = workbench.source || {};
-  const snapshot = workbench.snapshot || {};
   const status = apiWorkbenchConnectionText(workbench);
-  const sourceEnv = apiSourceEnvironmentSummary(source);
   return `
-    <section class="api-command-center">
-      <div class="api-command-main">
+    <section class="api-command-center api-studio-command-center">
+      <div class="api-studio-toolbar">
         <div class="api-workbench-title">
           <span>API 工作台</span>
           <h2>${escapeHtml(source.project_name || source.name || '接口自动化')}</h2>
-          <p>Apifox 提供接口和环境来源；平台保存本地快照，AI 生成测试资产，本地执行器输出实时日志和报告。</p>
+          <p>Apifox 提供接口和环境来源；平台保存本地快照，AI 生成测试资产，本地执行器输出日志和报告。</p>
         </div>
-        <div class="api-workbench-controls">
-          <label><span>当前项目</span><select onchange="apiWorkbenchSelectSource(this.value)">${apiWorkbenchSourceOptions(workbench.sources || [], source.source_id)}</select></label>
-          ${renderApiWorkbenchPrimaryActions(workbench)}
+        <div class="api-studio-toolbar-controls">
+          <label><span>项目</span><select onchange="apiWorkbenchSelectSource(this.value)">${apiWorkbenchSourceOptions(workbench.sources || [], source.source_id)}</select></label>
+          ${renderApiWorkbenchEnvironmentOption(source)}
+          <button class="btn-sm primary" onclick="${source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()'}">${source.source_id ? '立即同步' : '连接 Apifox'}</button>
+          <button class="btn-sm ai" onclick="showApiPlanPage()">新建测试</button>
         </div>
-        <div class="api-compact-project-grid">
-          <article>${apiStatusPill(status.label, status.tone)}<strong>${escapeHtml(status.detail)}</strong><span>连接状态</span></article>
-          <article><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong><span>接口快照 · ${escapeHtml(snapshot.created_at || source.last_success_at || '尚未同步')}</span></article>
-          <article><strong>${escapeHtml(source.environment_name || sourceEnv.environmentName || '未选择环境')}</strong><span>${escapeHtml(sourceEnv.baseUrl || 'base_url 待同步')}</span></article>
-          <article><strong>${escapeHtml(source.environment_snapshot?.variable_count || 0)}</strong><span>环境变量 · 敏感 ${escapeHtml(source.environment_snapshot?.sensitive_variable_count || 0)}</span></article>
+        <div class="api-studio-health-line">
+          ${apiStatusPill(status.label, status.tone)}
+          <strong>${escapeHtml(status.detail)}</strong>
         </div>
+      </div>
+      <div class="api-command-main">
         ${renderApiWorkbenchMetrics(workbench)}
       </div>
-      ${renderApiWorkbenchNextActions(workbench)}
     </section>
   `;
 }
@@ -633,20 +759,12 @@ function renderApiWorkbenchFlowCards(workbench = {}) {
   const latestReport = (workbench.reports || [])[0] || {};
   const cards = [
     {
-      title: '连接 Apifox',
+      title: '接口资产',
       state: source.source_id ? '已连接' : '待连接',
       detail: source.source_id ? `${source.project_name || source.name || 'API 项目'} · ${source.credential_configured ? '凭据已保存' : '凭据待配置'}` : '保存一次后，同事可直接使用本地项目。',
       action: source.source_id ? 'showApiAssetsPage()' : 'showApiAssetsPage()',
       label: source.source_id ? '查看资产' : '连接',
       tone: source.source_id ? 'ready' : 'todo',
-    },
-    {
-      title: '固化资产',
-      state: snapshot.endpoint_count ? `${snapshot.endpoint_count} 个接口` : '待同步',
-      detail: snapshot.endpoint_count ? `本地版本 ${snapshot.created_at || '-'}` : '从 Apifox 拉取接口和环境后固化。',
-      action: source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()',
-      label: snapshot.endpoint_count ? '更新快照' : '同步',
-      tone: snapshot.endpoint_count ? 'ready' : 'todo',
     },
     {
       title: 'AI 测试设计',
@@ -661,13 +779,31 @@ function renderApiWorkbenchFlowCards(workbench = {}) {
       tone: cases.latest_baseline?.plan_id ? 'ready' : (cases.latest_draft?.plan_id ? 'warn' : 'todo'),
     },
     {
-      title: '本地执行报告',
+      title: '在线调试',
+      state: snapshot.endpoint_count ? `${snapshot.endpoint_count} 个接口` : '待同步',
+      detail: snapshot.endpoint_count ? '选择接口查看请求、环境变量、响应和断言。' : '先从 Apifox 拉取接口快照。',
+      action: snapshot.endpoint_count ? 'showApiDebugPage()' : 'showApiAssetsPage()',
+      label: snapshot.endpoint_count ? '打开调试' : '同步',
+      tone: snapshot.endpoint_count ? 'ready' : 'todo',
+    },
+    {
+      title: '自动回归',
+      state: latestRun.execution_id ? apiExecutionStateText(latestRun.status) : (cases.latest_baseline?.plan_id ? '可执行' : '待保存资产'),
+      detail: latestRun.execution_id
+        ? `${latestRun.stats?.completed || 0}/${latestRun.stats?.total || 0} 完成`
+        : '使用已保存测试资产跑全量接口回归。',
+      action: cases.latest_baseline?.plan_id || latestRun.execution_id ? 'showApiRegressionPage()' : 'showApiPlanPage()',
+      label: latestRun.execution_id ? '看进度' : '开始回归',
+      tone: latestRun.execution_id || cases.latest_baseline?.plan_id ? 'ready' : 'todo',
+    },
+    {
+      title: '测试报告',
       state: latestRun.execution_id ? apiExecutionStateText(latestRun.status) : (latestReport.report_id ? apiExecutionStateText(latestReport.status) : '未执行'),
       detail: latestReport.report_id
         ? `${latestReport.passed || 0} 通过 · ${latestReport.failed || 0} 失败`
         : '执行时展示实时日志，结束后沉淀报告和失败分析。',
-      action: latestRun.execution_id ? 'showApiExecutionHistoryPage()' : 'showApiExecutionPage()',
-      label: latestRun.execution_id ? '看日志' : '执行测试',
+      action: latestRun.execution_id ? 'showApiExecutionHistoryPage()' : 'showApiReportsPage()',
+      label: latestRun.execution_id ? '看日志' : '查看报告',
       tone: latestReport.report_id || latestRun.execution_id ? 'ready' : 'todo',
     },
   ];
@@ -788,6 +924,8 @@ async function showApiTestingDashboard() {
     area.innerHTML = `
       <div class="api-testing-page api-workbench-page">
         ${renderApiWorkbenchSourceCard(data)}
+        ${renderApiWorkbenchSyncAndRisk(data)}
+        ${renderApiWorkbenchRecentTasks(data)}
         ${renderApiWorkbenchFlowCards(data)}
         ${renderApiWorkbenchAssetCard(data)}
       </div>
@@ -989,6 +1127,7 @@ function apiModuleSelectionState(sourceId = apiTestingProjectScope.sourceId, rev
       endpointIds: new Set(),
       selectedModules: new Set(),
       activeModulePath: '',
+      activeEndpointId: '',
       search: '',
       method: '',
       businessLine: ''
@@ -1060,6 +1199,183 @@ function renderApiAssetTable(endpoints, options = {}) {
       }).join('')}</tbody>
     </table>
   `;
+}
+
+function apiMethodTone(method = '') {
+  return String(method || '').toLowerCase();
+}
+
+function apiEndpointCoverageCount(endpoint = {}) {
+  return Number(endpoint.case_count || endpoint.test_case_count || endpoint.covered_case_count || 0);
+}
+
+function apiEndpointReadableStatus(endpoint = {}) {
+  if (endpoint.deprecated || endpoint.removed) return {text: '已删除', tone: 'danger'};
+  if (endpoint.changed || endpoint.diff_state === 'changed') return {text: '有变化', tone: 'warn'};
+  return {text: '正常', tone: 'success'};
+}
+
+function apiEndpointSourceLabel(endpoint = {}) {
+  return endpoint.source || endpoint.provider || 'Apifox';
+}
+
+function renderApiEndpointMethodTag(method = '') {
+  const label = String(method || 'GET').toUpperCase();
+  return `<span class="api-method-tag ${escapeHtml(apiMethodTone(label))}">${escapeHtml(label)}</span>`;
+}
+
+function renderApiAssetEndpointCards(endpoints, options = {}) {
+  if (!endpoints.length) return apiTestingEmpty(options.emptyText || '暂无接口资产。');
+  const state = apiModuleSelectionState();
+  if (!state.activeEndpointId || !endpoints.some(endpoint => String(endpoint.endpoint_id || '') === String(state.activeEndpointId))) {
+    state.activeEndpointId = String(endpoints[0]?.endpoint_id || '');
+  }
+  const allSelected = endpoints.every(endpoint => state.endpointIds.has(String(endpoint.endpoint_id || '')));
+  return `
+    <div class="api-endpoint-card-list">
+      <label class="api-endpoint-select-all">
+        <input type="checkbox" aria-label="选择当前接口" data-api-endpoint-select-all="1" onchange="toggleApiEndpointSelection(this.checked)" ${allSelected ? 'checked' : ''}>
+        <span>选择当前结果</span>
+      </label>
+      ${endpoints.map(endpoint => {
+        const endpointId = String(endpoint.endpoint_id || '');
+        const active = endpointId && endpointId === String(state.activeEndpointId || '');
+        const status = apiEndpointReadableStatus(endpoint);
+        const coverage = apiEndpointCoverageCount(endpoint);
+        return `
+          <article class="api-endpoint-card ${active ? 'active' : ''}" data-endpoint-id="${escapeHtml(endpointId)}">
+            <label class="api-endpoint-card-check">
+              <input class="api-endpoint-check" type="checkbox" value="${escapeHtml(endpointId)}" ${state.endpointIds.has(endpointId) ? 'checked' : ''} onchange="toggleApiEndpointById(this.value, this.checked)">
+            </label>
+            <button type="button" class="api-endpoint-card-main" onclick="selectApiAssetEndpointDetail(${jsArg(endpointId)})">
+              <span class="api-endpoint-plug" aria-hidden="true">API</span>
+              <span class="api-endpoint-route">${renderApiEndpointMethodTag(endpoint.method)}<strong>${escapeHtml(endpoint.path || '-')}</strong></span>
+              <b>${escapeHtml(endpoint.name || '未命名接口')}</b>
+              <small>来源：${escapeHtml(apiEndpointSourceLabel(endpoint))} · 覆盖：${coverage ? `${coverage} 条用例` : '待生成'} · 最近执行：${escapeHtml(endpoint.last_run_status || '暂无')}</small>
+            </button>
+            ${apiStatusPill(status.text, status.tone)}
+          </article>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function apiCurrentEndpointDetail(endpoints = apiFilteredModuleEndpoints()) {
+  const state = apiModuleSelectionState();
+  return endpoints.find(endpoint => String(endpoint.endpoint_id || '') === String(state.activeEndpointId || ''))
+    || endpoints[0]
+    || null;
+}
+
+function selectApiAssetEndpointDetail(endpointId) {
+  apiModuleSelectionState().activeEndpointId = String(endpointId || '');
+  renderApiModuleEndpointTable();
+}
+
+function selectApiEndpointDetailTab(tab) {
+  apiAssetDetailTab = String(tab || 'definition');
+  refreshApiEndpointDetailPanel();
+}
+
+function apiEndpointRiskItems(endpoint = {}) {
+  const risks = [];
+  if ((endpoint.required_fields || []).length) risks.push('必填参数缺失');
+  if (/auth|token|login|user/i.test(`${endpoint.path || ''} ${endpoint.name || ''}`)) risks.push('Token 失效或鉴权异常');
+  if (String(endpoint.method || '').toUpperCase() === 'POST') risks.push('重复提交或幂等风险');
+  if (endpoint.schema_hash) risks.push('响应结构变更');
+  return risks.length ? risks : ['参数边界', '异常响应', '权限校验'];
+}
+
+function renderApiEndpointDefinition(endpoint = {}) {
+  return `
+    <div class="api-endpoint-detail-section">
+      <div><span>接口名称</span><strong>${escapeHtml(endpoint.name || '未命名接口')}</strong></div>
+      <div><span>请求方式</span><strong>${escapeHtml(endpoint.method || '-')}</strong></div>
+      <div><span>路径</span><strong>${escapeHtml(endpoint.path || '-')}</strong></div>
+      <div><span>来源</span><strong>${escapeHtml(apiEndpointSourceLabel(endpoint))}</strong></div>
+      <div><span>请求参数</span><strong>${escapeHtml((endpoint.required_fields || []).join('、') || '未标注必填')}</strong></div>
+      <div><span>响应结构</span><strong>${escapeHtml(endpoint.schema_hash || '待从 schema 查看')}</strong></div>
+    </div>
+  `;
+}
+
+function renderApiEndpointAiAnalysis(endpoint = {}) {
+  const risks = apiEndpointRiskItems(endpoint);
+  return `
+    <div class="api-endpoint-ai-card">
+      <strong>AI理解：${escapeHtml(endpoint.name || endpoint.path || '当前接口')}</strong>
+      <p>该接口归属 ${escapeHtml(apiEndpointModulePath(endpoint) || '未分组')}，建议按成功流程、必填参数、鉴权和响应结构设计测试。</p>
+      <ul>${risks.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+      <div class="api-endpoint-recommendations">
+        <span>P0 成功流程</span>
+        <span>P1 参数异常</span>
+        <span>P1 权限异常</span>
+        <span>P2 边界场景</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderApiEndpointCaseSummary(endpoint = {}) {
+  const coverage = apiEndpointCoverageCount(endpoint);
+  return `
+    <div class="api-endpoint-case-summary">
+      <strong>已有测试用例：${escapeHtml(coverage)} 条</strong>
+      <p>${coverage ? '可在测试设计中查看和编辑已生成草稿。' : '当前接口还没有测试资产，建议先由 AI 生成。'}</p>
+      <div>
+        <button class="btn-sm ai" onclick="selectApiAssetEndpointDetail(${jsArg(endpoint.endpoint_id || '')}); toggleApiEndpointById(${jsArg(endpoint.endpoint_id || '')}, true); launchApiPlanGenerationFromAssets()">AI生成</button>
+        <button class="btn-sm" onclick="showApiPlanPage()">查看测试设计</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderApiEndpointExecutionHistory(endpoint = {}) {
+  const recent = (apiExecutionContext?.recent_runs || []).slice(0, 3);
+  return `
+    <div class="api-endpoint-history-list">
+      ${recent.length ? recent.map(run => `<div><span>${escapeHtml(run.updated_at || run.created_at || '-')}</span><strong>${escapeHtml(apiExecutionStateText(run.status))}</strong><small>${escapeHtml(run.plan_name || run.execution_id || '-')}</small></div>`).join('') : '<div><span>暂无执行历史</span><strong>保存测试资产后可执行</strong><small>结果会进入执行记录和测试报告。</small></div>'}
+      <button class="btn-sm" onclick="showApiExecutionHistoryPage()">查看全部</button>
+    </div>
+  `;
+}
+
+function renderApiEndpointDetailPanel(endpoint = apiCurrentEndpointDetail()) {
+  if (!endpoint) {
+    return `<aside id="api-endpoint-detail-panel" class="api-endpoint-detail-panel">${apiTestingEmpty('从中间列表选择一个接口查看详情。')}</aside>`;
+  }
+  const tabs = [
+    ['definition', '接口定义'],
+    ['analysis', 'AI分析'],
+    ['cases', '测试用例'],
+    ['history', '执行历史'],
+  ];
+  const content = ({
+    definition: renderApiEndpointDefinition(endpoint),
+    analysis: renderApiEndpointAiAnalysis(endpoint),
+    cases: renderApiEndpointCaseSummary(endpoint),
+    history: renderApiEndpointExecutionHistory(endpoint),
+  })[apiAssetDetailTab] || renderApiEndpointDefinition(endpoint);
+  return `
+    <aside id="api-endpoint-detail-panel" class="api-endpoint-detail-panel">
+      <div class="api-endpoint-detail-head">
+        <span>接口详情</span>
+        <strong>${escapeHtml(endpoint.name || endpoint.path || '未命名接口')}</strong>
+        <small>${escapeHtml(apiEndpointLabel(endpoint))}</small>
+      </div>
+      <div class="api-endpoint-detail-tabs" role="tablist">
+        ${tabs.map(([id, label]) => `<button type="button" class="${apiAssetDetailTab === id ? 'active' : ''}" onclick="selectApiEndpointDetailTab(${jsArg(id)})">${escapeHtml(label)}</button>`).join('')}
+      </div>
+      ${content}
+      <div id="api-asset-action-panel" class="api-asset-action-panel embedded">${renderApiAssetActionPanelContent(selectedApiAssetSource() || {})}</div>
+    </aside>
+  `;
+}
+
+function refreshApiEndpointDetailPanel() {
+  const panel = document.getElementById('api-endpoint-detail-panel');
+  if (panel) panel.outerHTML = renderApiEndpointDetailPanel();
 }
 
 function toggleApiEndpointById(endpointId, checked) {
@@ -2072,9 +2388,23 @@ function renderApiModuleTree(source, endpoints) {
     const active = state.activeModulePath === row.path;
     return `<div class="api-module-tree-row ${active ? 'active' : ''}" style="padding-left:${10 + Math.min(row.depth, 5) * 14}px">
       <input type="checkbox" data-module-path="${escapeHtml(row.path)}" ${checkState.checked ? 'checked' : ''} data-indeterminate="${checkState.indeterminate ? 'true' : 'false'}" aria-label="选择模块 ${escapeHtml(row.path)}" onchange="toggleApiModuleSelection(this.dataset.modulePath, this.checked)">
-      <button type="button" data-module-path="${escapeHtml(row.path)}" onclick="selectApiAssetModule(this.dataset.modulePath)"><span>${escapeHtml(row.path.split('/').pop())}</span><small>${escapeHtml(row.endpointCount)}</small></button>
+      <button type="button" data-module-path="${escapeHtml(row.path)}" onclick="selectApiAssetModule(this.dataset.modulePath)">
+        <i class="api-module-icon" aria-hidden="true">${escapeHtml(apiModuleIconLabel(row.path))}</i>
+        <span>${escapeHtml(row.path.split('/').pop())}</span>
+        <small class="api-module-count-badge">${escapeHtml(row.endpointCount)}</small>
+      </button>
     </div>`;
   }).join('')}</div>`;
+}
+
+function apiModuleIconLabel(path = '') {
+  const text = String(path || '').toLowerCase();
+  if (/user|用户|登录|账号/.test(text)) return 'USR';
+  if (/print|打印|印章|照片|文档/.test(text)) return 'PRT';
+  if (/model|模型|素材/.test(text)) return 'BOX';
+  if (/pay|支付|order|订单/.test(text)) return 'PAY';
+  if (/web|admin|后台/.test(text)) return 'WEB';
+  return 'MOD';
 }
 
 function syncApiModuleCheckboxStates() {
@@ -2102,6 +2432,7 @@ function toggleApiModuleSelection(path, checked) {
 function selectApiAssetModule(path) {
   const state = apiModuleSelectionState();
   state.activeModulePath = apiNormalizeModulePath(path);
+  state.activeEndpointId = '';
   renderApiModuleWorkspace();
 }
 
@@ -2127,11 +2458,13 @@ function apiFilteredModuleEndpoints() {
 
 function setApiModuleSearch(value) {
   apiModuleSelectionState().search = String(value || '');
+  apiModuleSelectionState().activeEndpointId = '';
   renderApiModuleEndpointTable();
 }
 
 function setApiModuleMethodFilter(value) {
   apiModuleSelectionState().method = String(value || '');
+  apiModuleSelectionState().activeEndpointId = '';
   renderApiModuleEndpointTable();
 }
 
@@ -2154,9 +2487,10 @@ function renderApiModuleEndpointTable() {
   const state = apiModuleSelectionState();
   const endpoints = apiFilteredModuleEndpoints();
   container.innerHTML = state.activeModulePath
-    ? renderApiAssetTable(endpoints, { emptyText: '当前模块没有符合筛选条件的接口。' })
+    ? renderApiAssetEndpointCards(endpoints, { emptyText: '当前模块没有符合筛选条件的接口。' })
     : apiTestingEmpty('请从左侧选择一个模块，再查看接口。');
   syncApiEndpointCheckboxStates();
+  refreshApiEndpointDetailPanel();
   refreshApiAssetActionPanel();
 }
 
@@ -2240,8 +2574,8 @@ function renderApiModuleWorkspace() {
         ${businessLines.map(item => `<option value="${escapeHtml(item.name)}" ${item.name === businessLine ? 'selected' : ''}>${escapeHtml(item.name)} · ${escapeHtml(item.endpointCount)} 个接口</option>`).join('')}
       </select>
     </div>
-    <div class="api-module-workspace api-asset-workbench-grid">
-      <section class="api-module-pane">
+    <div class="api-module-workspace api-asset-workbench-grid api-asset-studio-layout">
+      <section class="api-module-pane api-module-tree-card">
         <div class="api-module-pane-head"><strong>${escapeHtml(businessLine || '业务')}模块</strong><span>${escapeHtml(apiModuleRows(source, businessEndpoints).length)} 个</span></div>
         <div class="api-module-tree-scroll">${renderApiModuleTree(source, businessEndpoints)}</div>
       </section>
@@ -2250,10 +2584,12 @@ function renderApiModuleWorkspace() {
         <div class="api-module-filters">
           <input id="api-module-search" type="search" value="${escapeHtml(state.search)}" placeholder="搜索当前模块接口" oninput="setApiModuleSearch(this.value)">
           <select id="api-module-method-filter" aria-label="接口方法筛选" onchange="setApiModuleMethodFilter(this.value)"><option value="">全部方法</option>${methods.map(method => `<option value="${escapeHtml(method)}" ${state.method === method ? 'selected' : ''}>${escapeHtml(method)}</option>`).join('')}</select>
+          <select aria-label="覆盖率筛选" disabled><option>全部覆盖率</option></select>
+          <label class="api-inline-check"><input type="checkbox" disabled> 仅看有变化</label>
         </div>
         <div id="api-module-endpoint-table" class="api-module-endpoint-scroll"></div>
       </section>
-      ${renderApiAssetActionPanel(source)}
+      ${renderApiEndpointDetailPanel()}
     </div>`;
   renderApiModuleEndpointTable();
   syncApiModuleCheckboxStates();
@@ -2998,6 +3334,30 @@ function renderApiPlanScopeSummary() {
   `;
 }
 
+function renderApiAiDesignSteps() {
+  const selectedCount = selectedApiPlanEndpointIds().length;
+  const generationDone = apiPlanGenerationCurrent?.status === 'succeeded';
+  const draftCount = apiCandidatePlans().length;
+  const savedCount = (apiTestingPlans || []).filter(plan => plan.status === 'confirmed').length;
+  const steps = [
+    ['选择接口', selectedCount ? `${selectedCount} 个接口` : '待选择', !!selectedCount],
+    ['AI分析', generationDone || draftCount ? '已生成分析' : '等待生成', generationDone || draftCount],
+    ['生成测试建议', draftCount ? `${draftCount} 个草稿` : '待生成', !!draftCount],
+    ['确认保存', savedCount ? `${savedCount} 个资产` : '待确认', !!savedCount],
+  ];
+  return `
+    <section class="api-ai-design-steps" aria-label="AI 测试设计步骤">
+      ${steps.map(([label, detail, done], index) => `
+        <article class="${done ? 'done' : ''}">
+          <span>${done ? '✓' : index + 1}</span>
+          <strong>${escapeHtml(label)}</strong>
+          <small>${escapeHtml(detail)}</small>
+        </article>
+      `).join('')}
+    </section>
+  `;
+}
+
 function apiCandidatePlans(plans = apiTestingPlans) {
   return (plans || []).filter(plan => plan.status !== 'confirmed');
 }
@@ -3052,6 +3412,7 @@ async function showApiPlanPage() {
             <button class="btn-sm" onclick="showApiAssetsPage()">调整接口范围</button>
           </div>
         </div>
+        ${renderApiAiDesignSteps()}
         <div class="api-plan-layout">
           <section class="api-panel api-plan-selection-panel">
             <div class="api-section-heading"><div><span>生成范围</span><h3>这次要测什么</h3></div><strong>${selectedApiPlanEndpointIds().length} / ${API_PLAN_MAX_ENDPOINTS}</strong></div>
@@ -3650,7 +4011,7 @@ async function debugApiPlanCase(planId, caseId) {
     const execution = data.execution || {};
     showToast('✓ 单条调试已排队', 'success');
     apiExecutionActiveId = execution.execution_id || '';
-    await showApiExecutionPage();
+    await showApiRegressionPage();
   } catch (e) {
     showToast(e.message || '单条调试启动失败', 'error');
     if (['api_plan', 'api_dashboard'].includes(activeWorkflow)) rerenderApiPlanReview();
@@ -3955,6 +4316,123 @@ async function showApiExecutionPage() {
   await refreshApiExecutionContext(true);
 }
 
+function apiDebugEndpointOptions(endpoints = []) {
+  if (!endpoints.length) return '<option value="">暂无接口</option>';
+  return endpoints.slice(0, 120).map(endpoint => `
+    <option value="${escapeHtml(endpoint.endpoint_id || '')}">${escapeHtml(`${endpoint.method || 'GET'} ${endpoint.path || endpoint.name || '-'}`)}</option>
+  `).join('');
+}
+
+function apiDebugDefaultEndpoint() {
+  return apiCurrentEndpointDetail(apiTestingEndpoints) || apiTestingEndpoints[0] || {};
+}
+
+function renderApiDebugWorkspace(workbench = {}) {
+  const source = workbench.source || {};
+  const sourceEnv = apiSourceEnvironmentSummary(source);
+  const endpoint = apiDebugDefaultEndpoint();
+  const variables = (sourceEnv.variables || []).slice(0, 8);
+  const hasTestAssets = !!(workbench.cases?.latest_draft?.plan_id || workbench.cases?.latest_baseline?.plan_id);
+  const debugAction = hasTestAssets
+    ? ['选择用例调试', 'showApiPlanPage()']
+    : ['先生成可调试用例', 'showApiPlanPage()'];
+  return `
+    <section class="api-panel api-debug-workspace">
+      <div class="api-section-heading">
+        <div><span>在线调试</span><h2>请求、响应、断言和日志一屏完成</h2></div>
+        <button class="btn-sm primary" onclick="showApiAssetsPage()">选择更多接口</button>
+      </div>
+      <div class="api-debug-layout">
+        <div class="api-debug-request-panel">
+          <label><span>接口</span><select onchange="selectApiAssetEndpointDetail(this.value)">${apiDebugEndpointOptions(apiTestingEndpoints)}</select></label>
+          <div class="api-debug-request-line">
+            ${renderApiEndpointMethodTag(endpoint.method || 'GET')}
+            <input value="${escapeHtml(endpoint.path || '')}" aria-label="接口地址" readonly>
+            <button class="btn-sm primary" onclick="${debugAction[1]}">${escapeHtml(debugAction[0])}</button>
+          </div>
+          <div class="api-debug-guidance">
+            <strong>调试按“测试用例”执行</strong>
+            <span>这样能同时带上环境变量、业务 token、请求入参和断言结果；在测试设计中选择一条可执行用例后点击“调试单条”。</span>
+          </div>
+          <div class="api-debug-editor-grid">
+            <label><span>Header</span><textarea readonly>Authorization: Bearer {{token}}</textarea></label>
+            <label><span>Body</span><textarea readonly>${escapeHtml(apiDebugBodyPlaceholder(endpoint))}</textarea></label>
+          </div>
+          <div class="api-debug-tabs">
+            <button class="active">响应结果</button>
+            <button>断言结果</button>
+            <button>执行日志</button>
+          </div>
+          <div class="api-debug-response-grid">
+            <pre><strong>响应结果</strong>
+等待发送请求后展示 HTTP 状态、响应头和响应体。</pre>
+            <pre><strong>断言结果</strong>
+等待执行后展示状态码、JSONPath 和响应结构校验。</pre>
+            <pre><strong>执行日志</strong>
+发送请求、解析响应、执行断言、生成报告。</pre>
+          </div>
+        </div>
+        <aside class="api-debug-env-panel">
+          <span>环境变量</span>
+          <strong>${escapeHtml(source.provider_metadata?.environment_name || source.environment_id || '当前环境')}</strong>
+          <small>${escapeHtml(sourceEnv.baseUrl || '未读取到 Base URL')}</small>
+          <ul>${variables.length ? variables.map(item => `<li><span>${escapeHtml(item.name || '-')}</span><code>${item.sensitive ? '敏感值未同步' : escapeHtml(item.value || '空值')}</code></li>`).join('') : '<li><span>暂无变量</span><code>去环境配置补充</code></li>'}</ul>
+          <button class="btn-sm" onclick="showApiEnvironmentPage()">编辑变量</button>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function apiDebugBodyPlaceholder(endpoint = {}) {
+  const required = endpoint.required_fields || [];
+  if (!required.length) return '{\n  \n}';
+  const body = {};
+  required.slice(0, 8).forEach(field => { body[field] = `{{${field}}}`; });
+  return JSON.stringify(body, null, 2);
+}
+
+async function showApiDebugPage() {
+  const area = setApiTestingPage('api_debug', '在线调试', '轻量调试接口请求、环境变量、响应结果、断言结果和执行日志。');
+  if (!area) return;
+  area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取在线调试工作区...')}</div>`;
+  try {
+    const data = await loadApiTestingWorkbench();
+    area.innerHTML = `
+      <div class="api-testing-page api-native-center-page">
+        <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_debug', source: data.source || {}, snapshot: data.snapshot || {}})}</div>
+        ${renderSavedApiSourceShelf(data.sources || [], data.source?.source_id || '', 'workbench')}
+        ${renderApiDebugWorkspace(data)}
+      </div>
+    `;
+  } catch (error) {
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(error.message || '在线调试读取失败')}</div>`;
+  }
+}
+
+async function showApiRegressionPage() {
+  stopApiExecutionPolling(true);
+  apiBusinessAuthEditing = false;
+  const area = setApiTestingPage('api_regression', '自动回归', '选择测试资产并使用平台本地执行器运行，实时查看进度和日志。');
+  if (!area) return;
+  area.innerHTML = `
+    <div class="api-testing-page api-regression-center">
+      <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_regression'})}</div>
+      <section class="api-panel api-regression-hero">
+        <div><span>自动回归中心</span><h2>选择测试资产，直接执行接口回归</h2><p>执行会使用本地保存的 Apifox 环境快照、业务 token 和 AI 测试资产。</p></div>
+        <button class="btn-sm primary" onclick="refreshApiExecutionContext(true)">刷新执行能力</button>
+      </section>
+      <section id="api-execution-header" class="api-execution-header">${apiTestingEmpty('正在检查 API 执行环境...')}</section>
+      <section id="api-active-run" class="api-active-run" hidden></section>
+      <section class="api-execution-plans-section">
+        <div class="api-section-heading"><div><span>执行进度</span><h2>测试资产回归</h2></div><small id="api-plan-count">0 个计划</small></div>
+        <div id="api-execution-plans">${apiTestingEmpty('正在读取测试资产...')}</div>
+      </section>
+    </div>
+  `;
+  await refreshApiExecutionContext(true);
+}
+
 async function refreshApiExecutionContext(force = false) {
   if (apiExecutionRequestController) apiExecutionRequestController.abort();
   const controller = new AbortController();
@@ -3970,7 +4448,7 @@ async function refreshApiExecutionContext(force = false) {
       apiRequest(`/api-testing/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal }),
       apiRequest('/api-testing/sources?limit=20', { signal: controller.signal }),
     ]);
-    if (requestId !== apiExecutionContextRequestId || controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution' || capturedScopeKey !== apiProjectScopeKey()) return;
+    if (requestId !== apiExecutionContextRequestId || controller !== apiExecutionRequestController || !apiExecutionWorkflowActive() || capturedScopeKey !== apiProjectScopeKey()) return;
     stopApiExecutionPolling(true);
     apiTestingSources = sourceData.sources || [];
     apiTestingSyncs = sourceData.syncs || [];
@@ -3987,7 +4465,7 @@ async function refreshApiExecutionContext(force = false) {
     }
     else stopApiExecutionPolling();
   } catch (e) {
-    if (controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution' || capturedScopeKey !== apiProjectScopeKey()) return;
+    if (controller !== apiExecutionRequestController || !apiExecutionWorkflowActive() || capturedScopeKey !== apiProjectScopeKey()) return;
     const header = document.getElementById('api-execution-header');
     if (header) header.innerHTML = `<div class="api-inline-error">${escapeHtml(e.message || 'API 执行上下文读取失败')}</div>`;
   } finally {
@@ -4498,19 +4976,19 @@ function renderApiExecutionLogRows(rows, runId = '', options = {}) {
 
 function scheduleApiExecutionPoll(execution, requestId = apiExecutionPollRequestId, capturedScopeKey = apiProjectScopeKey()) {
   stopApiExecutionPolling();
-  if (!execution?.execution_id || apiExecutionTerminal(execution) || activeWorkflow !== 'api_execution') return;
+  if (!execution?.execution_id || apiExecutionTerminal(execution) || !apiExecutionWorkflowActive()) return;
   const delay = Math.max(1000, Number(execution.poll_after_ms || 3000));
   apiExecutionPollTimer = setTimeout(() => pollApiExecution(execution.execution_id, requestId, capturedScopeKey), delay);
 }
 
 async function pollApiExecution(executionId, requestId = apiExecutionPollRequestId, capturedScopeKey = apiProjectScopeKey()) {
-  if (activeWorkflow !== 'api_execution' || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey()) return;
+  if (!apiExecutionWorkflowActive() || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey()) return;
   if (apiExecutionPollController) apiExecutionPollController.abort();
   const controller = new AbortController();
   apiExecutionPollController = controller;
   try {
     const data = await apiRequest(`/api-testing/executions/${encodeURIComponent(executionId)}`, {signal: controller.signal});
-    if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
+    if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || !apiExecutionWorkflowActive()) return;
     const execution = data.execution || {};
     const active = document.getElementById('api-active-run');
     captureApiExecutionLogViewState(active);
@@ -4522,7 +5000,7 @@ async function pollApiExecution(executionId, requestId = apiExecutionPollRequest
     if (apiExecutionTerminal(execution)) await refreshApiExecutionContext(true);
     else scheduleApiExecutionPoll(execution, requestId, capturedScopeKey);
   } catch (e) {
-    if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || activeWorkflow !== 'api_execution') return;
+    if (controller !== apiExecutionPollController || executionId !== apiExecutionActiveId || requestId !== apiExecutionPollRequestId || capturedScopeKey !== apiProjectScopeKey() || !apiExecutionWorkflowActive()) return;
     apiExecutionPollTimer = setTimeout(() => pollApiExecution(executionId, requestId, capturedScopeKey), 5000);
   } finally {
     if (controller === apiExecutionPollController) apiExecutionPollController = null;

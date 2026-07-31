@@ -256,6 +256,14 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showApiPlanPage();
     return;
   }
+  if (sectionKey === 'api_debug' && typeof showApiDebugPage === 'function') {
+    showApiDebugPage();
+    return;
+  }
+  if (sectionKey === 'api_regression' && typeof showApiRegressionPage === 'function') {
+    showApiRegressionPage();
+    return;
+  }
   if (sectionKey === 'api_baselines' && typeof showApiPlanPage === 'function') {
     showApiPlanPage();
     return;

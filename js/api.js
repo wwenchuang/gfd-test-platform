@@ -122,11 +122,27 @@ const WORKFLOW_SECTIONS = {
     cards: [],
     checklist: []
   },
+  api_debug: {
+    index: '2',
+    title: '在线调试',
+    subtitle: '像轻量 Postman 一样查看请求、环境、响应和断言',
+    help: '从本地接口快照选择接口，带入当前环境变量；调试结果进入执行日志和报告链路。',
+    cards: [],
+    checklist: []
+  },
+  api_regression: {
+    index: '2',
+    title: '自动回归',
+    subtitle: '选择测试资产并用平台原生执行器跑完整接口回归',
+    help: '自动回归使用平台保存的环境快照、业务鉴权和 AI 测试资产，由本地执行器直接运行。',
+    cards: [],
+    checklist: []
+  },
   api_execution_history: {
     index: '2',
     title: '执行记录',
     subtitle: '查看本地执行日志和最近执行状态',
-    help: '执行记录展示真实请求、响应、断言和报告入口，不再依赖第三方平台状态。',
+    help: '执行记录展示真实请求、响应、断言和报告入口，直接反映本地执行器状态。',
     cards: [],
     checklist: []
   },

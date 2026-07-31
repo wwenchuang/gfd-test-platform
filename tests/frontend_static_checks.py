@@ -58,6 +58,8 @@ def main():
         "api_dashboard",
         "api_assets",
         "api_plan",
+        "api_debug",
+        "api_regression",
         "api_execution_history",
         "api_reports",
         "api_environment",
@@ -70,11 +72,13 @@ def main():
             f"API automation sidebar must not expose old workflow: {removed_workflow}",
         )
     order_positions = [html.index(f'data-workflow="{workflow}"') for workflow in api_sidebar_order]
-    require(order_positions == sorted(order_positions), "API automation sidebar must follow the six-page product workflow")
+    require(order_positions == sorted(order_positions), "API automation sidebar must follow the AI API Testing Studio workflow")
     for workflow, icon in {
         "api_dashboard": "API",
         "api_assets": "OAS",
         "api_plan": "AI",
+        "api_debug": "DBG",
+        "api_regression": "RUN",
         "api_execution_history": "LOG",
         "api_reports": "RPT",
         "api_environment": "EN",
@@ -106,17 +110,47 @@ def main():
     )
     require(
         "api-command-center" in api_testing_js
-        and "api-next-actions" in api_testing_js
-        and "api-compact-project-grid" in api_testing_js
+        and "api-studio-toolbar" in api_testing_js
+        and "api-overview-cards" in api_testing_js
+        and "api-sync-ai-grid" in api_testing_js
+        and "api-recent-task-table" in api_testing_js
         and "api-clean-snapshot" in api_testing_js
         and "renderApiWorkbenchFlowCards" in api_testing_js
-        and "renderApiWorkbenchPrimaryActions" in api_testing_js
+        and "renderApiWorkbenchRiskCard" in api_testing_js
+        and "renderApiWorkbenchRecentTasks" in api_testing_js
         and "API接口总数" in api_testing_js
-        and "已覆盖接口" in api_testing_js
+        and "测试覆盖率" in api_testing_js
         and "覆盖率" in api_testing_js
-        and "下一步" in api_testing_js
+        and "AI 风险提醒" in api_testing_js
+        and "最近执行记录" in api_testing_js
         and "高级信息" in api_testing_js,
-        "API workbench must use a clear command-center layout with next actions and folded technical detail",
+        "API workbench must follow the documented overview, sync, AI risk, and recent-task layout",
+    )
+    require(
+        "api-asset-studio-layout" in api_testing_js
+        and "api-module-tree-card" in api_testing_js
+        and "api-endpoint-card-list" in api_testing_js
+        and "api-endpoint-detail-tabs" in api_testing_js
+        and "接口定义" in api_testing_js
+        and "AI分析" in api_testing_js
+        and "测试用例" in api_testing_js
+        and "执行历史" in api_testing_js,
+        "API asset page must use the documented three-column layout with endpoint detail tabs",
+    )
+    require(
+        "showApiDebugPage" in api_testing_js
+        and "api-debug-workspace" in api_testing_js
+        and "响应结果" in api_testing_js
+        and "断言结果" in api_testing_js
+        and "执行日志" in api_testing_js,
+        "API automation must expose a Chinese online debug workspace",
+    )
+    require(
+        "showApiRegressionPage" in api_testing_js
+        and "api-regression-center" in api_testing_js
+        and "自动回归中心" in api_testing_js
+        and "执行进度" in api_testing_js,
+        "API automation must expose an automatic regression center instead of hiding execution behind history",
     )
     require(
         "/api-testing/sources" in api_testing_js
@@ -347,12 +381,14 @@ def main():
         and "apiWorkflowNextAction" in api_testing_js
         and "completedSteps" in api_testing_js
         and "api-workflow-stepper" in api_testing_js
-        and "项目资产" in api_testing_js
+        and "接口资产" in api_testing_js
         and "环境配置" in api_testing_js
         and "测试设计" in api_testing_js
+        and "在线调试" in api_testing_js
+        and "自动回归" in api_testing_js
         and "执行记录" in api_testing_js
         and "测试报告" in api_testing_js,
-        "Every API page must expose one human-readable six-step daily workflow and next action",
+        "Every API page must expose the documented AI API Testing Studio workflow and next action",
     )
     require(
         "api-workflow-desktop-steps" in api_testing_js
@@ -941,7 +977,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260731-api-command-ui" in html and "js/api-testing.js?v=20260731-api-command-ui" in html and "js/agent-status.js?v=20260731-api-product-workbench" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260731-api-studio-ui" in html and "js/api-testing.js?v=20260731-api-studio-ui" in html and "js/agent-status.js?v=20260731-agent-failure-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

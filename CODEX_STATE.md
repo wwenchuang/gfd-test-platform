@@ -28,6 +28,102 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Agent 同需求优先复用历史全通过 YAML 种子
+
+用户连续回归“基础打印新增百度网盘入口”后发现同一需求每次结果不一样：明明已有成功记录，后续运行仍重新 PLAN / 重新生成 YAML，导致生成数量、冒烟选择和通过率波动。
+
+根因：
+
+- 新需求/Figma 输入在 `CASE_RETRIEVAL` 阶段固定走“跳过旧基线复用匹配，直接生成新 YAML 草稿”。
+- 历史全通过 Agent run 只作为历史记录保存，没有参与同目标、同 Figma、同包名的新一轮回归种子选择。
+- 重新生成会再次受 PLAN 超时降级、AI 用例拆分和 Midscene 视觉执行波动影响，因此同一需求出现不同用例数和不同通过结果。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - 新增历史成功种子匹配：
+    - 目标文案归一化后必须一致。
+    - App package 必须一致。
+    - Figma 设计主链接必须一致；忽略 Figma 临时 `t=` 参数，但保留文件路径和 `node-id`。
+    - 历史 run 必须 `DONE` 且报告 outcome 为 `passed`，失败、超时、运行中均为 0。
+  - 从历史 run 的 `yamlRefs`、`generatedYamlExecutionPlan`、`generatedYamlPaths` 抽取仍存在的 YAML 文件。
+  - 将命中的 YAML 写入当前 run 的 `historicalSuccessSeedRefs`、`yamlRefs` 和 `generatedYamlPaths`。
+  - 种子保持 `source=generated`、`validationMode=historical_success_seed`，继续走现有 dry-run、冒烟分批和剩余用例阈值，不退化成不受控的普通 baseline。
+  - `GENERATE_YAML` 命中历史成功种子时跳过重新生成，并在日志中明确展示来源。
+- `tests/backend_static_checks.py`
+  - 新增同 target / package / Figma 历史全通过 Agent 回归测试。
+  - 覆盖 Figma `t=` 参数变化仍能命中、种子不会写入 `matchedCases` 绕过冒烟门禁、生成步骤不再重新调用 AI。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_new_requirement_reuses_historical_success_seed()
+print('targeted historical seed check passed')
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py CODEX_STATE.md
+```
+
+### 2026-07-31 API 自动化 Studio 信息架构与页面重排
+
+用户要求严格按两份接口自动化页面文档重构，目标是让新同事一眼知道每一步该做什么：Apifox 只作为接口资产/环境来源，平台负责本地快照、AI 测试设计、在线调试、自动回归、执行记录和报告。
+
+本轮产品判断：
+
+- 参考用户给的轻量接口测试平台截图和 [APIAuto](https://github.com/TommyLemon/APIAuto) 的少入口、强操作、可执行结果直出思路，不再把 API 页面做成 MeterSphere 式多平台编排。
+- 页面导航应表达日常流程，不是功能堆叠：工作台 -> 接口资产 -> 测试设计 -> 在线调试 -> 自动回归 -> 执行记录 -> 测试报告 -> 环境配置。
+- 在线调试不做“看起来能发送但没有真实执行链路”的假按钮；入口指向平台真实的单条用例调试 `/api/api-testing/cases/debug`，这样环境变量、业务 token、请求入参、断言、日志和报告都能被追踪。
+- 本轮只改 UI/路由/静态契约，不改 Apifox 解析、原生 API 执行语义和业务 token 存储边界。
+
+本轮实现：
+
+- `task-manager.html`
+  - 接口自动化菜单调整为 8 个清晰入口：`API 工作台`、`接口资产`、`测试设计`、`在线调试`、`自动回归`、`执行记录`、`测试报告`、`环境配置`。
+  - 每个入口增加短 icon 文案：`API/OAS/AI/DBG/RUN/LOG/RPT/EN`，降低纯文字列表的识别成本。
+  - 静态资源版本更新为 `20260731-api-studio-ui`。
+- `js/navigation.js` / `js/api.js`
+  - 新增 `api_debug`、`api_regression` 页面路由和 workflow section。
+  - `api_execution` 保留为内部兼容入口，主菜单不再暴露。
+- `js/api-testing.js`
+  - 工作台改为文档要求的顶部工具栏、4 个概览卡、Apifox 同步状态、AI 风险提醒、最近执行记录和五步流程卡。
+  - 接口资产页改为左中右三栏：左侧模块树带 icon/数量，中间接口卡片，右侧详情 Tab：`接口定义`、`AI分析`、`测试用例`、`执行历史`。
+  - AI 测试设计增加步骤条：`选择接口`、`AI分析`、`生成测试建议`、`确认保存`。
+  - 新增 `在线调试` 页面，展示接口、Header、Body、环境变量、响应结果、断言结果和执行日志，并引导到真实单条用例调试。
+  - 新增 `自动回归` 页面，复用平台本地执行器上下文、执行进度和实时日志。
+- `css/round5.css`
+  - 增加 API Studio 工具栏、概览卡、风险卡、最近任务表、三栏资产页、接口卡片、详情 Tab、在线调试和自动回归样式。
+  - 响应式约束：宽屏三栏，中屏卡片收缩，手机单列，避免按钮和长路径挤压。
+- `tests/frontend_static_checks.py`
+  - 静态契约升级为 8 页面 AI API Testing Studio。
+  - 增加工作台、资产三栏、在线调试、自动回归、缓存版本和中文文案断言。
+
+已对齐文档：
+
+- 工作台：项目/环境/搜索和主操作区、4 个指标、同步状态、AI 风险、最近执行。
+- 接口资产：模块树、接口卡片、方法标签、覆盖/状态、右侧详情四 Tab。
+- AI 测试设计：步骤式布局。
+- 在线调试：请求、环境变量、响应、断言、日志都在同页；真实执行仍从可执行用例的“调试单条”进入。
+- 自动回归：从“执行”改为“自动回归中心”，显示执行进度并复用本地执行器。
+- 执行记录/测试报告/环境配置：保留已有原生链路，不再引入 MeterSphere。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+python3 tests/api_workbench_checks.py
+python3 tests/api_native_execution_checks.py
+git diff --check -- task-manager.html js/api-testing.js js/api.js js/navigation.js css/round5.css tests/frontend_static_checks.py CODEX_STATE.md
+```
+
+注意：
+
+- 本轮未暂存或回滚用户历史 dirty 文件，包括 prompt、Runner、scorer、部署文档、截图 artifacts 和临时 HTML。
+- 后续如果要进一步做成真正的 Postman 式自由请求编辑器，需要新增后端自由请求执行接口；当前选择先保持可执行用例调试，避免 UI 先行但结果不可追踪。
+
 ### 2026-07-31 Agent 失败分类按唯一失败用例封顶
 
 用户部署 `b61bdf1` 后重新回归“基础打印新增百度网盘入口”。线上 Agent：
