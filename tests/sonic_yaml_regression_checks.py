@@ -386,6 +386,28 @@ def test_baseline_flows_recover_restored_print_preview_before_home_actions():
             )
 
 
+def test_wechat_import_retries_restored_cancelled_preview_before_home_wait():
+    for relative_path in (
+        "server-tasks/3D打印基线/模型导入-微信导入.yaml",
+        "server-tasks-all/3D打印基线/模型导入-微信导入.yaml",
+    ):
+        texts = [_step_text(step) for step in _load_flow(relative_path)]
+        first_home_wait = next((i for i, item in enumerate(texts) if "App 首页已加载完成" in item), len(texts))
+        startup_texts = texts[:first_home_wait]
+        cancelled_preview_recoveries = [
+            item
+            for item in startup_texts
+            if "启动" in item
+            and "已取消模型处理" in item
+            and "模型打印预览" in item
+            and "最多点击一次" in item
+        ]
+        require(
+            len(cancelled_preview_recoveries) >= 2,
+            f"{relative_path} must retry cancelled print-preview recovery before waiting for the App home page",
+        )
+
+
 def test_print_flows_stop_after_cancel_cleanup_without_returning_home():
     for relative_path in (
         "server-tasks/3D打印基线/模型导入-微信导入.yaml",
@@ -438,4 +460,5 @@ if __name__ == "__main__":
     test_local_import_accepts_android_file_picker_and_cancel_guard()
     test_wechat_import_uses_bounded_cancel_cleanup()
     test_baseline_flows_recover_restored_print_preview_before_home_actions()
+    test_wechat_import_retries_restored_cancelled_preview_before_home_wait()
     test_print_flows_stop_after_cancel_cleanup_without_returning_home()
