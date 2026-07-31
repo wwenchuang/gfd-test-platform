@@ -408,6 +408,27 @@ def test_wechat_import_retries_restored_cancelled_preview_before_home_wait():
         )
 
 
+def test_baseline_startup_leftover_cleanup_returns_home_after_cancelled_preview():
+    for base in ("server-tasks", "server-tasks-all"):
+        for path in (ROOT / base / "3D打印基线").glob("*.yaml"):
+            relative_path = str(path.relative_to(ROOT))
+            texts = [_step_text(step) for step in _load_flow(relative_path)]
+            confirm_index = next((i for i, item in enumerate(texts) if "遗留任务确认" in item), -1)
+            if confirm_index == -1:
+                continue
+            later_texts = texts[confirm_index + 1 :]
+            require(
+                any(
+                    "遗留任务返回首页" in item
+                    and "已取消模型处理" in item
+                    and "App 首页" in item
+                    and "不要点击「重新编辑」" in item
+                    for item in later_texts
+                ),
+                f"{relative_path} must return to App home after cancelling a leftover processing task before continuing business actions",
+            )
+
+
 def test_print_flows_stop_after_cancel_cleanup_without_returning_home():
     for relative_path in (
         "server-tasks/3D打印基线/模型导入-微信导入.yaml",
@@ -461,4 +482,5 @@ if __name__ == "__main__":
     test_wechat_import_uses_bounded_cancel_cleanup()
     test_baseline_flows_recover_restored_print_preview_before_home_actions()
     test_wechat_import_retries_restored_cancelled_preview_before_home_wait()
+    test_baseline_startup_leftover_cleanup_returns_home_after_cancelled_preview()
     test_print_flows_stop_after_cancel_cleanup_without_returning_home()
