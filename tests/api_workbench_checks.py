@@ -339,6 +339,74 @@ class ApiWorkbenchChecks(unittest.TestCase):
         finally:
             apifox_discovery_service.discover_project_context = old_discover
 
+    def test_workbench_refreshes_grouped_parameter_placeholder_snapshot(self):
+        from task_server.services import api_workbench_service
+
+        old_discover = apifox_discovery_service.discover_project_context
+        calls = []
+
+        def fake_discover(access_token, project_id, **kwargs):
+            calls.append({
+                "access_token": access_token,
+                "project_id": project_id,
+                "preferred_environment_id": kwargs.get("preferred_environment_id"),
+            })
+            return {
+                "project": {"id": project_id, "name": "3D", "team": {"id": "team-1", "name": "功夫豆"}},
+                "branches": [{"id": "", "name": "主分支（默认）", "is_default": True}],
+                "environments": [{
+                    "id": "33831678",
+                    "name": "生产环境（新）-腾讯云",
+                    "environment_snapshot": {
+                        "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                        "variables": [
+                            {"name": "Authorization", "value": "", "sensitive": True, "scope": "header"},
+                            {"name": "Biz", "value": "ZXB", "scope": "header"},
+                            {"name": "ZXBToken", "value": "", "sensitive": True, "scope": "body"},
+                        ],
+                    },
+                }],
+            }
+
+        apifox_discovery_service.discover_project_context = fake_discover
+        try:
+            source = api_source_service.save_api_source({
+                "source_type": "apifox",
+                "name": "3D",
+                "project_id": "5904970",
+                "environment_id": "33831678",
+                "access_token": "secret-apifox-token",
+                "sync_enabled": False,
+                "environment_snapshot": {
+                    "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                    "variables": [
+                        {"name": "cookie", "value": ""},
+                        {"name": "query", "value": ""},
+                        {"name": "header", "value": ""},
+                        {"name": "body", "value": ""},
+                    ],
+                },
+            })
+
+            workbench = api_workbench_service.api_testing_workbench(source["source_id"])
+            variable_names = [
+                item["name"]
+                for item in workbench["source"]["environment_snapshot"]["variables"]
+            ]
+
+            self.assertEqual(1, len(calls))
+            self.assertEqual(["Authorization", "Biz", "ZXBToken"], variable_names)
+            self.assertNotIn("header", variable_names)
+            self.assertEqual(
+                ["Authorization", "Biz", "ZXBToken"],
+                [
+                    item["name"]
+                    for item in api_source_service.get_api_source(source["source_id"], masked=True)["environment_snapshot"]["variables"]
+                ],
+            )
+        finally:
+            apifox_discovery_service.discover_project_context = old_discover
+
     def test_workbench_module_summary_uses_server_counts_and_endpoint_ids(self):
         from task_server.services import api_workbench_service
 

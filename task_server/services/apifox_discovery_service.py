@@ -130,7 +130,7 @@ def _safe_text(value: Any, limit: int = 500) -> str:
 
 def _first_present(raw: Dict[str, Any], keys: Sequence[str]) -> Any:
     for key in keys:
-        if key in raw:
+        if key in raw and not _is_blank(raw.get(key)):
             return raw.get(key)
     return None
 
@@ -495,7 +495,7 @@ def _environment_variable_rows(value: Any) -> List[Dict[str, Any]]:
     result: List[Dict[str, Any]] = []
     seen = set()
 
-    def append_row(item: Any, fallback_name: str = "") -> None:
+    def append_row(item: Any, fallback_name: str = "", inherited_scope: str = "") -> None:
         if len(result) >= 200:
             return
         raw = item if isinstance(item, dict) else {}
@@ -522,30 +522,56 @@ def _environment_variable_rows(value: Any) -> List[Dict[str, Any]]:
             "name": name,
             "value": "" if sensitive else _safe_text(value, 1000),
             "sensitive": sensitive,
-            "scope": _safe_text(raw.get("scope") or raw.get("type") or "environment", 40) or "environment",
+            "scope": _safe_text(
+                raw.get("scope") or raw.get("type") or raw.get("in") or inherited_scope or "environment",
+                40,
+            ) or "environment",
         })
 
-    def consume(candidate: Any, fallback_name: str = "") -> None:
+    def nested_variable_sources(raw: Dict[str, Any]) -> List[Any]:
+        return [
+            raw.get(key)
+            for key in _VARIABLE_SOURCE_KEYS
+            if key in raw and not _is_blank(raw.get(key))
+        ]
+
+    def consume(candidate: Any, fallback_name: str = "", inherited_scope: str = "") -> None:
         if len(result) >= 200 or _is_blank(candidate):
             return
         if isinstance(candidate, dict):
+            nested_sources = nested_variable_sources(candidate)
+            if nested_sources:
+                nested_scope = _safe_text(
+                    candidate.get("scope")
+                    or candidate.get("type")
+                    or candidate.get("in")
+                    or _field_value(candidate, _VARIABLE_NAME_KEYS)
+                    or inherited_scope
+                    or fallback_name,
+                    40,
+                )
+                for item in nested_sources:
+                    consume(item, "", nested_scope)
+                    if len(result) >= 200:
+                        break
+                return
             has_variable_shape = any(key in candidate for key in (*_VARIABLE_NAME_KEYS, *_VARIABLE_VALUE_KEYS))
             if has_variable_shape:
-                append_row(candidate, fallback_name)
+                append_row(candidate, fallback_name, inherited_scope)
                 return
             for key, item in candidate.items():
                 if isinstance(item, dict):
                     merged = dict(item)
                     merged.setdefault("name", key)
-                    append_row(merged, key)
+                    consume(merged, key, inherited_scope)
                 else:
-                    append_row({"name": key, "value": item}, key)
+                    append_row({"name": key, "value": item}, key, inherited_scope)
                 if len(result) >= 200:
                     break
             return
         if isinstance(candidate, list):
             for item in candidate:
-                consume(item, fallback_name)
+                consume(item, fallback_name, inherited_scope)
                 if len(result) >= 200:
                     break
 

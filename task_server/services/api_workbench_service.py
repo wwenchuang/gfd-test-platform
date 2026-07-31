@@ -87,6 +87,20 @@ def _environment_has_base_url(source: Dict[str, Any]) -> bool:
     return any(str((item if isinstance(item, dict) else {}).get("url") or "").strip() for item in base_urls)
 
 
+def _environment_snapshot_looks_like_grouped_parameter_placeholders(source: Dict[str, Any]) -> bool:
+    snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    variables = snapshot.get("variables") if isinstance(snapshot.get("variables"), list) else []
+    names = [
+        str((item if isinstance(item, dict) else {}).get("name") or "").strip().lower()
+        for item in variables
+        if str((item if isinstance(item, dict) else {}).get("name") or "").strip()
+    ]
+    if len(names) < 2:
+        return False
+    grouped_names = {"cookie", "cookies", "query", "queries", "header", "headers", "body", "path", "path_params"}
+    return all(name in grouped_names for name in names)
+
+
 def _select_named_option(rows: List[Dict[str, Any]], target_id: str) -> Dict[str, Any]:
     selected_id = str(target_id or "").strip()
     if selected_id:
@@ -448,9 +462,19 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     sources = [_source_summary(source) for source in api_source_service.list_api_sources()]
     source = _selected_source(source_id)
     selected_source_id = str(source.get("source_id") or "").strip()
-    if selected_source_id and not _environment_has_base_url(source):
+    should_refresh_environment = (
+        selected_source_id
+        and (
+            not _environment_has_base_url(source)
+            or _environment_snapshot_looks_like_grouped_parameter_placeholders(source)
+        )
+    )
+    if should_refresh_environment:
         try:
-            refreshed = refresh_apifox_environment_snapshot(selected_source_id)
+            refreshed = refresh_apifox_environment_snapshot(
+                selected_source_id,
+                force=_environment_snapshot_looks_like_grouped_parameter_placeholders(source),
+            )
             if refreshed:
                 source = refreshed
                 sources = [_source_summary(item) for item in api_source_service.list_api_sources()]

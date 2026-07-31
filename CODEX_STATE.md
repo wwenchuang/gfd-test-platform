@@ -28,6 +28,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Apifox 环境变量分组展开与本地值优先
+
+用户发现 Apifox 的环境变量里有 `Authorization`、`Biz`、`ZXBToken`、`ZXBManToken` 等参数，但平台只显示 `cookie/query/header/body` 这类分组名，真实变量没有同步出来。
+
+根因：
+
+- Apifox CLI 返回的环境变量可能按 `header/query/body/cookie` 分组，真实变量在分组内的 `parameters` / `variables` 数组里。
+- `apifox_discovery_service._environment_variable_rows()` 和 `api_source_service._snapshot_variable_rows()` 看到分组对象时没有继续递归展开，而是把分组名当成变量名保存。
+- Apifox 环境里同时存在“远程值”和“本地值”；当 `currentValue` 是空字符串、`localValue` 有值时，旧 `_field_value()` 会因为空远程值字段存在而停止，导致 `Biz=ZXB` 这类本地值丢失。
+- 已保存过的错误快照即使已有 base_url，也不会自动刷新，所以修完解析后旧页面仍可能继续显示 4 个分组名。
+
+修复：
+
+- discovery 与 source normalize 都递归展开 Apifox 分组变量，并把父分组写入变量 `scope`，例如 `Authorization` / `Biz` 的 scope 为 `header`。
+- 字段读取改为优先第一个非空值，避免空 `currentValue` 遮住 `localValue`。
+- token / Authorization / Cookie 等敏感变量仍只保留变量名和敏感标记，不保存真实值；`Biz` 这类普通变量会保存可执行值。
+- API 工作台识别旧的 `cookie/query/header/body` 分组占位快照，即使已有 base_url，也会强制刷新一次 Apifox 环境并保存真实变量名。
+
+已验证：
+
+```bash
+python3 -m unittest tests.api_asset_sync_checks.ApiSourceConfigTests.test_environment_snapshot_expands_apifox_grouped_parameter_variables tests.api_asset_sync_checks.ApifoxDiscoverySnapshotTests.test_environment_snapshot_expands_cli_grouped_parameter_variables
+python3 -m unittest tests.api_workbench_checks.ApiWorkbenchChecks.test_workbench_refreshes_grouped_parameter_placeholder_snapshot
+```
+
 ### 2026-07-31 Agent 历史成功种子继续增量生成
 
 用户确认“复用之前成功的”不应该导致同需求后续完全不再生成新用例；历史成功 YAML 应作为稳定保底，但仍要尽量新增覆盖。

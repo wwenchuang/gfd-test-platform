@@ -217,6 +217,48 @@ class ApiSourceConfigTests(unittest.TestCase):
         self.assertEqual(4, snapshot["variable_count"])
         self.assertEqual(1, snapshot["sensitive_variable_count"])
 
+    def test_environment_snapshot_expands_apifox_grouped_parameter_variables(self):
+        snapshot = self.service.normalize_environment_snapshot({
+            "services": [
+                {"name": "default", "baseUrl": "https://print.wisebeginner3d.com/app"},
+            ],
+            "parameters": [
+                {
+                    "type": "header",
+                    "parameters": [
+                        {"name": "Authorization", "localValue": "Bearer secret-token"},
+                        {"name": "Biz", "currentValue": "", "localValue": "ZXB"},
+                    ],
+                },
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"name": "ZXBToken", "currentValue": "", "localValue": "jwt-secret"},
+                    ],
+                },
+                {
+                    "type": "query",
+                    "parameters": [
+                        {"name": "locale", "localValue": "zh-CN"},
+                    ],
+                },
+            ],
+        })
+
+        variables = {item["name"]: item for item in snapshot["variables"]}
+
+        self.assertNotIn("header", variables)
+        self.assertNotIn("body", variables)
+        self.assertNotIn("query", variables)
+        self.assertEqual("ZXB", variables["Biz"]["value"])
+        self.assertEqual("zh-CN", variables["locale"]["value"])
+        self.assertEqual("", variables["Authorization"]["value"])
+        self.assertTrue(variables["Authorization"]["sensitive"])
+        self.assertEqual("", variables["ZXBToken"]["value"])
+        self.assertTrue(variables["ZXBToken"]["sensitive"])
+        self.assertEqual("header", variables["Biz"]["scope"])
+        self.assertEqual(4, snapshot["variable_count"])
+
     def test_global_apifox_credential_is_write_only_and_reusable(self):
         saved = self.service.save_apifox_credential({
             "access_token": "secret-global-apifox-token",
@@ -446,6 +488,43 @@ class ApifoxDiscoverySnapshotTests(unittest.TestCase):
         self.assertEqual("", variables["Authorization"]["value"])
         self.assertTrue(variables["Authorization"]["sensitive"])
         self.assertEqual(4, snapshot["variable_count"])
+
+    def test_environment_snapshot_expands_cli_grouped_parameter_variables(self):
+        from task_server.services import apifox_discovery_service
+
+        snapshot = apifox_discovery_service._environment_snapshot({
+            "services": [
+                {"name": "default", "baseUrl": "https://print.wisebeginner3d.com/app"},
+            ],
+            "parameters": [
+                {
+                    "type": "header",
+                    "parameters": [
+                        {"name": "Authorization", "localValue": "Bearer secret-token"},
+                        {"name": "Biz", "currentValue": "", "localValue": "ZXB"},
+                    ],
+                },
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"name": "ZXBToken", "currentValue": "", "localValue": "jwt-secret"},
+                    ],
+                },
+            ],
+        })
+
+        variables = {item["name"]: item for item in snapshot["variables"]}
+
+        self.assertNotIn("header", variables)
+        self.assertNotIn("body", variables)
+        self.assertEqual("ZXB", variables["Biz"]["value"])
+        self.assertEqual("", variables["Authorization"]["value"])
+        self.assertTrue(variables["Authorization"]["sensitive"])
+        self.assertEqual("", variables["ZXBToken"]["value"])
+        self.assertTrue(variables["ZXBToken"]["sensitive"])
+        self.assertEqual("header", variables["Authorization"]["scope"])
+        self.assertEqual("body", variables["ZXBToken"]["scope"])
+        self.assertEqual(3, snapshot["variable_count"])
 
 
 def _openapi_document(response_type="string", path="/items", operation_id="listItems", provider_id=""):
