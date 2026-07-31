@@ -28,6 +28,46 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Runner dry-run 超时不再硬阻断 Agent 正式执行
+
+用户反馈连续回归后失败越来越多。线上 3 次百度网盘 Agent 回归显示：
+
+- 前两次是真实 Runner 用例部分通过，结论已保持为“部分通过”。
+- 第三次生成 6 条 YAML、20 个场景，但在 `RUN_SONIC` 前置 `runner_yaml_dry_run` 阶段等待报告超时。
+- 两个 dry-run job 处于 pending/queued，无正式 Runner job 创建，最终被标记为 `FAILED / 未执行`。
+- 这不是 YAML 脚本失败，也不是产品失败，而是 Runner dry-run 报告不确定。
+
+根因：
+
+- 旧策略把 “Runner 真实 dry-run 等待报告超时，结果不确定” 直接写成 `formalDispatchSkipped` 和 `blockedFormalDispatch`。
+- 只要 dry-run 等待超时，即使本地 YAML dry-run 已通过，也会阻断正式下发，并把 Agent 标为失败。
+- 这与当前生产口径冲突：冒烟/非冒烟测试可以失败，但未执行/环境不确定不能污染真实用例通过率；除非冒烟全失败，最终结论不应直接升级为失败。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - 真实 Runner dry-run 明确返回 failed 时，仍然硬拦截正式下发。
+  - 真实 Runner dry-run 仅等待超时、且本地 YAML dry-run 已通过时，不再标记 YAML failed。
+  - 记录 `runnerDryRun.inconclusive=true` 和 `runnerDryRun.fallbackToFormalDispatch=true`。
+  - 继续创建正式 Runner job，避免 dry-run 报告链路抖动导致整轮 Agent “未执行失败”。
+- `tests/backend_static_checks.py`
+  - 新增回归测试 `check_agent_runner_dry_run_timeout_does_not_block_formal_dispatch()`。
+  - 更新旧断言：inconclusive dry-run 必须可见，但不再硬阻断正式执行。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_runner_dry_run_timeout_does_not_block_formal_dispatch()
+checks.check_agent_summary_separates_runner_outcomes_from_orchestration()
+checks.check_agent_history_list_exposes_report_summary()
+print('targeted checks passed')
+PY
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+```
+
 ### 2026-07-31 API 工作台六入口产品化收敛
 
 用户要求严格按上传文档重构接口测试模块：

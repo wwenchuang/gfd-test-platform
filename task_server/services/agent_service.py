@@ -6837,11 +6837,12 @@ def _agent_create_runner_jobs_for_refs(
                 ]
                 message = "Runner 真实 dry-run 未通过"
             else:
-                errors = []
-                message = "Runner 真实 dry-run 等待报告超时，结果不确定；未下发正式任务"
-                dry_row["formalDispatchSkipped"] = True
-                dry_row["skipReason"] = message
-                dry_row["runnerDryRun"]["blockedFormalDispatch"] = True
+                message = "Runner 真实 dry-run 等待报告超时，结果不确定；本地 dry-run 已通过，继续下发正式任务"
+                dry_row.setdefault("warnings", []).append(message)
+                dry_row["runnerDryRun"]["fallbackToFormalDispatch"] = True
+                dry_row["runnerDryRun"]["blockedFormalDispatch"] = False
+                dispatch_ready.append(item)
+                continue
             dry_row["ok"] = False
             dry_row.setdefault("errors", []).extend(errors or [message])
             dry_run_blocked.append({

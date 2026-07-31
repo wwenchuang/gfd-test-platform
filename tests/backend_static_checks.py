@@ -9581,12 +9581,12 @@ def check_generated_yaml_short_guards_and_execution_level_floor():
                 job_service.create_job = original_create_job
                 job_service.wait_jobs_finished = original_wait_jobs_finished
             require(
-                len(created.get("dryRunBlocked") or []) == 1
-                and not created.get("jobIds")
+                not created.get("dryRunBlocked")
+                and created.get("jobIds")
                 and len(created.get("dryRunResults") or []) == 1
-                and created["dryRunResults"][0].get("ok") is False
+                and created["dryRunResults"][0].get("ok") is True
                 and (created["dryRunResults"][0].get("runnerDryRun") or {}).get("inconclusive") is True,
-                "An inconclusive Runner dry-run must explicitly block formal dispatch instead of disappearing from execution totals",
+                "An inconclusive Runner dry-run must remain visible but fall back to formal dispatch after local dry-run passed",
             )
 
             ordered_payloads = []
@@ -15317,6 +15317,93 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
     require((no_runner_summary.get("execution") or {}).get("attemptedCount") == 0, "A pre-dispatch failure must not invent Runner attempts")
 
 
+def check_agent_runner_dry_run_timeout_does_not_block_formal_dispatch():
+    from task_server.services import agent_service, job_service
+
+    old_yaml_dry_run = agent_service._agent_yaml_dry_run_for_ref
+    old_repair_ref = agent_service._agent_repair_yaml_ref_for_execution
+    old_task_names = agent_service._agent_yaml_task_names_for_runner
+    old_cancel = agent_service._agent_run_cancel_requested
+    old_create_job = job_service.create_job
+    old_wait_jobs = job_service.wait_jobs_finished
+    old_timeout = job_service.runner_job_wait_timeout_seconds
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="agent-dry-run-timeout-"))
+    yaml_path = tmp_dir / "01-入口展示.yaml"
+    yaml_path.write_text("android:\n  tasks:\n    - name: 入口展示\n      flow: []\n", encoding="utf-8")
+    created_jobs = []
+
+    try:
+        agent_service._agent_yaml_dry_run_for_ref = lambda *_args, **_kwargs: {
+            "ok": True,
+            "mode": "mock_dry_run",
+            "executionLevel": "executable",
+            "taskCount": 1,
+            "errors": [],
+            "warnings": [],
+        }
+        agent_service._agent_repair_yaml_ref_for_execution = lambda _run, ref, reason="": (ref, None)
+        agent_service._agent_yaml_task_names_for_runner = lambda _path: ["入口展示"]
+        agent_service._agent_run_cancel_requested = lambda _run: False
+
+        def fake_create_job(payload):
+            kind = "dry" if payload.get("dry_run") else "formal"
+            job_id = f"{kind}-{len(created_jobs) + 1}"
+            created_jobs.append({"job_id": job_id, "payload": dict(payload)})
+            return {"job_id": job_id}
+
+        def fake_wait_jobs(job_ids, _run, timeout=0, interval=0, phase=""):
+            if "dry-run" in str(phase):
+                return {
+                    "completed": [],
+                    "failed": [],
+                    "timeout": [{"job_id": jid, "status": "pending", "agent_wait_timeout": True} for jid in job_ids],
+                }
+            return {
+                "completed": [{"job_id": jid, "status": "success"} for jid in job_ids],
+                "failed": [],
+                "timeout": [],
+            }
+
+        job_service.create_job = fake_create_job
+        job_service.wait_jobs_finished = fake_wait_jobs
+        job_service.runner_job_wait_timeout_seconds = lambda _count=1: 30
+
+        result = agent_service._agent_create_runner_jobs_for_refs(
+            {"runId": "agent-static-dry-timeout"},
+            [{"module": "AI_Agent_草稿", "file": yaml_path.name, "path": str(yaml_path)}],
+            "win-runner-01",
+            "ecbfd645",
+            "fixed",
+            runner_dry_run_enabled=True,
+            dry_run_timeout=1,
+            phase="smoke",
+        )
+        require(
+            result.get("jobIds") and any(not item["payload"].get("dry_run") for item in created_jobs),
+            "An inconclusive Runner dry-run timeout must fall back to formal dispatch when local YAML dry-run already passed",
+        )
+        require(
+            not result.get("dryRunBlocked"),
+            "Runner dry-run wait timeout without a concrete dry-run failure must be recorded as inconclusive, not as a YAML block",
+        )
+        dry_rows = result.get("dryRunResults") or []
+        require(
+            dry_rows
+            and dry_rows[0].get("ok") is True
+            and (dry_rows[0].get("runnerDryRun") or {}).get("fallbackToFormalDispatch") is True,
+            "Dry-run timeout fallback must stay visible without converting the YAML result to failed",
+        )
+    finally:
+        agent_service._agent_yaml_dry_run_for_ref = old_yaml_dry_run
+        agent_service._agent_repair_yaml_ref_for_execution = old_repair_ref
+        agent_service._agent_yaml_task_names_for_runner = old_task_names
+        agent_service._agent_run_cancel_requested = old_cancel
+        job_service.create_job = old_create_job
+        job_service.wait_jobs_finished = old_wait_jobs
+        job_service.runner_job_wait_timeout_seconds = old_timeout
+
+
 def check_agent_history_list_exposes_report_summary():
     from task_server.services import agent_service
 
@@ -16134,6 +16221,7 @@ def main():
     check_midscene_model_family_protocol()
     check_sonic_3d_baseline_regression_guards()
     check_agent_summary_separates_runner_outcomes_from_orchestration()
+    check_agent_runner_dry_run_timeout_does_not_block_formal_dispatch()
     check_agent_history_list_exposes_report_summary()
     check_agent_run_retry_clones_inputs_without_artifacts()
     check_api_asset_service_openapi_import()
