@@ -129,6 +129,9 @@ function agentRunResultSource(run) {
       generatedCases: generation.caseCount || summary.generatedCases || execution.generatedCases || 0,
       automationCases: generation.automationCaseCount || summary.automationCases || execution.automationCases || 0,
       generatedYaml: generation.yamlFileCount || summary.generatedYaml || execution.generatedYaml || 0,
+      totalPlanned: execution.totalPlanned || 0,
+      smokePlanned: execution.smokePlanned || 0,
+      nonSmokePlanned: execution.nonSmokePlanned || 0,
       smokeAllFailed: execution.smokeAllFailed,
       smokeAttempted: execution.smokeAttemptCount || 0,
       smokePassed: execution.smokePassedCount || 0,
@@ -159,6 +162,9 @@ function agentRunResultMeta(run) {
   const generatedCases = Number(result.generatedCases || 0);
   const automationCases = Number(result.automationCases || 0);
   const generatedYaml = Number(result.generatedYaml || 0);
+  const totalPlanned = Number(result.totalPlanned || 0);
+  const smokePlanned = Number(result.smokePlanned || 0);
+  const nonSmokePlanned = Number(result.nonSmokePlanned || 0);
   const smokeAttempted = Number(result.smokeAttempted || 0);
   const smokePassed = Number(result.smokePassed || 0);
   const smokeFailed = Number(result.smokeFailed || 0);
@@ -198,6 +204,9 @@ function agentRunResultMeta(run) {
     generatedCases,
     automationCases,
     generatedYaml,
+    totalPlanned,
+    smokePlanned,
+    nonSmokePlanned,
     smokeAttempted,
     smokePassed,
     smokeFailed,
@@ -278,7 +287,10 @@ function agentRunExecutionBuckets(result) {
     cancelled: 0,
     unknown: 0
   };
-  return { smoke, remaining };
+  return {
+    smoke: {...smoke, planned: Math.max(0, Number(result.smokePlanned || 0))},
+    remaining: {...remaining, planned: Math.max(0, Number(result.nonSmokePlanned || 0))}
+  };
 }
 
 function agentRunMetricHtml(label, value, detail = '') {
@@ -303,10 +315,12 @@ function agentRunResultSummaryHtml(run) {
   const smokeDetail = buckets.smoke.attempted
     ? [`通过 ${buckets.smoke.passed}`, buckets.smoke.failed ? `失败 ${buckets.smoke.failed}` : '失败 0', buckets.smoke.timeout ? `超时 ${buckets.smoke.timeout}` : ''].filter(Boolean).join(' / ')
     : '未执行';
-  const remainingText = buckets.remaining.attempted ? `${buckets.remaining.attempted} 条` : '-';
+  const remainingText = buckets.remaining.attempted
+    ? `${buckets.remaining.attempted} 条`
+    : (buckets.remaining.planned ? `0/${buckets.remaining.planned} 条` : '-');
   const remainingDetail = buckets.remaining.attempted
     ? [`通过 ${buckets.remaining.passed}`, buckets.remaining.failed ? `失败 ${buckets.remaining.failed}` : '失败 0', buckets.remaining.timeout ? `超时 ${buckets.remaining.timeout}` : '', buckets.remaining.running ? `执行中 ${buckets.remaining.running}` : ''].filter(Boolean).join(' / ')
-    : '无非冒烟用例';
+    : (buckets.remaining.planned ? '已计划，未进入扩展执行' : '无非冒烟用例');
   const orchestration = [
     result.runStatus ? `Agent ${agentStatusText(result.runStatus)}` : '',
     result.smokeAllFailed ? '冒烟全失败' : ''

@@ -1904,8 +1904,23 @@ def generation_targets_for_scope(analysis, mode="full", scope_plan=None):
         scope_plan.get("targetCaseCount"),
         targets.get("target_automation_cases") or 5,
     )
-    point_count = len(normalize_text_list((analysis or {}).get("requirement_points")))
-    requirement_floor = 5 if point_count <= 2 else (8 if point_count <= 5 else 12)
+    analysis = analysis if isinstance(analysis, dict) else {}
+    point_count = len(normalize_text_list(analysis.get("requirement_points")))
+    acceptance_checks = [
+        item for item in (analysis.get("requirement_acceptance_checks") or analysis.get("requirementAcceptanceChecks") or [])
+        if isinstance(item, dict) or str(item or "").strip()
+    ]
+    branch_values = []
+    for item in acceptance_checks:
+        if isinstance(item, dict):
+            branch = str(item.get("branch") or "").strip()
+            if branch:
+                branch_values.append(branch)
+    branch_count = len(set(branch_values))
+    acceptance_count = len(acceptance_checks)
+    effective_point_count = max(point_count, acceptance_count)
+    multi_branch_acceptance = branch_count >= 3 and acceptance_count >= 8
+    requirement_floor = 12 if multi_branch_acceptance or effective_point_count > 5 else (8 if effective_point_count > 2 else 5)
     target_count, size = _clamp_scope_size(max(target_count, requirement_floor), target_count)
     smoke_count = max(1, min(3, safe_int(scope_plan.get("smokeCount"), 3)))
     default_plan_counts = {

@@ -13909,6 +13909,78 @@ def check_agent_report_summary_keeps_non_smoke_buckets():
     )
 
 
+def check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-non-smoke-plan-not-executed",
+        "status": "DONE",
+        "artifacts": {
+            "summary": {
+                "conclusion": "部分通过",
+                "execution": {
+                    "outcome": "partial",
+                    "label": "部分通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 2,
+                    "logicalPassedCount": 2,
+                    "logicalFailedCount": 0,
+                    "logicalTimeoutCount": 0,
+                    "logicalRunningCount": 0,
+                    "smokeAllFailed": False,
+                    "phases": [
+                        {"phase": "smoke", "passed": 1, "failed": 1},
+                        {"phase": "安全重跑", "passed": 1, "failed": 0},
+                    ],
+                },
+                "orchestration": {"runStatus": "DONE", "label": "编排完成"},
+            },
+            "generationPipeline": {"caseCount": 5, "automationCaseCount": 5, "yamlFileCount": 5},
+            "generatedYamlExecutionPlan": {
+                "counts": {"total": 5, "selectedSmoke": 2, "deferredExecutable": 3},
+                "smokeResult": {"total": 2, "passed": 1, "failed": 1, "timeout": 0},
+                "readiness": {"stopFurtherExecution": True},
+            },
+            "rerunResult": {"createdCount": 1, "completedCount": 1, "failedCount": 0, "timeoutCount": 0},
+            "report": {"status": "failed"},
+        },
+    }
+    summary = agent_service._agent_run_report_summary(run)
+    require(
+        summary.get("nonSmokeAttempted") == 0
+        and summary.get("nonSmokePassed") == 0
+        and summary.get("nonSmokeFailed") == 0
+        and summary.get("nonSmokePlanned") == 3,
+        "Agent history card buckets must not display planned deferred YAML as executed non-smoke results",
+    )
+
+
+def check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements():
+    from task_server.services.case_service import generation_volume_targets
+
+    analysis = {
+        "requirement_points": [
+            "REQ-001 文档打印：校验百度网盘入口可见；校验同级关系；校验文案；点击后稳定可达",
+            "REQ-002 照片打印：校验百度网盘入口可见；校验同级关系；校验文案；点击后稳定可达",
+            "REQ-003 扫描复印：校验百度网盘入口可见；校验同级关系；校验文案；点击后稳定可达",
+        ],
+        "requirement_acceptance_checks": [
+            {"requirementId": f"REQ-{branch:03d}", "branch": branch_name, "kind": kind, "text": kind}
+            for branch, branch_name in enumerate(["文档打印", "照片打印", "扫描复印"], start=1)
+            for kind in ["visibility", "relation", "copy", "reachability"]
+        ],
+        "risks": ["第三方入口", "多业务入口"],
+        "visible_outcomes": ["百度网盘入口可见", "点击后稳定可达"],
+    }
+    targets = generation_volume_targets(analysis, mode="full")
+    require(
+        targets.get("size") == "large"
+        and targets.get("target_plan_cases") >= 20
+        and targets.get("target_automation_cases") == 12,
+        "Multi-branch entry requirements must use acceptance dimensions to create a large full test plan and 12-case automation target",
+    )
+
+
 def check_agent_cancel_cascades_runner_jobs():
     from task_server.services import agent_service, job_service
 
@@ -16444,6 +16516,8 @@ def main():
     check_agent_completed_tool_step_recovers_and_avoids_hot_cancel_reads()
     check_agent_orphaned_running_step_after_restart_requeues()
     check_agent_report_summary_keeps_non_smoke_buckets()
+    check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
+    check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
     check_agent_worker_start_is_idempotent()

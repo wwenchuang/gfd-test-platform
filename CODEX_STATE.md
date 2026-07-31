@@ -28,6 +28,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 最近 8 次百度网盘回归生成规模与结果桶修正
+
+用户反馈：
+
+- 最近 8 次“基础打印新增百度网盘入口”回归通过率偏低。
+- 大需求不应该只生成少量用例；完整测试计划和首批 Runner 执行数量不能混在一起。
+- 历史卡片里“非冒烟”有时显示为已执行，实际只是已计划未进入扩展执行，容易误判通过率。
+
+线上最近 8 次观察：
+
+- 用例生成量主要集中在 4-6 条，完整计划没有稳定放大到 20+。
+- 失败集中在照片打印分支可达性覆盖、首批冒烟失败、以及报告收集把“非冒烟计划”误展示成“非冒烟已执行”。
+- 有些任务实际 6 条跑过 5 条通过，但 Agent 终态仍显示失败或卡片统计不清晰，影响判断。
+
+根因：
+
+- `generation_volume_targets()` 只按 requirement point 数量判断规模；百度网盘需求被抽象成 3 个业务入口后，没有把 12 个验收维度纳入规模判断。
+- `generation_targets_for_scope()` 过度相信 AI 返回的 scope target，导致多入口多验收点需求仍可能按 medium/small 生成。
+- 报告桶统计把 deferred/remaining 计划数当成实际非冒烟执行数，导致卡片显示“非冒烟通过/失败”与真实 Runner 执行不一致。
+
+修复：
+
+- `case_service.generation_volume_targets()` 纳入 `requirement_acceptance_checks`、业务分支数和有效验收点数；3 个业务分支且 8 个以上验收点时强制按大需求处理。
+- `ai_skill_service.generation_targets_for_scope()` 增加多分支验收兜底：完整计划放大，自动化 YAML 目标提升到 12 条，避免 AI scope 误判压小生成范围。
+- `agent_service._agent_report_execution_buckets_from_plan()` 拆开“计划数量”和“真实执行数量”；没有 expanded runner 结果时，非冒烟实际执行保持 0，不再用计划数填充。
+- `reportSummary` 新增 `totalPlanned/smokePlanned/nonSmokePlanned`，前端卡片在非冒烟未执行时显示“已计划，未进入扩展执行”。
+- `task-manager.html` 更新 `agent-status.js` 缓存版本为 `20260731-agent-history-actual-buckets`。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
+checks.check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
+print('targeted checks passed')
+PY
+python3 tests/frontend_static_checks.py
+node --check js/agent-status.js
+python3 -m py_compile task_server/services/agent_service.py task_server/services/ai_skill_service.py task_server/services/case_service.py tests/backend_static_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+```
+
 ### 2026-07-30 原生 API 工作台模块生成范围与 AI 批次卡住恢复
 
 用户反馈：

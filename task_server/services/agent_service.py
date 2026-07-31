@@ -7540,15 +7540,32 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
     smoke_timeout = min(max(0, smoke_timeout), max(0, smoke_total - smoke_passed - smoke_failed))
     smoke_running = min(max(0, smoke_running), max(0, smoke_total - smoke_passed - smoke_failed - smoke_timeout))
 
-    non_smoke_attempted = max(0, total - smoke_total) if total else non_smoke_total
-    if non_smoke_total:
-        non_smoke_attempted = min(non_smoke_total, non_smoke_attempted or non_smoke_total)
+    expanded_result = plan.get("expandedResult") if isinstance(plan.get("expandedResult"), dict) else {}
+    expanded_created = _safe_int_local(expanded_result.get("created"), -1)
+    expanded_passed = _safe_int_local(expanded_result.get("passed"), 0)
+    expanded_failed = _safe_int_local(expanded_result.get("failed"), 0)
+    expanded_timeout = _safe_int_local(expanded_result.get("timeout"), 0)
+    expanded_running = _safe_int_local(expanded_result.get("running"), 0)
+    if expanded_created >= 0:
+        non_smoke_attempted = min(non_smoke_total or expanded_created, expanded_created)
+    elif total:
+        non_smoke_attempted = min(non_smoke_total, max(0, total - smoke_total)) if non_smoke_total else max(0, total - smoke_total)
+    else:
+        non_smoke_attempted = 0
     non_smoke_passed = min(max(0, passed - smoke_passed), non_smoke_attempted)
     non_smoke_failed = min(max(0, failed - smoke_failed), max(0, non_smoke_attempted - non_smoke_passed))
     non_smoke_timeout = min(max(0, timeout - smoke_timeout), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
     non_smoke_running = min(max(0, running - smoke_running), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed - non_smoke_timeout))
+    if expanded_created >= 0:
+        non_smoke_passed = min(max(0, expanded_passed), non_smoke_attempted)
+        non_smoke_failed = min(max(0, expanded_failed), max(0, non_smoke_attempted - non_smoke_passed))
+        non_smoke_timeout = min(max(0, expanded_timeout), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
+        non_smoke_running = min(max(0, expanded_running), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed - non_smoke_timeout))
 
     return {
+        "totalPlanned": plan_total,
+        "smokePlanned": smoke_total,
+        "nonSmokePlanned": non_smoke_total,
         "smokeAttempted": smoke_total,
         "smokePassed": smoke_passed,
         "smokeFailed": smoke_failed,
@@ -7667,6 +7684,9 @@ def _agent_run_report_summary(run):
         "runStatus": projected_run_status,
     }
     for key in (
+        "totalPlanned",
+        "smokePlanned",
+        "nonSmokePlanned",
         "smokeRunning",
         "nonSmokeAttempted",
         "nonSmokePassed",

@@ -418,19 +418,40 @@ def read_file_version(module, file, version_id):
 def generation_volume_targets(analysis, mode="full"):
     """根据分析结果计算生成数量目标。"""
     mode = str(mode or "full").strip().lower()
+    analysis = analysis if isinstance(analysis, dict) else {}
     points = normalize_text_list((analysis or {}).get("requirement_points"))
+    acceptance_checks = [
+        item for item in (analysis.get("requirement_acceptance_checks") or analysis.get("requirementAcceptanceChecks") or [])
+        if isinstance(item, dict) or str(item or "").strip()
+    ]
+    contract = analysis.get("requirement_contract") if isinstance(analysis.get("requirement_contract"), dict) else {}
+    branch_values = []
+    for item in acceptance_checks:
+        if isinstance(item, dict):
+            branch = str(item.get("branch") or "").strip()
+            if branch:
+                branch_values.append(branch)
+    for item in (contract.get("businessFlows") or contract.get("business_flows") or []):
+        if isinstance(item, dict):
+            branch = str(item.get("branch") or item.get("name") or "").strip()
+            if branch:
+                branch_values.append(branch)
+    branch_count = len(set(branch_values))
+    acceptance_count = len(acceptance_checks)
     risks = normalize_text_list((analysis or {}).get("risks"))
     visible = normalize_text_list((analysis or {}).get("visible_outcomes"))
     blockers = normalize_text_list((analysis or {}).get("blockers"))
     missing = normalize_text_list((analysis or {}).get("missing_inputs"))
     point_count = len(points)
-    complexity = point_count + min(len(risks), 4) + min(len(visible), 3)
-    if point_count <= 2 and complexity <= 5:
+    effective_point_count = max(point_count, acceptance_count)
+    complexity = effective_point_count + min(len(risks), 4) + min(len(visible), 3)
+    multi_branch_acceptance = branch_count >= 3 and acceptance_count >= 8
+    if not multi_branch_acceptance and point_count <= 2 and complexity <= 5:
         min_cases = target_cases = max_cases = 5
         min_plan_cases, target_plan_cases, max_plan_cases = 5, 5, 8
         min_scenarios, target_scenarios = 5, 8
         size = "small"
-    elif point_count <= 5 and complexity <= 9:
+    elif not multi_branch_acceptance and effective_point_count <= 5 and complexity <= 9:
         min_cases = target_cases = max_cases = 8
         min_plan_cases, target_plan_cases, max_plan_cases = 10, 10, 20
         min_scenarios, target_scenarios = 10, 20
@@ -451,6 +472,9 @@ def generation_volume_targets(analysis, mode="full"):
         "mode": mode,
         "size": size,
         "requirement_point_count": point_count,
+        "acceptance_check_count": acceptance_count,
+        "business_branch_count": branch_count,
+        "effective_requirement_point_count": effective_point_count,
         "min_plan_cases": min_plan_cases,
         "target_plan_cases": target_plan_cases,
         "max_plan_cases": max_plan_cases,
