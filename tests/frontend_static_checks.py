@@ -31,7 +31,11 @@ def main():
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     api_testing_js = (JS_DIR / "api-testing.js").read_text(encoding="utf-8")
+    api_js = (JS_DIR / "api.js").read_text(encoding="utf-8")
     state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
+    api_dashboard_guide = api_js[
+        api_js.index("api_dashboard:"):api_js.index("api_assets:")
+    ]
     project_selector_start = api_testing_js.index("function renderApiProjectSelector")
     project_selector_end = api_testing_js.index(
         "function renderApiSourceSummary",
@@ -76,6 +80,12 @@ def main():
             f"API testing workflow must use its semantic sidebar icon: {workflow}",
         )
     require('data-workflow="api_baselines"' not in html, "API baseline maintenance must stay inside AI design instead of adding another sidebar step")
+    require("step: 'review'" not in api_testing_js, "API workflow next action must only return step ids rendered by the simplified stepper")
+    require(
+        "showApiBaselinesPage()" not in api_dashboard_guide
+        and "维护 API 基线" not in api_dashboard_guide,
+        "API dashboard must guide users through AI design and execution instead of a hidden baseline workspace",
+    )
     require("js/api-testing.js" in html, "API testing frontend module must be loaded")
     require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
     require(

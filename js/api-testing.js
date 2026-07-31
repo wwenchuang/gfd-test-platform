@@ -191,7 +191,7 @@ function apiWorkflowNextAction(context = {}) {
   if (!selectedCount && !plans.length) return {step: 'assets', label: '选择模块和接口', handler: 'showApiAssetsPage()'};
   if (['queued', 'running'].includes(generation.status)) return {step: 'plan', label: '查看生成进度', handler: 'showApiPlanPage()'};
   const draft = plans.find(plan => plan.status === 'draft');
-  if (draft) return {step: 'review', label: '审阅用例', handler: 'showApiPlanPage()'};
+  if (draft) return {step: 'plan', label: '审阅用例', handler: 'showApiPlanPage()'};
   const confirmed = plans.find(plan => plan.status === 'confirmed' && (plan.revision_state || {}).state !== 'stale');
   if (['queued', 'running'].includes(execution.status)) return {step: 'execution', label: '查看执行进度', handler: 'showApiExecutionPage()'};
   if (reports.length) return {step: 'reports', label: '查看报告', handler: 'showApiReportsPage()'};

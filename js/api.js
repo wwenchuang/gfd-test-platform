@@ -77,19 +77,19 @@ const WORKFLOW_SECTIONS = {
   api_dashboard: {
     index: '2',
     title: 'API 工作台',
-    subtitle: '接口资产、AI 候选、API 基线、平台执行和报告闭环',
-    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，审阅 AI 候选并采纳为基线后由平台原生执行。',
+    subtitle: '接口资产、AI 用例、环境配置、平台执行和报告闭环',
+    help: '从 Apifox 只读同步 OpenAPI 接口资产和版本差异，审阅 AI 候选并确认后由平台原生执行。',
     cards: [
       { title: '同步接口资产', text: '服务端只读同步 Apifox OpenAPI，内容变化时生成不可变版本并分析影响。', actions: [
         { label: '打开接口资产', cls: 'primary', fn: 'showApiAssetsPage()' }
       ]},
-      { title: '生成 AI 候选', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言候选。', actions: [
-        { label: 'AI 用例计划', cls: 'ai', fn: 'showApiPlanPage()' }
+      { title: 'AI 用例设计', text: '按接口或模块生成成功流、必填缺失、鉴权和响应断言候选，先审阅再确认。', actions: [
+        { label: '进入 AI 测试设计', cls: 'ai', fn: 'showApiPlanPage()' }
       ]},
-      { title: '维护 API 基线', text: '集中查看已采纳计划、接口版本状态和受影响用例，按单套基线进入执行。', actions: [
-        { label: 'API 基线', fn: 'showApiBaselinesPage()' }
+      { title: '配置执行环境', text: '维护 Base URL、变量和业务鉴权，只保存为平台本地执行配置，不回写 Apifox。', actions: [
+        { label: '环境配置', fn: 'showApiEnvironmentPage()' }
       ]},
-      { title: 'API 执行', text: '选择 Apifox 环境和业务鉴权后，平台直接执行已采纳 API 基线。', actions: [
+      { title: 'API 执行', text: '选择环境和业务鉴权后，平台直接执行已确认的 API 用例。', actions: [
         { label: '执行测试', fn: 'showApiExecutionPage()' }
       ]},
       { title: '统一 API 报告', text: '展示平台执行报告，并按鉴权、环境、测试数据、断言和接口缺陷分类。', actions: [
