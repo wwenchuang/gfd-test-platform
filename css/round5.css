@@ -786,9 +786,50 @@
   border: 1px solid rgba(80, 140, 180, 0.22);
   background: rgba(2, 8, 18, 0.55);
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.api-source-environment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.api-env-snapshot-editor {
+  border-left: 3px solid var(--accent);
+}
+.api-env-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.api-env-editor-grid label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text2);
+  font-size: 11px;
+}
+.api-env-editor-grid textarea {
+  min-height: 220px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid rgba(0, 224, 255, 0.34);
+  background: rgba(2, 6, 23, 0.62);
+  color: var(--text);
+  font: 12px/1.55 var(--mono);
+  outline: none;
+}
+.api-env-editor-grid textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0, 224, 255, 0.14);
+}
+.api-env-editor-hint {
+  margin: 10px 0 0;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .api-segmented-control {
   display: inline-flex;
@@ -2702,6 +2743,23 @@
 .api-report-case strong {
   overflow-wrap: anywhere;
 }
+.api-report-legacy-notice {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(255, 197, 61, 0.34);
+  border-left: 3px solid var(--warning);
+  background: rgba(255, 197, 61, 0.08);
+}
+.api-report-legacy-notice strong {
+  color: var(--warning);
+}
+.api-report-legacy-notice p,
+.api-report-legacy-notice small {
+  margin: 0;
+  color: var(--text2);
+  line-height: 1.6;
+}
 .api-report-failure-box {
   display: grid;
   gap: 10px;
@@ -2722,6 +2780,25 @@
   gap: 10px;
   min-width: 0;
 }
+.api-report-failure-group-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.api-report-failure-group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 197, 61, 0.22);
+  background: rgba(2, 6, 23, 0.28);
+}
+.api-report-failure-group > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .api-section-heading.compact {
   margin-top: 4px;
 }
@@ -2735,6 +2812,22 @@
   padding: 12px;
   border: 1px solid var(--border);
   background: var(--surface);
+}
+.api-report-case-detail {
+  padding: 0;
+  overflow: hidden;
+}
+.api-report-case-detail > summary {
+  display: block;
+  padding: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.api-report-case-detail > summary::-webkit-details-marker {
+  display: none;
+}
+.api-report-case-detail > summary:hover {
+  background: rgba(0, 224, 255, 0.04);
 }
 .api-report-case.danger {
   border-left: 3px solid var(--danger);
@@ -2759,6 +2852,34 @@
 }
 .api-report-case small {
   color: var(--text3);
+  overflow-wrap: anywhere;
+}
+.api-report-case-detail-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border);
+}
+.api-report-detail-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.api-report-detail-block > span {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.api-report-detail-block pre {
+  max-height: 320px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid rgba(80, 140, 180, 0.24);
+  background: rgba(2, 6, 23, 0.44);
+  color: var(--text2);
+  font: 12px/1.55 var(--mono);
+  white-space: pre-wrap;
+  overflow: auto;
   overflow-wrap: anywhere;
 }
 .api-report-case-analysis {
@@ -2806,6 +2927,8 @@
   }
   .api-report-summary-cards,
   .api-report-environment-grid,
+  .api-report-failure-group-list,
+  .api-env-editor-grid,
   .api-report-case-main,
   .api-report-case-analysis {
     grid-template-columns: 1fr;
@@ -2819,6 +2942,13 @@
   }
   .api-report-failure-box li {
     grid-template-columns: 1fr;
+  }
+  .api-source-environment-actions {
+    justify-content: stretch;
+  }
+  .api-source-environment-actions .btn-sm {
+    flex: 1;
+    justify-content: center;
   }
 }
 .api-business-auth-panel > p {

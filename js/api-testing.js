@@ -28,6 +28,7 @@ let apiTestingReportContext = null;
 let apiSelectedReportId = '';
 let apiSelectedReportDetail = null;
 let apiPlanCaseEditor = { planId: '', caseId: '', text: '' };
+let apiEnvironmentSnapshotEditing = false;
 const API_PLAN_MAX_ENDPOINTS = 60;
 const API_PLAN_AI_BATCH_SIZE = 12;
 let apiAssetBusinessLines = [];
@@ -974,6 +975,7 @@ function apiSourceEnvironmentSnapshot(source = {}) {
 }
 
 function renderApiSourceEnvironmentSnapshot(source = {}) {
+  if (apiEnvironmentSnapshotEditing) return renderApiEnvironmentSnapshotEditor(source);
   const snapshot = apiSourceEnvironmentSnapshot(source);
   const baseUrls = Array.isArray(snapshot.base_urls) ? snapshot.base_urls : [];
   const variables = Array.isArray(snapshot.variables) ? snapshot.variables : [];
@@ -998,7 +1000,10 @@ function renderApiSourceEnvironmentSnapshot(source = {}) {
           <h4>Apifox 环境配置</h4>
           <small>${baseUrls.length} 个服务地址 · ${variableCount} 个变量 · ${sensitiveCount} 个敏感值未同步</small>
         </div>
-        <button type="button" class="btn-sm primary" onclick="useApiSourceEnvironmentSnapshot()" ${canSync ? '' : 'disabled'}>使用该环境执行</button>
+        <div class="api-source-environment-actions">
+          <button type="button" class="btn-sm" onclick="editApiEnvironmentSnapshot()" ${source.source_id ? '' : 'disabled'}>编辑本地快照</button>
+          <button type="button" class="btn-sm primary" onclick="useApiSourceEnvironmentSnapshot()" ${canSync ? '' : 'disabled'}>使用该环境执行</button>
+        </div>
       </div>
       <div class="api-source-environment-grid">
         <div><strong>服务地址</strong><ul>${baseUrlRows}</ul></div>
@@ -1006,6 +1011,92 @@ function renderApiSourceEnvironmentSnapshot(source = {}) {
       </div>
     </section>
   `;
+}
+
+function renderApiEnvironmentSnapshotEditor(source = {}) {
+  const snapshot = apiSourceEnvironmentSnapshot(source);
+  const baseUrls = Array.isArray(snapshot.base_urls) ? snapshot.base_urls : [];
+  const variables = Array.isArray(snapshot.variables) ? snapshot.variables : [];
+  return `
+    <section id="api-source-environment-snapshot" class="api-source-environment-snapshot api-env-snapshot-editor">
+      <div class="api-source-environment-head">
+        <div>
+        <span>本地环境快照</span>
+          <h4>编辑执行环境</h4>
+          <small>从 Apifox 拉下来的环境可在平台本地改，用于执行测试；保存后不反写 Apifox。</small>
+        </div>
+        <div class="api-source-environment-actions">
+          <button type="button" class="btn-sm" onclick="cancelApiEnvironmentSnapshotEdit()">取消</button>
+          <button type="button" class="btn-sm primary" onclick="saveApiEnvironmentSnapshotEdit()">保存本地环境</button>
+        </div>
+      </div>
+      <div class="api-env-editor-grid">
+        <label>
+          <span>服务地址列表</span>
+          <textarea id="api-env-base-urls-json" spellcheck="false">${escapeHtml(JSON.stringify(baseUrls.length ? baseUrls : [{name: 'default', url: ''}], null, 2))}</textarea>
+        </label>
+        <label>
+          <span>普通环境变量</span>
+          <textarea id="api-env-variables-json" spellcheck="false">${escapeHtml(JSON.stringify(variables, null, 2))}</textarea>
+        </label>
+      </div>
+      <p class="api-env-editor-hint">这里编辑的是平台本地执行副本。敏感变量名如 Authorization、token、password 会由服务端脱敏保存；业务登录 token 请继续在“环境公共鉴权”里配置。</p>
+    </section>
+  `;
+}
+
+function editApiEnvironmentSnapshot() {
+  apiEnvironmentSnapshotEditing = true;
+  const region = document.getElementById('api-source-environment-snapshot');
+  if (region) region.outerHTML = renderApiEnvironmentSnapshotEditor(selectedApiAssetSource() || {});
+}
+
+function cancelApiEnvironmentSnapshotEdit() {
+  apiEnvironmentSnapshotEditing = false;
+  const region = document.getElementById('api-source-environment-snapshot');
+  if (region) region.outerHTML = renderApiSourceEnvironmentSnapshot(selectedApiAssetSource() || {});
+}
+
+function readApiEnvironmentJson(selector, fallback) {
+  const text = String(document.querySelector(selector)?.value || '').trim();
+  if (!text) return fallback;
+  const parsed = JSON.parse(text);
+  if (!Array.isArray(parsed)) throw new Error('必须是 JSON 数组');
+  return parsed;
+}
+
+async function saveApiEnvironmentSnapshotEdit() {
+  const source = selectedApiAssetSource() || {};
+  if (!source.source_id) {
+    showToast('请先保存 Apifox 来源', 'error');
+    return;
+  }
+  let baseUrls;
+  let variables;
+  try {
+    baseUrls = readApiEnvironmentJson('#api-env-base-urls-json', []);
+    variables = readApiEnvironmentJson('#api-env-variables-json', []);
+  } catch (error) {
+    showToast(`环境 JSON 格式不正确：${error.message || error}`, 'error');
+    return;
+  }
+  try {
+    const data = await apiRequest(`/api-testing/sources/${encodeURIComponent(source.source_id)}/environment-snapshot`, {
+      method: 'POST',
+      body: {
+        environment_snapshot: {
+          base_urls: baseUrls,
+          variables,
+        }
+      }
+    });
+    apiEnvironmentSnapshotEditing = false;
+    if (data.source?.source_id) apiAssetSelectedSourceId = data.source.source_id;
+    showToast(data.message || '✓ 本地环境快照已保存', 'success');
+    await refreshApiAssetWorkspace(true);
+  } catch (error) {
+    showToast(error.message || '本地环境快照保存失败', 'error');
+  }
 }
 
 function apiSourceEnvironmentSummary(source = {}) {
@@ -4309,6 +4400,52 @@ function apiReportSummaryValue(summary = {}, key, fallback = 0) {
   return summary && summary[key] !== undefined && summary[key] !== null ? summary[key] : fallback;
 }
 
+function apiReportNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function apiReportPassRate(summary = {}, results = []) {
+  if (summary.pass_rate !== undefined && summary.pass_rate !== null && summary.pass_rate !== '') {
+    return apiReportNumber(summary.pass_rate, 0);
+  }
+  const total = apiReportNumber(summary.total, results.length);
+  const passed = apiReportNumber(summary.passed, results.filter(item => item.status === 'passed').length);
+  return total > 0 ? Math.round((passed / total) * 1000) / 10 : 0;
+}
+
+function apiReportHasValue(value) {
+  if (value === undefined || value === null || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
+}
+
+function apiReportHasRichDetails(report = {}) {
+  const environment = report.environment || {};
+  const results = Array.isArray(report.results) ? report.results : [];
+  return (
+    apiReportHasValue(environment.base_url)
+    || apiReportHasValue(environment.auth_variable)
+    || results.some(item => (
+      apiReportHasValue(item.request)
+      || apiReportHasValue(item.response)
+      || apiReportHasValue(item.assertions)
+      || apiReportHasValue(item.analysis)
+    ))
+  );
+}
+
+function apiReportStatusText(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'passed' || normalized === 'success') return '通过';
+  if (normalized === 'failed' || normalized === 'failure' || normalized === 'error') return '失败';
+  if (normalized === 'skipped' || normalized === 'skip') return '跳过';
+  if (normalized === 'running') return '执行中';
+  if (normalized === 'pending' || normalized === 'queued') return '等待中';
+  return status || '未知';
+}
+
 function renderApiReportDetail(report) {
   if (!report) return '';
   if (report.load_error) {
@@ -4318,26 +4455,32 @@ function renderApiReportDetail(report) {
   const environment = report.environment || {};
   const results = Array.isArray(report.results) ? report.results : [];
   const failedResults = results.filter(item => item.status !== 'passed');
+  const totalCount = apiReportSummaryValue(summary, 'total', results.length);
+  const passedCount = apiReportSummaryValue(summary, 'passed', results.filter(item => item.status === 'passed').length);
+  const failedCount = apiReportSummaryValue(summary, 'failed', failedResults.length);
+  const skippedCount = apiReportSummaryValue(summary, 'skipped', results.filter(item => item.status === 'skipped').length);
+  const passRate = apiReportPassRate(summary, results);
   return `
     <section class="api-panel api-report-detail-panel">
       <div class="api-section-heading">
-        <div><span>报告详情</span><h3>${escapeHtml(report.report_id || 'API 报告')}</h3></div>
+        <div><span>API 报告</span><h3>${escapeHtml(report.report_id || '接口测试报告')}</h3></div>
         <small>${escapeHtml(report.created_at || '-')}</small>
       </div>
       <div class="api-report-summary-cards">
-        ${renderApiReportMetric('总用例', apiReportSummaryValue(summary, 'total'), '')}
-        ${renderApiReportMetric('通过', apiReportSummaryValue(summary, 'passed'), 'success')}
-        ${renderApiReportMetric('失败', apiReportSummaryValue(summary, 'failed'), 'danger')}
-        ${renderApiReportMetric('跳过', apiReportSummaryValue(summary, 'skipped'), 'warn')}
-        ${renderApiReportMetric('通过率', `${apiReportSummaryValue(summary, 'pass_rate', 0)}%`, '')}
+        ${renderApiReportMetric('总用例', totalCount, '')}
+        ${renderApiReportMetric('通过', passedCount, 'success')}
+        ${renderApiReportMetric('失败', failedCount, 'danger')}
+        ${renderApiReportMetric('跳过', skippedCount, 'warn')}
+        ${renderApiReportMetric('通过率', `${passRate}%`, '')}
       </div>
       <div class="api-report-environment-grid">
-        ${renderApiReportEnvItem('BASE_URL', environment.base_url || '-')}
+        ${renderApiReportEnvItem('服务地址', environment.base_url || '-')}
         ${renderApiReportEnvItem('业务', environment.project_name || environment.project_id || '-')}
         ${renderApiReportEnvItem('环境', environment.environment_name || environment.environment_id || '-')}
         ${renderApiReportEnvItem('鉴权', environment.auth_variable || '未配置')}
         ${renderApiReportEnvItem('耗时', apiDurationText(summary.duration_seconds || 0))}
       </div>
+      ${apiReportHasRichDetails(report) ? '' : renderApiReportLegacyNotice(report, results)}
       ${failedResults.length ? renderApiReportFailureAnalysis(report.failure_analysis || {}, failedResults) : ''}
       <div class="api-section-heading compact"><div><span>测试明细</span><h3>请求、响应和断言</h3></div><small>${escapeHtml(results.length)} 条</small></div>
       <div class="api-report-case-list">${results.map(renderApiReportCase).join('') || apiTestingEmpty('报告中暂无用例明细')}</div>
@@ -4358,18 +4501,38 @@ function renderApiReportEnvItem(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || '-')}</strong></div>`;
 }
 
+function renderApiReportLegacyNotice(report = {}, results = []) {
+  const remote = report.remote || report.remote_execution || {};
+  const remoteStatus = remote.exec_status || remote.status || report.remote_status || '';
+  const reason = report.failure_reason || remote.failure_reason || '';
+  return `
+    <div class="api-report-legacy-notice">
+      <strong>历史报告数据不足</strong>
+      <p>这份报告只保存了摘要和 ${escapeHtml(results.length)} 条用例状态，未记录请求、响应、断言和环境详情。新执行会按下方结构保存完整明细。</p>
+      ${remoteStatus || reason ? `<small>原始远端状态：${escapeHtml(remoteStatus || '未知')}${reason ? ` · ${escapeHtml(reason)}` : ''}</small>` : ''}
+    </div>
+  `;
+}
+
 function renderApiReportFailureAnalysis(analysis = {}, failedResults = []) {
   const byType = analysis.by_type || {};
-  const typeSummary = Object.keys(byType).length
-    ? Object.entries(byType).map(([type, count]) => `${type}: ${count}`).join(' · ')
-    : `${failedResults.length} 条失败`;
+  const groups = Object.keys(byType).length
+    ? Object.entries(byType).map(([type, count]) => ({type, count, items: failedResults.filter(item => String(item.analysis?.failure_type || item.failure_type || '未分类') === String(type))}))
+    : [{type: '未分类失败', count: failedResults.length, items: failedResults}];
   return `
-    <div class="api-report-failure-box">
-      <div><span>失败分析</span><strong>${escapeHtml(typeSummary)}</strong></div>
-      <ul>${failedResults.slice(0, 5).map(item => {
-        const failure = item.analysis || {};
-        return `<li><strong>${escapeHtml(item.name || item.case_id || '-')}</strong><span>${escapeHtml(failure.summary || item.error || failure.failure_type || '接口校验失败')}</span></li>`;
-      }).join('')}</ul>
+    <div class="api-report-failure-box api-report-failure-groups">
+      <div><span>失败分析</span><strong>${escapeHtml(failedResults.length)} 条失败，按原因聚合</strong></div>
+      <div class="api-report-failure-group-list">
+        ${groups.map(group => `
+          <article class="api-report-failure-group">
+            <div><strong>${escapeHtml(group.type)}</strong><span>${escapeHtml(group.count)} 条</span></div>
+            <ul>${(group.items.length ? group.items : failedResults).slice(0, 4).map(item => {
+              const failure = item.analysis || {};
+              return `<li><strong>${escapeHtml(item.name || item.case_id || '-')}</strong><span>${escapeHtml(failure.summary || item.error || failure.failure_type || '接口校验失败')}</span></li>`;
+            }).join('')}</ul>
+          </article>
+        `).join('')}
+      </div>
     </div>
   `;
 }
@@ -4379,27 +4542,78 @@ function renderApiReportCase(item = {}) {
   const response = item.response || {};
   const analysis = item.analysis || {};
   const statusTone = apiReportStatusTone(item.status);
+  const openAttr = item.status === 'passed' ? '' : ' open';
   const assertionFailures = (item.assertions || []).filter(row => row && row.passed === false);
   const suggestions = Array.isArray(analysis.suggestions) ? analysis.suggestions : [];
   const evidence = Array.isArray(analysis.evidence) ? analysis.evidence : [];
+  const assertions = Array.isArray(item.assertions) ? item.assertions : [];
   return `
-    <article class="api-report-case ${escapeHtml(statusTone)}">
-      <div class="api-report-case-main">
-        <div><span>${escapeHtml(item.case_id || '-')}</span><strong>${escapeHtml(item.name || '-')}</strong><small>${escapeHtml(item.endpoint || '')}</small></div>
-        <div>${apiStatusPill(String(item.status || '-').toUpperCase(), statusTone)}<small>${escapeHtml(item.duration_ms || 0)} ms</small></div>
-        <div><span>请求</span><strong>${escapeHtml(request.method || '-')} ${escapeHtml(apiReportShortUrl(request.url || ''))}</strong></div>
-        <div><span>HTTP</span><strong>${escapeHtml(response.status_code || '-')}</strong></div>
-      </div>
-      ${item.status === 'passed' ? '' : `
-        <div class="api-report-case-analysis">
-          <div><span>类型</span><strong>${escapeHtml(analysis.failure_type || 'API_OR_PRODUCT_ISSUE')}</strong></div>
-          <div><span>证据</span>${evidence.length ? evidence.map(value => `<code>${escapeHtml(value)}</code>`).join('') : `<code>${escapeHtml(item.error || '无错误文本')}</code>`}</div>
-          <div><span>断言</span>${assertionFailures.length ? assertionFailures.map(row => `<code>${escapeHtml(row.message || row.type || '断言失败')}</code>`).join('') : '<code>未命中断言</code>'}</div>
-          <div><span>建议</span>${suggestions.map(value => `<p>${escapeHtml(value)}</p>`).join('') || '<p>检查接口响应和测试数据。</p>'}</div>
+    <details class="api-report-case api-report-case-detail ${escapeHtml(statusTone)}"${openAttr}>
+      <summary>
+        <div class="api-report-case-main">
+          <div><span>用例编号 ${escapeHtml(item.case_id || '-')}</span><strong>${escapeHtml(item.name || '-')}</strong><small>${escapeHtml(item.endpoint || request.path || '')}</small></div>
+          <div>${apiStatusPill(apiReportStatusText(item.status), statusTone)}<small>${escapeHtml(item.duration_ms || 0)} ms</small></div>
+          <div><span>接口请求</span><strong>${escapeHtml(request.method || item.method || '-')} ${escapeHtml(apiReportShortUrl(request.url || request.path || item.endpoint || ''))}</strong></div>
+          <div><span>响应状态</span><strong>${escapeHtml(response.status_code || response.status || item.http_status || '-')}</strong></div>
         </div>
-      `}
-    </article>
+      </summary>
+      <div class="api-report-case-detail-body">
+        ${renderApiReportDetailBlock('接口请求', apiReportRequestText(request, item), '历史报告未记录请求详情')}
+        ${renderApiReportDetailBlock('响应结果', apiReportResponseText(response, item), '历史报告未记录响应详情')}
+        ${renderApiReportDetailBlock('断言校验', assertions.length ? assertions.map(row => `${row.passed === false ? '失败' : '通过'} · ${row.message || row.type || row.path || '断言'}`).join('\n') : '', '历史报告未记录断言详情')}
+        ${item.status === 'passed' ? '' : `
+          <div class="api-report-case-analysis">
+            <div><span>失败类型</span><strong>${escapeHtml(analysis.failure_type || item.failure_type || '未分类')}</strong></div>
+            <div><span>证据</span>${evidence.length ? evidence.map(value => `<code>${escapeHtml(value)}</code>`).join('') : `<code>${escapeHtml(item.error || analysis.summary || '无错误文本')}</code>`}</div>
+            <div><span>断言失败</span>${assertionFailures.length ? assertionFailures.map(row => `<code>${escapeHtml(row.message || row.type || '断言失败')}</code>`).join('') : '<code>未记录失败断言</code>'}</div>
+            <div><span>处理建议</span>${suggestions.map(value => `<p>${escapeHtml(value)}</p>`).join('') || '<p>检查接口响应、鉴权变量和测试数据。</p>'}</div>
+          </div>
+        `}
+      </div>
+    </details>
   `;
+}
+
+function renderApiReportDetailBlock(title, text, emptyText) {
+  const value = String(text || '').trim();
+  return `
+    <div class="api-report-detail-block">
+      <span>${escapeHtml(title)}</span>
+      <pre>${escapeHtml(value || emptyText)}</pre>
+    </div>
+  `;
+}
+
+function apiReportRequestText(request = {}, item = {}) {
+  if (!apiReportHasValue(request)) return '';
+  const lines = [];
+  const method = request.method || item.method || '';
+  const url = request.url || request.path || item.endpoint || '';
+  if (method || url) lines.push(`${method || '-'} ${url || '-'}`);
+  if (apiReportHasValue(request.headers)) lines.push(`请求头\n${apiReportPrettyJson(request.headers)}`);
+  if (apiReportHasValue(request.query)) lines.push(`查询参数\n${apiReportPrettyJson(request.query)}`);
+  if (apiReportHasValue(request.body)) lines.push(`请求体\n${apiReportPrettyJson(request.body)}`);
+  return lines.join('\n\n');
+}
+
+function apiReportResponseText(response = {}, item = {}) {
+  if (!apiReportHasValue(response) && !item.error) return '';
+  const lines = [];
+  const status = response.status_code || response.status || item.http_status || '';
+  if (status) lines.push(`HTTP ${status}`);
+  if (apiReportHasValue(response.headers)) lines.push(`响应头\n${apiReportPrettyJson(response.headers)}`);
+  if (apiReportHasValue(response.body)) lines.push(`响应体\n${apiReportPrettyJson(response.body)}`);
+  if (item.error) lines.push(`错误信息\n${item.error}`);
+  return lines.join('\n\n');
+}
+
+function apiReportPrettyJson(value) {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (e) {
+    return String(value);
+  }
 }
 
 function apiReportShortUrl(url) {

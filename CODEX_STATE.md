@@ -28,6 +28,53 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 API 报告可读性与 Apifox 本地环境快照编辑
+
+用户反馈：
+
+- 参考外部自研接口测试面板后，当前 API 报告“没法看”，缺少清晰执行过程、结论、失败分析和单条接口明细。
+- 从 Apifox 拉下来的环境配置需要能在平台里改；但修改应服务于本地执行，不应反写 Apifox。
+- 页面文案尽量中文展示。
+
+线上复核：
+
+- 健康检查正常，线上已有报告 `api_report_1785320933785_00031`。
+- 该历史报告摘要显示 7 条全通过，但原始 remote 状态仍有 `PENDING / provider_terminal_state_missing` 等旧 MeterSphere 兼容字段。
+- 报告明细只保存了 `case_id/name/status/duration/error`，没有请求、响应、断言、环境和失败分析结构；因此 UI 不能假装这是完整报告。
+
+参考判断：
+
+- Postman Collection Runner、Bruno CLI report、Allure report 的共同点是先展示概要，再展示环境/执行上下文、失败归因和单用例详情。
+- 我们平台已转向原生 API 执行器，不再依赖 MeterSphere；因此报告结构应围绕平台本地执行日志和本地报告，而不是第三方任务状态。
+
+修复：
+
+- API 报告详情改成中文结构化展示：
+  - 结论卡：总用例、通过、失败、跳过、通过率；摘要缺失时从明细回算。
+  - 执行环境：服务地址、业务、环境、鉴权、耗时。
+  - 历史数据不足提示：旧报告缺少请求/响应/断言时明确标注，不误导成完整报告。
+  - 失败分析按原因分组展示，保留每个失败用例的摘要。
+  - 每条接口改为可展开卡片，展示接口请求、响应结果、断言校验和处理建议；失败项默认展开。
+- Apifox 环境快照新增本地编辑入口：
+  - `POST /api/api-testing/sources/{source_id}/environment-snapshot` 保存平台本地执行副本。
+  - 支持编辑服务地址列表和普通环境变量。
+  - 敏感变量名继续由后端脱敏保存；业务用户登录 token 仍放在“环境公共鉴权”安全 profile，不散落到环境快照里。
+  - 明确“不反写 Apifox”。
+- 前端缓存版本更新为 `20260731-api-report-env-edit`。
+
+验证：
+
+```bash
+python3 tests/api_workbench_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 -m py_compile task_server/router.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+python3 tests/api_native_execution_checks.py
+python3 tests/api_asset_sync_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/router.py js/api-testing.js css/round5.css task-manager.html tests/api_workbench_checks.py tests/frontend_static_checks.py
+```
+
 ### 2026-07-31 最近 8 次百度网盘回归生成规模与结果桶修正
 
 用户反馈：

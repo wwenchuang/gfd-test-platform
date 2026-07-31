@@ -3101,6 +3101,46 @@ def _post_api_testing_source_environment_sync(handler, qs, match):
     })
 
 
+@route_post_regex(r"^/api/api-testing/sources/([^/]+)/environment-snapshot$")
+def _post_api_testing_source_environment_snapshot(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_source_service
+    source_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    current = api_source_service.get_api_source(source_id, masked=False)
+    if not current:
+        handler._json({"ok": False, "error": "API source 不存在"}, 404)
+        return
+    try:
+        data = handler._body()
+        if not isinstance(data, dict):
+            raise ValueError("请求体必须为 JSON 对象")
+        snapshot = data.get("environment_snapshot", data.get("environmentSnapshot"))
+        if not isinstance(snapshot, dict):
+            raise ValueError("environment_snapshot 必须是对象")
+        source = api_source_service.save_api_source({
+            "source_id": source_id,
+            "source_type": current.get("source_type"),
+            "name": current.get("name"),
+            "base_url": current.get("base_url"),
+            "project_id": current.get("project_id"),
+            "branch_id": current.get("branch_id"),
+            "environment_id": current.get("environment_id"),
+            "provider_metadata": current.get("provider_metadata") or {},
+            "environment_snapshot": snapshot,
+            "sync_enabled": current.get("sync_enabled"),
+            "sync_interval_minutes": current.get("sync_interval_minutes"),
+            "sync_scope": current.get("sync_scope") or {},
+        })
+        handler._json({
+            "ok": True,
+            "source": source,
+            "message": "本地环境快照已保存；不会反写 Apifox。",
+        })
+    except ValueError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 @route_post_regex(r"^/api/api-testing/sources/([^/]+)/execution-binding$")
 def _post_api_testing_source_execution_binding(handler, qs, match):
     if _require_user_auth(handler):

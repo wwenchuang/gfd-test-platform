@@ -460,8 +460,20 @@ def main():
         and "api-report-environment-grid" in api_testing_js
         and "renderApiReportFailureAnalysis" in api_testing_js
         and "renderApiReportCase" in api_testing_js
+        and "apiReportHasRichDetails" in api_testing_js
+        and "api-report-legacy-notice" in api_testing_js
+        and "api-report-failure-groups" in api_testing_js
+        and "api-report-case-detail" in api_testing_js
         and "请求、响应和断言" in api_testing_js,
-        "API reports must expose mature report details: summary, environment, cases, and failure analysis",
+        "API reports must expose mature readable details: summary, environment, legacy gaps, grouped failures, cases, and failure analysis",
+    )
+    require(
+        "/environment-snapshot" in api_testing_js
+        and "renderApiEnvironmentSnapshotEditor" in api_testing_js
+        and "saveApiEnvironmentSnapshotEdit" in api_testing_js
+        and "本地环境快照" in api_testing_js
+        and "不反写 Apifox" in api_testing_js,
+        "Apifox environment snapshots must be editable as local execution copies without implying Apifox write-back",
     )
     require(
         "apiReportPollTimer" in api_testing_js
@@ -833,7 +845,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260730-api-workbench" in html and "js/api-testing.js?v=20260730-api-workbench-scope-recovery" in html and "js/agent-status.js?v=20260731-agent-history-actual-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, Agent report-card actual non-smoke buckets, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260729-api-baselines" in html and "js/navigation.js?v=20260729-api-baselines" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260730-agent-history-report-card" in html and "css/round5.css?v=20260731-api-report-env-edit" in html and "js/api-testing.js?v=20260731-api-report-env-edit" in html and "js/agent-status.js?v=20260731-agent-history-actual-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, Agent report-card actual non-smoke buckets, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -191,6 +192,10 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertIn("/api/api-testing/workbench", router.GET_ROUTES)
         self.assertIn("/api/api-testing/snapshots/update", router.POST_ROUTES)
         self.assertIn("/api/api-testing/cases/debug", router.POST_ROUTES)
+        self.assertTrue(any(
+            pattern.pattern == r"^/api/api-testing/sources/([^/]+)/environment-snapshot$"
+            for pattern, _fn in router._POST_REGEX_ROUTES
+        ))
 
         denied = _RouteHandler(authorized=False)
         router.GET_ROUTES["/api/api-testing/workbench"](denied, {})
@@ -214,6 +219,55 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertTrue(payload["ok"])
         self.assertEqual(source["source_id"], payload["source"]["source_id"])
+
+    def test_source_environment_snapshot_route_updates_local_execution_copy(self):
+        from task_server import router
+
+        source, _revision, _plan, _confirmed = self._seed_workbench()
+        route = next(
+            fn for pattern, fn in router._POST_REGEX_ROUTES
+            if pattern.pattern == r"^/api/api-testing/sources/([^/]+)/environment-snapshot$"
+        )
+        handler = _RouteHandler({
+            "environment_snapshot": {
+                "base_urls": [
+                    {"name": "APP测试环境", "url": "https://api.example.test/app"},
+                ],
+                "variables": [
+                    {"name": "tenant", "value": "3d", "scope": "environment"},
+                    {"name": "Authorization", "value": "Bearer secret", "scope": "environment"},
+                ],
+            }
+        })
+
+        route(
+            handler,
+            {},
+            re.match(
+                r"^/api/api-testing/sources/([^/]+)/environment-snapshot$",
+                f"/api/api-testing/sources/{source['source_id']}/environment-snapshot",
+            ),
+        )
+
+        status, payload = handler.responses[-1]
+        self.assertEqual(200, status)
+        self.assertTrue(payload["ok"])
+        snapshot = payload["source"]["environment_snapshot"]
+        self.assertEqual(
+            [{"name": "APP测试环境", "url": "https://api.example.test/app"}],
+            snapshot["base_urls"],
+        )
+        self.assertEqual("tenant", snapshot["variables"][0]["name"])
+        self.assertEqual("3d", snapshot["variables"][0]["value"])
+        self.assertEqual("Authorization", snapshot["variables"][1]["name"])
+        self.assertEqual("", snapshot["variables"][1]["value"])
+        self.assertTrue(snapshot["variables"][1]["sensitive"])
+
+        raw = api_source_service.get_api_source(source["source_id"], masked=False)
+        self.assertEqual(
+            "https://api.example.test/app",
+            raw["environment_snapshot"]["base_urls"][0]["url"],
+        )
 
     def test_workbench_persists_apifox_environment_snapshot_once(self):
         from task_server.services import api_workbench_service
