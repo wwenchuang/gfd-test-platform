@@ -15481,6 +15481,30 @@ def check_agent_history_list_exposes_report_summary():
         phase_names == ["smoke", "expanded-1"],
         "Agent report phases must collapse duplicate smoke/expanded aliases before they reach cards or detail pages",
     )
+    run_with_overcounted_failure_classes = copy.deepcopy(run_with_duplicate_phases)
+    run_with_overcounted_failure_classes["runId"] = "agent-static-history-overcounted-failure-classes"
+    execution = run_with_overcounted_failure_classes["artifacts"]["summary"]["execution"]
+    execution.update({
+        "logicalAttemptCount": 3,
+        "logicalPassedCount": 1,
+        "logicalFailedCount": 2,
+        "productFailedCount": 0,
+        "brokenCount": 3,
+        "unknownFailedCount": 3,
+    })
+    run_with_overcounted_failure_classes["artifacts"]["generatedYamlExecutionPlan"] = {
+        "counts": {"total": 5, "selectedSmoke": 3, "deferredExecutable": 2},
+        "smokeResult": {"total": 3, "passed": 1, "failed": 2, "timeout": 0},
+        "expandedResult": {"created": 0, "passed": 0, "failed": 0, "timeout": 0},
+    }
+    overcounted_summary = agent_service._agent_run_report_summary(run_with_overcounted_failure_classes)
+    require(
+        overcounted_summary.get("failed") == 2
+        and overcounted_summary.get("productFailed") == 0
+        and overcounted_summary.get("scriptFailed") == 2
+        and overcounted_summary.get("unknownFailed") == 0,
+        "Agent report failure categories must be capped to unique failed cases, not raw original plus repair failure events",
+    )
 
     old_runs_file = agent_service.AGENT_RUNS_FILE
     old_started_ts = agent_service.AGENT_SERVICE_STARTED_TS

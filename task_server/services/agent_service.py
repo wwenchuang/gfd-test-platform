@@ -7644,6 +7644,17 @@ def _agent_compact_report_phase_rows(phase_rows):
     return [compacted[key] for key in order]
 
 
+def _agent_unique_failure_class_counts(execution, failed):
+    """Project raw failure events onto mutually exclusive failed-case buckets."""
+    remaining = max(0, _safe_int_local(failed, 0))
+    product_failed = min(_safe_int_local(execution.get("productFailedCount"), 0), remaining)
+    remaining -= product_failed
+    script_failed = min(_safe_int_local(execution.get("brokenCount"), 0), remaining)
+    remaining -= script_failed
+    unknown_failed = min(_safe_int_local(execution.get("unknownFailedCount"), 0), remaining)
+    return product_failed, script_failed, unknown_failed
+
+
 def _agent_run_report_summary(run):
     if not isinstance(run, dict):
         return {}
@@ -7739,6 +7750,7 @@ def _agent_run_report_summary(run):
         report_status = "partial"
     elif execution_outcome == "running":
         report_status = "running"
+    product_failed, script_failed, unknown_failed = _agent_unique_failure_class_counts(execution, failed)
     result = {
         "conclusion": summary.get("conclusion") or execution.get("label") or "",
         "outcome": execution.get("outcome") or "",
@@ -7757,9 +7769,9 @@ def _agent_run_report_summary(run):
         "smokeFailed": smoke_failed,
         "smokeTimeout": smoke_timeout,
         "smokeAllFailed": bool(execution.get("smokeAllFailed")),
-        "productFailed": _safe_int_local(execution.get("productFailedCount"), 0),
-        "scriptFailed": _safe_int_local(execution.get("brokenCount"), 0),
-        "unknownFailed": _safe_int_local(execution.get("unknownFailedCount"), 0),
+        "productFailed": product_failed,
+        "scriptFailed": script_failed,
+        "unknownFailed": unknown_failed,
         "phases": phase_rows[:12],
         "reportStatus": report_status,
         "rawReportStatus": raw_report_status,

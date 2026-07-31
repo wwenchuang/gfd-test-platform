@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Agent 失败分类按唯一失败用例封顶
+
+用户部署 `b61bdf1` 后重新回归“基础打印新增百度网盘入口”。线上 Agent：
+
+- `agent-1785484424874-db812072`
+- 固定参数：`RUNNER_JOB / win-runner-01 / ecbfd645 / fixed / qwen3.7-plus / com.xbxxhz.box`
+- 服务健康：Task `qwen3.7-plus`，Figma token 存在，Runner `2026.07.26-qwen3.7-result-retry-v1`，OPPO `ecbfd645 / PHM110` ready。
+- PLAN 在 4 分钟左右触发 `PLAN AI 超时`，降级为 3 条业务分支继续。
+- 生成 5 条 YAML；执行计划：冒烟 3、非冒烟 2；dry-run 3/3 通过。
+- 覆盖审计仍有 warning：文档文案、扫描同级关系、扫描可达性被认为未完整覆盖，未作为 blocker。
+- 实际 Runner job 均绑定 `win-runner-01 / ecbfd645 / fixed`，没有向华为或第二台设备下发。
+- 冒烟结果：文档通过，照片失败，扫描失败；修复重跑仍失败。
+- 终态：`DONE / 部分通过`，`reportStatus=partial`，没有因为非全冒烟失败而变成整单失败。
+
+本轮发现 `reportSummary.failed=2`，但 `scriptFailed=3 / unknownFailed=3`。根因是底层 execution 分类为原始失败 + 修复重跑失败事件计数，用户卡片需要唯一失败用例计数。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - 新增 `_agent_unique_failure_class_counts()`，按唯一 `failed` 数把 `productFailed/scriptFailed/unknownFailed` 互斥封顶。
+- `js/agent-status.js`
+  - `agentRunFailureDetail()` 前端也按总失败数封顶，兼容历史记录或旧服务返回的过量分类。
+- `tests/backend_static_checks.py`
+  - 新增线上形态回归：总失败 2、原始分类脚本 3/未判定 3 时，用户层必须展示脚本 2、未判定 0。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_history_list_exposes_report_summary()
+print('targeted backend check passed')
+PY
+```
+
 ### 2026-07-31 Agent 报告按唯一用例展示部分通过和缺陷类型
 
 用户质疑连续回归后结果越来越差。基于最近 3 次“基础打印新增百度网盘入口”线上回归：

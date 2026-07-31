@@ -323,11 +323,14 @@ function agentRunMetricHtml(label, value, detail = '') {
 }
 
 function agentRunFailureDetail(result, fallbackFailed = 0) {
-  const productFailed = Number(result.productFailed || 0);
-  const scriptFailed = Number(result.scriptFailed || 0);
-  const unknownFailed = Number(result.unknownFailed || 0);
-  const classified = productFailed + scriptFailed + unknownFailed;
-  const unclassified = Math.max(0, Number(fallbackFailed || 0) - classified);
+  let remaining = Math.max(0, Number(fallbackFailed || 0));
+  const productFailed = Math.min(Number(result.productFailed || 0), remaining);
+  remaining -= productFailed;
+  const scriptFailed = Math.min(Number(result.scriptFailed || 0), remaining);
+  remaining -= scriptFailed;
+  const unknownFailed = Math.min(Number(result.unknownFailed || 0), remaining);
+  remaining -= unknownFailed;
+  const unclassified = Math.max(0, remaining);
   return [
     productFailed ? `产品缺陷 ${productFailed}` : '',
     scriptFailed ? `脚本问题 ${scriptFailed}` : '',
