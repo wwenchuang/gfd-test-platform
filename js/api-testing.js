@@ -1259,6 +1259,40 @@ function renderApiProjectSelector(sources, selectedId, context = 'assets') {
   return `<div class="api-project-switcher"><select class="api-project-select" aria-label="选择 Apifox 项目" onchange="${changeHandler}(this.value)">${options}</select>${addButton}</div>`;
 }
 
+function renderSavedApiSourceShelf(sources = [], selectedId = '', context = 'assets') {
+  const rows = (sources || []).filter(source => source && source.source_id);
+  const selectHandler = context === 'execution' ? 'selectApiExecutionSource' : 'selectApiAssetSource';
+  if (!rows.length) {
+    return `
+      <section class="api-saved-source-shelf">
+        <div><span>已保存 Apifox 项目</span><strong>暂无本地项目</strong><small>连接一次 Apifox 后会保存项目、环境和接口快照。</small></div>
+      </section>
+    `;
+  }
+  return `
+    <section class="api-saved-source-shelf">
+      <div class="api-saved-source-head">
+        <div><span>已保存 Apifox 项目</span><strong>本地项目快照</strong><small>同事可直接切换已有项目；需要更新时再手动重新读取 Apifox。</small></div>
+        <button class="btn-sm" type="button" onclick="startApiSourceDraft()">新增项目</button>
+      </div>
+      <div class="api-saved-source-list">
+        ${rows.map(source => {
+          const active = String(source.source_id || '') === String(selectedId || '');
+          const summary = apiSourceEnvironmentSummary(source);
+          const meta = source.provider_metadata || {};
+          return `
+            <button type="button" class="api-saved-source-card ${active ? 'active' : ''}" onclick="${selectHandler}(${jsArg(source.source_id)})">
+              <span>${escapeHtml(apiSourceDisplayName(source))}</span>
+              <strong>${escapeHtml(meta.environment_name || source.environment_id || '未选择环境')}</strong>
+              <small>${escapeHtml(summary.baseUrl || '未读取到 base_url')}</small>
+            </button>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const configured = source?.configured === true;
   const status = latestSync?.status || source?.last_sync_status || '';
@@ -1267,6 +1301,7 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const running = ['queued', 'running'].includes(status);
   const primaryLabel = status === 'failed' ? '重试读取' : '重新读取 Apifox 资产';
   return `
+    ${renderSavedApiSourceShelf(apiTestingSources, source?.source_id)}
     <div class="api-asset-context-bar">
       <div class="api-source-status-row">
         <div class="api-source-identity">
@@ -1937,6 +1972,15 @@ async function selectApiAssetSource(sourceId) {
   apiTestingProjectScope = { sourceId: apiAssetSelectedSourceId, revisionId: '' };
   apiTestingSelectionByScope.delete(apiProjectScopeKey());
   await refreshApiAssetWorkspace(true);
+}
+
+async function selectApiExecutionSource(sourceId) {
+  abortApiProjectScopeRequests();
+  apiAssetSelectedSourceId = sourceId || '';
+  apiExecutionActiveId = '';
+  apiTestingProjectScope = { sourceId: apiAssetSelectedSourceId, revisionId: '' };
+  apiTestingSelectionByScope.delete(apiProjectScopeKey());
+  await refreshApiExecutionContext(true);
 }
 
 async function selectApiAssetRevision(revisionId) {
@@ -3568,16 +3612,24 @@ async function refreshApiExecutionContext(force = false) {
     const query = new URLSearchParams();
     if (force) query.set('force', '1');
     if (sourceId) query.set('source_id', sourceId);
-    const data = await apiRequest(`/api-testing/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal });
+    const [data, sourceData] = await Promise.all([
+      apiRequest(`/api-testing/execution-context${query.toString() ? `?${query}` : ''}`, { signal: controller.signal }),
+      apiRequest('/api-testing/sources?limit=20', { signal: controller.signal }),
+    ]);
     if (requestId !== apiExecutionContextRequestId || controller !== apiExecutionRequestController || activeWorkflow !== 'api_execution' || capturedScopeKey !== apiProjectScopeKey()) return;
     stopApiExecutionPolling(true);
+    apiTestingSources = sourceData.sources || [];
+    apiTestingSyncs = sourceData.syncs || [];
     apiExecutionContext = data;
+    apiAssetSelectedSourceId = data.source_id || sourceId || apiAssetSelectedSourceId || '';
+    apiTestingProjectScope = { sourceId: apiAssetSelectedSourceId, revisionId: apiTestingProjectScope.revisionId || '' };
+    const effectiveScopeKey = apiProjectScopeKey();
     apiTestingPlans = data.plans || [];
     const active = (data.active_runs || [])[0] || null;
     apiExecutionActiveId = active?.execution_id || '';
     renderApiExecutionDynamic(data, active);
     if (active && !apiExecutionTerminal(active)) {
-      scheduleApiExecutionPoll(active, apiExecutionPollRequestId, capturedScopeKey);
+      scheduleApiExecutionPoll(active, apiExecutionPollRequestId, effectiveScopeKey);
     }
     else stopApiExecutionPolling();
   } catch (e) {
@@ -3629,6 +3681,7 @@ function renderApiExecutionHeader(context) {
         <button class="btn-sm icon-only" title="刷新执行数据" aria-label="刷新执行数据" onclick="refreshApiExecutionContext(true)">↻</button>
       </div>
     </div>
+    ${renderSavedApiSourceShelf(apiTestingSources, source.source_id || context.source_id || apiAssetSelectedSourceId, 'execution')}
     <div class="api-execution-env-card">
       <div class="api-execution-env-main">
         <div>
@@ -3996,7 +4049,19 @@ function renderApiActiveRun(execution) {
       </li>
     `).join('')}</ol>
     ${execution.error ? `<div class="api-inline-error">${escapeHtml(execution.error)}</div>` : ''}
-    ${renderApiExecutionLogRows(execution.events || [], execution.run_id || execution.execution_id)}
+    ${renderApiExecutionLiveLogPanel(execution)}
+  `;
+}
+
+function renderApiExecutionLiveLogPanel(execution = {}) {
+  return `
+    <section class="api-execution-live-log">
+      <div class="api-tech-log-head">
+        <div><span>实时执行日志</span><h3>接口请求过程</h3></div>
+        <small>发送请求 · 收到响应 · 断言结果 · 生成报告</small>
+      </div>
+      ${renderApiExecutionLogRows(execution.events || [], execution.run_id || execution.execution_id, {embedded: true})}
+    </section>
   `;
 }
 
@@ -4037,9 +4102,18 @@ function restoreApiExecutionLogViewState(root = document) {
   });
 }
 
-function renderApiExecutionLogRows(rows, runId = '') {
-  if (!(rows || []).length) return `<div class="api-tech-log"><div class="api-tech-log-head"><h3>技术日志</h3></div>${apiTestingEmpty('暂无执行日志')}</div>`;
-  return `<div class="api-tech-log"><div class="api-tech-log-head"><h3>技术日志</h3><span>${rows.length} 条真实事件</span></div>${rows.map(row => {
+function apiExecutionLogPhaseTitle(phaseId) {
+  if (phaseId === 'prepare') return '准备环境';
+  if (phaseId === 'execute') return '请求响应';
+  if (phaseId === 'assert') return '断言结果';
+  if (phaseId === 'report') return '生成报告';
+  return phaseId || '执行事件';
+}
+
+function renderApiExecutionLogRows(rows, runId = '', options = {}) {
+  const embedded = options.embedded === true;
+  if (!(rows || []).length) return `<div class="api-tech-log ${embedded ? 'embedded' : ''}">${embedded ? '' : '<div class="api-tech-log-head"><h3>技术日志</h3></div>'}${apiTestingEmpty('暂无执行日志')}</div>`;
+  return `<div class="api-tech-log ${embedded ? 'embedded' : ''}">${embedded ? '' : `<div class="api-tech-log-head"><h3>技术日志</h3><span>${rows.length} 条真实事件</span></div>`}${rows.map(row => {
     const eventId = row.event_id || '';
     const eventRunId = row.run_id || row.execution_id || runId;
     const key = apiExecutionLogKey(eventRunId, eventId);
@@ -4047,7 +4121,7 @@ function renderApiExecutionLogRows(rows, runId = '') {
     const detail = row.detail == null ? row.summary : (typeof row.detail === 'string' ? row.detail : JSON.stringify(row.detail, null, 2));
     return `
       <details class="api-log-detail" data-api-log-key="${escapeHtml(key)}" ${open ? 'open' : ''} ontoggle="toggleApiExecutionLog(${jsArg(eventRunId)}, ${jsArg(eventId)}, this.open)">
-        <summary><time>${escapeHtml(row.timestamp || '-')}</time><strong>${escapeHtml(row.summary || row.phase_id || '执行事件')}</strong><small>${escapeHtml(row.phase_id || '')}</small></summary>
+        <summary><time>${escapeHtml(row.timestamp || '-')}</time><strong>${escapeHtml(row.summary || row.phase_id || '执行事件')}</strong><small>${escapeHtml(apiExecutionLogPhaseTitle(row.phase_id))}</small></summary>
         <div class="api-log-content" onscroll="rememberApiExecutionLogScroll(${jsArg(key)}, this.scrollTop)"><pre>${escapeHtml(detail || '无更多详情')}</pre></div>
       </details>
     `;

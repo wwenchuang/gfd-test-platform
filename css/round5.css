@@ -789,6 +789,73 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.api-saved-source-shelf {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(0, 224, 255, 0.22);
+  background: rgba(8, 22, 40, 0.58);
+}
+.api-saved-source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.api-saved-source-head span,
+.api-saved-source-shelf > div > span {
+  display: block;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.api-saved-source-head strong,
+.api-saved-source-shelf > div > strong {
+  display: block;
+  margin-top: 3px;
+}
+.api-saved-source-head small,
+.api-saved-source-shelf > div > small {
+  color: var(--text2);
+}
+.api-saved-source-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.api-saved-source-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(80, 140, 180, 0.26);
+  background: rgba(15, 23, 42, 0.56);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.api-saved-source-card:hover,
+.api-saved-source-card.active {
+  border-color: var(--accent);
+  background: rgba(0, 224, 255, 0.08);
+}
+.api-saved-source-card span,
+.api-saved-source-card strong,
+.api-saved-source-card small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-saved-source-card span {
+  font-weight: 800;
+}
+.api-saved-source-card strong,
+.api-saved-source-card small {
+  color: var(--text2);
+  font-size: 11px;
+}
 .api-source-environment-actions {
   display: flex;
   align-items: center;
@@ -2308,6 +2375,31 @@
 .api-tech-log {
   margin-top: 14px;
 }
+.api-execution-live-log {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(0, 224, 255, 0.24);
+  background: rgba(2, 6, 23, 0.34);
+}
+.api-execution-live-log .api-tech-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.api-execution-live-log .api-tech-log-head span {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+.api-execution-live-log .api-tech-log-head small {
+  color: var(--text2);
+}
+.api-tech-log.embedded {
+  margin-top: 0;
+}
 .api-log-detail {
   border: 1px solid var(--border);
   margin-top: 8px;
@@ -2949,6 +3041,14 @@
   .api-source-environment-actions .btn-sm {
     flex: 1;
     justify-content: center;
+  }
+  .api-saved-source-head,
+  .api-execution-live-log .api-tech-log-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .api-saved-source-list {
+    grid-template-columns: 1fr;
   }
 }
 .api-business-auth-panel > p {

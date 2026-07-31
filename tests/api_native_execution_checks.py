@@ -18,6 +18,7 @@ from task_server.services import (
     api_execution_service,
     api_report_service,
     api_source_service,
+    api_test_plan_service,
     api_workspace_service,
 )
 
@@ -29,16 +30,19 @@ class NativeApiExecutionChecks(unittest.TestCase):
         self.old_workspace_dir = api_workspace_service.API_TESTING_DIR
         self.old_execution_dir = api_execution_service.API_TESTING_DIR
         self.old_report_dir = api_report_service.API_TESTING_DIR
+        self.old_plan_dir = api_test_plan_service.API_TESTING_DIR
         api_source_service.API_TESTING_DIR = self.temp_dir
         api_workspace_service.API_TESTING_DIR = self.temp_dir
         api_execution_service.API_TESTING_DIR = self.temp_dir
         api_report_service.API_TESTING_DIR = self.temp_dir
+        api_test_plan_service.API_TESTING_DIR = self.temp_dir
 
     def tearDown(self):
         api_source_service.API_TESTING_DIR = self.old_source_dir
         api_workspace_service.API_TESTING_DIR = self.old_workspace_dir
         api_execution_service.API_TESTING_DIR = self.old_execution_dir
         api_report_service.API_TESTING_DIR = self.old_report_dir
+        api_test_plan_service.API_TESTING_DIR = self.old_plan_dir
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _source(self):
@@ -138,6 +142,87 @@ class NativeApiExecutionChecks(unittest.TestCase):
         self.assertEqual("AUTH_ISSUE", failed["analysis"]["failure_type"])
         self.assertTrue(failed["analysis"]["evidence"])
         self.assertTrue(failed["analysis"]["suggestions"])
+
+    def test_execution_events_show_request_response_assert_and_report_without_secrets(self):
+        source = self._source()
+        api_workspace_service.save_api_auth_binding_metadata(
+            source["source_id"],
+            auth_type="bearer",
+            header_name="Authorization",
+            secret_value="source-secret",
+        )
+        plan = {
+            "plan_id": "api_plan_local",
+            "name": "本地执行日志计划",
+            "source_id": source["source_id"],
+        }
+        case = {
+            "case_id": "API-LOG-1",
+            "name": "查询当前用户",
+            "endpoint": "GET /users/me",
+            "request": {
+                "method": "GET",
+                "path": "/users/me",
+                "auth_ref": "MTP_API_AUTH_TEST",
+            },
+            "assertions": [{"type": "status", "expected": 200}],
+        }
+        original_execute_case = api_execution_service._execute_case
+
+        def fake_execute_case(_source_id, _base_url, _case):
+            return {
+                "case_id": "API-LOG-1",
+                "name": "查询当前用户",
+                "endpoint": "GET /users/me",
+                "status": "passed",
+                "duration_ms": 12,
+                "request": {
+                    "method": "GET",
+                    "url": "https://api.example.test/users/me",
+                    "headers": {"Authorization": "Bearer source-secret"},
+                },
+                "response": {"status_code": 200, "body": {"ok": True}},
+                "assertions": [{"type": "status", "passed": True, "message": "HTTP 200"}],
+            }
+
+        api_execution_service._execute_case = fake_execute_case
+        try:
+            execution_id = "api_execution_log_test"
+            execution = {
+                "execution_id": execution_id,
+                "run_id": "api_run_log_test",
+                "run_mode": "baseline",
+                "provider": "native_api",
+                "plan_id": plan["plan_id"],
+                "plan_name": plan["name"],
+                "source_id": source["source_id"],
+                "status": "queued",
+                "report_status": "pending",
+                "current_phase": "prepare",
+                "created_at": "2026-07-31 09:00:00",
+                "updated_at": "2026-07-31 09:00:00",
+                "duration_seconds": 0,
+                "stats": {"total": 1, "passed": 0, "failed": 0, "completed": 0},
+                "phases": api_execution_service._phases(),
+                "events": [],
+                "cases": [case],
+                "plan_snapshot": plan,
+                "poll_after_ms": 1500,
+            }
+            api_execution_service._save_execution(execution)
+            api_execution_service._run_execution(execution_id)
+            current = api_execution_service.get_api_execution(execution_id)
+        finally:
+            api_execution_service._execute_case = original_execute_case
+
+        summaries = [event.get("summary", "") for event in current.get("events", [])]
+        self.assertTrue(any("发送请求" in summary for summary in summaries))
+        self.assertTrue(any("收到响应" in summary for summary in summaries))
+        self.assertTrue(any("断言通过" in summary for summary in summaries))
+        self.assertTrue(any("生成报告" in summary for summary in summaries))
+        text = str(current)
+        self.assertNotIn("source-secret", text)
+        self.assertIn("Bearer ***", text)
 
 
 if __name__ == "__main__":

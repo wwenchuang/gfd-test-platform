@@ -28,6 +28,51 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 API 执行实时日志与已保存 Apifox 项目入口
+
+用户反馈：
+
+- 参考 `aippt-auto-test-share` 后，希望接口执行时像对方工具一样能直接看到实时日志，而不是只等最终报告。
+- Apifox 同步下来的项目、环境和接口快照需要有明显入口；同事使用时不应该每次都重新刷新或手填 Project ID。
+
+参考判断：
+
+- 参考工具的优点是流程短：左侧选环境/命令，右侧默认显示执行日志，结束后沉淀报告。
+- 我们不能照搬其内存任务和 stdout 日志实现；平台需要继续用本地持久化 source/execution/report 记录，并保持敏感字段脱敏。
+
+修复：
+
+- 原生 API 执行器细化执行事件：
+  - 排队、准备环境、发送请求、收到响应、断言通过/失败、生成报告、任务完成。
+  - 请求/响应日志保存结构化 detail，前端可展开查看。
+  - 鉴权只显示 `auth_state: Bearer ***`，不保存或展示 token 明文。
+- API 执行页新增“实时执行日志”面板：
+  - 默认跟随 active run 展示。
+  - 中文展示阶段：准备环境、请求响应、断言结果、生成报告。
+  - 继续保留日志展开状态和滚动位置，轮询刷新不折叠。
+- API 资产页新增“已保存 Apifox 项目”项目架：
+  - 直接展示本地已保存 source、环境和 base_url。
+  - 同事可直接切换已有项目；只有需要更新时才重新读取 Apifox。
+  - 不新增执行器、不反写 Apifox。
+- API 执行页也复用“已保存 Apifox 项目”项目架：
+  - 执行页会读取本地已保存 sources，不要求用户先回资产页刷新。
+  - 在执行页切换项目只切换本地执行上下文，不触发 Apifox 重新同步。
+  - 修复首次进入执行页时默认 source 与实时日志轮询 scope 不一致的问题。
+- 前端缓存版本更新为 `20260731-api-live-log-sources`。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 tests/api_native_execution_checks.py
+python3 tests/api_workbench_checks.py
+python3 tests/api_asset_sync_checks.py
+python3 -m py_compile task_server/services/api_execution_service.py tests/api_native_execution_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/api_execution_service.py js/api-testing.js css/round5.css task-manager.html tests/api_native_execution_checks.py tests/frontend_static_checks.py
+```
+
 ### 2026-07-31 API 报告可读性与 Apifox 本地环境快照编辑
 
 用户反馈：

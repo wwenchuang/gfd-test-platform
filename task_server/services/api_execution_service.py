@@ -296,6 +296,16 @@ def _build_url(base_url: str, request: Dict[str, Any]) -> str:
     return url
 
 
+def _short_api_url(url: Any) -> str:
+    try:
+        parsed = urllib.parse.urlparse(str(url or ""))
+    except Exception:
+        return str(url or "")
+    if parsed.path:
+        return f"{parsed.path}{('?' + parsed.query) if parsed.query else ''}"
+    return str(url or "")
+
+
 def _request_body(request: Dict[str, Any], headers: Dict[str, str]) -> bytes | None:
     method = str(request.get("method") or "GET").upper()
     if method in {"GET", "HEAD"}:
@@ -309,6 +319,76 @@ def _request_body(request: Dict[str, Any], headers: Dict[str, str]) -> bytes | N
     if isinstance(body, str):
         return body.encode("utf-8")
     return json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+
+def _public_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    public: Dict[str, str] = {}
+    for key, value in (headers or {}).items():
+        name = str(key or "").strip()
+        if not name:
+            continue
+        public[name] = "Bearer ***" if api_case_contract_service.is_sensitive_header_name(name) else str(value)
+    return public
+
+
+def _request_log_detail(source_id: str, base_url: str, case: Dict[str, Any]) -> Dict[str, Any]:
+    request = copy.deepcopy(case.get("request") or {})
+    method = str(request.get("method") or "GET").upper()
+    headers = {
+        str(key): str(value)
+        for key, value in (request.get("headers") or {}).items()
+        if str(key or "").strip()
+    }
+    if str(request.get("auth_ref") or "").strip():
+        auth = api_workspace_service.get_api_auth_secret(source_id)
+        header_name = str(auth.get("header_name") or "Authorization").strip()
+        if header_name:
+            headers.setdefault(header_name, "Bearer ***")
+    url = _build_url(base_url, request)
+    has_auth = any(api_case_contract_service.is_sensitive_header_name(name) for name in headers)
+    return api_case_contract_service.sanitize_sensitive_data({
+        "case_id": case.get("case_id"),
+        "name": case.get("name"),
+        "endpoint": case.get("endpoint"),
+        "auth_state": "Bearer ***" if has_auth else "未使用鉴权",
+        "request": {
+            "method": method,
+            "url": url,
+            "headers": _public_headers(headers),
+            "body": request.get("body"),
+        },
+    })
+
+
+def _response_log_detail(result: Dict[str, Any]) -> Dict[str, Any]:
+    response = result.get("response") if isinstance(result.get("response"), dict) else {}
+    request = result.get("request") if isinstance(result.get("request"), dict) else {}
+    return api_case_contract_service.sanitize_sensitive_data({
+        "case_id": result.get("case_id"),
+        "name": result.get("name"),
+        "status": result.get("status"),
+        "duration_ms": result.get("duration_ms", 0),
+        "request": {
+            "method": request.get("method"),
+            "url": request.get("url"),
+        },
+        "response": {
+            "status_code": response.get("status_code"),
+            "headers": response.get("headers") or {},
+            "body": response.get("body"),
+        },
+        "error": result.get("error", ""),
+    })
+
+
+def _assertion_log_detail(result: Dict[str, Any]) -> Dict[str, Any]:
+    return api_case_contract_service.sanitize_sensitive_data({
+        "case_id": result.get("case_id"),
+        "name": result.get("name"),
+        "status": result.get("status"),
+        "assertions": result.get("assertions") or [],
+        "error": result.get("error", ""),
+    })
 
 
 def _apply_auth(source_id: str, request: Dict[str, Any], headers: Dict[str, str]) -> None:
@@ -578,6 +658,14 @@ def _run_execution(execution_id: str) -> None:
         results: List[Dict[str, Any]] = []
         for index, case in enumerate(cases, start=1):
             _append_event(execution, "execute", f"[{index}/{len(cases)}] {case.get('name') or case.get('case_id')} 开始", {"case_id": case.get("case_id")})
+            request_detail = _request_log_detail(source_id, base_url, case)
+            request = request_detail.get("request") if isinstance(request_detail.get("request"), dict) else {}
+            _append_event(
+                execution,
+                "execute",
+                f"[{index}/{len(cases)}] 发送请求 {request.get('method') or '-'} {_short_api_url(request.get('url') or '')}",
+                request_detail,
+            )
             result = _execute_case(source_id, base_url, case)
             results.append(result)
             execution["results"] = results
@@ -587,17 +675,27 @@ def _run_execution(execution_id: str) -> None:
                 "failed": len([item for item in results if item.get("status") == "failed"]),
                 "completed": len(results),
             }
+            response = result.get("response") if isinstance(result.get("response"), dict) else {}
+            _append_event(
+                execution,
+                "execute",
+                f"[{index}/{len(cases)}] 收到响应 HTTP {response.get('status_code') or '-'} · {result.get('duration_ms', 0)}ms",
+                _response_log_detail(result),
+                status=result.get("status") or "running",
+            )
+            assertion_summary = "断言通过" if result.get("status") == "passed" else "断言失败"
             _append_event(
                 execution,
                 "assert",
-                f"[{result.get('status').upper()}] {result.get('name') or result.get('case_id')} · {result.get('duration_ms')}ms",
-                result,
+                f"[{index}/{len(cases)}] {assertion_summary}：{result.get('name') or result.get('case_id')}",
+                _assertion_log_detail(result),
                 status=result.get("status") or "running",
             )
         _set_phase(execution, "execute", "succeeded", "接口请求执行完成")
         failed = len([item for item in results if item.get("status") == "failed"])
         _set_phase(execution, "assert", "failed" if failed else "succeeded", f"{len(results) - failed} 通过 / {failed} 失败")
         _set_phase(execution, "report", "running", "生成平台 API 报告")
+        _append_event(execution, "report", "生成报告：汇总执行结果与失败分析", {"total": len(results), "failed": failed})
         report = api_report_service.save_api_report(_execution_report(execution))
         execution["report_id"] = report.get("report_id")
         execution["report_status"] = report.get("status")
