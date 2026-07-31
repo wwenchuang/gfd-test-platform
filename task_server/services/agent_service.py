@@ -5952,6 +5952,243 @@ def _agent_yaml_ref_is_generated(run, ref):
     return _agent_yaml_ref_source(run, ref) == "generated"
 
 
+def _agent_history_text_key(value):
+    text = unicodedata.normalize("NFKC", str(value or "").strip()).lower()
+    return re.sub(r"\s+", "", text)
+
+
+def _agent_history_figma_key(value):
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(text)
+    except Exception:
+        return _agent_history_text_key(text)
+    if not parsed.netloc:
+        return _agent_history_text_key(text)
+    query_pairs = []
+    for key, raw_value in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True):
+        normalized_key = str(key or "").strip().lower()
+        if normalized_key in ("t", "timestamp"):
+            continue
+        query_pairs.append((normalized_key, urllib.parse.unquote(str(raw_value or "").strip())))
+    query = urllib.parse.urlencode(sorted(query_pairs), doseq=True)
+    scheme = (parsed.scheme or "https").lower()
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    path = urllib.parse.unquote(parsed.path or "").rstrip("/")
+    return urllib.parse.urlunsplit((scheme, netloc, path, query, ""))
+
+
+def _agent_history_context_value(run, *names):
+    if not isinstance(run, dict):
+        return ""
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    normalized = _agent_normalized_input(run)
+    source_inputs = normalized.get("sourceInputs") if isinstance(normalized.get("sourceInputs"), dict) else {}
+    contexts = [
+        artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {},
+        run.get("sourceRefs") if isinstance(run.get("sourceRefs"), dict) else {},
+        normalized,
+        source_inputs,
+        run,
+    ]
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        for name in names:
+            value = context.get(name)
+            if value not in (None, ""):
+                return str(value).strip()
+    return ""
+
+
+def _agent_history_seed_signature(run):
+    return {
+        "target": _agent_history_text_key((run or {}).get("target")),
+        "figma": _agent_history_figma_key(_agent_history_context_value(run, "figmaUrl", "figma_url")),
+        "requirement": _agent_history_text_key(_agent_history_context_value(run, "requirementText", "requirement", "text")),
+        "appPackage": _agent_history_text_key(_agent_app_package(run or {})),
+    }
+
+
+def _agent_history_signature_matches(current, candidate):
+    current_sig = _agent_history_seed_signature(current)
+    candidate_sig = _agent_history_seed_signature(candidate)
+    if not current_sig.get("target") or current_sig.get("target") != candidate_sig.get("target"):
+        return False
+    if current_sig.get("appPackage") and current_sig.get("appPackage") != candidate_sig.get("appPackage"):
+        return False
+    if current_sig.get("figma"):
+        return current_sig.get("figma") == candidate_sig.get("figma")
+    return bool(current_sig.get("requirement") and current_sig.get("requirement") == candidate_sig.get("requirement"))
+
+
+def _agent_history_run_is_full_success(run):
+    if not isinstance(run, dict) or str(run.get("status") or "").upper() != "DONE":
+        return False
+    summary = _agent_run_report_summary(run)
+    if summary:
+        return bool(
+            str(summary.get("outcome") or "").lower() == "passed"
+            and _safe_int_local(summary.get("passed"), 0) > 0
+            and _safe_int_local(summary.get("failed"), 0) == 0
+            and _safe_int_local(summary.get("timeout"), 0) == 0
+            and _safe_int_local(summary.get("running"), 0) == 0
+        )
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    execution = ((artifacts.get("summary") or {}).get("execution") or {}) if isinstance(artifacts.get("summary"), dict) else {}
+    return bool(
+        str(execution.get("outcome") or "").lower() == "passed"
+        and _safe_int_local(execution.get("logicalPassedCount"), 0) > 0
+        and _safe_int_local(execution.get("logicalFailedCount"), 0) == 0
+    )
+
+
+def _agent_history_seed_refs_from_run(run, limit=8):
+    if not isinstance(run, dict):
+        return []
+    artifacts = run.get("artifacts") if isinstance(run.get("artifacts"), dict) else {}
+    refs_by_path = {}
+    ordered_paths = []
+
+    def add_path(path, ref=None):
+        path = str(path or "").strip()
+        if not path or not _candidate_path_exists(path):
+            return
+        norm = os.path.normpath(path)
+        if ref and norm not in refs_by_path:
+            refs_by_path[norm] = dict(ref)
+        if norm not in ordered_paths:
+            ordered_paths.append(norm)
+
+    for ref in artifacts.get("yamlRefs") or []:
+        if isinstance(ref, dict):
+            add_path(ref.get("path"), ref)
+
+    plan = artifacts.get("generatedYamlExecutionPlan") if isinstance(artifacts.get("generatedYamlExecutionPlan"), dict) else {}
+    for key in ("selected", "deferred", "results"):
+        for item in plan.get(key) or []:
+            if isinstance(item, dict):
+                add_path(item.get("path"), item)
+
+    for path in artifacts.get("generatedYamlPaths") or []:
+        add_path(path)
+    add_path(artifacts.get("generatedYamlPath"))
+
+    seed_refs = []
+    for norm_path in ordered_paths[:max(1, int(limit or 8))]:
+        base_ref = refs_by_path.get(norm_path) or {}
+        module = str(base_ref.get("module") or "").strip()
+        file_name = str(base_ref.get("file") or "").strip()
+        if not (module and file_name):
+            module, file_name = _task_dir_for_path(norm_path)
+        seed_refs.append({
+            "type": "file",
+            "source": "generated",
+            "generated": True,
+            "validationMode": "historical_success_seed",
+            "module": module,
+            "file": file_name,
+            "path": norm_path,
+            "content": "",
+            "confirmed": True,
+            "executionLevel": base_ref.get("executionLevel") or "executable",
+            "executableScore": base_ref.get("executableScore") if isinstance(base_ref.get("executableScore"), dict) else {},
+            "scopeReview": base_ref.get("scopeReview") if isinstance(base_ref.get("scopeReview"), dict) else {},
+            "runnerCandidate": bool(base_ref.get("runnerCandidate", True)),
+            "historySeed": True,
+            "historySeedRunId": run.get("runId") or "",
+            "reason": "同目标、同 Figma、同包名的历史全通过 Agent YAML 种子",
+        })
+    return seed_refs
+
+
+def _agent_historical_success_seed_refs(run, runs=None, limit=8):
+    if not isinstance(run, dict):
+        return []
+    history = runs if isinstance(runs, list) else load_agent_runs()
+    candidates = []
+    for previous in history or []:
+        if not isinstance(previous, dict):
+            continue
+        if previous.get("runId") and previous.get("runId") == run.get("runId"):
+            continue
+        if not _agent_history_signature_matches(run, previous):
+            continue
+        if not _agent_history_run_is_full_success(previous):
+            continue
+        seed_refs = _agent_history_seed_refs_from_run(previous, limit=limit)
+        if not seed_refs:
+            continue
+        summary = _agent_run_report_summary(previous)
+        candidates.append({
+            "updatedAt": str(previous.get("updatedAt") or previous.get("createdAt") or ""),
+            "passed": _safe_int_local(summary.get("passed"), len(seed_refs)) if summary else len(seed_refs),
+            "refs": seed_refs,
+        })
+    candidates.sort(key=lambda item: (item.get("updatedAt") or "", item.get("passed") or 0, len(item.get("refs") or [])), reverse=True)
+    return copy.deepcopy((candidates[0] or {}).get("refs") or []) if candidates else []
+
+
+def _apply_agent_historical_success_seed(run, seed_refs):
+    if not isinstance(run, dict) or not seed_refs:
+        return []
+    artifacts = run.setdefault("artifacts", {})
+    refs = [dict(ref) for ref in seed_refs if isinstance(ref, dict) and ref.get("path")]
+    if not refs:
+        return []
+    seed_run_id = refs[0].get("historySeedRunId") or ""
+    paths = [ref.get("path") for ref in refs if ref.get("path")]
+    artifacts["historicalSuccessSeedRefs"] = refs
+    artifacts["matchedCases"] = []
+    artifacts["matchedCount"] = len(refs)
+    artifacts["matchReason"] = f"命中历史全通过 Agent {seed_run_id}，复用 {len(refs)} 个 YAML 作为稳定回归种子"
+    artifacts["allowDraftGeneration"] = False
+    artifacts["generatedYaml"] = ""
+    artifacts["generatedYamlPath"] = paths[0] if paths else ""
+    artifacts["generatedYamlPaths"] = paths
+    artifacts["draftConfirmed"] = True
+    artifacts["requiresConfirm"] = False
+    artifacts["yamlRefs"] = refs
+    pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    artifacts["generationPipeline"] = {
+        **pipeline,
+        "source": "historical_success_seed",
+        "reusedHistoricalSuccessSeed": True,
+        "historicalSeedRunId": seed_run_id,
+        "caseCount": max(_safe_int_local(pipeline.get("caseCount"), 0), len(refs)),
+        "automationCaseCount": max(_safe_int_local(pipeline.get("automationCaseCount"), 0), len(refs)),
+        "yamlFileCount": len(refs),
+    }
+    keywords = _source_keywords(artifacts.get("sourceContext") if isinstance(artifacts.get("sourceContext"), dict) else {}, limit=16)
+    artifacts["caseRetrieval"] = {
+        "decision": "reuse_historical_success_seed",
+        "confidence": 0.99,
+        "strategy": "historical_success_agent",
+        "confidenceSource": "historical_success_agent",
+        "aiUsed": False,
+        "aiReason": artifacts["matchReason"],
+        "keywords": keywords,
+        "matchedKeywords": keywords,
+        "seedRunId": seed_run_id,
+        "candidates": [
+            {
+                "rel_path": os.path.relpath(ref.get("path"), _repo_base_dir()) if os.path.isabs(ref.get("path") or "") else ref.get("path"),
+                "dir_name": ref.get("module"),
+                "file_name": ref.get("file"),
+                "confidence": 0.99,
+                "reasons": [ref.get("reason") or "历史全通过 Agent YAML 种子"],
+            }
+            for ref in refs
+        ],
+    }
+    normalize_yaml_refs(run)
+    return artifacts.get("yamlRefs") or refs
+
+
 AGENT_TRANSITION_ACTIONS = {"aiTap", "aiInput", "ai", "aiAction", "aiAct", "aiScroll"}
 AGENT_FOLLOWUP_ACTIONS = {"aiWaitFor", "sleep", "aiAssert", "ai", "aiAction"}
 AGENT_ACTION_PREFIX_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(.*)$", re.S)
@@ -6157,7 +6394,9 @@ def validate_agent_yaml_content(yaml_text):
 def _agent_is_generated_yaml_run(run):
     artifacts = (run or {}).setdefault("artifacts", {})
     pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
-    if pipeline.get("source") in ("ui_yaml_pipeline", "agent_generate_yaml"):
+    if pipeline.get("source") in ("ui_yaml_pipeline", "agent_generate_yaml", "historical_success_seed"):
+        return True
+    if pipeline.get("reusedHistoricalSuccessSeed") or artifacts.get("historicalSuccessSeedRefs"):
         return True
     if pipeline.get("fallbackAutoConfirmed") or pipeline.get("progressJobId"):
         return True
@@ -8980,6 +9219,22 @@ def _tool_case_retrieval(run):
                 _log_tool_call(call, run.get("runId", ""))
                 return call
         if _agent_is_new_requirement_run(run, source_context):
+            seed_refs = _agent_historical_success_seed_refs(run)
+            if seed_refs:
+                applied_refs = _apply_agent_historical_success_seed(run, seed_refs)
+                artifacts["matchReason"] = (
+                    artifacts.get("matchReason")
+                    or f"命中历史全通过 Agent，复用 {len(applied_refs)} 个 YAML 作为稳定回归种子"
+                )
+                call["status"] = "SUCCESS"
+                call["outputSummary"] = artifacts["matchReason"]
+                call["keywords"] = (artifacts.get("caseRetrieval") or {}).get("keywords") or []
+                call["matchedKeywords"] = (artifacts.get("caseRetrieval") or {}).get("matchedKeywords") or []
+                call["artifactRefs"] = [str(ref.get("path") or "") for ref in applied_refs[:8]]
+                call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                call["durationMs"] = _compute_duration(call)
+                _log_tool_call(call, run.get("runId", ""))
+                return call
             artifacts["matchedCases"] = []
             artifacts["matchedCount"] = 0
             artifacts["matchReason"] = "检测到需求/Figma 新需求输入，跳过旧基线复用匹配，直接生成新 YAML 草稿"
@@ -10875,7 +11130,12 @@ def _tool_generate_yaml(run):
         file_refs = [item for item in refs if item.get("type") == "file" and item.get("confirmed")]
         if file_refs:
             call["status"] = "SKIPPED"
-            call["outputSummary"] = f"已有 {len(file_refs)} 个可复用 YAML，跳过生成"
+            historical_seed = artifacts.get("historicalSuccessSeedRefs") if isinstance(artifacts.get("historicalSuccessSeedRefs"), list) else []
+            if historical_seed:
+                seed_run_id = (historical_seed[0] or {}).get("historySeedRunId") if isinstance(historical_seed[0], dict) else ""
+                call["outputSummary"] = f"命中历史成功 Agent {seed_run_id} 的 {len(file_refs)} 个可复用 YAML，跳过重新生成"
+            else:
+                call["outputSummary"] = f"已有 {len(file_refs)} 个可复用 YAML，跳过生成"
             artifacts["generatedYaml"] = None
             call["endedAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             call["durationMs"] = _compute_duration(call)

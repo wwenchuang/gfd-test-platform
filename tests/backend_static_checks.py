@@ -15585,6 +15585,137 @@ def check_agent_history_list_exposes_report_summary():
     )
 
 
+def check_agent_new_requirement_reuses_historical_success_seed():
+    from task_server import storage
+    from task_server.services import agent_service
+
+    old_runs_file = agent_service.AGENT_RUNS_FILE
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            seed_dir = os.path.join(temp_dir, "midscene-tasks", "AI Agent 草稿")
+            os.makedirs(seed_dir, exist_ok=True)
+            seed_paths = []
+            for index, name in enumerate(("文档打印百度网盘入口.yaml", "照片打印百度网盘入口.yaml", "扫描复印百度网盘入口.yaml"), start=1):
+                path = os.path.join(seed_dir, name)
+                storage.write_text_file(path, f"""
+android:
+  tasks:
+    - name: "百度网盘入口历史成功种子 {index}"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "首页已加载完成"
+        - aiTap: "基础打印入口"
+        - aiWaitFor: "页面展示百度网盘入口"
+        - aiAssert: "百度网盘入口可见且文案正确"
+""")
+                seed_paths.append(path)
+
+            figma_url = "https://www.figma.com/design/sAG0XUT4oGsx1qrOostnxA/增加百度网盘入口?node-id=0-1&p=f&t=old-token-0"
+            current_figma_url = figma_url.replace("old-token", "new-token")
+            previous_run = {
+                "runId": "agent-static-history-seed-passed",
+                "status": "DONE",
+                "currentStep": "DONE",
+                "target": "基础打印新增百度网盘入口",
+                "appPackage": "com.xbxxhz.box",
+                "sourceType": "figma",
+                "sourceRefs": {"figmaUrl": figma_url},
+                "normalizedInput": {
+                    "figmaUrl": figma_url,
+                    "requirementText": "覆盖文档打印、照片打印、扫描复印三个入口的百度网盘展示、同级、文案、可达性",
+                },
+                "createdAt": "2026-07-31T08:00:00",
+                "updatedAt": "2026-07-31T08:30:00",
+                "artifacts": {
+                    "sourceContext": {
+                        "sourceType": "figma",
+                        "figmaUrl": figma_url,
+                        "requirementText": "覆盖文档打印、照片打印、扫描复印三个入口的百度网盘展示、同级、文案、可达性",
+                    },
+                    "generationPipeline": {
+                        "source": "ui_yaml_pipeline",
+                        "caseCount": 20,
+                        "automationCaseCount": 3,
+                        "yamlFileCount": 3,
+                    },
+                    "yamlRefs": [
+                        {
+                            "type": "file",
+                            "source": "generated",
+                            "generated": True,
+                            "validationMode": "generated",
+                            "module": "AI Agent 草稿",
+                            "file": os.path.basename(path),
+                            "path": path,
+                            "confirmed": True,
+                            "executionLevel": "executable",
+                        }
+                        for path in seed_paths
+                    ],
+                    "generatedYamlPaths": seed_paths,
+                    "generatedYamlExecutionPlan": {
+                        "counts": {"total": 3, "selectedSmoke": 2, "deferredExecutable": 1},
+                        "selected": [{"path": seed_paths[0]}, {"path": seed_paths[1]}],
+                        "deferred": [{"path": seed_paths[2]}],
+                    },
+                    "summary": {
+                        "conclusion": "通过",
+                        "execution": {
+                            "outcome": "passed",
+                            "logicalAttemptCount": 3,
+                            "logicalPassedCount": 3,
+                            "logicalFailedCount": 0,
+                            "smokeAllFailed": False,
+                        },
+                        "orchestration": {"runStatus": "DONE"},
+                    },
+                    "report": {"status": "complete"},
+                },
+            }
+            current_run = {
+                "runId": "agent-static-history-seed-current",
+                "status": "RUNNING",
+                "currentStep": "CASE_RETRIEVAL",
+                "target": "基础打印新增百度网盘入口",
+                "appPackage": "com.xbxxhz.box",
+                "sourceType": "figma",
+                "sourceRefs": {"figmaUrl": current_figma_url},
+                "scope": "regression",
+                "artifacts": {
+                    "sourceContext": {
+                        "sourceType": "figma",
+                        "figmaUrl": current_figma_url,
+                        "requirementText": "覆盖文档打印、照片打印、扫描复印三个入口的百度网盘展示、同级、文案、可达性",
+                    }
+                },
+            }
+            agent_service.AGENT_RUNS_FILE = os.path.join(temp_dir, "agent-runs.json")
+            agent_service.save_agent_runs([current_run, previous_run])
+            seed_refs = agent_service._agent_historical_success_seed_refs(current_run)
+            require(
+                len(seed_refs) == 3
+                and all(ref.get("historySeedRunId") == "agent-static-history-seed-passed" for ref in seed_refs)
+                and all(ref.get("source") == "generated" and ref.get("validationMode") == "historical_success_seed" for ref in seed_refs),
+                "Same target/package/Figma historical passed Agent run must supply generated YAML seed refs before fresh AI generation",
+            )
+            agent_service._apply_agent_historical_success_seed(current_run, seed_refs)
+            artifacts = current_run.get("artifacts") or {}
+            require(
+                artifacts.get("generatedYamlPaths") == seed_paths
+                and not artifacts.get("matchedCases")
+                and agent_service._agent_is_generated_yaml_run(current_run),
+                "Historical success seed must keep generated-YAML smoke gating active instead of becoming an ungated baseline match",
+            )
+            call = agent_service._tool_generate_yaml(current_run)
+            require(
+                call.get("status") == "SKIPPED"
+                and "历史成功" in call.get("outputSummary", ""),
+                "Generate YAML must skip fresh AI generation when historical success seed refs are already applied",
+            )
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_runs_file
+
+
 def check_agent_run_retry_clones_inputs_without_artifacts():
     from task_server import storage
     from task_server.services import agent_service
@@ -16778,6 +16909,7 @@ def main():
     check_agent_report_summary_keeps_non_smoke_buckets()
     check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
     check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
+    check_agent_new_requirement_reuses_historical_success_seed()
     check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()
