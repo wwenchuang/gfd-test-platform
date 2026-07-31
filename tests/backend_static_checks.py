@@ -13955,6 +13955,56 @@ def check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_pl
     )
 
 
+def check_agent_report_summary_counts_unique_final_cases_after_expanded_repair():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-expanded-repair-final-counts",
+        "status": "DONE",
+        "artifacts": {
+            "summary": {
+                "conclusion": "修复后通过",
+                "execution": {
+                    "outcome": "passed",
+                    "label": "修复后通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 4,
+                    "logicalPassedCount": 6,
+                    "logicalFailedCount": 0,
+                    "smokeAllFailed": False,
+                    "phases": [
+                        {"phase": "smoke", "passed": 3, "failed": 0},
+                        {"phase": "expanded-1", "passed": 0, "failed": 1},
+                        {"phase": "安全重跑", "passed": 1, "failed": 0},
+                        {"phase": "首批冒烟", "passed": 3, "failed": 0},
+                        {"phase": "扩展第1批", "passed": 0, "failed": 1},
+                        {"phase": "安全重跑-同设备串行", "passed": 1, "failed": 0},
+                    ],
+                },
+                "orchestration": {"runStatus": "DONE", "label": "编排完成"},
+            },
+            "generationPipeline": {"caseCount": 5, "automationCaseCount": 5, "yamlFileCount": 5},
+            "generatedYamlExecutionPlan": {
+                "counts": {"total": 4, "selectedSmoke": 3, "deferredExecutable": 1},
+                "smokeResult": {"total": 3, "passed": 3, "failed": 0, "timeout": 0},
+                "expandedResult": {"created": 1, "passed": 0, "failed": 1, "timeout": 0},
+            },
+            "rerunResult": {"createdCount": 1, "completedCount": 1, "failedCount": 0, "timeoutCount": 0},
+            "report": {"status": "failed"},
+        },
+    }
+    summary = agent_service._agent_run_report_summary(run)
+    require(
+        summary.get("attempted") == 4
+        and summary.get("passed") == 4
+        and summary.get("failed") == 0
+        and summary.get("nonSmokeAttempted") == 1
+        and summary.get("nonSmokePassed") == 1
+        and summary.get("nonSmokeFailed") == 0,
+        "Agent history final counts must use unique planned cases and count successful repair reruns as recovered, not as extra passed cases",
+    )
+
+
 def check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements():
     from task_server.services.case_service import generation_volume_targets
 
@@ -16517,6 +16567,7 @@ def main():
     check_agent_orphaned_running_step_after_restart_requeues()
     check_agent_report_summary_keeps_non_smoke_buckets()
     check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
+    check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
     check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()

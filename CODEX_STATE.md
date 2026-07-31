@@ -28,6 +28,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-07-31 Agent 历史卡片最终结果统计去重
+
+用户反馈：
+
+- Agent 运行记录卡片出现 `4/3 通过`、`6/4 通过` 这类分子大于分母的统计。
+- 其他人无法一眼判断实际通过多少条、失败多少条。
+
+线上复现：
+
+- `agent-1785461191470-63ea62f9` 实际 Runner 轨迹是：3 条 smoke 全通过，1 条 expanded 先失败，修复重跑通过。
+- 列表接口旧 `reportSummary` 显示 `attempted=4 / passed=6`，因为把 `smoke`、`首批冒烟`、`安全重跑`、`安全重跑-同设备串行` 等重复 phase 累加到了总通过数。
+
+修复：
+
+- `agent_service._agent_report_execution_buckets_from_plan()` 把修复重跑成功用于抵扣未通过的唯一用例：
+  - 先抵扣 smoke 未通过。
+  - 剩余修复成功再抵扣 non-smoke/expanded 未通过。
+- `_agent_run_report_summary()` 在有执行计划桶时，用 `smoke + nonSmoke` 的唯一用例最终桶重算 `attempted/passed/failed/timeout/running`。
+- 修复后通过且无最终失败时，将卡片使用的 `reportStatus` 投影为 `success`，避免旧原始报告 failed 覆盖最终结论。
+- `agent-status.js` 前端兜底优先使用 smoke/non-smoke 桶计算总数，不再直接展示重复 phase 导致的原始 `passed/attempted`。
+- `task-manager.html` 更新缓存版本为 `20260731-agent-history-final-buckets`。
+
+验证：
+
+```bash
+python3 - <<'PY'
+import tests.backend_static_checks as checks
+checks.check_agent_report_summary_keeps_non_smoke_buckets()
+checks.check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
+checks.check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
+print('targeted backend checks passed')
+PY
+python3 tests/frontend_static_checks.py
+node --check js/agent-status.js
+```
+
 ### 2026-07-31 API 执行实时日志与已保存 Apifox 项目入口
 
 用户反馈：

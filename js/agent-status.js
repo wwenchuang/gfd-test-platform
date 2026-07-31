@@ -154,11 +154,11 @@ function agentRunResultSource(run) {
 
 function agentRunResultMeta(run) {
   const result = agentRunResultSource(run);
-  const attempted = Number(result.attempted || 0);
-  const passed = Number(result.passed || 0);
-  const failed = Number(result.failed || 0);
-  const timeout = Number(result.timeout || 0);
-  const running = Number(result.running || 0);
+  const rawAttempted = Number(result.attempted || 0);
+  const rawPassed = Number(result.passed || 0);
+  const rawFailed = Number(result.failed || 0);
+  const rawTimeout = Number(result.timeout || 0);
+  const rawRunning = Number(result.running || 0);
   const generatedCases = Number(result.generatedCases || 0);
   const automationCases = Number(result.automationCases || 0);
   const generatedYaml = Number(result.generatedYaml || 0);
@@ -175,9 +175,19 @@ function agentRunResultMeta(run) {
   const nonSmokeFailed = Number(result.nonSmokeFailed || 0);
   const nonSmokeTimeout = Number(result.nonSmokeTimeout || 0);
   const nonSmokeRunning = Number(result.nonSmokeRunning || 0);
+  const bucketAttempted = smokeAttempted + nonSmokeAttempted;
+  const bucketPassed = smokePassed + nonSmokePassed;
+  const bucketFailed = smokeFailed + nonSmokeFailed;
+  const bucketTimeout = smokeTimeout + nonSmokeTimeout;
+  const bucketRunning = smokeRunning + nonSmokeRunning;
+  const attempted = bucketAttempted || rawAttempted || (rawPassed + rawFailed + rawTimeout + rawRunning);
+  const passed = bucketAttempted ? bucketPassed : (attempted ? Math.min(rawPassed, attempted) : rawPassed);
+  const failed = bucketAttempted ? bucketFailed : (attempted ? Math.min(rawFailed, Math.max(0, attempted - passed)) : rawFailed);
+  const timeout = bucketAttempted ? bucketTimeout : (attempted ? Math.min(rawTimeout, Math.max(0, attempted - passed - failed)) : rawTimeout);
+  const running = bucketAttempted ? bucketRunning : (attempted ? Math.min(rawRunning, Math.max(0, attempted - passed - failed - timeout)) : rawRunning);
   const rawOutcome = String(result.outcome || '').toLowerCase();
   const label = result.conclusion || result.label || '';
-  const hasReportResult = Boolean(result.hasExecution || attempted || passed || failed || timeout || running || label || rawOutcome);
+  const hasReportResult = Boolean(result.hasExecution || attempted || rawPassed || rawFailed || rawTimeout || rawRunning || label || rawOutcome);
   const total = attempted || (passed + failed + timeout + running);
   const score = total ? `${passed}/${total} 通过` : '';
   const details = [

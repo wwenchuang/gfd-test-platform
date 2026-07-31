@@ -7527,6 +7527,7 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
     repaired_passed = _safe_int_local(rerun_result.get("completedCount"), 0)
     repaired_failed = _safe_int_local(rerun_result.get("failedCount"), 0)
     repaired_timeout = _safe_int_local(rerun_result.get("timeoutCount"), 0)
+    recovered_from_smoke = 0
     if repaired_passed:
         recovered_from_smoke = min(repaired_passed, max(0, smoke_total - smoke_passed - smoke_timeout))
         smoke_passed += recovered_from_smoke
@@ -7561,6 +7562,14 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
         non_smoke_failed = min(max(0, expanded_failed), max(0, non_smoke_attempted - non_smoke_passed))
         non_smoke_timeout = min(max(0, expanded_timeout), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
         non_smoke_running = min(max(0, expanded_running), max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed - non_smoke_timeout))
+    recovered_from_non_smoke = min(
+        max(0, repaired_passed - recovered_from_smoke),
+        max(0, non_smoke_attempted - non_smoke_passed - non_smoke_timeout),
+    )
+    if recovered_from_non_smoke:
+        non_smoke_passed += recovered_from_non_smoke
+        non_smoke_failed = max(0, non_smoke_failed - recovered_from_non_smoke)
+        non_smoke_timeout = min(non_smoke_timeout, max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
 
     return {
         "totalPlanned": plan_total,
@@ -7659,6 +7668,15 @@ def _agent_run_report_summary(run):
     smoke_passed = bucket_counts.get("smokePassed") if bucket_counts else _safe_int_local(execution.get("smokePassedCount"), 0)
     smoke_failed = bucket_counts.get("smokeFailed") if bucket_counts else _safe_int_local(execution.get("smokeFailedCount"), 0)
     smoke_timeout = bucket_counts.get("smokeTimeout") if bucket_counts else _safe_int_local(execution.get("smokeTimeoutCount"), 0)
+    if bucket_counts:
+        attempted = _safe_int_local(bucket_counts.get("smokeAttempted"), 0) + _safe_int_local(bucket_counts.get("nonSmokeAttempted"), 0)
+        passed = _safe_int_local(bucket_counts.get("smokePassed"), 0) + _safe_int_local(bucket_counts.get("nonSmokePassed"), 0)
+        failed = _safe_int_local(bucket_counts.get("smokeFailed"), 0) + _safe_int_local(bucket_counts.get("nonSmokeFailed"), 0)
+        timeout = _safe_int_local(bucket_counts.get("smokeTimeout"), 0) + _safe_int_local(bucket_counts.get("nonSmokeTimeout"), 0)
+        running = _safe_int_local(bucket_counts.get("smokeRunning"), 0) + _safe_int_local(bucket_counts.get("nonSmokeRunning"), 0)
+    report_status = str(report.get("status") or "").strip()
+    if str(execution.get("outcome") or "").strip().lower() == "passed" and not failed and not timeout and not running:
+        report_status = "success"
     result = {
         "conclusion": summary.get("conclusion") or execution.get("label") or "",
         "outcome": execution.get("outcome") or "",
@@ -7678,7 +7696,7 @@ def _agent_run_report_summary(run):
         "smokeTimeout": smoke_timeout,
         "smokeAllFailed": bool(execution.get("smokeAllFailed")),
         "phases": phase_rows[:12],
-        "reportStatus": report.get("status") or "",
+        "reportStatus": report_status,
         "orchestrationState": orchestration.get("state") or "",
         "orchestrationLabel": orchestration.get("label") or "",
         "runStatus": projected_run_status,
