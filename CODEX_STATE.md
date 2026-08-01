@@ -76,6 +76,39 @@ git diff --check -- task-manager.html js/api-testing.js css/round5.css tests/fro
 - 验证 4 个命令卡、实时日志区域、测试报告区域和 0 值展示均渲染正常。
 - 页面无运行时 `pageerror`；本地未挂 AI Gateway 代理时存在 `/ai-gateway/ai/providers` 和 `/ai-gateway/ai/model-router` 404，这是本地 smoke 环境限制，不属于 API 工作台运行时错误。
 
+补充修正：
+
+用户指出上一版仍没有仔细参考原页面设计。重新启动参考项目 `web_server.py` 并用 Playwright 截图对照后，确认参考页的关键不是“多块卡片并列”，而是：
+
+- 左侧固定面板：运行环境、测试命令、大号执行按钮、执行历史。
+- 右侧主区域：`执行日志 / 测试报告` Tab。
+- 第一屏只承载执行任务，不展示额外资产快照、指标矩阵和模块列表。
+
+已将 `API 工作台` 首页改为 `api-runner-board`：
+
+- 首页只渲染 `renderApiWorkbenchRunnerBoard(data)`。
+- 不再默认渲染 `renderApiWorkbenchSourceCard(data)` 或 `renderApiWorkbenchAssetCard(data)`，避免第一屏信息过密。
+- 左侧 `api-runner-sidebar` 展示接口项目、执行环境、4 个测试命令、大按钮和执行历史。
+- 右侧 `api-runner-tabs` 在执行日志和测试报告之间切换，日志区域使用终端式大画布。
+- 接口快照和模块选择仍保留在 `接口资产 / AI测试设计` 深入页面，不从功能上删除。
+- 前端缓存版本更新为 `20260801-api-runner-board-v1`。
+
+补充验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+python3 -m unittest tests.apifox_discovery_checks tests.api_asset_sync_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/backend_static_checks.py
+```
+
+浏览器对照：
+
+- 参考截图：`tests/artifacts/reference-aippt-panel.png`
+- 修改前截图：`tests/artifacts/current-api-command-center-before.png`
+- 修改后截图：`tests/artifacts/current-api-runner-board-after.png`
+- 临时截图文件未纳入 git 提交。
+
 ### 2026-08-01 Apifox 环境本地值保留与原生 API 执行变量解析
 
 用户提供 Apifox 访问令牌后，已直接核查线上接口读取结果：

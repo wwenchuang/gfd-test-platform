@@ -1141,6 +1141,278 @@
   gap: 4px;
   min-width: 0;
 }
+.api-runner-board {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  min-height: calc(100vh - 136px);
+  border-top: 1px solid var(--border);
+  background: rgba(2, 6, 23, .2);
+}
+.api-runner-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  min-width: 0;
+  padding: 20px;
+  border-right: 1px solid var(--border);
+  background: rgba(15, 23, 42, .62);
+}
+.api-runner-section-title {
+  margin-bottom: 10px;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.api-runner-env-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.api-runner-env-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 13px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, .22);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.api-runner-env-card.active {
+  border-color: rgba(139, 92, 246, .72);
+  background: rgba(139, 92, 246, .12);
+}
+.api-runner-env-card span,
+.api-runner-env-card small,
+.api-runner-command small,
+.api-runner-command em,
+.api-runner-history button small,
+.api-runner-taskbar small,
+.api-runner-report-card small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-runner-env-card span,
+.api-runner-env-card small,
+.api-runner-command strong,
+.api-runner-command small,
+.api-runner-command em,
+.api-runner-history button strong,
+.api-runner-report-card strong,
+.api-runner-report-card small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-runner-command-list {
+  display: grid;
+  gap: 7px;
+}
+.api-runner-command {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, .2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.api-runner-command.ready {
+  border-color: rgba(139, 92, 246, .55);
+  background: rgba(139, 92, 246, .1);
+}
+.api-runner-command.warn {
+  border-color: rgba(245, 158, 11, .42);
+}
+.api-runner-command i {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  background: rgba(139, 92, 246, .18);
+  color: #a78bfa;
+  font-family: var(--mono);
+  font-style: normal;
+  font-weight: 900;
+}
+.api-runner-command span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.api-runner-command em {
+  grid-column: 2;
+  font-style: normal;
+}
+.api-runner-primary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6d5dfc, #a78bfa);
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+.api-runner-history-list {
+  display: grid;
+  gap: 7px;
+}
+.api-runner-history button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, .72);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.api-runner-history button span {
+  color: #22d3ee;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.api-runner-empty {
+  padding: 14px;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, .62);
+  color: var(--text3);
+  text-align: center;
+}
+.api-runner-empty.large {
+  padding: 58px 16px;
+  background: rgba(2, 6, 23, .28);
+}
+.api-runner-main {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  min-height: 0;
+}
+.api-runner-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  background: rgba(15, 23, 42, .72);
+}
+.api-runner-tabs button {
+  min-height: 46px;
+  padding: 0 20px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+}
+.api-runner-tabs button.active {
+  border-bottom-color: #8b5cf6;
+  color: #a78bfa;
+}
+.api-runner-tabs button:last-child {
+  margin-left: auto;
+  font-size: 12px;
+}
+.api-runner-panel {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-width: 0;
+  min-height: 0;
+}
+.api-runner-panel[hidden] {
+  display: none;
+}
+.api-runner-taskbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(15, 23, 42, .52);
+}
+.api-runner-taskbar > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.api-runner-taskbar code {
+  color: var(--text);
+}
+.api-runner-terminal {
+  min-width: 0;
+  min-height: 480px;
+  padding: 16px 18px;
+  background: rgba(2, 6, 23, .8);
+}
+.api-runner-terminal .api-tech-log {
+  border: 0;
+  background: transparent;
+}
+.api-runner-log-placeholder {
+  color: var(--text2);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.api-runner-report-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 480px;
+  padding: 16px;
+  background: rgba(2, 6, 23, .62);
+}
+.api-runner-report-card {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .7);
+}
+.api-runner-report-card i {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, .12);
+  color: var(--success);
+  font-style: normal;
+  font-weight: 900;
+}
+.api-runner-report-card.failed i {
+  background: rgba(239, 68, 68, .12);
+  color: var(--danger);
+}
+.api-runner-report-card > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
 .api-upload-row,
 .api-form-grid {
   display: grid;
@@ -3995,8 +4267,13 @@
   }
   .api-studio-toolbar,
   .api-command-center-shell,
+  .api-runner-board,
   .api-asset-studio-layout {
     grid-template-columns: 1fr;
+  }
+  .api-runner-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
   .api-debug-env-panel,
   .api-endpoint-detail-panel {
@@ -4011,7 +4288,9 @@
   .api-workbench-sync-grid,
   .api-workbench-asset-facts,
   .api-live-console-head,
-  .api-report-strip-card {
+  .api-report-strip-card,
+  .api-runner-env-grid,
+  .api-runner-report-card {
     grid-template-columns: 1fr;
   }
   .api-workbench-summary-strip > div,

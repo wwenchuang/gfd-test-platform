@@ -37,6 +37,7 @@ let apiAssetBusinessLines = [];
 let apiWorkbenchCurrent = null;
 let apiApifoxCredential = {};
 let apiAssetDetailTab = 'definition';
+let apiRunnerActiveTab = localStorage.getItem('api_runner_active_tab') || 'log';
 const apiPlanReviewStateByPlan = new Map();
 const apiExecutionBindingClientSessionId = globalThis.crypto?.randomUUID?.()
   || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1065,6 +1066,159 @@ function renderApiWorkbenchCommandCenter(workbench = {}) {
   `;
 }
 
+function apiRunnerTabActive(tab) {
+  return apiRunnerActiveTab === tab;
+}
+
+function switchApiRunnerTab(tab) {
+  apiRunnerActiveTab = tab === 'report' ? 'report' : 'log';
+  localStorage.setItem('api_runner_active_tab', apiRunnerActiveTab);
+  const root = document.querySelector('.api-runner-board');
+  if (!root) return;
+  root.querySelectorAll('[data-api-runner-tab]').forEach(button => {
+    button.classList.toggle('active', button.dataset.apiRunnerTab === apiRunnerActiveTab);
+  });
+  root.querySelectorAll('[data-api-runner-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.apiRunnerPanel !== apiRunnerActiveTab;
+  });
+}
+
+function renderApiRunnerEnvironmentCards(workbench = {}) {
+  const source = workbench.source || {};
+  const summary = apiSourceEnvironmentSummary(source);
+  const metadata = source.provider_metadata || {};
+  return `
+    <div class="api-runner-env-grid">
+      <button type="button" class="api-runner-env-card ${source.source_id ? 'active' : ''}" onclick="showApiAssetsPage()">
+        <strong>接口项目</strong>
+        <span>${escapeHtml(apiSourceDisplayName(source) || '选择 Apifox 项目')}</span>
+        <small>${escapeHtml(source.project_id || '保存后同事可复用')}</small>
+      </button>
+      <button type="button" class="api-runner-env-card ${summary.baseUrl ? 'active' : ''}" onclick="showApiEnvironmentPage()">
+        <strong>执行环境</strong>
+        <span>${escapeHtml(metadata.environment_name || source.environment_id || '配置环境')}</span>
+        <small>${escapeHtml(summary.baseUrl || 'Base URL 待配置')}</small>
+      </button>
+    </div>
+  `;
+}
+
+function renderApiRunnerCommands(workbench = {}) {
+  return `
+    <div class="api-runner-command-list">
+      ${apiWorkbenchCommandCards(workbench).map(card => `
+        <button type="button" class="api-runner-command ${escapeHtml(card.tone)}" onclick="${card.action}">
+          <i aria-hidden="true">${escapeHtml(card.icon)}</i>
+          <span><strong>${escapeHtml(card.title)}</strong><small>${escapeHtml(card.detail)}</small></span>
+          <em>${escapeHtml(card.meta)}</em>
+        </button>
+      `).join('')}
+    </div>
+  `;
+}
+
+function renderApiRunnerHistory(workbench = {}) {
+  const rows = apiWorkbenchRecentTaskRows(workbench);
+  return `
+    <section class="api-runner-history">
+      <div class="api-runner-section-title">执行历史</div>
+      <div class="api-runner-history-list">
+        ${rows.length ? rows.slice(0, 5).map(row => `
+          <button type="button" onclick="showApiExecutionHistoryPage()">
+            <span>${escapeHtml(row.type)}</span>
+            <strong>${escapeHtml(row.name)}</strong>
+            <small>${escapeHtml(row.status)} · ${escapeHtml(row.time)}</small>
+          </button>
+        `).join('') : '<div class="api-runner-empty">暂无记录</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function renderApiRunnerLogPanel(workbench = {}) {
+  const activeRun = apiWorkbenchActiveRun(workbench);
+  const latestRun = apiWorkbenchLatestRun(workbench);
+  const run = activeRun.execution_id ? activeRun : latestRun;
+  const events = run.events || [];
+  const taskId = run.execution_id || run.run_id || '-';
+  const badge = run.execution_id
+    ? apiStatusPill(apiExecutionStateText(run.status), apiExecutionTerminal(run) ? (run.status === 'succeeded' ? 'success' : 'danger') : 'warn')
+    : '';
+  return `
+    <section class="api-runner-panel" data-api-runner-panel="log" ${apiRunnerTabActive('log') ? '' : 'hidden'}>
+      <div class="api-runner-taskbar">
+        <div><span>任务：</span><code>${escapeHtml(taskId)}</code>${badge}</div>
+        <small>${escapeHtml(run.updated_at || run.started_at || '')}</small>
+      </div>
+      <div class="api-runner-terminal">
+        ${run.execution_id
+          ? renderApiExecutionLogRows(events, run.run_id || run.execution_id, {embedded: true})
+          : '<div class="api-runner-log-placeholder">等待执行任务...</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function renderApiRunnerReportPanel(workbench = {}) {
+  const reports = workbench.reports || [];
+  return `
+    <section class="api-runner-panel" data-api-runner-panel="report" ${apiRunnerTabActive('report') ? '' : 'hidden'}>
+      <div class="api-runner-report-list">
+        ${reports.length ? reports.slice(0, 8).map(report => {
+          const failed = Number(report.failed || report.summary?.failed || 0);
+          const total = Number(report.total || report.summary?.total || 0);
+          const passed = Number(report.passed || report.summary?.passed || 0);
+          return `
+            <article class="api-runner-report-card ${failed ? 'failed' : 'passed'}">
+              <i aria-hidden="true">${failed ? '!' : '✓'}</i>
+              <div><strong>${escapeHtml(report.report_id || report.run_id || '接口测试报告')}</strong><small>${escapeHtml(report.created_at || report.finished_at || '-')} · ${escapeHtml(String(total))} 总数 / ${escapeHtml(String(passed))} 通过 / ${escapeHtml(String(failed))} 失败</small></div>
+              <button class="btn-sm" onclick="apiSelectedReportId=${jsArg(report.report_id || '')}; showApiReportsPage()">查看</button>
+            </article>
+          `;
+        }).join('') : '<div class="api-runner-empty large">暂无测试报告</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function renderApiWorkbenchRunnerBoard(data = {}) {
+  const source = data.source || {};
+  const next = apiWorkflowNextAction({
+    source,
+    endpoints: data.scope?.endpoints || apiTestingEndpoints,
+    plans: apiTestingPlans,
+    generation: apiPlanGenerationCurrent || {},
+    execution: apiWorkbenchActiveRun(data),
+    reports: data.reports || [],
+    snapshot: data.snapshot || {},
+  });
+  return `
+    <section class="api-runner-board">
+      <aside class="api-runner-sidebar">
+        <section>
+          <div class="api-runner-section-title">运行环境</div>
+          ${renderApiRunnerEnvironmentCards(data)}
+        </section>
+        <section>
+          <div class="api-runner-section-title">测试命令</div>
+          ${renderApiRunnerCommands(data)}
+        </section>
+        <button type="button" class="api-runner-primary-button" onclick="${next.handler}">▶ ${escapeHtml(next.label)}</button>
+        ${renderApiRunnerHistory(data)}
+      </aside>
+      <main class="api-runner-main">
+        <nav class="api-runner-tabs" aria-label="API 执行面板">
+          <button type="button" data-api-runner-tab="log" class="${apiRunnerTabActive('log') ? 'active' : ''}" onclick="switchApiRunnerTab('log')">执行日志</button>
+          <button type="button" data-api-runner-tab="report" class="${apiRunnerTabActive('report') ? 'active' : ''}" onclick="switchApiRunnerTab('report')">测试报告</button>
+          <button type="button" onclick="showApiReportsPage()">全部报告</button>
+        </nav>
+        ${renderApiRunnerLogPanel(data)}
+        ${renderApiRunnerReportPanel(data)}
+      </main>
+    </section>
+  `;
+}
+
 function renderApiWorkbenchCaseCard(workbench = {}) {
   const cases = workbench.cases || {};
   const draft = cases.latest_draft || {};
@@ -1163,9 +1317,7 @@ function renderApiWorkbenchAssetCard(workbench = {}) {
 function renderApiWorkbenchPage(data = {}) {
   return `
     <div class="api-testing-page api-workbench-page">
-      ${renderApiWorkbenchSourceCard(data)}
-      ${renderApiWorkbenchCommandCenter(data)}
-      ${renderApiWorkbenchAssetCard(data)}
+      ${renderApiWorkbenchRunnerBoard(data)}
     </div>
   `;
 }
