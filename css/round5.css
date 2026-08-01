@@ -972,6 +972,175 @@
   background: rgba(2, 6, 23, .35);
   overflow-wrap: anywhere;
 }
+.api-command-center-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.api-command-panel,
+.api-live-console,
+.api-report-strip {
+  min-width: 0;
+  border: 1px solid rgba(0, 229, 255, .22);
+  background: rgba(8, 18, 34, .72);
+}
+.api-command-panel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+.api-command-panel-head {
+  display: grid;
+  gap: 6px;
+}
+.api-command-panel-head span,
+.api-command-env span,
+.api-command-card small,
+.api-live-console-head span,
+.api-report-strip-card span {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-command-panel-head h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.api-command-panel-head p {
+  margin: 0;
+  color: var(--text2);
+  line-height: 1.5;
+}
+.api-command-env {
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-command-env > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 11px;
+  background: rgba(15, 23, 42, .68);
+}
+.api-command-env strong,
+.api-command-env small,
+.api-command-card strong,
+.api-command-card span,
+.api-live-console-head strong,
+.api-report-strip-card strong,
+.api-report-strip-card small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-command-env small {
+  color: var(--text2);
+  font-size: 11px;
+}
+.api-command-list {
+  display: grid;
+  gap: 9px;
+}
+.api-command-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, .28);
+}
+.api-command-card.ready {
+  border-color: rgba(16, 185, 129, .35);
+}
+.api-command-card.warn {
+  border-color: rgba(245, 158, 11, .4);
+}
+.api-command-card > i {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: rgba(0, 229, 255, .12);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-style: normal;
+  font-weight: 800;
+}
+.api-command-card > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.api-command-card span {
+  color: var(--text2);
+  line-height: 1.45;
+}
+.api-command-execute {
+  width: 100%;
+  justify-content: center;
+}
+.api-command-console-grid {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.api-live-console,
+.api-report-strip {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+.api-live-console-head {
+  display: grid;
+  grid-template-columns: 1.4fr .7fr .7fr;
+  gap: 1px;
+  border: 1px solid var(--border);
+  background: var(--border);
+}
+.api-live-console-head > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 11px;
+  background: rgba(15, 23, 42, .68);
+}
+.api-live-console .api-tech-log {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid rgba(0, 229, 255, .14);
+}
+.api-report-strip-list {
+  display: grid;
+  gap: 9px;
+}
+.api-report-strip-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, .28);
+}
+.api-report-strip-card.success {
+  border-left: 3px solid var(--success);
+}
+.api-report-strip-card.danger {
+  border-left: 3px solid var(--danger);
+}
+.api-report-strip-card.warn {
+  border-left: 3px solid var(--warn);
+}
+.api-report-strip-card > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
 .api-upload-row,
 .api-form-grid {
   display: grid;
@@ -3825,6 +3994,7 @@
     grid-template-columns: 1fr 1fr;
   }
   .api-studio-toolbar,
+  .api-command-center-shell,
   .api-asset-studio-layout {
     grid-template-columns: 1fr;
   }
@@ -3839,7 +4009,9 @@
   .api-workbench-stage-grid,
   .api-workbench-metrics,
   .api-workbench-sync-grid,
-  .api-workbench-asset-facts {
+  .api-workbench-asset-facts,
+  .api-live-console-head,
+  .api-report-strip-card {
     grid-template-columns: 1fr;
   }
   .api-workbench-summary-strip > div,

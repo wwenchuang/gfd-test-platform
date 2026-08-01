@@ -857,6 +857,214 @@ function renderApiWorkbenchFlowCards(workbench = {}) {
   `;
 }
 
+function apiWorkbenchLatestDraft(workbench = {}) {
+  return workbench.cases?.latest_draft || {};
+}
+
+function apiWorkbenchLatestBaseline(workbench = {}) {
+  return workbench.cases?.latest_baseline || {};
+}
+
+function apiWorkbenchActiveRun(workbench = {}) {
+  return (workbench.execution?.active_runs || [])[0] || {};
+}
+
+function apiWorkbenchLatestRun(workbench = {}) {
+  return apiWorkbenchActiveRun(workbench).execution_id
+    ? apiWorkbenchActiveRun(workbench)
+    : ((workbench.execution?.recent_runs || [])[0] || {});
+}
+
+function apiWorkbenchLatestReport(workbench = {}) {
+  return (workbench.reports || [])[0] || {};
+}
+
+function apiWorkbenchPlanCanBatchDebug(plan = {}) {
+  return !!plan.plan_id
+    && plan.status === 'draft'
+    && Number(plan.executable_case_count || 0) > 0
+    && (plan.revision_state || {}).state !== 'stale'
+    && !(plan.binding_drift || []).length;
+}
+
+function apiWorkbenchBaselineCanRun(plan = {}, workbench = {}) {
+  const readiness = plan.execution_readiness || {};
+  const revision = plan.revision_state || {};
+  const execution = workbench.execution || {};
+  return !!plan.plan_id
+    && plan.status === 'confirmed'
+    && plan.can_execute !== false
+    && readiness.can_execute !== false
+    && revision.state !== 'stale'
+    && (execution.readiness || {}).can_execute !== false;
+}
+
+function renderApiWorkbenchCommandEnvironment(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const summary = apiSourceEnvironmentSummary(source);
+  const metadata = source.provider_metadata || {};
+  const activeRun = apiWorkbenchActiveRun(workbench);
+  return `
+    <div class="api-command-env">
+      <div><span>当前项目</span><strong>${escapeHtml(apiSourceDisplayName(source) || '未连接 Apifox')}</strong><small>${escapeHtml(source.project_id || source.source_id || '-')}</small></div>
+      <div><span>执行环境</span><strong>${escapeHtml(metadata.environment_name || source.environment_id || '未选择环境')}</strong><small>${escapeHtml(summary.baseUrlName || 'default')}</small></div>
+      <div><span>Base URL</span><strong>${escapeHtml(summary.baseUrl || '未配置')}</strong><small>来自平台本地环境快照</small></div>
+      <div><span>测试资产</span><strong>${escapeHtml(String(snapshot.endpoint_count || 0))} 个接口</strong><small>${escapeHtml(String((workbench.cases?.latest_baseline || {}).case_count || 0))} 条已保存用例</small></div>
+      <div><span>运行状态</span><strong>${escapeHtml(activeRun.execution_id ? apiExecutionStateText(activeRun.status) : '空闲')}</strong><small>${escapeHtml(activeRun.updated_at || activeRun.started_at || '等待命令')}</small></div>
+    </div>
+  `;
+}
+
+function apiWorkbenchCommandCards(workbench = {}) {
+  const source = workbench.source || {};
+  const snapshot = workbench.snapshot || {};
+  const draft = apiWorkbenchLatestDraft(workbench);
+  const baseline = apiWorkbenchLatestBaseline(workbench);
+  const activeRun = apiWorkbenchActiveRun(workbench);
+  const hasSource = !!source.source_id;
+  const hasSnapshot = Number(snapshot.endpoint_count || 0) > 0;
+  const canDebug = apiWorkbenchPlanCanBatchDebug(draft);
+  const canRun = apiWorkbenchBaselineCanRun(baseline, workbench);
+  return [
+    {
+      icon: '↻',
+      title: '更新 Apifox 快照',
+      detail: hasSource ? '拉取接口和环境，保存为平台本地快照。' : '先保存 Apifox 项目和访问令牌。',
+      meta: hasSnapshot ? `${snapshot.endpoint_count || 0} 个接口` : '未同步',
+      action: hasSource ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()',
+      label: hasSource ? '立即同步' : '连接项目',
+      tone: hasSource ? 'ready' : 'warn',
+    },
+    {
+      icon: 'AI',
+      title: 'AI 生成测试集',
+      detail: '按模块选择接口，AI 设计正常、异常和断言草稿。',
+      meta: draft.plan_id ? `${draft.case_count || 0} 条草稿` : (hasSnapshot ? '选择模块后生成' : '等待接口快照'),
+      action: hasSnapshot
+        ? "document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})"
+        : 'showApiAssetsPage()',
+      label: hasSnapshot ? '选择模块' : '先同步',
+      tone: draft.plan_id ? 'ready' : 'todo',
+    },
+    {
+      icon: 'DBG',
+      title: '批量调试草稿',
+      detail: '确认保存前，先用当前环境批量跑可执行草稿。',
+      meta: draft.plan_id ? `${draft.executable_case_count || 0} 条可调试` : '还没有 AI 草稿',
+      action: canDebug ? `apiWorkbenchBatchDebugDraft(${jsArg(draft.plan_id)})` : 'showApiPlanPage()',
+      label: canDebug ? '开始调试' : (draft.plan_id ? '打开草稿' : '去生成'),
+      tone: canDebug ? 'ready' : (draft.plan_id ? 'warn' : 'todo'),
+    },
+    {
+      icon: 'RUN',
+      title: '自动回归执行',
+      detail: '使用已保存测试资产、本地环境变量和业务 token 执行。',
+      meta: activeRun.execution_id ? apiExecutionStateText(activeRun.status) : (baseline.plan_id ? `${baseline.executable_case_count || 0} 条可执行` : '没有测试资产'),
+      action: activeRun.execution_id ? 'showApiRegressionPage()' : (canRun ? `apiWorkbenchRunBaseline(${jsArg(baseline.plan_id)})` : 'showApiPlanPage()'),
+      label: activeRun.execution_id ? '看进度' : (canRun ? '执行回归' : '先保存资产'),
+      tone: activeRun.execution_id || canRun ? 'ready' : 'todo',
+    },
+  ];
+}
+
+function renderApiWorkbenchCommandPanel(workbench = {}) {
+  const next = apiWorkflowNextAction({
+    source: workbench.source || {},
+    endpoints: workbench.scope?.endpoints || apiTestingEndpoints,
+    plans: apiTestingPlans,
+    generation: apiPlanGenerationCurrent || {},
+    execution: apiWorkbenchActiveRun(workbench),
+    reports: workbench.reports || [],
+    snapshot: workbench.snapshot || {},
+  });
+  return `
+    <aside class="api-command-panel">
+      <div class="api-command-panel-head">
+        <span>执行控制台</span>
+        <h3>选择环境和测试命令</h3>
+        <p>按参考执行器流程，先确认环境，再直接发起同步、AI 生成、调试或回归。</p>
+      </div>
+      ${renderApiWorkbenchCommandEnvironment(workbench)}
+      <div class="api-command-list">
+        ${apiWorkbenchCommandCards(workbench).map(card => `
+          <article class="api-command-card ${escapeHtml(card.tone)}">
+            <i aria-hidden="true">${escapeHtml(card.icon)}</i>
+            <div><strong>${escapeHtml(card.title)}</strong><span>${escapeHtml(card.detail)}</span><small>${escapeHtml(card.meta)}</small></div>
+            <button class="btn-sm" onclick="${card.action}">${escapeHtml(card.label)}</button>
+          </article>
+        `).join('')}
+      </div>
+      <button class="btn-sm primary api-command-execute" onclick="${next.handler}">${escapeHtml(next.label)}</button>
+    </aside>
+  `;
+}
+
+function renderApiWorkbenchLiveConsole(workbench = {}) {
+  const activeRun = apiWorkbenchActiveRun(workbench);
+  const latestRun = apiWorkbenchLatestRun(workbench);
+  const active = !!activeRun.execution_id;
+  const run = active ? activeRun : latestRun;
+  const events = run.events || [];
+  return `
+    <section class="api-live-console">
+      <div class="api-section-heading">
+        <div><span>${active ? '实时日志' : '最近日志'}</span><h3>${active ? '接口执行中' : '等待执行命令'}</h3></div>
+        <button class="btn-sm" onclick="${active ? 'showApiRegressionPage()' : 'showApiExecutionHistoryPage()'}">${active ? '打开执行页' : '执行记录'}</button>
+      </div>
+      <div class="api-live-console-head">
+        <div><span>任务</span><strong>${escapeHtml(run.plan_name || run.plan_id || run.execution_id || '暂无运行任务')}</strong></div>
+        <div><span>状态</span><strong>${escapeHtml(run.execution_id ? apiExecutionStateText(run.status) : '未开始')}</strong></div>
+        <div><span>进度</span><strong>${escapeHtml(String(run.stats?.completed || 0))} / ${escapeHtml(String(run.stats?.total || 0))}</strong></div>
+      </div>
+      ${run.execution_id
+        ? renderApiExecutionLogRows(events, run.run_id || run.execution_id, {embedded: true})
+        : `<div class="api-tech-log embedded">${apiTestingEmpty('暂无实时日志。点击左侧命令后，这里会显示请求、响应、断言和报告生成过程。')}</div>`}
+    </section>
+  `;
+}
+
+function renderApiWorkbenchReportStrip(workbench = {}) {
+  const reports = workbench.reports || [];
+  return `
+    <section class="api-report-strip">
+      <div class="api-section-heading">
+        <div><span>测试报告</span><h3>最近结果和失败分析</h3></div>
+        <button class="btn-sm" onclick="showApiReportsPage()">全部报告</button>
+      </div>
+      ${reports.length ? `
+        <div class="api-report-strip-list">
+          ${reports.slice(0, 4).map(report => {
+            const total = Number(report.total || report.summary?.total || 0);
+            const passed = Number(report.passed || report.summary?.passed || 0);
+            const failed = Number(report.failed || report.summary?.failed || 0);
+            const tone = failed > 0 ? 'danger' : (total > 0 ? 'success' : 'warn');
+            return `
+              <article class="api-report-strip-card ${tone}">
+                <div><strong>${escapeHtml(report.report_id || report.run_id || 'API 报告')}</strong><span>${escapeHtml(report.created_at || report.finished_at || '-')}</span></div>
+                <small>${escapeHtml(String(total))} 总数 · ${escapeHtml(String(passed))} 通过 · ${escapeHtml(String(failed))} 失败</small>
+                <button class="btn-sm" onclick="apiSelectedReportId=${jsArg(report.report_id || '')}; showApiReportsPage()">查看报告</button>
+              </article>
+            `;
+          }).join('')}
+        </div>
+      ` : `<div class="api-report-strip-list">${apiTestingEmpty('还没有报告。执行完成后会在这里展示通过率和失败原因。')}</div>`}
+    </section>
+  `;
+}
+
+function renderApiWorkbenchCommandCenter(workbench = {}) {
+  return `
+    <section class="api-command-center-shell">
+      ${renderApiWorkbenchCommandPanel(workbench)}
+      <div class="api-command-console-grid">
+        ${renderApiWorkbenchLiveConsole(workbench)}
+        ${renderApiWorkbenchReportStrip(workbench)}
+      </div>
+    </section>
+  `;
+}
+
 function renderApiWorkbenchCaseCard(workbench = {}) {
   const cases = workbench.cases || {};
   const draft = cases.latest_draft || {};
@@ -956,9 +1164,7 @@ function renderApiWorkbenchPage(data = {}) {
   return `
     <div class="api-testing-page api-workbench-page">
       ${renderApiWorkbenchSourceCard(data)}
-      ${renderApiWorkbenchSyncAndRisk(data)}
-      ${renderApiWorkbenchRecentTasks(data)}
-      ${renderApiWorkbenchFlowCards(data)}
+      ${renderApiWorkbenchCommandCenter(data)}
       ${renderApiWorkbenchAssetCard(data)}
     </div>
   `;
@@ -1011,6 +1217,29 @@ async function apiWorkbenchUpdateSnapshot() {
   } catch (error) {
     showToast(error.message || 'Apifox 快照同步失败', 'error');
   }
+}
+
+async function apiWorkbenchBatchDebugDraft(planId) {
+  const selectedPlanId = String(planId || '');
+  if (!selectedPlanId) {
+    await showApiPlanPage();
+    return;
+  }
+  await showApiPlanPage();
+  await openApiTestPlan(selectedPlanId);
+  if (String(apiTestingCurrentPlan?.plan_id || '') === selectedPlanId) {
+    await batchDebugApiPlan(selectedPlanId);
+  }
+}
+
+async function apiWorkbenchRunBaseline(planId) {
+  const selectedPlanId = String(planId || '');
+  if (!selectedPlanId) {
+    await showApiRegressionPage();
+    return;
+  }
+  await showApiRegressionPage();
+  await startApiExecution(selectedPlanId);
 }
 
 function renderApiSyncCenter(workbench = {}) {

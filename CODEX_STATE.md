@@ -28,6 +28,54 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-01 API 工作台一页式命令中心
+
+用户提供 `主对话_aippt-auto-test-share.zip` 作为参考后，已认真对照其核心流程：
+
+- 左侧选择运行环境和测试命令。
+- 右侧直接展示实时执行日志。
+- 执行完成后沉淀 HTML / JSON 报告和失败分析。
+- 历史任务能直接回看，不需要在多个页面里来回找入口。
+
+本轮没有照搬参考项目的硬编码用例和一次性脚本模式，而是把适合平台定位的交互方式收敛到 `API 工作台` 首页：
+
+- `js/api-testing.js`
+  - 新增 `api-command-center-shell` 首页命令中心。
+  - 左侧 `api-command-panel` 展示当前 Apifox 项目、执行环境、Base URL、测试资产和运行状态。
+  - 提供 4 个主命令：
+    - 更新 Apifox 快照：复用 `/api-testing/snapshots/update`。
+    - AI 生成测试集：滚动到模块选择区，不跳过接口范围确认。
+    - 批量调试草稿：打开当前 AI 草稿后复用 `batchDebugApiPlan()`。
+    - 自动回归执行：进入回归页后复用 `startApiExecution()`。
+  - 右侧 `api-live-console` 展示实时日志或等待执行提示。
+  - 右侧 `api-report-strip` 展示最近报告摘要和失败入口。
+  - 新面板里 0 值显式展示为 `0 个接口 / 0 条已保存用例`，避免空白造成误解。
+- `css/round5.css`
+  - 新增命令中心、命令卡、实时日志、报告摘要的布局和响应式样式。
+  - 1100px 以下改为单列，避免信息挤压。
+- `task-manager.html`
+  - 前端缓存版本更新为 `20260801-api-command-center-v1`。
+- `tests/frontend_static_checks.py`
+  - 增加静态验收，要求首页必须包含环境/命令、执行控制台、实时日志、测试报告等关键区域。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+python3 -m unittest tests.apifox_discovery_checks tests.api_asset_sync_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/backend_static_checks.py
+git diff --check -- task-manager.html js/api-testing.js css/round5.css tests/frontend_static_checks.py CODEX_STATE.md
+```
+
+本地浏览器 smoke：
+
+- 启动 `python3 -m task_server` 于 `127.0.0.1:8099`。
+- 使用 `admin / sonic2026` 登录。
+- 打开 `API 工作台`。
+- 验证 4 个命令卡、实时日志区域、测试报告区域和 0 值展示均渲染正常。
+- 页面无运行时 `pageerror`；本地未挂 AI Gateway 代理时存在 `/ai-gateway/ai/providers` 和 `/ai-gateway/ai/model-router` 404，这是本地 smoke 环境限制，不属于 API 工作台运行时错误。
+
 ### 2026-08-01 Apifox 环境本地值保留与原生 API 执行变量解析
 
 用户提供 Apifox 访问令牌后，已直接核查线上接口读取结果：
