@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-01 API 基线接口测试一键执行入口
+
+用户提出发版后需要能一键执行基线接口测试。当前平台不再引入 MeterSphere，也不新增第二套执行器；这里的“基线接口测试”定义为已经通过 AI 审阅/调试并保存的 confirmed API 测试资产，继续复用现有原生 API 执行器的 `baseline` run mode。
+
+修复：
+
+- `js/api-testing.js`
+  - 新增 `apiWorkbenchReleaseBaselineAction()`，专门决定工作台主按钮行为：
+    - 有运行中任务：查看基线执行进度。
+    - 最新 confirmed 测试资产可执行：一键执行基线接口测试。
+    - 已有测试资产但环境、token 或接口版本不满足：进入执行页检查条件。
+    - 只有 AI 草稿：先打开草稿审阅/调试并保存为测试资产。
+    - 尚无草稿：先生成测试资产。
+  - 工作台命令从泛化的“自动回归执行”改为“基线接口测试”，明确这是发版后跑已保存测试资产。
+  - 左侧 API 导航、工作流步骤、执行页标题统一为“基线接口测试”，但内部 `api_regression` workflow id 保持不变，避免改路由或后端状态模型。
+- `task-manager.html`
+  - API 自动化侧栏将 `api_regression` 展示为“基线接口测试”。
+  - 前端缓存版本更新为 `20260801-api-baseline-runner-v1`。
+- `tests/frontend_static_checks.py`
+  - 增加静态验收，要求工作台必须暴露“基线接口测试”和“一键执行基线接口测试”。
+  - 要求侧栏和执行中心使用“基线接口测试”语义，避免退回不直观的泛化回归文案。
+
+验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+node --check js/api.js
+node --check js/navigation.js
+python3 -m unittest tests.apifox_discovery_checks tests.api_asset_sync_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/backend_static_checks.py
+git diff --check -- task-manager.html js/api-testing.js tests/frontend_static_checks.py CODEX_STATE.md
+```
+
+本地浏览器 smoke：
+
+- 使用临时 dev 环境启动 `python3 -m task_server` 于 `127.0.0.1:8099`。
+- 登录 `admin / sonic2026`，打开 `API 工作台`。
+- 验证首屏存在 4 个测试命令、`基线接口测试` 命令和主按钮引导；本地空数据时主按钮显示 `先生成测试资产`。
+- 页面无运行时 `pageerror`；本地未挂 AI Gateway 代理时的资源 404 不作为 API 工作台错误。
+
 ### 2026-08-01 API 工作台一页式命令中心
 
 用户提供 `主对话_aippt-auto-test-share.zip` 作为参考后，已认真对照其核心流程：

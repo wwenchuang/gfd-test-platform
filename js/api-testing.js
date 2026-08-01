@@ -205,7 +205,7 @@ function apiWorkflowNextAction(context = {}) {
   const confirmed = plans.find(plan => plan.status === 'confirmed' && (plan.revision_state || {}).state !== 'stale');
   if (['queued', 'running'].includes(execution.status)) return {step: 'history', label: '查看执行记录', handler: 'showApiExecutionHistoryPage()'};
   if (reports.length) return {step: 'reports', label: '查看报告', handler: 'showApiReportsPage()'};
-  if (confirmed) return {step: 'regression', label: '开始回归', handler: 'showApiRegressionPage()'};
+  if (confirmed) return {step: 'regression', label: '执行基线', handler: 'showApiRegressionPage()'};
   return {step: 'plan', label: selectedCount ? '生成测试资产' : '选择接口', handler: selectedCount ? 'showApiPlanPage()' : 'showApiAssetsPage()'};
 }
 
@@ -233,7 +233,7 @@ function renderApiWorkflowStepper(context = {}) {
     {id: 'assets', label: '接口资产', handler: 'showApiAssetsPage()'},
     {id: 'plan', label: 'AI测试设计', handler: 'showApiPlanPage()'},
     {id: 'debug', label: '在线调试', handler: 'showApiDebugPage()'},
-    {id: 'regression', label: '自动回归', handler: 'showApiRegressionPage()'},
+    {id: 'regression', label: '基线接口测试', handler: 'showApiRegressionPage()'},
     {id: 'history', label: '执行记录', handler: 'showApiExecutionHistoryPage()'},
     {id: 'reports', label: '测试报告', handler: 'showApiReportsPage()'},
     {id: 'environment', label: '环境配置', handler: 'showApiEnvironmentPage()'},
@@ -674,8 +674,8 @@ function apiWorkbenchRecentTaskRows(workbench = {}) {
   const rows = [];
   (workbench.execution?.active_runs || []).forEach(run => rows.push({
     time: run.updated_at || run.started_at || run.created_at || '-',
-    type: '自动回归',
-    name: run.plan_name || run.plan_id || run.execution_id || '接口回归',
+    type: '基线接口测试',
+    name: run.plan_name || run.plan_id || run.execution_id || '接口基线执行',
     status: apiExecutionStateText(run.status),
     rate: '执行中',
   }));
@@ -825,13 +825,13 @@ function renderApiWorkbenchFlowCards(workbench = {}) {
       tone: snapshot.endpoint_count ? 'ready' : 'todo',
     },
     {
-      title: '自动回归',
+      title: '基线接口测试',
       state: latestRun.execution_id ? apiExecutionStateText(latestRun.status) : (cases.latest_baseline?.plan_id ? '可执行' : '待保存资产'),
       detail: latestRun.execution_id
         ? `${latestRun.stats?.completed || 0}/${latestRun.stats?.total || 0} 完成`
-        : '使用已保存测试资产跑全量接口回归。',
+        : '发版后使用已保存测试资产跑接口基线。',
       action: cases.latest_baseline?.plan_id || latestRun.execution_id ? 'showApiRegressionPage()' : 'showApiPlanPage()',
-      label: latestRun.execution_id ? '看进度' : '开始回归',
+      label: latestRun.execution_id ? '看进度' : '执行基线',
       tone: latestRun.execution_id || cases.latest_baseline?.plan_id ? 'ready' : 'todo',
     },
     {
@@ -900,6 +900,50 @@ function apiWorkbenchBaselineCanRun(plan = {}, workbench = {}) {
     && (execution.readiness || {}).can_execute !== false;
 }
 
+function apiWorkbenchReleaseBaselineAction(workbench = {}) {
+  const draft = apiWorkbenchLatestDraft(workbench);
+  const baseline = apiWorkbenchLatestBaseline(workbench);
+  const activeRun = apiWorkbenchActiveRun(workbench);
+  if (activeRun.execution_id) {
+    return {
+      label: '查看基线执行进度',
+      detail: '基线接口测试正在运行，继续查看实时日志和报告。',
+      handler: 'showApiRegressionPage()',
+      tone: 'ready',
+    };
+  }
+  if (apiWorkbenchBaselineCanRun(baseline, workbench)) {
+    return {
+      label: '一键执行基线接口测试',
+      detail: `发版后跑已保存测试资产：${baseline.executable_case_count || 0} 条可执行`,
+      handler: `apiWorkbenchRunBaseline(${jsArg(baseline.plan_id)})`,
+      tone: 'ready',
+    };
+  }
+  if (baseline.plan_id) {
+    return {
+      label: '检查基线执行条件',
+      detail: '测试资产已保存，但接口版本、环境或业务 token 需要先确认。',
+      handler: 'showApiRegressionPage()',
+      tone: 'warn',
+    };
+  }
+  if (draft.plan_id) {
+    return {
+      label: '先保存测试资产',
+      detail: 'AI 草稿调试确认后，保存为发版基线接口测试资产。',
+      handler: `openApiWorkbenchPlan(${jsArg(draft.plan_id)})`,
+      tone: 'warn',
+    };
+  }
+  return {
+    label: '先生成测试资产',
+    detail: '先从 Apifox 模块生成 AI 测试草稿，再调试并保存为基线接口测试。',
+    handler: 'showApiPlanPage()',
+    tone: 'todo',
+  };
+}
+
 function renderApiWorkbenchCommandEnvironment(workbench = {}) {
   const source = workbench.source || {};
   const snapshot = workbench.snapshot || {};
@@ -959,11 +1003,11 @@ function apiWorkbenchCommandCards(workbench = {}) {
     },
     {
       icon: 'RUN',
-      title: '自动回归执行',
-      detail: '使用已保存测试资产、本地环境变量和业务 token 执行。',
+      title: '基线接口测试',
+      detail: '发版后跑已保存测试资产，使用本地环境变量和业务 token。',
       meta: activeRun.execution_id ? apiExecutionStateText(activeRun.status) : (baseline.plan_id ? `${baseline.executable_case_count || 0} 条可执行` : '没有测试资产'),
       action: activeRun.execution_id ? 'showApiRegressionPage()' : (canRun ? `apiWorkbenchRunBaseline(${jsArg(baseline.plan_id)})` : 'showApiPlanPage()'),
-      label: activeRun.execution_id ? '看进度' : (canRun ? '执行回归' : '先保存资产'),
+      label: activeRun.execution_id ? '看进度' : (canRun ? '一键执行' : '先保存资产'),
       tone: activeRun.execution_id || canRun ? 'ready' : 'todo',
     },
   ];
@@ -1182,16 +1226,7 @@ function renderApiRunnerReportPanel(workbench = {}) {
 }
 
 function renderApiWorkbenchRunnerBoard(data = {}) {
-  const source = data.source || {};
-  const next = apiWorkflowNextAction({
-    source,
-    endpoints: data.scope?.endpoints || apiTestingEndpoints,
-    plans: apiTestingPlans,
-    generation: apiPlanGenerationCurrent || {},
-    execution: apiWorkbenchActiveRun(data),
-    reports: data.reports || [],
-    snapshot: data.snapshot || {},
-  });
+  const releaseAction = apiWorkbenchReleaseBaselineAction(data);
   return `
     <section class="api-runner-board">
       <aside class="api-runner-sidebar">
@@ -1203,7 +1238,7 @@ function renderApiWorkbenchRunnerBoard(data = {}) {
           <div class="api-runner-section-title">测试命令</div>
           ${renderApiRunnerCommands(data)}
         </section>
-        <button type="button" class="api-runner-primary-button" onclick="${next.handler}">▶ ${escapeHtml(next.label)}</button>
+        <button type="button" class="api-runner-primary-button ${escapeHtml(releaseAction.tone)}" title="${escapeHtml(releaseAction.detail)}" onclick="${releaseAction.handler}">▶ ${escapeHtml(releaseAction.label)}</button>
         ${renderApiRunnerHistory(data)}
       </aside>
       <main class="api-runner-main">
@@ -5035,19 +5070,19 @@ async function showApiDebugPage() {
 async function showApiRegressionPage() {
   stopApiExecutionPolling(true);
   apiBusinessAuthEditing = false;
-  const area = setApiTestingPage('api_regression', '自动回归', '选择测试资产并使用平台本地执行器运行，实时查看进度和日志。');
+  const area = setApiTestingPage('api_regression', '基线接口测试', '发版后选择已保存测试资产，一键运行并实时查看进度和日志。');
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-regression-center">
       <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_regression'})}</div>
       <section class="api-panel api-regression-hero">
-        <div><span>自动回归中心</span><h2>选择测试资产，直接执行接口回归</h2><p>执行会使用本地保存的 Apifox 环境快照、业务 token 和 AI 测试资产。</p></div>
+        <div><span>基线接口测试中心</span><h2>一键执行已保存的接口基线</h2><p>执行会使用本地保存的 Apifox 环境快照、业务 token 和 AI 测试资产。</p></div>
         <button class="btn-sm primary" onclick="refreshApiExecutionContext(true)">刷新执行能力</button>
       </section>
       <section id="api-execution-header" class="api-execution-header">${apiTestingEmpty('正在检查 API 执行环境...')}</section>
       <section id="api-active-run" class="api-active-run" hidden></section>
       <section class="api-execution-plans-section">
-        <div class="api-section-heading"><div><span>执行进度</span><h2>测试资产回归</h2></div><small id="api-plan-count">0 个计划</small></div>
+        <div class="api-section-heading"><div><span>执行进度</span><h2>基线测试资产</h2></div><small id="api-plan-count">0 个计划</small></div>
         <div id="api-execution-plans">${apiTestingEmpty('正在读取测试资产...')}</div>
       </section>
     </div>
