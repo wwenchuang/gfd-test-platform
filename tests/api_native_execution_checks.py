@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from task_server.services import (
+    api_asset_service,
     api_execution_service,
     api_report_service,
     api_source_service,
@@ -31,11 +32,13 @@ class NativeApiExecutionChecks(unittest.TestCase):
         self.old_execution_dir = api_execution_service.API_TESTING_DIR
         self.old_report_dir = api_report_service.API_TESTING_DIR
         self.old_plan_dir = api_test_plan_service.API_TESTING_DIR
+        self.old_asset_dir = api_asset_service.API_TESTING_DIR
         api_source_service.API_TESTING_DIR = self.temp_dir
         api_workspace_service.API_TESTING_DIR = self.temp_dir
         api_execution_service.API_TESTING_DIR = self.temp_dir
         api_report_service.API_TESTING_DIR = self.temp_dir
         api_test_plan_service.API_TESTING_DIR = self.temp_dir
+        api_asset_service.API_TESTING_DIR = self.temp_dir
 
     def tearDown(self):
         api_source_service.API_TESTING_DIR = self.old_source_dir
@@ -43,6 +46,7 @@ class NativeApiExecutionChecks(unittest.TestCase):
         api_execution_service.API_TESTING_DIR = self.old_execution_dir
         api_report_service.API_TESTING_DIR = self.old_report_dir
         api_test_plan_service.API_TESTING_DIR = self.old_plan_dir
+        api_asset_service.API_TESTING_DIR = self.old_asset_dir
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _source(self):
@@ -223,6 +227,179 @@ class NativeApiExecutionChecks(unittest.TestCase):
         text = str(current)
         self.assertNotIn("source-secret", text)
         self.assertIn("Bearer ***", text)
+
+    def test_execution_resolves_local_environment_variables_before_request(self):
+        source = api_source_service.save_api_source({
+            "name": "3D",
+            "source_type": "apifox",
+            "project_id": "5904970",
+            "environment_id": "APP测试环境",
+            "access_token": "apifox-token",
+            "provider_metadata": {
+                "project_name": "3D业务",
+                "environment_name": "APP测试环境",
+            },
+            "environment_snapshot": {
+                "base_urls": [{"name": "APP测试环境", "url": "https://api.example.test"}],
+                "variables": [
+                    {"name": "Biz", "value": "ZXB", "scope": "header"},
+                    {"name": "userId", "value": "135", "scope": "path"},
+                    {"name": "Authorization", "value": "Bearer runtime-token", "scope": "header", "sensitive": True},
+                    {"name": "ZXBToken", "value": "jwt-runtime-token", "scope": "body", "sensitive": True},
+                ],
+            },
+        })
+        plan = {
+            "plan_id": "api_plan_env_vars",
+            "name": "环境变量调试计划",
+            "source_id": source["source_id"],
+        }
+        case = {
+            "case_id": "API-ENV-1",
+            "name": "更新用户资料",
+            "endpoint": "POST /users/{userId}",
+            "request": {
+                "method": "POST",
+                "path": "/users/{{userId}}",
+                "query": {"biz": "{{Biz}}"},
+                "headers": {
+                    "Authorization": "{{Authorization}}",
+                    "X-Biz": "{{Biz}}",
+                    "X-ZXB-Token": "{{ZXBToken}}",
+                },
+                "body": {"biz": "{{Biz}}", "token": "{{ZXBToken}}"},
+            },
+            "assertions": [{"type": "status", "expected": 200}],
+        }
+        original_execute_case = api_execution_service._execute_case
+        captured = {}
+
+        def fake_execute_case(_source_id, _base_url, _case):
+            captured["case"] = _case
+            request = _case["request"]
+            self.assertEqual("/users/135", request["path"])
+            self.assertEqual({"biz": "ZXB"}, request["query"])
+            self.assertEqual("Bearer runtime-token", request["headers"]["Authorization"])
+            self.assertEqual("ZXB", request["headers"]["X-Biz"])
+            self.assertEqual("jwt-runtime-token", request["headers"]["X-ZXB-Token"])
+            self.assertEqual({"biz": "ZXB", "token": "jwt-runtime-token"}, request["body"])
+            return {
+                "case_id": "API-ENV-1",
+                "name": "更新用户资料",
+                "endpoint": "POST /users/{userId}",
+                "status": "passed",
+                "duration_ms": 15,
+                "request": {
+                    "method": "POST",
+                    "url": "https://api.example.test/users/135?biz=ZXB",
+                    "headers": request["headers"],
+                    "body": request["body"],
+                },
+                "response": {"status_code": 200, "body": {"ok": True}},
+                "assertions": [{"type": "status", "passed": True, "message": "HTTP 200"}],
+            }
+
+        api_execution_service._execute_case = fake_execute_case
+        try:
+            execution_id = "api_execution_env_vars"
+            execution = {
+                "execution_id": execution_id,
+                "run_id": "api_run_env_vars",
+                "run_mode": "debug_batch",
+                "provider": "native_api",
+                "plan_id": plan["plan_id"],
+                "plan_name": plan["name"],
+                "source_id": source["source_id"],
+                "status": "queued",
+                "report_status": "pending",
+                "current_phase": "prepare",
+                "created_at": "2026-08-01 10:00:00",
+                "updated_at": "2026-08-01 10:00:00",
+                "duration_seconds": 0,
+                "stats": {"total": 1, "passed": 0, "failed": 0, "completed": 0},
+                "phases": api_execution_service._phases(),
+                "events": [],
+                "cases": [case],
+                "plan_snapshot": plan,
+                "poll_after_ms": 1500,
+            }
+            api_execution_service._save_execution(execution)
+            api_execution_service._run_execution(execution_id)
+            current = api_execution_service.get_api_execution(execution_id)
+        finally:
+            api_execution_service._execute_case = original_execute_case
+
+        self.assertIn("case", captured)
+        self.assertEqual("succeeded", current["status"])
+        self.assertNotIn("runtime-token", str(current))
+        self.assertNotIn("jwt-runtime-token", str(current))
+        self.assertIn("Bearer ***", str(current))
+
+    def test_batch_debug_records_plan_validation_summary(self):
+        source = self._source()
+        staged = api_asset_service.stage_api_revision(source["source_id"], "3D", {
+            "openapi": "3.0.1",
+            "info": {"title": "3D", "version": "1.0.0"},
+            "paths": {
+                "/print3d/api/v1/users/me": {
+                    "get": {
+                        "tags": ["家用业务/app接口/我的/我的设置"],
+                        "summary": "我的资料",
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+                "/print3d/api/v1/region/provinces": {
+                    "get": {
+                        "tags": ["家用业务/app接口/我的/我的设置"],
+                        "summary": "省接口",
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+            },
+        }, source_type="apifox")
+        api_asset_service.activate_api_revision(staged["asset_id"], staged["revision_id"])
+        revision = api_asset_service.get_api_revision(staged["revision_id"])
+        endpoint_ids = [endpoint["endpoint_id"] for endpoint in revision["endpoints"]]
+        plan = api_test_plan_service.generate_api_test_plan(
+            revision["snapshot_id"],
+            endpoint_ids,
+            use_ai=False,
+            source_id=source["source_id"],
+        )
+        case_ids = [case["case_id"] for case in plan["cases"][:2]]
+        original_execute_case = api_execution_service._execute_case
+
+        def fake_execute_case(_source_id, _base_url, case):
+            return {
+                "case_id": case["case_id"],
+                "name": case["name"],
+                "endpoint": case["endpoint"],
+                "status": "passed",
+                "duration_ms": 9,
+                "request": {"method": "GET", "url": "https://api.example.test/demo"},
+                "response": {"status_code": 200, "body": {"ok": True}},
+                "assertions": [{"type": "status", "passed": True, "message": "HTTP 200"}],
+            }
+
+        api_execution_service._execute_case = fake_execute_case
+        try:
+            execution = api_execution_service.start_api_cases_debug(
+                plan["plan_id"],
+                case_ids,
+                spawn=False,
+            )
+        finally:
+            api_execution_service._execute_case = original_execute_case
+
+        self.assertEqual("debug_batch", execution["run_mode"])
+        self.assertEqual("succeeded", execution["status"])
+        self.assertEqual({"total": 2, "passed": 2, "failed": 0, "completed": 2}, execution["stats"])
+        updated = api_test_plan_service.get_api_test_plan(plan["plan_id"], source_id=source["source_id"])
+        debug_validation = updated["debug_validation"]
+        self.assertEqual("passed", debug_validation["state"])
+        self.assertEqual(case_ids, debug_validation["case_ids"])
+        self.assertEqual(execution["execution_id"], debug_validation["execution_id"])
+        self.assertTrue(updated["execution_readiness"]["debug_passed"])
 
 
 if __name__ == "__main__":

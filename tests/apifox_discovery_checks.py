@@ -127,6 +127,22 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                             ],
                         }})
                         raise SystemExit(0)
+                    if mode == "parameter_groups_only":
+                        emit({{
+                            "success": True,
+                            "data": [{{
+                                "id": 99,
+                                "name": "APP 测试环境",
+                                "baseUrls": {{"default": "https://app-api.example.test"}},
+                                "parameters": [
+                                    {{"name": "cookie"}},
+                                    {{"name": "query"}},
+                                    {{"name": "header"}},
+                                    {{"name": "body"}},
+                                ],
+                            }}],
+                        }})
+                        raise SystemExit(0)
                     if mode == "list_without_environment_detail":
                         emit({{
                             "success": True,
@@ -149,6 +165,22 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                         }}],
                     }})
                 elif args[:2] == ["environment", "get"]:
+                    if mode == "parameter_groups_only":
+                        emit({{
+                            "success": True,
+                            "data": {{
+                                "id": 99,
+                                "name": "APP 测试环境",
+                                "baseUrls": {{"default": "https://app-api.example.test"}},
+                                "parameters": [
+                                    {{"name": "cookie"}},
+                                    {{"name": "query"}},
+                                    {{"name": "header"}},
+                                    {{"name": "body"}},
+                                ],
+                            }},
+                        }})
+                        raise SystemExit(0)
                     emit({{
                         "success": True,
                         "data": {{
@@ -246,11 +278,28 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
                             {"name": "upload", "url": "https://upload.example.test"},
                         ],
                         "variables": [
-                            {"name": "tenantId", "value": "tenant-3d", "sensitive": False, "scope": "environment"},
-                            {"name": "accessToken", "value": "", "sensitive": True, "scope": "environment"},
+                            {
+                                "name": "tenantId",
+                                "value": "tenant-3d",
+                                "sensitive": False,
+                                "scope": "environment",
+                                "configured": True,
+                                "group_placeholder": False,
+                                "note": "",
+                            },
+                            {
+                                "name": "accessToken",
+                                "value": "",
+                                "sensitive": True,
+                                "scope": "environment",
+                                "configured": False,
+                                "group_placeholder": False,
+                                "note": "",
+                            },
                         ],
                         "variable_count": 2,
                         "sensitive_variable_count": 1,
+                        "placeholder_group_count": 0,
                     },
                 },
             ],
@@ -295,6 +344,24 @@ class ApifoxDiscoveryServiceChecks(unittest.TestCase):
         self.assertEqual("", snapshot["variables"][1]["value"])
         self.assertTrue(snapshot["variables"][1]["sensitive"])
         self.assertNotIn("secret-runtime-token", json.dumps(snapshot, ensure_ascii=False))
+
+    def test_project_context_marks_parameter_groups_as_placeholders(self):
+        self._set_mode("parameter_groups_only")
+
+        result = discovery.discover_project_context(
+            self.token,
+            "5904970",
+            cli_bin=str(self.cli_path),
+            timeout_seconds=5,
+        )
+
+        snapshot = result["environments"][1]["environment_snapshot"]
+        variables = {item["name"]: item for item in snapshot["variables"]}
+
+        self.assertEqual(0, snapshot["variable_count"])
+        self.assertEqual(4, snapshot["placeholder_group_count"])
+        self.assertTrue(variables["header"]["group_placeholder"])
+        self.assertEqual("Apifox 未返回该分组下的变量明细", variables["header"]["note"])
 
     def test_project_context_enriches_environment_detail_from_get(self):
         self._set_mode("list_without_environment_detail")

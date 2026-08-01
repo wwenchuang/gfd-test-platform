@@ -185,6 +185,173 @@ class ApiSourceConfigTests(unittest.TestCase):
         self.assertNotIn("secret-apifox-token", json.dumps(source, ensure_ascii=False))
         self.assertNotIn("secret-runtime-token", json.dumps(source, ensure_ascii=False))
 
+    def test_environment_snapshot_keeps_sensitive_values_server_side_and_publicly_marks_configured(self):
+        source = self.service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D 接口",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "access_token": "secret-apifox-token",
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [
+                    {"name": "Biz", "value": "ZXB", "scope": "header"},
+                    {"name": "Authorization", "value": "Bearer runtime-token", "scope": "header", "sensitive": True},
+                    {"name": "ZXBToken", "value": "jwt-runtime-token", "scope": "body", "sensitive": True},
+                ],
+            },
+        })
+
+        raw = self.service.get_api_source(source["source_id"], masked=False)
+        public = self.service.get_api_source(source["source_id"], masked=True)
+        raw_variables = {item["name"]: item for item in raw["environment_snapshot"]["variables"]}
+        public_variables = {item["name"]: item for item in public["environment_snapshot"]["variables"]}
+
+        self.assertEqual("Bearer runtime-token", raw_variables["Authorization"]["value"])
+        self.assertEqual("jwt-runtime-token", raw_variables["ZXBToken"]["value"])
+        self.assertEqual("", public_variables["Authorization"]["value"])
+        self.assertEqual("", public_variables["ZXBToken"]["value"])
+        self.assertTrue(public_variables["Authorization"]["configured"])
+        self.assertTrue(public_variables["ZXBToken"]["configured"])
+        self.assertNotIn("runtime-token", json.dumps(public, ensure_ascii=False))
+
+        updated = self.service.save_api_source({
+            "source_id": source["source_id"],
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [
+                    {"name": "Authorization", "value": "", "scope": "header", "sensitive": True},
+                    {"name": "ZXBToken", "value": "", "scope": "body", "sensitive": True},
+                ],
+            },
+        })
+        raw_after = self.service.get_api_source(source["source_id"], masked=False)
+        raw_after_variables = {item["name"]: item for item in raw_after["environment_snapshot"]["variables"]}
+
+        self.assertEqual("Bearer runtime-token", raw_after_variables["Authorization"]["value"])
+        self.assertEqual("jwt-runtime-token", raw_after_variables["ZXBToken"]["value"])
+        self.assertTrue(updated["environment_snapshot"]["variables"][0]["configured"])
+
+    def test_environment_snapshot_marks_empty_apifox_parameter_groups_as_placeholders(self):
+        snapshot = self.service.normalize_environment_snapshot({
+            "services": [{"name": "default", "baseUrl": "https://print.wisebeginner3d.com/app"}],
+            "parameters": [
+                {"name": "cookie"},
+                {"name": "query"},
+                {"name": "header"},
+                {"name": "body"},
+            ],
+        })
+
+        variables = {item["name"]: item for item in snapshot["variables"]}
+
+        self.assertEqual(0, snapshot["variable_count"])
+        self.assertEqual(4, snapshot["placeholder_group_count"])
+        self.assertTrue(variables["header"]["group_placeholder"])
+        self.assertEqual("Apifox 未返回该分组下的变量明细", variables["header"]["note"])
+
+    def test_apifox_refresh_preserves_platform_local_environment_values(self):
+        source = self.service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D 接口",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "access_token": "secret-apifox-token",
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [
+                    {"name": "Biz", "value": "ZXB", "scope": "header"},
+                    {"name": "Authorization", "value": "Bearer runtime-token", "scope": "header", "sensitive": True},
+                    {"name": "ZXBToken", "value": "jwt-runtime-token", "scope": "body", "sensitive": True},
+                ],
+            },
+        })
+
+        refreshed = self.service.save_api_source({
+            "source_id": source["source_id"],
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "parameters": [
+                    {"name": "cookie"},
+                    {"name": "query"},
+                    {"name": "header"},
+                    {"name": "body"},
+                ],
+            },
+            "preserve_missing_environment_variables": True,
+        })
+
+        raw = self.service.get_api_source(source["source_id"], masked=False)
+        raw_variables = {
+            (item["name"], item.get("scope") or "environment"): item
+            for item in raw["environment_snapshot"]["variables"]
+        }
+        public_text = json.dumps(refreshed, ensure_ascii=False)
+
+        self.assertEqual("ZXB", raw_variables[("Biz", "header")]["value"])
+        self.assertEqual("Bearer runtime-token", raw_variables[("Authorization", "header")]["value"])
+        self.assertEqual("jwt-runtime-token", raw_variables[("ZXBToken", "body")]["value"])
+        self.assertEqual(3, refreshed["environment_snapshot"]["variable_count"])
+        self.assertEqual(4, refreshed["environment_snapshot"]["placeholder_group_count"])
+        self.assertNotIn("runtime-token", public_text)
+        self.assertNotIn("jwt-runtime-token", public_text)
+
+    def test_apifox_refresh_keeps_non_sensitive_local_value_configured_when_remote_is_blank(self):
+        source = self.service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D 接口",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [
+                    {"name": "Biz", "value": "ZXB", "scope": "header"},
+                ],
+            },
+        })
+
+        refreshed = self.service.save_api_source({
+            "source_id": source["source_id"],
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [
+                    {"name": "Biz", "value": "", "scope": "header"},
+                ],
+            },
+            "preserve_missing_environment_variables": True,
+        })
+
+        variables = {
+            (item["name"], item.get("scope") or "environment"): item
+            for item in refreshed["environment_snapshot"]["variables"]
+        }
+
+        self.assertEqual("ZXB", variables[("Biz", "header")]["value"])
+        self.assertTrue(variables[("Biz", "header")]["configured"])
+
+    def test_normalized_snapshot_marks_preserved_non_sensitive_value_configured(self):
+        snapshot = self.service.normalize_environment_snapshot(
+            {
+                "variables": [
+                    {"name": "Biz", "value": "", "scope": "header"},
+                ],
+            },
+            previous_snapshot={
+                "variables": [
+                    {"name": "Biz", "value": "ZXB", "scope": "header"},
+                ],
+            },
+            preserve_missing_environment_variables=True,
+        )
+
+        variables = {
+            (item["name"], item.get("scope") or "environment"): item
+            for item in snapshot["variables"]
+        }
+
+        self.assertEqual("ZXB", variables[("Biz", "header")]["value"])
+        self.assertTrue(variables[("Biz", "header")]["configured"])
+
     def test_environment_snapshot_accepts_apifox_cli_variable_aliases(self):
         snapshot = self.service.normalize_environment_snapshot({
             "services": [

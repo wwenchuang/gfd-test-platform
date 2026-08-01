@@ -695,7 +695,7 @@ def main():
         and "Apifox 环境配置" in api_testing_js
         and "未读取到 base_url" in api_testing_js
         and "使用该环境执行" in api_testing_js
-        and "敏感值未同步" in api_testing_js
+        and "敏感值已在平台保存" in api_testing_js
         and "api-source-environment-snapshot" in api_testing_js,
         "API source workspace must display a compact Apifox environment snapshot for native execution without sensitive values",
     )
@@ -724,6 +724,18 @@ def main():
         and "断言结果" in api_testing_js
         and "api-execution-live-log" in api_testing_js,
         "Native API execution must show a readable live log panel during execution",
+    )
+    require(
+        "renderApiDebugEnvironmentEditor" in api_testing_js
+        and "saveApiDebugEnvironmentAndRun" in api_testing_js
+        and "保存环境并批量调试" in api_testing_js
+        and "Apifox 只读快照" in api_testing_js
+        and "平台本地值用于调试和回归" in api_testing_js
+        and "敏感值已在平台保存" in api_testing_js
+        and "Apifox 仅返回分组名" in api_testing_js
+        and "run_mode === 'debug_batch'" in api_testing_js
+        and "批量调试" in api_testing_js,
+        "Online API debugging must expose editable local environment values, batch debug entry, and clear Apifox/local value semantics",
     )
     require(
         "renderSavedApiSourceShelf" in api_testing_js
@@ -1015,7 +1027,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260731-api-studio-icons-cache-v2" in html and "js/api-testing.js?v=20260731-api-studio-icons-cache-v2" in html and "js/agent-status.js?v=20260731-agent-failure-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, sidebar icons, instant local workbench snapshot rendering, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260729-agent-report-progress" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260801-api-env-debug-v1" in html and "js/api-testing.js?v=20260801-api-env-debug-v1" in html and "js/agent-status.js?v=20260731-agent-failure-buckets" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, sidebar icons, instant local workbench snapshot rendering, local API environment debugging, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

@@ -28,6 +28,58 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-01 Apifox 环境本地值保留与原生 API 执行变量解析
+
+用户提供 Apifox 访问令牌后，已直接核查线上接口读取结果：
+
+- 线上平台可登录并读取 Apifox 项目列表：17 个项目，`5904970 / 3D` 可访问。
+- `3D` 项目可读取 2 个分支、21 个环境。
+- `33831678 / 生产环境（新）-腾讯云` 当前从 Apifox 返回：
+  - 1 个服务地址：`default -> https://print.wisebeginner3d.com/app`
+  - 4 个变量分组名：`cookie / query / header / body`
+  - 未返回用户截图里 Apifox 客户端本地值中的 `Authorization / Biz / ZXBToken / ZXBManToken / ZXBAgentToken / ZXBShareToken / ZXBPartnerToken` 明细。
+- 对照 Apifox 官方文档，环境变量存在远程值和本地值；本地值只保存在当前电脑本地，不会同步到云端或团队成员。因此平台服务端不能假设每次都能从 Apifox API/CLI 读取到截图里的本地 token 和本地变量值。
+
+根因：
+
+- 平台刷新 Apifox 环境时，把 `cookie/query/header/body` 这类空分组当成普通变量展示和计数，用户误以为变量丢失。
+- Apifox 没有返回本地值时，平台此前缺少“保留平台本地执行快照”的明确语义，容易在刷新时把已经手动配置好的业务 token / Header 变量冲掉。
+- 原生 API 执行器此前没有在执行前解析用例里的 `{{Biz}} / {{Authorization}} / {{ZXBToken}}` 等环境变量占位，导致“页面看起来配置了，执行时仍可能没带上”。
+
+修复：
+
+- `apifox_discovery_service.py`
+  - 将空的 `cookie/query/header/body` 标记为 `group_placeholder`，不计入可执行变量数。
+  - 视觉展示可说明“Apifox 未返回该分组下的变量明细”，避免把分组名误当成真实变量。
+- `api_source_service.py`
+  - Apifox 刷新支持 `preserve_missing_environment_variables`，刷新只更新 Apifox 能提供的 base_url / 远程变量，不覆盖平台本地保存的执行变量。
+  - 敏感变量真实值只存服务端，公开返回只显示“已配置”和指纹，不泄露 token。
+  - 非敏感变量如果从上一版本地快照保留下来，也正确标记为已配置。
+- `api_workbench_service.py` / `router.py`
+  - 从 Apifox 项目上下文保存或补齐环境快照时默认启用本地变量保留。
+- `api_execution_service.py`
+  - 原生执行器执行前读取未脱敏 source，解析请求 path/query/header/body 中的 `{{变量名}}`。
+  - 支持 draft 批量调试 `debug_batch`，调试结果回写计划，确认基线前可要求先调试通过。
+  - 正式回归继续保留 stale revision、workspace binding drift、auth binding drift 和可执行性门禁。
+- `api_case_contract_service.py`
+  - 脱敏时保留完整形态的 `{{Authorization}}` 等占位符，避免 AI 生成的环境变量引用被误清空。
+
+验证：
+
+```bash
+python3 -m unittest tests.apifox_discovery_checks tests.api_asset_sync_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/frontend_static_checks.py
+python3 -m py_compile task_server/services/apifox_discovery_service.py task_server/services/api_source_service.py task_server/services/api_execution_service.py task_server/services/api_case_contract_service.py task_server/services/api_test_plan_service.py task_server/services/api_workbench_service.py task_server/router.py tests/apifox_discovery_checks.py tests/api_asset_sync_checks.py tests/api_native_execution_checks.py tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+python3 tests/backend_static_checks.py
+```
+
+本地浏览器 smoke：
+
+- 用 `admin / sonic2026` 登录 `http://127.0.0.1:8099/task-manager.html`。
+- 依次打开 `API 工作台 / 接口资产 / 环境配置 / AI测试设计 / 在线调试 / 自动回归`。
+- 未复现 `selectedCount is not defined`；本地单进程 smoke 仅因未挂 AI Gateway 代理出现 `/ai-gateway/...` 404，和 API 自动化页面逻辑无关。
+
 ### 2026-07-31 Agent RERUN 等待 Runner 结果绕过 stale jobs 缓存
 
 本次按用户要求再次回归“基础打印新增百度网盘入口”：

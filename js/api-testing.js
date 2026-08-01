@@ -21,6 +21,7 @@ let apiExecutionBindingSaveController = null;
 let apiExecutionBindingIntentId = 0;
 let apiExecutionBindingIntent = null;
 let apiCaseDebugStartingKey = '';
+let apiBatchDebugStartingPlanId = '';
 let apiReportRequestId = 0;
 let apiReportRequestController = null;
 let apiReportPollTimer = null;
@@ -1677,6 +1678,12 @@ function apiSourceEnvironmentSnapshot(source = {}) {
   return selectedEnvironment.environment_snapshot || source.environment_snapshot || {};
 }
 
+function apiEnvironmentVariableDisplay(item = {}) {
+  if (item.group_placeholder) return 'Apifox 仅返回分组名';
+  if (item.sensitive) return item.configured ? '敏感值已在平台保存' : '敏感值待补充';
+  return item.value || '空值';
+}
+
 function renderApiSourceEnvironmentSnapshot(source = {}) {
   if (apiEnvironmentSnapshotEditing) return renderApiEnvironmentSnapshotEditor(source);
   const snapshot = apiSourceEnvironmentSnapshot(source);
@@ -1684,14 +1691,15 @@ function renderApiSourceEnvironmentSnapshot(source = {}) {
   const variables = Array.isArray(snapshot.variables) ? snapshot.variables : [];
   const variableCount = Number(snapshot.variable_count ?? variables.length ?? 0);
   const sensitiveCount = Number(snapshot.sensitive_variable_count ?? variables.filter(item => item?.sensitive).length ?? 0);
+  const placeholderCount = Number(snapshot.placeholder_group_count ?? variables.filter(item => item?.group_placeholder).length ?? 0);
   const canSync = !!(source.source_id && (baseUrls.length || variables.length));
   const baseUrlRows = baseUrls.length ? baseUrls.map(item => `
     <li><span>${escapeHtml(item.name || 'default')}</span><code>${escapeHtml(item.url || '')}</code></li>
   `).join('') : '<li class="muted">未读取到环境服务地址</li>';
   const variableRows = variables.length ? variables.slice(0, 12).map(item => `
-    <li>
+    <li class="${item.group_placeholder ? 'is-placeholder' : ''}">
       <span>${escapeHtml(item.name || '未命名变量')}</span>
-      <code>${item.sensitive ? '敏感值未同步' : escapeHtml(item.value || '空值')}</code>
+      <code>${escapeHtml(apiEnvironmentVariableDisplay(item))}</code>
     </li>
   `).join('') : '<li class="muted">未读取到普通环境变量</li>';
   const hiddenCount = Math.max(0, variables.length - 12);
@@ -1701,7 +1709,7 @@ function renderApiSourceEnvironmentSnapshot(source = {}) {
         <div>
           <span>APIFOX 环境配置</span>
           <h4>Apifox 环境配置</h4>
-          <small>${baseUrls.length} 个服务地址 · ${variableCount} 个变量 · ${sensitiveCount} 个敏感值未同步</small>
+          <small>${baseUrls.length} 个服务地址 · ${variableCount} 个执行变量 · ${sensitiveCount} 个敏感值 · ${placeholderCount} 个 Apifox 分组占位</small>
         </div>
         <div class="api-source-environment-actions">
           <button type="button" class="btn-sm" onclick="editApiEnvironmentSnapshot()" ${source.source_id ? '' : 'disabled'}>编辑本地快照</button>
@@ -1728,9 +1736,10 @@ function renderApiEnvironmentBaseUrlRow(item = {}, index = 0) {
 
 function renderApiEnvironmentVariableRow(item = {}) {
   return `
-    <div class="api-env-form-row" data-api-env-row>
+    <div class="api-env-form-row" data-api-env-row data-api-env-configured="${item.configured ? '1' : ''}">
       <input type="text" data-api-env-name value="${escapeHtml(item.name || '')}" placeholder="变量名，例如 tenantId">
-      <input type="text" data-api-env-value value="${escapeHtml(item.sensitive ? '' : (item.value || ''))}" placeholder="${item.sensitive ? '敏感值不展示' : '变量值'}">
+      <input type="text" data-api-env-value value="${escapeHtml(item.sensitive ? '' : (item.value || ''))}" placeholder="${item.sensitive ? (item.configured ? '留空则保留已保存值' : '输入后仅服务端保存') : '变量值'}">
+      <input type="text" data-api-env-scope value="${escapeHtml(item.scope || 'environment')}" placeholder="scope，例如 header">
       <label class="api-env-sensitive"><input type="checkbox" data-api-env-sensitive ${item.sensitive ? 'checked' : ''}> 敏感</label>
       <button type="button" class="btn-sm" onclick="removeApiEnvironmentSnapshotRow(this)">删除</button>
     </div>
@@ -1740,14 +1749,15 @@ function renderApiEnvironmentVariableRow(item = {}) {
 function renderApiEnvironmentSnapshotEditor(source = {}) {
   const snapshot = apiSourceEnvironmentSnapshot(source);
   const baseUrls = Array.isArray(snapshot.base_urls) && snapshot.base_urls.length ? snapshot.base_urls : [{name: 'default', url: ''}];
-  const variables = Array.isArray(snapshot.variables) && snapshot.variables.length ? snapshot.variables : [{name: '', value: '', sensitive: false}];
+  const editableVariables = Array.isArray(snapshot.variables) ? snapshot.variables.filter(item => !item?.group_placeholder) : [];
+  const variables = editableVariables.length ? editableVariables : [{name: '', value: '', scope: 'environment', sensitive: false}];
   return `
     <section id="api-source-environment-snapshot" class="api-source-environment-snapshot api-env-snapshot-editor">
       <div class="api-source-environment-head">
         <div>
           <span>本地环境快照</span>
           <h4>编辑执行环境</h4>
-          <small>从 Apifox 拉下来的环境可在平台本地改，用于执行测试；保存后不反写 Apifox。</small>
+          <small>Apifox 只读快照可以在平台本地补齐；平台本地值用于调试和回归，保存后不反写 Apifox。</small>
         </div>
         <div class="api-source-environment-actions">
           <button type="button" class="btn-sm" onclick="cancelApiEnvironmentSnapshotEdit()">取消</button>
@@ -1762,11 +1772,11 @@ function renderApiEnvironmentSnapshotEditor(source = {}) {
         </div>
         <div class="api-env-form-table">
           <header><strong>环境变量</strong><button type="button" class="btn-sm" onclick="addApiEnvironmentVariableRow()">添加变量</button></header>
-          <div class="api-env-form-head"><span>变量名</span><span>变量值</span><span>敏感</span><span>操作</span></div>
+          <div class="api-env-form-head"><span>变量名</span><span>变量值</span><span>作用域</span><span>敏感</span><span>操作</span></div>
           <div data-api-env-variable-list>${variables.map(item => renderApiEnvironmentVariableRow(item)).join('')}</div>
         </div>
       </div>
-      <p class="api-env-editor-hint">敏感变量名如 Authorization、token、password 会由服务端脱敏保存；业务登录 token 请继续在“环境公共鉴权”里配置。</p>
+      <p class="api-env-editor-hint">敏感变量名如 Authorization、token、password 会由服务端脱敏保存；已保存的敏感值留空不会清掉。业务登录 token 也可以继续在“环境公共鉴权”里配置。</p>
     </section>
   `;
 }
@@ -1809,7 +1819,7 @@ function readApiEnvironmentSnapshotRows() {
       name: row.querySelector('[data-api-env-name]')?.value.trim() || '',
       value: row.querySelector('[data-api-env-value]')?.value.trim() || '',
       sensitive: !!row.querySelector('[data-api-env-sensitive]')?.checked,
-      scope: 'environment'
+      scope: row.querySelector('[data-api-env-scope]')?.value.trim() || 'environment'
     }))
     .filter(item => item.name);
   if (!baseUrls.length) throw new Error('至少填写一个 Base URL');
@@ -3592,7 +3602,7 @@ function renderApiPlanReviewGuide(plan = {}) {
       <ul>
         <li>确认请求方法、路径、入参、鉴权变量和响应断言是否符合业务接口合同。</li>
         <li>待补数据不是失败；可以编辑 draft 用例补齐参数、Body 或断言，也可以先调试单条可执行用例。</li>
-        <li>可执行项满足本次范围后确认后保存为测试资产，再进入平台 API 回归执行。</li>
+        <li>可执行项需要先批量调试通过；调试通过后再保存为测试资产，并进入平台 API 回归执行。</li>
       </ul>
     </section>
   `;
@@ -4128,6 +4138,72 @@ function renderApiPlanEndpointGroups(plan) {
   return html;
 }
 
+function apiPlanDebugValidation(plan = {}) {
+  return (plan.debug_validation && typeof plan.debug_validation === 'object') ? plan.debug_validation : {};
+}
+
+function apiPlanExecutableCaseIds(plan = {}) {
+  return (plan.cases || [])
+    .filter(item => (item.readiness || {}).state === 'executable' && String(item.case_id || '').trim())
+    .map(item => String(item.case_id || '').trim());
+}
+
+function apiPlanDebugPassed(plan = {}) {
+  const readiness = plan.execution_readiness || {};
+  if (readiness.debug_passed === true) return true;
+  const validation = apiPlanDebugValidation(plan);
+  const caseIds = new Set((validation.case_ids || []).map(String));
+  const requiredIds = apiPlanExecutableCaseIds(plan);
+  return validation.state === 'passed' && requiredIds.length > 0 && requiredIds.every(id => caseIds.has(id));
+}
+
+function apiPlanDebugStateText(state = '') {
+  const value = String(state || 'not_run').toLowerCase();
+  if (value === 'passed') return '批量调试通过';
+  if (value === 'failed') return '批量调试失败';
+  if (value === 'partial') return '调试未覆盖全部';
+  if (value === 'running' || value === 'queued') return '批量调试中';
+  return '未批量调试';
+}
+
+function apiPlanDebugStatusClass(state = '') {
+  const value = String(state || 'not_run').toLowerCase();
+  if (value === 'passed') return 'success';
+  if (value === 'failed') return 'danger';
+  return 'warn';
+}
+
+function renderApiPlanDebugGate(plan = {}) {
+  if (plan.status === 'confirmed') return '';
+  const validation = apiPlanDebugValidation(plan);
+  const state = validation.state || (plan.execution_readiness || {}).debug_validation_state || 'not_run';
+  const stats = validation.stats || {};
+  const executableCount = Number(plan.executable_case_count || apiPlanExecutableCaseIds(plan).length || 0);
+  const debugCount = Number((validation.case_ids || []).length || (plan.execution_readiness || {}).debug_case_count || 0);
+  const failedCount = Number((validation.failed_case_ids || []).length || stats.failed || 0);
+  const passed = apiPlanDebugPassed(plan);
+  const copy = passed
+    ? '全部可执行用例已在当前环境调试通过，可以保存为测试资产。'
+    : state === 'failed'
+      ? '调试发现失败项，请查看实时日志或报告，修正入参/断言后重新批量调试。'
+      : '先用当前 Apifox 环境和业务 token 批量跑一遍可执行用例；通过后才允许保存为测试资产。';
+  return `
+    <section class="api-plan-debug-gate status-${escapeHtml(state || 'not_run')}">
+      <div>
+        <span>调试准入</span>
+        <h3>先批量调试，再保存测试资产</h3>
+        <p>${escapeHtml(copy)}</p>
+      </div>
+      <div class="api-plan-debug-facts">
+        <div><strong>${escapeHtml(executableCount)}</strong><span>待调试可执行项</span></div>
+        <div><strong>${escapeHtml(debugCount)}</strong><span>已覆盖调试项</span></div>
+        <div><strong>${escapeHtml(failedCount)}</strong><span>失败项</span></div>
+        <div>${apiStatusPill(apiPlanDebugStateText(state), apiPlanDebugStatusClass(state))}<small>${escapeHtml(validation.execution_id || '尚无调试记录')}</small></div>
+      </div>
+    </section>
+  `;
+}
+
 function renderApiPlanDetail(plan) {
   const cases = plan.cases || [];
   const readiness = plan.execution_readiness || {};
@@ -4136,6 +4212,10 @@ function renderApiPlanDetail(plan) {
   const bindingDrift = plan.binding_drift || [];
   const canConfirm = plan.status === 'draft' && readiness.can_confirm === true && !isStale && !bindingDrift.length;
   const canExecute = readiness.can_execute === true && !isStale && !bindingDrift.length;
+  const debugPassed = apiPlanDebugPassed(plan);
+  const debugValidation = apiPlanDebugValidation(plan);
+  const debugState = debugValidation.state || readiness.debug_validation_state || 'not_run';
+  const debugStarting = String(apiBatchDebugStartingPlanId || '') === String(plan.plan_id || '');
   const actionReason = bindingDrift[0] || apiPlanReadinessReason(plan);
   const missing = readiness.missing || [];
   const missingSummary = new Map();
@@ -4149,7 +4229,10 @@ function renderApiPlanDetail(plan) {
     primaryAction = `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按最新接口重新生成</button>`;
   } else if (bindingDrift.length) {
     primaryAction = `<button class="btn-sm ai" onclick="regenerateApiPlan(${jsArg(plan.plan_id)})">按当前绑定重新生成</button>`;
-  } else if (plan.status === 'draft' && canConfirm) {
+  } else if (plan.status === 'draft' && canConfirm && !debugPassed) {
+    const text = debugStarting || debugState === 'running' ? '批量调试中' : (debugState === 'failed' ? '重新批量调试' : '批量调试可执行用例');
+    primaryAction = `<button class="btn-sm primary" onclick="batchDebugApiPlan(${jsArg(plan.plan_id)})" ${debugStarting || debugState === 'running' ? 'disabled' : ''}>${escapeHtml(text)}</button><button class="btn-sm ghost" onclick="showApiDebugPage()">查看调试入口</button>`;
+  } else if (plan.status === 'draft' && canConfirm && debugPassed) {
     primaryAction = `<button class="btn-sm success" onclick="confirmApiTestPlan(${jsArg(plan.plan_id)})">保存为测试资产</button>`;
   } else if (plan.status === 'draft') {
     primaryAction = `<button class="btn-sm primary" onclick="setApiPlanReviewFilter('needs_review')">查看待补数据</button>`;
@@ -4162,7 +4245,7 @@ function renderApiPlanDetail(plan) {
     <div class="api-plan-detail-head"><div><span>${plan.status === 'confirmed' ? '已保存测试资产' : 'AI 草稿审阅'}</span><h3>${escapeHtml(plan.name || 'API 测试计划')}</h3></div>${isStale ? apiStatusPill('接口已变化', 'danger') : apiStatusPill(apiPlanStatusText(plan.status), plan.status === 'confirmed' ? 'success' : 'warn')}</div>
     <div class="api-plan-case-origin-banner" data-source="${escapeHtml(plan.source || '')}">
       <strong>${plan.status === 'confirmed' ? '已保存测试资产' : 'AI 生成结果'}</strong>
-      <span>${plan.status === 'confirmed' ? '该计划已保存为测试资产，可进入平台 API 执行。' : '这是 AI 生成的 draft 草稿，请先按接口审阅用例明细；确认后点“保存为测试资产”。'}</span>
+      <span>${plan.status === 'confirmed' ? '该计划已保存为测试资产，可进入平台 API 执行。' : '这是 AI 生成的 draft 草稿，请先按接口审阅用例明细，再批量调试可执行项；全部通过后才能保存为测试资产。'}</span>
       <small>${escapeHtml(sourceText)} · 业务鉴权 ${plan.auth_binding?.configured ? '已绑定平台安全 profile' : '未配置业务用户登录 token'}</small>
     </div>
     ${renderApiPlanReviewGuide(plan)}
@@ -4180,6 +4263,7 @@ function renderApiPlanDetail(plan) {
     ${bindingDrift.length ? `<div class="api-stale-warning">执行绑定已变化：${escapeHtml(bindingDrift.join('、'))}</div>` : ''}
     ${renderApiPlanBindingDriftPanel(plan)}
     ${isStale ? `<div class="api-stale-warning">${escapeHtml(actionReason)}</div>` : ''}
+    ${renderApiPlanDebugGate(plan)}
     <div class="generation-record-actions api-plan-primary-action">${primaryAction}</div>
     <details class="api-plan-tech-detail api-plan-facts-detail"><summary>来源、AI 与执行绑定</summary>${renderApiPlanFacts(plan)}<div class="api-plan-scope-facts"><span>Plan <code>${escapeHtml(plan.plan_id || '-')}</code></span></div></details>
     <section class="api-plan-endpoint-review">
@@ -4218,6 +4302,40 @@ async function confirmApiTestPlan(planId) {
     else await showApiPlanPage();
   } catch(e) {
     showToast(e.message || '保存测试资产失败', 'error');
+  }
+}
+
+async function batchDebugApiPlan(planId) {
+  if (apiBatchDebugStartingPlanId) {
+    showToast('正在创建批量调试，请勿重复提交', 'warn');
+    return;
+  }
+  const current = String(apiTestingCurrentPlan?.plan_id || '') === String(planId || '') ? apiTestingCurrentPlan : null;
+  const caseIds = apiPlanExecutableCaseIds(current || {});
+  if (!caseIds.length) {
+    showToast('当前草稿没有可批量调试的用例', 'error');
+    return;
+  }
+  apiBatchDebugStartingPlanId = String(planId || '');
+  rerenderApiPlanReview();
+  try {
+    const data = await apiRequest('/api-testing/cases/debug-batch', {
+      method: 'POST',
+      body: {
+        source_id: apiTestingProjectScope.sourceId || apiAssetSelectedSourceId,
+        plan_id: planId,
+        case_ids: caseIds,
+      }
+    });
+    const execution = data.execution || {};
+    showToast('✓ 批量调试已排队，正在打开实时日志', 'success');
+    apiExecutionActiveId = execution.execution_id || '';
+    await showApiRegressionPage();
+  } catch (e) {
+    showToast(e.message || '批量调试启动失败', 'error');
+    if (['api_plan', 'api_dashboard'].includes(activeWorkflow)) rerenderApiPlanReview();
+  } finally {
+    apiBatchDebugStartingPlanId = '';
   }
 }
 
@@ -4389,7 +4507,6 @@ function renderApiDebugWorkspace(workbench = {}) {
   const source = workbench.source || {};
   const sourceEnv = apiSourceEnvironmentSummary(source);
   const endpoint = apiDebugDefaultEndpoint();
-  const variables = (sourceEnv.variables || []).slice(0, 8);
   const hasTestAssets = !!(workbench.cases?.latest_draft?.plan_id || workbench.cases?.latest_baseline?.plan_id);
   const debugAction = hasTestAssets
     ? ['选择用例调试', 'showApiPlanPage()']
@@ -4430,16 +4547,82 @@ function renderApiDebugWorkspace(workbench = {}) {
 发送请求、解析响应、执行断言、生成报告。</pre>
           </div>
         </div>
-        <aside class="api-debug-env-panel">
-          <span>环境变量</span>
-          <strong>${escapeHtml(source.provider_metadata?.environment_name || source.environment_id || '当前环境')}</strong>
-          <small>${escapeHtml(sourceEnv.baseUrl || '未读取到 Base URL')}</small>
-          <ul>${variables.length ? variables.map(item => `<li><span>${escapeHtml(item.name || '-')}</span><code>${item.sensitive ? '敏感值未同步' : escapeHtml(item.value || '空值')}</code></li>`).join('') : '<li><span>暂无变量</span><code>去环境配置补充</code></li>'}</ul>
-          <button class="btn-sm" onclick="showApiEnvironmentPage()">编辑变量</button>
-        </aside>
+        ${renderApiDebugEnvironmentEditor(source, workbench)}
       </div>
     </section>
   `;
+}
+
+function renderApiDebugEnvironmentEditor(source = {}, workbench = {}) {
+  const snapshot = source.environment_snapshot || {};
+  const baseUrls = Array.isArray(snapshot.base_urls) && snapshot.base_urls.length ? snapshot.base_urls : [{name: 'default', url: ''}];
+  const variables = (Array.isArray(snapshot.variables) ? snapshot.variables : [])
+    .filter(item => !item?.group_placeholder);
+  const draft = workbench.cases?.latest_draft || {};
+  const draftPlanId = draft.plan_id || '';
+  const executable = Number(draft.executable_case_count || 0);
+  const placeholders = Array.isArray(snapshot.variables)
+    ? snapshot.variables.filter(item => item?.group_placeholder)
+    : [];
+  return `
+    <aside id="api-source-environment-snapshot" class="api-debug-env-panel api-debug-env-editor">
+      <div class="api-debug-env-title">
+        <span>调试环境</span>
+        <strong>${escapeHtml(source.provider_metadata?.environment_name || source.environment_id || '当前环境')}</strong>
+        <small>Apifox 只读快照；平台本地值用于调试和回归。</small>
+      </div>
+      <div class="api-env-form-table compact">
+        <header><strong>Base URL</strong><button type="button" class="btn-sm" onclick="addApiEnvironmentBaseUrlRow()">添加</button></header>
+        <div class="api-env-form-head"><span>名称</span><span>地址</span><span>操作</span></div>
+        <div data-api-env-base-url-list>${baseUrls.map((item, index) => renderApiEnvironmentBaseUrlRow(item, index)).join('')}</div>
+      </div>
+      <div class="api-env-form-table compact">
+        <header><strong>环境变量</strong><button type="button" class="btn-sm" onclick="addApiEnvironmentVariableRow()">添加</button></header>
+        <div class="api-env-form-head"><span>变量名</span><span>变量值</span><span>作用域</span><span>敏感</span><span>操作</span></div>
+        <div data-api-env-variable-list>${(variables.length ? variables : [{name: '', value: '', scope: 'environment', sensitive: false}]).map(item => renderApiEnvironmentVariableRow(item)).join('')}</div>
+      </div>
+      ${placeholders.length ? `<p class="api-env-editor-hint">Apifox 仅返回分组名：${escapeHtml(placeholders.map(item => item.name).join('、'))}。请在这里补齐 Authorization、Biz、ZXBToken 等实际执行变量。</p>` : ''}
+      <div class="api-debug-env-actions">
+        <button class="btn-sm" onclick="saveApiEnvironmentSnapshotEdit()">只保存环境</button>
+        <button class="btn-sm primary" onclick="saveApiDebugEnvironmentAndRun(${jsArg(draftPlanId)})" ${draftPlanId && executable ? '' : 'disabled'}>保存环境并批量调试</button>
+      </div>
+    </aside>
+  `;
+}
+
+async function saveApiDebugEnvironmentAndRun(planId) {
+  const source = selectedApiAssetSource() || {};
+  if (!source.source_id) {
+    showToast('请先保存 Apifox 项目和环境', 'error');
+    return;
+  }
+  let environmentSnapshot;
+  try {
+    environmentSnapshot = readApiEnvironmentSnapshotRows();
+  } catch (error) {
+    showToast(`环境配置不完整：${error.message || error}`, 'error');
+    return;
+  }
+  try {
+    const saved = await apiRequest(`/api-testing/sources/${encodeURIComponent(source.source_id)}/environment-snapshot`, {
+      method: 'POST',
+      body: {environment_snapshot: environmentSnapshot}
+    });
+    if (saved.source?.source_id) apiAssetSelectedSourceId = saved.source.source_id;
+    const data = await apiRequest('/api-testing/cases/debug-batch', {
+      method: 'POST',
+      body: {
+        source_id: source.source_id,
+        plan_id: planId,
+      }
+    });
+    const execution = data.execution || {};
+    showToast('✓ 已保存环境，批量调试已启动', 'success');
+    apiExecutionActiveId = execution.execution_id || '';
+    await showApiRegressionPage();
+  } catch (error) {
+    showToast(error.message || '保存环境或启动批量调试失败', 'error');
+  }
 }
 
 function apiDebugBodyPlaceholder(endpoint = {}) {
@@ -4940,7 +5123,9 @@ function apiExecutionTerminal(execution) {
 
 function renderApiActiveRun(execution) {
   const phases = execution.phases || [];
-  const runMode = execution.run_mode === 'debug_case' ? '单条调试' : '测试资产回归';
+  const runMode = execution.run_mode === 'debug_case'
+    ? '单条调试'
+    : (execution.run_mode === 'debug_batch' ? '批量调试' : '测试资产回归');
   return `
     <div class="api-active-run-head">
       <div><span>${escapeHtml(runMode)}</span><h2>${escapeHtml(execution.plan_name || execution.plan_id || 'API 执行')}</h2></div>

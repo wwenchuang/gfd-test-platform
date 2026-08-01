@@ -224,6 +224,11 @@ class ApiWorkbenchChecks(unittest.TestCase):
         router.POST_ROUTES["/api/api-testing/cases/debug"](denied_debug, {})
         self.assertEqual(401, denied_debug.responses[-1][0])
 
+        self.assertIn("/api/api-testing/cases/debug-batch", router.POST_ROUTES)
+        denied_batch_debug = _RouteHandler(authorized=False)
+        router.POST_ROUTES["/api/api-testing/cases/debug-batch"](denied_batch_debug, {})
+        self.assertEqual(401, denied_batch_debug.responses[-1][0])
+
         source, _revision, _plan, _confirmed = self._seed_workbench()
         allowed = _RouteHandler()
         router.GET_ROUTES["/api/api-testing/workbench"](
@@ -234,6 +239,51 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertTrue(payload["ok"])
         self.assertEqual(source["source_id"], payload["source"]["source_id"])
+
+    def test_confirm_route_requires_successful_batch_debug_for_draft_plan(self):
+        from task_server import router
+
+        source, _revision, draft, _confirmed = self._seed_workbench()
+        confirm_handler = _RouteHandler({"plan_id": draft["plan_id"]})
+        router.POST_ROUTES["/api/api-testing/plans/confirm"](confirm_handler, {})
+
+        status, payload = confirm_handler.responses[-1]
+        self.assertEqual(400, status)
+        self.assertIn("批量调试", payload["error"])
+
+        original_execute_case = api_execution_service._execute_case
+
+        def fake_execute_case(_source_id, _base_url, case):
+            return {
+                "case_id": case["case_id"],
+                "name": case["name"],
+                "endpoint": case["endpoint"],
+                "status": "passed",
+                "duration_ms": 7,
+                "request": {"method": "GET", "url": "https://api.example.test/users/me"},
+                "response": {"status_code": 200, "body": {"ok": True}},
+                "assertions": [{"type": "status", "passed": True, "message": "HTTP 200"}],
+            }
+
+        api_execution_service._execute_case = fake_execute_case
+        try:
+            case_ids = [case["case_id"] for case in draft["cases"] if (case.get("readiness") or {}).get("state") == "executable"]
+            execution = api_execution_service.start_api_cases_debug(
+                draft["plan_id"],
+                case_ids,
+                spawn=False,
+            )
+        finally:
+            api_execution_service._execute_case = original_execute_case
+
+        self.assertEqual("succeeded", execution["status"])
+
+        confirm_after_debug = _RouteHandler({"plan_id": draft["plan_id"]})
+        router.POST_ROUTES["/api/api-testing/plans/confirm"](confirm_after_debug, {})
+
+        confirmed_status, confirmed_payload = confirm_after_debug.responses[-1]
+        self.assertEqual(200, confirmed_status)
+        self.assertEqual("confirmed", confirmed_payload["plan"]["status"])
 
     def test_source_environment_snapshot_route_updates_local_execution_copy(self):
         from task_server import router

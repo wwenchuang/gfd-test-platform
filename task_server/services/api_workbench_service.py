@@ -166,6 +166,7 @@ def persist_apifox_project_context(
         "environment_id": str(selected_environment.get("id") if selected_environment else source.get("environment_id") or "").strip(),
         "provider_metadata": metadata,
         "environment_snapshot": environment_snapshot,
+        "preserve_missing_environment_variables": True,
         "sync_enabled": bool(source.get("sync_enabled")),
         "sync_interval_minutes": source.get("sync_interval_minutes") or 60,
         "sync_scope": source.get("sync_scope") or {},
@@ -562,9 +563,30 @@ def debug_api_case(source_id: str, plan_id: str, case_id: str) -> Dict[str, Any]
     return {"ok": True, "execution": execution}
 
 
+def debug_api_cases(source_id: str, plan_id: str, case_ids: List[str] | None = None) -> Dict[str, Any]:
+    """Run executable draft cases as one native debug batch before confirmation."""
+    selected_source_id = str(source_id or "").strip()
+    selected_plan_id = str(plan_id or "").strip()
+    if not selected_plan_id:
+        raise ValueError("请选择要批量调试的 API 用例计划")
+    plan = api_test_plan_service.get_api_test_plan(selected_plan_id, source_id=selected_source_id)
+    if not plan:
+        raise ValueError("API 用例计划不存在")
+    execution = api_execution_service.start_api_cases_debug(
+        selected_plan_id,
+        [
+            str(item or "").strip()
+            for item in (case_ids or [])
+            if str(item or "").strip()
+        ],
+    )
+    return {"ok": True, "execution": execution}
+
+
 __all__ = [
     "api_testing_workbench",
     "debug_api_case",
+    "debug_api_cases",
     "persist_apifox_project_context",
     "refresh_apifox_environment_snapshot",
     "update_apifox_snapshot",

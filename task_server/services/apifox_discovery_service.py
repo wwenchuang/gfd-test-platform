@@ -22,6 +22,7 @@ _SENSITIVE_NAME_RE = re.compile(
     r"(token|secret|password|passwd|pwd|authorization|cookie|session|apikey|api_key|accesskey|private)",
     re.IGNORECASE,
 )
+_APIFOX_PARAMETER_GROUP_NAMES = {"cookie", "query", "header", "body"}
 _BASE_URL_VALUE_KEYS = (
     "url",
     "value",
@@ -518,14 +519,27 @@ def _environment_variable_rows(value: Any) -> List[Dict[str, Any]]:
         value = _field_value(raw, _VARIABLE_VALUE_KEYS)
         if value is raw:
             value = ""
+        scope = _safe_text(
+            raw.get("scope") or raw.get("type") or raw.get("in") or inherited_scope or "environment",
+            40,
+        ) or "environment"
+        clean_value = _safe_text(value, 1000)
+        group_placeholder = bool(raw.get("group_placeholder")) or (
+            name.lower() in _APIFOX_PARAMETER_GROUP_NAMES
+            and not clean_value
+            and not raw.get("sensitive")
+            and not raw.get("secret")
+            and not raw.get("private")
+            and scope == "environment"
+        )
         result.append({
             "name": name,
-            "value": "" if sensitive else _safe_text(value, 1000),
+            "value": "" if sensitive else clean_value,
             "sensitive": sensitive,
-            "scope": _safe_text(
-                raw.get("scope") or raw.get("type") or raw.get("in") or inherited_scope or "environment",
-                40,
-            ) or "environment",
+            "scope": scope,
+            "configured": bool(clean_value) if not sensitive else False,
+            "group_placeholder": group_placeholder,
+            "note": "Apifox 未返回该分组下的变量明细" if group_placeholder else "",
         })
 
     def nested_variable_sources(raw: Dict[str, Any]) -> List[Any]:
@@ -591,11 +605,13 @@ def _environment_snapshot(raw: Dict[str, Any]) -> Dict[str, Any]:
         for key in _VARIABLE_SOURCE_KEYS
         if key in source and not _is_blank(source.get(key))
     ])
+    executable_variables = [item for item in variables if not item.get("group_placeholder")]
     return {
         "base_urls": base_urls,
         "variables": variables,
-        "variable_count": len(variables),
-        "sensitive_variable_count": sum(1 for item in variables if item.get("sensitive")),
+        "variable_count": len(executable_variables),
+        "sensitive_variable_count": sum(1 for item in executable_variables if item.get("sensitive")),
+        "placeholder_group_count": sum(1 for item in variables if item.get("group_placeholder")),
     }
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -26,6 +27,7 @@ from task_server.services import (
 API_TESTING_DIR = api_asset_service.API_TESTING_DIR
 TERMINAL_EXECUTION_STATES = {"succeeded", "failed", "cancelled"}
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_TEMPLATE_VARIABLE_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.:-]+)\s*\}\}")
 
 
 class ApiExecutionConflict(ValueError):
@@ -179,6 +181,61 @@ def _selected_environment(source: Dict[str, Any], binding: Dict[str, Any]) -> Di
 def _selected_base_url(source: Dict[str, Any], binding: Dict[str, Any]) -> str:
     environment = _selected_environment(source, binding)
     return str(environment.get("url") or "").strip().rstrip("/")
+
+
+def _source_environment_variable_map(source_id: str, source: Dict[str, Any]) -> Dict[str, str]:
+    snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    variables = snapshot.get("variables") if isinstance(snapshot.get("variables"), list) else []
+    result: Dict[str, str] = {}
+    for item in variables:
+        raw = item if isinstance(item, dict) else {}
+        if raw.get("group_placeholder"):
+            continue
+        name = str(raw.get("name") or "").strip()
+        value = raw.get("value")
+        if not name or value in (None, ""):
+            continue
+        result[name] = str(value)
+    auth = api_workspace_service.get_api_auth_secret(source_id)
+    if auth.get("configured") and auth.get("secret"):
+        variable_name = str(auth.get("variable_name") or "").strip()
+        header_name = str(auth.get("header_name") or "Authorization").strip()
+        secret = str(auth.get("secret") or "")
+        value = secret if str(auth.get("auth_type") or "bearer") != "bearer" or secret.lower().startswith("bearer ") else f"Bearer {secret}"
+        if variable_name:
+            result[variable_name] = value
+        if header_name and header_name not in result:
+            result[header_name] = value
+    return result
+
+
+def _resolve_template_value(value: Any, variables: Dict[str, str], missing: set[str]) -> Any:
+    if isinstance(value, str):
+        def replace(match: re.Match[str]) -> str:
+            name = match.group(1).strip()
+            if name not in variables:
+                missing.add(name)
+                return match.group(0)
+            return variables[name]
+
+        return _TEMPLATE_VARIABLE_RE.sub(replace, value)
+    if isinstance(value, list):
+        return [_resolve_template_value(item, variables, missing) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _resolve_template_value(item, variables, missing)
+            for key, item in value.items()
+        }
+    return copy.deepcopy(value)
+
+
+def _resolve_case_environment_variables(case: Dict[str, Any], variables: Dict[str, str]) -> Dict[str, Any]:
+    missing: set[str] = set()
+    resolved = _resolve_template_value(case, variables, missing)
+    if missing:
+        names = "、".join(sorted(missing)[:8])
+        raise ApiExecutionValidationError(f"环境变量未配置：{names}")
+    return resolved if isinstance(resolved, dict) else copy.deepcopy(case)
 
 
 def _plan_latest_run(plan_id: str, source_id: str = "") -> Dict[str, Any]:
@@ -644,21 +701,28 @@ def _run_execution(execution_id: str) -> None:
         _set_phase(execution, "prepare", "running", "读取计划、环境和鉴权")
         plan = execution.get("plan_snapshot") if isinstance(execution.get("plan_snapshot"), dict) else {}
         source_id = str(execution.get("source_id") or plan.get("source_id") or "").strip()
-        source = api_source_service.get_api_source(source_id, masked=True)
+        source = api_source_service.get_api_source(source_id, masked=False)
         binding = api_workspace_service.get_api_workspace_binding(source_id, allow_legacy=False)
         base_url = _selected_base_url(source, binding)
         if not base_url:
             raise ApiExecutionValidationError("当前 Apifox 环境没有可执行 base_url")
+        environment_variables = _source_environment_variable_map(source_id, source)
         execution["binding"] = binding
         execution["base_url"] = base_url
-        _append_event(execution, "prepare", f"当前环境 {base_url}", {"source_id": source_id})
+        _append_event(
+            execution,
+            "prepare",
+            f"当前环境 {base_url}",
+            {"source_id": source_id, "environment_variable_count": len(environment_variables)},
+        )
         _set_phase(execution, "prepare", "succeeded", "环境准备完成")
         _set_phase(execution, "execute", "running", "开始执行接口用例")
         cases = execution.get("cases") if isinstance(execution.get("cases"), list) else []
         results: List[Dict[str, Any]] = []
         for index, case in enumerate(cases, start=1):
             _append_event(execution, "execute", f"[{index}/{len(cases)}] {case.get('name') or case.get('case_id')} 开始", {"case_id": case.get("case_id")})
-            request_detail = _request_log_detail(source_id, base_url, case)
+            runtime_case = _resolve_case_environment_variables(case, environment_variables)
+            request_detail = _request_log_detail(source_id, base_url, runtime_case)
             request = request_detail.get("request") if isinstance(request_detail.get("request"), dict) else {}
             _append_event(
                 execution,
@@ -666,7 +730,7 @@ def _run_execution(execution_id: str) -> None:
                 f"[{index}/{len(cases)}] 发送请求 {request.get('method') or '-'} {_short_api_url(request.get('url') or '')}",
                 request_detail,
             )
-            result = _execute_case(source_id, base_url, case)
+            result = _execute_case(source_id, base_url, runtime_case)
             results.append(result)
             execution["results"] = results
             execution["stats"] = {
@@ -714,10 +778,29 @@ def _run_execution(execution_id: str) -> None:
         _append_event(execution, execution.get("current_phase") or "execute", str(exc), {"error": str(exc)}, status="failed")
     finally:
         execution.pop("_started_monotonic", None)
-        _save_execution(execution)
+        public = _save_execution(execution)
+        _record_debug_validation_if_needed(public)
 
 
-def _start_execution(plan: Dict[str, Any], cases: List[Dict[str, Any]], run_mode: str) -> Dict[str, Any]:
+def _record_debug_validation_if_needed(execution: Dict[str, Any]) -> None:
+    if str(execution.get("run_mode") or "") != "debug_batch":
+        return
+    try:
+        api_test_plan_service.record_api_plan_debug_result(
+            str(execution.get("plan_id") or ""),
+            execution,
+        )
+    except Exception:
+        pass
+
+
+def _start_execution(
+    plan: Dict[str, Any],
+    cases: List[Dict[str, Any]],
+    run_mode: str,
+    *,
+    spawn: bool = True,
+) -> Dict[str, Any]:
     if not cases:
         raise ApiExecutionValidationError("没有可执行 API 用例")
     source_id = str(plan.get("source_id") or "").strip()
@@ -744,8 +827,12 @@ def _start_execution(plan: Dict[str, Any], cases: List[Dict[str, Any]], run_mode
         "poll_after_ms": 1500,
     }
     _append_event(execution, "prepare", "API 执行已排队", {"case_count": len(cases)})
-    thread = threading.Thread(target=_run_execution, args=(execution_id,), daemon=True)
-    thread.start()
+    _record_debug_validation_if_needed(execution)
+    if spawn:
+        thread = threading.Thread(target=_run_execution, args=(execution_id,), daemon=True)
+        thread.start()
+    else:
+        _run_execution(execution_id)
     return _read_execution(execution_id)
 
 
@@ -755,6 +842,23 @@ def start_api_execution(plan_id: str) -> Dict[str, Any]:
         raise ApiExecutionValidationError("测试资产不存在")
     if plan.get("status") != "confirmed":
         raise ApiExecutionValidationError("正式执行前请先保存为测试资产")
+    revision_state = plan.get("revision_state") if isinstance(plan.get("revision_state"), dict) else {}
+    if revision_state.get("state") == "stale":
+        raise ApiExecutionValidationError("测试资产已过期，请重新生成或确认后再执行")
+    binding_drift = [
+        str(item or "").strip()
+        for item in (plan.get("binding_drift") or [])
+        if str(item or "").strip()
+    ]
+    if "auth_binding_drift" in binding_drift:
+        raise ApiExecutionValidationError("认证绑定已变化，请重新确认业务鉴权后再执行")
+    if "workspace_binding_drift" in binding_drift:
+        raise ApiExecutionValidationError("执行环境绑定已变化，请重新确认后再执行")
+    readiness = plan.get("execution_readiness") if isinstance(plan.get("execution_readiness"), dict) else {}
+    if not readiness.get("can_execute"):
+        if not int(readiness.get("executable_case_count") or 0):
+            raise ApiExecutionValidationError("没有可执行 API 用例")
+        raise ApiExecutionValidationError("测试资产未达到执行条件，请先处理待补齐项")
     cases = api_test_plan_service.executable_api_cases(plan)
     return _start_execution(plan, cases, "baseline")
 
@@ -771,6 +875,44 @@ def start_api_case_debug(plan_id: str, case_id: str) -> Dict[str, Any]:
     if not case:
         raise ApiExecutionValidationError("该 draft 用例仍缺测试数据，不能单条调试")
     return _start_execution(plan, [case], "debug_case")
+
+
+def start_api_cases_debug(
+    plan_id: str,
+    case_ids: List[str] | None = None,
+    *,
+    spawn: bool = True,
+) -> Dict[str, Any]:
+    plan = api_test_plan_service.get_api_test_plan(str(plan_id or "").strip())
+    if not plan:
+        raise ApiExecutionValidationError("API 用例计划不存在")
+    if plan.get("status") != "draft":
+        raise ApiExecutionValidationError("只有 AI 草稿需要批量调试后再保存为测试资产")
+    executable_cases = api_test_plan_service.executable_api_cases(plan)
+    requested_ids = [
+        str(item or "").strip()
+        for item in (case_ids or [])
+        if str(item or "").strip()
+    ]
+    if requested_ids:
+        requested_set = set(requested_ids)
+        cases = [
+            case for case in executable_cases
+            if str(case.get("case_id") or "").strip() in requested_set
+        ]
+        found_ids = {
+            str(case.get("case_id") or "").strip()
+            for case in cases
+            if str(case.get("case_id") or "").strip()
+        }
+        missing_ids = [case_id for case_id in requested_ids if case_id not in found_ids]
+        if missing_ids:
+            raise ApiExecutionValidationError("所选用例不可执行或不存在：" + "、".join(missing_ids[:5]))
+    else:
+        cases = executable_cases
+    if not cases:
+        raise ApiExecutionValidationError("该草稿没有可批量调试的可执行用例")
+    return _start_execution(plan, cases, "debug_batch", spawn=spawn)
 
 
 def _json_path_value(data: Any, path: str) -> Any:
@@ -857,5 +999,6 @@ __all__ = [
     "save_api_auth_binding",
     "save_api_auth_binding_from_login",
     "start_api_case_debug",
+    "start_api_cases_debug",
     "start_api_execution",
 ]

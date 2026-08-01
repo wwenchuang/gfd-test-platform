@@ -1350,18 +1350,20 @@ def _meter_case(case_id, state="executable"):
     }
 
 
-class MeterSphereContractBoundaryChecks(unittest.TestCase):
+class NativeExecutionContractBoundaryChecks(unittest.TestCase):
     def setUp(self):
-        from task_server.services import api_test_plan_service, metersphere_service
+        from task_server.services import api_execution_service, api_test_plan_service
 
+        self.execution_service = api_execution_service
         self.plan_service = api_test_plan_service
-        self.metersphere_service = metersphere_service
         self.old_get_plan = api_test_plan_service.get_api_test_plan
+        self.old_start_execution = api_execution_service._start_execution
 
     def tearDown(self):
         self.plan_service.get_api_test_plan = self.old_get_plan
+        self.execution_service._start_execution = self.old_start_execution
 
-    def test_stale_and_zero_executable_plans_cannot_push_or_run(self):
+    def test_stale_and_zero_executable_plans_cannot_run(self):
         stale_plan = {
             "plan_id": "api-plan-stale",
             "name": "过期计划",
@@ -1377,14 +1379,8 @@ class MeterSphereContractBoundaryChecks(unittest.TestCase):
         }
         self.plan_service.get_api_test_plan = lambda plan_id: copy.deepcopy(stale_plan)
 
-        with self.assertRaisesRegex(self.metersphere_service.MeterSphereExecutionValidationError, "过期"):
-            self.metersphere_service._execution_plan("api-plan-stale")
-        push = self.metersphere_service.push_plan_to_metersphere("api-plan-stale")
-        run = self.metersphere_service.create_metersphere_run("api-plan-stale")
-        self.assertFalse(push["ok"])
-        self.assertFalse(run["ok"])
-        self.assertIn("过期", push["error"])
-        self.assertIn("过期", run["error"])
+        with self.assertRaisesRegex(self.execution_service.ApiExecutionValidationError, "过期"):
+            self.execution_service.start_api_execution("api-plan-stale")
 
         blocked_plan = copy.deepcopy(stale_plan)
         blocked_plan["plan_id"] = "api-plan-blocked"
@@ -1396,8 +1392,8 @@ class MeterSphereContractBoundaryChecks(unittest.TestCase):
         }
         blocked_plan["cases"] = [_meter_case("API-REVIEW", "needs_review")]
         self.plan_service.get_api_test_plan = lambda plan_id: copy.deepcopy(blocked_plan)
-        with self.assertRaisesRegex(self.metersphere_service.MeterSphereExecutionValidationError, "可执行用例"):
-            self.metersphere_service._execution_plan("api-plan-blocked")
+        with self.assertRaisesRegex(self.execution_service.ApiExecutionValidationError, "可执行.*用例"):
+            self.execution_service.start_api_execution("api-plan-blocked")
 
     def test_execution_plan_rejects_current_auth_binding_drift(self):
         drifted_plan = {
@@ -1414,10 +1410,10 @@ class MeterSphereContractBoundaryChecks(unittest.TestCase):
         }
         self.plan_service.get_api_test_plan = lambda _plan_id: copy.deepcopy(drifted_plan)
 
-        with self.assertRaisesRegex(self.metersphere_service.MeterSphereExecutionValidationError, "认证绑定"):
-            self.metersphere_service._execution_plan("api-plan-auth-drift")
+        with self.assertRaisesRegex(self.execution_service.ApiExecutionValidationError, "认证绑定"):
+            self.execution_service.start_api_execution("api-plan-auth-drift")
 
-    def test_meter_payload_contains_only_executable_cases_with_audit_counts(self):
+    def test_native_execution_receives_only_executable_cases(self):
         plan = {
             "plan_id": "api-plan-mixed",
             "name": "混合计划",
@@ -1435,14 +1431,22 @@ class MeterSphereContractBoundaryChecks(unittest.TestCase):
                 "can_execute": True,
             },
         }
+        captured = {}
 
-        payload = self.metersphere_service._meter_payload_for_plan(plan)
+        def fake_start(plan_payload, cases, run_mode, **_kwargs):
+            captured["plan"] = copy.deepcopy(plan_payload)
+            captured["cases"] = copy.deepcopy(cases)
+            captured["run_mode"] = run_mode
+            return {"ok": True, "run_mode": run_mode}
 
-        self.assertEqual(payload["contractVersion"], "api_case_contract/v1")
-        self.assertEqual(payload["totalCaseCount"], 2)
-        self.assertEqual(payload["executableCaseCount"], 1)
-        self.assertEqual(payload["excludedCaseCount"], 1)
-        self.assertEqual([case["case_id"] for case in payload["cases"]], ["API-READY"])
+        self.plan_service.get_api_test_plan = lambda _plan_id: copy.deepcopy(plan)
+        self.execution_service._start_execution = fake_start
+
+        result = self.execution_service.start_api_execution("api-plan-mixed")
+
+        self.assertEqual("baseline", result["run_mode"])
+        self.assertEqual("baseline", captured["run_mode"])
+        self.assertEqual([case["case_id"] for case in captured["cases"]], ["API-READY"])
 
     def test_non_executable_and_cyclic_dependencies_block_dependent_cases(self):
         review_case = _meter_case("API-SETUP", "needs_review")

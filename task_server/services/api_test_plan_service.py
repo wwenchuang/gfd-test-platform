@@ -880,6 +880,33 @@ def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
             "scope_drift": scope_drift,
         }
     is_stale = revision_state.get("state") == "stale"
+    executable_case_ids = [
+        str(case.get("case_id") or "").strip()
+        for case in cases
+        if isinstance(case, dict)
+        and (case.get("readiness") or {}).get("state") == "executable"
+        and str(case.get("case_id") or "").strip()
+    ]
+    debug_validation = (
+        evaluated.get("debug_validation")
+        if isinstance(evaluated.get("debug_validation"), dict)
+        else {}
+    )
+    debug_state = str(debug_validation.get("state") or "not_run").strip() or "not_run"
+    debug_case_ids = {
+        str(item or "").strip()
+        for item in (debug_validation.get("case_ids") or [])
+        if str(item or "").strip()
+    }
+    debug_passed = (
+        debug_state == "passed"
+        and bool(executable_case_ids)
+        and set(executable_case_ids).issubset(debug_case_ids)
+    )
+    readiness["debug_validation_state"] = debug_state
+    readiness["debug_required_case_count"] = len(executable_case_ids)
+    readiness["debug_case_count"] = len(debug_case_ids)
+    readiness["debug_passed"] = debug_passed
     readiness["can_confirm"] = bool(readiness.get("executable_case_count")) and not is_stale
     readiness["can_execute"] = (
         evaluated.get("status") == "confirmed"
@@ -901,6 +928,12 @@ def evaluate_api_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     evaluated["revision_state"] = revision_state
     evaluated["binding_drift"] = binding_drift
     evaluated["scope_drift"] = scope_drift
+    evaluated["debug_validation"] = api_case_contract_service.sanitize_sensitive_data({
+        "state": debug_state,
+        "required_case_ids": executable_case_ids,
+        **debug_validation,
+        "debug_passed": debug_passed,
+    })
     return evaluated
 
 
@@ -1150,7 +1183,7 @@ def get_api_test_plan(plan_id: str, source_id: str = "") -> Dict[str, Any]:
     return evaluated
 
 
-def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
+def confirm_api_test_plan(plan_id: str, *, require_debug_validation: bool = False) -> Dict[str, Any]:
     plan = _read_api_test_plan(plan_id)
     if not plan:
         raise ValueError("API 测试计划不存在")
@@ -1164,12 +1197,80 @@ def confirm_api_test_plan(plan_id: str) -> Dict[str, Any]:
         raise ValueError("API 测试计划执行环境已变更，请重新生成")
     if not (evaluated.get("execution_readiness") or {}).get("can_confirm"):
         raise ValueError("API 测试计划没有可执行用例，请先补齐必填测试数据")
+    if (
+        require_debug_validation
+        and str(evaluated.get("status") or "") == "draft"
+        and not (evaluated.get("execution_readiness") or {}).get("debug_passed")
+    ):
+        raise ValueError("请先批量调试全部可执行用例并通过，再保存为测试资产")
     plan["status"] = "confirmed"
     plan["confirmed_at"] = _now()
     write_json_file(_plan_path(plan_id), plan)
     confirmed = evaluate_api_plan(plan)
     _save_plan_index(confirmed)
     return confirmed
+
+
+def record_api_plan_debug_result(plan_id: str, execution: Dict[str, Any]) -> Dict[str, Any]:
+    plan = _read_api_test_plan(plan_id)
+    if not plan:
+        raise ValueError("API 测试计划不存在")
+    evaluated = evaluate_api_plan(plan)
+    executable_case_ids = [
+        str(case.get("case_id") or "").strip()
+        for case in (evaluated.get("cases") or [])
+        if isinstance(case, dict)
+        and (case.get("readiness") or {}).get("state") == "executable"
+        and str(case.get("case_id") or "").strip()
+    ]
+    requested_case_ids = [
+        str(case.get("case_id") or "").strip()
+        for case in (execution.get("cases") or [])
+        if isinstance(case, dict) and str(case.get("case_id") or "").strip()
+    ]
+    results = [
+        item for item in (execution.get("results") or [])
+        if isinstance(item, dict) and str(item.get("case_id") or "").strip()
+    ]
+    passed_case_ids = [
+        str(item.get("case_id") or "").strip()
+        for item in results
+        if item.get("status") == "passed"
+    ]
+    failed_case_ids = [
+        str(item.get("case_id") or "").strip()
+        for item in results
+        if item.get("status") == "failed"
+    ]
+    execution_status = str(execution.get("status") or "").strip().lower()
+    if execution_status in {"queued", "running"}:
+        state = "running"
+    elif failed_case_ids:
+        state = "failed"
+    elif set(executable_case_ids).issubset(set(passed_case_ids)):
+        state = "passed"
+    else:
+        state = "partial"
+    validation = {
+        "state": state,
+        "execution_id": str(execution.get("execution_id") or ""),
+        "run_id": str(execution.get("run_id") or ""),
+        "run_mode": str(execution.get("run_mode") or ""),
+        "case_ids": requested_case_ids,
+        "required_case_ids": executable_case_ids,
+        "passed_case_ids": passed_case_ids,
+        "failed_case_ids": failed_case_ids,
+        "stats": execution.get("stats") or {},
+        "started_at": str(execution.get("started_at") or execution.get("created_at") or ""),
+        "finished_at": str(execution.get("finished_at") or ""),
+        "updated_at": _now(),
+    }
+    plan["debug_validation"] = api_case_contract_service.sanitize_sensitive_data(validation)
+    plan["updated_at"] = _now()
+    updated = evaluate_api_plan(plan)
+    write_json_file(_plan_path(plan_id), updated)
+    _save_plan_index(updated)
+    return updated
 
 
 def update_api_test_plan_cases(
@@ -1267,6 +1368,7 @@ __all__ = [
     "executable_api_cases",
     "generate_api_test_plan",
     "confirm_api_test_plan",
+    "record_api_plan_debug_result",
     "update_api_test_plan_cases",
     "get_api_test_plan",
     "list_api_test_plans",

@@ -2940,6 +2940,7 @@ def _api_testing_fill_apifox_environment_snapshot(data):
     environment_snapshot = selected_environment.get("environment_snapshot")
     if isinstance(environment_snapshot, dict) and environment_snapshot.get("base_urls"):
         data["environment_snapshot"] = environment_snapshot
+        data["preserve_missing_environment_variables"] = True
     provider_metadata = data.get("provider_metadata", data.get("providerMetadata"))
     if not isinstance(provider_metadata, dict):
         provider_metadata = {}
@@ -3371,7 +3372,10 @@ def _post_api_testing_plans_confirm(handler, qs):
     from task_server.services import api_test_plan_service
     try:
         d = handler._body()
-        plan = api_test_plan_service.confirm_api_test_plan(str(d.get("plan_id") or d.get("planId") or "").strip())
+        plan = api_test_plan_service.confirm_api_test_plan(
+            str(d.get("plan_id") or d.get("planId") or "").strip(),
+            require_debug_validation=True,
+        )
         handler._json({"ok": True, "plan": plan})
     except Exception as e:
         handler._json({"ok": False, "error": str(e)}, 400)
@@ -3406,6 +3410,25 @@ def _post_api_testing_workbench_case_debug(handler, qs):
             str(data.get("source_id") or data.get("sourceId") or "").strip(),
             str(data.get("plan_id") or data.get("planId") or "").strip(),
             str(data.get("case_id") or data.get("caseId") or "").strip(),
+        )
+        handler._json(result, 202)
+    except api_execution_service.ApiExecutionConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+    except (api_execution_service.ApiExecutionValidationError, ValueError) as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post("/api/api-testing/cases/debug-batch")
+def _post_api_testing_workbench_case_debug_batch(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_execution_service, api_workbench_service
+    data = handler._body()
+    try:
+        result = api_workbench_service.debug_api_cases(
+            str(data.get("source_id") or data.get("sourceId") or "").strip(),
+            str(data.get("plan_id") or data.get("planId") or "").strip(),
+            data.get("case_ids") or data.get("caseIds") or [],
         )
         handler._json(result, 202)
     except api_execution_service.ApiExecutionConflict as exc:

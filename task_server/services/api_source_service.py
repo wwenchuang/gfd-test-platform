@@ -27,6 +27,7 @@ _SENSITIVE_NAME_RE = re.compile(
     r"(token|secret|password|passwd|pwd|authorization|cookie|session|apikey|api_key|accesskey|private)",
     re.IGNORECASE,
 )
+_APIFOX_PARAMETER_GROUP_NAMES = {"cookie", "query", "header", "body"}
 _BASE_URL_SOURCE_KEYS = (
     "base_urls",
     "baseUrls",
@@ -249,6 +250,28 @@ def _looks_sensitive_name(name: Any) -> bool:
     return bool(_SENSITIVE_NAME_RE.search(str(name or "")))
 
 
+def _variable_value_fingerprint(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _previous_environment_variable_values(previous_snapshot: Any) -> Dict[tuple[str, str], str]:
+    snapshot = previous_snapshot if isinstance(previous_snapshot, dict) else {}
+    rows = snapshot.get("variables") if isinstance(snapshot.get("variables"), list) else []
+    values: Dict[tuple[str, str], str] = {}
+    for item in rows:
+        raw = item if isinstance(item, dict) else {}
+        name = _bounded_text(raw.get("name"), 160)
+        scope = _bounded_text(raw.get("scope"), 80) or "environment"
+        value = str(raw.get("value") or "")
+        if name and value:
+            values[(name, scope)] = value
+            values.setdefault((name, ""), value)
+    return values
+
+
 def _snapshot_base_url_rows(value: Any) -> List[Dict[str, str]]:
     result: List[Dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -300,9 +323,16 @@ def _snapshot_base_url_rows(value: Any) -> List[Dict[str, str]]:
     return result[:50]
 
 
-def _snapshot_variable_rows(value: Any) -> List[Dict[str, Any]]:
+def _snapshot_variable_rows(
+    value: Any,
+    *,
+    preserve_sensitive_values: bool = False,
+    preserve_previous_values: bool = False,
+    previous_values: Dict[tuple[str, str], str] | None = None,
+) -> List[Dict[str, Any]]:
     result: List[Dict[str, Any]] = []
     seen: set[str] = set()
+    previous = previous_values or {}
 
     def append_row(item: Any, fallback_name: str = "", inherited_scope: str = "") -> None:
         if len(result) >= 200:
@@ -324,14 +354,42 @@ def _snapshot_variable_rows(value: Any) -> List[Dict[str, Any]]:
         variable_value = _field_value(raw, _VARIABLE_VALUE_KEYS)
         if variable_value is raw:
             variable_value = ""
+        scope = _bounded_text(
+            raw.get("scope") or raw.get("type") or raw.get("in") or inherited_scope,
+            80,
+        ) or "environment"
+        clean_value = _bounded_text(variable_value, 2000)
+        prior_value = previous.get((name, scope)) or previous.get((name, ""))
+        group_placeholder = bool(raw.get("group_placeholder")) or (
+            name.lower() in _APIFOX_PARAMETER_GROUP_NAMES
+            and not clean_value
+            and not raw.get("sensitive")
+            and not raw.get("secret")
+            and not raw.get("private")
+            and scope == "environment"
+        )
+        stored_value = clean_value
+        if preserve_previous_values and not clean_value and prior_value and not group_placeholder:
+            stored_value = prior_value
+        if sensitive and not group_placeholder:
+            if preserve_sensitive_values:
+                stored_value = stored_value or prior_value
+            else:
+                stored_value = ""
+        configured = bool(
+            clean_value
+            or (preserve_previous_values and prior_value)
+            or (sensitive and prior_value)
+        ) and not group_placeholder
         result.append({
             "name": name,
-            "value": "" if sensitive else _bounded_text(variable_value, 2000),
+            "value": stored_value,
             "sensitive": sensitive,
-            "scope": _bounded_text(
-                raw.get("scope") or raw.get("type") or raw.get("in") or inherited_scope,
-                80,
-            ) or "environment",
+            "scope": scope,
+            "configured": configured,
+            "value_fingerprint": _variable_value_fingerprint(clean_value or prior_value) if (sensitive and (clean_value or prior_value)) else "",
+            "group_placeholder": group_placeholder,
+            "note": "Apifox 未返回该分组下的变量明细" if group_placeholder else "",
         })
 
     def nested_variable_sources(raw: Dict[str, Any]) -> List[Any]:
@@ -383,6 +441,58 @@ def _snapshot_variable_rows(value: Any) -> List[Dict[str, Any]]:
 
     consume(value)
     return result[:200]
+
+
+def _preserved_previous_variable_rows(
+    variables: List[Dict[str, Any]],
+    previous_snapshot: Any,
+) -> List[Dict[str, Any]]:
+    if len(variables) >= 200:
+        return variables[:200]
+    seen = {
+        (
+            _bounded_text((item if isinstance(item, dict) else {}).get("name"), 160),
+            _bounded_text((item if isinstance(item, dict) else {}).get("scope"), 80) or "environment",
+        )
+        for item in variables
+        if isinstance(item, dict)
+    }
+    snapshot = previous_snapshot if isinstance(previous_snapshot, dict) else {}
+    rows = snapshot.get("variables") if isinstance(snapshot.get("variables"), list) else []
+    merged = list(variables)
+    for item in rows:
+        raw = item if isinstance(item, dict) else {}
+        if raw.get("group_placeholder"):
+            continue
+        name = _bounded_text(raw.get("name"), 160)
+        scope = _bounded_text(raw.get("scope"), 80) or "environment"
+        value = _bounded_text(raw.get("value"), 2000)
+        key = (name, scope)
+        if not name or not value or key in seen:
+            continue
+        seen.add(key)
+        sensitive = bool(
+            raw.get("sensitive")
+            or raw.get("secret")
+            or raw.get("private")
+            or raw.get("isSensitive")
+            or raw.get("isSecret")
+            or raw.get("isPrivate")
+            or _looks_sensitive_name(name)
+        )
+        merged.append({
+            "name": name,
+            "value": value,
+            "sensitive": sensitive,
+            "scope": scope,
+            "configured": True,
+            "value_fingerprint": _variable_value_fingerprint(value) if sensitive else "",
+            "group_placeholder": False,
+            "note": "",
+        })
+        if len(merged) >= 200:
+            break
+    return merged[:200]
 
 
 def _environment_snapshot_sources(raw: Dict[str, Any], keys: tuple[str, ...]) -> List[Any]:
@@ -463,19 +573,35 @@ def apply_saved_apifox_credential(payload: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def normalize_environment_snapshot(value: Any) -> Dict[str, Any]:
+def normalize_environment_snapshot(
+    value: Any,
+    *,
+    preserve_sensitive_values: bool = False,
+    previous_snapshot: Any = None,
+    preserve_missing_environment_variables: bool = False,
+) -> Dict[str, Any]:
     """Return a safe public Apifox environment snapshot without secret values."""
     raw = value if isinstance(value, dict) else {}
     base_urls = _snapshot_base_url_rows(_environment_snapshot_sources(raw, _BASE_URL_SOURCE_KEYS))
-    variables = _snapshot_variable_rows(_environment_snapshot_sources(raw, _VARIABLE_SOURCE_KEYS))
+    variables = _snapshot_variable_rows(
+        _environment_snapshot_sources(raw, _VARIABLE_SOURCE_KEYS),
+        preserve_sensitive_values=preserve_sensitive_values,
+        preserve_previous_values=preserve_missing_environment_variables,
+        previous_values=_previous_environment_variable_values(previous_snapshot),
+    )
+    if preserve_missing_environment_variables:
+        variables = _preserved_previous_variable_rows(variables, previous_snapshot)
     if not base_urls and not variables:
         return {}
-    sensitive_count = sum(1 for item in variables if item.get("sensitive"))
+    executable_variables = [item for item in variables if not item.get("group_placeholder")]
+    sensitive_count = sum(1 for item in executable_variables if item.get("sensitive"))
+    placeholder_count = sum(1 for item in variables if item.get("group_placeholder"))
     return {
         "base_urls": base_urls,
         "variables": variables,
-        "variable_count": len(variables),
+        "variable_count": len(executable_variables),
         "sensitive_variable_count": sensitive_count,
+        "placeholder_group_count": placeholder_count,
     }
 
 
@@ -669,7 +795,16 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
         payload.get(
             "environment_snapshot",
             payload.get("environmentSnapshot", current.get("environment_snapshot")),
-        )
+        ),
+        preserve_sensitive_values=True,
+        previous_snapshot=current.get("environment_snapshot"),
+        preserve_missing_environment_variables=safe_bool(
+            payload.get(
+                "preserve_missing_environment_variables",
+                payload.get("preserveMissingEnvironmentVariables"),
+            ),
+            False,
+        ),
     )
     default_name = (
         provider_metadata.get("project_name")

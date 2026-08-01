@@ -67,6 +67,7 @@ _UNQUOTED_ASSIGNMENT_RE = re.compile(
     rf"(?![A-Za-z0-9_])(?P=key_quote)\s*(?P<separator>[:=])\s*)"
     rf"(?P<value>(?!\[REDACTED\])(?:bearer\s+)?[^\s,;}}\]\"']+)"
 )
+_TEMPLATE_PLACEHOLDER_RE = re.compile(r"^\s*\{\{\s*[A-Za-z0-9_.:-]+\s*\}\}\s*$")
 
 
 def _text(value: Any) -> str:
@@ -393,6 +394,10 @@ def _sanitize_text(value: str) -> str:
     return _UNQUOTED_ASSIGNMENT_RE.sub(_sanitize_unquoted_assignment, sanitized)
 
 
+def _looks_like_template_placeholder(value: Any) -> bool:
+    return isinstance(value, str) and bool(_TEMPLATE_PLACEHOLDER_RE.fullmatch(value))
+
+
 def _sanitize_openapi_value(
     value: Any,
     field_name: str = "",
@@ -420,6 +425,8 @@ def _sanitize_openapi_value(
             else is_sensitive_field_name(key_text)
         )
         if key_sensitive and key_text not in {"required"}:
+            if _looks_like_template_placeholder(nested):
+                result[key_text] = nested
             continue
         if key_text == "properties" and isinstance(nested, dict):
             result[key_text] = {
