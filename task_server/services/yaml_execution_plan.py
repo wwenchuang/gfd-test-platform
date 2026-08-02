@@ -108,7 +108,7 @@ def build_generated_yaml_execution_plan(
         "policy": {
             "modelCalls": "AI 参与需求规划、可信基线语义重排、YAML 路径规划、冒烟优先级和失败定向修复；平台以确定性规则执行静态校验、设备约束、dry-run 和继续阈值。",
             "smokePurpose": "首批冒烟用于证明 YAML 能下发、能运行、能产生日志；产品断言失败记录为测试结果，不等同于不可执行。",
-            "expansion": "首批没有脚本/YAML/定位/超时类阻断且真实通过率不低于 50% 时，按批继续执行剩余可执行用例。",
+            "expansion": "首批通过率不低于 50% 时按批继续执行剩余可执行用例；失败用例按真实结果归桶展示，不让单条非全败冒烟阻断覆盖执行。",
         },
         "counts": {
             "total": len(scored_refs),
@@ -230,25 +230,6 @@ def classify_generated_yaml_smoke_blocker(
         }
 
     bucket = classify_generated_yaml_failure_bucket(failure_reasons, dry_blocked)
-    text = _failure_text(failure_reasons, dry_blocked)
-    lowered = text.lower()
-    hard_failure = (
-        bucket in BLOCKING_BUCKETS
-        or "failed to locate element" in lowered
-        or "locate element" in lowered
-        or "未找到用例" in text
-        or "找不到" in text
-        or "工具调用失败" in text
-        or "yaml" in lowered
-        or "dry-run" in lowered
-    )
-    if smoke_failed and hard_failure:
-        return {
-            "block": True,
-            "reason": bucket,
-            "bucket": bucket,
-            "rule": "冒烟已下发但失败归因为脚本/YAML/元素定位/超时问题，先修复生成脚本或环境再扩展。",
-        }
     if smoke_failed >= smoke_total and bucket == "Runner 失败":
         return {
             "block": True,
@@ -275,7 +256,7 @@ def classify_generated_yaml_smoke_blocker(
         "passRate": round(smoke_pass_rate, 4),
         "reason": bucket if smoke_failed else "",
         "bucket": bucket if smoke_failed else "",
-        "rule": "冒烟必须能执行且真实通过率不低于 50%；产品断言失败或页面状态不匹配仍保留为真实测试结果。",
+        "rule": "冒烟必须能执行且真实通过率不低于 50%；产品断言失败或页面状态不匹配仍保留为真实测试结果，单条脚本/定位失败也不阻断剩余用例覆盖。",
     }
 
 

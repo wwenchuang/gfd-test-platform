@@ -28,6 +28,29 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-02 Agent 冒烟非全失败继续扩展策略
+
+用户连续回归“基础打印新增百度网盘入口”后确认：5 次均为 `DONE / 部分通过`，但第 3、5 次在首批冒烟 2/3 通过时仍提前收口，导致非冒烟 0/0 未执行。问题不是 Runner 或固定 OPPO，而是 Agent smoke gate 把单条元素定位 / 脚本类失败当成硬阻断，覆盖了既定的“冒烟通过率 >= 50% 继续执行剩余用例”策略。
+
+修复：
+
+- `task_server/services/yaml_execution_plan.py`
+  - `classify_generated_yaml_smoke_blocker()` 不再因为单条脚本 / YAML / 元素定位失败直接阻断扩展。
+  - 保留 dry-run 未通过、未创建 Runner 任务、通过率低于 50% 等确定性阻断。
+  - 失败桶继续写入报告和修复链路，单条失败不再阻断剩余 executable 覆盖。
+- `task_server/services/agent_service.py`、`task_server/services/yaml_service.py`、`task_server/services/case_service.py`
+  - 同步更新策略文案，避免线上报告继续提示“定位失败即阻断扩展”。
+- `tests/backend_static_checks.py`
+  - 新增回归：3 条冒烟中 2 条通过、1 条元素定位失败时，smoke gate 必须 `block=False`、`thresholdPassed=True`，并保留 `元素定位失败` 桶。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/case_service.py task_server/services/yaml_execution_plan.py tests/backend_static_checks.py
+git diff --check -- task_server/services/yaml_execution_plan.py task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/case_service.py tests/backend_static_checks.py
+```
+
 ### 2026-08-01 API 基线接口测试一键执行入口
 
 用户提出发版后需要能一键执行基线接口测试。当前平台不再引入 MeterSphere，也不新增第二套执行器；这里的“基线接口测试”定义为已经通过 AI 审阅/调试并保存的 confirmed API 测试资产，继续复用现有原生 API 执行器的 `baseline` run mode。

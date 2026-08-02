@@ -12161,6 +12161,13 @@ android:
         smoke_failed=1,
         timeout_count=0,
     )
+    script_smoke_blocker = classify_generated_yaml_smoke_blocker(
+        [{"failureType": "ELEMENT_NOT_FOUND", "reason": "failed to locate element: 照片打印页百度网盘入口"}],
+        [],
+        smoke_total=3,
+        smoke_failed=1,
+        timeout_count=0,
+    )
     dry_run_smoke_blocker = classify_generated_yaml_smoke_blocker(
         [],
         [{"file": "bad.yaml", "reason": "YAML dry-run 未通过", "errors": ["非官方 action"]}],
@@ -12175,8 +12182,12 @@ android:
         and threshold_smoke_blocker.get("block") is False
         and threshold_smoke_blocker.get("thresholdPassed") is True
         and threshold_smoke_blocker.get("passRate") == 0.5
+        and script_smoke_blocker.get("block") is False
+        and script_smoke_blocker.get("thresholdPassed") is True
+        and script_smoke_blocker.get("passRate") == round(2 / 3, 4)
+        and script_smoke_blocker.get("bucket") == "元素定位失败"
         and dry_run_smoke_blocker.get("block") is True,
-        "Smoke gate must preserve executable product failures while requiring at least 50% real passes before expansion",
+        "Smoke gate must preserve executable product/script failures while requiring at least 50% real passes before expansion",
     )
     scoped_payload = apply_generated_case_scope_gate({
         "analysis": {

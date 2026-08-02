@@ -7046,7 +7046,7 @@ def _select_agent_runner_refs(run, refs):
         "blocking": blocking,
         "deferred": deferred,
         "autoRepairCount": len(repairs),
-        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有稳定冒烟候选时不强行下发第三方授权、外部跳转或文件选择链路，需先生成或修正入口可见性短链路。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；保留每条真实结果，通过率不低于 50% 且没有脚本/YAML/定位/超时阻断时才继续扩展。",
+        "rule": "Agent 新生成 YAML 首批优先下发 executable 冒烟候选；没有稳定冒烟候选时不强行下发第三方授权、外部跳转或文件选择链路，需先生成或修正入口可见性短链路。首批冒烟用于验证 YAML 能下发、能运行、能产生日志；保留每条真实结果，通过率不低于 50% 时继续扩展，单条脚本/定位/产品断言失败进入报告和修复，不阻断剩余覆盖。",
     }
     execution_plan = build_generated_yaml_execution_plan(
         scored,

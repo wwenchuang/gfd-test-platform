@@ -8616,7 +8616,7 @@ def generate_ui_yaml_from_request(d, job_id=None):
         "enabled": True,
         "assertion_limit": YAML_GENERATED_ASSERTION_LIMIT,
         "reference_example_count": len(yaml_reference_examples),
-        "rule": "生成 YAML 时产出可分批全量执行的稳定用例；Runner 首批只跑冒烟准入，脚本/YAML/定位/超时类问题会阻断扩展，产品断言失败会记录为测试结果。",
+        "rule": "生成 YAML 时产出可分批全量执行的稳定用例；Runner 首批只跑冒烟准入，真实通过率不低于 50% 时继续扩展；单条脚本、定位、产品断言失败记录为测试结果并进入修复，不阻断剩余覆盖。",
     }
     review["yaml_smoke_stability"] = yaml_smoke_stability
     review["yaml_static_validation"] = yaml_static_validation
