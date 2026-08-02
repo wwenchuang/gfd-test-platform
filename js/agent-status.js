@@ -121,6 +121,18 @@ function agentRunResultSource(run) {
       outcome: execution.outcome || '',
       label: execution.label || summary.conclusion || '',
       hasExecution: execution.hasExecution,
+      finalAttempted: execution.logicalAttemptCount || execution.attemptedCount || 0,
+      finalPassed: execution.logicalPassedCount || execution.passedCount || 0,
+      finalFailed: execution.logicalFailedCount || execution.failedCount || 0,
+      finalTimeout: execution.logicalTimeoutCount || execution.timeoutCount || 0,
+      finalRunning: execution.logicalRunningCount || execution.runningCount || 0,
+      rawAttempted: execution.attemptedCount || 0,
+      rawPassed: execution.passedCount || 0,
+      rawFailed: execution.failedCount || 0,
+      rawTimeout: execution.timeoutCount || 0,
+      rawRunning: execution.runningCount || 0,
+      recovered: execution.recoveredCount || 0,
+      repairAttempted: execution.rerunAttemptCount || 0,
       attempted: execution.logicalAttemptCount || execution.attemptedCount || 0,
       passed: execution.logicalPassedCount || execution.passedCount || 0,
       failed: execution.logicalFailedCount || execution.failedCount || 0,
@@ -143,9 +155,9 @@ function agentRunResultSource(run) {
       nonSmokeFailed: execution.nonSmokeFailedCount || 0,
       nonSmokeTimeout: execution.nonSmokeTimeoutCount || 0,
       nonSmokeRunning: execution.nonSmokeRunningCount || 0,
-      productFailed: execution.productFailedCount || 0,
-      scriptFailed: execution.brokenCount || 0,
-      unknownFailed: execution.unknownFailedCount || 0,
+      productFailed: summary.productFailedJobCount ?? execution.productFailedCount ?? 0,
+      scriptFailed: summary.brokenJobCount ?? execution.brokenCount ?? 0,
+      unknownFailed: summary.unknownFailedJobCount ?? execution.unknownFailedCount ?? 0,
       phases: execution.phases || [],
       reportStatus: (artifacts.report || {}).status || '',
       orchestrationLabel: (summary.orchestration || {}).label || '',
@@ -157,11 +169,16 @@ function agentRunResultSource(run) {
 
 function agentRunResultMeta(run) {
   const result = agentRunResultSource(run);
-  const rawAttempted = Number(result.attempted || 0);
-  const rawPassed = Number(result.passed || 0);
-  const rawFailed = Number(result.failed || 0);
-  const rawTimeout = Number(result.timeout || 0);
-  const rawRunning = Number(result.running || 0);
+  const hasFinalCounts = ['finalAttempted', 'finalPassed', 'finalFailed', 'finalTimeout', 'finalRunning'].some(key => result[key] !== undefined && result[key] !== null && result[key] !== '');
+  const rawAttempted = Number((hasFinalCounts ? result.finalAttempted : result.attempted) || 0);
+  const rawPassed = Number((hasFinalCounts ? result.finalPassed : result.passed) || 0);
+  const rawFailed = Number((hasFinalCounts ? result.finalFailed : result.failed) || 0);
+  const rawTimeout = Number((hasFinalCounts ? result.finalTimeout : result.timeout) || 0);
+  const rawRunning = Number((hasFinalCounts ? result.finalRunning : result.running) || 0);
+  const rawAttemptedBeforeRepair = Number(result.rawAttempted || 0);
+  const rawFailedBeforeRepair = Number(result.rawFailed || 0);
+  const recovered = Number(result.recovered || 0);
+  const repairAttempted = Number(result.repairAttempted || 0);
   const generatedCases = Number(result.generatedCases || 0);
   const automationCases = Number(result.automationCases || 0);
   const generatedYaml = Number(result.generatedYaml || 0);
@@ -187,10 +204,18 @@ function agentRunResultMeta(run) {
   const bucketTimeout = smokeTimeout + nonSmokeTimeout;
   const bucketRunning = smokeRunning + nonSmokeRunning;
   const attempted = bucketAttempted || rawAttempted || (rawPassed + rawFailed + rawTimeout + rawRunning);
-  const passed = bucketAttempted ? bucketPassed : (attempted ? Math.min(rawPassed, attempted) : rawPassed);
-  const failed = bucketAttempted ? bucketFailed : (attempted ? Math.min(rawFailed, Math.max(0, attempted - passed)) : rawFailed);
-  const timeout = bucketAttempted ? bucketTimeout : (attempted ? Math.min(rawTimeout, Math.max(0, attempted - passed - failed)) : rawTimeout);
-  const running = bucketAttempted ? bucketRunning : (attempted ? Math.min(rawRunning, Math.max(0, attempted - passed - failed - timeout)) : rawRunning);
+  const passed = hasFinalCounts
+    ? Math.min(Math.max(0, rawPassed), attempted || rawPassed)
+    : (bucketAttempted ? Math.min(bucketPassed, attempted) : (attempted ? Math.min(rawPassed, attempted) : rawPassed));
+  const failed = hasFinalCounts
+    ? Math.min(Math.max(0, rawFailed), Math.max(0, attempted - passed))
+    : (bucketAttempted ? Math.min(bucketFailed, Math.max(0, attempted - passed)) : (attempted ? Math.min(rawFailed, Math.max(0, attempted - passed)) : rawFailed));
+  const timeout = hasFinalCounts
+    ? Math.min(Math.max(0, rawTimeout), Math.max(0, attempted - passed - failed))
+    : (bucketAttempted ? Math.min(bucketTimeout, Math.max(0, attempted - passed - failed)) : (attempted ? Math.min(rawTimeout, Math.max(0, attempted - passed - failed)) : rawTimeout));
+  const running = hasFinalCounts
+    ? Math.min(Math.max(0, rawRunning), Math.max(0, attempted - passed - failed - timeout))
+    : (bucketAttempted ? Math.min(bucketRunning, Math.max(0, attempted - passed - failed - timeout)) : (attempted ? Math.min(rawRunning, Math.max(0, attempted - passed - failed - timeout)) : rawRunning));
   const rawOutcome = String(result.outcome || '').toLowerCase();
   const label = result.conclusion || result.label || '';
   const hasReportResult = Boolean(result.hasExecution || attempted || rawPassed || rawFailed || rawTimeout || rawRunning || label || rawOutcome);
@@ -237,6 +262,10 @@ function agentRunResultMeta(run) {
     scriptFailed,
     unknownFailed,
     phases: Array.isArray(result.phases) ? result.phases : [],
+    rawAttempted: rawAttemptedBeforeRepair,
+    rawFailed: rawFailedBeforeRepair,
+    recovered,
+    repairAttempted,
     score,
     details,
     smokeAllFailed: Boolean(result.smokeAllFailed),
@@ -360,6 +389,8 @@ function agentRunResultSummaryHtml(run) {
     : (buckets.remaining.planned ? '已计划，未进入扩展执行' : '无非冒烟用例');
   const orchestration = [
     result.runStatus ? `Agent ${agentStatusText(result.runStatus)}` : '',
+    result.recovered ? `修复恢复 ${result.recovered}` : '',
+    result.rawFailed > result.failed ? `原始失败 ${result.rawFailed}` : '',
     result.smokeAllFailed ? '冒烟全失败' : ''
   ].filter(Boolean).join(' · ');
   return `

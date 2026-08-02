@@ -28,6 +28,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-03 Agent 报告最终口径与修复重跑统计拆分
+
+用户指出 Agent 历史卡片和最终报告在修复重跑后仍可能把“原始失败尝试”混进最终通过率，例如同一轮真实执行里逻辑结果已经恢复到 `6/8`，但卡片仍按计划桶或 Runner 原始 job 事件显示成 `5/8`，并可能出现通过数 + 失败数超过总执行数的观感。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - `_agent_run_report_summary()` 继续返回 `attempted/passed/failed` 兼容字段，但这些字段现在统一代表最终逻辑结果。
+  - 新增 `finalAttempted/finalPassed/finalFailed/finalTimeout/finalRunning`，前端可明确读取最终用例结果。
+  - 新增 `rawAttempted/rawPassed/rawFailed/rawTimeout/rawRunning/recovered/repairAttempted`，原始 Runner 尝试和修复恢复数保留为过程证据，不污染最终通过率。
+  - `_agent_report_execution_buckets_from_plan()` 对 smoke/non-smoke 桶按 `logicalPassedCount/logicalFailedCount` 做最终对齐，修复重跑恢复的失败会从对应桶扣减。
+  - `_tool_generate_summary()` 将 `productFailedJobCount/brokenJobCount/unknownFailedJobCount` 投影到最终未恢复失败；原始失败尝试另存为 `rawBrokenJobCount/rawFailedAttemptCount`。
+- `js/agent-status.js`
+  - 历史卡片优先使用 `final*` 字段。
+  - 卡片主数字只展示最终结果；“修复恢复 X / 原始失败 X”作为过程上下文展示，不计入主通过率。
+  - 对旧记录仍保留 fallback，并防止 bucket 叠加出不可能的 `passed + failed > total`。
+- `js/agent-workbench.js`
+  - 最终报告顶部指标优先使用逻辑最终结果，不再由 Runner evidence 原始 job 数直接覆盖。
+- `task-manager.html`
+  - 更新 `agent-workbench.js` 和 `agent-status.js` 缓存版本为 `20260803-agent-final-report-counts`。
+- `tests/backend_static_checks.py` / `tests/frontend_static_checks.py`
+  - 增加回归：9 条 YAML、首批 3、扩展实际 5、修复恢复后最终应显示 `6/8`，冒烟 `3/3`，非冒烟 `3/5`，而不是旧的 `5/8`。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/agent-status.js && node --check js/agent-workbench.js
+python3 -m py_compile task_server/services/agent_service.py tests/backend_static_checks.py tests/frontend_static_checks.py
+git diff --check -- task_server/services/agent_service.py js/agent-status.js js/agent-workbench.js task-manager.html tests/backend_static_checks.py tests/frontend_static_checks.py
+```
+
+额外用真实线上 Agent `agent-1785694113976-d2e6f391` 的完整数据回放本地新汇总，结果为：总执行 `6/8`，冒烟 `3/3`，非冒烟 `3/5`，原始失败尝试 `10`，修复恢复 `2`。
+
 ### 2026-08-02 Agent 冒烟非全失败继续扩展策略
 
 用户连续回归“基础打印新增百度网盘入口”后确认：5 次均为 `DONE / 部分通过`，但第 3、5 次在首批冒烟 2/3 通过时仍提前收口，导致非冒烟 0/0 未执行。问题不是 Runner 或固定 OPPO，而是 Agent smoke gate 把单条元素定位 / 脚本类失败当成硬阻断，覆盖了既定的“冒烟通过率 >= 50% 继续执行剩余用例”策略。

@@ -14016,6 +14016,71 @@ def check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
     )
 
 
+def check_agent_report_summary_reconciles_plan_buckets_with_final_recovery():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-final-bucket-recovery",
+        "status": "DONE",
+        "artifacts": {
+            "summary": {
+                "conclusion": "部分通过",
+                "execution": {
+                    "outcome": "partial",
+                    "label": "部分通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 8,
+                    "logicalPassedCount": 6,
+                    "logicalFailedCount": 2,
+                    "logicalTimeoutCount": 0,
+                    "logicalRunningCount": 0,
+                    "smokeAllFailed": False,
+                    "brokenCount": 6,
+                    "unknownFailedCount": 4,
+                    "phases": [
+                        {"phase": "smoke", "passed": 2, "failed": 1},
+                        {"phase": "expanded-1", "passed": 2, "failed": 3},
+                        {"phase": "repair", "passed": 2, "failed": 2},
+                    ],
+                },
+                "orchestration": {"runStatus": "DONE", "label": "编排完成"},
+            },
+            "generationPipeline": {"caseCount": 9, "automationCaseCount": 9, "yamlFileCount": 9},
+            "generatedYamlExecutionPlan": {
+                "counts": {"total": 9, "selectedSmoke": 3, "deferredExecutable": 6},
+                "smokeResult": {"total": 3, "passed": 2, "failed": 1, "timeout": 0},
+                "expandedResult": {"created": 5, "passed": 2, "failed": 3, "timeout": 0, "remainingDeferred": 1},
+                "readiness": {"expandedExecution": True, "remainingDeferredCount": 1},
+            },
+            "runnerExecutionGate": {"remainingDeferredCount": 1},
+            "rerunResult": {"createdCount": 4, "completedCount": 1, "failedCount": 2, "timeoutCount": 0},
+            "report": {"status": "failed"},
+        },
+    }
+
+    summary = agent_service._agent_run_report_summary(run)
+    require(
+        summary.get("attempted") == 8
+        and summary.get("passed") == 6
+        and summary.get("failed") == 2,
+        "Agent history cards must use final logical Runner results after repair, not stale plan bucket failures",
+    )
+    require(
+        summary.get("smokeAttempted") == 3
+        and summary.get("smokePassed") == 3
+        and summary.get("smokeFailed") == 0
+        and summary.get("nonSmokeAttempted") == 5
+        and summary.get("nonSmokePassed") == 3
+        and summary.get("nonSmokeFailed") == 2,
+        "Agent history smoke/non-smoke buckets must reconcile repair recovery without impossible pass+fail totals",
+    )
+    require(
+        summary.get("scriptFailed") == 2
+        and summary.get("unknownFailed") == 0,
+        "Failure classification must be projected onto unresolved final failures instead of raw failed attempts",
+    )
+
+
 def check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements():
     from task_server.services.case_service import generation_volume_targets
 
@@ -15234,8 +15299,9 @@ def check_agent_summary_separates_runner_outcomes_from_orchestration():
         require(
             retry_summary.get("runnerAttemptCount") == 6
             and retry_summary.get("passedJobCount") == 2
-            and retry_summary.get("brokenJobCount") == 4,
-            "Final report must expose both actual attempt count and preserved pass/broken counts",
+            and retry_summary.get("rawBrokenJobCount") == 4
+            and retry_summary.get("brokenJobCount") == 1,
+            "Final report must expose raw broken attempts separately from final unresolved broken cases",
         )
         require(
             retry_orchestration.get("runStatus") == "DONE"
@@ -17085,6 +17151,7 @@ def main():
     check_agent_report_summary_keeps_non_smoke_buckets()
     check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
     check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
+    check_agent_report_summary_reconciles_plan_buckets_with_final_recovery()
     check_agent_new_requirement_reuses_historical_success_seed()
     check_runner_wait_reads_fresh_job_state_during_agent_rerun()
     check_agent_historical_seed_survives_incremental_generation_failure()

@@ -2336,18 +2336,27 @@ function renderAgentSummaryArtifact(run) {
     const status = String(item.status || '').toLowerCase();
     return status !== 'timeout' && (!id || !timeoutIds.has(id));
   }).length;
-  const passedCount = runnerEvidenceJobs.length
-    ? runnerOutcomeGroups.success.length
-    : (Number(execution.passedCount ?? summary.passedJobCount ?? report.successJobs?.length ?? ((gate.smokePassedCount || 0) + (gate.expandedCompletedCount || 0))) || 0);
-  const failedCount = runnerEvidenceJobs.length
-    ? runnerOutcomeGroups.failed.length
-    : (Number(execution.failedCount ?? (failedJobs.length ? reportFailedOnly : summary.failedJobCount) ?? 0) || 0);
-  const timeoutCount = runnerEvidenceJobs.length
-    ? timeoutJobs.length
-    : (Number(execution.timeoutCount ?? (timeoutJobs.length ? timeoutJobs.length : summary.timeoutJobCount) ?? 0) || 0);
-  const runningCount = runnerEvidenceJobs.length
-    ? runnerOutcomeGroups.active.length
-    : (Number(execution.runningCount ?? (report.runningJobs?.length || summary.runningJobCount) ?? 0) || 0);
+  const hasLogicalExecutionCounts = ['logicalPassedCount', 'logicalFailedCount', 'logicalTimeoutCount', 'logicalRunningCount'].some(key => execution[key] !== undefined && execution[key] !== null);
+  const passedCount = hasLogicalExecutionCounts
+    ? (Number(execution.logicalPassedCount ?? summary.logicalPassedJobCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? runnerOutcomeGroups.success.length
+      : (Number(execution.passedCount ?? summary.passedJobCount ?? report.successJobs?.length ?? ((gate.smokePassedCount || 0) + (gate.expandedCompletedCount || 0))) || 0));
+  const failedCount = hasLogicalExecutionCounts
+    ? (Number(execution.logicalFailedCount ?? summary.logicalFailedJobCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? runnerOutcomeGroups.failed.length
+      : (Number(execution.failedCount ?? (failedJobs.length ? reportFailedOnly : summary.failedJobCount) ?? 0) || 0));
+  const timeoutCount = hasLogicalExecutionCounts
+    ? (Number(execution.logicalTimeoutCount ?? summary.timeoutJobCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? timeoutJobs.length
+      : (Number(execution.timeoutCount ?? (timeoutJobs.length ? timeoutJobs.length : summary.timeoutJobCount) ?? 0) || 0));
+  const runningCount = hasLogicalExecutionCounts
+    ? (Number(execution.logicalRunningCount ?? summary.runningJobCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? runnerOutcomeGroups.active.length
+      : (Number(execution.runningCount ?? (report.runningJobs?.length || summary.runningJobCount) ?? 0) || 0));
   const reportFailureTypes = failedJobs.reduce((counts, item) => {
     const type = agentReportFailureType(item);
     if (type === 'PRODUCT_BUG') counts.product += 1;
@@ -2355,18 +2364,26 @@ function renderAgentSummaryArtifact(run) {
     else if (String(item.status || '').toLowerCase() !== 'timeout') counts.unknown += 1;
     return counts;
   }, {product: 0, broken: 0, unknown: 0});
-  const productFailedCount = runnerEvidenceJobs.length
-    ? reportFailureTypes.product
-    : (Number(execution.productFailedCount ?? summary.productFailedJobCount ?? reportFailureTypes.product) || 0);
-  const brokenCount = runnerEvidenceJobs.length
-    ? reportFailureTypes.broken
-    : (Number(execution.brokenCount ?? summary.brokenJobCount ?? reportFailureTypes.broken) || 0);
-  const unknownFailedCount = runnerEvidenceJobs.length
-    ? reportFailureTypes.unknown
-    : (Number(execution.unknownFailedCount ?? summary.unknownFailedJobCount ?? reportFailureTypes.unknown) || 0);
-  const attemptedCount = runnerEvidenceJobs.length
-    ? runnerEvidenceJobs.length
-    : (Number(execution.attemptedCount) || (passedCount + failedCount + timeoutCount + runningCount));
+  const productFailedCount = hasLogicalExecutionCounts
+    ? (Number(summary.productFailedJobCount ?? execution.productFailedCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? reportFailureTypes.product
+      : (Number(execution.productFailedCount ?? summary.productFailedJobCount ?? reportFailureTypes.product) || 0));
+  const brokenCount = hasLogicalExecutionCounts
+    ? (Number(summary.brokenJobCount ?? execution.brokenCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? reportFailureTypes.broken
+      : (Number(execution.brokenCount ?? summary.brokenJobCount ?? reportFailureTypes.broken) || 0));
+  const unknownFailedCount = hasLogicalExecutionCounts
+    ? (Number(summary.unknownFailedJobCount ?? execution.unknownFailedCount ?? 0) || 0)
+    : (runnerEvidenceJobs.length
+      ? reportFailureTypes.unknown
+      : (Number(execution.unknownFailedCount ?? summary.unknownFailedJobCount ?? reportFailureTypes.unknown) || 0));
+  const attemptedCount = hasLogicalExecutionCounts
+    ? (Number(execution.logicalAttemptCount ?? summary.runnerOriginalAttemptCount ?? 0) || (passedCount + failedCount + timeoutCount + runningCount))
+    : (runnerEvidenceJobs.length
+      ? runnerEvidenceJobs.length
+      : (Number(execution.attemptedCount) || (passedCount + failedCount + timeoutCount + runningCount)));
   const logicalFailedCount = Number(execution.logicalFailedCount ?? summary.logicalFailedJobCount ?? failedCount) || 0;
   const logicalTimeoutCount = Number(execution.logicalTimeoutCount ?? summary.timeoutJobCount ?? timeoutCount) || 0;
   const recoveredCount = Number(execution.recoveredCount ?? summary.recoveredJobCount ?? 0) || 0;

@@ -7959,6 +7959,72 @@ def _agent_run_with_input_summary(run, detailed=False):
     return enriched
 
 
+def _agent_reconcile_report_bucket_totals(bucket_counts, passed, failed, timeout, running):
+    """Align user-facing smoke/non-smoke buckets with logical final results."""
+    if not isinstance(bucket_counts, dict):
+        return {}
+    bucket_counts = dict(bucket_counts)
+    suffixes = {
+        "passed": "Passed",
+        "failed": "Failed",
+        "timeout": "Timeout",
+        "running": "Running",
+    }
+    statuses = tuple(suffixes.keys())
+    targets = {
+        "passed": max(0, _safe_int_local(passed, 0)),
+        "failed": max(0, _safe_int_local(failed, 0)),
+        "timeout": max(0, _safe_int_local(timeout, 0)),
+        "running": max(0, _safe_int_local(running, 0)),
+    }
+
+    def key(prefix, status):
+        return f"{prefix}{suffixes[status]}"
+
+    def total(status):
+        return sum(_safe_int_local(bucket_counts.get(key(prefix, status)), 0) for prefix in ("smoke", "nonSmoke"))
+
+    def move_count(source_status, target_status, amount, prefixes=("nonSmoke", "smoke")):
+        remaining = max(0, _safe_int_local(amount, 0))
+        for prefix in prefixes:
+            if not remaining:
+                break
+            source_key = key(prefix, source_status)
+            target_key = key(prefix, target_status)
+            available = max(0, _safe_int_local(bucket_counts.get(source_key), 0))
+            moved = min(available, remaining)
+            if not moved:
+                continue
+            bucket_counts[source_key] = available - moved
+            bucket_counts[target_key] = _safe_int_local(bucket_counts.get(target_key), 0) + moved
+            remaining -= moved
+        return remaining
+
+    # A repair rerun can recover an original failed source while raw plan buckets
+    # still keep that original failure. Convert only status excess into the final
+    # target state so pass + fail never exceeds the logical executed count.
+    for target_status in statuses:
+        shortfall = targets[target_status] - total(target_status)
+        if shortfall <= 0:
+            continue
+        source_order = {
+            "passed": ("failed", "timeout", "running"),
+            "failed": ("running", "timeout", "passed"),
+            "timeout": ("running", "failed", "passed"),
+            "running": ("failed", "timeout", "passed"),
+        }.get(target_status, ())
+        for source_status in source_order:
+            if shortfall <= 0:
+                break
+            excess = total(source_status) - targets[source_status]
+            if excess <= 0:
+                continue
+            moved_left = move_count(source_status, target_status, min(shortfall, excess))
+            shortfall -= min(shortfall, excess) - moved_left
+
+    return bucket_counts
+
+
 def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passed, failed, timeout, running):
     """Build user-facing smoke/non-smoke buckets from the execution plan."""
     if not isinstance(artifacts, dict):
@@ -8036,7 +8102,7 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
         non_smoke_failed = max(0, non_smoke_failed - recovered_from_non_smoke)
         non_smoke_timeout = min(non_smoke_timeout, max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
 
-    return {
+    bucket_counts = {
         "totalPlanned": plan_total,
         "smokePlanned": smoke_total,
         "nonSmokePlanned": non_smoke_total,
@@ -8052,6 +8118,7 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
         "nonSmokeRunning": non_smoke_running,
         "executionBucketsSource": "generatedYamlExecutionPlan",
     }
+    return _agent_reconcile_report_bucket_totals(bucket_counts, passed, failed, timeout, running)
 
 
 def _agent_report_phase_key(phase):
@@ -8224,6 +8291,18 @@ def _agent_run_report_summary(run):
         "failed": failed,
         "timeout": timeout,
         "running": running,
+        "finalAttempted": attempted,
+        "finalPassed": passed,
+        "finalFailed": failed,
+        "finalTimeout": timeout,
+        "finalRunning": running,
+        "rawAttempted": _safe_int_local(execution.get("attemptedCount"), attempted),
+        "rawPassed": _safe_int_local(execution.get("passedCount"), passed),
+        "rawFailed": _safe_int_local(execution.get("failedCount"), failed),
+        "rawTimeout": _safe_int_local(execution.get("timeoutCount"), timeout),
+        "rawRunning": _safe_int_local(execution.get("runningCount"), running),
+        "recovered": _safe_int_local(execution.get("recoveredCount"), 0),
+        "repairAttempted": _safe_int_local(execution.get("rerunAttemptCount"), 0),
         "smokeAttempted": smoke_attempted,
         "smokePassed": smoke_passed,
         "smokeFailed": smoke_failed,
@@ -18130,6 +18209,11 @@ def _tool_generate_summary(run):
         recovered_count = _safe_int_local(execution.get("recoveredCount"), 0)
         if not recovered_count and recovery.get("recovered"):
             recovered_count = len([item for item in (recovery.get("sourceJobIds") or recovery.get("recoveredJobIds") or []) if str(item or "").strip()])
+        final_failed_count = _safe_int_local(execution.get("logicalFailedCount"), 0)
+        final_product_failed_count, final_broken_count, final_unknown_failed_count = _agent_unique_failure_class_counts(
+            execution,
+            final_failed_count,
+        )
         status_breakdown = {
             "finalConclusion": conclusion,
             "originalExecution": {
@@ -18185,12 +18269,16 @@ def _tool_generate_summary(run):
             "reportCount": report_count,
             "passedJobCount": execution.get("passedCount", 0),
             "failedJobCount": execution.get("failedCount", 0),
-            "productFailedJobCount": execution.get("productFailedCount", 0),
-            "brokenJobCount": execution.get("brokenCount", 0),
+            "productFailedJobCount": final_product_failed_count,
+            "brokenJobCount": final_broken_count,
+            "rawFailedAttemptCount": execution.get("failedCount", 0),
+            "rawProductFailedJobCount": execution.get("productFailedCount", 0),
+            "rawBrokenJobCount": execution.get("brokenCount", 0),
+            "rawUnknownFailedJobCount": execution.get("unknownFailedCount", 0),
             "recoveredJobCount": execution.get("recoveredCount", 0),
             "logicalPassedJobCount": execution.get("logicalPassedCount", 0),
             "logicalFailedJobCount": execution.get("logicalFailedCount", 0),
-            "unknownFailedJobCount": execution.get("unknownFailedCount", 0),
+            "unknownFailedJobCount": final_unknown_failed_count,
             "timeoutJobCount": execution.get("timeoutCount", 0),
             "runningJobCount": execution.get("runningCount", 0),
             "runnerAttemptCount": execution.get("attemptedCount", 0),
