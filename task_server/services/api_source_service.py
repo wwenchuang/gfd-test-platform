@@ -722,6 +722,7 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
     else:
         next_check_at = str(public.get("created_at") or _now())
     automatic_sync = bool(public.get("sync_enabled") and apifox_auto_sync_enabled())
+    public["sync_enabled"] = automatic_sync
     public["sync_schedule"] = {
         "mode": "automatic" if automatic_sync else "manual",
         "interval_minutes": interval,

@@ -87,6 +87,28 @@ git diff --check -- task_server/router.py task_server/services/api_source_servic
   - 执行日志渲染包含 `api-log-console` 和 `api-log-line`。
 - 截图：`/tmp/api-manual-workflow-smoke.png`。
 
+### 2026-08-03 API 手动 Apifox 更新公共状态补丁
+
+线上部署后复核 `/api/api-testing/sources` 发现一个历史数据兼容问题：默认后台自动更新已经关闭，`sync_schedule.mode` 也正确返回 `manual`，但旧 source 文件中保存过的 `sync_enabled=true` 仍被公共响应原样暴露，容易让前端和使用者误以为还存在自动同步。
+
+修复：
+
+- `task_server/services/api_source_service.py`
+  - `_public_source()` 将 `sync_enabled` 统一归一为“有效自动同步状态”：只有 source 本身启用且环境变量 `APIFOX_AUTO_SYNC_ENABLED=1` 时才返回 `true`。
+  - 默认未开启全局自动同步时，历史 source 对外也返回 `sync_enabled=false`、`sync_schedule.mode=manual`、`next_check_at=""`。
+- `tests/api_manual_workflow_checks.py`
+  - 新增历史 source 兼容回归，防止旧配置再次向前端暴露自动同步状态。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_manual_workflow_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/api_source_service.py tests/api_manual_workflow_checks.py
+git diff --check -- task_server/services/api_source_service.py tests/api_manual_workflow_checks.py CODEX_STATE.md
+```
+
 ### 2026-08-03 API 我的收藏接口真实调试修复
 
 用户指定线上真实流程：Apifox 生产环境 `生产环境（新）-腾讯云`，测试“我的收藏”3 个接口，并把业务 JWT 配到平台环境变量后执行。真实排查发现平台曾出现“HTTP 200 但业务未登录仍算通过”的假阳性：

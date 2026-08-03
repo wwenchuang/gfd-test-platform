@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -47,6 +48,27 @@ class ApiManualSourceWorkflowChecks(unittest.TestCase):
 
     def test_apifox_sources_default_to_manual_updates(self):
         source = self._create_source()
+
+        self.assertFalse(source["sync_enabled"])
+        self.assertEqual("manual", source["sync_schedule"]["mode"])
+        self.assertEqual("", source["sync_schedule"]["next_check_at"])
+
+    def test_public_source_masks_historical_auto_sync_when_global_auto_is_disabled(self):
+        previous = os.environ.pop("APIFOX_AUTO_SYNC_ENABLED", None)
+        try:
+            source = api_source_service._public_source({
+                "source_type": "apifox",
+                "name": "3D",
+                "project_id": "5904970",
+                "access_token": "apifox-token",
+                "sync_enabled": True,
+                "sync_interval_minutes": 60,
+                "last_success_at": "2026-08-03 18:33:02",
+                "last_sync_status": "succeeded",
+            })
+        finally:
+            if previous is not None:
+                os.environ["APIFOX_AUTO_SYNC_ENABLED"] = previous
 
         self.assertFalse(source["sync_enabled"])
         self.assertEqual("manual", source["sync_schedule"]["mode"])
