@@ -27,6 +27,17 @@ SMOKE_EXCLUDE_WORDS = (
 SMOKE_STRONG_WORDS = ("冒烟", "P0", "P1", "主流程", "主链", "核心", "基础")
 SMOKE_NAME_WORDS = ("入口", "展示")
 MAIN_CHAIN_WORDS = ("主流程", "主链", "核心", "入口", "开始创作", "AI建模", "图片建模", "文字建模", "语音创作", "生成模型")
+SMOKE_STABLE_ENTRY_WORDS = (
+    "入口可见", "入口展示", "可见性", "展示", "显示", "同级", "并列",
+)
+SMOKE_SECONDARY_CHECK_WORDS = (
+    "文案", "准确性", "点击后", "点击百度网盘", "跳转", "触发", "反馈",
+    "授权", "登录", "文件选择", "外部", "WebView", "宽屏", "窄屏",
+)
+BUSINESS_BRANCH_WORDS = (
+    "文档打印", "照片打印", "扫描复印", "普通打印", "3D打印",
+    "AI建模", "模型库", "小白客商城", "商城", "打印记录", "我的收藏",
+)
 VAGUE_PHRASES = (
     "检查是否正常", "确认是否正常", "页面正常", "功能正常", "验证功能正常",
     "验证页面正确", "检查页面正确", "页面正确", "结果正常", "状态正常",
@@ -243,6 +254,61 @@ def _ref_has_smoke_priority(item: dict, task_scores: List[dict]) -> bool:
     ])
     match = PRIORITY_RE.search(label)
     return bool(match and match.group(1).upper() in ("P0", "P1"))
+
+
+def _ref_label_for_smoke_rank(item: dict, task_scores: List[dict]) -> str:
+    return " ".join([
+        str(item.get("file") or ""),
+        str(item.get("module") or ""),
+        str(item.get("priority") or ""),
+        " ".join(str(task.get("name") or "") for task in task_scores),
+        " ".join(str(task.get("priority") or "") for task in task_scores),
+    ])
+
+
+def _ref_business_branch(item: dict, task_scores: List[dict]) -> str:
+    label = _ref_label_for_smoke_rank(item, task_scores)
+    for word in BUSINESS_BRANCH_WORDS:
+        if word in label:
+            return word
+    match = re.search(r"([\u4e00-\u9fa5A-Za-z0-9]{2,12}(?:打印|复印|建模|商城|收藏|记录))", label)
+    return match.group(1) if match else ""
+
+
+def _ref_smoke_secondary_rank(item: dict, task_scores: List[dict]) -> int:
+    label = _ref_label_for_smoke_rank(item, task_scores)
+    has_stable_entry = any(word in label for word in SMOKE_STABLE_ENTRY_WORDS)
+    has_secondary_check = any(word in label for word in SMOKE_SECONDARY_CHECK_WORDS)
+    if has_stable_entry and not has_secondary_check:
+        return 0
+    if has_stable_entry:
+        return 1
+    return 2
+
+
+def _select_diverse_smoke_refs(ranked: List[dict], limit: int) -> List[dict]:
+    """Prefer one stable smoke per business branch before duplicate branches."""
+    selected: List[dict] = []
+    selected_ids = set()
+    seen_branches = set()
+    for item in ranked:
+        score = item.get("executableScore") if isinstance(item.get("executableScore"), dict) else {}
+        task_scores = [task for task in (score.get("taskScores") or []) if isinstance(task, dict)]
+        branch = _ref_business_branch(item, task_scores)
+        if not branch or branch in seen_branches:
+            continue
+        selected.append(item)
+        selected_ids.add(id(item))
+        seen_branches.add(branch)
+        if len(selected) >= limit:
+            return selected
+    for item in ranked:
+        if id(item) in selected_ids:
+            continue
+        selected.append(item)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _task_priority(task: Dict[str, Any], fallback_text: str = "") -> str:
@@ -791,11 +857,13 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
         main_chain = bool(any(task.get("mainBusinessChain") for task in task_scores) or any(word in label for word in MAIN_CHAIN_WORDS))
         baseline = bool(score.get("baselineEvidence") or any(task.get("baselineEvidence") for task in task_scores))
         smoke_excluded = bool(item.get("smokeExcluded") or _has_smoke_exclusion(label))
+        smoke_secondary_rank = _ref_smoke_secondary_rank(item, task_scores)
         max_action_count = max([int(task.get("actionCount") or 0) for task in task_scores] or [0])
         max_wait_count = max([int(task.get("waitCount") or 0) for task in task_scores] or [0])
         high_replan_risk = any(str(task.get("replanRisk") or "") == "high" for task in task_scores)
         return (
             1 if smoke_excluded else 0,
+            smoke_secondary_rank,
             priority_rank,
             0 if main_chain else 1,
             0 if baseline else 1,
@@ -808,8 +876,9 @@ def rank_executable_yaml_refs(scored_refs: List[dict], *, limit: int = 3) -> Tup
 
     ranked = sorted(executable, key=sort_key)
     limit = max(1, int(limit or 3))
-    selected = ranked[:limit]
-    overflow = ranked[limit:]
+    selected = _select_diverse_smoke_refs(ranked, limit)
+    selected_ids = {id(item) for item in selected}
+    overflow = [item for item in ranked if id(item) not in selected_ids]
     blocked.extend({**item, "gateReason": f"超过自动冒烟首批上限 {limit}，待首批完成执行准入后再扩展执行"} for item in overflow)
     def strip_internal(row: dict) -> dict:
         return {key: value for key, value in row.items() if not str(key).startswith("_")}

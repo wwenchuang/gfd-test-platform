@@ -28,6 +28,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-03 Agent 首批冒烟选择稳定性修复
+
+线上回归 `agent-1785736612329-32d18627` 生成 10 个 YAML（4 个历史成功种子 + 6 个新增），dry-run 10/10 通过，但真实 OPPO `ecbfd645` 首批冒烟 `0/3`，修复重跑未恢复，终态 `FAILED / RERUN / 95%`。
+
+证据：
+
+- 首批真实执行失败不同于 dry-run：`job_1785737453079_00009`、`00010`、`00011` 是 YAML dry-run 通过，不代表手机执行通过。
+- 真实手机任务 `job_1785737483446_00012`、`job_1785737857058_00020`、`job_1785738196369_00021` 均在 `win-runner-01 / ecbfd645` 执行。
+- 两条任务早期 `Timeout after 300s`，日志停在 App 启动/早期交互；一条在 `aiWaitFor` 调用 `qwen3.7-plus` 时模型请求超时。
+- 最终失败分析进一步收敛出脚本层问题：照片打印候选在错误页面层级等待「百度网盘」，未先进入具体照片规格页，导致死等。
+
+修复：
+
+- `task_server/services/yaml_executable_scorer.py`
+  - `rank_executable_yaml_refs()` 首批排序新增稳定入口优先级：入口可见 / 入口展示 / 可见性 / 同级 / 并列优先。
+  - 文案准确性、点击后、跳转、反馈、授权、登录、WebView、宽/窄屏等二级验收维度仍可执行，但默认排到首批冒烟之后，进入 remaining。
+  - 首批选择新增业务分支分散策略：在排序后优先保证不同业务入口各取一条稳定短链路，再用剩余名额补同分支用例，避免两个文档用例挤掉照片/扫描分支。
+- `tests/backend_static_checks.py`
+  - 新增回归：候选同时包含文档/照片/扫描三条入口可见性短链路，并混入文案/点击跳转用例时，首批必须选择三入口可见性短链路，文案和跳转用例仅延后。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+git diff --check -- task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+```
+
 ### 2026-08-03 Agent 报告最终口径与修复重跑统计拆分
 
 用户指出 Agent 历史卡片和最终报告在修复重跑后仍可能把“原始失败尝试”混进最终通过率，例如同一轮真实执行里逻辑结果已经恢复到 `6/8`，但卡片仍按计划桶或 Runner 原始 job 事件显示成 `5/8`，并可能出现通过数 + 失败数超过总执行数的观感。

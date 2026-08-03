@@ -13266,6 +13266,64 @@ def check_smoke_selection_requires_explicit_ai_mark():
     require({"TC-002", "TC-003"}.issubset(set(smoke_ids)), "Local smoke gate must prioritize normal-chain baseline-backed cases")
 
 
+def check_generated_smoke_selection_prefers_diverse_stable_branches():
+    from task_server.services.yaml_executable_scorer import rank_executable_yaml_refs
+
+    def executable_ref(file_name, task_name, *, priority="P0", actions=6, waits=2):
+        return {
+            "module": "AI_Agent_草稿",
+            "file": file_name,
+            "smokeCandidate": True,
+            "runnerCandidate": True,
+            "executableScore": {
+                "executionLevel": "executable",
+                "level": "executable",
+                "ok": True,
+                "score": 96,
+                "smokeCandidate": True,
+                "baselineEvidence": True,
+                "taskScores": [{
+                    "name": task_name,
+                    "priority": priority,
+                    "executionLevel": "executable",
+                    "level": "executable",
+                    "score": 96,
+                    "actionCount": actions,
+                    "waitCount": waits,
+                    "assertCount": 1,
+                    "transitionCount": 2,
+                    "replanRisk": "low",
+                    "mainBusinessChain": True,
+                    "baselineEvidence": True,
+                    "smokeCandidate": True,
+                }],
+            },
+        }
+
+    refs = [
+        executable_ref("01-文档打印页-百度网盘入口文案准确性校验.yaml", "文档打印页-百度网盘入口文案准确性校验"),
+        executable_ref("02-文档打印页-点击百度网盘入口触发跳转反馈.yaml", "文档打印页-点击百度网盘入口触发跳转反馈"),
+        executable_ref("03-文档打印页-百度网盘入口可见性校验.yaml", "文档打印页-百度网盘入口可见性校验", priority="P1"),
+        executable_ref("04-照片打印页-百度网盘入口可见性校验.yaml", "照片打印页-百度网盘入口可见性校验", priority="P1"),
+        executable_ref("05-扫描复印页-百度网盘入口可见性校验.yaml", "扫描复印页-百度网盘入口可见性校验", priority="P1"),
+    ]
+    selected, blocked = rank_executable_yaml_refs(refs, limit=3)
+    selected_files = [item.get("file") for item in selected]
+    require(
+        selected_files == [
+            "03-文档打印页-百度网盘入口可见性校验.yaml",
+            "04-照片打印页-百度网盘入口可见性校验.yaml",
+            "05-扫描复印页-百度网盘入口可见性校验.yaml",
+        ],
+        "Generated first smoke batch must prefer stable visibility checks across different business branches before wording/jump checks",
+    )
+    require(
+        any("文案准确性" in (item.get("file") or "") for item in blocked)
+        and any("跳转反馈" in (item.get("file") or "") for item in blocked),
+        "Secondary wording and post-click checks must remain executable but be deferred behind stable first-smoke checks",
+    )
+
+
 def check_yaml_runner_eligibility_filter():
     from task_server.services import ai_skill_service, yaml_service
 
@@ -17132,6 +17190,7 @@ def main():
     check_qwen_structured_skills_disable_thinking()
     check_ai_skill_timeout_fallbacks_are_requirement_scoped()
     check_smoke_selection_requires_explicit_ai_mark()
+    check_generated_smoke_selection_prefers_diverse_stable_branches()
     check_yaml_runner_eligibility_filter()
     check_agent_yaml_validate_partial_quarantine()
     check_agent_yaml_validate_auto_repairs_missing_wait()
