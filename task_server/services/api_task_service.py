@@ -81,7 +81,7 @@ def _task_status(
         return "draft"
     if str(snapshot.get("state") or "") == "ready":
         return "selecting"
-    return "sync_needed"
+    return "update_needed"
 
 
 def _step(id_: str, title: str, state: str, action: str, summary: str) -> Dict[str, str]:
@@ -162,7 +162,7 @@ def build_api_test_task(
                 "选择接口",
                 "done" if interface_count else "todo",
                 "showApiAssetsPage()",
-                f"{interface_count} 个接口可选" if interface_count else "先从 Apifox 刷新接口状态",
+                f"{interface_count} 个接口可选" if interface_count else "先手动更新 Apifox 接口",
             ),
             _step(
                 "ai_design",

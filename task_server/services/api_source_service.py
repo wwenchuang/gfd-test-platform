@@ -124,6 +124,11 @@ def _apifox_credential_path() -> str:
     return _api_path("credentials", "apifox.json")
 
 
+def apifox_auto_sync_enabled() -> bool:
+    """Return whether Apifox sources may run scheduled background updates."""
+    return safe_bool(os.getenv("APIFOX_AUTO_SYNC_ENABLED", "0"), False)
+
+
 def _env_source() -> Dict[str, Any]:
     token = os.getenv("APIFOX_ACCESS_TOKEN", "").strip()
     project_id = os.getenv("APIFOX_PROJECT_ID", "").strip()
@@ -139,7 +144,8 @@ def _env_source() -> Dict[str, Any]:
         "environment_id": os.getenv("APIFOX_ENVIRONMENT_ID", "").strip(),
         "access_token": token,
         "credential_mode": "access_token",
-        "sync_enabled": safe_bool(os.getenv("APIFOX_SYNC_ENABLED", "1"), True),
+        "sync_enabled": apifox_auto_sync_enabled()
+        and safe_bool(os.getenv("APIFOX_SYNC_ENABLED", "0"), False),
         "sync_interval_minutes": _sync_interval(os.getenv("APIFOX_SYNC_INTERVAL_MINUTES", "60")),
         "last_sync_id": "",
         "last_attempt_at": "",
@@ -715,11 +721,12 @@ def _public_source(source: Dict[str, Any]) -> Dict[str, Any]:
         )
     else:
         next_check_at = str(public.get("created_at") or _now())
+    automatic_sync = bool(public.get("sync_enabled") and apifox_auto_sync_enabled())
     public["sync_schedule"] = {
-        "mode": "automatic" if public.get("sync_enabled") else "manual",
+        "mode": "automatic" if automatic_sync else "manual",
         "interval_minutes": interval,
         "last_success_at": str(public.get("last_success_at") or ""),
-        "next_check_at": next_check_at if public.get("sync_enabled") else "",
+        "next_check_at": next_check_at if automatic_sync else "",
         "status": str(public.get("last_sync_status") or ""),
     }
     return public
@@ -781,7 +788,13 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
         access_token = str(token_input).strip()
     else:
         access_token = str(current.get("access_token") or "").strip()
-    sync_enabled_default = source_type == "apifox"
+    sync_enabled_default = False
+    requested_sync_enabled = safe_bool(
+        payload.get("sync_enabled", payload.get("syncEnabled", current.get("sync_enabled"))),
+        sync_enabled_default,
+    )
+    if source_type == "apifox" and not apifox_auto_sync_enabled():
+        requested_sync_enabled = False
     scope_input = payload.get("sync_scope", payload.get("syncScope", current.get("sync_scope")))
     sync_scope = normalized_sync_scope(scope_input)
     provider_input_present = "provider_metadata" in payload or "providerMetadata" in payload
@@ -822,7 +835,7 @@ def _save_api_source_locked(payload: Dict[str, Any]) -> Dict[str, Any]:
         "environment_snapshot": environment_snapshot,
         "credential_mode": "access_token" if source_type == "apifox" else "none",
         "access_token": access_token,
-        "sync_enabled": safe_bool(payload.get("sync_enabled", payload.get("syncEnabled", current.get("sync_enabled"))), sync_enabled_default),
+        "sync_enabled": requested_sync_enabled,
         "sync_interval_minutes": _sync_interval(payload.get("sync_interval_minutes", payload.get("syncIntervalMinutes", current.get("sync_interval_minutes", 60)))),
         "last_sync_id": str(current.get("last_sync_id") or ""),
         "last_attempt_at": str(current.get("last_attempt_at") or ""),
@@ -914,6 +927,7 @@ __all__ = [
     "API_TESTING_DIR",
     "ApiSourceConfigDriftError",
     "DEFAULT_APIFOX_SOURCE_ID",
+    "apifox_auto_sync_enabled",
     "apply_saved_apifox_credential",
     "get_apifox_credential",
     "get_api_source",

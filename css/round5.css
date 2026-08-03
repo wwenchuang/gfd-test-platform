@@ -1479,6 +1479,74 @@
   border: 0;
   background: transparent;
 }
+.api-log-console {
+  display: grid;
+  gap: 6px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+  font-family: var(--mono);
+}
+.api-log-line {
+  border: 1px solid rgba(148, 163, 184, .22);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, .52);
+}
+.api-log-line > summary {
+  display: grid;
+  grid-template-columns: 132px 92px minmax(0, 1fr) 58px;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 10px;
+}
+.api-log-line > summary strong {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-log-line > summary em {
+  justify-self: end;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text2);
+}
+.api-log-line.ok {
+  border-left: 3px solid var(--success);
+}
+.api-log-line.error {
+  border-left: 3px solid var(--danger);
+}
+.api-log-line.warn {
+  border-left: 3px solid var(--warning);
+}
+.api-log-line.info {
+  border-left: 3px solid var(--accent);
+}
+.api-empty-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  align-items: center;
+  border: 1px dashed rgba(34, 211, 238, .42);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, .24);
+  padding: 18px;
+}
+.api-empty-action span {
+  color: var(--accent);
+  font-weight: 800;
+}
+.api-empty-action strong {
+  grid-column: 1;
+  color: var(--text2);
+  font-weight: 600;
+}
+.api-empty-action button {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
 .api-runner-log-placeholder {
   color: var(--text2);
   font-family: var(--mono);
@@ -3817,6 +3885,22 @@
   padding: 10px;
   border-top: 1px solid var(--border);
   background: var(--surface2);
+}
+.api-log-console .api-log-line > summary {
+  display: grid;
+  grid-template-columns: 132px 92px minmax(0, 1fr) 58px;
+  align-items: center;
+}
+.api-log-console .api-log-line > summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-log-console .api-log-line > summary em {
+  justify-self: end;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text2);
 }
 .api-testing-page .hidden {
   display: none !important;

@@ -28,6 +28,65 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-03 API 手动 Apifox 更新与参考执行器式日志收敛
+
+用户上传 `主对话_aippt-auto-test-share.zip` 作为参考，核心设计不是堆页面，而是把流程压缩为“左侧环境 / 测试命令 / 执行历史，右侧执行日志 / 测试报告”。参考实现的日志按步骤追加 PASS/FAIL/SKIP，失败时给原因和建议，不让大段 JSON 或反复刷新扰乱阅读。
+
+修复：
+
+- Apifox 来源默认改为手动更新：
+  - `task_server/services/api_source_service.py`
+    - 新增 `apifox_auto_sync_enabled()`，只有显式 `APIFOX_AUTO_SYNC_ENABLED=1` 时才允许后台定时更新。
+    - 新建 / 保存 Apifox source 默认 `sync_enabled=false`；即使旧 payload 传入 true，在未启用全局开关时也强制落为手动。
+  - `task_server/services/api_sync_service.py`
+    - 定时扫描 `due_api_source_ids()` 在默认状态返回空；替代同步任务也会在全局关闭时取消。
+  - `task_server/router.py`
+    - 保存接口配置后的提示改为“请手动更新 Apifox”，不再暗示自动同步排队。
+- API 工作台和接口资产页文案收敛：
+  - `task_server/services/api_task_service.py` / `api_workbench_service.py`
+    - task 状态从 `sync_needed` 收敛为 `update_needed`，步骤提示改为“先手动更新 Apifox 接口”。
+    - workbench 状态从“待同步 / 同步中 / 同步完成 / 刷新接口状态”改为“待更新 / 更新中 / 更新完成 / 手动更新 Apifox”。
+  - `js/api-testing.js`
+    - 移除定时同步入口和周期配置，设置保存只保留范围选择与手动更新。
+    - 接口资产页即使没有本地 revision，也先展示已保存来源和“手动更新 Apifox”空态，不再直接被 404 错误页挡住。
+    - 执行日志渲染改为 `api-log-console` / `api-log-line`，按时间、阶段、摘要、状态展示，可展开查看详情，并保存滚动位置，避免轮询时跳回顶部。
+  - `css/round5.css`
+    - 增加日志控制台和无快照动作区样式。
+  - `task-manager.html`
+    - 更新 API 前端缓存版本为 `20260803-api-manual-workflow-v1`。
+- 业务 token 保存接口兼容前端粘贴输入：
+  - `task_server/router.py`
+    - `/api/api-testing/sources/{source_id}/auth-binding` 接收 `secret/value/token/access_token/accessToken`，空 token 返回 400，响应不回显密钥。
+- 回归：
+  - `tests/api_manual_workflow_checks.py`
+    - 覆盖 Apifox source 默认手动更新、auth binding 的 value token 和空 token 校验。
+  - `tests/api_workbench_checks.py`
+    - 覆盖无本地快照时 workbench 返回 `update_needed` 和“手动更新 Apifox”文案。
+  - `tests/frontend_static_checks.py`
+    - 禁止 API UI 出现 `api-source-sync-enabled`、`启用定时同步`、`自动同步`、`刷新接口状态`，并要求无快照也暴露手动更新动作。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_manual_workflow_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/frontend_static_checks.py && python3 tests/backend_static_checks.py
+node --check js/api-testing.js
+python3 -m py_compile task_server/router.py task_server/services/api_source_service.py task_server/services/api_sync_service.py task_server/services/api_task_service.py task_server/services/api_workbench_service.py tests/api_manual_workflow_checks.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+git diff --check -- task_server/router.py task_server/services/api_source_service.py task_server/services/api_sync_service.py task_server/services/api_task_service.py task_server/services/api_workbench_service.py js/api-testing.js css/round5.css tests/api_manual_workflow_checks.py tests/api_workbench_checks.py tests/frontend_static_checks.py task-manager.html
+```
+
+本地浏览器 smoke：
+
+- 使用临时 `API_TESTING_DIR=/tmp/midscene-api-smoke.*` 启动 `python3 -m task_server` 于 `127.0.0.1:8099`。
+- 登录 `admin / sonic2026`。
+- 保存临时 Apifox 来源，确认即使 payload 请求 `sync_enabled=true`，服务端仍返回 `sync_enabled=false`、`sync_schedule.mode=manual`。
+- 打开 API 工作台和接口资产页，确认：
+  - 页面可见“手动更新 Apifox / 更新接口”。
+  - 不再出现“刷新接口状态 / 启用定时同步 / 自动同步”。
+  - 无本地接口快照时仍显示“本地还没有接口快照”和“手动更新 Apifox”按钮。
+  - 执行日志渲染包含 `api-log-console` 和 `api-log-line`。
+- 截图：`/tmp/api-manual-workflow-smoke.png`。
+
 ### 2026-08-03 API 我的收藏接口真实调试修复
 
 用户指定线上真实流程：Apifox 生产环境 `生产环境（新）-腾讯云`，测试“我的收藏”3 个接口，并把业务 JWT 配到平台环境变量后执行。真实排查发现平台曾出现“HTTP 200 但业务未登录仍算通过”的假阳性：

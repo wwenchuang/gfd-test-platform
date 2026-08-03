@@ -248,7 +248,7 @@ def _snapshot_summary(revision: Dict[str, Any], asset: Dict[str, Any]) -> Dict[s
     if not revision:
         return {
             "state": "missing",
-            "message": "还没有本地 API 资产快照，请先从 Apifox 同步一次。",
+            "message": "还没有本地 API 资产快照，请先手动更新 Apifox。",
             "endpoint_count": 0,
         }
     endpoints = revision.get("endpoints") if isinstance(revision.get("endpoints"), list) else []
@@ -350,14 +350,14 @@ def _sync_status_text(status: str, *, has_source: bool, has_snapshot: bool) -> s
     if not has_source:
         return "未连接"
     if value in {"queued", "running"}:
-        return "同步中"
+        return "更新中"
     if value in {"succeeded", "no_change"}:
-        return "同步完成"
+        return "更新完成"
     if value == "failed":
-        return "同步失败"
+        return "更新失败"
     if has_snapshot:
         return "已就绪"
-    return "待同步"
+    return "待更新"
 
 
 def _latest_sync(syncs: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -452,7 +452,7 @@ def _sync_state(
         "changed": _safe_int(summary.get("changed"), 0),
         "removed": _safe_int(summary.get("removed"), 0),
         "affected_tests": _safe_int(summary.get("affected_plans"), 0),
-        "action_label": "刷新接口状态" if has_source else "连接 Apifox",
+        "action_label": "手动更新 Apifox" if has_source else "连接 Apifox",
         "source_id": str(source.get("source_id") or ""),
         "sync_id": str(sync.get("sync_id") or ""),
         "error": str(sync.get("error") or source.get("last_error") or ""),

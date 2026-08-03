@@ -155,6 +155,15 @@ def main():
         "API workbench and environment pages must render saved local snapshots before background refresh",
     )
     require(
+        "手动更新 Apifox" in api_testing_js
+        and "更新接口" in api_testing_js
+        and "apiAssetNoSnapshotState" in api_testing_js
+        and "api-source-sync-enabled" not in api_testing_js
+        and "启用定时同步" not in api_testing_js
+        and "自动同步" not in api_testing_js,
+        "Apifox must be a manually updated source of truth; the UI must not expose timed/background sync controls and missing snapshots must still show a manual update action",
+    )
+    require(
         "api-command-center" in api_testing_js
         and "api-studio-toolbar" in api_testing_js
         and "api-overview-cards" in api_testing_js
@@ -207,10 +216,11 @@ def main():
         "API workbench dashboard must visually match the reference runner: left env/commands/history and right log/report tabs",
     )
     require(
-        "刷新接口状态" in api_testing_js
+        "手动更新 Apifox" in api_testing_js
+        and "刷新接口状态" not in api_testing_js
         and "更新 Apifox 快照" not in api_testing_js
         and "立即同步" not in api_testing_js,
-        "API workbench must describe Apifox refresh as checking interface status, not a developer-oriented sync/update snapshot action",
+        "API workbench must describe Apifox as a manual update action, not an automatic/developer-oriented sync action",
     )
     require(
         "apiWorkbenchReleaseBaselineAction" in api_testing_js
@@ -297,14 +307,14 @@ def main():
         and "startApiAssetSync" in api_testing_js
         and "pollApiAssetSync" in api_testing_js
         and "poll_after_ms" in api_testing_js,
-        "API assets must use server-side sources and backend-timed asynchronous synchronization",
+        "API assets must use server-side sources and backend-tracked manual update jobs",
     )
     require(
-        ("同步 Apifox" in api_testing_js or "重新读取 Apifox 资产" in api_testing_js)
+        ("手动更新 Apifox" in api_testing_js or "重新读取 Apifox 资产" in api_testing_js)
         and "上传 OpenAPI JSON" in api_testing_js
         and "api-source-token" in api_testing_js
         and 'type="password"' in api_testing_js,
-        "Apifox sync must be the primary asset action while manual OpenAPI upload remains available",
+        "Apifox manual update must be the primary asset action while manual OpenAPI upload remains available",
     )
     require(
         "api-source-credential-saved" in api_testing_js
@@ -1138,7 +1148,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260803-api-task-workflow-v1" in html and "js/api-testing.js?v=20260803-api-task-workflow-v1" in html and "js/agent-status.js?v=20260803-agent-final-report-counts" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, sidebar icons, instant local workbench snapshot rendering, local API environment debugging, API command-center dashboard, reference-style API runner board, one-click baseline API release regression, Agent final logical report counts, API task-oriented workflow, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260803-api-manual-workflow-v1" in html and "js/api-testing.js?v=20260803-api-manual-workflow-v1" in html and "js/agent-status.js?v=20260803-agent-final-report-counts" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, sidebar icons, instant local workbench snapshot rendering, local API environment debugging, API command-center dashboard, reference-style API runner board, one-click baseline API release regression, Agent final logical report counts, API task-oriented workflow, manual Apifox update flow, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

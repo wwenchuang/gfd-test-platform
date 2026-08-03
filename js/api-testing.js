@@ -146,6 +146,16 @@ function apiTestingEmpty(text) {
   return `<div class="report-empty">${escapeHtml(text)}</div>`;
 }
 
+function apiAssetNoSnapshotState(message = '') {
+  return `
+    <div class="api-empty-action">
+      <span>本地还没有接口快照</span>
+      <strong>${escapeHtml(message || '需要时手动从 Apifox 更新接口和环境。')}</strong>
+      <button class="btn-sm primary" onclick="startApiAssetSync()">手动更新 Apifox</button>
+    </div>
+  `;
+}
+
 function apiBusinessLineForEndpoint(endpoint = {}) {
   return apiEndpointModulePath(endpoint).split('/')[0] || '未分组';
 }
@@ -414,8 +424,8 @@ function apiWorkbenchConnectionText(workbench = {}) {
   const snapshot = workbench.snapshot || {};
   const execution = workbench.execution || {};
   const connection = execution.connection || {};
-  if (!source.source_id) return {label: '未连接', tone: 'warn', detail: '先连接 Apifox 项目并同步接口资产'};
-  if (snapshot.state !== 'ready') return {label: '待同步', tone: 'warn', detail: snapshot.message || '本地还没有接口快照'};
+  if (!source.source_id) return {label: '未连接', tone: 'warn', detail: '先连接 Apifox 项目并更新接口资产'};
+  if (snapshot.state !== 'ready') return {label: '待更新', tone: 'warn', detail: snapshot.message || '本地还没有接口快照'};
   if (connection.state !== 'connected') return {label: '环境待配置', tone: 'warn', detail: 'Apifox 环境缺少可执行 base_url'};
   return {label: '可执行', tone: 'success', detail: connection.base_url || '环境已就绪'};
 }
@@ -532,7 +542,7 @@ function renderApiWorkbenchMetrics(workbench = {}) {
   const cards = [
     ['API接口总数', metrics.total_endpoints ?? 0, '本地快照接口', 'NET'],
     ['测试覆盖率', apiWorkbenchCoverageRate(metrics), `${metrics.covered_endpoints ?? 0} 个接口已覆盖`, 'CHK'],
-    ['待处理变化', metrics.pending_changes ?? 0, '来自最近同步差异', 'ALT'],
+    ['待处理变化', metrics.pending_changes ?? 0, '来自最近更新差异', 'ALT'],
     ['今日执行', metrics.today_executions ?? 0, '本地执行记录', 'RUN'],
   ];
   return `
@@ -552,7 +562,7 @@ function renderApiWorkbenchMetrics(workbench = {}) {
 function renderApiWorkbenchEnvironmentOption(source = {}) {
   const sourceEnv = apiSourceEnvironmentSummary(source);
   const envName = apiSourceEnvironmentDisplayName(source);
-  const baseUrl = sourceEnv.baseUrl || 'base_url 待同步';
+  const baseUrl = sourceEnv.baseUrl || 'base_url 待更新';
   return `
     <label><span>环境</span><select aria-label="当前执行环境" onchange="showApiEnvironmentPage()">
       <option>${escapeHtml(envName)} · ${escapeHtml(baseUrl)}</option>
@@ -569,7 +579,7 @@ function renderApiWorkbenchPrimaryActions(workbench = {}) {
   return `
     <div class="api-primary-action-row">
       <button class="btn-sm primary" onclick="${source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()'}">
-        ${source.source_id ? '刷新接口状态' : '连接 Apifox'}
+        ${source.source_id ? '手动更新 Apifox' : '连接 Apifox'}
       </button>
       <button class="btn-sm ai" onclick="document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})" ${hasSnapshot ? '' : 'disabled'}>
         AI 生成测试
@@ -592,7 +602,7 @@ function renderApiWorkbenchNextActions(workbench = {}) {
   if (!source.source_id) {
     actions.push(['连接 Apifox 项目', '保存项目、环境和接口快照，后续同事可直接复用。', 'showApiAssetsPage()', '连接']);
   } else if (!endpointCount) {
-    actions.push(['刷新接口状态', '检查 Apifox 是否有接口或环境变化，并更新平台本地资产。', 'apiWorkbenchUpdateSnapshot()', '刷新']);
+    actions.push(['更新接口', '手动读取 Apifox 最新接口和环境，保存为平台本地快照。', 'apiWorkbenchUpdateSnapshot()', '更新']);
   } else if (!cases.latest_draft?.plan_id && !cases.latest_baseline?.plan_id) {
     actions.push(['选择模块生成测试', '从下方模块卡片选择范围，AI 会按接口合同生成测试资产草稿。', "document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})", '选择模块']);
   } else if (!cases.latest_baseline?.plan_id) {
@@ -603,7 +613,7 @@ function renderApiWorkbenchNextActions(workbench = {}) {
     actions.push(['开始本地执行', '使用当前环境快照和业务 token 执行已保存测试资产。', 'showApiExecutionPage()', '执行']);
   }
   if ((workbench.pending_changes || []).length) {
-    actions.push(['处理接口变化', '最近同步发现接口变化，建议先复核受影响测试资产。', 'showApiAssetsPage()', '查看变化']);
+    actions.push(['处理接口变化', '最近更新发现接口变化，建议先复核受影响测试资产。', 'showApiAssetsPage()', '查看变化']);
   }
   return `
     <aside class="api-next-actions">
@@ -622,7 +632,7 @@ function renderApiWorkbenchSyncState(workbench = {}) {
   const state = workbench.sync_state || {};
   const source = workbench.source || {};
   const action = source.source_id
-    ? `<button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()">刷新接口状态</button>`
+    ? `<button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()">手动更新 Apifox</button>`
     : `<button class="btn-sm primary" onclick="showApiAssetsPage()">连接 Apifox</button>`;
   return `
     <section class="api-panel api-workbench-sync-state">
@@ -632,7 +642,7 @@ function renderApiWorkbenchSyncState(workbench = {}) {
       </div>
       <div class="api-workbench-sync-grid">
         <div><span>连接状态</span><strong>${escapeHtml(state.status || '未连接')}</strong><small>${escapeHtml(state.error || 'Apifox 只读，本地使用快照')}</small></div>
-        <div><span>最后同步</span><strong>${escapeHtml(state.last_sync_at || '尚未同步')}</strong><small>${escapeHtml(state.sync_id || '-')}</small></div>
+        <div><span>最后更新</span><strong>${escapeHtml(state.last_sync_at || '尚未更新')}</strong><small>${escapeHtml(state.sync_id || '-')}</small></div>
         <div><span>接口数量</span><strong>${escapeHtml(state.interface_count || 0)}</strong><small>当前本地可用版本</small></div>
         <div><span>影响测试资产</span><strong>${escapeHtml(state.affected_tests || 0)}</strong><small>变化后需复核</small></div>
       </div>
@@ -693,7 +703,7 @@ function apiWorkbenchRecentTaskRows(workbench = {}) {
   });
   (workbench.syncs || []).slice(0, 2).forEach(sync => rows.push({
     time: sync.finished_at || sync.started_at || sync.created_at || '-',
-    type: '接口同步',
+    type: '接口更新',
     name: sync.source_name || sync.sync_id || 'Apifox 快照',
     status: apiAssetSyncStatusText(sync.status),
     rate: `${sync.summary?.unchanged || 0} 未变`,
@@ -714,7 +724,7 @@ function renderApiWorkbenchRecentTasks(workbench = {}) {
   return `
     <section class="api-panel api-recent-task-panel">
       <div class="api-section-heading">
-        <div><span>最近执行记录</span><h3>同步、AI 生成和本地执行放在一起看</h3></div>
+        <div><span>最近执行记录</span><h3>接口更新、AI 生成和本地执行放在一起看</h3></div>
         <button class="btn-sm" onclick="showApiExecutionHistoryPage()">全部记录</button>
       </div>
       ${rows.length ? `
@@ -730,7 +740,7 @@ function renderApiWorkbenchRecentTasks(workbench = {}) {
             </tr>
           `).join('')}</tbody>
         </table>
-      ` : apiTestingEmpty('暂无最近任务。先同步接口资产或生成测试资产。')}
+      ` : apiTestingEmpty('暂无最近任务。先更新接口资产或生成测试资产。')}
     </section>
   `;
 }
@@ -772,7 +782,7 @@ function renderApiWorkbenchSourceCard(workbench = {}) {
         <div class="api-studio-toolbar-controls">
           <label><span>项目</span><select onchange="apiWorkbenchSelectSource(this.value)">${apiWorkbenchSourceOptions(workbench.sources || [], source.source_id)}</select></label>
           ${renderApiWorkbenchEnvironmentOption(source)}
-          <button class="btn-sm primary" onclick="${source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()'}">${source.source_id ? '刷新接口状态' : '连接 Apifox'}</button>
+          <button class="btn-sm primary" onclick="${source.source_id ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()'}">${source.source_id ? '手动更新 Apifox' : '连接 Apifox'}</button>
           <button class="btn-sm ai" onclick="showApiPlanPage()">新建测试</button>
         </div>
         <div class="api-studio-health-line">
@@ -818,10 +828,10 @@ function renderApiWorkbenchFlowCards(workbench = {}) {
     },
     {
       title: '在线调试',
-      state: snapshot.endpoint_count ? `${snapshot.endpoint_count} 个接口` : '待同步',
+      state: snapshot.endpoint_count ? `${snapshot.endpoint_count} 个接口` : '待更新',
       detail: snapshot.endpoint_count ? '选择接口查看请求、环境变量、响应和断言。' : '先从 Apifox 拉取接口快照。',
       action: snapshot.endpoint_count ? 'showApiDebugPage()' : 'showApiAssetsPage()',
-      label: snapshot.endpoint_count ? '打开调试' : '同步',
+      label: snapshot.endpoint_count ? '打开调试' : '更新',
       tone: snapshot.endpoint_count ? 'ready' : 'todo',
     },
     {
@@ -973,11 +983,11 @@ function apiWorkbenchCommandCards(workbench = {}) {
   return [
     {
       icon: '↻',
-      title: '刷新接口状态',
-      detail: hasSource ? '检查 Apifox 是否有变化，更新平台本地资产。' : '先保存 Apifox 项目和访问令牌。',
-      meta: hasSnapshot ? `${snapshot.endpoint_count || 0} 个接口` : '未同步',
+      title: '更新接口',
+      detail: hasSource ? '手动读取 Apifox 最新接口和环境，保存为本地快照。' : '先保存 Apifox 项目和访问令牌。',
+      meta: hasSnapshot ? `${snapshot.endpoint_count || 0} 个接口` : '未更新',
       action: hasSource ? 'apiWorkbenchUpdateSnapshot()' : 'showApiAssetsPage()',
-      label: hasSource ? '刷新状态' : '连接项目',
+      label: hasSource ? '手动更新 Apifox' : '连接项目',
       tone: hasSource ? 'ready' : 'warn',
     },
     {
@@ -988,7 +998,7 @@ function apiWorkbenchCommandCards(workbench = {}) {
       action: hasSnapshot
         ? "document.getElementById('api-workbench-module-section')?.scrollIntoView({behavior: 'smooth', block: 'start'})"
         : 'showApiAssetsPage()',
-      label: hasSnapshot ? '选择模块' : '先同步',
+      label: hasSnapshot ? '选择模块' : '先更新',
       tone: draft.plan_id ? 'ready' : 'todo',
     },
     {
@@ -1027,7 +1037,7 @@ function renderApiWorkbenchCommandPanel(workbench = {}) {
       <div class="api-command-panel-head">
         <span>执行控制台</span>
         <h3>选择环境和测试命令</h3>
-        <p>按参考执行器流程，先确认环境，再直接发起同步、AI 生成、调试或回归。</p>
+        <p>按参考执行器流程，先确认环境，再执行接口更新、AI 生成、调试或回归。</p>
       </div>
       ${renderApiWorkbenchCommandEnvironment(workbench)}
       <div class="api-command-list">
@@ -1133,7 +1143,7 @@ function apiTaskStatusText(status) {
   if (value === 'ready') return '可执行';
   if (value === 'draft') return '草稿待确认';
   if (value === 'selecting') return '选择接口';
-  if (value === 'sync_needed') return '待刷新接口';
+  if (value === 'sync_needed' || value === 'update_needed') return '待更新接口';
   return '待开始';
 }
 
@@ -1405,14 +1415,14 @@ function renderApiWorkbenchAssetCard(workbench = {}) {
       <div class="api-section-heading">
         <div><span>接口快照</span><h3>选择模块生成测试资产</h3></div>
         <div class="api-workbench-actions-row">
-          <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>刷新接口状态</button>
+          <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>手动更新 Apifox</button>
           <button class="btn-sm" onclick="showApiAssetsPage()">高级资产管理</button>
         </div>
       </div>
       <div class="api-workbench-asset-facts">
         <div><span>来源</span><strong>${escapeHtml(source.project_name || source.name || '-')}</strong></div>
         <div><span>本地版本</span><strong>${escapeHtml(snapshot.created_at || '-')}</strong></div>
-        <div><span>同步状态</span><strong>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</strong></div>
+        <div><span>更新状态</span><strong>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</strong></div>
         <div><span>接口数</span><strong>${escapeHtml(snapshot.endpoint_count || 0)}</strong></div>
       </div>
       <div class="api-workbench-section-title"><span>业务模块</span><small>选择模块即可生成；超过 ${API_PLAN_MAX_ENDPOINTS} 个接口会自动截取当前模块前 ${API_PLAN_MAX_ENDPOINTS} 个</small></div>
@@ -1475,7 +1485,7 @@ async function apiWorkbenchUpdateSnapshot() {
       body: {source_id: sourceId}
     });
     const sync = data.sync || {};
-    showToast(sync.created ? '✓ Apifox 快照同步已排队' : '✓ Apifox 快照同步已存在', 'success');
+    showToast(sync.created ? '✓ Apifox 更新已排队' : '✓ Apifox 更新已在进行中', 'success');
     await refreshCurrentApiNativePage();
     if (sync.sync_id && !apiAssetSyncTerminal(sync)) {
       setTimeout(() => {
@@ -1483,7 +1493,7 @@ async function apiWorkbenchUpdateSnapshot() {
       }, Math.max(1500, Number(sync.poll_after_ms || 2000)));
     }
   } catch (error) {
-    showToast(error.message || 'Apifox 快照同步失败', 'error');
+    showToast(error.message || 'Apifox 更新失败', 'error');
   }
 }
 
@@ -1518,17 +1528,17 @@ function renderApiSyncCenter(workbench = {}) {
   return `
     <section class="api-panel api-sync-center-panel">
       <div class="api-section-heading">
-        <div><span>同步状态</span><h3>Apifox 只读同步到本地</h3></div>
+        <div><span>接口更新</span><h3>Apifox 只读更新到本地快照</h3></div>
         <div class="api-workbench-actions-row">
-          <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>刷新接口状态</button>
+          <button class="btn-sm primary" onclick="apiWorkbenchUpdateSnapshot()" ${source.source_id ? '' : 'disabled'}>手动更新 Apifox</button>
           <button class="btn-sm" onclick="showApiAssetsPage()">接口资产</button>
         </div>
       </div>
       <div class="api-sync-overview-grid">
         <div><span>项目</span><strong>${escapeHtml(apiSourceDisplayName(source) || '未连接')}</strong><small>${escapeHtml(source.project_id || '-')}</small></div>
-        <div><span>最后同步</span><strong>${escapeHtml(source.last_success_at || snapshot.last_sync_at || '尚未同步')}</strong><small>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</small></div>
+        <div><span>最后更新</span><strong>${escapeHtml(source.last_success_at || snapshot.last_sync_at || '尚未更新')}</strong><small>${escapeHtml(apiAssetSyncStatusText(sync.status || source.last_sync_status || ''))}</small></div>
         <div><span>接口快照</span><strong>${escapeHtml(snapshot.endpoint_count || 0)} 个接口</strong><small>${escapeHtml(snapshot.created_at || '本地暂无版本')}</small></div>
-        <div><span>影响计划</span><strong>${escapeHtml(summary.affected_plans || 0)} 个</strong><small>同步只影响本地执行，不回写 Apifox</small></div>
+        <div><span>影响计划</span><strong>${escapeHtml(summary.affected_plans || 0)} 个</strong><small>更新只影响本地执行，不回写 Apifox</small></div>
       </div>
       <div class="api-sync-diff-grid">
         <div><strong>${escapeHtml(summary.added || 0)}</strong><span>新增接口</span></div>
@@ -1536,7 +1546,7 @@ function renderApiSyncCenter(workbench = {}) {
         <div><strong>${escapeHtml(summary.removed || 0)}</strong><span>删除接口</span></div>
         <div><strong>${escapeHtml(summary.unchanged || 0)}</strong><span>未变化</span></div>
       </div>
-      <div id="api-assets-sync">${sync.sync_id ? renderApiAssetSync(sync) : apiTestingEmpty('暂无刷新记录。连接 Apifox 项目后点击“刷新接口状态”。')}</div>
+      <div id="api-assets-sync">${sync.sync_id ? renderApiAssetSync(sync) : apiTestingEmpty('暂无更新记录。连接 Apifox 项目后点击“手动更新 Apifox”。')}</div>
     </section>
   `;
 }
@@ -2056,7 +2066,7 @@ function syncApiEndpointCheckboxStates() {
 
 async function showApiAssetsPage() {
   stopApiAssetSyncPolling();
-  const area = setApiTestingPage('api_assets', '接口资产', '从 Apifox 同步 OpenAPI 版本，查看真实差异和受影响计划。');
+  const area = setApiTestingPage('api_assets', '接口资产', '从 Apifox 手动更新 OpenAPI 版本，查看真实差异和受影响计划。');
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-asset-console">
@@ -2064,7 +2074,7 @@ async function showApiAssetsPage() {
       <header class="api-asset-header">
         <div class="workflow-kicker">API ASSET · APIFOX / OPENAPI</div>
         <h2>接口资产</h2>
-        <p>选择业务线和模块后生成测试用例。接口由服务端自动从 Apifox 更新。</p>
+        <p>选择业务线和模块后生成测试用例。接口来自平台本地快照，需要时手动从 Apifox 更新。</p>
         <div id="api-source-summary">${apiTestingEmpty('正在读取 Apifox 来源...')}</div>
       </header>
       <section id="api-source-settings-panel" class="api-source-settings" hidden></section>
@@ -2088,7 +2098,7 @@ function apiAssetSyncTerminal(sync) {
 }
 
 function apiAssetSyncStatusText(status) {
-  return ({ queued: '排队中', running: '同步中', succeeded: '同步完成', no_change: '无变化', failed: '同步失败', cancelled: '已取消' })[status] || status || '未同步';
+  return ({ queued: '排队中', running: '更新中', succeeded: '更新完成', no_change: '无变化', failed: '更新失败', cancelled: '已取消' })[status] || status || '未更新';
 }
 
 function apiAssetSyncStatusClass(status) {
@@ -2104,7 +2114,7 @@ function apiAssetSyncPhaseText(phase) {
     persist_revision: '保存不可变版本',
     diff_revision: '计算版本差异',
     analyze_impact: '分析计划影响'
-  })[phase] || phase || '等待同步';
+  })[phase] || phase || '等待更新';
 }
 
 function apiAssetSyncLogKey(syncId) {
@@ -2640,7 +2650,6 @@ function renderSavedApiSourceShelf(sources = [], selectedId = '', context = 'ass
 function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const configured = source?.configured === true;
   const status = latestSync?.status || source?.last_sync_status || '';
-  const schedule = source?.sync_schedule || {};
   const syncDisabled = !configured || ['queued', 'running'].includes(status);
   const running = ['queued', 'running'].includes(status);
   const primaryLabel = status === 'failed' ? '重试读取' : '重新读取 Apifox 资产';
@@ -2651,7 +2660,7 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
         <div class="api-source-identity">
           ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
           ${apiStatusPill(configured ? '已连接' : '待配置', configured ? 'success' : 'warn')}
-          <span>${source?.credential_configured ? '访问凭据已安全保存；重新读取会同步接口、环境和 base_url' : '需要配置 Apifox 项目和访问令牌'}</span>
+          <span>${source?.credential_configured ? '访问凭据已安全保存；重新读取会更新接口、环境和 base_url' : '需要配置 Apifox 项目和访问令牌'}</span>
         </div>
         <div class="api-source-actions">
           <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在读取' : primaryLabel)}</button>
@@ -2661,9 +2670,9 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
       </div>
       ${renderApiSourceEnvironmentCompact(source || {})}
       <div class="api-source-facts">
-        <span><small>自动同步</small><strong>${schedule.mode === 'automatic' ? '已开启' : '未开启'}</strong></span>
-        <span><small>最近成功</small><strong>${escapeHtml(schedule.last_success_at || source?.last_success_at || '等待首次同步')}</strong></span>
-        <span><small>下次检查</small><strong>${escapeHtml(schedule.next_check_at || '手动同步')}</strong></span>
+        <span><small>更新方式</small><strong>手动更新</strong></span>
+        <span><small>最近成功</small><strong>${escapeHtml(source?.last_success_at || '等待首次更新')}</strong></span>
+        <span><small>本地快照</small><strong>${escapeHtml(snapshot.created_at || '尚未保存')}</strong></span>
         <span><small>当前状态</small><strong>${escapeHtml(apiAssetSyncStatusText(status))}</strong></span>
       </div>
     </div>
@@ -2680,7 +2689,7 @@ function renderApiSourceSettings(source = {}) {
   const canConfigure = apiSourceCanConfigure(source);
   const discoveryActionLabel = source.source_id ? '重新读取 Apifox 资产' : '读取 Apifox 资产';
   return `
-    <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>${apiTestingSourceDraftMode ? '新增 Apifox 项目' : '只读同步设置'}</h3></div><button class="btn-sm icon-only" title="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" aria-label="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" onclick="${apiTestingSourceDraftMode ? 'cancelApiSourceDraft()' : 'toggleApiSourceSettings(false)'}">×</button></div>
+    <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>${apiTestingSourceDraftMode ? '新增 Apifox 项目' : '只读更新设置'}</h3></div><button class="btn-sm icon-only" title="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" aria-label="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" onclick="${apiTestingSourceDraftMode ? 'cancelApiSourceDraft()' : 'toggleApiSourceSettings(false)'}">×</button></div>
     <div class="api-source-discovery">
       <div class="api-source-discovery-action">
         ${renderApiSourceCredentialControl(source)}
@@ -2691,13 +2700,9 @@ function renderApiSourceSettings(source = {}) {
     ${renderApiSourceManualFallback(source)}
     ${renderApiSourceEnvironmentSnapshot(source)}
     <div id="api-source-sync-configuration" class="api-source-sync-configuration ${canConfigure ? '' : 'hidden'}">
-      <div class="api-source-settings-grid">
-        <label><span>同步周期（分钟）</span><input id="api-source-interval" type="number" min="15" max="1440" step="15" value="${escapeHtml(source.sync_interval_minutes || 60)}"></label>
-        <label class="api-source-toggle"><input id="api-source-sync-enabled" type="checkbox" ${source.sync_enabled !== false ? 'checked' : ''}><span>启用定时同步</span></label>
-      </div>
       <div class="api-source-scope" data-api-source-scope>
-        <span>同步范围</span>
-        <div class="api-segmented-control" role="group" aria-label="Apifox 同步范围">
+        <span>更新范围</span>
+        <div class="api-segmented-control" role="group" aria-label="Apifox 更新范围">
           <button type="button" class="${scope.mode !== 'selected' ? 'active' : ''}" data-sync-scope="all" onclick="setApiSourceSyncScopeMode('all')">全部模块</button>
           <button type="button" class="${scope.mode === 'selected' ? 'active' : ''}" data-sync-scope="selected" onclick="setApiSourceSyncScopeMode('selected')">已选模块</button>
         </div>
@@ -3016,7 +3021,7 @@ function renderApiAssetSync(sync) {
         <summary><span>技术日志</span><small>${escapeHtml(events.length)} 条真实事件</small></summary>
         <div class="api-asset-sync-log">${events.length ? events.map(event => `
           <div><time>${escapeHtml(event.at || '-')}</time><strong title="${escapeHtml(event.phase || '')}">${escapeHtml(apiAssetSyncPhaseText(event.phase))}</strong><span>${escapeHtml(event.message || '')}</span></div>
-        `).join('') : apiTestingEmpty('暂无同步事件')}</div>
+        `).join('') : apiTestingEmpty('暂无更新事件')}</div>
       </details>
     </div>
   `;
@@ -3288,13 +3293,31 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
       apiAssetSelectedSourceId = (apiTestingSources[0] || {}).source_id || '';
     }
     const source = selectedApiAssetSource();
+    const latestSync = apiTestingSyncs.find(item => item.source_id === source?.source_id && ['queued', 'running'].includes(item.status))
+      || apiTestingSyncs.find(item => item.source_id === source?.source_id)
+      || null;
+    if (latestSync?.sync_id) apiAssetActiveSyncId = latestSync.sync_id;
     const revisionId = requestedRevisionId === null
       ? (apiAssetRevisionPinned ? apiAssetSelectedRevisionId : '')
       : String(requestedRevisionId || '');
     const assetQuery = revisionId
       ? `?source_id=${encodeURIComponent(source?.source_id || '')}&snapshot_id=${encodeURIComponent(revisionId)}`
       : (source?.source_id ? `?source_id=${encodeURIComponent(source.source_id)}` : '');
-    const assetData = await apiRequest(`/api-testing/assets${assetQuery}`, { signal: controller.signal });
+    let assetData;
+    try {
+      assetData = await apiRequest(`/api-testing/assets${assetQuery}`, { signal: controller.signal });
+    } catch (assetError) {
+      if (assetError?.name === 'AbortError') throw assetError;
+      assetData = {
+        ok: false,
+        source_id: source?.source_id || '',
+        snapshots: [],
+        endpoints: [],
+        business_lines: [],
+        snapshot: {},
+        asset_error: assetError?.message || '接口资产读取失败',
+      };
+    }
     if (requestId !== apiAssetContextRequestId || controller !== apiAssetRequestController || activeWorkflow !== 'api_assets') return;
     if (!source && !apiAssetSettingsOpen) apiAssetSettingsOpen = true;
     apiTestingSnapshots = assetData.snapshots || [];
@@ -3307,10 +3330,6 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
     if (source?.sync_scope?.mode === 'selected' && !moduleState.selectedModules.size) {
       (source.sync_scope.module_paths || []).map(apiNormalizeModulePath).filter(Boolean).forEach(path => moduleState.selectedModules.add(path));
     }
-    const latestSync = apiTestingSyncs.find(item => item.source_id === source?.source_id && ['queued', 'running'].includes(item.status))
-      || apiTestingSyncs.find(item => item.source_id === source?.source_id)
-      || null;
-    if (latestSync?.sync_id) apiAssetActiveSyncId = latestSync.sync_id;
     const summary = document.getElementById('api-source-summary');
     const settings = document.getElementById('api-source-settings-panel');
     const syncRegion = document.getElementById('api-assets-sync');
@@ -3320,8 +3339,12 @@ async function refreshApiAssetWorkspace(force = false, requestedRevisionId = nul
       settings.hidden = !apiAssetSettingsOpen;
     }
     if (syncRegion) syncRegion.innerHTML = renderApiAssetSync(latestSync);
-    body.innerHTML = renderApiAssetWorkspaceBody(assetData);
-    renderApiModuleWorkspace();
+    if (assetData.asset_error) {
+      body.innerHTML = apiAssetNoSnapshotState(assetData.asset_error);
+    } else {
+      body.innerHTML = renderApiAssetWorkspaceBody(assetData);
+      renderApiModuleWorkspace();
+    }
     updateApiWorkflowStepper({
       source,
       endpoints: apiTestingEndpoints,
@@ -3418,7 +3441,7 @@ async function saveApiSourceConfig(clearCredentials = false) {
   const scopeMode = document.querySelector('[data-sync-scope].active')?.dataset.syncScope || 'all';
   const selectedModules = apiSourceSelectedModulePaths(source);
   if (scopeMode === 'selected' && !selectedModules.length) {
-    showToast('请选择至少一个同步模块', 'error');
+    showToast('请选择至少一个更新模块', 'error');
     return;
   }
   if (!clearCredentials && !apiSourceHasReusableCredential(source) && !token) {
@@ -3455,8 +3478,8 @@ async function saveApiSourceConfig(clearCredentials = false) {
     project_id: projectId,
     branch_id: branchId,
     environment_id: environmentId,
-    sync_interval_minutes: Number(document.getElementById('api-source-interval')?.value || 60),
-    sync_enabled: !!document.getElementById('api-source-sync-enabled')?.checked,
+    sync_interval_minutes: 60,
+    sync_enabled: false,
     sync_scope: { mode: scopeMode, module_paths: scopeMode === 'selected' ? selectedModules : [] },
     selected_modules: scopeMode === 'selected' ? selectedModules : [],
     clear_credentials: !!clearCredentials
@@ -3497,7 +3520,7 @@ async function saveApiSourceConfig(clearCredentials = false) {
     if (tokenInput) tokenInput.value = '';
     if (data.sync?.sync_id) {
       apiAssetActiveSyncId = data.sync.sync_id;
-      showToast('✓ 设置已保存，接口正在自动同步', 'success');
+      showToast('✓ 设置已保存，请手动更新 Apifox', 'success');
     } else if (data.sync_error) {
       showToast(data.sync_error, 'error');
     } else {
@@ -3510,7 +3533,7 @@ async function saveApiSourceConfig(clearCredentials = false) {
 }
 
 async function clearApiSourceCredential() {
-  if (!confirm('确认清除服务端保存的 Apifox 令牌？清除后同步会停止。')) return;
+  if (!confirm('确认清除服务端保存的 Apifox 令牌？清除后无法手动更新接口。')) return;
   await saveApiSourceConfig(true);
 }
 
@@ -3549,10 +3572,10 @@ async function startApiAssetSync() {
     const region = document.getElementById('api-assets-sync');
     if (region) region.innerHTML = renderApiAssetSync(sync);
     restoreApiAssetSyncViewState(region);
-    showToast(sync.created === false ? '同步已在进行中' : 'Apifox 同步已启动', 'success');
+    showToast(sync.created === false ? '更新已在进行中' : 'Apifox 更新已启动', 'success');
     scheduleApiAssetSyncPoll(sync);
   } catch (e) {
-    showToast(e.message || 'Apifox 同步启动失败', 'error');
+    showToast(e.message || 'Apifox 更新启动失败', 'error');
   }
 }
 
@@ -3581,7 +3604,7 @@ async function pollApiAssetSync(syncId) {
         error.className = 'api-inline-error api-sync-poll-error';
         region.appendChild(error);
       }
-      error.textContent = `${e.message || '同步状态读取失败'}，3 秒后重试`;
+      error.textContent = `${e.message || '更新状态读取失败'}，3 秒后重试`;
     }
     stopApiAssetSyncPolling();
     if (apiAssetSyncWorkflowActive() && syncId === apiAssetActiveSyncId) {
@@ -5778,6 +5801,9 @@ function rememberApiExecutionLogScroll(key, scrollTop) {
 
 function captureApiExecutionLogViewState(root = document) {
   if (!root?.querySelectorAll) return;
+  root.querySelectorAll('[data-api-log-console-key]').forEach(node => {
+    apiLogScrollPositions.set(node.dataset.apiLogConsoleKey || '', node.scrollTop);
+  });
   root.querySelectorAll('[data-api-log-key]').forEach(detail => {
     const key = detail.dataset.apiLogKey || '';
     if (detail.open) apiLogExpandedKeys.add(key);
@@ -5789,6 +5815,9 @@ function captureApiExecutionLogViewState(root = document) {
 
 function restoreApiExecutionLogViewState(root = document) {
   if (!root?.querySelectorAll) return;
+  root.querySelectorAll('[data-api-log-console-key]').forEach(node => {
+    node.scrollTop = apiLogScrollPositions.get(node.dataset.apiLogConsoleKey || '') || 0;
+  });
   root.querySelectorAll('[data-api-log-key]').forEach(detail => {
     const key = detail.dataset.apiLogKey || '';
     detail.open = apiLogExpandedKeys.has(key);
@@ -5805,22 +5834,32 @@ function apiExecutionLogPhaseTitle(phaseId) {
   return phaseId || '执行事件';
 }
 
+function apiExecutionLogTone(row = {}) {
+  const text = `${row.status || ''} ${row.summary || ''} ${row.error || ''}`.toLowerCase();
+  if (/fail|error|失败|异常|超时|unauthorized|forbidden/.test(text)) return 'error';
+  if (/warn|等待|排队|pending|queued/.test(text)) return 'warn';
+  if (/pass|success|通过|完成|succeeded/.test(text)) return 'ok';
+  return 'info';
+}
+
 function renderApiExecutionLogRows(rows, runId = '', options = {}) {
   const embedded = options.embedded === true;
   if (!(rows || []).length) return `<div class="api-tech-log ${embedded ? 'embedded' : ''}">${embedded ? '' : '<div class="api-tech-log-head"><h3>技术日志</h3></div>'}${apiTestingEmpty('暂无执行日志')}</div>`;
-  return `<div class="api-tech-log ${embedded ? 'embedded' : ''}">${embedded ? '' : `<div class="api-tech-log-head"><h3>技术日志</h3><span>${rows.length} 条真实事件</span></div>`}${rows.map(row => {
+  const consoleKey = `${apiProjectScopeKey()}::execution-console::${runId || 'run'}`;
+  return `<div class="api-tech-log ${embedded ? 'embedded' : ''}">${embedded ? '' : `<div class="api-tech-log-head"><h3>技术日志</h3><span>${rows.length} 条真实事件</span></div>`}<div class="api-log-console" data-api-log-console-key="${escapeHtml(consoleKey)}" onscroll="rememberApiExecutionLogScroll(${jsArg(consoleKey)}, this.scrollTop)">${rows.map(row => {
     const eventId = row.event_id || '';
     const eventRunId = row.run_id || row.execution_id || runId;
     const key = apiExecutionLogKey(eventRunId, eventId);
     const open = apiLogExpandedKeys.has(key);
     const detail = row.detail == null ? row.summary : (typeof row.detail === 'string' ? row.detail : JSON.stringify(row.detail, null, 2));
+    const tone = apiExecutionLogTone(row);
     return `
-      <details class="api-log-detail" data-api-log-key="${escapeHtml(key)}" ${open ? 'open' : ''} ontoggle="toggleApiExecutionLog(${jsArg(eventRunId)}, ${jsArg(eventId)}, this.open)">
-        <summary><time>${escapeHtml(row.timestamp || '-')}</time><strong>${escapeHtml(row.summary || row.phase_id || '执行事件')}</strong><small>${escapeHtml(apiExecutionLogPhaseTitle(row.phase_id))}</small></summary>
+      <details class="api-log-detail api-log-line ${escapeHtml(tone)}" data-api-log-key="${escapeHtml(key)}" ${open ? 'open' : ''} ontoggle="toggleApiExecutionLog(${jsArg(eventRunId)}, ${jsArg(eventId)}, this.open)">
+        <summary><time>${escapeHtml(row.timestamp || '-')}</time><small>${escapeHtml(apiExecutionLogPhaseTitle(row.phase_id))}</small><strong>${escapeHtml(row.summary || row.phase_id || '执行事件')}</strong><em>${escapeHtml(tone === 'error' ? '失败' : (tone === 'warn' ? '等待' : (tone === 'ok' ? '完成' : '执行')))}</em></summary>
         <div class="api-log-content" onscroll="rememberApiExecutionLogScroll(${jsArg(key)}, this.scrollTop)"><pre>${escapeHtml(detail || '无更多详情')}</pre></div>
       </details>
     `;
-  }).join('')}</div>`;
+  }).join('')}</div></div>`;
 }
 
 function scheduleApiExecutionPoll(execution, requestId = apiExecutionPollRequestId, capturedScopeKey = apiProjectScopeKey()) {
@@ -6279,7 +6318,7 @@ function renderApiReportAiSummary(report = {}, failedResults = [], passRate = 0)
     : `本次通过率 ${passRate}%，未发现失败用例。`;
   const recommendation = failedCount
     ? (analysis.recommendation || analysis.summary || '优先检查失败接口的鉴权变量、请求入参、响应状态和断言配置。')
-    : '可以将本次结果作为当前环境的接口回归参考，后续接口变化时先刷新接口状态再执行。';
+    : '可以将本次结果作为当前环境的接口回归参考，后续接口变化时先手动更新 Apifox 再执行。';
   return `
     <div class="api-report-ai-summary">
       <div>

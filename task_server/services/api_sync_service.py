@@ -452,6 +452,7 @@ def _start_requested_replacement(sync_id: str, adapter: Any = None) -> Dict[str,
         if (
             not source
             or not source.get("sync_enabled")
+            or not api_source_service.apifox_auto_sync_enabled()
             or not source.get("project_id")
             or not source.get("access_token")
         ):
@@ -459,7 +460,7 @@ def _start_requested_replacement(sync_id: str, adapter: Any = None) -> Dict[str,
                 sync_id,
                 replacement_requested=False,
                 replacement_skipped=True,
-                event="最新配置未启用自动同步，已取消替代任务",
+                event="最新配置仅允许手动更新，已取消替代任务",
             )
         latest_fingerprint = api_source_service.source_config_fingerprint(source)
         trigger = str(record.get("replacement_trigger") or "configuration")
@@ -532,6 +533,8 @@ def _timestamp(value: str) -> float:
 
 
 def due_api_source_ids(now: float | None = None) -> List[str]:
+    if not api_source_service.apifox_auto_sync_enabled():
+        return []
     current = time.time() if now is None else float(now)
     due: List[str] = []
     for source in api_source_service.list_api_sources():

@@ -204,11 +204,42 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertTrue(workbench["apifox_credential"]["credential_configured"])
         self.assertEqual("3D", workbench["sync_state"]["project"])
         self.assertEqual(2, workbench["sync_state"]["interface_count"])
-        self.assertIn(workbench["sync_state"]["status"], {"待同步", "已就绪", "同步完成", "未连接"})
+        self.assertIn(workbench["sync_state"]["status"], {"待更新", "已就绪", "更新完成", "未连接"})
+        self.assertEqual("手动更新 Apifox", workbench["sync_state"]["action_label"])
         self.assertIsInstance(workbench["pending_changes"], list)
+        self.assertNotIn("刷新接口状态", text)
+        self.assertNotIn("待同步", text)
         self.assertNotIn("secret-apifox-token", text)
         self.assertNotIn("secret-global-apifox-token", text)
         self.assertNotIn("secret-runtime-token", text)
+
+    def test_workbench_missing_snapshot_uses_manual_update_copy(self):
+        from task_server.services import api_workbench_service
+
+        source = api_source_service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "access_token": "secret-apifox-token",
+            "provider_metadata": {
+                "project_name": "3D",
+                "environment_name": "生产环境（新）-腾讯云",
+            },
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+            },
+        })
+
+        workbench = api_workbench_service.api_testing_workbench(source["source_id"])
+        text = json.dumps(workbench, ensure_ascii=False)
+
+        self.assertEqual("update_needed", workbench["task"]["status"])
+        self.assertEqual("待更新", workbench["sync_state"]["status"])
+        self.assertEqual("手动更新 Apifox", workbench["sync_state"]["action_label"])
+        self.assertIn("先手动更新 Apifox 接口", text)
+        self.assertNotIn("刷新接口状态", text)
+        self.assertNotIn("待同步", text)
 
     def test_workbench_route_is_registered_and_requires_auth(self):
         from task_server import router

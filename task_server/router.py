@@ -3079,7 +3079,7 @@ def _post_api_testing_sources(handler, qs):
             except ValueError as exc:
                 response["sync_error"] = str(exc)
             except Exception:
-                response["sync_error"] = "接口配置已保存，自动同步排队失败，请点击重试"
+                response["sync_error"] = "接口配置已保存，请手动更新 Apifox"
         handler._json(response, status)
     except ValueError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
@@ -3247,11 +3247,21 @@ def _post_api_testing_source_auth_binding(handler, qs, match):
         return
     try:
         data = handler._body()
+        secret = str(
+            data.get("secret")
+            or data.get("value")
+            or data.get("token")
+            or data.get("access_token")
+            or data.get("accessToken")
+            or ""
+        ).strip()
+        if not secret:
+            raise ValueError("请输入业务用户登录 token")
         binding = api_execution_service.save_api_auth_binding(
             source_id,
             str(data.get("auth_type") or data.get("authType") or "").strip(),
             str(data.get("header_name") or data.get("headerName") or "").strip(),
-            str(data.get("secret") or ""),
+            secret,
         )
         handler._json({"ok": True, "binding": binding})
     except ValueError as exc:
