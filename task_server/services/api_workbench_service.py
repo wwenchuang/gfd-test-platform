@@ -17,6 +17,7 @@ from task_server.services import (
     api_execution_service,
     api_module_service,
     api_report_service,
+    api_task_service,
     api_source_service,
     api_sync_service,
     api_test_plan_service,
@@ -451,7 +452,7 @@ def _sync_state(
         "changed": _safe_int(summary.get("changed"), 0),
         "removed": _safe_int(summary.get("removed"), 0),
         "affected_tests": _safe_int(summary.get("affected_plans"), 0),
-        "action_label": "检查更新" if has_source else "连接 Apifox",
+        "action_label": "刷新接口状态" if has_source else "连接 Apifox",
         "source_id": str(source.get("source_id") or ""),
         "sync_id": str(sync.get("sync_id") or ""),
         "error": str(sync.get("error") or source.get("last_error") or ""),
@@ -500,16 +501,30 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     }
     execution_payload = _execution_summary(selected_source_id)
     snapshot_payload = _snapshot_summary(revision, asset)
+    source_payload = _source_summary(source)
+    metrics_payload = _coverage_metrics(endpoints, plans_payload, execution_payload, latest_sync)
+    sync_state_payload = _sync_state(source_payload, snapshot_payload, latest_sync)
+    pending_changes_payload = _pending_changes(latest_sync)
     return {
         "ok": True,
         "mode": "native_api_workbench",
-        "source": _source_summary(source),
+        "source": source_payload,
         "sources": sources,
         "apifox_credential": api_source_service.get_apifox_credential(masked=True),
         "snapshot": snapshot_payload,
-        "metrics": _coverage_metrics(endpoints, plans_payload, execution_payload, latest_sync),
-        "sync_state": _sync_state(_source_summary(source), snapshot_payload, latest_sync),
-        "pending_changes": _pending_changes(latest_sync),
+        "metrics": metrics_payload,
+        "sync_state": sync_state_payload,
+        "pending_changes": pending_changes_payload,
+        "task": api_task_service.build_api_test_task(
+            source=source_payload,
+            snapshot=snapshot_payload,
+            plans=plans_payload,
+            execution=execution_payload,
+            reports=reports,
+            sync_state=sync_state_payload,
+            metrics=metrics_payload,
+            pending_changes=pending_changes_payload,
+        ),
         "scope": {
             "endpoint_count": len(endpoints),
             "endpoints": endpoints[:300],

@@ -28,6 +28,55 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-03 API 自动化任务化工作台与流程收敛
+
+用户重新梳理接口模块后明确：现有 Apifox 同步、接口资产、AI 计划、执行和报告后端能力不应推翻，问题在于用户路径割裂、信息组织混乱、同步体验偏技术化、AI 入口和调试/报告入口不够顺。
+
+修复：
+
+- `task_server/services/api_task_service.py`
+  - 新增任务化 facade，把已有 source / snapshot / AI plan / execution / report 聚合成一个 `API测试任务` 对象。
+  - 任务描述固定为 `选择接口 → AI分析 → 调试参数 → 执行 → 报告`。
+  - 步骤包含 `选择接口 / AI分析与测试设计 / 调试参数 / 自动回归 / 查看报告`，不新增执行语义，只给前端一个稳定工作流状态。
+- `task_server/services/api_workbench_service.py`
+  - `/api-testing/workbench` 返回 `task`，复用 `metrics/sync_state/pending_changes`，避免前端自己拼业务流程。
+  - Apifox 主动作从“检查更新 / 更新快照”改成“刷新接口状态”，更贴近用户想确认接口是否变化的心智。
+- `task-manager.html`
+  - API 自动化导航按文档收敛为 `API 工作台 / 接口资产 / AI测试设计 / 在线调试 / 自动回归 / 执行记录 / 测试报告 / 环境配置`。
+  - AI 测试设计图标改为机器人；回归入口展示为“自动回归”，页面内部仍说明执行的是已保存基线测试资产。
+- `js/api-testing.js`
+  - 工作台首屏新增 `api-task-hero`，展示 API 测试任务、当前项目、环境、接口数、测试资产数、待处理变化和流程步骤。
+  - 统一 `apiSourceEnvironmentDisplayName()`，工作台、执行页、调试页和环境页优先展示 Apifox 环境中文名，例如 `生产环境（新）-腾讯云`，不再优先掉成环境 ID。
+  - 接口详情右侧固定为 `AI助手`，提供 `分析接口 / 生成测试 / 立即调试 / 补充异常 / 生成断言 / 分析失败`。
+  - 在线调试保留为核心入口，支持编辑本地环境快照后批量调试，不反写 Apifox。
+  - 执行记录页改为“左侧列表 + 右侧详情抽屉”，按 Request / Response / 断言 / 日志 / AI分析组织信息。
+  - 报告详情新增 `AI 总结` 和 `下一步建议`，在请求、响应、断言明细前先给失败聚合和处理建议。
+- `css/round5.css`
+  - 增加任务 hero、AI 助手动作区、执行记录抽屉和报告 AI 总结样式，并补窄屏单列规则。
+- `tests/api_workbench_checks.py` / `tests/frontend_static_checks.py`
+  - 增加回归：workbench 必须返回 `API测试任务`；执行环境必须优先中文名；Apifox 刷新文案必须为“刷新接口状态”；接口详情必须有 AI 助手和“立即调试”；执行记录必须是列表 + 右侧抽屉；报告必须有 AI 总结。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_workbench_checks
+python3 -m unittest tests.apifox_discovery_checks tests.api_asset_sync_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 -m py_compile task_server/services/api_task_service.py task_server/services/api_workbench_service.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+git diff --check -- task_server/services/api_task_service.py task_server/services/api_workbench_service.py js/api-testing.js css/round5.css task-manager.html tests/api_workbench_checks.py tests/frontend_static_checks.py
+```
+
+本地浏览器 smoke：
+
+- 使用临时目录启动 `python3 -m task_server` 于 `127.0.0.1:8099`。
+- 登录 `admin / sonic2026`。
+- 逐个打开 `API 工作台 / 接口资产 / 在线调试 / 自动回归 / 执行记录 / 测试报告 / 环境配置`。
+- 验证页面文本、任务流程、调试入口、执行记录和报告入口均可见。
+- 截图输出到 `/tmp/api-task-workflow-smoke.png`。
+- 本地未启动 AI Gateway 时 `/ai-gateway/ai/providers` 与 `/ai-gateway/ai/model-router` 返回 404，是本地 smoke 环境限制，不属于 API 页面运行时错误。
+
 ### 2026-08-03 Agent 首批冒烟选择稳定性修复
 
 线上回归 `agent-1785736612329-32d18627` 生成 10 个 YAML（4 个历史成功种子 + 6 个新增），dry-run 10/10 通过，但真实 OPPO `ecbfd645` 首批冒烟 `0/3`，修复重跑未恢复，终态 `FAILED / RERUN / 95%`。

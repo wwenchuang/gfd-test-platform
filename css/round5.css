@@ -475,6 +475,18 @@
 .api-endpoint-detail-head strong {
   overflow-wrap: anywhere;
 }
+.api-endpoint-ai-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.api-endpoint-ai-actions .btn-sm:first-child {
+  grid-column: 1 / -1;
+}
+.api-endpoint-ai-assistant .api-endpoint-detail-head span {
+  color: var(--cyan);
+}
 .api-endpoint-detail-tabs,
 .api-debug-tabs {
   display: grid;
@@ -1301,9 +1313,107 @@
 }
 .api-runner-main {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   min-width: 0;
   min-height: 0;
+}
+.api-task-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, .8fr);
+  gap: 14px;
+  margin: 20px 20px 16px;
+  padding: 16px;
+  border: 1px solid rgba(34, 211, 238, .36);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, .2);
+}
+.api-task-hero-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-task-hero-main span,
+.api-task-hero-status small,
+.api-task-hero-facts span,
+.api-task-steps span,
+.api-task-steps small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-task-hero-main h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 20px;
+}
+.api-task-hero-main p {
+  margin: 0;
+  color: var(--text2);
+}
+.api-task-hero-status {
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+}
+.api-task-hero-status strong,
+.api-task-hero-status small {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.api-task-hero-facts {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, .28);
+}
+.api-task-hero-facts div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+}
+.api-task-hero-facts div:last-child {
+  border-right: 0;
+}
+.api-task-hero-facts strong {
+  color: var(--text);
+  font-size: 18px;
+}
+.api-task-steps {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.api-task-steps button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  min-height: 76px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, .26);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.api-task-steps li.done button,
+.api-task-steps li.ready button {
+  border-color: rgba(16, 185, 129, .45);
+}
+.api-task-steps li.running button {
+  border-color: rgba(34, 211, 238, .65);
+  background: rgba(34, 211, 238, .1);
+}
+.api-task-steps li.todo button {
+  border-color: rgba(148, 163, 184, .22);
 }
 .api-runner-tabs {
   display: flex;
@@ -4032,6 +4142,88 @@
 .api-report-run-card.terminal {
   background: rgba(255, 197, 61, 0.04);
 }
+.api-execution-record-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, .9fr) minmax(360px, 1.1fr);
+  gap: 14px;
+  min-width: 0;
+}
+.api-execution-record-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  max-height: 560px;
+  overflow: auto;
+}
+.api-execution-record-item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .5);
+}
+.api-execution-record-item.selected {
+  border-color: rgba(34, 211, 238, .65);
+  background: rgba(8, 47, 73, .28);
+}
+.api-execution-record-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.api-execution-record-item span,
+.api-execution-record-item small,
+.api-execution-record-detail span,
+.api-execution-record-detail small,
+.api-execution-record-drawer-head span,
+.api-execution-record-drawer-head small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-execution-record-item strong,
+.api-execution-record-item small,
+.api-execution-record-drawer-head strong,
+.api-execution-record-detail strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.api-execution-record-drawer {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(34, 211, 238, .34);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, .42);
+}
+.api-execution-record-drawer-head {
+  display: grid;
+  gap: 4px;
+}
+.api-execution-record-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.api-execution-record-detail {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  background: rgba(15, 23, 42, .45);
+}
+.api-execution-record-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .api-report-history-table tbody tr {
   cursor: pointer;
 }
@@ -4068,6 +4260,29 @@
 .api-report-metric.success { border-top: 3px solid var(--success); }
 .api-report-metric.danger { border-top: 3px solid var(--danger); }
 .api-report-metric.warn { border-top: 3px solid var(--warning); }
+.api-report-ai-summary {
+  display: grid;
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(34, 211, 238, .32);
+  border-radius: 8px;
+  background: rgba(8, 47, 73, .18);
+}
+.api-report-ai-summary > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.api-report-ai-summary span,
+.api-report-ai-summary small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-report-ai-summary strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 .api-report-environment-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -4268,7 +4483,8 @@
   .api-studio-toolbar,
   .api-command-center-shell,
   .api-runner-board,
-  .api-asset-studio-layout {
+  .api-asset-studio-layout,
+  .api-execution-record-layout {
     grid-template-columns: 1fr;
   }
   .api-runner-sidebar {
@@ -4290,7 +4506,8 @@
   .api-live-console-head,
   .api-report-strip-card,
   .api-runner-env-grid,
-  .api-runner-report-card {
+  .api-runner-report-card,
+  .api-report-ai-summary {
     grid-template-columns: 1fr;
   }
   .api-workbench-summary-strip > div,
