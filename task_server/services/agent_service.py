@@ -162,6 +162,10 @@ AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS = max(
     120,
     min(600, safe_int(os.getenv("MIDSCENE_AGENT_PLAN_MINDMAP_TIMEOUT_SECONDS"), 240)),
 )
+AGENT_RUNNER_PRECHECK_RETRY_SECONDS = max(
+    0,
+    min(30, safe_int(os.getenv("MIDSCENE_AGENT_RUNNER_PRECHECK_RETRY_SECONDS"), 8)),
+)
 
 
 def _trace_time_text():
@@ -12111,15 +12115,49 @@ def _tool_execution_precheck(run):
 
         try:
             from task_server.services import runner_service
-            runners = runner_service.list_runners()
-            online = [rid for rid, item in runners.items() if item.get("online")]
             selected_runner = str(run.get("runnerId") or run.get("runner_id") or "").strip()
             selected_device = str(run.get("deviceId") or run.get("device_id") or "").strip()
             selected_strategy = str(run.get("deviceStrategy") or run.get("device_strategy") or "auto").strip().lower()
-            online_devices = [
-                d for d in runner_service.all_online_devices()
-                if d.get("runner_online") and d.get("status") in ("online", "device")
-            ]
+
+            def load_runner_snapshot():
+                snapshot_runners = runner_service.list_runners()
+                snapshot_online = [rid for rid, item in snapshot_runners.items() if item.get("online")]
+                snapshot_devices = [
+                    d for d in runner_service.all_online_devices()
+                    if d.get("runner_online") and d.get("status") in ("online", "device")
+                ]
+                return snapshot_runners, snapshot_online, snapshot_devices
+
+            def snapshot_satisfies_selection(snapshot_runners, snapshot_online, snapshot_online_devices):
+                if selected_runner:
+                    runner = snapshot_runners.get(selected_runner) or {}
+                    if not runner.get("online"):
+                        return False
+                    if selected_device:
+                        return selected_device in runner_service.runner_device_ids(runner)
+                    return True
+                if selected_device:
+                    return any(d.get("device_id") == selected_device for d in snapshot_online_devices)
+                if selected_strategy != "auto":
+                    return False
+                return bool(snapshot_online_devices or snapshot_online)
+
+            runners, online, online_devices = load_runner_snapshot()
+            if not snapshot_satisfies_selection(runners, online, online_devices) and AGENT_RUNNER_PRECHECK_RETRY_SECONDS > 0:
+                deadline = time.time() + AGENT_RUNNER_PRECHECK_RETRY_SECONDS
+                retry_count = 0
+                while time.time() < deadline and not snapshot_satisfies_selection(runners, online, online_devices):
+                    retry_count += 1
+                    current_step = next((s for s in run.get("steps", []) if s.get("step") == "EXECUTION_PRECHECK"), None)
+                    if current_step and current_step.get("status") == "RUNNING":
+                        _append_step_trace(
+                            run,
+                            current_step,
+                            f"Runner 心跳未恢复，等待重试 {retry_count} / {AGENT_RUNNER_PRECHECK_RETRY_SECONDS}s",
+                            status="RUNNING",
+                        )
+                    time.sleep(min(2, max(0.1, deadline - time.time())))
+                    runners, online, online_devices = load_runner_snapshot()
             artifacts["runnerSelection"] = {
                 "runnerId": selected_runner,
                 "deviceId": selected_device,

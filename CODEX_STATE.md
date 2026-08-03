@@ -28,6 +28,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-03 Agent Runner 重启空窗与 stale job 收敛
+
+线上 5 次稳定性回归在用户重启服务后被运行层异常打断：
+
+- `agent-1785741849134-c84bfd09` 的正式 Runner job `job_1785742668450_00002` 停在 `running / 95% / 执行结束，正在清理 App 状态`，`updated_at=2026-08-03 15:43:53` 后没有最终回调。
+- 取消孤儿任务后重新跑，第 1 次 `agent-1785744270233-acd05c04` 生成 8 个 YAML 且 dry-run 8/8 通过，但 `EXECUTION_PRECHECK` 在服务重启心跳窗口期误判 `win-runner-01` 不在线。
+- 第 2 次 `agent-1785745107461-d153b4df` 通过 precheck 并下发固定 OPPO `ecbfd645`，但正式 job `job_1785746049620_00005` 在 ADB 启动/滑动后 `updated_at=2026-08-03 16:38:30` 停止更新，Agent 长时间停在 `RUN_SONIC 51%`。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - `EXECUTION_PRECHECK` 增加短暂 Runner 心跳重试，默认 `MIDSCENE_AGENT_RUNNER_PRECHECK_RETRY_SECONDS=8`，上限 30 秒。
+  - 只在 Runner/设备当前不满足时等待并重新读取注册表；固定设备门禁不放宽，仍只允许指定 Runner/设备在线后继续。
+- `task_server/services/job_service.py`
+  - `recover_timed_out_jobs()` 改为强制读取最新 jobs 文件，避免缓存导致恢复扫描看不到 Runner 回传。
+  - 新增 Agent Runner job `updated_at` 停滞收敛：普通 running job 默认 `MIDSCENE_RUNNING_JOB_STALE_UPDATE_SECONDS=900` 秒，95% 清理阶段默认 `MIDSCENE_RUNNING_JOB_CLEANUP_STALE_UPDATE_SECONDS=300` 秒。
+  - stale job 自动标记为 failed，并写入 `stale_update_recovered=True`、`failure_type=ENV_ISSUE`、`report_missing_reason/ stderr_tail=Runner 回传停滞...`，避免 Agent 一直假运行。
+  - 仅收敛带 `parent_run_id/agent_run_id` 的 Agent Runner job，不影响普通 Sonic 套件。
+- `tests/backend_static_checks.py`
+  - 增加回归：运行中 Agent job 的 `updated_at` 停滞超过阈值时，必须在 1800 秒硬超时前被恢复为 failed。
+  - 增加静态验收：Agent precheck 必须包含 Runner 心跳短重试。
+
+验证：
+
+```bash
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/agent_service.py task_server/services/job_service.py tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py task_server/services/job_service.py tests/backend_static_checks.py
+```
+
 ### 2026-08-03 API 自动化任务化工作台与流程收敛
 
 用户重新梳理接口模块后明确：现有 Apifox 同步、接口资产、AI 计划、执行和报告后端能力不应推翻，问题在于用户路径割裂、信息组织混乱、同步体验偏技术化、AI 入口和调试/报告入口不够顺。

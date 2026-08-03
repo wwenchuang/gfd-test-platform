@@ -15901,6 +15901,7 @@ def check_runner_wait_reads_fresh_job_state_during_agent_rerun():
     from task_server.services import job_service
 
     old_jobs_file = job_service.JOBS_FILE
+    old_stale_seconds = getattr(job_service, "RUNNING_JOB_STALE_UPDATE_SECONDS", None)
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             jobs_file = os.path.join(temp_dir, "jobs.json")
@@ -15939,8 +15940,47 @@ def check_runner_wait_reads_fresh_job_state_during_agent_rerun():
                 and (run.get("artifacts", {}).get("jobProgress") or {}).get("completed") == 1,
                 "Agent rerun job waiting must read fresh persisted Runner job state instead of stale cached running state",
             )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            jobs_file = os.path.join(temp_dir, "jobs.json")
+            job_service.JOBS_FILE = jobs_file
+            job_service.RUNNING_JOB_STALE_UPDATE_SECONDS = 60
+            stale_job = {
+                "job_id": "job-static-stale-runner-callback",
+                "status": "running",
+                "phase": "smoke",
+                "module": "AI_Agent_草稿",
+                "file": "百度网盘入口.yaml",
+                "runner_id": "win-runner-01",
+                "target_runner_id": "win-runner-01",
+                "device_id": "ecbfd645",
+                "parent_run_id": "agent-static-stale-runner-callback",
+                "created_at": "2026-08-03 16:00:00",
+                "started_at": "2026-08-03 16:00:00",
+                "updated_at": "2026-08-03 16:00:20",
+                "progress": 5,
+                "progress_message": "执行中，已运行 243s",
+            }
+            storage.write_json_file(jobs_file, [stale_job])
+            original_time = job_service.time.time
+            original_now = job_service._now_str
+            try:
+                job_service.time.time = lambda: time.mktime(time.strptime("2026-08-03 16:02:30", "%Y-%m-%d %H:%M:%S"))
+                job_service._now_str = lambda: "2026-08-03 16:02:30"
+                job_service.recover_timed_out_jobs()
+            finally:
+                job_service.time.time = original_time
+                job_service._now_str = original_now
+            recovered = storage.read_json_file(jobs_file, default=[])[0]
+            require(
+                recovered.get("status") == "failed"
+                and recovered.get("stale_update_recovered") is True
+                and "Runner 回传停滞" in (recovered.get("stderr_tail") or ""),
+                "Running Runner jobs with stale update timestamps must be recovered before the 1800s hard timeout",
+            )
     finally:
         job_service.JOBS_FILE = old_jobs_file
+        if old_stale_seconds is not None:
+            job_service.RUNNING_JOB_STALE_UPDATE_SECONDS = old_stale_seconds
         storage.invalidate_json_cache()
 
 
@@ -17840,6 +17880,7 @@ def main():
     require('midscene_cli_dispatch_yaml_text(yaml_content, device_id=selected.get("device_id", ""))' in router_source, "Runner job dispatch must convert YAML to official Midscene CLI layout and inject selected device without changing saved scripts")
     agent_source = (ROOT / "task_server" / "services" / "agent_service.py").read_text(encoding="utf-8")
     require("selected_device_label" in agent_source and '"display_name", "brand", "model"' in agent_source, "Agent precheck must show physical device label/model for selected Runner device")
+    require("MIDSCENE_AGENT_RUNNER_PRECHECK_RETRY_SECONDS" in agent_source and "Runner 心跳未恢复，等待重试" in agent_source, "Agent precheck must retry briefly when Runner heartbeat is empty after a server restart")
     require("_runner_supports_yaml_dry_run" in agent_source and '"runner_yaml_dry_run"' in agent_source, "Agent must use real Runner YAML dry-run when runner capability is available")
     require('"neither android_home nor android_sdk_root" in lowered' in agent_source and "_agent_failed_item_has_concrete_environment_evidence" in agent_source and "not environment_locked" in agent_source, "Agent must lock concrete Android SDK/ADB failures as ENV_ISSUE while allowing bare timeouts to use AI keyframe reclassification")
     require('POST_FAILURE_ANALYSIS_STEPS = ("RUN_SONIC",)' in agent_source, "RUN_SONIC failure must continue into report collection, failure analysis and repair planning")

@@ -60,6 +60,23 @@ DEVICE_STRATEGY_AUTO = "auto"
 DEVICE_STRATEGY_MANUAL_REQUIRED = "manual_required"
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+RUNNING_JOB_STALE_UPDATE_SECONDS = max(
+    120,
+    _env_int("MIDSCENE_RUNNING_JOB_STALE_UPDATE_SECONDS", 900),
+)
+RUNNING_JOB_CLEANUP_STALE_UPDATE_SECONDS = max(
+    60,
+    _env_int("MIDSCENE_RUNNING_JOB_CLEANUP_STALE_UPDATE_SECONDS", 300),
+)
+
+
 def _trace_time_text() -> str:
     return time.strftime(_TIME_FMT)
 
@@ -475,6 +492,26 @@ def check_job_timeout(job: Dict[str, Any]) -> bool:
     return (time.time() - started) > JOB_TIMEOUT_SECONDS
 
 
+def _job_allows_stale_update_recovery(job: Dict[str, Any]) -> bool:
+    if not isinstance(job, dict):
+        return False
+    if str(job.get("source") or "").strip().lower() == "sonic":
+        return False
+    return bool(job.get("parent_run_id") or job.get("agent_run_id"))
+
+
+def _running_job_stale_update_seconds(job: Dict[str, Any]) -> int:
+    progress = 0
+    try:
+        progress = int(job.get("progress") or 0)
+    except (TypeError, ValueError):
+        progress = 0
+    message = str(job.get("progress_message") or "")
+    if progress >= 95 and "清理 App 状态" in message:
+        return RUNNING_JOB_CLEANUP_STALE_UPDATE_SECONDS
+    return RUNNING_JOB_STALE_UPDATE_SECONDS
+
+
 __all__ = [
     "load_jobs",
     "save_jobs",
@@ -779,7 +816,7 @@ def recover_timed_out_jobs() -> None:
     now = time.time()
     changed = False
     with JOB_LOCK:
-        jobs = _read_jobs_raw()
+        jobs = _read_jobs_raw(use_cache=False)
         for job in jobs:
             if job.get("status") != JOB_STATUS_RUNNING:
                 continue
@@ -789,6 +826,19 @@ def recover_timed_out_jobs() -> None:
                 job["finished_at"] = _now_str()
                 job["timeout_recovered"] = True
                 job["stderr_tail"] = f"任务执行超过 {JOB_TIMEOUT_SECONDS} 秒未回传结果，已自动回收"
+                changed = True
+                continue
+            updated = _parse_time(job.get("updated_at")) or started
+            stale_seconds = _running_job_stale_update_seconds(job)
+            if _job_allows_stale_update_recovery(job) and updated and now - updated > stale_seconds:
+                job["status"] = JOB_STATUS_FAILED
+                job["finished_at"] = _now_str()
+                job["stale_update_recovered"] = True
+                job["failure_type"] = job.get("failure_type") or "ENV_ISSUE"
+                job["failure_summary"] = job.get("failure_summary") or "Runner 回传停滞，平台自动收敛"
+                reason = f"Runner 回传停滞超过 {stale_seconds} 秒，已自动回收"
+                job["stderr_tail"] = reason
+                job["report_missing_reason"] = job.get("report_missing_reason") or reason
                 changed = True
         if changed:
             save_jobs(jobs)
@@ -1151,6 +1201,7 @@ def wait_jobs_finished(
         elapsed = time.time() - start_time
         if elapsed >= timeout:
             break
+        recover_timed_out_jobs()
 
         with JOB_LOCK:
             jobs = _read_jobs_raw(use_cache=False)
