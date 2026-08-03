@@ -646,6 +646,13 @@ def main():
         "Plan review must expose stable batches, failed-only retry, and stale regeneration",
     )
     require(
+        "generation.plans" in api_testing_js
+        and "api-generated-plan-card" in api_testing_js
+        and "审阅用例" in api_testing_js
+        and "openGeneratedApiPlan" in api_testing_js,
+        "Plan generation must show generated AI draft plans with a direct review entry",
+    )
+    require(
         "saveApiSourceExecutionBinding" in api_testing_js
         and "loadApiExecutionProjectEnvironments" in api_testing_js
         and "/execution-binding" in api_testing_js

@@ -151,15 +151,27 @@ def get_api_execution(execution_id: str) -> Dict[str, Any]:
 def _source_base_urls(source: Dict[str, Any]) -> List[Dict[str, str]]:
     snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
     base_urls = snapshot.get("base_urls") if isinstance(snapshot.get("base_urls"), list) else []
+    metadata = source.get("provider_metadata") if isinstance(source.get("provider_metadata"), dict) else {}
+    source_environment_id = str(source.get("environment_id") or "").strip()
+    source_environment_name = str(metadata.get("environment_name") or "").strip()
     rows = []
     for index, item in enumerate(base_urls, start=1):
         raw = item if isinstance(item, dict) else {}
         url = str(raw.get("url") or raw.get("value") or "").strip().rstrip("/")
         if not url:
             continue
+        raw_name = str(raw.get("name") or f"baseUrl{index}").strip()
+        display_name = str(raw.get("display_name") or raw.get("displayName") or raw.get("name") or f"服务地址 {index}").strip()
+        if len(base_urls) == 1 and source_environment_id:
+            row_id = source_environment_id
+            if source_environment_name:
+                display_name = source_environment_name
+        else:
+            row_id = raw_name
         rows.append({
-            "id": str(raw.get("name") or f"baseUrl{index}").strip(),
-            "name": str(raw.get("name") or f"服务地址 {index}").strip(),
+            "id": row_id,
+            "name": display_name,
+            "base_url_name": raw_name,
             "url": url,
             "enabled": True,
         })
@@ -171,7 +183,11 @@ def _selected_environment(source: Dict[str, Any], binding: Dict[str, Any]) -> Di
     selected_id = str(binding.get("environment_id") or source.get("environment_id") or "").strip()
     if selected_id:
         for item in environments:
-            if str(item.get("id") or "") == selected_id:
+            if selected_id in {
+                str(item.get("id") or ""),
+                str(item.get("name") or ""),
+                str(item.get("base_url_name") or ""),
+            }:
                 return item
     if environments:
         return environments[0]
@@ -478,6 +494,7 @@ def _status_expected(assertion: Dict[str, Any], status_code: int) -> bool:
 
 def _assertions(case: Dict[str, Any], status_code: int, parsed_body: Any, parse_error: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    explicit_business_code = False
     for assertion in case.get("assertions") or []:
         if not isinstance(assertion, dict):
             continue
@@ -490,10 +507,41 @@ def _assertions(case: Dict[str, Any], status_code: int, parsed_body: Any, parse_
         elif kind == "schema":
             passed = not parse_error and isinstance(parsed_body, (dict, list))
             message = parse_error or "响应 JSON 可解析"
+        elif kind == "business_code":
+            explicit_business_code = True
+            actual = _json_path_value(parsed_body, str(assertion.get("path") or "code"))
+            expected = assertion.get("expected", 0)
+            operator = str(assertion.get("operator") or "eq").strip().lower()
+            if operator in {"eq", "==", "="}:
+                passed = str(actual) == str(expected)
+            elif operator in {"in", "one_of"}:
+                values = expected if isinstance(expected, list) else [expected]
+                passed = str(actual) in {str(item) for item in values}
+            else:
+                passed = False
+            msg = ""
+            if isinstance(parsed_body, dict):
+                msg = str(parsed_body.get("msg") or parsed_body.get("message") or "").strip()
+            message = f"业务码 {actual}，期望 {expected}" + (f"：{msg}" if msg else "")
         else:
             message = f"暂不支持断言类型 {kind}"
             passed = False
         rows.append({"type": kind, "passed": passed, "message": message})
+    case_type = str(case.get("type") or "").strip().lower()
+    if (
+        not explicit_business_code
+        and case_type in {"", "positive", "chain"}
+        and isinstance(parsed_body, dict)
+        and "code" in parsed_body
+    ):
+        actual = parsed_body.get("code")
+        msg = str(parsed_body.get("msg") or parsed_body.get("message") or "").strip()
+        passed = str(actual) == "0"
+        rows.append({
+            "type": "business_code",
+            "passed": passed,
+            "message": f"业务码 {actual}，期望 0" + (f"：{msg}" if msg else ""),
+        })
     return rows
 
 

@@ -28,6 +28,50 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-03 API 我的收藏接口真实调试修复
+
+用户指定线上真实流程：Apifox 生产环境 `生产环境（新）-腾讯云`，测试“我的收藏”3 个接口，并把业务 JWT 配到平台环境变量后执行。真实排查发现平台曾出现“HTTP 200 但业务未登录仍算通过”的假阳性：
+
+- 3 个接口均来自 `家用业务/app接口/我的/我的收藏`：
+  - `POST /print3d/api/v1/collection/add`
+  - `POST /print3d/api/v1/collection/cancel`
+  - `POST /print3d/api/v1/collection/page`
+- Apifox OpenAPI 里这些接口没有 `security`，但 header 参数包含必填 `Authorization` 和 `Biz`。
+- 生产接口要求 `Authorization` 直接传 JWT 原文，不接受平台自动加的 `Bearer ` 前缀。
+- 旧逻辑只看 OpenAPI `security`，所以生成的 positive 用例未注入鉴权；接口返回 HTTP 200 + `code=4009 用户未登录` 时，只因 HTTP 200 和 JSON 可解析就被误判通过。
+
+修复：
+
+- `task_server/services/api_case_contract_service.py`
+  - `endpoint_requires_auth()` 不再只依赖 `security`，当必填 header 出现 `Authorization` / token 类敏感字段时，同样判定需要环境鉴权。
+  - positive / chain 用例自动引用 `environment_default`，但不把敏感 header 明文写进用例 JSON；`Biz` 等非敏感业务 header 仍保留为 `{{Biz}}`。
+  - 如果 2xx 响应 schema 中存在 `code` 字段，自动补充 `business_code == 0` 断言。
+- `task_server/services/api_execution_service.py`
+  - 执行断言支持 `business_code`。
+  - positive / chain 用例即使 AI 没显式写业务码断言，只要响应 JSON 有 `code`，也会隐式校验 `code == 0`，避免 HTTP 200 假阳性。
+  - auth 用例不加该成功门禁，允许校验未登录 / 未授权业务码。
+  - 单个 Apifox base URL 时，执行环境展示和选择优先使用 Apifox 环境中文名与环境 ID，例如 `生产环境（新）-腾讯云 / 33831678`，同时兼容旧绑定里的 `default`。
+- `task_server/services/api_plan_generation_service.py`
+  - 生成详情接口返回 `plans` 摘要，前端能直接展示 AI 生成的草稿计划，不再只能看批次技术日志。
+  - 兼容旧计划里的非数字计数字段，避免生成详情因历史数据报错。
+- `task_server/services/api_workbench_service.py`
+  - workbench 不再因为保存的环境变量看起来像 Apifox 分组占位符就每次自动刷新；只在缺少 base URL 时自动读取，手动刷新仍可强制更新。
+- `js/api-testing.js` / `css/round5.css`
+  - AI 生成完成后展示“AI 生成结果”候选卡片，显示用例数、可调试数、待补数，并提供明确的“审阅用例”入口。
+- `tests/api_case_contract_checks.py` / `tests/api_native_execution_checks.py` / `tests/api_workbench_checks.py` / `tests/frontend_static_checks.py`
+  - 增加上述鉴权识别、业务码断言、环境中文名、生成计划摘要、workbench 不反复刷新和前端审阅入口回归。
+
+验证：
+
+```bash
+python3 -m unittest tests.apifox_discovery_checks tests.api_asset_sync_checks tests.api_case_contract_checks tests.api_native_execution_checks tests.api_workbench_checks
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+python3 -m py_compile task_server/services/api_case_contract_service.py task_server/services/api_execution_service.py task_server/services/api_plan_generation_service.py task_server/services/api_workbench_service.py tests/api_case_contract_checks.py tests/api_native_execution_checks.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/api.js && node --check js/navigation.js
+git diff --check -- task_server/services/api_case_contract_service.py task_server/services/api_execution_service.py task_server/services/api_plan_generation_service.py task_server/services/api_workbench_service.py js/api-testing.js css/round5.css tests/api_case_contract_checks.py tests/api_native_execution_checks.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+```
+
 ### 2026-08-03 Agent Runner 重启空窗与 stale job 收敛
 
 线上 5 次稳定性回归在用户重启服务后被运行层异常打断：

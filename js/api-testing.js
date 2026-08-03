@@ -3729,6 +3729,7 @@ function renderApiPlanGeneration(generation) {
   const batches = generation.batches || [];
   const events = generation.events || [];
   const generatedBatches = batches.filter(batch => String(batch.plan_id || '').trim());
+  const generatedPlans = Array.isArray(generation.plans) ? generation.plans : [];
   const failedCount = Number(generation.failed_batches || batches.filter(batch => batch.status === 'failed').length);
   const retryable = ['partial', 'failed'].includes(generation.status) && failedCount > 0;
   const logKey = apiPlanGenerationLogKey(generation.generation_id);
@@ -3763,7 +3764,21 @@ function renderApiPlanGeneration(generation) {
       ${generatedBatches.length ? `
         <div class="api-plan-generated-summary">
           <div><strong>AI 生成结果</strong><span>${escapeHtml(generatedBatches.length)} 个草稿计划已生成，先审阅用例明细，再保存为测试资产。</span></div>
-          <div>${generatedBatches.map((batch, index) => `<button class="btn-sm ai" onclick="openGeneratedApiPlan(${jsArg(batch.plan_id)})">查看生成用例 ${escapeHtml(batch.batch_index || index + 1)}</button>`).join('')}</div>
+          <div class="api-generated-plan-list">${(generatedPlans.length ? generatedPlans : generatedBatches.map((batch, index) => ({
+            plan_id: batch.plan_id,
+            name: `生成用例 ${batch.batch_index || index + 1}`,
+            case_count: batch.endpoint_count || 0,
+            executable_case_count: 0,
+            needs_review_case_count: 0,
+          }))).map((plan, index) => `
+            <article class="api-generated-plan-card">
+              <div>
+                <strong>${escapeHtml(plan.name || `生成用例 ${index + 1}`)}</strong>
+                <small>${escapeHtml(plan.case_count || 0)} 条用例 · ${escapeHtml(plan.executable_case_count || 0)} 可调试 · ${escapeHtml(plan.needs_review_case_count || 0)} 待补</small>
+              </div>
+              <button class="btn-sm ai" onclick="openGeneratedApiPlan(${jsArg(plan.plan_id)})">审阅用例</button>
+            </article>
+          `).join('')}</div>
         </div>
       ` : ''}
       ${generation.error ? `<div class="api-inline-error">${escapeHtml(generation.error)}</div>` : ''}
@@ -3843,10 +3858,13 @@ async function pollApiPlanGeneration(generationId, requestId = apiPlanGeneration
     if (apiPlanGenerationTerminal(generation)) {
       if (['succeeded', 'partial'].includes(generation.status)) {
         await refreshApiPlanCards(capturedScopeKey);
-        const generatedPlanIds = (generation.batches || [])
+        const generatedPlanIds = ((generation.plans || []).length ? generation.plans : (generation.batches || []))
+          .map(item => String(item.plan_id || ''))
+          .filter(Boolean);
+        const fallbackPlanIds = (generation.batches || [])
           .map(batch => String(batch.plan_id || ''))
           .filter(Boolean);
-        const latestGeneratedPlanId = generatedPlanIds[generatedPlanIds.length - 1] || '';
+        const latestGeneratedPlanId = generatedPlanIds[generatedPlanIds.length - 1] || fallbackPlanIds[fallbackPlanIds.length - 1] || '';
         const latestGeneratedPlan = apiTestingPlans.find(
           plan => String(plan.plan_id || '') === latestGeneratedPlanId
         );

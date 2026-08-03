@@ -338,9 +338,37 @@ def _normalize_variables(raw: Any) -> List[Dict[str, str]]:
 
 def endpoint_requires_auth(endpoint: Dict[str, Any]) -> bool:
     security = endpoint.get("security")
-    if not isinstance(security, list) or not security:
-        return False
-    return all(isinstance(requirement, dict) and bool(requirement) for requirement in security)
+    if isinstance(security, list) and security:
+        return all(isinstance(requirement, dict) and bool(requirement) for requirement in security)
+    for parameter in endpoint.get("parameters") or []:
+        if not isinstance(parameter, dict):
+            continue
+        if _text(parameter.get("in")).lower() != "header":
+            continue
+        name = _text(parameter.get("name"))
+        if name and is_sensitive_header_name(name):
+            return True
+    return False
+
+
+def _success_response_has_business_code(endpoint: Dict[str, Any]) -> bool:
+    schemas: List[Dict[str, Any]] = []
+    for response in endpoint.get("responses") or []:
+        if not isinstance(response, dict):
+            continue
+        status = _text(response.get("status")).upper()
+        if status.startswith("2") or status == "2XX":
+            schema = response.get("schema")
+            if isinstance(schema, dict):
+                schemas.append(schema)
+    response_schema = endpoint.get("response_schema")
+    if isinstance(response_schema, dict):
+        schemas.append(response_schema)
+    for schema in schemas:
+        properties = schema.get("properties") if isinstance(schema, dict) else {}
+        if isinstance(properties, dict) and "code" in properties:
+            return True
+    return False
 
 
 def _looks_like_high_entropy_secret(value: str) -> bool:
@@ -490,10 +518,20 @@ def build_api_case_contract(
     if normalized_type not in {"positive", "negative", "auth", "boundary", "chain", "error"}:
         normalized_type = "positive"
     parameter_values, missing, issues = _request_parameters(endpoint)
+    requires_auth = endpoint_requires_auth(endpoint)
+    if requires_auth:
+        sensitive_header_missing = {
+            f"request.headers.{_text(parameter.get('name'))}"
+            for parameter in endpoint.get("parameters") or []
+            if isinstance(parameter, dict)
+            and _text(parameter.get("in")).lower() == "header"
+            and is_sensitive_header_name(parameter.get("name"))
+        }
+        missing = [item for item in missing if item not in sensitive_header_missing]
     for name in list(parameter_values["header"]):
         if is_sensitive_header_name(name):
             parameter_values["header"].pop(name, None)
-    if not endpoint_requires_auth(endpoint):
+    if not requires_auth:
         for parameter in endpoint.get("parameters") or []:
             if not isinstance(parameter, dict) or not parameter.get("required"):
                 continue
@@ -520,7 +558,7 @@ def build_api_case_contract(
         "query": parameter_values["query"],
         "headers": parameter_values["header"],
         "body": {} if body is _MISSING else body,
-        "auth_ref": "environment_default" if endpoint_requires_auth(endpoint) else "",
+        "auth_ref": "environment_default" if requires_auth else "",
     }
     negative_target = _normalize_omitted_field(
         omitted_field or proposed_case.get("negative_target"),
@@ -537,7 +575,7 @@ def build_api_case_contract(
         missing.append("request.mutation")
     if normalized_type == "auth":
         request["auth_ref"] = ""
-        if not endpoint_requires_auth(endpoint):
+        if not requires_auth:
             missing.append("endpoint.security")
 
     statuses = _response_statuses(endpoint, normalized_type)
@@ -548,6 +586,8 @@ def build_api_case_contract(
         missing.append("assertions.status")
     if normalized_type in {"positive", "chain"} and _has_success_schema(endpoint):
         assertions.append({"type": "schema", "schema_ref": "response:2xx"})
+    if normalized_type in {"positive", "chain"} and _success_response_has_business_code(endpoint):
+        assertions.append({"type": "business_code", "path": "code", "operator": "eq", "expected": 0})
 
     dependencies = _normalize_dependencies(proposed_case.get("dependencies"))
     known = {_text(case_id) for case_id in (known_case_ids or []) if _text(case_id)}

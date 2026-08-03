@@ -466,16 +466,13 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     selected_source_id = str(source.get("source_id") or "").strip()
     should_refresh_environment = (
         selected_source_id
-        and (
-            not _environment_has_base_url(source)
-            or _environment_snapshot_looks_like_grouped_parameter_placeholders(source)
-        )
+        and not _environment_has_base_url(source)
     )
     if should_refresh_environment:
         try:
             refreshed = refresh_apifox_environment_snapshot(
                 selected_source_id,
-                force=_environment_snapshot_looks_like_grouped_parameter_placeholders(source),
+                force=False,
             )
             if refreshed:
                 source = refreshed

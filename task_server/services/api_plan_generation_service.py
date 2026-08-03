@@ -59,6 +59,69 @@ def _safe(value: Any) -> Any:
     return api_case_contract_service.sanitize_sensitive_data(value)
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _plan_summary(plan_id: str, source_id: str = "") -> Dict[str, Any]:
+    selected_plan_id = str(plan_id or "").strip()
+    if not selected_plan_id:
+        return {}
+    plan = api_test_plan_service.get_api_test_plan(
+        selected_plan_id,
+        source_id=str(source_id or "").strip(),
+    )
+    if not plan:
+        return {}
+    return {
+        "plan_id": str(plan.get("plan_id") or ""),
+        "name": str(plan.get("name") or "API 接口测试计划"),
+        "status": str(plan.get("status") or "draft"),
+        "source": str(plan.get("source") or ""),
+        "created_at": str(plan.get("created_at") or ""),
+        "endpoint_count": _safe_int(plan.get("endpoint_count")),
+        "case_count": _safe_int(plan.get("case_count")),
+        "executable_case_count": _safe_int(plan.get("executable_case_count")),
+        "needs_review_case_count": _safe_int(plan.get("needs_review_case_count")),
+        "execution_readiness": plan.get("execution_readiness") if isinstance(plan.get("execution_readiness"), dict) else {},
+        "module_paths": [
+            str(item)
+            for item in (plan.get("module_paths") or [])
+            if str(item or "").strip()
+        ],
+        "selected_endpoint_keys": [
+            str(item)
+            for item in (plan.get("selected_endpoint_keys") or [])
+            if str(item or "").strip()
+        ],
+        "batch_index": _safe_int(plan.get("batch_index")),
+        "batch_count": _safe_int(plan.get("batch_count")),
+    }
+
+
+def _attach_plan_summaries(record: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(record, dict) or not record:
+        return record
+    source_id = str(record.get("source_id") or "").strip()
+    plans = []
+    seen: set[str] = set()
+    for batch in record.get("batches") or []:
+        if not isinstance(batch, dict):
+            continue
+        plan_id = str(batch.get("plan_id") or "").strip()
+        if not plan_id or plan_id in seen:
+            continue
+        summary = _plan_summary(plan_id, source_id)
+        if summary:
+            plans.append(summary)
+            seen.add(plan_id)
+    record["plans"] = plans
+    return record
+
+
 def _write_generation(record: Dict[str, Any]) -> None:
     write_json_file(
         _generation_path(str(record.get("generation_id") or "")),
@@ -181,7 +244,7 @@ def get_api_plan_generation(generation_id: str) -> Dict[str, Any]:
     if not isinstance(record, dict):
         return {}
     recovered = _recover_stale_running_batches(record)
-    return _safe(recovered)
+    return _safe(_attach_plan_summaries(recovered))
 
 
 def _recover_stale_running_batches(record: Dict[str, Any]) -> Dict[str, Any]:

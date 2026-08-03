@@ -80,6 +80,38 @@ class NativeApiExecutionChecks(unittest.TestCase):
         self.assertEqual("APP测试环境", context["environments"][0]["name"])
         self.assertEqual("platform", context["metadata"]["source"])
 
+    def test_single_apifox_default_base_url_uses_environment_name_and_id(self):
+        source = api_source_service.save_api_source({
+            "name": "3D",
+            "source_type": "apifox",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "access_token": "apifox-token",
+            "provider_metadata": {
+                "project_name": "3D业务",
+                "environment_name": "生产环境（新）-腾讯云",
+            },
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [],
+            },
+        })
+        api_workspace_service.save_api_workspace_binding(
+            source["source_id"],
+            "5904970",
+            "default",
+            project_name="3D业务",
+            environment_name="default",
+            connection_identity="platform-native-api",
+        )
+
+        context = api_execution_service.api_execution_context(source["source_id"])
+
+        self.assertEqual("33831678", context["environments"][0]["id"])
+        self.assertEqual("生产环境（新）-腾讯云", context["environments"][0]["name"])
+        self.assertEqual("https://print.wisebeginner3d.com/app", context["connection"]["base_url"])
+        self.assertEqual("33831678", context["selection"]["environment_id"])
+
     def test_business_token_is_server_side_secret_with_public_fingerprint(self):
         source = self._source()
         public_auth = api_workspace_service.save_api_auth_binding_metadata(
@@ -227,6 +259,46 @@ class NativeApiExecutionChecks(unittest.TestCase):
         text = str(current)
         self.assertNotIn("source-secret", text)
         self.assertIn("Bearer ***", text)
+
+    def test_positive_case_business_code_failure_is_not_counted_as_pass(self):
+        rows = api_execution_service._assertions(
+            {
+                "case_id": "API-BIZ-1",
+                "name": "我的收藏列表-成功响应",
+                "type": "positive",
+                "assertions": [
+                    {"type": "status", "operator": "in", "expected": [200]},
+                    {"type": "schema", "schema_ref": "response:2xx"},
+                ],
+            },
+            200,
+            {"code": 4009, "msg": "用户未登录！", "data": None},
+            "",
+        )
+
+        self.assertTrue(any(row["type"] == "status" and row["passed"] for row in rows))
+        business = next(row for row in rows if row["type"] == "business_code")
+        self.assertFalse(business["passed"])
+        self.assertIn("4009", business["message"])
+        self.assertIn("用户未登录", business["message"])
+
+    def test_auth_case_can_assert_unauthorized_business_code_without_success_gate(self):
+        rows = api_execution_service._assertions(
+            {
+                "case_id": "API-AUTH-1",
+                "name": "我的收藏列表-未授权访问校验",
+                "type": "auth",
+                "assertions": [
+                    {"type": "status", "operator": "in", "expected": [200, 401, 403]},
+                ],
+            },
+            200,
+            {"code": 4009, "msg": "用户未登录！"},
+            "",
+        )
+
+        self.assertFalse(any(row["type"] == "business_code" for row in rows))
+        self.assertTrue(all(row["passed"] for row in rows))
 
     def test_execution_resolves_local_environment_variables_before_request(self):
         source = api_source_service.save_api_source({

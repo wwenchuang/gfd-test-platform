@@ -398,7 +398,7 @@ class ApiWorkbenchChecks(unittest.TestCase):
         finally:
             apifox_discovery_service.discover_project_context = old_discover
 
-    def test_workbench_refreshes_grouped_parameter_placeholder_snapshot(self):
+    def test_workbench_keeps_saved_environment_snapshot_without_auto_refreshing_placeholders(self):
         from task_server.services import api_workbench_service
 
         old_discover = apifox_discovery_service.discover_project_context
@@ -453,9 +453,18 @@ class ApiWorkbenchChecks(unittest.TestCase):
                 for item in workbench["source"]["environment_snapshot"]["variables"]
             ]
 
+            self.assertEqual(0, len(calls))
+            self.assertEqual(["cookie", "query", "header", "body"], variable_names)
+            refreshed = api_workbench_service.refresh_apifox_environment_snapshot(
+                source["source_id"],
+                force=True,
+            )
+            refreshed_names = [
+                item["name"]
+                for item in refreshed["environment_snapshot"]["variables"]
+            ]
             self.assertEqual(1, len(calls))
-            self.assertEqual(["Authorization", "Biz", "ZXBToken"], variable_names)
-            self.assertNotIn("header", variable_names)
+            self.assertEqual(["Authorization", "Biz", "ZXBToken"], refreshed_names)
             self.assertEqual(
                 ["Authorization", "Biz", "ZXBToken"],
                 [
@@ -465,6 +474,105 @@ class ApiWorkbenchChecks(unittest.TestCase):
             )
         finally:
             apifox_discovery_service.discover_project_context = old_discover
+
+    def test_plan_generation_detail_includes_generated_plan_summaries(self):
+        source = api_source_service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "access_token": "secret-apifox-token",
+            "sync_enabled": False,
+        })
+        api_workspace_service.save_api_workspace_binding(
+            source["source_id"],
+            "5904970",
+            "33831678",
+            project_name="3D",
+            environment_name="生产环境（新）-腾讯云",
+            connection_identity="platform-native-api",
+        )
+        staged = api_asset_service.stage_api_revision(
+            source["source_id"],
+            "3D",
+            self._generated_openapi(1),
+            source_type="apifox",
+        )
+        api_asset_service.activate_api_revision(
+            staged["asset_id"],
+            staged["revision_id"],
+        )
+        endpoint_id = staged["revision"]["endpoints"][0]["endpoint_id"]
+        generation = api_plan_generation_service.start_api_plan_generation(
+            source["source_id"],
+            staged["revision_id"],
+            [endpoint_id],
+            [],
+            spawn=False,
+        )
+        old_run_ai_skill = api_test_plan_service.run_ai_skill
+
+        def fake_run_ai_skill(_skill_name, payload, **kwargs):
+            kwargs["runtime_trace"].update({"model": "qwen3.7-plus"})
+            return {
+                "cases": [{
+                    "case_id": "API-AI-001",
+                    "endpoint_id": payload["endpoints"][0]["endpoint_id"],
+                    "name": "AI 生成成功用例",
+                    "type": "positive",
+                    "steps": ["发送请求"],
+                }],
+                "review": {},
+            }
+
+        api_test_plan_service.run_ai_skill = fake_run_ai_skill
+        try:
+            completed = api_plan_generation_service.run_api_plan_generation(
+                generation["generation_id"],
+            )
+        finally:
+            api_test_plan_service.run_ai_skill = old_run_ai_skill
+
+        plan_id = completed["batches"][0]["plan_id"]
+        current = api_plan_generation_service.get_api_plan_generation(
+            generation["generation_id"],
+        )
+
+        self.assertEqual("succeeded", current["status"])
+        self.assertEqual([plan_id], [item["plan_id"] for item in current["plans"]])
+        self.assertEqual("draft", current["plans"][0]["status"])
+        self.assertEqual(1, current["plans"][0]["case_count"])
+        self.assertEqual(1, current["plans"][0]["endpoint_count"])
+
+    def test_plan_generation_summary_tolerates_legacy_non_numeric_counts(self):
+        old_get_plan = api_test_plan_service.get_api_test_plan
+
+        def fake_get_plan(_plan_id, source_id=""):
+            return {
+                "plan_id": "api_plan_legacy",
+                "name": "旧计划",
+                "status": "draft",
+                "endpoint_count": "-",
+                "case_count": "unknown",
+                "executable_case_count": "",
+                "needs_review_case_count": None,
+                "module_paths": ["我的收藏"],
+                "selected_endpoint_keys": ["api_1"],
+            }
+
+        api_test_plan_service.get_api_test_plan = fake_get_plan
+        try:
+            record = {
+                "generation_id": "api_plan_generation_legacy",
+                "source_id": "api_source_legacy",
+                "batches": [{"plan_id": "api_plan_legacy"}],
+            }
+            current = api_plan_generation_service._attach_plan_summaries(record)
+        finally:
+            api_test_plan_service.get_api_test_plan = old_get_plan
+
+        self.assertEqual(0, current["plans"][0]["endpoint_count"])
+        self.assertEqual(0, current["plans"][0]["case_count"])
 
     def test_workbench_module_summary_uses_server_counts_and_endpoint_ids(self):
         from task_server.services import api_workbench_service

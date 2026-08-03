@@ -386,6 +386,48 @@ class ApiCaseContractChecks(unittest.TestCase):
             case["assertions"],
         )
 
+    def test_authorization_header_parameter_requires_environment_auth_without_security(self):
+        endpoint = _endpoint(
+            security=[],
+            parameters=[
+                {
+                    "name": "Authorization",
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "string", "example": "{{Authorization}}"},
+                },
+                {
+                    "name": "Biz",
+                    "in": "header",
+                    "required": True,
+                    "schema": {"type": "string", "example": "{{Biz}}"},
+                },
+            ],
+            request_body_required=False,
+            request_schema={},
+            responses=[{
+                "status": "200",
+                "description": "ok",
+                "schema": {"type": "object", "properties": {"code": {"type": "integer"}}},
+            }],
+            response_schema={"type": "object", "properties": {"code": {"type": "integer"}}},
+        )
+
+        case = api_case_contract_service.build_api_case_contract(endpoint, "positive")
+        auth_case = api_case_contract_service.build_api_case_contract(endpoint, "auth")
+
+        self.assertTrue(api_case_contract_service.endpoint_requires_auth(endpoint))
+        self.assertEqual("environment_default", case["request"]["auth_ref"])
+        self.assertEqual({"Biz": "{{Biz}}"}, case["request"]["headers"])
+        self.assertEqual("executable", case["readiness"]["state"])
+        self.assertNotIn("request.headers.Authorization", case["readiness"]["missing"])
+        self.assertIn(
+            {"type": "business_code", "path": "code", "operator": "eq", "expected": 0},
+            case["assertions"],
+        )
+        self.assertEqual("", auth_case["request"]["auth_ref"])
+        self.assertNotIn("endpoint.security", auth_case["readiness"]["missing"])
+
     def test_optional_openapi_security_alternative_does_not_require_auth(self):
         endpoint = _endpoint(security=[{}, {"bearerAuth": []}])
 
