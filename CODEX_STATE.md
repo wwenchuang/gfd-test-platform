@@ -98,6 +98,8 @@ git diff --check -- task_server/router.py task_server/services/api_source_servic
   - 默认未开启全局自动同步时，历史 source 对外也返回 `sync_enabled=false`、`sync_schedule.mode=manual`、`next_check_at=""`。
 - `tests/api_manual_workflow_checks.py`
   - 新增历史 source 兼容回归，防止旧配置再次向前端暴露自动同步状态。
+- `js/api-testing.js`
+  - 接口资产页已保存项目的主按钮统一为“手动更新 Apifox 资产”，不再混用“重新读取 Apifox 资产”，降低新同事理解成本。
 
 验证：
 
@@ -106,6 +108,7 @@ python3 -m unittest tests.api_manual_workflow_checks tests.api_workbench_checks 
 python3 tests/frontend_static_checks.py
 python3 tests/backend_static_checks.py
 python3 -m py_compile task_server/services/api_source_service.py tests/api_manual_workflow_checks.py
+node --check js/api-testing.js
 git diff --check -- task_server/services/api_source_service.py tests/api_manual_workflow_checks.py CODEX_STATE.md
 ```
 

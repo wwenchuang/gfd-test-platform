@@ -2626,7 +2626,7 @@ function renderSavedApiSourceShelf(sources = [], selectedId = '', context = 'ass
   return `
     <section class="api-saved-source-shelf">
       <div class="api-saved-source-head">
-        <div><span>已保存 Apifox 项目</span><strong>本地项目快照</strong><small>同事可直接切换已有项目；需要更新时再手动重新读取 Apifox。</small></div>
+        <div><span>已保存 Apifox 项目</span><strong>本地项目快照</strong><small>同事可直接切换已有项目；需要更新时再手动更新 Apifox。</small></div>
         <button class="btn-sm" type="button" onclick="startApiSourceDraft()">新增项目</button>
       </div>
       <div class="api-saved-source-list">
@@ -2652,7 +2652,7 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
   const status = latestSync?.status || source?.last_sync_status || '';
   const syncDisabled = !configured || ['queued', 'running'].includes(status);
   const running = ['queued', 'running'].includes(status);
-  const primaryLabel = status === 'failed' ? '重试读取' : '重新读取 Apifox 资产';
+  const primaryLabel = status === 'failed' ? '重试更新' : '手动更新 Apifox 资产';
   return `
     ${renderSavedApiSourceShelf(apiTestingSources, source?.source_id)}
     <div class="api-asset-context-bar">
@@ -2660,7 +2660,7 @@ function renderApiSourceSummary(source, latestSync, snapshot = {}) {
         <div class="api-source-identity">
           ${renderApiProjectSelector(apiTestingSources, source?.source_id)}
           ${apiStatusPill(configured ? '已连接' : '待配置', configured ? 'success' : 'warn')}
-          <span>${source?.credential_configured ? '访问凭据已安全保存；重新读取会更新接口、环境和 base_url' : '需要配置 Apifox 项目和访问令牌'}</span>
+          <span>${source?.credential_configured ? '访问凭据已安全保存；手动更新会更新接口、环境和 base_url' : '需要配置 Apifox 项目和访问令牌'}</span>
         </div>
         <div class="api-source-actions">
           <button class="btn-sm primary" onclick="startApiAssetSync()" ${syncDisabled ? 'disabled' : ''}>${escapeHtml(running ? '正在读取' : primaryLabel)}</button>
@@ -2687,7 +2687,7 @@ function renderApiSourceSettings(source = {}) {
   const selectedModules = apiTestingSourceDraftMode ? [] : (scopeState.selectedModules.size ? Array.from(scopeState.selectedModules) : (scope.module_paths || []));
   const selectedSummary = selectedModules.length ? selectedModules.join('、') : '尚未选择模块';
   const canConfigure = apiSourceCanConfigure(source);
-  const discoveryActionLabel = source.source_id ? '重新读取 Apifox 资产' : '读取 Apifox 资产';
+  const discoveryActionLabel = source.source_id ? '手动更新 Apifox 资产' : '读取 Apifox 资产';
   return `
     <div class="api-source-settings-head"><div><span>APIFOX SOURCE</span><h3>${apiTestingSourceDraftMode ? '新增 Apifox 项目' : '只读更新设置'}</h3></div><button class="btn-sm icon-only" title="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" aria-label="${apiTestingSourceDraftMode ? '取消新增 Apifox 项目' : '关闭设置'}" onclick="${apiTestingSourceDraftMode ? 'cancelApiSourceDraft()' : 'toggleApiSourceSettings(false)'}">×</button></div>
     <div class="api-source-discovery">
@@ -2728,7 +2728,7 @@ function refreshApiSourceDiscoveryUi(source = currentApiSourceSettingsSource()) 
     discoveryButton.disabled = apiSourceDiscoveryBusy();
     discoveryButton.textContent = apiSourceDiscoveryBusy()
       ? '正在读取'
-      : (source.source_id ? '重新读取 Apifox 资产' : '读取 Apifox 资产');
+      : (source.source_id ? '手动更新 Apifox 资产' : '读取 Apifox 资产');
   }
   const canConfigure = apiSourceCanConfigure(source);
   document.getElementById('api-source-sync-configuration')?.classList.toggle('hidden', !canConfigure);
@@ -5395,7 +5395,7 @@ function renderApiExecutionHeader(context) {
         <div><span>变量</span><strong>${escapeHtml(sourceEnv.variableCount)} 个</strong><small>${escapeHtml(sourceEnv.sensitiveCount)} 个敏感</small></div>
         <div><span>执行状态</span><strong>${escapeHtml(readiness.primary_action || '-')}</strong></div>
       </div>
-      ${missingBaseUrl ? `<div class="api-env-action-required"><strong>需要先拉取 Apifox 环境</strong><span>当前环境没有可执行的 base_url。请回到“接口资产”，选择 Apifox 环境并点击“重新读取 Apifox 资产”。</span></div>` : ''}
+      ${missingBaseUrl ? `<div class="api-env-action-required"><strong>需要先拉取 Apifox 环境</strong><span>当前环境没有可执行的 base_url。请回到“接口资产”，选择 Apifox 环境并点击“手动更新 Apifox 资产”。</span></div>` : ''}
     </div>
     <details class="api-execution-selector-detail">
       <summary>切换业务或环境</summary>
