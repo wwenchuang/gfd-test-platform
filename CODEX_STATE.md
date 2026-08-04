@@ -28,6 +28,66 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 API 自动化：按 AIPPT 参考重做简单执行面板
+
+用户明确要求接口测试不要再围绕多个技术模块一步步跳转，而是按参考项目的体验收敛成：
+
+```text
+手动获取 Apifox 接口和环境
+→ 保存本地快照
+→ 选择模块/接口
+→ AI 生成测试用例
+→ 执行时实时看日志和报告
+```
+
+本轮处理：
+
+- `js/api-testing.js`
+  - `API 工作台` 默认不再渲染原来的多段任务卡、流程条、概览卡、风险卡和模块矩阵。
+  - 新增 `renderApiSimpleRunnerShell()`，首屏改成参考项目式两栏：
+    - 左侧：`运行环境`、`测试命令`、`执行历史`。
+    - 右侧：`执行日志`、`测试报告`。
+  - 测试命令固定围绕真实动作：
+    - `获取 Apifox 接口`：手动读取接口定义和环境，保存为本地快照。
+    - `AI 生成测试用例` / `审阅 AI 测试用例` / `批量调试 AI 用例` / `执行基线接口测试`：根据当前模块状态自动给出下一步。
+    - `环境配置`：Base URL、Header、变量和业务 token 独立配置。
+  - 模块命令文案改成动作导向，避免只显示“我的收藏接口测试”却看不出下一步。
+- `css/round5.css`
+  - 删除旧 Workbench 首页和 Runner 页面的大量复杂样式。
+  - 增加 `.api-simple-runner`、`.api-simple-sidebar`、`.api-simple-command`、`.api-simple-console`、`.api-simple-report-list` 等简洁执行台样式。
+- `task-manager.html`
+  - API 静态资源版本更新为 `20260804-api-simple-runner-v1`。
+- `tests/frontend_static_checks.py`
+  - 新增简化执行面板静态断言。
+  - 断言旧的多步流程函数和旧复杂首页样式不会重新出现。
+
+本地烟测：
+
+- 使用临时 `API_TESTING_DIR` 种入“我的收藏”3 个接口和生产环境快照，未污染真实资产。
+- 启动本地 `task_server` 于 `127.0.0.1:8099`。
+- Playwright 登录后进入 `API 工作台`，确认：
+  - 渲染 `.api-simple-runner`。
+  - 左侧只有 `运行环境 / 测试命令 / 执行历史`。
+  - 命令包含 `获取 Apifox 接口`、`审阅 AI 测试用例`、`环境配置`。
+  - 右侧包含 `执行日志 / 测试报告`。
+  - 旧的 `.api-runner-simple-flow`、`.api-task-hero`、`.api-runner-module-grid` 未出现。
+  - 默认命令有高亮，浏览器无 JS 错误。
+
+已验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 -m unittest tests.api_workbench_checks tests.api_manual_workflow_checks tests.api_native_execution_checks tests.api_case_contract_checks
+git diff --check -- js/api-testing.js css/round5.css tests/frontend_static_checks.py task-manager.html
+```
+
+注意：
+
+- 本轮没有把用户提供的业务 token 写入仓库；真实 token 仍应由页面/接口保存到服务端运行环境配置。
+- 本轮没有修改 Apifox 解析、环境发现和后端执行服务，只收敛 API 工作台默认入口和交互文案。
+- 用户历史 dirty 文件仍保持未暂存、未回滚。
+
 ### 2026-08-04 Agent 启动弹窗守卫与 Runner 回传重连
 
 线上百度网盘需求 `agent-1785808186102-7a1bd55d` 生成链路已恢复：历史成功种子 4 条 + 新增 4 条，8 条 YAML dry-run 全通过。但真机冒烟 3 条全部失败：
