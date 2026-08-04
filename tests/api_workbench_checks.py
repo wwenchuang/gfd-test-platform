@@ -241,6 +241,60 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertNotIn("刷新接口状态", text)
         self.assertNotIn("待同步", text)
 
+    def test_workbench_embeds_full_execution_events_for_runner_console(self):
+        from task_server.services import api_workbench_service
+
+        source, _revision, _draft, _confirmed = self._seed_workbench()
+        execution_id = "api_execution_full_log"
+        execution_dir = Path(self.temp_dir) / "api-executions"
+        execution_dir.mkdir(parents=True, exist_ok=True)
+        detail = {
+            "execution_id": execution_id,
+            "run_id": "api_run_full_log",
+            "run_mode": "debug_batch",
+            "plan_id": "api_plan_full_log",
+            "plan_name": "我的收藏接口批量调试",
+            "source_id": source["source_id"],
+            "status": "running",
+            "stats": {"total": 3, "completed": 1, "passed": 1, "failed": 0},
+            "created_at": "2026-08-04 10:00:00",
+            "updated_at": "2026-08-04 10:00:03",
+            "events": [
+                {
+                    "event_id": "api_event_1",
+                    "phase_id": "execute",
+                    "status": "passed",
+                    "timestamp": "2026-08-04 10:00:02",
+                    "summary": "[1/3] 收到响应 HTTP 200 · 120ms",
+                    "detail": {"case_id": "API-001", "request": {"headers": {"Authorization": "secret-runtime-token"}}},
+                }
+            ],
+            "results": [
+                {
+                    "case_id": "API-001",
+                    "status": "passed",
+                    "request": {"headers": {"Authorization": "secret-runtime-token"}},
+                }
+            ],
+        }
+        (execution_dir / f"{execution_id}.json").write_text(
+            json.dumps(detail, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        (execution_dir / "index.json").write_text(
+            json.dumps([{key: value for key, value in detail.items() if key != "events"}], ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        workbench = api_workbench_service.api_testing_workbench(source["source_id"])
+        active = workbench["execution"]["active_runs"][0]
+
+        self.assertEqual(execution_id, active["execution_id"])
+        self.assertEqual("debug_batch", active["run_mode"])
+        self.assertEqual("[1/3] 收到响应 HTTP 200 · 120ms", active["events"][0]["summary"])
+        self.assertEqual("execute", active["events"][0]["phase_id"])
+        self.assertNotIn("secret-runtime-token", json.dumps(active, ensure_ascii=False))
+
     def test_workbench_route_is_registered_and_requires_auth(self):
         from task_server import router
 

@@ -1265,6 +1265,45 @@
   grid-column: 2;
   font-style: normal;
 }
+.api-runner-module-picker {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.api-runner-module-list {
+  display: grid;
+  gap: 6px;
+}
+.api-runner-module-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(34, 211, 238, .22);
+  border-radius: 7px;
+  background: rgba(8, 47, 73, .18);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.api-runner-module-list button:hover {
+  border-color: rgba(34, 211, 238, .55);
+  background: rgba(8, 47, 73, .32);
+}
+.api-runner-module-list span,
+.api-runner-module-list small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-runner-module-list small {
+  color: var(--text3);
+  font-size: 11px;
+}
 .api-runner-primary-button {
   display: flex;
   align-items: center;
@@ -1442,7 +1481,7 @@
 }
 .api-runner-panel {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
@@ -1478,6 +1517,74 @@
 .api-runner-terminal .api-tech-log {
   border: 0;
   background: transparent;
+}
+.api-runner-terminal-note {
+  margin-bottom: 12px;
+  color: var(--text3);
+  font-size: 12px;
+}
+.api-runner-terminal-lines {
+  display: grid;
+  gap: 6px;
+  max-height: 520px;
+  overflow: auto;
+  font-family: var(--mono);
+}
+.api-runner-log-line {
+  display: grid;
+  grid-template-columns: 148px 58px minmax(0, 1fr) 88px;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(148, 163, 184, .2);
+  border-left-width: 3px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, .58);
+}
+.api-runner-log-line time,
+.api-runner-log-line small,
+.api-runner-log-line em {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-runner-log-line b {
+  color: var(--text2);
+  font-size: 11px;
+}
+.api-runner-log-line strong,
+.api-runner-log-line em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.api-runner-log-line em {
+  grid-column: 3 / -1;
+}
+.api-runner-log-line.ok {
+  border-left-color: var(--success);
+}
+.api-runner-log-line.ok b {
+  color: var(--success);
+}
+.api-runner-log-line.error {
+  border-left-color: var(--danger);
+}
+.api-runner-log-line.error b {
+  color: var(--danger);
+}
+.api-runner-log-line.warn {
+  border-left-color: var(--warning);
+}
+.api-runner-log-line.warn b {
+  color: var(--warning);
+}
+.api-runner-log-line.info {
+  border-left-color: var(--accent);
+}
+.api-runner-log-line.info b {
+  color: var(--accent);
 }
 .api-log-console {
   display: grid;
@@ -1556,9 +1663,67 @@
   display: grid;
   align-content: start;
   gap: 8px;
-  min-height: 480px;
+  min-height: 260px;
   padding: 16px;
   background: rgba(2, 6, 23, .62);
+}
+.api-runner-report-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 16px 16px 8px;
+  background: rgba(2, 6, 23, .62);
+}
+.api-runner-report-summary article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, .68);
+}
+.api-runner-report-summary span,
+.api-runner-report-summary small {
+  color: var(--text3);
+  font-size: 11px;
+}
+.api-runner-report-summary strong {
+  color: var(--text);
+  font-size: 20px;
+}
+.api-runner-report-summary article.ok strong {
+  color: var(--success);
+}
+.api-runner-report-summary article.failed strong {
+  color: var(--danger);
+}
+.api-runner-report-diagnosis {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  margin: 0 16px 8px;
+  padding: 12px 14px;
+  border: 1px solid rgba(245, 158, 11, .32);
+  border-radius: 8px;
+  background: rgba(120, 53, 15, .16);
+}
+.api-runner-report-diagnosis div {
+  display: grid;
+  gap: 4px;
+}
+.api-runner-report-diagnosis span {
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 800;
+}
+.api-runner-report-diagnosis ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text2);
 }
 .api-runner-report-card {
   display: grid;
@@ -1590,6 +1755,37 @@
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+.api-runner-advanced-links {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.api-runner-advanced-links p {
+  margin: 0;
+  color: var(--text3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.api-runner-advanced-links div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.api-runner-advanced-links button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, .7);
+  color: var(--text2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.api-runner-advanced-links button:hover {
+  border-color: rgba(34, 211, 238, .45);
+  color: var(--text);
 }
 .api-upload-row,
 .api-form-grid {
@@ -4616,6 +4812,9 @@
   .api-live-console-head,
   .api-report-strip-card,
   .api-runner-env-grid,
+  .api-runner-log-line,
+  .api-runner-report-summary,
+  .api-runner-report-diagnosis,
   .api-runner-report-card,
   .api-report-ai-summary {
     grid-template-columns: 1fr;

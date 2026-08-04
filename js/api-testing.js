@@ -1251,6 +1251,63 @@ function renderApiRunnerCommands(workbench = {}) {
   `;
 }
 
+function renderApiRunnerModulePicker(workbench = {}) {
+  const modules = apiWorkbenchCandidateModules(workbench).slice(0, 6);
+  const hasSnapshot = Number((workbench.snapshot || {}).endpoint_count || 0) > 0;
+  return `
+    <section id="api-workbench-module-section" class="api-runner-module-picker">
+      <div class="api-runner-section-title">AI 生成范围</div>
+      ${hasSnapshot ? `
+        <div class="api-runner-module-list">
+          ${modules.length ? modules.map(module => {
+            const count = apiWorkbenchEndpointCountForModule(module);
+            const selectedCount = Math.min(count, (module.endpoint_ids || []).length || API_PLAN_MAX_ENDPOINTS);
+            return `
+              <button type="button" onclick="apiWorkbenchGenerateModule(${jsArg(module.path)})">
+                <span>${escapeHtml(module.name || module.path || '未分组')}</span>
+                <small>${escapeHtml(selectedCount)} / ${escapeHtml(count)} 个接口</small>
+              </button>
+            `;
+          }).join('') : '<div class="api-runner-empty">当前快照没有可选模块</div>'}
+        </div>
+      ` : '<div class="api-runner-empty">先手动更新 Apifox 接口</div>'}
+    </section>
+  `;
+}
+
+function apiRunnerLogStatus(row = {}) {
+  const tone = apiExecutionLogTone(row);
+  if (tone === 'ok') return 'PASS';
+  if (tone === 'error') return 'FAIL';
+  if (tone === 'warn') return /skip|跳过/i.test(`${row.status || ''} ${row.summary || ''}`) ? 'SKIP' : 'WAIT';
+  return 'INFO';
+}
+
+function renderApiRunnerTerminalLines(events = [], run = {}) {
+  if (!events.length) {
+    return '<div class="api-runner-log-placeholder">等待执行任务...</div>';
+  }
+  const rows = events.slice(-160);
+  return `
+    <div class="api-runner-terminal-note">执行日志只展示关键流水；请求、响应、断言和完整详情可到执行记录查看。</div>
+    <div class="api-runner-terminal-lines" aria-label="执行日志只展示关键流水">
+      ${rows.map((row, index) => {
+        const tone = apiExecutionLogTone(row);
+        const detail = row.error || row.message || '';
+        return `
+          <div class="api-runner-log-line ${escapeHtml(tone)}">
+            <time>${escapeHtml(row.timestamp || run.updated_at || '-')}</time>
+            <b>${escapeHtml(apiRunnerLogStatus(row))}</b>
+            <strong>${escapeHtml(row.summary || row.message || row.phase_id || `执行事件 ${index + 1}`)}</strong>
+            <small>${escapeHtml(apiExecutionLogPhaseTitle(row.phase_id))}</small>
+            ${detail ? `<em>${escapeHtml(detail)}</em>` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
 function renderApiRunnerHistory(workbench = {}) {
   const rows = apiWorkbenchRecentTaskRows(workbench);
   return `
@@ -1264,6 +1321,21 @@ function renderApiRunnerHistory(workbench = {}) {
             <small>${escapeHtml(row.status)} · ${escapeHtml(row.time)}</small>
           </button>
         `).join('') : '<div class="api-runner-empty">暂无记录</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function renderApiRunnerAdvancedLinks() {
+  return `
+    <section class="api-runner-advanced-links">
+      <div class="api-runner-section-title">高级配置</div>
+      <p>接口资产 / 环境 / AI 草稿 / 报告详情</p>
+      <div>
+        <button type="button" onclick="showApiAssetsPage()">接口资产</button>
+        <button type="button" onclick="showApiEnvironmentPage()">环境配置</button>
+        <button type="button" onclick="showApiPlanPage()">AI 草稿</button>
+        <button type="button" onclick="showApiReportsPage()">报告详情</button>
       </div>
     </section>
   `;
@@ -1286,9 +1358,58 @@ function renderApiRunnerLogPanel(workbench = {}) {
       </div>
       <div class="api-runner-terminal">
         ${run.execution_id
-          ? renderApiExecutionLogRows(events, run.run_id || run.execution_id, {embedded: true})
+          ? renderApiRunnerTerminalLines(events, run)
           : '<div class="api-runner-log-placeholder">等待执行任务...</div>'}
       </div>
+    </section>
+  `;
+}
+
+function apiRunnerReportSummary(workbench = {}) {
+  const report = apiWorkbenchLatestReport(workbench);
+  const run = apiWorkbenchLatestRun(workbench);
+  const stats = report.summary || run.stats || {};
+  const total = Number(report.total || stats.total || 0);
+  const passed = Number(report.passed || stats.passed || 0);
+  const failed = Number(report.failed || stats.failed || 0);
+  const skipped = Math.max(0, Number(report.skipped || stats.skipped || 0));
+  const rate = total ? `${Math.round((passed / total) * 1000) / 10}%` : '-';
+  return {report, total, passed, failed, skipped, rate};
+}
+
+function renderApiRunnerReportSummary(workbench = {}) {
+  const summary = apiRunnerReportSummary(workbench);
+  const status = summary.report.status || apiWorkbenchLatestRun(workbench).status || '';
+  return `
+    <section class="api-runner-report-summary">
+      <article><span>总用例</span><strong>${escapeHtml(summary.total)}</strong></article>
+      <article class="ok"><span>通过</span><strong>${escapeHtml(summary.passed)}</strong></article>
+      <article class="${summary.failed ? 'failed' : 'ok'}"><span>失败</span><strong>${escapeHtml(summary.failed)}</strong></article>
+      <article><span>跳过</span><strong>${escapeHtml(summary.skipped)}</strong></article>
+      <article><span>通过率</span><strong>${escapeHtml(summary.rate)}</strong><small>${escapeHtml(apiExecutionStateText(status))}</small></article>
+    </section>
+  `;
+}
+
+function renderApiRunnerReportDiagnosis(workbench = {}) {
+  const summary = apiRunnerReportSummary(workbench);
+  const report = summary.report || {};
+  const notes = [];
+  if (summary.failed > 0) {
+    notes.push(`${summary.failed} 条失败，请优先查看响应码、业务 code、断言和环境变量。`);
+  }
+  if (Array.isArray(report.failure_groups)) {
+    report.failure_groups.slice(0, 3).forEach(group => {
+      const title = group.title || group.failure_type || group.reason || '';
+      if (title) notes.push(`${title}：${group.count || 1} 条`);
+    });
+  }
+  if (report.ai_summary) notes.push(report.ai_summary);
+  if (!notes.length) notes.push(summary.total ? '本次未发现失败，建议将稳定用例保存为基线接口测试。' : '执行后这里会展示失败原因、影响范围和下一步建议。');
+  return `
+    <section class="api-runner-report-diagnosis">
+      <div><span>失败分析</span><strong>${summary.failed ? '需要处理' : '暂无阻塞'}</strong></div>
+      <ul>${notes.slice(0, 4).map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
     </section>
   `;
 }
@@ -1297,6 +1418,8 @@ function renderApiRunnerReportPanel(workbench = {}) {
   const reports = workbench.reports || [];
   return `
     <section class="api-runner-panel" data-api-runner-panel="report" ${apiRunnerTabActive('report') ? '' : 'hidden'}>
+      ${renderApiRunnerReportSummary(workbench)}
+      ${renderApiRunnerReportDiagnosis(workbench)}
       <div class="api-runner-report-list">
         ${reports.length ? reports.slice(0, 8).map(report => {
           const failed = Number(report.failed || report.summary?.failed || 0);
@@ -1328,8 +1451,10 @@ function renderApiWorkbenchRunnerBoard(data = {}) {
           <div class="api-runner-section-title">测试命令</div>
           ${renderApiRunnerCommands(data)}
         </section>
+        ${renderApiRunnerModulePicker(data)}
         <button type="button" class="api-runner-primary-button ${escapeHtml(releaseAction.tone)}" title="${escapeHtml(releaseAction.detail)}" onclick="${releaseAction.handler}">▶ ${escapeHtml(releaseAction.label)}</button>
         ${renderApiRunnerHistory(data)}
+        ${renderApiRunnerAdvancedLinks()}
       </aside>
       <main class="api-runner-main">
         ${renderApiWorkbenchTaskHero(data)}

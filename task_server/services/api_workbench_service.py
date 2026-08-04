@@ -323,6 +323,64 @@ def _plans_for_source(source_id: str) -> Dict[str, Any]:
     }
 
 
+def _execution_with_detail(row: Dict[str, Any]) -> Dict[str, Any]:
+    execution_id = str((row or {}).get("execution_id") or "").strip()
+    if not execution_id:
+        return row if isinstance(row, dict) else {}
+    try:
+        detail = api_execution_service.get_api_execution(execution_id)
+    except Exception:
+        detail = {}
+    if not isinstance(detail, dict) or not detail:
+        return row
+    projected_keys = {
+        "execution_id",
+        "run_id",
+        "run_mode",
+        "provider",
+        "plan_id",
+        "plan_name",
+        "source_id",
+        "status",
+        "report_status",
+        "report_id",
+        "current_phase",
+        "stats",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "updated_at",
+        "duration_seconds",
+        "error",
+        "poll_after_ms",
+        "base_url",
+        "phases",
+        "events",
+        "results",
+    }
+    projected = {
+        key: detail.get(key)
+        for key in projected_keys
+        if key in detail
+    }
+    events = projected.get("events")
+    if isinstance(events, list):
+        projected["events"] = events[-200:]
+    results = projected.get("results")
+    if isinstance(results, list):
+        projected["results"] = results[-100:]
+    return api_case_contract_service.sanitize_sensitive_data({**row, **projected})
+
+
+def _execution_rows_with_detail(rows: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    detailed: List[Dict[str, Any]] = []
+    for row in rows[:max(1, int(limit or 1))]:
+        if not isinstance(row, dict):
+            continue
+        detailed.append(_execution_with_detail(row))
+    return detailed
+
+
 def _execution_summary(source_id: str) -> Dict[str, Any]:
     context = api_execution_service.api_execution_context(source_id=source_id) if source_id else {
         "readiness": {"state": "no_source", "can_execute": False, "missing": ["api_source"]},
@@ -338,8 +396,8 @@ def _execution_summary(source_id: str) -> Dict[str, Any]:
         "businesses": context.get("businesses") or [],
         "environments": context.get("environments") or [],
         "selection": context.get("selection") or {},
-        "active_runs": context.get("active_runs") or [],
-        "recent_runs": context.get("recent_runs") or [],
+        "active_runs": _execution_rows_with_detail(context.get("active_runs") or [], 3),
+        "recent_runs": _execution_rows_with_detail(context.get("recent_runs") or [], 8),
         "empty_reason": context.get("empty_reason") or "",
         "poll_after_ms": context.get("poll_after_ms") or 2000,
     }

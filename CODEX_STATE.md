@@ -28,6 +28,54 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 API 工作台参考执行器式一屏体验收敛
+
+用户上传 `主对话_aippt-auto-test-share.zip` 后再次明确：API 自动化默认入口不要继续堆接口资产、环境、AI 草稿和报告详情页面，而应像参考执行器一样先让新同事看到“环境 / 测试命令 / 执行日志 / 测试报告”。本轮定位到两个真实卡点：
+
+- workbench 聚合的执行列表只带 index 摘要，默认工作台日志区拿不到真实 `events`，所以用户看到的执行日志容易为空或只能跳转到别的页面。
+- “AI 生成测试集”按钮滚动到 `api-workbench-module-section`，但默认工作台已不渲染该模块区，导致主流程断裂。
+
+修复：
+
+- `task_server/services/api_workbench_service.py`
+  - `execution.active_runs/recent_runs` 改为嵌入脱敏后的完整执行详情，包含 `events/results/phases/stats`，事件截断到最近 200 条，结果截断到最近 100 条。
+  - 聚合层对执行详情再做一次递归脱敏，防止历史 execution 文件或第三方写入里残留 Authorization / token 明文。
+  - 保留现有执行语义，不新增执行模式，不改变 API runner 的真实结果来源。
+- `js/api-testing.js`
+  - 新增 `renderApiRunnerTerminalLines()`，工作台执行日志按参考执行器展示 PASS/FAIL/WAIT/INFO 关键流水，而不是大段 JSON。
+  - 新增 `renderApiRunnerReportSummary()` / `renderApiRunnerReportDiagnosis()`，默认报告页先展示总数、通过、失败、跳过、通过率和失败分析建议。
+  - 新增 `renderApiRunnerModulePicker()`，在左侧命令区直接选择模块生成 AI 测试资产，修复旧锚点失效。
+  - 新增 `renderApiRunnerAdvancedLinks()`，把接口资产、环境配置、AI 草稿、报告详情收进“高级配置”，默认路径保持一屏执行器。
+- `css/round5.css`
+  - 增加模块选择、终端日志行、报告摘要、失败诊断和高级入口样式，补充窄屏单列规则。
+- `task-manager.html`
+  - API 前端缓存版本更新为 `20260804-api-runner-console-v1`。
+- `tests/api_workbench_checks.py` / `tests/frontend_static_checks.py`
+  - 增加 workbench 必须嵌入真实 execution events 的回归。
+  - 增加默认 API 工作台必须提供 `renderApiRunnerTerminalLines`、`api-runner-report-summary`、`api-runner-advanced-links` 和“执行日志只展示关键流水”的静态回归。
+
+验证：
+
+```bash
+node --check js/api-testing.js
+python3 tests/frontend_static_checks.py
+python3 -m unittest tests.api_manual_workflow_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 -m py_compile task_server/services/api_workbench_service.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/api_workbench_service.py js/api-testing.js css/round5.css tests/api_workbench_checks.py tests/frontend_static_checks.py task-manager.html
+```
+
+本地浏览器 smoke：
+
+- 使用临时 `API_TESTING_DIR=/tmp/midscene-api-runner-smoke.*` 和 `PORT=8099` 启动 dev 服务。
+- 种子数据只包含 3 个“我的收藏”接口、生产环境中文名和测试用假 token。
+- Playwright 登录 `admin / sonic2026` 后打开 API 工作台，确认：
+  - `.api-runner-board`、`.api-runner-sidebar` 正常渲染。
+  - `#api-workbench-module-section` 在默认页存在。
+  - “执行日志 / 测试报告”两个 tab 存在。
+  - “高级配置”显示 `接口资产 / 环境 / AI 草稿 / 报告详情`。
+- 临时目录和截图已清理。
+
 ### 2026-08-04 Agent 历史成功种子恢复与真实 Runner 报告统计修复
 
 线上百度网盘需求 5 次回归暴露两个确定问题：
