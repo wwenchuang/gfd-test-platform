@@ -2634,8 +2634,31 @@ def test_desktop_runners_queue_report_after_result_is_archived():
         assert 'f"/api/runner/jobs/{job_id}/report-ready"' in runner
         run_job_body = runner[runner.index("def run_job("):runner.index("def print_startup()")]
         assert "http_upload_report(report_path, report_name)" not in run_job_body
-        assert '"report_upload_pending": bool(report_path)' in run_job_body
+        assert '"report_upload_pending": bool(report_path and not report_uploaded)' in run_job_body
         assert 'report_url = SERVER.rstrip("/") + "/reports/" + urllib.parse.quote(report_name)' in run_job_body
+
+
+def test_desktop_runners_replay_failed_result_callbacks_after_server_restart():
+    for filename in ("mac-midscene-runner.py", "windows-midscene-runner.py"):
+        runner = (ROOT / filename).read_text(encoding="utf-8")
+        assert "CALLBACK_OUTBOX_DIR" in runner
+        assert "def queue_failed_result_callback" in runner
+        assert "def replay_pending_result_callbacks" in runner
+        main_body = runner[runner.index("def main("):runner.index('if __name__ == "__main__"')]
+        assert "replay_pending_result_callbacks()" in main_body
+        assert main_body.index("heartbeat(devices)") < main_body.index("replay_pending_result_callbacks()") < main_body.index('http_json("GET", f"/api/runner/jobs/next?{qs}")')
+
+
+def test_desktop_runners_upload_report_before_result_callback_and_keep_outbox_metadata():
+    for filename in ("mac-midscene-runner.py", "windows-midscene-runner.py"):
+        runner = (ROOT / filename).read_text(encoding="utf-8")
+        assert "def upload_report_before_result" in runner
+        run_job_body = runner[runner.index("def run_job("):runner.index("def print_startup()")]
+        assert "upload_report_before_result(job_id, report_path, report_name)" in run_job_body
+        assert run_job_body.index("upload_report_before_result(job_id, report_path, report_name)") < run_job_body.index('return payload')
+        main_body = runner[runner.index("def main("):runner.index('if __name__ == "__main__"')]
+        assert "queue_failed_result_callback(job[\"job_id\"], result, pending_report_path, pending_report_name)" in main_body
+        assert "enqueue_report_upload(job[\"job_id\"], pending_report_path, pending_report_name)" in main_body
 
 
 def test_sonic_step_state_marks_bridge_and_legacy_steps_as_cleanup_required():
@@ -2952,6 +2975,8 @@ if __name__ == "__main__":
     test_groovy_default_does_not_force_kill_midscene_process()
     test_desktop_runners_default_to_five_minute_midscene_timeout()
     test_desktop_runners_queue_report_after_result_is_archived()
+    test_desktop_runners_replay_failed_result_callbacks_after_server_restart()
+    test_desktop_runners_upload_report_before_result_callback_and_keep_outbox_metadata()
     test_sonic_step_state_marks_bridge_and_legacy_steps_as_cleanup_required()
     test_sonic_step_state_marks_old_feishu_midscene_script_as_legacy()
     test_syncing_sonic_case_keeps_one_bridge_and_deletes_old_midscene_steps()

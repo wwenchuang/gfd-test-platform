@@ -11244,6 +11244,34 @@ def check_yaml_static_validation_and_patterns():
         and dry_run_midscene_yaml(normalized_model_yaml, app_package="com.example.print").get("ok") is True,
         "Runtime guard normalization must flatten model text/description prompt aliases into official Midscene string actions",
     )
+    popup_guard_yaml = """android:
+  tasks:
+    - name: basic print startup guard
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: 小白学习打印首页已加载，文档打印入口可见
+        - aiTap: 点击文档打印入口
+        - aiWaitFor: 文档打印页已打开
+"""
+    normalized_popup_yaml, popup_guard_changes = normalize_yaml_runtime_guards(
+        popup_guard_yaml,
+        app_package="com.xbxxhz.box",
+    )
+    normalized_popup_flow = yaml_service_module._pyyaml.safe_load(normalized_popup_yaml)["android"]["tasks"][0]["flow"]
+    popup_guard_index = next(
+        (idx for idx, item in enumerate(normalized_popup_flow) if isinstance(item, dict) and item.get("ai") and "活动弹窗" in str(item.get("ai"))),
+        -1,
+    )
+    first_business_tap_index = next(
+        (idx for idx, item in enumerate(normalized_popup_flow) if isinstance(item, dict) and "aiTap" in item),
+        -1,
+    )
+    require(
+        popup_guard_index >= 0
+        and first_business_tap_index > popup_guard_index
+        and any("弹窗/浮层" in item for item in popup_guard_changes),
+        "Default runtime guard must dismiss startup permission/activity popups before the first business tap",
+    )
     scan_reachability_yaml = """android:
   tasks:
     - name: 扫描复印企业云盘点击后首个可见页校验

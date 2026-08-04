@@ -28,6 +28,47 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 Agent 启动弹窗守卫与 Runner 回传重连
+
+线上百度网盘需求 `agent-1785808186102-7a1bd55d` 生成链路已恢复：历史成功种子 4 条 + 新增 4 条，8 条 YAML dry-run 全通过。但真机冒烟 3 条全部失败：
+
+- 文档打印首条被启动后的「喜欢哪个免费拿」活动弹窗遮挡，归类 `script_issue / popup_overlay`。
+- 照片打印 300s 超时，扫描复印 95% 清理阶段 Runner 回传停滞 300s 后被平台回收，归类环境/回传问题。
+
+修复：
+
+- `task_server/services/yaml_service.py`
+  - 新增 `STARTUP_POPUP_GUARD_PROMPT`、`startup_popup_guard_flow()`、`should_insert_startup_popup_guard()`、`insert_startup_popup_guard_after_launch()`。
+  - 默认 `balanced`/`strict` 运行时守卫都会在首次 `launch` 后、首个业务点击前插入一次通用启动弹窗处理。
+  - 守卫只处理权限、升级、广告、活动、免费领取、新手引导和蒙层的关闭/跳过/允许；明确禁止点击领取、立即体验、去使用、去打印、提交或确认业务按钮。
+  - 已有启动弹窗守卫的 YAML 不重复插入。
+- `windows-midscene-runner.py` / `mac-midscene-runner.py`
+  - 新增 `CALLBACK_OUTBOX_DIR`，结果回传失败时把最终 payload、报告路径和报告名落到本地 outbox。
+  - 心跳恢复后、拉取新任务前先执行 `replay_pending_result_callbacks()`，补发服务端重启期间完成的旧结果。
+  - `run_job()` 在返回结果前优先同步上传 HTML 报告并调用 `report-ready`，同步失败才保留后台上传队列。
+  - `report_upload_pending` 改为只有“存在报告且同步上传失败”时才为 true，避免有报告却长期显示缺失。
+- `tests/backend_static_checks.py`
+  - 增加默认启动弹窗守卫必须插在业务 `aiTap` 前的回归。
+- `tests/test_sonic_integration.py`
+  - 增加 Runner 本地 outbox 补发、心跳恢复后先补发、同步上传报告优先于 result callback 的静态回归。
+
+验证：
+
+```bash
+python3 - <<'PY'
+from tests import backend_static_checks as c
+c.check_yaml_static_validation_and_patterns()
+print('popup guard check passed')
+PY
+python3 - <<'PY'
+from tests import test_sonic_integration as t
+t.test_desktop_runners_replay_failed_result_callbacks_after_server_restart()
+t.test_desktop_runners_upload_report_before_result_callback_and_keep_outbox_metadata()
+t.test_desktop_runners_queue_report_after_result_is_archived()
+print('runner callback checks passed')
+PY
+```
+
 ### 2026-08-04 API 工作台模块任务流收敛
 
 用户继续反馈 API 自动化“乱乱的”，并要求真实测“我的收藏”这 3 个接口时，新同事能一眼知道从哪里开始。本轮复核线上/本地路径后定位到两个根因：

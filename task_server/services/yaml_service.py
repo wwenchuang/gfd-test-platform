@@ -2454,6 +2454,14 @@ def evidence_needs_popup_guard(evidence_text=""):
     return any(word.lower() in text.lower() for word in keywords)
 
 
+STARTUP_POPUP_GUARD_PROMPT = (
+    "启动弹窗处理只判断当前截图，最多点击一次：如果出现系统授权提示、升级提示、"
+    "广告弹窗、活动弹窗、免费领取弹窗、新手引导或蒙层，点击可见的允许、"
+    "稍后、跳过、知道了、关闭、X 或右上角关闭按钮；如果没有弹窗或已经在首页，"
+    "立即完成。不要点击领取、立即体验、去使用、去打印、提交或确认业务按钮。"
+)
+
+
 def extract_app_package_from_yaml(yaml_text):
     """从 YAML 文本中提取 app package。"""
     packages = []
@@ -3068,6 +3076,37 @@ def dynamic_recent_tasks_cleanup_flow(indent):
     ]
 
 
+def startup_popup_guard_flow(indent):
+    """生成启动后的一次性通用弹窗守卫。"""
+    return [
+        indent + "- ai: " + yaml_text(STARTUP_POPUP_GUARD_PROMPT),
+        indent + "- sleep: 800",
+    ]
+
+
+def should_insert_startup_popup_guard(evidence_text=""):
+    """默认 balanced/strict 都处理启动弹窗；minimal 仅在有证据时启用。"""
+    mode = runtime_guard_mode()
+    return mode in ("balanced", "strict") or evidence_needs_popup_guard(evidence_text)
+
+
+def insert_startup_popup_guard_after_launch(block, indent, evidence_text=""):
+    """将启动弹窗守卫插到首次 launch 后，且不重复插入。"""
+    if (
+        not should_insert_startup_popup_guard(evidence_text)
+        or not task_block_has_key(block, "launch")
+        or task_block_has_startup_popup_guard(block)
+    ):
+        return block, []
+    lines = (block or "").splitlines()
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*-\s+launch\s*:", line):
+            insert_at = index + 1
+            lines = lines[:insert_at] + startup_popup_guard_flow(indent) + lines[insert_at:]
+            return "\n".join(lines).rstrip(), ["补充启动弹窗/浮层一次性兜底处理"]
+    return block, []
+
+
 def launch_guard_flow(indent, app_package=None, evidence_text=""):
     """生成启动守卫流程。"""
     app_package = (app_package or "").strip()
@@ -3085,11 +3124,8 @@ def launch_guard_flow(indent, app_package=None, evidence_text=""):
         indent + "- sleep: 800",
         indent + "- launch: " + app_package,
     ])
-    if mode == "strict" or evidence_needs_popup_guard(evidence_text):
-        flows.extend([
-            indent + "- ai: " + yaml_text("如果出现权限弹窗、升级弹窗、广告弹窗、活动弹窗或引导浮层，优先点击允许、知道了、稍后、跳过、关闭或右上角关闭按钮；没有弹窗就继续"),
-            indent + "- sleep: 1000",
-        ])
+    if should_insert_startup_popup_guard(evidence_text):
+        flows.extend(startup_popup_guard_flow(indent))
     if mode == "strict":
         flows.extend([
             indent + "- ai: " + yaml_text("确保当前停留在被测 App 内；如果不在首页，尝试返回到首页或点击底部首页 Tab"),
@@ -4128,6 +4164,14 @@ def task_block_has_popup_guard(block):
     return any(word in (block or "") for word in ("弹窗", "浮层", "关闭", "跳过", "允许"))
 
 
+def task_block_has_startup_popup_guard(block):
+    """判断 task 块中是否已有启动阶段的条件式弹窗处理。"""
+    text = block or ""
+    startup_terms = ("启动弹窗处理", "打开之后如果有弹窗", "如果有弹窗就", "没有弹窗就", "没有弹窗则")
+    action_terms = ("关闭", "跳过", "允许", "知道了", "稍后", "X", "x按钮")
+    return any(term in text for term in startup_terms) and any(term in text for term in action_terms)
+
+
 def task_block_ends_with_key(block, key):
     """判断 task 块最后一个 flow 项是否为指定 key。"""
     flow_keys = []
@@ -5162,12 +5206,14 @@ def normalize_task_block_runtime_guards(block, app_package=None, evidence_text="
         changes.append("补充启动前清理 App 状态，并回到手机主页脱离系统文件页/外部页面")
     elif (runtime_guard_mode() == "strict" or evidence_needs_popup_guard(evidence_text)) and not task_block_has_popup_guard(block):
         insert = [
-            indent + "- ai: " + yaml_text("如果出现权限弹窗、升级弹窗、广告弹窗、活动弹窗或引导浮层，优先点击允许、知道了、稍后、跳过、关闭或右上角关闭按钮；没有弹窗就继续"),
+            indent + "- ai: " + yaml_text("如果出现系统授权提示、升级提示、广告弹窗、活动弹窗或引导浮层，优先点击允许、知道了、稍后、跳过、关闭或右上角关闭按钮；没有弹窗就继续"),
             indent + "- sleep: 1000",
         ]
         lines = lines[:flow_idx + 1] + insert + lines[flow_idx + 1:]
         changes.append("补充弹窗/浮层兜底处理")
     text = "\n".join(lines).rstrip()
+    text, startup_popup_changes = insert_startup_popup_guard_after_launch(text, indent, evidence_text)
+    changes.extend(startup_popup_changes)
     if "aiTap:" not in text and "aiAction:" not in text and "ai:" not in text and "aiAct:" not in text and "aiAssert:" not in text and "aiWaitFor:" not in text:
         text = text + "\n" + indent + "- aiAssert: " + yaml_text("当前 App 页面已正常展示")
         text = text + "\n" + indent + "- sleep: 500"

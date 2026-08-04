@@ -19,7 +19,8 @@ SERVER = os.getenv("TASK_SERVER", "http://101.34.197.12:8088")
 RUNNER_ID = os.getenv("RUNNER_ID", "win-runner-01")
 TOKEN = os.getenv("MIDSCENE_RUNNER_TOKEN", "").strip()
 WORKSPACE = Path(os.getenv("MIDSCENE_RUNNER_WORKSPACE", r"D:\sonic\midscene_run"))
-RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.24-qwen3.7-midscene110-v3")
+CALLBACK_OUTBOX_DIR = WORKSPACE / "callback_outbox"
+RUNNER_VERSION = os.getenv("MIDSCENE_RUNNER_VERSION", "2026.07.26-qwen3.7-result-retry-v1")
 RUNNER_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "3"))
 MIDSCENE_BIN = os.getenv("MIDSCENE_BIN", "midscene")
@@ -386,6 +387,70 @@ def post_job_report_ready(job_id, report_url="", local_report_path="", report_up
         "local_report_path": local_report_path,
         "report_upload_error": report_upload_error,
     }, timeout=60, attempts=3, label="报告回传")
+
+
+def upload_report_before_result(job_id, report_path, report_name):
+    if not report_path or not report_name:
+        return "", ""
+    try:
+        report_url = http_upload_report(Path(report_path), report_name)
+        print(f"Uploaded report before result callback: {report_url}")
+        try:
+            post_job_report_ready(job_id, report_url, str(report_path), "")
+        except Exception as e:
+            print(f"Immediate report association warning: {e}")
+        return report_url, ""
+    except Exception as e:
+        upload_error = str(e)
+        print(f"Immediate report upload failed, will keep background fallback: {upload_error}")
+        return "", upload_error
+
+
+def _callback_outbox_path(job_id):
+    safe = safe_filename(job_id).replace(".yaml", "").replace(".yml", "") or "job"
+    return CALLBACK_OUTBOX_DIR / f"{safe}.json"
+
+
+def queue_failed_result_callback(job_id, payload, pending_report_path="", pending_report_name=""):
+    CALLBACK_OUTBOX_DIR.mkdir(parents=True, exist_ok=True)
+    record = {
+        "job_id": job_id,
+        "payload": payload,
+        "pending_report_path": pending_report_path,
+        "pending_report_name": pending_report_name,
+        "queued_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    target = _callback_outbox_path(job_id)
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(target)
+    print(f"Queued result callback for replay: {job_id}")
+
+
+def replay_pending_result_callbacks():
+    if not CALLBACK_OUTBOX_DIR.exists():
+        return 0
+    replayed = 0
+    for path in sorted(CALLBACK_OUTBOX_DIR.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8", errors="ignore"))
+            job_id = record.get("job_id") or path.stem
+            payload = record.get("payload") or {}
+            pending_report_path = record.get("pending_report_path") or ""
+            pending_report_name = record.get("pending_report_name") or ""
+            if not isinstance(payload, dict) or not job_id:
+                path.unlink(missing_ok=True)
+                continue
+            post_job_result(job_id, payload)
+            if payload.get("report_upload_pending"):
+                enqueue_report_upload(job_id, pending_report_path, pending_report_name)
+            path.unlink(missing_ok=True)
+            replayed += 1
+            print(f"Replayed queued result callback: {job_id}")
+        except Exception as e:
+            print(f"Queued result callback replay paused: {path.name}: {e}")
+            break
+    return replayed
 
 
 def report_upload_worker():
@@ -1476,10 +1541,17 @@ def run_job(job):
     report_upload_error = ""
     report_missing_reason = ""
     report_name = ""
+    report_uploaded = False
     if report_path:
         report_name = f"{safe_filename(job.get('file', 'task')).replace('.yaml', '').replace('.yml', '')}-{job_id}.html"
         report_url = SERVER.rstrip("/") + "/reports/" + urllib.parse.quote(report_name)
         print(f"Report reserved for background upload: {report_url}")
+        uploaded_report_url, immediate_upload_error = upload_report_before_result(job_id, report_path, report_name)
+        if uploaded_report_url:
+            report_url = uploaded_report_url
+            report_uploaded = True
+        elif immediate_upload_error:
+            report_upload_error = immediate_upload_error
     else:
         report_missing_reason = "Midscene 未生成 HTML 报告，通常是启动前失败、命令异常退出，或报告目录未写入"
         print(f"Report not found: {report_missing_reason}")
@@ -1497,7 +1569,7 @@ def run_job(job):
         "local_report_path": str(report_path) if report_path else "",
         "report_upload_error": report_upload_error,
         "report_missing_reason": report_missing_reason,
-        "report_upload_pending": bool(report_path),
+        "report_upload_pending": bool(report_path and not report_uploaded),
         "_pending_report_path": str(report_path) if report_path else "",
         "_pending_report_name": report_name,
     }
@@ -1583,6 +1655,7 @@ def main():
             try:
                 heartbeat(devices)
                 log_runner_recovered("Heartbeat", error_state)
+                replay_pending_result_callbacks()
             except Exception as e:
                 log_runner_error("Heartbeat", e, error_state)
             qs = urllib.parse.urlencode({
@@ -1601,8 +1674,13 @@ def main():
             print(f"Finished {job['job_id']} status={result['status']}")
             pending_report_path = result.pop("_pending_report_path", "")
             pending_report_name = result.pop("_pending_report_name", "")
-            post_job_result(job["job_id"], result)
-            enqueue_report_upload(job["job_id"], pending_report_path, pending_report_name)
+            try:
+                post_job_result(job["job_id"], result)
+            except Exception:
+                queue_failed_result_callback(job["job_id"], result, pending_report_path, pending_report_name)
+                raise
+            if result.get("report_upload_pending"):
+                enqueue_report_upload(job["job_id"], pending_report_path, pending_report_name)
         except urllib.error.HTTPError as e:
             log_runner_error("Runner", e, error_state)
             print(f"HTTP detail: {e.code} {http_error_text(e)}")
