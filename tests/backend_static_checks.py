@@ -14139,6 +14139,60 @@ def check_agent_report_summary_reconciles_plan_buckets_with_final_recovery():
     )
 
 
+def check_agent_report_summary_uses_real_runner_totals_when_plan_buckets_are_stale():
+    from task_server.services import agent_service
+
+    run = {
+        "runId": "agent-static-real-runner-total-over-plan-bucket",
+        "status": "DONE",
+        "artifacts": {
+            "summary": {
+                "conclusion": "部分通过",
+                "execution": {
+                    "outcome": "partial",
+                    "label": "部分通过",
+                    "hasExecution": True,
+                    "logicalAttemptCount": 13,
+                    "logicalPassedCount": 11,
+                    "logicalFailedCount": 2,
+                    "logicalTimeoutCount": 0,
+                    "logicalRunningCount": 0,
+                    "smokeAllFailed": False,
+                    "phases": [
+                        {"phase": "smoke", "passed": 1, "failed": 1},
+                        {"phase": "expanded-1", "passed": 10, "failed": 1},
+                    ],
+                },
+                "orchestration": {"runStatus": "DONE", "label": "编排完成"},
+            },
+            "generationPipeline": {"caseCount": 7, "automationCaseCount": 7, "yamlFileCount": 7},
+            "generatedYamlExecutionPlan": {
+                "counts": {"total": 7, "selectedSmoke": 2, "deferredExecutable": 5},
+                "smokeResult": {"total": 2, "passed": 1, "failed": 1, "timeout": 0},
+            },
+            "report": {"status": "failed"},
+        },
+    }
+
+    summary = agent_service._agent_run_report_summary(run)
+    require(
+        summary.get("attempted") == 13
+        and summary.get("passed") == 11
+        and summary.get("failed") == 2,
+        "Agent history cards must not undercount real Runner attempts when generatedYamlExecutionPlan buckets are stale",
+    )
+    require(
+        summary.get("smokeAttempted") == 2
+        and summary.get("smokePassed") == 1
+        and summary.get("smokeFailed") == 1
+        and summary.get("nonSmokeAttempted") == 11
+        and summary.get("nonSmokePassed") == 10
+        and summary.get("nonSmokeFailed") == 1
+        and "runner" in str(summary.get("executionBucketsSource") or "").lower(),
+        "Report buckets must supplement stale plan buckets from real Runner phase/logical totals",
+    )
+
+
 def check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements():
     from task_server.services.case_service import generation_volume_targets
 
@@ -16056,6 +16110,101 @@ android:
         agent_service._agent_generate_yaml_from_ui_pipeline = original_pipeline
 
 
+def check_agent_generation_job_failure_keeps_historical_seed_execution_floor():
+    from task_server import storage
+    from task_server.services import agent_service, yaml_service
+
+    old_runs_file = agent_service.AGENT_RUNS_FILE
+    original_load_generate_job = yaml_service.load_generate_job
+    original_update_generate_job = yaml_service.update_generate_job
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            seed_path = os.path.join(temp_dir, "midscene-tasks", "AI Agent 草稿", "文档打印百度网盘入口.yaml")
+            os.makedirs(os.path.dirname(seed_path), exist_ok=True)
+            storage.write_text_file(seed_path, """
+android:
+  tasks:
+    - name: "文档打印百度网盘入口历史成功种子"
+      flow:
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "首页已加载完成"
+        - aiTap: "文档打印"
+        - aiWaitFor: "文档打印页展示百度网盘入口"
+        - aiAssert: "百度网盘入口可见且文案正确"
+""")
+            agent_service.AGENT_RUNS_FILE = os.path.join(temp_dir, "agent-runs.json")
+            seed_refs = [{
+                "type": "file",
+                "source": "generated",
+                "generated": True,
+                "validationMode": "historical_success_seed",
+                "module": "AI Agent 草稿",
+                "file": os.path.basename(seed_path),
+                "path": seed_path,
+                "confirmed": True,
+                "executionLevel": "executable",
+                "historySeed": True,
+                "historySeedRunId": "agent-static-history-seed-passed",
+            }]
+            run = {
+                "runId": "agent-static-history-seed-job-failure",
+                "status": "RUNNING",
+                "currentStep": "GENERATE_YAML",
+                "target": "基础打印新增百度网盘入口",
+                "sourceType": "figma",
+                "steps": [
+                    {"step": "GENERATE_YAML", "status": "RUNNING", "startedAt": "2026-08-03T20:00:00", "toolCalls": [], "liveTrace": []},
+                    {"step": "VALIDATE_YAML", "status": "PENDING"},
+                    {"step": "RISK_REVIEW", "status": "PENDING"},
+                ],
+                "artifacts": {
+                    "sourceContext": {
+                        "sourceType": "figma",
+                        "requirementText": "覆盖文档打印、照片打印、扫描复印三个入口的百度网盘展示、同级、文案、可达性",
+                    },
+                    "generationPipeline": {
+                        "source": "historical_success_seed",
+                        "reusedHistoricalSuccessSeed": True,
+                        "historicalSeedIncrementalAttempted": True,
+                        "progressJobId": "gen-static-history-seed-job-failure",
+                    },
+                },
+            }
+            agent_service._apply_agent_historical_success_seed(run, seed_refs)
+            yaml_service.load_generate_job = lambda _job_id: {
+                "job_id": "gen-static-history-seed-job-failure",
+                "status": "failed",
+                "step": "生成用例结构",
+                "message": "最终可执行 YAML 不足",
+                "error": "最终可执行 YAML 不足",
+                "progress": 100,
+                "error_detail": {"type": "case_count_below_min"},
+            }
+            yaml_service.update_generate_job = lambda _job_id, **kwargs: {"job_id": _job_id, **kwargs}
+
+            changed = agent_service._sync_agent_generation_job_state(run)
+            step = run["steps"][0]
+            artifacts = run.get("artifacts") or {}
+            pipeline = artifacts.get("generationPipeline") or {}
+            validation = artifacts.get("yamlValidation") or {}
+            require(
+                changed
+                and run.get("status") == "RUNNING"
+                and run.get("currentStep") == "VALIDATE_YAML"
+                and step.get("status") == "SUCCESS"
+                and "保留历史成功种子" in step.get("summary", "")
+                and len(artifacts.get("yamlRefs") or []) == 1
+                and pipeline.get("incrementalGenerationError")
+                and not pipeline.get("error")
+                and validation.get("ok") is True,
+                "Failed background generation jobs must keep historical success seeds as the execution floor and resume validation",
+            )
+    finally:
+        agent_service.AGENT_RUNS_FILE = old_runs_file
+        yaml_service.load_generate_job = original_load_generate_job
+        yaml_service.update_generate_job = original_update_generate_job
+
+
 def check_agent_run_retry_clones_inputs_without_artifacts():
     from task_server import storage
     from task_server.services import agent_service
@@ -17251,9 +17400,11 @@ def main():
     check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
     check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
     check_agent_report_summary_reconciles_plan_buckets_with_final_recovery()
+    check_agent_report_summary_uses_real_runner_totals_when_plan_buckets_are_stale()
     check_agent_new_requirement_reuses_historical_success_seed()
     check_runner_wait_reads_fresh_job_state_during_agent_rerun()
     check_agent_historical_seed_survives_incremental_generation_failure()
+    check_agent_generation_job_failure_keeps_historical_seed_execution_floor()
     check_generation_volume_uses_acceptance_dimensions_for_large_entry_requirements()
     check_agent_cancel_cascades_runner_jobs()
     check_agent_history_compacts_uploaded_blobs_after_prepare()

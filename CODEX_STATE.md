@@ -28,6 +28,52 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 Agent 历史成功种子恢复与真实 Runner 报告统计修复
+
+线上百度网盘需求 5 次回归暴露两个确定问题：
+
+- 部分 Agent 已经命中历史全通过种子 YAML，但后台增量生成 job 失败后，恢复器仍把 `GENERATE_YAML` 标记为失败，导致 `0 executable` 且不进入 Runner。
+- 报告卡片在计划桶缺少后续真实执行记录时，会用 `generatedYamlExecutionPlan` 覆盖真实 Runner 逻辑执行数，出现 `1/2`、`4/3` 等用户无法直观看懂的统计。
+
+修复：
+
+- `task_server/services/agent_service.py`
+  - 新增 `_agent_recover_generation_with_historical_seed_floor()`。
+  - 当 `GENERATE_YAML` 后台 job 失败、超时、取消或缺失，但当前 Agent 已保留历史成功种子时，不再整单失败：
+    - 恢复历史种子为可执行 YAML floor。
+    - `GENERATE_YAML` 步骤标记 `SUCCESS`。
+    - 写入 `incrementalGenerationError` 作为增量失败说明，但清除阻断型 `generationPipeline.error`。
+    - 推进到下一个 pending 步骤，服务恢复扫描会自动续跑 worker。
+  - 报告 smoke/non-smoke bucket 在计划缺少真实后续执行桶时，使用 Runner logical totals 补足非冒烟实际执行桶，并标记 `executionBucketsSource=generatedYamlExecutionPlan+runnerLogicalTotals`。
+- `tests/backend_static_checks.py`
+  - 新增回归：后台生成 job 失败时必须保留历史成功种子并继续 `VALIDATE_YAML`。
+  - 新增回归：真实 Runner 逻辑执行数大于 stale 计划桶时，历史卡片/报告不能低估分母和通过数。
+
+验证：
+
+```bash
+python3 - <<'PY'
+from tests import backend_static_checks as c
+c.check_agent_report_summary_uses_real_runner_totals_when_plan_buckets_are_stale()
+c.check_agent_generation_job_failure_keeps_historical_seed_execution_floor()
+print('new checks passed')
+PY
+python3 - <<'PY'
+from tests import backend_static_checks as c
+c.check_agent_report_summary_keeps_non_smoke_buckets()
+c.check_agent_report_summary_keeps_non_smoke_actual_execution_separate_from_plan()
+c.check_agent_report_summary_counts_unique_final_cases_after_expanded_repair()
+c.check_agent_report_summary_reconciles_plan_buckets_with_final_recovery()
+c.check_agent_report_summary_uses_real_runner_totals_when_plan_buckets_are_stale()
+c.check_agent_historical_seed_survives_incremental_generation_failure()
+c.check_agent_generation_job_failure_keeps_historical_seed_execution_floor()
+print('targeted adjacent checks passed')
+PY
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py tests/backend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/agent_service.py tests/backend_static_checks.py
+```
+
 ### 2026-08-03 API 手动 Apifox 更新与参考执行器式日志收敛
 
 用户上传 `主对话_aippt-auto-test-share.zip` 作为参考，核心设计不是堆页面，而是把流程压缩为“左侧环境 / 测试命令 / 执行历史，右侧执行日志 / 测试报告”。参考实现的日志按步骤追加 PASS/FAIL/SKIP，失败时给原因和建议，不让大段 JSON 或反复刷新扰乱阅读。

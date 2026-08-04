@@ -545,6 +545,110 @@ def _agent_orphaned_generation_message(stage, job):
     )
 
 
+def _agent_recover_generation_with_historical_seed_floor(run, step, job_id, stage, status, message, detail=None, orphaned=False):
+    """Keep verified historical YAML executable when incremental generation fails."""
+    if not isinstance(run, dict):
+        return False
+    artifacts = run.setdefault("artifacts", {})
+    pipeline = artifacts.get("generationPipeline") if isinstance(artifacts.get("generationPipeline"), dict) else {}
+    if not (
+        pipeline.get("reusedHistoricalSuccessSeed")
+        or pipeline.get("historicalSeedIncrementalAttempted")
+        or artifacts.get("historicalSuccessSeedRefs")
+    ):
+        return False
+    seed_refs = _agent_current_historical_seed_refs(run)
+    if not seed_refs:
+        return False
+    applied_refs = _agent_restore_historical_seed_execution_floor(run, seed_refs)
+    if not applied_refs:
+        return False
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    stage = str(stage or "生成 YAML").strip()
+    status = str(status or "failed").strip().lower()
+    message = str(message or f"{stage}未完成").strip() or f"{stage}未完成"
+    detail = detail if isinstance(detail, dict) else {"message": str(detail or message)}
+    artifacts = run.setdefault("artifacts", {})
+    pipeline = artifacts.setdefault("generationPipeline", {})
+    pipeline.pop("error", None)
+    pipeline.pop("errorDetail", None)
+    pipeline.update({
+        "source": "historical_success_seed",
+        "reusedHistoricalSuccessSeed": True,
+        "historicalSeedIncrementalAttempted": True,
+        "historicalSeedYamlFileCount": len(applied_refs),
+        "incrementalYamlFileCount": 0,
+        "yamlFileCount": len(applied_refs),
+        "progressJobId": job_id,
+        "jobStatus": status,
+        "incrementalGenerationError": message[:500],
+        "incrementalGenerationErrorDetail": detail,
+        "incrementalGenerationErrorStage": stage,
+        "incrementalGenerationRecoveredByHistoricalSeed": True,
+        "interruptedByWorkerLost": bool(orphaned or detail.get("type") in ("service_restart_interrupted", "worker_lost_or_model_stalled")),
+        "interruptedByServiceRestart": bool(detail.get("type") == "service_restart_interrupted"),
+    })
+    validation = _agent_yaml_validation_state(artifacts.get("yamlValidation"))
+    gate = validation.get("executionGate") if isinstance(validation.get("executionGate"), dict) else {}
+    artifacts["yamlValidation"] = {
+        **validation,
+        "ok": True,
+        "issues": [],
+        "autoConfirmed": True,
+        "historicalSeedIncremental": False,
+        "historicalSeedCount": len(applied_refs),
+        "incrementalGeneratedCount": 0,
+        "incrementalGenerationError": message[:500],
+        "executionGate": {
+            **gate,
+            "executableCount": max(_safe_int_local(gate.get("executableCount"), 0), len(applied_refs)),
+            "taskCount": len(applied_refs),
+        },
+    }
+
+    summary = (
+        f"{stage}增量生成失败，已保留历史成功种子 {len(applied_refs)} 个继续进入 dry-run 和 Runner；"
+        f"增量错误：{message[:160]}"
+    )
+    if step:
+        step["status"] = "SUCCESS"
+        step["endedAt"] = now
+        step.setdefault("startedAt", now)
+        step["summary"] = summary[:300]
+        step.pop("error", None)
+        tool_calls = step.setdefault("toolCalls", [])
+        tool_calls.append({
+            "callId": str(uuid.uuid4())[:8],
+            "toolName": "generate_yaml_historical_seed_recovery",
+            "category": "WRITE",
+            "status": "SUCCESS",
+            "startedAt": now,
+            "endedAt": now,
+            "durationMs": 0,
+            "outputSummary": summary,
+            "artifactRefs": [str(ref.get("path") or "") for ref in applied_refs[:20]],
+            "recoveredFrom": status,
+        })
+        trace = step.setdefault("liveTrace", [])
+        trace.append({
+            "time": _trace_time_text(),
+            "message": summary,
+            "status": "SUCCESS",
+        })
+        del trace[:-30]
+
+    next_step = _agent_next_pending_step_name(run)
+    run["status"] = "RUNNING" if next_step else "DONE"
+    run["currentStep"] = next_step or "DONE"
+    run.pop("error", None)
+    run["updatedAt"] = now
+    run.setdefault("logs", []).append({"time": now, "message": summary})
+    del run["logs"][:-200]
+    _refresh_agent_run_progress(run)
+    return True
+
+
 def _sync_agent_generation_job_state(run):
     """同步共享生成任务状态，收敛后台线程中断、超时或取消后的 Agent timeline。"""
     if not isinstance(run, dict) or run.get("status") != "RUNNING":
@@ -570,6 +674,16 @@ def _sync_agent_generation_job_state(run):
                 "生成 YAML 步骤已进入运行态，但后台生成任务没有创建。"
                 "这通常表示 Agent 调度在工具调用前被阻塞或中断，请部署最新修复后重新发起。"
             )
+            if _agent_recover_generation_with_historical_seed_floor(
+                run,
+                step,
+                job_id,
+                "生成 YAML",
+                "missing",
+                message,
+                {"type": "tool_dispatch_stalled", "message": message},
+            ):
+                return True
             if step:
                 step["status"] = "FAILED"
                 step["endedAt"] = now
@@ -655,6 +769,17 @@ def _sync_agent_generation_job_state(run):
     detail = job.get("error_detail") or job.get("failure_detail") or {}
     if not isinstance(detail, dict):
         detail = {"message": str(detail)}
+    if _agent_recover_generation_with_historical_seed_floor(
+        run,
+        step,
+        job_id,
+        stage,
+        status,
+        message,
+        detail,
+        orphaned=orphaned,
+    ):
+        return True
     if step:
         step["status"] = "FAILED"
         step["endedAt"] = now
@@ -1000,6 +1125,8 @@ def recover_stale_agent_runs(limit=None):
         for run in runs[:scan_count]:
             if _sync_agent_generation_job_state(run):
                 changed = True
+                if run.get("status") == "RUNNING" and _agent_next_pending_step_name(run) and run.get("runId"):
+                    resume_ids.append(run.get("runId"))
             if _compact_agent_run_input_blobs(run):
                 changed = True
             recovered, should_resume = _recover_stale_runner_job_progress(run)
@@ -8085,7 +8212,7 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
     if expanded_created >= 0:
         non_smoke_attempted = min(non_smoke_total or expanded_created, expanded_created)
     elif total:
-        non_smoke_attempted = min(non_smoke_total, max(0, total - smoke_total)) if non_smoke_total else max(0, total - smoke_total)
+        non_smoke_attempted = max(0, total - smoke_total)
     else:
         non_smoke_attempted = 0
     non_smoke_passed = min(max(0, passed - smoke_passed), non_smoke_attempted)
@@ -8106,6 +8233,10 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
         non_smoke_failed = max(0, non_smoke_failed - recovered_from_non_smoke)
         non_smoke_timeout = min(non_smoke_timeout, max(0, non_smoke_attempted - non_smoke_passed - non_smoke_failed))
 
+    execution_buckets_source = "generatedYamlExecutionPlan"
+    if total and smoke_total + non_smoke_attempted > max(plan_total, smoke_total + non_smoke_total):
+        execution_buckets_source = "generatedYamlExecutionPlan+runnerLogicalTotals"
+
     bucket_counts = {
         "totalPlanned": plan_total,
         "smokePlanned": smoke_total,
@@ -8120,7 +8251,7 @@ def _agent_report_execution_buckets_from_plan(artifacts, execution, total, passe
         "nonSmokeFailed": non_smoke_failed,
         "nonSmokeTimeout": non_smoke_timeout,
         "nonSmokeRunning": non_smoke_running,
-        "executionBucketsSource": "generatedYamlExecutionPlan",
+        "executionBucketsSource": execution_buckets_source,
     }
     return _agent_reconcile_report_bucket_totals(bucket_counts, passed, failed, timeout, running)
 
