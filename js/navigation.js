@@ -248,36 +248,18 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showApiAssetsPage();
     return;
   }
-  if (sectionKey === 'api_environment' && typeof showApiEnvironmentPage === 'function') {
-    showApiEnvironmentPage();
-    return;
-  }
-  if (sectionKey === 'api_plan' && typeof showApiPlanPage === 'function') {
-    showApiPlanPage();
-    return;
-  }
-  if (sectionKey === 'api_debug' && typeof showApiDebugPage === 'function') {
-    showApiDebugPage();
-    return;
-  }
-  if (sectionKey === 'api_regression' && typeof showApiRegressionPage === 'function') {
-    showApiRegressionPage();
-    return;
-  }
-  if (sectionKey === 'api_baselines' && typeof showApiPlanPage === 'function') {
-    showApiPlanPage();
-    return;
-  }
-  if (sectionKey === 'api_execution' && typeof showApiExecutionHistoryPage === 'function') {
-    showApiExecutionHistoryPage();
-    return;
-  }
-  if (sectionKey === 'api_execution_history' && typeof showApiExecutionHistoryPage === 'function') {
-    showApiExecutionHistoryPage();
-    return;
-  }
-  if (sectionKey === 'api_reports' && typeof showApiReportsPage === 'function') {
-    showApiReportsPage();
+  const collapsedApiWorkflows = [
+    'api_environment',
+    'api_plan',
+    'api_debug',
+    'api_regression',
+    'api_baselines',
+    'api_execution',
+    'api_execution_history',
+    'api_reports',
+  ];
+  if (collapsedApiWorkflows.includes(sectionKey) && typeof showApiTestingDashboard === 'function') {
+    showApiTestingDashboard();
     return;
   }
   area.className = 'editor-area';

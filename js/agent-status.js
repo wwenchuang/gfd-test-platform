@@ -2244,33 +2244,18 @@ async function activateWorkflow(sectionKey) {
     toggleLibrary(false);
     return;
   }
-  if (activeWorkflow === 'api_environment') {
-    showApiEnvironmentPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_plan') {
-    showApiPlanPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_baselines') {
-    showApiPlanPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_execution') {
-    showApiExecutionHistoryPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_execution_history') {
-    showApiExecutionHistoryPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_reports') {
-    showApiReportsPage();
+  const collapsedApiWorkflows = [
+    'api_environment',
+    'api_plan',
+    'api_debug',
+    'api_regression',
+    'api_baselines',
+    'api_execution',
+    'api_execution_history',
+    'api_reports',
+  ];
+  if (collapsedApiWorkflows.includes(activeWorkflow)) {
+    showApiTestingDashboard();
     toggleLibrary(false);
     return;
   }

@@ -614,6 +614,15 @@ function apiSimpleRunnerCommandCards(workbench = {}) {
       tone: hasSource ? 'ready' : 'warn',
       run: hasSource ? {type: 'update_snapshot'} : {type: 'assets'},
     },
+    {
+      id: 'manual_import',
+      icon: 'OAS',
+      title: '手动导入接口',
+      detail: '没有 Apifox 或临时调试时，可从 OpenAPI 文件、JSON 或手填项目导入。',
+      meta: hasSnapshot ? '可更新' : '手动可用',
+      tone: hasSnapshot ? 'ready' : 'todo',
+      run: {type: 'assets'},
+    },
   ];
   const moduleTasks = apiWorkbenchModuleTasks(workbench).slice(0, 8);
   if (moduleTasks.length) {
@@ -948,21 +957,21 @@ function renderApiWorkbenchPage(data = {}) {
 }
 
 async function showApiTestingDashboard() {
-  const area = setApiTestingPage('api_dashboard', 'API 工作台', 'Apifox 接口资产、AI 测试设计、本地执行和 API 报告闭环。');
+  const area = setApiTestingPage('api_dashboard', 'API 测试', '先获取或导入接口，再选择测试命令执行；日志和报告在同一页查看。');
   if (!area) return;
   const cached = readApiTestingWorkbenchCache();
   if (cached) {
     hydrateApiTestingWorkbench(cached);
     area.innerHTML = renderApiWorkbenchPage(cached);
   } else {
-    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 工作台...')}</div>`;
+    area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty('正在读取 API 测试面板...')}</div>`;
   }
   try {
     const data = await loadApiTestingWorkbench();
     area.innerHTML = renderApiWorkbenchPage(data);
   } catch(e) {
-    if (!cached) area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 工作台读取失败')}</div>`;
-    else showToast(e.message || 'API 工作台刷新失败，已展示本地快照', 'warn');
+    if (!cached) area.innerHTML = `<div class="api-testing-page">${apiTestingEmpty(e.message || 'API 测试面板读取失败')}</div>`;
+    else showToast(e.message || 'API 测试面板刷新失败，已展示本地快照', 'warn');
   }
 }
 
@@ -1569,15 +1578,15 @@ function syncApiEndpointCheckboxStates() {
 
 async function showApiAssetsPage() {
   stopApiAssetSyncPolling();
-  const area = setApiTestingPage('api_assets', '接口资产', '从 Apifox 手动更新 OpenAPI 版本，查看真实差异和受影响计划。');
+  const area = setApiTestingPage('api_assets', '接口来源', '手动从 Apifox 获取接口和环境，也可以上传 OpenAPI JSON；保存后回到 API 测试执行。');
   if (!area) return;
   area.innerHTML = `
     <div class="api-testing-page api-asset-console">
       <div id="api-workflow-stepper">${renderApiWorkflowStepper({workflow: 'api_assets'})}</div>
       <header class="api-asset-header">
         <div class="workflow-kicker">API ASSET · APIFOX / OPENAPI</div>
-        <h2>接口资产</h2>
-        <p>选择业务线和模块后生成测试用例。接口来自平台本地快照，需要时手动从 Apifox 更新。</p>
+        <h2>接口来源</h2>
+        <p>先手动获取 Apifox 接口和环境，或上传 OpenAPI JSON；保存后 API 测试页会直接使用本地快照。</p>
         <div id="api-source-summary">${apiTestingEmpty('正在读取 Apifox 来源...')}</div>
       </header>
       <section id="api-source-settings-panel" class="api-source-settings" hidden></section>

@@ -28,6 +28,59 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 API 自动化：收敛为单入口测试面板并兼容旧路由
+
+用户进一步明确：不要再把 API 自动化拆成一堆子页面；只需要类似参考项目的简单链路：
+
+```text
+获取 Apifox 接口 / 手动导入
+→ 保存本地快照
+→ 选择模块或接口
+→ AI 生成用例
+→ 执行并实时查看日志和报告
+```
+
+本轮处理：
+
+- `task-manager.html`
+  - 接口自动化侧栏从 8 个入口收敛为 2 个入口：
+    - `API 测试`
+    - `接口来源`
+  - `navigation.js`、`api-testing.js`、`agent-status.js` 的静态资源版本统一更新为 `20260804-api-single-panel-v1`。
+- `js/api-testing.js`
+  - `API 测试` 默认继续使用参考项目式两栏执行面板。
+  - 命令区新增 `手动导入接口`，进入 `接口来源`，支持没有 Apifox 或临时调试时上传 OpenAPI JSON / 手动配置。
+  - `获取 Apifox 接口` 继续保留为手动更新本地快照入口，不改后端 Apifox 解析。
+  - `接口资产` 页面标题和说明改为 `接口来源`，弱化内部资产模型表述。
+- `js/navigation.js` / `js/agent-status.js`
+  - 兼容旧本地状态或旧按钮调用：`api_plan`、`api_debug`、`api_regression`、`api_execution_history`、`api_reports`、`api_environment`、`api_baselines`、`api_execution` 都统一回到 `API 测试` 简单面板。
+  - 防止用户从旧 `AI测试设计` 状态进入复杂页面。
+- `tests/frontend_static_checks.py`
+  - 新增静态断言：侧栏只允许 `API 测试 / 接口来源` 两个入口。
+  - 断言旧 API workflow key 在导航和 `activateWorkflow` 中都必须收敛回简单面板。
+  - 断言命令区必须同时存在 `获取 Apifox 接口` 和 `手动导入接口`。
+
+本地验证：
+
+```bash
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js && node --check js/navigation.js && node --check js/agent-status.js
+python3 -m unittest tests.api_workbench_checks tests.api_manual_workflow_checks tests.api_native_execution_checks tests.api_case_contract_checks
+git diff --check -- task-manager.html js/navigation.js js/api-testing.js js/agent-status.js tests/frontend_static_checks.py
+```
+
+浏览器烟测：
+
+- 使用临时 `API_TESTING_DIR` 种入“我的收藏”3 个接口和生产环境快照。
+- 本地启动 `task_server` 于 `127.0.0.1:8099`，用 `admin / sonic2026` 登录。
+- 调用旧入口 `activateWorkflow('api_plan')` 后确认：
+  - 渲染 `.api-simple-runner`。
+  - 不再出现 `.api-plan-workspace` / `.api-workflow-stepper` / `.generation-record-head`。
+  - 左侧 API 菜单只有 `API 测试 / 接口来源`。
+  - 命令区包含 `获取 Apifox 接口`、`手动导入接口`、模块调试命令和 `环境配置`。
+  - 右侧保留 `执行日志 / 测试报告`。
+- 点击 `手动导入接口` 后确认进入 `接口来源` 页面，且仍可看到 Apifox 与 OpenAPI JSON 上传入口。
+
 ### 2026-08-04 API 自动化：按 AIPPT 参考重做简单执行面板
 
 用户明确要求接口测试不要再围绕多个技术模块一步步跳转，而是按参考项目的体验收敛成：
