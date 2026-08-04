@@ -31,6 +31,7 @@ def main():
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     api_testing_js = (JS_DIR / "api-testing.js").read_text(encoding="utf-8")
+    api_test_lab_js = (JS_DIR / "api-test-lab.js").read_text(encoding="utf-8")
     agent_status_js = (JS_DIR / "agent-status.js").read_text(encoding="utf-8")
     api_js = (JS_DIR / "api.js").read_text(encoding="utf-8")
     navigation_js = (JS_DIR / "navigation.js").read_text(encoding="utf-8")
@@ -162,6 +163,65 @@ def main():
         "API dashboard must guide users through AI design and execution instead of a hidden baseline workspace",
     )
     require("js/api-testing.js" in html, "API testing frontend module must be loaded")
+    require(
+        "js/api-test-lab.js" in html
+        and "showApiTestingDashboardOverride" in api_test_lab_js
+        and "showApiAssetsPageOverride" in api_test_lab_js
+        and "apiRequest(`/test-lab${path}`" in api_test_lab_js
+        and "apiLabRequest(`/state" in api_test_lab_js
+        and "apiLabRequest('/apifox/refresh'" in api_test_lab_js
+        and "apiLabRequest('/cases/generate'" in api_test_lab_js
+        and "apiLabRequest('/executions/run'" in api_test_lab_js
+        and "本地测试库" in api_test_lab_js
+        and "获取 Apifox 接口" in api_test_lab_js
+        and "AI 生成用例" in api_test_lab_js
+        and "执行日志" in api_test_lab_js
+        and "测试报告" in api_test_lab_js
+        and "手动导入 OpenAPI JSON" in api_test_lab_js,
+        "API automation must load the new one-page test lab with local library, Apifox update, AI generation, execution logs and reports",
+    )
+    require(
+        "业务 Token 写入位置" in api_test_lab_js
+        and "编辑环境" in api_test_lab_js
+        and "auth_header_name: authHeaderName" in api_test_lab_js
+        and "api-lab-variable-editor" in api_test_lab_js
+        and "apiLabReadEnvironmentVariables" in api_test_lab_js,
+        "API test lab environment editor must support full variable editing and selectable business token header",
+    )
+    require(
+        "apiLabRefreshConsoleOnly" in api_test_lab_js
+        and "root.outerHTML = renderApiLabConsole" in api_test_lab_js
+        and "if (options.silent) apiLabRefreshConsoleOnly(result.state || apiLabData || {});" in api_test_lab_js[
+            api_test_lab_js.index("async function apiLabOpenRun"):
+            api_test_lab_js.index("function apiLabSelectModule")
+        ],
+        "API test lab polling must refresh only the console area instead of re-rendering the whole page",
+    )
+    require(
+        "caseSummary" in api_test_lab_js
+        and "条可执行" in api_test_lab_js
+        and "条待补数据" in api_test_lab_js
+        and "可执行 /" not in api_test_lab_js,
+        "API test lab case state must show actionable executable/draft counts instead of a dense ratio",
+    )
+    require(
+        "高级字段：手动填写项目、分支和环境 ID" in api_test_lab_js
+        and "选择项目" in api_test_lab_js
+        and "选择环境" in api_test_lab_js
+        and "apiLabSelectedSourceHint" in api_test_lab_js,
+        "API source setup must prefer name-based Apifox selection and keep raw IDs in an advanced section",
+    )
+    openapi_import_block = api_test_lab_js[
+        api_test_lab_js.index("async function apiLabImportOpenApi"):
+        api_test_lab_js.index("function apiLabPickProject")
+    ]
+    require(
+        "apiLabSelectedSourceId = apiLabData?.source?.source_id || '';" in openapi_import_block
+        and "apiLabSelectedModulePath = apiLabData?.selected_module_path || '';" in openapi_import_block
+        and "localStorage.setItem('api_lab_source_id'" in openapi_import_block
+        and "apiLabSelectedEndpointIds.clear();" in openapi_import_block,
+        "OpenAPI import must select the newly saved local source/module immediately",
+    )
     require("showApiTestingDashboard" in html and "showApiAssetsPage" in html, "API testing pages must render through dedicated functions")
     require(
         "/api-testing/workbench" in api_testing_js

@@ -3478,6 +3478,102 @@ def _post_api_testing_case_debug(handler, qs):
         handler._json({"ok": False, "error": str(exc)}, 400)
 
 
+@route_get("/api/test-lab/state")
+def _get_test_lab_state(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    try:
+        handler._json(test_lab_service.api_lab_state(
+            str((qs.get("source_id") or qs.get("sourceId") or [""])[0] if isinstance(qs.get("source_id") or qs.get("sourceId"), list) else qs.get("source_id") or qs.get("sourceId") or "").strip(),
+            str((qs.get("module_path") or qs.get("modulePath") or [""])[0] if isinstance(qs.get("module_path") or qs.get("modulePath"), list) else qs.get("module_path") or qs.get("modulePath") or "").strip(),
+            str((qs.get("execution_id") or qs.get("executionId") or [""])[0] if isinstance(qs.get("execution_id") or qs.get("executionId"), list) else qs.get("execution_id") or qs.get("executionId") or "").strip(),
+        ))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 500)
+
+
+@route_post("/api/test-lab/apifox/refresh")
+def _post_test_lab_apifox_refresh(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    try:
+        handler._json(test_lab_service.refresh_apifox_to_test_lab(handler._body()))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post("/api/test-lab/openapi/import")
+def _post_test_lab_openapi_import(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    try:
+        handler._json(test_lab_service.import_openapi_to_test_lab(handler._body()))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post("/api/test-lab/environment")
+def _post_test_lab_environment(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    try:
+        handler._json(test_lab_service.save_environment(handler._body()))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post("/api/test-lab/cases/generate")
+def _post_test_lab_cases_generate(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    try:
+        handler._json(test_lab_service.generate_cases(handler._body()))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_post("/api/test-lab/executions/run")
+def _post_test_lab_executions_run(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import api_execution_service, test_lab_service
+    try:
+        handler._json(test_lab_service.run_cases(handler._body()), 202)
+    except api_execution_service.ApiExecutionConflict as exc:
+        handler._json({"ok": False, "error": str(exc)}, 409)
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
+@route_get_regex(r"^/api/test-lab/executions/([^/]+)$")
+def _get_test_lab_execution(handler, qs, match):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    execution_id = urllib.parse.unquote(str(match.group(1) or "")).strip()
+    try:
+        handler._json(test_lab_service.execution_detail(execution_id))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 404)
+
+
+@route_post("/api/test-lab/ui-yaml/index")
+def _post_test_lab_ui_yaml_index(handler, qs):
+    if _require_user_auth(handler):
+        return
+    from task_server.services import test_lab_service
+    try:
+        data = handler._body()
+        handler._json(test_lab_service.sync_ui_yaml_index(str(data.get("root_dir") or data.get("rootDir") or "").strip()))
+    except Exception as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+
+
 # ── 修复草稿保存 ────────────────────────────────────────────────────
 
 @route_post("/api/repair-drafts")

@@ -28,6 +28,83 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 API 自动化：新增本地测试库并按参考面板重做主流程
+
+用户最终确认 API 自动化只需要一条简单主链路：
+
+```text
+手动获取 Apifox 接口数据和环境
+→ 保存接口数据和环境
+→ 从保存的数据里筛选模块和接口
+→ AI 生成接口用例
+→ 执行，实时查看日志和报告
+```
+
+本轮按该目标处理：
+
+- 新增 `task_server/services/test_lab_service.py`
+  - 使用 SQLite 作为第一阶段本地测试库，默认路径为 `LEARNING_DIR/test-lab/test_lab.sqlite3`，也支持 `TEST_LAB_DIR` / `TEST_LAB_DB_PATH` 覆盖。
+  - 表结构覆盖：接口来源、执行环境、接口快照、测试用例、执行记录、UI YAML 索引。
+  - Apifox/OpenAPI 只作为手动更新来源；API 测试台默认从本地测试库读取，不再每次进入页面刷新 Apifox。
+  - `sync_ui_yaml_index()` 可把 UI 自动化 YAML 文件按稳定 sha256 索引进同一个测试库，后续可作为 UI/API 统一测试资产基础。
+- `task_server/router.py`
+  - 小范围新增 `/api/test-lab/*` 路由，不重构 router：
+    - `GET /api/test-lab/state`
+    - `POST /api/test-lab/apifox/refresh`
+    - `POST /api/test-lab/openapi/import`
+    - `POST /api/test-lab/environment`
+    - `POST /api/test-lab/cases/generate`
+    - `POST /api/test-lab/executions/run`
+    - `GET /api/test-lab/executions/{execution_id}`
+    - `POST /api/test-lab/ui-yaml/index`
+- 新增 `js/api-test-lab.js`
+  - 覆盖旧的复杂 API 子页面主入口，默认渲染一页式测试台：
+    - 左侧：运行环境、测试范围、测试命令、执行历史。
+    - 右侧：当前接口列表、执行日志、测试报告。
+  - `接口来源` 页面只负责手动读取/保存 Apifox，或者手动导入 OpenAPI JSON。
+  - 轮询运行中的任务时只刷新日志/报告区域，不再整页重绘，避免滚动和阅读被打断。
+  - 环境编辑支持 Base URL、Biz、业务 Token 写入位置、完整环境变量；业务 token 不回显。
+- `css/round5.css`
+  - 增加 API Test Lab 的两栏执行台样式，参考用户提供 zip 里的“运行环境 / 测试命令 / 执行日志 / 测试报告 / 历史记录”结构。
+- `tests/api_test_lab_checks.py` / `tests/frontend_static_checks.py`
+  - 增加本地测试库、OpenAPI 导入、项目特定鉴权 header、UI YAML 索引、前端主流程的回归。
+
+真实浏览器回归：
+
+- 本地启动 `task_server` 于 `127.0.0.1:8099`，使用临时 `TEST_LAB_DIR`，不污染线上和真实资产。
+- 通过页面手动导入“我的收藏”3 个接口：
+  - `GET /print3d/api/v1/favorite/list`
+  - `POST /print3d/api/v1/favorite/add`
+  - `POST /print3d/api/v1/favorite/cancel`
+- 验证导入后立即进入 API 测试台，并展示：
+  - 来源 `3D 我的收藏`
+  - 本地接口数 `3`
+  - 模块 `家用业务/app接口/我的/我的收藏`
+  - 环境变量自动发现 `ZXBToken`、`Biz`
+- 保存用户提供的业务 token 到 `ZXBToken`，页面只显示 `ZXBToken：已配置`，不展示内部 `MTP_API_AUTH_*` 指针。
+- 点击“生成并执行”后，3 个接口均真实请求生产地址并进入报告：
+  - 通过 `0`
+  - 失败 `3`
+  - 失败原因均为业务码 `4009`：`用户未登录！`
+  - 结论：平台流程已经跑通，失败来自业务 token/登录态，不是平台卡死或未执行。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_test_lab_checks tests.api_workbench_checks tests.api_manual_workflow_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 -m py_compile task_server/router.py task_server/services/test_lab_service.py tests/api_test_lab_checks.py tests/frontend_static_checks.py
+node --check js/api-test-lab.js
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/router.py task_server/services/test_lab_service.py js/api-test-lab.js css/round5.css task-manager.html tests/api_test_lab_checks.py tests/frontend_static_checks.py CODEX_STATE.md
+```
+
+注意：
+
+- 现在可以在服务器上用 SQLite 先落地测试数据；如果后续并发、权限、审计要求提高，建议把 `test_lab_service.py` 的存储层抽成 adapter 后迁移到 MySQL/Postgres。
+- Apifox 不再作为日常执行依赖，只保留“手动更新接口和环境”的数据来源职责。
+- 当前业务 token 在真实生产接口返回 `4009 用户未登录`，需要新的有效 3D 用户登录 token 才能让“我的收藏”正向用例通过。
+
 ### 2026-08-04 API 自动化：收敛为单入口测试面板并兼容旧路由
 
 用户进一步明确：不要再把 API 自动化拆成一堆子页面；只需要类似参考项目的简单链路：
