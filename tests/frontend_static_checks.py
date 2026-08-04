@@ -201,12 +201,11 @@ def main():
         and "renderApiWorkbenchTaskHero" in api_testing_js
         and "api-task-hero" in api_testing_js
         and "API测试任务" in api_testing_js
-        and "选择接口 → AI分析 → 调试参数 → 执行 → 报告" in api_testing_js
+        and "手动获取 Apifox 接口数据和环境 → 保存接口数据和环境 → 筛选要测的模块和接口 → AI 根据选择的接口生成测试用例 → 执行，实时查看日志和报告" in api_testing_js
         and "api-runner-sidebar" in api_testing_js
         and "api-runner-env-grid" in api_testing_js
-        and "api-runner-command-list" in api_testing_js
-        and "api-runner-primary-button" in api_testing_js
-        and "api-runner-history" in api_testing_js
+        and "api-runner-simple-flow" in api_testing_js
+        and "api-runner-task-card" in api_testing_js
         and "api-runner-tabs" in api_testing_js
         and "api-runner-terminal" in api_testing_js
         and "api-runner-report-list" in api_testing_js
@@ -219,11 +218,33 @@ def main():
         "renderApiRunnerTerminalLines" in api_testing_js
         and "api-runner-log-line" in api_testing_js
         and "api-runner-report-summary" in api_testing_js
-        and "api-runner-advanced-links" in api_testing_js
         and "执行日志只展示关键流水" in api_testing_js
-        and "高级配置" in api_testing_js
-        and "接口资产 / 环境 / AI 草稿 / 报告详情" in api_testing_js,
-        "API workbench default path must be a compact execution console; detailed asset/env/AI/report pages belong behind advanced links",
+        and "api-runner-simple-flow" in api_testing_js
+        and "手动获取 Apifox 接口数据和环境" in api_testing_js
+        and "保存接口数据和环境" in api_testing_js
+        and "筛选要测的模块和接口" in api_testing_js
+        and "AI 根据选择的接口生成测试用例" in api_testing_js
+        and "执行，实时查看日志和报告" in api_testing_js,
+        "API workbench default path must be the simple five-step interface test flow",
+    )
+    runner_board = api_testing_js.split("function renderApiWorkbenchRunnerBoard", 1)[1].split("function renderApiWorkbenchCaseCard", 1)[0]
+    require(
+        "全局命令" not in runner_board
+        and "renderApiRunnerAdvancedLinks" not in runner_board
+        and "api-runner-primary-button" not in runner_board,
+        "API workbench first screen must not expose global commands, advanced links, or baseline-first actions",
+    )
+    require(
+        "renderApiRunnerModuleTasks" in api_testing_js
+        and "api-runner-task-list" in api_testing_js
+        and "api-runner-task-card" in api_testing_js
+        and "apiWorkbenchModuleTasks" in api_testing_js
+        and "apiWorkbenchBatchDebugModule" in api_testing_js
+        and "本次任务" in api_testing_js
+        and "根据保存的数据筛选要测的模块和接口；先调试 AI 草稿，确认后再保存为稳定测试资产。" in api_testing_js
+        and "批量调试草稿" in api_testing_js
+        and "保存基线" in api_testing_js,
+        "API workbench must expose module-level task cards so users can choose one module and continue through AI draft, debug, baseline, and report on the same page",
     )
     require(
         "手动更新 Apifox" in api_testing_js
@@ -1158,7 +1179,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260804-api-runner-console-v1" in html and "js/api-testing.js?v=20260804-api-runner-console-v1" in html and "js/agent-status.js?v=20260803-agent-final-report-counts" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, sidebar icons, instant local workbench snapshot rendering, local API environment debugging, API command-center dashboard, reference-style API runner board, one-click baseline API release regression, Agent final logical report counts, API task-oriented workflow, manual Apifox update flow, reference-style API runner console, and prior workflow updates")
+    require("js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260727-runner-active-task" in html and "js/state.js?v=20260729-apifox-discovery" in html and "js/api.js?v=20260731-api-product-workbench" in html and "js/navigation.js?v=20260731-api-product-workbench" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260731-api-product-workbench" in html and "css/round5.css?v=20260804-api-runner-simple-flow-v2" in html and "js/api-testing.js?v=20260804-api-runner-simple-flow-v2" in html and "js/agent-status.js?v=20260803-agent-final-report-counts" in html, "Frontend cache versions must include Apifox discovery, API baselines, API login auth, live API reports, API run history, API case form editor, Apifox environment snapshots, native API execution, API environment readiness, simplified API workbench scope recovery, API report/environment editing, API live execution logs, saved Apifox source shelf, native API automation center navigation, Agent report-card readable final score/full timestamp, API sidebar polish, productized API workbench, reusable Apifox credentials, command-center API UI, AI API Testing Studio UI, sidebar icons, instant local workbench snapshot rendering, local API environment debugging, API command-center dashboard, reference-style API runner board, one-click baseline API release regression, Agent final logical report counts, API task-oriented workflow, manual Apifox update flow, reference-style API runner console, API module task flow, API simple five-step flow, and prior workflow updates")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html

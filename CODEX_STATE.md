@@ -28,6 +28,61 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-04 API 工作台模块任务流收敛
+
+用户继续反馈 API 自动化“乱乱的”，并要求真实测“我的收藏”这 3 个接口时，新同事能一眼知道从哪里开始。本轮复核线上/本地路径后定位到两个根因：
+
+- Workbench 只返回技术分层数据，前端只能从模块树截取候选模块，导致“家用业务 / app接口 / 我的”等父级模块和真正的“我的收藏”混在一起，任务入口不明确。
+- “我的收藏”接口的 `Biz` 是 Apifox 环境变量，但计划生成没有把非敏感必填 header 映射为 `{{Biz}}`，导致成功流仍被判 `needs_review`，用户看不到“批量调试草稿”的自然入口。
+
+修复：
+
+- `task_server/services/api_workbench_service.py`
+  - 新增 `module_tasks` 聚合，按模块返回接口数、接口名、草稿/基线计划、执行环境中文名、Base URL、鉴权状态、当前主动作。
+  - 计划只挂到精确模块或计划父级下的子模块；默认只展示叶子模块，避免父级模块重复污染“本次任务”。
+  - “我的收藏”这类已有可执行草稿的模块优先排序，主动作直接为“批量调试草稿”。
+- `task_server/services/api_task_service.py`
+  - API 测试任务描述和步骤统一为用户最终确认的 5 步：手动获取 Apifox 接口数据和环境、保存接口数据和环境、筛选模块和接口、AI 生成测试用例、执行并实时查看日志和报告。
+- `task_server/services/api_test_plan_service.py`
+  - 生成计划时读取当前 source 的 Apifox 环境快照，对非敏感必填 header 使用 `{{变量名}}` 占位，例如 `Biz -> {{Biz}}`。
+  - 仍不把敏感 token 写入用例；缺失场景保留负向用例，不被自动补全。
+- `js/api-testing.js`
+  - 新增 `renderApiRunnerModuleTasks()` / `apiWorkbenchModuleTasks()` / `apiWorkbenchBatchDebugModule()`。
+  - 新增 `renderApiRunnerSimpleFlow()`，默认工作台左侧只保留运行环境、5 步流程和模块任务卡；右侧只保留任务摘要、执行日志和测试报告。
+  - 默认首屏不再渲染“全局命令”、高级配置链接和基线优先主按钮，避免新同事先被技术入口带偏。
+  - 模块卡直接展示“批量调试草稿 / 保存基线 / 生成测试资产”。
+- `css/round5.css`
+  - 增加 5 步流程和模块任务卡样式，稳定展示模块名、接口数、草稿数、可调试数、环境与鉴权。
+- `task-manager.html`
+  - API 前端缓存版本更新为 `20260804-api-runner-simple-flow-v2`。
+- `tests/api_workbench_checks.py` / `tests/frontend_static_checks.py`
+  - 增加回归：workbench 必须返回“我的收藏”模块任务卡，含 3 个接口、生产环境中文名、鉴权状态和“批量调试草稿”主动作。
+  - 静态检查锁定默认工作台必须暴露 5 步流程和模块级任务卡，且首屏不能出现全局命令、高级配置或基线优先动作。
+
+验证：
+
+```bash
+python3 -m unittest tests.api_manual_workflow_checks tests.api_workbench_checks tests.api_native_execution_checks tests.api_case_contract_checks
+python3 tests/frontend_static_checks.py
+node --check js/api-testing.js
+python3 -m py_compile task_server/services/api_task_service.py task_server/services/api_workbench_service.py task_server/services/api_test_plan_service.py tests/api_workbench_checks.py tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check -- task_server/services/api_task_service.py task_server/services/api_workbench_service.py task_server/services/api_test_plan_service.py js/api-testing.js css/round5.css tests/api_workbench_checks.py tests/frontend_static_checks.py task-manager.html CODEX_STATE.md
+```
+
+本地浏览器 smoke：
+
+- 使用临时 `API_TESTING_DIR=/tmp/midscene-api-task-flow.*` 和 `PORT=8099` 启动 dev 服务。
+- 种子数据只包含 3 个“我的收藏”接口、1 个“我的设置”接口、生产环境中文名、Base URL、`Biz=ZXB` 和测试用鉴权引用。
+- Playwright 登录 `admin / sonic2026` 后打开 API 工作台，确认：
+  - `.api-runner-board` 正常渲染。
+  - 左侧显示 5 步：手动获取 Apifox 接口数据和环境、保存接口数据和环境、筛选要测的模块和接口、AI 根据选择的接口生成测试用例、执行并实时查看日志和报告。
+  - “我的收藏”是首张 `.api-runner-task-card`。
+  - 页面展示 `3 接口 / 12 草稿 / 3 可调试 / 批量调试草稿 / 保存基线 / Authorization 已配置`。
+  - 父级“家用业务”不再作为任务卡显示。
+  - 首屏不再展示“全局命令 / 高级配置 / 基线优先主按钮”，右侧不再重复渲染另一套步骤条。
+- 截图：`/tmp/api-simple-flow-smoke-clean.png`。
+
 ### 2026-08-04 API 工作台参考执行器式一屏体验收敛
 
 用户上传 `主对话_aippt-auto-test-share.zip` 后再次明确：API 自动化默认入口不要继续堆接口资产、环境、AI 草稿和报告详情页面，而应像参考执行器一样先让新同事看到“环境 / 测试命令 / 执行日志 / 测试报告”。本轮定位到两个真实卡点：

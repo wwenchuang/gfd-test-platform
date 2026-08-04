@@ -124,6 +124,54 @@ class ApiWorkbenchChecks(unittest.TestCase):
             },
         }
 
+    def _favorites_openapi(self):
+        return {
+            "openapi": "3.0.1",
+            "info": {"title": "3D 家用业务", "version": "1.0.0"},
+            "paths": {
+                "/print3d/api/v1/collection/add": {
+                    "post": {
+                        "tags": ["家用业务/app接口/我的/我的收藏"],
+                        "summary": "添加修改收藏",
+                        "parameters": [
+                            {"name": "Authorization", "in": "header", "required": True, "schema": {"type": "string"}},
+                            {"name": "Biz", "in": "header", "required": True, "schema": {"type": "string"}},
+                        ],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+                "/print3d/api/v1/collection/cancel": {
+                    "post": {
+                        "tags": ["家用业务/app接口/我的/我的收藏"],
+                        "summary": "取消收藏",
+                        "parameters": [
+                            {"name": "Authorization", "in": "header", "required": True, "schema": {"type": "string"}},
+                            {"name": "Biz", "in": "header", "required": True, "schema": {"type": "string"}},
+                        ],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+                "/print3d/api/v1/collection/page": {
+                    "post": {
+                        "tags": ["家用业务/app接口/我的/我的收藏"],
+                        "summary": "我的收藏列表",
+                        "parameters": [
+                            {"name": "Authorization", "in": "header", "required": True, "schema": {"type": "string"}},
+                            {"name": "Biz", "in": "header", "required": True, "schema": {"type": "string"}},
+                        ],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+                "/print3d/api/v1/users/me": {
+                    "get": {
+                        "tags": ["家用业务/app接口/我的/我的设置"],
+                        "summary": "我的资料",
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+            },
+        }
+
     def _seed_workbench(self):
         source = api_source_service.save_api_source({
             "source_type": "apifox",
@@ -194,13 +242,26 @@ class ApiWorkbenchChecks(unittest.TestCase):
         self.assertEqual(0, workbench["metrics"]["today_executions"])
         self.assertEqual("API测试任务", workbench["task"]["kind"])
         self.assertEqual("3D 接口测试任务", workbench["task"]["name"])
+        self.assertEqual(
+            "手动获取 Apifox 接口数据和环境 → 保存接口数据和环境 → 筛选要测的模块和接口 → AI 根据选择的接口生成测试用例 → 执行，实时查看日志和报告",
+            workbench["task"]["description"],
+        )
         self.assertEqual("生产环境（新）-腾讯云", workbench["task"]["environment"]["name"])
         self.assertEqual("33831678", workbench["task"]["environment"]["id"])
         self.assertEqual(2, workbench["task"]["summary"]["interface_count"])
         self.assertEqual(1, workbench["task"]["summary"]["baseline_case_count"])
         self.assertIn(workbench["task"]["status"], {"ready", "running", "draft"})
         self.assertTrue(workbench["task"]["steps"])
-        self.assertIn("自动回归", [step["title"] for step in workbench["task"]["steps"]])
+        self.assertEqual(
+            [
+                "手动获取 Apifox 接口数据和环境",
+                "保存接口数据和环境",
+                "筛选要测的模块和接口",
+                "AI 根据选择的接口生成测试用例",
+                "执行，实时查看日志和报告",
+            ],
+            [step["title"] for step in workbench["task"]["steps"]],
+        )
         self.assertTrue(workbench["apifox_credential"]["credential_configured"])
         self.assertEqual("3D", workbench["sync_state"]["project"])
         self.assertEqual(2, workbench["sync_state"]["interface_count"])
@@ -674,6 +735,69 @@ class ApiWorkbenchChecks(unittest.TestCase):
             sorted(household["endpoint_ids"]),
         )
         self.assertLessEqual(len(household["endpoint_ids"]), 60)
+
+    def test_workbench_returns_module_tasks_for_direct_debug_flow(self):
+        from task_server.services import api_workbench_service
+
+        source = api_source_service.save_api_source({
+            "source_type": "apifox",
+            "name": "3D",
+            "project_id": "5904970",
+            "environment_id": "33831678",
+            "access_token": "secret-apifox-token",
+            "provider_metadata": {
+                "project_name": "3D",
+                "environment_name": "生产环境（新）-腾讯云",
+            },
+            "environment_snapshot": {
+                "base_urls": [{"name": "default", "url": "https://print.wisebeginner3d.com/app"}],
+                "variables": [{"name": "Biz", "value": "ZXB"}],
+            },
+            "sync_enabled": False,
+        })
+        api_workspace_service.save_api_auth_binding_metadata(
+            source["source_id"],
+            auth_type="api_key",
+            header_name="Authorization",
+            secret_value="secret-runtime-token",
+        )
+        staged = api_asset_service.stage_api_revision(
+            source["source_id"],
+            "3D",
+            self._favorites_openapi(),
+            source_type="apifox",
+        )
+        api_asset_service.activate_api_revision(staged["asset_id"], staged["revision_id"])
+        revision = api_asset_service.get_api_revision(staged["revision_id"])
+        favorite_endpoint_ids = [
+            item["endpoint_id"]
+            for item in revision["endpoints"]
+            if "/collection/" in item["path"]
+        ]
+        draft = api_test_plan_service.generate_api_test_plan(
+            revision["snapshot_id"],
+            favorite_endpoint_ids,
+            use_ai=False,
+            source_id=source["source_id"],
+        )
+
+        workbench = api_workbench_service.api_testing_workbench(source["source_id"])
+        module_tasks = workbench["module_tasks"]
+        favorite = next(item for item in module_tasks if item["path"].endswith("/我的收藏"))
+
+        self.assertEqual(favorite_endpoint_ids, favorite["endpoint_ids"])
+        self.assertEqual(3, favorite["endpoint_count"])
+        self.assertEqual(draft["plan_id"], favorite["draft"]["plan_id"])
+        self.assertEqual("debug_draft", favorite["primary_action"])
+        self.assertEqual("批量调试草稿", favorite["primary_label"])
+        self.assertEqual("生产环境（新）-腾讯云", favorite["environment"]["name"])
+        self.assertEqual("https://print.wisebeginner3d.com/app", favorite["environment"]["base_url"])
+        self.assertTrue(favorite["auth"]["configured"])
+        self.assertIn("添加修改收藏", favorite["endpoint_names"])
+        self.assertLess(
+            module_tasks.index(favorite),
+            next(index for index, item in enumerate(module_tasks) if item["path"].endswith("/我的设置")),
+        )
 
     def test_stale_running_batch_becomes_retryable_without_losing_successes(self):
         source = api_source_service.save_api_source({

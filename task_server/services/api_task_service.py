@@ -123,12 +123,14 @@ def build_api_test_task(
     draft_count = _safe_int(latest_draft.get("case_count"), 0)
     baseline_count = _safe_int(latest_baseline.get("case_count"), 0)
     executable_count = _safe_int(latest_baseline.get("executable_case_count"), 0)
+    environment_variable_count = _safe_int(_environment_snapshot(source).get("variable_count"), 0)
+    has_saved_environment = bool(base_url.get("url")) or environment_variable_count > 0
     running = bool(latest_run.get("execution_id") and str(latest_run.get("status") or "").lower() in {"queued", "running"})
     return {
         "kind": "API测试任务",
         "task_id": f"api_task_{source.get('source_id') or source.get('project_id') or 'default'}",
         "name": f"{_project_name(source)} 接口测试任务",
-        "description": "选择接口 → AI分析 → 调试参数 → 执行 → 报告",
+        "description": "手动获取 Apifox 接口数据和环境 → 保存接口数据和环境 → 筛选要测的模块和接口 → AI 根据选择的接口生成测试用例 → 执行，实时查看日志和报告",
         "status": _task_status(snapshot, plans, execution, reports),
         "project": {
             "id": str(source.get("project_id") or ""),
@@ -158,39 +160,39 @@ def build_api_test_task(
         },
         "steps": [
             _step(
-                "select",
-                "选择接口",
+                "apifox_update",
+                "手动获取 Apifox 接口数据和环境",
                 "done" if interface_count else "todo",
                 "showApiAssetsPage()",
-                f"{interface_count} 个接口可选" if interface_count else "先手动更新 Apifox 接口",
+                f"{interface_count} 个接口已读取" if interface_count else "先手动更新 Apifox 接口和环境",
             ),
             _step(
-                "ai_design",
-                "AI分析与测试设计",
+                "save_snapshot",
+                "保存接口数据和环境",
+                "done" if (interface_count and has_saved_environment) else ("running" if interface_count else "todo"),
+                "showApiEnvironmentPage()",
+                "接口和环境已保存为本地快照" if (interface_count and has_saved_environment) else "检查 Base URL、变量和业务 token",
+            ),
+            _step(
+                "filter_scope",
+                "筛选要测的模块和接口",
+                "done" if interface_count else "todo",
+                "showApiAssetsPage()",
+                f"{interface_count} 个接口可按模块筛选" if interface_count else "先保存本地接口快照",
+            ),
+            _step(
+                "ai_generate",
+                "AI 根据选择的接口生成测试用例",
                 "done" if (draft_count or baseline_count) else "todo",
                 "showApiPlanPage()",
-                f"{draft_count or baseline_count} 条测试用例" if (draft_count or baseline_count) else "从接口详情或模块发起 AI 生成",
-            ),
-            _step(
-                "debug",
-                "调试参数",
-                "done" if executable_count else ("running" if draft_count else "todo"),
-                "showApiDebugPage()",
-                f"{executable_count} 条可执行" if executable_count else "先补齐环境变量、Token 和测试数据",
+                f"{draft_count or baseline_count} 条测试用例" if (draft_count or baseline_count) else "从模块任务卡发起 AI 生成",
             ),
             _step(
                 "execute",
-                "自动回归",
-                "running" if running else ("done" if latest_run.get("execution_id") else ("todo" if not executable_count else "ready")),
+                "执行，实时查看日志和报告",
+                "running" if running else ("done" if (latest_run.get("execution_id") or latest_report.get("report_id")) else ("todo" if not (draft_count or baseline_count or executable_count) else "ready")),
                 "showApiRegressionPage()",
-                "正在执行" if running else ("查看最近执行" if latest_run.get("execution_id") else "发版后一键执行基线接口测试"),
-            ),
-            _step(
-                "report",
-                "查看报告",
-                "done" if latest_report.get("report_id") else "todo",
-                "showApiReportsPage()",
-                "查看失败原因和 AI 分析" if latest_report.get("report_id") else "执行完成后自动生成报告",
+                "正在执行" if running else ("查看最近执行和报告" if (latest_run.get("execution_id") or latest_report.get("report_id")) else "批量调试草稿或执行已保存测试资产"),
             ),
         ],
     }

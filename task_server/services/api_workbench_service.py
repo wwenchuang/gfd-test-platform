@@ -456,6 +456,265 @@ def _pending_changes(sync: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _flatten_module_nodes(nodes: List[Dict[str, Any]], result: List[Dict[str, Any]] | None = None) -> List[Dict[str, Any]]:
+    if result is None:
+        result = []
+    for node in nodes or []:
+        if not isinstance(node, dict):
+            continue
+        result.append(node)
+        _flatten_module_nodes(node.get("children") or [], result)
+    return result
+
+
+def _module_path(value: Any) -> str:
+    return api_module_service.normalize_module_path(value)
+
+
+def _module_matches(candidate: str, target: str) -> bool:
+    normalized_candidate = _module_path(candidate)
+    normalized_target = _module_path(target)
+    if not normalized_candidate or not normalized_target:
+        return False
+    return (
+        normalized_candidate == normalized_target
+        or normalized_candidate.startswith(f"{normalized_target}/")
+        or normalized_target.startswith(f"{normalized_candidate}/")
+    )
+
+
+def _module_endpoint_rows(
+    endpoints: List[Dict[str, Any]],
+    module_path: str,
+) -> List[Dict[str, Any]]:
+    normalized = _module_path(module_path)
+    return [
+        endpoint for endpoint in endpoints
+        if api_module_service.module_selected(
+            endpoint.get("module_path") or endpoint.get("module"),
+            [normalized],
+        )
+    ]
+
+
+def _first_environment_base_url(source: Dict[str, Any]) -> Dict[str, str]:
+    snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    for item in snapshot.get("base_urls") or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if url:
+            return {
+                "name": str(item.get("name") or "default").strip() or "default",
+                "url": url,
+            }
+    return {"name": "", "url": ""}
+
+
+def _module_task_environment(source: Dict[str, Any]) -> Dict[str, Any]:
+    base_url = _first_environment_base_url(source)
+    return {
+        "id": str(source.get("environment_id") or ""),
+        "name": str(source.get("environment_name") or "") or "执行环境待配置",
+        "base_url_name": base_url["name"],
+        "base_url": base_url["url"],
+        "source_id": str(source.get("source_id") or ""),
+    }
+
+
+def _module_task_auth(execution: Dict[str, Any]) -> Dict[str, Any]:
+    binding = execution.get("auth_binding") if isinstance(execution.get("auth_binding"), dict) else {}
+    auth_type = str(binding.get("auth_type") or "").strip()
+    header_name = str(binding.get("header_name") or "").strip()
+    configured = bool(binding.get("configured") or binding.get("auth_ref"))
+    if not configured:
+        label = "未配置"
+    elif auth_type.lower() == "bearer":
+        label = "Bearer 已配置"
+    elif header_name:
+        label = f"{header_name} 已配置"
+    else:
+        label = "鉴权已配置"
+    return {
+        "configured": configured,
+        "label": label,
+        "auth_type": auth_type,
+        "header_name": header_name,
+        "variable_name": str(binding.get("variable_name") or ""),
+        "auth_ref": str(binding.get("auth_ref") or ""),
+    }
+
+
+def _plan_matches_module(
+    plan: Dict[str, Any],
+    module_path: str,
+    endpoint_keys: set[str],
+) -> bool:
+    has_module_contract = False
+    for plan_module in plan.get("module_paths") or []:
+        normalized_plan_module = _module_path(plan_module)
+        normalized_module_path = _module_path(module_path)
+        if not normalized_plan_module or not normalized_module_path:
+            continue
+        has_module_contract = True
+        if (
+            normalized_module_path == normalized_plan_module
+            or normalized_module_path.startswith(f"{normalized_plan_module}/")
+        ):
+            return True
+    if has_module_contract:
+        return False
+    selected_keys = {
+        str(item or "").strip()
+        for item in (plan.get("selected_endpoint_keys") or [])
+        if str(item or "").strip()
+    }
+    return bool(selected_keys and endpoint_keys and selected_keys.intersection(endpoint_keys))
+
+
+def _first_matching_plan(
+    plans: List[Dict[str, Any]],
+    module_path: str,
+    endpoint_keys: set[str],
+) -> Dict[str, Any]:
+    return next(
+        (
+            plan for plan in plans
+            if _plan_matches_module(plan, module_path, endpoint_keys)
+        ),
+        {},
+    )
+
+
+def _run_for_plans(rows: List[Dict[str, Any]], plan_ids: set[str]) -> Dict[str, Any]:
+    if not plan_ids:
+        return {}
+    return next(
+        (
+            row for row in rows or []
+            if str(row.get("plan_id") or "").strip() in plan_ids
+        ),
+        {},
+    )
+
+
+def _module_task_primary_action(
+    draft: Dict[str, Any],
+    baseline: Dict[str, Any],
+    active_run: Dict[str, Any],
+    execution: Dict[str, Any],
+) -> tuple[str, str, str, str]:
+    if active_run:
+        return "view_run", "查看执行日志", "运行中", "当前模块已有执行任务，优先查看实时日志和报告。"
+    if draft:
+        if _safe_int(draft.get("executable_case_count"), 0) > 0:
+            return "debug_draft", "批量调试草稿", "可调试", "先跑通草稿，再保存成基线。"
+        return "open_draft", "审阅草稿", "待补数据", "AI 已生成草稿，但仍有入参、断言或环境需要补齐。"
+    readiness = execution.get("readiness") if isinstance(execution.get("readiness"), dict) else {}
+    if baseline:
+        if (
+            bool(baseline.get("can_execute"))
+            and (baseline.get("execution_readiness") or {}).get("can_execute") is not False
+            and readiness.get("can_execute") is not False
+        ):
+            return "run_baseline", "执行基线", "可回归", "用已保存测试资产执行接口回归。"
+        return "inspect_baseline", "检查基线", "待配置", "基线存在，但执行环境、业务鉴权或版本需要确认。"
+    return "generate", "生成测试资产", "待生成", "从该模块接口生成 AI 测试草稿。"
+
+
+def _module_task_sort_key(task: Dict[str, Any]) -> tuple[Any, ...]:
+    action_rank = {
+        "view_run": 0,
+        "debug_draft": 1,
+        "run_baseline": 2,
+        "open_draft": 3,
+        "inspect_baseline": 4,
+        "generate": 5,
+    }
+    path = str(task.get("path") or "")
+    depth = len([part for part in path.split("/") if part])
+    has_plan = bool(task.get("draft") or task.get("baseline") or task.get("active_run"))
+    return (
+        0 if has_plan else 1,
+        action_rank.get(str(task.get("primary_action") or ""), 9),
+        -depth,
+        _safe_int(task.get("endpoint_count"), 0),
+        path,
+    )
+
+
+def _module_tasks(
+    module_summary: Dict[str, Any],
+    endpoints: List[Dict[str, Any]],
+    plans: Dict[str, Any],
+    execution: Dict[str, Any],
+    source: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    modules = _flatten_module_nodes(module_summary.get("roots") or [])
+    if not modules:
+        return []
+    environment = _module_task_environment(source)
+    auth = _module_task_auth(execution)
+    active_runs = execution.get("active_runs") or []
+    recent_runs = execution.get("recent_runs") or []
+    rows: List[Dict[str, Any]] = []
+    for module in modules:
+        path = _module_path(module.get("path"))
+        if not path:
+            continue
+        module_endpoints = _module_endpoint_rows(endpoints, path)
+        endpoint_keys = {
+            str(endpoint.get("endpoint_key") or "").strip()
+            for endpoint in module_endpoints
+            if str(endpoint.get("endpoint_key") or "").strip()
+        }
+        draft = _first_matching_plan(plans.get("drafts") or [], path, endpoint_keys)
+        baseline = _first_matching_plan(plans.get("baselines") or [], path, endpoint_keys)
+        plan_ids = {
+            str(plan.get("plan_id") or "").strip()
+            for plan in (draft, baseline)
+            if str(plan.get("plan_id") or "").strip()
+        }
+        active_run = _run_for_plans(active_runs, plan_ids)
+        latest_run = active_run or _run_for_plans(recent_runs, plan_ids)
+        if not (draft or baseline or active_run) and module.get("children"):
+            continue
+        primary_action, primary_label, status_label, primary_detail = _module_task_primary_action(
+            draft,
+            baseline,
+            active_run,
+            execution,
+        )
+        rows.append({
+            "path": path,
+            "name": str(module.get("name") or path.rsplit("/", 1)[-1] or "未分组"),
+            "depth": _safe_int(module.get("depth"), len(path.split("/"))),
+            "endpoint_count": len(module_endpoints) or _safe_int(module.get("endpoint_count"), 0),
+            "endpoint_ids": [
+                str(endpoint.get("endpoint_id") or "")
+                for endpoint in module_endpoints[:60]
+                if str(endpoint.get("endpoint_id") or "").strip()
+            ],
+            "endpoint_names": [
+                str(endpoint.get("name") or endpoint.get("summary") or endpoint.get("path") or "")
+                for endpoint in module_endpoints[:8]
+                if str(endpoint.get("name") or endpoint.get("summary") or endpoint.get("path") or "").strip()
+            ],
+            "draft": draft,
+            "baseline": baseline,
+            "active_run": active_run,
+            "latest_run": latest_run,
+            "environment": environment,
+            "auth": auth,
+            "primary_action": primary_action,
+            "primary_label": primary_label,
+            "primary_detail": primary_detail,
+            "status_label": status_label,
+        })
+    rows.sort(key=_module_task_sort_key)
+    return rows[:30]
+
+
 def _coverage_metrics(
     endpoints: List[Dict[str, Any]],
     plans_payload: Dict[str, Any],
@@ -560,6 +819,14 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
     metrics_payload = _coverage_metrics(endpoints, plans_payload, execution_payload, latest_sync)
     sync_state_payload = _sync_state(source_payload, snapshot_payload, latest_sync)
     pending_changes_payload = _pending_changes(latest_sync)
+    module_summary_payload = api_module_service.module_summary(revision.get("endpoints") or [])
+    module_tasks_payload = _module_tasks(
+        module_summary_payload,
+        endpoints,
+        plans_payload,
+        execution_payload,
+        source_payload,
+    )
     return {
         "ok": True,
         "mode": "native_api_workbench",
@@ -570,6 +837,7 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
         "metrics": metrics_payload,
         "sync_state": sync_state_payload,
         "pending_changes": pending_changes_payload,
+        "module_tasks": module_tasks_payload,
         "task": api_task_service.build_api_test_task(
             source=source_payload,
             snapshot=snapshot_payload,
@@ -583,7 +851,7 @@ def api_testing_workbench(source_id: str = "") -> Dict[str, Any]:
         "scope": {
             "endpoint_count": len(endpoints),
             "endpoints": endpoints[:300],
-            "modules": api_module_service.module_summary(revision.get("endpoints") or []),
+            "modules": module_summary_payload,
             "business_lines": api_module_service.business_line_summary(revision.get("endpoints") or []),
         },
         "cases": plans_payload,

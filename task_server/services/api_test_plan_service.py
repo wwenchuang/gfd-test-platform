@@ -555,6 +555,74 @@ def _case_contract_missing(case: Dict[str, Any], endpoint: Dict[str, Any] | None
     return sorted(set(missing))
 
 
+def _source_environment_variables(source: Dict[str, Any]) -> Dict[str, str]:
+    snapshot = source.get("environment_snapshot") if isinstance(source.get("environment_snapshot"), dict) else {}
+    variables = snapshot.get("variables") if isinstance(snapshot.get("variables"), list) else []
+    result: Dict[str, str] = {}
+    for item in variables:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name or api_case_contract_service.is_sensitive_field_name(name):
+            continue
+        value = item.get("value")
+        if value in (None, ""):
+            continue
+        result[name] = f"{{{{{name}}}}}"
+    return result
+
+
+def _apply_environment_parameter_placeholders(
+    cases: List[Dict[str, Any]],
+    endpoints: List[Dict[str, Any]],
+    source: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    environment_variables = _source_environment_variables(source)
+    if not environment_variables:
+        return cases
+    endpoint_by_id = {
+        str(endpoint.get("endpoint_id") or ""): endpoint
+        for endpoint in endpoints
+        if isinstance(endpoint, dict) and endpoint.get("endpoint_id")
+    }
+    updated_cases: List[Dict[str, Any]] = []
+    for raw_case in cases:
+        case = copy.deepcopy(raw_case)
+        endpoint = endpoint_by_id.get(str(case.get("endpoint_id") or ""))
+        request = case.get("request") if isinstance(case.get("request"), dict) else {}
+        headers = request.get("headers") if isinstance(request.get("headers"), dict) else {}
+        negative_target = str(case.get("negative_target") or "").strip()
+        for parameter in (endpoint or {}).get("parameters") or []:
+            if not isinstance(parameter, dict) or not parameter.get("required"):
+                continue
+            if str(parameter.get("in") or "").strip().lower() != "header":
+                continue
+            name = str(parameter.get("name") or "").strip()
+            if (
+                not name
+                or name not in environment_variables
+                or api_case_contract_service.is_sensitive_header_name(name)
+                or negative_target == f"header.{name}"
+                or str(headers.get(name) or "").strip()
+            ):
+                continue
+            headers[name] = environment_variables[name]
+        if headers:
+            request["headers"] = headers
+            case["request"] = request
+            readiness = case.get("readiness") if isinstance(case.get("readiness"), dict) else {}
+            missing = [
+                item for item in (readiness.get("missing") or [])
+                if not (isinstance(item, str) and item.startswith("request.headers.") and item.rsplit(".", 1)[-1] in headers)
+            ]
+            if isinstance(readiness, dict):
+                readiness["missing"] = sorted(set(missing))
+                readiness["state"] = "needs_review" if missing else "executable"
+                case["readiness"] = readiness
+        updated_cases.append(case)
+    return updated_cases
+
+
 def _stable_api_auth_binding(value: Any) -> Dict[str, Any]:
     binding = value if isinstance(value, dict) else {}
     required = ("auth_ref", "auth_type", "header_name", "variable_name", "environment_id")
@@ -1062,8 +1130,9 @@ def generate_api_test_plan(
     if require_ai_success and not ai_enabled:
         raise ValueError("当前批次要求 AI 成功，不能禁用 AI")
     selected_cases = local_cases
+    source_config = source
     ai_meta: Dict[str, Any] = {"enabled": ai_enabled, "used": False, "fallback_reason": ""}
-    source = "local"
+    plan_source = "local"
     if ai_enabled:
         ai_result = _ai_cases(snapshot, safe_endpoints, local_cases, plan_id, model_config)
         ai_result = api_case_contract_service.sanitize_sensitive_data(ai_result)
@@ -1076,12 +1145,17 @@ def generate_api_test_plan(
         })
         if ai_result.get("ok"):
             selected_cases = ai_result.get("cases") or local_cases
-            source = "ai"
+            plan_source = "ai"
         else:
             if require_ai_success:
                 error = str(ai_result.get("error") or "AI 生成失败")
                 raise ValueError(f"AI 生成失败：{error}")
-            source = "local_fallback"
+            plan_source = "local_fallback"
+    selected_cases = _apply_environment_parameter_placeholders(
+        selected_cases,
+        safe_endpoints,
+        source_config,
+    )
     _assert_generation_snapshot_current(generation, selected_source_id, snapshot)
     plan = {
         "plan_id": plan_id,
@@ -1102,7 +1176,7 @@ def generate_api_test_plan(
         "execution_binding_id": str(workspace_binding.get("binding_id") or ""),
         "name": f"{snapshot.get('title') or snapshot.get('name') or 'API'} 接口测试计划",
         "status": "draft",
-        "source": source,
+        "source": plan_source,
         "created_at": _now(),
         "confirmed_at": "",
         "endpoint_count": len(endpoints),
