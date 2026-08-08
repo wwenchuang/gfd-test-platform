@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import secrets
 import subprocess
 
 import pytest
@@ -37,9 +38,39 @@ def test_settings_reject_short_secret_when_enabled(monkeypatch):
         ApiTestingSettings.from_env()
 
 
-def test_settings_accept_32_character_secret_when_enabled(monkeypatch):
+def test_settings_reject_32_identical_characters_when_enabled(monkeypatch):
     monkeypatch.setenv("API_TESTING_ENABLED", "1")
-    monkeypatch.setenv("API_TESTING_SECRET_KEY", "0123456789abcdef0123456789abcdef")
+    monkeypatch.setenv("API_TESTING_SECRET_KEY", "x" * 32)
+    monkeypatch.setenv("API_TESTING_DATABASE_URL", "postgresql+psycopg://test@127.0.0.1/test")
+    monkeypatch.setenv("API_TESTING_REDIS_URL", "redis://127.0.0.1:6379/0")
+
+    with pytest.raises(ValueError, match="strong random value"):
+        ApiTestingSettings.from_env()
+
+
+def test_settings_reject_repeated_short_pattern_when_enabled(monkeypatch):
+    monkeypatch.setenv("API_TESTING_ENABLED", "1")
+    monkeypatch.setenv("API_TESTING_SECRET_KEY", "abc123" * 6)
+    monkeypatch.setenv("API_TESTING_DATABASE_URL", "postgresql+psycopg://test@127.0.0.1/test")
+    monkeypatch.setenv("API_TESTING_REDIS_URL", "redis://127.0.0.1:6379/0")
+
+    with pytest.raises(ValueError, match="strong random value"):
+        ApiTestingSettings.from_env()
+
+
+def test_settings_reject_known_placeholder_when_enabled(monkeypatch):
+    monkeypatch.setenv("API_TESTING_ENABLED", "1")
+    monkeypatch.setenv("API_TESTING_SECRET_KEY", "replace-with-your-own-random-key")
+    monkeypatch.setenv("API_TESTING_DATABASE_URL", "postgresql+psycopg://test@127.0.0.1/test")
+    monkeypatch.setenv("API_TESTING_REDIS_URL", "redis://127.0.0.1:6379/0")
+
+    with pytest.raises(ValueError, match="strong random value"):
+        ApiTestingSettings.from_env()
+
+
+def test_settings_accept_token_urlsafe_secret_when_enabled(monkeypatch):
+    monkeypatch.setenv("API_TESTING_ENABLED", "1")
+    monkeypatch.setenv("API_TESTING_SECRET_KEY", secrets.token_urlsafe(32))
     monkeypatch.setenv("API_TESTING_DATABASE_URL", "postgresql+psycopg://test@127.0.0.1/test")
     monkeypatch.setenv("API_TESTING_REDIS_URL", "redis://127.0.0.1:6379/0")
 
