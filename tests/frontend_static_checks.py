@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 from pathlib import Path
 
 
@@ -24,10 +25,60 @@ def _read_bundle() -> str:
     return "\n".join(parts)
 
 
+def check_api_automation_frontend_residue_is_removed():
+    state_js = (JS_DIR / "state.js").read_text(encoding="utf-8")
+    for name in (
+        "apiTestingOverview", "apiTestingSnapshots", "apiTestingEndpoints",
+        "apiTestingPlans", "apiTestingReports", "apiTestingCurrentSnapshotId",
+        "apiTestingCurrentPlan", "apiTestingSources", "apiTestingSyncs",
+        "apiTestingProjectScope", "apiTestingSourceDraftMode",
+        "apiTestingSelectionByScope", "apiAssetSelectedSourceId",
+        "apiAssetSelectedRevisionId", "apiAssetRevisionPinned",
+        "apiAssetActiveSyncId", "apiAssetSyncPollTimer", "apiAssetSettingsOpen",
+        "apiSourceCredentialEditing", "apiSourceDiscoveryRequestId",
+        "apiSourceDiscoveryState", "apiAssetContextRequestId",
+        "apiAssetRequestController", "apiPlanRequestController",
+        "apiExecutionRequestController", "apiAssetPageScrollTop",
+        "apiAssetSyncExpandedKeys", "apiAssetSyncScrollPositions",
+    ):
+        require(name not in state_js, f"Removed API frontend state must not remain: {name}")
+    require(
+        "api_asset_sync_expanded_keys" not in state_js,
+        "Removed API asset state must not parse preserved localStorage data",
+    )
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    scripts = package.get("scripts", {})
+    for name in ("test:api-project-workspace", "test:api-sync", "test:apifox-discovery"):
+        require(name not in scripts, f"Obsolete API test script must be removed: {name}")
+    static_script = scripts.get("test:static", "")
+    for filename in (
+        "api_asset_sync_checks.py", "api_case_contract_checks.py",
+        "api_manual_workflow_checks.py", "api_native_execution_checks.py",
+        "api_project_workspace_checks.py", "api_runtime_recovery_checks.py",
+        "api_test_lab_checks.py", "api_workbench_checks.py",
+        "apifox_discovery_checks.py", "metersphere_v365_adapter_checks.py",
+    ):
+        require(filename not in static_script, f"Deleted API test must not remain in test:static: {filename}")
+    for command in (
+        "tests/backend_static_checks.py", "tests/frontend_static_checks.py",
+        "tests/ai_gateway_static_checks.py", "tests/undefined_name_checks.py",
+        "tests/ai_gateway_catalog_checks.mjs", "ai_skills/evals/run_skill_evals.py",
+    ):
+        require(command in static_script, f"Active static verification must remain in test:static: {command}")
+    visual_smoke = (ROOT / "tests" / "visual_smoke_check.js").read_text(encoding="utf-8")
+    for marker in (
+        "/api/api-testing/", "apiTestingProjectScope", "apiAssetSyncPollCount",
+        "apiPlanGenerationPollCount", "meterExecution", "getSourceRequestBodies",
+        'data-workflow="api_', "metersphere-execution.png", "api-assets-sync.png",
+    ):
+        require(marker not in visual_smoke, f"API-only visual smoke residue must be removed: {marker}")
+
+
 def main():
     # After the round-3 split, JS/CSS live in separate files. Static substring
     # checks below should still cover the full deployable bundle, so we
     # concatenate task-manager.html + css/app.css + js/*.js as a single blob.
+    check_api_automation_frontend_residue_is_removed()
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")

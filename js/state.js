@@ -98,49 +98,6 @@ let selectedRepairJobId = '';
 let repairDrafts = [];
 let aiProviders = [];
 let aiModelRouter = {};
-let apiTestingOverview = null;
-let apiTestingSnapshots = [];
-let apiTestingEndpoints = [];
-let apiTestingPlans = [];
-let apiTestingReports = [];
-let apiTestingCurrentSnapshotId = '';
-let apiTestingCurrentPlan = null;
-let apiTestingSources = [];
-let apiTestingSyncs = [];
-let apiTestingProjectScope = { sourceId: '', revisionId: '' };
-let apiTestingSourceDraftMode = false;
-const apiTestingSelectionByScope = new Map();
-let apiAssetSelectedSourceId = '';
-let apiAssetSelectedRevisionId = '';
-let apiAssetRevisionPinned = false;
-let apiAssetActiveSyncId = '';
-let apiAssetSyncPollTimer = null;
-let apiAssetSettingsOpen = false;
-let apiSourceCredentialEditing = false;
-let apiSourceDiscoveryRequestId = 0;
-let apiSourceDiscoveryState = {
-  sourceKey: '',
-  status: 'idle',
-  projects: [],
-  project: null,
-  branches: [],
-  environments: [],
-  error: '',
-  errorCode: '',
-  manual: false,
-  manualSuggested: false,
-  search: '',
-  retryTarget: 'projects',
-  pendingProjectId: '',
-  fresh: false
-};
-let apiAssetContextRequestId = 0;
-let apiAssetRequestController = null;
-let apiPlanRequestController = null;
-let apiExecutionRequestController = null;
-let apiAssetPageScrollTop = 0;
-const apiAssetSyncExpandedKeys = new Set(JSON.parse(localStorage.getItem('api_asset_sync_expanded_keys') || '[]'));
-const apiAssetSyncScrollPositions = new Map();
 const apiLogExpandedKeys = new Set(JSON.parse(localStorage.getItem('api_log_expanded_keys') || '[]'));
 const apiLogScrollPositions = new Map();
 let apiExecutionContext = null;

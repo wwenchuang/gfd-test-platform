@@ -16293,7 +16293,12 @@ def check_agent_run_retry_clones_inputs_without_artifacts():
 
 
 def check_api_automation_backend_is_removed():
+    app_text = (ROOT / "task_server" / "app.py").read_text(encoding="utf-8")
     router_text = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    require(
+        not re.search(r"from\s+\.services\.api_[A-Za-z0-9_]+\s+import", app_text),
+        "Task server startup must not import removed API automation services",
+    )
     require("/api/api-testing/" not in router_text, "API testing routes must be removed")
     require("/api/test-lab/" not in router_text, "Test lab routes must be removed")
     for name in (
@@ -16309,6 +16314,17 @@ def check_api_automation_backend_is_removed():
         require(
             not (ROOT / "task_server" / "services" / name).exists(),
             f"API automation service must be removed: {name}",
+        )
+    for name in (
+        "api_asset_sync_checks.py", "api_case_contract_checks.py",
+        "api_manual_workflow_checks.py", "api_native_execution_checks.py",
+        "api_project_workspace_checks.py", "api_runtime_recovery_checks.py",
+        "api_test_lab_checks.py", "api_workbench_checks.py",
+        "apifox_discovery_checks.py",
+    ):
+        require(
+            not (ROOT / "tests" / name).exists(),
+            f"Obsolete API automation test must be removed: {name}",
         )
 
 

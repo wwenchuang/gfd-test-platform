@@ -28,6 +28,13 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-08 Existing API automation removed
+
+- Removed the API automation frontend, backend routes/services, AI skill, Apifox CLI deployment dependency, and API-specific tests.
+- Preserved SQLite databases, historical API reports, screenshots, and design documents as recovery data.
+- The platform no longer opens or writes the preserved API data.
+- Replacement API testing design is intentionally out of scope for this change.
+
 ### 2026-08-04 API 自动化：新增本地测试库并按参考面板重做主流程
 
 用户最终确认 API 自动化只需要一条简单主链路：
