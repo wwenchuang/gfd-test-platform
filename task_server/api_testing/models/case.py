@@ -2,7 +2,15 @@
 
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,28 +19,29 @@ from .base import Base, PrimaryRecord
 
 class ApiCase(PrimaryRecord, Base):
     __tablename__ = "api_cases"
-    __table_args__ = (Index("ix_api_cases_project_status", "project_id", "status"),)
+    __table_args__ = (
+        Index("ix_api_cases_project_status", "project_id", "status"),
+        ForeignKeyConstraint(
+            ["id", "active_version_id"],
+            ["api_case_versions.case_id", "api_case_versions.id"],
+            name="fk_api_cases_active_version_parent",
+            use_alter=True,
+        ),
+    )
 
     project_id: Mapped[str] = mapped_column(ForeignKey("api_projects.id", ondelete="CASCADE"), nullable=False)
     endpoint_id: Mapped[str] = mapped_column(ForeignKey("api_source_endpoints.id", ondelete="RESTRICT"), nullable=False)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="draft")
     origin: Mapped[str] = mapped_column(String(32), nullable=False)
-    active_version_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey(
-            "api_case_versions.id",
-            name="fk_api_cases_active_version_id_api_case_versions",
-            use_alter=True,
-            ondelete="SET NULL",
-        ),
-        nullable=True,
-    )
+    active_version_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
 
 
 class ApiCaseVersion(PrimaryRecord, Base):
     __tablename__ = "api_case_versions"
     __table_args__ = (
         UniqueConstraint("case_id", "version_number"),
+        UniqueConstraint("case_id", "id"),
         Index("ix_api_case_versions_case_number", "case_id", "version_number"),
     )
 

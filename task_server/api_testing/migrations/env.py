@@ -20,10 +20,11 @@ if config.config_file_name is not None:
 # application instead of parsing /opt/midscene.env independently.
 platform_config.load_startup_env()
 
+explicit_database_url = config.get_main_option("sqlalchemy.url").strip()
 database_url = (
-    os.getenv("TEST_DATABASE_URL", "").strip()
+    explicit_database_url
+    or os.getenv("TEST_DATABASE_URL", "").strip()
     or os.getenv("API_TESTING_DATABASE_URL", "").strip()
-    or config.get_main_option("sqlalchemy.url").strip()
 )
 if not database_url:
     raise RuntimeError("API_TESTING_DATABASE_URL is required for API testing migrations")

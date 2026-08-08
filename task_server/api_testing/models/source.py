@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -19,21 +20,21 @@ from .base import Base, PrimaryRecord
 
 class ApiSource(PrimaryRecord, Base):
     __tablename__ = "api_sources"
-    __table_args__ = (UniqueConstraint("project_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name"),
+        ForeignKeyConstraint(
+            ["id", "active_revision_id"],
+            ["api_source_revisions.source_id", "api_source_revisions.id"],
+            name="fk_api_sources_active_revision_parent",
+            use_alter=True,
+        ),
+    )
 
     project_id: Mapped[str] = mapped_column(ForeignKey("api_projects.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     source_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="active")
-    active_revision_id: Mapped[Optional[str]] = mapped_column(
-        ForeignKey(
-            "api_source_revisions.id",
-            name="fk_api_sources_active_revision_id_api_source_revisions",
-            use_alter=True,
-            ondelete="SET NULL",
-        ),
-        nullable=True,
-    )
+    active_revision_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     connection_config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
 
 
@@ -41,6 +42,7 @@ class ApiSourceRevision(PrimaryRecord, Base):
     __tablename__ = "api_source_revisions"
     __table_args__ = (
         UniqueConstraint("source_id", "revision_number"),
+        UniqueConstraint("source_id", "id"),
         Index("ix_api_source_revisions_source_number", "source_id", "revision_number"),
     )
 

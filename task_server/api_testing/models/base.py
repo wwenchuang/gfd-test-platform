@@ -3,7 +3,7 @@
 import uuid
 
 from sqlalchemy import DateTime, Integer, MetaData, String, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 
 NAMING_CONVENTION = {
@@ -35,3 +35,7 @@ class PrimaryRecord:
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
     row_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
+    @declared_attr.directive
+    def __mapper_args__(cls):
+        return {"version_id_col": cls.row_version}
