@@ -14,7 +14,6 @@ SKILL_NAMES = [
     "visual_grounder",
     "coverage_auditor",
     "repair_patch_planner",
-    "api_test_designer",
 ]
 
 

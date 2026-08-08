@@ -66,7 +66,6 @@ const SKILL_ACTION_MAP = {
   yaml_static_repair: 'optimize_yaml',
   case_coverage_repair: 'generate_case',
   legacy_case_generation: 'generate_case',
-  api_test_designer: 'generate_case',
 };
 
 function boundedEnvNumber(name, fallback, minimum, maximum) {

@@ -121,10 +121,36 @@ def main():
         "Gateway must reject empty model output, allow one audited fallback, and retain finish/token metadata",
     )
     require("app.post('/ai/skill'" in server, "server must expose AI Skill endpoint")
+    require("api_test_designer" not in server, "api_test_designer must not have a Gateway route")
     require(
-        "api_test_designer: 'generate_case'" in server,
-        "api_test_designer must have an explicit generate_case Gateway route",
+        not (ROOT / "ai_skills" / "prompts" / "api_test_designer.v1.md").exists(),
+        "api_test_designer prompt must be removed",
     )
+    require(
+        not (ROOT / "ai_skills" / "schemas" / "api_test_designer.schema.json").exists(),
+        "api_test_designer schema must be removed",
+    )
+    require(
+        not (ROOT / "ai_skills" / "evals" / "fixtures" / "api_executable_contract.json").exists(),
+        "api_test_designer eval fixture must be removed",
+    )
+    env_example = (ROOT / "deploy" / "midscene.env.example").read_text(encoding="utf-8")
+    for name in (
+        "METERSPHERE_",
+        "APIFOX_CLI_BIN",
+        "APIFOX_BASE_URL",
+        "APIFOX_ACCESS_TOKEN",
+        "APIFOX_PROJECT_ID",
+        "APIFOX_SOURCE_NAME",
+        "APIFOX_BRANCH_ID",
+        "APIFOX_ENVIRONMENT_ID",
+        "APIFOX_SYNC_ENABLED",
+        "APIFOX_SYNC_INTERVAL_MINUTES",
+    ):
+        require(f"export {name}=" not in env_example, f"{name} must be removed from env example")
+    config = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
+    for prefix in ("METERSPHERE_", "APIFOX_"):
+        require(f'"{prefix}"' not in config, f"{prefix} must not be an environment prefix")
     require("routeSupportsQwenHybridThinking" in server and "completionOptions.enable_thinking = false" in server and "completionOptions.response_format = {type: 'json_object'}" in server, "Structured Qwen skills must use non-thinking JSON Mode to avoid incompatible slow responses")
     require(
         "requestedCompletionTokens" in server
@@ -143,18 +169,6 @@ def main():
     require(not re.search(r"sk-[A-Za-z0-9_-]{12,}", server), "server must not contain real OpenAI/DashScope keys")
     require(not re.search(r"hk-[A-Za-z0-9_-]{12,}", server), "server must not contain real HighwayAPI keys")
     require(not re.search(r"figd_[A-Za-z0-9_-]{12,}", server), "server must not contain real Figma tokens")
-
-    api_case_schema = json.loads(
-        (ROOT / "ai_skills" / "schemas" / "api_test_designer.schema.json").read_text(encoding="utf-8")
-    )
-    case_schema = (((api_case_schema.get("properties") or {}).get("cases") or {}).get("items") or {})
-    case_fields = set((case_schema.get("properties") or {}).keys())
-    case_required = set(case_schema.get("required") or [])
-    executable_fields = {"request", "assertions", "variables", "dependencies", "readiness"}
-    require(
-        executable_fields <= case_fields and executable_fields <= case_required,
-        "api_test_designer schema must require the executable case contract",
-    )
 
     state_machine = (GATEWAY / "agent/agent-state-machine.js").read_text(encoding="utf-8")
     for state in (

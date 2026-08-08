@@ -11,10 +11,6 @@ PORT="${PORT:-8091}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
 NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
-APIFOX_CLI_VERSION="${APIFOX_CLI_VERSION:-2.2.8}"
-APIFOX_CLI_INSTALL_TIMEOUT_SECONDS="${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS:-600}"
-APIFOX_NPM_REGISTRY="${APIFOX_NPM_REGISTRY:-https://registry.npmmirror.com/}"
-APIFOX_NPM_FALLBACK_REGISTRY="${APIFOX_NPM_FALLBACK_REGISTRY:-https://registry.npmjs.org/}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -83,80 +79,6 @@ then
   fi
   if [ "${cryptography_installed}" -eq 0 ]; then
     echo "警告：无法自动安装 cryptography；服务仍可启动，但 MeterSphere Access Key 模式会保持不可执行。"
-  fi
-fi
-
-apifox_cli_usable() {
-  local cli_bin="$1"
-  local version_text
-  [ -n "${cli_bin}" ] && [ -x "${cli_bin}" ] || return 1
-  version_text="$("${cli_bin}" --version 2>&1)" || return 1
-  python3 - "${version_text}" <<'PY' >/dev/null 2>&1
-import re
-import sys
-
-match = re.search(r"(\d+)\.(\d+)\.(\d+)", sys.argv[1])
-version = tuple(int(item) for item in match.groups()) if match else (0, 0, 0)
-raise SystemExit(0 if version >= (2, 2, 6) else 1)
-PY
-}
-
-install_apifox_cli() {
-  local registry="$1"
-  local install_target="apifox-cli@${APIFOX_CLI_VERSION}"
-  local install_args=(
-    npm install -g "${install_target}"
-    --registry="${registry}"
-    --prefer-offline
-    --omit=optional
-    --ignore-scripts
-    --fetch-retries=1
-    --fetch-timeout=60000
-    --fetch-retry-mintimeout=1000
-    --fetch-retry-maxtimeout=5000
-    --no-audit
-    --no-fund
-    --progress=false
-    --loglevel=error
-  )
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS}" "${install_args[@]}"
-  else
-    "${install_args[@]}"
-  fi
-}
-
-APIFOX_CLI_BIN_RESOLVED="$(command -v apifox || true)"
-if apifox_cli_usable "${APIFOX_CLI_BIN_RESOLVED}"; then
-  echo "Apifox CLI 已可用：$("${APIFOX_CLI_BIN_RESOLVED}" --version 2>/dev/null)"
-elif ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-  echo "警告：未检测到 Node.js/npm，跳过 Apifox CLI 安装；API 来源手动连接仍可使用。"
-elif ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 14 ? 0 : 1)'; then
-  echo "警告：Node.js 版本低于 14，跳过 Apifox CLI 安装；API 来源手动连接仍可使用。"
-else
-  echo "正在安装 Apifox CLI ${APIFOX_CLI_VERSION}（用于只读发现项目、分支和环境名称）..."
-  install_status=0
-  if install_apifox_cli "${APIFOX_NPM_REGISTRY}"; then
-    :
-  else
-    install_status=$?
-    if [ "${install_status}" -eq 124 ]; then
-      echo "Apifox CLI 下载在 ${APIFOX_CLI_INSTALL_TIMEOUT_SECONDS} 秒内未完成；已保留 npm 缓存，不再重复切源安装。"
-      echo "提示：网络恢复后重新执行本安装脚本，npm 会优先复用已下载内容。"
-    elif [ "${APIFOX_NPM_REGISTRY}" != "${APIFOX_NPM_FALLBACK_REGISTRY}" ]; then
-      echo "Apifox CLI 镜像源快速失败，改用 npm 官方源重试..."
-      if install_apifox_cli "${APIFOX_NPM_FALLBACK_REGISTRY}"; then
-        install_status=0
-      else
-        install_status=$?
-      fi
-    fi
-  fi
-  APIFOX_CLI_BIN_RESOLVED="$(command -v apifox || true)"
-  if apifox_cli_usable "${APIFOX_CLI_BIN_RESOLVED}"; then
-    echo "Apifox CLI 安装完成：${APIFOX_CLI_BIN_RESOLVED}"
-  else
-    echo "警告：Apifox CLI 安装或版本校验失败；服务仍可启动，API 来源手动连接仍可使用。"
   fi
 fi
 
@@ -443,7 +365,6 @@ upgrade_env_default_if_old() {
 }
 
 ensure_env_default "AI_SKILLS_DIR" "${APP_DIR}/ai_skills"
-ensure_env_default "APIFOX_CLI_BIN" "${APIFOX_CLI_BIN_RESOLVED:-apifox}"
 upgrade_env_default_if_old "PORT" "8091" "8088"
 ensure_env_default "TASK_MAX_BODY_SIZE" "314572800"
 ensure_env_default "TASK_MAX_UPLOAD_BODY_SIZE" "314572800"
