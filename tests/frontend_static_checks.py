@@ -40,12 +40,17 @@ def check_api_automation_frontend_residue_is_removed():
         "apiAssetRequestController", "apiPlanRequestController",
         "apiExecutionRequestController", "apiAssetPageScrollTop",
         "apiAssetSyncExpandedKeys", "apiAssetSyncScrollPositions",
+        "apiLogExpandedKeys", "apiLogScrollPositions", "apiExecutionContext",
+        "apiExecutionActiveId", "apiExecutionPollTimer",
+        "apiExecutionSettingsOpen", "apiExecutionContextRequestId",
+        "apiExecutionStartingPlanId",
     ):
         require(name not in state_js, f"Removed API frontend state must not remain: {name}")
-    require(
-        "api_asset_sync_expanded_keys" not in state_js,
-        "Removed API asset state must not parse preserved localStorage data",
-    )
+    for storage_key in ("api_asset_sync_expanded_keys", "api_log_expanded_keys"):
+        require(
+            storage_key not in state_js,
+            f"Removed API state must not parse preserved localStorage data: {storage_key}",
+        )
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     scripts = package.get("scripts", {})
     for name in ("test:api-project-workspace", "test:api-sync", "test:apifox-discovery"):
