@@ -24,6 +24,7 @@ MIDSCENE_ENV_PREFIXES = (
     "SONIC_",
     "MIDSCENE_",
     "TASK_",
+    "API_TESTING_",
 )
 MIDSCENE_ENV_EXACT_KEYS = {
     "AI_SKILLS_DIR",

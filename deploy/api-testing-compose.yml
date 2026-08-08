@@ -1,0 +1,38 @@
+name: midscene-api-testing
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${API_TESTING_POSTGRES_DB:-midscene_api_testing}
+      POSTGRES_USER: ${API_TESTING_POSTGRES_USER:-midscene}
+      POSTGRES_PASSWORD: ${API_TESTING_POSTGRES_PASSWORD:?set API_TESTING_POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - api_testing_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - api_testing_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  api_testing_postgres_data:
+  api_testing_redis_data:

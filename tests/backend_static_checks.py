@@ -16328,6 +16328,64 @@ def check_api_automation_backend_is_removed():
         )
 
 
+def check_api_testing_runtime_infrastructure():
+    requirements = (ROOT / "requirements-api-testing.txt").read_text(encoding="utf-8")
+    for dependency in (
+        "SQLAlchemy>=2.0,<2.1",
+        "alembic>=1.14,<2",
+        "psycopg[binary]>=3.2,<3.3",
+        "redis>=5.2,<6",
+        "celery[redis]>=5.4,<6",
+        "cryptography>=44,<46",
+    ):
+        require(dependency in requirements, f"API testing runtime dependency missing: {dependency}")
+
+    dev_requirements = (ROOT / "requirements-api-testing-dev.txt").read_text(encoding="utf-8")
+    require("-r requirements-api-testing.txt" in dev_requirements, "API testing dev dependencies must include runtime dependencies")
+    require("pytest>=8,<9" in dev_requirements and "pytest-cov>=5,<7" in dev_requirements, "API testing dev dependencies must bound pytest tooling")
+
+    compose = (ROOT / "deploy" / "api-testing-compose.yml").read_text(encoding="utf-8")
+    require("postgres:16" in compose and "redis:7" in compose, "API testing compose must use PostgreSQL 16 and Redis 7")
+    require('"127.0.0.1:5432:5432"' in compose and '"127.0.0.1:6379:6379"' in compose, "API testing data services must bind only to localhost")
+    require("healthcheck:" in compose and "restart: unless-stopped" in compose, "API testing data services must have health checks and restart policies")
+    require("api_testing_postgres_data:" in compose and "api_testing_redis_data:" in compose, "API testing data services must use persistent named volumes")
+
+    worker_service = (ROOT / "deploy" / "midscene-api-worker.service").read_text(encoding="utf-8")
+    require("Environment=MIDSCENE_ENV_FILE=/opt/midscene.env" in worker_service, "API worker must use the platform's shared private environment loader")
+    require("/opt/midscene-task-platform/.venv/bin/celery" in worker_service, "API worker must run from the application venv")
+    require("-A task_server.api_testing.tasks:celery_app worker" in worker_service, "API worker must load the API testing Celery application")
+    require("--queues=api-testing --concurrency=2" in worker_service, "API worker must use the dedicated bounded queue")
+    platform_config = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
+    require('"API_TESTING_"' in platform_config, "Platform startup config must load API testing variables from the private env file")
+
+    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
+    for key in (
+        "API_TESTING_ENABLED",
+        "API_TESTING_DATABASE_URL",
+        "API_TESTING_REDIS_URL",
+        "API_TESTING_SECRET_KEY",
+        "API_TESTING_QUEUE",
+    ):
+        require(f"export {key}=" in env_example, f"Deployment env example must expose {key}")
+
+    install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+    require("python3 -m venv --system-site-packages" in install_script, "Deployment must create the shared application venv")
+    require("requirements-api-testing.txt" in install_script, "Deployment must install API testing runtime dependencies")
+    require("api-testing-migrate.sh" in install_script, "Deployment must invoke API testing migrations")
+    require("midscene-api-worker.service" in install_script, "Deployment must install the API testing worker service")
+    require('API_TESTING_ENABLED="${API_TESTING_ENABLED:-0}"' in install_script, "Deployment must default API testing to disabled")
+    require('if [ "${API_TESTING_ENABLED}" = "1" ]' in install_script, "Deployment must start the API worker only when enabled")
+    require('if [ -d "${SRC_DIR}/api-test" ]' in install_script, "Deployment must copy the API testing frontend when present")
+    migration_pos = install_script.find('"${APP_DIR}/deploy/api-testing-migrate.sh"')
+    restart_pos = install_script.find("systemctl restart midscene-task.service")
+    require(migration_pos >= 0 and restart_pos > migration_pos, "API migrations must complete before enabled services restart")
+
+    migrate_path = ROOT / "deploy" / "api-testing-migrate.sh"
+    require(os.access(migrate_path, os.X_OK), "API migration entrypoint must be executable from the source checkout")
+    migrate_script = migrate_path.read_text(encoding="utf-8")
+    require("API_TESTING_ENABLED" in migrate_script and "alembic" in migrate_script and "upgrade head" in migrate_script, "API migration entrypoint must be disabled-safe and run Alembic to head")
+
+
 def main():
     check_ai_gateway_response_diagnostics()
     check_automation_filter_invalid_json_self_repair()
@@ -16341,6 +16399,7 @@ def main():
     check_agent_history_list_exposes_report_summary()
     check_agent_run_retry_clones_inputs_without_artifacts()
     check_api_automation_backend_is_removed()
+    check_api_testing_runtime_infrastructure()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
     package_entry_source = (ROOT / "task_server" / "__main__.py").read_text(encoding="utf-8")

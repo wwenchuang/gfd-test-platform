@@ -5,9 +5,12 @@ APP_DIR="${APP_DIR:-/opt/midscene-task-platform}"
 WEB_DIR="${WEB_DIR:-/www/html}"
 ENV_FILE="${ENV_FILE:-/opt/midscene.env}"
 SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/midscene-task.service}"
+WORKER_SERVICE_FILE="${WORKER_SERVICE_FILE:-/etc/systemd/system/midscene-api-worker.service}"
+SERVICE_OVERRIDE_DIR="${SERVICE_OVERRIDE_DIR:-/etc/systemd/system/midscene-task.service.d}"
 USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
 PORT="${PORT:-8091}"
+VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
 NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-upload-size.conf}"
@@ -76,6 +79,15 @@ install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/midscene-upload
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/midscene_upload_compat.py" "${APP_DIR}/midscene_upload_compat.py"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/task-manager.html" "${APP_DIR}/task-manager.html"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/trace-viewer.html" "${APP_DIR}/trace-viewer.html"
+if [ -d "${SRC_DIR}/api-test" ]; then
+  rm -rf "${APP_DIR}/api-test"
+  cp -R "${SRC_DIR}/api-test" "${APP_DIR}/api-test"
+  find "${APP_DIR}/api-test" -name "._*" -delete
+  find "${APP_DIR}/api-test" -name ".DS_Store" -delete
+  chown -R "${USER_NAME}:${GROUP_NAME}" "${APP_DIR}/api-test"
+  find "${APP_DIR}/api-test" -type d -exec chmod 0755 {} \;
+  find "${APP_DIR}/api-test" -type f -exec chmod 0644 {} \;
+fi
 if [ -d "${SRC_DIR}/assets" ]; then
   rm -rf "${APP_DIR}/assets"
   cp -R "${SRC_DIR}/assets" "${APP_DIR}/assets"
@@ -92,7 +104,12 @@ install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/cleanup-serv
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/README.md" "${APP_DIR}/deploy/README.md"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene.env.example" "${APP_DIR}/deploy/midscene.env.example"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene-task.service" "${APP_DIR}/deploy/midscene-task.service"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene-api-worker.service" "${APP_DIR}/deploy/midscene-api-worker.service"
+install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/api-testing-migrate.sh" "${APP_DIR}/deploy/api-testing-migrate.sh"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/api-testing-compose.yml" "${APP_DIR}/deploy/api-testing-compose.yml"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/nginx-midscene-task.conf" "${APP_DIR}/deploy/nginx-midscene-task.conf"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/requirements-api-testing.txt" "${APP_DIR}/requirements-api-testing.txt"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/requirements-api-testing-dev.txt" "${APP_DIR}/requirements-api-testing-dev.txt"
 if [ -f "${SRC_DIR}/sonic-midscene-task-runner.groovy" ]; then
   install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/sonic-midscene-task-runner.groovy" "${APP_DIR}/sonic-midscene-task-runner.groovy"
   install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SRC_DIR}/sonic-midscene-task-runner.groovy" "/opt/sonic-midscene-task-runner.groovy"
@@ -105,6 +122,14 @@ done
 if [ -d "${WEB_DIR}" ]; then
   install -m 0644 "${SRC_DIR}/task-manager.html" "${WEB_DIR}/task-manager.html"
   install -m 0644 "${SRC_DIR}/trace-viewer.html" "${WEB_DIR}/trace-viewer.html"
+  if [ -d "${SRC_DIR}/api-test" ]; then
+    rm -rf "${WEB_DIR}/api-test"
+    cp -R "${SRC_DIR}/api-test" "${WEB_DIR}/api-test"
+    find "${WEB_DIR}/api-test" -name "._*" -delete
+    find "${WEB_DIR}/api-test" -name ".DS_Store" -delete
+    find "${WEB_DIR}/api-test" -type d -exec chmod 0755 {} \;
+    find "${WEB_DIR}/api-test" -type f -exec chmod 0644 {} \;
+  fi
   if [ -d "${SRC_DIR}/assets" ]; then
     rm -rf "${WEB_DIR}/assets"
     cp -R "${SRC_DIR}/assets" "${WEB_DIR}/assets"
@@ -159,6 +184,11 @@ if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -
       docker exec "${WEB_CONTAINER}" sh -lc "chmod 644 '${target_html}'"
       docker cp "${SRC_DIR}/trace-viewer.html" "${WEB_CONTAINER}:${target_dir}/trace-viewer.html"
       docker exec "${WEB_CONTAINER}" sh -lc "chmod 644 '${target_dir}/trace-viewer.html'"
+      if [ -d "${SRC_DIR}/api-test" ]; then
+        docker exec "${WEB_CONTAINER}" sh -lc "rm -rf '${target_dir}/api-test' && mkdir -p '${target_dir}'"
+        docker cp "${SRC_DIR}/api-test" "${WEB_CONTAINER}:${target_dir}/api-test"
+        docker exec "${WEB_CONTAINER}" sh -lc "find '${target_dir}/api-test' -type d -exec chmod 755 {} \\; && find '${target_dir}/api-test' -type f -exec chmod 644 {} \\;"
+      fi
       if [ -d "${SRC_DIR}/assets" ]; then
         docker exec "${WEB_CONTAINER}" sh -lc "rm -rf '${target_dir}/assets' && mkdir -p '${target_dir}'"
         docker cp "${SRC_DIR}/assets" "${WEB_CONTAINER}:${target_dir}/assets"
@@ -222,6 +252,15 @@ if [ -d "${SRC_DIR}/task_server" ]; then
   find "${APP_DIR}/task_server" -type d -exec chmod 0755 {} \;
   find "${APP_DIR}/task_server" -type f -exec chmod 0644 {} \;
 fi
+
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+  echo "正在创建应用 Python 虚拟环境：${VENV_DIR}"
+  python3 -m venv --system-site-packages "${VENV_DIR}"
+fi
+"${VENV_DIR}/bin/python" -m pip install \
+  --disable-pip-version-check \
+  --no-input \
+  -r "${APP_DIR}/requirements-api-testing.txt"
 
 # Deploy css/ and js/ frontend assets
 if [ -d "${SRC_DIR}/css" ]; then
@@ -345,6 +384,11 @@ upgrade_env_default_if_old() {
 }
 
 ensure_env_default "AI_SKILLS_DIR" "${APP_DIR}/ai_skills"
+ensure_env_default "API_TESTING_ENABLED" "0"
+ensure_env_default "API_TESTING_DATABASE_URL" ""
+ensure_env_default "API_TESTING_REDIS_URL" "redis://127.0.0.1:6379/0"
+ensure_env_default "API_TESTING_SECRET_KEY" ""
+ensure_env_default "API_TESTING_QUEUE" "api-testing"
 upgrade_env_default_if_old "PORT" "8091" "8088"
 ensure_env_default "TASK_MAX_BODY_SIZE" "314572800"
 ensure_env_default "TASK_MAX_UPLOAD_BODY_SIZE" "314572800"
@@ -403,11 +447,39 @@ upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_BATCH_SIZE" "4" "8"
 upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_TIMEOUT_SECONDS" "900" "600"
 upgrade_env_default_if_old "MIDSCENE_YAML_VISUAL_TOTAL_BUDGET_SECONDS" "3600" "5400"
 
+if [ -z "${API_TESTING_ENABLED+x}" ]; then
+  API_TESTING_ENABLED="$(sed -n "s/^export API_TESTING_ENABLED=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}$/\1/p" "${ENV_FILE}" | tail -n 1)"
+fi
+API_TESTING_ENABLED="${API_TESTING_ENABLED:-0}"
+API_TESTING_ENABLED_NORMALIZED="$(printf '%s' "${API_TESTING_ENABLED}" | tr '[:upper:]' '[:lower:]')"
+case "${API_TESTING_ENABLED_NORMALIZED}" in
+  1|true|yes|on) API_TESTING_ENABLED="1" ;;
+  *) API_TESTING_ENABLED="0" ;;
+esac
+export API_TESTING_ENABLED
+
 install -m 0644 "${SCRIPT_DIR}/midscene-task.service" "${SERVICE_FILE}"
+install -m 0644 "${SCRIPT_DIR}/midscene-api-worker.service" "${WORKER_SERVICE_FILE}"
+install -d -m 0755 "${SERVICE_OVERRIDE_DIR}"
+printf '%s\n' \
+  '[Service]' \
+  'ExecStart=' \
+  "ExecStart=${VENV_DIR}/bin/python -m task_server" \
+  > "${SERVICE_OVERRIDE_DIR}/api-testing-venv.conf"
 systemctl daemon-reload
 systemctl enable midscene-task.service
 
+if [ "${API_TESTING_ENABLED}" = "1" ]; then
+  "${APP_DIR}/deploy/api-testing-migrate.sh"
+  systemctl enable midscene-api-worker.service
+  systemctl restart midscene-task.service
+  systemctl restart midscene-api-worker.service
+else
+  systemctl disable --now midscene-api-worker.service >/dev/null 2>&1 || true
+  systemctl restart midscene-task.service
+fi
+
 echo "部署文件已安装到 ${APP_DIR}"
 echo "配置文件：${ENV_FILE}"
-echo "启动：sudo systemctl restart midscene-task"
+echo "API 测试：${API_TESTING_ENABLED}（0=关闭，1=启用）"
 echo "检查：curl http://127.0.0.1:${PORT}/api/health"

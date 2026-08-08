@@ -1,0 +1,21 @@
+[Unit]
+Description=Midscene API Testing Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=midscene
+Group=midscene
+WorkingDirectory=/opt/midscene-task-platform
+Environment=MIDSCENE_ENV_FILE=/opt/midscene.env
+ExecStart=/opt/midscene-task-platform/.venv/bin/celery \
+  -A task_server.api_testing.tasks:celery_app worker \
+  --loglevel=INFO --queues=api-testing --concurrency=2
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
