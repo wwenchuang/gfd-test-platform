@@ -3,7 +3,7 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/midscene-task-platform}"
 VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv}"
-ALEMBIC_CONFIG="${API_TESTING_ALEMBIC_CONFIG:-${APP_DIR}/task_server/api_testing/alembic.ini}"
+ALEMBIC_CONFIG="${API_TESTING_ALEMBIC_CONFIG:-${APP_DIR}/task_server/api_testing/migrations/alembic.ini}"
 API_TESTING_ENABLED="${API_TESTING_ENABLED:-0}"
 
 API_TESTING_ENABLED_NORMALIZED="$(printf '%s' "${API_TESTING_ENABLED}" | tr '[:upper:]' '[:lower:]')"

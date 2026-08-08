@@ -5,6 +5,7 @@ import os
 
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+_MIN_SECRET_LENGTH = 32
 
 
 @dataclass(frozen=True)
@@ -23,8 +24,8 @@ class ApiTestingSettings:
         secret_key = os.getenv("API_TESTING_SECRET_KEY", "").strip()
         queue = os.getenv("API_TESTING_QUEUE", "api-testing").strip() or "api-testing"
 
-        if enabled and not secret_key:
-            raise ValueError("API_TESTING_SECRET_KEY is required when API testing is enabled")
+        if enabled and len(secret_key) < _MIN_SECRET_LENGTH:
+            raise ValueError("API_TESTING_SECRET_KEY must be at least 32 characters when API testing is enabled")
         if enabled and not database_url:
             raise ValueError("API_TESTING_DATABASE_URL is required when API testing is enabled")
         if enabled and not redis_url:

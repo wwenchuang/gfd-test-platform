@@ -18,6 +18,25 @@ NGINX_UPLOAD_LIMIT_CONF="${NGINX_UPLOAD_LIMIT_CONF:-/etc/nginx/conf.d/midscene-u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+render_api_worker_unit() {
+  awk -v app_dir="${APP_DIR}" -v venv_dir="${VENV_DIR}" '
+    /^WorkingDirectory=/ {
+      print "WorkingDirectory=" app_dir
+      next
+    }
+    /^ExecStart=/ {
+      print "ExecStart=" venv_dir "/bin/celery \\"
+      next
+    }
+    { print }
+  ' "${SCRIPT_DIR}/midscene-api-worker.service"
+}
+
+if [ "${1:-}" = "--render-api-worker-unit" ]; then
+  render_api_worker_unit
+  exit 0
+fi
+
 if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 或 sudo 执行：sudo bash deploy/install-server.sh"
   exit 1
@@ -459,7 +478,10 @@ esac
 export API_TESTING_ENABLED
 
 install -m 0644 "${SCRIPT_DIR}/midscene-task.service" "${SERVICE_FILE}"
-install -m 0644 "${SCRIPT_DIR}/midscene-api-worker.service" "${WORKER_SERVICE_FILE}"
+worker_service_tmp="$(mktemp)"
+render_api_worker_unit > "${worker_service_tmp}"
+install -m 0644 "${worker_service_tmp}" "${WORKER_SERVICE_FILE}"
+rm -f "${worker_service_tmp}"
 install -d -m 0755 "${SERVICE_OVERRIDE_DIR}"
 printf '%s\n' \
   '[Service]' \
