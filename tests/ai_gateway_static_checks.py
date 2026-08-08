@@ -151,6 +151,16 @@ def main():
     config = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
     for prefix in ("METERSPHERE_", "APIFOX_"):
         require(f'"{prefix}"' not in config, f"{prefix} must not be an environment prefix")
+    installer = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+    for marker in (
+        "import cryptography",
+        "cryptography_installed",
+        "python3-cryptography",
+        "python3 -m pip install cryptography",
+        "MeterSphere 3.6.5 Access Key",
+        "MeterSphere Access Key",
+    ):
+        require(marker not in installer, f"installer must not contain MeterSphere cryptography dependency: {marker}")
     require("routeSupportsQwenHybridThinking" in server and "completionOptions.enable_thinking = false" in server and "completionOptions.response_format = {type: 'json_object'}" in server, "Structured Qwen skills must use non-thinking JSON Mode to avoid incompatible slow responses")
     require(
         "requestedCompletionTokens" in server
