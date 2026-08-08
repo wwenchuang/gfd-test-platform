@@ -91,54 +91,173 @@ class _LocalReferenceResolver:
         return reference == "#" or reference.startswith("#/")
 
     def resolve(self, reference: str) -> Any:
+        value, _ = self.resolve_with_context(reference)
+        return value
+
+    def resolve_with_context(self, reference: str) -> Tuple[Any, str]:
         if not self.is_local(reference):
             raise OpenApiValidationError("Reference is not local: %s" % reference)
         current: Any = self._document
+        context = "root"
         if reference == "#":
-            return current
+            return current, context
         for encoded in reference[2:].split("/"):
             segment = _decode_pointer_segment(encoded, reference)
             if isinstance(current, Mapping):
                 if segment not in current:
                     raise OpenApiValidationError("Unresolved local reference: %s" % reference)
+                context = self._mapping_child_context(context, segment)
                 current = current[segment]
             elif isinstance(current, list):
                 if not segment.isdigit() or int(segment) >= len(current):
                     raise OpenApiValidationError("Unresolved local reference: %s" % reference)
+                context = self._sequence_item_context(context)
                 current = current[int(segment)]
             else:
                 raise OpenApiValidationError("Unresolved local reference: %s" % reference)
-        return current
+        return current, context
+
+    @staticmethod
+    def _mapping_child_context(context: str, key: str) -> str:
+        if context == "payload":
+            return "payload"
+        if context == "components":
+            return {
+                "schemas": "schema_map",
+                "parameters": "parameter_map",
+                "headers": "header_map",
+                "examples": "example_map",
+                "pathItems": "path_item_map",
+                "callbacks": "callback_component_map",
+                "responses": "response_map",
+                "requestBodies": "request_body_map",
+            }.get(key, "generic")
+        if context in {"schema_map"}:
+            return "schema"
+        if context == "schema":
+            if key in {"example", "examples"}:
+                return "payload"
+            if key in {
+                "properties",
+                "patternProperties",
+                "$defs",
+                "definitions",
+                "dependentSchemas",
+            }:
+                return "schema_map"
+            if key in {"allOf", "anyOf", "oneOf", "prefixItems"}:
+                return "schema_list"
+            if key in {
+                "items",
+                "not",
+                "if",
+                "then",
+                "else",
+                "contains",
+                "propertyNames",
+                "additionalProperties",
+                "unevaluatedProperties",
+                "unevaluatedItems",
+                "contentSchema",
+            }:
+                return "schema"
+            return "generic"
+        if context in {"path_item_map", "callback_map"}:
+            return "path_item"
+        if context == "callback_component_map":
+            return "callback_map"
+        if context in {"parameter_map"}:
+            return "parameter"
+        if context in {"header_map"}:
+            return "header"
+        if context == "example_map":
+            return "example_object"
+        if context == "media_type_map":
+            return "media_type"
+        if context == "response_map":
+            return "response"
+        if context == "request_body_map":
+            return "request_body"
+        if context == "example_object":
+            return "payload" if key == "value" else "generic"
+        if context in {"parameter", "header"}:
+            if key == "schema":
+                return "schema"
+            if key == "content":
+                return "media_type_map"
+            if key == "example":
+                return "payload"
+            if key == "examples":
+                return "example_map"
+            return "generic"
+        if context == "media_type":
+            if key == "schema":
+                return "schema"
+            if key == "example":
+                return "payload"
+            if key == "examples":
+                return "example_map"
+            return "generic"
+
+        if key == "components":
+            return "components"
+        if key in {"paths", "webhooks"}:
+            return "path_item_map"
+        if key.lower() in HTTP_METHODS:
+            return "operation"
+        if key == "schema":
+            return "schema"
+        if key == "content":
+            return "media_type_map"
+        if key == "parameters":
+            return "parameter_list"
+        if key == "headers":
+            return "header_map"
+        if key == "responses":
+            return "response_map"
+        if key == "requestBody":
+            return "request_body"
+        if key == "callbacks":
+            return "callback_component_map"
+        return "generic"
+
+    @staticmethod
+    def _sequence_item_context(context: str) -> str:
+        return {
+            "schema_list": "schema",
+            "parameter_list": "parameter",
+        }.get(context, "generic")
 
     def dependency_closure(self, value: Any) -> Tuple[Mapping[str, Any], Tuple[str, ...]]:
         resolved: Dict[str, Any] = {}
         external: Set[str] = set()
-        visited_objects: Set[int] = set()
-        pending = [(value, False)]
+        visited_objects: Set[Tuple[int, str]] = set()
+        pending = [(value, "root")]
         while pending:
-            current, is_example_payload = pending.pop()
-            if is_example_payload:
+            current, context = pending.pop()
+            if context == "payload":
                 continue
             if isinstance(current, Mapping):
-                object_id = id(current)
-                if object_id in visited_objects:
+                object_identity = (id(current), context)
+                if object_identity in visited_objects:
                     continue
-                visited_objects.add(object_id)
+                visited_objects.add(object_identity)
                 reference = current.get("$ref")
                 if isinstance(reference, str):
                     if self.is_local(reference):
-                        target = self.resolve(reference)
+                        target, target_context = self.resolve_with_context(reference)
                         if reference not in resolved:
                             resolved[reference] = copy.deepcopy(target)
-                            pending.append((target, False))
+                            pending.append((target, target_context))
                     else:
                         external.add(reference)
                 pending.extend(
-                    (item, key in {"example", "examples", "value"})
+                    (item, self._mapping_child_context(context, key))
                     for key, item in current.items()
                 )
             elif isinstance(current, list):
-                pending.extend((item, False) for item in current)
+                item_context = self._sequence_item_context(context)
+                pending.extend((item, item_context) for item in current)
         return (
             {reference: resolved[reference] for reference in sorted(resolved)},
             tuple(sorted(external)),
@@ -162,19 +281,29 @@ def _resolve_path_item(
     path_item: Mapping[str, Any],
     resolver: _LocalReferenceResolver,
     resolving: Optional[Set[str]] = None,
+    cycles: Optional[Set[str]] = None,
 ) -> Mapping[str, Any]:
     resolving = set(resolving or ())
+    cycles = cycles if cycles is not None else set()
     merged: Dict[str, Any] = {}
     reference = path_item.get("$ref")
     if isinstance(reference, str):
         if not resolver.is_local(reference):
             return {key: value for key, value in path_item.items() if key != "$ref"}
         if reference in resolving:
+            cycles.add(reference)
             return {}
         target = resolver.resolve(reference)
         if not isinstance(target, Mapping):
             raise OpenApiValidationError("Referenced OpenAPI Path Item must be an object: %s" % reference)
-        merged.update(_resolve_path_item(target, resolver, resolving | {reference}))
+        merged.update(
+            _resolve_path_item(
+                target,
+                resolver,
+                resolving | {reference},
+                cycles,
+            )
+        )
     merged.update({key: value for key, value in path_item.items() if key != "$ref"})
     return merged
 
@@ -278,7 +407,19 @@ def normalize_openapi_document(document: Any, source_id: str) -> NormalizedSourc
         normalized_path = normalize_path(original_path)
         if not isinstance(canonical_path_item, dict):
             raise OpenApiValidationError("OpenAPI path item must be an object")
-        resolved_path_item = _resolve_path_item(canonical_path_item, resolver)
+        path_item_cycles: Set[str] = set()
+        resolved_path_item = _resolve_path_item(
+            canonical_path_item,
+            resolver,
+            cycles=path_item_cycles,
+        )
+        if path_item_cycles and not any(
+            field.lower() in HTTP_METHODS for field in resolved_path_item
+        ):
+            raise OpenApiValidationError(
+                "Cyclic local Path Item reference: %s"
+                % sorted(path_item_cycles)[0]
+            )
         for field in resolved_path_item:
             lowered = field.lower()
             if lowered not in HTTP_METHODS and field not in PATH_ITEM_FIELDS and not field.lower().startswith("x-"):

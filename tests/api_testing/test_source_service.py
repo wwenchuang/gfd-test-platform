@@ -1,9 +1,11 @@
 import copy
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import sys
 import textwrap
+import time
 
 from alembic import command
 from sqlalchemy import create_engine, func, select
@@ -310,6 +312,127 @@ def test_unresolved_local_reference_in_unused_component_is_rejected():
 
     with pytest.raises(OpenApiValidationError, match="Unresolved local reference.*Missing"):
         normalize_openapi_document(document, "source-1")
+
+
+def _named_schema_properties_document():
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    document["components"]["schemas"].update(
+        {
+            "NamedPropertiesEnvelope": {
+                "type": "object",
+                "properties": {
+                    "value": {"$ref": "#/components/schemas/ValuePayload"},
+                    "example": {"$ref": "#/components/schemas/ExamplePayload"},
+                    "examples": {"$ref": "#/components/schemas/ExamplesPayload"},
+                },
+            },
+            "ValuePayload": {"type": "string", "description": "value payload"},
+            "ExamplePayload": {"type": "string", "description": "example payload"},
+            "ExamplesPayload": {"type": "string", "description": "examples payload"},
+        }
+    )
+    document["paths"]["/print3d/api/v1/favorite/list"]["get"]["responses"]["200"][
+        "content"
+    ]["application/json"]["schema"] = {
+        "$ref": "#/components/schemas/NamedPropertiesEnvelope"
+    }
+    return document
+
+
+def test_schema_properties_named_value_example_and_examples_resolve_dependencies():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    normalized = normalize_openapi_document(_named_schema_properties_document(), "source-1")
+    endpoint = next(item for item in normalized.endpoints if item.operation_id == "favoriteList")
+
+    assert {
+        "#/components/schemas/ValuePayload",
+        "#/components/schemas/ExamplePayload",
+        "#/components/schemas/ExamplesPayload",
+    }.issubset(endpoint.operation["resolved_dependencies"])
+
+
+@pytest.mark.parametrize("property_name", ["value", "example", "examples"])
+def test_unresolved_reference_below_named_schema_property_is_rejected(property_name):
+    from task_server.api_testing.adapters.openapi import (
+        OpenApiValidationError,
+        normalize_openapi_document,
+    )
+
+    document = _named_schema_properties_document()
+    document["components"]["schemas"]["NamedPropertiesEnvelope"]["properties"][
+        property_name
+    ]["$ref"] = "#/components/schemas/Missing"
+
+    with pytest.raises(OpenApiValidationError, match="Unresolved local reference.*Missing"):
+        normalize_openapi_document(document, "source-1")
+
+
+def test_named_schema_property_component_changes_are_included_in_diff(
+    source_service, project
+):
+    document = _named_schema_properties_document()
+    active = _activate_fixture(source_service, project, document)
+
+    for schema_name in ("ValuePayload", "ExamplePayload", "ExamplesPayload"):
+        changed = copy.deepcopy(document)
+        changed["components"]["schemas"][schema_name]["description"] += " changed"
+        preview = source_service.preview_refresh(
+            project.id, active.source_id, changed, "admin"
+        )
+        assert preview.changed_count == 1, schema_name
+        assert preview.changes[0].operation_id == "favoriteList"
+        assert "resolved_dependencies" in preview.changes[0].changed_fields
+
+
+def test_pure_cyclic_path_item_reference_is_rejected():
+    from task_server.api_testing.adapters.openapi import (
+        OpenApiValidationError,
+        normalize_openapi_document,
+    )
+
+    document = {
+        "openapi": "3.1.0",
+        "info": {"title": "Cyclic Path Items", "version": "1"},
+        "paths": {"/cycle": {"$ref": "#/components/pathItems/A"}},
+        "components": {
+            "pathItems": {
+                "A": {"$ref": "#/components/pathItems/B"},
+                "B": {"$ref": "#/components/pathItems/A"},
+            }
+        },
+    }
+
+    with pytest.raises(OpenApiValidationError, match="Cyclic local Path Item"):
+        normalize_openapi_document(document, "source-1")
+
+
+def test_cyclic_path_item_with_concrete_operation_uses_sibling_operation():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    document = {
+        "openapi": "3.1.0",
+        "info": {"title": "Concrete Cyclic Path Item", "version": "1"},
+        "paths": {"/cycle": {"$ref": "#/components/pathItems/A"}},
+        "components": {
+            "pathItems": {
+                "A": {
+                    "$ref": "#/components/pathItems/B",
+                    "get": {
+                        "operationId": "cycleWithConcreteSibling",
+                        "responses": {"200": {"description": "ok"}},
+                    },
+                },
+                "B": {"$ref": "#/components/pathItems/A"},
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(document, "source-1")
+
+    assert [item.operation_id for item in normalized.endpoints] == [
+        "cycleWithConcreteSibling"
+    ]
 
 
 def test_openapi_31_is_supported_and_path_parameter_semantics_are_preserved():
@@ -780,12 +903,14 @@ def _write_apifox_test_cli(tmp_path):
             import json
             import os
             from pathlib import Path
+            import subprocess
             import sys
             import time
 
             mode = sys.argv[1]
             marker = Path(sys.argv[2])
             marker.write_text(os.getcwd(), encoding="utf-8")
+            Path(str(marker) + ".pid").write_text(str(os.getpid()), encoding="utf-8")
             output = Path(sys.argv[sys.argv.index("--output") + 1])
             environment = Path(sys.argv[sys.argv.index("--environment-output") + 1])
             document = {
@@ -803,6 +928,30 @@ def _write_apifox_test_cli(tmp_path):
             elif mode == "stderr-oversize":
                 os.write(2, os.environ["APIFOX_ACCESS_TOKEN"].encode() + b"-" + b"x" * 4096)
                 time.sleep(5)
+            elif mode == "boundary-failure":
+                os.write(2, ("界" * 19 + os.environ["APIFOX_ACCESS_TOKEN"] + "尾").encode())
+                raise SystemExit(3)
+            elif mode == "capture-boundary-overflow":
+                os.write(2, ("界" * 19 + os.environ["APIFOX_ACCESS_TOKEN"] + "尾").encode())
+                time.sleep(30)
+            elif mode in {"timeout", "selector-failure"}:
+                time.sleep(30)
+            elif mode in {"grandchild-overflow", "parent-exits-grandchild"}:
+                child = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-c",
+                        "import time; time.sleep(30)",
+                        "midscene-apifox-grandchild",
+                    ]
+                )
+                Path(str(marker) + ".grandchild.pid").write_text(
+                    str(child.pid), encoding="utf-8"
+                )
+                if mode == "grandchild-overflow":
+                    os.write(1, b"x" * 4096)
+                    time.sleep(30)
+                raise SystemExit(0)
             elif mode == "openapi-oversize":
                 output.write_bytes(b"x" * 4096)
             elif mode == "environment-oversize":
@@ -829,12 +978,33 @@ def _apifox_adapter_for_mode(tmp_path, mode, **limits):
 
     marker = tmp_path / (mode + "-cwd.txt")
     script = _write_apifox_test_cli(tmp_path)
+    timeout_seconds = limits.pop("timeout_seconds", 17)
     adapter = ApifoxAdapter(
         command=[sys.executable, str(script), mode, str(marker)],
-        timeout_seconds=17,
+        timeout_seconds=timeout_seconds,
         **limits,
     )
     return adapter, marker
+
+
+def _read_process_pid(path, timeout=2):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return int(path.read_text(encoding="utf-8"))
+        time.sleep(0.01)
+    pytest.fail("synthetic process did not publish pid: %s" % path)
+
+
+def _assert_process_absent(pid, timeout=3):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.02)
+    pytest.fail("process or zombie still exists: %s" % pid)
 
 
 def test_apifox_adapter_uses_explicit_safe_subprocess_and_returns_metadata(
@@ -937,3 +1107,204 @@ def test_apifox_adapter_rejects_oversized_outputs_and_cleans_up(
 
     assert token not in str(captured.value)
     assert not Path(marker.read_text(encoding="utf-8")).exists()
+
+
+@pytest.mark.parametrize(
+    "mode, stderr_limit",
+    [
+        ("boundary-failure", 4096),
+        ("capture-boundary-overflow", 64),
+    ],
+)
+def test_apifox_diagnostics_do_not_leak_token_prefix_across_byte_boundaries(
+    tmp_path, mode, stderr_limit
+):
+    from task_server.api_testing.adapters.apifox import (
+        ApifoxAdapterError,
+        ApifoxConnection,
+    )
+
+    token = "synthetic-boundary-token-value"
+    adapter, marker = _apifox_adapter_for_mode(
+        tmp_path,
+        mode,
+        max_stderr_bytes=stderr_limit,
+        diagnostic_bytes=64,
+    )
+
+    with pytest.raises(ApifoxAdapterError) as captured:
+        adapter.fetch(token, ApifoxConnection(project_id="project-123"))
+
+    message = str(captured.value)
+    assert token not in message
+    assert token[:8] not in message
+    assert "synthe" not in message
+    assert not Path(marker.read_text(encoding="utf-8")).exists()
+
+
+def test_apifox_rejects_non_posix_before_spawning(monkeypatch, tmp_path):
+    from task_server.api_testing.adapters import apifox
+
+    spawned = []
+
+    def forbidden_spawn(*args, **kwargs):
+        spawned.append((args, kwargs))
+        raise AssertionError("process must not be spawned")
+
+    monkeypatch.setattr(apifox, "_is_posix_server", lambda: False, raising=False)
+    monkeypatch.setattr(apifox.subprocess, "Popen", forbidden_spawn)
+    adapter, _ = _apifox_adapter_for_mode(tmp_path, "success")
+
+    with pytest.raises(apifox.ApifoxAdapterError, match="POSIX"):
+        adapter.fetch(
+            "synthetic-secret-token",
+            apifox.ApifoxConnection(project_id="project-123"),
+        )
+
+    assert spawned == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_apifox_overflow_terminates_grandchild_process_group(tmp_path):
+    from task_server.api_testing.adapters.apifox import (
+        ApifoxAdapterError,
+        ApifoxConnection,
+    )
+
+    adapter, marker = _apifox_adapter_for_mode(
+        tmp_path, "grandchild-overflow", max_stdout_bytes=64
+    )
+
+    with pytest.raises(ApifoxAdapterError, match="stdout exceeded"):
+        adapter.fetch(
+            "synthetic-secret-token", ApifoxConnection(project_id="project-123")
+        )
+
+    parent_pid = _read_process_pid(Path(str(marker) + ".pid"))
+    grandchild_pid = _read_process_pid(Path(str(marker) + ".grandchild.pid"))
+    _assert_process_absent(parent_pid)
+    _assert_process_absent(grandchild_pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_apifox_parent_exit_with_descendant_pipe_times_out_and_kills_group(tmp_path):
+    from task_server.api_testing.adapters.apifox import (
+        ApifoxAdapterError,
+        ApifoxConnection,
+    )
+
+    adapter, marker = _apifox_adapter_for_mode(
+        tmp_path, "parent-exits-grandchild", timeout_seconds=1
+    )
+
+    with pytest.raises(ApifoxAdapterError, match="timed out"):
+        adapter.fetch(
+            "synthetic-secret-token", ApifoxConnection(project_id="project-123")
+        )
+
+    parent_pid = _read_process_pid(Path(str(marker) + ".pid"))
+    grandchild_pid = _read_process_pid(Path(str(marker) + ".grandchild.pid"))
+    _assert_process_absent(parent_pid)
+    _assert_process_absent(grandchild_pid)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+@pytest.mark.parametrize("failure_stage", ["create", "register"])
+def test_apifox_selector_setup_failure_reaps_process(
+    monkeypatch, tmp_path, failure_stage
+):
+    from task_server.api_testing.adapters import apifox
+
+    adapter, marker = _apifox_adapter_for_mode(tmp_path, "selector-failure")
+    pid_path = Path(str(marker) + ".pid")
+    real_selector = apifox.selectors.DefaultSelector
+
+    if failure_stage == "create":
+        def failing_selector_factory():
+            _read_process_pid(pid_path)
+            raise PermissionError("synthetic selector creation failure")
+
+        monkeypatch.setattr(apifox.selectors, "DefaultSelector", failing_selector_factory)
+    else:
+        class FailingRegisterSelector:
+            def __init__(self):
+                self._delegate = real_selector()
+
+            def register(self, *args, **kwargs):
+                _read_process_pid(pid_path)
+                raise PermissionError("synthetic selector registration failure")
+
+            def close(self):
+                self._delegate.close()
+
+        monkeypatch.setattr(
+            apifox.selectors, "DefaultSelector", FailingRegisterSelector
+        )
+
+    with pytest.raises(apifox.ApifoxAdapterError, match="could not run"):
+        adapter.fetch(
+            "synthetic-secret-token",
+            apifox.ApifoxConnection(project_id="project-123"),
+        )
+
+    _assert_process_absent(_read_process_pid(pid_path))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_apifox_selector_loop_exception_reaps_process(
+    monkeypatch, tmp_path, error_type
+):
+    from task_server.api_testing.adapters import apifox
+
+    adapter, marker = _apifox_adapter_for_mode(tmp_path, "selector-failure")
+    pid_path = Path(str(marker) + ".pid")
+    real_selector = apifox.selectors.DefaultSelector
+
+    class FailingSelectSelector:
+        def __init__(self):
+            self._delegate = real_selector()
+
+        def register(self, *args, **kwargs):
+            return self._delegate.register(*args, **kwargs)
+
+        def get_map(self):
+            return self._delegate.get_map()
+
+        def select(self, *args, **kwargs):
+            _read_process_pid(pid_path)
+            raise error_type("synthetic selector loop failure")
+
+        def close(self):
+            self._delegate.close()
+
+    monkeypatch.setattr(
+        apifox.selectors, "DefaultSelector", FailingSelectSelector
+    )
+
+    with pytest.raises(error_type, match="selector loop failure"):
+        adapter.fetch(
+            "synthetic-secret-token",
+            apifox.ApifoxConnection(project_id="project-123"),
+        )
+
+    _assert_process_absent(_read_process_pid(pid_path))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process-group contract")
+def test_apifox_timeout_reaps_direct_process(tmp_path):
+    from task_server.api_testing.adapters.apifox import (
+        ApifoxAdapterError,
+        ApifoxConnection,
+    )
+
+    adapter, marker = _apifox_adapter_for_mode(
+        tmp_path, "timeout", timeout_seconds=1
+    )
+
+    with pytest.raises(ApifoxAdapterError, match="timed out"):
+        adapter.fetch(
+            "synthetic-secret-token", ApifoxConnection(project_id="project-123")
+        )
+
+    _assert_process_absent(_read_process_pid(Path(str(marker) + ".pid")))

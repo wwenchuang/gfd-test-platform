@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import selectors
+import signal
 import subprocess
 import tempfile
 import time
@@ -83,21 +84,52 @@ def _isolated_environment(home: str, token: str) -> Mapping[str, str]:
     return environment
 
 
-def _stop_process(process: subprocess.Popen) -> None:
-    if process.poll() is not None:
-        return
-    process.terminate()
+def _is_posix_server() -> bool:
+    return os.name == "posix"
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_process_group(process: subprocess.Popen) -> None:
+    process_group_id = process.pid
+    try:
+        os.killpg(process_group_id, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 0.5
+    while _process_group_exists(process_group_id) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if _process_group_exists(process_group_id):
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _wait_for_process(process: subprocess.Popen) -> None:
     try:
         process.wait(timeout=1)
     except subprocess.TimeoutExpired:
-        process.kill()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
         process.wait(timeout=1)
 
 
 def _diagnostic(data: bytes, token: str, limit: int) -> str:
-    # Truncate first so untrusted process output never expands an error object.
-    truncated = data[:limit]
-    return _redact(truncated.decode("utf-8", errors="replace"), token)
+    redacted = data
+    if token:
+        redacted = redacted.replace(token.encode("utf-8"), b"[REDACTED]")
+    return redacted[:limit].decode("utf-8", errors="replace")
 
 
 def _run_bounded(
@@ -110,30 +142,36 @@ def _run_bounded(
     diagnostic_bytes: int,
     token: str,
 ) -> Tuple[bytes, bytes]:
-    process = subprocess.Popen(
-        list(arguments),
-        cwd=cwd,
-        env=dict(environment),
-        shell=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
-    )
+    if not _is_posix_server():
+        raise ApifoxAdapterError("Apifox bounded runner requires a POSIX server")
+
+    process = None
+    selector = None
+    completed = False
     stdout = bytearray()
     stderr = bytearray()
-    streams = {
-        process.stdout: ("stdout", stdout, max_stdout_bytes),
-        process.stderr: ("stderr", stderr, max_stderr_bytes),
-    }
-    selector = selectors.DefaultSelector()
-    for stream in streams:
-        selector.register(stream, selectors.EVENT_READ)
-    deadline = time.monotonic() + timeout_seconds
     try:
+        process = subprocess.Popen(
+            list(arguments),
+            cwd=cwd,
+            env=dict(environment),
+            shell=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            start_new_session=True,
+        )
+        streams = {
+            process.stdout: ("stdout", stdout, max_stdout_bytes),
+            process.stderr: ("stderr", stderr, max_stderr_bytes),
+        }
+        selector = selectors.DefaultSelector()
+        for stream in streams:
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout_seconds
         while selector.get_map():
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _stop_process(process)
                 raise ApifoxAdapterError("Apifox command timed out")
             events = selector.select(timeout=min(remaining, 0.25))
             if not events:
@@ -147,15 +185,11 @@ def _run_bounded(
                     continue
                 target.extend(chunk)
                 if len(target) > limit:
-                    _stop_process(process)
-                    detail = _diagnostic(bytes(target), token, diagnostic_bytes)
-                    suffix = ": %s" % detail if detail else ""
                     raise ApifoxAdapterError(
-                        "Apifox %s exceeded %s bytes%s" % (name, limit, suffix)
+                        "Apifox %s exceeded %s bytes" % (name, limit)
                     )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            _stop_process(process)
             raise ApifoxAdapterError("Apifox command timed out")
         return_code = process.wait(timeout=remaining)
         if return_code:
@@ -163,21 +197,36 @@ def _run_bounded(
             raise ApifoxAdapterError(
                 "Apifox command failed%s" % (": %s" % detail if detail else "")
             )
+        completed = True
         return bytes(stdout), bytes(stderr)
     except subprocess.TimeoutExpired:
-        _stop_process(process)
         raise ApifoxAdapterError("Apifox command timed out") from None
     except OSError as error:
-        _stop_process(process)
         raise ApifoxAdapterError(
             "Apifox command could not run: %s" % _redact(error, token)
         ) from None
     finally:
-        selector.close()
-        if process.stdout is not None:
-            process.stdout.close()
-        if process.stderr is not None:
-            process.stderr.close()
+        if process is not None and not completed:
+            try:
+                _terminate_process_group(process)
+            except OSError:
+                pass
+        if selector is not None:
+            try:
+                selector.close()
+            except OSError:
+                pass
+        if process is not None:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            try:
+                _wait_for_process(process)
+            except (OSError, subprocess.SubprocessError):
+                pass
 
 
 def _read_json_file(path: Path, maximum_bytes: int, label: str) -> Any:
