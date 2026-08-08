@@ -1649,7 +1649,10 @@ function normalizeAgentReportJobs(report = {}, normalizedReport = null, artifact
   (Array.isArray(report.jobStatuses) ? report.jobStatuses : []).forEach(item => merge(item));
   (normalized.executionReports || []).forEach(item => merge(item, {reportUrl: item.reportUrl || item.report_url || ''}));
   (normalized.yamlExecutionRefs || []).forEach(item => merge(item));
+  (Array.isArray(report.successJobs) ? report.successJobs : []).forEach(item => merge(item, {status: item.status || 'passed'}));
   (Array.isArray(report.failedJobs) ? report.failedJobs : []).forEach(item => merge(item, {status: item.status || 'failed', failed: true}));
+  (Array.isArray(report.timeoutJobs) ? report.timeoutJobs : []).forEach(item => merge(item, {status: item.status || 'timeout', failed: true}));
+  (Array.isArray(report.runningJobs) ? report.runningJobs : []).forEach(item => merge(item, {status: item.status || 'running'}));
   collectAgentReportProgressJobs(artifacts).forEach(item => merge(item));
   return Array.from(byKey.values()).sort((a, b) => {
     const order = {failed: 0, running: 1, pending: 2, unknown: 3, success: 4};
