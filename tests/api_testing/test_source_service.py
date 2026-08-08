@@ -2,8 +2,8 @@ import copy
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-import subprocess
-from types import SimpleNamespace
+import sys
+import textwrap
 
 from alembic import command
 from sqlalchemy import create_engine, func, select
@@ -15,6 +15,7 @@ from task_server.api_testing.models.source import (
     ApiSourceDiff,
     ApiSourceEndpoint,
     ApiSourceRevision,
+    ApiSourceSchema,
 )
 from tests.api_testing.test_migrations import (
     _alembic_config,
@@ -107,7 +108,21 @@ def _changed_document():
 def test_openapi_normalization_preserves_supported_contract_metadata():
     from task_server.api_testing.adapters.openapi import normalize_openapi_document
 
-    normalized = normalize_openapi_document(FAVORITES_OPENAPI, "source-1")
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    document["x-root-extension"] = {"enabled": True}
+    operation = document["paths"]["/print3d/api/v1/favorite/list"]["get"]
+    operation["x-operation-extension"] = "favorite-list"
+    document["components"]["schemas"]["FavoriteListResponse"]["properties"][
+        "x-business-field"
+    ] = {"type": "string"}
+    operation["responses"]["200"]["content"]["application/json"]["examples"][
+        "success"
+    ]["value"]["x-business-value"] = 7
+    operation["responses"]["200"]["content"]["application/json"]["examples"][
+        "success"
+    ]["value"]["$ref"] = "business-value-not-a-json-reference"
+
+    normalized = normalize_openapi_document(document, "source-1")
 
     assert len(normalized.endpoints) == 3
     assert set(normalized.schemas) == {
@@ -127,12 +142,174 @@ def test_openapi_normalization_preserves_supported_contract_metadata():
     assert normalized.document["servers"][0]["url"] == "https://api.example.test/app"
     assert normalized.document["tags"][0]["name"] == "我的收藏"
     assert normalized.document["security"] == [{"BearerAuth": []}]
-    assert normalized.document["vendor_extensions"]["x-apifox-project"] == "synthetic-project"
-    assert list_endpoint.operation["vendor_extensions"]["x-apifox-folder"] == "favorites"
-    assert "x-apifox-project" not in normalized.document
+    assert normalized.document["x-apifox-project"] == "synthetic-project"
+    assert normalized.document["x-root-extension"] == {"enabled": True}
+    assert list_endpoint.operation["x-apifox-folder"] == "favorites"
+    assert list_endpoint.operation["x-operation-extension"] == "favorite-list"
+    assert normalized.document["components"]["schemas"]["FavoriteListResponse"][
+        "properties"
+    ]["x-business-field"] == {"type": "string"}
+    assert normalized.document["paths"]["/print3d/api/v1/favorite/list"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["examples"]["success"]["value"][
+        "x-business-value"
+    ] == 7
+    assert normalized.document["paths"]["/print3d/api/v1/favorite/list"]["get"][
+        "responses"
+    ]["200"]["content"]["application/json"]["examples"]["success"]["value"][
+        "$ref"
+    ] == "business-value-not-a-json-reference"
     saved_operation = normalized.document["paths"]["/print3d/api/v1/favorite/list"]["get"]
     assert "path_parameters" not in saved_operation
-    assert "resolved_schemas" not in saved_operation
+    assert "resolved_dependencies" not in saved_operation
+
+
+def _reference_chain_document():
+    return {
+        "openapi": "3.1.0",
+        "info": {"title": "Reference Chain", "version": "1.0.0"},
+        "paths": {
+            "/favorites/{favoriteId}": {
+                "$ref": "#/components/pathItems/Favorite~1Path~0Item"
+            },
+            "/favorites/{favoriteId}/copy": {
+                "parameters": [{"$ref": "#/components/parameters/FavoriteId"}],
+                "post": {
+                    "operationId": "copyFavorite",
+                    "requestBody": {"$ref": "#/components/requestBodies/FavoriteBody"},
+                    "responses": {"200": {"$ref": "#/components/responses/FavoriteOk"}},
+                },
+            },
+        },
+        "components": {
+            "pathItems": {
+                "Favorite/Path~Item": {
+                    "parameters": [{"$ref": "#/components/parameters/FavoriteId"}],
+                    "get": {
+                        "operationId": "getFavorite",
+                        "responses": {
+                            "200": {"$ref": "#/components/responses/FavoriteOk"}
+                        },
+                    },
+                }
+            },
+            "parameters": {
+                "FavoriteId": {
+                    "name": "favoriteId",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"$ref": "#/components/schemas/Favorite~1Id"},
+                }
+            },
+            "requestBodies": {
+                "FavoriteBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Favorite"}
+                        }
+                    },
+                }
+            },
+            "responses": {
+                "FavoriteOk": {
+                    "description": "ok",
+                    "headers": {
+                        "X-Trace": {"$ref": "#/components/headers/TraceHeader"}
+                    },
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Favorite"}
+                        }
+                    },
+                }
+            },
+            "headers": {
+                "TraceHeader": {
+                    "description": "trace",
+                    "schema": {"type": "string"},
+                }
+            },
+            "schemas": {
+                "Favorite/Id": {"type": "string"},
+                "Favorite": {
+                    "allOf": [
+                        {"$ref": "#/components/schemas/FavoriteBase"},
+                        {"$ref": "#/components/schemas/FavoriteCycleA"},
+                    ]
+                },
+                "FavoriteBase": {
+                    "type": "object",
+                    "properties": {"id": {"$ref": "#/components/schemas/Favorite~1Id"}},
+                },
+                "FavoriteCycleA": {"$ref": "#/components/schemas/FavoriteCycleB"},
+                "FavoriteCycleB": {"$ref": "#/components/schemas/FavoriteCycleA"},
+            },
+        },
+    }
+
+
+def test_local_reference_closure_supports_path_items_chains_cycles_and_escaped_pointers():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    normalized = normalize_openapi_document(_reference_chain_document(), "source-1")
+
+    assert {item.operation_id for item in normalized.endpoints} == {
+        "getFavorite",
+        "copyFavorite",
+    }
+    endpoint = next(item for item in normalized.endpoints if item.operation_id == "getFavorite")
+    dependencies = endpoint.operation["resolved_dependencies"]
+    assert "#/components/pathItems/Favorite~1Path~0Item" in dependencies
+    assert "#/components/parameters/FavoriteId" in dependencies
+    assert "#/components/responses/FavoriteOk" in dependencies
+    assert "#/components/headers/TraceHeader" in dependencies
+    assert "#/components/schemas/Favorite~1Id" in dependencies
+    assert "#/components/schemas/FavoriteCycleA" in dependencies
+    assert "#/components/schemas/FavoriteCycleB" in dependencies
+    assert normalized.document == _reference_chain_document()
+
+
+def test_unresolved_local_reference_is_rejected_but_external_reference_is_preserved():
+    from task_server.api_testing.adapters.openapi import (
+        OpenApiValidationError,
+        normalize_openapi_document,
+    )
+
+    unresolved = _reference_chain_document()
+    unresolved["components"]["responses"]["FavoriteOk"]["headers"]["X-Trace"][
+        "$ref"
+    ] = "#/components/headers/Missing"
+    with pytest.raises(OpenApiValidationError, match="Unresolved local reference.*Missing"):
+        normalize_openapi_document(unresolved, "source-1")
+
+    external = _reference_chain_document()
+    external["components"]["schemas"]["FavoriteBase"]["properties"]["remote"] = {
+        "$ref": "https://schemas.example.test/common.json#/Remote"
+    }
+    normalized = normalize_openapi_document(external, "source-1")
+    endpoint = next(item for item in normalized.endpoints if item.operation_id == "getFavorite")
+    assert endpoint.operation["external_references"] == [
+        "https://schemas.example.test/common.json#/Remote"
+    ]
+    assert normalized.document["components"]["schemas"]["FavoriteBase"]["properties"][
+        "remote"
+    ]["$ref"].startswith("https://")
+
+
+def test_unresolved_local_reference_in_unused_component_is_rejected():
+    from task_server.api_testing.adapters.openapi import (
+        OpenApiValidationError,
+        normalize_openapi_document,
+    )
+
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    document["components"]["schemas"]["Unused"] = {
+        "$ref": "#/components/schemas/Missing"
+    }
+
+    with pytest.raises(OpenApiValidationError, match="Unresolved local reference.*Missing"):
+        normalize_openapi_document(document, "source-1")
 
 
 def test_openapi_31_is_supported_and_path_parameter_semantics_are_preserved():
@@ -142,6 +319,14 @@ def test_openapi_31_is_supported_and_path_parameter_semantics_are_preserved():
     document["openapi"] = "3.1.0"
     document["jsonSchemaDialect"] = "https://json-schema.org/draft/2020-12/schema"
     operation = document["paths"].pop("/print3d/api/v1/favorite/list")
+    operation["parameters"] = [
+        {
+            "name": "favoriteId",
+            "in": "path",
+            "required": True,
+            "schema": {"type": "string"},
+        }
+    ]
     document["paths"]["/print3d/api/v1/favorite/{favoriteId}"] = operation
 
     normalized = normalize_openapi_document(document, "source-1")
@@ -159,6 +344,8 @@ def test_openapi_31_is_supported_and_path_parameter_semantics_are_preserved():
         ({"openapi": "3.0.3", "paths": {}}, "info"),
         ({"openapi": "3.0.3", "info": {"title": "x", "version": "1"}}, "paths"),
         ({"openapi": "2.0", "info": {"title": "x", "version": "1"}, "paths": {}}, "3.0 or 3.1"),
+        ({"openapi": "3.1.not-semver", "info": {"title": "x", "version": "1"}, "paths": {}}, "3.0 or 3.1"),
+        ({"openapi": "3.2.0", "info": {"title": "x", "version": "1"}, "paths": {}}, "3.0 or 3.1"),
         ({"openapi": "3.0.3", "info": {"title": "x", "version": "1"}, "paths": {"not/a/path": {"get": {}}}}, "start with"),
         ({"openapi": "3.0.3", "info": {"title": "x", "version": "1"}, "paths": {"/ok": {"fetch": {}}}}, "method"),
     ],
@@ -192,6 +379,118 @@ def test_openapi_validation_rejects_duplicate_normalized_method_path_identity():
         normalize_openapi_document(document, "source-1")
 
 
+@pytest.mark.parametrize(
+    "parameters, message",
+    [
+        ([], "exactly match"),
+        (
+            [
+                {
+                    "name": "otherId",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"},
+                }
+            ],
+            "exactly match",
+        ),
+        (
+            [
+                {
+                    "name": "favoriteId",
+                    "in": "query",
+                    "required": True,
+                    "schema": {"type": "string"},
+                }
+            ],
+            "exactly match",
+        ),
+        (
+            [
+                {
+                    "name": "favoriteId",
+                    "in": "path",
+                    "required": False,
+                    "schema": {"type": "string"},
+                }
+            ],
+            "required true",
+        ),
+        (
+            [
+                {
+                    "name": "favoriteId",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"},
+                },
+                {
+                    "name": "favoriteId",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"},
+                },
+            ],
+            "unique",
+        ),
+    ],
+)
+def test_openapi_validation_rejects_invalid_path_parameter_contract(parameters, message):
+    from task_server.api_testing.adapters.openapi import (
+        OpenApiValidationError,
+        normalize_openapi_document,
+    )
+
+    document = {
+        "openapi": "3.0.3",
+        "info": {"title": "path parameters", "version": "1"},
+        "paths": {
+            "/favorites/{favoriteId}": {
+                "get": {
+                    "operationId": "favorite",
+                    "parameters": parameters,
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    with pytest.raises(OpenApiValidationError, match=message):
+        normalize_openapi_document(document, "source-1")
+
+
+def test_component_parameter_reference_satisfies_path_parameter_contract():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    document = {
+        "openapi": "3.0.3",
+        "info": {"title": "path parameter ref", "version": "1"},
+        "paths": {
+            "/favorites/{favoriteId}": {
+                "parameters": [{"$ref": "#/components/parameters/FavoriteId"}],
+                "get": {
+                    "operationId": "favorite",
+                    "responses": {"200": {"description": "ok"}},
+                },
+            }
+        },
+        "components": {
+            "parameters": {
+                "FavoriteId": {
+                    "name": "favoriteId",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "string"},
+                }
+            }
+        },
+    }
+
+    normalized = normalize_openapi_document(document, "source-1")
+
+    assert normalized.endpoints[0].operation["path_parameters"][0]["name"] == "favoriteId"
+
+
 def test_stable_endpoint_key_uses_unambiguous_encoding():
     from task_server.api_testing.adapters.openapi import stable_endpoint_key
 
@@ -211,7 +510,7 @@ def test_preview_does_not_replace_active_revision(source_service, project, sessi
     assert preview.changed_count == 0
     assert preview.removed_count == 0
     assert preview.expires_at is not None
-    assert source_service.get_active_revision(project.id) is None
+    assert source_service.get_active_revision(project.id, preview.source_id) is None
 
     with session_factory() as session:
         candidate = session.get(ApiSourceRevision, preview.candidate_revision_id)
@@ -221,6 +520,26 @@ def test_preview_does_not_replace_active_revision(source_service, project, sessi
                 ApiSourceEndpoint.revision_id == candidate.id
             )
         ) == 3
+
+
+def test_canonical_extensions_and_business_keys_round_trip_through_postgresql(
+    source_service, project
+):
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    document["x-root-extension"] = {"source": "synthetic"}
+    operation = document["paths"]["/print3d/api/v1/favorite/list"]["get"]
+    operation["x-operation-extension"] = {"owner": "qa"}
+    document["components"]["schemas"]["FavoriteListResponse"]["properties"][
+        "x-business-field"
+    ] = {"type": "string"}
+    operation["responses"]["200"]["content"]["application/json"]["examples"][
+        "success"
+    ]["value"]["x-business-value"] = "kept"
+
+    preview = source_service.preview_refresh(project.id, None, document, "admin")
+    stored = source_service.get_revision(preview.candidate_revision_id).normalized_document
+
+    assert stored == document
 
 
 def test_repeated_document_after_activation_has_deterministic_no_change_diff(
@@ -237,7 +556,7 @@ def test_repeated_document_after_activation_has_deterministic_no_change_diff(
     assert preview.changed_count == 0
     assert preview.removed_count == 0
     assert preview.changes == ()
-    assert source_service.get_active_revision(project.id).id == active.id
+    assert source_service.get_active_revision(project.id, active.source_id).id == active.id
 
 
 def test_diff_reports_added_changed_and_removed_endpoints(source_service, project):
@@ -281,7 +600,89 @@ def test_component_schema_change_marks_referencing_endpoints_changed(
         "favoriteAdd",
         "favoriteCancel",
     }
-    assert all("resolved_schemas" in item.changed_fields for item in preview.changes)
+    assert all("resolved_dependencies" in item.changed_fields for item in preview.changes)
+
+
+def test_component_chain_change_marks_every_referencing_endpoint_changed(
+    source_service, project
+):
+    document = _reference_chain_document()
+    active = _activate_fixture(source_service, project, document)
+    changed = copy.deepcopy(document)
+    changed["components"]["headers"]["TraceHeader"]["description"] = "new trace"
+
+    preview = source_service.preview_refresh(project.id, active.source_id, changed, "admin")
+
+    assert preview.added_count == 0
+    assert preview.changed_count == 2
+    assert preview.removed_count == 0
+    assert {item.operation_id for item in preview.changes} == {
+        "getFavorite",
+        "copyFavorite",
+    }
+    assert all("resolved_dependencies" in item.changed_fields for item in preview.changes)
+
+
+def test_openapi_31_boolean_schemas_persist_exactly_in_postgresql(
+    source_service, project, session_factory
+):
+    document = {
+        "openapi": "3.1.0",
+        "info": {"title": "Boolean Schemas", "version": "1"},
+        "paths": {
+            "/boolean": {
+                "get": {
+                    "operationId": "booleanSchema",
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Nested"}
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "Anything": True,
+                "Nothing": False,
+                "Nested": {
+                    "type": "object",
+                    "properties": {"allowed": True, "denied": False},
+                },
+            }
+        },
+    }
+
+    preview = source_service.preview_refresh(project.id, None, document, "admin")
+
+    with session_factory() as session:
+        schemas = {
+            item.schema_key: item.schema
+            for item in session.scalars(
+                select(ApiSourceSchema).where(
+                    ApiSourceSchema.revision_id == preview.candidate_revision_id
+                )
+            )
+        }
+    assert schemas == document["components"]["schemas"]
+
+
+def test_openapi_30_rejects_top_level_boolean_schema():
+    from task_server.api_testing.adapters.openapi import (
+        OpenApiValidationError,
+        normalize_openapi_document,
+    )
+
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    document["components"]["schemas"]["InvalidBoolean"] = True
+
+    with pytest.raises(OpenApiValidationError, match="OpenAPI 3.0.*boolean schema"):
+        normalize_openapi_document(document, "source-1")
 
 
 def test_activation_preserves_old_revision_and_detects_changed_schema(
@@ -297,7 +698,7 @@ def test_activation_preserves_old_revision_and_detects_changed_schema(
 
     assert second.id != first.id
     assert source_service.get_revision(first.id).status == "superseded"
-    assert source_service.get_active_revision(project.id).id == second.id
+    assert source_service.get_active_revision(project.id, first.source_id).id == second.id
     with session_factory() as session:
         old_count = session.scalar(
             select(func.count()).select_from(ApiSourceEndpoint).where(
@@ -334,7 +735,7 @@ def test_stale_preview_cannot_overwrite_a_newer_activation(
 
     with pytest.raises(StaleSourcePreviewError, match="active revision changed"):
         source_service.activate_preview(preview_two.id, "admin")
-    assert source_service.get_active_revision(project.id).id == activated.id
+    assert source_service.get_active_revision(project.id, first.source_id).id == activated.id
     with session_factory() as session:
         stale_diff = session.get(ApiSourceDiff, preview_two.id)
         stale_candidate = session.get(ApiSourceRevision, preview_two.candidate_revision_id)
@@ -357,32 +758,94 @@ def test_expired_preview_is_rejected_without_changing_active_revision(
 
     with pytest.raises(SourcePreviewExpiredError, match="expired"):
         source_service.activate_preview(preview.id, "admin")
-    assert source_service.get_active_revision(project.id).id == first.id
+    assert source_service.get_active_revision(project.id, first.source_id).id == first.id
+
+
+def test_active_revision_read_is_scoped_to_selected_source(source_service, project):
+    first = _activate_fixture(source_service, project)
+    second_document = copy.deepcopy(FAVORITES_OPENAPI)
+    second_document["info"]["title"] = "Synthetic Favorites Secondary API"
+    second = _activate_fixture(source_service, project, second_document)
+
+    assert source_service.get_active_revision(project.id, first.source_id).id == first.id
+    assert source_service.get_active_revision(project.id, second.source_id).id == second.id
+    assert source_service.get_active_revision(project.id, "missing-source") is None
+
+
+def _write_apifox_test_cli(tmp_path):
+    script = tmp_path / "synthetic_apifox_cli.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import json
+            import os
+            from pathlib import Path
+            import sys
+            import time
+
+            mode = sys.argv[1]
+            marker = Path(sys.argv[2])
+            marker.write_text(os.getcwd(), encoding="utf-8")
+            output = Path(sys.argv[sys.argv.index("--output") + 1])
+            environment = Path(sys.argv[sys.argv.index("--environment-output") + 1])
+            document = {
+                "openapi": "3.0.3",
+                "info": {"title": "Synthetic CLI API", "version": "1"},
+                "paths": {},
+            }
+            metadata = {
+                "name": "Synthetic Production",
+                "variables": {"Biz": "ZXB"},
+            }
+            if mode == "stdout-oversize":
+                os.write(1, b"x" * 4096)
+                time.sleep(5)
+            elif mode == "stderr-oversize":
+                os.write(2, os.environ["APIFOX_ACCESS_TOKEN"].encode() + b"-" + b"x" * 4096)
+                time.sleep(5)
+            elif mode == "openapi-oversize":
+                output.write_bytes(b"x" * 4096)
+            elif mode == "environment-oversize":
+                output.write_text(json.dumps(document), encoding="utf-8")
+                environment.write_bytes(b"x" * 4096)
+            elif mode == "failure":
+                os.write(2, ("failed " + os.environ["APIFOX_ACCESS_TOKEN"]).encode())
+                raise SystemExit(3)
+            elif mode == "leak":
+                document["x-debug-access-token"] = os.environ["APIFOX_ACCESS_TOKEN"]
+                output.write_text(json.dumps(document), encoding="utf-8")
+            else:
+                output.write_text(json.dumps(document), encoding="utf-8")
+                environment.write_text(json.dumps(metadata), encoding="utf-8")
+            """
+        ),
+        encoding="utf-8",
+    )
+    return script
+
+
+def _apifox_adapter_for_mode(tmp_path, mode, **limits):
+    from task_server.api_testing.adapters.apifox import ApifoxAdapter
+
+    marker = tmp_path / (mode + "-cwd.txt")
+    script = _write_apifox_test_cli(tmp_path)
+    adapter = ApifoxAdapter(
+        command=[sys.executable, str(script), mode, str(marker)],
+        timeout_seconds=17,
+        **limits,
+    )
+    return adapter, marker
 
 
 def test_apifox_adapter_uses_explicit_safe_subprocess_and_returns_metadata(
-    monkeypatch,
+    monkeypatch, tmp_path
 ):
-    from task_server.api_testing.adapters.apifox import ApifoxAdapter, ApifoxConnection
+    from task_server.api_testing.adapters.apifox import ApifoxConnection
 
     token = "synthetic-secret-token"
     monkeypatch.setenv("QWEN_API_KEY", "must-not-reach-apifox")
     monkeypatch.setenv("API_TESTING_DATABASE_URL", "must-not-reach-apifox")
-    observed = {}
-
-    def fake_runner(args, **kwargs):
-        observed["args"] = args
-        observed["kwargs"] = kwargs
-        output_index = args.index("--output") + 1
-        Path(args[output_index]).write_text(json.dumps(FAVORITES_OPENAPI), encoding="utf-8")
-        metadata_index = args.index("--environment-output") + 1
-        Path(args[metadata_index]).write_text(
-            json.dumps({"name": "Synthetic Production", "variables": {"Biz": "ZXB"}}),
-            encoding="utf-8",
-        )
-        return SimpleNamespace(returncode=0, stdout="exported", stderr="")
-
-    adapter = ApifoxAdapter(command=["apifox", "export"], runner=fake_runner, timeout_seconds=17)
+    adapter, marker = _apifox_adapter_for_mode(tmp_path, "success")
     result = adapter.fetch(
         token,
         ApifoxConnection(
@@ -392,26 +855,18 @@ def test_apifox_adapter_uses_explicit_safe_subprocess_and_returns_metadata(
         ),
     )
 
-    assert result.document["info"]["title"] == "Synthetic Favorites API"
+    assert result.document["info"]["title"] == "Synthetic CLI API"
     assert result.environment_metadata["name"] == "Synthetic Production"
     assert result.identifiers == {
         "project_id": "project-123",
         "branch_id": "branch-main",
         "environment_id": "environment-prod",
     }
-    assert observed["args"][:2] == ["apifox", "export"]
-    assert token not in " ".join(observed["args"])
-    assert observed["kwargs"]["env"]["APIFOX_ACCESS_TOKEN"] == token
-    assert "QWEN_API_KEY" not in observed["kwargs"]["env"]
-    assert "API_TESTING_DATABASE_URL" not in observed["kwargs"]["env"]
-    assert observed["kwargs"]["env"]["HOME"] == observed["kwargs"]["cwd"]
-    assert observed["kwargs"]["shell"] is False
-    assert observed["kwargs"]["timeout"] == 17
-    assert observed["kwargs"]["check"] is True
-    assert not Path(observed["kwargs"]["cwd"]).exists()
+    temporary_directory = Path(marker.read_text(encoding="utf-8"))
+    assert not temporary_directory.exists()
 
 
-def test_apifox_adapter_redacts_token_from_failures():
+def test_apifox_adapter_redacts_token_from_failures(tmp_path):
     from task_server.api_testing.adapters.apifox import (
         ApifoxAdapter,
         ApifoxAdapterError,
@@ -420,23 +875,16 @@ def test_apifox_adapter_redacts_token_from_failures():
 
     token = "synthetic-secret-token"
 
-    def failing_runner(args, **kwargs):
-        raise subprocess.CalledProcessError(
-            1,
-            args,
-            output=f"stdout leaked {token}",
-            stderr=f"stderr leaked {token}",
-        )
-
-    adapter = ApifoxAdapter(command=["apifox", "export"], runner=failing_runner)
+    adapter, marker = _apifox_adapter_for_mode(tmp_path, "failure")
     with pytest.raises(ApifoxAdapterError) as captured:
         adapter.fetch(token, ApifoxConnection(project_id="project-123"))
 
     assert token not in str(captured.value)
     assert "[REDACTED]" in str(captured.value)
+    assert not Path(marker.read_text(encoding="utf-8")).exists()
 
 
-def test_apifox_adapter_rejects_export_payload_containing_access_token():
+def test_apifox_adapter_rejects_export_payload_containing_access_token(tmp_path):
     from task_server.api_testing.adapters.apifox import (
         ApifoxAdapter,
         ApifoxAdapterError,
@@ -445,16 +893,47 @@ def test_apifox_adapter_rejects_export_payload_containing_access_token():
 
     token = "synthetic-secret-token"
 
-    def leaking_runner(args, **kwargs):
-        output_index = args.index("--output") + 1
-        leaked = copy.deepcopy(FAVORITES_OPENAPI)
-        leaked["x-debug-access-token"] = token
-        Path(args[output_index]).write_text(json.dumps(leaked), encoding="utf-8")
-        return SimpleNamespace(returncode=0, stdout="exported", stderr="")
-
-    adapter = ApifoxAdapter(command=["apifox", "export"], runner=leaking_runner)
+    adapter, marker = _apifox_adapter_for_mode(tmp_path, "leak")
     with pytest.raises(ApifoxAdapterError) as captured:
         adapter.fetch(token, ApifoxConnection(project_id="project-123"))
 
     assert token not in str(captured.value)
     assert "access token" in str(captured.value)
+    assert not Path(marker.read_text(encoding="utf-8")).exists()
+
+
+@pytest.mark.parametrize(
+    "mode, limit_name, message",
+    [
+        ("stdout-oversize", "max_stdout_bytes", "stdout exceeded"),
+        ("stderr-oversize", "max_stderr_bytes", "stderr exceeded"),
+        ("openapi-oversize", "max_openapi_bytes", "OpenAPI export exceeded"),
+        ("environment-oversize", "max_environment_bytes", "environment export exceeded"),
+    ],
+)
+def test_apifox_adapter_rejects_oversized_outputs_and_cleans_up(
+    tmp_path, mode, limit_name, message
+):
+    from task_server.api_testing.adapters.apifox import (
+        ApifoxAdapterError,
+        ApifoxConnection,
+    )
+
+    token = "synthetic-secret-token"
+    adapter, marker = _apifox_adapter_for_mode(
+        tmp_path,
+        mode,
+        **{
+            "max_stdout_bytes": 128,
+            "max_stderr_bytes": 128,
+            "max_openapi_bytes": 128,
+            "max_environment_bytes": 128,
+            limit_name: 64,
+        },
+    )
+
+    with pytest.raises(ApifoxAdapterError, match=message) as captured:
+        adapter.fetch(token, ApifoxConnection(project_id="project-123"))
+
+    assert token not in str(captured.value)
+    assert not Path(marker.read_text(encoding="utf-8")).exists()

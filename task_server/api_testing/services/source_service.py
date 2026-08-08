@@ -236,10 +236,10 @@ class SourceService:
             source = repository.get_source(revision.source_id)
             return self._revision_view(repository, revision, source.project_id)
 
-    def get_active_revision(self, project_id):
+    def get_active_revision(self, project_id, source_id):
         with self._session_factory() as session:
             repository = SourceRepository(session)
-            revision = repository.get_active_revision_for_project(project_id)
+            revision = repository.get_active_revision(project_id, source_id)
             if revision is None:
                 return None
             source = repository.get_source(revision.source_id)

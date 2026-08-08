@@ -1,5 +1,7 @@
 """Transaction-scoped persistence for versioned API sources."""
 
+import copy
+
 from sqlalchemy import func, select
 
 from ..models.project import ApiProject
@@ -113,7 +115,7 @@ class SourceRepository:
                 ApiSourceSchema(
                     revision_id=revision_id,
                     schema_key=schema_key,
-                    schema=dict(schema),
+                    schema=copy.deepcopy(schema),
                     **audit_fields(actor_id),
                 )
             )
@@ -159,7 +161,7 @@ class SourceRepository:
             )
         )
 
-    def get_active_revision_for_project(self, project_id):
+    def get_active_revision(self, project_id, source_id):
         return self.session.scalar(
             select(ApiSourceRevision)
             .join(
@@ -167,7 +169,8 @@ class SourceRepository:
                 (ApiSource.id == ApiSourceRevision.source_id)
                 & (ApiSource.active_revision_id == ApiSourceRevision.id),
             )
-            .where(ApiSource.project_id == project_id)
-            .order_by(ApiSource.updated_at.desc())
-            .limit(1)
+            .where(
+                ApiSource.project_id == project_id,
+                ApiSource.id == source_id,
+            )
         )

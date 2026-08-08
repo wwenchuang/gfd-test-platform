@@ -22,7 +22,7 @@ class NormalizedSourceDocument:
     document: Mapping[str, Any]
     document_hash: str
     endpoints: Tuple[NormalizedEndpoint, ...]
-    schemas: Mapping[str, Mapping[str, Any]]
+    schemas: Mapping[str, Any]
 
 
 @dataclass(frozen=True)

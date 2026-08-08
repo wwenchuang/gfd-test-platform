@@ -1,6 +1,6 @@
 """Versioned API source models."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import (
     DateTime,
@@ -86,7 +86,7 @@ class ApiSourceSchema(PrimaryRecord, Base):
 
     revision_id: Mapped[str] = mapped_column(ForeignKey("api_source_revisions.id", ondelete="CASCADE"), nullable=False)
     schema_key: Mapped[str] = mapped_column(String(300), nullable=False)
-    schema: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    schema: Mapped[Any] = mapped_column(JSONB, nullable=False)
 
 
 class ApiSourceDiff(PrimaryRecord, Base):
