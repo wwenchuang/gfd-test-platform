@@ -236,32 +236,6 @@ function showWorkflowGuide(sectionKey = activeWorkflow) {
     showAssetsCenter();
     return;
   }
-  if (sectionKey === 'api_dashboard' && typeof showApiTestingDashboard === 'function') {
-    showApiTestingDashboard();
-    return;
-  }
-  if (sectionKey === 'api_assets' && typeof showApiAssetsPage === 'function') {
-    showApiAssetsPage();
-    return;
-  }
-  if (sectionKey === 'api_sync' && typeof showApiAssetsPage === 'function') {
-    showApiAssetsPage();
-    return;
-  }
-  const collapsedApiWorkflows = [
-    'api_environment',
-    'api_plan',
-    'api_debug',
-    'api_regression',
-    'api_baselines',
-    'api_execution',
-    'api_execution_history',
-    'api_reports',
-  ];
-  if (collapsedApiWorkflows.includes(sectionKey) && typeof showApiTestingDashboard === 'function') {
-    showApiTestingDashboard();
-    return;
-  }
   area.className = 'editor-area';
   area.innerHTML = workflowGuideHtml(sectionKey);
   updateToolbarState();

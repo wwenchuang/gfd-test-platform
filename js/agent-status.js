@@ -2052,13 +2052,7 @@ async function loadPreflightDashboard(live=false) {
 }
 
 function setActiveWorkflow(sectionKey, options = {}) {
-  const legacyApiWorkflowMap = {
-    api_sync: 'api_assets',
-    api_baselines: 'api_plan',
-    api_execution: 'api_execution_history',
-  };
-  const normalizedSection = legacyApiWorkflowMap[sectionKey] || sectionKey;
-  activeWorkflow = WORKFLOW_SECTIONS[normalizedSection] ? normalizedSection : 'dashboard';
+  activeWorkflow = WORKFLOW_SECTIONS[sectionKey] ? sectionKey : 'dashboard';
   updateWorkbenchPanelMode();
   renderWorkflowNav();
   const section = WORKFLOW_SECTIONS[activeWorkflow];
@@ -2114,16 +2108,6 @@ const CONTEXT_TOOLBAR_MAP = {
   execute:          { module: 'run',      icon: '▶', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   baseline:         { module: 'run',      icon: '⇄', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
   repair:           { module: 'run',      icon: '🔁', title: '执行操作', refreshLabel: '刷新任务', refreshFn: 'loadJobs(true)' },
-  // 接口测试 模块
-  api_dashboard:    { module: 'api',      icon: 'API', title: '接口测试', refreshLabel: '刷新', refreshFn: 'showApiTestingDashboard()' },
-  api_assets:       { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
-  api_sync:         { module: 'api',      icon: 'OAS', title: '接口测试', refreshLabel: '刷新资产', refreshFn: 'showApiAssetsPage()' },
-  api_environment:  { module: 'api',      icon: 'ENV', title: '接口测试', refreshLabel: '刷新环境', refreshFn: 'showApiEnvironmentPage()' },
-  api_plan:         { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新设计', refreshFn: 'showApiPlanPage()' },
-  api_baselines:    { module: 'api',      icon: 'AI', title: '接口测试', refreshLabel: '刷新设计', refreshFn: 'showApiPlanPage()' },
-  api_execution:    { module: 'api',      icon: 'LOG', title: '接口测试', refreshLabel: '刷新记录', refreshFn: 'showApiExecutionHistoryPage()' },
-  api_execution_history: { module: 'api', icon: 'LOG', title: '接口测试', refreshLabel: '刷新记录', refreshFn: 'showApiExecutionHistoryPage()' },
-  api_reports:      { module: 'api',      icon: 'RPT', title: '接口测试', refreshLabel: '刷新报告', refreshFn: 'showApiReportsPage()' },
   // 报告 模块
   reports:          { module: 'report',   icon: '📊', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
   failure_analysis: { module: 'report',   icon: '🔍', title: '报告', refreshLabel: '刷新报告', refreshFn: 'loadJobs(true)' },
@@ -2226,36 +2210,6 @@ async function activateWorkflow(sectionKey) {
   }
   if (activeWorkflow === 'agent_confirm') {
     await renderAgentConfirmPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_dashboard') {
-    showApiTestingDashboard();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_assets') {
-    showApiAssetsPage();
-    toggleLibrary(false);
-    return;
-  }
-  if (activeWorkflow === 'api_sync') {
-    showApiAssetsPage();
-    toggleLibrary(false);
-    return;
-  }
-  const collapsedApiWorkflows = [
-    'api_environment',
-    'api_plan',
-    'api_debug',
-    'api_regression',
-    'api_baselines',
-    'api_execution',
-    'api_execution_history',
-    'api_reports',
-  ];
-  if (collapsedApiWorkflows.includes(activeWorkflow)) {
-    showApiTestingDashboard();
     toggleLibrary(false);
     return;
   }

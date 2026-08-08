@@ -83,18 +83,6 @@
             <span class="workflow-main"><span class="workflow-name">脚本编辑</span></span>
           </button>
         </details>
-        <!-- 接口自动化 -->
-        <details class="nav-group" data-nav-group="api-testing" open>
-          <summary class="nav-group-title">接口自动化</summary>
-          <button class="workflow-step" data-workflow="api_dashboard" title="API 测试" onclick="activateWorkflow('api_dashboard')">
-            <span class="workflow-index" aria-hidden="true">🧪</span>
-            <span class="workflow-main"><span class="workflow-name">API 测试</span></span>
-          </button>
-          <button class="workflow-step" data-workflow="api_assets" title="接口来源" onclick="activateWorkflow('api_assets')">
-            <span class="workflow-index" aria-hidden="true">📦</span>
-            <span class="workflow-main"><span class="workflow-name">接口来源</span></span>
-          </button>
-        </details>
         <!-- 执行 -->
         <details class="nav-group" data-nav-group="run" open>
           <summary class="nav-group-title">执行</summary>
@@ -910,7 +898,6 @@
 <script src="js/loading-manager.js?v=20260701-install-refresh"></script>
 <script src="js/form-steps.js?v=20260701-install-refresh"></script>
 <script src="js/state.js?v=20260729-apifox-discovery"></script>
-<script src="js/api.js?v=20260731-api-product-workbench"></script>
 <script src="js/auth.js?v=20260701-install-refresh"></script>
 <script src="js/navigation.js?v=20260804-api-single-panel-v1"></script>
 <script src="js/agent-workbench.js?v=20260803-agent-final-report-counts"></script>
@@ -920,8 +907,6 @@
 <script src="js/reports.js?v=20260701-install-refresh"></script>
 <script src="js/ai-repair.js?v=20260701-install-refresh"></script>
 <script src="js/model-config.js?v=20260701-install-refresh"></script>
-<script src="js/api-testing.js?v=20260804-api-single-panel-v1"></script>
-<script src="js/api-test-lab.js?v=20260804-test-lab-v4"></script>
 <script src="js/yaml-editor.js?v=20260701-install-refresh"></script>
 <script src="js/app.js?v=20260727-runner-active-task"></script>
 <!-- legacy-static-check: 半自动 Agent 工作台 启动半自动 Agent 半自动 Agent 启动 Agent 进度 Agent 产物 SEMI_AUTO 半自动 AUTO_SAFE 安全自动（后续开放） 自动生成测试用例 自动生成 Midscene YAML 自动校验 YAML 生成后等待确认执行 Sonic 生成飞书缺陷草稿（不自动提交） autoRun: false autoCreateBug: false 执行与 AI 诊断中心 运行轨迹 从失败任务或测试目标出发 模型策略摘要 去模型配置 -->
