@@ -3,7 +3,8 @@
 import copy
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
+from jsonschema import Draft202012Validator, ValidationError
+
 from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_payload
 from ..repositories.ai_job_repository import AiJobRepository
 from .case_service import CaseService
@@ -21,22 +24,29 @@ from .case_service import CaseService
 
 MAX_ENDPOINTS = 60
 DEFAULT_BATCH_SIZE = 10
-DEFAULT_PROVIDER_ID = "qwen_plus"
-DEFAULT_MODEL = "qwen3.7-plus"
+DEFAULT_PROVIDER_ID = ""
+DEFAULT_MODEL = ""
+DEFAULT_LEASE_SECONDS = 300
 TERMINAL_JOB_STATES = frozenset(
     {"completed", "partial", "failed_validation", "failed_gateway"}
 )
 TERMINAL_BATCH_STATES = frozenset(
     {"completed", "failed_validation", "failed_gateway"}
 )
-FENCE_PATTERN = re.compile(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", re.IGNORECASE | re.DOTALL)
 SENSITIVE_KEY = re.compile(r"(?:token|secret|password|authorization|cookie|api[_-]?key)", re.IGNORECASE)
 SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{10,})?\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE),
-    re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9._~+/=@:-]{24,}(?![A-Za-z0-9])"),
+    re.compile(r"\bgAAAAA[A-Za-z0-9_-]{16,}\b"),
+    re.compile(r"(?<![A-Fa-f0-9])[A-Fa-f0-9]{48,}(?![A-Fa-f0-9])"),
+    re.compile(
+        r"(?<![A-Za-z0-9])(?=[A-Za-z0-9._~+/=@:-]{32,}(?![A-Za-z0-9]))"
+        r"(?=[A-Za-z0-9._~+/=@:-]*[A-Za-z])(?=[A-Za-z0-9._~+/=@:-]*[0-9])"
+        r"[A-Za-z0-9._~+/=@:-]{32,}(?![A-Za-z0-9])"
+    ),
 )
+PLACEHOLDER_PATTERN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_.-]*\}\}")
 OMITTED_CONTRACT_FIELDS = frozenset({"example", "examples", "default"})
 
 
@@ -67,6 +77,7 @@ class AiBatchView:
     actual_provider_id: str
     actual_model: str
     fallback_used: bool
+    fallback_index: int
     fallback_reason: str
     generated_draft_ids: Tuple[str, ...]
     validation_errors: Tuple[Mapping[str, Any], ...]
@@ -105,7 +116,7 @@ class AiJobView:
 
 
 class AiGatewayClient:
-    """Small default client for the existing Gateway `/ai/chat` contract."""
+    """Small default client for the dedicated API case-generation contract."""
 
     def __init__(self, base_url=None):
         self.base_url = str(
@@ -121,7 +132,7 @@ class AiGatewayClient:
             "timeoutMs": int(timeout_seconds * 1000),
         }
         request = urllib.request.Request(
-            self.base_url + "/ai/chat",
+            self.base_url + "/ai/api-case-generation",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
@@ -161,6 +172,7 @@ class AiCaseService:
         gateway_client=None,
         batch_size=DEFAULT_BATCH_SIZE,
         gateway_timeout_seconds=120,
+        lease_seconds=DEFAULT_LEASE_SECONDS,
     ):
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= MAX_ENDPOINTS:
             raise ValueError("AI batch size must be between 1 and 60")
@@ -168,6 +180,13 @@ class AiCaseService:
         self.gateway_client = gateway_client or AiGatewayClient()
         self.batch_size = batch_size
         self.gateway_timeout_seconds = gateway_timeout_seconds
+        if (
+            not isinstance(lease_seconds, (int, float))
+            or isinstance(lease_seconds, bool)
+            or lease_seconds < 0
+        ):
+            raise ValueError("AI lease seconds must be non-negative")
+        self.lease_seconds = float(lease_seconds)
         root = Path(__file__).resolve().parents[3]
         self.skill_text = (root / "ai_skills" / "api_case_generation.v1.md").read_text(
             encoding="utf-8"
@@ -177,6 +196,8 @@ class AiCaseService:
                 encoding="utf-8"
             )
         )
+        Draft202012Validator.check_schema(self.output_schema)
+        self.output_validator = Draft202012Validator(self.output_schema)
 
     def submit(
         self,
@@ -243,9 +264,23 @@ class AiCaseService:
             job = repository.get_job_for_update(job_id)
             if job is None:
                 raise AiJobNotFoundError("AI case generation job was not found")
-            if job.state in TERMINAL_JOB_STATES or job.state == "running":
+            if job.state in TERMINAL_JOB_STATES:
+                return self._job_view(repository, job)
+            if job.state == "running" and not self._lease_expired(job.summary):
                 return self._job_view(repository, job)
             summary = copy.deepcopy(job.summary)
+            summary["lease_started_at"] = datetime.now(timezone.utc).isoformat()
+            if job.state == "running":
+                for batch in repository.list_batches(job.id):
+                    if batch.state == "running":
+                        repository.update_batch(
+                            batch,
+                            state="queued",
+                            actual_model=batch.actual_model,
+                            result=batch.result,
+                            error=batch.error,
+                            actor_id=job.updated_by,
+                        )
             repository.update_job(
                 job,
                 state="running",
@@ -257,7 +292,16 @@ class AiCaseService:
             batch_ids = [item.id for item in repository.list_batches(job.id)]
 
         for batch_id in batch_ids:
-            self._process_batch(job_id, batch_id, actor_id)
+            try:
+                self._process_batch(job_id, batch_id, actor_id)
+            except Exception as exc:
+                self._finish_failed_batch(
+                    batch_id,
+                    "failed_validation",
+                    "worker_error",
+                    self._safe_error(exc),
+                    actor_id,
+                )
         return self._finalize(job_id, actor_id)
 
     def list_generated_drafts(self, job_id):
@@ -269,6 +313,7 @@ class AiCaseService:
             version_ids = []
             for batch in repository.list_batches(job.id):
                 version_ids.extend(batch.result.get("draft_version_ids", []))
+            version_ids = list(dict.fromkeys(version_ids))
         case_service = CaseService(self.session_factory)
         return tuple(case_service.get_version(item) for item in version_ids)
 
@@ -324,22 +369,23 @@ class AiCaseService:
             )
             return
 
-        generated_ids = []
         errors = []
         allowed_endpoint_ids = set(batch.endpoint_ids)
         for index, candidate in enumerate(candidates):
+            fingerprint = self._candidate_fingerprint(candidate)
             try:
                 if candidate["endpoint_id"] not in allowed_endpoint_ids:
                     raise AiCandidateValidationError(
                         "candidate endpoint is outside the current batch"
                     )
-                draft = self._create_validated_draft(
+                self._create_validated_draft(
                     candidate["endpoint_id"],
                     candidate["case"],
                     job_id,
+                    batch_id,
+                    fingerprint,
                     actor_id,
                 )
-                generated_ids.append(draft.id)
             except (AiCandidateValidationError, CasePayloadError, ValueError, LookupError) as exc:
                 errors.append(
                     {
@@ -347,19 +393,30 @@ class AiCaseService:
                         "endpoint_id": candidate.get("endpoint_id", ""),
                         "code": "candidate_validation_error",
                         "message": self._safe_error(exc),
+                        "candidate_fingerprint": fingerprint,
                     }
                 )
 
-        state = "completed" if generated_ids else "failed_validation"
-        result = {
-            "requested_provider_id": requested_provider_id,
-            "draft_version_ids": generated_ids,
-            "validation_errors": errors,
-            "model_evidence": evidence,
-        }
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             batch = repository.get_batch_for_update(batch_id)
+            result = copy.deepcopy(batch.result)
+            known_errors = {
+                item.get("candidate_fingerprint")
+                for item in result.get("validation_errors", [])
+                if item.get("candidate_fingerprint")
+            }
+            result["validation_errors"] = list(
+                result.get("validation_errors", [])
+            ) + [
+                item
+                for item in errors
+                if item["candidate_fingerprint"] not in known_errors
+            ]
+            result["model_evidence"] = evidence
+            generated_ids = list(dict.fromkeys(result.get("draft_version_ids", [])))
+            result["draft_version_ids"] = generated_ids
+            state = "completed" if generated_ids else "failed_validation"
             repository.update_batch(
                 batch,
                 state=state,
@@ -376,10 +433,15 @@ class AiCaseService:
         services = repository.get_environment_services(job.environment_revision_id)
         environment = {
             "variable_names": [
-                item.name for item in variables if item.enabled and not item.is_secret
+                self._sanitize_contract(item.name)
+                for item in variables
+                if item.enabled and not item.is_secret
             ],
             "services": [
-                {"name": item.service_name, "resolved": bool(item.base_url)}
+                {
+                    "name": self._sanitize_contract(item.service_name),
+                    "resolved": bool(item.base_url),
+                }
                 for item in services
             ],
         }
@@ -389,16 +451,16 @@ class AiCaseService:
             contracts.append(
                 {
                     "endpoint_id": endpoint.id,
-                    "operation_id": endpoint.operation_id,
+                    "operation_id": self._sanitize_contract(endpoint.operation_id),
                     "method": endpoint.method,
-                    "path": endpoint.path,
-                    "summary": endpoint.summary,
-                    "tags": list(endpoint.tags),
+                    "path": self._sanitize_contract(endpoint.path),
+                    "summary": self._sanitize_contract(endpoint.summary),
+                    "tags": self._sanitize_contract(list(endpoint.tags)),
                     "operation": self._sanitize_contract(endpoint.operation),
                 }
             )
         payload = {
-            "intent": job.summary.get("intent", ""),
+            "intent": self._sanitize_contract(job.summary.get("intent", "")),
             "endpoints": contracts,
             "environment": environment,
             "output_schema": self.output_schema,
@@ -416,16 +478,26 @@ class AiCaseService:
             batch.requested_model,
         )
 
-    def _create_validated_draft(self, endpoint_id, payload, job_id, actor_id):
+    def _create_validated_draft(
+        self, endpoint_id, payload, job_id, batch_id, fingerprint, actor_id
+    ):
+        self._assert_no_literal_secrets(payload)
         parsed = parse_case_payload(payload)
         request_path = parsed["request"]["path"]
         parsed_path = urlsplit(request_path)
         if parsed_path.scheme or parsed_path.netloc or request_path.startswith("//"):
             raise AiCandidateValidationError("AI case request path must be relative")
         with self.session_factory.begin() as session:
+            repository = AiJobRepository(session)
+            batch = repository.get_batch_for_update(batch_id)
+            if batch is None or batch.job_id != job_id:
+                raise AiJobNotFoundError("AI case generation batch was not found")
+            result = copy.deepcopy(batch.result)
+            checkpoints = dict(result.get("candidate_checkpoints", {}))
+            if fingerprint in checkpoints:
+                return str(checkpoints[fingerprint])
             bound_service = CaseService(_BoundSessionFactory(session))
             draft = bound_service.create_draft(endpoint_id, parsed, "ai", actor_id)
-            repository = AiJobRepository(session)
             job = repository.get_job(job_id)
             metadata = self._environment_metadata(
                 repository, job.environment_revision_id
@@ -438,7 +510,19 @@ class AiCaseService:
                 raise AiCandidateValidationError(
                     "deterministic case validation failed: " + details
                 )
-            return draft
+            checkpoints[fingerprint] = draft.id
+            draft_ids = list(dict.fromkeys(result.get("draft_version_ids", []) + [draft.id]))
+            result["candidate_checkpoints"] = checkpoints
+            result["draft_version_ids"] = draft_ids
+            repository.update_batch(
+                batch,
+                state="running",
+                actual_model=batch.actual_model,
+                result=result,
+                error=batch.error,
+                actor_id=actor_id,
+            )
+            return draft.id
 
     def _finish_failed_batch(
         self, batch_id, state, code, message, actor_id, *, evidence=None
@@ -503,6 +587,7 @@ class AiCaseService:
             actual_provider_id = self._single_or_mixed(actual_providers)
             actual_model = self._single_or_mixed(actual_models)
             summary = copy.deepcopy(job.summary)
+            summary.pop("lease_started_at", None)
             summary.update(
                 {
                     "generated_drafts": draft_count,
@@ -539,42 +624,31 @@ class AiCaseService:
             },
         }
 
-    @classmethod
-    def _parse_output(cls, response):
+    def _parse_output(self, response):
         if not isinstance(response, dict) or response.get("success") is not True:
             raise AiGatewayError("AI Gateway returned an unsuccessful response")
         content = response.get("content")
         if not isinstance(content, str) or not content.strip():
             raise AiCandidateValidationError("AI Gateway content must be non-empty JSON")
-        match = FENCE_PATTERN.fullmatch(content)
-        if match:
-            content = match.group(1).strip()
         try:
             payload = json.loads(content)
         except json.JSONDecodeError as exc:
             raise AiCandidateValidationError("AI Gateway content is not strict JSON") from exc
-        if not isinstance(payload, dict) or set(payload) != {"candidates"}:
+        try:
+            self.output_validator.validate(payload)
+        except ValidationError as exc:
+            location = ".".join(str(part) for part in exc.absolute_path) or "$"
             raise AiCandidateValidationError(
-                "AI output must contain only the candidates field"
-            )
+                f"AI output schema validation failed at {location}: {exc.validator}"
+            ) from None
         candidates = payload["candidates"]
-        if not isinstance(candidates, list) or not 1 <= len(candidates) <= MAX_ENDPOINTS:
-            raise AiCandidateValidationError(
-                "AI candidates must contain between 1 and 60 items"
-            )
         normalized = []
-        for index, candidate in enumerate(candidates):
-            if not isinstance(candidate, dict) or set(candidate) != {"endpoint_id", "case"}:
-                raise AiCandidateValidationError(
-                    f"candidate {index} contains unknown or missing fields"
-                )
-            endpoint_id = candidate["endpoint_id"]
-            if not isinstance(endpoint_id, str) or not endpoint_id:
-                raise AiCandidateValidationError(
-                    f"candidate {index} endpoint_id is invalid"
-                )
+        for candidate in candidates:
             normalized.append(
-                {"endpoint_id": endpoint_id, "case": copy.deepcopy(candidate["case"])}
+                {
+                    "endpoint_id": candidate["endpoint_id"],
+                    "case": copy.deepcopy(candidate["case"]),
+                }
             )
         return normalized
 
@@ -583,20 +657,39 @@ class AiCaseService:
         actual_provider_id = response.get("providerId")
         actual_model = response.get("model")
         fallback_used = response.get("fallbackUsed", False)
+        fallback_index = response.get("fallbackIndex", 0)
         fallback_reason = response.get("fallbackReason", "")
         if not isinstance(actual_provider_id, str) or not actual_provider_id:
             raise AiGatewayError("AI Gateway omitted provider evidence")
         if not isinstance(actual_model, str) or not actual_model:
             raise AiGatewayError("AI Gateway omitted model evidence")
-        if not isinstance(fallback_used, bool) or not isinstance(fallback_reason, str):
+        if (
+            AiCaseService._redact_text(actual_provider_id) != actual_provider_id
+            or AiCaseService._redact_text(actual_model) != actual_model
+        ):
+            raise AiGatewayError("AI Gateway returned unsafe model evidence")
+        if (
+            not isinstance(fallback_used, bool)
+            or not isinstance(fallback_index, int)
+            or isinstance(fallback_index, bool)
+            or fallback_index < 0
+            or not isinstance(fallback_reason, str)
+        ):
             raise AiGatewayError("AI Gateway returned invalid fallback evidence")
+        safe_reason = AiCaseService._safe_error(fallback_reason) if fallback_reason else ""
+        if fallback_used:
+            if fallback_index <= 0 or not fallback_reason.strip():
+                raise AiGatewayError("AI Gateway returned incomplete fallback evidence")
+        elif fallback_index != 0 or fallback_reason:
+            raise AiGatewayError("AI Gateway returned contradictory fallback evidence")
+        explicit_selection = bool(requested_provider_id or requested_model)
         changed = (
-            actual_provider_id != requested_provider_id
-            or (requested_model and actual_model != requested_model)
+            (bool(requested_provider_id) and actual_provider_id != requested_provider_id)
+            or (bool(requested_model) and actual_model != requested_model)
         )
-        if changed and not fallback_used:
+        if explicit_selection and changed != fallback_used:
             raise AiGatewayError(
-                "AI Gateway changed the selected model without fallback evidence"
+                "AI Gateway fallback evidence contradicts the selected model"
             )
         return {
             "requested_provider_id": requested_provider_id,
@@ -604,7 +697,8 @@ class AiCaseService:
             "actual_provider_id": actual_provider_id,
             "actual_model": actual_model,
             "fallback_used": fallback_used,
-            "fallback_reason": fallback_reason,
+            "fallback_index": fallback_index,
+            "fallback_reason": safe_reason,
         }
 
     @classmethod
@@ -622,18 +716,63 @@ class AiCaseService:
             return output
         if isinstance(value, list):
             return [cls._sanitize_contract(item, key) for item in value]
-        if SENSITIVE_KEY.search(key) and isinstance(value, str):
-            return "<redacted>"
+        if isinstance(value, str):
+            return cls._redact_text(value)
         return copy.deepcopy(value)
 
-    @staticmethod
-    def _safe_error(error):
-        text = str(error).replace("\r", " ").replace("\n", " ").strip()
+    @classmethod
+    def _redact_text(cls, value):
+        text = str(value)
         for pattern in SENSITIVE_VALUE_PATTERNS:
             text = pattern.sub("<redacted>", text)
+        return text
+
+    @classmethod
+    def _safe_error(cls, error):
+        text = str(error).replace("\r", " ").replace("\n", " ").strip()
+        text = cls._redact_text(text)
         if len(text) >= 24 and re.fullmatch(r"[A-Za-z0-9._~+/=@:-]+", text):
             text = "<redacted>"
         return text[:500] or error.__class__.__name__
+
+    @classmethod
+    def _assert_no_literal_secrets(cls, value, path="case"):
+        if isinstance(value, dict):
+            for raw_key, item in value.items():
+                key = str(raw_key)
+                cls._assert_no_literal_secrets(item, f"{path}.{key}")
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                cls._assert_no_literal_secrets(item, f"{path}[{index}]")
+            return
+        if not isinstance(value, str) or PLACEHOLDER_PATTERN.fullmatch(value.strip()):
+            return
+        if cls._redact_text(value) != value:
+            raise AiCandidateValidationError(
+                f"literal credential is not allowed at {path}; use a variable placeholder"
+            )
+
+    @staticmethod
+    def _candidate_fingerprint(candidate):
+        canonical = json.dumps(
+            candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _lease_expired(self, summary):
+        raw = summary.get("lease_started_at", "") if isinstance(summary, dict) else ""
+        if not isinstance(raw, str) or not raw:
+            return True
+        try:
+            started_at = datetime.fromisoformat(raw)
+        except ValueError:
+            return True
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) >= started_at + timedelta(
+            seconds=self.lease_seconds
+        )
 
     @staticmethod
     def _single_or_mixed(values):
@@ -679,9 +818,17 @@ class AiCaseService:
         if unknown:
             raise AiJobInputError("model_config contains unsupported fields")
         provider_id = cls._text(
-            model_config.get("providerId", DEFAULT_PROVIDER_ID), "providerId", 200
+            model_config.get("providerId", DEFAULT_PROVIDER_ID),
+            "providerId",
+            200,
+            allow_empty=True,
         )
-        model = cls._text(model_config.get("model", DEFAULT_MODEL), "model", 200)
+        model = cls._text(
+            model_config.get("model", DEFAULT_MODEL),
+            "model",
+            200,
+            allow_empty=True,
+        )
         return provider_id, model
 
     @classmethod
@@ -700,6 +847,7 @@ class AiCaseService:
             actual_provider_id=str(evidence.get("actual_provider_id", "")),
             actual_model=batch.actual_model,
             fallback_used=bool(evidence.get("fallback_used", False)),
+            fallback_index=int(evidence.get("fallback_index", 0)),
             fallback_reason=str(evidence.get("fallback_reason", "")),
             generated_draft_ids=tuple(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),

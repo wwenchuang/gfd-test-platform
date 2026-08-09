@@ -1285,6 +1285,34 @@ app.post('/ai/chat', asyncRoute(async (req, res) => {
   });
 }));
 
+app.post('/ai/api-case-generation', asyncRoute(async (req, res) => {
+  const {messages, temperature, model, providerId, provider} = req.body || {};
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({error: 'messages required'});
+  }
+  const body = {
+    messages,
+    providerId: providerId || provider || '',
+    model: model || '',
+    timeoutMs: req.body?.timeoutMs || req.body?.timeout_ms,
+  };
+  const {output, route} = await callAi('api_case_generation', body, {
+    promptOverride: '',
+    messages,
+    temperature,
+  });
+  res.json({
+    success: true,
+    content: output,
+    providerId: route.providerId,
+    model: route.model,
+    fallbackUsed: Boolean(route.fallbackUsed),
+    fallbackIndex: Number(route.fallbackIndex || 0),
+    fallbackReason: route.fallbackReason || '',
+    ...completionAuditResponse(route),
+  });
+}));
+
 app.post('/ai/generate-bug', asyncRoute(async (req, res) => {
   const body = {
     taskName: req.body?.taskName || '',

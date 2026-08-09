@@ -73,6 +73,7 @@ def main():
         "analyze_failure": "qwen_plus",
         "optimize_yaml": "qwen_plus",
         "agent_plan": "qwen_plus",
+        "api_case_generation": "qwen_plus",
         "generate_bug": "qwen_plus",
     }
     for action, provider_id in expected_routes.items():
@@ -91,6 +92,11 @@ def main():
     require("req.body?.requirement" in server and "req.body?.sourceContext" in server and "req.body?.businessContext" in server, "generate-yaml endpoint must pass requirement/source/Figma context to the model")
     require("/ai/providers" in server and "/ai/providers/test" in server and "/ai/model-router" in server, "server must expose provider and model-router endpoints")
     require("/ai/optimize-yaml" in server and "/ai/chat" in server, "server must expose AI Gateway integration endpoints")
+    require(
+        "app.post('/ai/api-case-generation'" in server
+        and "callAi('api_case_generation', body" in server,
+        "server must expose a dedicated API case generation route",
+    )
     require("imagePartsFromBody" in server and "image_url" in server and "reportKeyframes" in server, "AI Gateway failure analysis and repair must accept multimodal report keyframes")
     require("usedBaselineIds" in server and "baselineExamples" in server and "repairPolicy" in server, "AI Gateway failure analysis and YAML repair must receive grounded branch baselines and repair policy")
     require(server.count("sourceEvidence: req.body?.sourceEvidence || {}") >= 2 and "requirement: req.body?.requirement || ''" in server, "Failure analysis and YAML repair must forward original requirement and same-frame source evidence")

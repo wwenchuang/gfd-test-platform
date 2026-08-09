@@ -172,4 +172,3 @@ class AiJobRepository:
             job.summary = copy.deepcopy(summary)
         job.updated_by = actor_id
         self.session.flush()
-

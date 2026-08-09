@@ -24,4 +24,3 @@
 ## 输出
 
 输出唯一顶层字段 `candidates`。每项包含 `endpoint_id` 和完整 `case` 草稿。不得增加未知字段。
-

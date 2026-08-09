@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 from task_server.api_testing.models.case import ApiAiJob, ApiAiJobBatch, ApiCase
 from task_server.api_testing.models.project import ApiProject
+from task_server.api_testing.models.source import ApiSourceEndpoint
 from tests.api_testing.test_migrations import (
     _alembic_config,
     _assert_current_test_schema,
@@ -24,6 +26,13 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "my_favorites_openapi.json"
 FAVORITES_OPENAPI = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 SYNTHETIC_SECRET = "task7-secret-must-never-reach-ai"
 SYNTHETIC_PUBLIC_VALUE = "task7-public-value-must-never-reach-ai"
+SYNTHETIC_JWT = (
+    "eyJhbGciOiJIUzI1NiJ9."
+    "eyJzdWIiOiJ0YXNrLTctc2VjcmV0LXJlZ3Jlc3Npb24ifQ."
+    "c3ludGhldGljLXNpZ25hdHVyZS12YWx1ZQ"
+)
+SYNTHETIC_FERNET = "gAAAAABtask7SyntheticCiphertextValue0123456789abcdef"
+SYNTHETIC_FINGERPRINT = "a7" * 32
 
 
 def _audit(actor="admin"):
@@ -147,7 +156,12 @@ def _case_payload(endpoint, suffix="成功响应"):
         },
         "data_rows": [],
         "assertions": [
-            {"type": "status_code", "operator": "equals", "expected": 200}
+            {
+                "type": "status_code",
+                "operator": "equals",
+                "expected": 200,
+                "enabled": True,
+            }
         ],
         "extractions": [],
         "dependencies": [],
@@ -162,6 +176,7 @@ def _gateway_response(candidates, *, provider="qwen_plus", model="qwen3.7-plus")
         "providerId": provider,
         "model": model,
         "fallbackUsed": provider != "qwen_plus",
+        "fallbackIndex": 1 if provider != "qwen_plus" else 0,
         "fallbackReason": "primary timeout" if provider != "qwen_plus" else "",
     }
 
@@ -170,7 +185,7 @@ def _candidate(endpoint, suffix="成功响应"):
     return {"endpoint_id": endpoint.id, "case": _case_payload(endpoint, suffix)}
 
 
-def _service(session_factory, gateway, *, batch_size=10):
+def _service(session_factory, gateway, *, batch_size=10, lease_seconds=300):
     from task_server.api_testing.services.ai_service import AiCaseService
 
     return AiCaseService(
@@ -178,6 +193,7 @@ def _service(session_factory, gateway, *, batch_size=10):
         gateway_client=gateway,
         batch_size=batch_size,
         gateway_timeout_seconds=30,
+        lease_seconds=lease_seconds,
     )
 
 
@@ -333,7 +349,7 @@ def test_process_generates_three_favorites_drafts_without_secret_context(
     assert {item["name"]: item["resolved"] for item in prompt_payload["environment"]["services"]}["optional"] is False
 
 
-def test_code_fence_is_cleaned_but_unknown_output_is_not_guessed(
+def test_markdown_fence_and_unknown_output_are_rejected(
     session_factory, ai_context
 ):
     endpoint = ai_context["endpoints"]["favoriteList"]
@@ -348,7 +364,7 @@ def test_code_fence_is_cleaned_but_unknown_output_is_not_guessed(
     first = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
     )
-    assert service.process(first.id).state == "completed"
+    assert service.process(first.id).state == "failed_validation"
 
     second = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
@@ -366,9 +382,8 @@ def test_invalid_candidate_is_atomic_and_valid_candidate_survives(
 ):
     endpoint = ai_context["endpoints"]["favoriteList"]
     valid = _candidate(endpoint)
-    invalid = _candidate(endpoint, "危险脚本")
+    invalid = _candidate(endpoint, "绝对地址")
     invalid["case"]["request"]["path"] = "https://attacker.invalid/steal"
-    invalid["case"]["script"] = "import os"
     gateway = FakeGateway(_gateway_response([valid, invalid]))
     service = _service(session_factory, gateway)
     job = service.submit(
@@ -397,17 +412,26 @@ def test_absolute_url_and_arbitrary_processing_are_rejected_independently(
     script["case"]["processing"]["pre"] = [
         {"action": "python", "source": "import os"}
     ]
-    gateway = FakeGateway(_gateway_response([absolute, script]))
+    gateway = FakeGateway(
+        _gateway_response([absolute]),
+        _gateway_response([script]),
+    )
     service = _service(session_factory, gateway)
-    job = service.submit(
+    absolute_job = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
     )
+    absolute_result = service.process(absolute_job.id)
+    script_job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+    script_result = service.process(script_job.id)
 
-    result = service.process(job.id)
-
-    assert result.state == "failed_validation"
-    assert result.summary["invalid_candidates"] == 2
-    assert service.list_generated_drafts(job.id) == ()
+    assert absolute_result.state == "failed_validation"
+    assert absolute_result.summary["invalid_candidates"] == 1
+    assert script_result.state == "failed_validation"
+    assert script_result.summary["invalid_candidates"] == 1
+    assert service.list_generated_drafts(absolute_job.id) == ()
+    assert service.list_generated_drafts(script_job.id) == ()
 
 
 def test_later_gateway_timeout_keeps_completed_batch_and_process_is_idempotent(
@@ -493,9 +517,10 @@ def test_gateway_fallback_evidence_is_persisted_per_batch(
         assert stored.actual_model == "gpt-5-mini"
         assert stored.result["model_evidence"]["requested_provider_id"] == "qwen_plus"
         assert stored.result["model_evidence"]["actual_provider_id"] == "highway_gpt5_mini"
+        assert stored.result["model_evidence"]["fallback_index"] == 1
 
 
-def test_default_gateway_client_posts_to_existing_chat_endpoint(monkeypatch):
+def test_default_gateway_client_posts_to_api_case_generation_endpoint(monkeypatch):
     from task_server.api_testing.services.ai_service import AiGatewayClient
 
     captured = {}
@@ -515,6 +540,7 @@ def test_default_gateway_client_posts_to_existing_chat_endpoint(monkeypatch):
                     "providerId": "qwen_plus",
                     "model": "qwen3.6-plus",
                     "fallbackUsed": False,
+                    "fallbackIndex": 0,
                     "fallbackReason": "",
                 }
             ).encode()
@@ -534,11 +560,260 @@ def test_default_gateway_client_posts_to_existing_chat_endpoint(monkeypatch):
         timeout_seconds=25,
     )
 
-    assert captured["url"] == "http://127.0.0.1:8090/ai/chat"
+    assert captured["url"] == "http://127.0.0.1:8090/ai/api-case-generation"
     assert captured["payload"]["providerId"] == "qwen_plus"
     assert captured["payload"]["model"] == "qwen3.6-plus"
     assert captured["payload"]["messages"][0]["content"] == "contract"
     assert result["providerId"] == "qwen_plus"
+
+
+def test_default_model_selection_is_delegated_to_gateway_route(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    gateway = FakeGateway(_gateway_response([_candidate(endpoint)]))
+    service = _service(session_factory, gateway)
+
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+    completed = service.process(job.id)
+
+    assert job.requested_provider_id == ""
+    assert job.requested_model == ""
+    assert gateway.calls[0]["provider_id"] == ""
+    assert gateway.calls[0]["model"] == ""
+    assert completed.state == "completed"
+    assert completed.actual_provider_id == "qwen_plus"
+    assert completed.fallback_used is False
+
+
+def test_prompt_redacts_credential_shapes_from_all_contract_strings(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    with session_factory.begin() as session:
+        stored = session.get(ApiSourceEndpoint, endpoint.id)
+        stored.summary = f"收藏查询 {SYNTHETIC_JWT}"
+        stored.tags = ["收藏", SYNTHETIC_FERNET]
+        stored.operation = {
+            "description": f"description {SYNTHETIC_FINGERPRINT}",
+            "x-notes": [SYNTHETIC_JWT, {"text": SYNTHETIC_FERNET}],
+            "responses": {"200": {"description": "ok"}},
+        }
+
+    gateway = FakeGateway(_gateway_response([_candidate(endpoint)]))
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id],
+        ai_context["environment"].revision_id,
+        "admin",
+        intent=f"intent {SYNTHETIC_JWT}",
+    )
+
+    assert service.process(job.id).state == "completed"
+    prompt = json.dumps(gateway.calls[0]["messages"], ensure_ascii=False)
+    for secret in (SYNTHETIC_JWT, SYNTHETIC_FERNET, SYNTHETIC_FINGERPRINT):
+        assert secret not in prompt
+    assert prompt.count("<redacted>") >= 5
+
+
+def test_literal_credentials_are_rejected_before_case_service(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidates = []
+    header = _candidate(endpoint, "header secret")
+    header["case"]["request"]["headers"]["Authorization"] = (
+        f"Bearer {SYNTHETIC_JWT}"
+    )
+    candidates.append(header)
+    cookie = _candidate(endpoint, "cookie secret")
+    cookie["case"]["request"]["cookies"]["session"] = SYNTHETIC_JWT
+    candidates.append(cookie)
+    body = _candidate(endpoint, "body secret")
+    body["case"]["request"]["body"] = {"apiKey": "sk-syntheticTask7Secret123456"}
+    candidates.append(body)
+    row = _candidate(endpoint, "row secret")
+    row["case"]["data_rows"] = [
+        {"name": "secret row", "values": {"token": SYNTHETIC_FERNET}, "enabled": True}
+    ]
+    candidates.append(row)
+    processing = _candidate(endpoint, "processing secret")
+    processing["case"]["processing"]["pre"] = [
+        {"action": "set_variable", "name": "ZXBToken", "value": SYNTHETIC_JWT}
+    ]
+    candidates.append(processing)
+
+    service = _service(
+        session_factory, FakeGateway(_gateway_response(candidates))
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+    result = service.process(job.id)
+
+    assert result.state == "failed_validation"
+    assert result.summary["invalid_candidates"] == len(candidates)
+    assert service.list_generated_drafts(job.id) == ()
+    stored_text = json.dumps(
+        [dict(item) for item in result.batches[0].validation_errors],
+        ensure_ascii=False,
+    )
+    for secret in (SYNTHETIC_JWT, SYNTHETIC_FERNET, "sk-syntheticTask7Secret123456"):
+        assert secret not in stored_text
+
+
+def test_fallback_evidence_is_redacted_and_must_be_consistent(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    valid_fallback = _gateway_response(
+        [_candidate(endpoint)], provider="highway_gpt5_mini", model="gpt-5-mini"
+    )
+    valid_fallback["fallbackReason"] = f"Authorization: Bearer {SYNTHETIC_JWT}"
+    changed_without_index = copy.deepcopy(valid_fallback)
+    changed_without_index["fallbackIndex"] = 0
+    unchanged_claimed_fallback = _gateway_response([_candidate(endpoint)])
+    unchanged_claimed_fallback.update(
+        {"fallbackUsed": True, "fallbackIndex": 1, "fallbackReason": "timeout"}
+    )
+    gateway = FakeGateway(
+        valid_fallback, changed_without_index, unchanged_claimed_fallback
+    )
+    service = _service(session_factory, gateway)
+
+    first = service.submit(
+        [endpoint.id],
+        ai_context["environment"].revision_id,
+        "admin",
+        {"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+    )
+    completed = service.process(first.id)
+    assert completed.state == "completed"
+    assert SYNTHETIC_JWT not in completed.batches[0].fallback_reason
+    assert completed.batches[0].fallback_reason.endswith("<redacted>")
+
+    second = service.submit(
+        [endpoint.id],
+        ai_context["environment"].revision_id,
+        "admin",
+        {"providerId": "qwen_plus", "model": "qwen3.6-plus"},
+    )
+    assert service.process(second.id).state == "failed_gateway"
+
+    third = service.submit(
+        [endpoint.id],
+        ai_context["environment"].revision_id,
+        "admin",
+        {"providerId": "qwen_plus", "model": "qwen3.7-plus"},
+    )
+    assert service.process(third.id).state == "failed_gateway"
+
+
+def test_strict_json_schema_rejects_missing_required_nested_field(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint)
+    candidate["case"]["assertions"][0].pop("enabled", None)
+    service = _service(
+        session_factory, FakeGateway(_gateway_response([candidate]))
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "failed_validation"
+    assert service.list_generated_drafts(job.id) == ()
+
+
+def test_interrupted_batch_recovers_from_lease_without_duplicate_drafts(
+    session_factory, ai_context, monkeypatch
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidates = [
+        _candidate(endpoint, "first checkpoint"),
+        _candidate(endpoint, "second checkpoint"),
+    ]
+    gateway = FakeGateway(
+        _gateway_response(candidates), _gateway_response(candidates)
+    )
+    service = _service(session_factory, gateway, lease_seconds=0)
+    original = service._create_validated_draft
+    calls = {"count": 0}
+
+    def interrupt_second(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise KeyboardInterrupt("synthetic worker exit")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "_create_validated_draft", interrupt_second)
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="synthetic worker exit"):
+        service.process(job.id)
+    assert len(service.list_generated_drafts(job.id)) == 1
+
+    monkeypatch.setattr(service, "_create_validated_draft", original)
+    recovered = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert recovered.state == "completed"
+    assert len(drafts) == 2
+    assert len({item.id for item in drafts}) == 2
+    assert len(gateway.calls) == 2
+
+
+def test_unexpected_exception_converges_instead_of_leaving_running_state(
+    session_factory, ai_context, monkeypatch
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    service = _service(
+        session_factory, FakeGateway(_gateway_response([_candidate(endpoint)]))
+    )
+    monkeypatch.setattr(
+        service,
+        "_create_validated_draft",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic failure")),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "failed_validation"
+    assert result.batches[0].state == "failed_validation"
+    assert "synthetic failure" in result.batches[0].validation_errors[0]["message"]
+
+
+def test_concurrent_process_observes_fresh_lease_without_duplicate_gateway_call(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    gateway = FakeGateway()
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+    with session_factory.begin() as session:
+        stored = session.get(ApiAiJob, job.id)
+        stored.state = "running"
+        stored.summary = {
+            **stored.summary,
+            "lease_started_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    observed = service.process(job.id)
+
+    assert observed.state == "running"
+    assert gateway.calls == []
 
 
 def test_skill_schema_and_eval_define_a_strict_chinese_contract():

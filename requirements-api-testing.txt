@@ -4,3 +4,4 @@ psycopg[binary]>=3.2,<3.3
 redis>=5.2,<6
 celery[redis]>=5.4,<6
 cryptography>=44,<46
+jsonschema>=4.23,<5
