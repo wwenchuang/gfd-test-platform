@@ -260,6 +260,90 @@ def test_draft_input_rejects_unknown_or_invalid_fields(
         case_service.create_draft(endpoint.id, payload, "manual", "admin")
 
 
+@pytest.mark.parametrize(
+    "assertion, message",
+    [
+        (
+            {"type": "status_code", "operator": "matches", "expected": "["},
+            "not supported",
+        ),
+        (
+            {"type": "status_code", "operator": "equals", "expected": 99},
+            "status code",
+        ),
+        (
+            {"type": "status_code", "operator": "in", "expected": [200, 700]},
+            "status code",
+        ),
+        (
+            {"type": "json_path", "path": "$.code", "operator": "matches", "expected": "["},
+            "regular expression",
+        ),
+        (
+            {"type": "json_path", "path": "$.data", "operator": "contains", "expected": {"x": 1}},
+            "scalar",
+        ),
+        (
+            {"type": "json_path", "path": "$.count", "operator": "greater_than", "expected": "1"},
+            "number",
+        ),
+        (
+            {"type": "header", "name": "X-Trace", "operator": "in", "expected": "abc"},
+            "array",
+        ),
+        (
+            {"type": "response_time", "operator": "less_than", "expected": -1},
+            "non-negative",
+        ),
+        (
+            {"type": "json_path", "path": "$.data", "operator": "exists", "expected": True},
+            "must not define expected",
+        ),
+        (
+            {"type": "schema", "operator": "equals", "expected": "not-a-schema"},
+            "schema object",
+        ),
+    ],
+)
+def test_assertion_matrix_rejects_unsupported_operator_operands(
+    case_service, project_context, assertion, message
+):
+    from task_server.api_testing.contracts.case import CasePayloadError
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint)
+    payload["assertions"] = [assertion]
+
+    with pytest.raises(CasePayloadError, match=message):
+        case_service.create_draft(endpoint.id, payload, "manual", "admin")
+
+
+def test_phase1_rejects_nonempty_dependency_condition_before_persistence(
+    case_service, project_context, session_factory
+):
+    from task_server.api_testing.contracts.case import CasePayloadError
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint)
+    payload["dependencies"] = [
+        {
+            "case_version_id": "11111111-1111-4111-8111-111111111111",
+            "required": True,
+            "exports": [],
+            "condition": "__import__('os').system('echo bypass')",
+        }
+    ]
+
+    with session_factory() as session:
+        count_before = session.scalar(select(func.count(ApiCase.id)))
+
+    with pytest.raises(CasePayloadError, match="condition"):
+        case_service.create_draft(endpoint.id, payload, "manual", "admin")
+
+    with session_factory() as session:
+        assert session.scalar(select(func.count(ApiCase.id))) == count_before
+
+
 def test_edit_creates_immutable_version_and_preserves_children(
     case_service, project_context, session_factory
 ):
@@ -349,6 +433,155 @@ def test_validate_case_accepts_environment_and_data_row_variables(
 
     assert result.valid is True
     assert result.errors == ()
+
+
+def test_each_enabled_data_row_must_resolve_request_variables(
+    case_service, project_context
+):
+    from task_server.api_testing.validation import validate_case
+
+    endpoint_view = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint_view)
+    payload["request"]["headers"]["X-Row"] = "{{rowOnly}}"
+    payload["data_rows"] = [
+        {"name": "完整数据", "values": {"Biz": "ZXB", "rowOnly": "ok"}, "enabled": True},
+        {"name": "缺失数据", "values": {"Biz": "ZXB"}, "enabled": True},
+        {"name": "已禁用", "values": {"Biz": "ZXB"}, "enabled": False},
+    ]
+    draft = case_service.create_draft(endpoint_view.id, payload, "manual", "admin")
+    with case_service.session_factory() as session:
+        endpoint = session.get(ApiSourceEndpoint, endpoint_view.id)
+        result = validate_case(draft, endpoint, {"variables": {}, "services": {}})
+
+    missing = [item for item in result.errors if item.code == "undefined_variable"]
+    assert len(missing) == 1
+    assert "缺失数据" in missing[0].field
+    assert "rowOnly" in missing[0].message
+
+
+def test_template_variables_are_validated_when_no_data_rows(
+    case_service, project_context
+):
+    from task_server.api_testing.validation import validate_case
+
+    endpoint_view = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint_view)
+    payload["data_rows"] = []
+    payload["request"]["headers"]["X-Missing"] = "{{templateOnly}}"
+    draft = case_service.create_draft(endpoint_view.id, payload, "manual", "admin")
+    with case_service.session_factory() as session:
+        endpoint = session.get(ApiSourceEndpoint, endpoint_view.id)
+        result = validate_case(draft, endpoint, {"variables": {"Biz": "ZXB"}})
+
+    assert any(
+        item.code == "undefined_variable" and "templateOnly" in item.message
+        for item in result.errors
+    )
+
+
+def test_dependencies_use_repository_identity_and_real_extraction_targets(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    producer_payload = valid_list_case(endpoint)
+    producer_payload["name"] = "收藏前置数据"
+    producer_payload["extractions"] = [
+        {"target": "realExport", "type": "json_path", "path": "$.data[0].id"}
+    ]
+    producer = case_service.create_draft(endpoint.id, producer_payload, "manual", "admin")
+
+    consumer_payload = valid_list_case(endpoint)
+    consumer_payload["request"]["headers"]["X-Dependency"] = "{{realExport}}"
+    consumer_payload["dependencies"] = [
+        {"case_version_id": producer.id, "required": True, "exports": ["realExport"]}
+    ]
+    consumer = case_service.create_draft(endpoint.id, consumer_payload, "manual", "admin")
+    valid_result = case_service.validate_case(consumer.id, {"variables": {"Biz": "ZXB"}})
+    assert valid_result.valid is True
+
+    random_payload = valid_list_case(endpoint)
+    random_payload["request"]["headers"]["X-Ghost"] = "{{ghostExport}}"
+    random_payload["dependencies"] = [
+        {
+            "case_version_id": "22222222-2222-4222-8222-222222222222",
+            "required": True,
+            "exports": ["ghostExport"],
+        }
+    ]
+    random_case = case_service.create_draft(endpoint.id, random_payload, "manual", "admin")
+    random_result = case_service.validate_case(random_case.id, {"variables": {"Biz": "ZXB"}})
+    assert {item.code for item in random_result.errors} >= {
+        "dependency_not_found",
+        "undefined_variable",
+    }
+
+    fake_export_payload = valid_list_case(endpoint)
+    fake_export_payload["request"]["headers"]["X-Fake"] = "{{fakeExport}}"
+    fake_export_payload["dependencies"] = [
+        {"case_version_id": producer.id, "required": True, "exports": ["fakeExport"]}
+    ]
+    fake_case = case_service.create_draft(endpoint.id, fake_export_payload, "manual", "admin")
+    fake_result = case_service.validate_case(fake_case.id, {"variables": {"Biz": "ZXB"}})
+    assert {item.code for item in fake_result.errors} >= {
+        "dependency_export_invalid",
+        "undefined_variable",
+    }
+
+    with session_factory.begin() as session:
+        other_project = ApiProject(
+            name=f"Cross Project {os.urandom(4).hex()}",
+            slug=f"cross-project-{os.urandom(6).hex()}",
+            **_audit(),
+        )
+        session.add(other_project)
+        session.flush()
+        cross_case = ApiCase(
+            project_id=other_project.id,
+            endpoint_id=endpoint.id,
+            name="跨项目依赖",
+            status="draft",
+            origin="manual",
+            **_audit(),
+        )
+        session.add(cross_case)
+        session.flush()
+        cross_version = ApiCaseVersion(
+            case_id=cross_case.id,
+            endpoint_id=endpoint.id,
+            version_number=1,
+            status="draft",
+            purpose="synthetic cross-project dependency",
+            priority="P1",
+            request_template={"name": "跨项目依赖", "request": valid_list_case(endpoint)["request"]},
+            validation_summary={},
+            dependency_spec={"dependencies": []},
+            processing_spec={"pre": [], "post": []},
+            **_audit(),
+        )
+        session.add(cross_version)
+        session.flush()
+        session.add(
+            ApiCaseExtraction(
+                case_version_id=cross_version.id,
+                target_name="crossExport",
+                extraction_type="json_path",
+                definition={"path": "$.id", "required": True},
+                **_audit(),
+            )
+        )
+        cross_case.active_version_id = cross_version.id
+
+    cross_payload = valid_list_case(endpoint)
+    cross_payload["request"]["headers"]["X-Cross"] = "{{crossExport}}"
+    cross_payload["dependencies"] = [
+        {"case_version_id": cross_version.id, "required": True, "exports": ["crossExport"]}
+    ]
+    cross_consumer = case_service.create_draft(endpoint.id, cross_payload, "manual", "admin")
+    cross_result = case_service.validate_case(cross_consumer.id, {"variables": {"Biz": "ZXB"}})
+    assert {item.code for item in cross_result.errors} >= {
+        "dependency_project_mismatch",
+        "undefined_variable",
+    }
 
 
 def test_validate_case_reports_contract_and_safety_errors_without_network(
@@ -453,6 +686,7 @@ def _create_execution_evidence(
     environment_revision_id=None,
     project_id=None,
     source_revision_id=None,
+    parent_state="DONE",
 ):
     with session_factory.begin() as session:
         execution = ApiExecution(
@@ -462,7 +696,7 @@ def _create_execution_evidence(
                 environment_revision_id or context["environment_revision"].id
             ),
             execution_type=execution_type,
-            state=status,
+            state=parent_state,
             idempotency_key=f"task5-{os.urandom(8).hex()}",
             requested_case_ids=[case_version.case_id],
             request_snapshot={"sanitized": True},
@@ -514,6 +748,29 @@ def test_baseline_requires_exact_passing_debug_evidence(
     assert baseline.case_version_id == draft.id
     assert baseline.environment_revision_id == project_context["environment_revision"].id
     assert SYNTHETIC_SECRET not in repr(baseline)
+
+
+@pytest.mark.parametrize(
+    "parent_state",
+    ["QUEUED", "RUNNING", "FAILED", "BROKEN", "CANCELLED", "PASSED"],
+)
+def test_baseline_rejects_passed_child_under_non_done_parent(
+    case_service, project_context, session_factory, parent_state
+):
+    from task_server.api_testing.services.case_service import BaselineGateError
+
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "manual", "admin")
+    evidence_id = _create_execution_evidence(
+        session_factory,
+        project_context,
+        draft,
+        status="PASSED",
+        parent_state=parent_state,
+    )
+
+    with pytest.raises(BaselineGateError, match="successful terminal"):
+        case_service.adopt_baseline(draft.id, evidence_id, "admin")
 
 
 def test_baseline_rejects_cross_version_endpoint_environment_and_project(

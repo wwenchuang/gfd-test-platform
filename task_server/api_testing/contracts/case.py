@@ -4,6 +4,7 @@ import copy
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import re
 from types import MappingProxyType
 from typing import Any, Mapping, Optional, Tuple
 
@@ -25,6 +26,37 @@ ASSERTION_OPERATORS = frozenset(
         "in",
     }
 )
+ASSERTION_OPERATOR_MATRIX = {
+    "status_code": frozenset({"equals", "not_equals", "in"}),
+    "json_path": frozenset(
+        {
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "exists",
+            "not_exists",
+            "greater_than",
+            "less_than",
+            "matches",
+            "in",
+        }
+    ),
+    "header": frozenset(
+        {
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "exists",
+            "not_exists",
+            "matches",
+            "in",
+        }
+    ),
+    "response_time": frozenset({"greater_than", "less_than"}),
+    "schema": frozenset({"equals"}),
+}
 EXTRACTION_TYPES = frozenset({"json_path", "header", "cookie", "status_code"})
 PROCESSING_ACTIONS = frozenset(
     {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode"}
@@ -135,6 +167,11 @@ def _parse_assertions(value):
             raise CasePayloadError(f"assertions[{index}].type is not supported")
         if operator not in ASSERTION_OPERATORS:
             raise CasePayloadError(f"assertions[{index}].operator is not supported")
+        if operator not in ASSERTION_OPERATOR_MATRIX[assertion_type]:
+            raise CasePayloadError(
+                f"assertions[{index}] operator {operator} is not supported for {assertion_type}"
+            )
+        _validate_assertion_operand(item, assertion_type, operator, index)
         timeout_ms = item.get("timeout_ms", 0)
         if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or not 0 <= timeout_ms <= 60_000:
             raise CasePayloadError(f"assertions[{index}].timeout_ms is invalid")
@@ -154,6 +191,62 @@ def _parse_assertions(value):
             parsed["name"] = _text(item["name"], f"assertions[{index}].name", maximum=200)
         assertions.append(parsed)
     return assertions
+
+
+def _validate_assertion_operand(item, assertion_type, operator, index):
+    field = f"assertions[{index}]"
+    has_expected = "expected" in item
+    expected = item.get("expected")
+    if operator in {"exists", "not_exists"}:
+        if has_expected and expected is not None:
+            raise CasePayloadError(f"{field} {operator} must not define expected")
+        return
+    if not has_expected:
+        raise CasePayloadError(f"{field} operator {operator} requires expected")
+
+    if assertion_type == "status_code":
+        values = expected if operator == "in" else [expected]
+        if operator == "in" and (not isinstance(expected, list) or not expected):
+            raise CasePayloadError(f"{field} operator in requires a non-empty array")
+        if not all(
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 100 <= value <= 599
+            for value in values
+        ):
+            raise CasePayloadError(f"{field} expected must contain valid HTTP status code values")
+        return
+
+    if assertion_type == "response_time":
+        if (
+            not isinstance(expected, (int, float))
+            or isinstance(expected, bool)
+            or expected < 0
+        ):
+            raise CasePayloadError(f"{field} expected must be a non-negative number")
+        return
+
+    if assertion_type == "schema":
+        if not isinstance(expected, (dict, bool)):
+            raise CasePayloadError(f"{field} expected must be a schema object or boolean")
+        return
+
+    if operator in {"greater_than", "less_than"}:
+        if not isinstance(expected, (int, float)) or isinstance(expected, bool):
+            raise CasePayloadError(f"{field} expected must be a number")
+    elif operator in {"contains", "not_contains"}:
+        if expected is None or isinstance(expected, (dict, list)):
+            raise CasePayloadError(f"{field} expected must be a JSON scalar")
+    elif operator == "in":
+        if not isinstance(expected, list) or not expected or len(expected) > 100:
+            raise CasePayloadError(f"{field} expected must be a non-empty array")
+    elif operator == "matches":
+        if not isinstance(expected, str) or not expected or len(expected) > 2000:
+            raise CasePayloadError(f"{field} expected must be a regular expression string")
+        try:
+            re.compile(expected)
+        except re.error as exc:
+            raise CasePayloadError(f"{field} expected is not a valid regular expression") from exc
 
 
 def _parse_extractions(value):
@@ -207,8 +300,11 @@ def _parse_dependencies(value):
             "required": required,
             "exports": [_text(name, "dependency export", maximum=200) for name in exports],
         }
-        if "condition" in item:
-            parsed["condition"] = _text(item["condition"], f"dependencies[{index}].condition", maximum=1000)
+        condition = item.get("condition")
+        if condition not in (None, ""):
+            raise CasePayloadError(
+                f"dependencies[{index}].condition is not supported in Phase 1"
+            )
         dependencies.append(parsed)
     return dependencies
 

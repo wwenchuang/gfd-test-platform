@@ -151,7 +151,12 @@ def _unsafe_absolute_path(path):
     return bool(parsed.scheme or parsed.netloc or path.startswith("//"))
 
 
-def validate_case(case_version, endpoint, environment_metadata):
+def validate_case(
+    case_version,
+    endpoint,
+    environment_metadata,
+    dependency_metadata=None,
+):
     errors = []
     warnings = []
     request = dict(case_version.request)
@@ -218,19 +223,29 @@ def validate_case(case_version, endpoint, environment_metadata):
         _validate_value(body, body_schema, operation, "request.body", errors)
 
     available = _available_environment_variables(environment_metadata)
-    for row in case_version.data_rows:
-        if row.enabled:
-            available.update(row.values.keys())
+    dependency_metadata = dependency_metadata or {}
     for dependency in case_version.dependencies:
         identifier = dependency.get("case_version_id", "")
-        if UUID_PATTERN.fullmatch(identifier) and identifier != case_version.id:
-            available.update(dependency.get("exports", []))
+        metadata = dependency_metadata.get(identifier, {})
+        if metadata.get("status") == "trusted":
+            available.update(
+                set(dependency.get("exports", []))
+                & set(metadata.get("exports", []))
+            )
     for action in case_version.processing.get("pre", []):
         if action.get("action") == "set_variable" and isinstance(action.get("name"), str):
             available.add(action["name"])
-    missing = sorted(_variables_in(request) - available)
-    for name in missing:
-        _issue(errors, "undefined_variable", "request", f"variable is undefined: {name}")
+    request_variables = _variables_in(request)
+    enabled_rows = [row for row in case_version.data_rows if row.enabled]
+    validation_rows = enabled_rows or [None]
+    for row in validation_rows:
+        row_available = set(available)
+        if row is not None:
+            row_available.update(row.values.keys())
+        missing = sorted(request_variables - row_available)
+        for name in missing:
+            field = "request" if row is None else f"data_rows[{row.name}].request"
+            _issue(errors, "undefined_variable", field, f"variable is undefined: {name}")
 
     for index, assertion in enumerate(case_version.assertions):
         if assertion.type == "json_path" and (not assertion.path or not assertion.path.startswith("$")):
@@ -250,8 +265,19 @@ def validate_case(case_version, endpoint, environment_metadata):
         identifier = dependency.get("case_version_id", "")
         if not UUID_PATTERN.fullmatch(identifier) or identifier == case_version.id:
             _issue(errors, "dependency_invalid", f"dependencies[{index}].case_version_id", "dependency must reference another case version UUID")
+            continue
+        metadata = dependency_metadata.get(identifier, {})
+        if metadata.get("status") == "missing" or not metadata:
+            _issue(errors, "dependency_not_found", f"dependencies[{index}].case_version_id", "dependency case version does not exist")
+            continue
+        if metadata.get("status") == "project_mismatch":
+            _issue(errors, "dependency_project_mismatch", f"dependencies[{index}].case_version_id", "dependency belongs to a different project")
+            continue
+        actual_exports = set(metadata.get("exports", []))
         for name in dependency.get("exports", []):
             if not VARIABLE_NAME_PATTERN.fullmatch(name):
                 _issue(errors, "dependency_invalid", f"dependencies[{index}].exports", "dependency exports must be valid variable names")
+            elif name not in actual_exports:
+                _issue(errors, "dependency_export_invalid", f"dependencies[{index}].exports", f"dependency does not extract variable: {name}")
 
     return ValidationResult(tuple(errors), tuple(warnings))

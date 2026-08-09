@@ -12,6 +12,7 @@ from ..contracts.case import (
     parse_case_payload,
 )
 from ..repositories.case_repository import CaseRepository
+from ..validation import validate_case
 
 
 class EndpointNotFoundError(LookupError):
@@ -85,6 +86,55 @@ class CaseService:
             case = repository.get_case(version.case_id)
             return self._version_view(repository, version, case)
 
+    def validate_case(self, case_version_id, environment_metadata):
+        with self.session_factory() as session:
+            repository = CaseRepository(session)
+            version = repository.get_version(case_version_id)
+            if version is None:
+                raise CaseNotFoundError("API case version was not found")
+            case = repository.get_case(version.case_id)
+            endpoint = repository.get_endpoint(version.endpoint_id)
+            if case is None or endpoint is None:
+                raise CaseNotFoundError("API case validation context was not found")
+            view = self._version_view(repository, version, case)
+            dependency_ids = [
+                item.get("case_version_id")
+                for item in view.dependencies
+                if isinstance(item.get("case_version_id"), str)
+            ]
+            versions = repository.get_versions(dependency_ids)
+            cases = repository.get_cases(
+                [item.case_id for item in versions.values()]
+            )
+            dependency_metadata = {}
+            for dependency_id in dependency_ids:
+                dependency_version = versions.get(dependency_id)
+                if dependency_version is None:
+                    dependency_metadata[dependency_id] = {"status": "missing"}
+                    continue
+                dependency_case = cases.get(dependency_version.case_id)
+                if dependency_case is None:
+                    dependency_metadata[dependency_id] = {"status": "missing"}
+                    continue
+                dependency_metadata[dependency_id] = {
+                    "status": (
+                        "trusted"
+                        if dependency_case.project_id == case.project_id
+                        else "project_mismatch"
+                    ),
+                    "project_id": dependency_case.project_id,
+                    "exports": tuple(
+                        item.target_name
+                        for item in repository.get_extractions(dependency_version.id)
+                    ),
+                }
+            return validate_case(
+                view,
+                endpoint,
+                environment_metadata,
+                dependency_metadata=dependency_metadata,
+            )
+
     def adopt_baseline(self, case_version_id, debug_execution_case_id, actor_id):
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
@@ -105,6 +155,10 @@ class CaseService:
             )
             if not all((case, execution, endpoint, environment_revision, environment)):
                 raise BaselineGateError("baseline requires complete passing debug evidence")
+            if execution.state != "DONE":
+                raise BaselineGateError(
+                    "baseline requires a successful terminal debug execution"
+                )
             endpoint_project_id = self._endpoint_project_id(repository, endpoint)
             valid = (
                 evidence.status == "PASSED"

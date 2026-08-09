@@ -145,6 +145,28 @@ class CaseRepository:
     def get_version(self, version_id):
         return self.session.get(ApiCaseVersion, version_id)
 
+    def get_versions(self, version_ids):
+        identifiers = tuple(set(version_ids))
+        if not identifiers:
+            return {}
+        return {
+            item.id: item
+            for item in self.session.scalars(
+                select(ApiCaseVersion).where(ApiCaseVersion.id.in_(identifiers))
+            )
+        }
+
+    def get_cases(self, case_ids):
+        identifiers = tuple(set(case_ids))
+        if not identifiers:
+            return {}
+        return {
+            item.id: item
+            for item in self.session.scalars(
+                select(ApiCase).where(ApiCase.id.in_(identifiers))
+            )
+        }
+
     def get_data_rows(self, version_id):
         return tuple(
             self.session.scalars(
