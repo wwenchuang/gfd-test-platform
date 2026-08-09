@@ -52,9 +52,6 @@ NAMED_CREDENTIAL_PATTERN = re.compile(
     r"\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"
 )
 PLACEHOLDER_PATTERN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_.-]*\}\}")
-AUTHORIZATION_HEADER = re.compile(
-    r"^(?:proxy-)?authorization$", re.IGNORECASE
-)
 OMITTED_CONTRACT_FIELDS = frozenset({"example", "examples", "default"})
 
 
@@ -757,7 +754,7 @@ class AiCaseService:
         request = value.get("request", {}) if isinstance(value, dict) else {}
         headers = request.get("headers", {}) if isinstance(request, dict) else {}
         for name, item in headers.items():
-            if AUTHORIZATION_HEADER.fullmatch(str(name)) and cls._is_nonempty(item):
+            if SENSITIVE_KEY.search(str(name)) and cls._is_nonempty(item):
                 cls._require_full_placeholder(item, f"{path}.request.headers.{name}")
         cookies = request.get("cookies", {}) if isinstance(request, dict) else {}
         for name, item in cookies.items():

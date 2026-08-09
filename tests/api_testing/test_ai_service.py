@@ -758,6 +758,57 @@ def test_short_sensitive_output_values_require_full_placeholders(
     assert service.list_generated_drafts(job.id) == ()
 
 
+@pytest.mark.parametrize(
+    "header_name",
+    (
+        "api_key",
+        "API-KEY",
+        "X-Api-Key",
+        "access_token",
+        "Client-Secret",
+        "PASSWORD",
+        "Cookie",
+    ),
+)
+def test_sensitive_header_key_variants_require_full_placeholders(
+    session_factory, ai_context, header_name
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, f"sensitive header {header_name}")
+    candidate["case"]["request"]["headers"][header_name] = "test123"
+    service = _service(
+        session_factory, FakeGateway(_gateway_response([candidate]))
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "failed_validation"
+    assert result.summary["invalid_candidates"] == 1
+    assert service.list_generated_drafts(job.id) == ()
+
+
+def test_sensitive_non_authorization_header_accepts_full_placeholder(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, "sensitive header placeholder")
+    candidate["case"]["request"]["headers"]["X-Api-Key"] = "{{ZXBToken}}"
+    service = _service(
+        session_factory, FakeGateway(_gateway_response([candidate]))
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "completed"
+    assert len(service.list_generated_drafts(job.id)) == 1
+
+
 def test_sensitive_output_placeholders_are_accepted(
     session_factory, ai_context
 ):
