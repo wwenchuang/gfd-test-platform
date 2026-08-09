@@ -23,7 +23,8 @@ class SecretVariableView:
 class EnvironmentServiceView:
     name: str
     module_name: str
-    base_url: str
+    base_url: Optional[str]
+    unresolved: bool
     metadata: Mapping[str, Any]
 
     def __post_init__(self):
@@ -53,12 +54,21 @@ class EnvironmentView:
         object.__setattr__(self, "default_headers", _frozen_mapping(self.default_headers))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class RenderedRequest:
     path: Any
     query: Any
     headers: Any
     body: Any
+
+    def __repr__(self):
+        return "RenderedRequest(path=<redacted>, query=<redacted>, headers=<redacted>, body=<redacted>)"
+
+    __str__ = __repr__
+
+
+class UnresolvedServiceError(ValueError):
+    pass
 
 
 @dataclass(frozen=True, repr=False)
@@ -66,11 +76,12 @@ class ResolvedEnvironment:
     revision_id: str
     environment_id: str
     name: str
-    base_urls: Mapping[str, str]
+    base_urls: Mapping[str, Optional[str]]
     public_variables: Mapping[str, Any]
     secrets: Mapping[str, str]
     headers: Mapping[str, str]
     service_metadata: Mapping[str, Mapping[str, Any]]
+    unresolved_services: Tuple[str, ...]
     _renderer: Callable[[Any], Any] = field(repr=False, compare=False)
 
     def __post_init__(self):
@@ -79,19 +90,22 @@ class ResolvedEnvironment:
         object.__setattr__(self, "secrets", _frozen_mapping(self.secrets))
         object.__setattr__(self, "headers", _frozen_mapping(self.headers))
         object.__setattr__(self, "service_metadata", _frozen_mapping(self.service_metadata))
+        object.__setattr__(self, "unresolved_services", tuple(self.unresolved_services))
 
     def __repr__(self):
         return (
             "ResolvedEnvironment(revision_id=%r, environment_id=%r, name=%r, "
-            "base_urls=%r, public_variables=%r, secret_names=%r, header_names=%r)"
+            "service_count=%d, public_variable_count=%d, secret_count=%d, "
+            "header_count=%d, unresolved_service_count=%d)"
             % (
                 self.revision_id,
                 self.environment_id,
                 self.name,
-                dict(self.base_urls),
-                dict(self.public_variables),
-                tuple(sorted(self.secrets)),
-                tuple(sorted(self.headers)),
+                len(self.base_urls),
+                len(self.public_variables),
+                len(self.secrets),
+                len(self.headers),
+                len(self.unresolved_services),
             )
         )
 
@@ -99,6 +113,14 @@ class ResolvedEnvironment:
 
     def render(self, value):
         return self._renderer(copy.deepcopy(value))
+
+    def base_url_for(self, service_name):
+        if service_name not in self.base_urls:
+            raise UnresolvedServiceError(f"environment service is not defined: {service_name}")
+        value = self.base_urls[service_name]
+        if value is None:
+            raise UnresolvedServiceError(f"environment service URL is unresolved: {service_name}")
+        return value
 
     def render_request(self, *, path, query, headers, body):
         return RenderedRequest(

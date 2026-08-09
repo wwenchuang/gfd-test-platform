@@ -1,6 +1,7 @@
 """Editable API environments with encrypted secrets and strict runtime rendering."""
 
 import copy
+import ipaddress
 import re
 from urllib.parse import urlsplit
 
@@ -9,6 +10,7 @@ from ..contracts.environment import (
     EnvironmentView,
     ResolvedEnvironment,
     SecretVariableView,
+    UnresolvedServiceError,
 )
 from ..crypto import decrypt_secret, encrypt_secret, secret_fingerprint
 from ..repositories.environment_repository import EnvironmentRepository
@@ -69,14 +71,60 @@ def _variable_name(value):
     return name
 
 
+def _validate_hostname(hostname):
+    rendered = PLACEHOLDER.sub("placeholder", hostname)
+    if "{{" in rendered or "}}" in rendered:
+        raise EnvironmentInputError("service URL contains an invalid host placeholder")
+    try:
+        ipaddress.ip_address(rendered)
+        return
+    except ValueError:
+        pass
+    try:
+        ascii_hostname = rendered.encode("idna").decode("ascii").rstrip(".")
+    except UnicodeError:
+        raise EnvironmentInputError("service URL contains an invalid host") from None
+    if not ascii_hostname or len(ascii_hostname) > 253:
+        raise EnvironmentInputError("service URL contains an invalid host")
+    for label in ascii_hostname.split("."):
+        if (
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or re.fullmatch(r"[A-Za-z0-9-]+", label) is None
+        ):
+            raise EnvironmentInputError("service URL contains an invalid host")
+
+
 def _validate_service_url(value):
     url = _text(value, "service URL")
-    parsed = urlsplit(url)
+    if any(character.isspace() or ord(character) < 32 for character in url):
+        raise EnvironmentInputError("service URL must not contain whitespace")
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        raise EnvironmentInputError("service URL is invalid") from None
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise EnvironmentInputError("service URL must use http or https and include a host")
     if parsed.username is not None or parsed.password is not None:
         raise EnvironmentInputError("service URL must not include credentials")
+    if port is not None and port <= 0:
+        raise EnvironmentInputError("service URL contains an invalid port")
+    _validate_hostname(hostname)
     return url
+
+
+def _normalize_service_url(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise EnvironmentInputError("service URL must be a string or null")
+    if not value.strip():
+        return None
+    return _validate_service_url(value)
 
 
 def _normalize_services(value):
@@ -106,7 +154,7 @@ def _normalize_services(value):
                 item.get("module", item.get("module_name", "default")),
                 "service module",
             ),
-            "base_url": _validate_service_url(
+            "base_url": _normalize_service_url(
                 item.get("base_url", item.get("url", ""))
             ),
             "metadata": _mapping(item.get("metadata", {}), "service metadata"),
@@ -404,7 +452,7 @@ class EnvironmentService:
             environment = repository.get_environment(revision.environment_id)
             return self._view(repository, environment, revision)
 
-    def resolve_runtime(self, environment_revision_id, overrides):
+    def resolve_runtime(self, environment_revision_id, overrides, service_name=None):
         runtime_overrides = _normalize_public_variables(overrides)
         with self._session_factory() as session:
             repository = EnvironmentRepository(session)
@@ -433,16 +481,25 @@ class EnvironmentService:
         resolved_values = resolver.resolve_all()
         resolved_public = {name: resolved_values[name] for name in raw_public}
         resolved_secrets = {name: resolved_values[name] for name in secrets}
-        base_urls = {
-            name: resolver.render(item["base_url"])
-            for name, item in services.items()
-        }
-        for base_url in base_urls.values():
-            _validate_service_url(base_url)
+        base_urls = {}
+        unresolved_services = []
+        for name, item in services.items():
+            if item["base_url"] is None:
+                base_urls[name] = None
+                unresolved_services.append(name)
+                continue
+            try:
+                base_url = resolver.render(item["base_url"])
+                if not isinstance(base_url, str):
+                    raise EnvironmentInputError("resolved service URL must be a string")
+                base_urls[name] = _validate_service_url(base_url)
+            except UnresolvedVariableError:
+                base_urls[name] = None
+                unresolved_services.append(name)
         headers = {name: resolver.render(value) for name, value in revision.default_headers.items()}
         if any(not isinstance(value, str) for value in headers.values()):
             raise EnvironmentInputError("resolved default header values must be strings")
-        return ResolvedEnvironment(
+        runtime = ResolvedEnvironment(
             revision_id=revision.id,
             environment_id=environment.id,
             name=revision.name,
@@ -453,8 +510,12 @@ class EnvironmentService:
             service_metadata={
                 name: copy.deepcopy(item["metadata"]) for name, item in services.items()
             },
+            unresolved_services=tuple(sorted(unresolved_services)),
             _renderer=resolver.render,
         )
+        if service_name is not None:
+            runtime.base_url_for(_text(service_name, "service name"))
+        return runtime
 
     @staticmethod
     def _persist_services(repository, revision_id, services, actor_id):
@@ -463,7 +524,7 @@ class EnvironmentService:
                 revision_id,
                 service["name"],
                 service["module_name"],
-                service["base_url"],
+                service["base_url"] or "",
                 service["metadata"],
                 actor_id,
             )
@@ -483,7 +544,7 @@ class EnvironmentService:
             item.service_name: {
                 "name": item.service_name,
                 "module_name": item.module_name,
-                "base_url": item.base_url,
+                "base_url": item.base_url or None,
                 "metadata": copy.deepcopy(item.metadata_json),
             }
             for item in repository.get_services(revision_id)
@@ -534,6 +595,7 @@ class EnvironmentService:
                     name=name,
                     module_name=item["module_name"],
                     base_url=item["base_url"],
+                    unresolved=item["base_url"] is None,
                     metadata=item["metadata"],
                 )
                 for name, item in services.items()

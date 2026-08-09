@@ -203,6 +203,9 @@ def test_import_preserves_services_public_variables_and_headers(
         "ftp://print.example.test/app",
         "https://user:password@print.example.test/app",
         "https:///missing-host",
+        "https://example.com:bad/path",
+        "https://exa mple.com/path",
+        "https://-invalid.example.test/path",
     ],
 )
 def test_service_urls_require_http_without_embedded_credentials(
@@ -213,6 +216,71 @@ def test_service_urls_require_http_without_embedded_credentials(
 
     with pytest.raises(ValueError, match="service URL"):
         environment_service.import_from_source(invalid, "admin")
+
+
+def test_import_preserves_declared_service_without_available_url(
+    environment_service, production_environment
+):
+    imported_payload = copy.deepcopy(production_environment)
+    imported_payload["services"].append(
+        {
+            "name": "model",
+            "module": "模型服务",
+            "base_url": None,
+            "metadata": {"apifox_service_id": "service-model"},
+        }
+    )
+
+    imported = environment_service.import_from_source(imported_payload, "admin")
+
+    assert imported.services["default"].unresolved is False
+    assert imported.services["model"].base_url is None
+    assert imported.services["model"].unresolved is True
+
+    configured = environment_service.create_revision(
+        imported.id, {}, {"ZXBToken": BUSINESS_TOKEN}, "admin"
+    )
+    copied = environment_service.create_revision(
+        configured.id, {"description": "keep unresolved service"}, {}, "admin"
+    )
+    assert copied.services["model"].unresolved is True
+
+    runtime = environment_service.resolve_runtime(copied.revision_id, {})
+    assert runtime.base_url_for("default") == "https://print.example.test/app"
+    assert runtime.unresolved_services == ("model",)
+
+    from task_server.api_testing.services.environment_service import (
+        UnresolvedServiceError,
+    )
+
+    with pytest.raises(UnresolvedServiceError, match="model"):
+        runtime.base_url_for("model")
+    with pytest.raises(UnresolvedServiceError, match="model"):
+        environment_service.resolve_runtime(copied.revision_id, {}, service_name="model")
+
+    resolved = environment_service.create_revision(
+        copied.id,
+        {
+            "services": [
+                {
+                    "name": "default",
+                    "module": "默认模块",
+                    "base_url": "https://print.example.test/app",
+                },
+                {
+                    "name": "model",
+                    "module": "模型服务",
+                    "base_url": "https://model.example.test/api",
+                },
+            ]
+        },
+        {},
+        "admin",
+    )
+    assert resolved.services["model"].unresolved is False
+    assert environment_service.resolve_runtime(
+        resolved.revision_id, {}, service_name="model"
+    ).base_url_for("model") == "https://model.example.test/api"
 
 
 def test_revision_copy_set_clear_and_old_secret_resolution(
@@ -351,6 +419,43 @@ def test_runtime_resolves_nested_placeholders_and_ephemeral_overrides(
 
     persisted = environment_service.resolve_runtime(changed.revision_id, {})
     assert persisted.public_variables["userId"] == "default-user"
+
+
+def test_runtime_and_rendered_request_repr_never_include_sensitive_contents(
+    environment_service, production_environment
+):
+    configured = _import_with_token(environment_service, production_environment)
+    derived = environment_service.create_revision(
+        configured.id,
+        {
+            "variables": {"derivedAuth": "Bearer {{ZXBToken}}"},
+            "services": [
+                {
+                    "name": "default",
+                    "module": "默认模块",
+                    "base_url": "https://print.example.test/private/{{ZXBToken}}",
+                }
+            ],
+            "default_headers": {"X-Derived": "{{derivedAuth}}"},
+        },
+        {},
+        "admin",
+    )
+
+    runtime = environment_service.resolve_runtime(derived.revision_id, {})
+    request = runtime.render_request(
+        path="/private/{{ZXBToken}}",
+        query={"token": "{{ZXBToken}}"},
+        headers={"Authorization": "Bearer {{ZXBToken}}"},
+        body={"auth": "{{derivedAuth}}"},
+    )
+
+    for rendered in (repr(runtime), str(runtime), repr(request), str(request)):
+        assert BUSINESS_TOKEN not in rendered
+        assert f"Bearer {BUSINESS_TOKEN}" not in rendered
+        assert "/private/" not in rendered
+        assert "Authorization" not in rendered
+        assert "derivedAuth" not in rendered
 
 
 def test_runtime_rejects_secret_overrides_and_strict_placeholder_failures(
