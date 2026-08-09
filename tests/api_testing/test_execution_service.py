@@ -299,6 +299,9 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
         "cancelled": 0,
     }
     assert view.case_statuses == ("PASSED", "FAILED")
+    assert view.case_results[0]["case_version_id"] == first_case.id
+    assert view.case_results[0]["status"] == "PASSED"
+    assert view.case_results[0]["sanitized_result"]["status"] == "PASSED"
     assert executor.calls == 2
 
 

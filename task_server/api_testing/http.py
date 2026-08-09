@@ -1,6 +1,6 @@
 """Authenticated HTTP and SSE adapter for the API testing module."""
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 import json
 import re
@@ -17,7 +17,7 @@ from task_server.auth import bearer_token, verify_session_token
 from .config import ApiTestingSettings
 from .db import _session_factory
 from .events import EventStream
-from .models.case import ApiCase, ApiCaseVersion
+from .models.case import ApiAiJob, ApiCase, ApiCaseVersion
 from .models.environment import ApiEnvironment, ApiEnvironmentRevision
 from .models.execution import ApiExecution, ApiExecutionCase
 from .models.project import ApiProject, ApiWorkspace
@@ -201,6 +201,9 @@ def _get(segments, qs, actor):
     if len(segments) == 2 and segments[0] == "case-versions":
         _scope_case_version(factory, _uuid(segments[1]), actor)
         return {"case_version": _view(CaseService(factory).get_version(_uuid(segments[1])))}
+    if len(segments) == 2 and segments[0] == "ai-jobs":
+        _scope_ai_job_record(factory, _uuid(segments[1]), actor)
+        return {"job": _view(AiCaseService(factory).get_job(_uuid(segments[1])))}
     if len(segments) == 2 and segments[0] == "environments":
         _scope_environment(factory, _uuid(segments[1]), actor)
         return {"environment": _view(EnvironmentService(factory).get_environment(_uuid(segments[1])))}
@@ -277,7 +280,9 @@ def _post(segments, payload, actor, settings):
         environment_revision_id = _uuid(payload.get("environment_revision_id"))
         project_id = _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor)
         _scope_project(factory, project_id, actor)
-        return {"job": _view(AiCaseService(factory).submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", "")))}
+        job = AiCaseService(factory).submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""))
+        _enqueue_ai_job(job.id)
+        return {"job": _view(job)}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 
@@ -353,6 +358,18 @@ def _scope_environment(factory, environment_id, actor):
     if environment is None:
         raise _not_found()
     return environment
+
+
+def _scope_ai_job_record(factory, job_id, actor):
+    with factory() as session:
+        job = session.scalar(
+            select(ApiAiJob)
+            .join(ApiProject, ApiAiJob.project_id == ApiProject.id)
+            .where(ApiAiJob.id == job_id, ApiProject.owner_id == actor)
+        )
+    if job is None:
+        raise _not_found()
+    return job
 
 
 def _scope_environment_revision(factory, revision_id, actor):
@@ -565,6 +582,11 @@ def _enqueue_execution(execution_id):
     execute_api_testing.delay(execution_id)
 
 
+def _enqueue_ai_job(job_id):
+    from .tasks import generate_api_cases
+    generate_api_cases.delay(job_id)
+
+
 def _is_execution_events(segments):
     return len(segments) == 3 and segments[0] == "executions" and segments[2] == "events"
 
@@ -633,7 +655,7 @@ def _project_view(project):
 
 
 def _endpoint_view(endpoint):
-    return {"id": endpoint.id, "revision_id": endpoint.revision_id, "operation_id": endpoint.operation_id, "method": endpoint.method, "path": endpoint.path, "summary": endpoint.summary, "tags": endpoint.tags}
+    return {"id": endpoint.id, "revision_id": endpoint.revision_id, "operation_id": endpoint.operation_id, "method": endpoint.method, "path": endpoint.path, "summary": endpoint.summary, "tags": endpoint.tags, "operation": endpoint.operation}
 
 
 def _workspace_view(workspace):
@@ -641,14 +663,14 @@ def _workspace_view(workspace):
 
 
 def _view(value):
-    return _json_value(asdict(value) if is_dataclass(value) else value)
+    return _json_value(value)
 
 
 def _json_value(value):
     if isinstance(value, MappingProxyType):
         return {key: _json_value(item) for key, item in value.items()}
     if is_dataclass(value):
-        return _json_value(asdict(value))
+        return {field.name: _json_value(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, dict):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):

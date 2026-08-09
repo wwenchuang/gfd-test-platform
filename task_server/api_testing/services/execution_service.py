@@ -32,6 +32,7 @@ class ExecutionView:
     source_revision_id: str
     environment_revision_id: str
     case_statuses: tuple
+    case_results: tuple
     summary: MappingProxyType
     cancellation_requested: bool
     created_at: object
@@ -392,6 +393,18 @@ class ExecutionService:
             source_revision_id=execution.source_revision_id,
             environment_revision_id=execution.environment_revision_id,
             case_statuses=tuple(item.status for item in children),
+            case_results=tuple(
+                MappingProxyType({
+                    "execution_case_id": item.id,
+                    "case_version_id": item.case_version_id,
+                    "endpoint_id": item.endpoint_id,
+                    "status": item.status,
+                    "failure_category": item.failure_category,
+                    "duration_ms": item.duration_ms,
+                    "sanitized_result": copy.deepcopy(dict(item.sanitized_result)),
+                })
+                for item in children
+            ),
             summary=MappingProxyType(copy.deepcopy(dict(execution.summary))),
             cancellation_requested=execution.cancellation_requested_at is not None,
             created_at=execution.created_at,

@@ -19,6 +19,10 @@ export class ApiClient {
     return this.request<T>(path, { method: 'PUT', body })
   }
 
+  async post<T>(path: string, body: unknown): Promise<ApiEnvelope<T>> {
+    return this.request<T>(path, { method: 'POST', body })
+  }
+
   private async request<T>(path: string, options: RequestOptions = {}): Promise<ApiEnvelope<T>> {
     const token = sessionStorage.getItem('sessionToken')
     if (!token) {

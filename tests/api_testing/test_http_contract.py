@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from task_server.api_testing import http
 from task_server.api_testing.db import engine_for_url
 from task_server.api_testing.events import ExecutionEvent, EventStream
-from task_server.api_testing.models.case import ApiCase, ApiCaseVersion
+from task_server.api_testing.models.case import ApiAiJob, ApiAiJobBatch, ApiCase, ApiCaseVersion
 from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
 from task_server.api_testing.models.execution import ApiExecution
 from task_server.api_testing.models.project import ApiProject
@@ -120,6 +120,7 @@ def owned_records(api_context):
         revision = ApiSourceRevision(source_id=source.id, revision_number=1, status="active", document_hash="a" * 64, normalized_document={"openapi": "3.0.0"}, **_audit("owner-a"))
         session.add(revision)
         session.flush()
+        source.active_revision_id = revision.id
         endpoint = ApiSourceEndpoint(revision_id=revision.id, stable_key="b" * 64, operation_id="favoriteList", method="GET", path="/favorites", normalized_path="/favorites", operation={}, **_audit("owner-a"))
         environment = ApiEnvironment(project_id=first.id, source_id=source.id, name="env", **_audit("owner-a"))
         session.add_all((endpoint, environment))
@@ -237,6 +238,57 @@ def test_workspace_context_is_owner_scoped_and_persistent(http_client, owned_rec
     assert saved.status == loaded.status == 200
     assert loaded.body["data"]["workspace"] == payload
     assert denied.status == 404
+
+
+def test_ai_job_status_is_queryable_and_owner_scoped(http_client, api_context, owned_records):
+    with api_context["factory"].begin() as session:
+        job = ApiAiJob(
+            project_id=owned_records["project"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            state="running",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen3.6-plus",
+            actual_model="qwen3.6-plus",
+            summary={"requested_provider_id": "qwen", "generated_drafts": 0},
+            **_audit("owner-a"),
+        )
+        session.add(job)
+        session.flush()
+        session.add(ApiAiJobBatch(
+            job_id=job.id,
+            sequence=1,
+            state="running",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen3.6-plus",
+            actual_model="qwen3.6-plus",
+            result={"draft_version_ids": [], "validation_errors": []},
+            error={},
+            **_audit("owner-a"),
+        ))
+        job_id = job.id
+
+    accepted = http_client.get(f"/api/api-testing/v1/ai-jobs/{job_id}", _auth())
+    denied = http_client.get(f"/api/api-testing/v1/ai-jobs/{job_id}", _auth("owner-b"))
+
+    assert accepted.status == 200
+    assert accepted.body["data"]["job"]["state"] == "running"
+    assert accepted.body["data"]["job"]["batches"][0]["actual_model"] == "qwen3.6-plus"
+    assert denied.status == 404
+
+
+def test_ai_job_submission_enqueues_real_processing(http_client, owned_records, monkeypatch):
+    queued = []
+    monkeypatch.setattr(http, "_enqueue_ai_job", queued.append)
+
+    response = http_client.post("/api/api-testing/v1/ai-jobs", {
+        "endpoint_ids": [owned_records["endpoint"].id],
+        "environment_revision_id": owned_records["environment_revision"].id,
+        "intent": "覆盖收藏列表正向与鉴权失败",
+    }, _auth())
+
+    assert response.status == 200
+    assert queued == [response.body["data"]["job"]["id"]]
+    assert response.body["data"]["job"]["state"] == "queued"
 
 
 def test_sse_ticket_is_reusable_for_eventsource_reconnect(http_client, api_context, owned_records):

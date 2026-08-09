@@ -331,6 +331,14 @@ class AiCaseService:
         case_service = CaseService(self.session_factory)
         return tuple(case_service.get_version(item) for item in version_ids)
 
+    def get_job(self, job_id):
+        with self.session_factory() as session:
+            repository = AiJobRepository(session)
+            job = repository.get_job(job_id)
+            if job is None:
+                raise AiJobNotFoundError("AI case generation job was not found")
+            return self._job_view(repository, job)
+
     def _process_batch(self, job_id, batch_id, actor_id):
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)

@@ -6,6 +6,7 @@ from .config import ApiTestingSettings
 from .db import _session_factory
 from .events import EventStream
 from .services.execution_service import ExecutionService
+from .services.ai_service import AiCaseService
 
 
 settings = ApiTestingSettings.from_env()
@@ -32,3 +33,8 @@ def execute_api_testing(self, execution_id):
     return ExecutionService(
         factory, event_stream=EventStream(factory, redis_client)
     ).run(execution_id)
+
+
+@celery_app.task(name="api_testing.generate_cases", bind=True, acks_late=True)
+def generate_api_cases(self, job_id):
+    return AiCaseService(_session_factory()).process(job_id).state
