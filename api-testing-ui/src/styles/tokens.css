@@ -1,0 +1,16 @@
+:root {
+  color: #172033;
+  background: #f4f6f8;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #172033;
+  --muted: #687386;
+  --line: #d9dfe7;
+  --surface: #ffffff;
+  --canvas: #f4f6f8;
+  --blue: #1769aa;
+  --teal: #087f78;
+  --red: #ba3a3a;
+  --nav: #172033;
+}

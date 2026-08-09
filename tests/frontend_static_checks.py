@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 from pathlib import Path
 
 
@@ -266,7 +267,11 @@ def main():
         require(pattern not in html, f"Write API must use apiRequest, found direct fetch pattern: {pattern}")
     require("path-rail" in html and "失败分析：Qwen Plus" in html, "Dashboard must show model strategy as visual nodes")
     require("generation-flow" in html and "读资料" in html and "生成 YAML" in html, "Generation records must show a visual generation flow")
-    require("nav-group" in html and "接口测试" not in html and "配置" in html, "Sidebar navigation must remove the API group while retaining task-oriented groups")
+    require("nav-group" in html and "接口测试" not in html and "配置" in html, "Sidebar navigation must remove the legacy API group while retaining task-oriented groups")
+    api_test_link = re.search(r'<a\b[^>]*\bclass="[^"]*\bapi-test-link\b[^"]*"[^>]*\bhref="/api-test/"[^>]*>', html)
+    require(api_test_link is not None, "Sidebar must include a same-tab API testing link")
+    require("target=" not in api_test_link.group(0), "API testing navigation must keep the same browser tab")
+    require('data-workflow="api_' not in html and 'workflow-index">API<' not in html, "API testing navigation must not restore the legacy workflow or a letter-box icon")
     require("setActiveWorkflow('config');\n  renderTaskAppModal();" not in html, "App config modal must not reset workflow back to model config")
     require("setActiveWorkflow('config');\n  document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 环境体检';" not in html, "System preflight must not reset workflow back to model config")
     require("['assets', 'generate', 'yaml_edit', 'execute', 'repair', 'baseline'].includes(activeWorkflow)" in html, "Opening YAML from assets/yaml_edit must preserve the current workflow")
