@@ -1,8 +1,8 @@
 import copy
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import threading
 
 from alembic import command
 from sqlalchemy import create_engine, func, select
@@ -185,7 +185,7 @@ def _candidate(endpoint, suffix="成功响应"):
     return {"endpoint_id": endpoint.id, "case": _case_payload(endpoint, suffix)}
 
 
-def _service(session_factory, gateway, *, batch_size=10, lease_seconds=300):
+def _service(session_factory, gateway, *, batch_size=10):
     from task_server.api_testing.services.ai_service import AiCaseService
 
     return AiCaseService(
@@ -193,7 +193,6 @@ def _service(session_factory, gateway, *, batch_size=10, lease_seconds=300):
         gateway_client=gateway,
         batch_size=batch_size,
         gateway_timeout_seconds=30,
-        lease_seconds=lease_seconds,
     )
 
 
@@ -618,6 +617,62 @@ def test_prompt_redacts_credential_shapes_from_all_contract_strings(
     assert prompt.count("<redacted>") >= 5
 
 
+def test_prompt_redacts_short_named_credentials_without_dropping_schema_fields(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    with session_factory.begin() as session:
+        stored = session.get(ApiSourceEndpoint, endpoint.id)
+        stored.summary = "password=pw7"
+        stored.tags = ["cookie: x", "authorization: Basic dGVzdA=="]
+        stored.operation = {
+            "description": "api_key=test123 token: tiny",
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "password": {
+                                    "type": "string",
+                                    "example": "short-secret",
+                                    "default": "short-default",
+                                }
+                            },
+                        }
+                    }
+                }
+            },
+        }
+    gateway = FakeGateway(_gateway_response([_candidate(endpoint)]))
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id],
+        ai_context["environment"].revision_id,
+        "admin",
+        intent="Authorization: Bearer short-token",
+    )
+
+    assert service.process(job.id).state == "completed"
+    payload = json.loads(gateway.calls[0]["messages"][1]["content"])
+    prompt = json.dumps(payload, ensure_ascii=False)
+    for secret in (
+        "pw7",
+        "cookie: x",
+        "dGVzdA==",
+        "test123",
+        "token: tiny",
+        "short-token",
+        "short-secret",
+        "short-default",
+    ):
+        assert secret not in prompt
+    password_schema = payload["endpoints"][0]["operation"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]["properties"]["password"]
+    assert password_schema == {"type": "string"}
+
+
 def test_literal_credentials_are_rejected_before_case_service(
     session_factory, ai_context
 ):
@@ -664,6 +719,80 @@ def test_literal_credentials_are_rejected_before_case_service(
         assert secret not in stored_text
 
 
+def test_short_sensitive_output_values_require_full_placeholders(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidates = []
+    authorization = _candidate(endpoint, "short authorization")
+    authorization["case"]["request"]["headers"]["Authorization"] = "x"
+    candidates.append(authorization)
+    proxy_authorization = _candidate(endpoint, "short proxy authorization")
+    proxy_authorization["case"]["request"]["headers"]["Proxy-Authorization"] = "x"
+    candidates.append(proxy_authorization)
+    cookie = _candidate(endpoint, "short cookie")
+    cookie["case"]["request"]["cookies"]["session"] = "x"
+    candidates.append(cookie)
+    body = _candidate(endpoint, "short body secret")
+    body["case"]["request"]["body"] = {"password": "x"}
+    candidates.append(body)
+    row = _candidate(endpoint, "short row secret")
+    row["case"]["data_rows"] = [
+        {"name": "row", "values": {"api_key": "x"}, "enabled": True}
+    ]
+    candidates.append(row)
+    processing = _candidate(endpoint, "short processing secret")
+    processing["case"]["processing"]["pre"] = [
+        {"action": "set_variable", "name": "token", "value": "x"}
+    ]
+    candidates.append(processing)
+    service = _service(session_factory, FakeGateway(_gateway_response(candidates)))
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "failed_validation"
+    assert result.summary["invalid_candidates"] == len(candidates)
+    assert service.list_generated_drafts(job.id) == ()
+
+
+def test_sensitive_output_placeholders_are_accepted(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, "placeholder secrets")
+    candidate["case"]["request"]["headers"]["Authorization"] = "{{ZXBToken}}"
+    candidate["case"]["request"]["cookies"]["session"] = "{{ZXBToken}}"
+    candidate["case"]["request"]["body"] = {"password": "{{ZXBToken}}"}
+    candidate["case"]["data_rows"] = [
+        {
+            "name": "placeholder row",
+            "values": {"api_key": "{{ZXBToken}}"},
+            "enabled": True,
+        }
+    ]
+    candidate["case"]["processing"]["pre"] = [
+        {
+            "action": "set_variable",
+            "name": "token",
+            "value": "{{ZXBToken}}",
+        }
+    ]
+    service = _service(
+        session_factory, FakeGateway(_gateway_response([candidate]))
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "completed"
+    assert len(service.list_generated_drafts(job.id)) == 1
+
+
 def test_fallback_evidence_is_redacted_and_must_be_consistent(
     session_factory, ai_context
 ):
@@ -671,7 +800,9 @@ def test_fallback_evidence_is_redacted_and_must_be_consistent(
     valid_fallback = _gateway_response(
         [_candidate(endpoint)], provider="highway_gpt5_mini", model="gpt-5-mini"
     )
-    valid_fallback["fallbackReason"] = f"Authorization: Bearer {SYNTHETIC_JWT}"
+    valid_fallback["fallbackReason"] = (
+        f"Authorization: Bearer {SYNTHETIC_JWT}; api_key=test123"
+    )
     changed_without_index = copy.deepcopy(valid_fallback)
     changed_without_index["fallbackIndex"] = 0
     unchanged_claimed_fallback = _gateway_response([_candidate(endpoint)])
@@ -692,7 +823,8 @@ def test_fallback_evidence_is_redacted_and_must_be_consistent(
     completed = service.process(first.id)
     assert completed.state == "completed"
     assert SYNTHETIC_JWT not in completed.batches[0].fallback_reason
-    assert completed.batches[0].fallback_reason.endswith("<redacted>")
+    assert "test123" not in completed.batches[0].fallback_reason
+    assert completed.batches[0].fallback_reason.count("<redacted>") == 2
 
     second = service.submit(
         [endpoint.id],
@@ -730,7 +862,7 @@ def test_strict_json_schema_rejects_missing_required_nested_field(
     assert service.list_generated_drafts(job.id) == ()
 
 
-def test_interrupted_batch_recovers_from_lease_without_duplicate_drafts(
+def test_interrupted_batch_recovers_from_checkpoint_without_duplicate_drafts(
     session_factory, ai_context, monkeypatch
 ):
     endpoint = ai_context["endpoints"]["favoriteList"]
@@ -741,7 +873,7 @@ def test_interrupted_batch_recovers_from_lease_without_duplicate_drafts(
     gateway = FakeGateway(
         _gateway_response(candidates), _gateway_response(candidates)
     )
-    service = _service(session_factory, gateway, lease_seconds=0)
+    service = _service(session_factory, gateway)
     original = service._create_validated_draft
     calls = {"count": 0}
 
@@ -780,7 +912,9 @@ def test_unexpected_exception_converges_instead_of_leaving_running_state(
     monkeypatch.setattr(
         service,
         "_create_validated_draft",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic failure")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic failure api_key=test123")
+        ),
     )
     job = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
@@ -791,29 +925,60 @@ def test_unexpected_exception_converges_instead_of_leaving_running_state(
     assert result.state == "failed_validation"
     assert result.batches[0].state == "failed_validation"
     assert "synthetic failure" in result.batches[0].validation_errors[0]["message"]
+    assert "test123" not in result.batches[0].validation_errors[0]["message"]
 
 
-def test_concurrent_process_observes_fresh_lease_without_duplicate_gateway_call(
+def test_concurrent_process_uses_one_gateway_call_and_creates_one_draft(
     session_factory, ai_context
 ):
     endpoint = ai_context["endpoints"]["favoriteList"]
-    gateway = FakeGateway()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingGateway(FakeGateway):
+        def chat(self, **kwargs):
+            self.calls.append(copy.deepcopy(kwargs))
+            entered.set()
+            assert release.wait(timeout=5)
+            return _gateway_response([_candidate(endpoint)])
+
+    gateway = BlockingGateway()
     service = _service(session_factory, gateway)
     job = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
     )
-    with session_factory.begin() as session:
-        stored = session.get(ApiAiJob, job.id)
-        stored.state = "running"
-        stored.summary = {
-            **stored.summary,
-            "lease_started_at": datetime.now(timezone.utc).isoformat(),
-        }
+    completed = []
+    failures = []
 
+    def run_first():
+        try:
+            completed.append(service.process(job.id))
+        except BaseException as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=run_first)
+    worker.start()
+    assert entered.wait(timeout=5)
     observed = service.process(job.id)
+    release.set()
+    worker.join(timeout=5)
 
+    assert failures == []
+    assert worker.is_alive() is False
     assert observed.state == "running"
-    assert gateway.calls == []
+    assert completed[0].state == "completed"
+    assert len(gateway.calls) == 1
+    assert len(service.list_generated_drafts(job.id)) == 1
+
+
+def test_advisory_lock_key_is_stable_signed_64_bit():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    first = AiCaseService._advisory_lock_key("job-123")
+    second = AiCaseService._advisory_lock_key("job-123")
+
+    assert first == second
+    assert -(2**63) <= first < 2**63
 
 
 def test_skill_schema_and_eval_define_a_strict_chinese_contract():

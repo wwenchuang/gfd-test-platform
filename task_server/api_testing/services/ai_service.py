@@ -3,7 +3,7 @@
 import copy
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -16,6 +16,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, ValidationError
+from sqlalchemy import func, select
 
 from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_payload
 from ..repositories.ai_job_repository import AiJobRepository
@@ -26,7 +27,6 @@ MAX_ENDPOINTS = 60
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_PROVIDER_ID = ""
 DEFAULT_MODEL = ""
-DEFAULT_LEASE_SECONDS = 300
 TERMINAL_JOB_STATES = frozenset(
     {"completed", "partial", "failed_validation", "failed_gateway"}
 )
@@ -35,6 +35,7 @@ TERMINAL_BATCH_STATES = frozenset(
 )
 SENSITIVE_KEY = re.compile(r"(?:token|secret|password|authorization|cookie|api[_-]?key)", re.IGNORECASE)
 SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/=._~-]+"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{10,})?\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE),
@@ -46,7 +47,14 @@ SENSITIVE_VALUE_PATTERNS = (
         r"[A-Za-z0-9._~+/=@:-]{32,}(?![A-Za-z0-9])"
     ),
 )
+NAMED_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)\b(?:password|api[_-]?key|token|cookie|(?:proxy[-_ ]?)?authorization)\b"
+    r"\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)"
+)
 PLACEHOLDER_PATTERN = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_.-]*\}\}")
+AUTHORIZATION_HEADER = re.compile(
+    r"^(?:proxy-)?authorization$", re.IGNORECASE
+)
 OMITTED_CONTRACT_FIELDS = frozenset({"example", "examples", "default"})
 
 
@@ -172,7 +180,6 @@ class AiCaseService:
         gateway_client=None,
         batch_size=DEFAULT_BATCH_SIZE,
         gateway_timeout_seconds=120,
-        lease_seconds=DEFAULT_LEASE_SECONDS,
     ):
         if not isinstance(batch_size, int) or isinstance(batch_size, bool) or not 1 <= batch_size <= MAX_ENDPOINTS:
             raise ValueError("AI batch size must be between 1 and 60")
@@ -180,13 +187,6 @@ class AiCaseService:
         self.gateway_client = gateway_client or AiGatewayClient()
         self.batch_size = batch_size
         self.gateway_timeout_seconds = gateway_timeout_seconds
-        if (
-            not isinstance(lease_seconds, (int, float))
-            or isinstance(lease_seconds, bool)
-            or lease_seconds < 0
-        ):
-            raise ValueError("AI lease seconds must be non-negative")
-        self.lease_seconds = float(lease_seconds)
         root = Path(__file__).resolve().parents[3]
         self.skill_text = (root / "ai_skills" / "api_case_generation.v1.md").read_text(
             encoding="utf-8"
@@ -259,6 +259,26 @@ class AiCaseService:
             return self._job_view(repository, job)
 
     def process(self, job_id):
+        lock_session = self.session_factory()
+        lock_key = self._advisory_lock_key(job_id)
+        acquired = False
+        try:
+            acquired = bool(
+                lock_session.scalar(select(func.pg_try_advisory_lock(lock_key)))
+            )
+            if not acquired:
+                repository = AiJobRepository(lock_session)
+                job = repository.get_job(job_id)
+                if job is None:
+                    raise AiJobNotFoundError("AI case generation job was not found")
+                return self._job_view(repository, job)
+            return self._process_with_lock(job_id)
+        finally:
+            if acquired:
+                lock_session.scalar(select(func.pg_advisory_unlock(lock_key)))
+            lock_session.close()
+
+    def _process_with_lock(self, job_id):
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             job = repository.get_job_for_update(job_id)
@@ -266,10 +286,7 @@ class AiCaseService:
                 raise AiJobNotFoundError("AI case generation job was not found")
             if job.state in TERMINAL_JOB_STATES:
                 return self._job_view(repository, job)
-            if job.state == "running" and not self._lease_expired(job.summary):
-                return self._job_view(repository, job)
             summary = copy.deepcopy(job.summary)
-            summary["lease_started_at"] = datetime.now(timezone.utc).isoformat()
             if job.state == "running":
                 for batch in repository.list_batches(job.id):
                     if batch.state == "running":
@@ -587,7 +604,6 @@ class AiCaseService:
             actual_provider_id = self._single_or_mixed(actual_providers)
             actual_model = self._single_or_mixed(actual_models)
             summary = copy.deepcopy(job.summary)
-            summary.pop("lease_started_at", None)
             summary.update(
                 {
                     "generated_drafts": draft_count,
@@ -725,6 +741,7 @@ class AiCaseService:
         text = str(value)
         for pattern in SENSITIVE_VALUE_PATTERNS:
             text = pattern.sub("<redacted>", text)
+        text = NAMED_CREDENTIAL_PATTERN.sub("<redacted>", text)
         return text
 
     @classmethod
@@ -737,20 +754,78 @@ class AiCaseService:
 
     @classmethod
     def _assert_no_literal_secrets(cls, value, path="case"):
+        request = value.get("request", {}) if isinstance(value, dict) else {}
+        headers = request.get("headers", {}) if isinstance(request, dict) else {}
+        for name, item in headers.items():
+            if AUTHORIZATION_HEADER.fullmatch(str(name)) and cls._is_nonempty(item):
+                cls._require_full_placeholder(item, f"{path}.request.headers.{name}")
+        cookies = request.get("cookies", {}) if isinstance(request, dict) else {}
+        for name, item in cookies.items():
+            if cls._is_nonempty(item):
+                cls._require_full_placeholder(item, f"{path}.request.cookies.{name}")
+        cls._assert_sensitive_mapping(
+            request.get("body") if isinstance(request, dict) else None,
+            f"{path}.request.body",
+        )
+        for index, row in enumerate(value.get("data_rows", [])):
+            cls._assert_sensitive_mapping(
+                row.get("values"), f"{path}.data_rows[{index}].values"
+            )
+        processing = value.get("processing", {})
+        for phase in ("pre", "post"):
+            for index, action in enumerate(processing.get(phase, [])):
+                if (
+                    action.get("action") == "set_variable"
+                    and SENSITIVE_KEY.search(str(action.get("name", "")))
+                    and cls._is_nonempty(action.get("value"))
+                ):
+                    cls._require_full_placeholder(
+                        action.get("value"),
+                        f"{path}.processing.{phase}[{index}].value",
+                    )
+        cls._assert_no_credential_shapes(value, path)
+
+    @classmethod
+    def _assert_no_credential_shapes(cls, value, path):
         if isinstance(value, dict):
             for raw_key, item in value.items():
                 key = str(raw_key)
-                cls._assert_no_literal_secrets(item, f"{path}.{key}")
+                cls._assert_no_credential_shapes(item, f"{path}.{key}")
             return
         if isinstance(value, list):
             for index, item in enumerate(value):
-                cls._assert_no_literal_secrets(item, f"{path}[{index}]")
+                cls._assert_no_credential_shapes(item, f"{path}[{index}]")
             return
         if not isinstance(value, str) or PLACEHOLDER_PATTERN.fullmatch(value.strip()):
             return
         if cls._redact_text(value) != value:
             raise AiCandidateValidationError(
                 f"literal credential is not allowed at {path}; use a variable placeholder"
+            )
+
+    @classmethod
+    def _assert_sensitive_mapping(cls, value, path):
+        if isinstance(value, dict):
+            for raw_key, item in value.items():
+                key = str(raw_key)
+                item_path = f"{path}.{key}"
+                if SENSITIVE_KEY.search(key) and cls._is_nonempty(item):
+                    cls._require_full_placeholder(item, item_path)
+                else:
+                    cls._assert_sensitive_mapping(item, item_path)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                cls._assert_sensitive_mapping(item, f"{path}[{index}]")
+
+    @staticmethod
+    def _is_nonempty(value):
+        return value not in (None, "", [], {})
+
+    @staticmethod
+    def _require_full_placeholder(value, path):
+        if not isinstance(value, str) or not PLACEHOLDER_PATTERN.fullmatch(value.strip()):
+            raise AiCandidateValidationError(
+                f"sensitive value at {path} must use a complete variable placeholder"
             )
 
     @staticmethod
@@ -760,19 +835,10 @@ class AiCaseService:
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    def _lease_expired(self, summary):
-        raw = summary.get("lease_started_at", "") if isinstance(summary, dict) else ""
-        if not isinstance(raw, str) or not raw:
-            return True
-        try:
-            started_at = datetime.fromisoformat(raw)
-        except ValueError:
-            return True
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) >= started_at + timedelta(
-            seconds=self.lease_seconds
-        )
+    @staticmethod
+    def _advisory_lock_key(job_id):
+        digest = hashlib.sha256(str(job_id).encode("utf-8")).digest()[:8]
+        return int.from_bytes(digest, byteorder="big", signed=True)
 
     @staticmethod
     def _single_or_mixed(values):
