@@ -16299,7 +16299,8 @@ def check_api_automation_backend_is_removed():
         not re.search(r"from\s+\.services\.api_[A-Za-z0-9_]+\s+import", app_text),
         "Task server startup must not import removed API automation services",
     )
-    require("/api/api-testing/" not in router_text, "API testing routes must be removed")
+    require(router_text.count("register_api_testing_routes(") == 1, "API testing routes must mount exactly once")
+    require("api_testing.services" not in router_text, "API testing services must stay outside router.py")
     require("/api/test-lab/" not in router_text, "Test lab routes must be removed")
     for name in (
         "api_asset_service.py", "api_case_contract_service.py",

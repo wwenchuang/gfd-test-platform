@@ -42,6 +42,7 @@ from task_server.auth import (
     is_authorized_with_query, REVOKED_SESSION_TOKENS,
 )
 from task_server.response import BodyTooLarge
+from task_server.api_testing.routes import register_api_testing_routes
 
 from task_server.services.agent_service import (
     _start_agent_worker,
@@ -4978,3 +4979,6 @@ def _delete_knowledge_app(handler, qs):
         handler._json({"ok": False, "error": "非法路径"}, 400)
         return
     handler._json({"ok": True})
+
+
+register_api_testing_routes(route_get_prefix, route_post_prefix, route_delete_prefix)
