@@ -40,9 +40,20 @@ from .services.source_service import (
 API_PREFIX = "/api/api-testing/v1"
 MAX_JSON_BODY_BYTES = 1_000_000
 SSE_HEARTBEAT_SECONDS = 15
+# EventSource reconnects reuse its URL, so a successful event-stream exchange
+# renews this narrow, opaque ticket for only a short period.
 SSE_TICKET_TTL_SECONDS = 60
 TERMINAL_EXECUTION_STATES = frozenset({"DONE", "CANCELLED", "PASSED", "FAILED", "BROKEN"})
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SSE_TICKET_REDEEM_LUA = """
+local payload = redis.call('GET', KEYS[1])
+if not payload then return {0} end
+local ok, value = pcall(cjson.decode, payload)
+if not ok or type(value) ~= 'table' then return {0} end
+if type(value['owner_id']) ~= 'string' or value['execution_id'] ~= ARGV[1] then return {0} end
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+return {1, payload}
+"""
 
 
 class ApiHttpError(Exception):
@@ -482,13 +493,19 @@ def _consume_sse_ticket(settings, ticket, execution_id):
     if not isinstance(ticket, str) or not 32 <= len(ticket) <= 256:
         raise ApiHttpError(401, "unauthorized", "Authentication is required")
     try:
-        payload = _ticket_client(settings).getdel(_ticket_key(ticket))
+        redeemed = _ticket_client(settings).eval(
+            _SSE_TICKET_REDEEM_LUA,
+            1,
+            _ticket_key(ticket),
+            execution_id,
+            SSE_TICKET_TTL_SECONDS,
+        )
     except redis.RedisError:
         raise ApiHttpError(503, "sse_unavailable", "SSE ticket service is unavailable")
-    if not payload:
+    if not isinstance(redeemed, (list, tuple)) or len(redeemed) != 2 or redeemed[0] not in (1, "1"):
         raise ApiHttpError(401, "unauthorized", "Authentication is required")
     try:
-        value = json.loads(payload)
+        value = json.loads(redeemed[1])
     except (TypeError, ValueError):
         raise ApiHttpError(401, "unauthorized", "Authentication is required")
     if value.get("execution_id") != execution_id or not isinstance(value.get("owner_id"), str):
@@ -512,9 +529,13 @@ def _stream_events(handler, execution_id, request_id, actor):
     handler.send_header("Cache-Control", "no-cache")
     handler.send_header("X-Request-Id", request_id)
     handler.end_headers()
-    if execution.state in TERMINAL_EXECUTION_STATES:
-        return
     stream = _event_stream(factory)
+    if execution.state in TERMINAL_EXECUTION_STATES:
+        # A reconnect can race the terminal transition. Drain only durable
+        # backlog after Last-Event-ID, without waiting, then close the stream.
+        for event in stream.read(execution_id, after_id, 0):
+            _write_sse(handler, event.sequence, event.type, event.payload)
+        return
     while True:
         events = stream.read(execution_id, after_id, SSE_HEARTBEAT_SECONDS * 1000)
         if events:

@@ -16391,7 +16391,7 @@ def check_api_testing_runtime_infrastructure():
     require("api_workspaces" in workspace_source and "UniqueConstraint(\"owner_id\")" in workspace_source and "api_source_revisions.id" in workspace_source and "api_environment_revisions.id" in workspace_source, "Workspace migration must have one owner row and source/environment foreign keys")
     api_http_source = (ROOT / "task_server" / "api_testing" / "http.py").read_text(encoding="utf-8")
     require("_scope_execution" in api_http_source and "ApiProject.owner_id == actor" in api_http_source, "API HTTP resources must resolve nested records through the current owner project root")
-    require("SSE_TICKET_TTL_SECONDS" in api_http_source and "getdel" in api_http_source and "_issue_sse_ticket" in api_http_source, "Browser SSE must use short-lived single-use Redis tickets")
+    require("SSE_TICKET_TTL_SECONDS" in api_http_source and "_SSE_TICKET_REDEEM_LUA" in api_http_source and "eval(" in api_http_source and "_issue_sse_ticket" in api_http_source, "Browser SSE must use short-lived, reconnectable execution-bound Redis tickets")
     require("SSE_HEARTBEAT_SECONDS * 1000" in api_http_source and "if execution.state in TERMINAL_EXECUTION_STATES" in api_http_source, "SSE must heartbeat live streams and close terminal reconnects before blocking")
     router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
     app_source = (ROOT / "task_server" / "app.py").read_text(encoding="utf-8")

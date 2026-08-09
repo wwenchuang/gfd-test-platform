@@ -58,6 +58,11 @@ class HttpClient:
         connection.request(method, path, body=body, headers=headers or {})
         return HttpResponse(connection.getresponse())
 
+    def open_stream(self, path, headers=None):
+        connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
+        connection.request("GET", path, headers=headers or {})
+        return connection, connection.getresponse()
+
 
 @pytest.fixture()
 def http_client():
@@ -234,16 +239,22 @@ def test_workspace_context_is_owner_scoped_and_persistent(http_client, owned_rec
     assert denied.status == 404
 
 
-def test_sse_ticket_is_single_use_and_execution_bound(http_client, owned_records):
+def test_sse_ticket_is_reusable_for_eventsource_reconnect(http_client, api_context, owned_records):
     issue = http_client.post(f"/api/api-testing/v1/executions/{owned_records['execution'].id}/sse-ticket", {}, _auth())
     ticket = issue.body["data"]["ticket"]
+    api_context["redis"].expire(http._ticket_key(ticket), 1)
     accepted = http_client.get(f"/api/api-testing/v1/executions/{owned_records['execution'].id}/events?ticket={ticket}")
+    first_ttl = api_context["redis"].ttl(http._ticket_key(ticket))
+    api_context["redis"].expire(http._ticket_key(ticket), 1)
     replay = http_client.get(f"/api/api-testing/v1/executions/{owned_records['execution'].id}/events?ticket={ticket}")
+    second_ttl = api_context["redis"].ttl(http._ticket_key(ticket))
 
     assert issue.status == 200
     assert accepted.status == 200
     assert accepted.headers["Content-Type"].startswith("text/event-stream")
-    assert replay.status == 401
+    assert replay.status == 200
+    assert 1 < first_ttl <= http.SSE_TICKET_TTL_SECONDS
+    assert 1 < second_ttl <= http.SSE_TICKET_TTL_SECONDS
 
 
 def test_sse_ticket_cannot_be_redeemed_for_another_execution(http_client, owned_records):
@@ -253,6 +264,38 @@ def test_sse_ticket_cannot_be_redeemed_for_another_execution(http_client, owned_
 
     assert wrong_execution.status == 401
     assert wrong_execution.body["error"]["code"] == "unauthorized"
+
+
+def test_sse_ticket_reconnect_replays_only_new_durable_events(http_client, api_context, owned_records):
+    execution_id = owned_records["execution"].id
+    with api_context["factory"].begin() as session:
+        session.get(ApiExecution, execution_id).state = "RUNNING"
+    ticket = http_client.post(
+        f"/api/api-testing/v1/executions/{execution_id}/sse-ticket", {}, _auth()
+    ).body["data"]["ticket"]
+    stream = EventStream(api_context["factory"], api_context["redis"])
+    first_sequence = stream.append(execution_id, "progress", {"step": 1})
+
+    first_connection, first_response = http_client.open_stream(
+        f"/api/api-testing/v1/executions/{execution_id}/events?ticket={ticket}"
+    )
+    first_frame = b"".join(first_response.fp.readline() for _ in range(4))
+    first_connection.close()
+
+    second_sequence = stream.append(execution_id, "execution_finished", {"step": 2})
+    with api_context["factory"].begin() as session:
+        session.get(ApiExecution, execution_id).state = "DONE"
+    _, second_response = http_client.open_stream(
+        f"/api/api-testing/v1/executions/{execution_id}/events?ticket={ticket}",
+        {"Last-Event-ID": str(first_sequence)},
+    )
+    second_body = second_response.read()
+
+    assert first_response.status == second_response.status == 200
+    assert first_frame == b'id: 1\nevent: progress\ndata: {"step":1}\n\n'
+    assert first_sequence == 1
+    assert second_sequence == 2
+    assert second_body == b'id: 2\nevent: execution_finished\ndata: {"step":2}\n\n'
 
 
 def test_sse_frames_resume_heartbeat_terminal_and_disconnect(monkeypatch):
@@ -355,11 +398,14 @@ def test_terminal_sse_reconnect_does_not_block(monkeypatch):
         def end_headers(self):
             pass
 
+    reads = []
     monkeypatch.setattr(http, "_factory", lambda: object())
     monkeypatch.setattr(http, "_scope_execution", lambda *_args: SimpleNamespace(state="CANCELLED"))
-    monkeypatch.setattr(http, "_event_stream", lambda _factory: (_ for _ in ()).throw(AssertionError("terminal stream must not block")))
+    monkeypatch.setattr(http, "_event_stream", lambda _factory: SimpleNamespace(read=lambda *_args: reads.append(_args[2]) or ()))
 
     http._stream_events(Handler(), "00000000-0000-0000-0000-000000000001", "request", "owner-a")
+
+    assert reads == [0]
 
 
 def test_sse_disconnect_stops_stream(monkeypatch):
