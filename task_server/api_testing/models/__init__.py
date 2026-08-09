@@ -27,7 +27,7 @@ from .execution import (
     ApiExecutionEvent,
     ApiFailureAnalysis,
 )
-from .project import ApiProject, ApiProjectMember
+from .project import ApiProject, ApiProjectMember, ApiWorkspace
 from .source import (
     ApiSource,
     ApiSourceDiff,

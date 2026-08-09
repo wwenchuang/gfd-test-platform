@@ -22,7 +22,7 @@ from task_server.api_testing.models.environment import (
     ApiEnvironmentRevision,
     ApiSecretValue,
 )
-from task_server.api_testing.models.project import ApiProject
+from task_server.api_testing.models.project import ApiProject, ApiWorkspace
 from task_server.api_testing.models.source import (
     ApiSource,
     ApiSourceEndpoint,
@@ -363,6 +363,17 @@ def test_project_members_reserve_rbac_identity_without_permission_logic():
         if constraint.__class__.__name__ == "UniqueConstraint"
     }
     assert ("project_id", "identity_type", "member_identity") in unique_columns
+
+
+def test_workspace_context_has_one_owner_row_and_constrained_references():
+    table = ApiWorkspace.__table__
+    assert {"owner_id", "project_id", "source_revision_id", "environment_revision_id"}.issubset(table.c.keys())
+    assert any(set(constraint.columns.keys()) == {"owner_id"} for constraint in table.constraints if constraint.__class__.__name__ == "UniqueConstraint")
+    assert {
+        foreign_key.target_fullname
+        for column in (table.c.project_id, table.c.source_revision_id, table.c.environment_revision_id)
+        for foreign_key in column.foreign_keys
+    } == {"api_projects.id", "api_source_revisions.id", "api_environment_revisions.id"}
 
 
 def test_explicit_alembic_url_wins_over_environment_url(isolated_schema):

@@ -4,11 +4,12 @@ from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 import json
 import re
-import time
+import secrets
 from types import MappingProxyType
 from urllib.parse import unquote
 from uuid import UUID, uuid4
 
+import redis
 from sqlalchemy import select
 
 from task_server.auth import bearer_token, verify_session_token
@@ -16,8 +17,12 @@ from task_server.auth import bearer_token, verify_session_token
 from .config import ApiTestingSettings
 from .db import _session_factory
 from .events import EventStream
-from .models.project import ApiProject
-from .models.source import ApiSourceEndpoint
+from .models.case import ApiCase, ApiCaseVersion
+from .models.environment import ApiEnvironment, ApiEnvironmentRevision
+from .models.execution import ApiExecution, ApiExecutionCase
+from .models.project import ApiProject, ApiWorkspace
+from .models.source import ApiSource, ApiSourceDiff, ApiSourceEndpoint, ApiSourceRevision
+from .repositories.source_repository import audit_fields
 from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
@@ -35,6 +40,7 @@ from .services.source_service import (
 API_PREFIX = "/api/api-testing/v1"
 MAX_JSON_BODY_BYTES = 1_000_000
 SSE_HEARTBEAT_SECONDS = 15
+SSE_TICKET_TTL_SECONDS = 60
 TERMINAL_EXECUTION_STATES = frozenset({"DONE", "CANCELLED", "PASSED", "FAILED", "BROKEN"})
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -56,6 +62,10 @@ def dispatch_post(handler, qs, path):
     return _dispatch(handler, "POST", qs, path)
 
 
+def dispatch_put(handler, qs, path):
+    return _dispatch(handler, "PUT", qs, path)
+
+
 def dispatch_delete(handler, qs, path):
     return _dispatch(handler, "DELETE", qs, path)
 
@@ -63,15 +73,19 @@ def dispatch_delete(handler, qs, path):
 def _dispatch(handler, method, qs, path):
     request_id = _request_id(handler)
     try:
-        actor = _require_session(handler)
+        segments = _segments(path)
+        ticket = str(qs.get("ticket") or "")
+        if not ticket:
+            actor = _authenticate(handler, qs, segments, None)
         settings = ApiTestingSettings.from_env()
         if not settings.enabled:
             raise ApiHttpError(503, "api_testing_disabled", "API testing is unavailable")
-        segments = _segments(path)
+        if ticket:
+            actor = _authenticate(handler, qs, segments, settings)
         if method == "GET" and _is_execution_events(segments):
             return _stream_events(handler, _uuid(segments[1]), request_id, actor)
-        payload = _read_json_body(handler) if method == "POST" else None
-        result, status = _route(method, segments, qs, payload, actor)
+        payload = _read_json_body(handler) if method in {"POST", "PUT"} else None
+        result, status = _route(method, segments, qs, payload, actor, settings)
         return _success(handler, result, request_id, status)
     except ApiHttpError as error:
         return _failure(handler, error, request_id)
@@ -79,16 +93,21 @@ def _dispatch(handler, method, qs, path):
         return _failure(handler, _domain_error(error), request_id)
 
 
-def _request_id(handler):
-    value = str(handler.headers.get("X-Request-Id", "")).strip()
-    return value if _REQUEST_ID.fullmatch(value) else str(uuid4())
-
-
-def _require_session(handler):
+def _authenticate(handler, qs, segments, settings):
+    ticket = str(qs.get("ticket") or "")
+    if ticket:
+        if not _is_execution_events(segments):
+            raise ApiHttpError(401, "unauthorized", "Authentication is required")
+        return _consume_sse_ticket(settings, ticket, _uuid(segments[1]))
     payload = verify_session_token(bearer_token(handler.headers))
     if not payload or not isinstance(payload.get("user"), str) or not payload["user"]:
         raise ApiHttpError(401, "unauthorized", "Authentication is required")
     return payload["user"]
+
+
+def _request_id(handler):
+    value = str(handler.headers.get("X-Request-Id", "")).strip()
+    return value if _REQUEST_ID.fullmatch(value) else str(uuid4())
 
 
 def _segments(path):
@@ -107,8 +126,13 @@ def _uuid(value):
         raise ApiHttpError(400, "invalid_identifier", "Identifier must be a UUID")
 
 
+def _uuid_array(value, field):
+    if not isinstance(value, list):
+        raise ApiHttpError(422, "invalid_request", f"{field} must be an array")
+    return [_uuid(item) for item in value]
+
+
 def _read_json_body(handler):
-    # Authentication happens in _dispatch before this method is ever reached.
     header = handler.headers.get("Content-Length", "0")
     try:
         size = int(header)
@@ -125,11 +149,13 @@ def _read_json_body(handler):
     return payload
 
 
-def _route(method, segments, qs, payload, actor):
+def _route(method, segments, qs, payload, actor, settings):
     if method == "GET":
-        return _get(segments, qs), 200
+        return _get(segments, qs, actor), 200
     if method == "POST":
-        return _post(segments, payload, actor), 202 if segments == ("executions",) else 200
+        return _post(segments, payload, actor, settings), 202 if segments == ("executions",) else 200
+    if method == "PUT":
+        return _put(segments, payload, actor), 200
     if method == "DELETE":
         return _delete(segments, actor), 200
     raise ApiHttpError(405, "method_not_allowed", "Method is not allowed")
@@ -143,77 +169,374 @@ def _event_stream(factory):
     return EventStream(factory)
 
 
-def _get(segments, qs):
+def _get(segments, qs, actor):
     factory = _factory()
     if segments == ("projects",):
         with factory() as session:
-            projects = session.scalars(select(ApiProject).order_by(ApiProject.created_at)).all()
+            projects = session.scalars(
+                select(ApiProject).where(ApiProject.owner_id == actor).order_by(ApiProject.created_at)
+            ).all()
         return {"projects": [_project_view(item) for item in projects]}
     if segments == ("workspace",):
-        return {"project": None, "source_revision": None, "environment_revision": None}
+        with factory() as session:
+            workspace = session.scalar(select(ApiWorkspace).where(ApiWorkspace.owner_id == actor))
+        return {"workspace": _workspace_view(workspace) if workspace else None}
     if len(segments) == 2 and segments[0] == "executions":
+        _scope_execution(factory, _uuid(segments[1]), actor)
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).get(_uuid(segments[1])))}
     if len(segments) == 2 and segments[0] == "cases":
+        _scope_case(factory, _uuid(segments[1]), actor)
         return {"case": _view(CaseService(factory).get_case(_uuid(segments[1])))}
     if len(segments) == 2 and segments[0] == "case-versions":
+        _scope_case_version(factory, _uuid(segments[1]), actor)
         return {"case_version": _view(CaseService(factory).get_version(_uuid(segments[1])))}
     if len(segments) == 2 and segments[0] == "environments":
+        _scope_environment(factory, _uuid(segments[1]), actor)
         return {"environment": _view(EnvironmentService(factory).get_environment(_uuid(segments[1])))}
     if len(segments) == 2 and segments[0] == "environment-revisions":
+        _scope_environment_revision(factory, _uuid(segments[1]), actor)
         return {"environment_revision": _view(EnvironmentService(factory).get_revision(_uuid(segments[1])))}
     if len(segments) == 2 and segments[0] == "source-revisions":
+        _scope_source_revision(factory, _uuid(segments[1]), actor)
         return {"source_revision": _view(SourceService(factory).get_revision(_uuid(segments[1])))}
     if segments == ("endpoints",):
         revision_id = _uuid(qs.get("source_revision_id", ""))
+        _scope_source_revision(factory, revision_id, actor)
         with factory() as session:
-            endpoints = session.scalars(
-                select(ApiSourceEndpoint).where(ApiSourceEndpoint.revision_id == revision_id)
-            ).all()
+            endpoints = session.scalars(select(ApiSourceEndpoint).where(ApiSourceEndpoint.revision_id == revision_id)).all()
         return {"endpoints": [_endpoint_view(item) for item in endpoints]}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 
-def _post(segments, payload, actor):
+def _post(segments, payload, actor, settings):
     factory = _factory()
     if segments == ("projects",):
         name = _string(payload.get("name"), "name", 200)
         slug = _string(payload.get("slug"), "slug", 120)
         with factory.begin() as session:
-            project = ApiProject(name=name, slug=slug, description=str(payload.get("description") or ""), owner_id=actor, created_by=actor, updated_by=actor)
+            project = ApiProject(name=name, slug=slug, description=str(payload.get("description") or ""), **audit_fields(actor))
             session.add(project)
             session.flush()
             return {"project": _project_view(project)}
     if segments == ("sources", "preview"):
-        return {"preview": _view(SourceService(factory).preview_refresh(_uuid(payload.get("project_id")), _optional_uuid(payload.get("source_id")), _required_object(payload, "document"), actor))}
+        project_id = _uuid(payload.get("project_id"))
+        _scope_project(factory, project_id, actor)
+        source_id = _optional_uuid(payload.get("source_id"))
+        if source_id:
+            source = _scope_source(factory, source_id, actor)
+            if source.project_id != project_id:
+                raise _not_found()
+        return {"preview": _view(SourceService(factory).preview_refresh(project_id, source_id, _required_object(payload, "document"), actor))}
     if len(segments) == 3 and segments[0] == "sources" and segments[2] == "activate":
+        _scope_source_preview(factory, _uuid(segments[1]), actor)
         return {"source_revision": _view(SourceService(factory).activate_preview(_uuid(segments[1]), actor))}
     if segments == ("environments", "import"):
+        _scope_environment_import(factory, payload, actor)
         return {"environment": _view(EnvironmentService(factory).import_from_source(payload, actor))}
     if len(segments) == 3 and segments[0] == "environments" and segments[2] == "revisions":
+        _scope_environment(factory, _uuid(segments[1]), actor)
         return {"environment": _view(EnvironmentService(factory).create_revision(_uuid(segments[1]), payload.get("environment") or payload, payload.get("secret_updates") or {}, actor))}
     if segments == ("cases",):
+        _scope_endpoint(factory, _uuid(payload.get("endpoint_id")), actor)
         return {"case_version": _view(CaseService(factory).create_draft(_uuid(payload.get("endpoint_id")), _required_object(payload, "case"), payload.get("origin", "manual"), actor))}
     if len(segments) == 3 and segments[0] == "cases" and segments[2] == "versions":
+        _scope_case(factory, _uuid(segments[1]), actor)
         return {"case_version": _view(CaseService(factory).create_version(_uuid(segments[1]), _required_object(payload, "case"), actor))}
     if len(segments) == 3 and segments[0] == "case-versions" and segments[2] == "validate":
+        _scope_case_version(factory, _uuid(segments[1]), actor)
         return {"validation": _view(CaseService(factory).validate_case(_uuid(segments[1]), payload.get("environment_metadata") or {}))}
     if len(segments) == 3 and segments[0] == "case-versions" and segments[2] == "baseline":
+        _scope_case_version(factory, _uuid(segments[1]), actor)
+        _scope_execution_case(factory, _uuid(payload.get("debug_execution_case_id")), actor)
         return {"baseline": _view(CaseService(factory).adopt_baseline(_uuid(segments[1]), _uuid(payload.get("debug_execution_case_id")), actor))}
     if segments == ("executions",):
-        execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(_execution_request(payload), actor, _string(payload.get("idempotency_key"), "idempotency_key", 200))
+        request = _execution_request(payload)
+        _scope_execution_request(factory, request, actor)
+        execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(request, actor, _string(payload.get("idempotency_key"), "idempotency_key", 200))
         _enqueue_execution(execution.id)
         return {"execution": _view(execution)}
     if len(segments) == 3 and segments[0] == "executions" and segments[2] == "cancel":
+        _scope_execution(factory, _uuid(segments[1]), actor)
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).cancel(_uuid(segments[1]), actor))}
+    if len(segments) == 3 and segments[0] == "executions" and segments[2] == "sse-ticket":
+        _scope_execution(factory, _uuid(segments[1]), actor)
+        return {"ticket": _issue_sse_ticket(settings, actor, _uuid(segments[1]))}
     if segments == ("ai-jobs",):
-        return {"job": _view(AiCaseService(factory).submit(payload.get("endpoint_ids"), _uuid(payload.get("environment_revision_id")), actor, payload.get("model_config"), payload.get("intent", "")))}
+        endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
+        environment_revision_id = _uuid(payload.get("environment_revision_id"))
+        project_id = _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor)
+        _scope_project(factory, project_id, actor)
+        return {"job": _view(AiCaseService(factory).submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", "")))}
     raise ApiHttpError(404, "not_found", "Resource was not found")
+
+
+def _put(segments, payload, actor):
+    if segments != ("workspace",):
+        raise ApiHttpError(404, "not_found", "Resource was not found")
+    context = _workspace_input(payload)
+    factory = _factory()
+    _scope_workspace_context(factory, context, actor)
+    with factory.begin() as session:
+        workspace = session.scalar(select(ApiWorkspace).where(ApiWorkspace.owner_id == actor).with_for_update())
+        if workspace is None:
+            workspace = ApiWorkspace(**context, **audit_fields(actor))
+            session.add(workspace)
+        else:
+            for field, value in context.items():
+                setattr(workspace, field, value)
+            workspace.updated_by = actor
+        session.flush()
+        return {"workspace": _workspace_view(workspace)}
 
 
 def _delete(segments, actor):
     if len(segments) == 2 and segments[0] == "executions":
+        _scope_execution(_factory(), _uuid(segments[1]), actor)
         return {"execution": _view(ExecutionService(_factory(), event_stream=_event_stream(_factory())).cancel(_uuid(segments[1]), actor))}
     raise ApiHttpError(404, "not_found", "Resource was not found")
+
+
+def _scope_project(factory, project_id, actor):
+    with factory() as session:
+        project = session.scalar(select(ApiProject).where(ApiProject.id == project_id, ApiProject.owner_id == actor))
+    if project is None:
+        raise _not_found()
+    return project
+
+
+def _scope_source(factory, source_id, actor):
+    with factory() as session:
+        source = session.scalar(select(ApiSource).join(ApiProject, ApiSource.project_id == ApiProject.id).where(ApiSource.id == source_id, ApiProject.owner_id == actor))
+    if source is None:
+        raise _not_found()
+    return source
+
+
+def _scope_source_revision(factory, revision_id, actor):
+    with factory() as session:
+        revision = session.scalar(select(ApiSourceRevision).join(ApiSource, ApiSourceRevision.source_id == ApiSource.id).join(ApiProject, ApiSource.project_id == ApiProject.id).where(ApiSourceRevision.id == revision_id, ApiProject.owner_id == actor))
+    if revision is None:
+        raise _not_found()
+    return revision
+
+
+def _scope_source_preview(factory, preview_id, actor):
+    with factory() as session:
+        preview = session.scalar(select(ApiSourceDiff).join(ApiSource, ApiSourceDiff.source_id == ApiSource.id).join(ApiProject, ApiSource.project_id == ApiProject.id).where(ApiSourceDiff.id == preview_id, ApiProject.owner_id == actor))
+    if preview is None:
+        raise _not_found()
+    return preview
+
+
+def _scope_endpoint(factory, endpoint_id, actor):
+    with factory() as session:
+        endpoint = session.scalar(select(ApiSourceEndpoint).join(ApiSourceRevision, ApiSourceEndpoint.revision_id == ApiSourceRevision.id).join(ApiSource, ApiSourceRevision.source_id == ApiSource.id).join(ApiProject, ApiSource.project_id == ApiProject.id).where(ApiSourceEndpoint.id == endpoint_id, ApiProject.owner_id == actor))
+    if endpoint is None:
+        raise _not_found()
+    return endpoint
+
+
+def _scope_environment(factory, environment_id, actor):
+    with factory() as session:
+        environment = session.scalar(select(ApiEnvironment).join(ApiProject, ApiEnvironment.project_id == ApiProject.id).where(ApiEnvironment.id == environment_id, ApiProject.owner_id == actor))
+    if environment is None:
+        raise _not_found()
+    return environment
+
+
+def _scope_environment_revision(factory, revision_id, actor):
+    with factory() as session:
+        revision = session.scalar(select(ApiEnvironmentRevision).join(ApiEnvironment, ApiEnvironmentRevision.environment_id == ApiEnvironment.id).join(ApiProject, ApiEnvironment.project_id == ApiProject.id).where(ApiEnvironmentRevision.id == revision_id, ApiProject.owner_id == actor))
+    if revision is None:
+        raise _not_found()
+    return revision
+
+
+def _scope_case(factory, case_id, actor):
+    with factory() as session:
+        case = session.scalar(select(ApiCase).join(ApiProject, ApiCase.project_id == ApiProject.id).where(ApiCase.id == case_id, ApiProject.owner_id == actor))
+    if case is None:
+        raise _not_found()
+    return case
+
+
+def _scope_case_version(factory, version_id, actor):
+    with factory() as session:
+        version = session.scalar(select(ApiCaseVersion).join(ApiCase, ApiCaseVersion.case_id == ApiCase.id).join(ApiProject, ApiCase.project_id == ApiProject.id).where(ApiCaseVersion.id == version_id, ApiProject.owner_id == actor))
+    if version is None:
+        raise _not_found()
+    return version
+
+
+def _scope_execution(factory, execution_id, actor):
+    with factory() as session:
+        execution = session.scalar(select(ApiExecution).join(ApiProject, ApiExecution.project_id == ApiProject.id).where(ApiExecution.id == execution_id, ApiProject.owner_id == actor))
+    if execution is None:
+        raise _not_found()
+    return execution
+
+
+def _scope_execution_case(factory, execution_case_id, actor):
+    with factory() as session:
+        execution_case = session.scalar(
+            select(ApiExecutionCase)
+            .join(ApiExecution, ApiExecutionCase.execution_id == ApiExecution.id)
+            .join(ApiProject, ApiExecution.project_id == ApiProject.id)
+            .where(ApiExecutionCase.id == execution_case_id, ApiProject.owner_id == actor)
+        )
+    if execution_case is None:
+        raise _not_found()
+    return execution_case
+
+
+def _scope_environment_import(factory, payload, actor):
+    project_id = _uuid(payload.get("project_id"))
+    _scope_project(factory, project_id, actor)
+    source_id = _optional_uuid(payload.get("source_id"))
+    source_revision_id = _optional_uuid(payload.get("source_revision_id"))
+    if source_id:
+        source = _scope_source(factory, source_id, actor)
+        if source.project_id != project_id:
+            raise _not_found()
+    if source_revision_id:
+        revision = _scope_source_revision(factory, source_revision_id, actor)
+        if source_id and revision.source_id != source_id:
+            raise _not_found()
+
+
+def _scope_execution_request(factory, request, actor):
+    project = _scope_project(factory, request["project_id"], actor)
+    source_revision = _scope_source_revision(factory, request["source_revision_id"], actor)
+    environment_revision = _scope_environment_revision(factory, request["environment_revision_id"], actor)
+    if _scope_source(factory, source_revision.source_id, actor).project_id != project.id:
+        raise _not_found()
+    if _scope_environment(factory, environment_revision.environment_id, actor).project_id != project.id:
+        raise _not_found()
+    for version_id in request["case_version_ids"]:
+        version = _scope_case_version(factory, version_id, actor)
+        case = _scope_case(factory, version.case_id, actor)
+        if case.project_id != project.id:
+            raise _not_found()
+
+
+def _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor):
+    endpoints = [_scope_endpoint(factory, item, actor) for item in endpoint_ids]
+    environment_revision = _scope_environment_revision(factory, environment_revision_id, actor)
+    project_id = _scope_environment(factory, environment_revision.environment_id, actor).project_id
+    for endpoint in endpoints:
+        revision = _scope_source_revision(factory, endpoint.revision_id, actor)
+        if _scope_source(factory, revision.source_id, actor).project_id != project_id:
+            raise _not_found()
+    return project_id
+
+
+def _workspace_input(payload):
+    fields = {"project_id", "source_revision_id", "environment_revision_id"}
+    if set(payload) != fields:
+        raise ApiHttpError(422, "invalid_request", "Workspace context fields are invalid")
+    return {field: _optional_uuid(payload.get(field)) for field in fields}
+
+
+def _scope_workspace_context(factory, context, actor):
+    project_id = context["project_id"]
+    if project_id is None:
+        if context["source_revision_id"] or context["environment_revision_id"]:
+            raise ApiHttpError(422, "invalid_request", "Workspace project is required")
+        return
+    _scope_project(factory, project_id, actor)
+    if context["source_revision_id"]:
+        source = _scope_source(factory, _scope_source_revision(factory, context["source_revision_id"], actor).source_id, actor)
+        if source.project_id != project_id:
+            raise _not_found()
+    if context["environment_revision_id"]:
+        environment = _scope_environment(factory, _scope_environment_revision(factory, context["environment_revision_id"], actor).environment_id, actor)
+        if environment.project_id != project_id:
+            raise _not_found()
+
+
+def _ticket_client(settings):
+    try:
+        client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+        client.ping()
+        return client
+    except redis.RedisError:
+        raise ApiHttpError(503, "sse_unavailable", "SSE ticket service is unavailable")
+
+
+def _ticket_key(ticket):
+    return f"api-testing:sse-ticket:{ticket}"
+
+
+def _issue_sse_ticket(settings, actor, execution_id):
+    ticket = secrets.token_urlsafe(32)
+    try:
+        stored = _ticket_client(settings).set(_ticket_key(ticket), json.dumps({"owner_id": actor, "execution_id": execution_id}), ex=SSE_TICKET_TTL_SECONDS, nx=True)
+    except redis.RedisError:
+        raise ApiHttpError(503, "sse_unavailable", "SSE ticket service is unavailable")
+    if not stored:
+        raise ApiHttpError(503, "sse_unavailable", "SSE ticket service is unavailable")
+    return ticket
+
+
+def _consume_sse_ticket(settings, ticket, execution_id):
+    if not isinstance(ticket, str) or not 32 <= len(ticket) <= 256:
+        raise ApiHttpError(401, "unauthorized", "Authentication is required")
+    try:
+        payload = _ticket_client(settings).getdel(_ticket_key(ticket))
+    except redis.RedisError:
+        raise ApiHttpError(503, "sse_unavailable", "SSE ticket service is unavailable")
+    if not payload:
+        raise ApiHttpError(401, "unauthorized", "Authentication is required")
+    try:
+        value = json.loads(payload)
+    except (TypeError, ValueError):
+        raise ApiHttpError(401, "unauthorized", "Authentication is required")
+    if value.get("execution_id") != execution_id or not isinstance(value.get("owner_id"), str):
+        raise ApiHttpError(401, "unauthorized", "Authentication is required")
+    return value["owner_id"]
+
+
+def _stream_events(handler, execution_id, request_id, actor):
+    last_event_id = handler.headers.get("Last-Event-ID", "0").strip() or "0"
+    try:
+        after_id = int(last_event_id)
+    except ValueError:
+        raise ApiHttpError(400, "invalid_last_event_id", "Last-Event-ID must be a non-negative integer")
+    if after_id < 0:
+        raise ApiHttpError(400, "invalid_last_event_id", "Last-Event-ID must be a non-negative integer")
+    factory = _factory()
+    execution = _scope_execution(factory, execution_id, actor)
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Request-Id", request_id)
+    handler.end_headers()
+    if execution.state in TERMINAL_EXECUTION_STATES:
+        return
+    stream = _event_stream(factory)
+    while True:
+        events = stream.read(execution_id, after_id, SSE_HEARTBEAT_SECONDS * 1000)
+        if events:
+            for event in events:
+                _write_sse(handler, event.sequence, event.type, event.payload)
+                after_id = event.sequence
+                if event.type == "execution_finished":
+                    return
+        else:
+            _write_sse(handler, None, "heartbeat", {"request_id": request_id})
+        if _scope_execution(factory, execution_id, actor).state in TERMINAL_EXECUTION_STATES:
+            return
+
+
+def _write_sse(handler, sequence, event_type, payload):
+    lines = []
+    if sequence is not None:
+        lines.append(f"id: {sequence}")
+    lines.append(f"event: {event_type}")
+    lines.append("data: " + json.dumps(_json_value(payload), ensure_ascii=False, separators=(",", ":")))
+    handler.wfile.write(("\n".join(lines) + "\n\n").encode("utf-8"))
+    handler.wfile.flush()
 
 
 def _enqueue_execution(execution_id):
@@ -225,71 +548,17 @@ def _is_execution_events(segments):
     return len(segments) == 3 and segments[0] == "executions" and segments[2] == "events"
 
 
-def _stream_events(handler, execution_id, request_id, _actor):
-    last_event_id = handler.headers.get("Last-Event-ID", "0").strip() or "0"
-    try:
-        after_id = int(last_event_id)
-    except ValueError:
-        raise ApiHttpError(400, "invalid_last_event_id", "Last-Event-ID must be a non-negative integer")
-    if after_id < 0:
-        raise ApiHttpError(400, "invalid_last_event_id", "Last-Event-ID must be a non-negative integer")
-    factory = _factory()
-    service = ExecutionService(factory, event_stream=_event_stream(factory))
-    execution = service.get(execution_id)
-    handler.send_response(200)
-    handler._cors()
-    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-    handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("X-Request-Id", request_id)
-    handler.end_headers()
-    while True:
-        events = _event_stream(factory).read(execution_id, after_id, SSE_HEARTBEAT_SECONDS * 1000)
-        if events:
-            for event in events:
-                _write_sse(handler, event.sequence, event.type, event.payload)
-                after_id = event.sequence
-                if event.type == "execution_finished":
-                    return
-        else:
-            _write_sse(handler, None, "heartbeat", {"request_id": request_id})
-        if service.get(execution_id).state in TERMINAL_EXECUTION_STATES:
-            return
-
-
-def _write_sse(handler, sequence, event_type, payload):
-    lines = []
-    if sequence is not None:
-        lines.append(f"id: {sequence}")
-    lines.append(f"event: {event_type}")
-    lines.append("data: " + json.dumps(_json_value(payload), ensure_ascii=False, separators=(",", ":")))
-    try:
-        handler.wfile.write(("\n".join(lines) + "\n\n").encode("utf-8"))
-        handler.wfile.flush()
-    except (BrokenPipeError, ConnectionResetError):
-        raise
-
-
 def _success(handler, data, request_id, status):
-    body = json.dumps(
-        {"ok": True, "data": _json_value(data), "request_id": request_id},
-        ensure_ascii=False,
-    ).encode("utf-8")
-    handler.send_response(status)
-    handler._cors()
-    handler.send_header("Content-Type", "application/json; charset=utf-8")
-    handler.send_header("X-Request-Id", request_id)
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    try:
-        handler.wfile.write(body)
-    except (BrokenPipeError, ConnectionResetError):
-        pass
+    _send_json(handler, status, {"ok": True, "data": _json_value(data), "request_id": request_id}, request_id)
 
 
 def _failure(handler, error, request_id):
-    payload = {"ok": False, "error": {"code": error.code, "message": error.message, "details": _json_value(error.details)}, "request_id": request_id}
+    _send_json(handler, error.status, {"ok": False, "error": {"code": error.code, "message": error.message, "details": _json_value(error.details)}, "request_id": request_id}, request_id)
+
+
+def _send_json(handler, status, payload, request_id):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    handler.send_response(error.status)
+    handler.send_response(status)
     handler._cors()
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("X-Request-Id", request_id)
@@ -305,7 +574,7 @@ def _domain_error(error):
     if isinstance(error, ApiHttpError):
         return error
     if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError)):
-        return ApiHttpError(404, "not_found", "Resource was not found")
+        return _not_found()
     if isinstance(error, (ExecutionConflictError, BaselineGateError, SourcePreviewExpiredError, SourcePreviewStateError, StaleSourcePreviewError)):
         return ApiHttpError(409, "conflict", "Resource state conflicts with this request")
     if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError)):
@@ -313,15 +582,12 @@ def _domain_error(error):
     return ApiHttpError(500, "internal_error", "Internal server error")
 
 
+def _not_found():
+    return ApiHttpError(404, "not_found", "Resource was not found")
+
+
 def _execution_request(payload):
-    return {
-        "project_id": _uuid(payload.get("project_id")),
-        "source_revision_id": _uuid(payload.get("source_revision_id")),
-        "environment_revision_id": _uuid(payload.get("environment_revision_id")),
-        "case_version_ids": [_uuid(value) for value in payload.get("case_version_ids", [])],
-        "execution_type": _string(payload.get("execution_type", "debug"), "execution_type", 32),
-        "overrides": payload.get("overrides") or {},
-    }
+    return {"project_id": _uuid(payload.get("project_id")), "source_revision_id": _uuid(payload.get("source_revision_id")), "environment_revision_id": _uuid(payload.get("environment_revision_id")), "case_version_ids": _uuid_array(payload.get("case_version_ids"), "case_version_ids"), "execution_type": _string(payload.get("execution_type", "debug"), "execution_type", 32), "overrides": payload.get("overrides") or {}}
 
 
 def _string(value, name, maximum):
@@ -347,6 +613,10 @@ def _project_view(project):
 
 def _endpoint_view(endpoint):
     return {"id": endpoint.id, "revision_id": endpoint.revision_id, "operation_id": endpoint.operation_id, "method": endpoint.method, "path": endpoint.path, "summary": endpoint.summary, "tags": endpoint.tags}
+
+
+def _workspace_view(workspace):
+    return {"project_id": workspace.project_id, "source_revision_id": workspace.source_revision_id, "environment_revision_id": workspace.environment_revision_id}
 
 
 def _view(value):

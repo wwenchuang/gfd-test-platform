@@ -38,7 +38,7 @@ from .storage import (
     clean_filename, clean_asset_filename, clean_id, is_visible_yaml_filename,
 )
 from .router import (
-    dispatch_get, dispatch_post, dispatch_delete, dispatch_head,
+    dispatch_get, dispatch_post, dispatch_put, dispatch_delete, dispatch_head,
 )
 
 
@@ -98,6 +98,9 @@ class TaskHTTPHandler(ResponseMixin, BaseHTTPRequestHandler):
 
     def do_POST(self):
         return self._safe_call(lambda: dispatch_post(self))
+
+    def do_PUT(self):
+        return self._safe_call(lambda: dispatch_put(self))
 
     def do_DELETE(self):
         return self._safe_call(lambda: dispatch_delete(self))

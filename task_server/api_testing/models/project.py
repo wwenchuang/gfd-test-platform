@@ -1,5 +1,7 @@
 """API testing project model."""
 
+from typing import Optional
+
 from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -39,4 +41,21 @@ class ApiProjectMember(PrimaryRecord, Base):
     )
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="active"
+    )
+
+
+class ApiWorkspace(PrimaryRecord, Base):
+    """One saved API testing context per platform identity."""
+
+    __tablename__ = "api_workspaces"
+    __table_args__ = (UniqueConstraint("owner_id"),)
+
+    project_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("api_projects.id", ondelete="CASCADE"), nullable=True
+    )
+    source_revision_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("api_source_revisions.id", ondelete="SET NULL"), nullable=True
+    )
+    environment_revision_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("api_environment_revisions.id", ondelete="SET NULL"), nullable=True
     )

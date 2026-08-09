@@ -242,12 +242,15 @@ from task_server.services.yaml_service import (
 GET_ROUTES: dict = {}
 POST_ROUTES: dict = {}
 DELETE_ROUTES: dict = {}
+PUT_ROUTES: dict = {}
 HEAD_ROUTES: dict = {}
 
 # 前缀匹配路由（按注册顺序匹配，首次命中即返回）
 _GET_PREFIX_ROUTES: list = []
 _POST_PREFIX_ROUTES: list = []
 _DELETE_PREFIX_ROUTES: list = []
+_PUT_PREFIX_ROUTES: list = []
+_POST_PREFIX_BEFORE_BODY_ROUTES: list = []
 
 # 正则匹配路由（按注册顺序匹配）
 _GET_REGEX_ROUTES: list = []
@@ -279,6 +282,14 @@ def route_delete(path):
     return decorator
 
 
+def route_put(path):
+    """装饰器：注册 PUT 路由"""
+    def decorator(fn):
+        PUT_ROUTES[path] = fn
+        return fn
+    return decorator
+
+
 def route_get_prefix(prefix):
     """装饰器：注册 GET 前缀匹配路由"""
     def decorator(fn):
@@ -295,10 +306,26 @@ def route_post_prefix(prefix):
     return decorator
 
 
+def route_post_prefix_before_body(prefix):
+    """注册自行负责认证和请求体限制的前缀路由。"""
+    def decorator(fn):
+        _POST_PREFIX_BEFORE_BODY_ROUTES.append((prefix, fn))
+        return fn
+    return decorator
+
+
 def route_delete_prefix(prefix):
     """装饰器：注册 DELETE 前缀匹配路由"""
     def decorator(fn):
         _DELETE_PREFIX_ROUTES.append((prefix, fn))
+        return fn
+    return decorator
+
+
+def route_put_prefix(prefix):
+    """装饰器：注册 PUT 前缀匹配路由"""
+    def decorator(fn):
+        _PUT_PREFIX_ROUTES.append((prefix, fn))
         return fn
     return decorator
 
@@ -360,6 +387,9 @@ def dispatch_get(handler):
 def dispatch_post(handler):
     """分发 POST 请求：精确匹配 → 前缀匹配 → 正则匹配 → 404"""
     qs, path = handler._qs()
+    for prefix, fn in _POST_PREFIX_BEFORE_BODY_ROUTES:
+        if path.startswith(prefix):
+            return fn(handler, qs, path)
     if not handler._body_size_allowed(path):
         return
 
@@ -379,6 +409,15 @@ def dispatch_post(handler):
             return fn(handler, qs, m)
 
     # 4. 404
+    handler._text("Not Found", 404)
+
+
+def dispatch_put(handler):
+    """分发 PUT 请求；当前仅模块前缀自行执行认证和请求体限制。"""
+    qs, path = handler._qs()
+    for prefix, fn in _PUT_PREFIX_ROUTES:
+        if path.startswith(prefix):
+            return fn(handler, qs, path)
     handler._text("Not Found", 404)
 
 
@@ -4981,4 +5020,4 @@ def _delete_knowledge_app(handler, qs):
     handler._json({"ok": True})
 
 
-register_api_testing_routes(route_get_prefix, route_post_prefix, route_delete_prefix)
+register_api_testing_routes(route_get_prefix, route_post_prefix_before_body, route_delete_prefix, route_put_prefix)
