@@ -1,0 +1,30 @@
+{
+  "skill": "api_case_generation",
+  "version": "v1",
+  "language": "zh-CN",
+  "cases": [
+    {
+      "name": "我的收藏三接口",
+      "intent": "覆盖收藏列表查询、添加收藏和取消收藏的正常流程及必要鉴权风险",
+      "endpoint_operation_ids": ["favoriteList", "favoriteAdd", "favoriteCancel"],
+      "expect": {
+        "only_selected_endpoints": true,
+        "relative_paths_only": true,
+        "drafts_only": true,
+        "required_dimensions": ["positive", "authorization"],
+        "forbid_environment_values": true,
+        "forbid_arbitrary_scripts": true
+      }
+    },
+    {
+      "name": "契约不支持时不臆造依赖",
+      "intent": "验证单接口基础响应",
+      "endpoint_operation_ids": ["favoriteList"],
+      "expect": {
+        "dependency_only_when_supported": true,
+        "relative_paths_only": true,
+        "strict_json": true
+      }
+    }
+  ]
+}
