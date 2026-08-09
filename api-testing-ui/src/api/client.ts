@@ -42,14 +42,24 @@ export class ApiClient {
       this.redirectToLogin()
       throw new ApiClientError(401, '登录已失效')
     }
-    const payload = await response.json() as ApiEnvelope<T> & { error?: string; message?: string }
-    if (!response.ok) throw new ApiClientError(response.status, payload.error || payload.message || '请求失败')
+    const payload = await response.json() as ApiEnvelope<T> & { error?: unknown; message?: unknown }
+    if (!response.ok) throw new ApiClientError(response.status, errorMessage(payload))
     return payload
   }
 
   private redirectToLogin(): void {
     window.location.assign(LOGIN_PATH)
   }
+}
+
+function errorMessage(payload: { error?: unknown; message?: unknown }): string {
+  if (typeof payload.error === 'string') return payload.error
+  if (typeof payload.message === 'string') return payload.message
+  if (payload.error && typeof payload.error === 'object' && 'message' in payload.error) {
+    const message = (payload.error as { message?: unknown }).message
+    if (typeof message === 'string') return message
+  }
+  return '请求失败'
 }
 
 export const apiClient = new ApiClient()

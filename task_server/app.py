@@ -121,10 +121,49 @@ class TaskHTTPHandler(ResponseMixin, BaseHTTPRequestHandler):
 
 # ── 静态文件服务 ─────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_API_TEST_BUILD_ROOT = os.path.join(_PROJECT_ROOT, "api-test")
+
+
+def _send_static_file(handler, file_path):
+    handler.send_response(200)
+    handler._cors()
+    handler.send_header("Content-Type", guess_mime(file_path))
+    handler.send_header("Cache-Control", "public, max-age=3600")
+    handler.end_headers()
+    with open(file_path, "rb") as f:
+        handler.wfile.write(f.read())
+
+
+def _serve_api_test(handler, path):
+    if path != "/api-test" and not path.startswith("/api-test/"):
+        return False
+
+    root = os.path.abspath(_API_TEST_BUILD_ROOT)
+    relative_path = urllib.parse.unquote(path[len("/api-test"):]).lstrip("/")
+    candidate = os.path.abspath(os.path.join(root, relative_path))
+    if "\\" in relative_path or os.path.commonpath((root, candidate)) != root:
+        handler._text("api test asset not found", 404)
+        return True
+    if relative_path and os.path.isfile(candidate):
+        _send_static_file(handler, candidate)
+        return True
+    if relative_path.startswith("assets/") or os.path.splitext(relative_path)[1]:
+        handler._text("api test asset not found", 404)
+        return True
+
+    index_path = os.path.join(root, "index.html")
+    if os.path.isfile(index_path):
+        handler._html(read_text_file(index_path))
+    else:
+        handler._text("api test application not found", 404)
+    return True
 
 
 def _serve_static(handler, path):
     """处理静态文件请求（HTML/CSS/JS/图片等）。"""
+    if _serve_api_test(handler, path):
+        return True
+
     # 首页
     if path in ("/", "/task-manager.html", "/trace-viewer.html"):
         html_name = "trace-viewer.html" if path == "/trace-viewer.html" else "task-manager.html"

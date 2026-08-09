@@ -36,3 +36,41 @@ passed
 ## Dependency Note
 
 The default npm registry could not resolve in this environment (`ENOTFOUND`). Installation was completed with the user-specified `https://registry.npmmirror.com` command; no registry setting was written to global or project configuration.
+
+## Review Fixes
+
+### RED
+
+- `context.spec.ts` failed for a `workspace: null` GET response: the prior store retained stale IDs and reported a dereference error for a null PUT response.
+- `client.spec.ts` failed for a non-401 object error envelope because the previous client surfaced `[object Object]` rather than its message.
+- `tests.test_api_test_static` failed for `/api-test/`, a built asset, and `/api-test/runs` because `_serve_static()` declined every API-test path.
+- `frontend_static_checks.py` failed because the main-platform link used a literal `↗` instead of a local official Lucide asset.
+
+### GREEN
+
+- Vue router now uses hash history under `/api-test/`; the server also safely serves the build base and emitted assets, rejects encoded traversal, and returns the app index for a non-asset API-test subpath.
+- Workspace contracts permit `workspace: null` only for GET restore. The store clears all IDs without an error for that normal first-use state and rejects invalid save responses.
+- API client tests verify the Bearer header, same-tab 401 redirect, removal of session auth values only, and object error messages.
+- Main-platform navigation uses a copied official Lucide `FlaskConical` SVG asset, not a text symbol.
+
+### Review Verification
+
+```text
+npm --prefix api-testing-ui test -- --run
+2 test files passed; 8 tests passed
+
+npm --prefix api-testing-ui run build
+vite v5.4.21: api-test/ emitted successfully
+
+python3 -m unittest tests.test_api_test_static -v
+2 tests passed
+
+python3 tests/frontend_static_checks.py
+{'ok': True, 'checks': 72}
+
+python3 tests/backend_static_checks.py
+passed (exit 0, no output)
+
+git diff --check
+passed
+```

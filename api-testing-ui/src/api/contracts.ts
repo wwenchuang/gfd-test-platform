@@ -10,5 +10,5 @@ export interface ApiEnvelope<T> {
 }
 
 export interface WorkspaceResponse {
-  workspace: WorkspaceContext
+  workspace: WorkspaceContext | null
 }
