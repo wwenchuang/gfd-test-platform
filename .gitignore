@@ -15,6 +15,8 @@ dist/
 ai-gateway/logs/
 task-data/
 tests/artifacts/
+test-results/
+playwright-report/
 
 .env
 *.env

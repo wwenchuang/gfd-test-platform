@@ -123,6 +123,17 @@ class AiJobRepository:
     def get_job(self, job_id):
         return self.session.get(ApiAiJob, job_id)
 
+    def latest_incomplete_job(self, project_id):
+        return self.session.scalar(
+            select(ApiAiJob)
+            .where(
+                ApiAiJob.project_id == project_id,
+                ApiAiJob.state.in_(("queued", "running")),
+            )
+            .order_by(ApiAiJob.created_at.desc(), ApiAiJob.id.desc())
+            .limit(1)
+        )
+
     def get_job_for_update(self, job_id):
         return self.session.scalar(
             select(ApiAiJob).where(ApiAiJob.id == job_id).with_for_update()

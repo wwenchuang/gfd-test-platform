@@ -16398,6 +16398,28 @@ def check_api_testing_runtime_infrastructure():
     require("route_post_prefix_before_body" in router_source and "def dispatch_put" in router_source, "API POST requests must bypass legacy pre-body validation and workspace PUT must dispatch")
     require("def do_PUT" in app_source, "Task HTTP handler must expose workspace PUT")
 
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    require(
+        package.get("scripts", {}).get("test:api-testing") == "bash tests/run_api_testing_gate.sh",
+        "API testing must expose one reproducible full-stack deployment gate",
+    )
+    gate_path = ROOT / "tests" / "run_api_testing_gate.sh"
+    require(gate_path.exists(), "API testing full-stack gate script is missing")
+    gate_source = gate_path.read_text(encoding="utf-8")
+    for marker in (
+        "deploy/api-testing-compose.yml",
+        "tests/api_testing",
+        "api-testing-ui test",
+        "api-testing-ui run build",
+        "tests/api_testing_ui_visual_check.js",
+        "tests/api_testing_e2e.spec.mjs",
+    ):
+        require(marker in gate_source, f"API testing gate is missing: {marker}")
+    require(
+        (ROOT / "tests" / "fixtures" / "api-testing" / "favorites-target.mjs").exists(),
+        "API testing browser gate must use the deterministic favorites target",
+    )
+
 
 def main():
     check_ai_gateway_response_diagnostics()

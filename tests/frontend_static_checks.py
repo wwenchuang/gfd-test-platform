@@ -80,11 +80,33 @@ def check_api_automation_frontend_residue_is_removed():
         require(marker not in visual_smoke, f"API-only visual smoke residue must be removed: {marker}")
 
 
+def check_api_testing_frontend_workspace():
+    source_root = ROOT / "api-testing-ui" / "src"
+    require(source_root.is_dir(), "API testing Vue source workspace is missing")
+    app_source = (source_root / "App.vue").read_text(encoding="utf-8")
+    router_source = (source_root / "router.ts").read_text(encoding="utf-8")
+    for label in ("工作台", "接口资产", "执行记录", "测试报告", "环境配置"):
+        require(label in app_source, f"API testing navigation is missing: {label}")
+    for route in ("WorkbenchView", "AssetsView", "RunsView", "ReportsView", "SettingsView"):
+        require(route in router_source, f"API testing router is missing: {route}")
+    require((ROOT / "api-test" / "index.html").exists(), "Built API testing frontend is missing")
+
+    visual_source = (ROOT / "tests" / "api_testing_ui_visual_check.js").read_text(encoding="utf-8")
+    require("1440" in visual_source and "900" in visual_source, "API visual gate must cover desktop")
+    require("390" in visual_source and "844" in visual_source, "API visual gate must cover mobile")
+    require("assertNoHorizontalOverflow" in visual_source, "API visual gate must reject horizontal overflow")
+
+    acceptance_source = (ROOT / "tests" / "api_testing_e2e.spec.mjs").read_text(encoding="utf-8")
+    for marker in ("workbench-desktop.png", "workbench-mobile.png", "report-desktop.png", "report-mobile.png"):
+        require(marker in acceptance_source, f"API acceptance is missing screenshot evidence: {marker}")
+
+
 def main():
     # After the round-3 split, JS/CSS live in separate files. Static substring
     # checks below should still cover the full deployable bundle, so we
     # concatenate task-manager.html + css/app.css + js/*.js as a single blob.
     check_api_automation_frontend_residue_is_removed()
+    check_api_testing_frontend_workspace()
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")

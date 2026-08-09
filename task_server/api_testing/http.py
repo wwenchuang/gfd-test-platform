@@ -2,6 +2,7 @@
 
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime
+from functools import lru_cache
 import json
 import re
 import secrets
@@ -22,6 +23,7 @@ from .models.environment import ApiEnvironment, ApiEnvironmentRevision
 from .models.execution import ApiExecution, ApiExecutionCase
 from .models.project import ApiProject, ApiWorkspace
 from .models.source import ApiSource, ApiSourceDiff, ApiSourceEndpoint, ApiSourceRevision
+from .repositories.context_repository import ContextRepository
 from .repositories.source_repository import audit_fields
 from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
@@ -94,7 +96,13 @@ def _dispatch(handler, method, qs, path):
         if ticket:
             actor = _authenticate(handler, qs, segments, settings)
         if method == "GET" and _is_execution_events(segments):
-            return _stream_events(handler, _uuid(segments[1]), request_id, actor)
+            return _stream_events(
+                handler,
+                _uuid(segments[1]),
+                request_id,
+                actor,
+                after=qs.get("after"),
+            )
         payload = _read_json_body(handler) if method in {"POST", "PUT"} else None
         result, status = _route(method, segments, qs, payload, actor, settings)
         return _success(handler, result, request_id, status)
@@ -164,7 +172,7 @@ def _route(method, segments, qs, payload, actor, settings):
     if method == "GET":
         return _get(segments, qs, actor), 200
     if method == "POST":
-        return _post(segments, payload, actor, settings), 202 if segments == ("executions",) else 200
+        return _post(segments, payload, actor, settings), 202 if segments in {("executions",), ("regressions",)} else 200
     if method == "PUT":
         return _put(segments, payload, actor), 200
     if method == "DELETE":
@@ -177,7 +185,13 @@ def _factory():
 
 
 def _event_stream(factory):
-    return EventStream(factory)
+    settings = ApiTestingSettings.from_env()
+    return EventStream(factory, _shared_redis_client(settings.redis_url))
+
+
+@lru_cache(maxsize=4)
+def _shared_redis_client(redis_url):
+    return redis.Redis.from_url(redis_url, decode_responses=True)
 
 
 def _get(segments, qs, actor):
@@ -192,6 +206,32 @@ def _get(segments, qs, actor):
         with factory() as session:
             workspace = session.scalar(select(ApiWorkspace).where(ApiWorkspace.owner_id == actor))
         return {"workspace": _workspace_view(workspace) if workspace else None}
+    if segments == ("context-options",):
+        with factory() as session:
+            return ContextRepository(session).list_options(actor)
+    if segments == ("executions",):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        try:
+            limit = int(qs.get("limit", "50"))
+        except (TypeError, ValueError):
+            raise ApiHttpError(400, "invalid_request", "Execution list limit is invalid")
+        return {
+            "executions": [
+                _view(item)
+                for item in ExecutionService(
+                    factory, event_stream=_event_stream(factory)
+                ).list(project_id, actor, limit)
+            ]
+        }
+    if segments == ("ai-jobs", "latest"):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return {
+            "job": _view(
+                AiCaseService(factory).get_latest_incomplete_job(project_id)
+            )
+        }
     if len(segments) == 2 and segments[0] == "executions":
         _scope_execution(factory, _uuid(segments[1]), actor)
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).get(_uuid(segments[1])))}
@@ -213,6 +253,13 @@ def _get(segments, qs, actor):
     if len(segments) == 2 and segments[0] == "source-revisions":
         _scope_source_revision(factory, _uuid(segments[1]), actor)
         return {"source_revision": _view(SourceService(factory).get_revision(_uuid(segments[1])))}
+    if segments == ("cases",):
+        revision_id = _uuid(qs.get("source_revision_id", ""))
+        _scope_source_revision(factory, revision_id, actor)
+        versions = CaseService(factory).list_active_versions_for_source_revision(
+            revision_id, actor
+        )
+        return {"case_versions": [_view(item) for item in versions]}
     if segments == ("endpoints",):
         revision_id = _uuid(qs.get("source_revision_id", ""))
         _scope_source_revision(factory, revision_id, actor)
@@ -249,7 +296,8 @@ def _post(segments, payload, actor, settings):
         return {"environment": _view(EnvironmentService(factory).import_from_source(payload, actor))}
     if len(segments) == 3 and segments[0] == "environments" and segments[2] == "revisions":
         _scope_environment(factory, _uuid(segments[1]), actor)
-        return {"environment": _view(EnvironmentService(factory).create_revision(_uuid(segments[1]), payload.get("environment") or payload, payload.get("secret_updates") or {}, actor))}
+        changes = payload["environment"] if "environment" in payload else payload
+        return {"environment": _view(EnvironmentService(factory).create_revision(_uuid(segments[1]), changes, payload.get("secret_updates") or {}, actor))}
     if segments == ("cases",):
         _scope_endpoint(factory, _uuid(payload.get("endpoint_id")), actor)
         return {"case_version": _view(CaseService(factory).create_draft(_uuid(payload.get("endpoint_id")), _required_object(payload, "case"), payload.get("origin", "manual"), actor))}
@@ -269,6 +317,27 @@ def _post(segments, payload, actor, settings):
         execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(request, actor, _string(payload.get("idempotency_key"), "idempotency_key", 200))
         _enqueue_execution(execution.id)
         return {"execution": _view(execution)}
+    if segments == ("regressions",):
+        regression = {
+            "project_id": _uuid(payload.get("project_id")),
+            "source_revision_id": _uuid(payload.get("source_revision_id")),
+            "environment_revision_id": _uuid(payload.get("environment_revision_id")),
+        }
+        _scope_execution_request(
+            factory,
+            {**regression, "case_version_ids": [], "execution_type": "regression", "overrides": {}},
+            actor,
+            validate_cases=False,
+        )
+        execution = ExecutionService(
+            factory, event_stream=_event_stream(factory)
+        ).submit_active_baselines(
+            regression,
+            actor,
+            _string(payload.get("idempotency_key"), "idempotency_key", 200),
+        )
+        _enqueue_execution(execution.id)
+        return {"execution": _view(execution)}
     if len(segments) == 3 and segments[0] == "executions" and segments[2] == "cancel":
         _scope_execution(factory, _uuid(segments[1]), actor)
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).cancel(_uuid(segments[1]), actor))}
@@ -280,8 +349,17 @@ def _post(segments, payload, actor, settings):
         environment_revision_id = _uuid(payload.get("environment_revision_id"))
         project_id = _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor)
         _scope_project(factory, project_id, actor)
-        job = AiCaseService(factory).submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""))
-        _enqueue_ai_job(job.id)
+        service = AiCaseService(factory)
+        job = service.submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""))
+        try:
+            _enqueue_ai_job(job.id)
+        except Exception:
+            service.mark_enqueue_failure(job.id, actor)
+            raise ApiHttpError(
+                503,
+                "ai_enqueue_unavailable",
+                "AI generation queue is unavailable",
+            )
         return {"job": _view(job)}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
@@ -432,7 +510,7 @@ def _scope_environment_import(factory, payload, actor):
             raise _not_found()
 
 
-def _scope_execution_request(factory, request, actor):
+def _scope_execution_request(factory, request, actor, *, validate_cases=True):
     project = _scope_project(factory, request["project_id"], actor)
     source_revision = _scope_source_revision(factory, request["source_revision_id"], actor)
     environment_revision = _scope_environment_revision(factory, request["environment_revision_id"], actor)
@@ -440,6 +518,8 @@ def _scope_execution_request(factory, request, actor):
         raise _not_found()
     if _scope_environment(factory, environment_revision.environment_id, actor).project_id != project.id:
         raise _not_found()
+    if not validate_cases:
+        return
     for version_id in request["case_version_ids"]:
         version = _scope_case_version(factory, version_id, actor)
         case = _scope_case(factory, version.case_id, actor)
@@ -530,8 +610,10 @@ def _consume_sse_ticket(settings, ticket, execution_id):
     return value["owner_id"]
 
 
-def _stream_events(handler, execution_id, request_id, actor):
-    last_event_id = handler.headers.get("Last-Event-ID", "0").strip() or "0"
+def _stream_events(handler, execution_id, request_id, actor, *, after=None):
+    last_event_id = str(
+        after if after is not None else handler.headers.get("Last-Event-ID", "0")
+    ).strip() or "0"
     try:
         after_id = int(last_event_id)
     except ValueError:

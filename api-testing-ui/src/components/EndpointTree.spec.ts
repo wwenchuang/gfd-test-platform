@@ -28,4 +28,11 @@ describe('EndpointTree', () => {
     expect(mount(EndpointTree, { props: { endpoints: [], state: 'empty' } }).text()).toContain('尚无已保存接口')
     expect(mount(EndpointTree, { props: { endpoints: FAVORITES, state: 'partial' } }).text()).toContain('部分接口未能读取')
   })
+
+  it('keeps complete names and paths available when compact rows truncate them', () => {
+    const wrapper = mount(EndpointTree, { props: { endpoints: FAVORITES } })
+
+    expect(wrapper.get('.endpoint-copy strong').attributes('title')).toBe('收藏列表')
+    expect(wrapper.get('.endpoint-copy small').attributes('title')).toBe('/favorite/list')
+  })
 })

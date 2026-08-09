@@ -1057,3 +1057,36 @@ def test_skill_schema_and_eval_define_a_strict_chinese_contract():
         "favoriteAdd",
         "favoriteCancel",
     ]
+
+
+def test_failure_analyzer_returns_model_evidence_without_sending_bearer_secret():
+    from task_server.api_testing.services.ai_service import AiFailureAnalyzer
+
+    secret = "synthetic-failure-analysis-secret"
+    gateway = FakeGateway({
+        "success": True,
+        "providerId": "qwen_plus",
+        "model": "qwen3.7-plus",
+        "fallbackUsed": False,
+        "fallbackIndex": 0,
+        "fallbackReason": "",
+        "content": json.dumps({
+            "summary": "收藏接口业务码与预期不一致",
+            "root_cause": "服务返回业务失败",
+            "recommendations": ["核对收藏对象状态"],
+            "evidence": ["HTTP 200，但 $.code 为 4009"],
+        }, ensure_ascii=False),
+    })
+
+    result = AiFailureAnalyzer(gateway_client=gateway).analyze({
+        "status": "FAILED",
+        "failure_category": "product_assertion",
+        "sanitized_request": {"headers": {"Authorization": f"Bearer {secret}"}},
+        "sanitized_response": {"status_code": 200, "json": {"code": 4009}},
+    })
+
+    assert result["analyzer"] == "ai_gateway"
+    assert result["model"] == "qwen3.7-plus"
+    assert result["analysis"]["summary"] == "收藏接口业务码与预期不一致"
+    assert result["analysis"]["model_evidence"]["actual_provider_id"] == "qwen_plus"
+    assert secret not in json.dumps(gateway.calls, ensure_ascii=False)

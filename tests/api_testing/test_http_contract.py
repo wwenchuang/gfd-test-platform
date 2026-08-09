@@ -15,8 +15,8 @@ from task_server.api_testing.db import engine_for_url
 from task_server.api_testing.events import ExecutionEvent, EventStream
 from task_server.api_testing.models.case import ApiAiJob, ApiAiJobBatch, ApiCase, ApiCaseVersion
 from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
-from task_server.api_testing.models.execution import ApiExecution
-from task_server.api_testing.models.project import ApiProject
+from task_server.api_testing.models.execution import ApiExecution, ApiExecutionCase
+from task_server.api_testing.models.project import ApiProject, ApiWorkspace
 from task_server.api_testing.models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from task_server.app import TaskHTTPHandler, ThreadingHTTPServer
 from tests.api_testing.test_migrations import (
@@ -30,6 +30,21 @@ from tests.api_testing.test_migrations import (
 
 def _audit(owner):
     return {"owner_id": owner, "created_by": owner, "updated_by": owner}
+
+
+def test_default_event_stream_uses_configured_redis_wakeup(monkeypatch):
+    redis_client = object()
+    monkeypatch.setattr(
+        http.ApiTestingSettings,
+        "from_env",
+        staticmethod(lambda: SimpleNamespace(redis_url="redis://redis.example/7")),
+    )
+    monkeypatch.setattr(http, "_shared_redis_client", lambda url: redis_client)
+
+    stream = http._event_stream("factory")
+
+    assert stream.redis is redis_client
+    assert stream.session_factory == "factory"
 
 
 class HttpResponse:
@@ -165,11 +180,298 @@ def test_authenticated_reads_are_owner_scoped(http_client, owned_records):
     assert other.body["error"]["code"] == endpoints.body["error"]["code"] == "not_found"
 
 
+def test_execution_collection_is_owner_scoped_and_uses_display_metadata(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        execution = session.get(ApiExecution, owned_records["execution"].id)
+        execution.summary = {
+            "total": 1,
+            "passed": 0,
+            "failed": 1,
+            "broken": 0,
+            "cancelled": 0,
+        }
+        endpoint = session.get(ApiSourceEndpoint, owned_records["endpoint"].id)
+        endpoint.summary = "查询我的收藏"
+        session.add(
+            ApiExecutionCase(
+                execution_id=execution.id,
+                case_version_id=owned_records["version"].id,
+                endpoint_id=endpoint.id,
+                environment_revision_id=owned_records["environment_revision"].id,
+                ordinal=0,
+                status="FAILED",
+                failure_category="product_assertion",
+                duration_ms=86,
+                sanitized_result={
+                    "sanitized_request": {"method": "GET", "url": "https://example.test/favorites"},
+                    "sanitized_response": {"status_code": 200},
+                    "assertion_results": [{"passed": False, "message": "列表为空"}],
+                },
+                **_audit("owner-a"),
+            )
+        )
+
+    response = http_client.get(
+        f"/api/api-testing/v1/executions?project_id={owned_records['project'].id}",
+        _auth(),
+    )
+    denied = http_client.get(
+        f"/api/api-testing/v1/executions?project_id={owned_records['project'].id}",
+        _auth("owner-b"),
+    )
+
+    assert response.status == 200
+    records = response.body["data"]["executions"]
+    record = next(item for item in records if item["id"] == owned_records["execution"].id)
+    assert record["environment_name"] == "env"
+    assert record["case_results"][0] == {
+        "execution_case_id": record["case_results"][0]["execution_case_id"],
+        "case_version_id": owned_records["version"].id,
+        "endpoint_id": owned_records["endpoint"].id,
+        "case_name": "case",
+        "endpoint_summary": "查询我的收藏",
+        "method": "GET",
+        "path": "/favorites",
+        "status": "FAILED",
+            "failure_category": "product_assertion",
+            "failure_analysis": None,
+            "duration_ms": 86,
+        "sanitized_result": {
+            "sanitized_request": {"method": "GET", "url": "https://example.test/favorites"},
+            "sanitized_response": {"status_code": 200},
+            "assertion_results": [{"passed": False, "message": "列表为空"}],
+        },
+    }
+    assert denied.status == 404
+
+
+def test_active_case_versions_are_restored_for_owned_source_revision(
+    http_client, api_context, owned_records
+):
+    factory = api_context["factory"]
+    with factory.begin() as session:
+        first_case = session.get(ApiCase, owned_records["case"].id)
+        first_case.active_version_id = owned_records["version"].id
+
+        second_case = ApiCase(
+            project_id=owned_records["project"].id,
+            endpoint_id=owned_records["endpoint"].id,
+            name="收藏列表异常场景",
+            origin="ai",
+            **_audit("owner-a"),
+        )
+        session.add(second_case)
+        session.flush()
+        second_version = ApiCaseVersion(
+            case_id=second_case.id,
+            endpoint_id=owned_records["endpoint"].id,
+            version_number=1,
+            purpose="鉴权失败",
+            request_template={"name": second_case.name, "request": {}},
+            **_audit("owner-a"),
+        )
+        session.add(second_version)
+        session.flush()
+        second_case.active_version_id = second_version.id
+
+        inactive_version = ApiCaseVersion(
+            case_id=second_case.id,
+            endpoint_id=owned_records["endpoint"].id,
+            version_number=2,
+            purpose="未激活版本",
+            request_template={"name": "未激活版本", "request": {}},
+            **_audit("owner-a"),
+        )
+        session.add(inactive_version)
+
+        mismatched_case = ApiCase(
+            project_id=owned_records["other_project"].id,
+            endpoint_id=owned_records["endpoint"].id,
+            name="跨项目错误数据",
+            origin="manual",
+            **_audit("owner-b"),
+        )
+        session.add(mismatched_case)
+        session.flush()
+        mismatched_version = ApiCaseVersion(
+            case_id=mismatched_case.id,
+            endpoint_id=owned_records["endpoint"].id,
+            version_number=1,
+            purpose="不应返回",
+            request_template={"name": mismatched_case.name, "request": {}},
+            **_audit("owner-b"),
+        )
+        session.add(mismatched_version)
+        session.flush()
+        mismatched_case.active_version_id = mismatched_version.id
+
+    response = http_client.get(
+        f"/api/api-testing/v1/cases?source_revision_id={owned_records['revision'].id}",
+        _auth(),
+    )
+    denied = http_client.get(
+        f"/api/api-testing/v1/cases?source_revision_id={owned_records['revision'].id}",
+        _auth("owner-b"),
+    )
+
+    assert response.status == 200
+    restored = response.body["data"]["case_versions"]
+    assert [item["name"] for item in restored] == ["case", "收藏列表异常场景"]
+    assert {item["id"] for item in restored} == {
+        owned_records["version"].id,
+        second_version.id,
+    }
+    assert all(item["project_id"] == owned_records["project"].id for item in restored)
+    assert all(item["endpoint_id"] == owned_records["endpoint"].id for item in restored)
+    assert denied.status == 404
+
+
+def test_context_options_return_only_owned_active_display_metadata(
+    http_client, api_context, owned_records
+):
+    factory = api_context["factory"]
+    with factory.begin() as session:
+        session.get(ApiEnvironment, owned_records["environment"].id).active_revision_id = (
+            owned_records["environment_revision"].id
+        )
+        session.get(ApiProject, owned_records["project"].id).name = "3D 项目"
+        session.get(ApiSource, owned_records["source"].id).name = "Apifox 接口"
+        session.get(ApiEnvironmentRevision, owned_records["environment_revision"].id).name = (
+            "生产环境（新）- 腾讯云"
+        )
+
+    response = http_client.get("/api/api-testing/v1/context-options", _auth())
+
+    assert response.status == 200
+    options = response.body["data"]
+    assert options == {
+        "projects": [{"id": owned_records["project"].id, "name": "3D 项目"}],
+        "source_revisions": [
+            {
+                "id": owned_records["revision"].id,
+                "source_id": owned_records["source"].id,
+                "project_id": owned_records["project"].id,
+                "name": "Apifox 接口",
+                "revision_number": 1,
+                "endpoint_count": 1,
+            }
+        ],
+        "environment_revisions": [
+            {
+                "id": owned_records["environment_revision"].id,
+                "environment_id": owned_records["environment"].id,
+                "project_id": owned_records["project"].id,
+                "name": "生产环境（新）- 腾讯云",
+                "revision": 1,
+            }
+        ],
+    }
+    assert "normalized_document" not in json.dumps(options)
+    assert "default_headers" not in json.dumps(options)
+
+
+def test_context_options_are_empty_without_owned_saved_context(http_client, api_context):
+    response = http_client.get("/api/api-testing/v1/context-options", _auth("owner-b"))
+
+    assert response.status == 200
+    assert response.body["data"] == {
+        "projects": [],
+        "source_revisions": [],
+        "environment_revisions": [],
+    }
+
+
+def test_context_options_keep_saved_superseded_revisions_selectable(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        source = session.get(ApiSource, owned_records["source"].id)
+        environment = session.get(ApiEnvironment, owned_records["environment"].id)
+        old_source = session.get(ApiSourceRevision, owned_records["revision"].id)
+        old_environment = session.get(
+            ApiEnvironmentRevision, owned_records["environment_revision"].id
+        )
+        old_source.status = "superseded"
+        old_environment.status = "superseded"
+        current_source = ApiSourceRevision(
+            source_id=source.id,
+            revision_number=2,
+            status="active",
+            document_hash="c" * 64,
+            normalized_document={"openapi": "3.0.0"},
+            **_audit("owner-a"),
+        )
+        session.add(current_source)
+        session.flush()
+        source.active_revision_id = current_source.id
+        current_environment = ApiEnvironmentRevision(
+            environment_id=environment.id,
+            source_revision_id=current_source.id,
+            revision_number=2,
+            name="当前环境",
+            status="active",
+            **_audit("owner-a"),
+        )
+        session.add(current_environment)
+        session.flush()
+        environment.active_revision_id = current_environment.id
+        session.add(
+            ApiWorkspace(
+                project_id=owned_records["project"].id,
+                source_revision_id=old_source.id,
+                environment_revision_id=old_environment.id,
+                **_audit("owner-a"),
+            )
+        )
+
+    response = http_client.get("/api/api-testing/v1/context-options", _auth())
+
+    assert response.status == 200
+    assert {item["id"] for item in response.body["data"]["source_revisions"]} == {
+        owned_records["revision"].id,
+        current_source.id,
+    }
+    assert {item["id"] for item in response.body["data"]["environment_revisions"]} == {
+        owned_records["environment_revision"].id,
+        current_environment.id,
+    }
+
+
 def test_cross_owner_nested_write_is_hidden_not_validated(http_client, owned_records):
     response = http_client.post(f"/api/api-testing/v1/environments/{owned_records['environment'].id}/revisions", {}, _auth("owner-b"))
 
     assert response.status == 404
     assert response.body["error"]["code"] == "not_found"
+
+
+def test_secret_only_environment_revision_accepts_explicit_empty_changes(
+    http_client, api_context, owned_records, monkeypatch
+):
+    monkeypatch.setenv(
+        "API_TESTING_SECRET_KEY",
+        "http-contract-secret-6f971b1ce4264e8492aecf2721689e94",
+    )
+    with api_context["factory"].begin() as session:
+        environment = session.get(ApiEnvironment, owned_records["environment"].id)
+        environment.active_revision_id = owned_records["environment_revision"].id
+
+    response = http_client.post(
+        f"/api/api-testing/v1/environments/{owned_records['environment'].id}/revisions",
+        {
+            "environment": {},
+            "secret_updates": {"ZXBToken": "synthetic-secret-never-returned"},
+        },
+        _auth(),
+    )
+
+    assert response.status == 200
+    descriptor = response.body["data"]["environment"]["variables"]["ZXBToken"]
+    assert descriptor["name"] == "ZXBToken"
+    assert descriptor["configured"] is True
+    assert descriptor["fingerprint"]
+    assert "synthetic-secret-never-returned" not in json.dumps(response.body)
 
 
 def test_cross_owner_source_preview_is_hidden_before_document_validation(http_client, owned_records):
@@ -276,6 +578,60 @@ def test_ai_job_status_is_queryable_and_owner_scoped(http_client, api_context, o
     assert denied.status == 404
 
 
+def test_latest_unfinished_ai_job_can_be_restored_after_reload(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        completed = ApiAiJob(
+            project_id=owned_records["project"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            state="completed",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen",
+            actual_model="qwen",
+            summary={},
+            **_audit("owner-a"),
+        )
+        running = ApiAiJob(
+            project_id=owned_records["project"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            state="running",
+            endpoint_ids=[owned_records["endpoint"].id],
+            requested_model="qwen",
+            actual_model="qwen",
+            summary={},
+            **_audit("owner-a"),
+        )
+        session.add_all((completed, running))
+        session.flush()
+        session.add(
+            ApiAiJobBatch(
+                job_id=running.id,
+                sequence=1,
+                state="running",
+                endpoint_ids=[owned_records["endpoint"].id],
+                requested_model="qwen",
+                actual_model="qwen",
+                result={"draft_version_ids": [], "validation_errors": []},
+                error={},
+                **_audit("owner-a"),
+            )
+        )
+
+    response = http_client.get(
+        f"/api/api-testing/v1/ai-jobs/latest?project_id={owned_records['project'].id}",
+        _auth(),
+    )
+    denied = http_client.get(
+        f"/api/api-testing/v1/ai-jobs/latest?project_id={owned_records['project'].id}",
+        _auth("owner-b"),
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["job"]["id"] == running.id
+    assert denied.status == 404
+
+
 def test_ai_job_submission_enqueues_real_processing(http_client, owned_records, monkeypatch):
     queued = []
     monkeypatch.setattr(http, "_enqueue_ai_job", queued.append)
@@ -289,6 +645,47 @@ def test_ai_job_submission_enqueues_real_processing(http_client, owned_records, 
     assert response.status == 200
     assert queued == [response.body["data"]["job"]["id"]]
     assert response.body["data"]["job"]["state"] == "queued"
+
+
+def test_ai_job_enqueue_failure_is_persisted_as_safe_terminal_failure(
+    http_client, api_context, owned_records, monkeypatch
+):
+    secret = "sk-this-must-never-be-persisted"
+
+    def fail_enqueue(_job_id):
+        raise RuntimeError(f"Redis unavailable with credential {secret}")
+
+    monkeypatch.setattr(http, "_enqueue_ai_job", fail_enqueue)
+
+    response = http_client.post(
+        "/api/api-testing/v1/ai-jobs",
+        {
+            "endpoint_ids": [owned_records["endpoint"].id],
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "intent": "覆盖收藏列表",
+        },
+        _auth(),
+    )
+
+    assert response.status == 503
+    assert response.body["error"] == {
+        "code": "ai_enqueue_unavailable",
+        "message": "AI generation queue is unavailable",
+        "details": {},
+    }
+    with api_context["factory"]() as session:
+        job = session.query(ApiAiJob).one()
+        batches = session.query(ApiAiJobBatch).order_by(ApiAiJobBatch.sequence).all()
+        assert job.state == "failed_gateway"
+        assert job.summary["infrastructure_failure"] == "enqueue_failed"
+        assert job.summary["gateway_failures"] == len(batches) == 1
+        assert [item.state for item in batches] == ["failed_gateway"]
+        assert [item.error for item in batches] == [{"code": "enqueue_failed"}]
+        persisted = json.dumps(
+            {"summary": job.summary, "errors": [item.error for item in batches]}
+        )
+        assert secret not in persisted
+        assert "Redis unavailable" not in persisted
 
 
 def test_sse_ticket_is_reusable_for_eventsource_reconnect(http_client, api_context, owned_records):
@@ -348,6 +745,28 @@ def test_sse_ticket_reconnect_replays_only_new_durable_events(http_client, api_c
     assert first_sequence == 1
     assert second_sequence == 2
     assert second_body == b'id: 2\nevent: execution_finished\ndata: {"step":2}\n\n'
+
+
+def test_fresh_sse_ticket_can_resume_from_query_event_id(http_client, api_context, owned_records):
+    execution_id = owned_records["execution"].id
+    stream = EventStream(api_context["factory"], api_context["redis"])
+    first_sequence = stream.append(execution_id, "request", {"step": 1})
+    second_sequence = stream.append(execution_id, "execution_finished", {"step": 2})
+    with api_context["factory"].begin() as session:
+        session.get(ApiExecution, execution_id).state = "DONE"
+    ticket = http_client.post(
+        f"/api/api-testing/v1/executions/{execution_id}/sse-ticket", {}, _auth()
+    ).body["data"]["ticket"]
+
+    _, response = http_client.open_stream(
+        f"/api/api-testing/v1/executions/{execution_id}/events?ticket={ticket}&after={first_sequence}"
+    )
+    body = response.read()
+
+    assert response.status == 200
+    assert first_sequence == 1
+    assert second_sequence == 2
+    assert body == b'id: 2\nevent: execution_finished\ndata: {"step":2}\n\n'
 
 
 def test_sse_frames_resume_heartbeat_terminal_and_disconnect(monkeypatch):

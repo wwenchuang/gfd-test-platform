@@ -7551,6 +7551,95 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-08-10 API 测试 Phase 1 最终复审与并发稳定性收口
+
+独立代码复审在提交前发现 4 项线上稳定性风险，本轮均通过先补失败测试、再修改实现的方式关闭：
+
+- 失败用例不再在主执行任务中等待 AI。真实请求、结果落库、`case_finished` 和执行终态完成后，由独立 Celery 任务补充失败分析；送 AI 的脱敏证据限制为 128 KiB。前端对尚在分析的失败结果做有上限的后台刷新，分析不可用也不会阻塞报告。
+- HTTP SSE 默认使用 `API_TESTING_REDIS_URL` 对应的共享 Redis 客户端进行阻塞唤醒，不再让每个在线日志连接每 50ms 轮询 PostgreSQL；数据库仍是可重放的事实来源。
+- 执行记录选择增加版本隔离，快速切换 A/B 时较慢的 A 响应和旧 EventSource 的迟到事件不会覆盖 B 的标题、详情或日志。
+- SSE 断线按 1/2/5/10/30 秒退避并最多重试 5 次；耗尽后进入明确失败状态，并提供“重新连接日志”按钮，不再高频申请 ticket。
+
+最终完整验证：
+
+```bash
+npm run test:api-testing
+# Python API: 251 passed
+# Vue: 13 files / 60 passed
+# vue-tsc + Vite production build: passed
+# desktop/mobile visual check: passed
+# Playwright real browser E2E: 1 passed
+```
+
+真实浏览器 E2E 继续覆盖“我的收藏”三个接口的保存上下文、AI 生成、用例编辑、真实调试、采纳基线、一键回归、实时日志与报告闭环；报告同时保留 1 passed / 1 failed / 1 broken，并展示脱敏后的 `qwen3.7-plus` AI 失败分析证据。
+
+### 2026-08-10 API 测试平台 Phase 1：AI 设计、真实调试、基线回归与报告闭环
+
+Phase 1 已按 `docs/superpowers/plans/2026-08-08-api-testing-phase1.md` 完成基础设施和完整人工闭环：
+
+- PostgreSQL 16 保存项目、来源修订、环境修订、用例版本、基线证据、执行实例和报告；Redis 7 承载 Celery 队列、取消标记和可重连 SSE 事件。
+- 接口资产支持 OpenAPI 文件导入并固化为只读来源修订；工作台只展示项目、接口版本和执行环境中文名称，不要求用户填写技术 ID。
+- 环境配置支持 base URL、普通变量和加密敏感变量；浏览器只收到掩码与配置状态，真实 token 不进入 DOM、SSE、日志或报告 JSON。
+- AI 助手按选中接口通过 AI Gateway 生成结构化候选，保留 requested/actual provider/model 证据；失败分析同样调用 AI Gateway，模型不可用时明确降级为“平台诊断”，不伪装成 AI 结论。
+- 用例编辑器支持请求、数据、断言、提取、依赖和前后处理的结构化编辑与原始 JSON；嵌套校验错误定位到对应字段。
+- 在线调试不要求先采纳基线；只有同项目、接口、用例版本和环境修订的真实 PASSED 调试证据才能采纳为基线。
+- 自动回归通过真实 Celery worker 执行；实时日志使用短期、执行绑定、可重连 SSE ticket，并支持暂停自动滚动、级别/用例过滤和事件证据展开。
+- 报告分别展示 `PASSED / FAILED / BROKEN / CANCELLED / SKIPPED`，产品断言失败不会被脚本、网络或环境异常覆盖；请求、响应、断言、执行轨迹和 AI 失败分析均可追溯。
+- 执行记录可恢复到原项目/接口版本/环境上下文继续编辑；排队取消会生成真实取消结果，历史终态日志可从数据库恢复。
+
+真实浏览器验收使用本地隔离 PostgreSQL schema、Redis DB、Task server、Celery worker、确定性 AI Gateway 和目标服务，完整走通“我的收藏”三个接口：
+
+1. 登录现有任务平台并进入 `API 测试`。
+2. 导入并保存查询、添加、取消收藏 3 个接口。
+3. 创建 `生产环境（腾讯云）`，配置 `Biz` 与随机敏感 `ZXBToken`。
+4. AI 生成候选，编辑断言，逐条调试，再将通过证据采纳为基线。
+5. 自动回归产生 `1 PASSED / 1 FAILED / 1 BROKEN`，实时 SSE 全程不刷新页面。
+6. 最终报告展示 qwen3.7-plus AI 失败分析；随机 token 未出现在 DOM、服务日志、目标日志或报告 JSON。
+7. 1440x900 与 390x844 截图检查通过：桌面三栏、移动单列、AI 面板折叠、长路径 tooltip、实时日志和报告均无横向溢出。
+
+本轮完整验证：
+
+```bash
+npm run test:api-testing
+# 249 passed（Python API 测试）
+# 54 passed / 13 files（Vue 组件与 store）
+# vue-tsc + Vite production build 通过
+# API 桌面/移动视觉检查通过
+# Playwright “我的收藏”真实端到端 1 passed
+
+npm run test:static
+# undefined-name、backend 63、frontend 72、AI Gateway 46、模型目录和 AI Skill 合同全部通过
+
+npm run test:visual
+# 原平台桌面/移动 Agent、失败分析、重跑等视觉冒烟通过
+
+git diff --check
+# 通过
+```
+
+本地基础设施健康与迁移：
+
+```bash
+API_TESTING_POSTGRES_PASSWORD="${API_TESTING_POSTGRES_PASSWORD}" \
+  docker compose -f deploy/api-testing-compose.yml up -d --wait
+API_TESTING_ENABLED=1 deploy/api-testing-migrate.sh
+npm run test:api-testing
+```
+
+服务器部署仍使用现有顺序，必须先迁移再重启服务：
+
+```bash
+cd /opt/midscene-task-platform-src
+git pull --ff-only
+bash deploy/install-server.sh
+systemctl restart midscene-task
+systemctl restart midscene-api-worker
+curl http://127.0.0.1:8091/api/health
+curl http://127.0.0.1:8088/api/health
+```
+
+Phase 2 边界保持不变：测试集 DAG、跨用例提取、批量编排、合同漂移影响分析和完整版本对比不在 Phase 1 内；定时任务、通知、多 worker lease、趋势、Mock、性能/安全检查、角色权限和 CI/CD 触发继续按后续阶段实现。本轮没有用占位能力冒充这些后续功能。
+
 ### 2026-07-30 API 执行页 Apifox 环境快照修复与线上核查
 
 - 线上 8091 `/api/health` 与 8088 `/api/health` 均恢复 200；静态页加载版本为 `20260730-api-env-readiness`，`/api/auth/login` 登录正常。

@@ -5,13 +5,14 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
 
-from ..models.case import ApiCase, ApiCaseVersion
+from ..models.case import ApiBaseline, ApiCase, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import (
     ApiExecution,
     ApiExecutionAttempt,
     ApiExecutionCase,
     ApiExecutionEvent,
+    ApiFailureAnalysis,
 )
 from ..models.project import ApiProject
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
@@ -74,6 +75,35 @@ class ExecutionRepository:
             )
         }
 
+    def active_baseline_version_ids(
+        self,
+        project_id,
+        source_revision_id,
+        environment_revision_id,
+        owner_id,
+    ):
+        return tuple(
+            self.session.scalars(
+                select(ApiBaseline.case_version_id)
+                .join(
+                    ApiCaseVersion,
+                    ApiCaseVersion.id == ApiBaseline.case_version_id,
+                )
+                .join(
+                    ApiSourceEndpoint,
+                    ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
+                )
+                .where(
+                    ApiBaseline.project_id == project_id,
+                    ApiBaseline.environment_revision_id == environment_revision_id,
+                    ApiBaseline.owner_id == owner_id,
+                    ApiBaseline.status == "active",
+                    ApiSourceEndpoint.revision_id == source_revision_id,
+                )
+                .order_by(ApiBaseline.created_at, ApiBaseline.id)
+            )
+        )
+
     def get_by_idempotency(self, project_id, key):
         return self.session.scalar(
             select(ApiExecution).where(
@@ -126,6 +156,47 @@ class ExecutionRepository:
             query = query.with_for_update()
         return self.session.scalar(query)
 
+    def list_executions(self, project_id, owner_id, limit=50):
+        return tuple(
+            self.session.scalars(
+                select(ApiExecution)
+                .where(
+                    ApiExecution.project_id == project_id,
+                    ApiExecution.owner_id == owner_id,
+                )
+                .order_by(ApiExecution.created_at.desc(), ApiExecution.id.desc())
+                .limit(limit)
+            )
+        )
+
+    def display_metadata(self, execution, children):
+        versions = self.get_case_versions(item.case_version_id for item in children)
+        cases = self.get_cases(item.case_id for item in versions.values())
+        endpoints = self.get_endpoints(item.endpoint_id for item in children)
+        environment = self.get_environment_revision(execution.environment_revision_id)
+        analyses = self.latest_failure_analyses(item.id for item in children)
+        return {
+            "environment_name": environment.name if environment is not None else "",
+            "cases": cases,
+            "versions": versions,
+            "endpoints": endpoints,
+            "failure_analyses": analyses,
+        }
+
+    def latest_failure_analyses(self, execution_case_ids):
+        identifiers = tuple(dict.fromkeys(execution_case_ids))
+        if not identifiers:
+            return {}
+        records = self.session.scalars(
+            select(ApiFailureAnalysis)
+            .where(ApiFailureAnalysis.execution_case_id.in_(identifiers))
+            .order_by(ApiFailureAnalysis.created_at.desc(), ApiFailureAnalysis.id.desc())
+        )
+        output = {}
+        for record in records:
+            output.setdefault(record.execution_case_id, record)
+        return output
+
     def get_execution_cases(self, execution_id, *, for_update=False):
         query = (
             select(ApiExecutionCase)
@@ -175,6 +246,7 @@ class ExecutionRepository:
                 if child.status == "QUEUED":
                     child.status = "CANCELLED"
                     child.failure_category = "cancelled"
+            return self.finalize_execution(execution.id, actor_id)
         self.session.flush()
         return execution
 
@@ -215,6 +287,20 @@ class ExecutionRepository:
         execution_case.duration_ms = result.duration_ms
         execution_case.sanitized_result = copy.deepcopy(result.to_dict())
         execution_case.updated_by = actor_id
+        self.session.flush()
+        return record
+
+    def create_failure_analysis(self, execution_case, attempt_id, payload, actor_id):
+        record = ApiFailureAnalysis(
+            execution_case_id=execution_case.id,
+            attempt_id=attempt_id,
+            category=execution_case.failure_category or "unknown",
+            analyzer=payload["analyzer"],
+            model=payload["model"],
+            analysis=copy.deepcopy(payload["analysis"]),
+            **audit_fields(actor_id),
+        )
+        self.session.add(record)
         self.session.flush()
         return record
 

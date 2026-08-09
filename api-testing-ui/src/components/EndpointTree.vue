@@ -54,7 +54,7 @@ function toggle(endpointId: string, checked: boolean): void {
         />
         <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
           <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
-          <span class="endpoint-copy"><strong>{{ endpoint.summary || endpoint.path }}</strong><small>{{ endpoint.path }}</small></span>
+          <span class="endpoint-copy"><strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong><small :title="endpoint.path">{{ endpoint.path }}</small></span>
         </button>
       </label>
     </div>

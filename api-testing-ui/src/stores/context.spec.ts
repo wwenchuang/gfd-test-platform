@@ -83,6 +83,16 @@ describe('context store', () => {
     expect(store.sourceRevisionId).toBe(SERVER_WORKSPACE.source_revision_id)
     expect(store.environmentRevisionId).toBe(SERVER_WORKSPACE.environment_revision_id)
     expect(store.error).toBe('')
+    expect(store.isSaved).toBe(true)
+  })
+
+  it('marks the workspace dirty as soon as a saved selection changes', () => {
+    const store = useContextStore()
+    store.applyWorkspace(SAVED_WORKSPACE)
+
+    store.selectEnvironmentRevision('environment-revision-2')
+
+    expect(store.isSaved).toBe(false)
   })
 
   it('reports an invalid save response instead of accepting an empty workspace', async () => {
@@ -93,5 +103,17 @@ describe('context store', () => {
     })
 
     expect(store.error).toBe('工作区保存响应无效')
+  })
+
+  it('temporarily restores the exact context captured by a historical execution', () => {
+    const store = useContextStore()
+    store.applyWorkspace(SAVED_WORKSPACE)
+
+    store.restoreExecutionContext(SERVER_WORKSPACE)
+
+    expect(store.projectId).toBe(SERVER_WORKSPACE.project_id)
+    expect(store.sourceRevisionId).toBe(SERVER_WORKSPACE.source_revision_id)
+    expect(store.environmentRevisionId).toBe(SERVER_WORKSPACE.environment_revision_id)
+    expect(store.isSaved).toBe(false)
   })
 })

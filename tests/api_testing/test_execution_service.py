@@ -19,6 +19,7 @@ from task_server.api_testing.models.execution import (
     ApiExecutionAttempt,
     ApiExecutionCase,
     ApiExecutionEvent,
+    ApiFailureAnalysis,
 )
 from task_server.api_testing.models.project import ApiProject
 from task_server.api_testing.services.case_service import CaseService
@@ -154,6 +155,25 @@ class _ExplodingExecutor:
         raise RuntimeError("worker exploded with token=plain-worker-secret")
 
 
+class _FakeFailureAnalyzer:
+    def __init__(self):
+        self.calls = []
+
+    def analyze(self, evidence):
+        self.calls.append(copy.deepcopy(evidence))
+        return {
+            "analyzer": "ai_gateway",
+            "model": "qwen3.7-plus",
+            "analysis": {
+                "summary": "收藏接口业务码异常",
+                "root_cause": "服务返回 code=4009",
+                "recommendations": ["核对收藏对象状态"],
+                "evidence": ["$.code 期望 0，实际 4009"],
+                "model_evidence": {"actual_provider_id": "qwen_plus", "actual_model": "qwen3.7-plus"},
+            },
+        }
+
+
 class _PhaseExecutor:
     def __init__(self):
         self.barrier = threading.Barrier(2)
@@ -226,6 +246,38 @@ def test_submit_idempotency_snapshots_and_payload_conflict(
         assert record.environment_revision_id == execution_context["environment_revision"].id
         assert child.case_version_id == execution_context["case"].id
         assert child.endpoint_id == execution_context["endpoint"].id
+
+
+def test_submit_active_baselines_creates_one_click_regression(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    debug = service.submit(_request(execution_context), "admin", "baseline-debug")
+    assert service.run(debug.id) is True
+    debug_result = service.get(debug.id).case_results[0]
+    CaseService(session_factory).adopt_baseline(
+        execution_context["case"].id,
+        debug_result["execution_case_id"],
+        "admin",
+    )
+
+    execution = service.submit_active_baselines(
+        {
+            "project_id": execution_context["project"].id,
+            "source_revision_id": execution_context["source_revision"].id,
+            "environment_revision_id": execution_context["environment_revision"].id,
+        },
+        "admin",
+        "baseline-regression",
+    )
+
+    assert execution.execution_type == "regression"
+    assert execution.case_statuses == ("QUEUED",)
+    assert execution.case_results[0]["case_version_id"] == execution_context["case"].id
 
 
 def test_concurrent_submit_with_same_key_creates_one_execution(
@@ -303,6 +355,83 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
     assert view.case_results[0]["status"] == "PASSED"
     assert view.case_results[0]["sanitized_result"]["status"] == "PASSED"
     assert executor.calls == 2
+
+
+def test_failed_case_persists_ai_analysis_evidence_in_report(
+    session_factory, redis_client, execution_context
+):
+    analyzer = _FakeFailureAnalyzer()
+    dispatched = []
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("FAILED", "product_assertion")]),
+        failure_analysis_dispatcher=lambda *args: dispatched.append(args),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(_request(execution_context), "admin", "failure-analysis")
+
+    assert service.run(execution.id) is True
+    analysis_service = ExecutionService(
+        session_factory,
+        failure_analyzer=analyzer,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    assert analysis_service.analyze_failure(*dispatched[0]) is True
+    result = analysis_service.get(execution.id).case_results[0]
+
+    assert analyzer.calls[0]["failure_category"] == "product_assertion"
+    assert result["failure_analysis"]["analyzer"] == "ai_gateway"
+    assert result["failure_analysis"]["model"] == "qwen3.7-plus"
+    assert result["failure_analysis"]["analysis"]["summary"] == "收藏接口业务码异常"
+    with session_factory() as session:
+        stored = session.scalar(
+            select(ApiFailureAnalysis).where(
+                ApiFailureAnalysis.execution_case_id == result["execution_case_id"]
+            )
+        )
+        assert stored is not None
+        assert stored.attempt_id is not None
+
+
+def test_failure_analysis_is_dispatched_after_terminal_result_with_bounded_evidence(
+    session_factory, redis_client, execution_context
+):
+    large = _Result("FAILED", "product_assertion")
+    large.to_dict = lambda: {
+        "status": "FAILED",
+        "failure_category": "product_assertion",
+        "response": {"body": "x" * (1024 * 1024)},
+    }
+    dispatched = []
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([large]),
+        failure_analysis_dispatcher=lambda *args: dispatched.append(args),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context),
+        "admin",
+        "dispatched-failure-analysis",
+    )
+
+    assert service.run(execution.id) is True
+    terminal = service.get(execution.id)
+    assert terminal.state == "DONE"
+    assert terminal.case_results[0]["failure_analysis"] is None
+    assert len(dispatched) == 1
+    assert len(json.dumps(dispatched[0][3], ensure_ascii=False).encode("utf-8")) <= 128 * 1024
+
+    analyzer = _FakeFailureAnalyzer()
+    analysis_service = ExecutionService(
+        session_factory,
+        failure_analyzer=analyzer,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    analysis_service.analyze_failure(*dispatched[0])
+
+    result = analysis_service.get(execution.id).case_results[0]
+    assert result["failure_analysis"]["model"] == "qwen3.7-plus"
 
 
 def test_worker_exception_creates_broken_attempt_and_converges_all_children(
@@ -387,17 +516,55 @@ def test_worker_exception_creates_broken_attempt_and_converges_all_children(
 def test_cancel_intent_is_persistent_and_prevents_request(
     session_factory, redis_client, execution_context
 ):
+    first_case = execution_context["case"]
+    with session_factory.begin() as session:
+        original = session.get(ApiCaseVersion, first_case.id)
+        parent = session.get(ApiCase, original.case_id)
+        second = ApiCaseVersion(
+            case_id=parent.id,
+            endpoint_id=original.endpoint_id,
+            version_number=original.version_number + 1,
+            status="draft",
+            purpose=original.purpose,
+            priority=original.priority,
+            request_template=copy.deepcopy(original.request_template),
+            dependency_spec={"dependencies": []},
+            processing_spec={"pre": [], "post": []},
+            **_audit(),
+        )
+        session.add(second)
+        session.flush()
+        second_id = second.id
     executor = _FakeExecutor([_Result("PASSED")])
     service = ExecutionService(
         session_factory,
         executor=executor,
         event_stream=EventStream(session_factory, redis_client),
     )
-    execution = service.submit(_request(execution_context), "admin", "cancel-key")
+    execution = service.submit(
+        _request(
+            execution_context,
+            case_version_ids=[first_case.id, second_id],
+        ),
+        "admin",
+        "cancel-key",
+    )
     cancelled = service.cancel(execution.id, "admin")
     assert cancelled.cancellation_requested is True
+    assert cancelled.state == "CANCELLED"
+    assert cancelled.case_statuses == ("CANCELLED", "CANCELLED")
+    assert cancelled.summary == {
+        "total": 2,
+        "passed": 0,
+        "failed": 0,
+        "broken": 0,
+        "cancelled": 2,
+    }
     assert service.run(execution.id) is False
-    assert service.get(execution.id).state == "CANCELLED"
+    persisted = service.get(execution.id)
+    assert persisted.state == "CANCELLED"
+    assert persisted.case_statuses == ("CANCELLED", "CANCELLED")
+    assert persisted.summary == cancelled.summary
     assert executor.calls == 0
 
 

@@ -15,6 +15,7 @@ from ..models.case import (
 )
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import ApiExecution, ApiExecutionCase
+from ..models.project import ApiProject
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
 from .source_repository import audit_fields
 
@@ -38,6 +39,39 @@ class CaseRepository:
     def get_case_for_update(self, case_id):
         return self.session.scalar(
             select(ApiCase).where(ApiCase.id == case_id).with_for_update()
+        )
+
+    def list_active_versions_for_source_revision(self, revision_id, actor_id):
+        return tuple(
+            self.session.execute(
+                select(ApiCaseVersion, ApiCase)
+                .join(ApiCase, ApiCase.id == ApiCaseVersion.case_id)
+                .join(
+                    ApiSourceEndpoint,
+                    ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
+                )
+                .join(
+                    ApiSourceRevision,
+                    ApiSourceRevision.id == ApiSourceEndpoint.revision_id,
+                )
+                .join(ApiSource, ApiSource.id == ApiSourceRevision.source_id)
+                .join(ApiProject, ApiProject.id == ApiSource.project_id)
+                .where(
+                    ApiSourceRevision.id == revision_id,
+                    ApiProject.owner_id == actor_id,
+                    ApiCase.owner_id == actor_id,
+                    ApiCase.project_id == ApiProject.id,
+                    ApiCase.endpoint_id == ApiSourceEndpoint.id,
+                    ApiCaseVersion.endpoint_id == ApiCase.endpoint_id,
+                    ApiCase.active_version_id == ApiCaseVersion.id,
+                )
+                .order_by(
+                    ApiSourceEndpoint.normalized_path,
+                    ApiSourceEndpoint.method,
+                    ApiCase.name,
+                    ApiCase.id,
+                )
+            )
         )
 
     def create_case(self, project_id, endpoint_id, name, origin, actor_id):

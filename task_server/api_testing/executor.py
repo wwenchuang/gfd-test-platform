@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 import http.client
 import ipaddress
 import json
+import os
 import re
 import socket
 import ssl
@@ -51,6 +52,18 @@ class CancelledExecution(Exception):
 @dataclass(frozen=True)
 class HostPolicy:
     test_only_allowed_hosts: frozenset = frozenset()
+
+    @classmethod
+    def from_environment(cls):
+        app_env = os.getenv("TASK_APP_ENV", "prod").strip().lower()
+        if app_env not in {"test", "dev"}:
+            return cls()
+        hosts = frozenset(
+            item.strip().rstrip(".").lower()
+            for item in os.getenv("API_TESTING_TEST_ALLOWED_HOSTS", "").split(",")
+            if item.strip()
+        )
+        return cls(test_only_allowed_hosts=hosts)
 
     def resolve(self, url):
         parsed = urlsplit(url)
@@ -214,7 +227,7 @@ class HttpExecutor:
     ):
         self.case_service = case_service
         self.environment_service = environment_service
-        self.host_policy = host_policy or HostPolicy()
+        self.host_policy = host_policy or HostPolicy.from_environment()
         self.limits = limits or ExecutorLimits()
         self.cancellation_check = cancellation_check or (lambda _phase: False)
         self.phase_callback = phase_callback
@@ -406,6 +419,7 @@ class HttpExecutor:
                 self._remaining(deadline)
                 transport_socket.settimeout(self._remaining(deadline))
                 raw = connection.getresponse()
+                transport_socket = self._response_socket(raw, connection)
                 self._remaining(deadline)
                 if raw.status in {301, 302, 303, 307, 308}:
                     location = raw.getheader("Location")
@@ -428,6 +442,8 @@ class HttpExecutor:
                 chunks = []
                 size = 0
                 while True:
+                    if raw.isclosed():
+                        break
                     transport_socket.settimeout(self._remaining(deadline))
                     chunk = raw.read1(self.limits.read_chunk_bytes)
                     self._remaining(deadline)
@@ -476,6 +492,17 @@ class HttpExecutor:
         if remaining <= 0:
             raise RequestTimeoutError("request deadline exceeded")
         return remaining
+
+    @staticmethod
+    def _response_socket(response, connection):
+        stream = getattr(response, "fp", None)
+        buffered = getattr(stream, "raw", None)
+        response_socket = getattr(buffered, "_sock", None)
+        if response_socket is not None and response_socket.fileno() >= 0:
+            return response_socket
+        if connection.sock is not None and connection.sock.fileno() >= 0:
+            return connection.sock
+        raise ConnectionError("response transport is unavailable")
 
     @staticmethod
     def _origin(url):

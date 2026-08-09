@@ -384,6 +384,17 @@ def test_not_exists_assertion_treats_missing_path_as_product_result(target_serve
     assert result.status == "PASSED"
 
 
+def test_local_fixture_hosts_require_explicit_non_production_opt_in(monkeypatch):
+    monkeypatch.setenv("TASK_APP_ENV", "test")
+    monkeypatch.setenv("API_TESTING_TEST_ALLOWED_HOSTS", "127.0.0.1, localhost")
+    assert HostPolicy.from_environment().test_only_allowed_hosts == frozenset(
+        {"127.0.0.1", "localhost"}
+    )
+
+    monkeypatch.setenv("TASK_APP_ENV", "prod")
+    assert HostPolicy.from_environment().test_only_allowed_hosts == frozenset()
+
+
 def test_expected_negative_status_passes_only_with_explicit_status_assertion(
     target_server,
 ):

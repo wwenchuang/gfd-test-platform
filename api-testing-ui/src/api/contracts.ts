@@ -13,6 +13,85 @@ export interface WorkspaceResponse {
   workspace: WorkspaceContext | null
 }
 
+export interface ProjectOption {
+  id: string
+  name: string
+}
+
+export interface SourceRevisionOption {
+  id: string
+  source_id: string
+  project_id: string
+  name: string
+  revision_number: number
+  endpoint_count: number
+}
+
+export interface EnvironmentRevisionOption {
+  id: string
+  environment_id: string
+  project_id: string
+  name: string
+  revision: number
+}
+
+export interface EnvironmentServiceSnapshot {
+  name: string
+  module_name?: string
+  base_url: string | null
+  unresolved: boolean
+  metadata?: Record<string, unknown>
+}
+
+export interface EnvironmentRevisionSnapshot {
+  revision_id: string
+  variables: Record<string, unknown>
+  services: Record<string, EnvironmentServiceSnapshot>
+}
+
+export interface SourcePreview {
+  id: string
+  project_id: string
+  source_id: string
+  previous_revision_id: string | null
+  candidate_revision_id: string
+  added_count: number
+  changed_count: number
+  removed_count: number
+  changes: Array<Record<string, unknown>>
+}
+
+export interface SourceRevision {
+  id: string
+  project_id: string
+  source_id: string
+  revision_number: number
+  status: string
+  normalized_document: Record<string, unknown>
+  endpoints: ApiEndpoint[]
+}
+
+export interface EnvironmentView {
+  id: string
+  project_id: string
+  source_id: string | null
+  revision_id: string
+  source_revision_id: string | null
+  revision: number
+  name: string
+  description: string
+  status: string
+  services: Record<string, EnvironmentServiceSnapshot>
+  variables: Record<string, unknown>
+  default_headers: Record<string, unknown>
+}
+
+export interface ContextOptionsResponse {
+  projects: ProjectOption[]
+  source_revisions: SourceRevisionOption[]
+  environment_revisions: EnvironmentRevisionOption[]
+}
+
 export type LoadState = 'idle' | 'loading' | 'ready' | 'partial' | 'empty' | 'failed'
 
 export interface ApiEndpoint {
@@ -97,16 +176,66 @@ export interface DebugResult {
 
 export interface ExecutionView {
   id: string
+  project_id: string
   state: string
+  execution_type: 'debug' | 'regression'
+  source_revision_id: string
+  environment_revision_id: string
+  environment_name: string
   case_statuses: string[]
-  case_results: Array<{
-    execution_case_id: string
-    case_version_id: string
-    endpoint_id: string
-    status: string
-    failure_category: string
-    duration_ms: number
-    sanitized_result: Record<string, unknown>
-  }>
+  case_results: ExecutionCaseResult[]
   summary: Record<string, number>
+  cancellation_requested: boolean
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface ExecutionCaseResult {
+  execution_case_id: string
+  case_version_id: string
+  endpoint_id: string
+  case_name: string
+  endpoint_summary: string
+  method: string
+  path: string
+  status: string
+  failure_category: string
+  duration_ms: number
+  sanitized_result: Record<string, unknown>
+  failure_analysis?: {
+    category: string
+    analyzer: string
+    model: string
+    analysis: {
+      summary?: string
+      root_cause?: string
+      recommendations?: string[]
+      evidence?: string[]
+      model_evidence?: Record<string, unknown>
+    }
+  } | null
+}
+
+export type ExecutionConnectionState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'complete' | 'failed'
+
+export interface ExecutionEventView {
+  id: number
+  type: string
+  level: 'info' | 'warning' | 'error' | 'success'
+  caseId: string
+  message: string
+  payload: Record<string, unknown>
+}
+
+export interface CaseValidationIssue {
+  code: string
+  field: string
+  message: string
+}
+
+export interface CaseValidation {
+  valid: boolean
+  errors: CaseValidationIssue[]
+  warnings: CaseValidationIssue[]
 }

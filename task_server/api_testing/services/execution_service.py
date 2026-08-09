@@ -15,6 +15,9 @@ from .case_service import CaseService
 from .environment_service import EnvironmentService
 
 
+MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES = 128 * 1024
+
+
 class ExecutionConflictError(ValueError):
     pass
 
@@ -31,6 +34,7 @@ class ExecutionView:
     execution_type: str
     source_revision_id: str
     environment_revision_id: str
+    environment_name: str
     case_statuses: tuple
     case_results: tuple
     summary: MappingProxyType
@@ -82,12 +86,22 @@ def _parse_request(value):
 
 
 class ExecutionService:
-    def __init__(self, session_factory, *, executor=None, event_stream=None):
+    def __init__(
+        self,
+        session_factory,
+        *,
+        executor=None,
+        event_stream=None,
+        failure_analyzer=None,
+        failure_analysis_dispatcher=None,
+    ):
         self.session_factory = session_factory
         self.event_stream = event_stream or EventStream(session_factory)
         self.executor = executor or HttpExecutor(
             CaseService(session_factory), EnvironmentService(session_factory)
         )
+        self.failure_analyzer = failure_analyzer
+        self.failure_analysis_dispatcher = failure_analysis_dispatcher
 
     def submit(self, request, actor_id, idempotency_key):
         parsed = _parse_request(request)
@@ -103,7 +117,7 @@ class ExecutionService:
                 if existing.request_snapshot.get("fingerprint") != fingerprint:
                     raise ExecutionConflictError("idempotency key was used with a different payload")
                 children = repository.get_execution_cases(existing.id)
-                return self._view(existing, children)
+                return self._repository_view(repository, existing, children)
             context = self._validate_snapshot(repository, parsed)
             snapshot = {
                 "fingerprint": fingerprint,
@@ -147,12 +161,45 @@ class ExecutionService:
                     raise ExecutionConflictError(
                         "idempotency key was used with a different payload"
                     )
-                return self._view(
-                    existing, repository.get_execution_cases(existing.id)
-                )
-            view = self._view(execution, children)
+                children = repository.get_execution_cases(existing.id)
+                return self._repository_view(repository, existing, children)
+            view = self._repository_view(repository, execution, children)
         self.event_stream.append(view.id, "execution_queued", {"case_count": len(view.case_statuses)})
         return view
+
+    def submit_active_baselines(self, request, actor_id, idempotency_key):
+        if not isinstance(request, dict) or set(request) != {
+            "project_id",
+            "source_revision_id",
+            "environment_revision_id",
+        }:
+            raise ValueError("baseline regression request fields are invalid")
+        if not all(
+            isinstance(request.get(field), str) and request[field]
+            for field in request
+        ):
+            raise ValueError("baseline regression context is required")
+        with self.session_factory() as session:
+            version_ids = ExecutionRepository(session).active_baseline_version_ids(
+                request["project_id"],
+                request["source_revision_id"],
+                request["environment_revision_id"],
+                actor_id,
+            )
+        if not version_ids:
+            raise ExecutionConflictError(
+                "no active baselines match the current source and environment"
+            )
+        return self.submit(
+            {
+                **copy.deepcopy(request),
+                "case_version_ids": list(version_ids),
+                "execution_type": "regression",
+                "overrides": {},
+            },
+            actor_id,
+            idempotency_key,
+        )
 
     def get(self, execution_id):
         with self.session_factory() as session:
@@ -160,7 +207,24 @@ class ExecutionService:
             execution = repository.get_execution(execution_id)
             if execution is None:
                 raise ExecutionNotFoundError("API execution was not found")
-            return self._view(execution, repository.get_execution_cases(execution.id))
+            children = repository.get_execution_cases(execution.id)
+            return self._repository_view(repository, execution, children)
+
+    def list(self, project_id, actor_id, limit=50):
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("execution list limit must be between 1 and 100")
+        with self.session_factory() as session:
+            repository = ExecutionRepository(session)
+            return tuple(
+                self._repository_view(
+                    repository,
+                    execution,
+                    repository.get_execution_cases(execution.id),
+                )
+                for execution in repository.list_executions(
+                    project_id, actor_id, limit
+                )
+            )
 
     def cancel(self, execution_id, actor_id):
         with self.session_factory.begin() as session:
@@ -169,7 +233,7 @@ class ExecutionService:
             if execution is None:
                 raise ExecutionNotFoundError("API execution was not found")
             children = repository.get_execution_cases(execution.id)
-            view = self._view(execution, children)
+            view = self._repository_view(repository, execution, children)
         self.event_stream.signal_cancel(execution_id)
         self.event_stream.append(execution_id, "cancellation_requested", {})
         return view
@@ -211,7 +275,10 @@ class ExecutionService:
                 except Exception as exc:
                     worker_error = exc
                     result = self._broken_result(exc)
-                self._persist_child_result(execution_id, child.id, result)
+                attempt_id = self._persist_child_result(execution_id, child.id, result)
+                self._dispatch_failure_analysis(
+                    execution_id, child.id, attempt_id, result
+                )
                 self.event_stream.append(
                     execution_id,
                     "case_finished",
@@ -271,7 +338,81 @@ class ExecutionService:
                 if item.id == child_id
             )
             if current.status == "RUNNING":
-                repository.create_attempt(current, result, "worker")
+                return repository.create_attempt(current, result, "worker").id
+        return None
+
+    def _dispatch_failure_analysis(self, execution_id, child_id, attempt_id, result):
+        if (
+            self.failure_analysis_dispatcher is None
+            or attempt_id is None
+            or result.status not in {"FAILED", "BROKEN"}
+        ):
+            return
+        evidence = self._bounded_failure_evidence(redact(result.to_dict()))
+        try:
+            self.failure_analysis_dispatcher(
+                execution_id, child_id, attempt_id, evidence
+            )
+        except Exception as error:
+            self._safe_event(
+                execution_id,
+                "failure_analysis_unavailable",
+                {
+                    "execution_case_id": child_id,
+                    "error": type(error).__name__,
+                },
+            )
+
+    def analyze_failure(self, execution_id, child_id, attempt_id, evidence):
+        if self.failure_analyzer is None:
+            raise RuntimeError("failure analyzer is not configured")
+        try:
+            payload = self.failure_analyzer.analyze(redact(copy.deepcopy(evidence)))
+            with self.session_factory.begin() as session:
+                repository = ExecutionRepository(session)
+                child = next(
+                    item for item in repository.get_execution_cases(execution_id)
+                    if item.id == child_id
+                )
+                analysis = repository.create_failure_analysis(
+                    child, attempt_id, payload, "worker"
+                )
+            self._safe_event(
+                execution_id,
+                "failure_analysis",
+                {
+                    "execution_case_id": child_id,
+                    "analyzer": analysis.analyzer,
+                    "model": analysis.model,
+                },
+            )
+            return True
+        except Exception as error:
+            self._safe_event(
+                execution_id,
+                "failure_analysis_unavailable",
+                {
+                    "execution_case_id": child_id,
+                    "error": type(error).__name__,
+                },
+            )
+            return False
+
+    @staticmethod
+    def _bounded_failure_evidence(evidence):
+        encoded = json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded) <= MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES:
+            return evidence
+        preview = encoded[: MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES // 2].decode(
+            "utf-8", errors="ignore"
+        )
+        return {
+            "truncated": True,
+            "original_bytes": len(encoded),
+            "preview": preview,
+        }
 
     def _converge_outstanding(self, execution_id, error):
         result = self._broken_result(error)
@@ -383,8 +524,21 @@ class ExecutionService:
                 raise ValueError("case version does not match source revision and project")
         return {"versions": versions, "endpoints": endpoints}
 
+    @classmethod
+    def _repository_view(cls, repository, execution, children):
+        return cls._view(
+            execution,
+            children,
+            repository.display_metadata(execution, children),
+        )
+
     @staticmethod
-    def _view(execution, children):
+    def _view(execution, children, display_metadata=None):
+        display = display_metadata or {}
+        versions = display.get("versions", {})
+        cases = display.get("cases", {})
+        endpoints = display.get("endpoints", {})
+        failure_analyses = display.get("failure_analyses", {})
         return ExecutionView(
             id=execution.id,
             project_id=execution.project_id,
@@ -392,16 +546,41 @@ class ExecutionService:
             execution_type=execution.execution_type,
             source_revision_id=execution.source_revision_id,
             environment_revision_id=execution.environment_revision_id,
+            environment_name=str(display.get("environment_name", "")),
             case_statuses=tuple(item.status for item in children),
             case_results=tuple(
                 MappingProxyType({
                     "execution_case_id": item.id,
                     "case_version_id": item.case_version_id,
                     "endpoint_id": item.endpoint_id,
+                    "case_name": (
+                        cases.get(versions[item.case_version_id].case_id).name
+                        if item.case_version_id in versions
+                        and cases.get(versions[item.case_version_id].case_id)
+                        else ""
+                    ),
+                    "endpoint_summary": endpoints[item.endpoint_id].summary
+                    if item.endpoint_id in endpoints
+                    else "",
+                    "method": endpoints[item.endpoint_id].method
+                    if item.endpoint_id in endpoints
+                    else "",
+                    "path": endpoints[item.endpoint_id].path
+                    if item.endpoint_id in endpoints
+                    else "",
                     "status": item.status,
                     "failure_category": item.failure_category,
                     "duration_ms": item.duration_ms,
                     "sanitized_result": copy.deepcopy(dict(item.sanitized_result)),
+                    "failure_analysis": (
+                        {
+                            "category": failure_analyses[item.id].category,
+                            "analyzer": failure_analyses[item.id].analyzer,
+                            "model": failure_analyses[item.id].model,
+                            "analysis": copy.deepcopy(dict(failure_analyses[item.id].analysis)),
+                        }
+                        if item.id in failure_analyses else None
+                    ),
                 })
                 for item in children
             ),

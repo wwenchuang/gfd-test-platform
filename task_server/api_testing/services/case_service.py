@@ -86,6 +86,16 @@ class CaseService:
             case = repository.get_case(version.case_id)
             return self._version_view(repository, version, case)
 
+    def list_active_versions_for_source_revision(self, revision_id, actor_id):
+        with self.session_factory() as session:
+            repository = CaseRepository(session)
+            return tuple(
+                self._version_view(repository, version, case)
+                for version, case in repository.list_active_versions_for_source_revision(
+                    revision_id, actor_id
+                )
+            )
+
     def validate_case(self, case_version_id, environment_metadata):
         with self.session_factory() as session:
             repository = CaseRepository(session)

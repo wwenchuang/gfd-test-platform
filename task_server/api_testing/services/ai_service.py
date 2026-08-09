@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from sqlalchemy import func, select
 
 from ..contracts.case import CasePayloadError, CaseVersionView, parse_case_payload
+from ..executor import redact
 from ..repositories.ai_job_repository import AiJobRepository
 from .case_service import CaseService
 
@@ -154,6 +155,73 @@ class AiGatewayClient:
         if not isinstance(parsed, dict) or parsed.get("success") is not True:
             raise AiGatewayError("AI Gateway returned an unsuccessful response")
         return parsed
+
+
+class AiFailureAnalyzer:
+    """Best-effort evidence analysis through the same governed AI Gateway."""
+
+    def __init__(self, gateway_client=None, timeout_seconds=20):
+        self.gateway_client = gateway_client or AiGatewayClient()
+        self.timeout_seconds = timeout_seconds
+
+    def analyze(self, evidence):
+        safe_evidence = redact(copy.deepcopy(evidence))
+        provider_id = os.getenv("API_TESTING_AI_PROVIDER_ID", "")
+        model = os.getenv("API_TESTING_AI_MODEL", "")
+        response = self.gateway_client.chat(
+            messages=(
+                {
+                    "role": "system",
+                    "content": (
+                        "你是 API 测试失败分析器。只根据证据输出严格 JSON，字段必须为 "
+                        "summary、root_cause、recommendations、evidence；后两项是字符串数组。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(safe_evidence, ensure_ascii=False, separators=(",", ":")),
+                },
+            ),
+            provider_id=provider_id,
+            model=model,
+            timeout_seconds=self.timeout_seconds,
+        )
+        try:
+            content = json.loads(response.get("content", ""))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise AiGatewayError("AI Gateway returned invalid failure analysis JSON") from exc
+        if not isinstance(content, dict) or set(content) != {
+            "summary", "root_cause", "recommendations", "evidence"
+        }:
+            raise AiGatewayError("AI Gateway returned an invalid failure analysis contract")
+        summary = self._bounded_text(content["summary"], "summary", 1000)
+        root_cause = self._bounded_text(content["root_cause"], "root_cause", 2000)
+        recommendations = self._text_list(content["recommendations"], "recommendations")
+        evidence_items = self._text_list(content["evidence"], "evidence")
+        model_evidence = AiCaseService._model_evidence(response, provider_id, model)
+        return {
+            "analyzer": "ai_gateway",
+            "model": model_evidence["actual_model"],
+            "analysis": redact({
+                "summary": summary,
+                "root_cause": root_cause,
+                "recommendations": recommendations,
+                "evidence": evidence_items,
+                "model_evidence": model_evidence,
+            }),
+        }
+
+    @staticmethod
+    def _bounded_text(value, field, maximum):
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum:
+            raise AiGatewayError(f"AI Gateway returned invalid {field}")
+        return value.strip()
+
+    @classmethod
+    def _text_list(cls, value, field):
+        if not isinstance(value, list) or not 1 <= len(value) <= 10:
+            raise AiGatewayError(f"AI Gateway returned invalid {field}")
+        return [cls._bounded_text(item, field, 1000) for item in value]
 
 
 class _BoundSessionFactory:
@@ -337,6 +405,51 @@ class AiCaseService:
             job = repository.get_job(job_id)
             if job is None:
                 raise AiJobNotFoundError("AI case generation job was not found")
+            return self._job_view(repository, job)
+
+    def get_latest_incomplete_job(self, project_id):
+        with self.session_factory() as session:
+            repository = AiJobRepository(session)
+            job = repository.latest_incomplete_job(project_id)
+            return self._job_view(repository, job) if job is not None else None
+
+    def mark_enqueue_failure(self, job_id, actor_id):
+        with self.session_factory.begin() as session:
+            repository = AiJobRepository(session)
+            job = repository.get_job_for_update(job_id)
+            if job is None or job.owner_id != actor_id:
+                raise AiJobNotFoundError("AI case generation job was not found")
+            if job.state != "queued":
+                return self._job_view(repository, job)
+
+            failed_batches = 0
+            for batch in repository.list_batches(job.id):
+                if batch.state != "queued":
+                    continue
+                repository.update_batch(
+                    batch,
+                    state="failed_gateway",
+                    actual_model=batch.actual_model,
+                    result=batch.result,
+                    error={"code": "enqueue_failed"},
+                    actor_id=actor_id,
+                )
+                failed_batches += 1
+
+            summary = copy.deepcopy(job.summary)
+            summary.update(
+                {
+                    "gateway_failures": failed_batches,
+                    "infrastructure_failure": "enqueue_failed",
+                }
+            )
+            repository.update_job(
+                job,
+                state="failed_gateway",
+                actual_model=job.actual_model,
+                summary=summary,
+                actor_id=actor_id,
+            )
             return self._job_view(repository, job)
 
     def _process_batch(self, job_id, batch_id, actor_id):

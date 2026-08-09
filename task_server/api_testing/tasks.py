@@ -6,7 +6,7 @@ from .config import ApiTestingSettings
 from .db import _session_factory
 from .events import EventStream
 from .services.execution_service import ExecutionService
-from .services.ai_service import AiCaseService
+from .services.ai_service import AiCaseService, AiFailureAnalyzer
 
 
 settings = ApiTestingSettings.from_env()
@@ -20,6 +20,10 @@ if settings.enabled:
     )
 
 
+def _dispatch_failure_analysis(execution_id, child_id, attempt_id, evidence):
+    analyze_api_failure.delay(execution_id, child_id, attempt_id, evidence)
+
+
 @celery_app.task(name="api_testing.execute", bind=True, acks_late=True)
 def execute_api_testing(self, execution_id):
     factory = _session_factory()
@@ -31,8 +35,27 @@ def execute_api_testing(self, execution_id):
     except Exception:
         redis_client = None
     return ExecutionService(
-        factory, event_stream=EventStream(factory, redis_client)
+        factory,
+        event_stream=EventStream(factory, redis_client),
+        failure_analysis_dispatcher=_dispatch_failure_analysis,
     ).run(execution_id)
+
+
+@celery_app.task(name="api_testing.analyze_failure", bind=True, acks_late=True)
+def analyze_api_failure(self, execution_id, child_id, attempt_id, evidence):
+    factory = _session_factory()
+    redis_client = None
+    try:
+        import redis
+
+        redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+    except Exception:
+        redis_client = None
+    return ExecutionService(
+        factory,
+        event_stream=EventStream(factory, redis_client),
+        failure_analyzer=AiFailureAnalyzer(),
+    ).analyze_failure(execution_id, child_id, attempt_id, evidence)
 
 
 @celery_app.task(name="api_testing.generate_cases", bind=True, acks_late=True)

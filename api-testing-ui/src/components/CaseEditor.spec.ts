@@ -47,4 +47,88 @@ describe('CaseEditor', () => {
     const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
     expect(emitted.assertions[0].expected).toBe(201)
   })
+
+  it('writes request body edits back into request.body', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    await wrapper.find('[data-testid="request-body"]').setValue('{"favoriteId": 42}')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.request.body).toEqual({ favoriteId: 42 })
+    expect((emitted as unknown as Record<string, unknown>).body).toBeUndefined()
+  })
+
+  it('edits headers as rows instead of requiring a JSON object', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    await wrapper.find('[data-testid="headers-add"]').trigger('click')
+    const names = wrapper.findAll('[data-testid="headers-name"]')
+    const values = wrapper.findAll('[data-testid="headers-value"]')
+    await names.at(-1)!.setValue('X-Biz')
+    await values.at(-1)!.setValue('ZXB')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.request.headers['X-Biz']).toBe('ZXB')
+  })
+
+  it('shows invalid JSON feedback without discarding the typed request body', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+    const body = wrapper.find('[data-testid="request-body"]')
+
+    await body.setValue('{broken')
+
+    expect(wrapper.get('[data-error-for="request.body"]').text()).toContain('JSON')
+    expect((body.element as HTMLTextAreaElement).value).toBe('{broken')
+  })
+
+  it('renders backend errors and warnings next to affected structured sections', () => {
+    const wrapper = mount(CaseEditor, {
+      props: {
+        modelValue: DRAFT,
+        validationErrors: {
+          'request.headers.Authorization': 'Authorization 变量未配置',
+          'assertions[0].expected': '状态码必须是整数',
+        },
+        validationWarnings: { 'data_rows[0]': '数据行没有覆盖边界值' },
+      },
+    })
+
+    expect(wrapper.get('[data-error-for="request.headers.Authorization"]').text()).toContain('Authorization')
+    expect(wrapper.get('[data-error-for="assertions[0].expected"]').text()).toContain('整数')
+    expect(wrapper.get('[data-warning-for="data_rows[0]"]').text()).toContain('边界值')
+  })
+
+  it('shows missing structured request parameters in their owning sections', () => {
+    const wrapper = mount(CaseEditor, {
+      props: {
+        modelValue: DRAFT,
+        validationErrors: {
+          'request.query.pageSize': '缺少查询参数 pageSize',
+          'request.headers.X-Trace-Id': '缺少请求头 X-Trace-Id',
+          'request.path_params.favoriteId': '缺少路径参数 favoriteId',
+        },
+      },
+    })
+
+    for (const [field, legend] of [
+      ['request.query.pageSize', '查询参数'],
+      ['request.headers.X-Trace-Id', '请求头'],
+      ['request.path_params.favoriteId', '路径参数'],
+    ]) {
+      const feedback = wrapper.get(`[data-error-for="${field}"]`)
+      expect(feedback.element.closest('fieldset')?.querySelector('legend')?.textContent).toBe(legend)
+    }
+  })
+
+  it('shows nested request body validation errors in the body editor', () => {
+    const wrapper = mount(CaseEditor, {
+      props: {
+        modelValue: DRAFT,
+        validationErrors: { 'request.body.favorite.ownerId': '缺少收藏用户标识' },
+      },
+    })
+
+    const feedback = wrapper.get('[data-error-for="request.body.favorite.ownerId"]')
+    expect(feedback.element.closest('label')?.textContent).toContain('请求体（JSON）')
+  })
 })
