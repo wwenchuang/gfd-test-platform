@@ -45,6 +45,31 @@ class _TargetHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/slow"):
             time.sleep(0.2)
             self._send(200, {"code": 0})
+        elif self.path.startswith("/drip"):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", "4")
+            self.end_headers()
+            for value in b"slow":
+                try:
+                    self.wfile.write(bytes([value]))
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+                time.sleep(0.06)
+        elif self.path.startswith("/token"):
+            self._send(
+                200,
+                {
+                    "data": {
+                        "access_token": "server-issued-review-secret",
+                        "profile": {
+                            "password": "server-password-secret",
+                            "apiKey": "server-api-key-secret",
+                        },
+                    }
+                },
+            )
         elif self.path.startswith("/disconnect"):
             self.connection.shutdown(2)
             self.connection.close()
@@ -56,6 +81,15 @@ class _TargetHandler(BaseHTTPRequestHandler):
             self.send_response(302)
             self.send_header("Location", "/redirect-loop")
             self.end_headers()
+        elif self.path.startswith("/redirect-slow/"):
+            step = int(self.path.rsplit("/", 1)[-1])
+            time.sleep(0.04)
+            if step < 3:
+                self.send_response(302)
+                self.send_header("Location", f"/redirect-slow/{step + 1}")
+                self.end_headers()
+            else:
+                self._send(200, {"code": 0})
         elif self.path.startswith("/redirect-cross-origin"):
             self.send_response(302)
             self.send_header("Location", f"http://localhost:{type(self).port}/capture")
@@ -228,7 +262,7 @@ def test_missing_variable_is_broken_before_network(target_server):
 @pytest.mark.parametrize(
     "path, limits, category",
     [
-        ("/slow", ExecutorLimits(timeout_seconds=0.05, max_response_bytes=2048), "transport"),
+        ("/slow", ExecutorLimits(timeout_seconds=0.05, max_response_bytes=2048), "timeout"),
         ("/disconnect", ExecutorLimits(timeout_seconds=1, max_response_bytes=2048), "transport"),
         ("/large", ExecutorLimits(timeout_seconds=1, max_response_bytes=128), "response_limit"),
     ],
@@ -348,6 +382,94 @@ def test_not_exists_assertion_treats_missing_path_as_product_result(target_serve
         ),
     ).execute_case("case-version-1", "environment-revision-1", {})
     assert result.status == "PASSED"
+
+
+def test_expected_negative_status_passes_only_with_explicit_status_assertion(
+    target_server,
+):
+    expected = _executor(
+        target_server,
+        _case("/missing", assertions=[_assertion("status_code", "equals", 404)]),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+    unasserted = _executor(target_server, _case("/missing")).execute_case(
+        "case-version-1", "environment-revision-1", {}
+    )
+    other_assertion_failed = _executor(
+        target_server,
+        _case(
+            "/missing",
+            assertions=[
+                _assertion("status_code", "equals", 404),
+                _assertion("header", "exists", None, name="X-Required"),
+            ],
+        ),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+    assert expected.status == "PASSED"
+    assert unasserted.status == "FAILED"
+    assert unasserted.failure_category == "product_response"
+    assert other_assertion_failed.status == "FAILED"
+    assert other_assertion_failed.failure_category == "product_assertion"
+
+
+def test_timeout_is_total_deadline_across_slow_body_and_redirects(target_server):
+    for path in ("/drip", "/redirect-slow/0"):
+        started = time.monotonic()
+        result = _executor(
+            target_server,
+            _case(path),
+            limits=ExecutorLimits(
+                timeout_seconds=0.1,
+                max_response_bytes=2048,
+                max_redirects=5,
+            ),
+        ).execute_case("case-version-1", "environment-revision-1", {})
+        elapsed = time.monotonic() - started
+        assert result.status == "BROKEN"
+        assert result.failure_category == "timeout"
+        assert elapsed < 0.2
+
+
+def test_server_generated_sensitive_values_are_masked_everywhere(target_server):
+    phases = []
+    result = HttpExecutor(
+        _CaseService(
+            _case(
+                "/token",
+                assertions=[
+                    _assertion(
+                        "json_path",
+                        "equals",
+                        "server-issued-review-secret",
+                        "$.data.access_token",
+                    )
+                ],
+                extractions=[
+                    _extraction("issuedToken", "json_path", "$.data.access_token")
+                ],
+            )
+        ),
+        _EnvironmentService(target_server[0]),
+        host_policy=HostPolicy(
+            test_only_allowed_hosts=frozenset({"127.0.0.1"})
+        ),
+        phase_callback=lambda phase, payload: phases.append((phase, payload)),
+    ).execute_case("case-version-1", "environment-revision-1", {})
+    persisted = json.dumps(
+        {"result": result.to_dict(), "phases": phases}, ensure_ascii=False
+    )
+    for secret in (
+        "server-issued-review-secret",
+        "server-password-secret",
+        "server-api-key-secret",
+    ):
+        assert secret not in persisted
+    assert result.status == "PASSED"
+    assert {phase for phase, _payload in phases} >= {
+        "request",
+        "response",
+        "extraction",
+        "assertion",
+    }
 
 
 def test_explicit_cancellation_wins_before_and_after_request(target_server):

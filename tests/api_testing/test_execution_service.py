@@ -1,6 +1,9 @@
 import copy
 from concurrent.futures import ThreadPoolExecutor
+import json
 import os
+import threading
+import time
 
 from alembic import command
 from sqlalchemy import create_engine, func, select
@@ -11,7 +14,12 @@ import redis
 from task_server.api_testing.events import EventStream
 from task_server.api_testing.models.case import ApiCase, ApiCaseVersion
 from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
-from task_server.api_testing.models.execution import ApiExecution, ApiExecutionCase
+from task_server.api_testing.models.execution import (
+    ApiExecution,
+    ApiExecutionAttempt,
+    ApiExecutionCase,
+    ApiExecutionEvent,
+)
 from task_server.api_testing.models.project import ApiProject
 from task_server.api_testing.services.case_service import CaseService
 from task_server.api_testing.services.execution_service import (
@@ -141,6 +149,37 @@ class _FakeExecutor:
         return self.results.pop(0)
 
 
+class _ExplodingExecutor:
+    def execute_case(self, *_args, **_kwargs):
+        raise RuntimeError("worker exploded with token=plain-worker-secret")
+
+
+class _PhaseExecutor:
+    def __init__(self):
+        self.barrier = threading.Barrier(2)
+
+    def execute_case(
+        self,
+        case_version_id,
+        _environment_revision_id,
+        _overrides,
+        *,
+        cancellation_check=None,
+        phase_callback=None,
+    ):
+        self.barrier.wait(timeout=2)
+        phase_callback(
+            "request", {"case_version_id": case_version_id, "token": "phase-secret"}
+        )
+        phase_callback(
+            "response", {"case_version_id": case_version_id, "status_code": 200}
+        )
+        phase_callback(
+            "assertion", {"case_version_id": case_version_id, "passed": True}
+        )
+        return _Result("PASSED")
+
+
 class _Result:
     def __init__(self, status, category=""):
         self.status = status
@@ -263,6 +302,85 @@ def test_duplicate_worker_is_compare_and_set_and_summary_keeps_child_truth(
     assert executor.calls == 2
 
 
+def test_worker_exception_creates_broken_attempt_and_converges_all_children(
+    session_factory, redis_client, execution_context
+):
+    first_case = execution_context["case"]
+    with session_factory.begin() as session:
+        original = session.get(ApiCaseVersion, first_case.id)
+        parent = session.get(ApiCase, original.case_id)
+        second = ApiCaseVersion(
+            case_id=parent.id,
+            endpoint_id=original.endpoint_id,
+            version_number=original.version_number + 1,
+            status="draft",
+            purpose=original.purpose,
+            priority=original.priority,
+            request_template=copy.deepcopy(original.request_template),
+            dependency_spec={"dependencies": []},
+            processing_spec={"pre": [], "post": []},
+            **_audit(),
+        )
+        session.add(second)
+        session.flush()
+        second_id = second.id
+    service = ExecutionService(
+        session_factory,
+        executor=_ExplodingExecutor(),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(
+            execution_context,
+            case_version_ids=[first_case.id, second_id],
+        ),
+        "admin",
+        "worker-exception",
+    )
+    assert service.run(execution.id) is True
+    assert service.run(execution.id) is False
+    view = service.get(execution.id)
+    assert view.state == "DONE"
+    assert view.case_statuses == ("BROKEN", "BROKEN")
+    assert view.summary["broken"] == 2
+    with session_factory() as session:
+        attempts = tuple(
+            session.scalars(
+                select(ApiExecutionAttempt)
+                .join(
+                    ApiExecutionCase,
+                    ApiExecutionCase.id == ApiExecutionAttempt.execution_case_id,
+                )
+                .where(ApiExecutionCase.execution_id == execution.id)
+            )
+        )
+        assert len(attempts) == 2
+        persisted = json.dumps(
+            [
+                {
+                    "status": item.status,
+                    "error": item.error_message,
+                    "request": item.request,
+                    "response": item.response,
+                }
+                for item in attempts
+            ]
+        )
+        assert "plain-worker-secret" not in persisted
+        failure_events = tuple(
+            session.scalars(
+                select(ApiExecutionEvent).where(
+                    ApiExecutionEvent.execution_id == execution.id,
+                    ApiExecutionEvent.event_type == "failure",
+                )
+            )
+        )
+        assert len(failure_events) == 1
+        assert "plain-worker-secret" not in json.dumps(
+            failure_events[0].payload
+        )
+
+
 def test_cancel_intent_is_persistent_and_prevents_request(
     session_factory, redis_client, execution_context
 ):
@@ -295,6 +413,76 @@ def test_event_resume_is_strict_and_redis_failure_falls_back_to_postgres(
     assert [item.sequence for item in stream.read(execution.id, first, 1)] == [second]
 
 
+def test_postgres_fallback_blocks_until_deadline_or_new_event(
+    session_factory, execution_context
+):
+    stream = EventStream(session_factory, None)
+    service = ExecutionService(session_factory, event_stream=stream)
+    execution = service.submit(
+        _request(execution_context), "admin", "postgres-block"
+    )
+    latest = stream.read(execution.id, 0, 0)[-1].sequence
+    started = time.monotonic()
+    assert stream.read(execution.id, latest, 180) == ()
+    assert time.monotonic() - started >= 0.16
+
+    def append_later():
+        time.sleep(0.07)
+        stream.append(execution.id, "late", {"status": "ready"})
+
+    thread = threading.Thread(target=append_later)
+    thread.start()
+    started = time.monotonic()
+    events = stream.read(execution.id, latest, 500)
+    thread.join(timeout=1)
+    assert [item.type for item in events] == ["late"]
+    assert time.monotonic() - started < 0.3
+
+
+def test_phase_events_are_durable_sanitized_and_isolated_between_executions(
+    session_factory, redis_client, execution_context
+):
+    executor = _PhaseExecutor()
+    service = ExecutionService(
+        session_factory,
+        executor=executor,
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    first = service.submit(
+        _request(execution_context), "admin", "phase-first"
+    )
+    second = service.submit(
+        _request(execution_context), "admin", "phase-second"
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert list(pool.map(service.run, [first.id, second.id])) == [True, True]
+    for execution in (first, second):
+        events = service.event_stream.read(execution.id, 0, 0)
+        phase_events = [
+            item for item in events if item.type in {"request", "response", "assertion"}
+        ]
+        assert [item.type for item in phase_events] == [
+            "request",
+            "response",
+            "assertion",
+        ]
+        persisted = json.dumps([item.payload for item in events])
+        assert "phase-secret" not in persisted
+        assert len(
+            {
+                item.payload["execution_case_id"]
+                for item in phase_events
+            }
+        ) == 1
+    with session_factory() as session:
+        assert session.scalar(
+            select(func.count(ApiExecutionEvent.id)).where(
+                ApiExecutionEvent.execution_id.in_([first.id, second.id]),
+                ApiExecutionEvent.event_type == "request",
+            )
+        ) == 2
+
+
 def test_redis_stream_is_bounded_and_expires(
     session_factory, redis_client, execution_context, monkeypatch
 ):
@@ -308,6 +496,12 @@ def test_redis_stream_is_bounded_and_expires(
     key = service.event_stream._key(execution.id)
     assert redis_client.xlen(key) <= 5
     assert 0 < redis_client.ttl(key) <= EventStream.TTL_SECONDS
+    service.event_stream.append(
+        execution.id, "large", {"body": "x" * (EventStream.MAX_PAYLOAD_BYTES * 2)}
+    )
+    large = service.event_stream.read(execution.id, 0, 0)[-1]
+    assert large.payload["truncated"] is True
+    assert len(json.dumps(large.payload).encode()) <= EventStream.MAX_PAYLOAD_BYTES
 
 
 def test_submit_rejects_cross_project_or_revision_drift(

@@ -40,6 +40,10 @@ class RedirectLimitError(ValueError):
     pass
 
 
+class RequestTimeoutError(TimeoutError):
+    pass
+
+
 class CancelledExecution(Exception):
     pass
 
@@ -137,6 +141,31 @@ class CaseExecutionResult:
         }
 
 
+def discover_sensitive_values(value, key_name="", *, _depth=0, _found=None):
+    if _found is None:
+        _found = set()
+    if _depth > 32 or len(_found) >= 1000:
+        return tuple(_found)
+    sensitive = bool(_SENSITIVE_NAME.search(str(key_name)))
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if sensitive:
+                discover_sensitive_values(
+                    item, "secret", _depth=_depth + 1, _found=_found
+                )
+            discover_sensitive_values(
+                item, str(key), _depth=_depth + 1, _found=_found
+            )
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            discover_sensitive_values(
+                item, key_name, _depth=_depth + 1, _found=_found
+            )
+    elif sensitive and isinstance(value, str) and value:
+        _found.add(value)
+    return tuple(_found)
+
+
 def redact(value, secret_values=(), key_name=""):
     secrets = tuple(item for item in secret_values if isinstance(item, str) and item)
     if _SENSITIVE_NAME.search(str(key_name)):
@@ -181,15 +210,27 @@ class HttpExecutor:
         host_policy=None,
         limits=None,
         cancellation_check=None,
+        phase_callback=None,
     ):
         self.case_service = case_service
         self.environment_service = environment_service
         self.host_policy = host_policy or HostPolicy()
         self.limits = limits or ExecutorLimits()
         self.cancellation_check = cancellation_check or (lambda _phase: False)
+        self.phase_callback = phase_callback
 
-    def execute_case(self, case_version_id, environment_revision_id, overrides):
+    def execute_case(
+        self,
+        case_version_id,
+        environment_revision_id,
+        overrides,
+        *,
+        cancellation_check=None,
+        phase_callback=None,
+    ):
         started = time.monotonic()
+        cancel = cancellation_check or self.cancellation_check
+        callback = phase_callback or self.phase_callback
         trace = []
         request_view = {}
         response_view = {}
@@ -234,67 +275,119 @@ class HttpExecutor:
                 {"method": rendered["method"], "url": url, "headers": headers, "body": body},
                 secrets,
             )
-            self._check_cancel("before_request")
-            trace.append({"phase": "request", "request": request_view})
+            self._check_cancel("before_request", cancel)
+            self._emit_phase(callback, trace, "request", {"request": request_view})
             response = self._request(rendered["method"], url, headers, body_bytes)
+            response_secrets = tuple(
+                dict.fromkeys(
+                    secrets
+                    + discover_sensitive_values(response.json_body)
+                    + discover_sensitive_values(response.headers)
+                    + discover_sensitive_values(response.cookies, "cookie")
+                )
+            )
+            sanitized_body = (
+                json.dumps(
+                    redact(response.json_body, response_secrets),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                if response.json_body is not None
+                else redact(response.body_text, response_secrets)
+            )
             response_view = redact(
                 {
                     "status_code": response.status_code,
                     "headers": response.headers,
-                    "body": response.body_text,
+                    "body": sanitized_body,
                     "duration_ms": response.duration_ms,
                     "url": response.url,
                 },
-                secrets,
+                response_secrets,
             )
-            trace.append({"phase": "response", "response": response_view})
-            self._check_cancel("after_response")
+            self._emit_phase(
+                callback, trace, "response", {"response": response_view}
+            )
+            self._check_cancel("after_response", cancel)
             if case.extractions:
-                extracted = extract_values(case.extractions, response)
-                trace.append({"phase": "extraction", "variables": redact(extracted, secrets)})
-            self._check_cancel("before_assertion")
+                extracted = redact(
+                    extract_values(case.extractions, response), response_secrets
+                )
+                self._emit_phase(
+                    callback,
+                    trace,
+                    "extraction",
+                    {"variables": extracted},
+                )
+            self._check_cancel("before_assertion", cancel)
             if case.assertions:
-                assertion_results = evaluate_assertions(case.assertions, response)
-                trace.append({"phase": "assertion", "count": len(assertion_results)})
+                raw_assertion_results = evaluate_assertions(case.assertions, response)
+                assertion_results = tuple(
+                    redact(asdict(item), response_secrets)
+                    for item in raw_assertion_results
+                )
+                self._emit_phase(
+                    callback,
+                    trace,
+                    "assertion",
+                    {
+                        "count": len(assertion_results),
+                        "results": assertion_results,
+                    },
+                )
             self._apply_processing(case.processing.get("post", []), extracted)
-            if response.status_code >= 400:
-                status, category = "FAILED", "product_response"
-            elif any(not item.passed for item in assertion_results):
+            assertion_failed = any(
+                not item["passed"] for item in assertion_results
+            )
+            has_status_assertion = any(
+                item.enabled and item.type == "status_code"
+                for item in case.assertions
+            )
+            if assertion_failed:
                 status, category = "FAILED", "product_assertion"
+            elif response.status_code >= 400 and not has_status_assertion:
+                status, category = "FAILED", "product_response"
             else:
                 status, category = "PASSED", ""
-            return self._result(started, status, category, request_view, response_view, assertion_results, extracted, "", trace, secrets)
+            return self._result(started, status, category, request_view, response_view, assertion_results, extracted, "", trace, response_secrets)
         except CancelledExecution:
-            return self._result(started, "CANCELLED", "cancelled", request_view, response_view, assertion_results, extracted, "cancelled", trace, secrets)
+            return self._failure_result(callback, started, "CANCELLED", "cancelled", request_view, response_view, assertion_results, extracted, "cancelled", trace, secrets)
         except HostPolicyError as exc:
-            return self._result(started, "BROKEN", "host_policy", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return self._failure_result(callback, started, "BROKEN", "host_policy", request_view, response_view, (), {}, str(exc), trace, secrets)
         except RedirectLimitError as exc:
-            return self._result(started, "BROKEN", "redirect_limit", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return self._failure_result(callback, started, "BROKEN", "redirect_limit", request_view, response_view, (), {}, str(exc), trace, secrets)
         except ResponseLimitError as exc:
-            return self._result(started, "BROKEN", "response_limit", request_view, response_view, (), {}, str(exc), trace, secrets)
-        except (socket.timeout, TimeoutError, ConnectionError, http.client.HTTPException, OSError) as exc:
-            return self._result(started, "BROKEN", "transport", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return self._failure_result(callback, started, "BROKEN", "response_limit", request_view, response_view, (), {}, str(exc), trace, secrets)
+        except (socket.timeout, RequestTimeoutError) as exc:
+            return self._failure_result(callback, started, "BROKEN", "timeout", request_view, response_view, (), {}, str(exc) or "request deadline exceeded", trace, secrets)
+        except (ConnectionError, http.client.HTTPException, OSError) as exc:
+            return self._failure_result(callback, started, "BROKEN", "transport", request_view, response_view, (), {}, str(exc), trace, secrets)
         except (JsonPathError, json.JSONDecodeError) as exc:
-            return self._result(started, "BROKEN", "parser", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return self._failure_result(callback, started, "BROKEN", "parser", request_view, response_view, (), {}, str(exc), trace, secrets)
         except AssertionDefinitionError as exc:
-            return self._result(started, "BROKEN", "assertion_definition", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return self._failure_result(callback, started, "BROKEN", "assertion_definition", request_view, response_view, (), {}, str(exc), trace, secrets)
         except Exception as exc:
-            return self._result(started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
+            return self._failure_result(callback, started, "BROKEN", "environment", request_view, response_view, (), {}, str(exc), trace, secrets)
 
     def _request(self, method, initial_url, headers, body):
+        network_started = time.monotonic()
+        deadline = network_started + self.limits.timeout_seconds
         url = initial_url
         headers = dict(headers)
         for redirect_count in range(self.limits.max_redirects + 1):
+            self._remaining(deadline)
             parsed, port, addresses = self.host_policy.resolve(url)
+            self._remaining(deadline)
             connection_class = _PinnedHttpsConnection if parsed.scheme == "https" else _PinnedHttpConnection
             connection = None
             connection_error = None
             for address in addresses:
                 candidate = connection_class(
-                    parsed.hostname, port, address, self.limits.timeout_seconds
+                    parsed.hostname, port, address, self._remaining(deadline)
                 )
                 try:
                     candidate.connect()
+                    self._remaining(deadline)
                     connection = candidate
                     break
                 except OSError as exc:
@@ -302,13 +395,18 @@ class HttpExecutor:
                     candidate.close()
             if connection is None:
                 raise connection_error or ConnectionError("host could not be reached")
+            transport_socket = connection.sock
             path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
             request_headers = dict(headers)
             request_headers.setdefault("Host", parsed.netloc)
             started = time.monotonic()
             try:
+                transport_socket.settimeout(self._remaining(deadline))
                 connection.request(method, path, body=body, headers=request_headers)
+                self._remaining(deadline)
+                transport_socket.settimeout(self._remaining(deadline))
                 raw = connection.getresponse()
+                self._remaining(deadline)
                 if raw.status in {301, 302, 303, 307, 308}:
                     location = raw.getheader("Location")
                     raw.read(0)
@@ -330,7 +428,9 @@ class HttpExecutor:
                 chunks = []
                 size = 0
                 while True:
-                    chunk = raw.read(self.limits.read_chunk_bytes)
+                    transport_socket.settimeout(self._remaining(deadline))
+                    chunk = raw.read1(self.limits.read_chunk_bytes)
+                    self._remaining(deadline)
                     if not chunk:
                         break
                     size += len(chunk)
@@ -361,12 +461,21 @@ class HttpExecutor:
                     cookies=cookies,
                     body_text=text,
                     json_body=parsed_json,
-                    duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+                    duration_ms=max(
+                        0, int((time.monotonic() - network_started) * 1000)
+                    ),
                     url=url,
                 )
             finally:
                 connection.close()
         raise RedirectLimitError("redirect limit exceeded")
+
+    @staticmethod
+    def _remaining(deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RequestTimeoutError("request deadline exceeded")
+        return remaining
 
     @staticmethod
     def _origin(url):
@@ -377,9 +486,17 @@ class HttpExecutor:
             port = None
         return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
 
-    def _check_cancel(self, phase):
-        if self.cancellation_check(phase):
+    @staticmethod
+    def _check_cancel(phase, callback):
+        if callback(phase):
             raise CancelledExecution()
+
+    @staticmethod
+    def _emit_phase(callback, trace, phase, payload):
+        event = {"phase": phase, **copy.deepcopy(payload)}
+        trace.append(event)
+        if callback is not None:
+            callback(phase, copy.deepcopy(payload))
 
     @staticmethod
     def _render_path(path, path_params):
@@ -429,6 +546,47 @@ class HttpExecutor:
             error_message=redact(str(error), secrets),
             trace=tuple(redact(trace, secrets)),
         )
+
+    @classmethod
+    def _failure_result(
+        cls,
+        callback,
+        started,
+        status,
+        category,
+        request,
+        response,
+        assertions,
+        extracted,
+        error,
+        trace,
+        secrets,
+    ):
+        result = cls._result(
+            started,
+            status,
+            category,
+            request,
+            response,
+            assertions,
+            extracted,
+            error,
+            trace,
+            secrets,
+        )
+        if callback is not None:
+            try:
+                callback(
+                    "failure",
+                    {
+                        "status": status,
+                        "failure_category": category,
+                        "error_message": result.error_message,
+                    },
+                )
+            except Exception:
+                pass
+        return result
 
 
 def execute_case(case_version_id, environment_revision_id, overrides):
