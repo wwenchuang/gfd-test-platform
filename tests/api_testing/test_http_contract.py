@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from task_server.api_testing import http
 from task_server.api_testing.db import engine_for_url
 from task_server.api_testing.events import ExecutionEvent, EventStream
-from task_server.api_testing.models.case import ApiAiJob, ApiAiJobBatch, ApiCase, ApiCaseVersion
+from task_server.api_testing.models.case import ApiAiJob, ApiAiJobBatch, ApiBaseline, ApiCase, ApiCaseVersion
 from task_server.api_testing.models.environment import ApiEnvironment, ApiEnvironmentRevision
 from task_server.api_testing.models.execution import ApiExecution, ApiExecutionCase
 from task_server.api_testing.models.project import ApiProject, ApiWorkspace
@@ -755,6 +755,150 @@ def test_ai_job_submission_enqueues_real_processing(http_client, owned_records, 
     assert response.status == 200
     assert queued == [response.body["data"]["job"]["id"]]
     assert response.body["data"]["job"]["state"] == "queued"
+
+
+def test_api_task_restores_selection_and_tracks_ai_and_debug_execution(
+    http_client, owned_records, monkeypatch
+):
+    monkeypatch.setattr(http, "_enqueue_ai_job", lambda _job_id: None)
+    created = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "我的收藏接口回归",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    )
+    task_id = created.body["data"]["task"]["id"]
+    ai = http_client.post(
+        "/api/api-testing/v1/ai-jobs",
+        {
+            "endpoint_ids": [owned_records["endpoint"].id],
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "intent": "覆盖收藏查询",
+            "task_id": task_id,
+        },
+        _auth(),
+    )
+    debug = http_client.post(
+        "/api/api-testing/v1/executions",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "case_version_ids": [owned_records["version"].id],
+            "execution_type": "debug",
+            "overrides": {},
+            "idempotency_key": "task-debug-http-contract",
+            "task_id": task_id,
+        },
+        _auth(),
+    )
+    restored = http_client.get(
+        f"/api/api-testing/v1/tasks/active?project_id={owned_records['project'].id}",
+        _auth(),
+    )
+
+    assert created.status == ai.status == restored.status == 200
+    assert debug.status == 202
+    assert restored.body["data"]["task"]["id"] == task_id
+    assert restored.body["data"]["task"]["selected_endpoint_ids"] == [
+        owned_records["endpoint"].id
+    ]
+    assert restored.body["data"]["task"]["latest_ai_job_id"] == ai.body["data"][
+        "job"
+    ]["id"]
+    assert restored.body["data"]["task"]["latest_execution_id"] == debug.body[
+        "data"
+    ]["execution"]["id"]
+    assert restored.body["data"]["task"]["state"] == "debugging"
+
+
+def test_api_task_is_hidden_from_another_owner(http_client, owned_records):
+    created = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "收藏回归",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    )
+
+    denied = http_client.put(
+        f"/api/api-testing/v1/tasks/{created.body['data']['task']['id']}",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "越权修改",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth("owner-b"),
+    )
+
+    assert denied.status == 404
+    assert denied.body["error"]["code"] == "not_found"
+
+
+def test_api_task_run_executes_only_adopted_baselines_in_saved_selection(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        case = session.get(ApiCase, owned_records["case"].id)
+        case.active_version_id = owned_records["version"].id
+        debug_case = ApiExecutionCase(
+            execution_id=owned_records["execution"].id,
+            case_version_id=owned_records["version"].id,
+            endpoint_id=owned_records["endpoint"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            ordinal=0,
+            status="PASSED",
+            **_audit("owner-a"),
+        )
+        session.add(debug_case)
+        session.flush()
+        session.add(
+            ApiBaseline(
+                project_id=owned_records["project"].id,
+                case_id=owned_records["case"].id,
+                case_version_id=owned_records["version"].id,
+                environment_revision_id=owned_records["environment_revision"].id,
+                debug_execution_case_id=debug_case.id,
+                status="active",
+                **_audit("owner-a"),
+            )
+        )
+    task = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "我的收藏接口回归",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    ).body["data"]["task"]
+
+    response = http_client.post(
+        f"/api/api-testing/v1/tasks/{task['id']}/run",
+        {"idempotency_key": "task-regression-http-contract"},
+        _auth(),
+    )
+
+    assert response.status == 202
+    assert response.body["data"]["execution"]["execution_type"] == "regression"
+    assert response.body["data"]["execution"]["case_statuses"] == ["QUEUED"]
+    assert response.body["data"]["task"]["state"] == "running"
+    assert response.body["data"]["task"]["latest_execution_id"] == response.body[
+        "data"
+    ]["execution"]["id"]
 
 
 def test_ai_job_enqueue_failure_is_persisted_as_safe_terminal_failure(

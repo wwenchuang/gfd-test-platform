@@ -36,5 +36,6 @@ from .source import (
     ApiSourceRevision,
     ApiSourceSchema,
 )
+from .test_task import ApiTestTask
 
 __all__ = [name for name in globals() if name.startswith("Api") or name == "Base"]

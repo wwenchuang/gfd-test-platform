@@ -168,23 +168,37 @@ class ExecutionService:
         return view
 
     def submit_active_baselines(self, request, actor_id, idempotency_key):
-        if not isinstance(request, dict) or set(request) != {
+        required_fields = {
             "project_id",
             "source_revision_id",
             "environment_revision_id",
-        }:
+        }
+        allowed_fields = required_fields | {"endpoint_ids"}
+        if not isinstance(request, dict) or not (
+            required_fields <= set(request) <= allowed_fields
+        ):
             raise ValueError("baseline regression request fields are invalid")
         if not all(
             isinstance(request.get(field), str) and request[field]
-            for field in request
+            for field in required_fields
         ):
             raise ValueError("baseline regression context is required")
+        endpoint_ids = request.get("endpoint_ids")
+        if endpoint_ids is not None and (
+            not isinstance(endpoint_ids, list)
+            or not endpoint_ids
+            or len(endpoint_ids) > 500
+            or not all(isinstance(item, str) and item for item in endpoint_ids)
+            or len(set(endpoint_ids)) != len(endpoint_ids)
+        ):
+            raise ValueError("endpoint_ids must be a unique non-empty string array")
         with self.session_factory() as session:
             version_ids = ExecutionRepository(session).active_baseline_version_ids(
                 request["project_id"],
                 request["source_revision_id"],
                 request["environment_revision_id"],
                 actor_id,
+                endpoint_ids,
             )
         if not version_ids:
             raise ExecutionConflictError(
@@ -192,7 +206,7 @@ class ExecutionService:
             )
         return self.submit(
             {
-                **copy.deepcopy(request),
+                **{field: request[field] for field in required_fields},
                 "case_version_ids": list(version_ids),
                 "execution_type": "regression",
                 "overrides": {},

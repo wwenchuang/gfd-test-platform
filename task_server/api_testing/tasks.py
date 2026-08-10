@@ -7,6 +7,7 @@ from .db import _session_factory
 from .events import EventStream
 from .services.execution_service import ExecutionService
 from .services.ai_service import AiCaseService, AiFailureAnalyzer
+from .services.test_task_service import TestTaskService
 
 
 settings = ApiTestingSettings.from_env()
@@ -34,11 +35,13 @@ def execute_api_testing(self, execution_id):
         redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     except Exception:
         redis_client = None
-    return ExecutionService(
+    result = ExecutionService(
         factory,
         event_stream=EventStream(factory, redis_client),
         failure_analysis_dispatcher=_dispatch_failure_analysis,
     ).run(execution_id)
+    TestTaskService(factory).refresh_for_execution(execution_id)
+    return result
 
 
 @celery_app.task(name="api_testing.analyze_failure", bind=True, acks_late=True)
@@ -60,4 +63,7 @@ def analyze_api_failure(self, execution_id, child_id, attempt_id, evidence):
 
 @celery_app.task(name="api_testing.generate_cases", bind=True, acks_late=True)
 def generate_api_cases(self, job_id):
-    return AiCaseService(_session_factory()).process(job_id).state
+    factory = _session_factory()
+    result = AiCaseService(factory).process(job_id)
+    TestTaskService(factory).refresh_for_ai_job(job_id)
+    return result.state

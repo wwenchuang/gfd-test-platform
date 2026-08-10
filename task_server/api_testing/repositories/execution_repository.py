@@ -81,28 +81,31 @@ class ExecutionRepository:
         source_revision_id,
         environment_revision_id,
         owner_id,
+        endpoint_ids=None,
     ):
-        return tuple(
-            self.session.scalars(
-                select(ApiBaseline.case_version_id)
-                .join(
-                    ApiCaseVersion,
-                    ApiCaseVersion.id == ApiBaseline.case_version_id,
-                )
-                .join(
-                    ApiSourceEndpoint,
-                    ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
-                )
-                .where(
-                    ApiBaseline.project_id == project_id,
-                    ApiBaseline.environment_revision_id == environment_revision_id,
-                    ApiBaseline.owner_id == owner_id,
-                    ApiBaseline.status == "active",
-                    ApiSourceEndpoint.revision_id == source_revision_id,
-                )
-                .order_by(ApiBaseline.created_at, ApiBaseline.id)
+        statement = (
+            select(ApiBaseline.case_version_id)
+            .join(
+                ApiCaseVersion,
+                ApiCaseVersion.id == ApiBaseline.case_version_id,
             )
+            .join(
+                ApiSourceEndpoint,
+                ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
+            )
+            .where(
+                ApiBaseline.project_id == project_id,
+                ApiBaseline.environment_revision_id == environment_revision_id,
+                ApiBaseline.owner_id == owner_id,
+                ApiBaseline.status == "active",
+                ApiSourceEndpoint.revision_id == source_revision_id,
+            )
+            .order_by(ApiBaseline.created_at, ApiBaseline.id)
         )
+        identifiers = tuple(dict.fromkeys(endpoint_ids or ()))
+        if identifiers:
+            statement = statement.where(ApiSourceEndpoint.id.in_(identifiers))
+        return tuple(self.session.scalars(statement))
 
     def get_by_idempotency(self, project_id, key):
         return self.session.scalar(

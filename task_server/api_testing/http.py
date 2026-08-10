@@ -45,6 +45,12 @@ from .services.source_service import (
     SourceService,
     StaleSourcePreviewError,
 )
+from .services.test_task_service import (
+    TestTaskInputError,
+    TestTaskNotFoundError,
+    TestTaskScopeError,
+    TestTaskService,
+)
 
 
 API_PREFIX = "/api/api-testing/v1"
@@ -180,7 +186,12 @@ def _route(method, segments, qs, payload, actor, settings):
     if method == "GET":
         return _get(segments, qs, actor), 200
     if method == "POST":
-        return _post(segments, payload, actor, settings), 202 if segments in {("executions",), ("regressions",)} else 200
+        asynchronous = segments in {("executions",), ("regressions",)} or (
+            len(segments) == 3
+            and segments[0] == "tasks"
+            and segments[2] == "run"
+        )
+        return _post(segments, payload, actor, settings), 202 if asynchronous else 200
     if method == "PUT":
         return _put(segments, payload, actor), 200
     if method == "DELETE":
@@ -234,6 +245,10 @@ def _get(segments, qs, actor):
     if segments == ("context-options",):
         with factory() as session:
             return ContextRepository(session).list_options(actor)
+    if segments == ("tasks", "active"):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return {"task": _view(TestTaskService(factory).get_active(project_id, actor))}
     if segments == ("executions",):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
@@ -296,6 +311,27 @@ def _get(segments, qs, actor):
 
 def _post(segments, payload, actor, settings):
     factory = _factory()
+    if segments == ("tasks",):
+        return {"task": _view(TestTaskService(factory).save_context(actor, payload, actor))}
+    if len(segments) == 3 and segments[0] == "tasks" and segments[2] == "run":
+        task_id = _uuid(segments[1])
+        task_service = TestTaskService(factory)
+        task = task_service.get(task_id, actor)
+        execution = ExecutionService(
+            factory, event_stream=_event_stream(factory)
+        ).submit_active_baselines(
+            {
+                "project_id": task.project_id,
+                "source_revision_id": task.source_revision_id,
+                "environment_revision_id": task.environment_revision_id,
+                "endpoint_ids": list(task.selected_endpoint_ids),
+            },
+            actor,
+            _string(payload.get("idempotency_key"), "idempotency_key", 200),
+        )
+        task = task_service.attach_execution(task.id, execution.id, actor)
+        _enqueue_execution(execution.id)
+        return {"execution": _view(execution), "task": _view(task)}
     if segments == ("providers", "apifox", "projects"):
         return {"projects": _view(_apifox_service(factory).list_projects(actor))}
     if segments == ("providers", "apifox", "context"):
@@ -376,9 +412,22 @@ def _post(segments, payload, actor, settings):
         _scope_execution_case(factory, _uuid(payload.get("debug_execution_case_id")), actor)
         return {"baseline": _view(CaseService(factory).adopt_baseline(_uuid(segments[1]), _uuid(payload.get("debug_execution_case_id")), actor))}
     if segments == ("executions",):
+        task_id = _optional_uuid(payload.get("task_id"))
+        task_service = TestTaskService(factory)
+        if task_id:
+            task = task_service.get(task_id, actor)
+            if (
+                task.project_id != payload.get("project_id")
+                or task.source_revision_id != payload.get("source_revision_id")
+                or task.environment_revision_id
+                != payload.get("environment_revision_id")
+            ):
+                raise TestTaskScopeError("execution context does not match this task")
         request = _execution_request(payload)
         _scope_execution_request(factory, request, actor)
         execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(request, actor, _string(payload.get("idempotency_key"), "idempotency_key", 200))
+        if task_id:
+            task_service.attach_execution(task_id, execution.id, actor)
         _enqueue_execution(execution.id)
         return {"execution": _view(execution)}
     if segments == ("regressions",):
@@ -411,10 +460,21 @@ def _post(segments, payload, actor, settings):
     if segments == ("ai-jobs",):
         endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
         environment_revision_id = _uuid(payload.get("environment_revision_id"))
+        task_id = _optional_uuid(payload.get("task_id"))
+        task_service = TestTaskService(factory)
+        if task_id:
+            task = task_service.get(task_id, actor)
+            if (
+                task.environment_revision_id != environment_revision_id
+                or not set(endpoint_ids).issubset(set(task.selected_endpoint_ids))
+            ):
+                raise TestTaskScopeError("AI request does not match this task")
         project_id = _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor)
         _scope_project(factory, project_id, actor)
         service = AiCaseService(factory)
         job = service.submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""))
+        if task_id:
+            task_service.attach_ai_job(task_id, job.id, actor)
         try:
             _enqueue_ai_job(job.id)
         except Exception:
@@ -434,6 +494,14 @@ def _put(segments, payload, actor):
             "credential": _view(
                 ProviderService(_factory()).save_apifox_credential(
                     actor, payload.get("token"), actor
+                )
+            )
+        }
+    if len(segments) == 2 and segments[0] == "tasks":
+        return {
+            "task": _view(
+                TestTaskService(_factory()).update_context(
+                    _uuid(segments[1]), actor, payload, actor
                 )
             )
         }
@@ -770,7 +838,7 @@ def _send_json(handler, status, payload, request_id):
 def _domain_error(error):
     if isinstance(error, ApiHttpError):
         return error
-    if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError)):
+    if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError, TestTaskNotFoundError)):
         return _not_found()
     if isinstance(error, (ExecutionConflictError, BaselineGateError, SourcePreviewExpiredError, SourcePreviewStateError, StaleSourcePreviewError)):
         return ApiHttpError(409, "conflict", "Resource state conflicts with this request")
@@ -787,7 +855,9 @@ def _domain_error(error):
         )
     if isinstance(error, ApifoxOpenApiError):
         return ApiHttpError(502, "apifox_export_failed", str(error))
-    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ApifoxInputError, ProviderCredentialInputError)):
+    if isinstance(error, TestTaskScopeError):
+        return ApiHttpError(409, "task_scope_conflict", "测试任务范围与当前请求不一致")
+    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ApifoxInputError, ProviderCredentialInputError, TestTaskInputError)):
         return ApiHttpError(422, "invalid_request", "Request validation failed")
     return ApiHttpError(500, "internal_error", "Internal server error")
 
