@@ -285,52 +285,127 @@ class EnvironmentService:
         source = _source_payload(payload)
         actor = _text(actor_id, "actor id")
         with self._session_factory.begin() as session:
-            repository = EnvironmentRepository(session)
-            project = repository.get_project(source["project_id"])
-            if project is None:
-                raise EnvironmentNotFoundError("API testing project was not found")
-            source_record = None
-            source_revision = None
-            if source["source_id"]:
-                source_record = repository.get_source(source["source_id"])
-                if source_record is None or source_record.project_id != project.id:
-                    raise EnvironmentNotFoundError("API source was not found in this project")
-            if source["source_revision_id"]:
-                source_revision = repository.get_source_revision(
-                    source["source_revision_id"]
+            return self._import_normalized_in_session(session, source, actor)
+
+    def import_from_source_in_session(self, session, payload, actor_id):
+        return self._import_normalized_in_session(
+            session, _source_payload(payload), _text(actor_id, "actor id")
+        )
+
+    def upsert_from_source_in_session(self, session, payload, actor_id):
+        source = _source_payload(payload)
+        actor = _text(actor_id, "actor id")
+        repository = EnvironmentRepository(session)
+        project, source_record, source_revision = self._validate_source_scope(
+            repository, source
+        )
+        environment = repository.find_environment_for_update(
+            project.id,
+            source_record.id if source_record else None,
+            source["name"],
+        )
+        if environment is None:
+            return self._create_imported_revision(
+                repository, source, project, source_record, source_revision, actor
+            )
+
+        previous = repository.get_revision(environment.active_revision_id)
+        if previous is None:
+            raise EnvironmentNotFoundError(
+                "API environment active revision was not found"
+            )
+        _, _, previous_secrets = self._revision_state(repository, previous.id)
+        public_variables = {
+            name: value
+            for name, value in source["variables"].items()
+            if name not in previous_secrets
+        }
+        revision = repository.create_revision(
+            environment.id,
+            source_revision.id if source_revision else None,
+            repository.next_revision_number(environment.id),
+            source["name"],
+            source["description"],
+            source["default_headers"],
+            actor,
+        )
+        self._persist_services(repository, revision.id, source["services"], actor)
+        self._persist_public_variables(
+            repository, revision.id, environment.id, public_variables, actor
+        )
+        for secret_name, secret in sorted(previous_secrets.items()):
+            repository.add_secret_variable(
+                revision.id, environment.id, secret_name, secret.id, actor
+            )
+        environment.source_id = source_record.id if source_record else None
+        environment.active_revision_id = revision.id
+        environment.updated_by = actor
+        repository.flush()
+        return self._view(repository, environment, revision)
+
+    def _import_normalized_in_session(self, session, source, actor):
+        repository = EnvironmentRepository(session)
+        project, source_record, source_revision = self._validate_source_scope(
+            repository, source
+        )
+        return self._create_imported_revision(
+            repository, source, project, source_record, source_revision, actor
+        )
+
+    @staticmethod
+    def _validate_source_scope(repository, source):
+        project = repository.get_project(source["project_id"])
+        if project is None:
+            raise EnvironmentNotFoundError("API testing project was not found")
+        source_record = None
+        source_revision = None
+        if source["source_id"]:
+            source_record = repository.get_source(source["source_id"])
+            if source_record is None or source_record.project_id != project.id:
+                raise EnvironmentNotFoundError(
+                    "API source was not found in this project"
                 )
-                if source_revision is None or (
-                    source_record and source_revision.source_id != source_record.id
-                ):
-                    raise EnvironmentNotFoundError("API source revision was not found")
-                if source_record is None:
-                    source_record = repository.get_source(source_revision.source_id)
-                    if source_record is None or source_record.project_id != project.id:
-                        raise EnvironmentNotFoundError(
-                            "API source revision was not found in this project"
-                        )
-            environment = repository.create_environment(
-                project.id,
-                source_record.id if source_record else None,
-                source["name"],
-                actor,
+        if source["source_revision_id"]:
+            source_revision = repository.get_source_revision(
+                source["source_revision_id"]
             )
-            revision = repository.create_revision(
-                environment.id,
-                source_revision.id if source_revision else None,
-                1,
-                source["name"],
-                source["description"],
-                source["default_headers"],
-                actor,
-            )
-            self._persist_services(repository, revision.id, source["services"], actor)
-            self._persist_public_variables(
-                repository, revision.id, environment.id, source["variables"], actor
-            )
-            environment.active_revision_id = revision.id
-            repository.flush()
-            return self._view(repository, environment, revision)
+            if source_revision is None or (
+                source_record and source_revision.source_id != source_record.id
+            ):
+                raise EnvironmentNotFoundError("API source revision was not found")
+            if source_record is None:
+                source_record = repository.get_source(source_revision.source_id)
+                if source_record is None or source_record.project_id != project.id:
+                    raise EnvironmentNotFoundError(
+                        "API source revision was not found in this project"
+                    )
+        return project, source_record, source_revision
+
+    def _create_imported_revision(
+        self, repository, source, project, source_record, source_revision, actor
+    ):
+        environment = repository.create_environment(
+            project.id,
+            source_record.id if source_record else None,
+            source["name"],
+            actor,
+        )
+        revision = repository.create_revision(
+            environment.id,
+            source_revision.id if source_revision else None,
+            1,
+            source["name"],
+            source["description"],
+            source["default_headers"],
+            actor,
+        )
+        self._persist_services(repository, revision.id, source["services"], actor)
+        self._persist_public_variables(
+            repository, revision.id, environment.id, source["variables"], actor
+        )
+        environment.active_revision_id = revision.id
+        repository.flush()
+        return self._view(repository, environment, revision)
 
     def create_revision(self, environment_id, payload, secret_updates, actor_id):
         changes = _mapping(payload, "environment revision")

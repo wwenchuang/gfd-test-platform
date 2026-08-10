@@ -49,6 +49,57 @@ export interface EnvironmentRevisionSnapshot {
   services: Record<string, EnvironmentServiceSnapshot>
 }
 
+export interface ProviderCredential {
+  provider: 'apifox'
+  configured: boolean
+  fingerprint: string
+  updated_at: string | null
+}
+
+export interface ApifoxProject {
+  id: string
+  name: string
+  description: string
+  team_name: string
+}
+
+export interface ApifoxBranch {
+  id: string
+  name: string
+  is_default: boolean
+}
+
+export interface ApifoxEnvironment {
+  id: string
+  name: string
+  services: Array<Record<string, unknown>>
+  variables: Array<Record<string, unknown>>
+}
+
+export interface ApifoxProjectContext {
+  project: ApifoxProject
+  branches: ApifoxBranch[]
+  environments: ApifoxEnvironment[]
+  cli_version: string
+}
+
+export interface ApifoxRefreshPreview {
+  source_preview: SourcePreview
+  environment_candidate: {
+    name: string
+    services?: Array<Record<string, unknown>>
+    variables?: Record<string, unknown>
+    secret_placeholders: string[]
+  }
+}
+
+export interface ApifoxActivation {
+  source_revision: SourceRevision
+  environment: EnvironmentView
+  workspace: WorkspaceContext
+  secret_placeholders: string[]
+}
+
 export interface SourcePreview {
   id: string
   project_id: string

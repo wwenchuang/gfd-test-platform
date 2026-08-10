@@ -481,6 +481,116 @@ def test_cross_owner_source_preview_is_hidden_before_document_validation(http_cl
     assert response.body["error"]["code"] == "not_found"
 
 
+def test_apifox_credential_http_response_never_contains_plaintext(
+    http_client, api_context, monkeypatch
+):
+    token = "afxp-http-contract-secret"
+    monkeypatch.setenv(
+        "API_TESTING_SECRET_KEY",
+        "http-provider-secret-7f5f2a352ba84ba680c921e88e9f119b",
+    )
+
+    saved = http_client.put(
+        "/api/api-testing/v1/providers/apifox/credential",
+        {"token": token},
+        _auth(),
+    )
+    loaded = http_client.get(
+        "/api/api-testing/v1/providers/apifox/credential", _auth()
+    )
+
+    assert saved.status == loaded.status == 200
+    assert saved.body["data"]["credential"]["configured"] is True
+    assert loaded.body["data"]["credential"]["fingerprint"]
+    assert token not in json.dumps(saved.body)
+    assert token not in json.dumps(loaded.body)
+
+
+def test_apifox_discovery_and_preview_are_only_called_by_explicit_posts(
+    http_client, api_context, owned_records, monkeypatch
+):
+    calls = []
+
+    class FakeApifoxService:
+        def list_projects(self, owner_id):
+            calls.append(("projects", owner_id))
+            return ({"id": "5904970", "name": "3D"},)
+
+        def get_context(self, owner_id, project_id, preferred_environment_id=""):
+            calls.append(
+                ("context", owner_id, project_id, preferred_environment_id)
+            )
+            return {
+                "project": {"id": project_id, "name": "3D"},
+                "branches": ({"id": "", "name": "主分支（默认）"},),
+                "environments": (
+                    {"id": "33831678", "name": "生产环境（新）-腾讯云"},
+                ),
+                "cli_version": "2.2.8",
+            }
+
+        def preview_refresh(self, owner_id, payload, actor_id):
+            calls.append(("preview", owner_id, dict(payload), actor_id))
+            return {
+                "source_preview": {
+                    "id": "11111111-1111-4111-8111-111111111111",
+                    "added_count": 3,
+                    "changed_count": 1,
+                    "removed_count": 0,
+                },
+                "environment_candidate": {
+                    "name": "生产环境（新）-腾讯云",
+                    "secret_placeholders": ["ZXBToken"],
+                },
+            }
+
+    service = FakeApifoxService()
+    monkeypatch.setattr(http, "_apifox_service", lambda _factory: service)
+
+    before = http_client.get("/api/api-testing/v1/context-options", _auth())
+    projects = http_client.post(
+        "/api/api-testing/v1/providers/apifox/projects", {}, _auth()
+    )
+    context = http_client.post(
+        "/api/api-testing/v1/providers/apifox/context",
+        {"project_id": "5904970", "environment_id": "33831678"},
+        _auth(),
+    )
+    preview = http_client.post(
+        "/api/api-testing/v1/sources/apifox/preview",
+        {
+            "project_id": owned_records["project"].id,
+            "source_id": owned_records["source"].id,
+            "apifox_project_id": "5904970",
+            "branch_id": "",
+            "environment_id": "33831678",
+        },
+        _auth(),
+    )
+
+    assert before.status == projects.status == context.status == preview.status == 200
+    assert calls == [
+        ("projects", "owner-a"),
+        ("context", "owner-a", "5904970", "33831678"),
+        (
+            "preview",
+            "owner-a",
+            {
+                "project_id": owned_records["project"].id,
+                "source_id": owned_records["source"].id,
+                "apifox_project_id": "5904970",
+                "branch_id": "",
+                "environment_id": "33831678",
+            },
+            "owner-a",
+        ),
+    ]
+    assert preview.body["data"]["preview"]["source_preview"]["added_count"] == 3
+    assert preview.body["data"]["preview"]["environment_candidate"][
+        "secret_placeholders"
+    ] == ["ZXBToken"]
+
+
 def test_api_post_intercepts_invalid_and_oversized_content_length(http_client):
     malformed = http_client.request("POST", "/api/api-testing/v1/executions", b"", _auth(**{"Content-Length": "nope"}))
     oversized = http_client.request("POST", "/api/api-testing/v1/executions", b"", _auth(**{"Content-Length": str(1_000_001)}))

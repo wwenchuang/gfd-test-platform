@@ -190,42 +190,52 @@ class SourceService:
             )
 
     def activate_preview(self, preview_id, actor_id):
-        now = _utc_now()
         with self._session_factory.begin() as session:
-            repository = SourceRepository(session)
-            diff = repository.get_diff_for_update(preview_id)
-            if diff is None:
-                raise SourcePreviewNotFoundError("Source refresh preview was not found")
-            if diff.status != "preview":
-                raise SourcePreviewStateError("Source refresh preview is not pending")
-            if diff.expires_at is None or diff.expires_at <= now:
-                raise SourcePreviewExpiredError("Source refresh preview has expired")
-            source = repository.get_source_for_update(diff.source_id)
-            if source is None:
-                raise SourceNotFoundError("API source was not found")
-            if source.active_revision_id != diff.previous_revision_id:
-                raise StaleSourcePreviewError(
-                    "Source active revision changed after this preview was created"
-                )
-            candidate = repository.get_revision(diff.candidate_revision_id)
-            if candidate is None or candidate.source_id != source.id or candidate.status != "candidate":
-                raise SourcePreviewStateError("Source candidate revision is not activatable")
+            return self.activate_preview_in_session(session, preview_id, actor_id)
 
-            if source.active_revision_id:
-                previous = repository.get_revision(source.active_revision_id)
-                previous.status = "superseded"
-                previous.superseded_at = now
-                previous.updated_by = actor_id
-            candidate.status = "active"
-            candidate.activated_at = now
-            candidate.expires_at = None
-            candidate.updated_by = actor_id
-            source.active_revision_id = candidate.id
-            source.updated_by = actor_id
-            diff.status = "activated"
-            diff.updated_by = actor_id
-            session.flush()
-            return self._revision_view(repository, candidate, source.project_id)
+    def activate_preview_in_session(self, session, preview_id, actor_id):
+        now = _utc_now()
+        repository = SourceRepository(session)
+        diff = repository.get_diff_for_update(preview_id)
+        if diff is None:
+            raise SourcePreviewNotFoundError("Source refresh preview was not found")
+        if diff.status != "preview":
+            raise SourcePreviewStateError("Source refresh preview is not pending")
+        if diff.expires_at is None or diff.expires_at <= now:
+            raise SourcePreviewExpiredError("Source refresh preview has expired")
+        source = repository.get_source_for_update(diff.source_id)
+        if source is None:
+            raise SourceNotFoundError("API source was not found")
+        project = repository.get_project(source.project_id)
+        if project is None or project.owner_id != actor_id:
+            raise SourceNotFoundError("API source was not found")
+        if source.active_revision_id != diff.previous_revision_id:
+            raise StaleSourcePreviewError(
+                "Source active revision changed after this preview was created"
+            )
+        candidate = repository.get_revision(diff.candidate_revision_id)
+        if (
+            candidate is None
+            or candidate.source_id != source.id
+            or candidate.status != "candidate"
+        ):
+            raise SourcePreviewStateError("Source candidate revision is not activatable")
+
+        if source.active_revision_id:
+            previous = repository.get_revision(source.active_revision_id)
+            previous.status = "superseded"
+            previous.superseded_at = now
+            previous.updated_by = actor_id
+        candidate.status = "active"
+        candidate.activated_at = now
+        candidate.expires_at = None
+        candidate.updated_by = actor_id
+        source.active_revision_id = candidate.id
+        source.updated_by = actor_id
+        diff.status = "activated"
+        diff.updated_by = actor_id
+        session.flush()
+        return self._revision_view(repository, candidate, source.project_id)
 
     def get_revision(self, revision_id):
         with self._session_factory() as session:

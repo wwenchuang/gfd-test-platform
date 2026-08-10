@@ -39,6 +39,17 @@ class EnvironmentRepository:
             .with_for_update()
         )
 
+    def find_environment_for_update(self, project_id, source_id, name):
+        query = select(ApiEnvironment).where(
+            ApiEnvironment.project_id == project_id,
+            ApiEnvironment.name == name,
+        )
+        if source_id is None:
+            query = query.where(ApiEnvironment.source_id.is_(None))
+        else:
+            query = query.where(ApiEnvironment.source_id == source_id)
+        return self.session.scalar(query.with_for_update())
+
     def create_environment(self, project_id, source_id, name, actor_id):
         environment = ApiEnvironment(
             project_id=project_id,

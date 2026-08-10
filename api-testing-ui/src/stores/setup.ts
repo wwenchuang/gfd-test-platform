@@ -1,7 +1,16 @@
 import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { EnvironmentView, SourcePreview, SourceRevision } from '../api/contracts'
+import type {
+  ApifoxActivation,
+  ApifoxProject,
+  ApifoxProjectContext,
+  ApifoxRefreshPreview,
+  EnvironmentView,
+  ProviderCredential,
+  SourcePreview,
+  SourceRevision,
+} from '../api/contracts'
 
 export interface EnvironmentPayload {
   project_id: string
@@ -14,17 +23,135 @@ export interface EnvironmentPayload {
   default_headers: Record<string, string>
 }
 
+export interface ApifoxPreviewPayload {
+  project_id: string
+  source_id: string | null
+  apifox_project_id: string
+  branch_id: string
+  environment_id: string
+}
+
 export const useSetupStore = defineStore('api-setup', {
   state: () => ({
     preview: null as SourcePreview | null,
     activeRevision: null as SourceRevision | null,
     environment: null as EnvironmentView | null,
+    credential: null as ProviderCredential | null,
+    apifoxProjects: [] as ApifoxProject[],
+    apifoxContext: null as ApifoxProjectContext | null,
+    apifoxPreview: null as ApifoxRefreshPreview | null,
+    secretPlaceholders: [] as string[],
     secretUpdates: {} as Record<string, string>,
     busy: false,
     error: '',
     message: '',
   }),
   actions: {
+    async loadApifoxCredential(): Promise<ProviderCredential> {
+      const response = await apiClient.get<{ credential: ProviderCredential }>(
+        '/api/api-testing/v1/providers/apifox/credential',
+      )
+      this.credential = response.data.credential
+      return this.credential
+    },
+    async saveApifoxToken(token: string): Promise<ProviderCredential> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.put<{ credential: ProviderCredential }>(
+          '/api/api-testing/v1/providers/apifox/credential', { token: token.trim() },
+        )
+        this.credential = response.data.credential
+        this.message = 'Apifox 访问令牌已安全保存'
+        return this.credential
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Apifox 访问令牌保存失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
+    async discoverApifoxProjects(): Promise<ApifoxProject[]> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.post<{ projects: ApifoxProject[] }>(
+          '/api/api-testing/v1/providers/apifox/projects', {},
+        )
+        this.apifoxProjects = response.data.projects
+        this.message = this.apifoxProjects.length ? `已读取 ${this.apifoxProjects.length} 个 Apifox 项目` : '当前令牌下没有可用项目'
+        return this.apifoxProjects
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Apifox 项目读取失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
+    async discoverApifoxContext(projectId: string, environmentId = ''): Promise<ApifoxProjectContext> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.post<{ context: ApifoxProjectContext }>(
+          '/api/api-testing/v1/providers/apifox/context', {
+            project_id: projectId, environment_id: environmentId,
+          },
+        )
+        this.apifoxContext = response.data.context
+        this.message = `已读取 ${this.apifoxContext.environments.length} 个环境`
+        return this.apifoxContext
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Apifox 环境读取失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
+    async previewApifox(payload: ApifoxPreviewPayload): Promise<ApifoxRefreshPreview> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.post<{ preview: ApifoxRefreshPreview }>(
+          '/api/api-testing/v1/sources/apifox/preview', payload,
+        )
+        this.apifoxPreview = response.data.preview
+        this.preview = this.apifoxPreview.source_preview
+        this.secretPlaceholders = [...this.apifoxPreview.environment_candidate.secret_placeholders]
+        this.message = '已读取接口和环境变化，确认后才会保存'
+        return this.apifoxPreview
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Apifox 更新检查失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
+    async activateApifoxPreview(): Promise<ApifoxActivation> {
+      if (!this.apifoxPreview) throw new Error('请先检查 Apifox 更新')
+      this.busy = true
+      this.error = ''
+      try {
+        const response = await apiClient.post<ApifoxActivation>(
+          `/api/api-testing/v1/sources/apifox/${this.apifoxPreview.source_preview.id}/activate`, {},
+        )
+        this.activeRevision = response.data.source_revision
+        this.environment = response.data.environment
+        this.secretPlaceholders = [...response.data.secret_placeholders]
+        this.apifoxPreview = null
+        this.preview = null
+        this.message = `接口 v${this.activeRevision.revision_number} 与环境 v${this.environment.revision} 已保存`
+        return response.data
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : 'Apifox 更新保存失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
     async createProject(name: string): Promise<string> {
       this.error = ''
       const slug = `${slugify(name) || 'api-project'}-${Date.now().toString(36)}`

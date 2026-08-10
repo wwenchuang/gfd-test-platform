@@ -16,6 +16,8 @@ from sqlalchemy import select
 from task_server.auth import bearer_token, verify_session_token
 
 from .config import ApiTestingSettings
+from .adapters.apifox_discovery import ApifoxDiscoveryAdapter, ApifoxDiscoveryError
+from .adapters.apifox_openapi import ApifoxOpenApiAdapter, ApifoxOpenApiError
 from .db import _session_factory
 from .events import EventStream
 from .models.case import ApiAiJob, ApiCase, ApiCaseVersion
@@ -26,9 +28,15 @@ from .models.source import ApiSource, ApiSourceDiff, ApiSourceEndpoint, ApiSourc
 from .repositories.context_repository import ContextRepository
 from .repositories.source_repository import audit_fields
 from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
+from .services.apifox_service import ApifoxInputError, ApifoxService
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
 from .services.execution_service import ExecutionConflictError, ExecutionNotFoundError, ExecutionService
+from .services.provider_service import (
+    ProviderCredentialInputError,
+    ProviderCredentialNotFoundError,
+    ProviderService,
+)
 from .services.source_service import (
     SourceNotFoundError,
     SourcePreviewExpiredError,
@@ -189,6 +197,17 @@ def _event_stream(factory):
     return EventStream(factory, _shared_redis_client(settings.redis_url))
 
 
+def _apifox_service(factory):
+    return ApifoxService(
+        ProviderService(factory),
+        ApifoxDiscoveryAdapter(),
+        ApifoxOpenApiAdapter(),
+        SourceService(factory),
+        session_factory=factory,
+        environment_service=EnvironmentService(factory),
+    )
+
+
 @lru_cache(maxsize=4)
 def _shared_redis_client(redis_url):
     return redis.Redis.from_url(redis_url, decode_responses=True)
@@ -196,6 +215,12 @@ def _shared_redis_client(redis_url):
 
 def _get(segments, qs, actor):
     factory = _factory()
+    if segments == ("providers", "apifox", "credential"):
+        return {
+            "credential": _view(
+                ProviderService(factory).get_apifox_credential(actor)
+            )
+        }
     if segments == ("projects",):
         with factory() as session:
             projects = session.scalars(
@@ -271,6 +296,45 @@ def _get(segments, qs, actor):
 
 def _post(segments, payload, actor, settings):
     factory = _factory()
+    if segments == ("providers", "apifox", "projects"):
+        return {"projects": _view(_apifox_service(factory).list_projects(actor))}
+    if segments == ("providers", "apifox", "context"):
+        project_id = _string(payload.get("project_id"), "project_id", 100)
+        environment_id = str(payload.get("environment_id") or "").strip()
+        return {
+            "context": _view(
+                _apifox_service(factory).get_context(
+                    actor,
+                    project_id,
+                    preferred_environment_id=environment_id,
+                )
+            )
+        }
+    if segments == ("sources", "apifox", "preview"):
+        project_id = _uuid(payload.get("project_id"))
+        _scope_project(factory, project_id, actor)
+        source_id = _optional_uuid(payload.get("source_id"))
+        if source_id:
+            source = _scope_source(factory, source_id, actor)
+            if source.project_id != project_id:
+                raise _not_found()
+        request = {**payload, "project_id": project_id, "source_id": source_id}
+        return {
+            "preview": _view(
+                _apifox_service(factory).preview_refresh(actor, request, actor)
+            )
+        }
+    if (
+        len(segments) == 4
+        and segments[0] == "sources"
+        and segments[1] == "apifox"
+        and segments[3] == "activate"
+    ):
+        preview_id = _uuid(segments[2])
+        _scope_source_preview(factory, preview_id, actor)
+        return _view(
+            _apifox_service(factory).activate_preview(actor, preview_id, actor)
+        )
     if segments == ("projects",):
         name = _string(payload.get("name"), "name", 200)
         slug = _string(payload.get("slug"), "slug", 120)
@@ -365,6 +429,14 @@ def _post(segments, payload, actor, settings):
 
 
 def _put(segments, payload, actor):
+    if segments == ("providers", "apifox", "credential"):
+        return {
+            "credential": _view(
+                ProviderService(_factory()).save_apifox_credential(
+                    actor, payload.get("token"), actor
+                )
+            )
+        }
     if segments != ("workspace",):
         raise ApiHttpError(404, "not_found", "Resource was not found")
     context = _workspace_input(payload)
@@ -702,7 +774,20 @@ def _domain_error(error):
         return _not_found()
     if isinstance(error, (ExecutionConflictError, BaselineGateError, SourcePreviewExpiredError, SourcePreviewStateError, StaleSourcePreviewError)):
         return ApiHttpError(409, "conflict", "Resource state conflicts with this request")
-    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError)):
+    if isinstance(error, ProviderCredentialNotFoundError):
+        return ApiHttpError(
+            422, "apifox_token_required", "请先保存 Apifox 访问令牌"
+        )
+    if isinstance(error, ApifoxDiscoveryError):
+        return ApiHttpError(
+            error.http_status,
+            "apifox_" + str(error.code).lower(),
+            str(error),
+            {"manual_fallback": True},
+        )
+    if isinstance(error, ApifoxOpenApiError):
+        return ApiHttpError(502, "apifox_export_failed", str(error))
+    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ApifoxInputError, ProviderCredentialInputError)):
         return ApiHttpError(422, "invalid_request", "Request validation failed")
     return ApiHttpError(500, "internal_error", "Internal server error")
 
