@@ -1,0 +1,60 @@
+android:
+  tasks:
+    - name: "文档打印页百度网盘入口顺序校验"
+      flow:
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 1000
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "小白扫描王首页已加载完成，能看到文档打印或文件打印入口"
+          timeout: 15000
+        - aiTap: "文档打印入口"
+        - aiWaitFor: "文档打印页或文档导入区域已打开，页面能看到本地导入、本地文档、相册导入、微信导入或百度网盘中的任意入口"
+          timeout: 15000
+        - aiAssert: "文档打印页展示百度网盘入口，且百度网盘位于本地导入或本地文档入口之后"
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 800
+
+    - name: "扫描复印页百度网盘入口同级展示校验"
+      flow:
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 1000
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "小白扫描王首页已加载完成，能看到扫描复印、复印扫描或扫描入口"
+          timeout: 15000
+        - aiTap: "扫描复印入口、复印扫描入口或扫描入口"
+        - aiWaitFor: "扫描复印页已打开，页面展示本地导入、相册导入、微信导入或百度网盘入口"
+          timeout: 15000
+        - aiAssert: "扫描复印页展示百度网盘入口，并与本地导入、相册导入或微信导入入口同级排列"
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 800
+
+    - name: "普通照片打印页百度网盘入口展示校验"
+      flow:
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 1000
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "小白扫描王首页已加载完成，能看到照片打印、图片打印或照片入口"
+          timeout: 15000
+        - aiTap: "照片打印入口、图片打印入口或照片入口"
+        - aiWaitFor: "照片打印页已打开，页面展示相册导入、相机拍照或百度网盘入口"
+          timeout: 15000
+        - aiAssert: "普通照片打印页展示百度网盘入口，并与相册导入、相机拍照入口同级显示"
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 800
+
+    - name: "证件照导入页百度网盘入口展示校验"
+      flow:
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 1000
+        - launch: com.xbxxhz.box
+        - aiWaitFor: "小白扫描王首页已加载完成，能看到照片打印、图片打印或照片入口"
+          timeout: 15000
+        - aiTap: "照片打印入口、图片打印入口或照片入口"
+        - aiWaitFor: "照片打印页已打开，能看到证件照、一寸照、普通证件照或智能证件照入口"
+          timeout: 15000
+        - aiTap: "普通证件照入口、一寸照入口或智能证件照入口"
+        - aiWaitFor: "证件照导入页已打开，页面展示相册导入、相机拍照或百度网盘入口"
+          timeout: 15000
+        - aiAssert: "证件照导入页展示百度网盘入口，并与相册导入、相机拍照入口同级显示"
+        - runAdbShell: "am force-stop com.xbxxhz.box"
+        - sleep: 800

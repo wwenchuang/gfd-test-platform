@@ -88,11 +88,16 @@ EXTERNAL_FLOW_STRONG_WORDS = (
     "第三方授权", "选择文件", "打开百度网盘", "跳转百度网盘", "百度网盘授权",
     "百度网盘登录", "微信授权", "微信登录", "相册授权", "相机授权", "WebView",
 )
+BAIDU_ENTRY_VISIBILITY_WORDS = (
+    "入口可见", "入口展示", "可见性", "同级", "并列", "位置", "布局", "顺序", "入口校验",
+)
+MANUAL_SCOPE_WORDS = ("埋点", "eleTitle", "事件上报", "统计", "点击埋点", "曝光埋点")
 GENERATED_MANUAL_CONDITION_WORDS = (
     "待确认", "若存在", "如果存在", "如存在", "若入口存在", "如果入口存在",
     "或确认无", "或确认该页面无", "确认该页面无此入口", "确认该页面无该入口",
     "若不存在则记录", "如果不存在则记录", "记录缺陷", "记录入口的具体位置",
 )
+HEAVY_ADB_CLEANUP_WORDS = ("input keyevent 187", "wm size", "input swipe")
 # Generated baseline metadata comments are trace data, not proof that the case
 # matched a successful baseline. Treat only explicit template/reference wording
 # as baseline execution evidence.
@@ -510,6 +515,66 @@ def _is_baidu_original_entry_prompt(text: str) -> bool:
     return original_state or mixed_post_click
 
 
+def _is_heavy_recent_cleanup_shell(text: str) -> bool:
+    shell = str(text or "")
+    compact = _compact_text(shell)
+    if "inputkeyevent187" in compact:
+        return True
+    if "wmsize" in compact and "inputswipe" in compact:
+        return True
+    if shell.count("input swipe") >= 2:
+        return True
+    return any(word in shell for word in HEAVY_ADB_CLEANUP_WORDS) and len(shell) > 180
+
+
+def _baidu_entry_visibility_scope(task_name: str, task_text: str) -> bool:
+    name = _compact_text(task_name)
+    if "百度网盘" not in name:
+        return False
+    # Only visibility/order/layout cases should stay on the current page.  A
+    # dedicated click, authorization, WebView or degrade-flow case is allowed
+    # to click the entry, but it must be excluded from first-smoke selection.
+    if _has_smoke_exclusion(name) or _has_external_flow_exclusion(name):
+        return False
+    return any(word in name for word in BAIDU_ENTRY_VISIBILITY_WORDS)
+
+
+def _module_path_warnings(task_name: str, flow: List[Any]) -> List[str]:
+    name = _compact_text(task_name)
+    if "百度网盘" not in name:
+        return []
+    flow_texts = [_compact_text(_step_text(step)) for step in flow if isinstance(step, dict)]
+    warnings: List[str] = []
+
+    def has_flow_word(*words: str) -> bool:
+        return any(any(word in text for word in words) for text in flow_texts)
+
+    if "文档打印" in name and not has_flow_word("文档打印"):
+        warnings.append("文档打印百度网盘用例缺少进入文档打印页的页面路径")
+    if any(word in name for word in ("扫描复印", "复印扫描")) and not has_flow_word("扫描复印", "复印扫描"):
+        warnings.append("扫描复印百度网盘用例缺少进入扫描复印页的页面路径")
+    if "照片打印" in name and not has_flow_word("照片打印", "普通照片", "5寸照片", "照片打印页"):
+        warnings.append("照片打印百度网盘用例缺少进入照片打印页的页面路径")
+
+    cert_words = ("证件照", "一寸照", "智能证件照", "普通证件照")
+    if any(word in name for word in cert_words):
+        first_cert_tap = None
+        for index, step in enumerate(flow):
+            if not isinstance(step, dict) or "aiTap" not in step:
+                continue
+            text = _compact_text(_step_text(step))
+            if any(word in text for word in cert_words):
+                first_cert_tap = index
+                break
+        if first_cert_tap is not None:
+            prior = " ".join(flow_texts[:first_cert_tap])
+            if "照片打印" not in prior and "证件照页" not in prior and "证件照导入页" not in prior:
+                warnings.append("证件照百度网盘用例缺少先进入照片打印/证件照页面的路径，不能从首页直接点击一寸照")
+        elif not has_flow_word("照片打印", "证件照"):
+            warnings.append("证件照百度网盘用例缺少照片打印或证件照页面路径")
+    return warnings
+
+
 def _has_generated_manual_condition(text: str) -> bool:
     compact = _compact_text(text)
     return any(_compact_text(word) in compact for word in GENERATED_MANUAL_CONDITION_WORDS)
@@ -585,12 +650,24 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
 
         task_name_text = str(task_name or "")
         task_name_lower = task_name_text.lower()
+        manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         if generated and any(word in task_name_lower for word in FIGMA_INTERNAL_WORDS):
             warnings.append("用例标题/步骤包含 Figma 内部页名或设计稿标识，应改为业务名称后再自动执行")
             score -= 35
         if generated and not baseline_evidence and any(word in task_name_text for word in SECONDARY_EXPANSION_WORDS):
             warnings.append("异常/边界/鲁棒性扩展缺少成功基线依据，默认需确认后执行")
             score -= 30
+
+        entry_visibility_scope = _baidu_entry_visibility_scope(task_name_text, task_text)
+        compact_task_text = _compact_text(task_text)
+        if generated and any(word.lower() in compact_task_text for word in MANUAL_SCOPE_WORDS):
+            manual_hint = True
+            warnings.append("埋点/统计类用例需要日志或后台数据验证，不应自动下发 Runner")
+            score -= 65
+        if generated and _has_generated_manual_condition(task_text):
+            manual_hint = True
+            warnings.append("生成 YAML 含若存在/待确认/记录缺陷等人工条件分支，不能自动下发 Runner")
+            score -= 65
 
         action_count = 0
         wait_count = 0
@@ -605,14 +682,10 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         broad_ai_steps = 0
         nested_action_prefixes = 0
         baidu_original_state_after_click = 0
+        baidu_entry_click_mismatch = 0
+        heavy_adb_cleanup = 0
         replan_risk = "low"
-        manual_hint = _manual_hint(task) if isinstance(task, dict) else False
         start_guard = _has_start_guard(flow)
-        if generated and _has_generated_manual_condition(task_text):
-            manual_hint = True
-            warnings.append("生成 YAML 含若存在/待确认/记录缺陷等人工条件分支，不能自动下发 Runner")
-            score -= 65
-
         if flow and not start_guard:
             warnings.append("缺少稳定起点/启动守卫，可能依赖上一个页面状态")
             score -= 25 if generated else 10
@@ -650,6 +723,8 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
                         f"flow[{step_index + 1}] runAdbShell 包含 `${{...}}` shell 参数展开，Midscene 会按环境变量插值解析"
                     )
                     score -= 55
+                if generated and action == "runAdbShell" and isinstance(action_value, str) and _is_heavy_recent_cleanup_shell(action_value):
+                    heavy_adb_cleanup += 1
                 if isinstance(action_value, str):
                     prefix_match = ACTION_PREFIX_RE.match(action_value)
                     if prefix_match and prefix_match.group(1) in MIDSCENE_FLOW_ACTIONS:
@@ -666,9 +741,16 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
             if "aiQuery" in actions and _ai_query_too_generic(step_text):
                 generic_queries += 1
             if "aiTap" in actions and _is_baidu_netdisk_tap_prompt(step_text):
+                if entry_visibility_scope:
+                    baidu_entry_click_mismatch += 1
                 after_baidu_tap = True
             elif after_baidu_tap and any(action in actions for action in ("aiWaitFor", "aiAssert")) and _is_baidu_original_entry_prompt(step_text):
                 baidu_original_state_after_click += 1
+            if entry_visibility_scope and _is_baidu_post_click_target_prompt(step_text):
+                baidu_entry_click_mismatch += 1
+        for path_warning in _module_path_warnings(task_name_text, flow):
+            warnings.append(path_warning)
+            score -= 45
         if action_count < 3:
             warnings.append("步骤过少，无法形成稳定的冒烟路径")
             score -= 20
@@ -708,6 +790,12 @@ def score_midscene_yaml_executable(yaml_text: str, *, generated: bool = True) ->
         if baidu_original_state_after_click:
             warnings.append(f"{baidu_original_state_after_click} 个百度网盘点击后仍检查原业务页入口，实际会进入第三方/空状态页")
             score -= min(45, 35 * baidu_original_state_after_click)
+        if baidu_entry_click_mismatch:
+            warnings.append(f"{baidu_entry_click_mismatch} 个入口展示/位置类用例点击了百度网盘或等待第三方页面，应只检查当前业务页入口")
+            score -= min(65, 45 * baidu_entry_click_mismatch)
+        if heavy_adb_cleanup:
+            warnings.append(f"{heavy_adb_cleanup} 个启动守卫包含最近任务清理/多次滑动，Runner 上容易 ADB 超时；生成 YAML 只允许 force-stop + launch")
+            score -= min(70, 55 * heavy_adb_cleanup)
         if nested_action_prefixes:
             warnings.append(f"{nested_action_prefixes} 个步骤内容嵌套了动作名前缀，需要先规范化再执行")
         if len(flow) > 36:
