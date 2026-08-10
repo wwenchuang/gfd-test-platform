@@ -66,6 +66,11 @@ PHASE1_TABLES = {
     "api_ai_job_batches",
 }
 
+COMPLETION_TABLES = {
+    "api_provider_credentials",
+    "api_test_tasks",
+}
+
 EXPECTED_INDEXES = {
     "api_project_members": {"ix_api_project_members_project_status"},
     "api_source_revisions": {"ix_api_source_revisions_source_number"},
@@ -312,7 +317,7 @@ def test_offline_upgrade_contains_complete_phase1_schema():
         text=True,
     )
     generated_sql = result.stdout.lower()
-    for table_name in PHASE1_TABLES:
+    for table_name in PHASE1_TABLES | COMPLETION_TABLES:
         assert f"create table {table_name}" in generated_sql
 
 
@@ -411,7 +416,9 @@ def test_test_database_url_wins_when_alembic_url_is_empty(isolated_schema):
 def test_upgrade_creates_complete_phase1_schema(migrated_database):
     _, _, schema_url, _, _ = migrated_database
     inspector = inspect(create_engine(schema_url))
-    assert PHASE1_TABLES.issubset(set(inspector.get_table_names()))
+    assert (PHASE1_TABLES | COMPLETION_TABLES).issubset(
+        set(inspector.get_table_names())
+    )
 
 
 def test_phase1_schema_uses_explicit_foreign_keys_indexes_and_jsonb(migrated_database):

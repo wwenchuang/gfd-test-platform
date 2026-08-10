@@ -28,6 +28,7 @@ from .execution import (
     ApiFailureAnalysis,
 )
 from .project import ApiProject, ApiProjectMember, ApiWorkspace
+from .provider import ApiProviderCredential
 from .source import (
     ApiSource,
     ApiSourceDiff,
