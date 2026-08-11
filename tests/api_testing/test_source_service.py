@@ -272,6 +272,40 @@ def test_local_reference_closure_supports_path_items_chains_cycles_and_escaped_p
     assert normalized.document == _reference_chain_document()
 
 
+def test_local_reference_supports_percent_encoded_uri_fragment_segments():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    document = {
+        "openapi": "3.0.1",
+        "info": {"title": "Apifox encoded references", "version": "1.0.0"},
+        "paths": {
+            "/favorites": {
+                "get": {
+                    "operationId": "listFavorites",
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {"$ref": "#/components/schemas/Resp%3F"}
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+        "components": {"schemas": {"Resp?": {"type": "object"}}},
+    }
+
+    normalized = normalize_openapi_document(document, "source-1")
+
+    assert len(normalized.endpoints) == 1
+    assert normalized.endpoints[0].operation["resolved_dependencies"] == {
+        "#/components/schemas/Resp%3F": {"type": "object"}
+    }
+
+
 def test_unresolved_local_reference_is_rejected_but_external_reference_is_preserved():
     from task_server.api_testing.adapters.openapi import (
         OpenApiValidationError,

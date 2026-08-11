@@ -31,6 +31,14 @@ export interface ApifoxPreviewPayload {
   environment_id: string
 }
 
+export type ApifoxOperation =
+  | 'saving_token'
+  | 'loading_projects'
+  | 'loading_context'
+  | 'checking_update'
+  | 'saving_revision'
+  | null
+
 export const useSetupStore = defineStore('api-setup', {
   state: () => ({
     preview: null as SourcePreview | null,
@@ -42,6 +50,7 @@ export const useSetupStore = defineStore('api-setup', {
     apifoxPreview: null as ApifoxRefreshPreview | null,
     secretPlaceholders: [] as string[],
     secretUpdates: {} as Record<string, string>,
+    apifoxOperation: null as ApifoxOperation,
     busy: false,
     error: '',
     message: '',
@@ -56,6 +65,7 @@ export const useSetupStore = defineStore('api-setup', {
     },
     async saveApifoxToken(token: string): Promise<ProviderCredential> {
       this.busy = true
+      this.apifoxOperation = 'saving_token'
       this.error = ''
       this.message = ''
       try {
@@ -69,11 +79,13 @@ export const useSetupStore = defineStore('api-setup', {
         this.error = error instanceof Error ? error.message : 'Apifox 访问令牌保存失败'
         throw error
       } finally {
+        this.apifoxOperation = null
         this.busy = false
       }
     },
     async discoverApifoxProjects(): Promise<ApifoxProject[]> {
       this.busy = true
+      this.apifoxOperation = 'loading_projects'
       this.error = ''
       this.message = ''
       try {
@@ -87,11 +99,13 @@ export const useSetupStore = defineStore('api-setup', {
         this.error = error instanceof Error ? error.message : 'Apifox 项目读取失败'
         throw error
       } finally {
+        this.apifoxOperation = null
         this.busy = false
       }
     },
     async discoverApifoxContext(projectId: string, environmentId = ''): Promise<ApifoxProjectContext> {
       this.busy = true
+      this.apifoxOperation = 'loading_context'
       this.error = ''
       this.message = ''
       try {
@@ -107,11 +121,13 @@ export const useSetupStore = defineStore('api-setup', {
         this.error = error instanceof Error ? error.message : 'Apifox 环境读取失败'
         throw error
       } finally {
+        this.apifoxOperation = null
         this.busy = false
       }
     },
     async previewApifox(payload: ApifoxPreviewPayload): Promise<ApifoxRefreshPreview> {
       this.busy = true
+      this.apifoxOperation = 'checking_update'
       this.error = ''
       this.message = ''
       try {
@@ -121,18 +137,20 @@ export const useSetupStore = defineStore('api-setup', {
         this.apifoxPreview = response.data.preview
         this.preview = this.apifoxPreview.source_preview
         this.secretPlaceholders = [...this.apifoxPreview.environment_candidate.secret_placeholders]
-        this.message = '已读取接口和环境变化，确认后才会保存'
+        this.message = '更新预览已生成，检查差异后可保存为新版本'
         return this.apifoxPreview
       } catch (error) {
         this.error = error instanceof Error ? error.message : 'Apifox 更新检查失败'
         throw error
       } finally {
+        this.apifoxOperation = null
         this.busy = false
       }
     },
     async activateApifoxPreview(): Promise<ApifoxActivation> {
       if (!this.apifoxPreview) throw new Error('请先检查 Apifox 更新')
       this.busy = true
+      this.apifoxOperation = 'saving_revision'
       this.error = ''
       try {
         const response = await apiClient.post<ApifoxActivation>(
@@ -149,6 +167,7 @@ export const useSetupStore = defineStore('api-setup', {
         this.error = error instanceof Error ? error.message : 'Apifox 更新保存失败'
         throw error
       } finally {
+        this.apifoxOperation = null
         this.busy = false
       }
     },

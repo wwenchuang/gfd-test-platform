@@ -7583,6 +7583,32 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-08-11 API 测试部署：AI Gateway 与 Task Server 端口隔离
+
+线上首次启用 API 测试运行时后，`midscene-task` 持续退出并由 systemd 自动重启。依赖与 API 测试配置检查均通过，完整 traceback 最终定位为 `OSError: [Errno 98] Address already in use`。
+
+根因：
+
+- Task Server 使用共享环境变量 `PORT=8091`。
+- `install-server.sh` 执行 `pm2 restart ai-gateway --update-env` 时继承了该变量。
+- AI Gateway 的 `server.js` 也读取通用 `PORT`，因此被错误重启到 8091，抢占 Task Server 端口；其正常端口应为 8090。
+
+通用修复：
+
+- 部署脚本增加独立 `AI_GATEWAY_PORT`，默认 8090。
+- PM2 新建和重启 AI Gateway 时均显式注入 `PORT=${AI_GATEWAY_PORT}`，不再继承 Task Server 的 `PORT`。
+- 新增静态回归断言，覆盖 PM2 restart/start 两条路径，防止以后部署再次发生端口抢占。
+
+已验证：
+
+```bash
+python3 tests/ai_gateway_static_checks.py
+bash -n deploy/install-server.sh
+git diff --check
+```
+
+AI Gateway 静态检查 46 项通过。完整 `backend_static_checks.py` 在新 Mac 的系统 Python 环境因未安装 API 测试依赖 `redis` 而无法启动，属于本地依赖环境限制；本次新增断言本身已完成红灯到绿灯验证。
+
 ### 2026-08-10 API 测试 Phase 1 最终复审与并发稳定性收口
 
 独立代码复审在提交前发现 4 项线上稳定性风险，本轮均通过先补失败测试、再修改实现的方式关闭：
@@ -7926,3 +7952,37 @@ git diff --check -- task_server/services/yaml_service.py tests/backend_static_ch
 ```
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+### 2026-08-11 Apifox 更新预览：真实导出兼容与独立加载状态
+
+用户在线上接口资产页点击“检查更新”稳定返回 `422 Request validation failed`，并要求读取项目、读取环境和检查更新分别显示 loading；正式保存必须保留独立按钮。
+
+根因与真实重放：
+
+- 线上账号下的 Apifox 项目、分支和环境发现均成功，失败发生在 OpenAPI 导出后的平台规范化阶段。
+- 真实导出为 OpenAPI 3.0.1，约 4.8 MB、990 条 path；其中 `$ref` 使用 URI fragment 百分号编码 `#/components/schemas/Resp%3F`，对应组件名为 `Resp?`。
+- 平台原解析器只处理 JSON Pointer 的 `~0/~1`，没有先按 URI fragment 规则百分号解码，因此整份资产被误判为 unresolved local reference。
+- 修复后用同一份真实导出离线重放成功，规范化得到 993 个 endpoint、528 个 schema。
+
+本轮实现：
+
+- OpenAPI 本地引用解析在执行 JSON Pointer 解码前，先执行 URI fragment 百分号解码；这是通用标准兼容，不包含项目或接口硬编码。
+- Apifox 输入错误和 OpenAPI 校验错误不再统一覆盖成英文 `Request validation failed`，API 返回可操作的中文错误和稳定错误码。
+- 前端增加独立 Apifox 操作状态：读取项目、读取环境、检查更新、保存版本；对应按钮显示旋转图标和明确中文进度。
+- “检查更新”只生成并持久化候选预览，不覆盖当前正式版本；差异区明确显示独立的“保存为新版本”按钮。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing -q
+# 121 passed, 157 skipped（无本地 TEST_DATABASE_URL 的 PostgreSQL 用例按设计跳过）
+
+cd api-testing-ui
+npm test -- --run
+# 16 files / 68 tests passed
+npm run build
+
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+# backend/frontend/AI Gateway static checks 与 skill eval 全部通过
+
+git diff --check
+```
