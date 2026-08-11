@@ -361,6 +361,39 @@ def test_process_generates_three_favorites_drafts_without_secret_context(
     assert {item["name"]: item["resolved"] for item in prompt_payload["environment"]["services"]}["optional"] is False
 
 
+def test_schema_exists_output_is_normalized_to_json_root_exists(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint)
+    candidate["case"]["assertions"].append(
+        {
+            "type": "schema",
+            "operator": "exists",
+            "path": "$",
+            "enabled": True,
+        }
+    )
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([candidate])),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    completed = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert completed.state == "completed"
+    assert len(drafts) == 1
+    assertion = drafts[0].assertions[1]
+    assert assertion.type == "json_path"
+    assert assertion.operator == "exists"
+    assert assertion.path == "$"
+    assert assertion.expected is None
+
+
 def test_single_markdown_json_fence_is_unwrapped_but_unknown_output_is_rejected(
     session_factory, ai_context
 ):

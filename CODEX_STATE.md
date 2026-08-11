@@ -28,6 +28,26 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-11 API 测试：修复 AI 断言类型与操作符契约漂移
+
+线上“收藏”接口 AI 生成批次出现 `assertions[1] operator exists is not supported for schema`。根因不是 qwen-plus 不可用，也不是正式用例门禁过严，而是 AI 输出 Schema 只分别枚举了断言类型和操作符，没有表达二者的合法组合；模型因此生成了合同不允许的 `schema + exists`。
+
+本轮采用三层防护，没有放宽 `CasePayload` 正式契约：
+
+- `api_case_generation.v1.json` 增加按断言类型约束操作符的条件 Schema。`schema` 只允许 `equals` 且必须提供 JSON Schema 对象或布尔值；`status_code`、`json_path`、`header`、`response_time` 分别使用各自合法操作符集合。
+- `api_case_generation.v1.md` 明确提示模型遵守断言矩阵；检查响应字段或响应根节点是否存在时必须使用 `json_path + exists/not_exists`，根节点路径为 `$`。
+- `AiCaseService` 在严格 JSON Schema 校验前只修复一种语义明确的模型词汇漂移：将 `schema + exists/not_exists` 规范为 `json_path + exists/not_exists`。绝对 URL、任意脚本、未知字段、缺少必填字段以及其他非法类型/操作符组合仍会被拒绝。
+
+验证结果：
+
+- 新增线上同构回归测试，确认 `schema + exists` 被规范为可编辑、可执行的 `json_path + exists` 草稿。
+- AI 服务聚焦测试：`34 passed`。
+- API 完整门禁：后端 `294 passed`；Vue 前端 `19` 个测试文件、`82 passed`；TypeScript、Vite 构建、桌面/手机视觉检查通过。
+- Playwright “我的收藏”三接口闭环通过：导入、AI 设计、调试、采纳基线、回归、实时日志和报告均完成。
+- 仓库完整静态检查通过：undefined-name、后端 `63` 项、前端 `72` 项、AI Gateway `46` 项、动态模型目录和 AI skill contract eval 均通过。
+
+待线上部署后验证：重新生成当前收藏范围，确认不再出现 `schema + exists` 校验失败；使用线上已配置的业务 Token 逐条调试收藏接口并核对业务响应。业务成功与否必须依据 HTTP 状态、业务码和断言结果分别展示，不得把 HTTP 200 直接等同于业务通过。
+
 ### 2026-08-11 API 测试：修复 AI JSON 包装与 HTTP 浏览器执行兼容
 
 本轮在生产环境用“收藏”7 个接口复现了两个独立失败，修复仍位于 `feat/api-testing-phase2-m0`：

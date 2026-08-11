@@ -13,6 +13,7 @@
 - `environment.variable_names` 可能包含敏感变量名称，但不会包含变量值。需要鉴权时应引用已有敏感变量名；没有专用的无效凭证变量时，不生成“无效 token”场景。
 - 只允许声明式 `processing` 动作，不得输出任意脚本、代码、网络地址或执行命令。
 - 每个候选必须具备明确目的、可执行请求数据和可验证断言。
+- 断言类型与操作符必须匹配：`status_code` 仅用 `equals/not_equals/in`；`response_time` 仅用 `greater_than/less_than`；`schema` 仅用 `equals`，且 `expected` 必须是 JSON Schema 对象或布尔值；检查响应字段或响应根节点是否存在时使用 `json_path + exists/not_exists`，根节点路径为 `$`。
 - 只输出符合给定 JSON Schema 的 JSON 对象，不输出解释文字。
 
 ## 输入

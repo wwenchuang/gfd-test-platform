@@ -793,6 +793,7 @@ class AiCaseService:
             payload = json.loads(self._unwrap_json_fence(content))
         except json.JSONDecodeError as exc:
             raise AiCandidateValidationError("AI Gateway content is not strict JSON") from exc
+        payload = self._normalize_output_contract(payload)
         try:
             self.output_validator.validate(payload)
         except ValidationError as exc:
@@ -809,6 +810,36 @@ class AiCaseService:
                     "case": copy.deepcopy(candidate["case"]),
                 }
             )
+        return normalized
+
+    @staticmethod
+    def _normalize_output_contract(payload):
+        """Repair unambiguous model vocabulary drift before strict validation."""
+        normalized = copy.deepcopy(payload)
+        if not isinstance(normalized, dict):
+            return normalized
+        candidates = normalized.get("candidates")
+        if not isinstance(candidates, list):
+            return normalized
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            case = candidate.get("case")
+            assertions = case.get("assertions") if isinstance(case, dict) else None
+            if not isinstance(assertions, list):
+                continue
+            for assertion in assertions:
+                if not isinstance(assertion, dict):
+                    continue
+                if (
+                    assertion.get("type") == "schema"
+                    and assertion.get("operator") in {"exists", "not_exists"}
+                ):
+                    assertion["type"] = "json_path"
+                    if "path" not in assertion:
+                        assertion["path"] = "$"
+                    assertion.pop("expected", None)
+                    assertion.pop("name", None)
         return normalized
 
     @staticmethod

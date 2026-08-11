@@ -70,7 +70,35 @@
                     "name": {"type": "string", "maxLength": 1000},
                     "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 60000},
                     "enabled": {"type": "boolean"}
-                  }
+                  },
+                  "allOf": [
+                    {
+                      "if": {"properties": {"type": {"const": "status_code"}}},
+                      "then": {"properties": {"operator": {"enum": ["equals", "not_equals", "in"]}}}
+                    },
+                    {
+                      "if": {"properties": {"type": {"const": "json_path"}}},
+                      "then": {"properties": {"operator": {"enum": ["equals", "not_equals", "contains", "not_contains", "exists", "not_exists", "greater_than", "less_than", "matches", "in"]}}}
+                    },
+                    {
+                      "if": {"properties": {"type": {"const": "header"}}},
+                      "then": {"properties": {"operator": {"enum": ["equals", "not_equals", "contains", "not_contains", "exists", "not_exists", "matches", "in"]}}}
+                    },
+                    {
+                      "if": {"properties": {"type": {"const": "response_time"}}},
+                      "then": {"properties": {"operator": {"enum": ["greater_than", "less_than"]}}}
+                    },
+                    {
+                      "if": {"properties": {"type": {"const": "schema"}}},
+                      "then": {
+                        "required": ["expected"],
+                        "properties": {
+                          "operator": {"const": "equals"},
+                          "expected": {"type": ["object", "boolean"]}
+                        }
+                      }
+                    }
+                  ]
                 }
               },
               "extractions": {
