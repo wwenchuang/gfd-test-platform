@@ -2,9 +2,9 @@
 
 import copy
 
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 
-from ..models.case import ApiAiJob
+from ..models.case import ApiAiJob, ApiBaseline, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
 from ..models.execution import ApiExecution
 from ..models.project import ApiProject
@@ -51,6 +51,32 @@ class TestTaskRepository:
 
     def get_execution(self, record_id):
         return self.session.get(ApiExecution, record_id)
+
+    def runnable_baseline_count(self, task):
+        selected = tuple(dict.fromkeys(task.selected_endpoint_ids or ()))
+        if not selected:
+            return 0
+        return int(
+            self.session.scalar(
+                select(func.count(distinct(ApiCaseVersion.endpoint_id)))
+                .select_from(ApiBaseline)
+                .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
+                .join(
+                    ApiSourceEndpoint,
+                    ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id,
+                )
+                .where(
+                    ApiBaseline.project_id == task.project_id,
+                    ApiBaseline.environment_revision_id
+                    == task.environment_revision_id,
+                    ApiBaseline.owner_id == task.owner_id,
+                    ApiBaseline.status == "active",
+                    ApiSourceEndpoint.revision_id == task.source_revision_id,
+                    ApiSourceEndpoint.id.in_(selected),
+                )
+            )
+            or 0
+        )
 
     def get_task(self, record_id, *, for_update=False):
         query = select(ApiTestTask).where(ApiTestTask.id == record_id)

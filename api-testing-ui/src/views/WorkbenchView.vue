@@ -210,6 +210,11 @@ async function runCurrentTask(): Promise<void> {
   }
 }
 
+async function adoptBaseline(input: { caseVersionId: string; executionCaseId: string }): Promise<void> {
+  await cases.adoptBaseline(input.caseVersionId, input.executionCaseId)
+  if (context.projectId) await tasks.restore(context.projectId)
+}
+
 function routeValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
@@ -245,6 +250,6 @@ function routeValue(value: unknown): string {
       </main>
       <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
     </div>
-    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="cases.adoptBaseline($event.caseVersionId, $event.executionCaseId)" @close="debugOpen = false" />
+    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
   </section>
 </template>

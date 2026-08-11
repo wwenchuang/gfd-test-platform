@@ -20,6 +20,25 @@ const DRAFT: CaseDraft = {
 }
 
 describe('CaseEditor', () => {
+  it('does not publish an empty placeholder when only adding a request header row', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    await wrapper.get('[data-testid="headers-add"]').trigger('click')
+
+    expect(wrapper.find('[data-testid="headers-name"]').exists()).toBe(true)
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('does not include an unfinished request parameter when another field is edited', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    await wrapper.get('[data-testid="headers-add"]').trigger('click')
+    await wrapper.get('[data-testid="case-name"]').setValue('收藏列表调整')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.request.headers).toEqual({ Authorization: '{{ZXBToken}}' })
+  })
+
   it('preserves unsaved structured edits while switching to raw JSON and back', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
 

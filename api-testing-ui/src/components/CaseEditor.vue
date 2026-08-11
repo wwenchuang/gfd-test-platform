@@ -18,6 +18,9 @@ const rawError = ref('')
 const bodyText = ref(JSON.stringify(local.value.request.body, null, 2))
 const bodyError = ref('')
 const advancedErrors = ref<Record<string, string>>({})
+const pendingRequestEntries: Record<RequestMapField, Set<string>> = {
+  headers: new Set(), query: new Set(), path_params: new Set(), cookies: new Set(),
+}
 
 const requestSections = [
   { label: '请求头', field: 'headers' as const },
@@ -52,12 +55,17 @@ watch(() => props.modelValue, value => {
     raw.value = JSON.stringify(value, null, 2)
     bodyText.value = JSON.stringify(value.request.body, null, 2)
     bodyError.value = ''
+    for (const pending of Object.values(pendingRequestEntries)) pending.clear()
   }
 }, { deep: true })
 
 function publish(): void {
   raw.value = JSON.stringify(local.value, null, 2)
-  emit('update:modelValue', clone(local.value))
+  const published = clone(local.value)
+  for (const field of Object.keys(pendingRequestEntries) as RequestMapField[]) {
+    for (const name of pendingRequestEntries[field]) delete published.request[field][name]
+  }
+  emit('update:modelValue', published)
 }
 
 function entries(value: Record<string, unknown>): Array<[string, unknown]> {
@@ -73,14 +81,16 @@ function uniqueName(value: Record<string, unknown>, seed: string): string {
 
 function addRequestEntry(field: RequestMapField): void {
   const target = local.value.request[field]
-  target[uniqueName(target, '新参数')] = ''
-  publish()
+  const name = uniqueName(target, '新参数')
+  target[name] = ''
+  pendingRequestEntries[field].add(name)
 }
 
 function renameRequestEntry(field: RequestMapField, previous: string, next: string): void {
   const name = next.trim()
   const target = local.value.request[field]
   if (!name || (name !== previous && Object.prototype.hasOwnProperty.call(target, name))) return
+  pendingRequestEntries[field].delete(previous)
   const rebuilt: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(target)) rebuilt[key === previous ? name : key] = value
   local.value.request[field] = rebuilt
@@ -98,6 +108,7 @@ function updateRequestValueAt(field: RequestMapField, index: number, value: stri
 }
 
 function removeRequestEntry(field: RequestMapField, name: string): void {
+  pendingRequestEntries[field].delete(name)
   delete local.value.request[field][name]
   publish()
 }

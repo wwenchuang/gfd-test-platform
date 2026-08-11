@@ -13,7 +13,7 @@ from task_server.api_testing.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # The platform loader rejects broad file permissions, malformed quoting, and
 # unknown keys. Alembic must use the same private environment boundary as the

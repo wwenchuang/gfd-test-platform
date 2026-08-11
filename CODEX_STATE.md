@@ -8007,3 +8007,46 @@ PATH="$PWD/.venv/bin:$PATH" npm run test:static
 
 git diff --check
 ```
+
+### 2026-08-11 API AI 生成、基线可执行状态与编辑器占位符修复
+
+用户在线上选择“我的收藏”接口后遇到三类问题：AI 生成被确定性校验拦截、已有调试成功记录但任务执行返回资源冲突、请求头编辑器保存了空的“新参数”。
+
+根因：
+
+- AI 提示词为了保护敏感信息，把敏感环境变量的名称和值一起隐藏了。模型看不到已配置的 `ZXBToken` 变量名，只能自行生成 `Authorization` 等变量，随后被平台的未定义变量门禁正确拦截。
+- 任务视图只有 `ready` 状态，没有暴露当前来源版本和环境版本下实际可运行的基线数量；前端因此把“已有草稿但尚未采纳基线”误显示为可执行，后端执行器再以 409 拒绝。
+- 请求参数编辑器点击“添加参数”时立即把空的“新参数”发布给父组件；即使用户还没填写参数名，随后编辑其他字段也会把占位符保存。
+- Alembic 迁移的日志配置默认禁用已加载 logger，导致整套测试运行后数据库/Redis 故障日志消失。
+- AI 汇总把候选校验错误和派生的接口覆盖缺口重复计入 `invalid_candidates`，一条坏候选会显示为两条。
+
+本轮修复：
+
+- AI 仅接收已启用环境变量的名称，继续禁止传递敏感值、密文和指纹；技能提示明确禁止发明未配置的变量。
+- 任务合同新增 `runnable_baseline_count`，统计口径与执行器完全一致：同项目、同 owner、同来源版本、同环境版本、活动基线且位于当前选中接口范围。
+- 无可运行基线时，前端显示“待采纳基线”并禁用任务执行；后端仍保留门禁，并返回稳定错误码 `baseline_required` 和中文操作提示。
+- 调试成功后采纳基线会立即刷新任务状态；有一条基线时显示“可执行 1 / N”，只运行已采纳基线，不把未采纳草稿混入回归。
+- 请求参数新增行作为本地待填写行，只有明确参数名后才进入用例数据；编辑其他字段不会夹带空占位符。
+- `invalid_candidates` 只统计真实候选错误，覆盖缺口继续保留在详细校验错误和任务状态中。
+- Alembic 保留已有应用 logger；开发依赖补充 `PyYAML`，新机器使用项目 `.venv` 即可执行完整门禁。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:***@127.0.0.1:5432/midscene_api_testing' \
+TEST_REDIS_URL='redis://127.0.0.1:6379/14' \
+API_TESTING_REQUIRE_POSTGRES_TESTS=1 \
+.venv/bin/python -m pytest tests/api_testing -q
+# 291 passed
+
+npm --prefix api-testing-ui test -- --run
+# 18 files / 74 tests passed
+
+npm --prefix api-testing-ui run build
+node tests/api_testing_ui_visual_check.js
+npx playwright test tests/api_testing_e2e.spec.mjs --project=chromium
+# 我的收藏三接口完整闭环 1 passed
+
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+git diff --check
+```

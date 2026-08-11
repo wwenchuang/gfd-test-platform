@@ -971,6 +971,7 @@ def test_api_task_run_executes_only_adopted_baselines_in_saved_selection(
         },
         _auth(),
     ).body["data"]["task"]
+    assert task["runnable_baseline_count"] == 1
 
     response = http_client.post(
         f"/api/api-testing/v1/tasks/{task['id']}/run",
@@ -985,6 +986,36 @@ def test_api_task_run_executes_only_adopted_baselines_in_saved_selection(
     assert response.body["data"]["task"]["latest_execution_id"] == response.body[
         "data"
     ]["execution"]["id"]
+
+
+def test_api_task_without_an_active_baseline_is_not_runnable(
+    http_client, owned_records
+):
+    task = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "我的收藏接口回归",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    ).body["data"]["task"]
+
+    assert task["runnable_baseline_count"] == 0
+    response = http_client.post(
+        f"/api/api-testing/v1/tasks/{task['id']}/run",
+        {"idempotency_key": "task-regression-without-baseline"},
+        _auth(),
+    )
+
+    assert response.status == 409
+    assert response.body["error"] == {
+        "code": "baseline_required",
+        "message": "请先调试通过并采纳至少一条用例为基线",
+        "details": {},
+    }
 
 
 def test_ai_job_enqueue_failure_is_persisted_as_safe_terminal_failure(

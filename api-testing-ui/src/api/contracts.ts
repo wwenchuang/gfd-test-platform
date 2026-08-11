@@ -289,6 +289,7 @@ export interface ApiTestTask {
   name: string
   state: ApiTestTaskState
   selected_endpoint_ids: string[]
+  runnable_baseline_count: number
   latest_ai_job_id: string | null
   latest_execution_id: string | null
   summary: Record<string, unknown>

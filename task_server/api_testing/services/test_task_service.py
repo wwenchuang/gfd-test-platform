@@ -71,7 +71,7 @@ class TestTaskService:
                 task.summary = {}
                 task.updated_by = actor
                 repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     def update_context(self, task_id, owner_id, payload, actor_id):
         owner = _text(owner_id, "owner id", 128)
@@ -98,15 +98,16 @@ class TestTaskService:
             task.summary = {}
             task.updated_by = actor
             repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     def get(self, task_id, owner_id):
         owner = _text(owner_id, "owner id", 128)
         with self._session_factory() as session:
-            task = TestTaskRepository(session).get_task(task_id)
+            repository = TestTaskRepository(session)
+            task = repository.get_task(task_id)
             if task is None or task.owner_id != owner:
                 raise TestTaskNotFoundError("API testing task was not found")
-            return self._view(task)
+            return self._view(repository, task)
 
     def get_active(self, project_id, owner_id):
         owner = _text(owner_id, "owner id", 128)
@@ -116,7 +117,7 @@ class TestTaskService:
             if project is None or project.owner_id != owner:
                 raise TestTaskNotFoundError("API testing project was not found")
             task = repository.get_active(project_id, owner)
-            return self._view(task) if task is not None else None
+            return self._view(repository, task) if task is not None else None
 
     def attach_ai_job(self, task_id, ai_job_id, actor_id):
         actor = _text(actor_id, "actor id", 128)
@@ -136,7 +137,7 @@ class TestTaskService:
             task.state = "designing"
             task.updated_by = actor
             repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     def attach_execution(self, task_id, execution_id, actor_id):
         actor = _text(actor_id, "actor id", 128)
@@ -170,7 +171,7 @@ class TestTaskService:
             )
             task.updated_by = actor
             repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     def refresh_terminal_summary(self, task_id, actor_id):
         actor = _text(actor_id, "actor id", 128)
@@ -182,7 +183,7 @@ class TestTaskService:
                 raise TestTaskScopeError("task execution was not found")
             self._apply_execution_terminal(task, execution, actor)
             repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     def refresh_for_ai_job(self, ai_job_id):
         with self._session_factory.begin() as session:
@@ -198,14 +199,14 @@ class TestTaskService:
             elif job.state in {"failed_validation", "failed_gateway"}:
                 task.state = "failed"
             else:
-                return self._view(task)
+                return self._view(repository, task)
             task.summary = {
                 "ai_state": job.state,
                 "ai": copy.deepcopy(dict(job.summary)),
             }
             task.updated_by = "worker"
             repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     def refresh_for_execution(self, execution_id):
         with self._session_factory.begin() as session:
@@ -218,7 +219,7 @@ class TestTaskService:
                 return None
             self._apply_execution_terminal(task, execution, "worker")
             repository.flush()
-            return self._view(task)
+            return self._view(repository, task)
 
     @staticmethod
     def _apply_execution_terminal(task, execution, actor_id):
@@ -302,7 +303,7 @@ class TestTaskService:
             )
 
     @staticmethod
-    def _view(task):
+    def _view(repository, task):
         return ApiTestTaskView(
             id=task.id,
             project_id=task.project_id,
@@ -311,6 +312,7 @@ class TestTaskService:
             name=task.name,
             state=task.state,
             selected_endpoint_ids=tuple(task.selected_endpoint_ids),
+            runnable_baseline_count=repository.runnable_baseline_count(task),
             latest_ai_job_id=task.latest_ai_job_id,
             latest_execution_id=task.latest_execution_id,
             summary=MappingProxyType(copy.deepcopy(dict(task.summary))),

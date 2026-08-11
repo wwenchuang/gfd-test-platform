@@ -352,8 +352,12 @@ def test_process_generates_three_favorites_drafts_without_secret_context(
     assert SYNTHETIC_PUBLIC_VALUE not in prompt
     assert "fingerprint" not in prompt.lower()
     assert "ciphertext" not in prompt.lower()
-    assert "ZXBToken" not in prompt
-    assert prompt_payload["environment"]["variable_names"] == ["Biz", "pageNum"]
+    assert "ZXBToken" in prompt
+    assert prompt_payload["environment"]["variable_names"] == [
+        "Biz",
+        "pageNum",
+        "ZXBToken",
+    ]
     assert {item["name"]: item["resolved"] for item in prompt_payload["environment"]["services"]}["optional"] is False
 
 

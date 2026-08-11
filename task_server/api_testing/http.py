@@ -867,6 +867,14 @@ def _domain_error(error):
         return error
     if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError, TestTaskNotFoundError)):
         return _not_found()
+    if isinstance(error, ExecutionConflictError) and str(error).startswith(
+        "no active baselines"
+    ):
+        return ApiHttpError(
+            409,
+            "baseline_required",
+            "请先调试通过并采纳至少一条用例为基线",
+        )
     if isinstance(error, (ExecutionConflictError, BaselineGateError, SourcePreviewExpiredError, SourcePreviewStateError, StaleSourcePreviewError)):
         return ApiHttpError(409, "conflict", "Resource state conflicts with this request")
     if isinstance(error, ProviderCredentialNotFoundError):

@@ -589,7 +589,7 @@ class AiCaseService:
             "variable_names": [
                 self._sanitize_contract(item.name)
                 for item in variables
-                if item.enabled and not item.is_secret
+                if item.enabled
             ],
             "services": [
                 {
@@ -715,11 +715,17 @@ class AiCaseService:
             draft_count = sum(
                 len(item.result.get("draft_version_ids", [])) for item in batches
             )
+            validation_errors = tuple(
+                error
+                for item in batches
+                for error in item.result.get("validation_errors", [])
+            )
             invalid_count = sum(
-                len(item.result.get("validation_errors", [])) for item in batches
+                error.get("code") != "missing_endpoint_coverage"
+                for error in validation_errors
             )
             gateway_failures = sum(item.state == "failed_gateway" for item in batches)
-            if draft_count and (invalid_count or gateway_failures):
+            if draft_count and (validation_errors or gateway_failures):
                 state = "partial"
             elif draft_count:
                 state = "completed"
