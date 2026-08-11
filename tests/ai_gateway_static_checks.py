@@ -158,6 +158,12 @@ def main():
     for prefix in ("METERSPHERE_", "APIFOX_"):
         require(f'"{prefix}"' not in config, f"{prefix} must not be an environment prefix")
     installer = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+    require(
+        'AI_GATEWAY_PORT="${AI_GATEWAY_PORT:-8090}"' in installer
+        and 'env PORT="${AI_GATEWAY_PORT}" pm2 restart ai-gateway --update-env' in installer
+        and 'env PORT="${AI_GATEWAY_PORT}" pm2 start server.js --name ai-gateway --update-env' in installer,
+        "installer must isolate AI Gateway port 8090 from the task server PORT environment",
+    )
     for marker in (
         "import cryptography",
         "cryptography_installed",

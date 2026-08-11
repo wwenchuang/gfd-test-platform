@@ -7583,6 +7583,32 @@ git diff --check -- task_server/services/agent_service.py js/agent-workbench.js 
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
 
+### 2026-08-11 API 测试部署：AI Gateway 与 Task Server 端口隔离
+
+线上首次启用 API 测试运行时后，`midscene-task` 持续退出并由 systemd 自动重启。依赖与 API 测试配置检查均通过，完整 traceback 最终定位为 `OSError: [Errno 98] Address already in use`。
+
+根因：
+
+- Task Server 使用共享环境变量 `PORT=8091`。
+- `install-server.sh` 执行 `pm2 restart ai-gateway --update-env` 时继承了该变量。
+- AI Gateway 的 `server.js` 也读取通用 `PORT`，因此被错误重启到 8091，抢占 Task Server 端口；其正常端口应为 8090。
+
+通用修复：
+
+- 部署脚本增加独立 `AI_GATEWAY_PORT`，默认 8090。
+- PM2 新建和重启 AI Gateway 时均显式注入 `PORT=${AI_GATEWAY_PORT}`，不再继承 Task Server 的 `PORT`。
+- 新增静态回归断言，覆盖 PM2 restart/start 两条路径，防止以后部署再次发生端口抢占。
+
+已验证：
+
+```bash
+python3 tests/ai_gateway_static_checks.py
+bash -n deploy/install-server.sh
+git diff --check
+```
+
+AI Gateway 静态检查 46 项通过。完整 `backend_static_checks.py` 在新 Mac 的系统 Python 环境因未安装 API 测试依赖 `redis` 而无法启动，属于本地依赖环境限制；本次新增断言本身已完成红灯到绿灯验证。
+
 ### 2026-08-10 API 测试 Phase 1 最终复审与并发稳定性收口
 
 独立代码复审在提交前发现 4 项线上稳定性风险，本轮均通过先补失败测试、再修改实现的方式关闭：

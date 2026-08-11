@@ -10,6 +10,7 @@ SERVICE_OVERRIDE_DIR="${SERVICE_OVERRIDE_DIR:-/etc/systemd/system/midscene-task.
 USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
 PORT="${PORT:-8091}"
+AI_GATEWAY_PORT="${AI_GATEWAY_PORT:-8090}"
 VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv}"
 WEB_CONTAINER="${WEB_CONTAINER:-sonic-server-272-midscene-reports-1}"
 NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-300m}"
@@ -365,9 +366,9 @@ if [ -d "${SRC_DIR}/ai-gateway" ]; then
   fi
   if command -v pm2 >/dev/null 2>&1; then
     if pm2 describe ai-gateway >/dev/null 2>&1; then
-      pm2 restart ai-gateway --update-env || true
+      env PORT="${AI_GATEWAY_PORT}" pm2 restart ai-gateway --update-env || true
     else
-      (cd "${AI_GATEWAY_DIR}" && pm2 start server.js --name ai-gateway --update-env) || true
+      (cd "${AI_GATEWAY_DIR}" && env PORT="${AI_GATEWAY_PORT}" pm2 start server.js --name ai-gateway --update-env) || true
     fi
     pm2 save || true
   else
