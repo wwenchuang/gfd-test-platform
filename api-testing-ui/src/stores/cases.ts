@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView } from '../api/contracts'
+import { createIdempotencyKey } from '../utils/idempotency'
 
 const TERMINAL_AI = new Set(['completed', 'partial', 'failed', 'failed_gateway', 'failed_validation'])
 const TERMINAL_EXECUTION = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
@@ -187,7 +188,7 @@ export const useCasesStore = defineStore('api-cases', {
         case_version_ids: [input.caseVersionId],
         execution_type: 'debug',
         overrides: {},
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: createIdempotencyKey(),
         ...(input.taskId ? { task_id: input.taskId } : {}),
       })
       this.debugExecution = response.data.execution

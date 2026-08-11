@@ -3,6 +3,7 @@ import { markRaw } from 'vue'
 
 import { apiClient } from '../api/client'
 import type { ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
+import { createIdempotencyKey } from '../utils/idempotency'
 
 const TERMINAL = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 const EVENT_TYPES = [
@@ -216,7 +217,7 @@ export const useExecutionsStore = defineStore('api-executions', {
           case_version_ids: caseIds,
           execution_type: execution.execution_type,
           overrides: {},
-          idempotency_key: crypto.randomUUID(),
+          idempotency_key: createIdempotencyKey(),
         },
       )
       this.executions.unshift(response.data.execution)
@@ -233,7 +234,7 @@ export const useExecutionsStore = defineStore('api-executions', {
             project_id: input.projectId,
             source_revision_id: input.sourceRevisionId,
             environment_revision_id: input.environmentRevisionId,
-            idempotency_key: crypto.randomUUID(),
+            idempotency_key: createIdempotencyKey(),
           },
         )
         this.executions.unshift(response.data.execution)

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
 import type { ApiTestTask, ExecutionView } from '../api/contracts'
+import { createIdempotencyKey } from '../utils/idempotency'
 
 interface TaskContext {
   projectId: string
@@ -62,7 +63,7 @@ export const useTasksStore = defineStore('api-test-tasks', {
       try {
         const response = await apiClient.post<{ task: ApiTestTask; execution: ExecutionView }>(
           `/api/api-testing/v1/tasks/${encodeURIComponent(this.task.id)}/run`,
-          { idempotency_key: crypto.randomUUID() },
+          { idempotency_key: createIdempotencyKey() },
         )
         this.task = response.data.task
         return response.data.execution

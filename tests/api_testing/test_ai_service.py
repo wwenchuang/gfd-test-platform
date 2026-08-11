@@ -196,6 +196,15 @@ def _service(session_factory, gateway, *, batch_size=10):
     )
 
 
+def test_json_fence_unwrapper_accepts_only_one_complete_json_document():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    document = '{"candidates": []}'
+
+    assert AiCaseService._unwrap_json_fence(f"```json\n{document}\n```") == document
+    assert AiCaseService._unwrap_json_fence(f"说明\n```json\n{document}\n```") != document
+
+
 def test_submit_deduplicates_in_order_and_creates_bounded_batches(
     session_factory, ai_context
 ):
@@ -348,7 +357,7 @@ def test_process_generates_three_favorites_drafts_without_secret_context(
     assert {item["name"]: item["resolved"] for item in prompt_payload["environment"]["services"]}["optional"] is False
 
 
-def test_markdown_fence_and_unknown_output_are_rejected(
+def test_single_markdown_json_fence_is_unwrapped_but_unknown_output_is_rejected(
     session_factory, ai_context
 ):
     endpoint = ai_context["endpoints"]["favoriteList"]
@@ -363,7 +372,8 @@ def test_markdown_fence_and_unknown_output_are_rejected(
     first = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
     )
-    assert service.process(first.id).state == "failed_validation"
+    assert service.process(first.id).state == "completed"
+    assert len(service.list_generated_drafts(first.id)) == 1
 
     second = service.submit(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
@@ -399,6 +409,34 @@ def test_invalid_candidate_is_atomic_and_valid_candidate_survives(
         assert session.scalar(
             select(func.count(ApiCase.id)).where(ApiCase.project_id == result.project_id)
         ) == 1
+
+
+def test_missing_selected_endpoint_is_reported_as_partial_coverage(
+    session_factory, ai_context
+):
+    endpoints = ai_context["endpoints"]
+    covered = endpoints["favoriteList"]
+    missing = endpoints["favoriteAdd"]
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([_candidate(covered)])),
+    )
+    job = service.submit(
+        [covered.id, missing.id],
+        ai_context["environment"].revision_id,
+        "admin",
+    )
+
+    result = service.process(job.id)
+
+    assert result.state == "partial"
+    assert result.batches[0].state == "partial"
+    assert len(service.list_generated_drafts(job.id)) == 1
+    assert any(
+        item["code"] == "missing_endpoint_coverage"
+        and item["endpoint_id"] == missing.id
+        for item in result.batches[0].validation_errors
+    )
 
 
 def test_absolute_url_and_arbitrary_processing_are_rejected_independently(
