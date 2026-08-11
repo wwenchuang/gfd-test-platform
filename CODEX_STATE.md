@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-11 API 测试 Phase 1：Apifox 手动更新与持久测试任务已完成
+
+当前实现位于 `feat/api-testing-phase1`，沿用现有 API 测试子系统，没有新增另一套并行工作流。
+
+- Apifox 保持手动刷新：访问令牌按用户加密保存，页面只返回配置状态和指纹；项目、分支、环境发现和 OpenAPI 导出仅在用户明确点击时访问 Apifox。
+- 接口和环境先预览差异，只有点击确认后才生成不可变源版本和可编辑本地环境版本；刷新失败不会覆盖当前工作区。
+- OpenAPI JSON 导入保留为“高级导入”备用入口，不再是日常主链路。
+- 新增持久化 API 测试任务，保存项目、接口版本、环境、选中接口、AI 任务、最新执行和终态统计；后端校验所有引用属于同一用户和同一测试范围。
+- 工作台可显式保存当前任务，刷新页面后恢复环境和已选接口；AI 生成、单例调试和基线回归共用同一 `task_id`。
+- “执行本任务”只执行当前范围已采纳的基线，创建后直接进入对应实时执行记录，继续沿用 `PASSED` / `FAILED` / `BROKEN` 双层结果语义。
+- Playwright 支持通过 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 选用系统 Chrome，CI 未配置时仍使用 Playwright 默认浏览器。
+
+完整本地门禁已通过：
+
+```bash
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+API_TESTING_POSTGRES_PASSWORD='task5-test-postgres-only' \
+bash tests/run_api_testing_gate.sh
+```
+
+结果：
+
+- PostgreSQL / Redis 容器健康，Alembic 升级到 `0003` 成功。
+- API 后端 `276 passed`。
+- Vue / Pinia 前端 `15` 个测试文件、`66 passed`。
+- TypeScript 检查和 Vite 生产构建通过。
+- 桌面与手机视觉检查通过，无水平溢出。
+- “我的收藏”3 接口浏览器闭环通过：导入、环境密钥脱敏、任务保存/刷新恢复、AI 生成、逐条调试采纳、任务回归、实时日志以及 `PASSED` / `FAILED` / `BROKEN` 报告。
+- `git diff --check` 通过，源码、测试和本文档中未扫描到真实 Apifox/JWT 密钥。
+
+待集成后再做的线上步骤：部署已验证提交，检查 `8091` / `8088` 健康，再用服务端安全环境中的有效 3D 用户 token 执行一次真实生产“我的收藏”回归。不得把业务 token 写入 Git。
+
 ### 2026-08-08 Existing API automation removed
 
 - Removed the API automation frontend, backend routes/services, AI skill, Apifox CLI deployment dependency, and API-specific tests.

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Bug, RefreshCw } from 'lucide-vue-next'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
 import CaseEditor from '../components/CaseEditor.vue'
@@ -9,15 +9,19 @@ import ContextBar from '../components/ContextBar.vue'
 import DebugDrawer from '../components/DebugDrawer.vue'
 import EndpointDetail from '../components/EndpointDetail.vue'
 import EndpointTree from '../components/EndpointTree.vue'
+import TaskStatusStrip from '../components/TaskStatusStrip.vue'
 import type { ApiEndpoint, CaseDraft } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
+import { useTasksStore } from '../stores/tasks'
 
 const context = useContextStore()
 const assets = useAssetsStore()
 const cases = useCasesStore()
+const tasks = useTasksStore()
 const route = useRoute()
+const router = useRouter()
 const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
@@ -28,33 +32,58 @@ const activeVersions = computed(() => activeEndpoint.value
   ? (cases.versionIdsByEndpoint[activeEndpoint.value.id] || []).map(id => cases.versions[id]).filter(Boolean)
   : [])
 const debugRunning = computed(() => cases.debugPolling)
+const environmentName = computed(() => context.environmentRevisions.find(
+  item => item.id === context.environmentRevisionId,
+)?.name || '未选择环境')
+const taskMatchesSelection = computed(() => Boolean(
+  tasks.task
+  && tasks.task.project_id === context.projectId
+  && tasks.task.source_revision_id === context.sourceRevisionId
+  && tasks.task.environment_revision_id === context.environmentRevisionId
+  && [...tasks.task.selected_endpoint_ids].sort().join('|') === [...selectedIds.value].sort().join('|'),
+))
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  restoreExecutionContextFromRoute()
-  if (context.sourceRevisionId) await loadSource(context.sourceRevisionId)
+  const routeContext = restoreExecutionContextFromRoute()
+  const restoredTask = context.projectId ? await tasks.restore(context.projectId) : null
+  if (restoredTask && !routeContext) {
+    context.restoreExecutionContext({
+      project_id: restoredTask.project_id,
+      source_revision_id: restoredTask.source_revision_id,
+      environment_revision_id: restoredTask.environment_revision_id,
+    })
+  }
+  const restoredSelection = restoredTask
+    && restoredTask.project_id === context.projectId
+    && restoredTask.source_revision_id === context.sourceRevisionId
+    ? restoredTask.selected_endpoint_ids
+    : []
+  if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, restoredSelection)
   await restoreDeepLink()
   if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
 })
 
-function restoreExecutionContextFromRoute(): void {
+function restoreExecutionContextFromRoute(): boolean {
   const projectId = routeValue(route.query.projectId)
   const sourceRevisionId = routeValue(route.query.sourceRevisionId)
   const environmentRevisionId = routeValue(route.query.environmentRevisionId)
-  if (!projectId || !sourceRevisionId || !environmentRevisionId) return
+  if (!projectId || !sourceRevisionId || !environmentRevisionId) return false
   context.restoreExecutionContext({
     project_id: projectId,
     source_revision_id: sourceRevisionId,
     environment_revision_id: environmentRevisionId,
   })
+  return true
 }
 
-async function loadSource(sourceRevisionId: string): Promise<void> {
+async function loadSource(sourceRevisionId: string, restoredSelection: string[] = []): Promise<void> {
   localError.value = ''
   try {
     await Promise.all([assets.load(sourceRevisionId), cases.loadSavedCases(sourceRevisionId)])
     activeEndpoint.value = null
-    selectedIds.value = []
+    const available = new Set(assets.endpoints.map(item => item.id))
+    selectedIds.value = restoredSelection.filter(item => available.has(item))
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '无法读取已保存接口和用例'
   }
@@ -62,17 +91,24 @@ async function loadSource(sourceRevisionId: string): Promise<void> {
 
 function changeProject(projectId: string | null): void {
   context.selectProject(projectId)
+  tasks.clear()
   activeEndpoint.value = null
   selectedIds.value = []
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
   context.selectSourceRevision(sourceRevisionId)
+  tasks.clear()
   if (sourceRevisionId) await loadSource(sourceRevisionId)
   else {
     assets.endpoints = []
     activeEndpoint.value = null
   }
+}
+
+function changeEnvironment(environmentRevisionId: string | null): void {
+  context.selectEnvironmentRevision(environmentRevisionId)
+  if (tasks.task?.environment_revision_id !== environmentRevisionId) tasks.clear()
 }
 
 function activate(endpoint: ApiEndpoint): void {
@@ -107,7 +143,10 @@ async function saveDraft(): Promise<void> {
 }
 async function generate(intent: string): Promise<void> {
   if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
-  await cases.generate(selectedIds.value, context.environmentRevisionId, intent)
+  const task = await saveCurrentTask()
+  if (!task) return
+  await cases.generate(selectedIds.value, context.environmentRevisionId, intent, task.id)
+  if (context.projectId) await tasks.restore(context.projectId)
   const firstGenerated = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
   if (firstGenerated) {
     const version = cases.versions[firstGenerated]
@@ -117,13 +156,57 @@ async function generate(intent: string): Promise<void> {
 }
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeVersionId.value) return
+  if (activeEndpoint.value && !selectedIds.value.includes(activeEndpoint.value.id)) {
+    selectedIds.value = [...selectedIds.value, activeEndpoint.value.id]
+  }
+  const task = await saveCurrentTask()
+  if (!task) return
   cases.debugExecution = null
   debugOpen.value = true
   localError.value = ''
   try {
-    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: activeVersionId.value })
+    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: activeVersionId.value, taskId: task.id })
+    await tasks.restore(context.projectId)
   } catch (error) {
     cases.debugError = error instanceof Error ? error.message : '调试任务创建失败'
+  }
+}
+
+async function saveCurrentTask() {
+  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
+    localError.value = '请先选择接口项目、接口版本和执行环境'
+    return null
+  }
+  if (!selectedIds.value.length) {
+    localError.value = '请至少选择一个接口'
+    return null
+  }
+  localError.value = ''
+  try {
+    await context.saveContext()
+    if (context.error) throw new Error(context.error)
+    const projectName = context.projects.find(item => item.id === context.projectId)?.name || 'API'
+    const name = tasks.task?.project_id === context.projectId
+      ? tasks.task.name
+      : `${projectName}接口测试`
+    return await tasks.saveSelection({
+      projectId: context.projectId,
+      sourceRevisionId: context.sourceRevisionId,
+      environmentRevisionId: context.environmentRevisionId,
+    }, selectedIds.value, name)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '测试任务保存失败'
+    return null
+  }
+}
+
+async function runCurrentTask(): Promise<void> {
+  if (!taskMatchesSelection.value && !await saveCurrentTask()) return
+  try {
+    const execution = await tasks.runCurrent()
+    await router.push({ name: 'runs', query: { executionId: execution.id } })
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '测试任务执行失败'
   }
 }
 
@@ -146,10 +229,11 @@ function routeValue(value: unknown): string {
       :saved="context.isSaved"
       @update:project-id="changeProject"
       @update:source-revision-id="changeSource"
-      @update:environment-revision-id="context.selectEnvironmentRevision($event)"
+      @update:environment-revision-id="changeEnvironment"
       @save="context.saveContext()"
     />
-    <p v-if="context.error || localError" class="inline-error">{{ context.error || localError }}</p>
+    <TaskStatusStrip :task="tasks.task" :selected-count="selectedIds.length" :environment-name="environmentName" :saving="tasks.saving" :running="tasks.running" @save="saveCurrentTask" @run="runCurrentTask" />
+    <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="design-workspace">
       <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
       <main class="design-center">

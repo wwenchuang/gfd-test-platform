@@ -56,6 +56,18 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/workspace' && req.method === 'GET') {
       return sendJson(res, { workspace: { project_id: 'project-1', source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1' } });
     }
+    if (url.pathname === '/api/api-testing/v1/workspace' && req.method === 'PUT') {
+      return sendJson(res, { workspace: { project_id: 'project-1', source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1' } });
+    }
+    if (url.pathname === '/api/api-testing/v1/tasks/active') return sendJson(res, { task: null });
+    if (url.pathname === '/api/api-testing/v1/tasks' && req.method === 'POST') {
+      return sendJson(res, { task: {
+        id: 'task-1', project_id: 'project-1', source_revision_id: 'source-revision-1',
+        environment_revision_id: 'environment-revision-1', name: '3D 项目接口测试', state: 'draft',
+        selected_endpoint_ids: [endpoint.id], latest_ai_job_id: null, latest_execution_id: null,
+        summary: {}, created_at: '', updated_at: '',
+      } });
+    }
     if (url.pathname === '/api/api-testing/v1/context-options') {
       return sendJson(res, {
         projects: [{ id: 'project-1', name: '3D 项目' }],
@@ -95,7 +107,12 @@ async function assertNoHorizontalOverflow(page, label) {
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}/api-test/`;
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : {}),
+  });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

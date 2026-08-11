@@ -279,6 +279,23 @@ export interface ExecutionEventView {
   payload: Record<string, unknown>
 }
 
+export type ApiTestTaskState = 'draft' | 'designing' | 'debugging' | 'ready' | 'running' | 'failed' | 'completed'
+
+export interface ApiTestTask {
+  id: string
+  project_id: string
+  source_revision_id: string
+  environment_revision_id: string
+  name: string
+  state: ApiTestTaskState
+  selected_endpoint_ids: string[]
+  latest_ai_job_id: string | null
+  latest_execution_id: string | null
+  summary: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export interface CaseValidationIssue {
   code: string
   field: string

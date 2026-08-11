@@ -90,12 +90,13 @@ export const useCasesStore = defineStore('api-cases', {
         this.saving = false
       }
     },
-    async generate(endpointIds: string[], environmentRevisionId: string, intent: string): Promise<void> {
+    async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string): Promise<void> {
       this.aiError = ''
       this.aiCanResume = false
       try {
         const response = await apiClient.post<{ job: AiJob }>('/api/api-testing/v1/ai-jobs', {
           endpoint_ids: endpointIds, environment_revision_id: environmentRevisionId, intent,
+          ...(taskId ? { task_id: taskId } : {}),
         })
         this.aiJob = response.data.job
         this.lastAiJobId = response.data.job.id
@@ -175,7 +176,7 @@ export const useCasesStore = defineStore('api-cases', {
       this.validationErrors = issueMap(validation.errors || [])
       this.validationWarnings = issueMap(validation.warnings || [])
     },
-    async debug(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string; caseVersionId: string }): Promise<void> {
+    async debug(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string; caseVersionId: string; taskId?: string }): Promise<void> {
       this.debugResult = null
       this.debugError = ''
       this.debugCanResume = false
@@ -187,6 +188,7 @@ export const useCasesStore = defineStore('api-cases', {
         execution_type: 'debug',
         overrides: {},
         idempotency_key: crypto.randomUUID(),
+        ...(input.taskId ? { task_id: input.taskId } : {}),
       })
       this.debugExecution = response.data.execution
       await this.pollExecution(response.data.execution.id)

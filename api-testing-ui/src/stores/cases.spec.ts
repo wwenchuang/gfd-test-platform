@@ -110,6 +110,24 @@ describe('cases store', () => {
     expect(store.aiCanResume).toBe(true)
   })
 
+  it('attaches AI generation and debug execution to the current task', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { job: { id: 'job-1', state: 'queued', batches: [] } } })
+      .mockResolvedValueOnce({ data: { execution: { id: 'execution-1', state: 'QUEUED' } } })
+    const store = useCasesStore()
+    vi.spyOn(store, 'pollAiJob').mockResolvedValue()
+    vi.spyOn(store, 'pollExecution').mockResolvedValue()
+
+    await store.generate(['endpoint-1'], 'environment-1', '覆盖收藏流程', 'task-1')
+    await store.debug({
+      projectId: 'project-1', sourceRevisionId: 'source-1',
+      environmentRevisionId: 'environment-1', caseVersionId: 'version-1', taskId: 'task-1',
+    })
+
+    expect(post.mock.calls[0][1]).toEqual(expect.objectContaining({ task_id: 'task-1' }))
+    expect(post.mock.calls[1][1]).toEqual(expect.objectContaining({ task_id: 'task-1' }))
+  })
+
   it('keeps real execution trace and error evidence in debug results', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution: {
       id: 'execution-1', state: 'DONE', case_statuses: ['BROKEN'], summary: {},

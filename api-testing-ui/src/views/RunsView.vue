@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted } from 'vue'
 import { Play } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import ExecutionConsole from '../components/ExecutionConsole.vue'
 import ExecutionDetailDrawer from '../components/ExecutionDetailDrawer.vue'
@@ -11,11 +11,14 @@ import { useExecutionsStore } from '../stores/executions'
 
 const context = useContextStore()
 const executions = useExecutionsStore()
+const route = useRoute()
 const router = useRouter()
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   if (context.projectId) await executions.load(context.projectId)
+  const executionId = typeof route.query.executionId === 'string' ? route.query.executionId : ''
+  if (executionId) await executions.select(executionId)
 })
 onBeforeUnmount(() => executions.disconnect())
 
