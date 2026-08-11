@@ -32,9 +32,13 @@ const activeVersions = computed(() => activeEndpoint.value
   ? (cases.versionIdsByEndpoint[activeEndpoint.value.id] || []).map(id => cases.versions[id]).filter(Boolean)
   : [])
 const debugRunning = computed(() => cases.debugPolling)
-const environmentName = computed(() => context.environmentRevisions.find(
+const selectedEnvironment = computed(() => context.environmentRevisions.find(
   item => item.id === context.environmentRevisionId,
-)?.name || '未选择环境')
+))
+const environmentName = computed(() => selectedEnvironment.value?.name || '未选择环境')
+const environmentLabel = computed(() => selectedEnvironment.value
+  ? `${selectedEnvironment.value.name} · v${selectedEnvironment.value.revision}`
+  : '未选择环境')
 const taskMatchesSelection = computed(() => Boolean(
   tasks.task
   && tasks.task.project_id === context.projectId
@@ -92,6 +96,8 @@ async function loadSource(sourceRevisionId: string, restoredSelection: string[] 
 function changeProject(projectId: string | null): void {
   context.selectProject(projectId)
   tasks.clear()
+  cases.clearDebug()
+  debugOpen.value = false
   activeEndpoint.value = null
   selectedIds.value = []
 }
@@ -99,6 +105,8 @@ function changeProject(projectId: string | null): void {
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()
+  cases.clearDebug()
+  debugOpen.value = false
   if (sourceRevisionId) await loadSource(sourceRevisionId)
   else {
     assets.endpoints = []
@@ -108,6 +116,8 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
 
 function changeEnvironment(environmentRevisionId: string | null): void {
   context.selectEnvironmentRevision(environmentRevisionId)
+  cases.clearDebug()
+  debugOpen.value = false
   if (tasks.task?.environment_revision_id !== environmentRevisionId) tasks.clear()
 }
 
@@ -250,6 +260,6 @@ function routeValue(value: unknown): string {
       </main>
       <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
     </div>
-    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
+    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
   </section>
 </template>

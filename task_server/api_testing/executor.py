@@ -275,7 +275,14 @@ class HttpExecutor:
                 parsed = urlsplit(url)
                 url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query, doseq=True), ""))
             headers = dict(runtime.headers)
-            headers.update(rendered.get("headers") or {})
+            headers.update(
+                {
+                    key: value
+                    for key, value in (rendered.get("headers") or {}).items()
+                    if value is not None
+                    and (not isinstance(value, str) or value.strip())
+                }
+            )
             cookies = rendered.get("cookies") or {}
             if cookies:
                 headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in cookies.items())

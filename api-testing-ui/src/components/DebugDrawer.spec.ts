@@ -10,8 +10,14 @@ describe('DebugDrawer', () => {
   afterEach(() => { document.body.innerHTML = '' })
   it('debugs a draft without requiring baseline adoption', async () => {
     const wrapper = mount(DebugDrawer, {
-      props: { caseVersionId: 'draft-1', environmentRevisionId: 'environment-1' },
+      props: {
+        caseVersionId: 'draft-1', environmentRevisionId: 'environment-1',
+        environmentLabel: '生产环境（新）-腾讯云 · v6',
+      },
     })
+
+    expect(wrapper.text()).toContain('生产环境（新）-腾讯云 · v6')
+    expect(wrapper.text()).not.toContain('environment-1')
 
     await wrapper.find('[data-testid="debug-send"]').trigger('click')
 

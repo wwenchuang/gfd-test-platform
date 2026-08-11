@@ -27,6 +27,7 @@ export const useCasesStore = defineStore('api-cases', {
     debugPolling: false,
     debugCanResume: false,
     debugError: '',
+    debugGeneration: 0,
   }),
   actions: {
     draftFor(endpoint: ApiEndpoint): CaseDraft {
@@ -178,6 +179,7 @@ export const useCasesStore = defineStore('api-cases', {
       this.validationWarnings = issueMap(validation.warnings || [])
     },
     async debug(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string; caseVersionId: string; taskId?: string }): Promise<void> {
+      this.debugGeneration += 1
       this.debugResult = null
       this.debugError = ''
       this.debugCanResume = false
@@ -197,12 +199,14 @@ export const useCasesStore = defineStore('api-cases', {
     async pollExecution(executionId: string, options: { maxAttempts?: number; delayMs?: number } = {}): Promise<void> {
       const maxAttempts = options.maxAttempts ?? 240
       const delayMs = options.delayMs ?? 1000
+      const generation = this.debugGeneration
       this.debugPolling = true
       this.debugCanResume = false
       this.debugError = ''
       try {
         for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
           const response = await apiClient.get<{ execution: ExecutionView }>(`/api/api-testing/v1/executions/${executionId}`)
+          if (generation !== this.debugGeneration) return
           this.debugExecution = response.data.execution
           if (TERMINAL_EXECUTION.has(this.debugExecution.state)) {
             const result = this.debugExecution.case_results[0]
@@ -218,13 +222,21 @@ export const useCasesStore = defineStore('api-cases', {
         this.debugCanResume = true
         this.debugError = error instanceof Error ? `${error.message}，可继续查看进度` : '调试进度读取失败，可继续查看进度'
       } finally {
-        this.debugPolling = false
+        if (generation === this.debugGeneration) this.debugPolling = false
       }
     },
     async resumeDebug(): Promise<void> {
       if (!this.debugExecution?.id || this.debugPolling) return
       this.debugError = ''
       await this.pollExecution(this.debugExecution.id)
+    },
+    clearDebug(): void {
+      this.debugGeneration += 1
+      this.debugExecution = null
+      this.debugResult = null
+      this.debugPolling = false
+      this.debugCanResume = false
+      this.debugError = ''
     },
     async adoptBaseline(caseVersionId: string, executionCaseId: string): Promise<void> {
       await apiClient.post(`/api/api-testing/v1/case-versions/${caseVersionId}/baseline`, {

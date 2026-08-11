@@ -157,4 +157,42 @@ describe('cases store', () => {
     expect(store.debugCanResume).toBe(true)
     expect(store.debugExecution?.id).toBe('execution-1')
   })
+
+  it('clears stale debug evidence when the execution environment changes', () => {
+    const store = useCasesStore()
+    store.debugExecution = { id: 'execution-old' } as never
+    store.debugResult = {
+      status: 'FAILED', executionCaseId: 'case-old', resolvedRequest: {},
+      sanitizedResponse: {}, assertions: [], failureCategory: 'product_assertion', logs: [],
+    }
+    store.debugError = '旧环境错误'
+    store.debugCanResume = true
+
+    store.clearDebug()
+
+    expect(store.debugExecution).toBeNull()
+    expect(store.debugResult).toBeNull()
+    expect(store.debugError).toBe('')
+    expect(store.debugCanResume).toBe(false)
+  })
+
+  it('does not restore a late debug response after the environment changed', async () => {
+    let finishRequest!: (value: unknown) => void
+    vi.spyOn(apiClient, 'get').mockReturnValue(new Promise(resolve => { finishRequest = resolve }) as never)
+    const store = useCasesStore()
+
+    const polling = store.pollExecution('execution-old', { maxAttempts: 1, delayMs: 0 })
+    store.clearDebug()
+    finishRequest({ data: { execution: {
+      id: 'execution-old', state: 'DONE', case_statuses: ['FAILED'], summary: {},
+      case_results: [{
+        execution_case_id: 'case-old', case_version_id: 'version-1', endpoint_id: 'endpoint-1',
+        status: 'FAILED', failure_category: 'product_assertion', duration_ms: 10, sanitized_result: {},
+      }],
+    } } })
+    await polling
+
+    expect(store.debugExecution).toBeNull()
+    expect(store.debugResult).toBeNull()
+  })
 })

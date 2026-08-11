@@ -8050,3 +8050,38 @@ npx playwright test tests/api_testing_e2e.spec.mjs --project=chromium
 PATH="$PWD/.venv/bin:$PATH" npm run test:static
 git diff --check
 ```
+
+### 2026-08-11 API 环境版本辨识与公共请求头优先级修复
+
+用户保存“生产环境（新）-腾讯云 v6”后，在线调试抽屉仍显示环境 UUID，且“我的收藏列表”请求没有携带业务授权头。
+
+线上核验：
+
+- 工作区、当前任务和最近调试执行绑定的环境修订均为 `e7b81421-78fe-4508-878a-54893db5429b`；该 ID 对应的正是“生产环境（新）-腾讯云 v6”，不存在回退到旧环境。
+- v6 已保存敏感变量 `ZXBToken`，但 `default_headers` 为空；已有手工用例还包含空值 `Authorization`，最终请求只发送了 `Content-Type`，业务响应为 HTTP 200、业务码 4009。
+- 调试抽屉只展示数据库 UUID，且切换环境后仍可能保留上一环境的调试结果，造成环境未生效的误判。
+
+本轮修复：
+
+- 调试抽屉展示“环境名称 · 版本”，数据库修订 ID 继续仅作为请求参数，不作为主要界面文案。
+- 切换项目、接口版本或环境时清空上一上下文的调试执行、结果、错误和恢复状态，并关闭旧抽屉。
+- 执行器合并请求头时忽略用例级 `null`、空字符串和纯空白值；空的可选请求头不再覆盖环境公共请求头。
+- 保留环境版本不可变和任务绑定门禁，不自动猜测或硬编码某个业务项目的鉴权方式。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:***@127.0.0.1:5432/midscene_api_testing' \
+TEST_REDIS_URL='redis://127.0.0.1:6379/14' \
+API_TESTING_REQUIRE_POSTGRES_TESTS=1 \
+.venv/bin/python -m pytest tests/api_testing -q
+# 292 passed
+
+npm --prefix api-testing-ui test -- --run
+# 18 files / 76 tests passed
+
+npm --prefix api-testing-ui run build
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+bash tests/run_api_testing_gate.sh
+# Chromium：我的收藏三接口完整闭环 1 passed
+```

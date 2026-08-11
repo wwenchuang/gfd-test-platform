@@ -152,7 +152,7 @@ class _Runtime:
         self.base_url = base_url
         self.values = values
         self.secrets = {k: v for k, v in values.items() if "token" in k.lower()}
-        self.headers = {"Authorization": "Bearer {{token}}"} if "token" in values else {}
+        self.headers = {"Authorization": f"Bearer {values['token']}"} if "token" in values else {}
 
     def base_url_for(self, _service):
         return self.base_url
@@ -257,6 +257,20 @@ def test_missing_variable_is_broken_before_network(target_server):
     assert result.status == "BROKEN"
     assert result.failure_category == "environment"
     assert handler.request_count == before
+
+
+def test_blank_case_header_does_not_override_environment_default(target_server):
+    _, handler = target_server
+    handler.captured_authorization = None
+
+    result = _executor(
+        target_server,
+        _case("/capture", headers={"Authorization": ""}),
+        values={"token": "environment-token"},
+    ).execute_case("case-version-1", "environment-revision-1", {})
+
+    assert result.status == "PASSED"
+    assert handler.captured_authorization == "Bearer environment-token"
 
 
 @pytest.mark.parametrize(
