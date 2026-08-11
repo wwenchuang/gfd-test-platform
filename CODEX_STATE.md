@@ -8085,3 +8085,41 @@ PATH="$PWD/.venv/bin:$PATH" npm run test:static
 bash tests/run_api_testing_gate.sh
 # Chromium：我的收藏三接口完整闭环 1 passed
 ```
+
+### 2026-08-11 API 当前草稿断言与单次调试版本一致性修复
+
+用户在单次调试中修改断言后，右侧仍展示旧断言结果；同时把业务响应码 `60101004` 填入“状态码”时，界面没有指出它不是 HTTP 状态码。
+
+根因：
+
+- 工作台“调试当前草稿”实际直接提交上一个已保存版本 ID，没有先保存当前编辑内容，因此名称与行为不一致。
+- 用例版本读取合同包含数据库读模型字段（例如嵌套 `sequence`、空的 `path/name`）；当前版本再次保存时直接回写这些字段，会被严格写合同拒绝。旧调试路径跳过保存，长期掩盖了该问题。
+- 编辑器把 HTTP 状态码与响应 JSON 中的业务码都显示为“状态码”，且前端没有校验 HTTP 状态范围。
+- 完整回归还暴露两个时序问题：新建项目时在选项加载前设置下拉值，以及接口保存未完成就进入环境页。前者已在产品代码中修复，后者由验收脚本等待真实保存完成信号。
+
+本轮修复：
+
+- 单次调试改为“保存并调试”：先本地校验，再保存当前草稿、执行后端环境校验，最后只使用本次返回的新版本 ID 创建调试执行。
+- 草稿有改动时立即清理旧调试证据并关闭旧抽屉，避免把历史结果误认为当前结果。
+- 读模型转换为写草稿时使用字段白名单，移除 `sequence` 和无效空字段，保持严格合同而不放宽后端门禁。
+- 断言类型明确显示为“HTTP 状态码”和“响应 JSON 字段”；HTTP 状态码仅允许 100 到 599。业务码需使用响应 JSON 字段断言，例如路径 `$.code`。
+- 后端把用例合同错误映射为稳定的 `case_validation_failed` 和可操作中文提示，不再返回笼统错误。
+- 新建平台项目会先刷新项目列表，再选择新项目，避免下拉框偶发回到“请选择”。
+
+已验证：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 293 backend tests passed
+# 19 frontend files / 82 tests passed
+# Vue typecheck + Vite production build passed
+# desktop/mobile visual check passed
+# 我的收藏三接口 Playwright 完整闭环 1 passed
+
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+# undefined-name、backend 63、frontend 72、AI Gateway 46、模型目录与 skill eval 全部通过
+
+git diff --check
+```
+
+说明：直接使用系统 Python 运行静态检查会因新 Mac 系统环境没有 `redis` 包而中止；项目 `.venv` 是实际运行环境，使用该环境的完整静态检查已通过。

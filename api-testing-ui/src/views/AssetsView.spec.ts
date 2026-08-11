@@ -6,6 +6,7 @@ import { nextTick } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
+import { useContextStore } from '../stores/context'
 import { useSetupStore } from '../stores/setup'
 import AssetsView from './AssetsView.vue'
 
@@ -61,6 +62,32 @@ describe('AssetsView Apifox actions', () => {
 
     expect(buttonText(wrapper)).toContain('保存为新版本')
     expect(wrapper.text()).toContain('检查更新只生成预览，不会覆盖当前版本')
+  })
+
+  it('selects a newly created project after refreshing the project options', async () => {
+    const wrapper = mount(AssetsView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await flushPromises()
+    const context = useContextStore()
+    vi.spyOn(useSetupStore(), 'createProject').mockResolvedValue('project-2')
+    vi.spyOn(context, 'loadOptions').mockImplementation(async () => {
+      context.projects = [
+        { id: 'project-1', name: '3D 家用' },
+        { id: 'project-2', name: '3D 我的收藏' },
+      ]
+    })
+
+    const newProjectButton = wrapper.findAll('button').find(button => button.text() === '新建平台项目')
+    expect(newProjectButton).toBeDefined()
+    await newProjectButton!.trigger('click')
+    await wrapper.get('input[placeholder="例如：3D 家用业务"]').setValue('3D 我的收藏')
+    const createButton = wrapper.findAll('button').find(button => button.text() === '创建')
+    expect(createButton).toBeDefined()
+    await createButton!.trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('select').element as HTMLSelectElement).value).toBe('project-2')
   })
 })
 

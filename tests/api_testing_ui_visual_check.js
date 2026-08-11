@@ -81,7 +81,19 @@ function createServer() {
         { ...endpoint, id: 'endpoint-favorite-cancel', method: 'POST', path: '/print3d/api/v1/favorite/cancel', summary: '取消收藏' },
       ] });
     }
-    if (url.pathname === '/api/api-testing/v1/cases') return sendJson(res, { case_versions: [caseVersion] });
+    if (url.pathname === '/api/api-testing/v1/cases' && req.method === 'GET') return sendJson(res, { case_versions: [caseVersion] });
+    if (url.pathname === '/api/api-testing/v1/cases/case-1/versions' && req.method === 'POST') {
+      return sendJson(res, { case_version: { ...caseVersion, id: 'case-version-2', version: 2 } });
+    }
+    if (url.pathname === '/api/api-testing/v1/environment-revisions/environment-revision-1') {
+      return sendJson(res, { environment_revision: {
+        id: 'environment-revision-1', revision_id: 'environment-revision-1', name: '生产环境（新）- 腾讯云', revision: 2,
+        variables: { Biz: 'ZXB' }, services: { default: { name: 'default', base_url: 'https://example.test', unresolved: false } },
+      } });
+    }
+    if (url.pathname === '/api/api-testing/v1/case-versions/case-version-2/validate' && req.method === 'POST') {
+      return sendJson(res, { validation: { valid: true, errors: [], warnings: [] } });
+    }
     if (url.pathname === '/api/api-testing/v1/ai-jobs/latest') return sendJson(res, { job: null });
     if (url.pathname === '/api/api-testing/v1/executions' && req.method === 'POST') {
       return sendJson(res, { execution: { id: 'execution-1', state: 'QUEUED', case_statuses: [], case_results: [], summary: {} } }, 202);
@@ -129,7 +141,7 @@ async function assertNoHorizontalOverflow(page, label) {
     await assertNoHorizontalOverflow(page, 'desktop');
     await page.screenshot({ path: path.join(ARTIFACTS, 'workbench-desktop.png'), fullPage: true });
 
-    await page.getByRole('button', { name: '调试当前草稿' }).click();
+    await page.getByRole('button', { name: '保存并调试' }).click();
     await page.getByRole('dialog', { name: '在线调试' }).waitFor();
     await page.getByText('PASSED', { exact: true }).waitFor();
     await page.keyboard.press('Escape');

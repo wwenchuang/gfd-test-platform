@@ -45,8 +45,9 @@ async function createProject(): Promise<void> {
   localError.value = ''
   if (!projectName.value.trim()) { localError.value = '请输入项目名称'; return }
   try {
-    projectId.value = await setup.createProject(projectName.value)
+    const createdProjectId = await setup.createProject(projectName.value)
     await context.loadOptions()
+    projectId.value = createdProjectId
     projectName.value = ''
     showProjectForm.value = false
     revisionId.value = ''

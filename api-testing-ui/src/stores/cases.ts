@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
 import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView } from '../api/contracts'
+import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 import { createIdempotencyKey } from '../utils/idempotency'
 
 const TERMINAL_AI = new Set(['completed', 'partial', 'failed', 'failed_gateway', 'failed_validation'])
@@ -91,6 +92,20 @@ export const useCasesStore = defineStore('api-cases', {
       } finally {
         this.saving = false
       }
+    },
+    async saveForDebug(endpointId: string, environmentRevisionId: string): Promise<CaseVersion> {
+      const draft = this.drafts[endpointId]
+      if (!draft) throw new Error('请先编辑测试用例')
+      const localErrors = validateCaseDraftLocally(draft)
+      if (Object.keys(localErrors).length) {
+        this.validationErrors = localErrors
+        this.validationWarnings = {}
+        throw new Error(Object.values(localErrors)[0])
+      }
+      const version = await this.save(endpointId, environmentRevisionId)
+      const firstError = Object.values(this.validationErrors)[0]
+      if (firstError) throw new Error(`请先修正用例校验错误：${firstError}`)
+      return version
     },
     async generate(endpointIds: string[], environmentRevisionId: string, intent: string, taskId?: string): Promise<void> {
       this.aiError = ''
@@ -263,12 +278,37 @@ function fromVersion(version: CaseVersion): CaseDraft {
     purpose: version.purpose,
     priority: version.priority,
     request: version.request,
-    data_rows: version.data_rows,
-    assertions: version.assertions,
-    extractions: version.extractions,
+    data_rows: version.data_rows.map(row => ({ name: row.name, values: row.values, enabled: row.enabled })),
+    assertions: version.assertions.map(publicAssertion),
+    extractions: version.extractions.map(publicExtraction),
     dependencies: version.dependencies,
     processing: version.processing,
   })
+}
+
+function publicAssertion(assertion: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    type: assertion.type,
+    operator: assertion.operator,
+    expected: assertion.expected,
+    timeout_ms: assertion.timeout_ms ?? 0,
+    enabled: assertion.enabled ?? true,
+  }
+  if (typeof assertion.path === 'string' && assertion.path) result.path = assertion.path
+  if (typeof assertion.name === 'string' && assertion.name) result.name = assertion.name
+  return result
+}
+
+function publicExtraction(extraction: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    target: extraction.target,
+    type: extraction.type,
+    required: extraction.required ?? true,
+  }
+  if (typeof extraction.path === 'string' && extraction.path) result.path = extraction.path
+  if (typeof extraction.name === 'string' && extraction.name) result.name = extraction.name
+  if (Object.prototype.hasOwnProperty.call(extraction, 'default')) result.default = extraction.default
+  return result
 }
 
 function toDebugResult(value: ExecutionView['case_results'][number]): DebugResult {

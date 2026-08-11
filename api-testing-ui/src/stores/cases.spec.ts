@@ -37,6 +37,30 @@ describe('cases store', () => {
     ])
   })
 
+  it('removes read-only nested sequence fields before resaving a persisted version', async () => {
+    const persisted = {
+      ...VERSION,
+      data_rows: [{ name: '默认数据', values: {}, enabled: true, sequence: 0 }],
+      assertions: [{ type: 'status_code', operator: 'equals', expected: 200, path: null, name: null, timeout_ms: 0, enabled: true, sequence: 0 }],
+    } as unknown as CaseVersion
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
+      environment_revision: { revision_id: 'environment-1', variables: {}, services: {} },
+    } })
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { case_version: { ...persisted, id: 'version-2', version: 2 } } })
+      .mockResolvedValueOnce({ data: { validation: { valid: true, errors: [], warnings: [] } } })
+    const store = useCasesStore()
+    store.registerVersion(persisted)
+
+    await store.saveForDebug(VERSION.endpoint_id, 'environment-1')
+
+    const submitted = (post.mock.calls[0][1] as { case: CaseVersion }).case
+    expect(submitted.data_rows[0]).not.toHaveProperty('sequence')
+    expect(submitted.assertions[0]).not.toHaveProperty('sequence')
+    expect(submitted.assertions[0]).not.toHaveProperty('path')
+    expect(submitted.assertions[0]).not.toHaveProperty('name')
+  })
+
   it('validates a saved draft against the selected environment snapshot', async () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
       environment_revision: {
@@ -61,6 +85,46 @@ describe('cases store', () => {
         services: { default: { name: 'default', base_url: 'https://api.example.test/app', unresolved: false } },
       } },
     ])
+  })
+
+  it('prepares the current draft for debug with the newly saved version', async () => {
+    const saved = { ...VERSION, id: 'version-2', version: 2 }
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: {
+      environment_revision: { revision_id: 'environment-1', variables: {}, services: {} },
+    } })
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { case_version: saved } })
+      .mockResolvedValueOnce({ data: { validation: { valid: true, errors: [], warnings: [] } } })
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    store.drafts[VERSION.endpoint_id] = {
+      ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])),
+      assertions: [{ type: 'status_code', operator: 'equals', expected: 201, timeout_ms: 0, enabled: true }],
+    }
+
+    const prepared = await store.saveForDebug(VERSION.endpoint_id, 'environment-1')
+
+    expect(prepared.id).toBe('version-2')
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
+    expect(get).toHaveBeenCalledOnce()
+    expect(post.mock.calls[0][1]).toEqual({ case: expect.objectContaining({
+      assertions: [expect.objectContaining({ expected: 201 })],
+    }) })
+  })
+
+  it('does not save or debug a draft with a business code entered as an HTTP status', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+    const store = useCasesStore()
+    store.registerVersion(VERSION)
+    store.drafts[VERSION.endpoint_id] = {
+      ...JSON.parse(JSON.stringify(store.drafts[VERSION.endpoint_id])),
+      assertions: [{ type: 'status_code', operator: 'equals', expected: 60101004, timeout_ms: 0, enabled: true }],
+    }
+
+    await expect(store.saveForDebug(VERSION.endpoint_id, 'environment-1')).rejects.toThrow('响应 JSON 字段')
+
+    expect(post).not.toHaveBeenCalled()
+    expect(store.validationErrors['assertions[0].expected']).toContain('100 到 599')
   })
 
   it('restores every persisted case version for the saved source revision', async () => {

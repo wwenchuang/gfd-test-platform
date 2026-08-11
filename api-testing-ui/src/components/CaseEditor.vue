@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { Code2, List, Plus, Trash2 } from 'lucide-vue-next'
 
 import type { CaseDraft } from '../api/contracts'
+import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 
 type RequestMapField = 'headers' | 'query' | 'path_params' | 'cookies'
 type ProcessingPhase = 'pre' | 'post'
@@ -35,7 +36,14 @@ const assertionOperators: Record<string, string[]> = {
   response_time: ['greater_than', 'less_than'],
   schema: ['equals'],
 }
-const hasBlockingError = computed(() => Boolean(bodyError.value || rawError.value || Object.keys(advancedErrors.value).length))
+const localValidationErrors = computed(() => validateCaseDraftLocally(local.value))
+const displayValidationErrors = computed(() => ({ ...props.validationErrors, ...localValidationErrors.value }))
+const hasBlockingError = computed(() => Boolean(
+  bodyError.value
+  || rawError.value
+  || Object.keys(advancedErrors.value).length
+  || Object.keys(localValidationErrors.value).length,
+))
 
 function validationMessages(prefix: string, source: Record<string, string>): Array<[string, string]> {
   return Object.entries(source).filter(([field]) => field === prefix || field.startsWith(`${prefix}.`) || field.startsWith(`${prefix}[`))
@@ -164,7 +172,11 @@ function changeAssertionType(assertion: Record<string, unknown>): void {
 }
 
 function updateExpected(assertion: Record<string, unknown>, value: string): void {
-  assertion.expected = ['status_code', 'response_time'].includes(String(assertion.type)) ? numericOrText(value) : parseScalar(value)
+  assertion.expected = assertion.type === 'status_code' && assertion.operator === 'in'
+    ? parseScalar(value)
+    : ['status_code', 'response_time'].includes(String(assertion.type))
+      ? numericOrText(value)
+      : parseScalar(value)
   publish()
 }
 
@@ -275,15 +287,15 @@ function clone(value: CaseDraft): CaseDraft {
 
       <section class="editor-section"><div class="section-heading"><strong>断言</strong><button class="mini-icon" type="button" title="增加断言" @click="addAssertion"><Plus :size="15" /></button></div>
         <div v-for="(assertion, index) in local.assertions" :key="index" class="assertion-card">
-          <label>类型<select v-model="assertion.type" @change="changeAssertionType(assertion)"><option value="status_code">状态码</option><option value="json_path">JSON Path</option><option value="header">响应头</option><option value="response_time">响应时间</option><option value="schema">Schema</option></select></label>
+          <label>类型<select v-model="assertion.type" @change="changeAssertionType(assertion)"><option value="status_code">HTTP 状态码</option><option value="json_path">响应 JSON 字段</option><option value="header">响应头</option><option value="response_time">响应时间</option><option value="schema">响应结构</option></select></label>
           <label>比较<select v-model="assertion.operator" @change="publish"><option v-for="operator in assertionOperators[String(assertion.type)] || ['equals']" :key="operator" :value="operator">{{ operator }}</option></select></label>
-          <label v-if="['json_path','schema'].includes(String(assertion.type))">路径<input v-model="assertion.path" placeholder="$.data" @input="publish" /></label>
+          <label v-if="['json_path','schema'].includes(String(assertion.type))">路径<input v-model="assertion.path" :placeholder="assertion.type === 'json_path' ? '$.code' : '$.data'" @input="publish" /></label>
           <label v-if="assertion.type === 'header'">响应头<input v-model="assertion.name" placeholder="Content-Type" @input="publish" /></label>
           <label v-if="!['exists','not_exists'].includes(String(assertion.operator))">期望值<input :data-testid="`assertion-expected-${index}`" :value="renderValue(assertion.expected)" @input="updateExpected(assertion, ($event.target as HTMLInputElement).value)" /></label>
           <label>超时(ms)<input v-model.number="assertion.timeout_ms" type="number" min="0" max="60000" @input="publish" /></label>
           <label class="toggle-line"><input v-model="assertion.enabled" type="checkbox" @change="publish" />启用</label>
           <button class="mini-icon danger" type="button" title="删除断言" @click="local.assertions.splice(index, 1); publish()"><Trash2 :size="15" /></button>
-          <small v-for="([field, message]) in validationMessages(`assertions[${index}]`, validationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
+          <small v-for="([field, message]) in validationMessages(`assertions[${index}]`, displayValidationErrors)" :key="field" :data-error-for="field" class="field-error row-feedback">{{ message }}</small>
           <small v-for="([field, message]) in validationMessages(`assertions[${index}]`, validationWarnings)" :key="field" :data-warning-for="field" class="field-warning row-feedback">{{ message }}</small>
         </div>
       </section>
@@ -299,6 +311,6 @@ function clone(value: CaseDraft): CaseDraft {
     </div>
 
     <div v-else class="raw-editor"><textarea v-model="raw" rows="26" spellcheck="false" @blur="applyRaw" /><p v-if="rawError" class="field-error">{{ rawError }}</p></div>
-    <footer class="editor-footer"><span role="status">{{ savedMessage }}</span><button class="primary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button></footer>
+    <footer class="editor-footer"><span role="status">{{ savedMessage }}</span><button data-testid="save-case-draft" class="primary-command" type="button" :disabled="saving || hasBlockingError" @click="emit('save')">{{ saving ? '保存中...' : '保存草稿' }}</button></footer>
   </section>
 </template>

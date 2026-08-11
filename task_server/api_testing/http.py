@@ -18,6 +18,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from task_server.auth import bearer_token, verify_session_token
 
 from .config import ApiTestingSettings
+from .contracts.case import CasePayloadError
 from .adapters.apifox_discovery import ApifoxDiscoveryAdapter, ApifoxDiscoveryError
 from .adapters.apifox_openapi import ApifoxOpenApiAdapter, ApifoxOpenApiError
 from .adapters.openapi import OpenApiValidationError
@@ -898,6 +899,13 @@ def _domain_error(error):
             "openapi_validation_failed",
             "接口定义校验失败：%s" % str(error),
         )
+    if isinstance(error, CasePayloadError):
+        message = str(error)
+        if "valid HTTP status code values" in message:
+            message = "HTTP 状态码只能是 100 到 599；业务码请改用响应 JSON 字段断言（例如 $.code）"
+        else:
+            message = "用例内容校验失败：%s" % message
+        return ApiHttpError(422, "case_validation_failed", message)
     if isinstance(error, (OperationalError, InterfaceError)):
         return ApiHttpError(
             503,

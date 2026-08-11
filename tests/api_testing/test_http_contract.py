@@ -63,6 +63,21 @@ def test_apifox_validation_error_keeps_its_actionable_chinese_message():
     assert openapi_error.message == "接口定义校验失败：Unresolved local reference: #/missing"
 
 
+def test_case_payload_error_keeps_actionable_assertion_feedback():
+    from task_server.api_testing.contracts.case import CasePayloadError
+
+    error = http._domain_error(
+        CasePayloadError(
+            "assertions[0] expected must contain valid HTTP status code values"
+        )
+    )
+
+    assert error.status == 422
+    assert error.code == "case_validation_failed"
+    assert "HTTP 状态码" in error.message
+    assert "响应 JSON 字段" in error.message
+
+
 class HttpResponse:
     def __init__(self, response):
         self.status = response.status

@@ -144,12 +144,21 @@ async function restoreDeepLink(): Promise<void> {
   activate(endpoint)
 }
 function updateDraft(draft: CaseDraft): void {
-  if (activeEndpoint.value) cases.updateDraft(activeEndpoint.value.id, draft)
+  if (activeEndpoint.value) {
+    cases.updateDraft(activeEndpoint.value.id, draft)
+    cases.clearDebug()
+    debugOpen.value = false
+  }
 }
-async function saveDraft(): Promise<void> {
-  if (!activeEndpoint.value) return
+async function saveDraft() {
+  if (!activeEndpoint.value) return null
   localError.value = ''
-  try { await cases.save(activeEndpoint.value.id, context.environmentRevisionId || undefined) } catch (error) { localError.value = error instanceof Error ? error.message : '草稿保存失败' }
+  try {
+    return await cases.save(activeEndpoint.value.id, context.environmentRevisionId || undefined)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '草稿保存失败'
+    return null
+  }
 }
 async function generate(intent: string): Promise<void> {
   if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
@@ -165,17 +174,24 @@ async function generate(intent: string): Promise<void> {
   }
 }
 async function submitDebug(): Promise<void> {
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeVersionId.value) return
-  if (activeEndpoint.value && !selectedIds.value.includes(activeEndpoint.value.id)) {
-    selectedIds.value = [...selectedIds.value, activeEndpoint.value.id]
+  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
+  const endpointId = activeEndpoint.value.id
+  localError.value = ''
+  let version
+  try {
+    version = await cases.saveForDebug(endpointId, context.environmentRevisionId)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '当前草稿保存或校验失败'
+    return
   }
+  if (!selectedIds.value.includes(endpointId)) selectedIds.value = [...selectedIds.value, endpointId]
   const task = await saveCurrentTask()
   if (!task) return
   cases.debugExecution = null
   debugOpen.value = true
   localError.value = ''
   try {
-    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: activeVersionId.value, taskId: task.id })
+    await cases.debug({ projectId: context.projectId, sourceRevisionId: context.sourceRevisionId, environmentRevisionId: context.environmentRevisionId, caseVersionId: version.id, taskId: task.id })
     await tasks.restore(context.projectId)
   } catch (error) {
     cases.debugError = error instanceof Error ? error.message : '调试任务创建失败'
@@ -256,7 +272,7 @@ function routeValue(value: unknown): string {
         <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="cases.setActiveVersion(activeEndpoint!.id, ($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ version.origin === 'ai' ? 'AI' : '手工' }}</option></select></label><span>{{ activeVersions.length }} 个用例</span></div>
         <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
         <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
-        <button v-if="activeVersionId" class="debug-command" type="button" @click="submitDebug"><Bug :size="16" />调试当前草稿</button>
+        <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>
       </main>
       <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
     </div>

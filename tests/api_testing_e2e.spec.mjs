@@ -30,6 +30,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.locator('input[type="file"]').setInputFiles(acceptance.openApiPath)
   await page.getByRole('button', { name: '读取并比较' }).click()
   await page.getByRole('button', { name: '确认保存接口' }).click()
+  await expect(page.getByText(/接口版本 v\d+ 已保存/)).toBeVisible()
 
   await page.getByRole('link', { name: '环境配置' }).click()
   await page.getByLabel('环境名称').fill('生产环境（腾讯云）')
@@ -73,15 +74,14 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
 
   await page.getByRole('button', { name: /查询我的收藏/ }).click()
   await page.getByTestId('assertion-expected-0').fill('200')
-  await page.getByRole('button', { name: '保存草稿' }).click()
-  await page.getByRole('button', { name: '调试当前草稿' }).click()
+  await page.getByRole('button', { name: '保存并调试' }).click()
   await expect(page.getByText('PASSED', { exact: true })).toBeVisible()
   await page.getByTestId('adopt-baseline').click()
   await page.getByTitle('关闭调试').click()
 
   for (const summary of ['添加收藏', '取消收藏']) {
     await page.getByRole('button', { name: new RegExp(summary) }).click()
-    await page.getByRole('button', { name: '调试当前草稿' }).click()
+    await page.getByRole('button', { name: '保存并调试' }).click()
     await expect(page.getByText('PASSED', { exact: true })).toBeVisible()
     await page.getByTestId('adopt-baseline').click()
     await page.getByTitle('关闭调试').click()

@@ -67,6 +67,15 @@ describe('CaseEditor', () => {
     expect(emitted.assertions[0].expected).toBe(201)
   })
 
+  it('blocks business response codes entered as HTTP status assertions', async () => {
+    const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
+
+    await wrapper.find('[data-testid="assertion-expected-0"]').setValue('60101004')
+
+    expect(wrapper.get('[data-error-for="assertions[0].expected"]').text()).toContain('响应 JSON 字段')
+    expect(wrapper.get('[data-testid="save-case-draft"]').attributes('disabled')).toBeDefined()
+  })
+
   it('writes request body edits back into request.body', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
 
