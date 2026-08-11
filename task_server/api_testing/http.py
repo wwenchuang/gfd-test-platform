@@ -18,6 +18,7 @@ from task_server.auth import bearer_token, verify_session_token
 from .config import ApiTestingSettings
 from .adapters.apifox_discovery import ApifoxDiscoveryAdapter, ApifoxDiscoveryError
 from .adapters.apifox_openapi import ApifoxOpenApiAdapter, ApifoxOpenApiError
+from .adapters.openapi import OpenApiValidationError
 from .db import _session_factory
 from .events import EventStream
 from .models.case import ApiAiJob, ApiCase, ApiCaseVersion
@@ -855,9 +856,17 @@ def _domain_error(error):
         )
     if isinstance(error, ApifoxOpenApiError):
         return ApiHttpError(502, "apifox_export_failed", str(error))
+    if isinstance(error, ApifoxInputError):
+        return ApiHttpError(422, "apifox_validation_failed", str(error))
+    if isinstance(error, OpenApiValidationError):
+        return ApiHttpError(
+            422,
+            "openapi_validation_failed",
+            "接口定义校验失败：%s" % str(error),
+        )
     if isinstance(error, TestTaskScopeError):
         return ApiHttpError(409, "task_scope_conflict", "测试任务范围与当前请求不一致")
-    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ApifoxInputError, ProviderCredentialInputError, TestTaskInputError)):
+    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ProviderCredentialInputError, TestTaskInputError)):
         return ApiHttpError(422, "invalid_request", "Request validation failed")
     return ApiHttpError(500, "internal_error", "Internal server error")
 

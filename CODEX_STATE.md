@@ -7952,3 +7952,37 @@ git diff --check -- task_server/services/yaml_service.py tests/backend_static_ch
 ```
 
 全量 `python3 tests/backend_static_checks.py` 仍被工作区已有 `OBJ保龄球打印.yaml` 历史基线改动挡住，失败点不变：`OBJ bowling baseline must recover when the first go-print tap leaves the suite preview page open`；该文件属于用户历史改动范围，本轮未修改、未回滚。
+### 2026-08-11 Apifox 更新预览：真实导出兼容与独立加载状态
+
+用户在线上接口资产页点击“检查更新”稳定返回 `422 Request validation failed`，并要求读取项目、读取环境和检查更新分别显示 loading；正式保存必须保留独立按钮。
+
+根因与真实重放：
+
+- 线上账号下的 Apifox 项目、分支和环境发现均成功，失败发生在 OpenAPI 导出后的平台规范化阶段。
+- 真实导出为 OpenAPI 3.0.1，约 4.8 MB、990 条 path；其中 `$ref` 使用 URI fragment 百分号编码 `#/components/schemas/Resp%3F`，对应组件名为 `Resp?`。
+- 平台原解析器只处理 JSON Pointer 的 `~0/~1`，没有先按 URI fragment 规则百分号解码，因此整份资产被误判为 unresolved local reference。
+- 修复后用同一份真实导出离线重放成功，规范化得到 993 个 endpoint、528 个 schema。
+
+本轮实现：
+
+- OpenAPI 本地引用解析在执行 JSON Pointer 解码前，先执行 URI fragment 百分号解码；这是通用标准兼容，不包含项目或接口硬编码。
+- Apifox 输入错误和 OpenAPI 校验错误不再统一覆盖成英文 `Request validation failed`，API 返回可操作的中文错误和稳定错误码。
+- 前端增加独立 Apifox 操作状态：读取项目、读取环境、检查更新、保存版本；对应按钮显示旋转图标和明确中文进度。
+- “检查更新”只生成并持久化候选预览，不覆盖当前正式版本；差异区明确显示独立的“保存为新版本”按钮。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing -q
+# 121 passed, 157 skipped（无本地 TEST_DATABASE_URL 的 PostgreSQL 用例按设计跳过）
+
+cd api-testing-ui
+npm test -- --run
+# 16 files / 68 tests passed
+npm run build
+
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+# backend/frontend/AI Gateway static checks 与 skill eval 全部通过
+
+git diff --check
+```

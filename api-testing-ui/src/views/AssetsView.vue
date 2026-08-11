@@ -155,7 +155,7 @@ async function saveJsonRevision(): Promise<void> {
 
     <section class="setup-section compact-step">
       <header><div><h2><KeyRound :size="17" />访问令牌</h2><p>只加密保存在平台，不会展示给页面、日志或 AI。</p></div><span v-if="setup.credential?.configured" class="configured-state"><CheckCircle2 :size="15" />已配置 · {{ setup.credential.fingerprint }}</span></header>
-      <div class="credential-row"><input v-model="apifoxToken" type="password" autocomplete="off" placeholder="输入新的 Apifox Access Token" @keyup.enter="saveToken" /><button class="secondary-command" type="button" :disabled="setup.busy || !apifoxToken.trim()" @click="saveToken"><Save :size="15" />保存令牌</button><button class="primary-command" type="button" :disabled="setup.busy || !setup.credential?.configured" @click="readProjects"><CloudDownload :size="15" />读取项目</button></div>
+      <div class="credential-row"><input v-model="apifoxToken" type="password" autocomplete="off" placeholder="输入新的 Apifox Access Token" @keyup.enter="saveToken" /><button class="secondary-command" type="button" :disabled="setup.busy || !apifoxToken.trim()" @click="saveToken"><Save :size="15" />保存令牌</button><button class="primary-command" type="button" :disabled="setup.busy || !setup.credential?.configured" @click="readProjects"><RefreshCw v-if="setup.apifoxOperation === 'loading_projects'" class="is-spinning" :size="15" /><CloudDownload v-else :size="15" />{{ setup.apifoxOperation === 'loading_projects' ? '正在读取项目…' : '读取项目' }}</button></div>
     </section>
 
     <section class="setup-section compact-step">
@@ -164,16 +164,16 @@ async function saveJsonRevision(): Promise<void> {
       <div class="scope-picker-grid">
         <label>平台项目<select v-model="projectId" @change="chooseDefaultRevision"><option value="">请选择</option><option v-for="item in context.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
         <label>Apifox 项目<select v-model="apifoxProjectId"><option value="">{{ setup.apifoxProjects.length ? '请选择' : '先点击读取项目' }}</option><option v-for="item in setup.apifoxProjects" :key="item.id" :value="item.id">{{ item.name }}{{ item.team_name ? ` · ${item.team_name}` : '' }}</option></select></label>
-        <button class="secondary-command scope-read" type="button" :disabled="setup.busy || !apifoxProjectId" @click="readContext"><RefreshCw :size="15" />读取环境</button>
+        <button class="secondary-command scope-read" type="button" :disabled="setup.busy || !apifoxProjectId" @click="readContext"><RefreshCw :class="{ 'is-spinning': setup.apifoxOperation === 'loading_context' }" :size="15" />{{ setup.apifoxOperation === 'loading_context' ? '正在读取环境…' : '读取环境' }}</button>
         <label>分支<select v-model="branchId" :disabled="!setup.apifoxContext"><option v-for="item in setup.apifoxContext?.branches || []" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
         <label>执行环境<select v-model="environmentId" :disabled="!setup.apifoxContext"><option value="">请选择</option><option v-for="item in setup.apifoxContext?.environments || []" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
-        <button class="primary-command scope-check" type="button" :disabled="setup.busy || !canCheckUpdate" @click="checkApifoxUpdate"><RefreshCw :size="15" />检查更新</button>
+        <button class="primary-command scope-check" type="button" :disabled="setup.busy || !canCheckUpdate" @click="checkApifoxUpdate"><RefreshCw :class="{ 'is-spinning': setup.apifoxOperation === 'checking_update' }" :size="15" />{{ setup.apifoxOperation === 'checking_update' ? '正在检查更新…' : '检查更新' }}</button>
       </div>
       <p v-if="selectedEnvironment" class="selection-note">将读取“{{ selectedEnvironment.name }}”的接口定义、服务地址和非敏感变量。</p>
     </section>
 
     <section v-if="setup.apifoxPreview" class="setup-section diff-review">
-      <header><div><h2>变化确认</h2><p>当前版本尚未改变。确认后，接口和环境会一起保存为新版本。</p></div><button class="primary-command" type="button" :disabled="setup.busy" @click="saveApifoxUpdate"><Check :size="15" />确认保存</button></header>
+      <header><div><h2>变化确认</h2><p>检查更新只生成预览，不会覆盖当前版本。确认差异后再保存接口和环境。</p></div><button class="primary-command" type="button" :disabled="setup.busy" @click="saveApifoxUpdate"><RefreshCw v-if="setup.apifoxOperation === 'saving_revision'" class="is-spinning" :size="15" /><Check v-else :size="15" />{{ setup.apifoxOperation === 'saving_revision' ? '正在保存…' : '保存为新版本' }}</button></header>
       <div class="diff-review-grid"><div class="diff-counts"><div><strong>{{ setup.preview?.added_count }}</strong><span>新增</span></div><div><strong>{{ setup.preview?.changed_count }}</strong><span>变更</span></div><div><strong>{{ setup.preview?.removed_count }}</strong><span>删除</span></div></div><div class="environment-preview"><span>环境</span><strong>{{ setup.apifoxPreview.environment_candidate.name }}</strong><small v-if="setup.secretPlaceholders.length">保存后需在环境配置中填写：{{ setup.secretPlaceholders.join('、') }}</small><small v-else>未发现待配置的敏感变量</small></div></div>
     </section>
 

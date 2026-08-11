@@ -111,6 +111,8 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .editor-footer { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-height: 54px; padding: 9px 13px; border-top: 1px solid var(--line); }.editor-footer span { margin-right: auto; color: var(--teal); font-size: 11px; }
 .primary-command, .secondary-command, .baseline-command, .debug-command { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 5px; cursor: pointer; }
 .primary-command { border: 1px solid var(--blue); background: var(--blue); color: #fff; }.primary-command:disabled { opacity: .48; cursor: not-allowed; }.wide { width: 100%; }
+.is-spinning { animation: command-spin .8s linear infinite; }
+@keyframes command-spin { to { transform: rotate(360deg); } }
 .secondary-command, .debug-command { border: 1px solid var(--line); background: #fff; color: var(--blue); }.debug-command { margin: 0 13px 13px; }
 .baseline-command { width: 100%; margin-top: 10px; border: 1px solid var(--teal); background: #eaf8f4; color: var(--teal); }
 .ai-assistant { position: sticky; top: 14px; min-height: 360px; transition: width .16s ease; }.ai-assistant.collapsed { width: 50px; min-height: 50px; justify-self: end; }.ai-assistant .panel-header > div { display: flex; align-items: center; gap: 7px; }

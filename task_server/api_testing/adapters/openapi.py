@@ -6,6 +6,7 @@ import json
 import re
 import unicodedata
 from typing import Any, Dict, Mapping, MutableMapping, Optional, Sequence, Set, Tuple
+from urllib.parse import unquote
 
 from ..contracts.source import NormalizedEndpoint, NormalizedSourceDocument
 
@@ -101,7 +102,10 @@ class _LocalReferenceResolver:
         context = "root"
         if reference == "#":
             return current, context
-        for encoded in reference[2:].split("/"):
+        pointer = unquote(reference[1:])
+        if not pointer.startswith("/"):
+            raise OpenApiValidationError("Invalid local JSON Pointer: %s" % reference)
+        for encoded in pointer[1:].split("/"):
             segment = _decode_pointer_segment(encoded, reference)
             if isinstance(current, Mapping):
                 if segment not in current:

@@ -47,6 +47,21 @@ def test_default_event_stream_uses_configured_redis_wakeup(monkeypatch):
     assert stream.session_factory == "factory"
 
 
+def test_apifox_validation_error_keeps_its_actionable_chinese_message():
+    from task_server.api_testing.adapters.openapi import OpenApiValidationError
+    from task_server.api_testing.services.apifox_service import ApifoxInputError
+
+    error = http._domain_error(ApifoxInputError("选择的 Apifox 环境不存在或已不可访问"))
+    openapi_error = http._domain_error(OpenApiValidationError("Unresolved local reference: #/missing"))
+
+    assert error.status == 422
+    assert error.code == "apifox_validation_failed"
+    assert error.message == "选择的 Apifox 环境不存在或已不可访问"
+    assert openapi_error.status == 422
+    assert openapi_error.code == "openapi_validation_failed"
+    assert openapi_error.message == "接口定义校验失败：Unresolved local reference: #/missing"
+
+
 class HttpResponse:
     def __init__(self, response):
         self.status = response.status
