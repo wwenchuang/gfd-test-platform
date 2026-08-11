@@ -32,7 +32,7 @@ TERMINAL_JOB_STATES = frozenset(
     {"completed", "partial", "failed_validation", "failed_gateway"}
 )
 TERMINAL_BATCH_STATES = frozenset(
-    {"completed", "failed_validation", "failed_gateway"}
+    {"completed", "partial", "failed_validation", "failed_gateway"}
 )
 SENSITIVE_KEY = re.compile(r"(?:token|secret|password|authorization|cookie|api[_-]?key)", re.IGNORECASE)
 SENSITIVE_VALUE_PATTERNS = (
@@ -506,6 +506,7 @@ class AiCaseService:
 
         errors = []
         allowed_endpoint_ids = set(batch.endpoint_ids)
+        covered_endpoint_ids = set()
         for index, candidate in enumerate(candidates):
             fingerprint = self._candidate_fingerprint(candidate)
             try:
@@ -521,6 +522,7 @@ class AiCaseService:
                     fingerprint,
                     actor_id,
                 )
+                covered_endpoint_ids.add(candidate["endpoint_id"])
             except (AiCandidateValidationError, CasePayloadError, ValueError, LookupError) as exc:
                 errors.append(
                     {
@@ -531,6 +533,18 @@ class AiCaseService:
                         "candidate_fingerprint": fingerprint,
                     }
                 )
+
+        errors.extend(
+            {
+                "candidate_index": -1,
+                "endpoint_id": endpoint_id,
+                "code": "missing_endpoint_coverage",
+                "message": "AI did not produce a valid candidate for this selected endpoint",
+                "candidate_fingerprint": f"missing:{endpoint_id}",
+            }
+            for endpoint_id in batch.endpoint_ids
+            if endpoint_id not in covered_endpoint_ids
+        )
 
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
@@ -551,7 +565,12 @@ class AiCaseService:
             result["model_evidence"] = evidence
             generated_ids = list(dict.fromkeys(result.get("draft_version_ids", [])))
             result["draft_version_ids"] = generated_ids
-            state = "completed" if generated_ids else "failed_validation"
+            if generated_ids and errors:
+                state = "partial"
+            elif generated_ids:
+                state = "completed"
+            else:
+                state = "failed_validation"
             repository.update_batch(
                 batch,
                 state=state,
@@ -765,7 +784,7 @@ class AiCaseService:
         if not isinstance(content, str) or not content.strip():
             raise AiCandidateValidationError("AI Gateway content must be non-empty JSON")
         try:
-            payload = json.loads(content)
+            payload = json.loads(self._unwrap_json_fence(content))
         except json.JSONDecodeError as exc:
             raise AiCandidateValidationError("AI Gateway content is not strict JSON") from exc
         try:
@@ -785,6 +804,16 @@ class AiCaseService:
                 }
             )
         return normalized
+
+    @staticmethod
+    def _unwrap_json_fence(content):
+        stripped = content.strip()
+        fenced = re.fullmatch(
+            r"```(?:json)?[ \t]*\r?\n(?P<body>[\s\S]*?)\r?\n```",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        return fenced.group("body").strip() if fenced else stripped
 
     @staticmethod
     def _model_evidence(response, requested_provider_id, requested_model):

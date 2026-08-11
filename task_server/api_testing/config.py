@@ -8,6 +8,8 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _MIN_SECRET_LENGTH = 32
 _MIN_SECRET_UNIQUE_CHARACTERS = 8
 _MAX_REPEATED_UNIT_LENGTH = 16
+_DEFAULT_WORKER_HEARTBEAT_KEY = "midscene:api-testing:worker-heartbeat"
+_DEFAULT_WORKER_HEARTBEAT_TTL_SECONDS = 45
 _KNOWN_PLACEHOLDER_SECRETS = frozenset({
     "change-me",
     "change-this-long-random-secret",
@@ -41,6 +43,8 @@ class ApiTestingSettings:
     redis_url: str
     secret_key: str
     queue: str
+    worker_heartbeat_key: str
+    worker_heartbeat_ttl_seconds: int
 
     @classmethod
     def from_env(cls):
@@ -49,6 +53,21 @@ class ApiTestingSettings:
         redis_url = os.getenv("API_TESTING_REDIS_URL", "redis://127.0.0.1:6379/0").strip()
         secret_key = os.getenv("API_TESTING_SECRET_KEY", "").strip()
         queue = os.getenv("API_TESTING_QUEUE", "api-testing").strip() or "api-testing"
+        worker_heartbeat_key = (
+            os.getenv("API_TESTING_WORKER_HEARTBEAT_KEY", _DEFAULT_WORKER_HEARTBEAT_KEY).strip()
+            or _DEFAULT_WORKER_HEARTBEAT_KEY
+        )
+        try:
+            worker_heartbeat_ttl_seconds = int(
+                os.getenv(
+                    "API_TESTING_WORKER_HEARTBEAT_TTL_SECONDS",
+                    str(_DEFAULT_WORKER_HEARTBEAT_TTL_SECONDS),
+                )
+            )
+        except ValueError as error:
+            raise ValueError("API_TESTING_WORKER_HEARTBEAT_TTL_SECONDS must be an integer") from error
+        if not 15 <= worker_heartbeat_ttl_seconds <= 300:
+            raise ValueError("API_TESTING_WORKER_HEARTBEAT_TTL_SECONDS must be between 15 and 300")
 
         if enabled and len(secret_key) < _MIN_SECRET_LENGTH:
             raise ValueError("API_TESTING_SECRET_KEY must be at least 32 characters when API testing is enabled")
@@ -65,4 +84,6 @@ class ApiTestingSettings:
             redis_url=redis_url,
             secret_key=secret_key,
             queue=queue,
+            worker_heartbeat_key=worker_heartbeat_key,
+            worker_heartbeat_ttl_seconds=worker_heartbeat_ttl_seconds,
         )

@@ -4,6 +4,7 @@ from dataclasses import fields, is_dataclass
 from datetime import date, datetime
 from functools import lru_cache
 import json
+import logging
 import re
 import secrets
 from types import MappingProxyType
@@ -12,6 +13,7 @@ from uuid import UUID, uuid4
 
 import redis
 from sqlalchemy import select
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from task_server.auth import bearer_token, verify_session_token
 
@@ -38,6 +40,7 @@ from .services.provider_service import (
     ProviderCredentialNotFoundError,
     ProviderService,
 )
+from .services.readiness_service import ReadinessService
 from .services.source_service import (
     SourceNotFoundError,
     SourcePreviewExpiredError,
@@ -71,6 +74,7 @@ if type(value['owner_id']) ~= 'string' or value['execution_id'] ~= ARGV[1] then 
 redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
 return {1, payload}
 """
+logger = logging.getLogger(__name__)
 
 
 class ApiHttpError(Exception):
@@ -100,6 +104,7 @@ def dispatch_delete(handler, qs, path):
 
 def _dispatch(handler, method, qs, path):
     request_id = _request_id(handler)
+    actor = None
     try:
         segments = _segments(path)
         ticket = str(qs.get("ticket") or "")
@@ -124,7 +129,22 @@ def _dispatch(handler, method, qs, path):
     except ApiHttpError as error:
         return _failure(handler, error, request_id)
     except Exception as error:
-        return _failure(handler, _domain_error(error), request_id)
+        mapped_error = _domain_error(error)
+        _log_dispatch_error(error, mapped_error, request_id, method, path, actor)
+        return _failure(handler, mapped_error, request_id)
+
+
+def _log_dispatch_error(error, mapped_error, request_id, method, path, actor):
+    logger.error(
+        "API testing request failed request_id=%s method=%s route=%s actor=%s "
+        "error_code=%s exception_type=%s",
+        request_id,
+        method,
+        path,
+        actor or "unknown",
+        mapped_error.code,
+        type(error).__name__,
+    )
 
 
 def _authenticate(handler, qs, segments, settings):
@@ -185,7 +205,7 @@ def _read_json_body(handler):
 
 def _route(method, segments, qs, payload, actor, settings):
     if method == "GET":
-        return _get(segments, qs, actor), 200
+        return _get(segments, qs, actor, settings), 200
     if method == "POST":
         asynchronous = segments in {("executions",), ("regressions",)} or (
             len(segments) == 3
@@ -202,6 +222,10 @@ def _route(method, segments, qs, payload, actor, settings):
 
 def _factory():
     return _session_factory()
+
+
+def _readiness(settings):
+    return ReadinessService(settings).check()
 
 
 def _event_stream(factory):
@@ -225,7 +249,9 @@ def _shared_redis_client(redis_url):
     return redis.Redis.from_url(redis_url, decode_responses=True)
 
 
-def _get(segments, qs, actor):
+def _get(segments, qs, actor, settings):
+    if segments == ("readiness",):
+        return _readiness(settings)
     factory = _factory()
     if segments == ("providers", "apifox", "credential"):
         return {
@@ -863,6 +889,18 @@ def _domain_error(error):
             422,
             "openapi_validation_failed",
             "接口定义校验失败：%s" % str(error),
+        )
+    if isinstance(error, (OperationalError, InterfaceError)):
+        return ApiHttpError(
+            503,
+            "database_unavailable",
+            "API 测试数据库暂时不可用，请稍后重试",
+        )
+    if isinstance(error, redis.RedisError):
+        return ApiHttpError(
+            503,
+            "redis_unavailable",
+            "API 测试任务队列暂时不可用，请稍后重试",
         )
     if isinstance(error, TestTaskScopeError):
         return ApiHttpError(409, "task_scope_conflict", "测试任务范围与当前请求不一致")

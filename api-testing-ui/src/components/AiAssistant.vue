@@ -14,6 +14,13 @@ const STATE_LABELS: Record<string, string> = { queued: '排队中', running: '�
 const stateLabel = computed(() => STATE_LABELS[props.job?.state || ''] || '等待生成')
 const running = computed(() => props.polling)
 function useIntent(value: string): void { intent.value = value }
+function validationMessage(batch: AiJob['batches'][number]): string {
+  const issue = batch.validation_errors.find(item => typeof item.message === 'string')
+  if (issue?.code === 'missing_endpoint_coverage') return '部分已选接口没有生成有效用例，请检查草稿后重试缺口'
+  const message = issue?.message
+  if (message === 'AI Gateway content is not strict JSON') return 'AI 返回内容格式不正确，请重新生成'
+  return typeof message === 'string' ? message : ''
+}
 </script>
 
 <template>
@@ -28,7 +35,7 @@ function useIntent(value: string): void { intent.value = value }
         <p v-if="error" class="state-message" :class="{ 'state-error': !canResume }">{{ error }}</p>
         <section v-if="job" class="ai-job" aria-live="polite">
           <div class="job-summary"><strong>{{ stateLabel }}</strong><span>{{ job.actual_model || job.requested_model || '由平台选择模型' }}</span></div>
-          <article v-for="batch in job.batches" :key="batch.id" class="batch-row"><span>批次 {{ batch.sequence }}</span><strong>{{ ({ queued: '排队', running: '生成中', completed: '完成', partial: '部分完成', failed: '失败', failed_gateway: '模型失败', failed_validation: '校验失败' } as Record<string,string>)[batch.state] || batch.state }}</strong><small>{{ batch.actual_model || batch.requested_model || '等待模型' }} · {{ batch.generated_draft_ids.length }} 个草稿</small></article>
+          <article v-for="batch in job.batches" :key="batch.id" class="batch-row"><span>批次 {{ batch.sequence }}</span><strong>{{ ({ queued: '排队', running: '生成中', completed: '完成', partial: '部分完成', failed: '失败', failed_gateway: '模型失败', failed_validation: '校验失败' } as Record<string,string>)[batch.state] || batch.state }}</strong><small>{{ batch.actual_model || batch.requested_model || '等待模型' }} · {{ batch.generated_draft_ids.length }} 个草稿</small><small v-if="validationMessage(batch)" class="batch-error" role="alert">{{ validationMessage(batch) }}</small></article>
           <button v-if="canResume" class="secondary-command" type="button" @click="emit('resume')"><RefreshCw :size="15" />继续查看</button>
           <button v-else-if="['partial','failed','failed_gateway','failed_validation'].includes(job.state)" class="secondary-command" type="button" @click="emit('retry', intent)"><RefreshCw :size="15" />重新生成当前范围</button>
         </section>

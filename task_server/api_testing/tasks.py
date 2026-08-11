@@ -1,6 +1,9 @@
 """Celery entry point for API execution; core behavior remains synchronously testable."""
 
+import logging
+
 from celery import Celery
+from celery.signals import heartbeat_sent, worker_ready
 
 from .config import ApiTestingSettings
 from .db import _session_factory
@@ -11,6 +14,7 @@ from .services.test_task_service import TestTaskService
 
 
 settings = ApiTestingSettings.from_env()
+logger = logging.getLogger(__name__)
 celery_app = Celery("midscene-api-testing")
 if settings.enabled:
     celery_app.conf.update(
@@ -19,6 +23,28 @@ if settings.enabled:
         task_default_queue=settings.queue,
         task_ignore_result=True,
     )
+
+
+def _heartbeat_redis():
+    import redis
+
+    return redis.Redis.from_url(settings.redis_url, decode_responses=True)
+
+
+@heartbeat_sent.connect
+@worker_ready.connect
+def publish_worker_heartbeat(sender=None, **kwargs):
+    try:
+        _heartbeat_redis().set(
+            settings.worker_heartbeat_key,
+            "1",
+            ex=settings.worker_heartbeat_ttl_seconds,
+        )
+    except Exception:
+        logger.warning(
+            "Unable to publish API testing worker heartbeat",
+            exc_info=True,
+        )
 
 
 def _dispatch_failure_analysis(execution_id, child_id, attempt_id, evidence):

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 import redis
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from task_server.api_testing import http
@@ -654,6 +655,76 @@ def test_disabled_mode_is_stable_before_database_access(http_client, monkeypatch
 
     assert response.status == 503
     assert response.body["error"]["code"] == "api_testing_disabled"
+
+
+def test_readiness_route_returns_component_state_without_opening_domain_database(
+    http_client, monkeypatch
+):
+    monkeypatch.setattr(
+        http.ApiTestingSettings,
+        "from_env",
+        staticmethod(lambda: SimpleNamespace(enabled=True, redis_url="redis://unused")),
+    )
+    monkeypatch.setattr(
+        http,
+        "verify_session_token",
+        lambda token: {"user": "owner-a"} if token == "owner-a" else None,
+    )
+    monkeypatch.setattr(http, "_readiness", lambda settings: {"ready": True})
+    monkeypatch.setattr(
+        http,
+        "_factory",
+        lambda: (_ for _ in ()).throw(AssertionError("domain database was opened")),
+    )
+
+    response = http_client.get("/api/api-testing/v1/readiness", _auth())
+
+    assert response.status == 200
+    assert response.body["data"] == {"ready": True}
+
+
+def test_database_failure_is_safe_traceable_and_returns_503(
+    http_client, monkeypatch, caplog
+):
+    monkeypatch.setattr(
+        http.ApiTestingSettings,
+        "from_env",
+        staticmethod(lambda: SimpleNamespace(enabled=True, redis_url="redis://unused")),
+    )
+    monkeypatch.setattr(
+        http,
+        "verify_session_token",
+        lambda token: {"user": "owner-a"} if token == "owner-a" else None,
+    )
+
+    def fail_factory():
+        raise OperationalError(
+            "SELECT 1",
+            {},
+            Exception("database password secret-value"),
+        )
+
+    monkeypatch.setattr(http, "_factory", fail_factory)
+
+    response = http_client.get(
+        "/api/api-testing/v1/projects",
+        _auth(**{"X-Request-Id": "database-check-42"}),
+    )
+
+    assert response.status == 503
+    assert response.body["error"]["code"] == "database_unavailable"
+    assert response.body["request_id"] == "database-check-42"
+    assert "secret-value" not in json.dumps(response.body)
+    assert "database-check-42" in caplog.text
+    assert "secret-value" not in caplog.text
+
+
+def test_redis_connection_failure_maps_to_stable_dependency_error():
+    error = http._domain_error(redis.ConnectionError("redis password secret-value"))
+
+    assert error.status == 503
+    assert error.code == "redis_unavailable"
+    assert "secret-value" not in error.message
 
 
 def test_workspace_context_is_owner_scoped_and_persistent(http_client, owned_records):
