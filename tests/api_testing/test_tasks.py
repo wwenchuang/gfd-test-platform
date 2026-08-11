@@ -1,4 +1,39 @@
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 from task_server.api_testing import tasks
+
+
+def test_worker_heartbeat_has_short_expiry(monkeypatch):
+    fake_redis = Mock()
+    monkeypatch.setattr(tasks, "_heartbeat_redis", lambda: fake_redis)
+    monkeypatch.setattr(
+        tasks,
+        "settings",
+        SimpleNamespace(
+            worker_heartbeat_key="midscene:api-testing:worker-heartbeat",
+            worker_heartbeat_ttl_seconds=45,
+        ),
+    )
+
+    tasks.publish_worker_heartbeat(None)
+
+    fake_redis.set.assert_called_once_with(
+        "midscene:api-testing:worker-heartbeat",
+        "1",
+        ex=45,
+    )
+
+
+def test_worker_heartbeat_failure_does_not_crash_worker(monkeypatch, caplog):
+    def fail_redis():
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(tasks, "_heartbeat_redis", fail_redis)
+
+    tasks.publish_worker_heartbeat(None)
+
+    assert "Unable to publish API testing worker heartbeat" in caplog.text
 
 
 def test_execution_worker_refreshes_linked_task_after_running(monkeypatch):

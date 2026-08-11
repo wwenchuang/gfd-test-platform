@@ -28,6 +28,17 @@ def test_settings_are_disabled_without_infrastructure(monkeypatch):
     assert settings.enabled is False
 
 
+def test_worker_heartbeat_settings_have_bounded_defaults(monkeypatch):
+    monkeypatch.setenv("API_TESTING_ENABLED", "0")
+    monkeypatch.delenv("API_TESTING_WORKER_HEARTBEAT_KEY", raising=False)
+    monkeypatch.delenv("API_TESTING_WORKER_HEARTBEAT_TTL_SECONDS", raising=False)
+
+    settings = ApiTestingSettings.from_env()
+
+    assert settings.worker_heartbeat_key == "midscene:api-testing:worker-heartbeat"
+    assert settings.worker_heartbeat_ttl_seconds == 45
+
+
 def test_settings_reject_short_secret_when_enabled(monkeypatch):
     monkeypatch.setenv("API_TESTING_ENABLED", "1")
     monkeypatch.setenv("API_TESTING_SECRET_KEY", "x" * 31)
