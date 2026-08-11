@@ -16299,7 +16299,8 @@ def check_api_automation_backend_is_removed():
         not re.search(r"from\s+\.services\.api_[A-Za-z0-9_]+\s+import", app_text),
         "Task server startup must not import removed API automation services",
     )
-    require("/api/api-testing/" not in router_text, "API testing routes must be removed")
+    require(router_text.count("register_api_testing_routes(") == 1, "API testing routes must mount exactly once")
+    require("api_testing.services" not in router_text, "API testing services must stay outside router.py")
     require("/api/test-lab/" not in router_text, "Test lab routes must be removed")
     for name in (
         "api_asset_service.py", "api_case_contract_service.py",
@@ -16328,6 +16329,98 @@ def check_api_automation_backend_is_removed():
         )
 
 
+def check_api_testing_runtime_infrastructure():
+    requirements = (ROOT / "requirements-api-testing.txt").read_text(encoding="utf-8")
+    for dependency in (
+        "SQLAlchemy>=2.0,<2.1",
+        "alembic>=1.14,<2",
+        "psycopg[binary]>=3.2,<3.3",
+        "redis>=5.2,<6",
+        "celery[redis]>=5.4,<6",
+        "cryptography>=44,<46",
+    ):
+        require(dependency in requirements, f"API testing runtime dependency missing: {dependency}")
+
+    dev_requirements = (ROOT / "requirements-api-testing-dev.txt").read_text(encoding="utf-8")
+    require("-r requirements-api-testing.txt" in dev_requirements, "API testing dev dependencies must include runtime dependencies")
+    require("pytest>=8,<9" in dev_requirements and "pytest-cov>=5,<7" in dev_requirements, "API testing dev dependencies must bound pytest tooling")
+
+    compose = (ROOT / "deploy" / "api-testing-compose.yml").read_text(encoding="utf-8")
+    require("postgres:16" in compose and "redis:7" in compose, "API testing compose must use PostgreSQL 16 and Redis 7")
+    require('"127.0.0.1:5432:5432"' in compose and '"127.0.0.1:6379:6379"' in compose, "API testing data services must bind only to localhost")
+    require("healthcheck:" in compose and "restart: unless-stopped" in compose, "API testing data services must have health checks and restart policies")
+    require("api_testing_postgres_data:" in compose and "api_testing_redis_data:" in compose, "API testing data services must use persistent named volumes")
+
+    worker_service = (ROOT / "deploy" / "midscene-api-worker.service").read_text(encoding="utf-8")
+    require("Environment=MIDSCENE_ENV_FILE=/opt/midscene.env" in worker_service, "API worker must use the platform's shared private environment loader")
+    require("/opt/midscene-task-platform/.venv/bin/celery" in worker_service, "API worker must run from the application venv")
+    require("-A task_server.api_testing.tasks:celery_app worker" in worker_service, "API worker must load the API testing Celery application")
+    require("--queues=api-testing --concurrency=2" in worker_service, "API worker must use the dedicated bounded queue")
+    platform_config = (ROOT / "task_server" / "config.py").read_text(encoding="utf-8")
+    require('"API_TESTING_"' in platform_config, "Platform startup config must load API testing variables from the private env file")
+
+    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
+    for key in (
+        "API_TESTING_ENABLED",
+        "API_TESTING_DATABASE_URL",
+        "API_TESTING_REDIS_URL",
+        "API_TESTING_SECRET_KEY",
+        "API_TESTING_QUEUE",
+    ):
+        require(f"export {key}=" in env_example, f"Deployment env example must expose {key}")
+
+    install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+    require("python3 -m venv --system-site-packages" in install_script, "Deployment must create the shared application venv")
+    require("requirements-api-testing.txt" in install_script, "Deployment must install API testing runtime dependencies")
+    require("api-testing-migrate.sh" in install_script, "Deployment must invoke API testing migrations")
+    require("midscene-api-worker.service" in install_script, "Deployment must install the API testing worker service")
+    require('API_TESTING_ENABLED="${API_TESTING_ENABLED:-0}"' in install_script, "Deployment must default API testing to disabled")
+    require('if [ "${API_TESTING_ENABLED}" = "1" ]' in install_script, "Deployment must start the API worker only when enabled")
+    require('if [ -d "${SRC_DIR}/api-test" ]' in install_script, "Deployment must copy the API testing frontend when present")
+    migration_pos = install_script.find('"${APP_DIR}/deploy/api-testing-migrate.sh"')
+    restart_pos = install_script.find("systemctl restart midscene-task.service")
+    require(migration_pos >= 0 and restart_pos > migration_pos, "API migrations must complete before enabled services restart")
+
+    migrate_path = ROOT / "deploy" / "api-testing-migrate.sh"
+    require(os.access(migrate_path, os.X_OK), "API migration entrypoint must be executable from the source checkout")
+    migrate_script = migrate_path.read_text(encoding="utf-8")
+    require("API_TESTING_ENABLED" in migrate_script and "alembic" in migrate_script and "upgrade head" in migrate_script, "API migration entrypoint must be disabled-safe and run Alembic to head")
+    workspace_migration = ROOT / "task_server" / "api_testing" / "migrations" / "versions" / "0002_workspace_context.py"
+    require(workspace_migration.exists(), "API testing must persist owner-scoped workspace context in a forward migration")
+    workspace_source = workspace_migration.read_text(encoding="utf-8")
+    require("api_workspaces" in workspace_source and "UniqueConstraint(\"owner_id\")" in workspace_source and "api_source_revisions.id" in workspace_source and "api_environment_revisions.id" in workspace_source, "Workspace migration must have one owner row and source/environment foreign keys")
+    api_http_source = (ROOT / "task_server" / "api_testing" / "http.py").read_text(encoding="utf-8")
+    require("_scope_execution" in api_http_source and "ApiProject.owner_id == actor" in api_http_source, "API HTTP resources must resolve nested records through the current owner project root")
+    require("SSE_TICKET_TTL_SECONDS" in api_http_source and "_SSE_TICKET_REDEEM_LUA" in api_http_source and "eval(" in api_http_source and "_issue_sse_ticket" in api_http_source, "Browser SSE must use short-lived, reconnectable execution-bound Redis tickets")
+    require("SSE_HEARTBEAT_SECONDS * 1000" in api_http_source and "if execution.state in TERMINAL_EXECUTION_STATES" in api_http_source, "SSE must heartbeat live streams and close terminal reconnects before blocking")
+    router_source = (ROOT / "task_server" / "router.py").read_text(encoding="utf-8")
+    app_source = (ROOT / "task_server" / "app.py").read_text(encoding="utf-8")
+    require("route_post_prefix_before_body" in router_source and "def dispatch_put" in router_source, "API POST requests must bypass legacy pre-body validation and workspace PUT must dispatch")
+    require("def do_PUT" in app_source, "Task HTTP handler must expose workspace PUT")
+
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    require(
+        package.get("scripts", {}).get("test:api-testing") == "bash tests/run_api_testing_gate.sh",
+        "API testing must expose one reproducible full-stack deployment gate",
+    )
+    gate_path = ROOT / "tests" / "run_api_testing_gate.sh"
+    require(gate_path.exists(), "API testing full-stack gate script is missing")
+    gate_source = gate_path.read_text(encoding="utf-8")
+    for marker in (
+        "deploy/api-testing-compose.yml",
+        "tests/api_testing",
+        "api-testing-ui test",
+        "api-testing-ui run build",
+        "tests/api_testing_ui_visual_check.js",
+        "tests/api_testing_e2e.spec.mjs",
+    ):
+        require(marker in gate_source, f"API testing gate is missing: {marker}")
+    require(
+        (ROOT / "tests" / "fixtures" / "api-testing" / "favorites-target.mjs").exists(),
+        "API testing browser gate must use the deterministic favorites target",
+    )
+
+
 def main():
     check_ai_gateway_response_diagnostics()
     check_automation_filter_invalid_json_self_repair()
@@ -16341,6 +16434,7 @@ def main():
     check_agent_history_list_exposes_report_summary()
     check_agent_run_retry_clones_inputs_without_artifacts()
     check_api_automation_backend_is_removed()
+    check_api_testing_runtime_infrastructure()
     entry_source = ENTRY.read_text(encoding="utf-8")
     require("from task_server.app import main" in entry_source, "midscene-upload.py must be a light task_server entrypoint")
     package_entry_source = (ROOT / "task_server" / "__main__.py").read_text(encoding="utf-8")

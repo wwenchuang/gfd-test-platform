@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 from pathlib import Path
 
 
@@ -79,11 +80,33 @@ def check_api_automation_frontend_residue_is_removed():
         require(marker not in visual_smoke, f"API-only visual smoke residue must be removed: {marker}")
 
 
+def check_api_testing_frontend_workspace():
+    source_root = ROOT / "api-testing-ui" / "src"
+    require(source_root.is_dir(), "API testing Vue source workspace is missing")
+    app_source = (source_root / "App.vue").read_text(encoding="utf-8")
+    router_source = (source_root / "router.ts").read_text(encoding="utf-8")
+    for label in ("工作台", "接口资产", "执行记录", "测试报告", "环境配置"):
+        require(label in app_source, f"API testing navigation is missing: {label}")
+    for route in ("WorkbenchView", "AssetsView", "RunsView", "ReportsView", "SettingsView"):
+        require(route in router_source, f"API testing router is missing: {route}")
+    require((ROOT / "api-test" / "index.html").exists(), "Built API testing frontend is missing")
+
+    visual_source = (ROOT / "tests" / "api_testing_ui_visual_check.js").read_text(encoding="utf-8")
+    require("1440" in visual_source and "900" in visual_source, "API visual gate must cover desktop")
+    require("390" in visual_source and "844" in visual_source, "API visual gate must cover mobile")
+    require("assertNoHorizontalOverflow" in visual_source, "API visual gate must reject horizontal overflow")
+
+    acceptance_source = (ROOT / "tests" / "api_testing_e2e.spec.mjs").read_text(encoding="utf-8")
+    for marker in ("workbench-desktop.png", "workbench-mobile.png", "report-desktop.png", "report-mobile.png"):
+        require(marker in acceptance_source, f"API acceptance is missing screenshot evidence: {marker}")
+
+
 def main():
     # After the round-3 split, JS/CSS live in separate files. Static substring
     # checks below should still cover the full deployable bundle, so we
     # concatenate task-manager.html + css/app.css + js/*.js as a single blob.
     check_api_automation_frontend_residue_is_removed()
+    check_api_testing_frontend_workspace()
     html = _read_bundle()
     execution_js = (JS_DIR / "execution.js").read_text(encoding="utf-8")
     utils_js = (JS_DIR / "utils.js").read_text(encoding="utf-8")
@@ -266,7 +289,12 @@ def main():
         require(pattern not in html, f"Write API must use apiRequest, found direct fetch pattern: {pattern}")
     require("path-rail" in html and "失败分析：Qwen Plus" in html, "Dashboard must show model strategy as visual nodes")
     require("generation-flow" in html and "读资料" in html and "生成 YAML" in html, "Generation records must show a visual generation flow")
-    require("nav-group" in html and "接口测试" not in html and "配置" in html, "Sidebar navigation must remove the API group while retaining task-oriented groups")
+    require("nav-group" in html and "接口测试" not in html and "配置" in html, "Sidebar navigation must remove the legacy API group while retaining task-oriented groups")
+    api_test_link = re.search(r'<a\b[^>]*\bclass="[^"]*\bapi-test-link\b[^"]*"[^>]*\bhref="/api-test/"[^>]*>.*?</a>', html, re.DOTALL)
+    require(api_test_link is not None, "Sidebar must include a same-tab API testing link")
+    require("target=" not in api_test_link.group(0), "API testing navigation must keep the same browser tab")
+    require('assets/icons/flask-conical.svg' in api_test_link.group(0) and '↗' not in api_test_link.group(0), "API testing navigation must use the local Lucide icon instead of a text symbol")
+    require('data-workflow="api_' not in html and 'workflow-index">API<' not in html, "API testing navigation must not restore the legacy workflow or a letter-box icon")
     require("setActiveWorkflow('config');\n  renderTaskAppModal();" not in html, "App config modal must not reset workflow back to model config")
     require("setActiveWorkflow('config');\n  document.getElementById('toolbar-path').innerHTML = '<span>📁</span> 环境体检';" not in html, "System preflight must not reset workflow back to model config")
     require("['assets', 'generate', 'yaml_edit', 'execute', 'repair', 'baseline'].includes(activeWorkflow)" in html, "Opening YAML from assets/yaml_edit must preserve the current workflow")

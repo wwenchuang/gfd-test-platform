@@ -7,6 +7,14 @@
       "highway_deepseek"
     ]
   },
+  "api_case_generation": {
+    "providerId": "qwen_plus",
+    "fallbackProviderIds": [
+      "highway_gpt5_mini",
+      "highway_gpt4_1_mini",
+      "highway_deepseek"
+    ]
+  },
   "generate_yaml": {
     "providerId": "qwen_plus",
     "fallbackProviderIds": [

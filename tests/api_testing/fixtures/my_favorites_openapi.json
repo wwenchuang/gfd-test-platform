@@ -1,0 +1,210 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Synthetic Favorites API",
+    "version": "1.0.0",
+    "description": "Synthetic contract used by API testing source import tests."
+  },
+  "servers": [
+    {
+      "url": "https://api.example.test/app",
+      "description": "Synthetic production"
+    }
+  ],
+  "tags": [
+    {
+      "name": "我的收藏",
+      "description": "Synthetic favorites operations"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "x-apifox-project": "synthetic-project",
+  "paths": {
+    "/print3d/api/v1/favorite/list": {
+      "parameters": [
+        {
+          "name": "Biz",
+          "in": "header",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "example": "ZXB"
+        }
+      ],
+      "get": {
+        "operationId": "favoriteList",
+        "summary": "查询我的收藏",
+        "tags": [
+          "我的收藏"
+        ],
+        "parameters": [
+          {
+            "name": "pageNum",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "example": 1
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "收藏列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FavoriteListResponse"
+                },
+                "examples": {
+                  "success": {
+                    "value": {
+                      "code": 0,
+                      "data": []
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-apifox-folder": "favorites"
+      }
+    },
+    "/print3d/api/v1/favorite/add": {
+      "post": {
+        "operationId": "favoriteAdd",
+        "summary": "添加收藏",
+        "tags": [
+          "我的收藏"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteMutationRequest"
+              },
+              "example": {
+                "targetId": "synthetic-model-001",
+                "favoriteType": "MODEL"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "添加成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/print3d/api/v1/favorite/cancel": {
+      "post": {
+        "operationId": "favoriteCancel",
+        "summary": "取消收藏",
+        "tags": [
+          "我的收藏"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FavoriteMutationRequest"
+              },
+              "examples": {
+                "model": {
+                  "value": {
+                    "targetId": "synthetic-model-001",
+                    "favoriteType": "MODEL"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "取消成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "FavoriteMutationRequest": {
+        "type": "object",
+        "required": [
+          "targetId",
+          "favoriteType"
+        ],
+        "properties": {
+          "targetId": {
+            "type": "string"
+          },
+          "favoriteType": {
+            "type": "string"
+          }
+        }
+      },
+      "MutationResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "FavoriteListResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  }
+}

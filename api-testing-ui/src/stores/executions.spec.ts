@@ -1,0 +1,259 @@
+// @vitest-environment jsdom
+
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+
+import { apiClient } from '../api/client'
+import type { ApiEnvelope, ExecutionView } from '../api/contracts'
+import { useExecutionsStore } from './executions'
+
+describe('executions store', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.restoreAllMocks()
+  })
+
+  it('deduplicates monotonic SSE events without replacing existing evidence', () => {
+    const store = useExecutionsStore()
+    store.appendEvent({ id: 2, type: 'case_finished', level: 'error', caseId: 'case-a', message: '原始失败', payload: {} })
+    store.appendEvent({ id: 2, type: 'case_finished', level: 'info', caseId: 'case-a', message: '重复覆盖', payload: {} })
+    store.appendEvent({ id: 3, type: 'execution_finished', level: 'info', caseId: '', message: '执行完成', payload: {} })
+
+    expect(store.events.map(item => item.message)).toEqual(['原始失败', '执行完成'])
+  })
+
+  it('uses an opaque ticket URL and never places the session token in EventSource', async () => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { ticket: 'opaque-ticket' } })
+    const opened: string[] = []
+    class FakeEventSource {
+      static OPEN = 1
+      readyState = 1
+      onopen: null | (() => void) = null
+      onerror: null | (() => void) = null
+      constructor(url: string) { opened.push(url) }
+      addEventListener(): void {}
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    sessionStorage.setItem('sessionToken', 'browser-session-secret')
+    const store = useExecutionsStore()
+
+    await store.connect('execution-1')
+
+    expect(opened).toEqual(['/api/api-testing/v1/executions/execution-1/events?ticket=opaque-ticket'])
+    expect(opened[0]).not.toContain('browser-session-secret')
+    vi.unstubAllGlobals()
+  })
+
+  it('starts the saved baseline set with one regression command', async () => {
+    const execution = {
+      id: 'execution-regression', project_id: 'project-1', state: 'QUEUED', execution_type: 'regression',
+      source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1',
+      environment_name: '生产环境（新）- 腾讯云', case_statuses: ['QUEUED'], case_results: [], summary: {},
+      cancellation_requested: false, created_at: '', started_at: null, finished_at: null,
+    } as const
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { execution } })
+    const store = useExecutionsStore()
+    vi.spyOn(store, 'select').mockResolvedValue()
+
+    await store.runBaselines({
+      projectId: 'project-1', sourceRevisionId: 'source-revision-1', environmentRevisionId: 'environment-revision-1',
+    })
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/regressions', {
+      project_id: 'project-1', source_revision_id: 'source-revision-1',
+      environment_revision_id: 'environment-revision-1', idempotency_key: expect.any(String),
+    })
+    expect(store.executions[0]?.id).toBe('execution-regression')
+  })
+
+  it('opens the durable event stream when selecting a completed execution', async () => {
+    const execution = {
+      id: 'execution-done', project_id: 'project-1', state: 'DONE', execution_type: 'regression',
+      source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '生产环境',
+      case_statuses: ['PASSED'], case_results: [], summary: { total: 1, passed: 1 },
+      cancellation_requested: false, created_at: '', started_at: '', finished_at: '',
+    } as const
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { execution } })
+    const store = useExecutionsStore()
+    const connect = vi.spyOn(store, 'connect').mockResolvedValue()
+
+    await store.select('execution-done')
+
+    expect(connect).toHaveBeenCalledWith('execution-done')
+  })
+
+  it('renews an expired SSE ticket and resumes after the last durable event', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { ticket: 'ticket-one' } })
+      .mockResolvedValueOnce({ data: { ticket: 'ticket-two' } })
+    const opened: Array<{ url: string; source: FakeEventSource }> = []
+    class FakeEventSource {
+      static OPEN = 1
+      readyState = 1
+      onopen: null | (() => void) = null
+      onerror: null | (() => void) = null
+      constructor(public url: string) { opened.push({ url, source: this }) }
+      addEventListener(): void {}
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = useExecutionsStore()
+    store.active = { id: 'execution-1', state: 'RUNNING' } as never
+    store.appendEvent({ id: 7, type: 'response', level: 'info', caseId: 'case-a', message: '收到响应', payload: {} })
+
+    await store.connect('execution-1')
+    opened[0].source.onerror?.()
+    expect(opened).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(opened).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(opened[1].url).toBe('/api/api-testing/v1/executions/execution-1/events?ticket=ticket-two&after=7')
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('stops reconnecting after the bounded retry budget', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { ticket: 'opaque-ticket' } })
+    const opened: FakeEventSource[] = []
+    class FakeEventSource {
+      onopen: null | (() => void) = null
+      onerror: null | (() => void) = null
+      constructor(_url: string) { opened.push(this) }
+      addEventListener(): void {}
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = useExecutionsStore()
+    store.active = { id: 'execution-1', state: 'RUNNING' } as never
+
+    await store.connect('execution-1')
+    for (const delay of [1000, 2000, 5000, 10000, 30000]) {
+      opened.at(-1)?.onerror?.()
+      await vi.advanceTimersByTimeAsync(delay)
+    }
+    opened.at(-1)?.onerror?.()
+    await vi.runAllTimersAsync()
+
+    expect(opened).toHaveLength(6)
+    expect(store.connectionState).toBe('failed')
+    expect(store.error).toContain('重新连接')
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the latest execution when record requests resolve out of order', async () => {
+    let resolveFirst: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
+    let resolveSecond: ((value: ApiEnvelope<{ execution: ExecutionView }>) => void) | undefined
+    vi.spyOn(apiClient, 'get')
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve }))
+    const store = useExecutionsStore()
+    const connect = vi.spyOn(store, 'connect').mockResolvedValue()
+    const first = store.select('execution-a')
+    const second = store.select('execution-b')
+    resolveSecond?.({ data: { execution: { id: 'execution-b', state: 'DONE' } as ExecutionView } })
+    await second
+    resolveFirst?.({ data: { execution: { id: 'execution-a', state: 'DONE' } as ExecutionView } })
+    await first
+
+    expect(store.active?.id).toBe('execution-b')
+    expect(connect).toHaveBeenCalledTimes(1)
+    expect(connect).toHaveBeenCalledWith('execution-b')
+  })
+
+  it('ignores late events from a previously selected execution', async () => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { ticket: 'opaque-ticket' } })
+    const listeners = new Map<string, (event: MessageEvent) => void>()
+    class FakeEventSource {
+      onopen: null | (() => void) = null
+      onerror: null | (() => void) = null
+      addEventListener(type: string, listener: EventListener): void {
+        listeners.set(type, listener as (event: MessageEvent) => void)
+      }
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = useExecutionsStore()
+    store.active = { id: 'execution-a', state: 'RUNNING' } as never
+    const loadExecution = vi.spyOn(store, 'loadExecution').mockResolvedValue({ id: 'execution-a' } as never)
+
+    await store.connect('execution-a')
+    store.disconnect()
+    store.active = { id: 'execution-b', state: 'RUNNING' } as never
+    listeners.get('execution_finished')?.({ data: '{"state":"DONE"}', lastEventId: '8' } as MessageEvent)
+
+    expect(loadExecution).not.toHaveBeenCalled()
+    expect(store.events).toEqual([])
+    vi.unstubAllGlobals()
+  })
+
+  it('does not open a stale SSE ticket after switching executions', async () => {
+    let resolveFirstTicket: ((value: ApiEnvelope<{ ticket: string }>) => void) | undefined
+    vi.spyOn(apiClient, 'get').mockImplementation(async path => ({
+      data: { execution: { id: path.endsWith('execution-a') ? 'execution-a' : 'execution-b', state: 'RUNNING' } as ExecutionView },
+    }))
+    vi.spyOn(apiClient, 'post')
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirstTicket = resolve }))
+      .mockResolvedValueOnce({ data: { ticket: 'ticket-b' } })
+    const opened: string[] = []
+    class FakeEventSource {
+      onopen: null | (() => void) = null
+      onerror: null | (() => void) = null
+      constructor(url: string) { opened.push(url) }
+      addEventListener(): void {}
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const store = useExecutionsStore()
+
+    const first = store.select('execution-a')
+    await vi.waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1))
+    await store.select('execution-b')
+    resolveFirstTicket?.({ data: { ticket: 'ticket-a' } })
+    await first
+
+    expect(opened).toEqual(['/api/api-testing/v1/executions/execution-b/events?ticket=ticket-b'])
+    expect(store.active?.id).toBe('execution-b')
+    vi.unstubAllGlobals()
+  })
+
+  it('refreshes a terminal failure until background AI analysis is available', async () => {
+    vi.useFakeTimers()
+    const pending = {
+      id: 'execution-1', state: 'DONE',
+      case_results: [{ execution_case_id: 'case-1', status: 'FAILED', failure_analysis: null }],
+    } as unknown as ExecutionView
+    const analyzed = {
+      ...pending,
+      case_results: [{
+        ...pending.case_results[0],
+        failure_analysis: { model: 'qwen3.7-plus', analysis: { summary: '业务码异常' } },
+      }],
+    } as unknown as ExecutionView
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { execution: pending } })
+      .mockResolvedValueOnce({ data: { execution: analyzed } })
+    const store = useExecutionsStore()
+    store.active = pending
+
+    await store.refreshPendingAnalysis('execution-1')
+    expect(store.active?.case_results[0].failure_analysis).toBeNull()
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(store.active?.case_results[0].failure_analysis?.model).toBe('qwen3.7-plus')
+    expect(apiClient.get).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('renders extraction evidence in the live event stream', () => {
+    const store = useExecutionsStore()
+
+    store.consumeEvent('extraction', { data: '{"execution_case_id":"case-a","target":"favoriteId"}', lastEventId: '4' } as MessageEvent, 'execution-1')
+
+    expect(store.events[0]).toMatchObject({ id: 4, type: 'extraction', caseId: 'case-a', message: '提取变量' })
+  })
+})

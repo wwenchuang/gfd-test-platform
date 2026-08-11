@@ -1,0 +1,94 @@
+// @vitest-environment jsdom
+
+import { mount } from '@vue/test-utils'
+import { afterEach, describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
+
+import type { ExecutionView } from '../api/contracts'
+import ExecutionDetailDrawer from './ExecutionDetailDrawer.vue'
+
+const execution: ExecutionView = {
+  id: 'execution-1', project_id: 'project-1', state: 'DONE', execution_type: 'debug',
+  source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '生产环境',
+  case_statuses: ['FAILED'], summary: { FAILED: 1 }, cancellation_requested: false,
+  created_at: '2026-08-10T00:00:00Z', started_at: '2026-08-10T00:00:01Z', finished_at: '2026-08-10T00:00:02Z',
+  case_results: [{
+    execution_case_id: 'execution-case-1', case_version_id: 'case-version-1', endpoint_id: 'endpoint-1',
+    case_name: '查询我的收藏', endpoint_summary: '我的收藏列表', method: 'GET', path: '/favorites',
+    status: 'FAILED', failure_category: 'product_assertion', duration_ms: 120,
+    sanitized_result: { assertion_results: [{ passed: false, message: '状态码不匹配' }] },
+  }],
+}
+
+describe('ExecutionDetailDrawer', () => {
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('emits the exact case selected for editing', async () => {
+    const wrapper = mount(ExecutionDetailDrawer, { props: { execution } })
+
+    await wrapper.get('[data-testid="edit-case"]').trigger('click')
+
+    expect(wrapper.emitted('edit')?.[0]?.[0]).toMatchObject({
+      endpoint_id: 'endpoint-1', case_version_id: 'case-version-1',
+    })
+  })
+
+  it('traps keyboard focus and returns it when closed', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const wrapper = mount(ExecutionDetailDrawer, { attachTo: document.body, props: { execution } })
+    await nextTick()
+    await nextTick()
+    const dialog = wrapper.get('[role="dialog"]')
+    const buttons = dialog.findAll('button')
+    buttons.at(-1)!.element.focus()
+
+    await dialog.trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(buttons[0].element)
+
+    await dialog.trigger('keydown', { key: 'Escape' })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    wrapper.unmount()
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('resets the active result when the execution changes', async () => {
+    const wrapper = mount(ExecutionDetailDrawer, { props: { execution } })
+    const nextExecution: ExecutionView = {
+      ...execution,
+      id: 'execution-2',
+      source_revision_id: 'source-2',
+      environment_revision_id: 'environment-2',
+      case_results: [{
+        ...execution.case_results[0], execution_case_id: 'execution-case-2', endpoint_id: 'endpoint-2',
+        case_version_id: 'case-version-2', case_name: '取消收藏', path: '/favorites/cancel',
+      }],
+    }
+
+    await wrapper.setProps({ execution: nextExecution })
+    await wrapper.get('[data-testid="edit-case"]').trigger('click')
+
+    expect(wrapper.emitted('edit')?.at(-1)?.[0]).toMatchObject({ endpoint_id: 'endpoint-2', case_version_id: 'case-version-2' })
+    expect(wrapper.emitted('edit')?.at(-1)?.[1]).toMatchObject({ id: 'execution-2', source_revision_id: 'source-2' })
+  })
+
+  it('updates the selected result when background AI analysis arrives', async () => {
+    const wrapper = mount(ExecutionDetailDrawer, { props: { execution } })
+    const analyzed: ExecutionView = {
+      ...execution,
+      case_results: [{
+        ...execution.case_results[0],
+        failure_analysis: {
+          analyzer: 'ai_gateway', model: 'qwen3.7-plus', category: 'product_assertion',
+          analysis: { summary: '收藏接口业务码异常', root_cause: 'code=4009', recommendations: ['检查数据'], evidence: ['断言失败'] },
+        },
+      }],
+    }
+
+    await wrapper.setProps({ execution: analyzed })
+
+    expect(wrapper.text()).toContain('AI 失败分析')
+    expect(wrapper.text()).toContain('qwen3.7-plus')
+  })
+})
