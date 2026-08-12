@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { Play } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import ExecutionConsole from '../components/ExecutionConsole.vue'
@@ -33,21 +32,12 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
 async function rerun(execution: ExecutionView): Promise<void> {
   await executions.rerunFailed(execution)
 }
-async function runBaselines(): Promise<void> {
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) return
-  await executions.runBaselines({
-    projectId: context.projectId,
-    sourceRevisionId: context.sourceRevisionId,
-    environmentRevisionId: context.environmentRevisionId,
-  })
-}
 </script>
 
 <template>
   <section class="workspace">
     <header class="page-toolbar">
       <div><p class="eyebrow">API TEST RUNS</p><h1>执行记录</h1><p class="page-subtitle">选择任务即可继续查看实时日志，不会重复发起请求。</p></div>
-      <button data-testid="run-baselines" class="primary-command" type="button" :disabled="executions.baselineStarting || !context.projectId || !context.sourceRevisionId || !context.environmentRevisionId" @click="runBaselines"><Play :size="15" />{{ executions.baselineStarting ? '正在创建' : '执行当前基线' }}</button>
     </header>
     <p v-if="executions.error" class="inline-error">{{ executions.error }}</p>
     <ExecutionConsole

@@ -275,9 +275,65 @@ def test_submit_active_baselines_creates_one_click_regression(
         "baseline-regression",
     )
 
-    assert execution.execution_type == "regression"
+    assert execution.execution_type == "baseline_regression"
     assert execution.case_statuses == ("QUEUED",)
     assert execution.case_results[0]["case_version_id"] == execution_context["case"].id
+
+
+def test_submit_active_baselines_can_run_only_selected_baseline_ids(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED"), _Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    first_debug = service.submit(_request(execution_context), "admin", "selected-baseline-debug-1")
+    assert service.run(first_debug.id) is True
+    first_result = service.get(first_debug.id).case_results[0]
+    first_baseline = CaseService(session_factory).adopt_baseline(
+        execution_context["case"].id,
+        first_result["execution_case_id"],
+        "admin",
+    )
+
+    second_payload = valid_list_case(execution_context["endpoint"])
+    second_payload["name"] = "我的收藏列表 - 第二条基线"
+    second_case = CaseService(session_factory).create_draft(
+        execution_context["endpoint"].id,
+        second_payload,
+        "manual",
+        "admin",
+    )
+    second_debug = service.submit(
+        _request(execution_context, case_version_ids=[second_case.id]),
+        "admin",
+        "selected-baseline-debug-2",
+    )
+    assert service.run(second_debug.id) is True
+    second_result = service.get(second_debug.id).case_results[0]
+    second_baseline = CaseService(session_factory).adopt_baseline(
+        second_case.id,
+        second_result["execution_case_id"],
+        "admin",
+    )
+
+    execution = service.submit_active_baselines(
+        {
+            "project_id": execution_context["project"].id,
+            "source_revision_id": execution_context["source_revision"].id,
+            "environment_revision_id": execution_context["environment_revision"].id,
+            "baseline_ids": [second_baseline.id],
+        },
+        "admin",
+        "selected-baseline-regression",
+    )
+
+    assert execution.execution_type == "baseline_regression"
+    assert [item["case_version_id"] for item in execution.case_results] == [second_case.id]
+    assert first_baseline.case_version_id not in [
+        item["case_version_id"] for item in execution.case_results
+    ]
 
 
 def test_concurrent_submit_with_same_key_creates_one_execution(

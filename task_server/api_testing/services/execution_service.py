@@ -52,6 +52,20 @@ def _fingerprint(value):
     return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
 
 
+def _optional_identifier_array(value, field):
+    if value is None:
+        return None
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(value) > 500
+        or not all(isinstance(item, str) and item for item in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError(f"{field} must be a unique non-empty string array")
+    return value
+
+
 def _parse_request(value):
     if not isinstance(value, dict):
         raise ValueError("execution request must be an object")
@@ -69,7 +83,7 @@ def _parse_request(value):
     for field in ("project_id", "source_revision_id", "environment_revision_id"):
         if not isinstance(result[field], str) or not result[field]:
             raise ValueError(f"{field} is required")
-    if result["execution_type"] not in {"debug", "regression"}:
+    if result["execution_type"] not in {"debug", "regression", "baseline_regression"}:
         raise ValueError("execution type is not supported")
     identifiers = result["case_version_ids"]
     if (
@@ -173,7 +187,7 @@ class ExecutionService:
             "source_revision_id",
             "environment_revision_id",
         }
-        allowed_fields = required_fields | {"endpoint_ids"}
+        allowed_fields = required_fields | {"endpoint_ids", "baseline_ids"}
         if not isinstance(request, dict) or not (
             required_fields <= set(request) <= allowed_fields
         ):
@@ -183,15 +197,8 @@ class ExecutionService:
             for field in required_fields
         ):
             raise ValueError("baseline regression context is required")
-        endpoint_ids = request.get("endpoint_ids")
-        if endpoint_ids is not None and (
-            not isinstance(endpoint_ids, list)
-            or not endpoint_ids
-            or len(endpoint_ids) > 500
-            or not all(isinstance(item, str) and item for item in endpoint_ids)
-            or len(set(endpoint_ids)) != len(endpoint_ids)
-        ):
-            raise ValueError("endpoint_ids must be a unique non-empty string array")
+        endpoint_ids = _optional_identifier_array(request.get("endpoint_ids"), "endpoint_ids")
+        baseline_ids = _optional_identifier_array(request.get("baseline_ids"), "baseline_ids")
         with self.session_factory() as session:
             version_ids = ExecutionRepository(session).active_baseline_version_ids(
                 request["project_id"],
@@ -199,6 +206,7 @@ class ExecutionService:
                 request["environment_revision_id"],
                 actor_id,
                 endpoint_ids,
+                baseline_ids,
             )
         if not version_ids:
             raise ExecutionConflictError(
@@ -208,7 +216,7 @@ class ExecutionService:
             {
                 **{field: request[field] for field in required_fields},
                 "case_version_ids": list(version_ids),
-                "execution_type": "regression",
+                "execution_type": "baseline_regression",
                 "overrides": {},
             },
             actor_id,

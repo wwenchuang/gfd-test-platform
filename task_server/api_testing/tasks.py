@@ -8,8 +8,10 @@ from celery.signals import heartbeat_sent, worker_ready
 from .config import ApiTestingSettings
 from .db import _session_factory
 from .events import EventStream
+from .repositories.execution_repository import ExecutionRepository
 from .services.execution_service import ExecutionService
 from .services.ai_service import AiCaseService, AiFailureAnalyzer
+from .services.notification_service import NotificationNotConfiguredError, NotificationService
 from .services.test_task_service import TestTaskService
 
 
@@ -61,13 +63,52 @@ def execute_api_testing(self, execution_id):
         redis_client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
     except Exception:
         redis_client = None
+    event_stream = EventStream(factory, redis_client)
     result = ExecutionService(
         factory,
-        event_stream=EventStream(factory, redis_client),
+        event_stream=event_stream,
         failure_analysis_dispatcher=_dispatch_failure_analysis,
     ).run(execution_id)
     TestTaskService(factory).refresh_for_execution(execution_id)
+    if result:
+        _notify_baseline_regression(factory, event_stream, execution_id)
     return result
+
+
+def _notify_baseline_regression(factory, event_stream, execution_id):
+    with factory() as session:
+        execution = ExecutionRepository(session).get_execution(execution_id)
+        if (
+            execution is None
+            or execution.execution_type != "baseline_regression"
+            or execution.state != "DONE"
+        ):
+            return
+        actor_id = execution.owner_id
+    try:
+        result = NotificationService(factory).send_execution_report(execution_id, actor_id)
+    except NotificationNotConfiguredError as error:
+        event_stream.append(
+            execution_id,
+            "notification_failed",
+            {"channel_type": "feishu", "message": str(error)},
+        )
+    except Exception:
+        logger.warning(
+            "Unable to send API baseline regression Feishu report",
+            exc_info=True,
+        )
+        event_stream.append(
+            execution_id,
+            "notification_failed",
+            {"channel_type": "feishu", "message": "飞书报告发送失败"},
+        )
+    else:
+        event_stream.append(
+            execution_id,
+            "notification_sent",
+            {"channel_type": result.channel_type, "message": result.message},
+        )
 
 
 @celery_app.task(name="api_testing.analyze_failure", bind=True, acks_late=True)

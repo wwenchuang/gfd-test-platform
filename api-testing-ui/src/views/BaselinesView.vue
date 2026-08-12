@@ -7,10 +7,12 @@ import ContextBar from '../components/ContextBar.vue'
 import type { ApiBaselineCase } from '../api/contracts'
 import { baselineGroup, useBaselinesStore } from '../stores/baselines'
 import { useContextStore } from '../stores/context'
+import { useExecutionsStore } from '../stores/executions'
 import { useTasksStore } from '../stores/tasks'
 
 const context = useContextStore()
 const baselines = useBaselinesStore()
+const executions = useExecutionsStore()
 const tasks = useTasksStore()
 const router = useRouter()
 const search = ref('')
@@ -146,10 +148,25 @@ async function addSelectedToTask(): Promise<boolean> {
 }
 
 async function runSelectedTask(): Promise<void> {
-  const ready = tasks.task || await addSelectedToTask()
-  if (!ready) return
+  localError.value = ''
+  localMessage.value = ''
+  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
+    localError.value = '请先选择项目、接口版本和执行环境'
+    return
+  }
+  if (!baselines.selectedIds.length) {
+    localError.value = '请先勾选要执行的基线用例'
+    return
+  }
   try {
-    const execution = await tasks.runCurrent()
+    await context.saveContext()
+    if (context.error) throw new Error(context.error)
+    const execution = await executions.runBaselines({
+      projectId: context.projectId,
+      sourceRevisionId: context.sourceRevisionId,
+      environmentRevisionId: context.environmentRevisionId,
+      baselineIds: baselines.selectedIds,
+    })
     await router.push({ name: 'runs', query: { executionId: execution.id } })
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基线任务执行失败'
@@ -256,7 +273,7 @@ function rowTitle(item: ApiBaselineCase): string {
             <button class="secondary-command" type="button" :disabled="!filteredBaselines.length" @click="toggleFiltered">{{ allFilteredSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
             <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length" @click="baselines.clearSelection">清空选择</button>
             <button class="primary-command" type="button" :disabled="tasks.saving || !baselines.selectedIds.length" @click="addSelectedToTask"><ListPlus :size="15" />{{ tasks.saving ? '加入中' : '加入当前任务' }}</button>
-            <button class="primary-command" type="button" :disabled="tasks.running || !baselines.selectedIds.length" @click="runSelectedTask"><Play :size="15" />{{ tasks.running ? '创建执行中' : '执行所选基线' }}</button>
+            <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselines.selectedIds.length" @click="runSelectedTask"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '执行所选基线' }}</button>
           </div>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">

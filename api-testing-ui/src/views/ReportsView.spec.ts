@@ -40,4 +40,24 @@ describe('ReportsView', () => {
     expect(wrapper.text()).toContain('返回报告列表')
     expect(wrapper.text()).toContain('诊断结论')
   })
+
+  it('labels baseline regression reports separately from ad-hoc debug runs', () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [{
+      ...report,
+      id: 'baseline-report-1',
+      execution_type: 'baseline_regression',
+      case_statuses: ['PASSED'],
+      case_results: [report.case_results[0]],
+      summary: { total: 1, passed: 1, failed: 0 },
+    }]
+
+    const wrapper = mount(ReportsView)
+
+    expect(wrapper.text()).toContain('基线回归')
+    expect(wrapper.text()).not.toContain('自动回归')
+  })
 })

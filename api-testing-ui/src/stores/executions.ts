@@ -255,18 +255,21 @@ export const useExecutionsStore = defineStore('api-executions', {
       await this.select(response.data.execution.id)
       return response.data.execution
     },
-    async runBaselines(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string }): Promise<ExecutionView> {
+    async runBaselines(input: { projectId: string; sourceRevisionId: string; environmentRevisionId: string; baselineIds?: string[] }): Promise<ExecutionView> {
       this.baselineStarting = true
       this.error = ''
       try {
+        const payload: Record<string, unknown> = {
+          project_id: input.projectId,
+          source_revision_id: input.sourceRevisionId,
+          environment_revision_id: input.environmentRevisionId,
+          idempotency_key: createIdempotencyKey(),
+        }
+        const baselineIds = [...new Set(input.baselineIds || [])]
+        if (baselineIds.length) payload.baseline_ids = baselineIds
         const response = await apiClient.post<{ execution: ExecutionView }>(
           '/api/api-testing/v1/regressions',
-          {
-            project_id: input.projectId,
-            source_revision_id: input.sourceRevisionId,
-            environment_revision_id: input.environmentRevisionId,
-            idempotency_key: createIdempotencyKey(),
-          },
+          payload,
         )
         this.executions.unshift(response.data.execution)
         await this.select(response.data.execution.id)

@@ -20,8 +20,21 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELLED: '已取消', RUNNING: '运行中', QUEUED: '等待中', DONE: '已结束',
 }
 
+const EXECUTION_TYPE_LABELS: Record<string, string> = {
+  debug: '在线调试',
+  regression: '自动回归',
+  baseline_regression: '基线回归',
+}
+
 export function statusLabel(status: string): string {
   return STATUS_LABELS[String(status || '').toUpperCase()] || String(status || '未知')
+}
+
+export function executionTypeLabel(executionOrType: ExecutionView | string): string {
+  const value = typeof executionOrType === 'string'
+    ? executionOrType
+    : executionOrType.execution_type
+  return EXECUTION_TYPE_LABELS[value] || 'API 执行'
 }
 
 export function formatDuration(durationMs: number): string {

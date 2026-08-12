@@ -1021,12 +1021,107 @@ def test_api_task_run_executes_only_adopted_baselines_in_saved_selection(
     )
 
     assert response.status == 202
-    assert response.body["data"]["execution"]["execution_type"] == "regression"
+    assert response.body["data"]["execution"]["execution_type"] == "baseline_regression"
     assert response.body["data"]["execution"]["case_statuses"] == ["QUEUED"]
     assert response.body["data"]["task"]["state"] == "running"
     assert response.body["data"]["task"]["latest_execution_id"] == response.body[
         "data"
     ]["execution"]["id"]
+
+
+def test_selected_baseline_regression_does_not_use_task_scope(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        first_case = session.get(ApiCase, owned_records["case"].id)
+        first_case.active_version_id = owned_records["version"].id
+        debug_case = ApiExecutionCase(
+            execution_id=owned_records["execution"].id,
+            case_version_id=owned_records["version"].id,
+            endpoint_id=owned_records["endpoint"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            ordinal=0,
+            status="PASSED",
+            **_audit("owner-a"),
+        )
+        session.add(debug_case)
+        session.flush()
+        first_baseline = ApiBaseline(
+            project_id=owned_records["project"].id,
+            case_id=owned_records["case"].id,
+            case_version_id=owned_records["version"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            debug_execution_case_id=debug_case.id,
+            status="active",
+            **_audit("owner-a"),
+        )
+        second_case = ApiCase(
+            project_id=owned_records["project"].id,
+            endpoint_id=owned_records["endpoint"].id,
+            name="case second baseline",
+            origin="manual",
+            **_audit("owner-a"),
+        )
+        session.add(second_case)
+        session.flush()
+        second_version = ApiCaseVersion(
+            case_id=second_case.id,
+            endpoint_id=owned_records["endpoint"].id,
+            version_number=1,
+            purpose="case second",
+            request_template={"name": "case second", "request": {}},
+            **_audit("owner-a"),
+        )
+        session.add(second_version)
+        session.flush()
+        second_case.active_version_id = second_version.id
+        second_debug_case = ApiExecutionCase(
+            execution_id=owned_records["second_execution"].id,
+            case_version_id=second_version.id,
+            endpoint_id=owned_records["endpoint"].id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            ordinal=0,
+            status="PASSED",
+            **_audit("owner-a"),
+        )
+        session.add(second_debug_case)
+        session.flush()
+        second_baseline = ApiBaseline(
+            project_id=owned_records["project"].id,
+            case_id=second_case.id,
+            case_version_id=second_version.id,
+            environment_revision_id=owned_records["environment_revision"].id,
+            debug_execution_case_id=second_debug_case.id,
+            status="active",
+            **_audit("owner-a"),
+        )
+        session.add_all((first_baseline, second_baseline))
+        session.flush()
+        selected_baseline_id = second_baseline.id
+        selected_case_version_id = second_version.id
+        unselected_case_version_id = owned_records["version"].id
+
+    response = http_client.post(
+        "/api/api-testing/v1/regressions",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "baseline_ids": [selected_baseline_id],
+            "idempotency_key": "selected-baseline-http-contract",
+        },
+        _auth(),
+    )
+
+    assert response.status == 202
+    execution = response.body["data"]["execution"]
+    assert execution["execution_type"] == "baseline_regression"
+    assert [item["case_version_id"] for item in execution["case_results"]] == [
+        selected_case_version_id
+    ]
+    assert unselected_case_version_id not in [
+        item["case_version_id"] for item in execution["case_results"]
+    ]
 
 
 def test_api_task_without_an_active_baseline_is_not_runnable(

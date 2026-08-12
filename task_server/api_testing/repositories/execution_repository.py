@@ -82,6 +82,7 @@ class ExecutionRepository:
         environment_revision_id,
         owner_id,
         endpoint_ids=None,
+        baseline_ids=None,
     ):
         statement = (
             select(ApiBaseline.case_version_id)
@@ -105,6 +106,9 @@ class ExecutionRepository:
         identifiers = tuple(dict.fromkeys(endpoint_ids or ()))
         if identifiers:
             statement = statement.where(ApiSourceEndpoint.id.in_(identifiers))
+        baseline_identifiers = tuple(dict.fromkeys(baseline_ids or ()))
+        if baseline_identifiers:
+            statement = statement.where(ApiBaseline.id.in_(baseline_identifiers))
         return tuple(self.session.scalars(statement))
 
     def get_by_idempotency(self, project_id, key):

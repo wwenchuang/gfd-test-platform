@@ -230,7 +230,7 @@ export interface ExecutionView {
   id: string
   project_id: string
   state: string
-  execution_type: 'debug' | 'regression'
+  execution_type: 'debug' | 'regression' | 'baseline_regression'
   source_revision_id: string
   environment_revision_id: string
   environment_name: string

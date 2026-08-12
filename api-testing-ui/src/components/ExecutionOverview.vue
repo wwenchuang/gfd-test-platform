@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 
 import type { ExecutionView } from '../api/contracts'
-import { executionConclusion, executionMetrics, formatDuration } from '../utils/executionPresentation'
+import { executionConclusion, executionMetrics, executionTypeLabel, formatDuration } from '../utils/executionPresentation'
 
 const props = defineProps<{ execution: ExecutionView }>()
 const metrics = computed(() => executionMetrics(props.execution))
@@ -13,7 +13,7 @@ const conclusion = computed(() => executionConclusion(props.execution))
   <section class="execution-overview">
     <div class="overview-identity">
       <span>任务</span>
-      <strong>{{ execution.execution_type === 'debug' ? '在线调试' : '自动回归' }}</strong>
+      <strong>{{ executionTypeLabel(execution) }}</strong>
       <code>{{ execution.id }}</code>
     </div>
     <div class="overview-environment"><span>执行环境</span><strong>{{ execution.environment_name || '未命名环境' }}</strong></div>

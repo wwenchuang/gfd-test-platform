@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { RotateCw, Square } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
-import { executionFailureBuckets, executionMetrics } from '../utils/executionPresentation'
+import { executionFailureBuckets, executionMetrics, executionTypeLabel } from '../utils/executionPresentation'
 import CaseEvidence from './CaseEvidence.vue'
 import CaseResultList from './CaseResultList.vue'
 import ExecutionLog from './ExecutionLog.vue'
@@ -46,14 +46,14 @@ function selectCase(result: ExecutionCaseResult): void {
     <aside class="execution-list panel">
       <header class="panel-header"><h2>执行记录</h2><span>{{ executions.length }} 条</span></header>
       <button v-for="execution in executions" :key="execution.id" type="button" :class="['execution-row', { active: execution.id === active?.id }]" @click="emit('select', execution.id)">
-        <strong>{{ execution.execution_type === 'debug' ? '在线调试' : '自动回归' }}</strong><span>{{ execution.environment_name || '未命名环境' }}</span><small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small><b>{{ execution.state }}</b>
+        <strong>{{ executionTypeLabel(execution) }}</strong><span>{{ execution.environment_name || '未命名环境' }}</span><small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small><b>{{ execution.state }}</b>
       </button>
       <p v-if="!loading && !executions.length" class="state-message">还没有执行记录，可从工作台调试已保存草稿。</p>
     </aside>
     <main class="execution-main">
       <template v-if="active">
         <div class="execution-heading">
-          <div><h2>{{ active.execution_type === 'debug' ? '在线调试' : '自动回归' }}</h2><span>{{ active.environment_name }} · {{ active.case_results.length }} 条用例</span></div>
+          <div><h2>{{ executionTypeLabel(active) }}</h2><span>{{ active.environment_name }} · {{ active.case_results.length }} 条用例</span></div>
           <div><button v-if="connectionState === 'failed'" class="secondary-command" type="button" @click="emit('reconnect', active.id)"><RotateCw :size="14" />重新连接日志</button><button v-if="running" class="secondary-command" type="button" @click="emit('cancel', active.id)"><Square :size="14" />取消</button><button v-else-if="active.case_results.some(item => ['FAILED','BROKEN'].includes(item.status))" class="secondary-command" type="button" @click="emit('rerun', active)"><RotateCw :size="14" />重跑失败项</button></div>
         </div>
         <ExecutionOverview :execution="active" />

@@ -10,6 +10,7 @@ import {
   executionConclusion,
   executionFailureBuckets,
   executionMetrics,
+  executionTypeLabel,
   formatDuration,
   statusLabel,
 } from '../utils/executionPresentation'
@@ -79,7 +80,7 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
 }
 
 function reportName(report: ExecutionView): string {
-  return report.execution_type === 'debug' ? '在线调试' : '自动回归'
+  return executionTypeLabel(report)
 }
 
 function importantResults(report: ExecutionView): ExecutionCaseResult[] {

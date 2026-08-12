@@ -339,7 +339,7 @@ def _get(segments, qs, actor, settings):
             "source_revision_id": _uuid(qs.get("source_revision_id", "")),
             "environment_revision_id": _uuid(qs.get("environment_revision_id", "")),
             "case_version_ids": [],
-            "execution_type": "regression",
+            "execution_type": "baseline_regression",
             "overrides": {},
         }
         _scope_execution_request(factory, request, actor, validate_cases=False)
@@ -509,9 +509,11 @@ def _post(segments, payload, actor, settings):
             "source_revision_id": _uuid(payload.get("source_revision_id")),
             "environment_revision_id": _uuid(payload.get("environment_revision_id")),
         }
+        if payload.get("baseline_ids") is not None:
+            regression["baseline_ids"] = _uuid_array(payload.get("baseline_ids"), "baseline_ids")
         _scope_execution_request(
             factory,
-            {**regression, "case_version_ids": [], "execution_type": "regression", "overrides": {}},
+            {**regression, "case_version_ids": [], "execution_type": "baseline_regression", "overrides": {}},
             actor,
             validate_cases=False,
         )

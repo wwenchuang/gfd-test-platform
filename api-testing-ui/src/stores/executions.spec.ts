@@ -45,9 +45,9 @@ describe('executions store', () => {
     vi.unstubAllGlobals()
   })
 
-  it('starts the saved baseline set with one regression command', async () => {
+  it('starts the selected baseline set with one baseline regression command', async () => {
     const execution = {
-      id: 'execution-regression', project_id: 'project-1', state: 'QUEUED', execution_type: 'regression',
+      id: 'execution-regression', project_id: 'project-1', state: 'QUEUED', execution_type: 'baseline_regression',
       source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1',
       environment_name: '生产环境（新）- 腾讯云', case_statuses: ['QUEUED'], case_results: [], summary: {},
       cancellation_requested: false, created_at: '', started_at: null, finished_at: null,
@@ -58,11 +58,13 @@ describe('executions store', () => {
 
     await store.runBaselines({
       projectId: 'project-1', sourceRevisionId: 'source-revision-1', environmentRevisionId: 'environment-revision-1',
+      baselineIds: ['baseline-2', 'baseline-2', 'baseline-3'],
     })
 
     expect(post).toHaveBeenCalledWith('/api/api-testing/v1/regressions', {
       project_id: 'project-1', source_revision_id: 'source-revision-1',
       environment_revision_id: 'environment-revision-1', idempotency_key: expect.any(String),
+      baseline_ids: ['baseline-2', 'baseline-3'],
     })
     expect(store.executions[0]?.id).toBe('execution-regression')
   })
