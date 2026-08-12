@@ -29,6 +29,9 @@ export const useCasesStore = defineStore('api-cases', {
     debugCanResume: false,
     debugError: '',
     debugGeneration: 0,
+    baselineAdopting: false,
+    baselineMessage: '',
+    baselineError: '',
   }),
   actions: {
     draftFor(endpoint: ApiEndpoint): CaseDraft {
@@ -47,6 +50,7 @@ export const useCasesStore = defineStore('api-cases', {
       this.validationErrors = {}
       this.validationWarnings = {}
       this.savedMessage = ''
+      this.clearBaselineFeedback()
     },
     registerVersion(version: CaseVersion, makeActive = true): void {
       this.versions[version.id] = version
@@ -198,6 +202,7 @@ export const useCasesStore = defineStore('api-cases', {
       this.debugResult = null
       this.debugError = ''
       this.debugCanResume = false
+      this.clearBaselineFeedback()
       const response = await apiClient.post<{ execution: ExecutionView }>('/api/api-testing/v1/executions', {
         project_id: input.projectId,
         source_revision_id: input.sourceRevisionId,
@@ -252,11 +257,28 @@ export const useCasesStore = defineStore('api-cases', {
       this.debugPolling = false
       this.debugCanResume = false
       this.debugError = ''
+      this.clearBaselineFeedback()
     },
     async adoptBaseline(caseVersionId: string, executionCaseId: string): Promise<void> {
-      await apiClient.post(`/api/api-testing/v1/case-versions/${caseVersionId}/baseline`, {
-        debug_execution_case_id: executionCaseId,
-      })
+      if (this.baselineAdopting) return
+      this.baselineAdopting = true
+      this.baselineMessage = ''
+      this.baselineError = ''
+      try {
+        await apiClient.post(`/api/api-testing/v1/case-versions/${caseVersionId}/baseline`, {
+          debug_execution_case_id: executionCaseId,
+        })
+        this.baselineMessage = '已采纳为基线'
+      } catch (error) {
+        this.baselineError = error instanceof Error ? error.message : '采纳基线失败'
+      } finally {
+        this.baselineAdopting = false
+      }
+    },
+    clearBaselineFeedback(): void {
+      this.baselineAdopting = false
+      this.baselineMessage = ''
+      this.baselineError = ''
     },
   },
 })
@@ -273,7 +295,7 @@ function blankDraft(endpoint: ApiEndpoint): CaseDraft {
 }
 
 function fromVersion(version: CaseVersion): CaseDraft {
-  return structuredClone({
+  return cloneJson({
     name: version.name,
     purpose: version.purpose,
     priority: version.priority,
@@ -284,6 +306,10 @@ function fromVersion(version: CaseVersion): CaseDraft {
     dependencies: version.dependencies,
     processing: version.processing,
   })
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function publicAssertion(assertion: Record<string, unknown>): Record<string, unknown> {

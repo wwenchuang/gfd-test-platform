@@ -46,6 +46,22 @@ describe('DebugDrawer', () => {
     expect(failed.find('[data-testid="adopt-baseline"]').exists()).toBe(false)
   })
 
+  it('shows baseline adoption progress and completion', async () => {
+    const wrapper = mount(DebugDrawer, {
+      props: {
+        caseVersionId: 'draft-1', environmentRevisionId: 'environment-1', baselineAdopting: true,
+        result: { status: 'PASSED', executionCaseId: 'execution-case-1', resolvedRequest: {}, sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [] },
+      },
+    })
+
+    expect(wrapper.get('[data-testid="adopt-baseline"]').text()).toContain('采纳中')
+    expect(wrapper.get('[data-testid="adopt-baseline"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ baselineAdopting: false, baselineMessage: '已采纳为基线' })
+    expect(wrapper.get('[data-testid="baseline-success"]').text()).toContain('后续可直接加入回归执行')
+    expect(wrapper.get('[data-testid="adopt-baseline"]').attributes('disabled')).toBeDefined()
+  })
+
   it('offers progress recovery without submitting a duplicate execution', async () => {
     const wrapper = mount(DebugDrawer, {
       props: { caseVersionId: 'draft-1', environmentRevisionId: 'environment-1', canResume: true, error: '进度读取超时' },

@@ -4,8 +4,9 @@ import { Bug, CheckCircle2, Play, X } from 'lucide-vue-next'
 
 import type { DebugResult } from '../api/contracts'
 
-const props = withDefaults(defineProps<{ caseVersionId: string; environmentRevisionId: string; environmentLabel?: string; result?: DebugResult | null; running?: boolean; canResume?: boolean; open?: boolean; error?: string }>(), {
+const props = withDefaults(defineProps<{ caseVersionId: string; environmentRevisionId: string; environmentLabel?: string; result?: DebugResult | null; running?: boolean; canResume?: boolean; open?: boolean; error?: string; baselineAdopting?: boolean; baselineMessage?: string; baselineError?: string }>(), {
   environmentLabel: '', result: null, running: false, canResume: false, open: true, error: '',
+  baselineAdopting: false, baselineMessage: '', baselineError: '',
 })
 const emit = defineEmits<{
   submit: [input: { caseVersionIds: string[]; environmentRevisionId: string }]
@@ -74,7 +75,9 @@ function handleKeydown(event: KeyboardEvent): void {
       <details open><summary>脱敏响应</summary><pre>{{ JSON.stringify(result.sanitizedResponse, null, 2) }}</pre></details>
       <details><summary>断言结果</summary><pre>{{ JSON.stringify(result.assertions, null, 2) }}</pre></details>
       <details><summary>执行日志</summary><pre>{{ result.logs.join('\n') }}</pre></details>
-      <button v-if="result.status === 'PASSED'" data-testid="adopt-baseline" class="baseline-command" type="button" @click="emit('adopt', { caseVersionId, executionCaseId: result.executionCaseId })"><CheckCircle2 :size="16" />采纳为基线</button>
+      <button v-if="result.status === 'PASSED'" data-testid="adopt-baseline" class="baseline-command" type="button" :disabled="baselineAdopting || Boolean(baselineMessage)" @click="emit('adopt', { caseVersionId, executionCaseId: result.executionCaseId })"><CheckCircle2 :size="16" />{{ baselineAdopting ? '采纳中…' : baselineMessage || '采纳为基线' }}</button>
+      <p v-if="baselineMessage" data-testid="baseline-success" class="state-message status-pass" role="status">{{ baselineMessage }}，后续可直接加入回归执行。</p>
+      <p v-if="baselineError" data-testid="baseline-error" class="state-message state-error" role="alert">{{ baselineError }}</p>
     </section>
   </aside>
 </template>

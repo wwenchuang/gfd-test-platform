@@ -240,6 +240,30 @@ describe('cases store', () => {
     expect(store.debugCanResume).toBe(false)
   })
 
+  it('exposes visible progress and success after adopting a passing debug result', async () => {
+    vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { baseline: { id: 'baseline-1', status: 'active' } } })
+    const store = useCasesStore()
+
+    const adoption = store.adoptBaseline('version-1', 'execution-case-1')
+
+    expect(store.baselineAdopting).toBe(true)
+    await adoption
+    expect(store.baselineAdopting).toBe(false)
+    expect(store.baselineMessage).toBe('已采纳为基线')
+    expect(store.baselineError).toBe('')
+  })
+
+  it('exposes the backend error when baseline adoption is rejected', async () => {
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('调试证据与当前用例版本不一致'))
+    const store = useCasesStore()
+
+    await store.adoptBaseline('version-1', 'execution-case-1')
+
+    expect(store.baselineAdopting).toBe(false)
+    expect(store.baselineMessage).toBe('')
+    expect(store.baselineError).toBe('调试证据与当前用例版本不一致')
+  })
+
   it('does not restore a late debug response after the environment changed', async () => {
     let finishRequest!: (value: unknown) => void
     vi.spyOn(apiClient, 'get').mockReturnValue(new Promise(resolve => { finishRequest = resolve }) as never)

@@ -86,4 +86,80 @@ describe('WorkbenchView debug workflow', () => {
     }))
     expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(debug.mock.invocationCallOrder[0])
   })
+
+  it('reloads the editor when another saved case is selected', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+
+    const missingBiz = savedCase('version-missing-biz', 'case-missing-biz', '添加收藏 - 缺失 Biz', {})
+    const normal = savedCase('version-normal', 'case-normal', '添加收藏 - 正常流程', { Biz: '{{Biz}}' })
+    const cases = useCasesStore()
+    cases.registerVersion(missingBiz)
+    cases.registerVersion(normal, false)
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['endpoints'],
+            emits: ['activate'],
+            template: '<button data-testid="activate-endpoint" @click="$emit(\'activate\', endpoints[0])">选择接口</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="activate-endpoint"]').trigger('click')
+    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('添加收藏 - 缺失 Biz')
+    cases.debugResult = {
+      status: 'PASSED', executionCaseId: 'old-evidence', resolvedRequest: {},
+      sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [],
+    }
+
+    await wrapper.get('.case-version-picker select').setValue('version-normal')
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('添加收藏 - 正常流程')
+    expect((wrapper.get('[data-testid="headers-name"]').element as HTMLInputElement).value).toBe('Biz')
+    expect(cases.debugResult).toBeNull()
+  })
 })
+
+function savedCase(id: string, caseId: string, name: string, headers: Record<string, unknown>): CaseVersion {
+  return {
+    id, case_id: caseId, endpoint_id: ENDPOINT.id, status: 'draft', origin: 'ai', version: 1,
+    validation_summary: {}, name, purpose: name, priority: 'P1',
+    request: { method: 'POST', path: '/collection/add', service: 'default', path_params: {}, query: {}, headers, cookies: {}, body: { modelSn: 'm001' } },
+    data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] },
+  }
+}

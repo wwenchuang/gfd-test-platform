@@ -126,6 +126,13 @@ function activate(endpoint: ApiEndpoint): void {
   cases.draftFor(endpoint)
 }
 
+function selectCaseVersion(versionId: string): void {
+  if (!activeEndpoint.value || versionId === activeVersionId.value) return
+  cases.clearDebug()
+  debugOpen.value = false
+  cases.setActiveVersion(activeEndpoint.value.id, versionId)
+}
+
 async function restoreDeepLink(): Promise<void> {
   const endpointId = routeValue(route.query.endpointId)
   const caseVersionId = routeValue(route.query.caseVersionId)
@@ -238,7 +245,11 @@ async function runCurrentTask(): Promise<void> {
 
 async function adoptBaseline(input: { caseVersionId: string; executionCaseId: string }): Promise<void> {
   await cases.adoptBaseline(input.caseVersionId, input.executionCaseId)
-  if (context.projectId) await tasks.restore(context.projectId)
+  if (!cases.baselineError && context.projectId) {
+    try { await tasks.restore(context.projectId) } catch (error) {
+      localError.value = error instanceof Error ? `基线已采纳，但任务状态刷新失败：${error.message}` : '基线已采纳，但任务状态刷新失败'
+    }
+  }
 }
 
 function routeValue(value: unknown): string {
@@ -269,13 +280,13 @@ function routeValue(value: unknown): string {
       <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
       <main class="design-center">
         <EndpointDetail :endpoint="activeEndpoint" />
-        <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="cases.setActiveVersion(activeEndpoint!.id, ($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ version.origin === 'ai' ? 'AI' : '手工' }}</option></select></label><span>{{ activeVersions.length }} 个用例</span></div>
+        <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="selectCaseVersion(($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ version.origin === 'ai' ? 'AI' : '手工' }}</option></select></label><span>{{ activeVersions.length }} 个用例</span></div>
         <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
         <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>
       </main>
       <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
     </div>
-    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
+    <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
   </section>
 </template>

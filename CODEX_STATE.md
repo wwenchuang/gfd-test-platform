@@ -8143,3 +8143,38 @@ git diff --check
 ```
 
 说明：直接使用系统 Python 运行静态检查会因新 Mac 系统环境没有 `redis` 包而中止；项目 `.venv` 是实际运行环境，使用该环境的完整静态检查已通过。
+
+### 2026-08-12 API 已保存用例切换与基线采纳反馈修复
+
+用户在线上切换同一接口的已保存用例后，下拉框已显示新用例，但下方编辑器仍保留上一条用例；通过调试的用例点击“采纳为基线”也没有任何可见反馈。
+
+根因：
+
+- Pinia 会把已保存的 `CaseVersion` 转成 Vue 响应式代理。切换用例时，store 直接对该代理调用 `structuredClone`，浏览器抛出 `DataCloneError` 并中断事件处理，因此只有原生下拉框显示值变化，草稿状态没有更新。
+- 基线采纳只有一个裸异步请求，没有采纳中、成功和失败状态；工作台也没有捕获任务状态刷新异常，成功和失败在界面上都表现为“无响应”。
+- 切换用例时没有清除上一用例的调试证据，存在把旧执行结果与新用例版本同时展示的风险。
+
+本轮修复：
+
+- 用例读模型转换为编辑草稿时改用 JSON 数据克隆，兼容 Pinia 响应式代理，并继续只保留可写字段。
+- 切换已保存用例会同步重载名称、请求参数、请求体等完整草稿，同时关闭抽屉并清理旧调试证据。
+- 基线采纳增加防重复提交、采纳中、成功和失败反馈；成功后刷新任务的可执行基线数，刷新失败也会明确提示“基线已采纳，但任务状态刷新失败”。
+- 增加工作台真实组件联动测试、基线采纳成功/失败状态测试和抽屉反馈测试。
+
+已验证：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 294 backend tests passed
+# 19 frontend files / 86 tests passed
+# Vue typecheck + Vite production build passed
+# desktop/mobile visual check passed
+# 我的收藏三接口 Playwright 完整闭环 1 passed
+
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+# undefined-name、backend 63、frontend 72、AI Gateway 46、模型目录与 skill eval 全部通过
+
+git diff --check
+```
+
+限制：当前 Codex 任务虽已加载 Chrome 控制技能，但没有暴露浏览器控制调用接口；因此本轮以项目内真实 Chromium 端到端闭环验证，未直接操作用户已有 Chrome 标签页。
