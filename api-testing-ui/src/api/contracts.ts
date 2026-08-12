@@ -276,6 +276,7 @@ export interface ExecutionEventView {
   type: string
   level: 'info' | 'warning' | 'error' | 'success'
   caseId: string
+  createdAt?: string
   message: string
   payload: Record<string, unknown>
 }

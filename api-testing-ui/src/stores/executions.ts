@@ -12,6 +12,7 @@ const EVENT_TYPES = [
 ]
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const ANALYSIS_REFRESH_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 10000]
+const FINAL_SNAPSHOT_POLL_MS = 5000
 
 export const useExecutionsStore = defineStore('api-executions', {
   state: () => ({
@@ -28,6 +29,7 @@ export const useExecutionsStore = defineStore('api-executions', {
     selectionVersion: 0,
     analysisRefreshTimer: null as ReturnType<typeof setTimeout> | null,
     analysisRefreshAttempts: 0,
+    finalSnapshotTimer: null as ReturnType<typeof setTimeout> | null,
   }),
   actions: {
     async load(projectId: string): Promise<void> {
@@ -133,6 +135,7 @@ export const useExecutionsStore = defineStore('api-executions', {
       if (this.reconnectAttempts >= RECONNECT_DELAYS_MS.length) {
         this.connectionState = 'failed'
         this.error = '实时日志重新连接失败，请手动重新连接'
+        this.scheduleFinalSnapshotPoll(executionId)
         return
       }
       const delay = RECONNECT_DELAYS_MS[this.reconnectAttempts] ?? RECONNECT_DELAYS_MS.at(-1)!
@@ -148,9 +151,34 @@ export const useExecutionsStore = defineStore('api-executions', {
       }, delay)
     },
     async reconnect(executionId: string): Promise<void> {
+      if (this.finalSnapshotTimer) clearTimeout(this.finalSnapshotTimer)
+      this.finalSnapshotTimer = null
       this.reconnectAttempts = 0
       this.error = ''
       await this.connect(executionId)
+    },
+    scheduleFinalSnapshotPoll(executionId: string): void {
+      if (this.finalSnapshotTimer || (this.active && this.active.id !== executionId)) return
+      const selectionVersion = this.selectionVersion
+      this.finalSnapshotTimer = setTimeout(async () => {
+        this.finalSnapshotTimer = null
+        if (selectionVersion !== this.selectionVersion || (this.active && this.active.id !== executionId)) return
+        try {
+          const execution = await this.loadExecution(executionId)
+          if (TERMINAL.has(execution.state)) {
+            this.connectionState = 'complete'
+            this.analysisRefreshAttempts = 0
+            const pendingAnalysis = execution.case_results.some(
+              item => ['FAILED', 'BROKEN'].includes(item.status) && !item.failure_analysis,
+            )
+            if (pendingAnalysis) void this.refreshPendingAnalysis(executionId)
+            return
+          }
+        } catch (error) {
+          this.error = error instanceof Error ? error.message : '无法刷新执行终态'
+        }
+        this.scheduleFinalSnapshotPoll(executionId)
+      }, FINAL_SNAPSHOT_POLL_MS)
     },
     consumeEvent(type: string, event: MessageEvent, executionId: string): void {
       let payload: Record<string, unknown> = {}
@@ -191,6 +219,8 @@ export const useExecutionsStore = defineStore('api-executions', {
       this.reconnectTimer = null
       if (this.analysisRefreshTimer) clearTimeout(this.analysisRefreshTimer)
       this.analysisRefreshTimer = null
+      if (this.finalSnapshotTimer) clearTimeout(this.finalSnapshotTimer)
+      this.finalSnapshotTimer = null
       if (resetState) {
         this.reconnectAttempts = 0
         this.analysisRefreshAttempts = 0
@@ -251,6 +281,9 @@ export const useExecutionsStore = defineStore('api-executions', {
 })
 
 function toEvent(id: number, type: string, payload: Record<string, unknown>): ExecutionEventView {
+  const createdAt = typeof payload._event_created_at === 'string' ? payload._event_created_at : undefined
+  const visiblePayload = { ...payload }
+  delete visiblePayload._event_created_at
   const status = String(payload.status || payload.state || '')
   const level: ExecutionEventView['level'] =
     status === 'PASSED' ? 'success'
@@ -268,7 +301,8 @@ function toEvent(id: number, type: string, payload: Record<string, unknown>): Ex
     type,
     level,
     caseId: String(payload.execution_case_id || ''),
+    createdAt,
     message: labels[type] || String(payload.message || type),
-    payload,
+    payload: visiblePayload,
   }
 }

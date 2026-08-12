@@ -1,6 +1,7 @@
 import io
 import json
 import os
+from datetime import datetime, timezone
 from http.client import HTTPConnection
 from pathlib import Path
 from threading import Thread
@@ -27,6 +28,31 @@ from tests.api_testing.test_migrations import (
     _drop_test_schema,
     _without_database_environment,
 )
+
+
+def test_sse_event_timestamp_is_included_without_mutating_payload():
+    class Handler:
+        def __init__(self):
+            self.wfile = io.BytesIO()
+
+    payload = {"status": "PASSED"}
+    handler = Handler()
+
+    http._write_sse(
+        handler,
+        7,
+        "case_finished",
+        payload,
+        datetime(2026, 8, 12, 7, 9, 38, tzinfo=timezone.utc),
+    )
+
+    frame = handler.wfile.getvalue().decode("utf-8")
+    data = json.loads(next(line[6:] for line in frame.splitlines() if line.startswith("data: ")))
+    assert data == {
+        "status": "PASSED",
+        "_event_created_at": "2026-08-12T07:09:38+00:00",
+    }
+    assert payload == {"status": "PASSED"}
 
 
 def _audit(owner):
@@ -1127,10 +1153,16 @@ def test_sse_ticket_reconnect_replays_only_new_durable_events(http_client, api_c
     second_body = second_response.read()
 
     assert first_response.status == second_response.status == 200
-    assert first_frame == b'id: 1\nevent: progress\ndata: {"step":1}\n\n'
+    assert first_frame.startswith(b'id: 1\nevent: progress\ndata: ')
+    first_data = json.loads(first_frame.split(b'data: ', 1)[1])
+    assert first_data["step"] == 1
+    assert datetime.fromisoformat(first_data["_event_created_at"]).tzinfo is not None
     assert first_sequence == 1
     assert second_sequence == 2
-    assert second_body == b'id: 2\nevent: execution_finished\ndata: {"step":2}\n\n'
+    assert second_body.startswith(b'id: 2\nevent: execution_finished\ndata: ')
+    second_data = json.loads(second_body.split(b'data: ', 1)[1])
+    assert second_data["step"] == 2
+    assert datetime.fromisoformat(second_data["_event_created_at"]).tzinfo is not None
 
 
 def test_fresh_sse_ticket_can_resume_from_query_event_id(http_client, api_context, owned_records):
@@ -1152,7 +1184,10 @@ def test_fresh_sse_ticket_can_resume_from_query_event_id(http_client, api_contex
     assert response.status == 200
     assert first_sequence == 1
     assert second_sequence == 2
-    assert body == b'id: 2\nevent: execution_finished\ndata: {"step":2}\n\n'
+    assert body.startswith(b'id: 2\nevent: execution_finished\ndata: ')
+    data = json.loads(body.split(b'data: ', 1)[1])
+    assert data["step"] == 2
+    assert datetime.fromisoformat(data["_event_created_at"]).tzinfo is not None
 
 
 def test_sse_frames_resume_heartbeat_terminal_and_disconnect(monkeypatch):

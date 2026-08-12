@@ -136,13 +136,31 @@ describe('executions store', () => {
       await vi.advanceTimersByTimeAsync(delay)
     }
     opened.at(-1)?.onerror?.()
-    await vi.runAllTimersAsync()
 
     expect(opened).toHaveLength(6)
     expect(store.connectionState).toBe('failed')
     expect(store.error).toContain('重新连接')
+    expect(store.finalSnapshotTimer).not.toBeNull()
+    store.disconnect()
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('keeps polling snapshots after SSE retries are exhausted until execution is terminal', async () => {
+    vi.useFakeTimers()
+    const running = { id: 'execution-1', state: 'RUNNING', case_results: [] } as unknown as ExecutionView
+    const done = { ...running, state: 'DONE' } as ExecutionView
+    vi.spyOn(apiClient, 'get').mockResolvedValueOnce({ data: { execution: done } })
+    const store = useExecutionsStore()
+    store.active = running
+
+    store.scheduleFinalSnapshotPoll('execution-1')
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(store.active?.state).toBe('DONE')
+    expect(store.connectionState).toBe('complete')
+    expect(store.finalSnapshotTimer).toBeNull()
+    vi.useRealTimers()
   })
 
   it('keeps the latest execution when record requests resolve out of order', async () => {
@@ -255,5 +273,21 @@ describe('executions store', () => {
     store.consumeEvent('extraction', { data: '{"execution_case_id":"case-a","target":"favoriteId"}', lastEventId: '4' } as MessageEvent, 'execution-1')
 
     expect(store.events[0]).toMatchObject({ id: 4, type: 'extraction', caseId: 'case-a', message: '提取变量' })
+  })
+
+  it('keeps the durable event timestamp outside the visible evidence payload', () => {
+    const store = useExecutionsStore()
+
+    store.consumeEvent('case_finished', {
+      data: '{"execution_case_id":"case-a","status":"PASSED","_event_created_at":"2026-08-12T07:09:38+00:00"}',
+      lastEventId: '9',
+    } as MessageEvent, 'execution-1')
+
+    expect(store.events[0]).toMatchObject({
+      id: 9,
+      caseId: 'case-a',
+      createdAt: '2026-08-12T07:09:38+00:00',
+      payload: { execution_case_id: 'case-a', status: 'PASSED' },
+    })
   })
 })

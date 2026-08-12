@@ -26,4 +26,23 @@ describe('ReportSummary', () => {
     expect(wrapper.text()).toContain('生产环境（腾讯云）')
     expect(wrapper.text()).toContain('1.28 秒')
   })
+
+  it('renders a compact scan row without repeating the five statistic tiles', () => {
+    const wrapper = mount(ReportSummary, {
+      props: {
+        summary: { total: 5, passed: 3, failed: 1, broken: 0, cancelled: 0, skipped: 1 },
+        durationMs: 1280,
+        environmentName: '生产环境 V6',
+        conclusion: '执行不完整',
+        compact: true,
+      },
+    })
+
+    expect(wrapper.find('.summary-grid').exists()).toBe(false)
+    expect(wrapper.text()).toContain('通过率 60%')
+    expect(wrapper.text()).toContain('执行不完整')
+    expect(wrapper.text()).toContain('3 通过')
+    expect(wrapper.text()).toContain('1 失败')
+    expect(wrapper.text()).toContain('1.28 秒')
+  })
 })

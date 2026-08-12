@@ -7,11 +7,24 @@ import ExecutionLog from './ExecutionLog.vue'
 import type { ExecutionEventView } from '../api/contracts'
 
 const EVENTS: ExecutionEventView[] = [
-  { id: 1, type: 'execution_started', level: 'info', caseId: '', message: '开始执行', payload: {} },
-  { id: 2, type: 'case_finished', level: 'error', caseId: 'case-a', message: '断言失败', payload: { status: 'FAILED' } },
+  { id: 1, type: 'execution_started', level: 'info', caseId: '', createdAt: '2026-08-12T07:09:38Z', message: '开始执行', payload: {} },
+  { id: 2, type: 'case_finished', level: 'error', caseId: 'case-a', createdAt: '2026-08-12T07:09:39Z', message: '断言失败', payload: { status: 'FAILED' } },
 ]
 
 describe('ExecutionLog', () => {
+  it('redacts sensitive keys in expanded event evidence', async () => {
+    const wrapper = mount(ExecutionLog, {
+      props: {
+        events: [{ id: 1, type: 'request', level: 'info', caseId: 'case-1', message: '发送请求', payload: { headers: { Authorization: 'Bearer event-secret' } } }],
+      },
+    })
+
+    await wrapper.get('[data-testid="log-evidence-toggle"]').trigger('click')
+
+    expect(wrapper.text()).not.toContain('event-secret')
+    expect(wrapper.text()).toContain('已隐藏')
+  })
+
   it('keeps existing lines while paused and exposes reconnect state', async () => {
     const wrapper = mount(ExecutionLog, {
       props: { events: EVENTS, connectionState: 'reconnecting' },
@@ -31,12 +44,35 @@ describe('ExecutionLog', () => {
   })
 
   it('filters by level and case without mutating the event history', async () => {
-    const wrapper = mount(ExecutionLog, { props: { events: EVENTS, connectionState: 'open' } })
+    const wrapper = mount(ExecutionLog, {
+      props: { events: EVENTS, connectionState: 'open', caseLabels: { 'case-a': '查询我的收藏' } },
+    })
 
     await wrapper.get('[data-testid="log-level"]').setValue('error')
 
     expect(wrapper.findAll('[data-testid="log-line"]')).toHaveLength(1)
     expect(wrapper.text()).toContain('断言失败')
+    expect(wrapper.text()).toContain('查询我的收藏')
+    expect(wrapper.text()).toContain('15:09:39')
+  })
+
+  it('pauses following when the reader scrolls away and counts unseen logs', async () => {
+    const wrapper = mount(ExecutionLog, { props: { events: EVENTS, connectionState: 'open' } })
+    const output = wrapper.get('[data-testid="log-output"]')
+    Object.defineProperties(output.element, {
+      scrollHeight: { configurable: true, value: 600 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: { configurable: true, writable: true, value: 120 },
+    })
+
+    await output.trigger('scroll')
+    await wrapper.setProps({
+      events: [...EVENTS, { id: 3, type: 'request', level: 'info', caseId: 'case-a', message: '发送请求', payload: {} }],
+    })
+
+    expect(wrapper.text()).toContain('1 条新日志')
+    await wrapper.get('[data-testid="log-follow"]').trigger('click')
+    expect(wrapper.text()).not.toContain('1 条新日志')
   })
 
   it('reveals sanitized event evidence without replacing the log line', async () => {

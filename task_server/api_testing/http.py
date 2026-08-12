@@ -801,13 +801,17 @@ def _stream_events(handler, execution_id, request_id, actor, *, after=None):
         # A reconnect can race the terminal transition. Drain only durable
         # backlog after Last-Event-ID, without waiting, then close the stream.
         for event in stream.read(execution_id, after_id, 0):
-            _write_sse(handler, event.sequence, event.type, event.payload)
+            _write_sse(
+                handler, event.sequence, event.type, event.payload, event.created_at
+            )
         return
     while True:
         events = stream.read(execution_id, after_id, SSE_HEARTBEAT_SECONDS * 1000)
         if events:
             for event in events:
-                _write_sse(handler, event.sequence, event.type, event.payload)
+                _write_sse(
+                    handler, event.sequence, event.type, event.payload, event.created_at
+                )
                 after_id = event.sequence
                 if event.type == "execution_finished":
                     return
@@ -817,12 +821,15 @@ def _stream_events(handler, execution_id, request_id, actor, *, after=None):
             return
 
 
-def _write_sse(handler, sequence, event_type, payload):
+def _write_sse(handler, sequence, event_type, payload, created_at=None):
     lines = []
     if sequence is not None:
         lines.append(f"id: {sequence}")
     lines.append(f"event: {event_type}")
-    lines.append("data: " + json.dumps(_json_value(payload), ensure_ascii=False, separators=(",", ":")))
+    event_payload = dict(payload)
+    if created_at is not None:
+        event_payload["_event_created_at"] = created_at.isoformat()
+    lines.append("data: " + json.dumps(_json_value(event_payload), ensure_ascii=False, separators=(",", ":")))
     handler.wfile.write(("\n".join(lines) + "\n\n").encode("utf-8"))
     handler.wfile.flush()
 

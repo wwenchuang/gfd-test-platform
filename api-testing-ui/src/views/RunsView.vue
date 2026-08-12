@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { Play } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -13,6 +13,7 @@ const context = useContextStore()
 const executions = useExecutionsStore()
 const route = useRoute()
 const router = useRouter()
+const inspected = ref<ExecutionCaseResult | null>(null)
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
@@ -59,7 +60,9 @@ async function runBaselines(): Promise<void> {
       @cancel="executions.cancel($event)"
       @rerun="rerun"
       @reconnect="executions.reconnect($event)"
+      @inspect="inspected = $event"
+      @edit="edit"
     />
-    <ExecutionDetailDrawer v-if="executions.active && ['DONE','CANCELLED'].includes(executions.active.state)" :execution="executions.active" @close="executions.active = null" @edit="edit" @rerun="rerun" />
+    <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" @close="inspected = null" @edit="edit" @rerun="rerun" />
   </section>
 </template>

@@ -91,4 +91,18 @@ describe('ExecutionDetailDrawer', () => {
     expect(wrapper.text()).toContain('AI 失败分析')
     expect(wrapper.text()).toContain('qwen3.7-plus')
   })
+
+  it('opens the requested case rather than always selecting the first result', async () => {
+    const second = {
+      ...execution.case_results[0], execution_case_id: 'execution-case-2', endpoint_id: 'endpoint-2',
+      case_version_id: 'case-version-2', case_name: '取消收藏', path: '/favorites/cancel',
+    }
+    const wrapper = mount(ExecutionDetailDrawer, {
+      props: { execution: { ...execution, case_results: [...execution.case_results, second] }, initialCaseId: second.execution_case_id },
+    })
+
+    expect(wrapper.text()).toContain('取消收藏')
+    await wrapper.get('[data-testid="edit-case"]').trigger('click')
+    expect(wrapper.emitted('edit')?.[0]?.[0]).toMatchObject({ endpoint_id: 'endpoint-2' })
+  })
 })
