@@ -6,6 +6,18 @@ import { describe, expect, it } from 'vitest'
 import AiAssistant from './AiAssistant.vue'
 
 describe('AiAssistant', () => {
+  it('defaults to business and parameter cases instead of runtime header cases', () => {
+    const wrapper = mount(AiAssistant, {
+      props: { selectedCount: 1, job: null },
+    })
+    const textarea = wrapper.get('textarea').element as HTMLTextAreaElement
+
+    expect(textarea.value).toContain('Body')
+    expect(textarea.value).toContain('环境自动注入')
+    expect(textarea.value).not.toContain('覆盖正常流程、鉴权')
+    expect(textarea.value).not.toContain('生成正常、边界与鉴权')
+  })
+
   it('shows the actionable validation reason for a failed batch', () => {
     const wrapper = mount(AiAssistant, {
       props: {

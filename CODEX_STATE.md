@@ -8278,3 +8278,48 @@ git diff --check
 - 不新增数据库、迁移、执行模式或报告数据源，不影响 UI Agent、Midscene、Runner 和 Sonic。
 
 详细规格：`docs/superpowers/specs/2026-08-12-api-execution-report-experience-design.md`。
+### 2026-08-12 API 任务语义、用例删除与报告首页优化
+
+用户反馈工作台里的“应用范围”“保存本次任务”含义不清、已生成用例缺少删除管理、采纳基线缺少可见位置，同时测试报告首页只有原始历史列表，无法快速判断本次结果。
+
+根因：
+
+- 工作台把“测试范围保存”和“任务保存”混在同一条操作链里，按钮文案没有说明任务会保存当前接口范围，调试通过后才可作为基线回归执行。
+- 已保存用例缺少归档入口；前端归档缓存处理先删除版本再按已删除对象过滤，导致被删除版本 ID 仍留在列表里。
+- AI/手工用例允许 `schema` 断言只写 `{ "type": "object" }` 这类弱约束，业务错误响应同样是 object，容易误判通过。
+- 报告首页没有聚合执行记录，也没有问题分布和失败摘要，用户必须逐条点开才能知道问题在哪里。
+
+本轮修复：
+
+- “应用范围”改为“保存测试范围”；任务条增加“新建任务”“保存为当前任务”，并说明任务保存接口范围，基线来自通过调试后的采纳结果。
+- 任务条展示当前可执行基线数，作为后续定时回归入口的前置可见信息。
+- 新增 API 用例归档能力：`DELETE /api/api-testing/v1/cases/{case_id}` 只归档当前 case，不删除历史执行证据；列表只返回非归档用例。
+- 前端已保存用例下拉旁增加删除当前用例按钮，删除后自动切到同接口下一条用例或回到草稿。
+- `schema` 断言必须包含 `required/properties/items/enum/const/oneOf/anyOf/allOf` 等真实约束；只写空 schema 或 `{type: object}` 会在保存/AI 校验时失败。
+- AI 助手默认测试意图调整为 Body 字段、参数边界和业务失败响应，不再默认生成 Biz/Authorization/ZXBToken 等请求头专项用例。
+- 报告首页改为诊断型入口：展示当前项目、执行次数、总用例、问题用例、累计耗时、通过/失败/异常/未完成分布，以及每条报告的关键问题摘要；点击后继续进入详细诊断报告看请求、响应、断言和 AI 分析。
+
+后续明确未完成：
+
+- 独立“基线用例”页面、基线批量加入任务、定时任务和飞书群机器人 Webhook 配置还未实现；这些需要单独做基线中心与通知中心，不能算作本轮完成。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/stores/cases.spec.ts src/components/TaskStatusStrip.spec.ts src/components/ContextBar.spec.ts src/components/AiAssistant.spec.ts src/views/ReportsView.spec.ts
+# 5 files / 29 tests passed
+
+.venv/bin/python -m py_compile task_server/api_testing/contracts/case.py task_server/api_testing/services/case_service.py task_server/api_testing/repositories/case_repository.py task_server/api_testing/http.py
+# passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+git diff --check
+# passed
+```
+
+说明：本地 PostgreSQL 测试环境未导出强制数据库测试变量，聚焦后端数据库用例本次显示 skip；纯合同校验、前端行为、生产构建和静态检查已通过。

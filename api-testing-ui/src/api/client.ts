@@ -23,6 +23,10 @@ export class ApiClient {
     return this.request<T>(path, { method: 'POST', body })
   }
 
+  async delete<T>(path: string): Promise<ApiEnvelope<T>> {
+    return this.request<T>(path, { method: 'DELETE' })
+  }
+
   private async request<T>(path: string, options: RequestOptions = {}): Promise<ApiEnvelope<T>> {
     const token = sessionStorage.getItem('sessionToken')
     if (!token) {

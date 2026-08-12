@@ -199,6 +199,23 @@ describe('cases store', () => {
     expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-2')
   })
 
+  it('archives the selected saved case and activates the next available version', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+    const del = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { case: { id: 'case-1', status: 'archived' } } })
+    const store = useCasesStore()
+    const second = { ...VERSION, id: 'version-2', case_id: 'case-2', name: '取消收藏' }
+    store.registerVersion(VERSION)
+    store.registerVersion(second, false)
+
+    await store.archiveCase(VERSION.endpoint_id, VERSION.id)
+
+    expect(del).toHaveBeenCalledWith('/api/api-testing/v1/cases/case-1')
+    expect(post).not.toHaveBeenCalled()
+    expect(store.versionIdsByEndpoint[VERSION.endpoint_id]).toEqual(['version-2'])
+    expect(store.activeVersionByEndpoint[VERSION.endpoint_id]).toBe('version-2')
+    expect(store.drafts[VERSION.endpoint_id].name).toBe('取消收藏')
+  })
+
   it('makes a long-running AI job resumable after the local polling window', async () => {
     vi.spyOn(apiClient, 'get').mockResolvedValue({
       data: { job: { id: 'job-1', state: 'running', endpoint_ids: [], requested_model: 'qwen', actual_model: 'qwen', fallback_used: false, summary: {}, batches: [] } },

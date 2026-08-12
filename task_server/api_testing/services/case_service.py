@@ -57,7 +57,7 @@ class CaseService:
         with self.session_factory.begin() as session:
             repository = CaseRepository(session)
             case = repository.get_case_for_update(case_id)
-            if case is None:
+            if case is None or case.status == "archived":
                 raise CaseNotFoundError("API case was not found")
             version_number = repository.next_version_number(case.id)
             version = self._persist_version(
@@ -68,6 +68,18 @@ class CaseService:
             case.updated_by = actor_id
             repository.flush()
             return self._version_view(repository, version, case)
+
+    def archive_case(self, case_id, actor_id):
+        with self.session_factory.begin() as session:
+            repository = CaseRepository(session)
+            case = repository.get_case_for_update(case_id)
+            if case is None or case.owner_id != actor_id:
+                raise CaseNotFoundError("API case was not found")
+            case.status = "archived"
+            case.active_version_id = None
+            case.updated_by = actor_id
+            repository.flush()
+            return self._case_view(case)
 
     def get_case(self, case_id):
         with self.session_factory() as session:

@@ -9,7 +9,7 @@ const props = withDefaults(defineProps<{ selectedCount: number; job: AiJob | nul
 })
 const emit = defineEmits<{ generate: [intent: string]; retry: [intent: string]; resume: [] }>()
 const collapsed = ref(false)
-const intent = ref('覆盖正常流程、鉴权、参数边界与业务失败响应')
+const intent = ref('覆盖正常流程、请求 Body 字段边界、参数边界与业务失败响应；Biz、Authorization、ZXBToken 由环境自动注入，不生成请求头或鉴权类用例')
 const STATE_LABELS: Record<string, string> = { queued: '排队中', running: '生成中', completed: '已完成', partial: '部分完成', failed: '失败', failed_gateway: '模型调用失败', failed_validation: '校验失败' }
 const stateLabel = computed(() => STATE_LABELS[props.job?.state || ''] || '等待生成')
 const running = computed(() => props.polling)
@@ -31,7 +31,7 @@ function validationMessage(batch: AiJob['batches'][number]): string {
         <p class="assistant-lead">已选择 {{ selectedCount }} 个接口。AI 负责设计候选，平台负责校验与执行。</p>
         <label>测试意图<textarea v-model="intent" rows="4" /></label>
         <button class="primary-command wide" type="button" :disabled="!selectedCount || running" @click="emit('generate', intent)"><Sparkles :size="16" />{{ running ? 'AI 正在生成' : '生成测试用例' }}</button>
-        <div class="assistant-actions"><button type="button" @click="useIntent('先分析接口合同和业务风险，再生成正常、边界与鉴权用例')">分析接口</button><button type="button" @click="useIntent('重点补充状态码、业务码、响应结构和关键字段断言')">补充断言</button><button type="button" @click="useIntent('根据最近失败分类生成可复现用例，并区分产品失败与脚本问题')">分析失败</button></div>
+        <div class="assistant-actions"><button type="button" @click="useIntent('先分析接口合同、Body 示例、Query/Path 参数和业务风险，再生成正常、边界与业务失败用例；不要生成请求头或鉴权类用例')">分析接口</button><button type="button" @click="useIntent('重点补充状态码、业务码、响应结构和关键字段断言')">补充断言</button><button type="button" @click="useIntent('根据最近失败分类生成可复现用例，并区分产品失败与脚本问题')">分析失败</button></div>
         <p v-if="error" class="state-message" :class="{ 'state-error': !canResume }">{{ error }}</p>
         <section v-if="job" class="ai-job" aria-live="polite">
           <div class="job-summary"><strong>{{ stateLabel }}</strong><span>{{ job.actual_model || job.requested_model || '由平台选择模型' }}</span></div>

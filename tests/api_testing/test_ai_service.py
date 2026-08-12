@@ -662,6 +662,34 @@ def test_schema_exists_output_is_normalized_to_json_root_exists(
     assert assertion.expected is None
 
 
+def test_weak_object_schema_assertion_is_rejected_before_persistence(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint)
+    candidate["case"]["assertions"].append(
+        {
+            "type": "schema",
+            "operator": "equals",
+            "expected": {"type": "object"},
+            "enabled": True,
+        }
+    )
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([candidate])),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    failed = service.process(job.id)
+
+    assert failed.state == "failed_validation"
+    assert failed.batches[0].generated_draft_ids == []
+    assert "must constrain response fields" in failed.batches[0].validation_errors[0]["message"]
+
+
 def test_single_markdown_json_fence_is_unwrapped_but_unknown_output_is_rejected(
     session_factory, ai_context
 ):

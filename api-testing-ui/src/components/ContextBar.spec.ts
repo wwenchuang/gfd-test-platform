@@ -44,4 +44,16 @@ describe('ContextBar', () => {
     expect(wrapper.text()).toContain('先创建项目')
     expect(wrapper.text()).not.toContain('范围已保存')
   })
+
+  it('labels range saving as an explicit save action', () => {
+    const wrapper = mount(ContextBar, {
+      props: {
+        ...OPTIONS,
+        projectId: 'project-uuid', sourceRevisionId: 'source-uuid', environmentRevisionId: 'env-uuid',
+      },
+    })
+
+    expect(wrapper.text()).toContain('保存测试范围')
+    expect(wrapper.text()).not.toContain('应用范围')
+  })
 })

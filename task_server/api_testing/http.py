@@ -552,9 +552,15 @@ def _put(segments, payload, actor):
 
 
 def _delete(segments, actor):
+    factory = _factory()
+    if len(segments) == 2 and segments[0] == "cases":
+        case_id = _uuid(segments[1])
+        _scope_case(factory, case_id, actor)
+        return {"case": _view(CaseService(factory).archive_case(case_id, actor))}
     if len(segments) == 2 and segments[0] == "executions":
-        _scope_execution(_factory(), _uuid(segments[1]), actor)
-        return {"execution": _view(ExecutionService(_factory(), event_stream=_event_stream(_factory())).cancel(_uuid(segments[1]), actor))}
+        execution_id = _uuid(segments[1])
+        _scope_execution(factory, execution_id, actor)
+        return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).cancel(execution_id, actor))}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 

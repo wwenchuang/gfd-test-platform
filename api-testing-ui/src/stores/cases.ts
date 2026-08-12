@@ -178,6 +178,28 @@ export const useCasesStore = defineStore('api-cases', {
       const version = response.data.case_version
       this.registerVersion(version)
     },
+    async archiveCase(endpointId: string, versionId: string): Promise<void> {
+      const version = this.versions[versionId]
+      if (!version) throw new Error('请选择要删除的用例')
+      await apiClient.delete(`/api/api-testing/v1/cases/${version.case_id}`)
+      for (const [id, item] of Object.entries(this.versions)) {
+        if (item.case_id === version.case_id) delete this.versions[id]
+      }
+      const remainingIds = (this.versionIdsByEndpoint[endpointId] || [])
+        .filter(id => this.versions[id] && this.versions[id].case_id !== version.case_id)
+      this.versionIdsByEndpoint[endpointId] = remainingIds
+      if (this.activeVersionByEndpoint[endpointId] === versionId) {
+        if (remainingIds.length) this.setActiveVersion(endpointId, remainingIds[0])
+        else {
+          delete this.activeVersionByEndpoint[endpointId]
+          delete this.drafts[endpointId]
+        }
+      }
+      this.clearDebug()
+      this.validationErrors = {}
+      this.validationWarnings = {}
+      this.savedMessage = '用例已删除，历史执行和基线证据仍保留'
+    },
     async validate(versionId: string, environmentRevisionId?: string): Promise<void> {
       this.validationErrors = {}
       this.validationWarnings = {}

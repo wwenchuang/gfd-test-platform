@@ -57,6 +57,23 @@ ASSERTION_OPERATOR_MATRIX = {
     "response_time": frozenset({"greater_than", "less_than"}),
     "schema": frozenset({"equals"}),
 }
+MEANINGFUL_SCHEMA_KEYS = frozenset(
+    {
+        "required",
+        "properties",
+        "items",
+        "const",
+        "enum",
+        "oneOf",
+        "anyOf",
+        "allOf",
+        "not",
+        "minItems",
+        "maxItems",
+        "minProperties",
+        "maxProperties",
+    }
+)
 EXTRACTION_TYPES = frozenset({"json_path", "header", "cookie", "status_code"})
 PROCESSING_ACTIONS = frozenset(
     {"set_variable", "copy_variable", "remove_variable", "json_encode", "json_decode"}
@@ -229,6 +246,10 @@ def _validate_assertion_operand(item, assertion_type, operator, index):
     if assertion_type == "schema":
         if not isinstance(expected, (dict, bool)):
             raise CasePayloadError(f"{field} expected must be a schema object or boolean")
+        if not _schema_has_meaningful_constraint(expected):
+            raise CasePayloadError(
+                f"{field} expected must constrain response fields or values"
+            )
         return
 
     if operator in {"greater_than", "less_than"}:
@@ -247,6 +268,24 @@ def _validate_assertion_operand(item, assertion_type, operator, index):
             re.compile(expected)
         except re.error as exc:
             raise CasePayloadError(f"{field} expected is not a valid regular expression") from exc
+
+
+def _schema_has_meaningful_constraint(schema):
+    if isinstance(schema, bool):
+        return False
+    if not isinstance(schema, dict):
+        return False
+    if any(key in schema for key in MEANINGFUL_SCHEMA_KEYS):
+        return True
+    for value in schema.values():
+        if isinstance(value, dict) and _schema_has_meaningful_constraint(value):
+            return True
+        if isinstance(value, list) and any(
+            isinstance(item, dict) and _schema_has_meaningful_constraint(item)
+            for item in value
+        ):
+            return True
+    return False
 
 
 def _parse_extractions(value):

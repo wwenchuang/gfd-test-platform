@@ -303,6 +303,10 @@ def test_draft_input_rejects_unknown_or_invalid_fields(
             {"type": "schema", "operator": "equals", "expected": "not-a-schema"},
             "schema object",
         ),
+        (
+            {"type": "schema", "operator": "equals", "expected": {"type": "object"}},
+            "must constrain response fields",
+        ),
     ],
 )
 def test_assertion_matrix_rejects_unsupported_operator_operands(
@@ -964,3 +968,22 @@ def test_case_and_baseline_views_do_not_expose_execution_payloads(
     assert "ZXBToken" in repr(draft)
     assert SYNTHETIC_SECRET not in repr(draft)
     assert SYNTHETIC_SECRET not in repr(baseline)
+
+
+def test_archived_case_is_removed_from_active_case_list(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "ai", "admin")
+
+    archived = case_service.archive_case(draft.case_id, "admin")
+    active = case_service.list_active_versions_for_source_revision(
+        project_context["source_revision"].id, "admin"
+    )
+
+    assert archived.status == "archived"
+    assert all(item.case_id != draft.case_id for item in active)
+    with session_factory() as session:
+        case = session.get(ApiCase, draft.case_id)
+        assert case.status == "archived"
+        assert case.active_version_id is None

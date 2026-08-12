@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Bug, RefreshCw } from 'lucide-vue-next'
+import { Bug, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
@@ -131,6 +131,42 @@ function selectCaseVersion(versionId: string): void {
   cases.clearDebug()
   debugOpen.value = false
   cases.setActiveVersion(activeEndpoint.value.id, versionId)
+}
+
+function startNewTask(): void {
+  tasks.clear()
+  cases.clearDebug()
+  debugOpen.value = false
+  localError.value = ''
+  selectedIds.value = []
+  activeEndpoint.value = null
+}
+
+async function saveScope(): Promise<void> {
+  localError.value = ''
+  try {
+    await context.saveContext()
+    if (context.error) throw new Error(context.error)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '测试范围保存失败'
+  }
+}
+
+async function deleteActiveCase(): Promise<void> {
+  if (!activeEndpoint.value || !activeVersionId.value) return
+  const version = cases.versions[activeVersionId.value]
+  if (!version) return
+  const confirmed = window.confirm(`删除用例“${version.name}”？历史执行记录和已采纳基线证据会保留。`)
+  if (!confirmed) return
+  localError.value = ''
+  try {
+    const endpointId = activeEndpoint.value.id
+    await cases.archiveCase(endpointId, version.id)
+    if (!cases.versionIdsByEndpoint[endpointId]?.length) cases.draftFor(activeEndpoint.value)
+    if (context.projectId) await tasks.restore(context.projectId)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '用例删除失败'
+  }
 }
 
 async function restoreDeepLink(): Promise<void> {
@@ -272,15 +308,15 @@ function routeValue(value: unknown): string {
       @update:project-id="changeProject"
       @update:source-revision-id="changeSource"
       @update:environment-revision-id="changeEnvironment"
-      @save="context.saveContext()"
+      @save="saveScope"
     />
-    <TaskStatusStrip :task="tasks.task" :selected-count="selectedIds.length" :environment-name="environmentName" :saving="tasks.saving" :running="tasks.running" @save="saveCurrentTask" @run="runCurrentTask" />
+    <TaskStatusStrip :task="tasks.task" :selected-count="selectedIds.length" :environment-name="environmentName" :saving="tasks.saving" :running="tasks.running" @new="startNewTask" @save="saveCurrentTask" @run="runCurrentTask" />
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="design-workspace">
       <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
       <main class="design-center">
         <EndpointDetail :endpoint="activeEndpoint" />
-        <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="selectCaseVersion(($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ version.origin === 'ai' ? 'AI' : '手工' }}</option></select></label><span>{{ activeVersions.length }} 个用例</span></div>
+        <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="selectCaseVersion(($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ version.origin === 'ai' ? 'AI' : '手工' }}</option></select></label><span>{{ activeVersions.length }} 个用例</span><button class="mini-icon danger" type="button" title="删除当前用例" :disabled="cases.saving || !activeVersionId" @click="deleteActiveCase"><Trash2 :size="15" /></button></div>
         <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
         <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
         <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>

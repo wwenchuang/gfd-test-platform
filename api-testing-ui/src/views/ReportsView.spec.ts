@@ -19,7 +19,7 @@ const report: ExecutionView = {
 describe('ReportsView', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('uses compact history rows and opens a full diagnostic report in place', async () => {
+  it('summarizes report health before opening the full diagnostic report', async () => {
     const executions = useExecutionsStore()
     const context = useContextStore()
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
@@ -27,7 +27,14 @@ describe('ReportsView', () => {
     executions.executions = [report]
     const wrapper = mount(ReportsView)
 
+    expect(wrapper.text()).toContain('报告概览')
+    expect(wrapper.text()).toContain('1 次执行')
+    expect(wrapper.text()).toContain('1 个问题')
+    expect(wrapper.text()).toContain('需要关注')
+    expect(wrapper.text()).toContain('取消收藏')
+    expect(wrapper.text()).toContain('断言失败')
     expect(wrapper.text()).toContain('通过率 50%')
+    expect(wrapper.find('.report-dashboard').exists()).toBe(true)
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
     await wrapper.get('[data-testid="report-history-row"]').trigger('click')
     expect(wrapper.text()).toContain('返回报告列表')

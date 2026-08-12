@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Play, Save, Workflow } from 'lucide-vue-next'
+import { FilePlus2, Play, Save, Workflow } from 'lucide-vue-next'
 
 import type { ApiTestTask } from '../api/contracts'
 
@@ -11,7 +11,7 @@ const props = withDefaults(defineProps<{
   running?: boolean
 }>(), { environmentName: '未选择环境', saving: false, running: false })
 
-defineEmits<{ save: []; run: [] }>()
+defineEmits<{ save: []; run: []; new: [] }>()
 
 const stateLabels: Record<string, string> = {
   draft: '待设计', designing: 'AI 生成中', debugging: '调试中', ready: '可执行',
@@ -32,14 +32,17 @@ const runnableLabel = (task: ApiTestTask | null): string => {
   <section class="task-status-strip" aria-label="当前测试任务">
     <div class="task-heading">
       <Workflow :size="18" />
-      <div><span>当前任务</span><strong>{{ task?.name || '尚未保存测试任务' }}</strong></div>
+      <div><span>当前任务</span><strong>{{ task?.name || '新任务未保存' }}</strong></div>
     </div>
     <div class="task-fact"><span>范围</span><strong>{{ task ? `已保存 ${task.selected_endpoint_ids.length} 个接口` : '未保存' }}</strong><small>当前选择 {{ selectedCount }} 个</small></div>
     <div class="task-fact"><span>环境</span><strong>{{ environmentName }}</strong></div>
+    <div class="task-fact"><span>基线</span><strong>{{ task ? `${task.runnable_baseline_count} / ${task.selected_endpoint_ids.length}` : '0 / 0' }}</strong><small>可加入定时回归</small></div>
     <div class="task-fact"><span>状态</span><strong :class="task ? `task-state-${task.state}` : ''">{{ runnableLabel(task) }}</strong></div>
     <div class="task-actions">
-      <button data-testid="save-task" class="secondary-command" type="button" :disabled="saving || !selectedCount" @click="$emit('save')"><Save :size="15" />{{ saving ? '保存中' : '保存本次任务' }}</button>
+      <button data-testid="new-task" class="secondary-command" type="button" :disabled="saving || running" @click="$emit('new')"><FilePlus2 :size="15" />新建任务</button>
+      <button data-testid="save-task" class="secondary-command" type="button" :disabled="saving || !selectedCount" @click="$emit('save')"><Save :size="15" />{{ saving ? '保存中' : '保存为当前任务' }}</button>
       <button data-testid="run-task" class="primary-command" type="button" :disabled="running || !task || task.runnable_baseline_count < 1 || ['designing','debugging','running'].includes(task.state)" @click="$emit('run')"><Play :size="15" />{{ running ? '创建执行中' : '执行本任务' }}</button>
     </div>
+    <p class="task-help">任务保存当前接口范围；调试通过后采纳为基线，后续可作为发版定时回归的执行集合。</p>
   </section>
 </template>

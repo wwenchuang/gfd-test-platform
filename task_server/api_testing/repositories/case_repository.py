@@ -62,6 +62,7 @@ class CaseRepository:
                     ApiCase.owner_id == actor_id,
                     ApiCase.project_id == ApiProject.id,
                     ApiCase.endpoint_id == ApiSourceEndpoint.id,
+                    ApiCase.status != "archived",
                     ApiCaseVersion.endpoint_id == ApiCase.endpoint_id,
                     ApiCase.active_version_id == ApiCaseVersion.id,
                 )
