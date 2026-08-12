@@ -506,6 +506,31 @@ class BaselineView:
     case_version_id: str
     environment_revision_id: str
     debug_execution_case_id: str
+    group_name: str
     status: str
     adopted_by: str
     adopted_at: datetime
+
+
+@dataclass(frozen=True)
+class BaselineCaseView:
+    id: str
+    project_id: str
+    case_id: str
+    case_version_id: str
+    environment_revision_id: str
+    endpoint_id: str
+    case_name: str
+    case_version: int
+    priority: str
+    origin: str
+    method: str
+    path: str
+    endpoint_summary: str
+    tags: Tuple[str, ...]
+    group_name: str
+    adoption_reason: str
+    adopted_at: datetime
+
+    def __post_init__(self):
+        object.__setattr__(self, "tags", tuple(self.tags))

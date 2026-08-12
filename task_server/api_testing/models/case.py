@@ -103,13 +103,17 @@ class ApiCaseScript(PrimaryRecord, Base):
 
 class ApiBaseline(PrimaryRecord, Base):
     __tablename__ = "api_baselines"
-    __table_args__ = (Index("ix_api_baselines_project_case", "project_id", "case_id"),)
+    __table_args__ = (
+        Index("ix_api_baselines_project_case", "project_id", "case_id"),
+        Index("ix_api_baselines_project_group", "project_id", "group_name"),
+    )
 
     project_id: Mapped[str] = mapped_column(ForeignKey("api_projects.id", ondelete="CASCADE"), nullable=False)
     case_id: Mapped[str] = mapped_column(ForeignKey("api_cases.id", ondelete="CASCADE"), nullable=False)
     case_version_id: Mapped[str] = mapped_column(ForeignKey("api_case_versions.id", ondelete="RESTRICT"), nullable=False)
     environment_revision_id: Mapped[str] = mapped_column(ForeignKey("api_environment_revisions.id", ondelete="RESTRICT"), nullable=False)
     debug_execution_case_id: Mapped[str] = mapped_column(ForeignKey("api_execution_cases.id", ondelete="RESTRICT"), nullable=False)
+    group_name: Mapped[str] = mapped_column(String(120), nullable=False, server_default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="active")
     adoption_reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
 

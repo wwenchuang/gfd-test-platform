@@ -28,6 +28,27 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-12 API 测试：基线中心、基线维护与飞书回归通知
+
+本轮沿用现有 API 测试子系统，没有推翻架构或新增并行工作流。目标是把已经调试通过的用例沉淀成可复用基线，并让发版回归结果可以从平台直接发到飞书群。
+
+- 新增基线用例中心：按当前项目、接口版本和环境展示已采纳基线，支持搜索、分组筛选、批量加入当前任务和直接执行所选基线。
+- 基线用例现在是可维护资产：平台持久化 `group_name`，支持批量新建/调整分组、跳转工作台编辑对应版本、以及“移出基线”。移出基线只归档 `api_baselines` 记录，不删除用例草稿和历史执行证据。
+- 新增 `0005_baseline_groups` 迁移；线上部署后需要执行 API testing Alembic 迁移。
+- 新增每项目飞书通知配置：Webhook 加密保存，只返回配置状态和指纹；报告页可将回归报告发送到飞书群。
+- 执行事件补充飞书发送成功/失败标签，便于后续报告审计。
+
+验证结果：
+
+- 前端聚焦测试：`src/stores/baselines.spec.ts`、`src/stores/notifications.spec.ts` 共 `5 passed`。
+- API 前端生产构建通过：`npm --prefix api-testing-ui run build`。
+- 后端 touched API 测试模块 `py_compile` 通过。
+- 仓库后端静态检查通过：`tests/backend_static_checks.py` 返回 `63` 项通过。
+- API 迁移/任务服务聚焦 pytest：`6 passed, 16 skipped`；跳过项为本机无测试数据库时的既有跳过策略。
+- `git diff --check` 通过。
+
+部署注意：上线后执行 `bash deploy/api-testing-migrate.sh`，再重启 `midscene-api-worker` 和 `midscene-task`。如果要发送飞书报告，需要先在 API 测试的环境/设置页配置对应项目的飞书群机器人 Webhook。
+
 ### 2026-08-12 API 测试：阻断运行时请求头用例并绑定 AI 接口身份
 
 线上 `qwen-plus` 仍会生成“缺失 Biz / Authorization / ZXBToken”“鉴权失败”以及“正常流程（含 Biz + Authorization）”等请求头候选，并偶发因模型改写 `request.path` 报 `path_mismatch:request.path`。提示词已经明确禁止这些场景，根因是平台只清空候选请求头，却没有约束候选语义，也在确定性校验前信任了 AI 给出的接口方法和相对路径。

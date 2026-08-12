@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, ListChecks } from 'lucide-vue-next'
+import { AlertTriangle, BarChart3, CheckCircle2, Clock3, ListChecks, Send } from 'lucide-vue-next'
 
 import DiagnosticReport from '../components/DiagnosticReport.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
@@ -15,12 +15,15 @@ import {
 } from '../utils/executionPresentation'
 import { useContextStore } from '../stores/context'
 import { useExecutionsStore } from '../stores/executions'
+import { useNotificationsStore } from '../stores/notifications'
 
 const context = useContextStore()
 const executions = useExecutionsStore()
+const notifications = useNotificationsStore()
 const router = useRouter()
 const selected = ref<ExecutionView | null>(null)
 const filter = ref<'all' | 'failed' | 'passed'>('all')
+const sendingReportId = ref('')
 const reports = computed(() => executions.executions.filter(item => ['DONE', 'CANCELLED'].includes(item.state)))
 const visibleReports = computed(() => reports.value.filter(report => {
   const conclusion = executionConclusion(report)
@@ -64,7 +67,7 @@ const projectName = computed(() => context.projects.find(item => item.id === con
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  if (context.projectId) await executions.load(context.projectId)
+  if (context.projectId) await Promise.all([executions.load(context.projectId), notifications.loadFeishu(context.projectId)])
 })
 
 function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
@@ -82,6 +85,15 @@ function reportName(report: ExecutionView): string {
 function importantResults(report: ExecutionView): ExecutionCaseResult[] {
   const issues = report.case_results.filter(item => item.status !== 'PASSED')
   return (issues.length ? issues : report.case_results).slice(0, 3)
+}
+
+async function sendFeishu(report: ExecutionView): Promise<void> {
+  sendingReportId.value = report.id
+  try {
+    await notifications.sendExecutionReport(report.id)
+  } finally {
+    sendingReportId.value = ''
+  }
 }
 </script>
 
@@ -119,6 +131,8 @@ function importantResults(report: ExecutionView): ExecutionCaseResult[] {
           <span :style="{ flexGrow: Math.max(dashboard.skipped + dashboard.cancelled, 0) }" class="bucket-neutral">未完成 {{ dashboard.skipped + dashboard.cancelled }}</span>
         </div>
       </section>
+      <p v-if="notifications.error" class="inline-error">{{ notifications.error }}</p>
+      <p v-if="notifications.lastSendMessage" class="setup-success"><Send :size="16" />{{ notifications.lastSendMessage }}</p>
 
       <section class="report-board">
         <header class="report-board-header">
@@ -147,6 +161,7 @@ function importantResults(report: ExecutionView): ExecutionCaseResult[] {
               <strong>{{ reportName(report) }}</strong>
               <time>{{ new Date(report.created_at).toLocaleString('zh-CN') }}</time>
               <small>{{ report.environment_name || '未命名环境' }}</small>
+              <button class="secondary-command report-send-command" type="button" :disabled="notifications.sending && sendingReportId === report.id" @click.stop="sendFeishu(report)"><Send :size="13" />{{ sendingReportId === report.id ? '发送中' : '发飞书' }}</button>
             </div>
             <div class="report-card-metrics">
               <div><strong>通过率 {{ executionMetrics(report).passRate }}%</strong><span>真实通过 / 总用例</span></div>

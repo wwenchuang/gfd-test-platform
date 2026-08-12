@@ -9,6 +9,7 @@ const TERMINAL = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
 const EVENT_TYPES = [
   'execution_queued', 'execution_started', 'case_started', 'request', 'response',
   'assertion', 'extraction', 'failure_analysis', 'failure_analysis_unavailable', 'case_finished', 'cancellation_requested', 'failure', 'execution_finished',
+  'notification_sent', 'notification_failed',
 ]
 const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000, 30000]
 const ANALYSIS_REFRESH_DELAYS_MS = [500, 1000, 2000, 4000, 8000, 10000]
@@ -295,6 +296,7 @@ function toEvent(id: number, type: string, payload: Record<string, unknown>): Ex
     failure_analysis: 'AI 失败分析已生成', failure_analysis_unavailable: 'AI 失败分析暂不可用',
     case_finished: `用例完成${status ? `：${status}` : ''}`,
     cancellation_requested: '已请求取消', failure: '执行异常', execution_finished: `执行结束${status ? `：${status}` : ''}`,
+    notification_sent: '飞书报告已发送', notification_failed: '飞书报告发送失败',
   }
   return {
     id,

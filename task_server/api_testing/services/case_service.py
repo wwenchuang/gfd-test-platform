@@ -4,6 +4,7 @@ import copy
 
 from ..contracts.case import (
     AssertionView,
+    BaselineCaseView,
     BaselineView,
     CaseVersionView,
     CaseView,
@@ -28,6 +29,7 @@ class BaselineGateError(ValueError):
 
 
 ALLOWED_ORIGINS = frozenset({"manual", "ai", "imported"})
+DEFAULT_BASELINE_GROUP = "未分组"
 
 
 class CaseService:
@@ -105,6 +107,19 @@ class CaseService:
                 self._version_view(repository, version, case)
                 for version, case in repository.list_active_versions_for_source_revision(
                     revision_id, actor_id
+                )
+            )
+
+    def list_active_baselines(self, project_id, source_revision_id, environment_revision_id, actor_id):
+        with self.session_factory() as session:
+            repository = CaseRepository(session)
+            return tuple(
+                self._baseline_case_view(baseline, case, version, endpoint)
+                for baseline, case, version, endpoint in repository.list_active_baselines(
+                    project_id,
+                    source_revision_id,
+                    environment_revision_id,
+                    actor_id,
                 )
             )
 
@@ -208,6 +223,7 @@ class CaseService:
                 version.id,
                 evidence.environment_revision_id,
                 evidence.id,
+                self._default_group_name(endpoint),
                 actor_id,
             )
             repository.flush()
@@ -218,6 +234,42 @@ class CaseService:
             baseline = CaseRepository(session).get_baseline(baseline_id)
             if baseline is None:
                 raise CaseNotFoundError("API baseline was not found")
+            return self._baseline_view(baseline)
+
+    def update_baseline_group(self, baseline_ids, group_name, actor_id):
+        group_name = self._clean_group_name(group_name)
+        if not baseline_ids:
+            raise ValueError("baseline_ids is required")
+        with self.session_factory.begin() as session:
+            repository = CaseRepository(session)
+            views = []
+            for baseline_id in baseline_ids:
+                baseline = repository.get_baseline_for_update(baseline_id)
+                if (
+                    baseline is None
+                    or baseline.owner_id != actor_id
+                    or baseline.status != "active"
+                ):
+                    raise CaseNotFoundError("API baseline was not found")
+                baseline.group_name = group_name
+                baseline.updated_by = actor_id
+                views.append(self._baseline_view(baseline))
+            repository.flush()
+            return tuple(views)
+
+    def archive_baseline(self, baseline_id, actor_id):
+        with self.session_factory.begin() as session:
+            repository = CaseRepository(session)
+            baseline = repository.get_baseline_for_update(baseline_id)
+            if (
+                baseline is None
+                or baseline.owner_id != actor_id
+                or baseline.status != "active"
+            ):
+                raise CaseNotFoundError("API baseline was not found")
+            baseline.status = "archived"
+            baseline.updated_by = actor_id
+            repository.flush()
             return self._baseline_view(baseline)
 
     @staticmethod
@@ -325,7 +377,44 @@ class CaseService:
             case_version_id=baseline.case_version_id,
             environment_revision_id=baseline.environment_revision_id,
             debug_execution_case_id=baseline.debug_execution_case_id,
+            group_name=baseline.group_name or DEFAULT_BASELINE_GROUP,
             status=baseline.status,
             adopted_by=baseline.created_by,
             adopted_at=baseline.created_at,
         )
+
+    @staticmethod
+    def _baseline_case_view(baseline, case, version, endpoint):
+        return BaselineCaseView(
+            id=baseline.id,
+            project_id=baseline.project_id,
+            case_id=case.id,
+            case_version_id=version.id,
+            environment_revision_id=baseline.environment_revision_id,
+            endpoint_id=endpoint.id,
+            case_name=case.name,
+            case_version=version.version_number,
+            priority=version.priority,
+            origin=case.origin,
+            method=endpoint.method,
+            path=endpoint.path,
+            endpoint_summary=endpoint.summary,
+            tags=tuple(endpoint.tags or ()),
+            group_name=baseline.group_name or CaseService._default_group_name(endpoint),
+            adoption_reason=baseline.adoption_reason,
+            adopted_at=baseline.created_at,
+        )
+
+    @staticmethod
+    def _default_group_name(endpoint):
+        tags = tuple(endpoint.tags or ())
+        return str(tags[0]).strip() if tags and str(tags[0]).strip() else DEFAULT_BASELINE_GROUP
+
+    @staticmethod
+    def _clean_group_name(value):
+        if not isinstance(value, str):
+            raise ValueError("baseline group name is invalid")
+        group_name = value.strip()
+        if not group_name or len(group_name) > 120:
+            raise ValueError("baseline group name is invalid")
+        return group_name

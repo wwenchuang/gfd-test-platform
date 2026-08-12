@@ -36,6 +36,11 @@ from .services.apifox_service import ApifoxInputError, ApifoxService
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
 from .services.execution_service import ExecutionConflictError, ExecutionNotFoundError, ExecutionService
+from .services.notification_service import (
+    NotificationInputError,
+    NotificationNotConfiguredError,
+    NotificationService,
+)
 from .services.provider_service import (
     ProviderCredentialInputError,
     ProviderCredentialNotFoundError,
@@ -328,6 +333,35 @@ def _get(segments, qs, actor, settings):
             revision_id, actor
         )
         return {"case_versions": [_view(item) for item in versions]}
+    if segments == ("baselines",):
+        request = {
+            "project_id": _uuid(qs.get("project_id", "")),
+            "source_revision_id": _uuid(qs.get("source_revision_id", "")),
+            "environment_revision_id": _uuid(qs.get("environment_revision_id", "")),
+            "case_version_ids": [],
+            "execution_type": "regression",
+            "overrides": {},
+        }
+        _scope_execution_request(factory, request, actor, validate_cases=False)
+        return {
+            "baselines": [
+                _view(item)
+                for item in CaseService(factory).list_active_baselines(
+                    request["project_id"],
+                    request["source_revision_id"],
+                    request["environment_revision_id"],
+                    actor,
+                )
+            ]
+        }
+    if segments == ("notifications", "feishu"):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return {
+            "notification": _view(
+                NotificationService(factory).get_feishu(project_id, actor)
+            )
+        }
     if segments == ("endpoints",):
         revision_id = _uuid(qs.get("source_revision_id", ""))
         _scope_source_revision(factory, revision_id, actor)
@@ -439,6 +473,17 @@ def _post(segments, payload, actor, settings):
         _scope_case_version(factory, _uuid(segments[1]), actor)
         _scope_execution_case(factory, _uuid(payload.get("debug_execution_case_id")), actor)
         return {"baseline": _view(CaseService(factory).adopt_baseline(_uuid(segments[1]), _uuid(payload.get("debug_execution_case_id")), actor))}
+    if segments == ("baselines", "bulk-group"):
+        return {
+            "baselines": [
+                _view(item)
+                for item in CaseService(factory).update_baseline_group(
+                    _uuid_array(payload.get("baseline_ids"), "baseline_ids"),
+                    _string(payload.get("group_name"), "group_name", 120),
+                    actor,
+                )
+            ]
+        }
     if segments == ("executions",):
         task_id = _optional_uuid(payload.get("task_id"))
         task_service = TestTaskService(factory)
@@ -485,6 +530,17 @@ def _post(segments, payload, actor, settings):
     if len(segments) == 3 and segments[0] == "executions" and segments[2] == "sse-ticket":
         _scope_execution(factory, _uuid(segments[1]), actor)
         return {"ticket": _issue_sse_ticket(settings, actor, _uuid(segments[1]))}
+    if len(segments) == 3 and segments[0] == "executions" and segments[2] == "notify":
+        execution_id = _uuid(segments[1])
+        _scope_execution(factory, execution_id, actor)
+        channel_type = str(payload.get("channel_type") or "feishu").strip()
+        if channel_type != "feishu":
+            raise ApiHttpError(422, "invalid_request", "Notification channel is not supported")
+        return {
+            "notification": _view(
+                NotificationService(factory).send_execution_report(execution_id, actor)
+            )
+        }
     if segments == ("ai-jobs",):
         endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
         environment_revision_id = _uuid(payload.get("environment_revision_id"))
@@ -525,6 +581,25 @@ def _put(segments, payload, actor):
                 )
             )
         }
+    if segments == ("notifications", "feishu"):
+        project_id = _uuid(payload.get("project_id"))
+        factory = _factory()
+        _scope_project(factory, project_id, actor)
+        return {
+            "notification": _view(
+                NotificationService(factory).save_feishu(project_id, payload, actor)
+            )
+        }
+    if len(segments) == 2 and segments[0] == "baselines":
+        return {
+            "baseline": _view(
+                CaseService(_factory()).update_baseline_group(
+                    [_uuid(segments[1])],
+                    _string(payload.get("group_name"), "group_name", 120),
+                    actor,
+                )[0]
+            )
+        }
     if len(segments) == 2 and segments[0] == "tasks":
         return {
             "task": _view(
@@ -561,6 +636,8 @@ def _delete(segments, actor):
         execution_id = _uuid(segments[1])
         _scope_execution(factory, execution_id, actor)
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).cancel(execution_id, actor))}
+    if len(segments) == 2 and segments[0] == "baselines":
+        return {"baseline": _view(CaseService(factory).archive_baseline(_uuid(segments[1]), actor))}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 
@@ -881,6 +958,8 @@ def _domain_error(error):
         return error
     if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError, TestTaskNotFoundError)):
         return _not_found()
+    if isinstance(error, NotificationNotConfiguredError):
+        return ApiHttpError(422, "notification_not_configured", "请先配置并启用飞书群机器人 Webhook")
     if isinstance(error, ExecutionConflictError) and str(error).startswith(
         "no active baselines"
     ):
@@ -933,7 +1012,7 @@ def _domain_error(error):
         )
     if isinstance(error, TestTaskScopeError):
         return ApiHttpError(409, "task_scope_conflict", "测试任务范围与当前请求不一致")
-    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ProviderCredentialInputError, TestTaskInputError)):
+    if isinstance(error, (ValueError, EnvironmentInputError, AiJobInputError, ProviderCredentialInputError, TestTaskInputError, NotificationInputError)):
         return ApiHttpError(422, "invalid_request", "Request validation failed")
     return ApiHttpError(500, "internal_error", "Internal server error")
 

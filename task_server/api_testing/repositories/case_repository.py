@@ -258,6 +258,36 @@ class CaseRepository:
             )
         )
 
+    def list_active_baselines(self, project_id, source_revision_id, environment_revision_id, actor_id):
+        return tuple(
+            self.session.execute(
+                select(ApiBaseline, ApiCase, ApiCaseVersion, ApiSourceEndpoint)
+                .join(ApiCase, ApiCase.id == ApiBaseline.case_id)
+                .join(ApiCaseVersion, ApiCaseVersion.id == ApiBaseline.case_version_id)
+                .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
+                .where(
+                    ApiBaseline.project_id == project_id,
+                    ApiBaseline.environment_revision_id == environment_revision_id,
+                    ApiBaseline.status == "active",
+                    ApiBaseline.owner_id == actor_id,
+                    ApiCase.project_id == project_id,
+                    ApiCase.owner_id == actor_id,
+                    ApiCase.status != "archived",
+                    ApiCase.active_version_id == ApiCaseVersion.id,
+                    ApiCaseVersion.endpoint_id == ApiSourceEndpoint.id,
+                    ApiSourceEndpoint.revision_id == source_revision_id,
+                )
+                .order_by(
+                    ApiBaseline.group_name,
+                    ApiSourceEndpoint.tags,
+                    ApiSourceEndpoint.normalized_path,
+                    ApiSourceEndpoint.method,
+                    ApiCase.name,
+                    ApiBaseline.created_at.desc(),
+                )
+            )
+        )
+
     def create_baseline(
         self,
         project_id,
@@ -265,6 +295,7 @@ class CaseRepository:
         case_version_id,
         environment_revision_id,
         debug_execution_case_id,
+        group_name,
         actor_id,
     ):
         record = ApiBaseline(
@@ -273,6 +304,7 @@ class CaseRepository:
             case_version_id=case_version_id,
             environment_revision_id=environment_revision_id,
             debug_execution_case_id=debug_execution_case_id,
+            group_name=group_name,
             status="active",
             adoption_reason="passing debug evidence",
             **audit_fields(actor_id),
@@ -283,6 +315,11 @@ class CaseRepository:
 
     def get_baseline(self, baseline_id):
         return self.session.get(ApiBaseline, baseline_id)
+
+    def get_baseline_for_update(self, baseline_id):
+        return self.session.scalar(
+            select(ApiBaseline).where(ApiBaseline.id == baseline_id).with_for_update()
+        )
 
     def flush(self):
         self.session.flush()

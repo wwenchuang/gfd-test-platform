@@ -310,3 +310,40 @@ export interface CaseValidation {
   errors: CaseValidationIssue[]
   warnings: CaseValidationIssue[]
 }
+
+export interface ApiBaselineCase {
+  id: string
+  project_id: string
+  case_id: string
+  case_version_id: string
+  environment_revision_id: string
+  endpoint_id: string
+  case_name: string
+  case_version: number
+  priority: string
+  origin: string
+  method: string
+  path: string
+  endpoint_summary: string
+  tags: string[]
+  group_name: string
+  adoption_reason: string
+  adopted_at: string
+}
+
+export interface FeishuNotification {
+  project_id: string
+  channel_type: 'feishu'
+  name: string
+  enabled: boolean
+  configured: boolean
+  fingerprint: string
+  updated_at: string | null
+}
+
+export interface NotificationSendResult {
+  execution_id: string
+  channel_type: 'feishu'
+  sent: boolean
+  message: string
+}

@@ -27,6 +27,7 @@ from .execution import (
     ApiExecutionEvent,
     ApiFailureAnalysis,
 )
+from .notification import ApiNotificationChannel
 from .project import ApiProject, ApiProjectMember, ApiWorkspace
 from .provider import ApiProviderCredential
 from .source import (
