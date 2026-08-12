@@ -8218,3 +8218,18 @@ PATH="$PWD/.venv/bin:$PATH" npm run test:static
 git diff --check
 # passed
 ```
+
+### 2026-08-12 API 执行明细与测试报告体验设计
+
+用户确认执行页采用“结构化执行控制台”，测试报告采用“诊断型测试报告”。本轮只固化设计，不修改业务代码。
+
+设计结论：
+
+- 执行页复用现有 `ExecutionView`、SSE 事件和逐用例结果，按任务摘要、实时轨迹、用例明细和测试报告组织信息。
+- 实时轨迹默认显示结构化日志与逐用例真实状态；完整请求、响应、断言、依赖轨迹和 AI 分析按用例展开。
+- 自动跟随在用户向上浏览时暂停，SSE 断开保留旧日志并允许重连。
+- 报告首页以结论、环境版本、真实状态统计、失败分类和 AI 诊断为主；终端式技术日志保留为可展开证据，不作为唯一报告视图。
+- `FAILED`、`BROKEN`、`SKIPPED` 继续使用平台确定性语义，AI 只能解释结果，不能改写状态。
+- 不新增数据库、迁移、执行模式或报告数据源，不影响 UI Agent、Midscene、Runner 和 Sonic。
+
+详细规格：`docs/superpowers/specs/2026-08-12-api-execution-report-experience-design.md`。
