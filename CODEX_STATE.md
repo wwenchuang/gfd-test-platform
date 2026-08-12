@@ -28,6 +28,24 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-12 API 测试：阻断运行时请求头用例并绑定 AI 接口身份
+
+线上 `qwen-plus` 仍会生成“缺失 Biz / Authorization / ZXBToken”“鉴权失败”以及“正常流程（含 Biz + Authorization）”等请求头候选，并偶发因模型改写 `request.path` 报 `path_mismatch:request.path`。提示词已经明确禁止这些场景，根因是平台只清空候选请求头，却没有约束候选语义，也在确定性校验前信任了 AI 给出的接口方法和相对路径。
+
+本轮在现有 AI 用例生成服务增加两层通用门禁，没有针对“收藏”接口写死：
+
+- 根据当前环境默认请求头、默认头引用的变量和接口契约 Header 参数，动态识别名称、测试目的或数据行名称中的请求头测试语义；`Biz`、`Authorization`、`ZXBToken`、`token`、`鉴权`、`请求头` 等运行时注入项不能再成为独立正向或负向候选。
+- AI 输出的相对 `request.method` 和 `request.path` 在解析前强制绑定到用户实际选择的源接口，消除模型路径漂移；绝对 URL 和协议相对 URL仍直接拒绝，SSRF 防线不变。
+- 环境运行时注入逻辑不变：环境默认 `Authorization` 与接口契约需要的 `Biz` 继续在执行时统一注入，业务用例只覆盖 Body、Query、Path、业务响应和参数边界。
+
+验证结果：
+
+- API 完整门禁：后端 `304 passed`；Vue 前端 `25` 个测试文件、`112 passed`；TypeScript、Vite 构建、桌面与手机视觉检查通过。
+- Playwright“我的收藏”三接口导入、AI 设计、调试、基线回归和报告闭环通过。
+- 仓库静态检查通过：后端 `63` 项、前端 `72` 项、AI Gateway `46` 项；AI skill contract `3` 个 fixture 通过；`git diff --check` 通过。
+
+部署后重新生成当前收藏范围即可验证；已有历史草稿不会被自动删除，新的生成结果不应再出现请求头类候选或 `path_mismatch:request.path`。
+
 ### 2026-08-12 API 测试：结构化执行控制台与诊断型报告完成
 
 本轮沿用现有 `ExecutionView`、持久 SSE 事件、逐用例结果和失败分析，没有新增执行模式、数据库表或平行报告数据源。执行页和报告页已按用户确认的方案 A 收敛：

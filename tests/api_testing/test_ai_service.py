@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 from alembic import command
 from sqlalchemy import create_engine, func, select
@@ -203,6 +204,69 @@ def test_json_fence_unwrapper_accepts_only_one_complete_json_document():
 
     assert AiCaseService._unwrap_json_fence(f"```json\n{document}\n```") == document
     assert AiCaseService._unwrap_json_fence(f"说明\n```json\n{document}\n```") != document
+
+
+def test_runtime_header_scenario_detection_uses_environment_and_contract_names():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    class Repository:
+        @staticmethod
+        def get_environment_revision(_revision_id):
+            return SimpleNamespace(
+                default_headers={"Authorization": "Bearer {{ZXBToken}}"}
+            )
+
+        @staticmethod
+        def get_environment_variables(_revision_id):
+            return (
+                SimpleNamespace(name="Biz", enabled=True),
+                SimpleNamespace(name="ZXBToken", enabled=True),
+            )
+
+    endpoint = SimpleNamespace(
+        summary="我的收藏列表",
+        operation={
+            "parameters": [
+                {"in": "header", "name": "Biz", "required": True},
+            ]
+        },
+    )
+    allowed = {
+        "name": "我的收藏列表 - 分页边界",
+        "purpose": "验证 pageNum 与 pageSize 的业务边界",
+        "data_rows": [],
+    }
+    forbidden = {
+        "name": "我的收藏列表 - 正常获取（含 Biz + Authorization）",
+        "purpose": "验证携带有效请求头",
+        "data_rows": [],
+    }
+
+    assert not AiCaseService._is_runtime_managed_header_scenario(
+        Repository(), endpoint, "revision", allowed
+    )
+    assert AiCaseService._is_runtime_managed_header_scenario(
+        Repository(), endpoint, "revision", forbidden
+    )
+
+
+def test_request_identity_binding_uses_the_selected_source_endpoint():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    payload = {
+        "request": {
+            "method": "DELETE",
+            "path": "/ai-invented/path",
+            "service": "default",
+        }
+    }
+    endpoint = SimpleNamespace(method="POST", path="/source/path")
+
+    AiCaseService._bind_request_identity(payload, endpoint)
+
+    assert payload["request"]["method"] == "POST"
+    assert payload["request"]["path"] == "/source/path"
+    assert payload["request"]["service"] == "default"
 
 
 def test_submit_deduplicates_in_order_and_creates_bounded_batches(
@@ -502,6 +566,67 @@ def test_generated_case_headers_are_runtime_managed_by_environment(
     assert result.state == "completed"
     assert len(drafts) == 1
     assert drafts[0].request["headers"] == {"Biz": "{{Biz}}"}
+
+
+def test_runtime_managed_request_headers_cannot_be_generated_as_test_scenarios(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    valid = _candidate(endpoint, "分页查询 pageNum=1, pageSize=10")
+    invalid = []
+    for name, purpose in (
+        ("我的收藏列表 - 无 Biz 头失败", "验证缺少 Biz 请求头时失败"),
+        ("鉴权失败：缺失 Authorization 头", "验证 Authorization 为空"),
+        ("我的收藏列表 - 正常获取（含 Biz + Authorization）", "验证携带有效请求头"),
+        ("鉴权缺失（无 Biz/ZXBToken）", "验证业务 token 缺失"),
+    ):
+        candidate = _candidate(endpoint)
+        candidate["case"]["name"] = name
+        candidate["case"]["purpose"] = purpose
+        invalid.append(candidate)
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([valid, *invalid])),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert result.state == "partial"
+    assert result.summary["invalid_candidates"] == len(invalid)
+    assert [draft.name for draft in drafts] == [valid["case"]["name"]]
+    assert all(
+        item["code"] == "candidate_validation_error"
+        and "runtime-managed request header" in item["message"]
+        for item in result.batches[0].validation_errors
+    )
+
+
+def test_ai_relative_method_and_path_are_bound_to_the_selected_endpoint(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint, "分页查询")
+    candidate["case"]["request"]["method"] = "DELETE"
+    candidate["case"]["request"]["path"] = "/ai-invented/path"
+    service = _service(
+        session_factory,
+        FakeGateway(_gateway_response([candidate])),
+    )
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert result.state == "completed"
+    assert len(drafts) == 1
+    assert drafts[0].request["method"] == endpoint.method
+    assert drafts[0].request["path"] == endpoint.path
 
 
 def test_schema_exists_output_is_normalized_to_json_root_exists(

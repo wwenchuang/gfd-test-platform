@@ -660,16 +660,26 @@ class AiCaseService:
             endpoint = endpoints.get(endpoint_id)
             if endpoint is None:
                 raise AiCandidateValidationError("AI case endpoint was not found")
+            request_path = normalized_payload["request"].get("path", "")
+            parsed_path = urlsplit(request_path)
+            if parsed_path.scheme or parsed_path.netloc or request_path.startswith("//"):
+                raise AiCandidateValidationError("AI case request path must be relative")
+            if self._is_runtime_managed_header_scenario(
+                repository,
+                endpoint,
+                job.environment_revision_id,
+                normalized_payload,
+            ):
+                raise AiCandidateValidationError(
+                    "runtime-managed request headers cannot be test scenarios"
+                )
+            self._bind_request_identity(normalized_payload, endpoint)
             normalized_payload["request"]["headers"] = self._runtime_managed_headers(
                 repository,
                 endpoint,
                 job.environment_revision_id,
             )
             parsed = parse_case_payload(normalized_payload)
-            request_path = parsed["request"]["path"]
-            parsed_path = urlsplit(request_path)
-            if parsed_path.scheme or parsed_path.netloc or request_path.startswith("//"):
-                raise AiCandidateValidationError("AI case request path must be relative")
             bound_service = CaseService(_BoundSessionFactory(session))
             draft = bound_service.create_draft(endpoint_id, parsed, "ai", actor_id)
             metadata = self._environment_metadata(
@@ -915,6 +925,79 @@ class AiCaseService:
                 if normalized not in configured_headers and variable_name:
                     headers[name] = "{{%s}}" % variable_name
         return headers
+
+    @staticmethod
+    def _bind_request_identity(payload, endpoint):
+        request = payload.get("request")
+        if not isinstance(request, dict):
+            raise AiCandidateValidationError("AI case request must be an object")
+        request["method"] = str(endpoint.method).upper()
+        request["path"] = str(endpoint.path)
+
+    @staticmethod
+    def _is_runtime_managed_header_scenario(
+        repository, endpoint, revision_id, payload
+    ):
+        revision = repository.get_environment_revision(revision_id)
+        terms = {
+            "authorization",
+            "content-type",
+            "content type",
+            "request header",
+            "请求头",
+            "鉴权",
+        }
+        default_headers = revision.default_headers if revision is not None else {}
+        for name, value in default_headers.items():
+            terms.add(str(name))
+            if isinstance(value, str):
+                for placeholder in PLACEHOLDER_PATTERN.findall(value):
+                    variable_name = placeholder[2:-2]
+                    terms.add(variable_name)
+                    if "token" in variable_name.casefold():
+                        terms.add("token")
+
+        operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
+        for collection in (
+            operation.get("path_parameters", []),
+            operation.get("parameters", []),
+        ):
+            if not isinstance(collection, list):
+                continue
+            for parameter in collection:
+                if (
+                    isinstance(parameter, Mapping)
+                    and parameter.get("in") == "header"
+                    and isinstance(parameter.get("name"), str)
+                ):
+                    terms.add(parameter["name"])
+
+        semantic_text = [payload.get("name", ""), payload.get("purpose", "")]
+        data_rows = payload.get("data_rows", [])
+        if isinstance(data_rows, list):
+            semantic_text.extend(
+                row.get("name", "")
+                for row in data_rows
+                if isinstance(row, Mapping)
+            )
+        text = " ".join(str(item) for item in semantic_text if item)
+        summary = str(getattr(endpoint, "summary", "") or "").strip()
+        if summary:
+            text = text.replace(summary, " ")
+        normalized = text.casefold()
+
+        for term in terms:
+            candidate = str(term).strip().casefold()
+            if not candidate:
+                continue
+            if re.search(r"[\u4e00-\u9fff]", candidate):
+                if candidate in normalized:
+                    return True
+                continue
+            pattern = r"(?<![a-z0-9_])" + re.escape(candidate) + r"(?![a-z0-9_])"
+            if re.search(pattern, normalized):
+                return True
+        return False
 
     def _parse_output(self, response):
         if not isinstance(response, dict) or response.get("success") is not True:
