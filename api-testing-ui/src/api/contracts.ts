@@ -47,6 +47,7 @@ export interface EnvironmentRevisionSnapshot {
   revision_id: string
   variables: Record<string, unknown>
   services: Record<string, EnvironmentServiceSnapshot>
+  default_headers?: Record<string, unknown>
 }
 
 export interface ProviderCredential {

@@ -695,8 +695,22 @@ def test_canonical_extensions_and_business_keys_round_trip_through_postgresql(
 
     preview = source_service.preview_refresh(project.id, None, document, "admin")
     stored = source_service.get_revision(preview.candidate_revision_id).normalized_document
+    revision = source_service.get_revision(preview.candidate_revision_id)
+    endpoints = {item.operation_id: item for item in revision.endpoints}
 
     assert stored == document
+    assert endpoints["favoriteAdd"].operation["requestBody"]["content"][
+        "application/json"
+    ]["example"] == {
+        "targetId": "synthetic-model-001",
+        "favoriteType": "MODEL",
+    }
+    assert endpoints["favoriteCancel"].operation["requestBody"]["content"][
+        "application/json"
+    ]["examples"]["model"]["value"] == {
+        "targetId": "synthetic-model-001",
+        "favoriteType": "MODEL",
+    }
 
 
 def test_repeated_document_after_activation_has_deterministic_no_change_diff(

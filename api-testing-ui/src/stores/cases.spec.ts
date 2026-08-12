@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { CaseVersion } from '../api/contracts'
+import type { ApiEndpoint, CaseVersion } from '../api/contracts'
 import { useCasesStore } from './cases'
 
 const VERSION = {
@@ -18,6 +18,55 @@ describe('cases store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+  })
+
+  it('starts a new draft with the direct OpenAPI JSON body example', () => {
+    const store = useCasesStore()
+    const endpoint = {
+      id: 'endpoint-add', method: 'POST', path: '/favorite/add', summary: '添加收藏', tags: [],
+      operation: {
+        requestBody: { content: { 'application/json': { example: { modelSn: 'm001' } } } },
+      },
+    } as ApiEndpoint
+
+    const draft = store.draftFor(endpoint)
+
+    expect(draft.request.body).toEqual({ modelSn: 'm001' })
+  })
+
+  it('starts a new draft with the first named OpenAPI JSON body example', () => {
+    const store = useCasesStore()
+    const endpoint = {
+      id: 'endpoint-cancel', method: 'POST', path: '/favorite/cancel', summary: '取消收藏', tags: [],
+      operation: {
+        requestBody: { content: { 'application/json': { examples: {
+          model: { value: { modelSn: 'm002', favoriteType: 'MODEL' } },
+        } } } },
+      },
+    } as ApiEndpoint
+
+    const draft = store.draftFor(endpoint)
+
+    expect(draft.request.body).toEqual({ modelSn: 'm002', favoriteType: 'MODEL' })
+  })
+
+  it('starts a new draft with an example from a referenced OpenAPI request body', () => {
+    const store = useCasesStore()
+    const endpoint = {
+      id: 'endpoint-referenced', method: 'POST', path: '/favorite/referenced', summary: '引用请求体', tags: [],
+      operation: {
+        requestBody: { $ref: '#/components/requestBodies/FavoriteRequest' },
+        resolved_dependencies: {
+          '#/components/requestBodies/FavoriteRequest': {
+            content: { 'application/json': { example: { modelSn: 'm003' } } },
+          },
+        },
+      },
+    } as ApiEndpoint
+
+    const draft = store.draftFor(endpoint)
+
+    expect(draft.request.body).toEqual({ modelSn: 'm003' })
   })
 
   it('sends only the public CaseDraft fields when saving a loaded AI version', async () => {
@@ -67,6 +116,7 @@ describe('cases store', () => {
         revision_id: 'environment-1',
         variables: { Biz: 'ZXB', ZXBToken: { configured: true, fingerprint: 'safe-fingerprint' } },
         services: { default: { name: 'default', base_url: 'https://api.example.test/app', unresolved: false } },
+        default_headers: { Authorization: 'Bearer {{ZXBToken}}' },
       },
     } })
     const post = vi.spyOn(apiClient, 'post')
@@ -83,6 +133,7 @@ describe('cases store', () => {
       { environment_metadata: {
         variables: { Biz: 'ZXB', ZXBToken: { configured: true, fingerprint: 'safe-fingerprint' } },
         services: { default: { name: 'default', base_url: 'https://api.example.test/app', unresolved: false } },
+        headers: { Authorization: { configured: true } },
       } },
     ])
   })

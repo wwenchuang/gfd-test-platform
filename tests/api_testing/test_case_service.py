@@ -652,6 +652,60 @@ def test_validate_case_distinguishes_optional_contract_warnings(
     assert any(item.code == "optional_parameter_omitted" for item in result.warnings)
 
 
+def test_validate_case_accepts_required_headers_managed_by_environment(
+    case_service, project_context
+):
+    from task_server.api_testing.validation import validate_case
+
+    endpoint_view = project_context["endpoints"]["favoriteList"]
+    payload = valid_list_case(endpoint_view)
+    payload["request"]["headers"] = {}
+    payload["data_rows"] = []
+    draft = case_service.create_draft(
+        endpoint_view.id, payload, "manual", "admin"
+    )
+    with case_service.session_factory() as session:
+        endpoint = session.get(ApiSourceEndpoint, endpoint_view.id)
+        result = validate_case(
+            draft,
+            endpoint,
+            {
+                "variables": {},
+                "headers": {"Biz": {"configured": True}},
+                "services": {},
+            },
+        )
+
+    assert result.valid is True
+    assert not any(item.code == "required_parameter_missing" for item in result.errors)
+
+
+def test_validate_case_resolves_referenced_request_body_contract(
+    case_service, project_context
+):
+    from task_server.api_testing.validation import validate_case
+
+    endpoint_view = project_context["endpoints"]["favoriteAdd"]
+    payload = valid_add_case(endpoint_view)
+    payload["request"]["body"] = {}
+    draft = case_service.create_draft(
+        endpoint_view.id, payload, "manual", "admin"
+    )
+    with case_service.session_factory() as session:
+        endpoint = session.get(ApiSourceEndpoint, endpoint_view.id)
+        operation = copy.deepcopy(endpoint.operation)
+        original_body = operation["requestBody"]
+        operation["requestBody"] = {"$ref": "#/components/requestBodies/AddFavorite"}
+        operation.setdefault("resolved_dependencies", {})[
+            "#/components/requestBodies/AddFavorite"
+        ] = original_body
+        endpoint.operation = operation
+        session.flush()
+        result = validate_case(draft, endpoint, {"variables": {}, "services": {}})
+
+    assert any(item.code == "body_required_property" for item in result.errors)
+
+
 def test_validate_case_rejects_malformed_placeholders_and_wrong_endpoint(
     case_service, project_context
 ):

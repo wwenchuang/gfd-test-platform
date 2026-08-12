@@ -79,6 +79,17 @@ def _available_environment_variables(metadata):
     return available
 
 
+def _available_environment_headers(metadata):
+    available = set()
+    headers = metadata.get("headers", {}) if isinstance(metadata, Mapping) else {}
+    if isinstance(headers, Mapping):
+        for name, value in headers.items():
+            if isinstance(value, Mapping) and value.get("configured") is False:
+                continue
+            available.add(str(name).lower())
+    return available
+
+
 def _json_type_matches(value, schema_type):
     if _is_placeholder(value) or schema_type is None:
         return True
@@ -132,7 +143,7 @@ def _validate_value(value, schema, operation, field, errors):
 
 
 def _request_body_schema(operation):
-    request_body = operation.get("requestBody")
+    request_body = _resolve_schema(operation.get("requestBody"), operation)
     if not isinstance(request_body, Mapping):
         return False, None
     content = request_body.get("content", {})
@@ -204,12 +215,17 @@ def validate_case(
         if not target_field or not isinstance(name, str):
             continue
         supplied = request.get(target_field, {})
-        present = isinstance(supplied, Mapping) and name in supplied
+        explicitly_supplied = isinstance(supplied, Mapping) and name in supplied
+        present = explicitly_supplied
+        if location == "header" and name.lower() in _available_environment_headers(
+            environment_metadata
+        ):
+            present = True
         if parameter.get("required") and not present:
             _issue(errors, "required_parameter_missing", f"request.{target_field}.{name}", "required OpenAPI parameter is missing")
         elif not parameter.get("required") and not present:
             _issue(warnings, "optional_parameter_omitted", f"request.{target_field}.{name}", "optional OpenAPI parameter is omitted")
-        if present:
+        if explicitly_supplied:
             schema = parameter.get("schema", {})
             schema = _resolve_schema(schema, operation)
             if isinstance(schema, Mapping) and not _json_type_matches(supplied[name], schema.get("type")):

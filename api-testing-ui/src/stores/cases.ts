@@ -187,7 +187,13 @@ export const useCasesStore = defineStore('api-cases', {
           `/api/api-testing/v1/environment-revisions/${environmentRevisionId}`,
         )
         const snapshot = environmentResponse.data.environment_revision
-        environmentMetadata = { variables: snapshot.variables, services: snapshot.services }
+        environmentMetadata = {
+          variables: snapshot.variables,
+          services: snapshot.services,
+          headers: Object.fromEntries(
+            Object.keys(snapshot.default_headers || {}).map(name => [name, { configured: true }]),
+          ),
+        }
       }
       const response = await apiClient.post<{ validation: CaseValidation }>(`/api/api-testing/v1/case-versions/${versionId}/validate`, {
         environment_metadata: environmentMetadata,
@@ -288,10 +294,62 @@ function blankDraft(endpoint: ApiEndpoint): CaseDraft {
     name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
     purpose: `验证${endpoint.summary || endpoint.path}`,
     priority: 'P1',
-    request: { method: endpoint.method, path: endpoint.path, service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
+    request: { method: endpoint.method, path: endpoint.path, service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: requestBodyExample(endpoint.operation) },
     data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
     extractions: [], dependencies: [], processing: { pre: [], post: [] },
   }
+}
+
+function requestBodyExample(operation: Record<string, unknown> | undefined): unknown {
+  if (!operation) return null
+  const requestBody = resolveOperationReference(asRecord(operation.requestBody), operation)
+  const content = asRecord(requestBody?.content)
+  if (!content) return null
+  const mediaEntries = Object.entries(content)
+  const preferred = mediaEntries.find(([name]) => name === 'application/json')
+    || mediaEntries.find(([name]) => name.endsWith('+json'))
+    || mediaEntries[0]
+  const media = asRecord(preferred?.[1])
+  if (!media) return null
+  if (Object.prototype.hasOwnProperty.call(media, 'example')) return cloneJson(media.example)
+  const examples = asRecord(media.examples)
+  if (examples) {
+    for (const item of Object.values(examples)) {
+      const example = asRecord(item)
+      if (example && Object.prototype.hasOwnProperty.call(example, 'value')) return cloneJson(example.value)
+    }
+  }
+  const schema = resolveOperationSchema(asRecord(media.schema), operation)
+  if (schema && Object.prototype.hasOwnProperty.call(schema, 'example')) return cloneJson(schema.example)
+  if (schema && Object.prototype.hasOwnProperty.call(schema, 'default')) return cloneJson(schema.default)
+  return null
+}
+
+function resolveOperationSchema(
+  schema: Record<string, unknown> | null,
+  operation: Record<string, unknown>,
+): Record<string, unknown> | null {
+  return resolveOperationReference(schema, operation)
+}
+
+function resolveOperationReference(
+  value: Record<string, unknown> | null,
+  operation: Record<string, unknown>,
+): Record<string, unknown> | null {
+  let current = value
+  const dependencies = asRecord(operation.resolved_dependencies)
+  const seen = new Set<string>()
+  while (current && typeof current.$ref === 'string' && dependencies && !seen.has(current.$ref)) {
+    seen.add(current.$ref)
+    current = asRecord(dependencies[current.$ref])
+  }
+  return current
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
 }
 
 function fromVersion(version: CaseVersion): CaseDraft {

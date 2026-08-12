@@ -34,7 +34,11 @@ TERMINAL_JOB_STATES = frozenset(
 TERMINAL_BATCH_STATES = frozenset(
     {"completed", "partial", "failed_validation", "failed_gateway"}
 )
-SENSITIVE_KEY = re.compile(r"(?:token|secret|password|authorization|cookie|api[_-]?key)", re.IGNORECASE)
+SENSITIVE_KEY = re.compile(
+    r"(?:token|secret|password|authorization|cookie|api[_-]?key|"
+    r"session[_-]?id|credential|private[_-]?key|(?:^|[_-])pin(?:$|[_-]))",
+    re.IGNORECASE,
+)
 SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/=._~-]+"),
     re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -610,7 +614,11 @@ class AiCaseService:
                     "path": self._sanitize_contract(endpoint.path),
                     "summary": self._sanitize_contract(endpoint.summary),
                     "tags": self._sanitize_contract(list(endpoint.tags)),
-                    "operation": self._sanitize_contract(endpoint.operation),
+                    "runtime_headers_managed_by_environment": True,
+                    "operation": self._sanitize_contract(
+                        self._business_operation_contract(endpoint.operation),
+                        preserve_examples=True,
+                    ),
                 }
             )
         payload = {
@@ -636,11 +644,8 @@ class AiCaseService:
         self, endpoint_id, payload, job_id, batch_id, fingerprint, actor_id
     ):
         self._assert_no_literal_secrets(payload)
-        parsed = parse_case_payload(payload)
-        request_path = parsed["request"]["path"]
-        parsed_path = urlsplit(request_path)
-        if parsed_path.scheme or parsed_path.netloc or request_path.startswith("//"):
-            raise AiCandidateValidationError("AI case request path must be relative")
+        normalized_payload = copy.deepcopy(payload)
+        normalized_payload["request"]["headers"] = {}
         with self.session_factory.begin() as session:
             repository = AiJobRepository(session)
             batch = repository.get_batch_for_update(batch_id)
@@ -650,9 +655,23 @@ class AiCaseService:
             checkpoints = dict(result.get("candidate_checkpoints", {}))
             if fingerprint in checkpoints:
                 return str(checkpoints[fingerprint])
+            job = repository.get_job(job_id)
+            endpoints = repository.get_endpoints((endpoint_id,))
+            endpoint = endpoints.get(endpoint_id)
+            if endpoint is None:
+                raise AiCandidateValidationError("AI case endpoint was not found")
+            normalized_payload["request"]["headers"] = self._runtime_managed_headers(
+                repository,
+                endpoint,
+                job.environment_revision_id,
+            )
+            parsed = parse_case_payload(normalized_payload)
+            request_path = parsed["request"]["path"]
+            parsed_path = urlsplit(request_path)
+            if parsed_path.scheme or parsed_path.netloc or request_path.startswith("//"):
+                raise AiCandidateValidationError("AI case request path must be relative")
             bound_service = CaseService(_BoundSessionFactory(session))
             draft = bound_service.create_draft(endpoint_id, parsed, "ai", actor_id)
-            job = repository.get_job(job_id)
             metadata = self._environment_metadata(
                 repository, job.environment_revision_id
             )
@@ -772,6 +791,7 @@ class AiCaseService:
     def _environment_metadata(repository, revision_id):
         variables = repository.get_environment_variables(revision_id)
         services = repository.get_environment_services(revision_id)
+        revision = repository.get_environment_revision(revision_id)
         return {
             "variables": {
                 item.name: {"configured": True, "secret": bool(item.is_secret)}
@@ -781,7 +801,120 @@ class AiCaseService:
             "services": {
                 item.service_name: {"resolved": bool(item.base_url)} for item in services
             },
+            "headers": {
+                str(name): {"configured": True}
+                for name in (revision.default_headers if revision is not None else {})
+            },
         }
+
+    @staticmethod
+    def _business_operation_contract(operation):
+        if not isinstance(operation, Mapping):
+            return {}
+        contract = {}
+        for field in ("description", "deprecated", "requestBody", "responses"):
+            if field in operation:
+                contract[field] = copy.deepcopy(operation[field])
+        responses = contract.get("responses")
+        if isinstance(responses, Mapping):
+            for response in responses.values():
+                if isinstance(response, dict):
+                    response.pop("headers", None)
+
+        parameters = []
+        seen = set()
+        for collection in (
+            operation.get("path_parameters", []),
+            operation.get("parameters", []),
+        ):
+            if not isinstance(collection, list):
+                continue
+            for parameter in collection:
+                if not isinstance(parameter, Mapping) or parameter.get("in") == "header":
+                    continue
+                identity = (parameter.get("in"), parameter.get("name"))
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                parameters.append(copy.deepcopy(parameter))
+        if parameters:
+            contract["parameters"] = parameters
+        if isinstance(operation.get("resolved_dependencies"), Mapping):
+            dependencies = AiCaseService._referenced_dependency_closure(
+                contract,
+                operation["resolved_dependencies"],
+            )
+            if dependencies:
+                contract["resolved_dependencies"] = dependencies
+        if isinstance(operation.get("external_references"), list):
+            contract["external_references"] = copy.deepcopy(
+                operation["external_references"]
+            )
+        return contract
+
+    @staticmethod
+    def _referenced_dependency_closure(contract, dependencies):
+        pending = list(AiCaseService._local_references(contract))
+        resolved = {}
+        while pending:
+            reference = pending.pop()
+            if reference in resolved or reference not in dependencies:
+                continue
+            dependency = copy.deepcopy(dependencies[reference])
+            resolved[reference] = dependency
+            pending.extend(AiCaseService._local_references(dependency))
+        return resolved
+
+    @staticmethod
+    def _local_references(value):
+        references = set()
+        pending = [value]
+        while pending:
+            current = pending.pop()
+            if isinstance(current, Mapping):
+                reference = current.get("$ref")
+                if isinstance(reference, str) and reference.startswith("#/"):
+                    references.add(reference)
+                pending.extend(current.values())
+            elif isinstance(current, list):
+                pending.extend(current)
+        return references
+
+    @staticmethod
+    def _runtime_managed_headers(repository, endpoint, revision_id):
+        revision = repository.get_environment_revision(revision_id)
+        configured_headers = {
+            str(name).lower()
+            for name in (revision.default_headers if revision is not None else {})
+        }
+        variable_names = {
+            item.name.lower(): item.name
+            for item in repository.get_environment_variables(revision_id)
+            if item.enabled
+        }
+        headers = {}
+        operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
+        for collection in (
+            operation.get("path_parameters", []),
+            operation.get("parameters", []),
+        ):
+            if not isinstance(collection, list):
+                continue
+            for parameter in collection:
+                if (
+                    not isinstance(parameter, Mapping)
+                    or parameter.get("in") != "header"
+                    or parameter.get("required") is not True
+                ):
+                    continue
+                name = parameter.get("name")
+                if not isinstance(name, str) or not name:
+                    continue
+                normalized = name.lower()
+                variable_name = variable_names.get(normalized)
+                if normalized not in configured_headers and variable_name:
+                    headers[name] = "{{%s}}" % variable_name
+        return headers
 
     def _parse_output(self, response):
         if not isinstance(response, dict) or response.get("success") is not True:
@@ -902,20 +1035,51 @@ class AiCaseService:
         }
 
     @classmethod
-    def _sanitize_contract(cls, value, key=""):
+    def _sanitize_contract(
+        cls,
+        value,
+        key="",
+        *,
+        preserve_examples=False,
+        sensitive_context=False,
+        example_context=False,
+    ):
         if isinstance(value, dict):
             output = {}
             for raw_key, item in value.items():
                 name = str(raw_key)
-                if name in OMITTED_CONTRACT_FIELDS:
+                if name in OMITTED_CONTRACT_FIELDS and not preserve_examples:
                     continue
-                if SENSITIVE_KEY.search(name) and not isinstance(item, (dict, list)):
+                named_sensitive = bool(SENSITIVE_KEY.search(name))
+                nested_sensitive = sensitive_context or named_sensitive
+                nested_example = example_context or name in OMITTED_CONTRACT_FIELDS
+                if (
+                    not isinstance(item, (dict, list))
+                    and (named_sensitive or (sensitive_context and nested_example))
+                ):
                     output[name] = "<redacted>"
                 else:
-                    output[name] = cls._sanitize_contract(item, name)
+                    output[name] = cls._sanitize_contract(
+                        item,
+                        name,
+                        preserve_examples=preserve_examples,
+                        sensitive_context=nested_sensitive,
+                        example_context=nested_example,
+                    )
             return output
         if isinstance(value, list):
-            return [cls._sanitize_contract(item, key) for item in value]
+            return [
+                cls._sanitize_contract(
+                    item,
+                    key,
+                    preserve_examples=preserve_examples,
+                    sensitive_context=sensitive_context,
+                    example_context=example_context,
+                )
+                for item in value
+            ]
+        if sensitive_context and example_context and value is not None:
+            return "<redacted>"
         if isinstance(value, str):
             return cls._redact_text(value)
         return copy.deepcopy(value)

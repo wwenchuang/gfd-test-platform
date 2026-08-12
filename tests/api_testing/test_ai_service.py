@@ -361,6 +361,149 @@ def test_process_generates_three_favorites_drafts_without_secret_context(
     assert {item["name"]: item["resolved"] for item in prompt_payload["environment"]["services"]}["optional"] is False
 
 
+def test_prompt_keeps_safe_body_examples_and_omits_runtime_headers(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteAdd"]
+    with session_factory.begin() as session:
+        stored = session.get(ApiSourceEndpoint, endpoint.id)
+        operation = copy.deepcopy(stored.operation)
+        operation["parameters"] = [
+            {
+                "name": "Biz",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": SYNTHETIC_PUBLIC_VALUE,
+            },
+            {
+                "name": "locale",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "zh-CN",
+            },
+        ]
+        operation["resolved_dependencies"] = {
+            **operation.get("resolved_dependencies", {}),
+            "#/components/parameters/Biz": {
+                "name": "Biz",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+            },
+            "#/components/securitySchemes/BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+            },
+            "#/components/headers/TraceId": {
+                "description": "response trace header",
+                "schema": {"type": "string"},
+            },
+        }
+        operation["responses"]["200"]["headers"] = {
+            "X-Trace-Id": {"$ref": "#/components/headers/TraceId"}
+        }
+        media = operation["requestBody"]["content"]["application/json"]
+        media["example"] = {
+            "modelSn": "m001",
+            "accessToken": SYNTHETIC_SECRET,
+        }
+        stored.operation = operation
+
+    gateway = FakeGateway(_gateway_response([_candidate(endpoint)]))
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    assert service.process(job.id).state == "completed"
+    payload = json.loads(gateway.calls[0]["messages"][1]["content"])
+    contract = payload["endpoints"][0]
+    operation = contract["operation"]
+    parameters = operation["parameters"]
+    body_example = operation["requestBody"]["content"]["application/json"][
+        "example"
+    ]
+
+    assert contract["runtime_headers_managed_by_environment"] is True
+    assert [(item["in"], item["name"]) for item in parameters] == [
+        ("query", "locale")
+    ]
+    assert "path_parameters" not in operation
+    assert "#/components/parameters/Biz" not in operation.get(
+        "resolved_dependencies", {}
+    )
+    assert "#/components/securitySchemes/BearerAuth" not in operation.get(
+        "resolved_dependencies", {}
+    )
+    assert "#/components/headers/TraceId" not in operation.get(
+        "resolved_dependencies", {}
+    )
+    assert body_example == {"modelSn": "m001", "accessToken": "<redacted>"}
+    assert SYNTHETIC_SECRET not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_prompt_redacts_additional_short_sensitive_body_example_fields(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteAdd"]
+    with session_factory.begin() as session:
+        stored = session.get(ApiSourceEndpoint, endpoint.id)
+        operation = copy.deepcopy(stored.operation)
+        operation["requestBody"]["content"]["application/json"]["example"] = {
+            "modelSn": "m001",
+            "sessionId": "short-session",
+            "credential": "short-credential",
+            "privateKey": "short-key",
+            "pin": "1234",
+        }
+        stored.operation = operation
+
+    gateway = FakeGateway(_gateway_response([_candidate(endpoint)]))
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    assert service.process(job.id).state == "completed"
+    payload = json.loads(gateway.calls[0]["messages"][1]["content"])
+    example = payload["endpoints"][0]["operation"]["requestBody"]["content"][
+        "application/json"
+    ]["example"]
+
+    assert example == {
+        "modelSn": "m001",
+        "sessionId": "<redacted>",
+        "credential": "<redacted>",
+        "privateKey": "<redacted>",
+        "pin": "<redacted>",
+    }
+
+
+def test_generated_case_headers_are_runtime_managed_by_environment(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    candidate = _candidate(endpoint)
+    candidate["case"]["request"]["headers"] = {
+        "Biz": "{{Biz}}",
+        "Authorization": "{{ZXBToken}}",
+    }
+    gateway = FakeGateway(_gateway_response([candidate]))
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    result = service.process(job.id)
+    drafts = service.list_generated_drafts(job.id)
+
+    assert result.state == "completed"
+    assert len(drafts) == 1
+    assert drafts[0].request["headers"] == {"Biz": "{{Biz}}"}
+
+
 def test_schema_exists_output_is_normalized_to_json_root_exists(
     session_factory, ai_context
 ):
@@ -689,7 +832,7 @@ def test_prompt_redacts_credential_shapes_from_all_contract_strings(
     prompt = json.dumps(gateway.calls[0]["messages"], ensure_ascii=False)
     for secret in (SYNTHETIC_JWT, SYNTHETIC_FERNET, SYNTHETIC_FINGERPRINT):
         assert secret not in prompt
-    assert prompt.count("<redacted>") >= 5
+    assert prompt.count("<redacted>") >= 4
 
 
 def test_prompt_redacts_short_named_credentials_without_dropping_schema_fields(
@@ -745,7 +888,11 @@ def test_prompt_redacts_short_named_credentials_without_dropping_schema_fields(
     password_schema = payload["endpoints"][0]["operation"]["requestBody"][
         "content"
     ]["application/json"]["schema"]["properties"]["password"]
-    assert password_schema == {"type": "string"}
+    assert password_schema == {
+        "type": "string",
+        "example": "<redacted>",
+        "default": "<redacted>",
+    }
 
 
 def test_literal_credentials_are_rejected_before_case_service(

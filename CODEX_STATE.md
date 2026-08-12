@@ -8178,3 +8178,43 @@ git diff --check
 ```
 
 限制：当前 Codex 任务虽已加载 Chrome 控制技能，但没有暴露浏览器控制调用接口；因此本轮以项目内真实 Chromium 端到端闭环验证，未直接操作用户已有 Chrome 标签页。
+
+### 2026-08-12 Apifox Body 示例驱动 API 用例设计
+
+用户反馈 Apifox 调试页已有 JSON Body 示例，但平台新草稿没有带入示例，AI 生成也没有依据 Body 字段设计用例，同时生成了没有业务价值的请求头专项用例。
+
+根因：
+
+- Apifox/OpenAPI 同步和 PostgreSQL 资产实际完整保留了 `requestBody.content.*.example` 与 `examples.*.value`；数据没有在同步阶段丢失。
+- AI 提示构建为降低敏感信息风险，统一删除了 `example`、`examples` 和 `default`，导致安全的业务 Body 示例也被移除。
+- 新建手工草稿固定使用空 Body，没有读取内联、命名、Schema 或 `$ref` 请求体示例。
+- AI 候选仍可构造请求头，确定性校验又要求用例显式提供 OpenAPI 必填 Header，没有识别所选环境已经配置的公共请求头。
+
+本轮修复：
+
+- 保持 Apifox 接口源资产完整、只读，增加数据库往返测试锁定直接示例和命名示例不丢失。
+- AI 输入改为最小业务契约：保留 Body Schema、直接示例、命名示例、响应契约和非 Header 参数；移除 Header 参数、安全配置及无关元数据。
+- AI 的 `$ref` 依赖只保留 Body、非 Header 参数和响应体真正引用的闭包；响应 Header 及未引用的 Header/安全组件不会进入提示。
+- 安全示例值可以送入 AI；token、cookie、Authorization、密码、sessionId、credential、privateKey、PIN、密钥、JWT、密文等字段和值继续递归脱敏，模型原始输出仍先经过字面凭证拦截。
+- 提示词明确 Body 优先，并禁止生成 Biz、Authorization、Content-Type、token、cookie 等独立请求头用例；AI 候选请求头统一由平台清空。
+- 执行时继续按环境注入公共请求头；OpenAPI 必填 Header 若已有环境公共 Header 即视为已配置，否则只允许引用同名已配置环境变量，不向 AI 暴露真实值。
+- 新手工草稿会从 `application/json`、`+json` 或首个媒体类型读取直接示例、首个命名示例、Schema 示例/default，并支持 `requestBody` 和 Schema 的本地 `$ref` 解析。
+- 后端确定性校验同步解析 `requestBody` 自身的 `$ref`，引用式请求体仍执行必填 Body 和字段类型校验。
+- 重新构建并提交 `api-test` 生产静态资源。
+
+已验证：
+
+```bash
+bash tests/run_api_testing_gate.sh
+# 299 backend tests passed
+# 19 frontend files / 89 tests passed
+# Vue typecheck + Vite production build passed
+# desktop/mobile visual check passed
+# 我的收藏三接口 Playwright 完整闭环 1 passed
+
+PATH="$PWD/.venv/bin:$PATH" npm run test:static
+# undefined-name、backend 63、frontend 72、AI Gateway 46、模型目录与 skill eval 全部通过
+
+git diff --check
+# passed
+```
