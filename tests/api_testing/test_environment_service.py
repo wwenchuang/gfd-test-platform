@@ -420,14 +420,32 @@ def test_revision_copy_set_clear_and_old_secret_resolution(
     assert changed.services == configured.services
     assert changed.variables["Biz"] == "ZXB"
     assert changed.variables["ZXBToken"].fingerprint == configured.variables["ZXBToken"].fingerprint
-    assert changed.default_headers["Authorization"] == "Bearer {{ZXBToken}}"
-    assert changed.default_headers["X-Revision"] == "three"
+    assert changed.default_headers == {"X-Revision": "three"}
+    changed_runtime = environment_service.resolve_runtime(changed.revision_id, {})
+    assert "Authorization" not in changed_runtime.headers
+    assert changed_runtime.headers["X-Revision"] == "three"
     assert cleared.revision == 4
     assert "ZXBToken" not in cleared.variables
 
     old_runtime = environment_service.resolve_runtime(configured.revision_id, {})
     assert old_runtime.headers["Authorization"] == f"Bearer {BUSINESS_TOKEN}"
     assert old_runtime.secrets["ZXBToken"] == BUSINESS_TOKEN
+    cleared_runtime = environment_service.resolve_runtime(cleared.revision_id, {})
+    assert cleared_runtime.headers["X-Revision"] == "three"
+    assert "ZXBToken" not in cleared_runtime.secrets
+
+
+def test_revision_clear_secret_rejects_inherited_headers_that_reference_it(
+    environment_service, production_environment
+):
+    configured = _import_with_token(environment_service, production_environment)
+    cleared = environment_service.create_revision(
+        configured.id,
+        {},
+        {"ZXBToken": None},
+        "editor",
+    )
+
     with pytest.raises(Exception, match="ZXBToken") as error:
         environment_service.resolve_runtime(cleared.revision_id, {})
     assert BUSINESS_TOKEN not in str(error.value)

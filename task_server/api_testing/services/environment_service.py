@@ -471,9 +471,11 @@ class EnvironmentService:
                 if "services" in changes
                 else previous_services
             )
-            headers = copy.deepcopy(previous.default_headers)
-            if "default_headers" in changes:
-                headers.update(_normalize_headers(changes["default_headers"]))
+            headers = (
+                _normalize_headers(changes["default_headers"])
+                if "default_headers" in changes
+                else copy.deepcopy(previous.default_headers)
+            )
             name = (
                 _text(changes["name"], "environment name")
                 if "name" in changes

@@ -34,6 +34,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 环境：默认请求头删除保存生效
+
+用户反馈：环境配置页删除默认请求头后保存不生效，保存后 `Biz`、`ZXBToken`、`Authorization` 等请求头仍会回到页面。
+
+根因：
+
+- 后端创建环境新版本时，如果 payload 显式包含 `default_headers`，仍先复制旧版本请求头再 `update` 新值。
+- 前端删除某个请求头后会提交“删除后的完整请求头集合”，但后端 merge 逻辑会把旧版本里被删除的请求头重新合并回来。
+
+本轮修复：
+
+- `default_headers` 出现在变更 payload 时改为完整替换；只有字段省略时才继承旧版本请求头。
+- 补后端回归：替换默认请求头后 runtime 不再包含旧 `Authorization`；清空敏感变量但仍被旧请求头引用时继续报错且不泄露密钥。
+- 补前端回归：删除 `Authorization` 并保存时提交 payload 不包含被删请求头。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_environment_service.py::test_revision_copy_set_clear_and_old_secret_resolution tests/api_testing/test_environment_service.py::test_revision_clear_secret_rejects_inherited_headers_that_reference_it -q
+# 2 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_environment_service.py -q
+# 22 passed
+
+npm --prefix api-testing-ui test -- --run src/views/SettingsView.spec.ts --reporter=basic
+# 1 file / 5 tests passed
+
+.venv/bin/python -m py_compile task_server/api_testing/services/environment_service.py tests/api_testing/test_environment_service.py
+# passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 基线：移动所选支持已有分组
 
 用户反馈：基线页选中多条基线后，“移动所选”必须能移动到其他已有分组，而不是只能依赖输入框创建新分组。

@@ -34,7 +34,11 @@ const environmentView: EnvironmentView = {
     },
   },
   variables: { Biz: 'ZXB', ZXBToken: { configured: true } },
-  default_headers: { Authorization: 'Bearer {{ZXBToken}}' },
+  default_headers: {
+    Biz: 'ZXB',
+    ZXBToken: '{{ZXBToken}}',
+    Authorization: 'Bearer {{ZXBToken}}',
+  },
 }
 
 describe('SettingsView environment asset center', () => {
@@ -179,6 +183,40 @@ describe('SettingsView environment asset center', () => {
     expect(serviceNames).toContain('默认服务')
     expect(serviceNames).toContain('图片建模')
     expect(serviceNames).not.toContain('097168f8-348d-4138-b876-123456789abc')
+  })
+
+  it('persists deleted default request headers when saving a new environment revision', async () => {
+    const { wrapper } = await mountView()
+    const setup = useSetupStore()
+    const saveEnvironment = vi.spyOn(setup, 'saveEnvironment').mockResolvedValue({
+      ...environmentView,
+      revision_id: 'environment-revision-3',
+      revision: 3,
+      default_headers: {
+        Biz: 'ZXB',
+        ZXBToken: '{{ZXBToken}}',
+      },
+    })
+
+    await wrapper.get('[data-action="edit"]').trigger('click')
+    await flushPromises()
+
+    const headerNameInputs = wrapper.findAll('input[aria-label="请求头名称"]')
+    const deleteHeaderButtons = wrapper.findAll('button[title="删除请求头"]')
+    const authorizationIndex = headerNameInputs.findIndex(
+      input => (input.element as HTMLInputElement).value === 'Authorization',
+    )
+    expect(authorizationIndex).toBeGreaterThanOrEqual(0)
+
+    await deleteHeaderButtons[authorizationIndex].trigger('click')
+    await wrapper.get('[data-action="save"]').trigger('click')
+    await flushPromises()
+
+    const payload = saveEnvironment.mock.calls[0]?.[1]
+    expect(payload?.default_headers).toEqual({
+      Biz: 'ZXB',
+      ZXBToken: '{{ZXBToken}}',
+    })
   })
 })
 
