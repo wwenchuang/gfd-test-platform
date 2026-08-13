@@ -267,7 +267,13 @@ function dateText(value?: string | null): string {
             <p class="eyebrow">PROJECTS</p>
             <h2>项目资产</h2>
           </div>
-          <button class="icon-command" type="button" title="新建平台项目" @click="showProjectForm = !showProjectForm">
+          <button
+            class="icon-command"
+            type="button"
+            title="打开项目创建面板"
+            aria-label="打开项目创建面板"
+            @click="showProjectForm = !showProjectForm"
+          >
             <FolderPlus :size="17" />
           </button>
         </header>

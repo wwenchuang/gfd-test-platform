@@ -28,6 +28,48 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-13 API 测试：本机数据库 Gate 与 AI 业务断言收口
+
+用户要求本机缺少 PostgreSQL / Redis 时直接固定环境，避免 API 测试后端用例继续跳过；同时线上 AI 生成用例仍把“业务码 / code 断言”误识别成缺少 Biz 请求头的场景，导致草稿校验和生成质量不稳定。
+
+本轮在真实本机 PostgreSQL / Redis gate 下收口：
+
+- `tests/run_api_testing_gate.sh` 已能启动项目自带 `deploy/api-testing-compose.yml` 的 PostgreSQL / Redis，并执行 Alembic 迁移。
+- 修复 AI 用例过滤逻辑：`业务码` / `业务线` 不再触发“运行时托管请求头场景”拦截，保留对 Biz、Authorization、Token、登录态等真正运行时注入字段的过滤。
+- 增加回归测试覆盖：业务码响应断言应保留；缺 Biz / 缺 Authorization / token 缺失类请求头场景仍不允许生成。
+- 更新 API 测试 E2E：报告页已改为“项目报告驾驶舱 → 查看完整诊断”，E2E 不再按旧页面结构误判失败。
+- 刷新 `api-test` 静态构建产物，当前 hash 为 `index-B8BUziDa.js`。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_ai_service.py::test_business_code_assertion_is_not_confused_with_biz_runtime_header tests/api_testing/test_ai_service.py::test_runtime_managed_request_headers_cannot_be_generated_as_test_scenarios tests/api_testing/test_ai_service.py::test_runtime_managed_header_scenario_detection_covers_login_state_synonyms -q
+# 2 passed, 1 skipped
+
+npx playwright test tests/api_testing_e2e.spec.mjs --project=chromium
+# 1 passed
+
+./tests/run_api_testing_gate.sh
+# PostgreSQL / Redis healthy；Alembic migrations completed
+# Backend: 336 passed
+# Frontend Vitest: 31 files / 153 tests passed
+# Frontend build: passed
+# Visual check: ok
+# Playwright E2E: 1 passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+.venv/bin/python -m py_compile task_server/api_testing/services/ai_service.py tests/api_testing/test_ai_service.py tests/api_testing/test_http_contract.py
+# passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-13 API 测试：已选接口列表布局修复
 
 用户反馈工作台“接口范围 → 已选接口”列表只显示方法标签和删除按钮，接口名称 / 路径不可见。排查确认根因是已选列表复用了“全部接口”的 `.endpoint-row` 两列布局，去掉 checkbox 后 `.endpoint-open` 与移除按钮挤在同一行，长分组下接口摘要被压缩不可读。

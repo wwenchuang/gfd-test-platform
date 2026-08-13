@@ -59,6 +59,9 @@ function createServer() {
     if (url.pathname === '/api/api-testing/v1/workspace' && req.method === 'PUT') {
       return sendJson(res, { workspace: { project_id: 'project-1', source_revision_id: 'source-revision-1', environment_revision_id: 'environment-revision-1' } });
     }
+    if (url.pathname === '/api/api-testing/v1/tasks' && req.method === 'GET') {
+      return sendJson(res, { tasks: [] });
+    }
     if (url.pathname === '/api/api-testing/v1/tasks/active') return sendJson(res, { task: null });
     if (url.pathname === '/api/api-testing/v1/tasks' && req.method === 'POST') {
       return sendJson(res, { task: {
@@ -129,6 +132,9 @@ async function assertNoHorizontalOverflow(page, label) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('response', response => {
+    if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`);
+  });
   await page.addInitScript(() => sessionStorage.setItem('sessionToken', 'visual-api-test-token'));
   try {
     await page.goto(url, { waitUntil: 'networkidle' });

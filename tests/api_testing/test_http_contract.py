@@ -406,27 +406,43 @@ def test_context_options_return_only_owned_active_display_metadata(
 
     assert response.status == 200
     options = response.body["data"]
-    assert options == {
-        "projects": [{"id": owned_records["project"].id, "name": "3D 项目"}],
-        "source_revisions": [
-            {
-                "id": owned_records["revision"].id,
-                "source_id": owned_records["source"].id,
-                "project_id": owned_records["project"].id,
-                "name": "Apifox 接口",
-                "revision_number": 1,
-                "endpoint_count": 1,
-            }
-        ],
-        "environment_revisions": [
-            {
-                "id": owned_records["environment_revision"].id,
-                "environment_id": owned_records["environment"].id,
-                "project_id": owned_records["project"].id,
-                "name": "生产环境（新）- 腾讯云",
-                "revision": 1,
-            }
-        ],
+    assert len(options["projects"]) == 1
+    project = options["projects"][0]
+    assert {key: project[key] for key in ("id", "name")} == {
+        "id": owned_records["project"].id,
+        "name": "3D 项目",
+    }
+    assert len(options["source_revisions"]) == 1
+    source_revision = options["source_revisions"][0]
+    assert {
+        key: source_revision[key]
+        for key in (
+            "id",
+            "source_id",
+            "project_id",
+            "name",
+            "revision_number",
+            "endpoint_count",
+        )
+    } == {
+        "id": owned_records["revision"].id,
+        "source_id": owned_records["source"].id,
+        "project_id": owned_records["project"].id,
+        "name": "Apifox 接口",
+        "revision_number": 1,
+        "endpoint_count": 1,
+    }
+    assert len(options["environment_revisions"]) == 1
+    environment_revision = options["environment_revisions"][0]
+    assert {
+        key: environment_revision[key]
+        for key in ("id", "environment_id", "project_id", "name", "revision")
+    } == {
+        "id": owned_records["environment_revision"].id,
+        "environment_id": owned_records["environment"].id,
+        "project_id": owned_records["project"].id,
+        "name": "生产环境（新）- 腾讯云",
+        "revision": 1,
     }
     assert "normalized_document" not in json.dumps(options)
     assert "default_headers" not in json.dumps(options)

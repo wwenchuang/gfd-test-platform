@@ -374,7 +374,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
         <template v-else-if="editing">
           <header class="environment-detail-header">
             <div><p class="eyebrow">{{ creating ? 'NEW ENVIRONMENT' : 'NEW REVISION' }}</p><h2>{{ creating ? '新建环境' : `编辑 ${selectedAsset?.name || name}` }}</h2><p>{{ creating ? '新环境保存后归属于当前项目。' : '保存会创建新版本，旧版本保留在历史中。' }}</p></div>
-            <div class="toolbar-actions"><button class="secondary-command" type="button" @click="cancelEdit">取消</button><button class="primary-command" type="button" :disabled="setup.busy" data-action="save" @click="save"><Save :size="15" />{{ setup.busy ? '正在保存' : '保存新版本' }}</button></div>
+            <div class="toolbar-actions"><button class="secondary-command" type="button" @click="cancelEdit">取消</button><button class="primary-command" type="button" :disabled="setup.busy" data-action="save" @click="save"><Save :size="15" />{{ setup.busy ? '正在保存' : (creating ? '保存环境' : '保存新版本') }}</button></div>
           </header>
 
           <section class="environment-editor-section">

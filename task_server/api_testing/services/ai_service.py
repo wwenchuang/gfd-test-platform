@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -89,12 +89,16 @@ class AiBatchView:
     fallback_used: bool
     fallback_index: int
     fallback_reason: str
-    generated_draft_ids: Tuple[str, ...]
+    generated_draft_ids: List[str]
     validation_errors: Tuple[Mapping[str, Any], ...]
 
     def __post_init__(self):
         object.__setattr__(self, "endpoint_ids", tuple(self.endpoint_ids))
-        object.__setattr__(self, "generated_draft_ids", tuple(self.generated_draft_ids))
+        object.__setattr__(
+            self,
+            "generated_draft_ids",
+            list(self.generated_draft_ids),
+        )
         object.__setattr__(
             self,
             "validation_errors",
@@ -674,6 +678,8 @@ class AiCaseService:
                     "runtime-managed request headers cannot be test scenarios"
                 )
             self._bind_request_identity(normalized_payload, endpoint)
+            self._complete_openapi_parameters(normalized_payload, endpoint)
+            self._assert_no_literal_secrets(normalized_payload)
             normalized_payload["request"]["headers"] = self._runtime_managed_headers(
                 repository,
                 endpoint,
@@ -959,6 +965,104 @@ class AiCaseService:
         request["method"] = str(endpoint.method).upper()
         request["path"] = str(endpoint.path)
 
+    @classmethod
+    def _complete_openapi_parameters(cls, payload, endpoint):
+        request = payload.get("request")
+        if not isinstance(request, dict):
+            raise AiCandidateValidationError("AI case request must be an object")
+        operation = endpoint.operation if isinstance(endpoint.operation, Mapping) else {}
+        location_fields = {
+            "path": "path_params",
+            "query": "query",
+            "cookie": "cookies",
+        }
+        for collection in (
+            operation.get("path_parameters", []),
+            operation.get("parameters", []),
+        ):
+            if not isinstance(collection, list):
+                continue
+            for parameter in collection:
+                if not isinstance(parameter, Mapping):
+                    continue
+                target_field = location_fields.get(parameter.get("in"))
+                name = parameter.get("name")
+                if not target_field or not isinstance(name, str) or not name:
+                    continue
+                supplied = request.get(target_field)
+                if not isinstance(supplied, dict):
+                    supplied = {}
+                    request[target_field] = supplied
+                if name in supplied:
+                    continue
+                value, has_value = cls._parameter_seed_value(
+                    parameter,
+                    operation,
+                    allow_synthetic=parameter.get("required") is True,
+                )
+                if has_value:
+                    supplied[name] = value
+
+    @classmethod
+    def _parameter_seed_value(cls, parameter, operation, *, allow_synthetic):
+        if "example" in parameter:
+            return copy.deepcopy(parameter["example"]), True
+        if "default" in parameter:
+            return copy.deepcopy(parameter["default"]), True
+        examples = parameter.get("examples")
+        if isinstance(examples, Mapping):
+            for item in examples.values():
+                if isinstance(item, Mapping) and "value" in item:
+                    return copy.deepcopy(item["value"]), True
+                if item is not None and not isinstance(item, Mapping):
+                    return copy.deepcopy(item), True
+        schema = cls._resolve_contract_schema(parameter.get("schema"), operation)
+        if isinstance(schema, Mapping):
+            if "example" in schema:
+                return copy.deepcopy(schema["example"]), True
+            if "default" in schema:
+                return copy.deepcopy(schema["default"]), True
+            enum_values = schema.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                return copy.deepcopy(enum_values[0]), True
+            if allow_synthetic:
+                return cls._synthetic_value_for_schema(schema), True
+        if allow_synthetic:
+            return "sample", True
+        return None, False
+
+    @staticmethod
+    def _resolve_contract_schema(schema, operation):
+        current = schema
+        visited = set()
+        dependencies = operation.get("resolved_dependencies", {})
+        while isinstance(current, Mapping) and isinstance(current.get("$ref"), str):
+            reference = current["$ref"]
+            if reference in visited or reference not in dependencies:
+                return current
+            visited.add(reference)
+            current = dependencies[reference]
+        return current
+
+    @staticmethod
+    def _synthetic_value_for_schema(schema):
+        schema_type = schema.get("type")
+        if isinstance(schema_type, list):
+            schema_type = next((item for item in schema_type if item != "null"), None)
+        if schema_type == "integer":
+            minimum = schema.get("minimum")
+            return int(minimum) if isinstance(minimum, (int, float)) else 1
+        if schema_type == "number":
+            minimum = schema.get("minimum")
+            return float(minimum) if isinstance(minimum, (int, float)) else 1
+        if schema_type == "boolean":
+            return True
+        if schema_type == "array":
+            return []
+        if schema_type == "object":
+            return {}
+        return "sample"
+
     @staticmethod
     def _is_runtime_managed_header_scenario(
         repository, endpoint, revision_id, payload
@@ -974,8 +1078,6 @@ class AiCaseService:
             "token",
             "zxbtoken",
             "业务头",
-            "业务码",
-            "业务线",
             "业务 token",
             "业务token",
             "默认请求头",
@@ -1405,7 +1507,7 @@ class AiCaseService:
             fallback_used=bool(evidence.get("fallback_used", False)),
             fallback_index=int(evidence.get("fallback_index", 0)),
             fallback_reason=str(evidence.get("fallback_reason", "")),
-            generated_draft_ids=tuple(result.get("draft_version_ids", [])),
+            generated_draft_ids=list(result.get("draft_version_ids", [])),
             validation_errors=tuple(result.get("validation_errors", [])),
         )
 

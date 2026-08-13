@@ -33,6 +33,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await expect(page.getByText(/接口版本 v\d+ 已保存/)).toBeVisible()
 
   await page.getByRole('link', { name: '环境配置' }).click()
+  await page.getByRole('button', { name: '新建环境' }).click()
   await page.getByLabel('环境名称').fill('生产环境（腾讯云）')
   await page.getByTitle('添加变量').click()
   await page.getByLabel('变量名', { exact: true }).fill('Biz')
@@ -46,7 +47,7 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
   await page.getByTestId('context-project').selectOption({ label: '3D 我的收藏' })
   await page.getByTestId('context-source').selectOption({ index: 1 })
   await page.getByTestId('context-environment').selectOption({ index: 1 })
-  await page.getByRole('button', { name: '应用范围' }).click()
+  await page.getByRole('button', { name: '保存测试范围' }).click()
   await expect(page.getByText('范围已保存')).toBeVisible()
   for (const summary of ['查询我的收藏', '添加收藏', '取消收藏']) {
     await page.getByRole('button', { name: new RegExp(summary) }).locator('..').getByRole('checkbox').check()
@@ -111,6 +112,9 @@ test('我的收藏三接口完成导入、AI 设计、调试、基线回归和�
 
   await page.getByRole('link', { name: '测试报告' }).click()
   await page.getByTestId('report-history-row').first().click()
+  await expect(page.getByText('项目报告驾驶舱', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '查看完整诊断' })).toBeVisible()
+  await page.getByTestId('report-open-diagnostic').click()
   await expect(page.getByRole('heading', { name: '诊断结论' })).toBeVisible()
   await expect(page.getByText('产品失败', { exact: true })).toBeVisible()
   await expect(page.getByText('环境异常', { exact: true })).toBeVisible()

@@ -10,7 +10,12 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 import pytest
 
-from task_server.api_testing.models.case import ApiAiJob, ApiAiJobBatch, ApiCase
+from task_server.api_testing.models.case import (
+    ApiAiJob,
+    ApiAiJobBatch,
+    ApiCase,
+    ApiCaseVersion,
+)
 from task_server.api_testing.models.project import ApiProject
 from task_server.api_testing.models.source import ApiSourceEndpoint
 from tests.api_testing.test_migrations import (
@@ -554,7 +559,14 @@ def test_prompt_keeps_safe_body_examples_and_omits_runtime_headers(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
     )
 
-    assert service.process(job.id).state == "completed"
+    processed = service.process(job.id)
+    assert processed.state == "completed"
+    assert processed.batches[0].generated_draft_ids
+    with session_factory() as session:
+        draft = session.get(ApiCaseVersion, processed.batches[0].generated_draft_ids[0])
+        request = draft.request_template["request"]
+    assert request["query"] == {"locale": "zh-CN"}
+    assert request["body"] == {"targetId": "model-001", "favoriteType": "MODEL"}
     payload = json.loads(gateway.calls[0]["messages"][1]["content"])
     contract = payload["endpoints"][0]
     operation = contract["operation"]
@@ -629,7 +641,19 @@ def test_prompt_marks_bodyless_query_endpoints_as_parameter_driven(
         [endpoint.id], ai_context["environment"].revision_id, "admin"
     )
 
-    assert service.process(job.id).state == "completed"
+    processed = service.process(job.id)
+    assert processed.state == "completed"
+    assert processed.batches[0].generated_draft_ids
+    with session_factory() as session:
+        draft = session.get(ApiCaseVersion, processed.batches[0].generated_draft_ids[0])
+        request = draft.request_template["request"]
+    assert request["query"] == {
+        "pageNum": 1,
+        "deviceId": "681268D090B7",
+        "source": "calibration",
+        "printSn": "1441818241848516608",
+    }
+    assert request["body"] is None
     payload = json.loads(gateway.calls[0]["messages"][1]["content"])
     operation = payload["endpoints"][0]["operation"]
 
@@ -772,6 +796,34 @@ def test_runtime_managed_header_scenario_detection_covers_login_state_synonyms()
     }
 
     assert AiCaseService._is_runtime_managed_header_scenario(
+        FakeRepository(), endpoint, "environment-revision", payload
+    )
+
+
+def test_business_code_assertion_is_not_confused_with_biz_runtime_header():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    class FakeRepository:
+        @staticmethod
+        def get_environment_revision(revision_id):
+            return SimpleNamespace(
+                default_headers={
+                    "Authorization": "Bearer {{ZXBToken}}",
+                    "Biz": "{{Biz}}",
+                }
+            )
+
+    endpoint = SimpleNamespace(
+        summary="我的收藏列表",
+        operation={"parameters": [{"in": "header", "name": "Biz"}]},
+    )
+    payload = {
+        "name": "我的收藏列表 - 正常响应",
+        "purpose": "验证状态码和业务码",
+        "data_rows": [{"name": "pageNum=1, pageSize=10"}],
+    }
+
+    assert not AiCaseService._is_runtime_managed_header_scenario(
         FakeRepository(), endpoint, "environment-revision", payload
     )
 
