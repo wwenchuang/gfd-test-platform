@@ -26,7 +26,12 @@ const environmentView: EnvironmentView = {
   status: environment.status,
   services: {
     default: { name: 'default', module_name: '默认服务', base_url: 'https://api.example.com', unresolved: false },
-    'service-2': { name: 'service-2', module_name: '图片建模', base_url: 'https://image.example.com', unresolved: false },
+    '097168f8-348d-4138-b876-123456789abc': {
+      name: '097168f8-348d-4138-b876-123456789abc',
+      module_name: '图片建模',
+      base_url: 'https://image.example.com',
+      unresolved: false,
+    },
   },
   variables: { Biz: 'ZXB', ZXBToken: { configured: true } },
   default_headers: { Authorization: 'Bearer {{ZXBToken}}' },
@@ -48,6 +53,7 @@ describe('SettingsView environment asset center', () => {
     ]
     context.environmentRevisions = [
       { id: 'environment-revision-2', environment_id: 'environment-1', project_id: 'project-1', name: environment.name, revision: 2 },
+      { id: 'environment-revision-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 },
     ]
     vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
     vi.spyOn(context, 'loadOptions').mockResolvedValue()
@@ -56,6 +62,18 @@ describe('SettingsView environment asset center', () => {
     vi.spyOn(setup, 'loadEnvironmentAssets').mockImplementation(async () => {
       setup.environmentAssets = [environment]
       return setup.environmentAssets
+    })
+    vi.spyOn(setup, 'loadEnvironmentProjectStats').mockImplementation(async (projectIds: string[]) => {
+      setup.environmentProjectStats = {
+        ...setup.environmentProjectStats,
+        ...Object.fromEntries(projectIds.map(id => [
+          id,
+          id === 'project-1'
+            ? { environmentCount: 1, activeCount: 1, archivedCount: 0, updatedAt: environment.updated_at }
+            : { environmentCount: 0, activeCount: 0, archivedCount: 0, updatedAt: null },
+        ])),
+      }
+      return setup.environmentProjectStats
     })
     vi.spyOn(setup, 'loadEnvironmentRevision').mockImplementation(async () => {
       setup.environment = environmentView
@@ -116,6 +134,51 @@ describe('SettingsView environment asset center', () => {
     await wrapper.get('[data-status="archived"]').trigger('click')
     await flushPromises()
     expect(loadAssets).toHaveBeenLastCalledWith('project-1', 'archived')
+  })
+
+  it('uses readable detail tabs and restores a historical environment revision', async () => {
+    const { wrapper } = await mountView()
+    const setup = useSetupStore()
+    vi.spyOn(setup, 'restoreEnvironmentRevision').mockResolvedValue({
+      ...environmentView,
+      revision_id: 'environment-revision-3',
+      revision: 3,
+      name: '生产环境',
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    expect(wrapper.text()).toContain('概览')
+    expect(wrapper.text()).toContain('服务地址')
+    expect(wrapper.text()).toContain('变量与凭证')
+    expect(wrapper.text()).toContain('版本历史')
+    expect(wrapper.text()).not.toContain('097168f8-348d-4138-b876-123456789abc')
+
+    await wrapper.get('[data-tab="variables"]').trigger('click')
+    expect(wrapper.text()).toContain('ZXBToken')
+    expect(wrapper.text()).toContain('已配置')
+    expect(wrapper.text()).not.toContain('secret-token')
+
+    await wrapper.get('[data-tab="history"]').trigger('click')
+    await wrapper.get('[data-revision-id="environment-revision-1"][data-action="restore-revision"]').trigger('click')
+    await flushPromises()
+
+    expect(setup.restoreEnvironmentRevision).toHaveBeenCalledWith('environment-revision-1')
+    expect(wrapper.text()).toContain('v3')
+  })
+
+  it('uses readable service names in the edit form instead of internal service ids', async () => {
+    const { wrapper } = await mountView()
+
+    await wrapper.get('[data-action="edit"]').trigger('click')
+
+    expect(wrapper.text()).toContain('服务名称')
+    expect(wrapper.text()).toContain('内部服务键只用于执行匹配')
+    expect(wrapper.text()).not.toContain('服务键已保留')
+
+    const serviceNames = wrapper.findAll('input[aria-label="服务名"]').map(input => (input.element as HTMLInputElement).value)
+    expect(serviceNames).toContain('默认服务')
+    expect(serviceNames).toContain('图片建模')
+    expect(serviceNames).not.toContain('097168f8-348d-4138-b876-123456789abc')
   })
 })
 

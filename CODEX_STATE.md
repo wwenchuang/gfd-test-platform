@@ -6,6 +6,12 @@
 
 平台已有完整的 Agent 生成、YAML 校验、Runner 执行、Sonic 同步、报告和失败修复链路。当前主要目标不是重构架构，而是提高 AI 生成 Midscene YAML 的可执行性、速度和生产稳定性。
 
+## 当前本地仓库路径
+
+- 当前实际仓库：`/Users/adouceshi/Documents/projects/midscene-task-platform`
+- 旧路径 `/Users/wenchuang/Documents/Codex/midscene-task-platform` 和 `/Users/wenchuang/Documents/测试平台` 不再作为本机开发仓库使用。
+- 本机 API 测试依赖使用项目自带 `deploy/api-testing-compose.yml` 启动 PostgreSQL / Redis；完整后端 API testing 测试需同时设置 `TEST_DATABASE_URL` 与 `TEST_REDIS_URL`。
+
 ## 当前重点问题
 
 1. Agent 生成 YAML 时偶尔会把“入口展示 / 布局 / 同级校验”误生成成“点击入口进入第三方流程”。
@@ -27,6 +33,52 @@
 - Windows Runner 服务脚本：使用 NSSM 安装为服务。
 
 ## 最近完成的关键修复
+
+### 2026-08-14 API 测试：环境资产中心按项目重构
+
+用户确认采用环境页方案 B：把“环境资产、环境版本和编辑表单”拆开，形成项目列表、环境资产列表、环境详情三栏结构，避免进入页面直接看到大表单，也避免接口版本切换后误以为环境丢失。
+
+本轮已实现：
+
+- 环境页左侧按项目展示环境统计：环境数量、活动环境、归档环境和最近更新时间。
+- 中间环境资产列表支持活动 / 归档切换、搜索、归档、恢复，并且切换项目后只展示该项目环境。
+- 右侧环境详情改为 `概览 / 服务地址 / 变量与凭证 / 版本历史` 四个 Tab，默认只读，点击编辑后才进入表单。
+- 历史环境版本支持“恢复为新的当前版本”，旧版本继续保留用于审计。
+- 编辑 / 新建环境保存后会生成新版本，并刷新项目环境统计。
+- `进入工作台` 会携带当前项目、接口版本和环境版本上下文。
+- 页面展示服务名称、模块和 Base URL，不再把数据库 ID 或 Apifox 内部 UUID 当成用户可见服务名称。
+- 敏感变量仍只展示“已配置”，编辑时留空表示保持原值。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_environment_service.py -q
+# 21 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/1' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing -q
+# 337 passed
+
+npm --prefix api-testing-ui test -- --run src/stores/setup.spec.ts src/components/EnvironmentAssetList.spec.ts src/views/SettingsView.spec.ts --reporter=dot
+# 3 files / 14 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=dot
+# 31 files / 157 tests passed
+
+npm --prefix api-testing-ui run build
+# passed
+
+.venv/bin/python -m py_compile task_server/api_testing/http.py task_server/api_testing/services/environment_service.py tests/api_testing/test_environment_service.py
+# passed
+
+.venv/bin/python tests/frontend_static_checks.py
+# 72 checks passed
+
+.venv/bin/python tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
 
 ### 2026-08-13 API 测试：本机数据库 Gate 与 AI 业务断言收口
 

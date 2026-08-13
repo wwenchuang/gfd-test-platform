@@ -26,6 +26,13 @@ export interface EnvironmentPayload {
   default_headers: Record<string, string>
 }
 
+export interface EnvironmentProjectStats {
+  environmentCount: number
+  activeCount: number
+  archivedCount: number
+  updatedAt: string | null
+}
+
 export interface ApifoxPreviewPayload {
   project_id: string
   source_id: string | null
@@ -48,6 +55,7 @@ export const useSetupStore = defineStore('api-setup', {
     activeRevision: null as SourceRevision | null,
     environment: null as EnvironmentView | null,
     environmentAssets: [] as EnvironmentAsset[],
+    environmentProjectStats: {} as Record<string, EnvironmentProjectStats>,
     environmentHistory: [] as EnvironmentRevisionSummary[],
     credential: null as ProviderCredential | null,
     apifoxProjects: [] as ApifoxProject[],
@@ -263,6 +271,25 @@ export const useSetupStore = defineStore('api-setup', {
       this.environment = response.data.environment_revision
       return this.environment
     },
+    async restoreEnvironmentRevision(revisionId: string): Promise<EnvironmentView> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.post<{ environment_revision: EnvironmentView }>(
+          `/api/api-testing/v1/environment-revisions/${encodeURIComponent(revisionId)}/restore`,
+          {},
+        )
+        this.environment = response.data.environment_revision
+        this.message = `环境 ${this.environment.name} · v${this.environment.revision} 已恢复为当前版本`
+        return this.environment
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '环境历史版本恢复失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
     async loadEnvironmentAssets(
       projectId: string,
       status: 'active' | 'archived' | 'all' = 'active',
@@ -272,6 +299,20 @@ export const useSetupStore = defineStore('api-setup', {
       )
       this.environmentAssets = response.data.environments
       return this.environmentAssets
+    },
+    async loadEnvironmentProjectStats(projectIds: string[]): Promise<Record<string, EnvironmentProjectStats>> {
+      const uniqueProjectIds = [...new Set(projectIds.filter(Boolean))]
+      const entries = await Promise.all(uniqueProjectIds.map(async (projectId) => {
+        const response = await apiClient.get<{ environments: EnvironmentAsset[] }>(
+          `/api/api-testing/v1/environments?project_id=${encodeURIComponent(projectId)}&status=all`,
+        )
+        return [projectId, summarizeEnvironmentAssets(response.data.environments)] as const
+      }))
+      this.environmentProjectStats = {
+        ...this.environmentProjectStats,
+        ...Object.fromEntries(entries),
+      }
+      return this.environmentProjectStats
     },
     async loadEnvironmentHistory(environmentId: string): Promise<EnvironmentRevisionSummary[]> {
       const response = await apiClient.get<{ revisions: EnvironmentRevisionSummary[] }>(
@@ -355,4 +396,20 @@ function editableEnvironment(payload: EnvironmentPayload): Record<string, unknow
 
 function slugify(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function summarizeEnvironmentAssets(environments: EnvironmentAsset[]): EnvironmentProjectStats {
+  return environments.reduce<EnvironmentProjectStats>((summary, environment) => {
+    summary.environmentCount += 1
+    if (environment.status === 'archived') summary.archivedCount += 1
+    else summary.activeCount += 1
+    summary.updatedAt = latestDate(summary.updatedAt, environment.updated_at)
+    return summary
+  }, { environmentCount: 0, activeCount: 0, archivedCount: 0, updatedAt: null })
+}
+
+function latestDate(current: string | null, next: string): string | null {
+  if (!next) return current
+  if (!current) return next
+  return new Date(next).getTime() > new Date(current).getTime() ? next : current
 }

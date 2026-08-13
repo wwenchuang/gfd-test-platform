@@ -171,6 +171,54 @@ describe('setup store', () => {
     expect(store.environmentHistory[0].revision).toBe(2)
   })
 
+  it('loads per-project environment stats without replacing the current environment list', async () => {
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { environments: [
+        {
+          id: 'environment-1', project_id: 'project-1', source_id: 'source-1',
+          active_revision_id: 'revision-2', source_revision_id: 'source-revision-2',
+          revision: 2, name: '生产环境', description: '', status: 'active',
+          service_count: 2, public_variable_count: 3, secret_count: 1,
+          created_at: '2026-08-10T10:00:00Z', updated_at: '2026-08-13T10:00:00Z',
+        },
+        {
+          id: 'environment-2', project_id: 'project-1', source_id: 'source-1',
+          active_revision_id: 'revision-1', source_revision_id: 'source-revision-1',
+          revision: 1, name: '旧测试环境', description: '', status: 'archived',
+          service_count: 1, public_variable_count: 0, secret_count: 0,
+          created_at: '2026-08-09T10:00:00Z', updated_at: '2026-08-12T10:00:00Z',
+        },
+      ] } })
+      .mockResolvedValueOnce({ data: { environments: [
+        {
+          id: 'environment-3', project_id: 'project-2', source_id: null,
+          active_revision_id: 'revision-3', source_revision_id: null,
+          revision: 1, name: '联调环境', description: '', status: 'active',
+          service_count: 1, public_variable_count: 1, secret_count: 0,
+          created_at: '2026-08-11T10:00:00Z', updated_at: '2026-08-14T10:00:00Z',
+        },
+      ] } })
+    const store = useSetupStore()
+    store.environmentAssets = [{
+      id: 'selected-environment', project_id: 'project-1', source_id: 'source-1',
+      active_revision_id: 'selected-revision', source_revision_id: 'source-revision-2',
+      revision: 2, name: '当前页面环境', description: '', status: 'active',
+      service_count: 1, public_variable_count: 0, secret_count: 0,
+      created_at: '2026-08-10T10:00:00Z', updated_at: '2026-08-13T10:00:00Z',
+    }]
+
+    const stats = await (store as any).loadEnvironmentProjectStats(['project-1', 'project-2'])
+
+    expect(get.mock.calls).toEqual([
+      ['/api/api-testing/v1/environments?project_id=project-1&status=all'],
+      ['/api/api-testing/v1/environments?project_id=project-2&status=all'],
+    ])
+    expect(stats['project-1']).toMatchObject({ environmentCount: 2, activeCount: 1, archivedCount: 1, updatedAt: '2026-08-13T10:00:00Z' })
+    expect(stats['project-2']).toMatchObject({ environmentCount: 1, activeCount: 1, archivedCount: 0, updatedAt: '2026-08-14T10:00:00Z' })
+    expect(store.environmentAssets).toHaveLength(1)
+    expect(store.environmentAssets[0].id).toBe('selected-environment')
+  })
+
   it('archives and restores stable environment assets without deleting revisions', async () => {
     const archived = {
       id: 'environment-1', project_id: 'project-1', source_id: null,

@@ -511,6 +511,50 @@ class EnvironmentService:
             repository.flush()
             return self._view(repository, environment, revision)
 
+    def restore_revision(self, revision_id, actor_id):
+        actor = _text(actor_id, "actor id")
+        with self._session_factory.begin() as session:
+            repository = EnvironmentRepository(session)
+            source_revision = repository.get_revision(revision_id)
+            if source_revision is None:
+                raise EnvironmentNotFoundError("API environment revision was not found")
+            environment = repository.get_environment_for_update(
+                source_revision.environment_id
+            )
+            if environment is None:
+                raise EnvironmentNotFoundError("API environment was not found")
+            project = repository.get_project(environment.project_id)
+            if project is None or project.owner_id != actor:
+                raise EnvironmentNotFoundError("API environment was not found")
+
+            services, public_variables, secrets = self._revision_state(
+                repository, source_revision.id
+            )
+            revision = repository.create_revision(
+                environment.id,
+                source_revision.source_revision_id,
+                repository.next_revision_number(environment.id),
+                source_revision.name,
+                source_revision.description,
+                copy.deepcopy(source_revision.default_headers),
+                actor,
+            )
+            self._persist_services(repository, revision.id, services, actor)
+            self._persist_public_variables(
+                repository, revision.id, environment.id, public_variables, actor
+            )
+            for secret_name, secret in sorted(secrets.items()):
+                repository.add_secret_variable(
+                    revision.id, environment.id, secret_name, secret.id, actor
+                )
+
+            environment.name = source_revision.name
+            environment.active_revision_id = revision.id
+            environment.status = "active"
+            environment.updated_by = actor
+            repository.flush()
+            return self._view(repository, environment, revision)
+
     def get_environment(self, environment_id):
         with self._session_factory() as session:
             repository = EnvironmentRepository(session)

@@ -208,6 +208,46 @@ def test_environment_assets_can_be_archived_and_restored_without_deleting_histor
     )] == [imported.id]
 
 
+def test_environment_revision_can_be_restored_as_new_current_revision(
+    environment_service, production_environment
+):
+    configured = _import_with_token(environment_service, production_environment)
+    changed = environment_service.create_revision(
+        configured.id,
+        {
+            "name": "灰度环境",
+            "description": "temporary gray release",
+            "services": [
+                {
+                    "name": "default",
+                    "module": "默认模块",
+                    "base_url": "https://gray.example.test/app",
+                    "metadata": {"apifox_service_id": "service-default-gray"},
+                }
+            ],
+            "variables": {"Biz": "GRAY"},
+        },
+        {},
+        "admin",
+    )
+
+    restored = environment_service.restore_revision(configured.revision_id, "admin")
+
+    assert restored.id == configured.id
+    assert restored.revision == changed.revision + 1
+    assert restored.name == configured.name
+    assert restored.description == configured.description
+    assert restored.services["default"].base_url == "https://print.example.test/app"
+    assert restored.services["share"].module_name == "分享"
+    assert restored.variables["Biz"] == "ZXB"
+    assert restored.variables["ZXBToken"].configured is True
+    assert [item.revision for item in environment_service.list_revisions(
+        configured.id, "admin"
+    )] == [restored.revision, changed.revision, configured.revision, 1]
+    runtime = environment_service.resolve_runtime(restored.revision_id, {})
+    assert runtime.headers["Authorization"] == f"Bearer {BUSINESS_TOKEN}"
+
+
 def test_environment_asset_queries_reject_cross_owner_access(
     environment_service, production_environment
 ):

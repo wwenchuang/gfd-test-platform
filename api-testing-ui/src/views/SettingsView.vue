@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowRight, Bell, Check, KeyRound, Pencil, Plus, Save, Trash2 } from 'lucide-vue-next'
+import { ArrowRight, Bell, Check, KeyRound, Pencil, Plus, RotateCcw, Save, Trash2 } from 'lucide-vue-next'
 
-import type { EnvironmentView, SourceRevision } from '../api/contracts'
+import type { EnvironmentAsset, EnvironmentRevisionSummary, EnvironmentView, SourceRevision } from '../api/contracts'
 import { apiClient } from '../api/client'
 import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
@@ -12,6 +12,13 @@ import { type EnvironmentPayload, useSetupStore } from '../stores/setup'
 
 type Pair = { key: string; value: string }
 type ServiceRow = { key: string; name: string; module: string; base_url: string }
+type DetailTab = 'overview' | 'services' | 'variables' | 'history'
+const detailTabs: Array<{ id: DetailTab; label: string }> = [
+  { id: 'overview', label: '概览' },
+  { id: 'services', label: '服务地址' },
+  { id: 'variables', label: '变量与凭证' },
+  { id: 'history', label: '版本历史' },
+]
 
 const route = useRoute()
 const router = useRouter()
@@ -29,6 +36,7 @@ const creating = ref(false)
 const loadingAssets = ref(false)
 const loadingDetail = ref(false)
 const localError = ref('')
+const detailTab = ref<DetailTab>('overview')
 
 const name = ref('')
 const description = ref('')
@@ -49,9 +57,11 @@ const selectedAsset = computed(() => setup.environmentAssets.find(item => item.i
 const environmentDetail = computed(() => setup.environment?.id === selectedEnvironmentId.value ? setup.environment : null)
 const publicVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => !isSecretDescriptor(value)))
 const secretVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => isSecretDescriptor(value)))
+const projectEnvironmentStats = computed(() => setup.environmentProjectStats)
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
+  await refreshProjectEnvironmentStats()
   const queryProjectId = textQuery(route.query.projectId)
   projectId.value = context.projects.some(item => item.id === queryProjectId)
     ? queryProjectId
@@ -70,6 +80,7 @@ async function loadProjectScope(): Promise<void> {
   try {
     await Promise.all([
       setup.loadEnvironmentAssets(projectId.value, environmentStatus.value),
+      refreshProjectEnvironmentStats([projectId.value]),
       loadFeishu(),
     ])
     const preferredId = setup.environmentAssets.some(item => item.id === selectedEnvironmentId.value)
@@ -89,6 +100,7 @@ async function changeProject(nextProjectId: string): Promise<void> {
   environmentStatus.value = 'active'
   selectedEnvironmentId.value = ''
   editing.value = false
+  detailTab.value = 'overview'
   await loadProjectScope()
 }
 
@@ -96,6 +108,7 @@ async function changeStatus(status: 'active' | 'archived'): Promise<void> {
   environmentStatus.value = status
   selectedEnvironmentId.value = ''
   editing.value = false
+  detailTab.value = 'overview'
   await loadProjectScope()
 }
 
@@ -106,6 +119,7 @@ async function selectEnvironment(environmentAssetId: string): Promise<void> {
   sourceRevisionId.value = asset.source_revision_id || ''
   editing.value = false
   creating.value = false
+  detailTab.value = 'overview'
   loadingDetail.value = true
   localError.value = ''
   try {
@@ -126,6 +140,7 @@ function startEdit(): void {
   applyEnvironment(environmentDetail.value)
   editing.value = true
   creating.value = false
+  detailTab.value = 'overview'
 }
 
 async function startCreate(): Promise<void> {
@@ -134,11 +149,13 @@ async function startCreate(): Promise<void> {
   sourceRevisionId.value = sourceOptions.value.at(-1)?.id || ''
   editing.value = true
   creating.value = true
+  detailTab.value = 'overview'
   await prefillFromSource()
 }
 
 function cancelEdit(): void {
   editing.value = false
+  detailTab.value = 'overview'
   if (selectedAsset.value && environmentDetail.value) applyEnvironment(environmentDetail.value)
   else if (!selectedAsset.value) clearEditor()
 }
@@ -180,6 +197,7 @@ async function save(): Promise<void> {
     await context.loadOptions()
     environmentStatus.value = 'active'
     await setup.loadEnvironmentAssets(projectId.value, 'active')
+    await refreshProjectEnvironmentStats([projectId.value])
     editing.value = false
     creating.value = false
     await selectEnvironment(saved.id)
@@ -192,6 +210,7 @@ async function archiveEnvironment(id: string): Promise<void> {
   if (!window.confirm('归档后该环境不会出现在工作台选择项中，历史版本和执行记录仍会保留。确定归档吗？')) return
   try {
     await setup.archiveEnvironment(id)
+    await refreshProjectEnvironmentStats([projectId.value])
     await loadProjectScope()
   } catch (error) {
     localError.value = messageOf(error, '环境归档失败')
@@ -201,9 +220,33 @@ async function archiveEnvironment(id: string): Promise<void> {
 async function restoreEnvironment(id: string): Promise<void> {
   try {
     await setup.restoreEnvironment(id)
+    await refreshProjectEnvironmentStats([projectId.value])
     await loadProjectScope()
   } catch (error) {
     localError.value = messageOf(error, '环境恢复失败')
+  }
+}
+
+async function restoreEnvironmentRevision(revisionId: string): Promise<void> {
+  if (!window.confirm('确认将该历史版本恢复为新的当前版本吗？旧版本仍会保留。')) return
+  loadingDetail.value = true
+  localError.value = ''
+  try {
+    const restored = await setup.restoreEnvironmentRevision(revisionId)
+    setup.replaceEnvironmentAsset(environmentAssetFromView(restored))
+    await refreshProjectEnvironmentStats([projectId.value])
+    setup.environmentHistory = [
+      revisionSummaryFromView(restored),
+      ...setup.environmentHistory.filter(item => item.id !== restored.revision_id),
+    ]
+    selectedEnvironmentId.value = restored.id
+    sourceRevisionId.value = restored.source_revision_id || ''
+    applyEnvironment(restored)
+    detailTab.value = 'overview'
+  } catch (error) {
+    localError.value = messageOf(error, '环境历史版本恢复失败')
+  } finally {
+    loadingDetail.value = false
   }
 }
 
@@ -248,10 +291,10 @@ function applyEnvironment(value: EnvironmentView): void {
   environmentId.value = value.id
   name.value = value.name
   description.value = value.description
-  services.value = Object.entries(value.services).map(([key, item]) => ({
+  services.value = Object.entries(value.services).map(([key, item], index) => ({
     key,
-    name: item.name || key,
-    module: item.module_name || '',
+    name: serviceLabel(item, index),
+    module: item.module_name && !isOpaqueId(item.module_name) ? item.module_name : '',
     base_url: item.base_url || '',
   }))
   if (!services.value.length) services.value = [emptyService('default')]
@@ -271,6 +314,7 @@ function clearSelection(): void {
   setup.environmentHistory = []
   editing.value = false
   creating.value = false
+  detailTab.value = 'overview'
   clearEditor()
 }
 
@@ -317,14 +361,53 @@ function sourceLabel(sourceId: string | null): string {
   return source ? `${source.name} · v${source.revision_number}` : '历史接口版本'
 }
 
+async function refreshProjectEnvironmentStats(projectIds = context.projects.map(item => item.id)): Promise<void> {
+  const ids = projectIds.filter(Boolean)
+  if (!ids.length) return
+  await setup.loadEnvironmentProjectStats(ids)
+}
+
 function serviceLabel(item: { name: string; module_name?: string }, index: number): string {
   if (item.module_name && !isOpaqueId(item.module_name)) return item.module_name
   if (item.name && !isOpaqueId(item.name) && item.name !== 'default') return item.name
   return item.name === 'default' ? '默认服务' : `服务 ${index + 1}`
 }
 
+function environmentAssetFromView(value: EnvironmentView): EnvironmentAsset {
+  return {
+    id: value.id,
+    project_id: value.project_id,
+    source_id: value.source_id,
+    active_revision_id: value.revision_id,
+    source_revision_id: value.source_revision_id,
+    revision: value.revision,
+    name: value.name,
+    description: value.description,
+    status: value.status === 'archived' ? 'archived' : 'active',
+    service_count: Object.keys(value.services).length,
+    public_variable_count: Object.values(value.variables).filter(item => !isSecretDescriptor(item)).length,
+    secret_count: Object.values(value.variables).filter(item => isSecretDescriptor(item)).length,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+}
+
+function revisionSummaryFromView(value: EnvironmentView): EnvironmentRevisionSummary {
+  return {
+    id: value.revision_id,
+    environment_id: value.id,
+    source_revision_id: value.source_revision_id,
+    revision: value.revision,
+    name: value.name,
+    description: value.description,
+    status: value.status,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+}
+
 function emptyService(key: string): ServiceRow {
-  return { key, name: key, module: key === 'default' ? '默认服务' : '', base_url: '' }
+  return { key, name: key === 'default' ? '默认服务' : '', module: key === 'default' ? '默认服务' : '', base_url: '' }
 }
 
 function addPair(rows: Pair[]): void { rows.push({ key: '', value: '' }) }
@@ -361,6 +444,7 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
         :selected-project-id="projectId"
         :selected-environment-id="selectedEnvironmentId"
         :status="environmentStatus"
+        :project-stats="projectEnvironmentStats"
         @select-project="changeProject"
         @select-environment="selectEnvironment"
         @update:status="changeStatus"
@@ -388,8 +472,8 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
           </section>
 
           <section class="environment-editor-section">
-            <header><div><h3>服务地址</h3><p>保留稳定服务键，页面优先展示模块名称。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push(emptyService(`service-${services.length + 1}`))"><Plus :size="15" /></button></header>
-            <div class="editable-table"><div class="table-head"><span>服务键</span><span>展示名称</span><span>Base URL</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
+            <header><div><h3>服务地址</h3><p>内部服务键只用于执行匹配；页面、工作台和报告展示业务名称或模块。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push(emptyService(`service-${services.length + 1}`))"><Plus :size="15" /></button></header>
+            <div class="editable-table"><div class="table-head"><span>服务名称</span><span>模块</span><span>Base URL</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
           </section>
 
           <section class="environment-editor-section split-section">
@@ -415,19 +499,47 @@ function formatDate(value: string): string { return value ? new Date(value).toLo
             <div><small>最近更新</small><strong>{{ formatDate(selectedAsset.updated_at) }}</strong></div>
           </div>
 
-          <section class="environment-read-section">
-            <header><div><h3>服务地址</h3><p>{{ selectedAsset.service_count }} 个服务可用于在线调试和任务执行。</p></div></header>
-            <div class="environment-service-list"><article v-for="(item, key, index) in environmentDetail.services" :key="key"><div><strong>{{ serviceLabel(item, index) }}</strong><small>{{ key === 'default' ? '默认服务' : '服务键已保留' }}</small></div><code>{{ item.base_url || '未配置地址' }}</code></article></div>
+          <nav class="environment-detail-tabs" aria-label="环境详情">
+            <button
+              v-for="tab in detailTabs"
+              :key="tab.id"
+              type="button"
+              :class="{ active: detailTab === tab.id }"
+              :data-tab="tab.id"
+              @click="detailTab = tab.id"
+            >{{ tab.label }}</button>
+          </nav>
+
+          <section v-if="detailTab === 'overview'" class="environment-read-section environment-overview-detail">
+            <header><div><h3>环境概览</h3><p>环境资产独立于接口版本长期保存；调试或任务执行时再选择当前环境版本。</p></div></header>
+            <div class="environment-summary-grid">
+              <div><small>状态</small><strong>{{ selectedAsset.status === 'active' ? '使用中' : '已归档' }}</strong></div>
+              <div><small>服务地址</small><strong>{{ selectedAsset.service_count }}</strong></div>
+              <div><small>公共变量</small><strong>{{ selectedAsset.public_variable_count }}</strong></div>
+              <div><small>敏感凭证</small><strong>{{ selectedAsset.secret_count }}</strong></div>
+            </div>
+            <div v-if="Object.keys(environmentDetail.services).length" class="environment-overview-services">
+              <article v-for="(item, key, index) in environmentDetail.services" :key="key">
+                <span :title="serviceLabel(item, index)">{{ serviceLabel(item, index) }}</span>
+                <code :title="item.base_url || '未配置地址'">{{ item.base_url || '未配置地址' }}</code>
+              </article>
+            </div>
           </section>
 
-          <section class="environment-read-grid">
+          <section v-else-if="detailTab === 'services'" class="environment-read-section">
+            <header><div><h3>服务地址</h3><p>{{ selectedAsset.service_count }} 个服务可用于在线调试和任务执行。</p></div></header>
+            <div class="environment-service-list"><article v-for="(item, key, index) in environmentDetail.services" :key="key"><div><strong>{{ serviceLabel(item, index) }}</strong><small>{{ key === 'default' ? '默认服务' : '按内部键匹配执行' }}</small></div><code>{{ item.base_url || '未配置地址' }}</code></article></div>
+          </section>
+
+          <section v-else-if="detailTab === 'variables'" class="environment-read-grid">
             <div class="environment-read-section"><header><div><h3>公共变量</h3><p>执行时按变量名注入。</p></div><span>{{ publicVariables.length }}</span></header><dl><template v-for="([key, value]) in publicVariables" :key="key"><dt>{{ key }}</dt><dd>{{ displayValue(value) || '空值' }}</dd></template></dl><p v-if="!publicVariables.length" class="compact-empty">暂无公共变量</p></div>
             <div class="environment-read-section"><header><div><h3>敏感凭证</h3><p>页面不回显密文。</p></div><span>{{ secretVariables.length }}</span></header><dl><template v-for="([key, value]) in secretVariables" :key="key"><dt>{{ key }}</dt><dd><Check v-if="isSecretDescriptor(value) && value.configured" :size="14" />{{ isSecretDescriptor(value) && value.configured ? '已配置' : '未配置' }}</dd></template></dl><p v-if="!secretVariables.length" class="compact-empty">暂无敏感凭证</p></div>
+            <div class="environment-read-section environment-header-section"><header><div><h3>默认请求头</h3><p>执行时自动注入，推荐使用变量引用。</p></div><span>{{ Object.keys(environmentDetail.default_headers).length }}</span></header><dl><template v-for="([key, value]) in Object.entries(environmentDetail.default_headers)" :key="key"><dt>{{ key }}</dt><dd>{{ displayValue(value) }}</dd></template></dl><p v-if="!Object.keys(environmentDetail.default_headers).length" class="compact-empty">暂无默认请求头</p></div>
           </section>
 
-          <section class="environment-read-section environment-history">
+          <section v-else class="environment-read-section environment-history">
             <header><div><h3>版本历史</h3><p>编辑环境会新增版本，历史不会被覆盖。</p></div><span>{{ setup.environmentHistory.length }} 个版本</span></header>
-            <ol><li v-for="revision in setup.environmentHistory" :key="revision.id"><span class="history-version">v{{ revision.revision }}</span><div><strong>{{ revision.name }}</strong><small>{{ sourceLabel(revision.source_revision_id) }} · {{ formatDate(revision.updated_at) }}</small></div><span v-if="revision.id === selectedAsset.active_revision_id" class="current-version">当前</span></li></ol>
+            <ol><li v-for="revision in setup.environmentHistory" :key="revision.id"><span class="history-version">v{{ revision.revision }}</span><div><strong>{{ revision.name }}</strong><small>{{ sourceLabel(revision.source_revision_id) }} · {{ formatDate(revision.updated_at) }}</small></div><span v-if="revision.id === selectedAsset.active_revision_id" class="current-version">当前</span><button v-else class="environment-history-action" type="button" :data-revision-id="revision.id" data-action="restore-revision" @click="restoreEnvironmentRevision(revision.id)"><RotateCcw :size="14" />恢复</button></li></ol>
           </section>
         </template>
 

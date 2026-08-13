@@ -486,6 +486,18 @@ def _post(segments, payload, actor, settings):
                 EnvironmentService(factory).restore(environment_id, actor)
             )
         }
+    if (
+        len(segments) == 3
+        and segments[0] == "environment-revisions"
+        and segments[2] == "restore"
+    ):
+        revision_id = _uuid(segments[1])
+        _scope_environment_revision(factory, revision_id, actor)
+        return {
+            "environment_revision": _view(
+                EnvironmentService(factory).restore_revision(revision_id, actor)
+            )
+        }
     if segments == ("cases",):
         _scope_endpoint(factory, _uuid(payload.get("endpoint_id")), actor)
         return {"case_version": _view(CaseService(factory).create_draft(_uuid(payload.get("endpoint_id")), _required_object(payload, "case"), payload.get("origin", "manual"), actor))}

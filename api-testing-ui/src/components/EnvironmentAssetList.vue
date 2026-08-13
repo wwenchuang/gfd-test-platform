@@ -1,14 +1,23 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import { Archive, CheckCircle2, Database, RotateCcw } from 'lucide-vue-next'
 
 import type { EnvironmentAsset, ProjectOption } from '../api/contracts'
 
-defineProps<{
+interface ProjectEnvironmentStats {
+  environmentCount: number
+  activeCount: number
+  archivedCount: number
+  updatedAt: string | null
+}
+
+const props = defineProps<{
   projects: ProjectOption[]
   environments: EnvironmentAsset[]
   selectedProjectId: string
   selectedEnvironmentId: string
   status: 'active' | 'archived'
+  projectStats?: Record<string, ProjectEnvironmentStats>
 }>()
 
 const emit = defineEmits<{
@@ -18,6 +27,30 @@ const emit = defineEmits<{
   archive: [environmentId: string]
   restore: [environmentId: string]
 }>()
+
+const searchQuery = ref('')
+
+const filteredEnvironments = computed(() => {
+  const keyword = searchQuery.value.trim().toLowerCase()
+  if (!keyword) return props.environments
+  return props.environments.filter(item => {
+    return [item.name, item.description, String(item.revision)]
+      .some(value => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+
+const environmentCountLabel = computed(() => {
+  if (!searchQuery.value.trim()) return `${props.environments.length} 个`
+  return `${filteredEnvironments.value.length} / ${props.environments.length} 个`
+})
+
+function projectEnvironmentLabel(projectId: string): string {
+  const stats = props.projectStats?.[projectId]
+  if (!stats || stats.environmentCount <= 0) return '暂无环境'
+  const archived = stats.archivedCount > 0 ? ` · ${stats.archivedCount} 已归档` : ''
+  const updated = stats.updatedAt ? ` · 更新 ${stats.updatedAt.slice(0, 10)}` : ''
+  return `${stats.environmentCount} 个环境 · ${stats.activeCount} 活动${archived}${updated}`
+}
 </script>
 
 <template>
@@ -34,14 +67,17 @@ const emit = defineEmits<{
         @click="emit('select-project', project.id)"
       >
         <Database :size="16" />
-        <span>{{ project.name }}</span>
+        <span class="environment-project-copy">
+          <strong>{{ project.name }}</strong>
+          <small>{{ projectEnvironmentLabel(project.id) }}</small>
+        </span>
       </button>
       <p v-if="!projects.length" class="environment-nav-empty">暂无项目</p>
     </aside>
 
     <section class="environment-assets" aria-label="环境资产">
       <header class="environment-assets-header">
-        <div><strong>环境资产</strong><small>{{ environments.length }} 个</small></div>
+        <div><strong>环境资产</strong><small>{{ environmentCountLabel }}</small></div>
         <div class="environment-status-tabs">
           <button
             type="button"
@@ -58,9 +94,18 @@ const emit = defineEmits<{
         </div>
       </header>
 
+      <div class="environment-asset-search">
+        <input
+          v-model="searchQuery"
+          data-environment-search
+          type="search"
+          placeholder="搜索环境名称或说明"
+        />
+      </div>
+
       <div class="environment-asset-items">
         <article
-          v-for="environment in environments"
+          v-for="environment in filteredEnvironments"
           :key="environment.id"
           class="environment-asset-item"
           :class="{ active: selectedEnvironmentId === environment.id }"
@@ -96,10 +141,10 @@ const emit = defineEmits<{
             @click.stop="emit('restore', environment.id)"
           ><RotateCcw :size="14" />恢复</button>
         </article>
-        <div v-if="!environments.length" class="environment-list-empty">
+        <div v-if="!filteredEnvironments.length" class="environment-list-empty">
           <Database :size="24" />
-          <strong>{{ status === 'active' ? '暂无已保存环境' : '暂无已归档环境' }}</strong>
-          <span>{{ status === 'active' ? '从 Apifox 手动同步或导入后会显示在这里。' : '归档的环境可在这里恢复。' }}</span>
+          <strong>{{ searchQuery ? '没有匹配环境' : (status === 'active' ? '暂无已保存环境' : '暂无已归档环境') }}</strong>
+          <span>{{ searchQuery ? '换一个关键词，或切换项目查看。' : (status === 'active' ? '从 Apifox 手动同步或导入后会显示在这里。' : '归档的环境可在这里恢复。') }}</span>
         </div>
       </div>
     </section>
