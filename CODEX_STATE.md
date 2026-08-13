@@ -8596,3 +8596,38 @@ git diff --check
 - M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
 - M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
 - M4：执行记录/报告删除、报告 UI、飞书卡片链接和项目级机器人配置。
+
+### 2026-08-13 API 测试：测试报告按项目展示与驾驶舱优化
+
+本轮只收口用户最新反馈的“测试报告按项目展示、报告页样式太弱”问题，不混入基线资产、任务模型、Apifox 同步或飞书机器人配置。
+
+本轮修复：
+
+- 测试报告页新增项目范围选择，进入页面时按当前项目加载执行报告，切换项目后重新加载对应项目结果。
+- 报告列表在前端再次按 `project_id` 过滤，避免不同项目执行结果混在同一个报告页。
+- 报告页标题调整为“项目测试报告”，新增项目报告范围卡片，展示当前项目、报告数量和刷新入口。
+- 报告总览从普通列表头改为“项目报告驾驶舱”，突出执行次数、通过用例、问题用例、累计耗时和通过率。
+- 报告卡片、问题分布条、报告索引和详情区域增加更明确的边界、层级和视觉权重，保留现有筛选、批量删除、单条删除、飞书发送状态和诊断详情入口。
+- 新增报告页行为测试，覆盖“按项目加载并过滤报告结果”的主路径。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/views/ReportsView.spec.ts --reporter=basic
+# 1 file / 6 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+git diff --check
+# passed
+```
+
+后续仍按既定阶段继续：
+
+- M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
+- M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
+- M4：执行记录/报告删除、飞书卡片链接和项目级机器人配置。

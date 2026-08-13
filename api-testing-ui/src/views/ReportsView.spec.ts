@@ -1,13 +1,14 @@
 // @vitest-environment jsdom
 
 import { createPinia, setActivePinia } from 'pinia'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
 import type { ExecutionView } from '../api/contracts'
 import { useExecutionsStore } from '../stores/executions'
 import { useContextStore } from '../stores/context'
+import { useNotificationsStore } from '../stores/notifications'
 import ReportsView from './ReportsView.vue'
 
 const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
@@ -36,7 +37,7 @@ describe('ReportsView', () => {
     executions.executions = [report]
     const wrapper = mount(ReportsView)
 
-    expect(wrapper.text()).toContain('报告概览')
+    expect(wrapper.text()).toContain('项目报告驾驶舱')
     expect(wrapper.text()).toContain('1 次执行')
     expect(wrapper.text()).toContain('1 个问题')
     expect(wrapper.text()).toContain('需要关注')
@@ -49,6 +50,47 @@ describe('ReportsView', () => {
     await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
     expect(wrapper.text()).toContain('返回报告列表')
     expect(wrapper.text()).toContain('诊断结论')
+  })
+
+  it('loads and filters report results by the selected project', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    const notifications = useNotificationsStore()
+    context.projectId = 'project-1'
+    context.projects = [
+      { id: 'project-1', name: '3D家用' },
+      { id: 'project-2', name: '商城项目' },
+    ] as typeof context.projects
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(notifications, 'loadFeishu').mockResolvedValue()
+    const otherReport: ExecutionView = {
+      ...report,
+      id: 'report-2',
+      project_id: 'project-2',
+      summary: { total: 1, passed: 1, failed: 0 },
+      case_results: [{ ...report.case_results[0], case_name: '商城项目用例' }],
+    }
+    const load = vi.spyOn(executions, 'load').mockImplementation(async projectId => {
+      executions.executions = projectId === 'project-1' ? [report, otherReport] : [otherReport]
+    })
+
+    const wrapper = mount(ReportsView)
+    await flushPromises()
+
+    expect(load).toHaveBeenCalledWith('project-1')
+    expect((wrapper.get('[data-testid="report-project-select"]').element as HTMLSelectElement).value).toBe('project-1')
+    expect(wrapper.text()).toContain('项目报告驾驶舱')
+    expect(wrapper.text()).toContain('3D家用')
+    expect(wrapper.text()).toContain('取消收藏')
+    expect(wrapper.text()).not.toContain('商城项目用例')
+
+    await wrapper.get('[data-testid="report-project-select"]').setValue('project-2')
+    await flushPromises()
+
+    expect(load).toHaveBeenCalledWith('project-2')
+    expect(wrapper.text()).toContain('商城项目')
+    expect(wrapper.text()).toContain('商城项目用例')
   })
 
   it('archives selected reports in bulk from the report dashboard', async () => {

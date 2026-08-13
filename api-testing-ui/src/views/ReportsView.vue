@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, Send, Trash2 } from 'lucide-vue-next'
+import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, RefreshCw, Send, Trash2 } from 'lucide-vue-next'
 
 import DiagnosticReport from '../components/DiagnosticReport.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
@@ -28,7 +28,12 @@ const selectedReportId = ref('')
 const selectedReportIds = ref<Set<string>>(new Set())
 const filter = ref<'all' | 'failed' | 'passed'>('all')
 const sendingReportId = ref('')
-const reports = computed(() => executions.executions.filter(item => ['DONE', 'CANCELLED'].includes(item.state)))
+const reportProjectId = ref('')
+const projectOptions = computed(() => context.projects)
+const selectedProject = computed(() => projectOptions.value.find(item => item.id === reportProjectId.value) || null)
+const reports = computed(() => executions.executions
+  .filter(item => ['DONE', 'CANCELLED'].includes(item.state))
+  .filter(item => !reportProjectId.value || item.project_id === reportProjectId.value))
 const visibleReports = computed(() => reports.value.filter(report => {
   const conclusion = executionConclusion(report)
   if (filter.value === 'failed') return ['failed', 'broken', 'cancelled', 'neutral'].includes(conclusion.tone)
@@ -67,7 +72,8 @@ const dashboard = computed(() => {
   }
 })
 const latestReport = computed(() => reports.value[0] || null)
-const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
+const projectName = computed(() => selectedProject.value?.name || '未选择项目')
+const reportRangeLabel = computed(() => reports.value.length ? `最近 ${reports.value.length} 次执行` : '暂无报告')
 const currentReport = computed(() => visibleReports.value.find(item => item.id === selectedReportId.value) || visibleReports.value[0] || null)
 const currentMetrics = computed(() => currentReport.value ? executionMetrics(currentReport.value) : null)
 const currentBuckets = computed(() => currentReport.value ? executionFailureBuckets(currentReport.value) : null)
@@ -87,7 +93,8 @@ type FeishuReportState = {
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  if (context.projectId) await Promise.all([executions.load(context.projectId), notifications.loadFeishu(context.projectId)])
+  reportProjectId.value = context.projectId || context.projects[0]?.id || ''
+  if (reportProjectId.value) await loadProjectReports(reportProjectId.value)
 })
 
 watch([visibleReports, () => route.query.execution_id, () => route.query.executionId], ([reports]) => {
@@ -105,6 +112,26 @@ function reportIdFromRoute(): string {
   const value = route.query.execution_id ?? route.query.executionId
   if (Array.isArray(value)) return String(value[0] || '')
   return String(value || '')
+}
+
+async function loadProjectReports(projectId = reportProjectId.value): Promise<void> {
+  if (!projectId) {
+    executions.executions = []
+    selectedReportId.value = ''
+    selectedReportIds.value = new Set()
+    return
+  }
+  await Promise.all([executions.load(projectId), notifications.loadFeishu(projectId)])
+}
+
+async function changeReportProject(event: Event): Promise<void> {
+  const value = (event.target as HTMLSelectElement).value
+  reportProjectId.value = value
+  selected.value = null
+  selectedReportId.value = ''
+  selectedReportIds.value = new Set()
+  filter.value = 'all'
+  await loadProjectReports(value)
 }
 
 function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
@@ -181,15 +208,38 @@ async function deleteReports(reportIds: string[]): Promise<void> {
       <header class="page-toolbar">
         <div>
           <p class="eyebrow">API TEST REPORTS</p>
-          <h1>测试报告</h1>
-          <p class="page-subtitle">当前项目：{{ projectName }}。先看结论、问题分布和失败摘要，再按用例展开请求、响应与断言证据。</p>
+          <h1>项目测试报告</h1>
+          <p class="page-subtitle">按项目查看接口自动化结果。先看整体结论，再定位问题报告和用例证据。</p>
         </div>
       </header>
+
+      <section class="report-project-scope" aria-label="项目报告范围">
+        <div class="report-project-identity">
+          <BarChart3 :size="18" />
+          <div>
+            <span>项目报告</span>
+            <strong>{{ projectName }}</strong>
+            <small>{{ reportRangeLabel }} · 只展示当前项目执行结果</small>
+          </div>
+        </div>
+        <div class="report-project-controls">
+          <label>
+            项目
+            <select data-testid="report-project-select" :value="reportProjectId" @change="changeReportProject">
+              <option value="" disabled>请选择项目</option>
+              <option v-for="project in projectOptions" :key="project.id" :value="project.id">{{ project.name }}</option>
+            </select>
+          </label>
+          <button type="button" class="secondary-command" :disabled="!reportProjectId || executions.loading" @click="loadProjectReports()">
+            <RefreshCw :size="15" :class="{ 'is-spinning': executions.loading }" />刷新报告
+          </button>
+        </div>
+      </section>
 
       <section class="report-dashboard" aria-label="报告概览">
         <div class="report-hero">
           <div>
-            <p class="eyebrow">报告概览</p>
+            <p class="eyebrow">项目报告驾驶舱</p>
             <h2>{{ dashboard.issueCases ? '需要关注' : '全部通过' }}</h2>
             <p>{{ dashboard.totalReports }} 次执行 · {{ dashboard.totalCases }} 条用例 · 最近 {{ latestReport ? new Date(latestReport.created_at).toLocaleString('zh-CN') : '暂无执行' }}</p>
           </div>
