@@ -10,7 +10,12 @@ import { useExecutionsStore } from '../stores/executions'
 import { useContextStore } from '../stores/context'
 import ReportsView from './ReportsView.vue'
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => routeState,
+}))
 
 const report: ExecutionView = {
   id: 'report-1', project_id: 'project-1', state: 'DONE', execution_type: 'regression', source_revision_id: 'source-1', environment_revision_id: 'environment-1', environment_name: '生产环境 V6', case_statuses: ['PASSED', 'FAILED'], summary: { total: 2, passed: 1, failed: 1 }, cancellation_requested: false, created_at: '2026-08-12T07:00:00Z', started_at: null, finished_at: null,
@@ -18,7 +23,10 @@ const report: ExecutionView = {
 }
 
 describe('ReportsView', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+  beforeEach(() => {
+    routeState.query = {}
+    setActivePinia(createPinia())
+  })
 
   it('summarizes report health before opening the full diagnostic report', async () => {
     const executions = useExecutionsStore()
@@ -101,5 +109,30 @@ describe('ReportsView', () => {
     const wrapper = mount(ReportsView)
 
     expect(wrapper.get('[data-testid="report-feishu-status"]').text()).toContain('飞书通知已发')
+  })
+
+  it('opens the report requested by Feishu link query', async () => {
+    routeState.query = { execution_id: 'report-2' }
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [
+      report,
+      {
+        ...report,
+        id: 'report-2',
+        execution_type: 'baseline_regression',
+        environment_name: '生产环境 V9',
+        summary: { total: 1, passed: 1, failed: 0 },
+        case_results: [{ ...report.case_results[0], case_name: '目标报告用例' }],
+      },
+    ]
+
+    const wrapper = mount(ReportsView)
+    await nextTick()
+
+    expect(wrapper.get('.report-detail-hero').text()).toContain('生产环境 V9')
+    expect(wrapper.text()).toContain('目标报告用例')
   })
 })

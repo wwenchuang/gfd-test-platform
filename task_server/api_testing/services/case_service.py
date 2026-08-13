@@ -110,15 +110,13 @@ class CaseService:
                 )
             )
 
-    def list_active_baselines(self, project_id, source_revision_id, environment_revision_id, actor_id):
+    def list_active_baselines(self, project_id, actor_id):
         with self.session_factory() as session:
             repository = CaseRepository(session)
             return tuple(
                 self._baseline_case_view(baseline, case, version, endpoint)
                 for baseline, case, version, endpoint in repository.list_active_baselines(
                     project_id,
-                    source_revision_id,
-                    environment_revision_id,
                     actor_id,
                 )
             )
@@ -212,11 +210,6 @@ class CaseService:
                 raise BaselineGateError(
                     "baseline requires passing debug evidence for the same project, endpoint, case version, and environment revision"
                 )
-            for previous in repository.active_baselines_for_update(
-                case.id, environment.id
-            ):
-                previous.status = "superseded"
-                previous.updated_by = actor_id
             baseline = repository.create_baseline(
                 case.project_id,
                 case.id,
@@ -248,7 +241,7 @@ class CaseService:
                 if (
                     baseline is None
                     or baseline.owner_id != actor_id
-                    or baseline.status != "active"
+                    or baseline.status == "archived"
                 ):
                     raise CaseNotFoundError("API baseline was not found")
                 baseline.group_name = group_name
@@ -264,7 +257,7 @@ class CaseService:
             if (
                 baseline is None
                 or baseline.owner_id != actor_id
-                or baseline.status != "active"
+                or baseline.status == "archived"
             ):
                 raise CaseNotFoundError("API baseline was not found")
             baseline.status = "archived"
@@ -391,7 +384,9 @@ class CaseService:
             case_id=case.id,
             case_version_id=version.id,
             environment_revision_id=baseline.environment_revision_id,
+            source_revision_id=endpoint.revision_id,
             endpoint_id=endpoint.id,
+            status=baseline.status,
             case_name=case.name,
             case_version=version.version_number,
             priority=version.priority,

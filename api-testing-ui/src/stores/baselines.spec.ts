@@ -14,14 +14,14 @@ describe('baselines store', () => {
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
       {
         id: 'baseline-1', project_id: 'project-1', case_id: 'case-1', case_version_id: 'version-1',
-        environment_revision_id: 'environment-1', endpoint_id: 'endpoint-1', case_name: '我的收藏列表',
+        environment_revision_id: 'environment-1', source_revision_id: 'source-old', endpoint_id: 'endpoint-1', status: 'superseded', case_name: '我的收藏列表',
         case_version: 2, priority: 'P1', origin: 'ai', method: 'POST', path: '/print3d/api/v1/collection/page',
         endpoint_summary: '我的收藏列表', tags: ['家用业务', 'app接口'], adoption_reason: 'passing debug evidence',
         group_name: '我的收藏', adopted_at: '2026-08-12T10:00:00Z',
       },
       {
         id: 'baseline-2', project_id: 'project-1', case_id: 'case-2', case_version_id: 'version-2',
-        environment_revision_id: 'environment-1', endpoint_id: 'endpoint-2', case_name: '取消收藏',
+        environment_revision_id: 'environment-2', source_revision_id: 'source-new', endpoint_id: 'endpoint-2', status: 'active', case_name: '取消收藏',
         case_version: 1, priority: 'P1', origin: 'manual', method: 'POST', path: '/print3d/api/v1/collection/cancel',
         endpoint_summary: '取消收藏', tags: ['家用业务', 'app接口'], adoption_reason: 'passing debug evidence',
         group_name: '我的收藏', adopted_at: '2026-08-12T10:01:00Z',
@@ -37,8 +37,9 @@ describe('baselines store', () => {
     store.toggle('baseline-1')
     store.toggle('baseline-2')
 
-    expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines?project_id=project-1&source_revision_id=source-1&environment_revision_id=environment-1')
+    expect(get).toHaveBeenCalledWith('/api/api-testing/v1/baselines?project_id=project-1')
     expect(store.groups).toEqual(['我的收藏'])
+    expect(store.items.map(item => item.source_revision_id)).toEqual(['source-old', 'source-new'])
     expect(store.selectedEndpointIds).toEqual(['endpoint-1', 'endpoint-2'])
   })
 
@@ -51,14 +52,14 @@ describe('baselines store', () => {
     store.items = [
       {
         id: 'baseline-1', project_id: 'project-1', case_id: 'case-1', case_version_id: 'version-1',
-        environment_revision_id: 'environment-1', endpoint_id: 'endpoint-1', case_name: '我的收藏列表',
+        environment_revision_id: 'environment-1', source_revision_id: 'source-old', endpoint_id: 'endpoint-1', status: 'active', case_name: '我的收藏列表',
         case_version: 2, priority: 'P1', origin: 'ai', method: 'POST', path: '/print3d/api/v1/collection/page',
         endpoint_summary: '我的收藏列表', tags: [], group_name: '未分组', adoption_reason: '',
         adopted_at: '2026-08-12T10:00:00Z',
       },
       {
         id: 'baseline-2', project_id: 'project-1', case_id: 'case-2', case_version_id: 'version-2',
-        environment_revision_id: 'environment-1', endpoint_id: 'endpoint-2', case_name: '取消收藏',
+        environment_revision_id: 'environment-2', source_revision_id: 'source-new', endpoint_id: 'endpoint-2', status: 'active', case_name: '取消收藏',
         case_version: 1, priority: 'P1', origin: 'manual', method: 'POST', path: '/print3d/api/v1/collection/cancel',
         endpoint_summary: '取消收藏', tags: [], group_name: '未分组', adoption_reason: '',
         adopted_at: '2026-08-12T10:01:00Z',
@@ -81,7 +82,7 @@ describe('baselines store', () => {
     store.items = [
       {
         id: 'baseline-1', project_id: 'project-1', case_id: 'case-1', case_version_id: 'version-1',
-        environment_revision_id: 'environment-1', endpoint_id: 'endpoint-1', case_name: '我的收藏列表',
+        environment_revision_id: 'environment-1', source_revision_id: 'source-old', endpoint_id: 'endpoint-1', status: 'superseded', case_name: '我的收藏列表',
         case_version: 2, priority: 'P1', origin: 'ai', method: 'POST', path: '/print3d/api/v1/collection/page',
         endpoint_summary: '我的收藏列表', tags: [], group_name: '我的收藏', adoption_reason: '',
         adopted_at: '2026-08-12T10:00:00Z',

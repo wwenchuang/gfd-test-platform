@@ -69,6 +69,54 @@ describe('cases store', () => {
     expect(draft.request.body).toEqual({ modelSn: 'm003' })
   })
 
+  it('starts a new draft with OpenAPI query parameter examples but no header scenarios', () => {
+    const store = useCasesStore()
+    const endpoint = {
+      id: 'endpoint-work-info', method: 'GET', path: '/devices/workInfo', summary: '设备工作详情', tags: [],
+      operation: {
+        parameters: [
+          { name: 'deviceSn', in: 'query', schema: { type: 'string' }, example: '1234567890123456789' },
+          { name: 'source', in: 'query', schema: { type: 'string', default: 'calibration' } },
+          { name: 'Authorization', in: 'header', schema: { type: 'string' }, example: 'Bearer token' },
+        ],
+      },
+    } as ApiEndpoint
+
+    const draft = store.draftFor(endpoint)
+
+    expect(draft.request.query).toEqual({
+      deviceSn: '1234567890123456789',
+      source: 'calibration',
+    })
+    expect(draft.request.headers).toEqual({})
+  })
+
+  it('starts a new draft with JSON body values derived from property examples', () => {
+    const store = useCasesStore()
+    const endpoint = {
+      id: 'endpoint-add', method: 'POST', path: '/collection/add', summary: '添加修改收藏', tags: [],
+      operation: {
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  modelSn: { type: 'string', example: 'm001' },
+                  type: { type: 'string', default: 'MODEL' },
+                },
+              },
+            },
+          },
+        },
+      },
+    } as ApiEndpoint
+
+    const draft = store.draftFor(endpoint)
+
+    expect(draft.request.body).toEqual({ modelSn: 'm001', type: 'MODEL' })
+  })
+
   it('sends only the public CaseDraft fields when saving a loaded AI version', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_version: { ...VERSION, version: 2 } } })
     const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { case_version: VERSION } })

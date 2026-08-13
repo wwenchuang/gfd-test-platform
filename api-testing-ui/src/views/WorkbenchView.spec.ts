@@ -47,6 +47,7 @@ describe('WorkbenchView debug workflow', () => {
     const debug = vi.spyOn(cases, 'debug').mockResolvedValue()
 
     const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
     vi.spyOn(tasks, 'restore').mockResolvedValue(null)
     vi.spyOn(tasks, 'saveSelection').mockResolvedValue({ id: 'task-1', name: '3D 家用接口测试' } as never)
 
@@ -112,6 +113,7 @@ describe('WorkbenchView debug workflow', () => {
     vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
 
     const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
     vi.spyOn(tasks, 'restore').mockResolvedValue(null)
 
     const router = createRouter({
@@ -152,6 +154,85 @@ describe('WorkbenchView debug workflow', () => {
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('添加收藏 - 正常流程')
     expect((wrapper.get('[data-testid="headers-name"]').element as HTMLInputElement).value).toBe('Biz')
     expect(cases.debugResult).toBeNull()
+  })
+
+  it('generates cases against the exact saved task scope', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+
+    const cases = useCasesStore()
+    cases.aiError = '旧的失败'
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const generate = vi.spyOn(cases, 'generate').mockResolvedValue()
+
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+      id: 'task-1',
+      name: '3D 家用接口测试',
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      selected_endpoint_ids: [ENDPOINT.id],
+      state: 'draft',
+      runnable_baseline_count: 0,
+      latest_ai_job_id: null,
+      latest_execution_id: null,
+      summary: {},
+      created_at: '',
+      updated_at: '',
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['endpoints'],
+            emits: ['activate', 'selection-change'],
+            template: '<button data-testid="select-endpoint" @click="$emit(\'selection-change\', [endpoints[0].id]); $emit(\'activate\', endpoints[0])">选择接口</button>',
+          },
+          AiAssistant: {
+            emits: ['generate'],
+            template: '<button data-testid="generate-cases" @click="$emit(\'generate\', \'覆盖正常流程\')">生成</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="select-endpoint"]').trigger('click')
+    await wrapper.get('[data-testid="generate-cases"]').trigger('click')
+    await flushPromises()
+
+    expect(generate).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', '覆盖正常流程', 'task-1')
+    expect(cases.aiError).toBe('')
   })
 })
 

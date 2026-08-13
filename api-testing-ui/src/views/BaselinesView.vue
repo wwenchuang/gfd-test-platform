@@ -21,9 +21,10 @@ const groupName = ref('')
 const localError = ref('')
 const localMessage = ref('')
 
-const contextReady = computed(() => Boolean(context.projectId && context.sourceRevisionId && context.environmentRevisionId))
+const projectReady = computed(() => Boolean(context.projectId))
+const executionReady = computed(() => Boolean(context.projectId && context.environmentRevisionId && executionSourceRevisionId.value))
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
-const sourceName = computed(() => {
+const selectedSourceName = computed(() => {
   const source = context.sourceRevisions.find(item => item.id === context.sourceRevisionId)
   return source ? `${source.name} · v${source.revision_number}` : '未选择接口版本'
 })
@@ -31,6 +32,10 @@ const environmentName = computed(() => {
   const environment = context.environmentRevisions.find(item => item.id === context.environmentRevisionId)
   return environment ? `${environment.name} · v${environment.revision}` : '未选择环境'
 })
+const executionSourceRevisionId = computed(() => {
+  return context.sourceRevisionId || baselines.selectedItems[0]?.source_revision_id || baselines.items[0]?.source_revision_id || ''
+})
+const selectedSourceById = computed(() => new Map(context.sourceRevisions.map(item => [item.id, item])))
 const filteredBaselines = computed(() => {
   const needle = search.value.trim().toLowerCase()
   return baselines.items.filter(item => {
@@ -71,14 +76,10 @@ async function changeProject(projectId: string | null): Promise<void> {
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
   context.selectSourceRevision(sourceRevisionId)
-  baselines.clearSelection()
-  await loadBaselines()
 }
 
 async function changeEnvironment(environmentRevisionId: string | null): Promise<void> {
   context.selectEnvironmentRevision(environmentRevisionId)
-  baselines.clearSelection()
-  await loadBaselines()
 }
 
 async function loadBaselines(): Promise<void> {
@@ -87,8 +88,6 @@ async function loadBaselines(): Promise<void> {
   if (!context.projectId) return
   await baselines.load({
     projectId: context.projectId,
-    sourceRevisionId: context.sourceRevisionId || undefined,
-    environmentRevisionId: context.environmentRevisionId || undefined,
   })
 }
 
@@ -116,8 +115,8 @@ async function saveScope(): Promise<void> {
 async function addSelectedToTask(): Promise<boolean> {
   localError.value = ''
   localMessage.value = ''
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
-    localError.value = '请先选择项目、接口版本和执行环境'
+  if (!context.projectId || !context.environmentRevisionId || !executionSourceRevisionId.value) {
+    localError.value = '请先选择项目和执行环境；接口版本仅用于执行记录，不会过滤基线'
     return false
   }
   if (!baselines.selectedEndpointIds.length) {
@@ -129,14 +128,14 @@ async function addSelectedToTask(): Promise<boolean> {
     if (context.error) throw new Error(context.error)
     const restored = await tasks.restore(context.projectId)
     const existing = restored?.project_id === context.projectId
-      && restored.source_revision_id === context.sourceRevisionId
+      && restored.source_revision_id === executionSourceRevisionId.value
       && restored.environment_revision_id === context.environmentRevisionId
       ? restored.selected_endpoint_ids
       : []
     const endpointIds = [...new Set([...existing, ...baselines.selectedEndpointIds])]
     await tasks.saveSelection({
       projectId: context.projectId,
-      sourceRevisionId: context.sourceRevisionId,
+      sourceRevisionId: executionSourceRevisionId.value,
       environmentRevisionId: context.environmentRevisionId,
     }, endpointIds, `${projectName.value}基线回归`)
     localMessage.value = `已将 ${baselines.selectedItems.length} 条基线加入当前任务`
@@ -150,8 +149,8 @@ async function addSelectedToTask(): Promise<boolean> {
 async function runSelectedTask(): Promise<void> {
   localError.value = ''
   localMessage.value = ''
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
-    localError.value = '请先选择项目、接口版本和执行环境'
+  if (!context.projectId || !context.environmentRevisionId || !executionSourceRevisionId.value) {
+    localError.value = '请先选择项目和执行环境；接口版本仅用于执行记录，不会过滤基线'
     return
   }
   if (!baselines.selectedIds.length) {
@@ -163,7 +162,7 @@ async function runSelectedTask(): Promise<void> {
     if (context.error) throw new Error(context.error)
     const execution = await executions.runBaselines({
       projectId: context.projectId,
-      sourceRevisionId: context.sourceRevisionId,
+      sourceRevisionId: executionSourceRevisionId.value,
       environmentRevisionId: context.environmentRevisionId,
       baselineIds: baselines.selectedIds,
     })
@@ -213,6 +212,11 @@ async function archiveBaseline(item: ApiBaselineCase): Promise<void> {
 function rowTitle(item: ApiBaselineCase): string {
   return item.endpoint_summary || item.case_name || item.path
 }
+
+function sourceRevisionName(item: ApiBaselineCase): string {
+  const source = selectedSourceById.value.get(item.source_revision_id)
+  return source ? `${source.name} · v${source.revision_number}` : `来源版本 ${item.source_revision_id.slice(0, 8)}`
+}
 </script>
 
 <template>
@@ -223,7 +227,7 @@ function rowTitle(item: ApiBaselineCase): string {
         <h1>基线用例</h1>
         <p class="page-subtitle">已调试通过并采纳的用例在这里统一查看。基线按项目固定保存，执行时再选择目标环境。</p>
       </div>
-      <button class="icon-command" type="button" title="重新读取基线" :disabled="baselines.loading || !contextReady" @click="loadBaselines"><RefreshCw :class="{ 'is-spinning': baselines.loading }" :size="18" /></button>
+      <button class="icon-command" type="button" title="重新读取基线" :disabled="baselines.loading || !projectReady" @click="loadBaselines"><RefreshCw :class="{ 'is-spinning': baselines.loading }" :size="18" /></button>
     </header>
 
     <ContextBar
@@ -235,6 +239,8 @@ function rowTitle(item: ApiBaselineCase): string {
       :environment-revision-id="context.environmentRevisionId"
       :loading="context.loading || context.optionsLoading || baselines.loading"
       :saved="context.isSaved"
+      save-label="保存执行环境"
+      saved-label="执行环境已保存"
       @update:project-id="changeProject"
       @update:source-revision-id="changeSource"
       @update:environment-revision-id="changeEnvironment"
@@ -243,7 +249,7 @@ function rowTitle(item: ApiBaselineCase): string {
 
     <section class="baseline-summary-grid" aria-label="基线概览">
       <div><span>项目</span><strong>{{ projectName }}</strong></div>
-      <div><span>当前接口范围</span><strong>{{ sourceName }}</strong></div>
+      <div><span>执行记录接口版本</span><strong>{{ selectedSourceName }}</strong><small>不筛选基线</small></div>
       <div><span>本次执行目标</span><strong>{{ environmentName }}</strong></div>
       <div><span>基线数量</span><strong>{{ baselines.items.length }} 条</strong></div>
       <div><span>已选择</span><strong>{{ baselines.selectedItems.length }} 条</strong></div>
@@ -272,8 +278,8 @@ function rowTitle(item: ApiBaselineCase): string {
           <div>
             <button class="secondary-command" type="button" :disabled="!filteredBaselines.length" @click="toggleFiltered">{{ allFilteredSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
             <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length" @click="baselines.clearSelection">清空选择</button>
-            <button class="primary-command" type="button" :disabled="tasks.saving || !baselines.selectedIds.length" @click="addSelectedToTask"><ListPlus :size="15" />{{ tasks.saving ? '加入中' : '加入当前任务' }}</button>
-            <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselines.selectedIds.length" @click="runSelectedTask"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '执行所选基线' }}</button>
+            <button class="primary-command" type="button" :disabled="tasks.saving || !baselines.selectedIds.length || !executionReady" @click="addSelectedToTask"><ListPlus :size="15" />{{ tasks.saving ? '加入中' : '加入当前任务' }}</button>
+            <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselines.selectedIds.length || !executionReady" @click="runSelectedTask"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行基线' }}</button>
           </div>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">
@@ -289,7 +295,7 @@ function rowTitle(item: ApiBaselineCase): string {
 
         <div v-if="baselines.loading" class="section-empty">正在读取基线用例…</div>
         <div v-else-if="!context.projectId" class="section-empty">先选择项目，再查看该项目沉淀的基线。</div>
-        <div v-else-if="!filteredBaselines.length" class="section-empty">该项目暂无基线。请先在工作台调试通过后采纳为基线。</div>
+        <div v-else-if="!filteredBaselines.length" class="section-empty">该项目暂无基线。基线按项目固定保存，切换接口版本或执行环境不会影响这里；请先在工作台调试通过后采纳为基线。</div>
         <div v-else class="baseline-table" role="table" aria-label="基线用例列表">
           <div class="baseline-table-head" role="row">
             <span></span><span>用例</span><span>接口</span><span>分组</span><span>版本</span><span>采纳时间</span><span>操作</span>
@@ -300,14 +306,17 @@ function rowTitle(item: ApiBaselineCase): string {
             </label>
             <span class="baseline-case-copy">
               <strong>{{ item.case_name }}</strong>
-              <small>{{ item.adoption_reason || '已采纳为基线' }}</small>
+              <small>
+                <b v-if="item.status !== 'active'" class="baseline-status-pill">历史版本</b>
+                {{ item.adoption_reason || '已采纳为基线' }}
+              </small>
             </span>
             <span class="baseline-endpoint-copy">
               <b><span :class="['method-badge', `method-${item.method.toLowerCase()}`]">{{ item.method }}</span>{{ rowTitle(item) }}</b>
               <code>{{ item.path }}</code>
             </span>
             <span>{{ baselineGroup(item) }}</span>
-            <span>{{ item.priority }} · v{{ item.case_version }} · {{ item.origin === 'ai' ? 'AI' : '手工' }}</span>
+            <span>{{ item.priority }} · 用例 v{{ item.case_version }} · {{ item.origin === 'ai' ? 'AI' : '手工' }}<small>来源版本：{{ sourceRevisionName(item) }}</small></span>
             <time>{{ new Date(item.adopted_at).toLocaleString('zh-CN') }}</time>
             <span class="baseline-row-actions">
               <button class="tiny-command" type="button" title="编辑用例" @click="editBaseline(item)"><Edit3 :size="14" />编辑</button>

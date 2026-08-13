@@ -40,7 +40,7 @@ describe('notifications store', () => {
 
   it('sends a completed execution report to Feishu', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: {
-      notification: { execution_id: 'execution-1', channel_type: 'feishu', sent: true, message: '飞书报告已发送' },
+      notification: { execution_id: 'execution-1', channel_type: 'feishu', sent: true, message: '飞书通知已发' },
     } })
     const store = useNotificationsStore()
 
@@ -49,6 +49,6 @@ describe('notifications store', () => {
     expect(post).toHaveBeenCalledWith('/api/api-testing/v1/executions/execution-1/notify', {
       channel_type: 'feishu',
     })
-    expect(store.lastSendMessage).toBe('飞书报告已发送')
+    expect(store.lastSendMessage).toBe('飞书通知已发')
   })
 })

@@ -229,6 +229,8 @@ export interface DebugResult {
 export interface ExecutionView {
   id: string
   project_id: string
+  task_id?: string | null
+  task_name?: string | null
   state: string
   execution_type: 'debug' | 'regression' | 'baseline_regression'
   source_revision_id: string
@@ -237,6 +239,7 @@ export interface ExecutionView {
   case_statuses: string[]
   case_results: ExecutionCaseResult[]
   summary: Record<string, number>
+  notifications?: Record<string, { sent?: boolean; failed?: boolean; message?: string }>
   cancellation_requested: boolean
   created_at: string
   started_at: string | null
@@ -317,7 +320,9 @@ export interface ApiBaselineCase {
   case_id: string
   case_version_id: string
   environment_revision_id: string
+  source_revision_id: string
   endpoint_id: string
+  status: string
   case_name: string
   case_version: number
   priority: string

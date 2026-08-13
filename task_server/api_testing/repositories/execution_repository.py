@@ -78,8 +78,6 @@ class ExecutionRepository:
     def active_baseline_version_ids(
         self,
         project_id,
-        source_revision_id,
-        environment_revision_id,
         owner_id,
         endpoint_ids=None,
         baseline_ids=None,
@@ -97,7 +95,7 @@ class ExecutionRepository:
             .where(
                 ApiBaseline.project_id == project_id,
                 ApiBaseline.owner_id == owner_id,
-                ApiBaseline.status == "active",
+                ApiBaseline.status != "archived",
             )
             .order_by(ApiBaseline.created_at, ApiBaseline.id)
         )

@@ -40,7 +40,7 @@ const runnableLabel = (task: ApiTestTask | null): string => {
     <div class="task-fact"><span>状态</span><strong :class="task ? `task-state-${task.state}` : ''">{{ runnableLabel(task) }}</strong></div>
     <div class="task-actions">
       <button data-testid="new-task" class="secondary-command" type="button" :disabled="saving || running" @click="$emit('new')"><FilePlus2 :size="15" />新建任务</button>
-      <button data-testid="save-task" class="secondary-command" type="button" :disabled="saving || !selectedCount" @click="$emit('save')"><Save :size="15" />{{ saving ? '保存中' : '保存为当前任务' }}</button>
+      <button data-testid="save-task" class="secondary-command" type="button" :disabled="saving || !selectedCount" @click="$emit('save')"><Save :size="15" />{{ saving ? '保存中' : '保存任务范围' }}</button>
       <button data-testid="run-task" class="primary-command" type="button" :disabled="running || !task || task.runnable_baseline_count < 1 || ['designing','debugging','running'].includes(task.state)" @click="$emit('run')"><Play :size="15" />{{ running ? '创建执行中' : '执行本任务' }}</button>
     </div>
     <p class="task-help">任务保存当前接口范围；调试通过后采纳为基线，后续可作为发版定时回归的执行集合。</p>

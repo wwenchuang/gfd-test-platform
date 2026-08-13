@@ -269,6 +269,79 @@ def test_request_identity_binding_uses_the_selected_source_endpoint():
     assert payload["request"]["service"] == "default"
 
 
+def test_business_contract_marks_bodyless_parameter_endpoints_as_parameter_driven():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    operation = {
+        "requestBody": None,
+        "parameters": [
+            {
+                "name": "Biz",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": SYNTHETIC_PUBLIC_VALUE,
+            },
+            {
+                "name": "deviceId",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "minLength": 1},
+                "example": "681268D090B7",
+            },
+            {
+                "name": "source",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "enum": ["calibration", "print"]},
+                "example": "calibration",
+            },
+            {
+                "name": "printSn",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "1441818241848516608",
+            },
+        ],
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "code": {"type": "integer"},
+                                "msg": {"type": "string"},
+                                "data": {"type": "object"},
+                            },
+                        }
+                    }
+                }
+            }
+        },
+    }
+
+    contract = AiCaseService._business_operation_contract(operation)
+
+    assert "requestBody" not in contract
+    assert contract["case_design_strategy"] == "parameter_driven"
+    assert contract["request_body_state"] == "absent"
+    assert contract["parameter_case_guidance"] == {
+        "basis": "path/query/cookie parameters",
+        "request_body": "keep_null",
+        "required_parameters": ["deviceId", "source"],
+        "optional_parameters": ["printSn"],
+        "suggested_positive_source": "example/default/schema constraints",
+        "suggested_negative_source": "missing required, empty string, wrong type or documented enum/boundary",
+    }
+    assert [(item["in"], item["name"]) for item in contract["parameters"]] == [
+        ("query", "deviceId"),
+        ("query", "source"),
+        ("query", "printSn"),
+    ]
+
+
 def test_submit_deduplicates_in_order_and_creates_bounded_batches(
     session_factory, ai_context
 ):
@@ -508,6 +581,74 @@ def test_prompt_keeps_safe_body_examples_and_omits_runtime_headers(
     assert SYNTHETIC_SECRET not in json.dumps(payload, ensure_ascii=False)
 
 
+def test_prompt_marks_bodyless_query_endpoints_as_parameter_driven(
+    session_factory, ai_context
+):
+    endpoint = ai_context["endpoints"]["favoriteList"]
+    with session_factory.begin() as session:
+        stored = session.get(ApiSourceEndpoint, endpoint.id)
+        operation = copy.deepcopy(stored.operation)
+        operation.pop("requestBody", None)
+        operation["parameters"] = [
+            {
+                "name": "Biz",
+                "in": "header",
+                "required": True,
+                "schema": {"type": "string"},
+                "example": SYNTHETIC_PUBLIC_VALUE,
+            },
+            {
+                "name": "deviceId",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "minLength": 1},
+                "example": "681268D090B7",
+                "description": "设备 ID",
+            },
+            {
+                "name": "source",
+                "in": "query",
+                "required": True,
+                "schema": {"type": "string", "enum": ["calibration", "print"]},
+                "example": "calibration",
+                "description": "校准场景下 =calibration",
+            },
+            {
+                "name": "printSn",
+                "in": "query",
+                "required": False,
+                "schema": {"type": "string"},
+                "example": "1441818241848516608",
+            },
+        ]
+        stored.operation = operation
+
+    gateway = FakeGateway(_gateway_response([_candidate(endpoint)]))
+    service = _service(session_factory, gateway)
+    job = service.submit(
+        [endpoint.id], ai_context["environment"].revision_id, "admin"
+    )
+
+    assert service.process(job.id).state == "completed"
+    payload = json.loads(gateway.calls[0]["messages"][1]["content"])
+    operation = payload["endpoints"][0]["operation"]
+
+    assert "requestBody" not in operation
+    assert operation["case_design_strategy"] == "parameter_driven"
+    assert operation["request_body_state"] == "absent"
+    assert operation["parameter_case_guidance"]["request_body"] == "keep_null"
+    assert operation["parameter_case_guidance"]["required_parameters"] == [
+        "deviceId",
+        "source",
+    ]
+    assert operation["parameter_case_guidance"]["optional_parameters"] == ["printSn"]
+    assert [(item["in"], item["name"], item.get("example")) for item in operation["parameters"]] == [
+        ("query", "deviceId", "681268D090B7"),
+        ("query", "source", "calibration"),
+        ("query", "printSn", "1441818241848516608"),
+    ]
+
+
 def test_prompt_redacts_additional_short_sensitive_body_example_fields(
     session_factory, ai_context
 ):
@@ -579,6 +720,8 @@ def test_runtime_managed_request_headers_cannot_be_generated_as_test_scenarios(
         ("鉴权失败：缺失 Authorization 头", "验证 Authorization 为空"),
         ("我的收藏列表 - 正常获取（含 Biz + Authorization）", "验证携带有效请求头"),
         ("鉴权缺失（无 Biz/ZXBToken）", "验证业务 token 缺失"),
+        ("业务失败响应：未登录", "验证登录态缺失时接口返回错误"),
+        ("登录态过期场景", "验证用户 token 过期后的失败响应"),
     ):
         candidate = _candidate(endpoint)
         candidate["case"]["name"] = name
@@ -602,6 +745,34 @@ def test_runtime_managed_request_headers_cannot_be_generated_as_test_scenarios(
         item["code"] == "candidate_validation_error"
         and "runtime-managed request header" in item["message"]
         for item in result.batches[0].validation_errors
+    )
+
+
+def test_runtime_managed_header_scenario_detection_covers_login_state_synonyms():
+    from task_server.api_testing.services.ai_service import AiCaseService
+
+    class FakeRepository:
+        @staticmethod
+        def get_environment_revision(revision_id):
+            return SimpleNamespace(
+                default_headers={
+                    "Authorization": "Bearer {{ZXBToken}}",
+                    "Biz": "{{Biz}}",
+                }
+            )
+
+    endpoint = SimpleNamespace(
+        summary="我的收藏列表",
+        operation={"parameters": []},
+    )
+    payload = {
+        "name": "我的收藏列表 - 未登录",
+        "purpose": "验证登录态缺失时接口返回错误",
+        "data_rows": [{"name": "登录态过期"}],
+    }
+
+    assert AiCaseService._is_runtime_managed_header_scenario(
+        FakeRepository(), endpoint, "environment-revision", payload
     )
 
 
@@ -1424,6 +1595,8 @@ def test_skill_schema_and_eval_define_a_strict_chinese_contract():
     )
 
     assert "只输出" in skill and "不得" in skill and "接口测试" in skill
+    assert "参数驱动" in skill and "requestBody 缺失" in skill
+    assert 'schema: {"type":"object"}' in skill
     assert schema["additionalProperties"] is False
     assert schema["properties"]["candidates"]["items"]["additionalProperties"] is False
     assert evaluation["language"] == "zh-CN"

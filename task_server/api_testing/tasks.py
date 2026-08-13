@@ -101,7 +101,7 @@ def _notify_baseline_regression(factory, event_stream, execution_id):
         event_stream.append(
             execution_id,
             "notification_failed",
-            {"channel_type": "feishu", "message": "飞书报告发送失败"},
+            {"channel_type": "feishu", "message": "飞书通知发送失败"},
         )
     else:
         event_stream.append(

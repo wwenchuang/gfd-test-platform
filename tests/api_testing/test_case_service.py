@@ -898,7 +898,7 @@ def test_baseline_rejects_cross_version_endpoint_environment_and_project(
         case_service.adopt_baseline(second.id, wrong_project, "admin")
 
 
-def test_readoption_supersedes_only_same_case_and_environment(
+def test_readoption_keeps_multiple_active_baseline_versions_until_manual_archive(
     case_service, project_context, session_factory
 ):
     endpoint = project_context["endpoints"]["favoriteList"]
@@ -910,15 +910,27 @@ def test_readoption_supersedes_only_same_case_and_environment(
     second_evidence = _create_execution_evidence(session_factory, project_context, second)
     second_baseline = case_service.adopt_baseline(second.id, second_evidence, "admin")
 
-    assert case_service.get_baseline(first_baseline.id).status == "superseded"
+    assert case_service.get_baseline(first_baseline.id).status == "active"
     assert case_service.get_baseline(second_baseline.id).status == "active"
+    active = case_service.list_active_baselines(project_context["project"].id, "admin")
+    assert {item.id for item in active} >= {first_baseline.id, second_baseline.id}
+
+    archived = case_service.archive_baseline(first_baseline.id, "admin")
+    active_after_archive = case_service.list_active_baselines(
+        project_context["project"].id,
+        "admin",
+    )
+
+    assert archived.status == "archived"
+    assert first_baseline.id not in {item.id for item in active_after_archive}
+    assert second_baseline.id in {item.id for item in active_after_archive}
     with session_factory() as session:
         assert session.scalar(
             select(func.count(ApiBaseline.id)).where(ApiBaseline.case_id == first.case_id)
         ) == 2
 
 
-def test_new_revision_of_same_environment_supersedes_old_baseline(
+def test_new_environment_revision_keeps_old_baseline_visible_until_manual_archive(
     case_service, project_context, session_factory
 ):
     endpoint = project_context["endpoints"]["favoriteList"]
@@ -949,8 +961,44 @@ def test_new_revision_of_same_environment_supersedes_old_baseline(
     )
     second_baseline = case_service.adopt_baseline(second.id, second_evidence, "admin")
 
-    assert case_service.get_baseline(first_baseline.id).status == "superseded"
+    assert case_service.get_baseline(first_baseline.id).status == "active"
     assert case_service.get_baseline(second_baseline.id).status == "active"
+    active = case_service.list_active_baselines(project_context["project"].id, "admin")
+    active_ids = {item.id for item in active}
+    assert {first_baseline.id, second_baseline.id} <= active_ids
+    assert case_service.get_baseline(first_baseline.id).environment_revision_id != (
+        case_service.get_baseline(second_baseline.id).environment_revision_id
+    )
+
+
+def test_historical_superseded_baseline_remains_manageable_until_archived(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "manual", "admin")
+    evidence_id = _create_execution_evidence(session_factory, project_context, draft)
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    with session_factory.begin() as session:
+        historical = session.get(ApiBaseline, baseline.id)
+        historical.status = "superseded"
+
+    visible = case_service.list_active_baselines(project_context["project"].id, "admin")
+
+    assert [item.id for item in visible] == [baseline.id]
+    assert visible[0].status == "superseded"
+
+    updated = case_service.update_baseline_group([baseline.id], "历史稳定集", "admin")
+    assert updated[0].group_name == "历史稳定集"
+
+    archived = case_service.archive_baseline(baseline.id, "admin")
+    active_after_archive = case_service.list_active_baselines(
+        project_context["project"].id,
+        "admin",
+    )
+
+    assert archived.status == "archived"
+    assert baseline.id not in {item.id for item in active_after_archive}
 
 
 def test_case_and_baseline_views_do_not_expose_execution_payloads(
@@ -968,6 +1016,49 @@ def test_case_and_baseline_views_do_not_expose_execution_payloads(
     assert "ZXBToken" in repr(draft)
     assert SYNTHETIC_SECRET not in repr(draft)
     assert SYNTHETIC_SECRET not in repr(baseline)
+
+
+def test_project_baselines_remain_visible_across_source_and_environment_revisions(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "manual", "admin")
+    evidence_id = _create_execution_evidence(session_factory, project_context, draft)
+    baseline = case_service.adopt_baseline(draft.id, evidence_id, "admin")
+
+    from task_server.api_testing.services.source_service import SourceService
+
+    source_service = SourceService(session_factory)
+    preview = source_service.preview_refresh(
+        project_context["project"].id,
+        project_context["source_revision"].source_id,
+        copy.deepcopy(FAVORITES_OPENAPI),
+        "admin",
+    )
+    new_revision = source_service.activate_preview(preview.id, "admin")
+    with session_factory.begin() as session:
+        new_environment_revision = ApiEnvironmentRevision(
+            environment_id=project_context["environment"].id,
+            source_revision_id=new_revision.id,
+            revision_number=2,
+            name=project_context["environment"].name,
+            default_headers={"Authorization": "Bearer {{ZXBToken}}"},
+            **_audit(),
+        )
+        session.add(new_environment_revision)
+        session.flush()
+        environment = session.get(ApiEnvironment, project_context["environment"].id)
+        environment.active_revision_id = new_environment_revision.id
+
+    baselines = case_service.list_active_baselines(
+        project_context["project"].id,
+        "admin",
+    )
+
+    assert [item.id for item in baselines] == [baseline.id]
+    assert baselines[0].source_revision_id == project_context["source_revision"].id
+    assert baselines[0].environment_revision_id == project_context["environment_revision"].id
+    assert baselines[0].case_version_id == draft.id
 
 
 def test_archived_case_is_removed_from_active_case_list(

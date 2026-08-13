@@ -192,6 +192,7 @@ def test_export_uses_official_endpoint_and_bearer_header():
     payload = json.loads(request.data.decode("utf-8"))
     assert payload["branchId"] == 2
     assert payload["environmentIds"] == [33831678]
+    assert payload["options"]["addFoldersToTags"] is True
     assert timeout == 30
     assert document["openapi"] == "3.0.1"
 

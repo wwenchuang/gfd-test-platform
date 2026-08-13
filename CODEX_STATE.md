@@ -28,6 +28,156 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-13 API 测试：历史基线恢复为可见固定资产
+
+用户反馈之前采纳过的基线在接口版本 / 环境版本切换后找不到。进一步排查发现：虽然新逻辑已停止自动顶掉旧基线，但历史数据中已经被旧逻辑标记为 `superseded` 的基线仍被列表、任务计数和基线回归执行过滤掉。
+
+本轮把基线固定资产语义统一为：只有 `archived` 表示用户主动移出基线，其余历史状态均作为项目基线可见、可分组、可移出、可加入任务并可按当前环境执行。
+
+- `CaseRepository.list_active_baselines` 改为返回项目下所有未归档基线。
+- `ExecutionRepository.active_baseline_version_ids` 和 `TestTaskRepository.runnable_baseline_count` 同步使用未归档基线，避免基线页能看到但执行 / 任务计数找不到。
+- `CaseService.update_baseline_group` / `archive_baseline` 允许管理历史 `superseded` 基线，只拒绝已归档基线。
+- `BaselineCaseView` 增加 `status` 字段，前端对非 `active` 基线显示“历史版本”标识。
+- 新增回归测试覆盖：历史 `superseded` 基线仍可见、可改分组、可归档，归档后才从列表消失。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/api_testing/contracts/case.py task_server/api_testing/services/case_service.py task_server/api_testing/repositories/case_repository.py task_server/api_testing/repositories/execution_repository.py task_server/api_testing/repositories/test_task_repository.py
+# passed
+
+npm --prefix api-testing-ui test -- --run src/stores/baselines.spec.ts src/views/BaselinesView.spec.ts
+# 2 files / 4 tests passed
+
+python3 -m pytest tests/api_testing/test_case_service.py::test_project_baselines_remain_visible_across_source_and_environment_revisions tests/api_testing/test_case_service.py::test_readoption_keeps_multiple_active_baseline_versions_until_manual_archive tests/api_testing/test_case_service.py::test_new_environment_revision_keeps_old_baseline_visible_until_manual_archive tests/api_testing/test_case_service.py::test_historical_superseded_baseline_remains_manageable_until_archived tests/api_testing/test_execution_service.py::test_selected_baseline_regression_runs_fixed_baseline_against_current_environment -q
+# 5 skipped；本机无测试 PostgreSQL，按既有策略跳过，需线上数据库环境再跑真实回归。
+```
+
+### 2026-08-13 API 测试：基线固定资产不再被新版本自动顶掉
+
+用户反馈基线应是固定资产，接口版本和环境版本更新频率高，切换后不应找不到既有基线；多个基线版本应由用户手动删除 / 移出 / 分组维护。
+
+本轮只收口基线采纳和查询语义，不混入 Apifox 参数同步、报告 UI 或飞书通知：
+
+- 基线页继续按项目维度读取固定资产，接口版本仅作为来源版本展示，执行环境仅作为运行时选择，不再作为默认过滤条件。
+- 采纳同一接口 / 同一环境家族的新基线时，不再把旧基线自动标记为 `superseded`；旧版本和新版本会同时保持 `active`，用户可以通过“移出基线 / 归档 / 分组”手动调整。
+- 后端移除 `active_baselines_for_update` 自动顶替逻辑，避免采纳新版本后旧基线从列表消失。
+- 用例服务测试改为验证“多版本基线同时可见，手动归档后才消失”，并覆盖新环境版本下旧基线仍可见的场景。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/api_testing/contracts/case.py task_server/api_testing/services/case_service.py task_server/api_testing/repositories/case_repository.py task_server/api_testing/repositories/execution_repository.py task_server/api_testing/services/execution_service.py
+# passed
+
+npm --prefix api-testing-ui test -- --run src/stores/baselines.spec.ts src/views/BaselinesView.spec.ts
+# 2 files / 4 tests passed
+
+python3 -m pytest tests/api_testing/test_case_service.py::test_project_baselines_remain_visible_across_source_and_environment_revisions tests/api_testing/test_case_service.py::test_readoption_keeps_multiple_active_baseline_versions_until_manual_archive tests/api_testing/test_case_service.py::test_new_environment_revision_keeps_old_baseline_visible_until_manual_archive tests/api_testing/test_execution_service.py::test_selected_baseline_regression_runs_fixed_baseline_against_current_environment -q
+# 4 skipped；本机无测试 PostgreSQL，按既有策略跳过，需线上数据库环境再跑真实回归。
+```
+
+### 2026-08-13 API 测试：M2/M4 基线固定资产、任务身份与飞书报告链接收口
+
+本轮继续 M2/M4 剩余闭环，只处理基线固定查询、执行记录任务身份、报告链接定位和飞书卡片，不混入 Apifox 参数同步、AI 用例生成规则或报告大改版。
+
+- 基线查询后端改为项目维度固定资产：`GET /api/api-testing/v1/baselines` 只要求 `project_id`，不再要求当前接口版本和执行环境；切换版本 / 环境后已有基线不会因为查询条件变化而消失。
+- `CaseService.list_active_baselines` 和 `CaseRepository.list_active_baselines` 契约同步收敛为 `project_id + actor_id`；基线自身仍保留采纳时的来源 `environment_revision_id` 和 `case_version_id` 作为展示 / 审计字段。
+- 执行提交增加任务快照：`ExecutionService.submit(..., task=...)` 和 `submit_active_baselines(..., task=...)` 会把 `task_id/task_name` 写入 `request_snapshot.task`；执行记录、报告和控制台可以稳定展示“执行的是哪个任务”。
+- `/tasks/{id}/run` 和 `/executions` 路由已把当前任务传给执行服务；手动发送飞书报告后会写入 `notification_sent` 事件，刷新页面后仍能看到“飞书通知已发”。
+- 飞书通知从纯文本升级为交互卡片：突出任务、环境、用例统计、通过率、问题摘要，并在配置了 `API_TESTING_REPORT_BASE_URL` / `API_TESTING_PUBLIC_BASE_URL` / `MIDSCENE_PUBLIC_BASE_URL` / `PUBLIC_BASE_URL` 时附带“查看报告”按钮。
+- 报告页支持 `execution_id` / `executionId` query 定位；飞书卡片链接打开 `/api-test/#/reports?execution_id=...` 时会直接选中对应报告。
+
+已验证：
+
+```bash
+python3 -m pytest tests/api_testing/test_execution_service.py::test_task_snapshot_keeps_task_identity_for_execution_history tests/api_testing/test_execution_service.py::test_task_snapshot_normalizes_empty_task_name tests/api_testing/test_notification_service.py -q
+# 4 passed
+
+python3 -m pytest tests/api_testing/test_execution_service.py::test_execution_view_derives_feishu_notification_from_events tests/api_testing/test_execution_service.py::test_task_snapshot_keeps_task_identity_for_execution_history tests/api_testing/test_execution_service.py::test_task_snapshot_normalizes_empty_task_name tests/api_testing/test_notification_service.py -q
+# 5 passed
+
+npm --prefix api-testing-ui test -- --run src/views/ReportsView.spec.ts src/stores/baselines.spec.ts src/stores/notifications.spec.ts src/stores/tasks.spec.ts src/components/ExecutionConsole.spec.ts
+# 5 files / 20 tests passed
+
+npm --prefix api-testing-ui run build
+# passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
+受限说明：`tests/api_testing/test_execution_service.py::test_submit_active_baselines_creates_one_click_regression` 和 `tests/api_testing/test_case_service.py::test_project_baselines_remain_visible_across_source_and_environment_revisions` 在本机因无测试 PostgreSQL 按既有策略跳过；上线后仍需在服务器执行 `bash deploy/api-testing-migrate.sh` 并做真实基线回归验证。
+
+### 2026-08-13 API 测试：参数型接口 AI 生成规则
+
+用户反馈 `body=null`、只有 query/path/cookie 参数的接口，例如设备状态查询，AI 仍按 Body 或弱 Schema 思路生成，出现 `assertions[1] expected must constrain response fields or values` 等校验失败。
+
+本轮只修参数驱动接口的 AI 契约和提示词，不改前端工作台、基线、报告或飞书通知：
+
+- AI 输入契约在接口无 `requestBody` 或 `requestBody: null`、但存在非 Header 参数时，标记 `case_design_strategy=parameter_driven`、`request_body_state=absent`。
+- 契约提供必填参数、可选参数、正向示例来源和负向边界来源；Header 参数仍被过滤，不进入 AI 业务用例设计范围。
+- Prompt 明确参数驱动接口的请求体必须保持 `null`，用例应基于 path/query/cookie 参数的 required、类型、枚举、默认值、示例值和说明生成正常、缺失必填、空值、错误类型/格式、枚举/边界和业务失败响应。
+- Prompt 明确参数型接口断言必须约束真实响应字段或值，例如 `$.code`、`$.msg`、`$.data`、状态码或带 `properties/required` 的 Schema；继续禁止 `schema: {"type":"object"}` 这类弱断言。
+
+已验证：
+
+```bash
+python3 -m pytest tests/api_testing/test_ai_service.py -q
+# 9 passed, 36 skipped；跳过项为本机无测试 PostgreSQL 时的既有跳过策略。
+
+python3 -m py_compile task_server/api_testing/services/ai_service.py
+# passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
+### 2026-08-13 API 测试：Apifox 分组与参数示例同步、AI 请求头场景过滤
+
+本轮只收口 M3 的同步数据完整性和 AI 生成过滤，没有混改基线、任务列表、报告 UI 或飞书通知。
+
+- OpenAPI 规范化时会优先合并 Apifox 文件夹扩展和标准 `tags`，例如 `家用业务 / app接口 / 我的收藏` 不再被已有单层 tag 覆盖成 `我的收藏` 或落到未分组。
+- 保持 query/path/body 的示例值、必填、类型和说明进入接口契约；前端草稿仍基于这些字段自动填充调试请求。
+- Body JSON 示例会保留在 `requestBody.content.application/json.example`，供 AI 生成和手工调试复用。
+- AI 候选校验扩展运行时鉴权识别：`未登录`、`登录态过期`、`token 过期/缺失`、`Biz`、`ZXBToken` 等会被判定为环境默认请求头场景，不再沉淀成无意义用例。
+- AI Prompt 已有“请求头由平台按环境统一注入”的约束，本轮只补服务端兜底，防止模型偶发生成请求头缺失类候选。
+
+验证结果：
+
+- `python3 -m pytest tests/api_testing/test_source_service.py tests/api_testing/test_ai_service.py::test_prompt_keeps_safe_body_examples_and_omits_runtime_headers tests/api_testing/test_ai_service.py::test_runtime_managed_request_headers_cannot_be_generated_as_test_scenarios tests/api_testing/test_ai_service.py::test_runtime_managed_header_scenario_detection_covers_login_state_synonyms tests/api_testing/test_ai_service.py::test_ai_relative_method_and_path_are_bound_to_the_selected_endpoint -q`：`50 passed, 15 skipped`；跳过项为本机无测试数据库时的既有跳过。
+- `npm --prefix api-testing-ui test -- --run src/stores/cases.spec.ts src/components/EndpointTree.spec.ts src/views/WorkbenchView.spec.ts`：`31 passed`。
+- `npm --prefix api-testing-ui run build`：通过。
+- `python3 tests/frontend_static_checks.py`：`72` 项通过。
+- `python3 tests/backend_static_checks.py`：`63` 项通过。
+- `git diff --check`：通过。
+
+### 2026-08-13 API 测试：接口范围选择器支持分组折叠、分组全选和已选列表
+
+本轮只收口工作台左侧接口范围选择体验，没有改动 Apifox 同步后端、AI 生成、基线或报告模型。
+
+- `EndpointTree` 增加 `全部接口 / 已选接口` 两个视图，900+ 接口不再只能靠顶部数字判断已选范围。
+- Apifox 分组在接口树中支持折叠 / 展开；分组标题展示接口总数和已选数。
+- 分组标题增加复选框，支持整组全选 / 取消；部分选中时显示半选状态。
+- `已选接口` 视图按分组展示当前选择，支持单条移除和清空已选；切回 `全部接口` 后原始接口树仍保留。
+- 选择事件仍按接口源列表顺序向外发出，避免影响任务范围保存、AI 生成和执行入口的既有联动。
+
+验证结果：
+
+- `npm --prefix api-testing-ui test -- --run src/components/EndpointTree.spec.ts src/views/WorkbenchView.spec.ts`：`9 passed`。
+- `npm --prefix api-testing-ui run build`：通过。
+- `python3 tests/frontend_static_checks.py`：`72` 项通过。
+- `git diff --check`：通过。
+
 ### 2026-08-12 API 测试：基线回归范围隔离与项目级飞书自动通知
 
 本轮修复 API 基线回归的执行语义，没有新增执行模式页面，也没有改动 UI Agent / YAML 主链路。

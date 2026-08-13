@@ -166,6 +166,99 @@ def test_openapi_normalization_preserves_supported_contract_metadata():
     assert "resolved_dependencies" not in saved_operation
 
 
+def test_openapi_normalization_uses_apifox_folder_when_tags_are_missing():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    list_operation = document["paths"]["/print3d/api/v1/favorite/list"]["get"]
+    list_operation.pop("tags")
+    list_operation["x-apifox-folder"] = {
+        "name": "我的收藏",
+        "path": ["家用业务", "app接口", "我的收藏"],
+    }
+
+    normalized = normalize_openapi_document(document, "source-1")
+
+    list_endpoint = next(item for item in normalized.endpoints if item.operation_id == "favoriteList")
+    assert list_endpoint.tags == ("家用业务", "app接口", "我的收藏")
+
+
+def test_openapi_normalization_merges_apifox_folder_with_existing_tags():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    list_operation = document["paths"]["/print3d/api/v1/favorite/list"]["get"]
+    list_operation["tags"] = ["我的收藏"]
+    list_operation["x-apifox-folder"] = {
+        "name": "我的收藏",
+        "path": ["家用业务", "app接口", "我的收藏"],
+    }
+
+    normalized = normalize_openapi_document(document, "source-1")
+
+    list_endpoint = next(item for item in normalized.endpoints if item.operation_id == "favoriteList")
+    assert list_endpoint.tags == ("家用业务", "app接口", "我的收藏")
+
+
+def test_openapi_normalization_preserves_parameter_and_body_examples_for_drafts():
+    from task_server.api_testing.adapters.openapi import normalize_openapi_document
+
+    document = copy.deepcopy(FAVORITES_OPENAPI)
+    document["paths"]["/print3d/api/v1/devices/workInfo"] = {
+        "get": {
+            "operationId": "deviceWorkInfo",
+            "summary": "设备工作详情",
+            "tags": ["设备"],
+            "parameters": [
+                {
+                    "name": "deviceSn",
+                    "in": "query",
+                    "required": True,
+                    "description": "设备序列号",
+                    "schema": {"type": "string"},
+                    "example": "1234567890123456789",
+                },
+                {
+                    "name": "source",
+                    "in": "query",
+                    "required": True,
+                    "description": "校准场景下 =calibration",
+                    "schema": {"type": "string"},
+                    "example": "calibration",
+                },
+                {
+                    "name": "printSn",
+                    "in": "query",
+                    "required": False,
+                    "schema": {"type": "string"},
+                    "example": "1441818241848516608",
+                },
+            ],
+            "responses": {"200": {"description": "ok"}},
+        }
+    }
+    add_operation = document["paths"]["/print3d/api/v1/favorite/add"]["post"]
+    add_operation["requestBody"]["content"]["application/json"]["example"] = {
+        "modelSn": "m001"
+    }
+
+    normalized = normalize_openapi_document(document, "source-1")
+
+    work_info = next(item for item in normalized.endpoints if item.operation_id == "deviceWorkInfo")
+    assert [
+        (item["name"], item["in"], item.get("required"), item.get("example"), item.get("description"))
+        for item in work_info.operation["parameters"]
+    ] == [
+        ("deviceSn", "query", True, "1234567890123456789", "设备序列号"),
+        ("source", "query", True, "calibration", "校准场景下 =calibration"),
+        ("printSn", "query", False, "1441818241848516608", None),
+    ]
+    add_endpoint = next(item for item in normalized.endpoints if item.operation_id == "favoriteAdd")
+    assert add_endpoint.operation["requestBody"]["content"]["application/json"]["example"] == {
+        "modelSn": "m001"
+    }
+
+
 def _reference_chain_document():
     return {
         "openapi": "3.1.0",

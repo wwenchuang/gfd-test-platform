@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Bug, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Bug, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
@@ -26,6 +26,7 @@ const selectedIds = ref<string[]>([])
 const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
+const taskNameDraft = ref('')
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const activeVersions = computed(() => activeEndpoint.value
@@ -50,6 +51,7 @@ const taskMatchesSelection = computed(() => Boolean(
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   const routeContext = restoreExecutionContextFromRoute()
+  if (context.projectId) await tasks.list(context.projectId)
   const restoredTask = context.projectId ? await tasks.restore(context.projectId) : null
   if (restoredTask && !routeContext) {
     context.restoreExecutionContext({
@@ -67,6 +69,10 @@ onMounted(async () => {
   await restoreDeepLink()
   if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
 })
+
+watch(() => tasks.task?.name, name => {
+  taskNameDraft.value = name || defaultTaskName()
+}, { immediate: true })
 
 function restoreExecutionContextFromRoute(): boolean {
   const projectId = routeValue(route.query.projectId)
@@ -96,16 +102,20 @@ async function loadSource(sourceRevisionId: string, restoredSelection: string[] 
 function changeProject(projectId: string | null): void {
   context.selectProject(projectId)
   tasks.clear()
+  tasks.tasks = []
   cases.clearDebug()
+  cases.clearAiJob()
   debugOpen.value = false
   activeEndpoint.value = null
   selectedIds.value = []
+  if (projectId) void tasks.list(projectId)
 }
 
 async function changeSource(sourceRevisionId: string | null): Promise<void> {
   context.selectSourceRevision(sourceRevisionId)
   tasks.clear()
   cases.clearDebug()
+  cases.clearAiJob()
   debugOpen.value = false
   if (sourceRevisionId) await loadSource(sourceRevisionId)
   else {
@@ -117,8 +127,26 @@ async function changeSource(sourceRevisionId: string | null): Promise<void> {
 function changeEnvironment(environmentRevisionId: string | null): void {
   context.selectEnvironmentRevision(environmentRevisionId)
   cases.clearDebug()
+  cases.clearAiJob()
   debugOpen.value = false
   if (tasks.task?.environment_revision_id !== environmentRevisionId) tasks.clear()
+}
+
+async function selectTask(taskId: string): Promise<void> {
+  localError.value = ''
+  const task = tasks.select(taskId)
+  if (!task) return
+  cases.clearDebug()
+  cases.clearAiJob()
+  debugOpen.value = false
+  context.restoreExecutionContext({
+    project_id: task.project_id,
+    source_revision_id: task.source_revision_id,
+    environment_revision_id: task.environment_revision_id,
+  })
+  await loadSource(task.source_revision_id, task.selected_endpoint_ids)
+  const endpoint = assets.endpoints.find(item => task.selected_endpoint_ids.includes(item.id))
+  activeEndpoint.value = endpoint || null
 }
 
 function activate(endpoint: ApiEndpoint): void {
@@ -136,10 +164,12 @@ function selectCaseVersion(versionId: string): void {
 function startNewTask(): void {
   tasks.clear()
   cases.clearDebug()
+  cases.clearAiJob()
   debugOpen.value = false
   localError.value = ''
   selectedIds.value = []
   activeEndpoint.value = null
+  taskNameDraft.value = defaultTaskName()
 }
 
 async function saveScope(): Promise<void> {
@@ -205,9 +235,10 @@ async function saveDraft() {
 }
 async function generate(intent: string): Promise<void> {
   if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
+  cases.clearAiJob()
   const task = await saveCurrentTask()
   if (!task) return
-  await cases.generate(selectedIds.value, context.environmentRevisionId, intent, task.id)
+  await cases.generate([...task.selected_endpoint_ids], task.environment_revision_id, intent, task.id)
   if (context.projectId) await tasks.restore(context.projectId)
   const firstGenerated = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
   if (firstGenerated) {
@@ -254,10 +285,7 @@ async function saveCurrentTask() {
   try {
     await context.saveContext()
     if (context.error) throw new Error(context.error)
-    const projectName = context.projects.find(item => item.id === context.projectId)?.name || 'API'
-    const name = tasks.task?.project_id === context.projectId
-      ? tasks.task.name
-      : `${projectName}接口测试`
+    const name = taskNameDraft.value.trim() || defaultTaskName()
     return await tasks.saveSelection({
       projectId: context.projectId,
       sourceRevisionId: context.sourceRevisionId,
@@ -266,6 +294,19 @@ async function saveCurrentTask() {
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '测试任务保存失败'
     return null
+  }
+}
+
+async function renameCurrentTask(): Promise<void> {
+  if (!tasks.task) {
+    localError.value = '请先保存任务后再修改任务名称'
+    return
+  }
+  localError.value = ''
+  try {
+    await tasks.rename(tasks.task.id, taskNameDraft.value)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '任务名称保存失败'
   }
 }
 
@@ -291,6 +332,11 @@ async function adoptBaseline(input: { caseVersionId: string; executionCaseId: st
 function routeValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
+
+function defaultTaskName(): string {
+  const projectName = context.projects.find(item => item.id === context.projectId)?.name || 'API'
+  return `${projectName}接口测试`
+}
 </script>
 
 <template>
@@ -311,6 +357,18 @@ function routeValue(value: unknown): string {
       @save="saveScope"
     />
     <TaskStatusStrip :task="tasks.task" :selected-count="selectedIds.length" :environment-name="environmentName" :saving="tasks.saving" :running="tasks.running" @new="startNewTask" @save="saveCurrentTask" @run="runCurrentTask" />
+    <section class="task-switcher" aria-label="测试任务列表">
+      <label>历史任务
+        <select data-testid="task-selector" :value="tasks.task?.id || ''" :disabled="tasks.loading || !tasks.tasks.length" @change="selectTask(($event.target as HTMLSelectElement).value)">
+          <option value="">{{ tasks.tasks.length ? '选择已有任务' : '暂无已保存任务' }}</option>
+          <option v-for="item in tasks.tasks" :key="item.id" :value="item.id">{{ item.name }} · {{ item.selected_endpoint_ids.length }} 个接口 · {{ item.state }}</option>
+        </select>
+      </label>
+      <label>任务名称
+        <input v-model="taskNameDraft" data-testid="task-name-input" maxlength="200" placeholder="例如：收藏链路发版回归" />
+      </label>
+      <button data-testid="rename-task" class="secondary-command" type="button" :disabled="tasks.saving || !tasks.task" @click="renameCurrentTask"><Save :size="15" />保存名称</button>
+    </section>
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="design-workspace">
       <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />

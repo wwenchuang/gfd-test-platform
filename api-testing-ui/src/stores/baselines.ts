@@ -5,8 +5,8 @@ import type { ApiBaselineCase } from '../api/contracts'
 
 interface BaselineContext {
   projectId: string
-  sourceRevisionId: string
-  environmentRevisionId: string
+  sourceRevisionId?: string
+  environmentRevisionId?: string
 }
 
 export const useBaselinesStore = defineStore('api-baselines', {
@@ -36,8 +36,6 @@ export const useBaselinesStore = defineStore('api-baselines', {
       try {
         const query = new URLSearchParams({
           project_id: context.projectId,
-          source_revision_id: context.sourceRevisionId,
-          environment_revision_id: context.environmentRevisionId,
         })
         const response = await apiClient.get<{ baselines: ApiBaselineCase[] }>(
           `/api/api-testing/v1/baselines?${query}`,

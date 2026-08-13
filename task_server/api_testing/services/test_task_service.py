@@ -100,6 +100,18 @@ class TestTaskService:
             repository.flush()
             return self._view(repository, task)
 
+    def create_context(self, owner_id, payload, actor_id):
+        owner = _text(owner_id, "owner id", 128)
+        actor = _text(actor_id, "actor id", 128)
+        if owner != actor:
+            raise TestTaskScopeError("task actor does not own this workflow")
+        parsed = self._parse_context(payload)
+        with self._session_factory.begin() as session:
+            repository = TestTaskRepository(session)
+            self._validate_context(repository, owner, parsed)
+            task = repository.create(parsed, actor)
+            return self._view(repository, task)
+
     def get(self, task_id, owner_id):
         owner = _text(owner_id, "owner id", 128)
         with self._session_factory() as session:
@@ -107,6 +119,26 @@ class TestTaskService:
             task = repository.get_task(task_id)
             if task is None or task.owner_id != owner:
                 raise TestTaskNotFoundError("API testing task was not found")
+            return self._view(repository, task)
+
+    def list(self, project_id, owner_id):
+        owner = _text(owner_id, "owner id", 128)
+        with self._session_factory() as session:
+            repository = TestTaskRepository(session)
+            project = repository.get_project(project_id)
+            if project is None or project.owner_id != owner:
+                raise TestTaskNotFoundError("API testing project was not found")
+            return tuple(self._view(repository, task) for task in repository.list_tasks(project_id, owner))
+
+    def rename(self, task_id, name, actor_id):
+        actor = _text(actor_id, "actor id", 128)
+        parsed_name = _text(name, "task name")
+        with self._session_factory.begin() as session:
+            repository = TestTaskRepository(session)
+            task = self._owned_task(repository, task_id, actor, for_update=True)
+            task.name = parsed_name
+            task.updated_by = actor
+            repository.flush()
             return self._view(repository, task)
 
     def get_active(self, project_id, owner_id):
@@ -165,6 +197,9 @@ class TestTaskService:
                 raise TestTaskScopeError(
                     "execution contains endpoints outside this task"
                 )
+            snapshot = copy.deepcopy(dict(execution.request_snapshot or {}))
+            snapshot["task"] = {"id": task.id, "name": task.name}
+            execution.request_snapshot = snapshot
             task.latest_execution_id = execution.id
             task.state = (
                 "debugging" if execution.execution_type == "debug" else "running"

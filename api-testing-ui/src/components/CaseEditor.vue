@@ -106,7 +106,7 @@ function renameRequestEntry(field: RequestMapField, previous: string, next: stri
 }
 
 function updateRequestValue(field: RequestMapField, name: string, value: string): void {
-  local.value.request[field][name] = parseScalar(value)
+  local.value.request[field][name] = value
   publish()
 }
 

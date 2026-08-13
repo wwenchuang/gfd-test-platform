@@ -69,7 +69,7 @@ export const useNotificationsStore = defineStore('api-notifications', {
         this.lastSendMessage = response.data.notification.message
         return response.data.notification
       } catch (error) {
-        this.error = error instanceof Error ? error.message : '飞书报告发送失败'
+        this.error = error instanceof Error ? error.message : '飞书通知发送失败'
         throw error
       } finally {
         this.sending = false

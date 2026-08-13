@@ -282,6 +282,10 @@ def _get(segments, qs, actor, settings):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
         return {"task": _view(TestTaskService(factory).get_active(project_id, actor))}
+    if segments == ("tasks",):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return {"tasks": _view(TestTaskService(factory).list(project_id, actor))}
     if segments == ("executions",):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
@@ -334,22 +338,13 @@ def _get(segments, qs, actor, settings):
         )
         return {"case_versions": [_view(item) for item in versions]}
     if segments == ("baselines",):
-        request = {
-            "project_id": _uuid(qs.get("project_id", "")),
-            "source_revision_id": _uuid(qs.get("source_revision_id", "")),
-            "environment_revision_id": _uuid(qs.get("environment_revision_id", "")),
-            "case_version_ids": [],
-            "execution_type": "baseline_regression",
-            "overrides": {},
-        }
-        _scope_execution_request(factory, request, actor, validate_cases=False)
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
         return {
             "baselines": [
                 _view(item)
                 for item in CaseService(factory).list_active_baselines(
-                    request["project_id"],
-                    request["source_revision_id"],
-                    request["environment_revision_id"],
+                    project_id,
                     actor,
                 )
             ]
@@ -374,7 +369,7 @@ def _get(segments, qs, actor, settings):
 def _post(segments, payload, actor, settings):
     factory = _factory()
     if segments == ("tasks",):
-        return {"task": _view(TestTaskService(factory).save_context(actor, payload, actor))}
+        return {"task": _view(TestTaskService(factory).create_context(actor, payload, actor))}
     if len(segments) == 3 and segments[0] == "tasks" and segments[2] == "run":
         task_id = _uuid(segments[1])
         task_service = TestTaskService(factory)
@@ -390,6 +385,7 @@ def _post(segments, payload, actor, settings):
             },
             actor,
             _string(payload.get("idempotency_key"), "idempotency_key", 200),
+            task=task,
         )
         task = task_service.attach_execution(task.id, execution.id, actor)
         _enqueue_execution(execution.id)
@@ -498,7 +494,12 @@ def _post(segments, payload, actor, settings):
                 raise TestTaskScopeError("execution context does not match this task")
         request = _execution_request(payload)
         _scope_execution_request(factory, request, actor)
-        execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(request, actor, _string(payload.get("idempotency_key"), "idempotency_key", 200))
+        execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(
+            request,
+            actor,
+            _string(payload.get("idempotency_key"), "idempotency_key", 200),
+            task=task if task_id else None,
+        )
         if task_id:
             task_service.attach_execution(task_id, execution.id, actor)
         _enqueue_execution(execution.id)
@@ -550,9 +551,20 @@ def _post(segments, payload, actor, settings):
         channel_type = str(payload.get("channel_type") or "feishu").strip()
         if channel_type != "feishu":
             raise ApiHttpError(422, "invalid_request", "Notification channel is not supported")
+        notification = NotificationService(factory).send_execution_report(
+            execution_id, actor
+        )
+        _event_stream(factory).append(
+            execution_id,
+            "notification_sent",
+            {
+                "channel_type": notification.channel_type,
+                "message": notification.message,
+            },
+        )
         return {
             "notification": _view(
-                NotificationService(factory).send_execution_report(execution_id, actor)
+                notification
             )
         }
     if segments == ("ai-jobs",):
@@ -619,6 +631,16 @@ def _put(segments, payload, actor):
             "task": _view(
                 TestTaskService(_factory()).update_context(
                     _uuid(segments[1]), actor, payload, actor
+                )
+            )
+        }
+    if len(segments) == 3 and segments[0] == "tasks" and segments[2] == "name":
+        return {
+            "task": _view(
+                TestTaskService(_factory()).rename(
+                    _uuid(segments[1]),
+                    payload.get("name"),
+                    actor,
                 )
             )
         }

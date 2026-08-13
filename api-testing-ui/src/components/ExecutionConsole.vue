@@ -89,8 +89,8 @@ function deleteSelected(): void {
       >
         <input type="checkbox" :checked="selectedExecutionIds.has(execution.id)" aria-label="选择执行记录" @click.stop="toggleExecution(execution.id)" />
         <span class="execution-row-body">
-          <strong>{{ executionTypeLabel(execution) }}</strong>
-          <span>{{ execution.environment_name || '未命名环境' }}</span>
+          <strong>{{ execution.task_name || executionTypeLabel(execution) }}</strong>
+          <span>{{ execution.task_name ? executionTypeLabel(execution) + ' · ' : '' }}{{ execution.environment_name || '未命名环境' }}</span>
           <small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small>
         </span>
         <b>{{ execution.state }}</b>
@@ -101,7 +101,7 @@ function deleteSelected(): void {
     <main class="execution-main">
       <template v-if="active">
         <div class="execution-heading">
-          <div><h2>{{ executionTypeLabel(active) }}</h2><span>{{ active.environment_name }} · {{ active.case_results.length }} 条用例</span></div>
+          <div><h2>{{ active.task_name || executionTypeLabel(active) }}</h2><span>{{ executionTypeLabel(active) }} · {{ active.environment_name }} · {{ active.case_results.length }} 条用例</span></div>
           <div><button v-if="connectionState === 'failed'" class="secondary-command" type="button" @click="emit('reconnect', active.id)"><RotateCw :size="14" />重新连接日志</button><button v-if="running" class="secondary-command" type="button" @click="emit('cancel', active.id)"><Square :size="14" />取消</button><button v-else-if="active.case_results.some(item => ['FAILED','BROKEN'].includes(item.status))" class="secondary-command" type="button" @click="emit('rerun', active)"><RotateCw :size="14" />重跑失败项</button></div>
         </div>
         <ExecutionOverview :execution="active" />

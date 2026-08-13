@@ -241,24 +241,7 @@ class CaseRepository:
     def get_environment(self, environment_id):
         return self.session.get(ApiEnvironment, environment_id)
 
-    def active_baselines_for_update(self, case_id, environment_id):
-        return tuple(
-            self.session.scalars(
-                select(ApiBaseline)
-                .join(
-                    ApiEnvironmentRevision,
-                    ApiEnvironmentRevision.id == ApiBaseline.environment_revision_id,
-                )
-                .where(
-                    ApiBaseline.case_id == case_id,
-                    ApiEnvironmentRevision.environment_id == environment_id,
-                    ApiBaseline.status == "active",
-                )
-                .with_for_update()
-            )
-        )
-
-    def list_active_baselines(self, project_id, source_revision_id, environment_revision_id, actor_id):
+    def list_active_baselines(self, project_id, actor_id):
         return tuple(
             self.session.execute(
                 select(ApiBaseline, ApiCase, ApiCaseVersion, ApiSourceEndpoint)
@@ -267,15 +250,12 @@ class CaseRepository:
                 .join(ApiSourceEndpoint, ApiSourceEndpoint.id == ApiCaseVersion.endpoint_id)
                 .where(
                     ApiBaseline.project_id == project_id,
-                    ApiBaseline.environment_revision_id == environment_revision_id,
-                    ApiBaseline.status == "active",
+                    ApiBaseline.status != "archived",
                     ApiBaseline.owner_id == actor_id,
                     ApiCase.project_id == project_id,
                     ApiCase.owner_id == actor_id,
                     ApiCase.status != "archived",
-                    ApiCase.active_version_id == ApiCaseVersion.id,
                     ApiCaseVersion.endpoint_id == ApiSourceEndpoint.id,
-                    ApiSourceEndpoint.revision_id == source_revision_id,
                 )
                 .order_by(
                     ApiBaseline.group_name,

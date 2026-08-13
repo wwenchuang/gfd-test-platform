@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from types import MappingProxyType
+from typing import Optional
 
 from sqlalchemy.exc import IntegrityError
 
@@ -30,6 +31,8 @@ class ExecutionNotFoundError(LookupError):
 class ExecutionView:
     id: str
     project_id: str
+    task_id: Optional[str]
+    task_name: Optional[str]
     state: str
     execution_type: str
     source_revision_id: str
@@ -141,13 +144,17 @@ class ExecutionService:
         self.failure_analyzer = failure_analyzer
         self.failure_analysis_dispatcher = failure_analysis_dispatcher
 
-    def submit(self, request, actor_id, idempotency_key):
+    def submit(self, request, actor_id, idempotency_key, *, task=None):
         parsed = _parse_request(request)
         if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 200:
             raise ValueError("idempotency key is invalid")
         if not isinstance(actor_id, str) or not actor_id:
             raise ValueError("actor id is required")
-        fingerprint = _fingerprint(parsed)
+        task_snapshot = self._task_snapshot(task)
+        fingerprint_payload = (
+            parsed if task_snapshot is None else {**parsed, "_task": task_snapshot}
+        )
+        fingerprint = _fingerprint(fingerprint_payload)
         with self.session_factory.begin() as session:
             repository = ExecutionRepository(session)
             existing = repository.get_by_idempotency(parsed["project_id"], idempotency_key)
@@ -172,6 +179,8 @@ class ExecutionService:
                 "source_revision_id": parsed["source_revision_id"],
                 "environment_revision_id": parsed["environment_revision_id"],
             }
+            if task_snapshot is not None:
+                snapshot["task"] = task_snapshot
             try:
                 with session.begin_nested():
                     execution = repository.create_execution(
@@ -205,7 +214,7 @@ class ExecutionService:
         self.event_stream.append(view.id, "execution_queued", {"case_count": len(view.case_statuses)})
         return view
 
-    def submit_active_baselines(self, request, actor_id, idempotency_key):
+    def submit_active_baselines(self, request, actor_id, idempotency_key, *, task=None):
         required_fields = {
             "project_id",
             "source_revision_id",
@@ -226,15 +235,13 @@ class ExecutionService:
         with self.session_factory() as session:
             version_ids = ExecutionRepository(session).active_baseline_version_ids(
                 request["project_id"],
-                request["source_revision_id"],
-                request["environment_revision_id"],
                 actor_id,
                 endpoint_ids,
                 baseline_ids,
             )
         if not version_ids:
             raise ExecutionConflictError(
-                "no active baselines match the current source and environment"
+                "no active baselines match the selected project or baseline selection"
             )
         return self.submit(
             {
@@ -245,6 +252,7 @@ class ExecutionService:
             },
             actor_id,
             idempotency_key,
+            task=task,
         )
 
     def get(self, execution_id):
@@ -619,8 +627,27 @@ class ExecutionService:
         )
 
     @staticmethod
+    def _task_snapshot(task):
+        if task is None:
+            return None
+        if isinstance(task, dict):
+            raw_id = task.get("id")
+            raw_name = task.get("name")
+        else:
+            raw_id = getattr(task, "id", None)
+            raw_name = getattr(task, "name", None)
+        if not isinstance(raw_id, str) or not raw_id.strip():
+            return None
+        name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else "未命名任务"
+        return {"id": raw_id.strip(), "name": name[:200]}
+
+    @staticmethod
     def _view(execution, children, display_metadata=None):
         display = display_metadata or {}
+        snapshot = getattr(execution, "request_snapshot", {}) or {}
+        task = snapshot.get("task", {}) if isinstance(snapshot, dict) else {}
+        if not isinstance(task, dict):
+            task = {}
         versions = display.get("versions", {})
         cases = display.get("cases", {})
         endpoints = display.get("endpoints", {})
@@ -629,6 +656,8 @@ class ExecutionService:
         return ExecutionView(
             id=execution.id,
             project_id=execution.project_id,
+            task_id=task.get("id") if isinstance(task.get("id"), str) else None,
+            task_name=task.get("name") if isinstance(task.get("name"), str) else None,
             state=execution.state,
             execution_type=execution.execution_type,
             source_revision_id=execution.source_revision_id,

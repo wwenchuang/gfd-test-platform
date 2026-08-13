@@ -99,6 +99,22 @@ describe('CaseEditor', () => {
     expect(emitted.request.headers['X-Biz']).toBe('ZXB')
   })
 
+  it('keeps request parameter values as strings even when they look numeric', async () => {
+    const draft: CaseDraft = {
+      ...DRAFT,
+      request: {
+        ...DRAFT.request,
+        query: { deviceSn: '1234567890123456789' },
+      },
+    }
+    const wrapper = mount(CaseEditor, { props: { modelValue: draft } })
+
+    await wrapper.find('[data-testid="query-value"]').setValue('1234567890123456800')
+
+    const emitted = wrapper.emitted('update:modelValue')?.at(-1)?.[0] as CaseDraft
+    expect(emitted.request.query.deviceSn).toBe('1234567890123456800')
+  })
+
   it('shows invalid JSON feedback without discarding the typed request body', async () => {
     const wrapper = mount(CaseEditor, { props: { modelValue: DRAFT } })
     const body = wrapper.find('[data-testid="request-body"]')

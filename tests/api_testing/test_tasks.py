@@ -123,7 +123,7 @@ def test_execution_worker_sends_project_feishu_for_baseline_regression(monkeypat
 
         def send_execution_report(self, execution_id, actor_id):
             calls.append(("notify", execution_id, actor_id))
-            return SimpleNamespace(channel_type="feishu", message="飞书报告已发送")
+            return SimpleNamespace(channel_type="feishu", message="飞书通知已发")
 
     class FakeEventStream:
         def __init__(self, *args, **kwargs):
@@ -155,7 +155,7 @@ def test_execution_worker_sends_project_feishu_for_baseline_regression(monkeypat
         ("refresh", "execution-1"),
         ("load-execution", "execution-1"),
         ("notify", "execution-1", "owner-a"),
-        ("event", "execution-1", "notification_sent", "飞书报告已发送"),
+        ("event", "execution-1", "notification_sent", "飞书通知已发"),
     ]
 
 

@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from typing import Optional
+from urllib.parse import urlencode
 
 from task_server.services.feishu_service import (
     send_feishu_notification,
@@ -106,14 +108,14 @@ class NotificationService:
             metadata = execution_repository.display_metadata(execution, children)
             webhook = decrypt_secret(notification.ciphertext)
             send_feishu_notification(
-                {"text": self._message(execution, children, metadata)},
+                {"card": self._card(execution, children, metadata)},
                 webhook=webhook,
             )
             return NotificationSendView(
                 execution_id=execution.id,
                 channel_type=FEISHU_CHANNEL,
                 sent=True,
-                message="飞书报告已发送",
+                message="飞书通知已发",
             )
 
     @staticmethod
@@ -137,6 +139,113 @@ class NotificationService:
             fingerprint=record.fingerprint,
             updated_at=record.updated_at,
         )
+
+    @staticmethod
+    def _report_url(execution_id):
+        base_url = ""
+        for key in (
+            "API_TESTING_REPORT_BASE_URL",
+            "API_TESTING_PUBLIC_BASE_URL",
+            "MIDSCENE_PUBLIC_BASE_URL",
+            "PUBLIC_BASE_URL",
+        ):
+            value = os.getenv(key, "").strip()
+            if value:
+                base_url = value
+                break
+        if not base_url:
+            return ""
+        return (
+            f"{base_url.rstrip('/')}/api-test/#/reports?"
+            f"{urlencode({'execution_id': execution_id})}"
+        )
+
+    @staticmethod
+    def _card(execution, children, metadata):
+        summary = execution.summary or {}
+        total = int(summary.get("total") or len(children))
+        passed = int(summary.get("passed") or 0)
+        failed = int(summary.get("failed") or 0)
+        broken = int(summary.get("broken") or 0)
+        skipped = int(summary.get("skipped") or 0)
+        cancelled = int(summary.get("cancelled") or 0)
+        issue_count = failed + broken + skipped + cancelled
+        conclusion = "通过" if total and issue_count == 0 and passed == total else "未通过"
+        pass_rate = round((passed / total) * 100) if total else 0
+        environment_name = metadata.get("environment_name") or "未命名环境"
+        snapshot = getattr(execution, "request_snapshot", {}) or {}
+        task = snapshot.get("task", {}) if isinstance(snapshot, dict) else {}
+        task_name = task.get("name") if isinstance(task, dict) else ""
+        if not task_name:
+            task_name = "基线回归"
+        title = f"API 基线回归报告：{conclusion}"
+        template = "green" if conclusion == "通过" else "red"
+        lines = [
+            f"**任务**：{task_name}",
+            f"**环境**：{environment_name}",
+            f"**用例**：共 {total} 条，通过 {passed}，失败 {failed}，异常 {broken}，跳过 {skipped}，取消 {cancelled}",
+            f"**通过率**：{pass_rate}%",
+        ]
+        issues = [item for item in children if item.status != "PASSED"][:5]
+        elements = [
+            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}}
+        ]
+        if issues:
+            versions = metadata.get("versions") or {}
+            cases = metadata.get("cases") or {}
+            endpoints = metadata.get("endpoints") or {}
+            issue_lines = []
+            for item in issues:
+                version = versions.get(item.case_version_id)
+                case = cases.get(version.case_id) if version is not None else None
+                endpoint = endpoints.get(item.endpoint_id)
+                name = (
+                    getattr(case, "name", "")
+                    or getattr(endpoint, "summary", "")
+                    or getattr(endpoint, "path", "")
+                    or "未命名用例"
+                )
+                issue_lines.append(
+                    f"- {item.status} · {name} · {item.failure_category or '未分类'}"
+                )
+            elements.extend(
+                [
+                    {"tag": "hr"},
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": "**问题摘要**\n" + "\n".join(issue_lines),
+                        },
+                    },
+                ]
+            )
+        report_url = NotificationService._report_url(execution.id)
+        if report_url:
+            elements.extend(
+                [
+                    {"tag": "hr"},
+                    {
+                        "tag": "action",
+                        "actions": [
+                            {
+                                "tag": "button",
+                                "text": {"tag": "plain_text", "content": "查看报告"},
+                                "type": "primary",
+                                "url": report_url,
+                            }
+                        ],
+                    },
+                ]
+            )
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": template,
+                "title": {"tag": "plain_text", "content": title},
+            },
+            "elements": elements,
+        }
 
     @staticmethod
     def _message(execution, children, metadata):

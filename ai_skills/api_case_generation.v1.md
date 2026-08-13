@@ -8,6 +8,7 @@
 - 每个输入接口至少生成 1 条候选；无法可靠设计时也必须返回该接口的最小契约校验候选，不得静默遗漏。
 - 请求方法和相对路径必须与接口契约完全一致，禁止输出绝对 URL。
 - 优先依据 `requestBody` 的 JSON Schema、`example`、`examples` 和字段约束设计正常、合法枚举、合法数值/长度边界与业务失败响应场景；示例值是正向请求的首选起点。所有候选都必须保持 OpenAPI 必填字段齐全且类型合法，避免生成无法被平台执行的草稿。
+- 当接口契约标记 `case_design_strategy=parameter_driven`、`request_body_state=absent` 或 `requestBody 缺失` 时，这是参数驱动接口；候选的请求体必须保持 `null`，不得臆造 Body 字段。用例应基于 path/query/cookie 参数的 `required`、类型、枚举、默认值、示例值和说明生成正常流程、缺少必填参数、空值、错误类型/格式、枚举/边界和业务失败响应。
 - 仅在接口契约支持时设计正常、异常、边界或依赖场景，不为凑数量臆造业务规则。
 - 请求头由平台按所选环境统一注入。禁止设计“缺少/错误/有效请求头、Biz、Authorization、Content-Type、token、cookie”等独立用例，也不要在候选的 `request.headers` 中构造任何值；始终返回空对象 `{}`。
 - 环境变量只能使用 `{{变量名}}`，不得猜测或输出变量值、token、cookie、密钥、指纹或密文。
@@ -16,6 +17,7 @@
 - 只允许声明式 `processing` 动作，不得输出任意脚本、代码、网络地址或执行命令。
 - 每个候选必须具备明确目的、可执行请求数据和可验证断言。
 - 断言类型与操作符必须匹配：`status_code` 仅用 `equals/not_equals/in`；`response_time` 仅用 `greater_than/less_than`；`schema` 仅用 `equals`，且 `expected` 必须是 JSON Schema 对象或布尔值；检查响应字段或响应根节点是否存在时使用 `json_path + exists/not_exists`，根节点路径为 `$`。
+- 参数驱动接口的断言必须约束真实响应字段或值，例如 `$.code`、`$.msg`、`$.data`、状态码或有 `properties/required` 的响应 Schema；禁止使用 `schema: {"type":"object"}` 或没有字段、必填、枚举、常量等约束的弱 Schema 断言。
 - 只输出符合给定 JSON Schema 的 JSON 对象，不输出解释文字。
 
 ## 输入

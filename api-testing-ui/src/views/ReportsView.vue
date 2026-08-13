@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, Send, Trash2 } from 'lucide-vue-next'
 
 import DiagnosticReport from '../components/DiagnosticReport.vue'
@@ -22,6 +22,7 @@ const context = useContextStore()
 const executions = useExecutionsStore()
 const notifications = useNotificationsStore()
 const router = useRouter()
+const route = useRoute()
 const selected = ref<ExecutionView | null>(null)
 const selectedReportId = ref('')
 const selectedReportIds = ref<Set<string>>(new Set())
@@ -89,13 +90,22 @@ onMounted(async () => {
   if (context.projectId) await Promise.all([executions.load(context.projectId), notifications.loadFeishu(context.projectId)])
 })
 
-watch(visibleReports, reports => {
+watch([visibleReports, () => route.query.execution_id, () => route.query.executionId], ([reports]) => {
   const visibleIds = new Set(reports.map(item => item.id))
   selectedReportIds.value = new Set([...selectedReportIds.value].filter(id => visibleIds.has(id)))
-  if (!reports.some(item => item.id === selectedReportId.value)) {
+  const requested = reportIdFromRoute()
+  if (requested && reports.some(item => item.id === requested)) {
+    selectedReportId.value = requested
+  } else if (!reports.some(item => item.id === selectedReportId.value)) {
     selectedReportId.value = reports[0]?.id || ''
   }
 }, { immediate: true })
+
+function reportIdFromRoute(): string {
+  const value = route.query.execution_id ?? route.query.executionId
+  if (Array.isArray(value)) return String(value[0] || '')
+  return String(value || '')
+}
 
 function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
   void router.push({ name: 'workbench', query: {

@@ -13,8 +13,11 @@ const props = withDefaults(defineProps<{
   environmentRevisionId: string | null
   loading?: boolean
   saved?: boolean
+  saveLabel?: string
+  savedLabel?: string
 }>(), {
   projects: () => [], sourceRevisions: () => [], environmentRevisions: () => [], loading: false, saved: false,
+  saveLabel: '保存测试范围', savedLabel: '范围已保存',
 })
 
 const emit = defineEmits<{
@@ -58,7 +61,7 @@ function nullable(value: string): string | null {
     <a v-if="!projectId" class="context-next" href="#/assets">先创建项目</a>
     <a v-else-if="!sources.length" class="context-next" href="#/assets">先保存接口来源</a>
     <a v-else-if="!environments.length" class="context-next" href="#/settings">先配置执行环境</a>
-    <span v-else-if="saved && projectId && sourceRevisionId && environmentRevisionId" class="saved-state" role="status">范围已保存</span>
-    <button class="context-save" type="button" :disabled="loading || !projectId || !sourceRevisionId || !environmentRevisionId" @click="emit('save')"><Save :size="16" />保存测试范围</button>
+    <span v-else-if="saved && projectId && sourceRevisionId && environmentRevisionId" class="saved-state" role="status">{{ savedLabel }}</span>
+    <button class="context-save" type="button" :disabled="loading || !projectId || !sourceRevisionId || !environmentRevisionId" @click="emit('save')"><Save :size="16" />{{ saveLabel }}</button>
   </section>
 </template>

@@ -519,7 +519,9 @@ class BaselineCaseView:
     case_id: str
     case_version_id: str
     environment_revision_id: str
+    source_revision_id: str
     endpoint_id: str
+    status: str
     case_name: str
     case_version: int
     priority: str

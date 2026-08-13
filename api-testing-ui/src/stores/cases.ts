@@ -158,6 +158,13 @@ export const useCasesStore = defineStore('api-cases', {
       this.aiError = ''
       await this.pollAiJob(this.lastAiJobId)
     },
+    clearAiJob(): void {
+      this.aiJob = null
+      this.aiError = ''
+      this.aiPolling = false
+      this.aiCanResume = false
+      this.lastAiJobId = ''
+    },
     async restoreLatestAiJob(projectId: string): Promise<void> {
       try {
         const response = await apiClient.get<{ job: AiJob | null }>(
@@ -316,10 +323,49 @@ function blankDraft(endpoint: ApiEndpoint): CaseDraft {
     name: endpoint.summary || `${endpoint.method} ${endpoint.path}`,
     purpose: `验证${endpoint.summary || endpoint.path}`,
     priority: 'P1',
-    request: { method: endpoint.method, path: endpoint.path, service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: requestBodyExample(endpoint.operation) },
+    request: { method: endpoint.method, path: endpoint.path, service: 'default', ...requestParameterExamples(endpoint.operation), headers: {}, body: requestBodyExample(endpoint.operation) },
     data_rows: [], assertions: [{ type: 'status_code', operator: 'equals', expected: 200, timeout_ms: 0, enabled: true }],
     extractions: [], dependencies: [], processing: { pre: [], post: [] },
   }
+}
+
+function requestParameterExamples(operation: Record<string, unknown> | undefined): Pick<CaseDraft['request'], 'path_params' | 'query' | 'cookies'> {
+  const result = {
+    path_params: {} as Record<string, unknown>,
+    query: {} as Record<string, unknown>,
+    cookies: {} as Record<string, unknown>,
+  }
+  if (!operation) return result
+  const parameters = [
+    ...arrayRecords(operation.path_parameters),
+    ...arrayRecords(operation.parameters),
+  ]
+  for (const parameter of parameters) {
+    const name = typeof parameter.name === 'string' ? parameter.name.trim() : ''
+    const location = typeof parameter.in === 'string' ? parameter.in : ''
+    if (!name || location === 'header') continue
+    const value = parameterExample(parameter, operation)
+    if (value === undefined) continue
+    if (location === 'path') result.path_params[name] = value
+    else if (location === 'query') result.query[name] = value
+    else if (location === 'cookie') result.cookies[name] = value
+  }
+  return result
+}
+
+function parameterExample(parameter: Record<string, unknown>, operation: Record<string, unknown>): unknown {
+  if (Object.prototype.hasOwnProperty.call(parameter, 'example')) return cloneJson(parameter.example)
+  const examples = asRecord(parameter.examples)
+  if (examples) {
+    for (const item of Object.values(examples)) {
+      const example = asRecord(item)
+      if (example && Object.prototype.hasOwnProperty.call(example, 'value')) return cloneJson(example.value)
+    }
+  }
+  const schema = resolveOperationSchema(asRecord(parameter.schema), operation)
+  if (schema && Object.prototype.hasOwnProperty.call(schema, 'example')) return cloneJson(schema.example)
+  if (schema && Object.prototype.hasOwnProperty.call(schema, 'default')) return cloneJson(schema.default)
+  return undefined
 }
 
 function requestBodyExample(operation: Record<string, unknown> | undefined): unknown {
@@ -344,7 +390,26 @@ function requestBodyExample(operation: Record<string, unknown> | undefined): unk
   const schema = resolveOperationSchema(asRecord(media.schema), operation)
   if (schema && Object.prototype.hasOwnProperty.call(schema, 'example')) return cloneJson(schema.example)
   if (schema && Object.prototype.hasOwnProperty.call(schema, 'default')) return cloneJson(schema.default)
+  const body = objectFromSchemaExamples(schema, operation)
+  if (body !== undefined) return body
   return null
+}
+
+function objectFromSchemaExamples(
+  schema: Record<string, unknown> | null,
+  operation: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const resolved = resolveOperationSchema(schema, operation)
+  const properties = asRecord(resolved?.properties)
+  if (!properties) return undefined
+  const body: Record<string, unknown> = {}
+  for (const [name, property] of Object.entries(properties)) {
+    const propertySchema = resolveOperationSchema(asRecord(property), operation)
+    if (!propertySchema) continue
+    if (Object.prototype.hasOwnProperty.call(propertySchema, 'example')) body[name] = cloneJson(propertySchema.example)
+    else if (Object.prototype.hasOwnProperty.call(propertySchema, 'default')) body[name] = cloneJson(propertySchema.default)
+  }
+  return Object.keys(body).length ? body : undefined
 }
 
 function resolveOperationSchema(
@@ -372,6 +437,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null
+}
+
+function arrayRecords(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)))
+    : []
 }
 
 function fromVersion(version: CaseVersion): CaseDraft {

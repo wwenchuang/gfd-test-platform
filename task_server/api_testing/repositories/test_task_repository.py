@@ -67,11 +67,8 @@ class TestTaskRepository:
                 )
                 .where(
                     ApiBaseline.project_id == task.project_id,
-                    ApiBaseline.environment_revision_id
-                    == task.environment_revision_id,
                     ApiBaseline.owner_id == task.owner_id,
-                    ApiBaseline.status == "active",
-                    ApiSourceEndpoint.revision_id == task.source_revision_id,
+                    ApiBaseline.status != "archived",
                     ApiSourceEndpoint.id.in_(selected),
                 )
             )
@@ -83,6 +80,19 @@ class TestTaskRepository:
         if for_update:
             query = query.with_for_update()
         return self.session.scalar(query)
+
+    def list_tasks(self, project_id, owner_id, limit=100):
+        return tuple(
+            self.session.scalars(
+                select(ApiTestTask)
+                .where(
+                    ApiTestTask.project_id == project_id,
+                    ApiTestTask.owner_id == owner_id,
+                )
+                .order_by(ApiTestTask.updated_at.desc(), ApiTestTask.id.desc())
+                .limit(limit)
+            )
+        )
 
     def get_by_ai_job(self, job_id, *, for_update=False):
         query = select(ApiTestTask).where(ApiTestTask.latest_ai_job_id == job_id)

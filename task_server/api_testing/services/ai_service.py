@@ -823,7 +823,9 @@ class AiCaseService:
             return {}
         contract = {}
         for field in ("description", "deprecated", "requestBody", "responses"):
-            if field in operation:
+            if field in operation and not (
+                field == "requestBody" and operation[field] is None
+            ):
                 contract[field] = copy.deepcopy(operation[field])
         responses = contract.get("responses")
         if isinstance(responses, Mapping):
@@ -849,6 +851,29 @@ class AiCaseService:
                 parameters.append(copy.deepcopy(parameter))
         if parameters:
             contract["parameters"] = parameters
+            if "requestBody" not in contract:
+                required_parameters = [
+                    str(parameter["name"])
+                    for parameter in parameters
+                    if parameter.get("required") is True and parameter.get("name")
+                ]
+                optional_parameters = [
+                    str(parameter["name"])
+                    for parameter in parameters
+                    if parameter.get("required") is not True and parameter.get("name")
+                ]
+                contract["case_design_strategy"] = "parameter_driven"
+                contract["request_body_state"] = "absent"
+                contract["parameter_case_guidance"] = {
+                    "basis": "path/query/cookie parameters",
+                    "request_body": "keep_null",
+                    "required_parameters": required_parameters,
+                    "optional_parameters": optional_parameters,
+                    "suggested_positive_source": "example/default/schema constraints",
+                    "suggested_negative_source": (
+                        "missing required, empty string, wrong type or documented enum/boundary"
+                    ),
+                }
         if isinstance(operation.get("resolved_dependencies"), Mapping):
             dependencies = AiCaseService._referenced_dependency_closure(
                 contract,
@@ -941,11 +966,45 @@ class AiCaseService:
         revision = repository.get_environment_revision(revision_id)
         terms = {
             "authorization",
+            "bearer",
+            "biz",
             "content-type",
             "content type",
             "request header",
+            "token",
+            "zxbtoken",
+            "业务头",
+            "业务码",
+            "业务线",
+            "业务 token",
+            "业务token",
+            "默认请求头",
+            "登录态",
+            "登录过期",
             "请求头",
+            "认证失败",
+            "未授权",
+            "未登录",
+            "未登陆",
+            "用户 token",
+            "用户token",
+            "运行时请求头",
             "鉴权",
+            "鉴权失败",
+            "缺少 token",
+            "缺少token",
+            "缺失 token",
+            "缺失token",
+            "无 token",
+            "无token",
+            "环境请求头",
+            "身份认证",
+            "授权失败",
+            "token 为空",
+            "token为空",
+            "token 过期",
+            "token过期",
+            "请求头",
         }
         default_headers = revision.default_headers if revision is not None else {}
         for name, value in default_headers.items():

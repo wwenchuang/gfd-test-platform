@@ -81,6 +81,22 @@ def test_execution_view_derives_feishu_notification_from_events():
     }
 
 
+def test_task_snapshot_keeps_task_identity_for_execution_history():
+    snapshot = ExecutionService._task_snapshot(
+        SimpleNamespace(id="task-1", name="收藏接口回归")
+    )
+
+    assert snapshot == {"id": "task-1", "name": "收藏接口回归"}
+
+
+def test_task_snapshot_normalizes_empty_task_name():
+    snapshot = ExecutionService._task_snapshot({"id": "task-2", "name": "   "})
+
+    assert snapshot == {"id": "task-2", "name": "未命名任务"}
+    assert ExecutionService._task_snapshot(None) is None
+    assert ExecutionService._task_snapshot({"name": "无 ID 任务"}) is None
+
+
 @pytest.fixture(scope="module")
 def execution_database():
     database_url = _database_url()
@@ -311,9 +327,12 @@ def test_submit_active_baselines_creates_one_click_regression(
         },
         "admin",
         "baseline-regression",
+        task=SimpleNamespace(id="task-baseline-1", name="收藏接口基线"),
     )
 
     assert execution.execution_type == "baseline_regression"
+    assert execution.task_id == "task-baseline-1"
+    assert execution.task_name == "收藏接口基线"
     assert execution.case_statuses == ("QUEUED",)
     assert execution.case_results[0]["case_version_id"] == execution_context["case"].id
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Search } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, Search, X } from 'lucide-vue-next'
 
 import type { ApiEndpoint, LoadState } from '../api/contracts'
 
@@ -10,54 +10,193 @@ const props = withDefaults(defineProps<{ endpoints: ApiEndpoint[]; selectedIds?:
 const emit = defineEmits<{ 'selection-change': [ids: string[]]; activate: [endpoint: ApiEndpoint] }>()
 const query = ref('')
 const selected = ref(new Set(props.selectedIds))
+const activeTab = ref<'all' | 'selected'>('all')
+const collapsedGroups = ref(new Set<string>())
 
 watch(() => props.selectedIds, ids => { selected.value = new Set(ids) })
 
 const filtered = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
   if (!needle) return props.endpoints
-  return props.endpoints.filter(item => [item.summary, item.path, item.method, ...item.tags].join(' ').toLocaleLowerCase().includes(needle))
+  return props.endpoints.filter(item => [item.summary, item.path, item.method, endpointGroupName(item), ...item.tags].join(' ').toLocaleLowerCase().includes(needle))
 })
-const groups = computed(() => {
+const groups = computed(() => groupEndpoints(filtered.value))
+const selectedEndpoints = computed(() => props.endpoints.filter(endpoint => selected.value.has(endpoint.id)))
+const selectedGroups = computed(() => groupEndpoints(selectedEndpoints.value))
+
+function groupEndpoints(endpoints: ApiEndpoint[]): Array<[string, ApiEndpoint[]]> {
   const grouped = new Map<string, ApiEndpoint[]>()
-  for (const endpoint of filtered.value) {
-    const name = endpoint.tags[0] || '未分组接口'
+  for (const endpoint of endpoints) {
+    const name = endpointGroupName(endpoint)
     grouped.set(name, [...(grouped.get(name) || []), endpoint])
   }
-  return [...grouped.entries()]
-})
+  return [...grouped.entries()].sort(([left], [right]) => {
+    if (left === '未分组接口') return 1
+    if (right === '未分组接口') return -1
+    return left.localeCompare(right, 'zh-Hans-CN')
+  })
+}
+
+function endpointGroupName(endpoint: ApiEndpoint): string {
+  const tagLabel = cleanParts(endpoint.tags).join(' / ')
+  if (tagLabel) return tagLabel
+  const operation = endpoint.operation || {}
+  return cleanParts([
+    ...folderParts(operation['x-apifox-folder']),
+    ...folderParts(operation['x-apifox-folder-path']),
+    ...folderParts(operation['x-apifox-folderPath']),
+    ...folderParts(operation['x-apifox-folder-name']),
+    ...folderParts(operation['x-apifox-folderName']),
+  ]).join(' / ') || '未分组接口'
+}
+
+function folderParts(value: unknown): string[] {
+  if (typeof value === 'string') return splitPart(value)
+  if (Array.isArray(value)) return cleanParts(value.flatMap(item => folderParts(item)))
+  if (!value || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  for (const key of ['path', 'paths', 'folderPath', 'folder_path', 'parentNames', 'parent_names']) {
+    if (key in record) {
+      const path = folderParts(record[key])
+      const names = cleanParts([record.name, record.title, record.folderName, record.folder_name])
+      if (names.length && path.at(-1) !== names.at(-1)) path.push(...names)
+      return cleanParts(path)
+    }
+  }
+  return cleanParts([record.name, record.title, record.folderName, record.folder_name])
+}
+
+function splitPart(value: string): string[] {
+  const text = value.trim()
+  if (!text) return []
+  for (const separator of [' / ', '/', '>', '\\']) {
+    if (text.includes(separator)) return cleanParts(text.split(separator))
+  }
+  return [text]
+}
+
+function cleanParts(values: unknown[]): string[] {
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const value of values) {
+    const text = String(value || '').trim()
+    if (!text || seen.has(text)) continue
+    seen.add(text)
+    parts.push(text)
+  }
+  return parts
+}
 
 function toggle(endpointId: string, checked: boolean): void {
   const next = new Set(selected.value)
   if (checked) next.add(endpointId); else next.delete(endpointId)
+  updateSelection(next)
+}
+
+function updateSelection(next: Set<string>): void {
   selected.value = next
-  emit('selection-change', [...next])
+  emit('selection-change', props.endpoints.filter(endpoint => next.has(endpoint.id)).map(endpoint => endpoint.id))
+}
+
+function selectedCount(items: ApiEndpoint[]): number {
+  return items.filter(item => selected.value.has(item.id)).length
+}
+
+function groupChecked(items: ApiEndpoint[]): boolean {
+  return items.length > 0 && selectedCount(items) === items.length
+}
+
+function groupIndeterminate(items: ApiEndpoint[]): boolean {
+  const count = selectedCount(items)
+  return count > 0 && count < items.length
+}
+
+function toggleGroup(items: ApiEndpoint[], checked: boolean): void {
+  const next = new Set(selected.value)
+  for (const endpoint of items) {
+    if (checked) next.add(endpoint.id); else next.delete(endpoint.id)
+  }
+  updateSelection(next)
+}
+
+function toggleCollapsed(group: string): void {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(group)) next.delete(group); else next.add(group)
+  collapsedGroups.value = next
+}
+
+function clearSelected(): void {
+  updateSelection(new Set())
 }
 </script>
 
 <template>
   <section class="endpoint-tree" aria-label="接口范围">
-    <header class="panel-header"><h2>接口范围</h2><span>{{ selected.size }} 已选</span></header>
+    <header class="panel-header endpoint-tree-header"><h2>接口范围</h2><span>{{ selected.size }} 已选</span></header>
+    <div class="endpoint-tabs" aria-label="接口范围视图">
+      <button data-testid="all-tab" type="button" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">全部接口</button>
+      <button data-testid="selected-tab" type="button" :class="{ active: activeTab === 'selected' }" @click="activeTab = 'selected'">已选接口 <span>{{ selected.size }}</span></button>
+    </div>
     <label class="search-box"><Search :size="15" /><span class="sr-only">搜索接口</span><input v-model="query" data-testid="endpoint-search" placeholder="搜索名称或路径" /></label>
     <p v-if="state === 'loading'" class="state-message">正在读取接口...</p>
     <p v-else-if="state === 'failed'" class="state-message state-error">{{ error || '接口读取失败' }}</p>
     <p v-else-if="state === 'empty'" class="state-message">尚无已保存接口，请先导入接口来源。</p>
     <p v-if="state === 'partial'" class="partial-notice">部分接口未能读取，已展示可用结果。</p>
-    <div v-for="[group, items] in groups" :key="group" class="endpoint-group">
-      <h3>{{ group }} <span>{{ items.length }}</span></h3>
-      <label v-for="endpoint in items" :key="endpoint.id" class="endpoint-row" @dblclick="emit('activate', endpoint)">
-        <input
-          :data-testid="`endpoint-${endpoint.id}`"
-          type="checkbox"
-          :checked="selected.has(endpoint.id)"
-          @change="toggle(endpoint.id, ($event.target as HTMLInputElement).checked)"
-        />
-        <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
-          <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
-          <span class="endpoint-copy"><strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong><small :title="endpoint.path">{{ endpoint.path }}</small></span>
-        </button>
-      </label>
-    </div>
-    <p v-if="state === 'ready' && !filtered.length" class="state-message">没有匹配的接口。</p>
+    <template v-if="activeTab === 'all'">
+      <div v-for="[group, items] in groups" :key="group" class="endpoint-group">
+        <h3 class="endpoint-group-head">
+          <label class="group-select">
+            <input
+              :data-testid="`group-select-${group}`"
+              type="checkbox"
+              :checked="groupChecked(items)"
+              :indeterminate.prop="groupIndeterminate(items)"
+              @change="toggleGroup(items, ($event.target as HTMLInputElement).checked)"
+            />
+            <button :data-testid="`group-toggle-${group}`" type="button" @click="toggleCollapsed(group)">
+              <ChevronRight v-if="collapsedGroups.has(group)" :size="14" />
+              <ChevronDown v-else :size="14" />
+              <span>{{ group }}</span>
+            </button>
+          </label>
+          <span :data-testid="`group-selected-count-${group}`">{{ selectedCount(items) ? `${selectedCount(items)} 已选 / ` : '' }}{{ items.length }}</span>
+        </h3>
+        <template v-if="!collapsedGroups.has(group)">
+          <label v-for="endpoint in items" :key="endpoint.id" class="endpoint-row" @dblclick="emit('activate', endpoint)">
+            <input
+              :data-testid="`endpoint-${endpoint.id}`"
+              type="checkbox"
+              :checked="selected.has(endpoint.id)"
+              @change="toggle(endpoint.id, ($event.target as HTMLInputElement).checked)"
+            />
+            <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
+              <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
+              <span class="endpoint-copy"><strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong><small :title="endpoint.path">{{ endpoint.path }}</small></span>
+            </button>
+          </label>
+        </template>
+      </div>
+      <p v-if="state === 'ready' && !filtered.length" class="state-message">没有匹配的接口。</p>
+    </template>
+    <template v-else>
+      <div class="selected-toolbar">
+        <span>当前已选 {{ selected.size }} 个接口</span>
+        <button type="button" class="text-command" :disabled="!selected.size" @click="clearSelected">清空已选</button>
+      </div>
+      <div v-for="[group, items] in selectedGroups" :key="group" class="endpoint-group selected-endpoint-group">
+        <h3>{{ group }} <span>{{ items.length }}</span></h3>
+        <div v-for="endpoint in items" :key="endpoint.id" class="endpoint-row selected-endpoint-row">
+          <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
+            <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
+            <span class="endpoint-copy"><strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong><small :title="endpoint.path">{{ endpoint.path }}</small></span>
+          </button>
+          <button :data-testid="`remove-selected-${endpoint.id}`" class="mini-icon" type="button" :title="`移除 ${endpoint.summary || endpoint.path}`" @click="toggle(endpoint.id, false)">
+            <X :size="14" />
+            <span class="sr-only">移除</span>
+          </button>
+        </div>
+      </div>
+      <p v-if="!selectedEndpoints.length" class="state-message">还没有选择接口。切回全部接口后，可按分组勾选。</p>
+    </template>
   </section>
 </template>

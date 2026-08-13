@@ -389,6 +389,77 @@ def _validate_schema_dialect(version: str, schemas: Mapping[str, Any]) -> None:
                 )
 
 
+def _clean_tag_parts(values: Sequence[Any]) -> Tuple[str, ...]:
+    parts = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        for separator in (" / ", "/", ">", "\\"):
+            if separator in text:
+                nested = _clean_tag_parts(text.split(separator))
+                for item in nested:
+                    if item not in seen:
+                        parts.append(item)
+                        seen.add(item)
+                break
+        else:
+            if text not in seen:
+                parts.append(text)
+                seen.add(text)
+    return tuple(parts)
+
+
+def _folder_parts(value: Any) -> Tuple[str, ...]:
+    if isinstance(value, str):
+        return _clean_tag_parts([value])
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        parts = []
+        for item in value:
+            if isinstance(item, Mapping):
+                parts.extend(_folder_parts(item))
+            else:
+                parts.extend(_clean_tag_parts([item]))
+        return _clean_tag_parts(parts)
+    if not isinstance(value, Mapping):
+        return ()
+    for key in ("path", "paths", "folderPath", "folder_path", "parentNames", "parent_names"):
+        if key in value:
+            path_parts = list(_folder_parts(value[key]))
+            name_parts = list(_clean_tag_parts([value.get("name") or value.get("title") or value.get("folderName")]))
+            if name_parts and (not path_parts or path_parts[-1] != name_parts[-1]):
+                path_parts.extend(name_parts)
+            if path_parts:
+                return _clean_tag_parts(path_parts)
+    return _clean_tag_parts([
+        value.get("name"),
+        value.get("title"),
+        value.get("folderName"),
+        value.get("folder_name"),
+    ])
+
+
+def _apifox_folder_tags(*containers: Mapping[str, Any]) -> Tuple[str, ...]:
+    keys = (
+        "x-apifox-folder",
+        "x-apifox-folder-path",
+        "x-apifox-folderPath",
+        "x-apifox-folder-name",
+        "x-apifox-folderName",
+    )
+    for container in containers:
+        if not isinstance(container, Mapping):
+            continue
+        for key in keys:
+            if key not in container:
+                continue
+            parts = _folder_parts(container[key])
+            if parts:
+                return parts
+    return ()
+
+
 def normalize_openapi_document(document: Any, source_id: str) -> NormalizedSourceDocument:
     canonical_document = copy.deepcopy(_validate_root(copy.deepcopy(document)))
     paths = canonical_document["paths"]
@@ -467,9 +538,13 @@ def normalize_openapi_document(document: Any, source_id: str) -> NormalizedSourc
             if external_references:
                 operation["external_references"] = list(external_references)
             operation_id = str(operation.get("operationId") or "")
-            tags = operation.get("tags") or []
-            if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+            operation_tags = operation.get("tags") or []
+            if not isinstance(operation_tags, list) or any(
+                not isinstance(tag, str) for tag in operation_tags
+            ):
                 raise OpenApiValidationError("OpenAPI operation tags must be an array of strings")
+            folder_tags = _apifox_folder_tags(operation, resolved_path_item, canonical_path_item)
+            tags = _clean_tag_parts([*folder_tags, *operation_tags])
             endpoints.append(
                 NormalizedEndpoint(
                     stable_key=stable_endpoint_key(source_id, operation_id, method, normalized_path),

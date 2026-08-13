@@ -212,6 +212,33 @@ def test_saving_again_updates_the_current_task_instead_of_creating_duplicates(
     assert service.get_active(task_records["project"].id, "owner-a").id == first.id
 
 
+def test_create_task_keeps_earlier_saved_tasks_visible(task_factory, task_records):
+    service = TaskService(task_factory)
+    first = service.create_context("owner-a", _payload(task_records), "owner-a")
+    second = service.create_context(
+        "owner-a",
+        {**_payload(task_records), "name": "新增收藏冒烟"},
+        "owner-a",
+    )
+
+    tasks = service.list(task_records["project"].id, "owner-a")
+
+    assert second.id != first.id
+    assert [item.id for item in tasks][:2] == [second.id, first.id]
+    assert service.get_active(task_records["project"].id, "owner-a").id == second.id
+
+
+def test_task_can_be_renamed_without_changing_scope(task_factory, task_records):
+    service = TaskService(task_factory)
+    task = service.create_context("owner-a", _payload(task_records), "owner-a")
+
+    renamed = service.rename(task.id, "发版收藏回归", "owner-a")
+
+    assert renamed.id == task.id
+    assert renamed.name == "发版收藏回归"
+    assert renamed.selected_endpoint_ids == task.selected_endpoint_ids
+
+
 def test_task_rejects_endpoint_from_another_source_revision(
     task_factory, task_records
 ):

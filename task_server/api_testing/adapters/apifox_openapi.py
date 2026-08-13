@@ -53,7 +53,7 @@ class ApifoxOpenApiAdapter:
             "scope": {"type": "ALL"},
             "options": {
                 "includeApifoxExtensionProperties": True,
-                "addFoldersToTags": False,
+                "addFoldersToTags": True,
             },
             "oasVersion": "3.0",
             "exportFormat": "JSON",
