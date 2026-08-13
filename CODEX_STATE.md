@@ -28,6 +28,38 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-13 API 测试：基线分组维护补齐
+
+用户要求基线用例支持编辑、删除和新建分组，并且基线作为固定资产不应因为版本 / 环境切换而找不到。本轮在既有“固定资产”基础上补齐分组管理交互，不改变基线查询和执行语义：
+
+- 基线页分组编辑区从单一“保存分组”收敛为“移动所选 / 重命名分组 / 删除分组”。
+- 选中左侧自定义分组后，可一次性重命名该分组内所有基线。
+- 删除自定义分组不会删除基线用例，而是把分组内基线移回“未分组”，避免误删可回归资产。
+- “未分组”作为系统分组不可重命名 / 删除，只能把基线移动进出。
+- 新增前端回归测试覆盖：切换接口版本 / 执行环境后基线仍可见；自定义分组可重命名；删除分组后基线仍保留。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/EndpointTree.spec.ts src/views/WorkbenchView.spec.ts src/views/BaselinesView.spec.ts src/views/RunsView.spec.ts src/views/ReportsView.spec.ts src/views/AssetsView.spec.ts src/stores/tasks.spec.ts src/stores/executions.spec.ts src/stores/notifications.spec.ts src/stores/setup.spec.ts src/stores/cases.spec.ts src/stores/baselines.spec.ts
+# 12 files / 75 tests passed
+
+npm --prefix api-testing-ui run build
+# passed
+
+python3 -m pytest tests/api_testing/test_ai_service.py tests/api_testing/test_source_service.py tests/api_testing/test_execution_service.py tests/api_testing/test_notification_service.py tests/api_testing/test_test_task_service.py -q
+# 63 passed, 74 skipped；跳过项为本机无完整 API 测试数据库 / 外部服务时的既有跳过策略。
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-13 API 测试：历史基线恢复为可见固定资产
 
 用户反馈之前采纳过的基线在接口版本 / 环境版本切换后找不到。进一步排查发现：虽然新逻辑已停止自动顶掉旧基线，但历史数据中已经被旧逻辑标记为 `superseded` 的基线仍被列表、任务计数和基线回归执行过滤掉。

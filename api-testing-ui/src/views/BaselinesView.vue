@@ -52,6 +52,12 @@ const filteredSelectedCount = computed(() => {
   const visible = new Set(filteredBaselines.value.map(item => item.id))
   return baselines.selectedIds.filter(id => visible.has(id)).length
 })
+const activeGroupItems = computed(() => (
+  group.value === 'all' ? [] : baselines.items.filter(item => baselineGroup(item) === group.value)
+))
+const canManageCurrentGroup = computed(() => (
+  group.value !== 'all' && group.value !== '未分组' && activeGroupItems.value.length > 0
+))
 const allFilteredSelected = computed(() => Boolean(
   filteredBaselines.value.length && filteredSelectedCount.value === filteredBaselines.value.length,
 ))
@@ -186,6 +192,49 @@ async function updateSelectedGroup(): Promise<void> {
   }
 }
 
+async function renameCurrentGroup(): Promise<void> {
+  localError.value = ''
+  localMessage.value = ''
+  if (!canManageCurrentGroup.value) {
+    localError.value = '请先选择一个自定义基线分组'
+    return
+  }
+  const next = groupName.value.trim()
+  if (!next) {
+    localError.value = '请输入新的分组名称'
+    return
+  }
+  try {
+    await baselines.updateGroup(activeGroupItems.value.map(item => item.id), next)
+    localMessage.value = `已将分组“${group.value}”重命名为“${next}”`
+    group.value = next
+    groupName.value = ''
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '基线分组重命名失败'
+  }
+}
+
+async function deleteCurrentGroup(): Promise<void> {
+  localError.value = ''
+  localMessage.value = ''
+  if (!canManageCurrentGroup.value) {
+    localError.value = '请先选择一个自定义基线分组'
+    return
+  }
+  const previous = group.value
+  const affected = activeGroupItems.value.length
+  const confirmed = window.confirm(`删除分组“${previous}”？分组内基线会保留，并移回“未分组”。`)
+  if (!confirmed) return
+  try {
+    await baselines.updateGroup(activeGroupItems.value.map(item => item.id), '未分组')
+    localMessage.value = `已删除分组“${previous}”，${affected} 条基线已移回“未分组”`
+    group.value = 'all'
+    groupName.value = ''
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '基线分组删除失败'
+  }
+}
+
 async function editBaseline(item: ApiBaselineCase): Promise<void> {
   await router.push({
     name: 'workbench',
@@ -285,12 +334,20 @@ function sourceRevisionName(item: ApiBaselineCase): string {
         <div class="baseline-group-editor" aria-label="基线分组编辑">
           <div>
             <strong>基线分组</strong>
-            <span>选择基线后输入分组名，可新建分组或移动到已有分组。</span>
+            <span>选择基线可新建或移动分组；选中左侧分组后可重命名或删除分组。</span>
           </div>
           <input v-model="groupName" placeholder="例如：发版冒烟、收藏链路、登录鉴权" />
-          <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length || !groupName.trim()" @click="updateSelectedGroup">
-            保存分组
-          </button>
+          <div class="baseline-group-actions">
+            <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length || !groupName.trim()" @click="updateSelectedGroup">
+              移动所选
+            </button>
+            <button class="secondary-command" type="button" :disabled="!canManageCurrentGroup || !groupName.trim()" @click="renameCurrentGroup">
+              重命名分组
+            </button>
+            <button class="secondary-command danger" type="button" :disabled="!canManageCurrentGroup" @click="deleteCurrentGroup">
+              删除分组
+            </button>
+          </div>
         </div>
 
         <div v-if="baselines.loading" class="section-empty">正在读取基线用例…</div>

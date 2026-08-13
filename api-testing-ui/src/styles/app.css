@@ -285,6 +285,8 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .baseline-group-editor strong { font-size: 12px; }
 .baseline-group-editor span { color: var(--muted); font-size: 10px; }
 .baseline-group-editor input { width: 100%; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: var(--text); }
+.baseline-group-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.baseline-group-actions .danger { border-color: #f0c4c4; background: #fff5f5; color: #b42318; }
 .baseline-table-head, .baseline-row { grid-template-columns: 32px minmax(190px, .9fr) minmax(280px, 1.25fr) minmax(110px, .5fr) minmax(110px, .5fr) minmax(150px, .6fr) minmax(118px, auto); }
 .baseline-checkbox { display: flex; align-items: center; justify-content: center; }
 .baseline-row-actions { display: inline-flex; justify-content: flex-end; gap: 6px; }
@@ -293,5 +295,5 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .tiny-command:hover { border-color: var(--blue); background: #f0f6fb; }
 .tiny-command.danger { color: #b42318; }
 .tiny-command.danger:hover { border-color: #fda29b; background: #fff5f5; }
-@media (max-width: 1100px) { .baseline-group-editor { grid-template-columns: 1fr; align-items: stretch; }.baseline-table-head, .baseline-row { grid-template-columns: 26px minmax(170px, 1fr) minmax(220px, 1.2fr) minmax(110px, auto); }.baseline-table-head span:nth-child(n+4):not(:last-child), .baseline-row > span:nth-child(n+4):not(:last-child), .baseline-row time { display: none; }.baseline-row-actions { display: flex; } }
+@media (max-width: 1100px) { .baseline-group-editor { grid-template-columns: 1fr; align-items: stretch; }.baseline-group-actions, .baseline-group-actions button { width: 100%; }.baseline-table-head, .baseline-row { grid-template-columns: 26px minmax(170px, 1fr) minmax(220px, 1.2fr) minmax(110px, auto); }.baseline-table-head span:nth-child(n+4):not(:last-child), .baseline-row > span:nth-child(n+4):not(:last-child), .baseline-row time { display: none; }.baseline-row-actions { display: flex; } }
 @media (max-width: 620px) { .baseline-row-actions { grid-column: 2; justify-content: flex-start; }.baseline-group-editor button { width: 100%; } }
