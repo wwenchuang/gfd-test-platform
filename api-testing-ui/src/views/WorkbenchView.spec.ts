@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ApiEndpoint, CaseVersion } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseVersion } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -294,6 +294,106 @@ describe('WorkbenchView debug workflow', () => {
     expect(context.environmentRevisionId).toBe('env-2')
     expect(loadAssets).toHaveBeenCalledWith('source-2')
     expect(listTasks).toHaveBeenCalledWith('project-2')
+  })
+
+  it('keeps a historical task scope while running it with the selected runtime environment', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1',
+      sourceRevisionId: null,
+      environmentRevisionId: null,
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [
+        { id: 'source-current', source_id: 'source-current', project_id: 'project-1', name: '默认模块', revision_number: 9, endpoint_count: 999 },
+      ],
+      environmentRevisions: [
+        { id: 'environment-current', environment_id: 'environment-current', project_id: 'project-1', name: '生产环境（新）', revision: 9 },
+      ],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [ENDPOINT]
+      assets.state = 'ready'
+    })
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const historicalTask = {
+      id: 'task-old',
+      project_id: 'project-1',
+      source_revision_id: 'source-old',
+      environment_revision_id: 'environment-old',
+      name: '3D 家用基线回归',
+      state: 'ready',
+      selected_endpoint_ids: [ENDPOINT.id],
+      runnable_baseline_count: 1,
+      latest_ai_job_id: null,
+      latest_execution_id: null,
+      summary: { task_type: 'baseline' },
+      created_at: '',
+      updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockImplementation(async () => {
+      tasks.tasks = [historicalTask]
+      return tasks.tasks
+    })
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const run = vi.spyOn(tasks, 'runCurrent').mockResolvedValue({ id: 'execution-1' } as never)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'workbench', component: WorkbenchView },
+        { path: '/runs', name: 'runs', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          EndpointDetail: true,
+          CaseEditor: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['selectedIds'],
+            template: '<div data-testid="endpoint-tree">{{ selectedIds.length }}</div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="task-selector"]').setValue('task-old')
+    await flushPromises()
+
+    expect(context.sourceRevisionId).toBe('source-old')
+    expect(context.environmentRevisionId).toBe('environment-old')
+    expect((wrapper.get('[data-testid="context-source"]').element as HTMLSelectElement).value).toBe('source-old')
+    expect((wrapper.get('[data-testid="context-environment"]').element as HTMLSelectElement).value).toBe('environment-old')
+    expect(wrapper.get('.task-status-strip').text()).toContain('任务保存环境')
+
+    await wrapper.get('[data-testid="context-environment"]').setValue('environment-current')
+    await flushPromises()
+
+    expect(context.environmentRevisionId).toBe('environment-current')
+    expect(wrapper.get('.task-status-strip').text()).toContain('生产环境（新）')
+
+    await wrapper.get('[data-testid="run-task"]').trigger('click')
+    await flushPromises()
+
+    expect(run).toHaveBeenCalledWith('environment-current')
+    expect(router.currentRoute.value.name).toBe('runs')
+    expect(router.currentRoute.value.query.executionId).toBe('execution-1')
   })
 })
 

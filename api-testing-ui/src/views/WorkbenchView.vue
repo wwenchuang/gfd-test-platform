@@ -10,7 +10,7 @@ import DebugDrawer from '../components/DebugDrawer.vue'
 import EndpointDetail from '../components/EndpointDetail.vue'
 import EndpointTree from '../components/EndpointTree.vue'
 import TaskStatusStrip from '../components/TaskStatusStrip.vue'
-import type { ApiEndpoint, CaseDraft } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseDraft } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -36,10 +36,10 @@ const debugRunning = computed(() => cases.debugPolling)
 const selectedEnvironment = computed(() => context.environmentRevisions.find(
   item => item.id === context.environmentRevisionId,
 ))
-const environmentName = computed(() => selectedEnvironment.value?.name || '未选择环境')
+const environmentName = computed(() => selectedEnvironment.value?.name || (context.environmentRevisionId ? '任务保存环境' : '未选择环境'))
 const environmentLabel = computed(() => selectedEnvironment.value
   ? `${selectedEnvironment.value.name} · v${selectedEnvironment.value.revision}`
-  : '未选择环境')
+  : context.environmentRevisionId ? '任务保存环境 · 已保存任务引用' : '未选择环境')
 const taskMatchesSelection = computed(() => Boolean(
   tasks.task
   && tasks.task.project_id === context.projectId
@@ -53,10 +53,14 @@ onMounted(async () => {
   if (context.projectId) await tasks.list(context.projectId)
   const restoredTask = context.projectId ? await tasks.restore(context.projectId) : null
   if (restoredTask && !routeContext) {
+    const runtimeEnvironmentId = restoredTask.project_id === context.projectId
+      ? context.environmentRevisionId || restoredTask.environment_revision_id
+      : restoredTask.environment_revision_id
+    ensureTaskContextOptions(restoredTask, runtimeEnvironmentId)
     context.restoreExecutionContext({
       project_id: restoredTask.project_id,
       source_revision_id: restoredTask.source_revision_id,
-      environment_revision_id: restoredTask.environment_revision_id,
+      environment_revision_id: runtimeEnvironmentId,
     })
   }
   const restoredSelection = restoredTask
@@ -140,6 +144,7 @@ async function selectTask(taskId: string): Promise<void> {
   const runtimeEnvironmentId = task.project_id === context.projectId
     ? context.environmentRevisionId || task.environment_revision_id
     : task.environment_revision_id
+  ensureTaskContextOptions(task, runtimeEnvironmentId)
   context.restoreExecutionContext({
     project_id: task.project_id,
     source_revision_id: task.source_revision_id,
@@ -336,6 +341,42 @@ async function adoptBaseline(input: { caseVersionId: string; executionCaseId: st
 
 function routeValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function ensureTaskContextOptions(task: ApiTestTask, environmentRevisionId: string | null): void {
+  ensureSourceRevisionOption(task)
+  if (environmentRevisionId) ensureEnvironmentRevisionOption(task, environmentRevisionId)
+}
+
+function ensureSourceRevisionOption(task: ApiTestTask): void {
+  if (context.sourceRevisions.some(item => item.id === task.source_revision_id)) return
+  context.sourceRevisions = [
+    ...context.sourceRevisions,
+    {
+      id: task.source_revision_id,
+      source_id: task.source_revision_id,
+      project_id: task.project_id,
+      name: '当前任务接口版本',
+      revision_number: 0,
+      endpoint_count: task.selected_endpoint_ids.length,
+      source_status: 'active',
+    },
+  ]
+}
+
+function ensureEnvironmentRevisionOption(task: ApiTestTask, environmentRevisionId: string): void {
+  if (context.environmentRevisions.some(item => item.id === environmentRevisionId)) return
+  context.environmentRevisions = [
+    ...context.environmentRevisions,
+    {
+      id: environmentRevisionId,
+      environment_id: environmentRevisionId,
+      project_id: task.project_id,
+      name: environmentRevisionId === task.environment_revision_id ? '任务保存环境' : '当前执行环境',
+      revision: 0,
+      status: 'active',
+    },
+  ]
 }
 
 function defaultTaskName(): string {

@@ -34,6 +34,42 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 工作台：历史任务旧版本引用 fallback 修复
+
+用户反馈：选择历史任务后，顶部接口版本和执行环境下拉会置空；再切换环境时任务列表刷新，历史任务无法直接用新环境执行，形成“选择历史任务 / 选择环境”的死循环。
+
+本轮修复：
+
+- 历史任务继续作为固定接口范围；执行环境作为运行时选择，不再要求与任务创建时环境一致。
+- 当历史任务引用的接口版本或环境版本已经不在当前下拉选项中时，工作台会补充只读 fallback 选项：`当前任务接口版本`、`任务保存环境`，避免顶部下拉和任务条显示空白。
+- 用户选择历史任务后仍可切换到当前最新环境；执行时前端把最新选择的 `environment_revision_id` 传给任务执行接口。
+- 新增回归测试覆盖：历史任务引用旧 source/env，切换到当前环境后执行，`tasks.runCurrent` 必须收到新的环境 ID。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/views/WorkbenchView.spec.ts -t "keeps a historical task scope" --reporter=basic
+# 1 file / 1 focused test passed
+
+npm --prefix api-testing-ui test -- --run src/views/WorkbenchView.spec.ts --reporter=basic
+# 1 file / 5 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 31 files / 161 tests passed
+
+npm --prefix api-testing-ui run build
+# passed
+
+.venv/bin/python tests/frontend_static_checks.py
+# 72 checks passed
+
+.venv/bin/python tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 测试：环境资产中心按项目重构
 
 用户确认采用环境页方案 B：把“环境资产、环境版本和编辑表单”拆开，形成项目列表、环境资产列表、环境详情三栏结构，避免进入页面直接看到大表单，也避免接口版本切换后误以为环境丢失。
