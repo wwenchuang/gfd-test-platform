@@ -39,6 +39,14 @@ class EnvironmentRepository:
             .with_for_update()
         )
 
+    def list_environments(self, project_id, status="active"):
+        query = select(ApiEnvironment).where(ApiEnvironment.project_id == project_id)
+        if status != "all":
+            query = query.where(ApiEnvironment.status == status)
+        return tuple(
+            self.session.scalars(query.order_by(ApiEnvironment.name, ApiEnvironment.id))
+        )
+
     def find_environment_for_update(self, project_id, source_id, name):
         query = select(ApiEnvironment).where(
             ApiEnvironment.project_id == project_id,
@@ -63,6 +71,18 @@ class EnvironmentRepository:
 
     def get_revision(self, revision_id):
         return self.session.get(ApiEnvironmentRevision, revision_id)
+
+    def list_revisions(self, environment_id):
+        return tuple(
+            self.session.scalars(
+                select(ApiEnvironmentRevision)
+                .where(ApiEnvironmentRevision.environment_id == environment_id)
+                .order_by(
+                    ApiEnvironmentRevision.revision_number.desc(),
+                    ApiEnvironmentRevision.id.desc(),
+                )
+            )
+        )
 
     def next_revision_number(self, environment_id):
         current = self.session.scalar(

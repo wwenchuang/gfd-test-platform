@@ -125,6 +125,9 @@ class HttpClient:
     def put(self, path, payload=None, headers=None):
         return self.request("PUT", path, json.dumps(payload or {}).encode("utf-8"), {"Content-Type": "application/json", **(headers or {})})
 
+    def delete(self, path, headers=None):
+        return self.request("DELETE", path, headers=headers)
+
     def request(self, method, path, body=None, headers=None):
         connection = HTTPConnection("127.0.0.1", self.port, timeout=3)
         connection.request(method, path, body=body, headers=headers or {})
@@ -501,6 +504,78 @@ def test_cross_owner_nested_write_is_hidden_not_validated(http_client, owned_rec
 
     assert response.status == 404
     assert response.body["error"]["code"] == "not_found"
+
+
+def test_environment_asset_routes_list_history_archive_and_restore(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        environment = session.get(ApiEnvironment, owned_records["environment"].id)
+        environment.active_revision_id = owned_records["environment_revision"].id
+
+    project_id = owned_records["project"].id
+    environment_id = owned_records["environment"].id
+    listed = http_client.get(
+        f"/api/api-testing/v1/environments?project_id={project_id}", _auth()
+    )
+    history = http_client.get(
+        f"/api/api-testing/v1/environments/{environment_id}/revisions", _auth()
+    )
+
+    assert listed.status == 200
+    assert listed.body["data"]["environments"][0]["id"] == environment_id
+    assert listed.body["data"]["environments"][0]["active_revision_id"] == (
+        owned_records["environment_revision"].id
+    )
+    assert history.status == 200
+    assert [item["revision"] for item in history.body["data"]["revisions"]] == [1]
+
+    archived = http_client.delete(
+        f"/api/api-testing/v1/environments/{environment_id}", _auth()
+    )
+    active = http_client.get(
+        f"/api/api-testing/v1/environments?project_id={project_id}", _auth()
+    )
+    archived_list = http_client.get(
+        f"/api/api-testing/v1/environments?project_id={project_id}&status=archived",
+        _auth(),
+    )
+
+    assert archived.status == 200
+    assert archived.body["data"]["environment"]["status"] == "archived"
+    assert active.body["data"]["environments"] == []
+    assert archived_list.body["data"]["environments"][0]["id"] == environment_id
+
+    restored = http_client.post(
+        f"/api/api-testing/v1/environments/{environment_id}/restore", {}, _auth()
+    )
+
+    assert restored.status == 200
+    assert restored.body["data"]["environment"]["status"] == "active"
+
+
+def test_environment_asset_routes_hide_cross_owner_resources(
+    http_client, api_context, owned_records
+):
+    with api_context["factory"].begin() as session:
+        environment = session.get(ApiEnvironment, owned_records["environment"].id)
+        environment.active_revision_id = owned_records["environment_revision"].id
+
+    project_id = owned_records["project"].id
+    environment_id = owned_records["environment"].id
+
+    assert http_client.get(
+        f"/api/api-testing/v1/environments?project_id={project_id}",
+        _auth("owner-b"),
+    ).status == 404
+    assert http_client.get(
+        f"/api/api-testing/v1/environments/{environment_id}/revisions",
+        _auth("owner-b"),
+    ).status == 404
+    assert http_client.delete(
+        f"/api/api-testing/v1/environments/{environment_id}",
+        _auth("owner-b"),
+    ).status == 404
 
 
 def test_secret_only_environment_revision_accepts_explicit_empty_changes(

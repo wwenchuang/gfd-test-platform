@@ -286,6 +286,17 @@ def _get(segments, qs, actor, settings):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
         return {"tasks": _view(TestTaskService(factory).list(project_id, actor))}
+    if segments == ("environments",):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return {
+            "environments": [
+                _view(item)
+                for item in EnvironmentService(factory).list_assets(
+                    project_id, actor, qs.get("status", "active")
+                )
+            ]
+        }
     if segments == ("executions",):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
@@ -324,6 +335,17 @@ def _get(segments, qs, actor, settings):
     if len(segments) == 2 and segments[0] == "environments":
         _scope_environment(factory, _uuid(segments[1]), actor)
         return {"environment": _view(EnvironmentService(factory).get_environment(_uuid(segments[1])))}
+    if len(segments) == 3 and segments[0] == "environments" and segments[2] == "revisions":
+        environment_id = _uuid(segments[1])
+        _scope_environment(factory, environment_id, actor)
+        return {
+            "revisions": [
+                _view(item)
+                for item in EnvironmentService(factory).list_revisions(
+                    environment_id, actor
+                )
+            ]
+        }
     if len(segments) == 2 and segments[0] == "environment-revisions":
         _scope_environment_revision(factory, _uuid(segments[1]), actor)
         return {"environment_revision": _view(EnvironmentService(factory).get_revision(_uuid(segments[1])))}
@@ -456,6 +478,14 @@ def _post(segments, payload, actor, settings):
         _scope_environment(factory, _uuid(segments[1]), actor)
         changes = payload["environment"] if "environment" in payload else payload
         return {"environment": _view(EnvironmentService(factory).create_revision(_uuid(segments[1]), changes, payload.get("secret_updates") or {}, actor))}
+    if len(segments) == 3 and segments[0] == "environments" and segments[2] == "restore":
+        environment_id = _uuid(segments[1])
+        _scope_environment(factory, environment_id, actor)
+        return {
+            "environment": _view(
+                EnvironmentService(factory).restore(environment_id, actor)
+            )
+        }
     if segments == ("cases",):
         _scope_endpoint(factory, _uuid(payload.get("endpoint_id")), actor)
         return {"case_version": _view(CaseService(factory).create_draft(_uuid(payload.get("endpoint_id")), _required_object(payload, "case"), payload.get("origin", "manual"), actor))}
@@ -693,6 +723,14 @@ def _delete(segments, actor):
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).archive(execution_id, actor))}
     if len(segments) == 2 and segments[0] == "baselines":
         return {"baseline": _view(CaseService(factory).archive_baseline(_uuid(segments[1]), actor))}
+    if len(segments) == 2 and segments[0] == "environments":
+        environment_id = _uuid(segments[1])
+        _scope_environment(factory, environment_id, actor)
+        return {
+            "environment": _view(
+                EnvironmentService(factory).archive(environment_id, actor)
+            )
+        }
     if len(segments) == 2 and segments[0] == "projects":
         project_id = _uuid(segments[1])
         _scope_project(factory, project_id, actor)

@@ -8700,3 +8700,46 @@ git diff --check
 - M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
 - M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
 - M4：执行记录/报告删除、飞书卡片链接和项目级机器人配置。
+
+### 2026-08-13 API 环境资产中心与工作台上下文收口
+
+本轮只实现项目化环境资产管理和工作台上下文联动，不提前实现定时任务，避免把任务、基线和调度规则再次耦合到环境编辑页。
+
+本轮实现：
+
+- 环境改为项目内的稳定资产：编辑环境生成新 revision，不因接口版本更新而复制或丢失环境身份。
+- 环境资产页按项目展示环境列表，支持“使用中 / 已归档”切换、选择详情、编辑、归档、恢复和历史版本查看。
+- 删除环境采用逻辑归档；已有任务、基线和执行记录仍可解析历史环境 revision。
+- 环境详情展示接口地址、公共变量、敏感变量配置状态和 revision 历史；敏感值不回显。
+- Apifox 环境读取保持手动触发，环境资产页通过现有接口资产同步流程更新，不增加后台自动刷新。
+- 从环境资产页进入工作台时携带 `projectId`、`sourceRevisionId`、`environmentRevisionId`；工作台按所选项目、接口版本和环境加载调试范围。
+- 项目级飞书机器人配置继续归项目所有，不放入环境或任务资产，供基线回归和未来定时执行复用。
+
+未来定时任务边界已固定：
+
+- 任务和基线是独立可复用资产；调度器只引用 `task_id`，或引用 `baseline_group_id` / 基线用例集合，不复制用例数据。
+- 调度器选择执行环境时引用稳定 `environment_id`，执行时解析当前有效 revision；如需要可选固定 `environment_revision_id`。
+- 是否发送飞书由调度计划保存 `notify_feishu` 开关；Webhook 从项目级飞书配置读取，不在每条定时任务中重复保存。
+- 本轮没有新增调度器、Cron 表、后台轮询或定时执行入口，后续可在上述边界上独立实现。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_environment_service.py tests/api_testing/test_http_contract.py -q
+# 14 passed, 50 skipped；跳过项为本机未启用 PostgreSQL/Redis 的集成场景
+
+npm --prefix api-testing-ui test -- --run
+# 31 files / 153 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```

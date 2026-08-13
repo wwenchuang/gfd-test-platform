@@ -10,10 +10,17 @@ import { useContextStore } from '../stores/context'
 import { useSetupStore } from '../stores/setup'
 import AssetsView from './AssetsView.vue'
 
+const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+
+vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
+}))
+
 describe('AssetsView Apifox actions', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.restoreAllMocks()
+    routeState.query = {}
     vi.spyOn(apiClient, 'get').mockImplementation(async (path) => {
       if (path.endsWith('/workspace')) return { data: { workspace: null } } as never
       if (path.endsWith('/context-options')) {
@@ -85,6 +92,35 @@ describe('AssetsView Apifox actions', () => {
     const createButton = wrapper.findAll('button').find(button => button.text() === '创建')
     expect(createButton).toBeDefined()
     await createButton!.trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('[data-testid="platform-project-select"]').element as HTMLSelectElement).value).toBe('project-2')
+  })
+
+  it('uses the project passed from the environment asset center instead of the saved workspace project', async () => {
+    routeState.query = { projectId: 'project-2' }
+    vi.mocked(apiClient.get).mockImplementation(async (path) => {
+      if (path.endsWith('/workspace')) {
+        return { data: { workspace: { project_id: 'project-1' } } } as never
+      }
+      if (path.endsWith('/context-options')) {
+        return { data: {
+          projects: [
+            { id: 'project-1', name: '3D 家用' },
+            { id: 'project-2', name: '打印后台' },
+          ],
+          source_revisions: [],
+          environment_revisions: [],
+        } } as never
+      }
+      return { data: { credential: {
+        provider: 'apifox', configured: true, fingerprint: 'a1b2c3d4e5f6', updated_at: null,
+      } } } as never
+    })
+
+    const wrapper = mount(AssetsView, {
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
     await flushPromises()
 
     expect((wrapper.get('[data-testid="platform-project-select"]').element as HTMLSelectElement).value).toBe('project-2')

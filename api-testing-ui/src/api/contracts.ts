@@ -149,6 +149,35 @@ export interface EnvironmentView {
   default_headers: Record<string, unknown>
 }
 
+export interface EnvironmentAsset {
+  id: string
+  project_id: string
+  source_id: string | null
+  active_revision_id: string
+  source_revision_id: string | null
+  revision: number
+  name: string
+  description: string
+  status: 'active' | 'archived'
+  service_count: number
+  public_variable_count: number
+  secret_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface EnvironmentRevisionSummary {
+  id: string
+  environment_id: string
+  source_revision_id: string | null
+  revision: number
+  name: string
+  description: string
+  status: string
+  created_at: string
+  updated_at: string
+}
+
 export interface ContextOptionsResponse {
   projects: ProjectOption[]
   source_revisions: SourceRevisionOption[]

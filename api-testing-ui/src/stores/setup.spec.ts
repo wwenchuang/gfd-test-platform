@@ -142,6 +142,57 @@ describe('setup store', () => {
     expect(store.apifoxPreview?.source_preview.id).toBe('preview-1')
     expect(store.activeRevision).toBeNull()
   })
+
+  it('loads project environment assets and their revision history', async () => {
+    const get = vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { environments: [{
+        id: 'environment-1', project_id: 'project-1', source_id: 'source-1',
+        active_revision_id: 'environment-revision-2', source_revision_id: 'source-revision-2',
+        revision: 2, name: '生产环境', description: '腾讯云', status: 'active',
+        service_count: 2, public_variable_count: 3, secret_count: 1,
+        created_at: '2026-08-10T10:00:00Z', updated_at: '2026-08-13T10:00:00Z',
+      }] } })
+      .mockResolvedValueOnce({ data: { revisions: [{
+        id: 'environment-revision-2', environment_id: 'environment-1',
+        source_revision_id: 'source-revision-2', revision: 2, name: '生产环境',
+        description: '腾讯云', status: 'active', created_at: '2026-08-13T10:00:00Z',
+        updated_at: '2026-08-13T10:00:00Z',
+      }] } })
+    const store = useSetupStore()
+
+    await store.loadEnvironmentAssets('project-1')
+    await store.loadEnvironmentHistory('environment-1')
+
+    expect(get.mock.calls).toEqual([
+      ['/api/api-testing/v1/environments?project_id=project-1&status=active'],
+      ['/api/api-testing/v1/environments/environment-1/revisions'],
+    ])
+    expect(store.environmentAssets[0].name).toBe('生产环境')
+    expect(store.environmentHistory[0].revision).toBe(2)
+  })
+
+  it('archives and restores stable environment assets without deleting revisions', async () => {
+    const archived = {
+      id: 'environment-1', project_id: 'project-1', source_id: null,
+      active_revision_id: 'environment-revision-1', source_revision_id: null,
+      revision: 1, name: '测试环境', description: '', status: 'archived' as const,
+      service_count: 1, public_variable_count: 0, secret_count: 0,
+      created_at: '2026-08-10T10:00:00Z', updated_at: '2026-08-13T10:00:00Z',
+    }
+    const restored = { ...archived, status: 'active' as const }
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { environment: archived } })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { environment: restored } })
+    const store = useSetupStore()
+    store.environmentAssets = [{ ...restored }]
+
+    await store.archiveEnvironment('environment-1')
+    expect(store.environmentAssets[0].status).toBe('archived')
+    await store.restoreEnvironment('environment-1')
+
+    expect(remove).toHaveBeenCalledWith('/api/api-testing/v1/environments/environment-1')
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/environments/environment-1/restore', {})
+    expect(store.environmentAssets[0].status).toBe('active')
+  })
 })
 
 function deferred<T>() {

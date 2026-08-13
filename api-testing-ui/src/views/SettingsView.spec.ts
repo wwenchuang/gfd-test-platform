@@ -1,0 +1,136 @@
+// @vitest-environment jsdom
+
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { EnvironmentAsset, EnvironmentView } from '../api/contracts'
+import { useContextStore } from '../stores/context'
+import { useNotificationsStore } from '../stores/notifications'
+import { useSetupStore } from '../stores/setup'
+import SettingsView from './SettingsView.vue'
+
+const environment: EnvironmentAsset = {
+  id: 'environment-1', project_id: 'project-1', source_id: 'source-1',
+  active_revision_id: 'environment-revision-2', source_revision_id: 'source-revision-2',
+  revision: 2, name: '生产环境（新）-腾讯云', description: '发布回归环境', status: 'active',
+  service_count: 2, public_variable_count: 3, secret_count: 1,
+  created_at: '2026-08-12T10:00:00Z', updated_at: '2026-08-13T10:00:00Z',
+}
+
+const environmentView: EnvironmentView = {
+  id: environment.id, project_id: environment.project_id, source_id: environment.source_id,
+  revision_id: environment.active_revision_id, source_revision_id: environment.source_revision_id,
+  revision: environment.revision, name: environment.name, description: environment.description,
+  status: environment.status,
+  services: {
+    default: { name: 'default', module_name: '默认服务', base_url: 'https://api.example.com', unresolved: false },
+    'service-2': { name: 'service-2', module_name: '图片建模', base_url: 'https://image.example.com', unresolved: false },
+  },
+  variables: { Biz: 'ZXB', ZXBToken: { configured: true } },
+  default_headers: { Authorization: 'Bearer {{ZXBToken}}' },
+}
+
+describe('SettingsView environment asset center', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.restoreAllMocks()
+
+    const context = useContextStore()
+    context.projects = [
+      { id: 'project-1', name: '3D 家用' },
+      { id: 'project-2', name: '打印后台' },
+    ]
+    context.projectId = 'project-1'
+    context.sourceRevisions = [
+      { id: 'source-revision-2', source_id: 'source-1', project_id: 'project-1', name: '默认模块', revision_number: 2, endpoint_count: 999 },
+    ]
+    context.environmentRevisions = [
+      { id: 'environment-revision-2', environment_id: 'environment-1', project_id: 'project-1', name: environment.name, revision: 2 },
+    ]
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const setup = useSetupStore()
+    vi.spyOn(setup, 'loadEnvironmentAssets').mockImplementation(async () => {
+      setup.environmentAssets = [environment]
+      return setup.environmentAssets
+    })
+    vi.spyOn(setup, 'loadEnvironmentRevision').mockImplementation(async () => {
+      setup.environment = environmentView
+      return environmentView
+    })
+    vi.spyOn(setup, 'loadEnvironmentHistory').mockImplementation(async () => {
+      setup.environmentHistory = [
+        { id: 'environment-revision-2', environment_id: environment.id, source_revision_id: 'source-revision-2', revision: 2, name: environment.name, description: environment.description, status: 'active', created_at: '2026-08-13T10:00:00Z', updated_at: '2026-08-13T10:00:00Z' },
+        { id: 'environment-revision-1', environment_id: environment.id, source_revision_id: 'source-revision-1', revision: 1, name: '生产环境', description: '', status: 'active', created_at: '2026-08-12T10:00:00Z', updated_at: '2026-08-12T10:00:00Z' },
+      ]
+      return setup.environmentHistory
+    })
+
+    const notifications = useNotificationsStore()
+    vi.spyOn(notifications, 'loadFeishu').mockResolvedValue()
+  })
+
+  it('lists project environments and opens the selected environment in the workbench', async () => {
+    const { wrapper, router } = await mountView()
+
+    expect(wrapper.text()).toContain('项目环境')
+    expect(wrapper.text()).toContain('3D 家用')
+    expect(wrapper.text()).toContain('生产环境（新）-腾讯云')
+    expect(wrapper.text()).toContain('2 个服务')
+    expect(wrapper.text()).toContain('版本历史')
+    expect(wrapper.text()).toContain('v2')
+    expect(wrapper.text()).toContain('图片建模')
+
+    await wrapper.get('[data-action="workbench"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('workbench')
+    expect(router.currentRoute.value.query).toEqual({
+      projectId: 'project-1',
+      sourceRevisionId: 'source-revision-2',
+      environmentRevisionId: 'environment-revision-2',
+    })
+  })
+
+  it('switches project scope and supports archiving and restoring environment assets', async () => {
+    const { wrapper } = await mountView()
+    const setup = useSetupStore()
+    const loadAssets = vi.mocked(setup.loadEnvironmentAssets)
+    vi.spyOn(setup, 'archiveEnvironment').mockResolvedValue({ ...environment, status: 'archived' })
+    vi.spyOn(setup, 'restoreEnvironment').mockResolvedValue({ ...environment, status: 'active' })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    await wrapper.get('[data-project-id="project-2"]').trigger('click')
+    await flushPromises()
+    expect(loadAssets).toHaveBeenLastCalledWith('project-2', 'active')
+
+    await wrapper.get('[data-project-id="project-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-action="archive"]').trigger('click')
+    await flushPromises()
+    expect(setup.archiveEnvironment).toHaveBeenCalledWith('environment-1')
+
+    await wrapper.get('[data-status="archived"]').trigger('click')
+    await flushPromises()
+    expect(loadAssets).toHaveBeenLastCalledWith('project-1', 'archived')
+  })
+})
+
+async function mountView() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', name: 'workbench', component: { template: '<div />' } },
+      { path: '/assets', name: 'assets', component: { template: '<div />' } },
+      { path: '/settings', name: 'settings', component: SettingsView },
+    ],
+  })
+  await router.push('/settings')
+  await router.isReady()
+  const wrapper = mount(SettingsView, { global: { plugins: [router] } })
+  await flushPromises()
+  return { wrapper, router }
+}

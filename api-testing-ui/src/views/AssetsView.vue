@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   ArrowRight, Check, CheckCircle2, CloudDownload, Database,
   Edit3, FileJson, FolderPlus, KeyRound, Layers, RefreshCw, Save, Trash2,
@@ -12,6 +13,7 @@ import { useSetupStore } from '../stores/setup'
 
 const context = useContextStore()
 const setup = useSetupStore()
+const route = useRoute()
 const projectId = ref('')
 const revisionId = ref('')
 const environmentRevisionId = ref('')
@@ -70,9 +72,16 @@ const diffSummary = computed(() => setup.preview ? [
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions(), setup.loadApifoxCredential()])
-  projectId.value = context.projectId || context.projects[0]?.id || ''
+  const requestedProjectId = routeValue(route.query.projectId)
+  projectId.value = context.projects.some(item => item.id === requestedProjectId)
+    ? requestedProjectId
+    : context.projectId || context.projects[0]?.id || ''
   chooseDefaultContext()
 })
+
+function routeValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
 
 function latestSourceRevision(items: SourceRevisionOption[]): SourceRevisionOption | null {
   return [...items].sort((left, right) => left.revision_number - right.revision_number || left.id.localeCompare(right.id)).at(-1) || null

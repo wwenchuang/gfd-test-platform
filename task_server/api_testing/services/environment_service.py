@@ -6,6 +6,8 @@ import re
 from urllib.parse import urlsplit
 
 from ..contracts.environment import (
+    EnvironmentAssetView,
+    EnvironmentRevisionSummary,
     EnvironmentServiceView,
     EnvironmentView,
     ResolvedEnvironment,
@@ -517,6 +519,118 @@ class EnvironmentService:
                 raise EnvironmentNotFoundError("API environment was not found")
             revision = repository.get_revision(environment.active_revision_id)
             return self._view(repository, environment, revision)
+
+    def list_assets(self, project_id, actor_id, status="active"):
+        project_identifier = _text(project_id, "project id")
+        actor = _text(actor_id, "actor id")
+        normalized_status = _text(status, "environment status")
+        if normalized_status not in {"active", "archived", "all"}:
+            raise EnvironmentInputError("environment status is invalid")
+        with self._session_factory() as session:
+            repository = EnvironmentRepository(session)
+            project = repository.get_project(project_identifier)
+            if project is None or project.owner_id != actor:
+                raise EnvironmentNotFoundError("API testing project was not found")
+            assets = []
+            for environment in repository.list_environments(
+                project_identifier, normalized_status
+            ):
+                if not environment.active_revision_id:
+                    continue
+                revision = repository.get_revision(environment.active_revision_id)
+                if revision is None:
+                    continue
+                services, public_variables, secret_records = self._revision_state(
+                    repository, revision.id
+                )
+                assets.append(
+                    EnvironmentAssetView(
+                        id=environment.id,
+                        project_id=environment.project_id,
+                        source_id=environment.source_id,
+                        active_revision_id=revision.id,
+                        source_revision_id=revision.source_revision_id,
+                        revision=revision.revision_number,
+                        name=revision.name,
+                        description=revision.description,
+                        status=environment.status,
+                        service_count=len(services),
+                        public_variable_count=len(public_variables),
+                        secret_count=len(secret_records),
+                        created_at=environment.created_at,
+                        updated_at=environment.updated_at,
+                    )
+                )
+            return tuple(assets)
+
+    def list_revisions(self, environment_id, actor_id):
+        actor = _text(actor_id, "actor id")
+        with self._session_factory() as session:
+            repository = EnvironmentRepository(session)
+            environment = repository.get_environment(environment_id)
+            if environment is None:
+                raise EnvironmentNotFoundError("API environment was not found")
+            project = repository.get_project(environment.project_id)
+            if project is None or project.owner_id != actor:
+                raise EnvironmentNotFoundError("API environment was not found")
+            return tuple(
+                EnvironmentRevisionSummary(
+                    id=revision.id,
+                    environment_id=revision.environment_id,
+                    source_revision_id=revision.source_revision_id,
+                    revision=revision.revision_number,
+                    name=revision.name,
+                    description=revision.description,
+                    status=revision.status,
+                    created_at=revision.created_at,
+                    updated_at=revision.updated_at,
+                )
+                for revision in repository.list_revisions(environment.id)
+            )
+
+    def archive(self, environment_id, actor_id):
+        return self._set_status(environment_id, actor_id, "archived")
+
+    def restore(self, environment_id, actor_id):
+        return self._set_status(environment_id, actor_id, "active")
+
+    def _set_status(self, environment_id, actor_id, status):
+        actor = _text(actor_id, "actor id")
+        with self._session_factory.begin() as session:
+            repository = EnvironmentRepository(session)
+            environment = repository.get_environment_for_update(environment_id)
+            if environment is None:
+                raise EnvironmentNotFoundError("API environment was not found")
+            project = repository.get_project(environment.project_id)
+            if project is None or project.owner_id != actor:
+                raise EnvironmentNotFoundError("API environment was not found")
+            environment.status = status
+            environment.updated_by = actor
+            repository.flush()
+            revision = repository.get_revision(environment.active_revision_id)
+            if revision is None:
+                raise EnvironmentNotFoundError(
+                    "API environment active revision was not found"
+                )
+            services, public_variables, secret_records = self._revision_state(
+                repository, revision.id
+            )
+            return EnvironmentAssetView(
+                id=environment.id,
+                project_id=environment.project_id,
+                source_id=environment.source_id,
+                active_revision_id=revision.id,
+                source_revision_id=revision.source_revision_id,
+                revision=revision.revision_number,
+                name=revision.name,
+                description=revision.description,
+                status=environment.status,
+                service_count=len(services),
+                public_variable_count=len(public_variables),
+                secret_count=len(secret_records),
+                created_at=environment.created_at,
+                updated_at=environment.updated_at,
+            )
 
     def get_revision(self, revision_id):
         with self._session_factory() as session:

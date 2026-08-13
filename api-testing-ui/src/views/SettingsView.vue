@@ -1,73 +1,246 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Bell, Check, KeyRound, Plus, Save, Trash2 } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowRight, Bell, Check, KeyRound, Pencil, Plus, Save, Trash2 } from 'lucide-vue-next'
 
 import type { EnvironmentView, SourceRevision } from '../api/contracts'
 import { apiClient } from '../api/client'
+import EnvironmentAssetList from '../components/EnvironmentAssetList.vue'
 import { useContextStore } from '../stores/context'
 import { useNotificationsStore } from '../stores/notifications'
 import { type EnvironmentPayload, useSetupStore } from '../stores/setup'
 
 type Pair = { key: string; value: string }
-type ServiceRow = { name: string; module: string; base_url: string }
+type ServiceRow = { key: string; name: string; module: string; base_url: string }
 
+const route = useRoute()
+const router = useRouter()
 const context = useContextStore()
 const setup = useSetupStore()
 const notifications = useNotificationsStore()
+
 const projectId = ref('')
+const environmentStatus = ref<'active' | 'archived'>('active')
+const selectedEnvironmentId = ref('')
 const sourceRevisionId = ref('')
-const environmentRevisionId = ref('')
 const environmentId = ref<string | null>(null)
+const editing = ref(false)
+const creating = ref(false)
+const loadingAssets = ref(false)
+const loadingDetail = ref(false)
+const localError = ref('')
+
 const name = ref('')
 const description = ref('')
-const services = ref<ServiceRow[]>([{ name: 'default', module: '默认服务', base_url: '' }])
+const services = ref<ServiceRow[]>([emptyService('default')])
 const variables = ref<Pair[]>([])
 const headers = ref<Pair[]>([{ key: 'Authorization', value: 'Bearer {{ZXBToken}}' }])
-const secretRows = ref<Array<{ key: string; value: string; configured: boolean }>>([{ key: 'ZXBToken', value: '', configured: false }])
-const localError = ref('')
+const secretRows = ref<Array<{ key: string; value: string; configured: boolean }>>([
+  { key: 'ZXBToken', value: '', configured: false },
+])
+
 const feishuName = ref('API 基线报告')
 const feishuWebhook = ref('')
 const feishuEnabled = ref(false)
 
 const sourceOptions = computed(() => context.sourceRevisions.filter(item => item.project_id === projectId.value))
-const environmentOptions = computed(() => context.environmentRevisions.filter(item => item.project_id === projectId.value))
+const selectedProject = computed(() => context.projects.find(item => item.id === projectId.value) || null)
+const selectedAsset = computed(() => setup.environmentAssets.find(item => item.id === selectedEnvironmentId.value) || null)
+const environmentDetail = computed(() => setup.environment?.id === selectedEnvironmentId.value ? setup.environment : null)
+const publicVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => !isSecretDescriptor(value)))
+const secretVariables = computed(() => Object.entries(environmentDetail.value?.variables || {}).filter(([, value]) => isSecretDescriptor(value)))
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  projectId.value = context.projectId || context.projects[0]?.id || ''
-  sourceRevisionId.value = context.sourceRevisionId || sourceOptions.value.at(-1)?.id || ''
-  environmentRevisionId.value = context.environmentRevisionId || environmentOptions.value.at(-1)?.id || ''
-  if (environmentRevisionId.value) await loadEnvironment()
-  else await prefillFromSource()
-  await loadFeishu()
+  const queryProjectId = textQuery(route.query.projectId)
+  projectId.value = context.projects.some(item => item.id === queryProjectId)
+    ? queryProjectId
+    : context.projectId || context.projects[0]?.id || ''
+  await loadProjectScope()
 })
 
-function changeProject(): void {
-  sourceRevisionId.value = sourceOptions.value.at(-1)?.id || ''
-  environmentRevisionId.value = environmentOptions.value.at(-1)?.id || ''
-  environmentId.value = null
-  if (environmentRevisionId.value) void loadEnvironment()
-  else void prefillFromSource()
-  void loadFeishu()
+async function loadProjectScope(): Promise<void> {
+  localError.value = ''
+  if (!projectId.value) {
+    setup.environmentAssets = []
+    clearSelection()
+    return
+  }
+  loadingAssets.value = true
+  try {
+    await Promise.all([
+      setup.loadEnvironmentAssets(projectId.value, environmentStatus.value),
+      loadFeishu(),
+    ])
+    const preferredId = setup.environmentAssets.some(item => item.id === selectedEnvironmentId.value)
+      ? selectedEnvironmentId.value
+      : setup.environmentAssets[0]?.id || ''
+    if (preferredId) await selectEnvironment(preferredId)
+    else clearSelection()
+  } catch (error) {
+    localError.value = messageOf(error, '环境资产读取失败')
+  } finally {
+    loadingAssets.value = false
+  }
 }
 
-async function loadEnvironment(): Promise<void> {
+async function changeProject(nextProjectId: string): Promise<void> {
+  projectId.value = nextProjectId
+  environmentStatus.value = 'active'
+  selectedEnvironmentId.value = ''
+  editing.value = false
+  await loadProjectScope()
+}
+
+async function changeStatus(status: 'active' | 'archived'): Promise<void> {
+  environmentStatus.value = status
+  selectedEnvironmentId.value = ''
+  editing.value = false
+  await loadProjectScope()
+}
+
+async function selectEnvironment(environmentAssetId: string): Promise<void> {
+  const asset = setup.environmentAssets.find(item => item.id === environmentAssetId)
+  if (!asset) return
+  selectedEnvironmentId.value = environmentAssetId
+  sourceRevisionId.value = asset.source_revision_id || ''
+  editing.value = false
+  creating.value = false
+  loadingDetail.value = true
   localError.value = ''
-  if (!environmentRevisionId.value) { resetEnvironment(); await prefillFromSource(); return }
-  try { applyEnvironment(await setup.loadEnvironmentRevision(environmentRevisionId.value)) }
-  catch (error) { localError.value = error instanceof Error ? error.message : '环境读取失败' }
+  try {
+    const [detail] = await Promise.all([
+      setup.loadEnvironmentRevision(asset.active_revision_id),
+      setup.loadEnvironmentHistory(asset.id),
+    ])
+    applyEnvironment(detail)
+  } catch (error) {
+    localError.value = messageOf(error, '环境详情读取失败')
+  } finally {
+    loadingDetail.value = false
+  }
+}
+
+function startEdit(): void {
+  if (!environmentDetail.value) return
+  applyEnvironment(environmentDetail.value)
+  editing.value = true
+  creating.value = false
+}
+
+async function startCreate(): Promise<void> {
+  clearEditor()
+  selectedEnvironmentId.value = ''
+  sourceRevisionId.value = sourceOptions.value.at(-1)?.id || ''
+  editing.value = true
+  creating.value = true
+  await prefillFromSource()
+}
+
+function cancelEdit(): void {
+  editing.value = false
+  if (selectedAsset.value && environmentDetail.value) applyEnvironment(environmentDetail.value)
+  else if (!selectedAsset.value) clearEditor()
+}
+
+async function save(): Promise<void> {
+  localError.value = ''
+  if (!projectId.value || !name.value.trim()) {
+    localError.value = '请选择项目并填写环境名称'
+    return
+  }
+  const usableServices = services.value.filter(item => item.name.trim() || item.base_url.trim())
+  if (!usableServices.length || usableServices.every(item => !item.base_url.trim())) {
+    localError.value = '至少配置一个可用服务地址'
+    return
+  }
+  const updatedSecretKeys = new Set(secretRows.value.filter(item => item.key.trim() && item.value).map(item => item.key.trim()))
+  setup.secretUpdates = Object.fromEntries(
+    secretRows.value.filter(item => item.key.trim() && item.value).map(item => [item.key.trim(), item.value]),
+  )
+  const payload: EnvironmentPayload = {
+    project_id: projectId.value,
+    source_id: sourceOptions.value.find(item => item.id === sourceRevisionId.value)?.source_id || null,
+    source_revision_id: sourceRevisionId.value || null,
+    name: name.value.trim(),
+    description: description.value.trim(),
+    services: Object.fromEntries(usableServices.map((item, index) => [
+      item.key || item.name.trim() || `service-${index + 1}`,
+      { name: item.name.trim() || item.key || `service-${index + 1}`, module_name: item.module.trim(), base_url: item.base_url.trim() || null },
+    ])),
+    variables: objectFromPairs(variables.value),
+    default_headers: objectFromPairs(headers.value) as Record<string, string>,
+  }
+  try {
+    const saved = await setup.saveEnvironment(creating.value ? null : environmentId.value, payload)
+    secretRows.value.forEach(item => {
+      if (updatedSecretKeys.has(item.key.trim())) item.configured = true
+      item.value = ''
+    })
+    await context.loadOptions()
+    environmentStatus.value = 'active'
+    await setup.loadEnvironmentAssets(projectId.value, 'active')
+    editing.value = false
+    creating.value = false
+    await selectEnvironment(saved.id)
+  } catch (error) {
+    localError.value = messageOf(error, '环境保存失败')
+  }
+}
+
+async function archiveEnvironment(id: string): Promise<void> {
+  if (!window.confirm('归档后该环境不会出现在工作台选择项中，历史版本和执行记录仍会保留。确定归档吗？')) return
+  try {
+    await setup.archiveEnvironment(id)
+    await loadProjectScope()
+  } catch (error) {
+    localError.value = messageOf(error, '环境归档失败')
+  }
+}
+
+async function restoreEnvironment(id: string): Promise<void> {
+  try {
+    await setup.restoreEnvironment(id)
+    await loadProjectScope()
+  } catch (error) {
+    localError.value = messageOf(error, '环境恢复失败')
+  }
+}
+
+async function openWorkbench(): Promise<void> {
+  const asset = selectedAsset.value
+  if (!asset) return
+  const sourceRevision = asset.source_revision_id || sourceOptions.value.at(-1)?.id || ''
+  if (!sourceRevision) {
+    localError.value = '该环境尚未关联接口版本，请先前往接口资产同步最新接口'
+    return
+  }
+  await router.push({
+    name: 'workbench',
+    query: {
+      projectId: projectId.value,
+      sourceRevisionId: sourceRevision,
+      environmentRevisionId: asset.active_revision_id,
+    },
+  })
+}
+
+async function openSync(): Promise<void> {
+  await router.push({ name: 'assets', query: { projectId: projectId.value } })
 }
 
 async function prefillFromSource(): Promise<void> {
   if (!sourceRevisionId.value) return
   try {
-    const response = await apiClient.get<{ source_revision: SourceRevision }>(`/api/api-testing/v1/source-revisions/${sourceRevisionId.value}`)
-    const servers = Array.isArray(response.data.source_revision.normalized_document.servers)
-      ? response.data.source_revision.normalized_document.servers as Array<Record<string, unknown>> : []
-    const url = typeof servers[0]?.url === 'string' ? servers[0].url : ''
-    if (url && !services.value.some(item => item.base_url)) services.value = [{ name: 'default', module: '默认服务', base_url: url }]
+    const response = await apiClient.get<{ source_revision: SourceRevision }>(
+      `/api/api-testing/v1/source-revisions/${sourceRevisionId.value}`,
+    )
+    const sourceServers = response.data.source_revision.normalized_document.servers
+    const serverRows = Array.isArray(sourceServers) ? sourceServers as Array<Record<string, unknown>> : []
+    const url = typeof serverRows[0]?.url === 'string' ? serverRows[0].url : ''
+    if (url && !services.value.some(item => item.base_url)) services.value = [{ ...emptyService('default'), base_url: url }]
   } catch {
-    // A source without a server declaration remains editable manually.
+    // OpenAPI 可以没有 servers，环境仍允许手工配置。
   }
 }
 
@@ -75,7 +248,13 @@ function applyEnvironment(value: EnvironmentView): void {
   environmentId.value = value.id
   name.value = value.name
   description.value = value.description
-  services.value = Object.values(value.services).map(item => ({ name: item.name, module: item.module_name || '', base_url: item.base_url || '' }))
+  services.value = Object.entries(value.services).map(([key, item]) => ({
+    key,
+    name: item.name || key,
+    module: item.module_name || '',
+    base_url: item.base_url || '',
+  }))
+  if (!services.value.length) services.value = [emptyService('default')]
   variables.value = []
   secretRows.value = []
   for (const [key, raw] of Object.entries(value.variables)) {
@@ -86,52 +265,40 @@ function applyEnvironment(value: EnvironmentView): void {
   headers.value = Object.entries(value.default_headers).map(([key, raw]) => ({ key, value: String(raw ?? '') }))
 }
 
-function resetEnvironment(): void {
+function clearSelection(): void {
+  selectedEnvironmentId.value = ''
+  setup.environment = null
+  setup.environmentHistory = []
+  editing.value = false
+  creating.value = false
+  clearEditor()
+}
+
+function clearEditor(): void {
   environmentId.value = null
   name.value = ''
   description.value = ''
-  services.value = [{ name: 'default', module: '默认服务', base_url: '' }]
+  services.value = [emptyService('default')]
   variables.value = []
   headers.value = [{ key: 'Authorization', value: 'Bearer {{ZXBToken}}' }]
   secretRows.value = [{ key: 'ZXBToken', value: '', configured: false }]
-}
-
-async function save(): Promise<void> {
-  localError.value = ''
-  if (!projectId.value || !name.value.trim()) { localError.value = '请选择项目并填写环境名称'; return }
-  const usableServices = services.value.filter(item => item.name.trim())
-  if (!usableServices.length || usableServices.every(item => !item.base_url.trim())) { localError.value = '至少配置一个可用服务地址'; return }
-  setup.secretUpdates = Object.fromEntries(secretRows.value.filter(item => item.key.trim() && item.value).map(item => [item.key.trim(), item.value]))
-  const payload: EnvironmentPayload = {
-    project_id: projectId.value,
-    source_id: sourceOptions.value.find(item => item.id === sourceRevisionId.value)?.source_id || null,
-    source_revision_id: sourceRevisionId.value || null,
-    name: name.value.trim(), description: description.value,
-    services: usableServices.map(item => ({ name: item.name.trim(), module: item.module.trim() || '默认模块', base_url: item.base_url.trim() || null })),
-    variables: objectFromPairs(variables.value), default_headers: objectFromPairs(headers.value) as Record<string, string>,
-  }
-  try {
-    const saved = await setup.saveEnvironment(environmentId.value, payload)
-    secretRows.value.forEach(item => { item.value = ''; item.configured = true })
-    await context.loadOptions()
-    environmentRevisionId.value = saved.revision_id
-    environmentId.value = saved.id
-  } catch (error) { localError.value = error instanceof Error ? error.message : '环境保存失败' }
 }
 
 async function loadFeishu(): Promise<void> {
   if (!projectId.value) return
   await notifications.loadFeishu(projectId.value)
   const current = notifications.feishu
-  if (!current) return
-  feishuName.value = current.name || 'API 基线报告'
-  feishuEnabled.value = current.enabled
+  feishuName.value = current?.name || 'API 基线报告'
+  feishuEnabled.value = current?.enabled === true
   feishuWebhook.value = ''
 }
 
 async function saveFeishu(): Promise<void> {
   localError.value = ''
-  if (!projectId.value) { localError.value = '请先选择项目'; return }
+  if (!projectId.value) {
+    localError.value = '请先选择项目'
+    return
+  }
   try {
     await notifications.saveFeishu(projectId.value, {
       name: feishuName.value.trim() || 'API 基线报告',
@@ -140,41 +307,142 @@ async function saveFeishu(): Promise<void> {
     })
     feishuWebhook.value = ''
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '飞书通知保存失败'
+    localError.value = messageOf(error, '飞书通知保存失败')
   }
 }
 
+function sourceLabel(sourceId: string | null): string {
+  if (!sourceId) return '未绑定接口版本'
+  const source = context.sourceRevisions.find(item => item.id === sourceId)
+  return source ? `${source.name} · v${source.revision_number}` : '历史接口版本'
+}
+
+function serviceLabel(item: { name: string; module_name?: string }, index: number): string {
+  if (item.module_name && !isOpaqueId(item.module_name)) return item.module_name
+  if (item.name && !isOpaqueId(item.name) && item.name !== 'default') return item.name
+  return item.name === 'default' ? '默认服务' : `服务 ${index + 1}`
+}
+
+function emptyService(key: string): ServiceRow {
+  return { key, name: key, module: key === 'default' ? '默认服务' : '', base_url: '' }
+}
+
 function addPair(rows: Pair[]): void { rows.push({ key: '', value: '' }) }
-function objectFromPairs(rows: Pair[]): Record<string, unknown> { return Object.fromEntries(rows.filter(item => item.key.trim()).map(item => [item.key.trim(), parseValue(item.value)])) }
+function objectFromPairs(rows: Pair[]): Record<string, unknown> {
+  return Object.fromEntries(rows.filter(item => item.key.trim()).map(item => [item.key.trim(), parseValue(item.value)]))
+}
 function parseValue(value: string): unknown { try { return JSON.parse(value) } catch { return value } }
 function displayValue(value: unknown): string { return typeof value === 'string' ? value : JSON.stringify(value) }
 function isSecretDescriptor(value: unknown): value is { configured: boolean } { return Boolean(value && typeof value === 'object' && 'configured' in value) }
+function isOpaqueId(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value) }
+function textQuery(value: unknown): string { return typeof value === 'string' ? value : '' }
+function messageOf(error: unknown, fallback: string): string { return error instanceof Error ? error.message : fallback }
+function formatDate(value: string): string { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未知时间' }
 </script>
 
 <template>
-  <section class="workspace setup-page">
-    <header class="page-toolbar"><div><p class="eyebrow">API ENVIRONMENT</p><h1>环境配置</h1><p class="page-subtitle">服务地址、公共变量和业务 token 在这里统一管理，执行时按变量名注入。</p></div><button class="primary-command" type="button" :disabled="setup.busy" @click="save"><Save :size="15" />{{ setup.busy ? '正在保存' : '保存环境' }}</button></header>
-    <section class="setup-section"><header><div><h2>选择范围</h2><p>已有环境直接编辑；选择“新建环境”不会覆盖历史版本。</p></div></header><div class="setup-grid three"><label>项目<select v-model="projectId" @change="changeProject"><option value="">请选择项目</option><option v-for="item in context.projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>接口版本<select v-model="sourceRevisionId" @change="prefillFromSource"><option value="">不绑定接口版本</option><option v-for="item in sourceOptions" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision_number }}</option></select></label><label>环境<select v-model="environmentRevisionId" @change="loadEnvironment"><option value="">新建环境</option><option v-for="item in environmentOptions" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision }}</option></select></label></div></section>
-    <section class="setup-section"><header><div><h2>基本信息</h2><p>工作台和报告只展示名称，不展示数据库 ID。</p></div></header><div class="setup-grid"><label>环境名称<input v-model="name" placeholder="例如：生产环境（新）- 腾讯云" /></label><label>说明<input v-model="description" placeholder="可选" /></label></div></section>
-    <section class="setup-section"><header><div><h2>服务地址</h2><p>用例通过服务名选择 Base URL。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push({ name: '', module: '', base_url: '' })"><Plus :size="15" /></button></header><div class="editable-table"><div class="table-head"><span>服务名</span><span>模块</span><span>Base URL</span><span></span></div><div v-for="(item, index) in services" :key="index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div></section>
-    <section class="setup-section split-section"><div><header><div><h2>公共变量</h2><p>普通值可回显和编辑。</p></div><button class="mini-icon" type="button" title="添加变量" @click="addPair(variables)"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in variables" :key="index" class="pair-row"><input v-model="item.key" aria-label="变量名" placeholder="变量名" /><input v-model="item.value" aria-label="变量值" placeholder="变量值" /><button class="mini-icon danger" type="button" title="删除变量" @click="variables.splice(index, 1)"><Trash2 :size="14" /></button></div><p v-if="!variables.length" class="compact-empty">暂无公共变量</p></div></div><div><header><div><h2>敏感变量</h2><p>只显示是否已配置，新值提交后立即清空。</p></div><button class="mini-icon" type="button" title="添加敏感变量" @click="secretRows.push({ key: '', value: '', configured: false })"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in secretRows" :key="index" class="pair-row secret-row"><input v-model="item.key" aria-label="敏感变量名" placeholder="例如 ZXBToken" /><input v-model="item.value" type="password" autocomplete="new-password" aria-label="敏感变量值" :placeholder="item.configured ? '已配置，留空则保持不变' : '输入后仅发送一次'" /><KeyRound :size="15" :class="item.configured ? 'secret-configured' : 'secret-empty'" /></div></div></div></section>
-    <section class="setup-section"><header><div><h2>默认请求头</h2><p>推荐引用变量，例如 Authorization: Bearer &#123;&#123;ZXBToken&#125;&#125;。</p></div><button class="mini-icon" type="button" title="添加请求头" @click="addPair(headers)"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in headers" :key="index" class="pair-row"><input v-model="item.key" aria-label="请求头名称" /><input v-model="item.value" aria-label="请求头值" /><button class="mini-icon danger" type="button" title="删除请求头" @click="headers.splice(index, 1)"><Trash2 :size="14" /></button></div></div></section>
-    <section class="setup-section notification-section">
-      <header>
-        <div><h2>飞书报告通知</h2><p>基线回归报告可一键发送到飞书群。Webhook 加密保存，留空表示保留原值。</p></div>
-        <span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span>
-      </header>
-      <div class="setup-grid three">
-        <label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label>
-        <label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." /></label>
-        <label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label>
+  <section class="workspace environment-center-page">
+    <header class="page-toolbar environment-page-toolbar">
+      <div>
+        <p class="eyebrow">API ENVIRONMENT ASSETS</p>
+        <h1>项目环境</h1>
+        <p class="page-subtitle">环境按项目长期保存；同步、编辑和运行互不混淆，历史版本可追溯。</p>
       </div>
-      <footer class="notification-actions">
-        <span><Bell :size="14" />报告页会按当前项目发送最近执行结果；未启用时不会误发。</span>
-        <button class="secondary-command" type="button" :disabled="notifications.loading || !projectId" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button>
-        <button class="primary-command" type="button" :disabled="notifications.saving || !projectId" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存飞书配置' }}</button>
-      </footer>
+      <div class="toolbar-actions">
+        <button class="secondary-command" type="button" :disabled="!projectId" data-action="sync" @click="openSync">前往同步</button>
+        <button class="primary-command" type="button" :disabled="!projectId" data-action="create" @click="startCreate"><Plus :size="15" />新建环境</button>
+      </div>
+    </header>
+
+    <section class="environment-center-shell">
+      <EnvironmentAssetList
+        :projects="context.projects"
+        :environments="setup.environmentAssets"
+        :selected-project-id="projectId"
+        :selected-environment-id="selectedEnvironmentId"
+        :status="environmentStatus"
+        @select-project="changeProject"
+        @select-environment="selectEnvironment"
+        @update:status="changeStatus"
+        @archive="archiveEnvironment"
+        @restore="restoreEnvironment"
+      />
+
+      <main class="environment-detail-panel">
+        <div v-if="loadingAssets || loadingDetail" class="environment-detail-empty">正在读取环境资产…</div>
+
+        <template v-else-if="editing">
+          <header class="environment-detail-header">
+            <div><p class="eyebrow">{{ creating ? 'NEW ENVIRONMENT' : 'NEW REVISION' }}</p><h2>{{ creating ? '新建环境' : `编辑 ${selectedAsset?.name || name}` }}</h2><p>{{ creating ? '新环境保存后归属于当前项目。' : '保存会创建新版本，旧版本保留在历史中。' }}</p></div>
+            <div class="toolbar-actions"><button class="secondary-command" type="button" @click="cancelEdit">取消</button><button class="primary-command" type="button" :disabled="setup.busy" data-action="save" @click="save"><Save :size="15" />{{ setup.busy ? '正在保存' : '保存新版本' }}</button></div>
+          </header>
+
+          <section class="environment-editor-section">
+            <header><div><h3>基本信息</h3><p>工作台、任务和报告只展示业务名称，不展示数据库 ID。</p></div></header>
+            <div class="setup-grid three">
+              <label>所属项目<input :value="selectedProject?.name || ''" disabled /></label>
+              <label>环境名称<input v-model="name" placeholder="例如：生产环境（新）- 腾讯云" /></label>
+              <label>来源接口版本<select v-model="sourceRevisionId" @change="prefillFromSource"><option value="">不绑定接口版本</option><option v-for="item in sourceOptions" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.revision_number }}</option></select></label>
+            </div>
+            <label class="wide-field">说明<input v-model="description" placeholder="例如：线上发布后的基线回归环境" /></label>
+          </section>
+
+          <section class="environment-editor-section">
+            <header><div><h3>服务地址</h3><p>保留稳定服务键，页面优先展示模块名称。</p></div><button class="mini-icon" type="button" title="添加服务" @click="services.push(emptyService(`service-${services.length + 1}`))"><Plus :size="15" /></button></header>
+            <div class="editable-table"><div class="table-head"><span>服务键</span><span>展示名称</span><span>Base URL</span><span></span></div><div v-for="(item, index) in services" :key="item.key || index" class="table-row service-row"><input v-model="item.name" aria-label="服务名" /><input v-model="item.module" aria-label="服务模块" /><input v-model="item.base_url" aria-label="服务地址" placeholder="https://api.example.com" /><button class="mini-icon danger" type="button" title="删除服务" @click="services.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
+          </section>
+
+          <section class="environment-editor-section split-section">
+            <div><header><div><h3>公共变量</h3><p>普通值可回显和编辑。</p></div><button class="mini-icon" type="button" title="添加变量" @click="addPair(variables)"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in variables" :key="index" class="pair-row"><input v-model="item.key" aria-label="变量名" placeholder="变量名" /><input v-model="item.value" aria-label="变量值" placeholder="变量值" /><button class="mini-icon danger" type="button" title="删除变量" @click="variables.splice(index, 1)"><Trash2 :size="14" /></button></div><p v-if="!variables.length" class="compact-empty">暂无公共变量</p></div></div>
+            <div><header><div><h3>敏感变量</h3><p>只显示配置状态，新值提交后立即清空。</p></div><button class="mini-icon" type="button" title="添加敏感变量" @click="secretRows.push({ key: '', value: '', configured: false })"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in secretRows" :key="index" class="pair-row secret-row"><input v-model="item.key" aria-label="敏感变量名" placeholder="例如 ZXBToken" /><input v-model="item.value" type="password" autocomplete="new-password" aria-label="敏感变量值" :placeholder="item.configured ? '已配置，留空则保持不变' : '输入后仅发送一次'" /><KeyRound :size="15" :class="item.configured ? 'secret-configured' : 'secret-empty'" /></div></div></div>
+          </section>
+
+          <section class="environment-editor-section">
+            <header><div><h3>默认请求头</h3><p>推荐引用变量，例如 Authorization: Bearer &#123;&#123;ZXBToken&#125;&#125;。</p></div><button class="mini-icon" type="button" title="添加请求头" @click="addPair(headers)"><Plus :size="15" /></button></header><div class="pair-list"><div v-for="(item, index) in headers" :key="index" class="pair-row"><input v-model="item.key" aria-label="请求头名称" /><input v-model="item.value" aria-label="请求头值" /><button class="mini-icon danger" type="button" title="删除请求头" @click="headers.splice(index, 1)"><Trash2 :size="14" /></button></div></div>
+          </section>
+        </template>
+
+        <template v-else-if="selectedAsset && environmentDetail">
+          <header class="environment-detail-header">
+            <div><p class="eyebrow">ENVIRONMENT</p><h2>{{ selectedAsset.name }}</h2><p>{{ selectedAsset.description || '暂无说明' }}</p></div>
+            <div class="toolbar-actions"><button class="secondary-command" type="button" data-action="edit" @click="startEdit"><Pencil :size="15" />编辑</button><button class="primary-command" type="button" data-action="workbench" @click="openWorkbench">进入工作台<ArrowRight :size="15" /></button></div>
+          </header>
+
+          <div class="environment-overview-strip">
+            <div><small>所属项目</small><strong>{{ selectedProject?.name }}</strong></div>
+            <div><small>当前版本</small><strong>v{{ selectedAsset.revision }}</strong></div>
+            <div><small>来源接口</small><strong>{{ sourceLabel(selectedAsset.source_revision_id) }}</strong></div>
+            <div><small>最近更新</small><strong>{{ formatDate(selectedAsset.updated_at) }}</strong></div>
+          </div>
+
+          <section class="environment-read-section">
+            <header><div><h3>服务地址</h3><p>{{ selectedAsset.service_count }} 个服务可用于在线调试和任务执行。</p></div></header>
+            <div class="environment-service-list"><article v-for="(item, key, index) in environmentDetail.services" :key="key"><div><strong>{{ serviceLabel(item, index) }}</strong><small>{{ key === 'default' ? '默认服务' : '服务键已保留' }}</small></div><code>{{ item.base_url || '未配置地址' }}</code></article></div>
+          </section>
+
+          <section class="environment-read-grid">
+            <div class="environment-read-section"><header><div><h3>公共变量</h3><p>执行时按变量名注入。</p></div><span>{{ publicVariables.length }}</span></header><dl><template v-for="([key, value]) in publicVariables" :key="key"><dt>{{ key }}</dt><dd>{{ displayValue(value) || '空值' }}</dd></template></dl><p v-if="!publicVariables.length" class="compact-empty">暂无公共变量</p></div>
+            <div class="environment-read-section"><header><div><h3>敏感凭证</h3><p>页面不回显密文。</p></div><span>{{ secretVariables.length }}</span></header><dl><template v-for="([key, value]) in secretVariables" :key="key"><dt>{{ key }}</dt><dd><Check v-if="isSecretDescriptor(value) && value.configured" :size="14" />{{ isSecretDescriptor(value) && value.configured ? '已配置' : '未配置' }}</dd></template></dl><p v-if="!secretVariables.length" class="compact-empty">暂无敏感凭证</p></div>
+          </section>
+
+          <section class="environment-read-section environment-history">
+            <header><div><h3>版本历史</h3><p>编辑环境会新增版本，历史不会被覆盖。</p></div><span>{{ setup.environmentHistory.length }} 个版本</span></header>
+            <ol><li v-for="revision in setup.environmentHistory" :key="revision.id"><span class="history-version">v{{ revision.revision }}</span><div><strong>{{ revision.name }}</strong><small>{{ sourceLabel(revision.source_revision_id) }} · {{ formatDate(revision.updated_at) }}</small></div><span v-if="revision.id === selectedAsset.active_revision_id" class="current-version">当前</span></li></ol>
+          </section>
+        </template>
+
+        <div v-else class="environment-detail-empty"><strong>{{ environmentStatus === 'active' ? '当前项目还没有环境资产' : '当前项目没有已归档环境' }}</strong><span>{{ environmentStatus === 'active' ? '从 Apifox 手动同步，或新建一个可调试环境。' : '归档环境会保留历史，之后可以恢复。' }}</span></div>
+      </main>
     </section>
-    <p v-if="localError || setup.error || notifications.error" class="inline-error" role="alert">{{ localError || setup.error || notifications.error }}</p><p v-if="setup.message" class="setup-success"><Check :size="16" />{{ setup.message }}</p><p v-if="notifications.message" class="setup-success"><Bell :size="16" />{{ notifications.message }}</p>
+
+    <section v-if="projectId" class="setup-section notification-section project-notification-card">
+      <header><div><p class="eyebrow">PROJECT NOTIFICATION</p><h2>项目飞书通知</h2><p>机器人绑定到 {{ selectedProject?.name }}；后续定时任务只保存“是否通知”，不重复保存 Webhook。</p></div><span v-if="notifications.feishu?.configured" class="configured-state"><Check :size="14" />已配置 {{ notifications.feishu.fingerprint }}</span></header>
+      <div class="setup-grid three"><label>通知名称<input v-model="feishuName" placeholder="例如：API 基线报告" /></label><label class="grow">飞书群机器人 Webhook<input v-model="feishuWebhook" type="password" autocomplete="new-password" placeholder="已配置时留空表示保持不变" /></label><label class="toggle-card"><input v-model="feishuEnabled" type="checkbox" />启用报告发送</label></div>
+      <footer class="notification-actions"><span><Bell :size="14" />任务和基线是独立资产；后续调度器可选择任务或基线分组，并决定是否发送飞书。</span><button class="secondary-command" type="button" :disabled="notifications.loading" @click="loadFeishu">{{ notifications.loading ? '读取中' : '读取配置' }}</button><button class="primary-command" type="button" :disabled="notifications.saving" @click="saveFeishu">{{ notifications.saving ? '保存中' : '保存项目通知' }}</button></footer>
+    </section>
+
+    <p v-if="localError || setup.error || context.error || notifications.error" class="inline-error" role="alert">{{ localError || setup.error || context.error || notifications.error }}</p>
+    <p v-if="setup.message" class="setup-success"><Check :size="16" />{{ setup.message }}</p>
+    <p v-if="notifications.message" class="setup-success"><Bell :size="16" />{{ notifications.message }}</p>
   </section>
 </template>

@@ -54,6 +54,37 @@ class EnvironmentView:
         object.__setattr__(self, "default_headers", _frozen_mapping(self.default_headers))
 
 
+@dataclass(frozen=True)
+class EnvironmentAssetView:
+    id: str
+    project_id: str
+    source_id: Optional[str]
+    active_revision_id: str
+    source_revision_id: Optional[str]
+    revision: int
+    name: str
+    description: str
+    status: str
+    service_count: int
+    public_variable_count: int
+    secret_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class EnvironmentRevisionSummary:
+    id: str
+    environment_id: str
+    source_revision_id: Optional[str]
+    revision: int
+    name: str
+    description: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
 @dataclass(frozen=True, repr=False)
 class RenderedRequest:
     path: Any

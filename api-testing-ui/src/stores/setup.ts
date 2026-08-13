@@ -6,6 +6,8 @@ import type {
   ApifoxProject,
   ApifoxProjectContext,
   ApifoxRefreshPreview,
+  EnvironmentAsset,
+  EnvironmentRevisionSummary,
   EnvironmentView,
   ProviderCredential,
   ProjectOption,
@@ -45,6 +47,8 @@ export const useSetupStore = defineStore('api-setup', {
     preview: null as SourcePreview | null,
     activeRevision: null as SourceRevision | null,
     environment: null as EnvironmentView | null,
+    environmentAssets: [] as EnvironmentAsset[],
+    environmentHistory: [] as EnvironmentRevisionSummary[],
     credential: null as ProviderCredential | null,
     apifoxProjects: [] as ApifoxProject[],
     apifoxContext: null as ApifoxProjectContext | null,
@@ -258,6 +262,44 @@ export const useSetupStore = defineStore('api-setup', {
       )
       this.environment = response.data.environment_revision
       return this.environment
+    },
+    async loadEnvironmentAssets(
+      projectId: string,
+      status: 'active' | 'archived' | 'all' = 'active',
+    ): Promise<EnvironmentAsset[]> {
+      const response = await apiClient.get<{ environments: EnvironmentAsset[] }>(
+        `/api/api-testing/v1/environments?project_id=${encodeURIComponent(projectId)}&status=${status}`,
+      )
+      this.environmentAssets = response.data.environments
+      return this.environmentAssets
+    },
+    async loadEnvironmentHistory(environmentId: string): Promise<EnvironmentRevisionSummary[]> {
+      const response = await apiClient.get<{ revisions: EnvironmentRevisionSummary[] }>(
+        `/api/api-testing/v1/environments/${encodeURIComponent(environmentId)}/revisions`,
+      )
+      this.environmentHistory = response.data.revisions
+      return this.environmentHistory
+    },
+    async archiveEnvironment(environmentId: string): Promise<EnvironmentAsset> {
+      const response = await apiClient.delete<{ environment: EnvironmentAsset }>(
+        `/api/api-testing/v1/environments/${encodeURIComponent(environmentId)}`,
+      )
+      this.replaceEnvironmentAsset(response.data.environment)
+      this.message = `环境 ${response.data.environment.name} 已归档`
+      return response.data.environment
+    },
+    async restoreEnvironment(environmentId: string): Promise<EnvironmentAsset> {
+      const response = await apiClient.post<{ environment: EnvironmentAsset }>(
+        `/api/api-testing/v1/environments/${encodeURIComponent(environmentId)}/restore`, {},
+      )
+      this.replaceEnvironmentAsset(response.data.environment)
+      this.message = `环境 ${response.data.environment.name} 已恢复`
+      return response.data.environment
+    },
+    replaceEnvironmentAsset(environment: EnvironmentAsset): void {
+      const index = this.environmentAssets.findIndex(item => item.id === environment.id)
+      if (index === -1) this.environmentAssets.push(environment)
+      else this.environmentAssets[index] = environment
     },
     async saveEnvironment(environmentId: string | null, payload: EnvironmentPayload): Promise<EnvironmentView> {
       this.busy = true

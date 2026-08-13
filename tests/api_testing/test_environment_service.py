@@ -152,6 +152,79 @@ def _import_with_token(environment_service, production_environment):
     )
 
 
+def test_environment_assets_are_project_scoped_and_keep_revision_history(
+    environment_service, production_environment
+):
+    production = environment_service.import_from_source(
+        production_environment, "admin"
+    )
+    environment_service.create_revision(
+        production.id,
+        {"description": "platform maintained revision"},
+        {"ZXBToken": BUSINESS_TOKEN},
+        "admin",
+    )
+    development_payload = copy.deepcopy(production_environment)
+    development_payload["name"] = "开发环境"
+    development_payload["description"] = "manual development environment"
+    development = environment_service.import_from_source(
+        development_payload, "admin"
+    )
+
+    assets = environment_service.list_assets(
+        production_environment["project_id"], "admin"
+    )
+    history = environment_service.list_revisions(production.id, "admin")
+
+    assert [item.name for item in assets] == ["开发环境", "生产环境"]
+    assert {item.id for item in assets} == {production.id, development.id}
+    assert next(item for item in assets if item.id == production.id).revision == 2
+    assert next(item for item in assets if item.id == production.id).service_count == 2
+    assert [item.revision for item in history] == [2, 1]
+    assert history[0].description == "platform maintained revision"
+
+
+def test_environment_assets_can_be_archived_and_restored_without_deleting_history(
+    environment_service, production_environment
+):
+    imported = environment_service.import_from_source(production_environment, "admin")
+
+    archived = environment_service.archive(imported.id, "admin")
+
+    assert archived.status == "archived"
+    assert environment_service.list_assets(
+        production_environment["project_id"], "admin"
+    ) == ()
+    assert [item.id for item in environment_service.list_assets(
+        production_environment["project_id"], "admin", status="archived"
+    )] == [imported.id]
+    assert len(environment_service.list_revisions(imported.id, "admin")) == 1
+
+    restored = environment_service.restore(imported.id, "admin")
+
+    assert restored.status == "active"
+    assert [item.id for item in environment_service.list_assets(
+        production_environment["project_id"], "admin"
+    )] == [imported.id]
+
+
+def test_environment_asset_queries_reject_cross_owner_access(
+    environment_service, production_environment
+):
+    imported = environment_service.import_from_source(production_environment, "admin")
+
+    from task_server.api_testing.services.environment_service import (
+        EnvironmentNotFoundError,
+    )
+
+    with pytest.raises(EnvironmentNotFoundError):
+        environment_service.list_assets(
+            production_environment["project_id"], "another-owner"
+        )
+    with pytest.raises(EnvironmentNotFoundError):
+        environment_service.list_revisions(imported.id, "another-owner")
+
+
 def test_imported_environment_is_editable_without_mutating_source(
     environment_service, production_environment, session_factory
 ):
