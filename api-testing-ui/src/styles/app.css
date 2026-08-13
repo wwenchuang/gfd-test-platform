@@ -76,9 +76,13 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .group-select button span { overflow: hidden; color: #344055; font: inherit; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .selected-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 .selected-endpoint-group h3 { background: #f3f8fd; }
-.selected-endpoint-row { grid-template-columns: minmax(0, 1fr) 30px; }
-.selected-endpoint-row .endpoint-open { padding-left: 0; }
-.selected-endpoint-row .mini-icon { color: var(--red); }
+.selected-group-head { align-items: center; gap: 8px; }
+.selected-group-head .selected-group-name { min-width: 0; overflow: hidden; color: #344055; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.selected-endpoint-row { grid-template-columns: minmax(0, 1fr) 32px; gap: 8px; min-height: 66px; padding: 8px 10px; }
+.selected-endpoint-open { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; width: 100%; min-width: 0; padding: 6px 0; }
+.selected-endpoint-copy { display: grid; align-content: center; min-width: 0; }
+.selected-endpoint-copy strong, .selected-endpoint-copy small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selected-remove-button { justify-self: end; color: var(--red); }
 .endpoint-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; padding: 4px 7px; border-top: 1px solid #edf0f4; }
 .endpoint-row > input { width: 15px; min-height: 15px; margin: 0; }
 .endpoint-open { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 3px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }

@@ -28,6 +28,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-13 API 测试：已选接口列表布局修复
+
+用户反馈工作台“接口范围 → 已选接口”列表只显示方法标签和删除按钮，接口名称 / 路径不可见。排查确认根因是已选列表复用了“全部接口”的 `.endpoint-row` 两列布局，去掉 checkbox 后 `.endpoint-open` 与移除按钮挤在同一行，长分组下接口摘要被压缩不可读。
+
+本轮只修复已选接口列表 UI，不混入任务、基线、报告或 Apifox 同步逻辑：
+
+- 已选接口行改为专用结构：`方法标签 + 接口名称 / 路径 + 移除按钮`。
+- 已选接口分组标题支持长名称省略，并保留 `title` 方便查看完整分组。
+- 已选接口名称和路径都保留完整 `title`，视觉上单行省略，避免撑破左侧面板。
+- 新增前端回归测试覆盖已选接口摘要专用结构，防止后续再次被通用行布局压缩。
+- 刷新 `api-test` 构建产物，线上部署后 `/api-test/#/` 会使用新的静态资源。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/EndpointTree.spec.ts
+# 1 file / 7 tests passed
+
+npm --prefix api-testing-ui test -- --run
+# 29 files / 146 tests passed
+
+npm --prefix api-testing-ui run build
+# passed
+
+python3 -m py_compile task_server/api_testing/*.py tests/backend_static_checks.py
+# passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-13 API 测试：基线分组维护补齐
 
 用户要求基线用例支持编辑、删除和新建分组，并且基线作为固定资产不应因为版本 / 环境切换而找不到。本轮在既有“固定资产”基础上补齐分组管理交互，不改变基线查询和执行语义：

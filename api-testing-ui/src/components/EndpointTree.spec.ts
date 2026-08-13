@@ -120,4 +120,25 @@ describe('EndpointTree', () => {
     await wrapper.get('[data-testid="all-tab"]').trigger('click')
     expect(wrapper.text()).toContain('添加收藏')
   })
+
+  it('renders selected endpoint summaries in a dedicated readable row layout', async () => {
+    const wrapper = mount(EndpointTree, {
+      props: {
+        endpoints: [
+          { id: 'endpoint-1', method: 'GET', path: '/pmc/api/v1/deviceCmd/deviceStatus', summary: '获取设备状态', tags: ['本地测试', '启迪设备'] },
+        ],
+        selectedIds: ['endpoint-1'],
+      },
+    })
+
+    await wrapper.get('[data-testid="selected-tab"]').trigger('click')
+
+    const row = wrapper.get('[data-testid="selected-endpoint-row-endpoint-1"]')
+    const summary = row.get('[data-testid="selected-endpoint-summary-endpoint-1"]')
+
+    expect(row.classes()).toContain('selected-endpoint-row')
+    expect(summary.text()).toContain('获取设备状态')
+    expect(summary.text()).toContain('/pmc/api/v1/deviceCmd/deviceStatus')
+    expect(row.get('[data-testid="remove-selected-endpoint-1"]').attributes('title')).toContain('移除 获取设备状态')
+  })
 })

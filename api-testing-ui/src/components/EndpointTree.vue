@@ -184,13 +184,16 @@ function clearSelected(): void {
         <button type="button" class="text-command" :disabled="!selected.size" @click="clearSelected">清空已选</button>
       </div>
       <div v-for="[group, items] in selectedGroups" :key="group" class="endpoint-group selected-endpoint-group">
-        <h3>{{ group }} <span>{{ items.length }}</span></h3>
-        <div v-for="endpoint in items" :key="endpoint.id" class="endpoint-row selected-endpoint-row">
-          <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
+        <h3 class="selected-group-head"><span class="selected-group-name" :title="group">{{ group }}</span><span>{{ items.length }}</span></h3>
+        <div v-for="endpoint in items" :key="endpoint.id" :data-testid="`selected-endpoint-row-${endpoint.id}`" class="endpoint-row selected-endpoint-row">
+          <button type="button" class="endpoint-open selected-endpoint-open" @click="emit('activate', endpoint)">
             <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
-            <span class="endpoint-copy"><strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong><small :title="endpoint.path">{{ endpoint.path }}</small></span>
+            <span :data-testid="`selected-endpoint-summary-${endpoint.id}`" class="endpoint-copy selected-endpoint-copy">
+              <strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong>
+              <small :title="endpoint.path">{{ endpoint.path }}</small>
+            </span>
           </button>
-          <button :data-testid="`remove-selected-${endpoint.id}`" class="mini-icon" type="button" :title="`移除 ${endpoint.summary || endpoint.path}`" @click="toggle(endpoint.id, false)">
+          <button :data-testid="`remove-selected-${endpoint.id}`" class="mini-icon selected-remove-button" type="button" :title="`移除 ${endpoint.summary || endpoint.path}`" @click="toggle(endpoint.id, false)">
             <X :size="14" />
             <span class="sr-only">移除</span>
           </button>
