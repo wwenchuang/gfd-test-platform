@@ -27,8 +27,49 @@ const emit = defineEmits<{
   save: []
 }>()
 
-const sources = computed(() => props.sourceRevisions.filter(item => item.project_id === props.projectId))
-const environments = computed(() => props.environmentRevisions.filter(item => item.project_id === props.projectId))
+const sources = computed(() => {
+  const list = props.sourceRevisions.filter(item => item.project_id === props.projectId)
+  if (props.sourceRevisionId && !list.some(item => item.id === props.sourceRevisionId)) {
+    return [
+      ...list,
+      {
+        id: props.sourceRevisionId,
+        source_id: props.sourceRevisionId,
+        project_id: props.projectId || '',
+        name: '当前任务接口版本',
+        revision_number: 0,
+        endpoint_count: 0,
+      },
+    ]
+  }
+  return list
+})
+const environments = computed(() => {
+  const list = props.environmentRevisions.filter(item => item.project_id === props.projectId)
+  if (props.environmentRevisionId && !list.some(item => item.id === props.environmentRevisionId)) {
+    return [
+      ...list,
+      {
+        id: props.environmentRevisionId,
+        environment_id: props.environmentRevisionId,
+        project_id: props.projectId || '',
+        name: '当前执行环境',
+        revision: 0,
+      },
+    ]
+  }
+  return list
+})
+
+function sourceLabel(source: SourceRevisionOption): string {
+  if (!source.revision_number && !source.endpoint_count) return `${source.name} · 已保存任务引用`
+  return `${source.name} · v${source.revision_number} · ${source.endpoint_count} 个接口`
+}
+
+function environmentLabel(environment: EnvironmentRevisionOption): string {
+  if (!environment.revision) return `${environment.name} · 已保存任务引用`
+  return `${environment.name} · v${environment.revision}`
+}
 
 function nullable(value: string): string | null {
   return value || null
@@ -48,13 +89,13 @@ function nullable(value: string): string | null {
       <label>接口版本
         <select data-testid="context-source" :value="sourceRevisionId || ''" :disabled="loading || !projectId" @change="emit('update:sourceRevisionId', nullable(($event.target as HTMLSelectElement).value))">
           <option value="">{{ sources.length ? '选择已保存接口' : '暂无已保存接口' }}</option>
-          <option v-for="source in sources" :key="source.id" :value="source.id">{{ source.name }} · v{{ source.revision_number }} · {{ source.endpoint_count }} 个接口</option>
+          <option v-for="source in sources" :key="source.id" :value="source.id">{{ sourceLabel(source) }}</option>
         </select>
       </label>
       <label>执行环境
         <select data-testid="context-environment" :value="environmentRevisionId || ''" :disabled="loading || !projectId" @change="emit('update:environmentRevisionId', nullable(($event.target as HTMLSelectElement).value))">
           <option value="">{{ environments.length ? '选择执行环境' : '暂无已保存环境' }}</option>
-          <option v-for="environment in environments" :key="environment.id" :value="environment.id">{{ environment.name }} · v{{ environment.revision }}</option>
+          <option v-for="environment in environments" :key="environment.id" :value="environment.id">{{ environmentLabel(environment) }}</option>
         </select>
       </label>
     </div>

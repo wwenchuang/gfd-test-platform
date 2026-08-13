@@ -92,6 +92,31 @@ describe('tasks store', () => {
     expect(store.tasks[0].name).toBe('收藏回归 V2')
   })
 
+  it('updates the selected task when only the runtime environment changes', async () => {
+    const updated = { ...TASK, environment_revision_id: 'environment-2', name: '收藏回归 V2' }
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { task: updated } })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { task: { ...updated, id: 'task-new' } } })
+    const store = useTasksStore()
+    store.task = TASK
+    store.tasks = [TASK]
+
+    await store.saveSelection({
+      projectId: 'project-1',
+      sourceRevisionId: 'source-1',
+      environmentRevisionId: 'environment-2',
+    }, ['endpoint-1'], '收藏回归 V2')
+
+    expect(put).toHaveBeenCalledWith('/api/api-testing/v1/tasks/task-1', {
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-2',
+      name: '收藏回归 V2',
+      selected_endpoint_ids: ['endpoint-1'],
+    })
+    expect(post).not.toHaveBeenCalled()
+    expect(store.task?.environment_revision_id).toBe('environment-2')
+  })
+
   it('renames the current task without changing its saved scope', async () => {
     const renamed = { ...TASK, name: '发版收藏基线' }
     const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { task: renamed } })
@@ -124,5 +149,24 @@ describe('tasks store', () => {
     })
     expect(started.id).toBe('execution-1')
     expect(store.task?.state).toBe('running')
+  })
+
+  it('runs a saved task with the selected runtime environment', async () => {
+    const execution = { id: 'execution-2', state: 'QUEUED', environment_revision_id: 'environment-2' }
+    const runningTask = { ...TASK, state: 'running', latest_execution_id: 'execution-2' }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { task: runningTask, execution },
+    })
+    const store = useTasksStore()
+    store.task = TASK
+    store.tasks = [TASK]
+
+    const started = await store.runCurrent('environment-2')
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/tasks/task-1/run', {
+      idempotency_key: expect.any(String),
+      environment_revision_id: 'environment-2',
+    })
+    expect(started.id).toBe('execution-2')
   })
 })

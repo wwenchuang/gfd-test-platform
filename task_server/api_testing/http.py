@@ -396,15 +396,18 @@ def _post(segments, payload, actor, settings):
         task_id = _uuid(segments[1])
         task_service = TestTaskService(factory)
         task = task_service.get(task_id, actor)
+        environment_revision_id = _optional_uuid(payload.get("environment_revision_id")) or task.environment_revision_id
+        request = {
+            "project_id": task.project_id,
+            "source_revision_id": task.source_revision_id,
+            "environment_revision_id": environment_revision_id,
+            "endpoint_ids": list(task.selected_endpoint_ids),
+        }
+        _scope_execution_request(factory, request, actor, validate_cases=False)
         execution = ExecutionService(
             factory, event_stream=_event_stream(factory)
         ).submit_active_baselines(
-            {
-                "project_id": task.project_id,
-                "source_revision_id": task.source_revision_id,
-                "environment_revision_id": task.environment_revision_id,
-                "endpoint_ids": list(task.selected_endpoint_ids),
-            },
+            request,
             actor,
             _string(payload.get("idempotency_key"), "idempotency_key", 200),
             task=task,
@@ -523,24 +526,23 @@ def _post(segments, payload, actor, settings):
             ]
         }
     if segments == ("executions",):
+        request = _execution_request(payload)
         task_id = _optional_uuid(payload.get("task_id"))
         task_service = TestTaskService(factory)
+        task = None
         if task_id:
             task = task_service.get(task_id, actor)
             if (
-                task.project_id != payload.get("project_id")
-                or task.source_revision_id != payload.get("source_revision_id")
-                or task.environment_revision_id
-                != payload.get("environment_revision_id")
+                task.project_id != request["project_id"]
+                or task.source_revision_id != request["source_revision_id"]
             ):
                 raise TestTaskScopeError("execution context does not match this task")
-        request = _execution_request(payload)
         _scope_execution_request(factory, request, actor)
         execution = ExecutionService(factory, event_stream=_event_stream(factory)).submit(
             request,
             actor,
             _string(payload.get("idempotency_key"), "idempotency_key", 200),
-            task=task if task_id else None,
+            task=task,
         )
         if task_id:
             task_service.attach_execution(task_id, execution.id, actor)
@@ -613,16 +615,16 @@ def _post(segments, payload, actor, settings):
         endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
         environment_revision_id = _uuid(payload.get("environment_revision_id"))
         task_id = _optional_uuid(payload.get("task_id"))
+        project_id = _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor)
+        _scope_project(factory, project_id, actor)
         task_service = TestTaskService(factory)
         if task_id:
             task = task_service.get(task_id, actor)
             if (
-                task.environment_revision_id != environment_revision_id
+                task.project_id != project_id
                 or not set(endpoint_ids).issubset(set(task.selected_endpoint_ids))
             ):
                 raise TestTaskScopeError("AI request does not match this task")
-        project_id = _scope_ai_job(factory, endpoint_ids, environment_revision_id, actor)
-        _scope_project(factory, project_id, actor)
         service = AiCaseService(factory)
         job = service.submit(endpoint_ids, environment_revision_id, actor, payload.get("model_config"), payload.get("intent", ""))
         if task_id:

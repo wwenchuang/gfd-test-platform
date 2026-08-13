@@ -77,7 +77,6 @@ export const useTasksStore = defineStore('api-test-tasks', {
         const sameTaskContext = this.task
           && this.task.project_id === context.projectId
           && this.task.source_revision_id === context.sourceRevisionId
-          && this.task.environment_revision_id === context.environmentRevisionId
         const response = sameTaskContext
           ? await apiClient.put<{ task: ApiTestTask }>(
             `/api/api-testing/v1/tasks/${encodeURIComponent(this.task!.id)}`,
@@ -114,14 +113,16 @@ export const useTasksStore = defineStore('api-test-tasks', {
         this.saving = false
       }
     },
-    async runCurrent(): Promise<ExecutionView> {
+    async runCurrent(environmentRevisionId?: string): Promise<ExecutionView> {
       if (!this.task) throw new Error('请先保存本次测试任务')
       this.running = true
       this.error = ''
       try {
+        const payload: Record<string, string> = { idempotency_key: createIdempotencyKey() }
+        if (environmentRevisionId) payload.environment_revision_id = environmentRevisionId
         const response = await apiClient.post<{ task: ApiTestTask; execution: ExecutionView }>(
           `/api/api-testing/v1/tasks/${encodeURIComponent(this.task.id)}/run`,
-          { idempotency_key: createIdempotencyKey() },
+          payload,
         )
         this.task = response.data.task
         this.upsertTask(this.task)

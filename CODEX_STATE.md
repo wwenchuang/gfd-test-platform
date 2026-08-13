@@ -80,6 +80,48 @@ git diff --check
 # passed
 ```
 
+### 2026-08-14 API 工作台：历史任务与运行时环境解耦
+
+本轮只收口用户反馈的“选择历史任务后无法切换新环境执行、接口版本和环境被置空、任务选择与环境选择形成死循环”问题。
+
+本轮修复：
+
+- 工作台选择历史任务时，任务继续代表固定的接口范围；运行环境使用当前页面选择的环境，不再强行回写任务保存时的旧环境。
+- 切换执行环境时不再清空当前任务，也不再把任务判断为范围冲突。
+- 保存任务范围时，同项目同接口版本的任务会被更新，即使运行环境变化也不会误创建新任务。
+- AI 生成用例使用当前选择的运行环境，但仍绑定当前任务的接口范围，避免“测试任务范围与当前请求不一致”。
+- 执行历史任务时前端会把当前 `environment_revision_id` 传给后端；后端执行任务时接受运行时环境覆盖。
+- 后端任务校验改为“同项目、同接口版本、接口集合在任务范围内”，不再要求 AI job / execution 的环境 revision 必须等于任务保存时的环境。
+- 顶部接口版本 / 执行环境下拉在历史任务引用的 revision 暂未出现在当前选项列表时，会保留“当前任务接口版本 / 当前执行环境 · 已保存任务引用”，不再显示空白。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/ContextBar.spec.ts src/stores/tasks.spec.ts src/views/WorkbenchView.spec.ts --reporter=basic
+# 3 files / 17 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-BxHgMqMh.js
+
+python3 -m py_compile task_server/api_testing/http.py task_server/api_testing/services/test_task_service.py
+# passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/0' python3 -m pytest tests/api_testing/test_test_task_service.py tests/api_testing/test_http_contract.py -q
+# 54 passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 31 files / 160 tests passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-13 API 测试：本机数据库 Gate 与 AI 业务断言收口
 
 用户要求本机缺少 PostgreSQL / Redis 时直接固定环境，避免 API 测试后端用例继续跳过；同时线上 AI 生成用例仍把“业务码 / code 断言”误识别成缺少 Biz 请求头的场景，导致草稿校验和生成质量不稳定。

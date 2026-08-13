@@ -44,7 +44,6 @@ const taskMatchesSelection = computed(() => Boolean(
   tasks.task
   && tasks.task.project_id === context.projectId
   && tasks.task.source_revision_id === context.sourceRevisionId
-  && tasks.task.environment_revision_id === context.environmentRevisionId
   && [...tasks.task.selected_endpoint_ids].sort().join('|') === [...selectedIds.value].sort().join('|'),
 ))
 
@@ -129,7 +128,6 @@ function changeEnvironment(environmentRevisionId: string | null): void {
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
-  if (tasks.task?.environment_revision_id !== environmentRevisionId) tasks.clear()
 }
 
 async function selectTask(taskId: string): Promise<void> {
@@ -139,10 +137,13 @@ async function selectTask(taskId: string): Promise<void> {
   cases.clearDebug()
   cases.clearAiJob()
   debugOpen.value = false
+  const runtimeEnvironmentId = task.project_id === context.projectId
+    ? context.environmentRevisionId || task.environment_revision_id
+    : task.environment_revision_id
   context.restoreExecutionContext({
     project_id: task.project_id,
     source_revision_id: task.source_revision_id,
-    environment_revision_id: task.environment_revision_id,
+    environment_revision_id: runtimeEnvironmentId,
   })
   await loadSource(task.source_revision_id, task.selected_endpoint_ids)
   const endpoint = assets.endpoints.find(item => task.selected_endpoint_ids.includes(item.id))
@@ -238,7 +239,7 @@ async function generate(intent: string): Promise<void> {
   cases.clearAiJob()
   const task = await saveCurrentTask()
   if (!task) return
-  await cases.generate([...task.selected_endpoint_ids], task.environment_revision_id, intent, task.id)
+  await cases.generate([...task.selected_endpoint_ids], context.environmentRevisionId, intent, task.id)
   if (context.projectId) await tasks.restore(context.projectId)
   const firstGenerated = cases.aiJob?.batches.flatMap(item => item.generated_draft_ids)[0]
   if (firstGenerated) {
@@ -311,9 +312,13 @@ async function renameCurrentTask(): Promise<void> {
 }
 
 async function runCurrentTask(): Promise<void> {
+  if (!context.environmentRevisionId) {
+    localError.value = '请选择本次执行环境'
+    return
+  }
   if (!taskMatchesSelection.value && !await saveCurrentTask()) return
   try {
-    const execution = await tasks.runCurrent()
+    const execution = await tasks.runCurrent(context.environmentRevisionId)
     await router.push({ name: 'runs', query: { executionId: execution.id } })
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '测试任务执行失败'

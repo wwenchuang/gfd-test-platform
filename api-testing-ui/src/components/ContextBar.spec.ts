@@ -56,4 +56,24 @@ describe('ContextBar', () => {
     expect(wrapper.text()).toContain('保存测试范围')
     expect(wrapper.text()).not.toContain('应用范围')
   })
+
+  it('keeps historical task revisions visible when option lists are stale', () => {
+    const wrapper = mount(ContextBar, {
+      props: {
+        projects: OPTIONS.projects,
+        sourceRevisions: [],
+        environmentRevisions: [],
+        projectId: 'project-uuid',
+        sourceRevisionId: 'task-source-revision',
+        environmentRevisionId: 'task-runtime-env',
+      },
+    })
+
+    const source = wrapper.get('[data-testid="context-source"]').element as HTMLSelectElement
+    const environment = wrapper.get('[data-testid="context-environment"]').element as HTMLSelectElement
+    expect(source.value).toBe('task-source-revision')
+    expect(environment.value).toBe('task-runtime-env')
+    expect(wrapper.text()).toContain('当前任务接口版本')
+    expect(wrapper.text()).toContain('当前执行环境')
+  })
 })

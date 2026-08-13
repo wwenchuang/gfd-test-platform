@@ -122,7 +122,14 @@ def task_records(task_factory):
             name="生产环境",
             **_audit(),
         )
-        session.add(environment_revision)
+        runtime_environment_revision = ApiEnvironmentRevision(
+            environment_id=environment.id,
+            source_revision_id=revision.id,
+            revision_number=2,
+            name="生产环境 V2",
+            **_audit(),
+        )
+        session.add_all((environment_revision, runtime_environment_revision))
         session.flush()
         environment.active_revision_id = environment_revision.id
         ai_job = ApiAiJob(
@@ -145,7 +152,27 @@ def task_records(task_factory):
             summary={"total": 3, "passed": 3, "failed": 0, "broken": 0, "cancelled": 0},
             **_audit(),
         )
-        session.add_all((ai_job, execution))
+        runtime_ai_job = ApiAiJob(
+            project_id=project.id,
+            environment_revision_id=runtime_environment_revision.id,
+            state="completed",
+            endpoint_ids=[endpoint.id],
+            summary={"generated_drafts": 1},
+            **_audit(),
+        )
+        runtime_execution = ApiExecution(
+            project_id=project.id,
+            source_revision_id=revision.id,
+            environment_revision_id=runtime_environment_revision.id,
+            execution_type="regression",
+            state="DONE",
+            idempotency_key="task-runtime-execution-" + suffix,
+            requested_case_ids=[],
+            request_snapshot={},
+            summary={"total": 1, "passed": 1, "failed": 0, "broken": 0, "cancelled": 0},
+            **_audit(),
+        )
+        session.add_all((ai_job, execution, runtime_ai_job, runtime_execution))
         session.flush()
         return {
             "project": project,
@@ -154,8 +181,11 @@ def task_records(task_factory):
             "endpoint": endpoint,
             "foreign_endpoint": foreign_endpoint,
             "environment_revision": environment_revision,
+            "runtime_environment_revision": runtime_environment_revision,
             "ai_job": ai_job,
             "execution": execution,
+            "runtime_ai_job": runtime_ai_job,
+            "runtime_execution": runtime_execution,
         }
 
 
@@ -282,3 +312,33 @@ def test_worker_refreshes_task_when_execution_finishes(task_factory, task_record
 
     assert refreshed.state == "completed"
     assert refreshed.summary["passed"] == 3
+
+
+def test_task_allows_runtime_environment_for_ai_job(task_factory, task_records):
+    service = TaskService(task_factory)
+    task = service.save_context("owner-a", _payload(task_records), "owner-a")
+
+    designing = service.attach_ai_job(
+        task.id,
+        task_records["runtime_ai_job"].id,
+        "owner-a",
+    )
+
+    assert designing.state == "designing"
+    assert designing.latest_ai_job_id == task_records["runtime_ai_job"].id
+    assert designing.environment_revision_id == task_records["environment_revision"].id
+
+
+def test_task_allows_runtime_environment_for_execution(task_factory, task_records):
+    service = TaskService(task_factory)
+    task = service.save_context("owner-a", _payload(task_records), "owner-a")
+
+    running = service.attach_execution(
+        task.id,
+        task_records["runtime_execution"].id,
+        "owner-a",
+    )
+
+    assert running.state == "running"
+    assert running.latest_execution_id == task_records["runtime_execution"].id
+    assert running.environment_revision_id == task_records["environment_revision"].id

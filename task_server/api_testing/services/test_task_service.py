@@ -161,7 +161,6 @@ class TestTaskService:
                 job is None
                 or job.owner_id != actor
                 or job.project_id != task.project_id
-                or job.environment_revision_id != task.environment_revision_id
                 or not set(job.endpoint_ids).issubset(set(task.selected_endpoint_ids))
             ):
                 raise TestTaskScopeError("AI job does not match this task")
@@ -182,7 +181,6 @@ class TestTaskService:
                 or execution.owner_id != actor
                 or execution.project_id != task.project_id
                 or execution.source_revision_id != task.source_revision_id
-                or execution.environment_revision_id != task.environment_revision_id
             ):
                 raise TestTaskScopeError("execution does not match this task")
             snapshot_versions = execution.request_snapshot.get("case_versions", [])
