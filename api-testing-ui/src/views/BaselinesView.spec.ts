@@ -150,4 +150,30 @@ describe('BaselinesView fixed project assets', () => {
     expect(wrapper.text()).toContain('未分组')
     expect(wrapper.text()).toContain('添加收藏 - 正常流程')
   })
+
+  it('moves selected baselines to an existing group', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({ id: 'baseline-1', group_name: '未分组', case_name: '添加收藏 - 正常流程' }),
+      baselineFixture({ id: 'baseline-2', endpoint_id: 'endpoint-2', group_name: '收藏链路', case_name: '取消收藏 - 正常流程' }),
+      baselineFixture({ id: 'baseline-3', endpoint_id: 'endpoint-3', group_name: '登录鉴权', case_name: '登录 - 正常流程' }),
+    ] } })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { baselines: [
+      { id: 'baseline-1', group_name: '登录鉴权' },
+    ] } })
+
+    const wrapper = mountWithContext()
+    await flushPromises()
+
+    await buttonByText(wrapper, '未分组').trigger('click')
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="baseline-move-target"]').setValue('登录鉴权')
+    await wrapper.get('[data-testid="baseline-move-selected"]').trigger('click')
+    await flushPromises()
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/baselines/bulk-group', {
+      baseline_ids: ['baseline-1'],
+      group_name: '登录鉴权',
+    })
+    expect(wrapper.text()).toContain('已将 1 条基线移动到“登录鉴权”')
+  })
 })

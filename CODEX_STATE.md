@@ -34,6 +34,43 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 基线：移动所选支持已有分组
+
+用户反馈：基线页选中多条基线后，“移动所选”必须能移动到其他已有分组，而不是只能依赖输入框创建新分组。
+
+本轮修复：
+
+- 基线分组编辑区新增“目标分组”下拉，可直接选择已有分组。
+- 保留“新分组/重命名”输入框；输入新名称时优先使用输入值创建或移动到新分组。
+- “移动所选”按钮在未选择基线或未指定目标分组时禁用，并在异常时给出明确提示。
+- 移动成功后显示“已将 N 条基线移动到目标分组”的反馈，避免用户不知道操作是否生效。
+- 新增前端回归测试覆盖：选中未分组基线后移动到已有“登录鉴权”分组。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/views/BaselinesView.spec.ts -t "moves selected baselines to an existing group" --reporter=basic
+# 1 file / 1 focused test passed
+
+npm --prefix api-testing-ui test -- --run src/views/BaselinesView.spec.ts --reporter=basic
+# 1 file / 3 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 31 files / 162 tests passed
+
+npm --prefix api-testing-ui run build
+# passed; generated api-test/assets/index-5c37-M5t.js and index-CEDCxZal.css
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 工作台：历史任务旧版本引用 fallback 修复
 
 用户反馈：选择历史任务后，顶部接口版本和执行环境下拉会置空；再切换环境时任务列表刷新，历史任务无法直接用新环境执行，形成“选择历史任务 / 选择环境”的死循环。

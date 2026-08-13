@@ -18,6 +18,7 @@ const router = useRouter()
 const search = ref('')
 const group = ref('all')
 const groupName = ref('')
+const moveTargetGroup = ref('')
 const localError = ref('')
 const localMessage = ref('')
 
@@ -62,6 +63,7 @@ const allFilteredSelected = computed(() => Boolean(
   filteredBaselines.value.length && filteredSelectedCount.value === filteredBaselines.value.length,
 ))
 const selectedGroups = computed(() => [...new Set(baselines.selectedItems.map(item => baselineGroup(item)))])
+const moveTargetName = computed(() => groupName.value.trim() || moveTargetGroup.value.trim())
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
@@ -181,12 +183,22 @@ async function runSelectedTask(): Promise<void> {
 async function updateSelectedGroup(): Promise<void> {
   localError.value = ''
   localMessage.value = ''
+  if (!baselines.selectedIds.length) {
+    localError.value = '请先选择要移动的基线用例'
+    return
+  }
+  const next = moveTargetName.value
+  if (!next) {
+    localError.value = '请选择目标分组，或输入新的分组名称'
+    return
+  }
+  const affected = baselines.selectedItems.length
   try {
-    await baselines.updateGroup(baselines.selectedIds, groupName.value)
-    const next = groupName.value.trim()
+    await baselines.updateGroup(baselines.selectedIds, next)
     group.value = next
     groupName.value = ''
-    localMessage.value = `已将 ${baselines.selectedItems.length} 条基线归入“${next}”`
+    moveTargetGroup.value = ''
+    localMessage.value = `已将 ${affected} 条基线移动到“${next}”`
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基线分组保存失败'
   }
@@ -334,11 +346,23 @@ function sourceRevisionName(item: ApiBaselineCase): string {
         <div class="baseline-group-editor" aria-label="基线分组编辑">
           <div>
             <strong>基线分组</strong>
-            <span>选择基线可新建或移动分组；选中左侧分组后可重命名或删除分组。</span>
+            <span>可移动到已有分组，也可输入新名称创建分组；选中左侧分组后可重命名或删除。</span>
           </div>
-          <input v-model="groupName" placeholder="例如：发版冒烟、收藏链路、登录鉴权" />
+          <div class="baseline-group-controls">
+            <label>
+              <span>目标分组</span>
+              <select v-model="moveTargetGroup" data-testid="baseline-move-target">
+                <option value="">选择已有分组</option>
+                <option v-for="item in baselines.groups" :key="item" :value="item">{{ item }}</option>
+              </select>
+            </label>
+            <label>
+              <span>新分组/重命名</span>
+              <input v-model="groupName" placeholder="例如：发版冒烟、收藏链路、登录鉴权" />
+            </label>
+          </div>
           <div class="baseline-group-actions">
-            <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length || !groupName.trim()" @click="updateSelectedGroup">
+            <button class="secondary-command" type="button" data-testid="baseline-move-selected" :disabled="!baselines.selectedIds.length || !moveTargetName" @click="updateSelectedGroup">
               移动所选
             </button>
             <button class="secondary-command" type="button" :disabled="!canManageCurrentGroup || !groupName.trim()" @click="renameCurrentGroup">
