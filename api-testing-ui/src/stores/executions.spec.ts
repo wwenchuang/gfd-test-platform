@@ -332,4 +332,50 @@ describe('executions store', () => {
     expect(store.executions.map(item => item.id)).toEqual(['execution-3'])
     expect(store.active?.id).toBe('execution-3')
   })
+
+  it('reruns every case from the selected execution record', async () => {
+    const created = {
+      id: 'execution-rerun', project_id: 'project-1', state: 'QUEUED', execution_type: 'regression',
+      source_revision_id: 'source-1', environment_revision_id: 'environment-1',
+      environment_name: '生产环境（新）- 腾讯云', case_statuses: ['QUEUED'], case_results: [], summary: {},
+      cancellation_requested: false, created_at: '', started_at: null, finished_at: null,
+    } as ExecutionView
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { execution: created } })
+    const store = useExecutionsStore()
+    vi.spyOn(store, 'select').mockResolvedValue()
+
+    const rerun = await store.rerunExecution({
+      id: 'execution-source',
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      environment_name: '生产环境（新）- 腾讯云',
+      state: 'DONE',
+      execution_type: 'regression',
+      task_id: 'task-1',
+      task_name: '收藏接口发版回归',
+      case_statuses: ['PASSED', 'FAILED'],
+      case_results: [
+        { execution_case_id: 'case-1', case_version_id: 'case-version-1', status: 'PASSED' },
+        { execution_case_id: 'case-2', case_version_id: 'case-version-2', status: 'FAILED' },
+      ],
+      summary: {},
+      cancellation_requested: false,
+      created_at: '',
+      started_at: null,
+      finished_at: null,
+    } as ExecutionView)
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/executions', {
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      case_version_ids: ['case-version-1', 'case-version-2'],
+      execution_type: 'regression',
+      overrides: {},
+      idempotency_key: expect.any(String),
+    })
+    expect(rerun?.id).toBe('execution-rerun')
+    expect(store.executions[0]?.id).toBe('execution-rerun')
+  })
 })

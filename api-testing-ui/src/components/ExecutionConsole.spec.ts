@@ -81,4 +81,32 @@ describe('ExecutionConsole', () => {
     expect((wrapper.get('[data-testid="log-level"]').element as HTMLSelectElement).value).toBe('all')
     expect(wrapper.text()).toContain('新执行开始')
   })
+
+  it('keeps a rerun action for the selected execution and labels records by task type', async () => {
+    const debugExecution: ExecutionView = {
+      ...execution,
+      id: 'execution-debug',
+      execution_type: 'debug',
+      task_id: null,
+      task_name: null,
+      case_results: [execution.case_results[0]],
+      summary: { PASSED: 1 },
+    }
+    const wrapper = mount(ExecutionConsole, {
+      props: {
+        executions: [execution, debugExecution],
+        active: debugExecution,
+        events: [],
+        connectionState: 'complete',
+      },
+    })
+
+    expect(wrapper.text()).toContain('在线调试')
+    expect(wrapper.text()).toContain('单条')
+    expect(wrapper.text()).toContain('收藏接口发版回归')
+    expect(wrapper.text()).toContain('多条')
+
+    await wrapper.get('[data-testid="rerun-active-execution"]').trigger('click')
+    expect(wrapper.emitted('rerun')?.[0]?.[0]).toMatchObject({ id: 'execution-debug' })
+  })
 })

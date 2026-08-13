@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Bug, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
+import { Bug, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
@@ -356,19 +356,21 @@ function defaultTaskName(): string {
       @update:environment-revision-id="changeEnvironment"
       @save="saveScope"
     />
-    <TaskStatusStrip :task="tasks.task" :selected-count="selectedIds.length" :environment-name="environmentName" :saving="tasks.saving" :running="tasks.running" @new="startNewTask" @save="saveCurrentTask" @run="runCurrentTask" />
-    <section class="task-switcher" aria-label="测试任务列表">
-      <label>历史任务
-        <select data-testid="task-selector" :value="tasks.task?.id || ''" :disabled="tasks.loading || !tasks.tasks.length" @change="selectTask(($event.target as HTMLSelectElement).value)">
-          <option value="">{{ tasks.tasks.length ? '选择已有任务' : '暂无已保存任务' }}</option>
-          <option v-for="item in tasks.tasks" :key="item.id" :value="item.id">{{ item.name }} · {{ item.selected_endpoint_ids.length }} 个接口 · {{ item.state }}</option>
-        </select>
-      </label>
-      <label>任务名称
-        <input v-model="taskNameDraft" data-testid="task-name-input" maxlength="200" placeholder="例如：收藏链路发版回归" />
-      </label>
-      <button data-testid="rename-task" class="secondary-command" type="button" :disabled="tasks.saving || !tasks.task" @click="renameCurrentTask"><Save :size="15" />保存名称</button>
-    </section>
+    <TaskStatusStrip
+      v-model:task-name-draft="taskNameDraft"
+      :task="tasks.task"
+      :tasks="tasks.tasks"
+      :selected-count="selectedIds.length"
+      :environment-name="environmentName"
+      :loading="tasks.loading"
+      :saving="tasks.saving"
+      :running="tasks.running"
+      @select-task="selectTask"
+      @rename-task="renameCurrentTask"
+      @new="startNewTask"
+      @save="saveCurrentTask"
+      @run="runCurrentTask"
+    />
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
     <div class="design-workspace">
       <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />

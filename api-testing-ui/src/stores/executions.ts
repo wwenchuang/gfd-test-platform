@@ -273,6 +273,14 @@ export const useExecutionsStore = defineStore('api-executions', {
         .filter(item => !['PASSED', 'SKIPPED', 'CANCELLED'].includes(item.status))
         .map(item => item.case_version_id)
       if (!caseIds.length) return null
+      return await this.createRerun(execution, caseIds)
+    },
+    async rerunExecution(execution: ExecutionView): Promise<ExecutionView | null> {
+      const caseIds = execution.case_results.map(item => item.case_version_id).filter(Boolean)
+      if (!caseIds.length) return null
+      return await this.createRerun(execution, caseIds)
+    },
+    async createRerun(execution: ExecutionView, caseIds: string[]): Promise<ExecutionView> {
       const response = await apiClient.post<{ execution: ExecutionView }>(
         '/api/api-testing/v1/executions',
         {

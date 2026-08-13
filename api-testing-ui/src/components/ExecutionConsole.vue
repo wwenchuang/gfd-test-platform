@@ -23,7 +23,9 @@ const emit = defineEmits<{
 const tab = ref<'trace' | 'cases' | 'report'>('trace')
 const selected = ref<ExecutionCaseResult | null>(null)
 const selectedExecutionIds = ref<Set<string>>(new Set())
-const running = computed(() => props.active && !['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'].includes(props.active.state))
+const terminalStates = new Set(['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'])
+const running = computed(() => props.active && !terminalStates.has(props.active.state))
+const canRerunActive = computed(() => Boolean(props.active && terminalStates.has(props.active.state) && props.active.case_results.length))
 const caseLabels = computed(() => Object.fromEntries((props.active?.case_results || []).map(result => [result.execution_case_id, result.case_name || result.endpoint_summary || result.path])))
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
 const buckets = computed(() => props.active ? executionFailureBuckets(props.active) : null)
@@ -66,6 +68,28 @@ function deleteSelected(): void {
   emit('deleteMany', [...selectedExecutionIds.value])
   selectedExecutionIds.value = new Set()
 }
+
+function executionResultCount(execution: ExecutionView): number {
+  return execution.case_results.length || Number(execution.summary?.TOTAL || execution.summary?.total || 0)
+}
+
+function executionTaskType(execution: ExecutionView): string {
+  if (execution.execution_type === 'baseline_regression') return '基线'
+  return executionResultCount(execution) > 1 ? '多条' : '单条'
+}
+
+function executionDisplayName(execution: ExecutionView): string {
+  return execution.task_name || executionTypeLabel(execution)
+}
+
+function executionSubtitle(execution: ExecutionView): string {
+  const parts = [
+    executionTypeLabel(execution),
+    `${executionResultCount(execution)} 条`,
+    execution.environment_name || '未命名环境',
+  ]
+  return parts.join(' · ')
+}
 </script>
 
 <template>
@@ -89,8 +113,8 @@ function deleteSelected(): void {
       >
         <input type="checkbox" :checked="selectedExecutionIds.has(execution.id)" aria-label="选择执行记录" @click.stop="toggleExecution(execution.id)" />
         <span class="execution-row-body">
-          <strong>{{ execution.task_name || executionTypeLabel(execution) }}</strong>
-          <span>{{ execution.task_name ? executionTypeLabel(execution) + ' · ' : '' }}{{ execution.environment_name || '未命名环境' }}</span>
+          <strong :title="executionDisplayName(execution)">{{ executionDisplayName(execution) }}</strong>
+          <span><em class="execution-type-chip">{{ executionTaskType(execution) }}</em>{{ executionSubtitle(execution) }}</span>
           <small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small>
         </span>
         <b>{{ execution.state }}</b>
@@ -101,8 +125,8 @@ function deleteSelected(): void {
     <main class="execution-main">
       <template v-if="active">
         <div class="execution-heading">
-          <div><h2>{{ active.task_name || executionTypeLabel(active) }}</h2><span>{{ executionTypeLabel(active) }} · {{ active.environment_name }} · {{ active.case_results.length }} 条用例</span></div>
-          <div><button v-if="connectionState === 'failed'" class="secondary-command" type="button" @click="emit('reconnect', active.id)"><RotateCw :size="14" />重新连接日志</button><button v-if="running" class="secondary-command" type="button" @click="emit('cancel', active.id)"><Square :size="14" />取消</button><button v-else-if="active.case_results.some(item => ['FAILED','BROKEN'].includes(item.status))" class="secondary-command" type="button" @click="emit('rerun', active)"><RotateCw :size="14" />重跑失败项</button></div>
+          <div><h2 :title="executionDisplayName(active)">{{ executionDisplayName(active) }}</h2><span><em class="execution-type-chip">{{ executionTaskType(active) }}</em>{{ executionSubtitle(active) }}</span></div>
+          <div><button v-if="connectionState === 'failed'" class="secondary-command" type="button" @click="emit('reconnect', active.id)"><RotateCw :size="14" />重新连接日志</button><button v-if="running" class="secondary-command" type="button" @click="emit('cancel', active.id)"><Square :size="14" />取消</button><button v-else-if="canRerunActive" data-testid="rerun-active-execution" class="primary-command" type="button" @click="emit('rerun', active)"><RotateCw :size="14" />重新执行此记录</button></div>
         </div>
         <ExecutionOverview :execution="active" />
         <nav class="execution-tabs" aria-label="执行详情视图">

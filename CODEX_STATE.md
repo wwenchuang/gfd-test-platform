@@ -8561,3 +8561,38 @@ git diff --check
 - M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
 - M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
 - M4：执行记录/报告删除、报告 UI、飞书卡片链接和项目级机器人配置。
+
+### 2026-08-13 API 测试：任务列表、任务名称与执行记录重跑入口
+
+本轮按用户最新反馈只收口 M1 任务闭环，不混入 Apifox 同步、基线资产、报告 UI 或飞书通知。
+
+本轮修复：
+
+- 工作台任务条展示已保存任务下拉，可以选择历史任务继续编辑，不再只能每次新建。
+- 支持编辑并保存当前任务名称；任务标题和历史任务选项均保留完整 title，长名称在界面压缩显示。
+- 任务条按当前任务类型展示“基线 / 多条任务 / 单条任务 / 新任务”，让用户能区分基线回归、单接口调试和多接口任务。
+- 执行记录列表和详情优先展示任务名称，缺少任务名时回退到执行类型；列表附带“基线 / 多条 / 单条”类型标签。
+- 选中一条已结束执行记录时，右上角保留“重新执行此记录”，并按该记录的全部用例版本重新创建执行。
+- 执行记录重跑增加 store 层测试，确认 POST `/api/api-testing/v1/executions` 时携带原记录的全部 `case_version_ids`。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/TaskStatusStrip.spec.ts src/components/ExecutionConsole.spec.ts src/stores/executions.spec.ts src/stores/tasks.spec.ts src/views/WorkbenchView.spec.ts src/views/RunsView.spec.ts --reporter=dot
+# 6 files / 35 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+git diff --check
+# passed
+```
+
+后续仍按既定阶段继续：
+
+- M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
+- M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
+- M4：执行记录/报告删除、报告 UI、飞书卡片链接和项目级机器人配置。

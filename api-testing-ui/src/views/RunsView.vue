@@ -30,7 +30,7 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
   } })
 }
 async function rerun(execution: ExecutionView): Promise<void> {
-  await executions.rerunFailed(execution)
+  await executions.rerunExecution(execution)
 }
 
 async function deleteExecution(executionId: string): Promise<void> {
