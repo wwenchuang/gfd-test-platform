@@ -503,6 +503,18 @@ def _post(segments, payload, actor, settings):
             task_service.attach_execution(task_id, execution.id, actor)
         _enqueue_execution(execution.id)
         return {"execution": _view(execution)}
+    if segments == ("executions", "archive"):
+        execution_ids = _uuid_array(payload.get("execution_ids"), "execution_ids")
+        for execution_id in execution_ids:
+            _scope_execution(factory, execution_id, actor)
+        return {
+            "executions": [
+                _view(item)
+                for item in ExecutionService(
+                    factory, event_stream=_event_stream(factory)
+                ).archive_many(execution_ids, actor)
+            ]
+        }
     if segments == ("regressions",):
         regression = {
             "project_id": _uuid(payload.get("project_id")),
@@ -637,7 +649,7 @@ def _delete(segments, actor):
     if len(segments) == 2 and segments[0] == "executions":
         execution_id = _uuid(segments[1])
         _scope_execution(factory, execution_id, actor)
-        return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).cancel(execution_id, actor))}
+        return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).archive(execution_id, actor))}
     if len(segments) == 2 and segments[0] == "baselines":
         return {"baseline": _view(CaseService(factory).archive_baseline(_uuid(segments[1]), actor))}
     raise ApiHttpError(404, "not_found", "Resource was not found")

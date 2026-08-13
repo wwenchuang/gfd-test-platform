@@ -292,4 +292,44 @@ describe('executions store', () => {
       payload: { execution_case_id: 'case-a', status: 'PASSED' },
     })
   })
+
+  it('archives one execution and clears the active record locally', async () => {
+    const archived = { id: 'execution-1', state: 'ARCHIVED' } as ExecutionView
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { execution: archived } })
+    const store = useExecutionsStore()
+    const disconnect = vi.spyOn(store, 'disconnect')
+    store.executions = [
+      { id: 'execution-1', state: 'DONE' } as ExecutionView,
+      { id: 'execution-2', state: 'DONE' } as ExecutionView,
+    ]
+    store.active = store.executions[0]
+    store.events = [{ id: 1, type: 'execution_finished', level: 'info', caseId: '', message: '完成', payload: {} }]
+
+    await store.deleteExecutions(['execution-1'])
+
+    expect(remove).toHaveBeenCalledWith('/api/api-testing/v1/executions/execution-1')
+    expect(store.executions.map(item => item.id)).toEqual(['execution-2'])
+    expect(store.active).toBeNull()
+    expect(store.events).toEqual([])
+    expect(disconnect).toHaveBeenCalled()
+  })
+
+  it('archives multiple executions in one request and keeps the current record when not selected', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { executions: [] } })
+    const store = useExecutionsStore()
+    store.executions = [
+      { id: 'execution-1', state: 'DONE' } as ExecutionView,
+      { id: 'execution-2', state: 'DONE' } as ExecutionView,
+      { id: 'execution-3', state: 'DONE' } as ExecutionView,
+    ]
+    store.active = store.executions[2]
+
+    await store.deleteExecutions(['execution-1', 'execution-2', 'execution-2'])
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/executions/archive', {
+      execution_ids: ['execution-1', 'execution-2'],
+    })
+    expect(store.executions.map(item => item.id)).toEqual(['execution-3'])
+    expect(store.active?.id).toBe('execution-3')
+  })
 })

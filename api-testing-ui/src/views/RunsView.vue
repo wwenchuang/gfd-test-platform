@@ -32,6 +32,17 @@ function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
 async function rerun(execution: ExecutionView): Promise<void> {
   await executions.rerunFailed(execution)
 }
+
+async function deleteExecution(executionId: string): Promise<void> {
+  const wasActive = executions.active?.id === executionId
+  await executions.deleteExecution(executionId)
+  if (wasActive) inspected.value = null
+}
+
+async function deleteExecutions(executionIds: string[]): Promise<void> {
+  await executions.deleteExecutions(executionIds)
+  if (!executions.active || executionIds.includes(executions.active.id)) inspected.value = null
+}
 </script>
 
 <template>
@@ -52,6 +63,8 @@ async function rerun(execution: ExecutionView): Promise<void> {
       @reconnect="executions.reconnect($event)"
       @inspect="inspected = $event"
       @edit="edit"
+      @delete="deleteExecution"
+      @delete-many="deleteExecutions"
     />
     <ExecutionDetailDrawer v-if="executions.active && inspected" :execution="executions.active" :initial-case-id="inspected.execution_case_id" @close="inspected = null" @edit="edit" @rerun="rerun" />
   </section>

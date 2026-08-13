@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { RotateCw, Square } from 'lucide-vue-next'
+import { RotateCw, Square, Trash2 } from 'lucide-vue-next'
 
 import type { ExecutionCaseResult, ExecutionConnectionState, ExecutionEventView, ExecutionView } from '../api/contracts'
 import { executionFailureBuckets, executionMetrics, executionTypeLabel } from '../utils/executionPresentation'
@@ -17,13 +17,18 @@ const emit = defineEmits<{
   reconnect: [id: string]
   inspect: [result: ExecutionCaseResult]
   edit: [result: ExecutionCaseResult, execution: ExecutionView]
+  delete: [id: string]
+  deleteMany: [ids: string[]]
 }>()
 const tab = ref<'trace' | 'cases' | 'report'>('trace')
 const selected = ref<ExecutionCaseResult | null>(null)
+const selectedExecutionIds = ref<Set<string>>(new Set())
 const running = computed(() => props.active && !['DONE', 'CANCELLED', 'PASSED', 'FAILED', 'BROKEN'].includes(props.active.state))
 const caseLabels = computed(() => Object.fromEntries((props.active?.case_results || []).map(result => [result.execution_case_id, result.case_name || result.endpoint_summary || result.path])))
 const metrics = computed(() => props.active ? executionMetrics(props.active) : null)
 const buckets = computed(() => props.active ? executionFailureBuckets(props.active) : null)
+const selectedExecutionCount = computed(() => selectedExecutionIds.value.size)
+const allVisibleSelected = computed(() => props.executions.length > 0 && props.executions.every(item => selectedExecutionIds.value.has(item.id)))
 
 watch(() => props.active?.id, () => {
   const active = props.active
@@ -34,20 +39,63 @@ watch(() => props.active?.case_results, results => {
   if (!results) return
   selected.value = results.find(item => item.execution_case_id === selected.value?.execution_case_id) || results[0] || null
 })
+watch(() => props.executions.map(item => item.id).join('|'), () => {
+  const visible = new Set(props.executions.map(item => item.id))
+  selectedExecutionIds.value = new Set([...selectedExecutionIds.value].filter(id => visible.has(id)))
+})
 
 function selectCase(result: ExecutionCaseResult): void {
   selected.value = result
   emit('inspect', result)
+}
+
+function toggleExecution(id: string): void {
+  const next = new Set(selectedExecutionIds.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedExecutionIds.value = next
+}
+
+function toggleAllExecutions(): void {
+  selectedExecutionIds.value = allVisibleSelected.value
+    ? new Set()
+    : new Set(props.executions.map(item => item.id))
+}
+
+function deleteSelected(): void {
+  emit('deleteMany', [...selectedExecutionIds.value])
+  selectedExecutionIds.value = new Set()
 }
 </script>
 
 <template>
   <div class="execution-console">
     <aside class="execution-list panel">
-      <header class="panel-header"><h2>执行记录</h2><span>{{ executions.length }} 条</span></header>
-      <button v-for="execution in executions" :key="execution.id" type="button" :class="['execution-row', { active: execution.id === active?.id }]" @click="emit('select', execution.id)">
-        <strong>{{ executionTypeLabel(execution) }}</strong><span>{{ execution.environment_name || '未命名环境' }}</span><small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small><b>{{ execution.state }}</b>
-      </button>
+      <header class="panel-header">
+        <h2>执行记录</h2><span>{{ executions.length }} 条</span>
+      </header>
+      <div class="execution-list-tools">
+        <button type="button" class="text-command" :disabled="!executions.length" @click="toggleAllExecutions">{{ allVisibleSelected ? '取消全选' : '全选' }}</button>
+        <button type="button" class="danger-command" :disabled="!selectedExecutionCount" @click="deleteSelected"><Trash2 :size="13" />删除 {{ selectedExecutionCount || '' }}</button>
+      </div>
+      <article
+        v-for="execution in executions"
+        :key="execution.id"
+        role="button"
+        tabindex="0"
+        :class="['execution-row', { active: execution.id === active?.id }]"
+        @click="emit('select', execution.id)"
+        @keydown.enter="emit('select', execution.id)"
+      >
+        <input type="checkbox" :checked="selectedExecutionIds.has(execution.id)" aria-label="选择执行记录" @click.stop="toggleExecution(execution.id)" />
+        <span class="execution-row-body">
+          <strong>{{ executionTypeLabel(execution) }}</strong>
+          <span>{{ execution.environment_name || '未命名环境' }}</span>
+          <small>{{ execution.created_at ? new Date(execution.created_at).toLocaleString('zh-CN') : '' }}</small>
+        </span>
+        <b>{{ execution.state }}</b>
+        <button type="button" class="icon-danger" aria-label="删除执行记录" @click.stop="emit('delete', execution.id)"><Trash2 :size="13" /></button>
+      </article>
       <p v-if="!loading && !executions.length" class="state-message">还没有执行记录，可从工作台调试已保存草稿。</p>
     </aside>
     <main class="execution-main">

@@ -2,6 +2,7 @@ import copy
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+from types import SimpleNamespace
 import threading
 import time
 
@@ -22,6 +23,7 @@ from task_server.api_testing.models.execution import (
     ApiFailureAnalysis,
 )
 from task_server.api_testing.models.project import ApiProject
+from task_server.api_testing.repositories.execution_repository import ExecutionRepository
 from task_server.api_testing.services.case_service import CaseService
 from task_server.api_testing.services.execution_service import (
     ExecutionConflictError,
@@ -41,6 +43,42 @@ from tests.api_testing.test_migrations import (
 
 def _audit(actor="admin"):
     return {"owner_id": actor, "created_by": actor, "updated_by": actor}
+
+
+def test_execution_view_derives_feishu_notification_from_events():
+    execution = SimpleNamespace(
+        id="execution-1",
+        project_id="project-1",
+        state="DONE",
+        execution_type="baseline_regression",
+        source_revision_id="source-1",
+        environment_revision_id="environment-1",
+        summary={"total": 1, "passed": 1},
+        cancellation_requested_at=None,
+        created_at=None,
+        started_at=None,
+        finished_at=None,
+    )
+
+    view = ExecutionService._view(
+        execution,
+        (),
+        {
+            "environment_name": "生产环境",
+            "events": [
+                SimpleNamespace(
+                    type="notification_sent",
+                    payload={"channel_type": "feishu", "message": "飞书通知已发"},
+                )
+            ],
+        },
+    )
+
+    assert view.notifications["feishu"] == {
+        "sent": True,
+        "failed": False,
+        "message": "飞书通知已发",
+    }
 
 
 @pytest.fixture(scope="module")
@@ -334,6 +372,65 @@ def test_submit_active_baselines_can_run_only_selected_baseline_ids(
     assert first_baseline.case_version_id not in [
         item["case_version_id"] for item in execution.case_results
     ]
+
+
+def test_selected_baseline_regression_runs_fixed_baseline_against_current_environment(
+    session_factory, redis_client, execution_context
+):
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor([_Result("PASSED")]),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    debug = service.submit(_request(execution_context), "admin", "fixed-baseline-debug")
+    assert service.run(debug.id) is True
+    debug_result = service.get(debug.id).case_results[0]
+    baseline = CaseService(session_factory).adopt_baseline(
+        execution_context["case"].id,
+        debug_result["execution_case_id"],
+        "admin",
+    )
+
+    source_service = SourceService(session_factory)
+    preview = source_service.preview_refresh(
+        execution_context["project"].id,
+        execution_context["source_revision"].source_id,
+        copy.deepcopy(FAVORITES_OPENAPI),
+        "admin",
+    )
+    new_revision = source_service.activate_preview(preview.id, "admin")
+    with session_factory.begin() as session:
+        environment = session.get(
+            ApiEnvironment,
+            execution_context["environment_revision"].environment_id,
+        )
+        new_environment_revision = ApiEnvironmentRevision(
+            environment_id=environment.id,
+            source_revision_id=new_revision.id,
+            revision_number=2,
+            name=environment.name,
+            default_headers={},
+            **_audit(),
+        )
+        session.add(new_environment_revision)
+        session.flush()
+        environment.active_revision_id = new_environment_revision.id
+
+    execution = service.submit_active_baselines(
+        {
+            "project_id": execution_context["project"].id,
+            "source_revision_id": new_revision.id,
+            "environment_revision_id": new_environment_revision.id,
+            "baseline_ids": [baseline.id],
+        },
+        "admin",
+        "fixed-baseline-current-env",
+    )
+
+    assert execution.execution_type == "baseline_regression"
+    assert execution.source_revision_id == new_revision.id
+    assert execution.environment_revision_id == new_environment_revision.id
+    assert execution.case_results[0]["case_version_id"] == baseline.case_version_id
 
 
 def test_concurrent_submit_with_same_key_creates_one_execution(
@@ -637,6 +734,56 @@ def test_event_resume_is_strict_and_redis_failure_falls_back_to_postgres(
 
     monkeypatch.setattr(redis_client, "xread", lambda *_args, **_kwargs: (_ for _ in ()).throw(ConnectionError("down")))
     assert [item.sequence for item in stream.read(execution.id, first, 1)] == [second]
+
+
+def test_execution_view_marks_sent_feishu_notification(
+    session_factory, execution_context
+):
+    service = ExecutionService(session_factory)
+    execution = service.submit(
+        _request(execution_context), "admin", "notification-view"
+    )
+    with session_factory.begin() as session:
+        repository = ExecutionRepository(session)
+        repository.append_event(
+            execution.id,
+            "notification_sent",
+            {"channel_type": "feishu", "message": "飞书通知已发"},
+        )
+
+    view = service.get(execution.id)
+
+    assert view.notifications["feishu"] == {
+        "sent": True,
+        "failed": False,
+        "message": "飞书通知已发",
+    }
+
+
+def test_archive_execution_hides_record_from_lists(session_factory, execution_context):
+    service = ExecutionService(session_factory)
+    first = service.submit(_request(execution_context), "admin", "archive-first")
+    second = service.submit(_request(execution_context), "admin", "archive-second")
+    service.cancel(first.id, "admin")
+
+    archived = service.archive(first.id, "admin")
+    listed = service.list(first.project_id, "admin", 50)
+
+    assert archived.state == "ARCHIVED"
+    assert archived.summary["_archived_from_state"] == "CANCELLED"
+    assert [item.id for item in listed] == [second.id]
+
+
+def test_archive_rejects_running_execution(session_factory, execution_context):
+    service = ExecutionService(session_factory)
+    execution = service.submit(_request(execution_context), "admin", "archive-running")
+    with session_factory.begin() as session:
+        assert ExecutionRepository(session).compare_and_set_execution(
+            execution.id, {"QUEUED"}, "RUNNING"
+        )
+
+    with pytest.raises(ExecutionConflictError, match="running executions"):
+        service.archive(execution.id, "admin")
 
 
 def test_postgres_fallback_blocks_until_deadline_or_new_event(

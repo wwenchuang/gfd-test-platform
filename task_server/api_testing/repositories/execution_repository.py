@@ -96,10 +96,8 @@ class ExecutionRepository:
             )
             .where(
                 ApiBaseline.project_id == project_id,
-                ApiBaseline.environment_revision_id == environment_revision_id,
                 ApiBaseline.owner_id == owner_id,
                 ApiBaseline.status == "active",
-                ApiSourceEndpoint.revision_id == source_revision_id,
             )
             .order_by(ApiBaseline.created_at, ApiBaseline.id)
         )
@@ -170,11 +168,33 @@ class ExecutionRepository:
                 .where(
                     ApiExecution.project_id == project_id,
                     ApiExecution.owner_id == owner_id,
+                    ApiExecution.state != "ARCHIVED",
                 )
                 .order_by(ApiExecution.created_at.desc(), ApiExecution.id.desc())
                 .limit(limit)
             )
         )
+
+    def archive_execution(self, execution_id, actor_id):
+        execution = self.get_execution(execution_id, for_update=True)
+        if execution is None:
+            return None
+        if execution.state in {"QUEUED", "RUNNING"}:
+            raise ValueError("running executions cannot be archived")
+        if execution.state != "ARCHIVED":
+            summary = copy.deepcopy(execution.summary or {})
+            summary.setdefault("_archived_from_state", execution.state)
+            execution.summary = summary
+            execution.state = "ARCHIVED"
+            execution.updated_by = actor_id
+            self.session.flush()
+        return execution
+
+    def archive_executions(self, execution_ids, actor_id):
+        records = []
+        for execution_id in tuple(dict.fromkeys(execution_ids)):
+            records.append(self.archive_execution(execution_id, actor_id))
+        return tuple(record for record in records if record is not None)
 
     def display_metadata(self, execution, children):
         versions = self.get_case_versions(item.case_version_id for item in children)
@@ -188,6 +208,7 @@ class ExecutionRepository:
             "versions": versions,
             "endpoints": endpoints,
             "failure_analyses": analyses,
+            "events": self.read_events(execution.id, 0),
         }
 
     def latest_failure_analyses(self, execution_case_ids):

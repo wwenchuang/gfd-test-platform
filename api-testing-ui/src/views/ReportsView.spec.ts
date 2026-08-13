@@ -3,6 +3,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 
 import type { ExecutionView } from '../api/contracts'
 import { useExecutionsStore } from '../stores/executions'
@@ -33,12 +34,36 @@ describe('ReportsView', () => {
     expect(wrapper.text()).toContain('需要关注')
     expect(wrapper.text()).toContain('取消收藏')
     expect(wrapper.text()).toContain('断言失败')
-    expect(wrapper.text()).toContain('通过率 50%')
+    expect(wrapper.text()).toContain('50%')
     expect(wrapper.find('.report-dashboard').exists()).toBe(true)
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
     await wrapper.get('[data-testid="report-history-row"]').trigger('click')
+    await wrapper.get('[data-testid="report-open-diagnostic"]').trigger('click')
     expect(wrapper.text()).toContain('返回报告列表')
     expect(wrapper.text()).toContain('诊断结论')
+  })
+
+  it('archives selected reports in bulk from the report dashboard', async () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    const deleteExecutions = vi.spyOn(executions, 'deleteExecutions').mockImplementation(async ids => {
+      executions.executions = executions.executions.filter(item => !ids.includes(item.id))
+    })
+    executions.executions = [
+      report,
+      { ...report, id: 'report-2', summary: { total: 1, passed: 1, failed: 0 }, case_results: [report.case_results[0]] },
+    ]
+    const wrapper = mount(ReportsView)
+
+    await nextTick()
+    await wrapper.findAll('input[aria-label="选择报告"]')[0].trigger('click')
+    await wrapper.findAll('input[aria-label="选择报告"]')[1].trigger('click')
+    await wrapper.get('.report-board-actions .danger-command').trigger('click')
+
+    expect(deleteExecutions).toHaveBeenCalledWith(['report-1', 'report-2'])
+    expect(wrapper.text()).toContain('0 / 0')
   })
 
   it('labels baseline regression reports separately from ad-hoc debug runs', () => {
@@ -59,5 +84,22 @@ describe('ReportsView', () => {
 
     expect(wrapper.text()).toContain('基线回归')
     expect(wrapper.text()).not.toContain('自动回归')
+  })
+
+  it('shows the persisted Feishu sent state on the report card', () => {
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    executions.executions = [{
+      ...report,
+      notifications: {
+        feishu: { sent: true, failed: false, message: '飞书通知已发' },
+      },
+    }]
+
+    const wrapper = mount(ReportsView)
+
+    expect(wrapper.get('[data-testid="report-feishu-status"]').text()).toContain('飞书通知已发')
   })
 })

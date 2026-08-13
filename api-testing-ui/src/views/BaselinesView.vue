@@ -84,11 +84,11 @@ async function changeEnvironment(environmentRevisionId: string | null): Promise<
 async function loadBaselines(): Promise<void> {
   localError.value = ''
   localMessage.value = ''
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) return
+  if (!context.projectId) return
   await baselines.load({
     projectId: context.projectId,
-    sourceRevisionId: context.sourceRevisionId,
-    environmentRevisionId: context.environmentRevisionId,
+    sourceRevisionId: context.sourceRevisionId || undefined,
+    environmentRevisionId: context.environmentRevisionId || undefined,
   })
 }
 
@@ -221,7 +221,7 @@ function rowTitle(item: ApiBaselineCase): string {
       <div>
         <p class="eyebrow">API BASELINES</p>
         <h1>基线用例</h1>
-        <p class="page-subtitle">已调试通过并采纳的用例在这里统一查看，可批量加入任务用于发版回归。</p>
+        <p class="page-subtitle">已调试通过并采纳的用例在这里统一查看。基线按项目固定保存，执行时再选择目标环境。</p>
       </div>
       <button class="icon-command" type="button" title="重新读取基线" :disabled="baselines.loading || !contextReady" @click="loadBaselines"><RefreshCw :class="{ 'is-spinning': baselines.loading }" :size="18" /></button>
     </header>
@@ -243,8 +243,8 @@ function rowTitle(item: ApiBaselineCase): string {
 
     <section class="baseline-summary-grid" aria-label="基线概览">
       <div><span>项目</span><strong>{{ projectName }}</strong></div>
-      <div><span>接口版本</span><strong>{{ sourceName }}</strong></div>
-      <div><span>执行环境</span><strong>{{ environmentName }}</strong></div>
+      <div><span>当前接口范围</span><strong>{{ sourceName }}</strong></div>
+      <div><span>本次执行目标</span><strong>{{ environmentName }}</strong></div>
       <div><span>基线数量</span><strong>{{ baselines.items.length }} 条</strong></div>
       <div><span>已选择</span><strong>{{ baselines.selectedItems.length }} 条</strong></div>
     </section>
@@ -288,8 +288,8 @@ function rowTitle(item: ApiBaselineCase): string {
         </div>
 
         <div v-if="baselines.loading" class="section-empty">正在读取基线用例…</div>
-        <div v-else-if="!contextReady" class="section-empty">先选择项目、接口版本和执行环境，再查看对应基线。</div>
-        <div v-else-if="!filteredBaselines.length" class="section-empty">当前范围暂无基线。请先在工作台调试通过后采纳为基线。</div>
+        <div v-else-if="!context.projectId" class="section-empty">先选择项目，再查看该项目沉淀的基线。</div>
+        <div v-else-if="!filteredBaselines.length" class="section-empty">该项目暂无基线。请先在工作台调试通过后采纳为基线。</div>
         <div v-else class="baseline-table" role="table" aria-label="基线用例列表">
           <div class="baseline-table-head" role="row">
             <span></span><span>用例</span><span>接口</span><span>分组</span><span>版本</span><span>采纳时间</span><span>操作</span>

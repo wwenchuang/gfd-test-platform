@@ -38,6 +38,7 @@ class ExecutionView:
     case_statuses: tuple
     case_results: tuple
     summary: MappingProxyType
+    notifications: MappingProxyType
     cancellation_requested: bool
     created_at: object
     started_at: object
@@ -64,6 +65,29 @@ def _optional_identifier_array(value, field):
     ):
         raise ValueError(f"{field} must be a unique non-empty string array")
     return value
+
+
+def _execution_notification_status(events):
+    notifications = {}
+    for event in events or ():
+        event_type = getattr(event, "event_type", "") or getattr(event, "type", "")
+        payload = copy.deepcopy(getattr(event, "payload", {}) or {})
+        channel_type = str(payload.get("channel_type") or "")
+        if channel_type != "feishu":
+            continue
+        if event_type == "notification_sent":
+            notifications["feishu"] = {
+                "sent": True,
+                "failed": False,
+                "message": str(payload.get("message") or "飞书通知已发"),
+            }
+        elif event_type == "notification_failed":
+            notifications["feishu"] = {
+                "sent": False,
+                "failed": True,
+                "message": str(payload.get("message") or "飞书通知发送失败"),
+            }
+    return MappingProxyType(notifications)
 
 
 def _parse_request(value):
@@ -259,6 +283,43 @@ class ExecutionService:
         self.event_stream.signal_cancel(execution_id)
         self.event_stream.append(execution_id, "cancellation_requested", {})
         return view
+
+    def archive(self, execution_id, actor_id):
+        with self.session_factory.begin() as session:
+            repository = ExecutionRepository(session)
+            try:
+                execution = repository.archive_execution(execution_id, actor_id)
+            except ValueError as error:
+                raise ExecutionConflictError(str(error))
+            if execution is None:
+                raise ExecutionNotFoundError("API execution was not found")
+            children = repository.get_execution_cases(execution.id)
+            return self._repository_view(repository, execution, children)
+
+    def archive_many(self, execution_ids, actor_id):
+        identifiers = tuple(dict.fromkeys(execution_ids))
+        if not identifiers:
+            raise ValueError("execution_ids must not be empty")
+        if len(identifiers) > 200:
+            raise ValueError("execution_ids cannot exceed 200")
+        with self.session_factory.begin() as session:
+            repository = ExecutionRepository(session)
+            views = []
+            try:
+                for execution_id in identifiers:
+                    execution = repository.archive_execution(execution_id, actor_id)
+                    if execution is None:
+                        raise ExecutionNotFoundError("API execution was not found")
+                    views.append(
+                        self._repository_view(
+                            repository,
+                            execution,
+                            repository.get_execution_cases(execution.id),
+                        )
+                    )
+            except ValueError as error:
+                raise ExecutionConflictError(str(error))
+            return tuple(views)
 
     def run(self, execution_id):
         with self.session_factory.begin() as session:
@@ -541,7 +602,10 @@ class ExecutionService:
                 case is None
                 or case.project_id != project.id
                 or endpoint is None
-                or endpoint.revision_id != source_revision.id
+                or (
+                    request["execution_type"] != "baseline_regression"
+                    and endpoint.revision_id != source_revision.id
+                )
             ):
                 raise ValueError("case version does not match source revision and project")
         return {"versions": versions, "endpoints": endpoints}
@@ -561,6 +625,7 @@ class ExecutionService:
         cases = display.get("cases", {})
         endpoints = display.get("endpoints", {})
         failure_analyses = display.get("failure_analyses", {})
+        events = display.get("events", ())
         return ExecutionView(
             id=execution.id,
             project_id=execution.project_id,
@@ -607,6 +672,7 @@ class ExecutionService:
                 for item in children
             ),
             summary=MappingProxyType(copy.deepcopy(dict(execution.summary))),
+            notifications=_execution_notification_status(events),
             cancellation_requested=execution.cancellation_requested_at is not None,
             created_at=execution.created_at,
             started_at=execution.started_at,

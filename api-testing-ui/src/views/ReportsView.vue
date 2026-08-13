@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { AlertTriangle, BarChart3, CheckCircle2, Clock3, ListChecks, Send } from 'lucide-vue-next'
+import { AlertTriangle, BarChart3, CheckCircle2, Clock3, Eye, ListChecks, Send, Trash2 } from 'lucide-vue-next'
 
 import DiagnosticReport from '../components/DiagnosticReport.vue'
 import type { ExecutionCaseResult, ExecutionView } from '../api/contracts'
@@ -23,6 +23,8 @@ const executions = useExecutionsStore()
 const notifications = useNotificationsStore()
 const router = useRouter()
 const selected = ref<ExecutionView | null>(null)
+const selectedReportId = ref('')
+const selectedReportIds = ref<Set<string>>(new Set())
 const filter = ref<'all' | 'failed' | 'passed'>('all')
 const sendingReportId = ref('')
 const reports = computed(() => executions.executions.filter(item => ['DONE', 'CANCELLED'].includes(item.state)))
@@ -65,11 +67,35 @@ const dashboard = computed(() => {
 })
 const latestReport = computed(() => reports.value[0] || null)
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
+const currentReport = computed(() => visibleReports.value.find(item => item.id === selectedReportId.value) || visibleReports.value[0] || null)
+const currentMetrics = computed(() => currentReport.value ? executionMetrics(currentReport.value) : null)
+const currentBuckets = computed(() => currentReport.value ? executionFailureBuckets(currentReport.value) : null)
+const currentIssueResults = computed(() => {
+  const report = currentReport.value
+  if (!report) return []
+  const issues = report.case_results.filter(item => item.status !== 'PASSED')
+  return (issues.length ? issues : report.case_results).slice(0, 8)
+})
+const selectedReportCount = computed(() => selectedReportIds.value.size)
+const allVisibleReportsSelected = computed(() => visibleReports.value.length > 0 && visibleReports.value.every(item => selectedReportIds.value.has(item.id)))
+
+type FeishuReportState = {
+  label: string
+  tone: 'idle' | 'sent' | 'failed'
+}
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   if (context.projectId) await Promise.all([executions.load(context.projectId), notifications.loadFeishu(context.projectId)])
 })
+
+watch(visibleReports, reports => {
+  const visibleIds = new Set(reports.map(item => item.id))
+  selectedReportIds.value = new Set([...selectedReportIds.value].filter(id => visibleIds.has(id)))
+  if (!reports.some(item => item.id === selectedReportId.value)) {
+    selectedReportId.value = reports[0]?.id || ''
+  }
+}, { immediate: true })
 
 function edit(result: ExecutionCaseResult, execution: ExecutionView): void {
   void router.push({ name: 'workbench', query: {
@@ -83,17 +109,57 @@ function reportName(report: ExecutionView): string {
   return executionTypeLabel(report)
 }
 
-function importantResults(report: ExecutionView): ExecutionCaseResult[] {
-  const issues = report.case_results.filter(item => item.status !== 'PASSED')
-  return (issues.length ? issues : report.case_results).slice(0, 3)
+function feishuReportState(report: ExecutionView): FeishuReportState {
+  const status = report.notifications?.feishu
+  if (status?.sent) return { label: status.message || '飞书通知已发', tone: 'sent' }
+  if (status?.failed) return { label: status.message || '飞书通知发送失败', tone: 'failed' }
+  return { label: '发飞书', tone: 'idle' }
+}
+
+function markFeishuSent(reportId: string, message: string): void {
+  const status = { sent: true, failed: false, message: message || '飞书通知已发' }
+  const report = executions.executions.find(item => item.id === reportId)
+  if (report) report.notifications = { ...(report.notifications || {}), feishu: status }
+  if (selected.value?.id === reportId) {
+    selected.value.notifications = { ...(selected.value.notifications || {}), feishu: status }
+  }
 }
 
 async function sendFeishu(report: ExecutionView): Promise<void> {
   sendingReportId.value = report.id
   try {
-    await notifications.sendExecutionReport(report.id)
+    const result = await notifications.sendExecutionReport(report.id)
+    markFeishuSent(report.id, result.message)
   } finally {
     sendingReportId.value = ''
+  }
+}
+
+function selectReport(report: ExecutionView): void {
+  selectedReportId.value = report.id
+}
+
+function toggleReportSelection(reportId: string): void {
+  const next = new Set(selectedReportIds.value)
+  if (next.has(reportId)) next.delete(reportId)
+  else next.add(reportId)
+  selectedReportIds.value = next
+}
+
+function toggleAllReports(): void {
+  selectedReportIds.value = allVisibleReportsSelected.value
+    ? new Set()
+    : new Set(visibleReports.value.map(item => item.id))
+}
+
+async function deleteReports(reportIds: string[]): Promise<void> {
+  const ids = [...new Set(reportIds)].filter(Boolean)
+  if (!ids.length) return
+  await executions.deleteExecutions(ids)
+  selectedReportIds.value = new Set()
+  if (selected.value && ids.includes(selected.value.id)) selected.value = null
+  if (ids.includes(selectedReportId.value)) {
+    selectedReportId.value = visibleReports.value.find(item => !ids.includes(item.id))?.id || ''
   }
 }
 </script>
@@ -142,48 +208,93 @@ async function sendFeishu(report: ExecutionView): Promise<void> {
             <strong>执行报告</strong>
             <span>{{ visibleReports.length }} / {{ reports.length }}</span>
           </div>
-          <div class="report-filter-tabs" aria-label="报告筛选">
-            <button type="button" :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button>
-            <button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">有问题</button>
-            <button type="button" :class="{ active: filter === 'passed' }" @click="filter = 'passed'">已通过</button>
+          <div class="report-board-actions">
+            <div class="report-filter-tabs" aria-label="报告筛选">
+              <button type="button" :class="{ active: filter === 'all' }" @click="filter = 'all'">全部</button>
+              <button type="button" :class="{ active: filter === 'failed' }" @click="filter = 'failed'">有问题</button>
+              <button type="button" :class="{ active: filter === 'passed' }" @click="filter = 'passed'">已通过</button>
+            </div>
+            <button type="button" class="danger-command" :disabled="!selectedReportCount" @click="deleteReports([...selectedReportIds])"><Trash2 :size="14" />批量删除 {{ selectedReportCount || '' }}</button>
           </div>
         </header>
-        <div class="report-list">
-          <button
-            v-for="report in visibleReports"
-            :key="report.id"
-            data-testid="report-history-row"
-            type="button"
-            :class="['report-history-card', `tone-${executionConclusion(report).tone}`]"
-            @click="selected = report"
-          >
-            <div class="report-card-main">
-              <span class="report-status-chip">{{ executionConclusion(report).label }}</span>
-              <strong>{{ reportName(report) }}</strong>
-              <time>{{ new Date(report.created_at).toLocaleString('zh-CN') }}</time>
-              <small>{{ report.environment_name || '未命名环境' }}</small>
-              <button class="secondary-command report-send-command" type="button" :disabled="notifications.sending && sendingReportId === report.id" @click.stop="sendFeishu(report)"><Send :size="13" />{{ sendingReportId === report.id ? '发送中' : '发飞书' }}</button>
+        <div class="report-workbench">
+          <aside class="report-index">
+            <div class="report-index-tools">
+              <button type="button" class="text-command" :disabled="!visibleReports.length" @click="toggleAllReports">{{ allVisibleReportsSelected ? '取消全选' : '全选当前筛选' }}</button>
+              <span>已选 {{ selectedReportCount }} 条</span>
             </div>
-            <div class="report-card-metrics">
-              <div><strong>通过率 {{ executionMetrics(report).passRate }}%</strong><span>真实通过 / 总用例</span></div>
-              <div><strong>{{ executionMetrics(report).total }} 条</strong><span>总用例</span></div>
-              <div><strong>{{ formatDuration(executionMetrics(report).durationMs) }}</strong><span>耗时</span></div>
-            </div>
-            <div class="report-card-buckets">
-              <span>产品失败 {{ executionFailureBuckets(report).product }}</span>
-              <span>脚本/数据 {{ executionFailureBuckets(report).scriptData }}</span>
-              <span>环境异常 {{ executionFailureBuckets(report).environment }}</span>
-            </div>
-            <div class="report-card-evidence">
-              <strong>{{ executionMetrics(report).failed + executionMetrics(report).broken + executionMetrics(report).skipped + executionMetrics(report).cancelled ? '关键问题' : '通过证据' }}</strong>
-              <p v-for="result in importantResults(report)" :key="result.execution_case_id">
-                <b>{{ statusLabel(result.status) }}</b>
-                <span>{{ result.case_name || result.endpoint_summary || result.path }}</span>
-                <small>{{ caseResultSummary(result) }}</small>
-              </p>
-            </div>
-          </button>
-          <div v-if="!visibleReports.length" class="section-empty">暂无匹配报告。</div>
+            <article
+              v-for="report in visibleReports"
+              :key="report.id"
+              data-testid="report-history-row"
+              role="button"
+              tabindex="0"
+              :class="['report-index-row', `tone-${executionConclusion(report).tone}`, { active: report.id === currentReport?.id }]"
+              @click="selectReport(report)"
+              @keydown.enter="selectReport(report)"
+            >
+              <input type="checkbox" :checked="selectedReportIds.has(report.id)" aria-label="选择报告" @click.stop="toggleReportSelection(report.id)" />
+              <div>
+                <span class="report-status-chip">{{ executionConclusion(report).label }}</span>
+                <strong>{{ reportName(report) }}</strong>
+                <time>{{ new Date(report.created_at).toLocaleString('zh-CN') }}</time>
+                <small>{{ report.environment_name || '未命名环境' }} · {{ executionMetrics(report).total }} 条用例</small>
+              </div>
+              <b>{{ executionMetrics(report).passRate }}%</b>
+              <button type="button" class="icon-danger" aria-label="删除报告" @click.stop="deleteReports([report.id])"><Trash2 :size="13" /></button>
+            </article>
+            <div v-if="!visibleReports.length" class="section-empty">暂无匹配报告。</div>
+          </aside>
+
+          <main class="report-detail-panel">
+            <template v-if="currentReport && currentMetrics && currentBuckets">
+              <header class="report-detail-hero" :class="`tone-${executionConclusion(currentReport).tone}`">
+                <div>
+                  <span class="report-status-chip">{{ executionConclusion(currentReport).label }}</span>
+                  <h2>{{ reportName(currentReport) }}</h2>
+                  <p>{{ currentReport.environment_name || '未命名环境' }} · {{ new Date(currentReport.created_at).toLocaleString('zh-CN') }}</p>
+                </div>
+                <strong>{{ currentMetrics.passRate }}%</strong>
+              </header>
+              <div class="report-detail-actions">
+                <button data-testid="report-open-diagnostic" type="button" class="secondary-command" @click="selected = currentReport"><Eye :size="14" />查看完整诊断</button>
+                <button
+                  data-testid="report-feishu-status"
+                  type="button"
+                  :class="['secondary-command', 'report-send-command', `feishu-${feishuReportState(currentReport).tone}`]"
+                  :disabled="notifications.sending && sendingReportId === currentReport.id"
+                  @click="sendFeishu(currentReport)"
+                >
+                  <Send :size="13" />{{ sendingReportId === currentReport.id ? '发送中' : feishuReportState(currentReport).label }}
+                </button>
+                <button type="button" class="danger-command" @click="deleteReports([currentReport.id])"><Trash2 :size="14" />删除报告</button>
+              </div>
+              <div class="report-detail-stats">
+                <div><span>总用例</span><strong>{{ currentMetrics.total }}</strong></div>
+                <div><span>通过</span><strong class="tone-passed">{{ currentMetrics.passed }}</strong></div>
+                <div><span>失败</span><strong class="tone-failed">{{ currentMetrics.failed }}</strong></div>
+                <div><span>异常</span><strong class="tone-broken">{{ currentMetrics.broken }}</strong></div>
+                <div><span>耗时</span><strong>{{ formatDuration(currentMetrics.durationMs) }}</strong></div>
+              </div>
+              <section class="report-detail-buckets">
+                <div><strong>产品失败 {{ currentBuckets.product }}</strong><span>后端业务码、响应字段或产品断言不符合预期</span></div>
+                <div><strong>脚本/数据 {{ currentBuckets.scriptData }}</strong><span>测试数据缺失、参数模板或脚本配置问题</span></div>
+                <div><strong>环境异常 {{ currentBuckets.environment }}</strong><span>环境、网络、鉴权配置或服务不可用</span></div>
+              </section>
+              <section class="report-detail-evidence">
+                <header><strong>{{ currentMetrics.failed + currentMetrics.broken + currentMetrics.skipped + currentMetrics.cancelled ? '问题证据' : '通过证据' }}</strong><span>{{ currentIssueResults.length }} 条</span></header>
+                <article v-for="result in currentIssueResults" :key="result.execution_case_id">
+                  <b :class="`status-${String(result.status).toLowerCase()}`">{{ statusLabel(result.status) }}</b>
+                  <div>
+                    <strong>{{ result.case_name || result.endpoint_summary || result.path }}</strong>
+                    <small>{{ result.method }} {{ result.path }}</small>
+                  </div>
+                  <p>{{ caseResultSummary(result) }}</p>
+                </article>
+              </section>
+            </template>
+            <div v-else class="section-empty">暂无报告。执行接口或基线回归后，这里会展示报告摘要。</div>
+          </main>
         </div>
       </section>
     </template>

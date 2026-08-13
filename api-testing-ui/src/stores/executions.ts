@@ -23,6 +23,7 @@ export const useExecutionsStore = defineStore('api-executions', {
     connectionState: 'idle' as ExecutionConnectionState,
     loading: false,
     baselineStarting: false,
+    deleting: false,
     error: '',
     eventSource: null as EventSource | null,
     reconnectTimer: null as ReturnType<typeof setTimeout> | null,
@@ -234,6 +235,39 @@ export const useExecutionsStore = defineStore('api-executions', {
       )
       this.active = response.data.execution
     },
+    async deleteExecution(executionId: string): Promise<void> {
+      await this.deleteExecutions([executionId])
+    },
+    async deleteExecutions(executionIds: string[]): Promise<void> {
+      const ids = [...new Set(executionIds)].filter(Boolean)
+      if (!ids.length) return
+      this.deleting = true
+      this.error = ''
+      try {
+        if (ids.length === 1) {
+          await apiClient.delete<{ execution: ExecutionView }>(
+            `/api/api-testing/v1/executions/${encodeURIComponent(ids[0])}`,
+          )
+        } else {
+          await apiClient.post<{ executions: ExecutionView[] }>(
+            '/api/api-testing/v1/executions/archive',
+            { execution_ids: ids },
+          )
+        }
+        const archived = new Set(ids)
+        this.executions = this.executions.filter(item => !archived.has(item.id))
+        if (this.active && archived.has(this.active.id)) {
+          this.disconnect()
+          this.active = null
+          this.events = []
+        }
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '执行记录删除失败'
+        throw error
+      } finally {
+        this.deleting = false
+      }
+    },
     async rerunFailed(execution: ExecutionView): Promise<ExecutionView | null> {
       const caseIds = execution.case_results
         .filter(item => !['PASSED', 'SKIPPED', 'CANCELLED'].includes(item.status))
@@ -299,7 +333,7 @@ function toEvent(id: number, type: string, payload: Record<string, unknown>): Ex
     failure_analysis: 'AI 失败分析已生成', failure_analysis_unavailable: 'AI 失败分析暂不可用',
     case_finished: `用例完成${status ? `：${status}` : ''}`,
     cancellation_requested: '已请求取消', failure: '执行异常', execution_finished: `执行结束${status ? `：${status}` : ''}`,
-    notification_sent: '飞书报告已发送', notification_failed: '飞书报告发送失败',
+    notification_sent: '飞书通知已发', notification_failed: '飞书通知发送失败',
   }
   return {
     id,
