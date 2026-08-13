@@ -16,6 +16,11 @@ export interface WorkspaceResponse {
 export interface ProjectOption {
   id: string
   name: string
+  slug?: string
+  description?: string
+  status?: string
+  created_at?: string
+  updated_at?: string
 }
 
 export interface SourceRevisionOption {
@@ -23,8 +28,12 @@ export interface SourceRevisionOption {
   source_id: string
   project_id: string
   name: string
+  source_type?: string
+  source_status?: string
   revision_number: number
   endpoint_count: number
+  created_at?: string
+  activated_at?: string | null
 }
 
 export interface EnvironmentRevisionOption {
@@ -33,6 +42,8 @@ export interface EnvironmentRevisionOption {
   project_id: string
   name: string
   revision: number
+  status?: string
+  created_at?: string
 }
 
 export interface EnvironmentServiceSnapshot {

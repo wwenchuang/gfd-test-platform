@@ -20,7 +20,15 @@ class ContextRepository:
             workspace.environment_revision_id if workspace else None
         )
         projects = self.session.execute(
-            select(ApiProject.id, ApiProject.name)
+            select(
+                ApiProject.id,
+                ApiProject.name,
+                ApiProject.slug,
+                ApiProject.description,
+                ApiProject.status,
+                ApiProject.created_at,
+                ApiProject.updated_at,
+            )
             .where(ApiProject.owner_id == actor_id, ApiProject.status == "active")
             .order_by(ApiProject.name, ApiProject.id)
         ).all()
@@ -30,7 +38,11 @@ class ContextRepository:
                 ApiSource.id,
                 ApiSource.project_id,
                 ApiSource.name,
+                ApiSource.source_type,
+                ApiSource.status,
                 ApiSourceRevision.revision_number,
+                ApiSourceRevision.created_at,
+                ApiSourceRevision.activated_at,
                 func.count(ApiSourceEndpoint.id),
             )
             .join(
@@ -56,7 +68,11 @@ class ContextRepository:
                 ApiSource.id,
                 ApiSource.project_id,
                 ApiSource.name,
+                ApiSource.source_type,
+                ApiSource.status,
                 ApiSourceRevision.revision_number,
+                ApiSourceRevision.created_at,
+                ApiSourceRevision.activated_at,
                 ApiProject.name,
             )
             .order_by(
@@ -73,6 +89,8 @@ class ContextRepository:
                 ApiEnvironment.project_id,
                 ApiEnvironmentRevision.name,
                 ApiEnvironmentRevision.revision_number,
+                ApiEnvironmentRevision.status,
+                ApiEnvironmentRevision.created_at,
             )
             .join(
                 ApiEnvironment,
@@ -98,8 +116,24 @@ class ContextRepository:
         ).all()
         return {
             "projects": [
-                {"id": project_id, "name": name}
-                for project_id, name in projects
+                {
+                    "id": project_id,
+                    "name": name,
+                    "slug": slug,
+                    "description": description,
+                    "status": status,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+                for (
+                    project_id,
+                    name,
+                    slug,
+                    description,
+                    status,
+                    created_at,
+                    updated_at,
+                ) in projects
             ],
             "source_revisions": [
                 {
@@ -107,7 +141,11 @@ class ContextRepository:
                     "source_id": source_id,
                     "project_id": project_id,
                     "name": name,
+                    "source_type": source_type,
+                    "source_status": source_status,
                     "revision_number": revision_number,
+                    "created_at": created_at,
+                    "activated_at": activated_at,
                     "endpoint_count": int(endpoint_count),
                 }
                 for (
@@ -115,7 +153,11 @@ class ContextRepository:
                     source_id,
                     project_id,
                     name,
+                    source_type,
+                    source_status,
                     revision_number,
+                    created_at,
+                    activated_at,
                     endpoint_count,
                 ) in source_revisions
             ],
@@ -126,7 +168,17 @@ class ContextRepository:
                     "project_id": project_id,
                     "name": name,
                     "revision": revision_number,
+                    "status": status,
+                    "created_at": created_at,
                 }
-                for revision_id, environment_id, project_id, name, revision_number in environment_revisions
+                for (
+                    revision_id,
+                    environment_id,
+                    project_id,
+                    name,
+                    revision_number,
+                    status,
+                    created_at,
+                ) in environment_revisions
             ],
         }

@@ -234,6 +234,67 @@ describe('WorkbenchView debug workflow', () => {
     expect(generate).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', '覆盖正常流程', 'task-1')
     expect(cases.aiError).toBe('')
   })
+
+  it('uses project, source revision, and environment from the asset page route', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'old-project',
+      sourceRevisionId: 'old-source',
+      environmentRevisionId: 'old-env',
+      projects: [
+        { id: 'old-project', name: '旧项目' },
+        { id: 'project-2', name: '打印后台' },
+      ],
+      sourceRevisions: [
+        { id: 'old-source', project_id: 'old-project', name: '旧版本', revision: 1 },
+        { id: 'source-2', project_id: 'project-2', name: '后台模块', revision: 2 },
+      ],
+      environmentRevisions: [
+        { id: 'old-env', project_id: 'old-project', name: '旧环境', revision: 1 },
+        { id: 'env-2', project_id: 'project-2', name: '后台环境', revision: 3 },
+      ],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    const loadAssets = vi.spyOn(assets, 'load').mockResolvedValue()
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const tasks = useTasksStore()
+    const listTasks = vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/?projectId=project-2&sourceRevisionId=source-2&environmentRevisionId=env-2')
+    await router.isReady()
+    mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(context.projectId).toBe('project-2')
+    expect(context.sourceRevisionId).toBe('source-2')
+    expect(context.environmentRevisionId).toBe('env-2')
+    expect(loadAssets).toHaveBeenCalledWith('source-2')
+    expect(listTasks).toHaveBeenCalledWith('project-2')
+  })
 })
 
 function savedCase(id: string, caseId: string, name: string, headers: Record<string, unknown>): CaseVersion {

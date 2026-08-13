@@ -616,6 +616,25 @@ def _put(segments, payload, actor):
                 NotificationService(factory).save_feishu(project_id, payload, actor)
             )
         }
+    if len(segments) == 2 and segments[0] == "projects":
+        project_id = _uuid(segments[1])
+        name = _string(payload.get("name"), "name", 200)
+        description = str(payload.get("description") or "").strip()
+        factory = _factory()
+        _scope_project(factory, project_id, actor)
+        with factory.begin() as session:
+            project = session.scalar(
+                select(ApiProject)
+                .where(ApiProject.id == project_id, ApiProject.owner_id == actor)
+                .with_for_update()
+            )
+            if project is None:
+                raise _not_found()
+            project.name = name
+            project.description = description
+            project.updated_by = actor
+            session.flush()
+            return {"project": _project_view(project)}
     if len(segments) == 2 and segments[0] == "baselines":
         return {
             "baseline": _view(
@@ -674,6 +693,21 @@ def _delete(segments, actor):
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).archive(execution_id, actor))}
     if len(segments) == 2 and segments[0] == "baselines":
         return {"baseline": _view(CaseService(factory).archive_baseline(_uuid(segments[1]), actor))}
+    if len(segments) == 2 and segments[0] == "projects":
+        project_id = _uuid(segments[1])
+        _scope_project(factory, project_id, actor)
+        with factory.begin() as session:
+            project = session.scalar(
+                select(ApiProject)
+                .where(ApiProject.id == project_id, ApiProject.owner_id == actor)
+                .with_for_update()
+            )
+            if project is None:
+                raise _not_found()
+            project.status = "archived"
+            project.updated_by = actor
+            session.flush()
+            return {"project": _project_view(project)}
     raise ApiHttpError(404, "not_found", "Resource was not found")
 
 

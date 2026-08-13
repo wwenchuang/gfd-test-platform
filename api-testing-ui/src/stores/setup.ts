@@ -8,6 +8,7 @@ import type {
   ApifoxRefreshPreview,
   EnvironmentView,
   ProviderCredential,
+  ProjectOption,
   SourcePreview,
   SourceRevision,
 } from '../api/contracts'
@@ -178,6 +179,41 @@ export const useSetupStore = defineStore('api-setup', {
         name: name.trim(), slug, description: '',
       })
       return response.data.project.id
+    },
+    async updateProject(projectId: string, payload: { name: string; description?: string }): Promise<ProjectOption> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.put<{ project: ProjectOption }>(
+          `/api/api-testing/v1/projects/${encodeURIComponent(projectId)}`,
+          payload,
+        )
+        this.message = '项目信息已保存'
+        return response.data.project
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '项目信息保存失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
+    },
+    async archiveProject(projectId: string): Promise<ProjectOption> {
+      this.busy = true
+      this.error = ''
+      this.message = ''
+      try {
+        const response = await apiClient.delete<{ project: ProjectOption }>(
+          `/api/api-testing/v1/projects/${encodeURIComponent(projectId)}`,
+        )
+        this.message = '项目已归档'
+        return response.data.project
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '项目归档失败'
+        throw error
+      } finally {
+        this.busy = false
+      }
     },
     async previewSource(projectId: string, sourceId: string | null, document: Record<string, unknown>): Promise<SourcePreview> {
       this.busy = true

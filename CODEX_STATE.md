@@ -8518,3 +8518,46 @@ git diff --check
 ```
 
 说明：本地 PostgreSQL 测试环境未导出强制数据库测试变量，聚焦后端数据库用例本次显示 skip；纯合同校验、前端行为、生产构建和静态检查已通过。
+
+### 2026-08-13 API 接口资产页项目化与工作台联动
+
+用户明确要求本阶段只收口“接口资产页 + 工作台项目联动”，不混入 AI 生成、基线、报告、飞书通知等后续事项。
+
+本轮修复：
+
+- 接口资产页从 Apifox 读取向导改为项目化资产管理页：左侧展示平台项目列表，中间展示当前项目接口版本、环境、接口数量、最近同步与变更摘要，右侧固定项目操作。
+- 项目列表展示项目名称、已保存接口数、环境数、最近同步时间和绑定的 Apifox 来源，避免只看当前单个项目。
+- 新增平台项目编辑和归档接口：支持修改项目名称/备注；删除入口执行逻辑归档，不物理删除已有任务、基线或执行记录。
+- “同步最新接口”固定在项目操作区，检查更新只生成预览；确认后保存为新的接口版本和环境版本。
+- “直接开始测试”改为“进入工作台”，并通过路由携带 `projectId/sourceRevisionId/environmentRevisionId`。
+- 工作台进入时读取路由上下文，确保只加载从接口资产页选择的项目、接口版本和环境。
+- 前端合同补齐项目、接口版本、环境版本的状态、时间和来源字段，用于资产页展示。
+- 重新构建 `api-test` 生产静态资源，避免部署后仍加载旧 JS/CSS。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/views/AssetsView.spec.ts src/views/WorkbenchView.spec.ts
+# 2 files / 7 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed
+
+python3 -m py_compile task_server/api_testing/http.py task_server/api_testing/repositories/context_repository.py
+# passed
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
+后续仍按既定阶段继续，当前未混入：
+
+- M2：基线固定资产模型、基线分组、编辑/删除、按环境执行。
+- M3：Apifox 分组、query/path/body 示例、必填、类型、说明等同步完整性。
+- M4：执行记录/报告删除、报告 UI、飞书卡片链接和项目级机器人配置。
