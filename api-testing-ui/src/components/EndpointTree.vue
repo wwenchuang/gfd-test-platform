@@ -22,7 +22,22 @@ const filtered = computed(() => {
 })
 const groups = computed(() => groupEndpoints(filtered.value))
 const selectedEndpoints = computed(() => props.endpoints.filter(endpoint => selected.value.has(endpoint.id)))
-const selectedGroups = computed(() => groupEndpoints(selectedEndpoints.value))
+const filteredSelectedEndpoints = computed(() => {
+  const needle = query.value.trim().toLocaleLowerCase()
+  if (!needle) return selectedEndpoints.value
+  return selectedEndpoints.value.filter(item => matchesEndpoint(item, needle))
+})
+const selectedGroups = computed(() => groupEndpoints(filteredSelectedEndpoints.value))
+
+function matchesEndpoint(endpoint: ApiEndpoint, needle: string): boolean {
+  return [
+    endpoint.summary,
+    endpoint.path,
+    endpoint.method,
+    endpointGroupName(endpoint),
+    ...endpoint.tags,
+  ].join(' ').toLocaleLowerCase().includes(needle)
+}
 
 function groupEndpoints(endpoints: ApiEndpoint[]): Array<[string, ApiEndpoint[]]> {
   const grouped = new Map<string, ApiEndpoint[]>()
@@ -200,6 +215,7 @@ function clearSelected(): void {
         </div>
       </div>
       <p v-if="!selectedEndpoints.length" class="state-message">还没有选择接口。切回全部接口后，可按分组勾选。</p>
+      <p v-else-if="!filteredSelectedEndpoints.length" class="state-message">已选接口里没有匹配结果。</p>
     </template>
   </section>
 </template>

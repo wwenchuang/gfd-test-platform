@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiClient } from '../api/client'
 import { useContextStore } from '../stores/context'
+import { useExecutionsStore } from '../stores/executions'
+import { useTasksStore } from '../stores/tasks'
 import BaselinesView from './BaselinesView.vue'
 
 function mountWithContext(): ReturnType<typeof mount> {
@@ -30,7 +32,10 @@ function mountWithContext(): ReturnType<typeof mount> {
   vi.spyOn(context, 'saveContext').mockResolvedValue()
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/', name: 'baselines', component: BaselinesView }],
+    routes: [
+      { path: '/', name: 'baselines', component: BaselinesView },
+      { path: '/runs', name: 'runs', component: { template: '<div />' } },
+    ],
   })
 
   return mount(BaselinesView, {
@@ -175,5 +180,89 @@ describe('BaselinesView fixed project assets', () => {
       group_name: '登录鉴权',
     })
     expect(wrapper.text()).toContain('已将 1 条基线移动到“登录鉴权”')
+  })
+
+  it('saves selected baselines as a regression task without saving workspace context', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture(),
+    ] } })
+
+    const wrapper = mountWithContext()
+    const context = useContextStore()
+    const tasks = useTasksStore()
+    const createSelection = vi.spyOn(tasks, 'createSelection').mockResolvedValue({ id: 'task-1' } as never)
+    const saveSelection = vi.spyOn(tasks, 'saveSelection')
+    await flushPromises()
+
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await buttonByText(wrapper, '保存为基线回归任务').trigger('click')
+    await flushPromises()
+
+    expect(context.saveContext).not.toHaveBeenCalled()
+    expect(createSelection).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sourceRevisionId: 'source-v1',
+      environmentRevisionId: 'env-v9',
+    }, ['endpoint-1'], '3D 家用基线回归')
+    expect(saveSelection).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('已保存基线回归任务：1 条基线')
+  })
+
+  it('runs selected baselines with current environment without saving workspace context', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture(),
+    ] } })
+
+    const wrapper = mountWithContext()
+    const context = useContextStore()
+    const executions = useExecutionsStore()
+    const runBaselines = vi.spyOn(executions, 'runBaselines').mockResolvedValue({ id: 'execution-1' } as never)
+    await flushPromises()
+
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await buttonByText(wrapper, '按当前环境执行所选基线').trigger('click')
+    await flushPromises()
+
+    expect(context.saveContext).not.toHaveBeenCalled()
+    expect(runBaselines).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sourceRevisionId: 'source-v1',
+      environmentRevisionId: 'env-v9',
+      baselineIds: ['baseline-1'],
+    })
+  })
+
+  it('shows readable error when selected baselines come from multiple source revisions', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture({ id: 'baseline-1', endpoint_id: 'endpoint-1', source_revision_id: 'source-v1' }),
+      baselineFixture({ id: 'baseline-2', endpoint_id: 'endpoint-2', source_revision_id: 'source-v2', case_name: '取消收藏 - 正常流程' }),
+    ] } })
+
+    const wrapper = mountWithContext()
+    const executions = useExecutionsStore()
+    const runBaselines = vi.spyOn(executions, 'runBaselines').mockResolvedValue({ id: 'execution-1' } as never)
+    await flushPromises()
+
+    const boxes = wrapper.findAll('input[type="checkbox"]')
+    await boxes[0].setValue(true)
+    await boxes[1].setValue(true)
+    await buttonByText(wrapper, '按当前环境执行所选基线').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('所选基线来自多个接口版本，请按来源版本分批保存或执行')
+    expect(runBaselines).not.toHaveBeenCalled()
+  })
+
+  it('does not show stale workbench task errors on the baseline page', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({ data: { baselines: [
+      baselineFixture(),
+    ] } })
+
+    const wrapper = mountWithContext()
+    const tasks = useTasksStore()
+    tasks.error = '测试任务范围与当前请求不一致'
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('测试任务范围与当前请求不一致')
   })
 })

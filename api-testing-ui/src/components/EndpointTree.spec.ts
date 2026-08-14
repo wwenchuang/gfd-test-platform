@@ -121,6 +121,26 @@ describe('EndpointTree', () => {
     expect(wrapper.text()).toContain('添加收藏')
   })
 
+  it('filters selected endpoints by path as well as summary', async () => {
+    const wrapper = mount(EndpointTree, {
+      props: {
+        endpoints: [
+          { id: 'endpoint-1', method: 'GET', path: '/pmc/api/v1/deviceCmd/deviceStatus', summary: '获取设备状态', tags: ['本地测试', '启迪设备'] },
+          { id: 'endpoint-2', method: 'POST', path: '/print3d/api/v1/qidi/collection/add', summary: '添加收藏', tags: ['家用业务', '我的收藏'] },
+        ],
+        selectedIds: ['endpoint-1', 'endpoint-2'],
+      },
+    })
+
+    await wrapper.get('[data-testid="selected-tab"]').trigger('click')
+    await wrapper.get('[data-testid="endpoint-search"]').setValue('qidi')
+
+    expect(wrapper.text()).toContain('添加收藏')
+    expect(wrapper.text()).toContain('/print3d/api/v1/qidi/collection/add')
+    expect(wrapper.text()).not.toContain('获取设备状态')
+    expect(wrapper.text()).not.toContain('/pmc/api/v1/deviceCmd/deviceStatus')
+  })
+
   it('renders selected endpoint summaries in a dedicated readable row layout', async () => {
     const wrapper = mount(EndpointTree, {
       props: {

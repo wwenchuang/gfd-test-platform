@@ -68,6 +68,40 @@ git diff --check
 # passed
 ```
 
+### 2026-08-14 API 基线：回归任务保存与按环境执行解耦
+
+用户反馈：基线页“加入当前任务”语义不清，点击后仍报“测试任务范围与当前请求不一致”；“按当前环境执行基线”也会误走工作台当前请求/测试范围校验。
+
+本轮修复：
+
+- 将按钮改为“保存为基线回归任务”和“按当前环境执行所选基线”，明确一个用于后续复用，一个用于立即执行。
+- 保存基线回归任务不再调用工作台测试范围保存，不再要求当前请求与固定基线一致。
+- 执行所选基线直接使用所选基线的来源接口版本和当前选择的执行环境；环境可以按运行时自由切换。
+- 所选基线来自多个接口版本时，显示“所选基线来自多个接口版本，请按来源版本分批保存或执行”，不再透出 `Request validation failed`。
+- 新增前端回归测试覆盖：保存基线回归任务、按当前环境执行所选基线、跨接口版本选择时给出可读错误。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/stores/tasks.spec.ts src/views/BaselinesView.spec.ts --reporter=basic
+# 2 files / 16 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 31 files / 169 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-CkMPz6HG.js
+
+python3 tests/frontend_static_checks.py
+# 72 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 基线：移动所选支持已有分组
 
 用户反馈：基线页选中多条基线后，“移动所选”必须能移动到其他已有分组，而不是只能依赖输入框创建新分组。

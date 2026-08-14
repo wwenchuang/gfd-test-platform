@@ -117,6 +117,32 @@ describe('tasks store', () => {
     expect(store.task?.environment_revision_id).toBe('environment-2')
   })
 
+  it('creates an independent regression task instead of updating the current task', async () => {
+    const regressionTask = { ...TASK, id: 'task-baseline', name: '3D 家用基线回归' }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { task: regressionTask } })
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { task: { ...TASK, name: 'should-not-update' } } })
+    const store = useTasksStore()
+    store.task = TASK
+    store.tasks = [TASK]
+
+    await store.createSelection({
+      projectId: 'project-1',
+      sourceRevisionId: 'source-1',
+      environmentRevisionId: 'environment-2',
+    }, ['endpoint-1', 'endpoint-1'], '3D 家用基线回归')
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/tasks', {
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-2',
+      name: '3D 家用基线回归',
+      selected_endpoint_ids: ['endpoint-1'],
+    })
+    expect(put).not.toHaveBeenCalled()
+    expect(store.task?.id).toBe('task-baseline')
+    expect(store.tasks.map(item => item.id)).toEqual(['task-baseline', 'task-1'])
+  })
+
   it('renames the current task without changing its saved scope', async () => {
     const renamed = { ...TASK, name: '发版收藏基线' }
     const put = vi.spyOn(apiClient, 'put').mockResolvedValue({ data: { task: renamed } })

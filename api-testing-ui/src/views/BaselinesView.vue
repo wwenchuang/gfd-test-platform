@@ -23,7 +23,6 @@ const localError = ref('')
 const localMessage = ref('')
 
 const projectReady = computed(() => Boolean(context.projectId))
-const executionReady = computed(() => Boolean(context.projectId && context.environmentRevisionId && executionSourceRevisionId.value))
 const projectName = computed(() => context.projects.find(item => item.id === context.projectId)?.name || '未选择项目')
 const selectedSourceName = computed(() => {
   const source = context.sourceRevisions.find(item => item.id === context.sourceRevisionId)
@@ -33,9 +32,24 @@ const environmentName = computed(() => {
   const environment = context.environmentRevisions.find(item => item.id === context.environmentRevisionId)
   return environment ? `${environment.name} · v${environment.revision}` : '未选择环境'
 })
-const executionSourceRevisionId = computed(() => {
-  return context.sourceRevisionId || baselines.selectedItems[0]?.source_revision_id || baselines.items[0]?.source_revision_id || ''
+const selectedBaselineSourceRevisionIds = computed(() => {
+  const ids = new Set<string>()
+  for (const item of baselines.selectedItems) {
+    if (item.source_revision_id) ids.add(item.source_revision_id)
+  }
+  return [...ids]
 })
+const baselineActionSourceRevisionId = computed(() => {
+  if (selectedBaselineSourceRevisionIds.value.length === 1) return selectedBaselineSourceRevisionIds.value[0]
+  if (selectedBaselineSourceRevisionIds.value.length === 0) {
+    return baselines.items[0]?.source_revision_id || context.sourceRevisionId || ''
+  }
+  return ''
+})
+const executionSourceRevisionId = computed(() => {
+  return baselineActionSourceRevisionId.value || context.sourceRevisionId || ''
+})
+const baselineActionReady = computed(() => Boolean(context.projectId && context.environmentRevisionId && baselines.selectedIds.length))
 const selectedSourceById = computed(() => new Map(context.sourceRevisions.map(item => [item.id, item])))
 const filteredBaselines = computed(() => {
   const needle = search.value.trim().toLowerCase()
@@ -120,58 +134,71 @@ async function saveScope(): Promise<void> {
   }
 }
 
-async function addSelectedToTask(): Promise<boolean> {
+type BaselineActionValidation =
+  | { ok: true; projectId: string; environmentRevisionId: string; sourceRevisionId: string }
+  | { ok: false }
+
+function validateBaselineAction(options: { requireEndpointIds?: boolean } = {}): BaselineActionValidation {
+  const projectId = context.projectId
+  if (!projectId) {
+    localError.value = '请先选择项目'
+    return { ok: false }
+  }
+  const environmentRevisionId = context.environmentRevisionId
+  if (!environmentRevisionId) {
+    localError.value = '请先选择执行环境；基线执行时只切换环境，不会因为接口版本变化而丢失'
+    return { ok: false }
+  }
+  if (!baselines.selectedIds.length) {
+    localError.value = '请先勾选要处理的基线用例'
+    return { ok: false }
+  }
+  if (selectedBaselineSourceRevisionIds.value.length > 1) {
+    localError.value = '所选基线来自多个接口版本，请按来源版本分批保存或执行'
+    return { ok: false }
+  }
+  const sourceRevisionId = selectedBaselineSourceRevisionIds.value[0] || baselineActionSourceRevisionId.value
+  if (!sourceRevisionId) {
+    localError.value = '所选基线缺少来源接口版本，无法保存或执行'
+    return { ok: false }
+  }
+  if (options.requireEndpointIds && !baselines.selectedEndpointIds.length) {
+    localError.value = '所选基线缺少接口信息，无法保存为任务'
+    return { ok: false }
+  }
+  return { ok: true, projectId, environmentRevisionId, sourceRevisionId }
+}
+
+async function saveSelectedAsRegressionTask(): Promise<boolean> {
   localError.value = ''
   localMessage.value = ''
-  if (!context.projectId || !context.environmentRevisionId || !executionSourceRevisionId.value) {
-    localError.value = '请先选择项目和执行环境；接口版本仅用于执行记录，不会过滤基线'
-    return false
-  }
-  if (!baselines.selectedEndpointIds.length) {
-    localError.value = '请先勾选要加入任务的基线用例'
-    return false
-  }
+  const validation = validateBaselineAction({ requireEndpointIds: true })
+  if (!validation.ok) return false
   try {
-    await context.saveContext()
-    if (context.error) throw new Error(context.error)
-    const restored = await tasks.restore(context.projectId)
-    const existing = restored?.project_id === context.projectId
-      && restored.source_revision_id === executionSourceRevisionId.value
-      && restored.environment_revision_id === context.environmentRevisionId
-      ? restored.selected_endpoint_ids
-      : []
-    const endpointIds = [...new Set([...existing, ...baselines.selectedEndpointIds])]
-    await tasks.saveSelection({
-      projectId: context.projectId,
-      sourceRevisionId: executionSourceRevisionId.value,
-      environmentRevisionId: context.environmentRevisionId,
+    const endpointIds = [...new Set(baselines.selectedEndpointIds)]
+    await tasks.createSelection({
+      projectId: validation.projectId,
+      sourceRevisionId: validation.sourceRevisionId,
+      environmentRevisionId: validation.environmentRevisionId,
     }, endpointIds, `${projectName.value}基线回归`)
-    localMessage.value = `已将 ${baselines.selectedItems.length} 条基线加入当前任务`
+    localMessage.value = `已保存基线回归任务：${baselines.selectedItems.length} 条基线，可在任务列表和定时任务中复用`
     return true
   } catch (error) {
-    localError.value = error instanceof Error ? error.message : '基线加入任务失败'
+    localError.value = error instanceof Error ? error.message : '基线回归任务保存失败'
     return false
   }
 }
 
-async function runSelectedTask(): Promise<void> {
+async function runSelectedBaselines(): Promise<void> {
   localError.value = ''
   localMessage.value = ''
-  if (!context.projectId || !context.environmentRevisionId || !executionSourceRevisionId.value) {
-    localError.value = '请先选择项目和执行环境；接口版本仅用于执行记录，不会过滤基线'
-    return
-  }
-  if (!baselines.selectedIds.length) {
-    localError.value = '请先勾选要执行的基线用例'
-    return
-  }
+  const validation = validateBaselineAction()
+  if (!validation.ok) return
   try {
-    await context.saveContext()
-    if (context.error) throw new Error(context.error)
     const execution = await executions.runBaselines({
-      projectId: context.projectId,
-      sourceRevisionId: executionSourceRevisionId.value,
-      environmentRevisionId: context.environmentRevisionId,
+      projectId: validation.projectId,
+      sourceRevisionId: validation.sourceRevisionId,
+      environmentRevisionId: validation.environmentRevisionId,
       baselineIds: baselines.selectedIds,
     })
     await router.push({ name: 'runs', query: { executionId: execution.id } })
@@ -339,8 +366,9 @@ function sourceRevisionName(item: ApiBaselineCase): string {
           <div>
             <button class="secondary-command" type="button" :disabled="!filteredBaselines.length" @click="toggleFiltered">{{ allFilteredSelected ? '取消当前筛选' : '全选当前筛选' }}</button>
             <button class="secondary-command" type="button" :disabled="!baselines.selectedIds.length" @click="baselines.clearSelection">清空选择</button>
-            <button class="primary-command" type="button" :disabled="tasks.saving || !baselines.selectedIds.length || !executionReady" @click="addSelectedToTask"><ListPlus :size="15" />{{ tasks.saving ? '加入中' : '加入当前任务' }}</button>
-            <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselines.selectedIds.length || !executionReady" @click="runSelectedTask"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行基线' }}</button>
+            <button class="primary-command" type="button" :disabled="tasks.saving || !baselineActionReady" @click="saveSelectedAsRegressionTask"><ListPlus :size="15" />{{ tasks.saving ? '保存中' : '保存为基线回归任务' }}</button>
+            <button class="primary-command" type="button" :disabled="executions.baselineStarting || !baselineActionReady" @click="runSelectedBaselines"><Play :size="15" />{{ executions.baselineStarting ? '创建执行中' : '按当前环境执行所选基线' }}</button>
+            <small class="baseline-action-hint">保存会创建独立基线回归任务；立即执行只使用当前执行环境，不修改工作台任务。</small>
           </div>
         </header>
         <div class="baseline-group-editor" aria-label="基线分组编辑">
@@ -408,7 +436,7 @@ function sourceRevisionName(item: ApiBaselineCase): string {
       </main>
     </section>
 
-    <p v-if="context.error || baselines.error || tasks.error || localError" class="inline-error">{{ context.error || baselines.error || tasks.error || localError }}</p>
+    <p v-if="context.error || baselines.error || localError" class="inline-error">{{ context.error || baselines.error || localError }}</p>
     <p v-if="localMessage" class="setup-success"><ShieldCheck :size="16" />{{ localMessage }}<span v-if="selectedGroups.length">覆盖分组：{{ selectedGroups.join('、') }}</span></p>
   </section>
 </template>

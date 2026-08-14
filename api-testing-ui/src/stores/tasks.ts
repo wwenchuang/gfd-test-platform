@@ -93,6 +93,29 @@ export const useTasksStore = defineStore('api-test-tasks', {
         this.saving = false
       }
     },
+    async createSelection(context: TaskContext, endpointIds: string[], name: string): Promise<ApiTestTask> {
+      const selectedEndpointIds = [...new Set(endpointIds)]
+      if (!selectedEndpointIds.length) throw new Error('请至少选择一个接口')
+      this.saving = true
+      this.error = ''
+      try {
+        const response = await apiClient.post<{ task: ApiTestTask }>('/api/api-testing/v1/tasks', {
+          project_id: context.projectId,
+          source_revision_id: context.sourceRevisionId,
+          environment_revision_id: context.environmentRevisionId,
+          name,
+          selected_endpoint_ids: selectedEndpointIds,
+        })
+        this.task = response.data.task
+        this.upsertTask(this.task)
+        return this.task
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '测试任务创建失败'
+        throw error
+      } finally {
+        this.saving = false
+      }
+    },
     async rename(taskId: string, name: string): Promise<ApiTestTask> {
       const nextName = name.trim()
       if (!nextName) throw new Error('任务名称不能为空')
