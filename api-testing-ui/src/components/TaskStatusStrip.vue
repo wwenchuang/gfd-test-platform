@@ -6,20 +6,17 @@ import type { ApiTestTask } from '../api/contracts'
 
 const props = withDefaults(defineProps<{
   task: ApiTestTask | null
-  tasks?: ApiTestTask[]
   taskNameDraft?: string
   selectedCount: number
   environmentName?: string
-  loading?: boolean
   saving?: boolean
   running?: boolean
-}>(), { tasks: () => [], taskNameDraft: '', environmentName: '未选择环境', loading: false, saving: false, running: false })
+}>(), { taskNameDraft: '', environmentName: '未选择环境', saving: false, running: false })
 
 const emit = defineEmits<{
   save: []
   run: []
   new: []
-  'select-task': [taskId: string]
   'rename-task': []
   'update:taskNameDraft': [name: string]
 }>()
@@ -70,14 +67,6 @@ function updateName(event: Event): void {
       <button data-testid="run-task" class="primary-command" type="button" :disabled="running || !task || task.runnable_baseline_count < 1 || ['designing','debugging','running'].includes(task.state)" @click="$emit('run')"><Play :size="15" />{{ running ? '创建执行中' : '执行本任务' }}</button>
     </div>
     <div class="task-management">
-      <label>已保存任务
-        <select data-testid="task-selector" :value="task?.id || ''" :disabled="loading || !tasks.length" @change="emit('select-task', ($event.target as HTMLSelectElement).value)">
-          <option value="">{{ tasks.length ? '选择历史任务' : '暂无已保存任务' }}</option>
-          <option v-for="item in tasks" :key="item.id" :value="item.id">
-            {{ item.name }} · {{ taskTypeLabel(item) }} · {{ item.selected_endpoint_ids.length }} 个接口
-          </option>
-        </select>
-      </label>
       <label>任务名称
         <input data-testid="task-name-input" :value="taskNameDraft" maxlength="200" placeholder="例如：收藏链路发版回归" @input="updateName" />
       </label>

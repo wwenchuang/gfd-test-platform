@@ -141,6 +141,15 @@ class TestTaskService:
             repository.flush()
             return self._view(repository, task)
 
+    def delete(self, task_id, actor_id):
+        actor = _text(actor_id, "actor id", 128)
+        with self._session_factory.begin() as session:
+            repository = TestTaskRepository(session)
+            task = self._owned_task(repository, task_id, actor, for_update=True)
+            view = self._view(repository, task)
+            repository.delete(task)
+            return view
+
     def get_active(self, project_id, owner_id):
         owner = _text(owner_id, "owner id", 128)
         with self._session_factory() as session:

@@ -34,6 +34,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 工作台：左侧独立任务列表和基本管理操作
+
+用户要求工作台任务不要继续藏在“已保存任务”下拉里，需要左侧独立任务列表，并支持编辑任务、环境/用例范围调整、删除和执行等基本操作。
+
+本轮修复：
+
+- 工作台新增左侧 `任务列表` 面板，展示当前项目下已保存任务数量、任务名、状态、接口数、基线数和保存环境。
+- 左侧任务列表支持搜索任务名称、新建任务、点击任务进入编辑、行内执行任务、行内删除任务。
+- 删除任务增加二次确认，删除任务只移除任务资产；任务关联的用例、基线和历史执行记录会保留。
+- 选中任务后会恢复该任务保存的接口版本、环境、接口范围，并在右侧继续编辑任务名称、接口范围、用例内容和执行环境。
+- 原任务条中的“已保存任务”下拉已移除，任务管理入口收口到左侧列表；任务条保留当前任务概览、名称保存、范围保存和执行本任务。
+- 后端补齐 `DELETE /api/api-testing/v1/tasks/:id`，服务层和前端 store 均支持删除任务。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/stores/tasks.spec.ts src/components/TaskStatusStrip.spec.ts src/components/TaskListPanel.spec.ts src/views/WorkbenchView.spec.ts --reporter=basic
+# 4 files / 21 tests passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_test_task_service.py -q
+# 11 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/1' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_http_contract.py::test_api_task_can_be_deleted_from_saved_list -q
+# 1 passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-DjLW3sS7.js and index-CaCHAfd9.css
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 33 files / 182 tests passed
+
+python3 -m py_compile task_server/api_testing/services/test_task_service.py task_server/api_testing/repositories/test_task_repository.py task_server/api_testing/http.py
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 工作台：接口范围搜索固定、分组折叠和命中高亮
 
 用户反馈工作台接口范围列表滚动后搜索框不方便使用，同步过来的接口分组默认展开过长，搜索命中项最好高亮。

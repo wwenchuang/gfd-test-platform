@@ -157,6 +157,23 @@ export const useTasksStore = defineStore('api-test-tasks', {
         this.running = false
       }
     },
+    async remove(taskId: string): Promise<ApiTestTask> {
+      this.saving = true
+      this.error = ''
+      try {
+        const response = await apiClient.delete<{ task: ApiTestTask }>(
+          `/api/api-testing/v1/tasks/${encodeURIComponent(taskId)}`,
+        )
+        this.tasks = this.tasks.filter(item => item.id !== taskId)
+        if (this.task?.id === taskId) this.task = null
+        return response.data.task
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '测试任务删除失败'
+        throw error
+      } finally {
+        this.saving = false
+      }
+    },
     clear(): void {
       this.task = null
       this.error = ''

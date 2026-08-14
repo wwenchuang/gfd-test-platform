@@ -269,6 +269,24 @@ def test_task_can_be_renamed_without_changing_scope(task_factory, task_records):
     assert renamed.selected_endpoint_ids == task.selected_endpoint_ids
 
 
+def test_task_can_be_deleted_from_saved_list(task_factory, task_records):
+    service = TaskService(task_factory)
+    first = service.create_context("owner-a", _payload(task_records), "owner-a")
+    second = service.create_context(
+        "owner-a",
+        {**_payload(task_records), "name": "保留的任务"},
+        "owner-a",
+    )
+
+    deleted = service.delete(first.id, "owner-a")
+    tasks = service.list(task_records["project"].id, "owner-a")
+
+    assert deleted.id == first.id
+    assert [item.id for item in tasks] == [second.id]
+    with pytest.raises(TaskNotFoundError):
+        service.get(first.id, "owner-a")
+
+
 def test_task_rejects_endpoint_from_another_source_revision(
     task_factory, task_records
 ):

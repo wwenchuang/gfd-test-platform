@@ -373,7 +373,7 @@ describe('WorkbenchView debug workflow', () => {
     })
     await flushPromises()
 
-    await wrapper.get('[data-testid="task-selector"]').setValue('task-old')
+    await wrapper.get('[data-testid="task-list-item-task-old"]').trigger('click')
     await flushPromises()
 
     expect(context.sourceRevisionId).toBe('source-old')
@@ -394,6 +394,87 @@ describe('WorkbenchView debug workflow', () => {
     expect(run).toHaveBeenCalledWith('environment-current')
     expect(router.currentRoute.value.name).toBe('runs')
     expect(router.currentRoute.value.query.executionId).toBe('execution-1')
+  })
+
+  it('deletes a saved task from the dedicated left task list after confirmation', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1',
+      sourceRevisionId: 'source-1',
+      environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', source_id: 'source-1', project_id: 'project-1', name: '默认模块', revision_number: 1, endpoint_count: 1 }],
+      environmentRevisions: [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    vi.spyOn(assets, 'load').mockImplementation(async () => {
+      assets.endpoints = [ENDPOINT]
+      assets.state = 'ready'
+    })
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+
+    const task = {
+      id: 'task-delete',
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      name: '待删除回归',
+      state: 'ready',
+      selected_endpoint_ids: [ENDPOINT.id],
+      runnable_baseline_count: 1,
+      latest_ai_job_id: null,
+      latest_execution_id: null,
+      summary: {},
+      created_at: '',
+      updated_at: '',
+    } as ApiTestTask
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockImplementation(async () => {
+      tasks.tasks = [task]
+      return tasks.tasks
+    })
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    const remove = vi.spyOn(tasks, 'remove').mockImplementation(async taskId => {
+      tasks.tasks = tasks.tasks.filter(item => item.id !== taskId)
+      if (tasks.task?.id === taskId) tasks.task = null
+      return task
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          EndpointDetail: true,
+          CaseEditor: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['selectedIds'],
+            template: '<div data-testid="endpoint-tree">{{ selectedIds.length }}</div>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="task-list-delete-task-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(window.confirm).toHaveBeenCalledWith('删除任务“待删除回归”？任务关联的用例、基线和历史执行记录会保留。')
+    expect(remove).toHaveBeenCalledWith('task-delete')
+    expect(wrapper.text()).not.toContain('待删除回归')
   })
 })
 

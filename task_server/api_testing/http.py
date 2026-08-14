@@ -781,6 +781,8 @@ def _delete(segments, actor):
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).archive(execution_id, actor))}
     if len(segments) == 2 and segments[0] == "baselines":
         return {"baseline": _view(CaseService(factory).archive_baseline(_uuid(segments[1]), actor))}
+    if len(segments) == 2 and segments[0] == "tasks":
+        return {"task": _view(TestTaskService(factory).delete(_uuid(segments[1]), actor))}
     if len(segments) == 2 and segments[0] == "scheduled-jobs":
         return {"scheduled_job": _view(ScheduledJobService(factory).delete(_uuid(segments[1]), actor))}
     if len(segments) == 2 and segments[0] == "environments":

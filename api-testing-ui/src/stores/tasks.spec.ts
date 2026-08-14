@@ -195,4 +195,17 @@ describe('tasks store', () => {
     })
     expect(started.id).toBe('execution-2')
   })
+
+  it('removes a saved task and clears it when it is currently selected', async () => {
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({ data: { task: TASK } })
+    const store = useTasksStore()
+    store.task = TASK
+    store.tasks = [TASK, { ...TASK, id: 'task-2', name: '其它任务' }]
+
+    await store.remove(TASK.id)
+
+    expect(remove).toHaveBeenCalledWith('/api/api-testing/v1/tasks/task-1')
+    expect(store.task).toBeNull()
+    expect(store.tasks.map(item => item.id)).toEqual(['task-2'])
+  })
 })

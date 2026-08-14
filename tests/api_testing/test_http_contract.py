@@ -1064,6 +1064,49 @@ def test_api_task_is_hidden_from_another_owner(http_client, owned_records):
     assert denied.body["error"]["code"] == "not_found"
 
 
+def test_api_task_can_be_deleted_from_saved_list(http_client, owned_records):
+    first = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "待删除任务",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    ).body["data"]["task"]
+    second = http_client.post(
+        "/api/api-testing/v1/tasks",
+        {
+            "project_id": owned_records["project"].id,
+            "source_revision_id": owned_records["revision"].id,
+            "environment_revision_id": owned_records["environment_revision"].id,
+            "name": "保留任务",
+            "selected_endpoint_ids": [owned_records["endpoint"].id],
+        },
+        _auth(),
+    ).body["data"]["task"]
+
+    deleted = http_client.delete(
+        f"/api/api-testing/v1/tasks/{first['id']}",
+        _auth(),
+    )
+    denied = http_client.delete(
+        f"/api/api-testing/v1/tasks/{second['id']}",
+        _auth("owner-b"),
+    )
+    listed = http_client.get(
+        f"/api/api-testing/v1/tasks?project_id={owned_records['project'].id}",
+        _auth(),
+    )
+
+    assert deleted.status == 200
+    assert deleted.body["data"]["task"]["id"] == first["id"]
+    assert denied.status == 404
+    assert [item["id"] for item in listed.body["data"]["tasks"]] == [second["id"]]
+
+
 def test_api_task_run_executes_only_adopted_baselines_in_saved_selection(
     http_client, api_context, owned_records
 ):

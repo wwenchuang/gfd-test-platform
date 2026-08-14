@@ -59,7 +59,7 @@ describe('TaskStatusStrip', () => {
     expect(wrapper.emitted('run')).toHaveLength(1)
   })
 
-  it('shows saved tasks, supports selecting one and renaming the current task', async () => {
+  it('supports renaming the current task without managing saved tasks inline', async () => {
     const task = {
       id: 'task-1', project_id: 'project-1', source_revision_id: 'source-1',
       environment_revision_id: 'environment-1', name: '我的收藏接口回归任务名称很长需要被压缩显示',
@@ -71,22 +71,15 @@ describe('TaskStatusStrip', () => {
     const wrapper = mount(TaskStatusStrip, {
       props: {
         task,
-        tasks: [
-          task,
-          { ...task, id: 'task-2', name: '单接口调试', selected_endpoint_ids: ['endpoint-3'], runnable_baseline_count: 0 },
-        ],
         selectedCount: 2,
         environmentName: '生产环境（新）- 腾讯云',
         taskNameDraft: task.name,
       },
     })
 
-    expect(wrapper.get('[data-testid="task-selector"]').text()).toContain('我的收藏接口回归任务名称很长需要被压缩显示')
+    expect(wrapper.find('[data-testid="task-selector"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('我的收藏接口回归任务名称很长需要被压缩显示')
     expect(wrapper.text()).toContain('基线')
-    expect(wrapper.text()).toContain('单接口调试')
-
-    await wrapper.get('[data-testid="task-selector"]').setValue('task-2')
-    expect(wrapper.emitted('select-task')?.[0]).toEqual(['task-2'])
 
     await wrapper.get('[data-testid="task-name-input"]').setValue('收藏冒烟')
     expect(wrapper.emitted('update:taskNameDraft')?.at(-1)).toEqual(['收藏冒烟'])

@@ -138,5 +138,9 @@ class TestTaskRepository:
         self.session.flush()
         return record
 
+    def delete(self, task):
+        self.session.delete(task)
+        self.session.flush()
+
     def flush(self):
         self.session.flush()
