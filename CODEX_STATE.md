@@ -34,6 +34,45 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 定时任务：列表编辑、删除和基线分组信息补齐
+
+用户继续反馈定时任务页存在以下问题：新增基线分组未同步、多条基线应列出所有基线并按分组选择、列表需支持启用/飞书开关/删除/再次编辑、每天/每周缺少明确执行时间。
+
+本轮修复：
+
+- 刷新按钮同时刷新定时任务列表和目标资产，新增基线分组能同步出现在选择器里。
+- `baseline_group` 选项展示分组信息：分组名、可执行基线数量、代表用例和接口路径，例如 `登录成功用例 · POST /login`。
+- `baselines` 目标改为按分组展示所有 active 基线，分组内列出每条基线供多选。
+- 列表行新增启用开关、飞书通知开关、编辑、删除和手动执行；删除使用二次确认弹窗。
+- 点编辑会把任务回填到右侧表单，保存时走更新；新建任务仍走创建。
+- 后端补齐 `PUT /scheduled-jobs/:id` 和 `DELETE /scheduled-jobs/:id`，服务层支持全量更新字段和 targets、删除任务。
+- 每天/每周的具体时间已明确：每天默认 `0 2 * * *`（每天 02:00），每周默认 `0 9 * * 1`（每周一 09:00）；表单保存时会提交对应 cron 表达式。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_scheduled_job_service.py -q
+# 2 passed
+
+npm --prefix api-testing-ui test -- --run src/views/ScheduledJobsView.spec.ts --reporter=basic
+# 1 file / 5 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 32 files / 174 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-DjXQrDnx.js and index-9zZhXj5O.css
+
+python3 -m py_compile task_server/api_testing/services/scheduled_job_service.py task_server/api_testing/http.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
+注意：
+
+- 当前 `python3 tests/frontend_static_checks.py` 失败在工作区已有脑图报告检查：`Report builder must support manual defect severity input`。相关脏文件为 `task_server/services/test_report_service.py`、`tests/frontend_static_checks.py`、`tests/test_mindmap_test_report_service.py`，本轮未纳入定时任务提交。
+
 ### 2026-08-14 API 定时任务：表单交互优化
 
 用户反馈定时任务创建页中 Cron 表达式缺少可选案例、勾选控件样式粗糙、目标用例/基线仍需手动输入 ID。

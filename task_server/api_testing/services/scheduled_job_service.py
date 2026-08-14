@@ -113,17 +113,46 @@ class ScheduledJobService:
             )
             session.add(record)
             session.flush()
-            for index, target_id in enumerate(parsed["target_ids"]):
-                session.add(ApiScheduledJobTarget(
-                    job_id=record.id,
-                    sequence=index,
-                    target_type=parsed["target_type"],
-                    target_id=target_id,
-                    group_name=target_id if parsed["target_type"] == "baseline_group" else "",
-                    **audit_fields(actor_id),
-                ))
+            self._replace_targets(session, record.id, parsed, actor_id)
             session.flush()
             return self._view(session, record)
+
+    def update(self, job_id, payload, actor_id):
+        parsed = self._parse(payload)
+        with self.session_factory.begin() as session:
+            record = self._owned_job(session, job_id, actor_id, for_update=True)
+            if record.project_id != parsed["project_id"]:
+                raise ScheduledJobInputError("scheduled job project cannot be changed")
+            self._validate_project(session, parsed["project_id"], actor_id)
+            environment_revision_id, environment_id = self._resolve_environment(session, parsed)
+            source_revision_id = self._resolve_source_revision(session, parsed, actor_id)
+            record.source_revision_id = source_revision_id
+            record.environment_revision_id = environment_revision_id
+            record.environment_id = environment_id
+            record.name = parsed["name"]
+            record.target_type = parsed["target_type"]
+            record.schedule_type = parsed["schedule_type"]
+            record.cron_expression = parsed["cron_expression"]
+            record.environment_strategy = parsed["environment_strategy"]
+            record.enabled = parsed["enabled"]
+            record.notify_feishu = parsed["notify_feishu"]
+            record.retry_count = parsed["retry_count"]
+            record.timeout_seconds = parsed["timeout_seconds"]
+            record.updated_by = actor_id
+            self._replace_targets(session, record.id, parsed, actor_id)
+            session.flush()
+            return self._view(session, record)
+
+    def delete(self, job_id, actor_id):
+        with self.session_factory.begin() as session:
+            record = self._owned_job(session, job_id, actor_id, for_update=True)
+            view = self._view(session, record)
+            for target in self._targets(session, record.id):
+                session.delete(target)
+            session.flush()
+            session.delete(record)
+            session.flush()
+            return view
 
     def list(self, project_id, actor_id):
         with self.session_factory() as session:
@@ -420,6 +449,21 @@ class ScheduledJobService:
             .where(ApiScheduledJobTarget.job_id == job_id)
             .order_by(ApiScheduledJobTarget.sequence)
         ))
+
+    @classmethod
+    def _replace_targets(cls, session, job_id, parsed, actor_id):
+        for target in cls._targets(session, job_id):
+            session.delete(target)
+        session.flush()
+        for index, target_id in enumerate(parsed["target_ids"]):
+            session.add(ApiScheduledJobTarget(
+                job_id=job_id,
+                sequence=index,
+                target_type=parsed["target_type"],
+                target_id=target_id,
+                group_name=target_id if parsed["target_type"] == "baseline_group" else "",
+                **audit_fields(actor_id),
+            ))
 
     @classmethod
     def _view(cls, session, job):

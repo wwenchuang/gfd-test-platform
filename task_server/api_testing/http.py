@@ -733,6 +733,14 @@ def _put(segments, payload, actor):
                 )
             )
         }
+    if len(segments) == 2 and segments[0] == "scheduled-jobs":
+        job_id = _uuid(segments[1])
+        factory = _factory()
+        return {
+            "scheduled_job": _view(
+                ScheduledJobService(factory).update(job_id, payload, actor)
+            )
+        }
     if len(segments) == 3 and segments[0] == "tasks" and segments[2] == "name":
         return {
             "task": _view(
@@ -773,6 +781,8 @@ def _delete(segments, actor):
         return {"execution": _view(ExecutionService(factory, event_stream=_event_stream(factory)).archive(execution_id, actor))}
     if len(segments) == 2 and segments[0] == "baselines":
         return {"baseline": _view(CaseService(factory).archive_baseline(_uuid(segments[1]), actor))}
+    if len(segments) == 2 and segments[0] == "scheduled-jobs":
+        return {"scheduled_job": _view(ScheduledJobService(factory).delete(_uuid(segments[1]), actor))}
     if len(segments) == 2 and segments[0] == "environments":
         environment_id = _uuid(segments[1])
         _scope_environment(factory, environment_id, actor)

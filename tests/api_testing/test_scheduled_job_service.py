@@ -169,3 +169,59 @@ def test_scheduled_job_can_be_created_and_manually_run(scheduled_factory, schedu
     assert execution.execution_type == "scheduled"
     assert execution.execution_source == "scheduled_job"
     assert execution.task_name == "每日发版回归"
+
+
+def test_scheduled_job_can_be_updated_and_deleted(scheduled_factory, scheduled_records):
+    from task_server.api_testing.services.scheduled_job_service import ScheduledJobService
+
+    service = ScheduledJobService(scheduled_factory)
+    job = service.create(
+        {
+            "project_id": scheduled_records["project"].id,
+            "name": "每日发版回归",
+            "schedule_type": "daily",
+            "cron_expression": "0 2 * * *",
+            "environment_strategy": "fixed_revision",
+            "environment_revision_id": scheduled_records["environment_revision"].id,
+            "target_type": "cases",
+            "target_ids": [scheduled_records["case_version"].id],
+            "enabled": True,
+            "notify_feishu": True,
+            "retry_count": 1,
+            "timeout_seconds": 900,
+        },
+        "owner-a",
+    )
+
+    updated = service.update(
+        job.id,
+        {
+            "project_id": scheduled_records["project"].id,
+            "name": "每周发版回归",
+            "schedule_type": "weekly",
+            "cron_expression": "0 9 * * 1",
+            "environment_strategy": "fixed_revision",
+            "environment_revision_id": scheduled_records["environment_revision"].id,
+            "target_type": "cases",
+            "target_ids": [scheduled_records["case_version"].id],
+            "enabled": False,
+            "notify_feishu": False,
+            "retry_count": 2,
+            "timeout_seconds": 1200,
+        },
+        "owner-a",
+    )
+
+    assert updated.id == job.id
+    assert updated.name == "每周发版回归"
+    assert updated.schedule_type == "weekly"
+    assert updated.cron_expression == "0 9 * * 1"
+    assert updated.enabled is False
+    assert updated.notify_feishu is False
+    assert updated.retry_count == 2
+    assert updated.timeout_seconds == 1200
+
+    deleted = service.delete(job.id, "owner-a")
+
+    assert deleted.id == job.id
+    assert service.list(scheduled_records["project"].id, "owner-a") == ()

@@ -61,6 +61,28 @@ export const useScheduledJobsStore = defineStore('api-scheduled-jobs', {
         this.saving = false
       }
     },
+    async update(jobId: string, input: ScheduledJobInput): Promise<ScheduledJob> {
+      this.saving = true
+      this.error = ''
+      try {
+        const response = await apiClient.put<{ scheduled_job: ScheduledJob }>(
+          `/api/api-testing/v1/scheduled-jobs/${encodeURIComponent(jobId)}`,
+          input,
+        )
+        this.items = this.items.map(item => item.id === jobId ? response.data.scheduled_job : item)
+        return response.data.scheduled_job
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : '定时任务保存失败'
+        throw error
+      } finally {
+        this.saving = false
+      }
+    },
+    async remove(jobId: string): Promise<void> {
+      this.error = ''
+      await apiClient.delete(`/api/api-testing/v1/scheduled-jobs/${encodeURIComponent(jobId)}`)
+      this.items = this.items.filter(item => item.id !== jobId)
+    },
     async runOnce(jobId: string): Promise<ExecutionView> {
       this.runningId = jobId
       this.error = ''

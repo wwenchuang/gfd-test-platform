@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CalendarClock, Check, Play, RefreshCw, Save } from 'lucide-vue-next'
+import { CalendarClock, Check, Pencil, Play, RefreshCw, Save, Trash2 } from 'lucide-vue-next'
 
 import type { ApiBaselineCase, ApiTestTask, CaseVersion, ScheduledJob } from '../api/contracts'
 import { baselineGroup, useBaselinesStore } from '../stores/baselines'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
-import { useScheduledJobsStore } from '../stores/scheduledJobs'
+import { type ScheduledJobInput, useScheduledJobsStore } from '../stores/scheduledJobs'
 import { useTasksStore } from '../stores/tasks'
 
 const context = useContextStore()
@@ -31,6 +31,8 @@ const form = reactive({
 const selectedTargetIds = ref<string[]>([])
 const targetSearch = ref('')
 const targetLoadError = ref('')
+const editingJobId = ref('')
+let suspendTargetReset = false
 
 interface TargetOption {
   id: string
@@ -51,6 +53,16 @@ const cronPresets = [
   { id: 'monthly', title: '每月 1 日 10:00', expression: '0 10 1 * *', description: '月度基线检查' },
   { id: 'half-hour', title: '每 30 分钟', expression: '*/30 * * * *', description: '高频环境探活' },
 ]
+const scheduleDefaultExpressions: Record<ScheduledJob['schedule_type'], string> = {
+  daily: '0 2 * * *',
+  weekly: '0 9 * * 1',
+  cron: '',
+}
+const scheduleTimeDescriptions: Record<ScheduledJob['schedule_type'], string> = {
+  daily: '每天 02:00 执行',
+  weekly: '每周一 09:00 执行',
+  cron: '按 Cron 表达式执行',
+}
 
 const projectId = computed(() => context.projectId || context.projects[0]?.id || '')
 const sourceRevisionId = computed(() => context.sourceRevisionId || context.sourceRevisions.find(item => item.project_id === projectId.value)?.id || '')
@@ -86,6 +98,21 @@ const filteredTargetOptions = computed(() => {
     .toLocaleLowerCase()
     .includes(keyword))
 })
+const filteredBaselineGroups = computed(() => {
+  const groups = new Map<string, TargetOption[]>()
+  for (const option of filteredTargetOptions.value) {
+    const name = option.meta || '未分组'
+    groups.set(name, [...(groups.get(name) || []), option])
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
+    .map(([name, options]) => ({ name, options }))
+})
+const editorTitle = computed(() => editingJobId.value ? '编辑定时任务' : '新建定时任务')
+const saveLabel = computed(() => {
+  if (scheduledJobs.saving) return '保存中'
+  return editingJobId.value ? '保存修改' : '保存定时任务'
+})
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
@@ -96,6 +123,7 @@ onMounted(async () => {
 })
 
 watch(() => form.targetType, () => {
+  if (suspendTargetReset) return
   selectedTargetIds.value = []
   targetSearch.value = ''
 })
@@ -114,7 +142,17 @@ async function saveJob(): Promise<void> {
     scheduledJobs.error = `请先${targetPickerTitle.value}`
     return
   }
-  await scheduledJobs.create({
+  const input = buildJobInput(ids)
+  if (editingJobId.value) {
+    await scheduledJobs.update(editingJobId.value, input)
+  } else {
+    await scheduledJobs.create(input)
+  }
+  resetEditor()
+}
+
+function buildJobInput(ids: string[]): ScheduledJobInput {
+  return {
     project_id: projectId.value,
     source_revision_id: sourceRevisionId.value,
     environment_revision_id: environmentRevisionId.value,
@@ -123,13 +161,13 @@ async function saveJob(): Promise<void> {
     target_type: form.targetType,
     target_ids: ids,
     schedule_type: form.scheduleType,
-    cron_expression: form.scheduleType === 'cron' ? form.cronExpression.trim() : '',
+    cron_expression: scheduleExpression(),
     environment_strategy: form.environmentStrategy,
     enabled: form.enabled,
     notify_feishu: form.notifyFeishu,
     retry_count: form.retryCount,
     timeout_seconds: form.timeoutSeconds,
-  })
+  }
 }
 
 async function runJob(job: ScheduledJob): Promise<void> {
@@ -151,6 +189,13 @@ async function loadTargetAssets(): Promise<void> {
   }
 }
 
+async function refreshAll(): Promise<void> {
+  await Promise.all([
+    projectId.value ? scheduledJobs.load(projectId.value) : Promise.resolve(),
+    loadTargetAssets(),
+  ])
+}
+
 function setScheduleType(type: ScheduledJob['schedule_type']): void {
   form.scheduleType = type
   if (type === 'cron' && !form.cronExpression.trim()) applyCronPreset(cronPresets[0].expression)
@@ -158,6 +203,11 @@ function setScheduleType(type: ScheduledJob['schedule_type']): void {
 
 function applyCronPreset(expression: string): void {
   form.cronExpression = expression
+}
+
+function scheduleExpression(): string {
+  if (form.scheduleType === 'cron') return form.cronExpression.trim()
+  return scheduleDefaultExpressions[form.scheduleType]
 }
 
 function toggleTarget(id: string): void {
@@ -185,23 +235,94 @@ function targetTypeLabel(type: ScheduledJob['target_type']): string {
 
 function scheduleLabel(job: ScheduledJob): string {
   if (job.schedule_type === 'cron') return job.cron_expression || 'Cron'
-  return job.schedule_type === 'weekly' ? '每周' : '每天'
+  return job.schedule_type === 'weekly' ? '每周一 09:00' : '每天 02:00'
+}
+
+function editJob(job: ScheduledJob): void {
+  suspendTargetReset = true
+  editingJobId.value = job.id
+  form.name = job.name
+  form.targetType = job.target_type
+  form.scheduleType = job.schedule_type
+  form.cronExpression = job.cron_expression || scheduleDefaultExpressions[job.schedule_type]
+  form.environmentStrategy = job.environment_strategy
+  form.enabled = job.enabled
+  form.notifyFeishu = job.notify_feishu
+  form.retryCount = job.retry_count
+  form.timeoutSeconds = job.timeout_seconds
+  selectedTargetIds.value = [...job.target_ids]
+  targetSearch.value = ''
+  suspendTargetReset = false
+}
+
+function resetEditor(): void {
+  suspendTargetReset = true
+  editingJobId.value = ''
+  form.name = ''
+  form.targetType = 'baseline_group'
+  form.scheduleType = 'daily'
+  form.cronExpression = ''
+  form.environmentStrategy = 'fixed_revision'
+  form.enabled = true
+  form.notifyFeishu = false
+  form.retryCount = 0
+  form.timeoutSeconds = 1800
+  selectedTargetIds.value = []
+  targetSearch.value = ''
+  suspendTargetReset = false
+}
+
+async function toggleJobFlag(job: ScheduledJob, flag: 'enabled' | 'notify_feishu'): Promise<void> {
+  await scheduledJobs.update(job.id, jobInputFromJob({
+    ...job,
+    [flag]: !job[flag],
+  }))
+}
+
+async function deleteJob(job: ScheduledJob): Promise<void> {
+  const confirmed = window.confirm(`删除定时任务“${job.name}”？该操作不可恢复。`)
+  if (!confirmed) return
+  await scheduledJobs.remove(job.id)
+  if (editingJobId.value === job.id) resetEditor()
+}
+
+function jobInputFromJob(job: ScheduledJob): ScheduledJobInput {
+  return {
+    project_id: job.project_id,
+    source_revision_id: job.source_revision_id,
+    environment_revision_id: job.environment_revision_id,
+    environment_id: job.environment_id,
+    name: job.name,
+    target_type: job.target_type,
+    target_ids: [...job.target_ids],
+    schedule_type: job.schedule_type,
+    cron_expression: job.cron_expression || scheduleDefaultExpressions[job.schedule_type],
+    environment_strategy: job.environment_strategy,
+    enabled: job.enabled,
+    notify_feishu: job.notify_feishu,
+    retry_count: job.retry_count,
+    timeout_seconds: job.timeout_seconds,
+  }
 }
 
 function baselineGroupOptions(): TargetOption[] {
-  const counts = new Map<string, number>()
+  const groups = new Map<string, ApiBaselineCase[]>()
   for (const item of activeBaselines.value) {
     const name = baselineGroup(item)
-    counts.set(name, (counts.get(name) || 0) + 1)
+    groups.set(name, [...(groups.get(name) || []), item])
   }
-  return [...counts.entries()]
+  return [...groups.entries()]
     .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
-    .map(([name, count]) => ({
-      id: name,
-      title: name,
-      subtitle: `${count} 条可执行基线`,
-      meta: '基线分组',
-    }))
+    .map(([name, items]) => {
+      const sample = items[0]
+      const sampleText = sample ? `${sample.case_name || sample.endpoint_summary || sample.path} · ${sample.method} ${sample.path}` : ''
+      return {
+        id: name,
+        title: name,
+        subtitle: [`${items.length} 条可执行基线`, sampleText].filter(Boolean).join(' · '),
+        meta: '基线分组',
+      }
+    })
 }
 
 function baselineOption(item: ApiBaselineCase): TargetOption {
@@ -245,7 +366,7 @@ function byTitle(left: TargetOption, right: TargetOption): number {
         <h1>定时任务</h1>
         <p class="page-subtitle">定时任务独立保存项目、目标和环境策略；手动执行会生成带“定时任务”来源的执行记录。</p>
       </div>
-      <button type="button" class="secondary-command" :disabled="!projectId || scheduledJobs.loading" @click="scheduledJobs.load(projectId)">
+      <button type="button" class="secondary-command" data-testid="scheduled-refresh" :disabled="!projectId || scheduledJobs.loading" @click="refreshAll">
         <RefreshCw :size="15" :class="{ 'is-spinning': scheduledJobs.loading }" />刷新
       </button>
     </header>
@@ -261,15 +382,25 @@ function byTitle(left: TargetOption, right: TargetOption): number {
             <span>{{ targetTypeLabel(job.target_type) }} · {{ scheduleLabel(job) }} · {{ job.notify_feishu ? '飞书通知' : '不通知' }}</span>
             <small>{{ job.target_ids.join('、') || '暂无目标' }}</small>
           </div>
-          <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id" @click="runJob(job)">
-            <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
-          </button>
+          <div class="scheduled-row-actions">
+            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" title="启用" @click="toggleJobFlag(job, 'enabled')"><span /></button>
+            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :class="{ active: job.notify_feishu }" title="飞书通知" @click="toggleJobFlag(job, 'notify_feishu')"><span /></button>
+            <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
+            <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
+            <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id" @click="runJob(job)">
+              <Play :size="14" />{{ scheduledJobs.runningId === job.id ? '投递中' : '手动执行一次' }}
+            </button>
+          </div>
         </article>
         <p v-if="!scheduledJobs.items.length" class="section-empty">暂无定时任务。</p>
       </section>
 
       <section class="scheduled-editor">
-        <header class="panel-header"><h2>新建定时任务</h2><CalendarClock :size="17" /></header>
+        <header class="panel-header">
+          <h2>{{ editorTitle }}</h2>
+          <button v-if="editingJobId" type="button" class="text-command" data-testid="scheduled-new" @click="resetEditor">新建</button>
+          <CalendarClock v-else :size="17" />
+        </header>
         <div class="setup-grid two">
           <label>任务名称<input v-model="form.name" data-testid="scheduled-name" placeholder="例如：每日发版回归" /></label>
           <label>目标类型
@@ -290,19 +421,39 @@ function byTitle(left: TargetOption, right: TargetOption): number {
             </header>
             <p v-if="targetLoadError" class="compact-empty">{{ targetLoadError }}</p>
             <div v-else class="target-option-list">
-              <button
-                v-for="option in filteredTargetOptions"
-                :key="`${form.targetType}-${option.id}`"
-                type="button"
-                class="target-option"
-                :class="{ active: isTargetSelected(option.id) }"
-                data-testid="scheduled-target-option"
-                @click="toggleTarget(option.id)"
-              >
-                <span class="target-check"><Check v-if="isTargetSelected(option.id)" :size="13" /></span>
-                <span class="target-copy"><strong>{{ option.title }}</strong><small>{{ option.subtitle }}</small></span>
-                <b>{{ option.meta }}</b>
-              </button>
+              <template v-if="form.targetType === 'baselines'">
+                <div v-for="group in filteredBaselineGroups" :key="group.name" class="target-group">
+                  <div class="target-group-head"><strong>{{ group.name }}</strong><span>{{ group.options.length }}</span></div>
+                  <button
+                    v-for="option in group.options"
+                    :key="`${form.targetType}-${option.id}`"
+                    type="button"
+                    class="target-option"
+                    :class="{ active: isTargetSelected(option.id) }"
+                    data-testid="scheduled-target-option"
+                    @click="toggleTarget(option.id)"
+                  >
+                    <span class="target-check"><Check v-if="isTargetSelected(option.id)" :size="13" /></span>
+                    <span class="target-copy"><strong>{{ option.title }}</strong><small>{{ option.subtitle }}</small></span>
+                    <b>{{ option.meta }}</b>
+                  </button>
+                </div>
+              </template>
+              <template v-else>
+                <button
+                  v-for="option in filteredTargetOptions"
+                  :key="`${form.targetType}-${option.id}`"
+                  type="button"
+                  class="target-option"
+                  :class="{ active: isTargetSelected(option.id) }"
+                  data-testid="scheduled-target-option"
+                  @click="toggleTarget(option.id)"
+                >
+                  <span class="target-check"><Check v-if="isTargetSelected(option.id)" :size="13" /></span>
+                  <span class="target-copy"><strong>{{ option.title }}</strong><small>{{ option.subtitle }}</small></span>
+                  <b>{{ option.meta }}</b>
+                </button>
+              </template>
               <p v-if="!filteredTargetOptions.length" class="section-empty">暂无可选目标。</p>
             </div>
           </section>
@@ -318,6 +469,7 @@ function byTitle(left: TargetOption, right: TargetOption): number {
                 @click="setScheduleType(option.value)"
               >{{ option.label }}</button>
             </div>
+            <p class="schedule-time-note">{{ scheduleTimeDescriptions[form.scheduleType] }}</p>
           </fieldset>
           <section v-if="form.scheduleType === 'cron'" class="cron-preset-panel wide">
             <label>Cron 表达式<input v-model="form.cronExpression" data-testid="scheduled-cron" placeholder="0 2 * * *" /></label>
@@ -355,7 +507,7 @@ function byTitle(left: TargetOption, right: TargetOption): number {
         </div>
         <footer class="notification-actions">
           <span>当前项目：{{ context.projects.find(item => item.id === projectId)?.name || '未选择' }}</span>
-          <button data-testid="scheduled-save" type="button" class="primary-command" :disabled="scheduledJobs.saving" @click="saveJob"><Save :size="14" />{{ scheduledJobs.saving ? '保存中' : '保存定时任务' }}</button>
+          <button data-testid="scheduled-save" type="button" class="primary-command" :disabled="scheduledJobs.saving" @click="saveJob"><Save :size="14" />{{ saveLabel }}</button>
         </footer>
       </section>
     </div>
