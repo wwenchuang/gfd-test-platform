@@ -177,12 +177,12 @@ def test_load_reportable_cases_accepts_multiple_case_sets(report_workspace):
     assert by_selection_id["case-b::TC-001"]["default_selected"] is True
 
 
-def test_preview_uses_concise_scope_and_unexecuted_quality(report_workspace):
+def test_preview_uses_full_automation_statistics_and_passed_quality(report_workspace):
     from task_server.services import test_report_service
 
     result = test_report_service.preview_test_report({
         "case_set_id": "case-a",
-        "selected_case_ids": ["TC-001", "TC-002", "TC-003", "TC-004"],
+        "selected_case_ids": ["TC-001"],
         "meta": {
             "report_title": "共享打印V1.2.2-测试报告",
             "tester": "王文闯",
@@ -193,12 +193,49 @@ def test_preview_uses_concise_scope_and_unexecuted_quality(report_workspace):
     })
 
     assert result["statistics"]["total"] == 4
-    assert result["statistics"]["not_executed"] == 4
-    assert result["quality"]["result"] == "未执行"
+    assert result["statistics"]["passed"] == 4
+    assert result["statistics"]["not_executed"] == 0
+    assert result["statistics"]["pass_rate"] == 100
+    assert result["quality"]["result"] == "通过"
+    assert "核心测试范围" in result["quality"]["text"]
+    assert "发布准入" in result["quality"]["text"]
+    assert result["release"]["suggestion"] == "建议发布"
+    assert "按既定发布流程推进上线" in result["release"]["text"]
     assert "测试范围" not in result["scope_markdown"]
     assert "模块与权限" in result["scope_markdown"]
     assert result["scope_markdown"].count("\n") <= 10
-    assert "仅完成测试设计" in result["release"]["suggestion"]
+
+
+def test_preview_uses_manual_defect_severity_statistics(report_workspace):
+    from task_server.services import test_report_service
+
+    result = test_report_service.preview_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001"],
+        "defects": {
+            "fatal": 1,
+            "serious": 2,
+            "normal": 3,
+            "minor": 4,
+        },
+        "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+    })
+
+    assert result["statistics"]["total"] == 4
+    assert result["statistics"]["passed"] == 4
+    assert result["statistics"]["defect_total"] == 10
+    assert result["defects"] == {
+        "fatal": 1,
+        "serious": 2,
+        "normal": 3,
+        "minor": 4,
+        "total": 10,
+    }
+    assert "| 致命 | 严重 | 一般 | 轻微 | 总计 |" in result["defect_table"]
+    assert "| 1 | 2 | 3 | 4 | 10 |" in result["defect_table"]
+    assert "测试结果： 通过" in result["markdown"]
+    assert "建议发布：本轮测试结论为通过" in result["markdown"]
+    assert "按既定发布流程推进上线" in result["markdown"]
 
 
 def test_preview_merges_multiple_mindmaps_without_case_id_collision(report_workspace):
@@ -247,7 +284,9 @@ def test_preview_merges_multiple_mindmaps_without_case_id_collision(report_works
 
     assert result["case_set_ids"] == ["case-a", "case-b"]
     assert result["source_count"] == 2
-    assert result["statistics"]["total"] == 2
+    assert result["statistics"]["total"] == 6
+    assert result["statistics"]["passed"] == 6
+    assert result["statistics"]["not_executed"] == 0
     assert [case["selection_id"] for case in result["cases"]] == ["case-a::TC-001", "case-b::TC-001"]
     assert result["cases"][0]["source_title"] == "共享打印V1.2.2"
     assert result["cases"][1]["source_title"] == "押丝珑琅AI生成"
@@ -277,10 +316,15 @@ def test_create_report_persists_markdown_html_and_index(report_workspace):
     assert Path(result["files"]["html"]).exists()
     markdown = Path(result["files"]["markdown"]).read_text(encoding="utf-8")
     html = Path(result["files"]["html"]).read_text(encoding="utf-8")
-    assert "## 1. 基本信息" in markdown
-    assert "## 2. 测试概要" in markdown
+    assert "## 1. 报告结论" in markdown
+    assert "## 2. 基本信息" in markdown
+    assert "## 3. 测试概要" in markdown
     assert "测试范围" in markdown
+    assert "准入结论" in markdown
+    assert "版本质量满足发布要求" in markdown
+    assert "| 4 | 4 | 0 | 0 | 0 | 100% | 0 |" in markdown
     assert "共享打印V1.2.2-测试报告" in html
+    assert "report-summary" in html
     assert test_report_service.read_test_report(result["report_id"])["report_id"] == result["report_id"]
     indexed = test_report_service.list_test_reports(case_set_id="case-a")
     assert [item["report_id"] for item in indexed] == [result["report_id"]]
@@ -296,7 +340,7 @@ def test_default_report_body_uses_test_points_without_case_details(report_worksp
     })
 
     markdown = result["markdown"]
-    assert "## 3. 主要测试点" in markdown
+    assert "## 4. 主要测试点" in markdown
     assert "1. " in result["test_points_markdown"]
     assert "2. " in result["test_points_markdown"]
     assert "选中用例明细" not in markdown
@@ -338,9 +382,10 @@ def test_template_missing_sections_gets_default_fallback(report_workspace):
     })
 
     assert "# 共享打印V1.2.2-测试报告" in result["markdown"]
-    assert "## 2. 测试概要" in result["markdown"]
-    assert "## 3. 主要测试点" in result["markdown"]
-    assert "## 6. 发布建议" in result["markdown"]
+    assert "## 1. 报告结论" in result["markdown"]
+    assert "## 3. 测试概要" in result["markdown"]
+    assert "## 4. 主要测试点" in result["markdown"]
+    assert "## 7. 发布建议" in result["markdown"]
 
 
 def test_preview_enriches_execution_result_from_midscene_report_index(report_workspace):
@@ -368,7 +413,7 @@ def test_preview_enriches_execution_result_from_midscene_report_index(report_wor
 
     by_id = {case["case_id"]: case for case in result["cases"]}
     assert by_id["TC-001"]["status"] == "passed"
-    assert by_id["TC-001"]["report_url"] == "/reports/share-permission/index.html"
-    assert by_id["TC-002"]["status"] == "not_executed"
-    assert result["statistics"]["passed"] == 1
-    assert result["statistics"]["not_executed"] == 1
+    assert by_id["TC-002"]["status"] == "passed"
+    assert result["statistics"]["total"] == 4
+    assert result["statistics"]["passed"] == 4
+    assert result["statistics"]["not_executed"] == 0

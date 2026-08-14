@@ -3664,6 +3664,20 @@ function mindmapReportSelectedClientSides() {
     .join(' / ');
 }
 
+function mindmapReportNumberValue(id) {
+  const value = Number(document.getElementById(id)?.value || 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function mindmapReportDefectsPayload() {
+  return {
+    fatal: mindmapReportNumberValue('mindmap-report-defect-fatal'),
+    serious: mindmapReportNumberValue('mindmap-report-defect-serious'),
+    normal: mindmapReportNumberValue('mindmap-report-defect-normal'),
+    minor: mindmapReportNumberValue('mindmap-report-defect-minor')
+  };
+}
+
 function mindmapReportCaseVisible(item = {}) {
   const keyword = (document.getElementById('mindmap-report-search')?.value || '').trim().toLowerCase();
   const priority = document.getElementById('mindmap-report-priority')?.value || 'all';
@@ -3715,6 +3729,7 @@ function mindmapReportPayload() {
     case_set_id: caseSetIds[0] || '',
     case_set_ids: caseSetIds,
     selected_case_ids: mindmapReportSelectedIds(),
+    defects: mindmapReportDefectsPayload(),
     template_id: document.getElementById('mindmap-report-template')?.value || '',
     meta: mindmapReportMetaPayload()
   };
@@ -3732,6 +3747,7 @@ function mindmapReportStatsHtml(data = {}) {
       <div><strong>${escapeHtml(stats.blocked ?? '-')}</strong><span>阻塞</span></div>
       <div><strong>${escapeHtml(stats.not_executed ?? '-')}</strong><span>未执行</span></div>
       <div><strong>${escapeHtml(stats.pass_rate ?? 0)}%</strong><span>通过率</span></div>
+      <div><strong>${escapeHtml(stats.defect_total ?? 0)}</strong><span>缺陷总数</span></div>
     </div>
     <div class="mindmap-report-decision">
       <span>质量评估：${escapeHtml(quality.result || '-')}</span>
@@ -3945,6 +3961,14 @@ function renderMindmapReportBuilder(data) {
             <label>测试用例链接<input id="mindmap-report-case-link" placeholder="http://qa-agiletc.gongfudou.com/caseManager/..."></label>
             <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
+            <label class="wide">缺陷统计
+              <span class="mindmap-report-defect-grid">
+                <span class="mindmap-report-defect-field"><em>致命</em><input id="mindmap-report-defect-fatal" type="number" min="0" step="1" value="0"></span>
+                <span class="mindmap-report-defect-field"><em>严重</em><input id="mindmap-report-defect-serious" type="number" min="0" step="1" value="0"></span>
+                <span class="mindmap-report-defect-field"><em>一般</em><input id="mindmap-report-defect-normal" type="number" min="0" step="1" value="0"></span>
+                <span class="mindmap-report-defect-field"><em>轻微</em><input id="mindmap-report-defect-minor" type="number" min="0" step="1" value="0"></span>
+              </span>
+            </label>
             <label class="wide">报告模板
               <span class="mindmap-report-template-row">
                 <select id="mindmap-report-template">${mindmapReportTemplateOptions()}</select>
