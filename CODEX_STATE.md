@@ -34,6 +34,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 工作台：接口范围搜索固定、分组折叠和命中高亮
+
+用户反馈工作台接口范围列表滚动后搜索框不方便使用，同步过来的接口分组默认展开过长，搜索命中项最好高亮。
+
+本轮修复：
+
+- 接口范围面板顶部标题、全部/已选 Tab 和搜索框都固定在滚动容器顶部，滚动接口列表时搜索框保持可见。
+- 接口分组首次同步进来默认折叠，只显示分组名、选择框和数量；点击分组箭头后展开接口明细。
+- 用户手动展开/折叠的状态会保留，新同步进来的分组默认折叠。
+- 搜索时匹配到的折叠分组会临时展开，避免搜索结果藏在折叠分组里。
+- 搜索命中会在分组名、接口名称和接口路径中高亮匹配片段，例如输入 `qidi` 时路径里的 `qidi` 会标黄。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/EndpointTree.spec.ts --reporter=basic
+# 1 file / 11 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 32 files / 178 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-JdpJNbuJ.js and index-B-96TOjC.css
+
+python3 tests/frontend_static_checks.py
+# 81 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 定时任务：基线选择口径、Cron 校验和开关标记
 
 用户继续反馈定时任务页中基线分组/多条基线没有和基线库列表同步，Cron 手写表达式缺少校验和含义说明，列表开关缺少可读标记。

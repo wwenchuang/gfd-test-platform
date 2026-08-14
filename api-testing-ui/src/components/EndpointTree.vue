@@ -8,6 +8,11 @@ const props = withDefaults(defineProps<{ endpoints: ApiEndpoint[]; selectedIds?:
   selectedIds: () => [], state: 'ready', error: '',
 })
 const emit = defineEmits<{ 'selection-change': [ids: string[]]; activate: [endpoint: ApiEndpoint] }>()
+interface HighlightSegment {
+  text: string
+  match: boolean
+}
+
 const query = ref('')
 const selected = ref(new Set(props.selectedIds))
 const activeTab = ref<'all' | 'selected'>('all')
@@ -21,6 +26,7 @@ const filtered = computed(() => {
   return props.endpoints.filter(item => [item.summary, item.path, item.method, endpointGroupName(item), ...item.tags].join(' ').toLocaleLowerCase().includes(needle))
 })
 const groups = computed(() => groupEndpoints(filtered.value))
+const allGroupNames = computed(() => groupEndpoints(props.endpoints).map(([group]) => group))
 const selectedEndpoints = computed(() => props.endpoints.filter(endpoint => selected.value.has(endpoint.id)))
 const filteredSelectedEndpoints = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
@@ -28,6 +34,17 @@ const filteredSelectedEndpoints = computed(() => {
   return selectedEndpoints.value.filter(item => matchesEndpoint(item, needle))
 })
 const selectedGroups = computed(() => groupEndpoints(filteredSelectedEndpoints.value))
+const knownGroupNames = ref(new Set<string>())
+
+watch(allGroupNames, names => {
+  const visible = new Set(names)
+  const next = new Set([...collapsedGroups.value].filter(group => visible.has(group)))
+  for (const group of names) {
+    if (!knownGroupNames.value.has(group)) next.add(group)
+  }
+  knownGroupNames.value = visible
+  collapsedGroups.value = next
+}, { immediate: true })
 
 function matchesEndpoint(endpoint: ApiEndpoint, needle: string): boolean {
   return [
@@ -140,6 +157,30 @@ function toggleCollapsed(group: string): void {
   collapsedGroups.value = next
 }
 
+function isGroupCollapsed(group: string): boolean {
+  return !query.value.trim() && collapsedGroups.value.has(group)
+}
+
+function highlightText(value: string): HighlightSegment[] {
+  const text = value || ''
+  const needle = query.value.trim()
+  if (!needle) return [{ text, match: false }]
+  const lowerText = text.toLocaleLowerCase()
+  const lowerNeedle = needle.toLocaleLowerCase()
+  const segments: HighlightSegment[] = []
+  let cursor = 0
+  let index = lowerText.indexOf(lowerNeedle)
+  while (index >= 0) {
+    if (index > cursor) segments.push({ text: text.slice(cursor, index), match: false })
+    const end = index + needle.length
+    segments.push({ text: text.slice(index, end), match: true })
+    cursor = end
+    index = lowerText.indexOf(lowerNeedle, cursor)
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), match: false })
+  return segments.length ? segments : [{ text, match: false }]
+}
+
 function clearSelected(): void {
   updateSelection(new Set())
 }
@@ -152,7 +193,9 @@ function clearSelected(): void {
       <button data-testid="all-tab" type="button" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">全部接口</button>
       <button data-testid="selected-tab" type="button" :class="{ active: activeTab === 'selected' }" @click="activeTab = 'selected'">已选接口 <span>{{ selected.size }}</span></button>
     </div>
-    <label class="search-box"><Search :size="15" /><span class="sr-only">搜索接口</span><input v-model="query" data-testid="endpoint-search" placeholder="搜索名称或路径" /></label>
+    <div class="endpoint-search-bar">
+      <label class="search-box"><Search :size="15" /><span class="sr-only">搜索接口</span><input v-model="query" data-testid="endpoint-search" placeholder="搜索名称或路径" /></label>
+    </div>
     <p v-if="state === 'loading'" class="state-message">正在读取接口...</p>
     <p v-else-if="state === 'failed'" class="state-message state-error">{{ error || '接口读取失败' }}</p>
     <p v-else-if="state === 'empty'" class="state-message">尚无已保存接口，请先导入接口来源。</p>
@@ -169,14 +212,19 @@ function clearSelected(): void {
               @change="toggleGroup(items, ($event.target as HTMLInputElement).checked)"
             />
             <button :data-testid="`group-toggle-${group}`" type="button" @click="toggleCollapsed(group)">
-              <ChevronRight v-if="collapsedGroups.has(group)" :size="14" />
+              <ChevronRight v-if="isGroupCollapsed(group)" :size="14" />
               <ChevronDown v-else :size="14" />
-              <span>{{ group }}</span>
+              <span>
+                <template v-for="(segment, index) in highlightText(group)" :key="`${group}-group-${index}`">
+                  <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                  <template v-else>{{ segment.text }}</template>
+                </template>
+              </span>
             </button>
           </label>
           <span :data-testid="`group-selected-count-${group}`">{{ selectedCount(items) ? `${selectedCount(items)} 已选 / ` : '' }}{{ items.length }}</span>
         </h3>
-        <template v-if="!collapsedGroups.has(group)">
+        <template v-if="!isGroupCollapsed(group)">
           <label v-for="endpoint in items" :key="endpoint.id" class="endpoint-row" @dblclick="emit('activate', endpoint)">
             <input
               :data-testid="`endpoint-${endpoint.id}`"
@@ -186,7 +234,20 @@ function clearSelected(): void {
             />
             <button type="button" class="endpoint-open" @click="emit('activate', endpoint)">
               <span :class="['method-badge', `method-${endpoint.method.toLowerCase()}`]">{{ endpoint.method }}</span>
-              <span class="endpoint-copy"><strong :title="endpoint.summary || endpoint.path">{{ endpoint.summary || endpoint.path }}</strong><small :title="endpoint.path">{{ endpoint.path }}</small></span>
+              <span class="endpoint-copy">
+                <strong :title="endpoint.summary || endpoint.path">
+                  <template v-for="(segment, index) in highlightText(endpoint.summary || endpoint.path)" :key="`${endpoint.id}-summary-${index}`">
+                    <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                    <template v-else>{{ segment.text }}</template>
+                  </template>
+                </strong>
+                <small :title="endpoint.path">
+                  <template v-for="(segment, index) in highlightText(endpoint.path)" :key="`${endpoint.id}-path-${index}`">
+                    <mark v-if="segment.match" class="search-highlight">{{ segment.text }}</mark>
+                    <template v-else>{{ segment.text }}</template>
+                  </template>
+                </small>
+              </span>
             </button>
           </label>
         </template>

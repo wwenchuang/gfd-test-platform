@@ -14,7 +14,8 @@ describe('EndpointTree', () => {
   it('keeps endpoint selection while filtering the tree', async () => {
     const wrapper = mount(EndpointTree, { props: { endpoints: FAVORITES } })
 
-    await wrapper.find('[data-testid="endpoint-endpoint-1"]').setValue(true)
+    await wrapper.get('[data-testid="group-toggle-我的收藏"]').trigger('click')
+    await wrapper.get('[data-testid="endpoint-endpoint-1"]').setValue(true)
     await wrapper.find('[data-testid="endpoint-search"]').setValue('删除收藏')
 
     expect(wrapper.emitted('selection-change')?.at(-1)?.[0]).toEqual(['endpoint-1'])
@@ -29,11 +30,18 @@ describe('EndpointTree', () => {
     expect(mount(EndpointTree, { props: { endpoints: FAVORITES, state: 'partial' } }).text()).toContain('部分接口未能读取')
   })
 
-  it('keeps complete names and paths available when compact rows truncate them', () => {
+  it('keeps complete names and paths available when compact rows truncate them', async () => {
     const wrapper = mount(EndpointTree, { props: { endpoints: FAVORITES } })
 
+    await wrapper.get('[data-testid="group-toggle-我的收藏"]').trigger('click')
     expect(wrapper.get('.endpoint-copy strong').attributes('title')).toBe('收藏列表')
     expect(wrapper.get('.endpoint-copy small').attributes('title')).toBe('/favorite/list')
+  })
+
+  it('keeps the endpoint search controls sticky above the scrollable grouped list', () => {
+    const wrapper = mount(EndpointTree, { props: { endpoints: FAVORITES } })
+
+    expect(wrapper.get('.endpoint-search-bar').find('[data-testid="endpoint-search"]').exists()).toBe(true)
   })
 
   it('groups endpoints by Apifox folders and keeps ungrouped endpoints last', () => {
@@ -74,7 +82,7 @@ describe('EndpointTree', () => {
     expect(groupTitles.at(-1)).toContain('未分组接口')
   })
 
-  it('collapses groups and toggles all endpoints in a group', async () => {
+  it('starts synced groups collapsed, expands on demand, and toggles all endpoints in a group', async () => {
     const wrapper = mount(EndpointTree, {
       props: {
         endpoints: [
@@ -85,15 +93,50 @@ describe('EndpointTree', () => {
       },
     })
 
-    await wrapper.get('[data-testid="group-toggle-我的收藏"]').trigger('click')
-    expect(wrapper.text()).not.toContain('/favorite/list')
     expect(wrapper.text()).toContain('我的收藏')
+    expect(wrapper.text()).not.toContain('/favorite/list')
 
     await wrapper.get('[data-testid="group-toggle-我的收藏"]').trigger('click')
+    expect(wrapper.text()).toContain('/favorite/list')
+
     await wrapper.get('[data-testid="group-select-我的收藏"]').setValue(true)
 
     expect(wrapper.emitted('selection-change')?.at(-1)?.[0]).toEqual(['endpoint-1', 'endpoint-2'])
     expect(wrapper.get('[data-testid="group-selected-count-我的收藏"]').text()).toContain('2 已选')
+  })
+
+  it('auto-expands matching collapsed groups while searching', async () => {
+    const wrapper = mount(EndpointTree, {
+      props: {
+        endpoints: [
+          { id: 'endpoint-1', method: 'GET', path: '/favorite/list', summary: '收藏列表', tags: ['我的收藏'] },
+          { id: 'endpoint-2', method: 'POST', path: '/favorite/add', summary: '添加收藏', tags: ['我的收藏'] },
+        ],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('/favorite/list')
+
+    await wrapper.get('[data-testid="endpoint-search"]').setValue('收藏列表')
+
+    expect(wrapper.text()).toContain('收藏列表')
+    expect(wrapper.text()).toContain('/favorite/list')
+  })
+
+  it('highlights search matches in endpoint names, paths, and groups', async () => {
+    const wrapper = mount(EndpointTree, {
+      props: {
+        endpoints: [
+          { id: 'endpoint-1', method: 'POST', path: '/pmc/api/v1/iot/qidiAuth', summary: '获取设备密钥', tags: ['本地测试', '启迪设备'] },
+        ],
+      },
+    })
+
+    await wrapper.get('[data-testid="endpoint-search"]').setValue('qidi')
+
+    const highlights = wrapper.findAll('mark.search-highlight').map(item => item.text())
+    expect(highlights).toContain('qidi')
+    expect(wrapper.text()).toContain('/pmc/api/v1/iot/qidiAuth')
   })
 
   it('shows selected endpoints separately and removes them without losing the full tree', async () => {
@@ -118,6 +161,7 @@ describe('EndpointTree', () => {
     expect(wrapper.emitted('selection-change')?.at(-1)?.[0]).toEqual(['endpoint-3'])
 
     await wrapper.get('[data-testid="all-tab"]').trigger('click')
+    await wrapper.get('[data-testid="group-toggle-我的收藏"]').trigger('click')
     expect(wrapper.text()).toContain('添加收藏')
   })
 
