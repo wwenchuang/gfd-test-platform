@@ -179,6 +179,16 @@ from task_server.services.sonic_service import (
     task_case_sonic_context,
     touch_sonic_suite_activity,
 )
+from task_server.services.test_report_service import (
+    TestReportError,
+    create_test_report,
+    list_test_report_templates,
+    list_test_reports,
+    load_reportable_cases,
+    preview_test_report,
+    read_test_report,
+    save_test_report_template,
+)
 from task_server.services.yaml_baseline_cache import (
     get_yaml_baseline_cache,
     get_yaml_baseline_cache_status,
@@ -2208,6 +2218,59 @@ def _get_reports(handler, qs):
     handler._json({"ok": True, "reports": reports, "total": len(reports)})
 
 
+# ── 脑图测试报告 ────────────────────────────────────────────────────
+
+@route_get("/api/test-reports/cases")
+def _get_test_report_cases(handler, qs):
+    case_set_id = qs.get("case_set_id") or qs.get("caseSetId") or qs.get("id")
+    try:
+        handler._json(load_reportable_cases(case_set_id))
+    except TestReportError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+    except Exception as exc:
+        handler._json({"ok": False, "error": f"读取可报告用例失败：{exc}"}, 500)
+
+
+@route_get("/api/test-reports")
+def _get_test_reports(handler, qs):
+    case_set_id = qs.get("case_set_id") or qs.get("caseSetId") or ""
+    limit = safe_int(qs.get("limit"), 100)
+    handler._json({"ok": True, "reports": list_test_reports(case_set_id=case_set_id, limit=limit)})
+
+
+@route_get("/api/test-reports/download")
+def _get_test_report_download(handler, qs):
+    report_id = qs.get("report_id") or qs.get("reportId") or qs.get("id")
+    output_format = str(qs.get("format") or "html").strip().lower()
+    if output_format not in {"html", "md", "markdown"}:
+        handler._json({"ok": False, "error": "format 只支持 html 或 md"}, 400)
+        return
+    report = read_test_report(report_id)
+    if not report:
+        handler._json({"ok": False, "error": "测试报告不存在"}, 404)
+        return
+    files = report.get("files") if isinstance(report.get("files"), dict) else {}
+    path = files.get("markdown") if output_format in {"md", "markdown"} else files.get("html")
+    if not path or not os.path.exists(path):
+        handler._json({"ok": False, "error": "测试报告文件不存在，请重新生成"}, 404)
+        return
+    try:
+        body = read_text_file(path).encode("utf-8")
+    except Exception as exc:
+        handler._json({"ok": False, "error": f"读取测试报告文件失败：{exc}"}, 500)
+        return
+    title = str(report.get("title") or report_id or "测试报告").strip()
+    suffix = "测试报告.md" if output_format in {"md", "markdown"} else "测试报告.html"
+    filename = clean_asset_filename(f"{title}_{suffix}", default=f"{report_id}_{suffix}")
+    content_type = "text/markdown; charset=utf-8" if output_format in {"md", "markdown"} else "text/html; charset=utf-8"
+    send_attachment(handler, body, filename, content_type)
+
+
+@route_get("/api/test-reports/templates")
+def _get_test_report_templates(handler, qs):
+    handler._json({"ok": True, "templates": list_test_report_templates()})
+
+
 # ── Trace / DAG Debugger ─────────────────────────────────────────────
 
 def _debug_auth_required(handler):
@@ -2627,6 +2690,50 @@ def _post_reports_rebuild_index(handler, qs):
     from task_server.services.report_service import rebuild_index
     result = rebuild_index()
     handler._json(result)
+
+
+# ── 脑图测试报告（POST）──────────────────────────────────────────────
+
+@route_post("/api/test-reports/preview")
+def _post_test_reports_preview(handler, qs):
+    try:
+        d = handler._body()
+    except Exception:
+        d = {}
+    try:
+        handler._json(preview_test_report(d))
+    except TestReportError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+    except Exception as exc:
+        handler._json({"ok": False, "error": f"生成测试报告预览失败：{exc}"}, 500)
+
+
+@route_post("/api/test-reports")
+def _post_test_reports(handler, qs):
+    try:
+        d = handler._body()
+    except Exception:
+        d = {}
+    try:
+        handler._json(create_test_report(d))
+    except TestReportError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+    except Exception as exc:
+        handler._json({"ok": False, "error": f"生成测试报告失败：{exc}"}, 500)
+
+
+@route_post("/api/test-reports/templates")
+def _post_test_report_templates(handler, qs):
+    try:
+        d = handler._body()
+    except Exception:
+        d = {}
+    try:
+        handler._json({"ok": True, "template": save_test_report_template(d)})
+    except TestReportError as exc:
+        handler._json({"ok": False, "error": str(exc)}, 400)
+    except Exception as exc:
+        handler._json({"ok": False, "error": f"保存测试报告模板失败：{exc}"}, 500)
 
 
 # ── 报告上传（原始）─────────────────────────────────────────────────

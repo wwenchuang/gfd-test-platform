@@ -72,6 +72,38 @@ git diff --check
 # passed
 ```
 
+### 2026-08-14 脑图用例测试报告：实现完成
+
+用户确认按“测试设计报告 + 可选执行结果补充”落地，并要求参考基础模板、优化模板、测试范围精简。
+
+本轮实现：
+
+- 新增 `task_server/services/test_report_service.py`：从 `summary.json` 读取脑图用例，归一化自动化/人工用例，默认选择 P0 / P1 / 冒烟自动化用例。
+- 测试范围按功能点和场景聚合，正文最多展示 8 个场景、每个功能点最多 3 个核心场景；完整用例进入附录。
+- 新增测试报告 Markdown / HTML 默认模板，结构为 `基本信息 / 测试概要 / 测试数据 / 质量评估 / 发布建议 / 附录`。
+- 支持 Markdown / HTML 文本模板上传，模板缺少关键区块时自动补默认区块。
+- 保存报告到 `CASE_DIR/<case_set_id>/test-reports/<report_id>/`，同时维护 `LEARNING_DIR/test-report-index.json`。
+- 新增 `/api/test-reports/*` 路由：读取可报告用例、预览、生成、下载、模板列表和模板上传；不改变现有 `/api/reports` Runner 报告索引语义。
+- 脑图中心每条记录新增“生成报告”，进入两栏式报告生成页：左侧筛选/勾选用例，右侧填写标题、测试周期、测试人员、涉及端侧、版本、环境、需求链接、用例链接、测试目标、备注和模板。
+- 若 `summary.generatedCaseGroups` 能映射到 YAML 文件，且 `LEARNING_DIR/report-index.json` 中已有同模块同 YAML 文件执行报告，则保守补充用例状态和报告链接；匹配不到标记为未执行。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/services/test_report_service.py task_server/router.py
+.venv/bin/python -m pytest tests/test_mindmap_test_report_service.py -q
+.venv/bin/python tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/app.js
+node --check js/state.js
+git diff --check
+```
+
+注意：
+
+- 系统 `python3 tests/backend_static_checks.py` 当前会因仓库内已有 `task_server/api_testing/services/scheduled_job_service.py` 使用 `str | None` 而在较旧系统 Python 下失败；同一检查使用项目 `.venv/bin/python` 已通过。
+- 工作区中存在一批与本功能无关的 API 定时任务文件改动，本轮不回滚、不提交。
+
 ### 2026-08-14 脑图用例测试报告：设计规格
 
 用户希望在脑图中心基于 `.mm` / 需求用例选择范围生成正式测试报告，支持自定义标题、测试时间、测试人员、涉及端侧，并支持上传模板。

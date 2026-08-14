@@ -2791,6 +2791,222 @@
     padding: 3px 7px;
     white-space: nowrap;
   }
+  .mindmap-report-layout {
+    display: grid;
+    grid-template-columns: minmax(360px, .9fr) minmax(460px, 1.1fr);
+    align-items: start;
+    gap: 14px;
+    min-width: 0;
+  }
+  .mindmap-report-panel {
+    border: 1px solid rgba(51,80,109,.72);
+    border-radius: 8px;
+    background: rgba(7,12,24,.58);
+    padding: 12px;
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+  .mindmap-report-panel .section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(51,80,109,.52);
+  }
+  .mindmap-report-panel .section-head h3,
+  .mindmap-report-scope h3,
+  .mindmap-report-markdown h3 {
+    font-size: 16px;
+    line-height: 1.35;
+  }
+  .mindmap-report-panel .section-head p {
+    margin-top: 4px;
+    color: var(--text2);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .mindmap-report-filters,
+  .mindmap-report-actions,
+  .mindmap-report-template-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+  .mindmap-report-filters input,
+  .mindmap-report-filters select,
+  .mindmap-report-form input,
+  .mindmap-report-form select,
+  .mindmap-report-form textarea {
+    min-width: 0;
+    border: 1px solid rgba(51,80,109,.82);
+    border-radius: 8px;
+    background: rgba(6,10,20,.82);
+    color: var(--text);
+    padding: 8px 10px;
+    font: inherit;
+  }
+  .mindmap-report-filters input {
+    flex: 1 1 180px;
+  }
+  .mindmap-report-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    color: var(--text2);
+    font-size: 13px;
+  }
+  .mindmap-report-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .mindmap-report-form label {
+    display: grid;
+    gap: 6px;
+    color: var(--text2);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .mindmap-report-form label.wide {
+    grid-column: 1 / -1;
+  }
+  .mindmap-report-form label:has(input[type="date"]) {
+    grid-template-columns: minmax(80px, auto) minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+  }
+  .mindmap-report-template-row select {
+    flex: 1 1 220px;
+  }
+  .mindmap-report-case-tree {
+    display: grid;
+    gap: 10px;
+    max-height: 68vh;
+    overflow: auto;
+    padding-right: 2px;
+  }
+  .mindmap-report-feature {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+  .mindmap-report-feature-head h3 {
+    font-size: 14px;
+    color: var(--text);
+  }
+  .mindmap-report-scenario {
+    border: 1px solid rgba(51,80,109,.58);
+    border-radius: 8px;
+    background: rgba(9,16,30,.56);
+    padding: 8px;
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .mindmap-report-scenario-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--text2);
+    font-size: 12px;
+  }
+  .mindmap-report-scenario-head strong {
+    color: var(--text);
+    font-size: 13px;
+  }
+  .mindmap-report-case {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    padding: 7px;
+    border-radius: 8px;
+    background: rgba(8,12,22,.58);
+  }
+  .mindmap-report-case:hover {
+    background: rgba(15,27,45,.78);
+  }
+  .mindmap-report-case-main {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+  .mindmap-report-case-main strong {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.35;
+    word-break: break-word;
+  }
+  .mindmap-report-case-main em {
+    color: var(--muted);
+    font-size: 11px;
+    font-style: normal;
+    line-height: 1.45;
+  }
+  .mindmap-report-preview {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+  }
+  .mindmap-report-stats {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .mindmap-report-stats > div {
+    border: 1px solid rgba(51,80,109,.58);
+    border-radius: 8px;
+    background: rgba(9,16,30,.62);
+    padding: 8px;
+    display: grid;
+    gap: 3px;
+  }
+  .mindmap-report-stats strong {
+    color: var(--text);
+    font-size: 18px;
+  }
+  .mindmap-report-stats span,
+  .mindmap-report-decision span,
+  .mindmap-report-result span {
+    color: var(--text2);
+    font-size: 12px;
+  }
+  .mindmap-report-decision,
+  .mindmap-report-result {
+    border: 1px solid rgba(51,80,109,.58);
+    border-radius: 8px;
+    background: rgba(9,16,30,.62);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+  }
+  .mindmap-report-scope,
+  .mindmap-report-markdown {
+    border: 1px solid rgba(51,80,109,.58);
+    border-radius: 8px;
+    background: rgba(9,16,30,.52);
+    padding: 10px;
+    min-width: 0;
+  }
+  .mindmap-report-scope pre,
+  .mindmap-report-markdown pre {
+    margin-top: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text2);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+  .mindmap-report-markdown pre {
+    max-height: 420px;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
   .generation-record-card {
     padding: 14px;
     display: grid;
@@ -2829,7 +3045,8 @@
     background: rgba(8,11,18,.32);
   }
   @media (max-width: 1180px) {
-    .mindmap-center-split {
+    .mindmap-center-split,
+    .mindmap-report-layout {
       grid-template-columns: 1fr;
     }
   }
@@ -2850,6 +3067,13 @@
     .mindmap-row-time,
     .mindmap-row-percent {
       white-space: normal;
+    }
+    .mindmap-report-form,
+    .mindmap-report-stats {
+      grid-template-columns: 1fr;
+    }
+    .mindmap-report-form label:has(input[type="date"]) {
+      grid-template-columns: 1fr;
     }
   }
   .review-page {

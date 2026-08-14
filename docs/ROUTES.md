@@ -158,7 +158,19 @@
 | POST | `/api/report/chunk` | 内联 | Runner | Runner 分片上传报告 |
 | POST | `/api/report/chunk-finish` | 内联 | Runner | Runner 分片上传完成 |
 
-### 2.10 修复草稿
+### 2.10 脑图测试报告
+
+| 方法 | 路径 | Service 函数 | 认证 | 说明 |
+|------|------|-------------|------|------|
+| GET | `/api/test-reports/cases` | `test_report_service.load_reportable_cases` | Session | 读取脑图用例树（`?case_set_id=X`） |
+| POST | `/api/test-reports/preview` | `test_report_service.preview_test_report` | Session | 生成测试报告预览 |
+| POST | `/api/test-reports` | `test_report_service.create_test_report` | Session | 保存测试报告并生成 HTML / Markdown |
+| GET | `/api/test-reports` | `test_report_service.list_test_reports` | Session | 测试报告历史（`?case_set_id=X`） |
+| GET | `/api/test-reports/download` | `test_report_service.read_test_report` | Session | 下载测试报告（`?report_id=X&format=html|md`） |
+| GET | `/api/test-reports/templates` | `test_report_service.list_test_report_templates` | Session | 测试报告模板列表 |
+| POST | `/api/test-reports/templates` | `test_report_service.save_test_report_template` | Session | 上传 Markdown / HTML 模板 |
+
+### 2.11 修复草稿
 
 | 方法 | 路径 | Service 函数 | 认证 | 说明 |
 |------|------|-------------|------|------|

@@ -3558,12 +3558,425 @@ function mindmapRecordCard(item={}) {
       <div class="mindmap-row-actions">
         <button class="btn-sm" onclick="showGenerationReviewByCaseSet(${jsArg(caseSetId)})">生成分析</button>
         ${item.mindmap_downloadable ? `<a class="btn-sm" href="${mindmapDownloadUrl(caseSetId)}" target="_blank">下载</a>` : ''}
+        <button class="btn-sm success" onclick="openMindmapReportBuilder(${jsArg(caseSetId)})">生成报告</button>
         <button class="btn-sm primary" onclick="regenerateGenerationMindmap(${jsArg(caseSetId)}, this)" title="只按现有生成分析重建脑图文件（FreeMind .mm）；不调用千问，不改用例，不覆盖 YAML">刷新脑图文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmap(${jsArg(caseSetId)})">删除文件</button>
         <button class="btn-sm danger" onclick="deleteGenerationMindmapRecord(${jsArg(caseSetId)})" title="从脑图中心隐藏这条记录，同时删除对应 .mm 文件；不删除 YAML 和生成分析">删除记录</button>
       </div>
     </div>
   `;
+}
+
+function flattenMindmapReportCases(data = mindmapReportData) {
+  if (!data || !Array.isArray(data.groups)) return [];
+  const rows = [];
+  data.groups.forEach(group => {
+    (group.scenarios || []).forEach(scenario => {
+      (scenario.cases || []).forEach(item => rows.push(item));
+    });
+  });
+  return rows;
+}
+
+function mindmapReportCaseVisible(item = {}) {
+  const keyword = (document.getElementById('mindmap-report-search')?.value || '').trim().toLowerCase();
+  const priority = document.getElementById('mindmap-report-priority')?.value || 'all';
+  const type = document.getElementById('mindmap-report-type')?.value || 'all';
+  const smoke = document.getElementById('mindmap-report-smoke')?.checked || false;
+  if (priority !== 'all' && String(item.priority || '').toUpperCase() !== priority) return false;
+  if (type !== 'all' && item.source_type !== type) return false;
+  if (smoke && !item.smoke) return false;
+  if (!keyword) return true;
+  const haystack = [
+    item.case_id, item.title, item.feature, item.scenario, item.priority,
+    item.source_type === 'manual' ? '人工' : '自动化'
+  ].join(' ').toLowerCase();
+  return haystack.includes(keyword);
+}
+
+function mindmapReportSelectedIds() {
+  return Array.from(mindmapReportSelection || []).filter(Boolean);
+}
+
+function setMindmapReportStatus(text, type = '') {
+  const el = document.getElementById('mindmap-report-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = `generate-status ${type || ''}`;
+}
+
+function mindmapReportMetaPayload() {
+  return {
+    report_title: document.getElementById('mindmap-report-title')?.value.trim() || '',
+    test_start: document.getElementById('mindmap-report-start')?.value.trim() || '',
+    test_end: document.getElementById('mindmap-report-end')?.value.trim() || '',
+    tester: document.getElementById('mindmap-report-tester')?.value.trim() || '',
+    client_side: document.getElementById('mindmap-report-client')?.value.trim() || '',
+    version: document.getElementById('mindmap-report-version')?.value.trim() || '',
+    environment: document.getElementById('mindmap-report-env')?.value.trim() || '',
+    requirement_link: document.getElementById('mindmap-report-requirement')?.value.trim() || '',
+    case_link: document.getElementById('mindmap-report-case-link')?.value.trim() || '',
+    test_goal: document.getElementById('mindmap-report-goal')?.value.trim() || '',
+    remark: document.getElementById('mindmap-report-remark')?.value.trim() || ''
+  };
+}
+
+function mindmapReportPayload() {
+  return {
+    case_set_id: mindmapReportData?.case_set_id || '',
+    selected_case_ids: mindmapReportSelectedIds(),
+    template_id: document.getElementById('mindmap-report-template')?.value || '',
+    meta: mindmapReportMetaPayload()
+  };
+}
+
+function mindmapReportStatsHtml(data = {}) {
+  const stats = data.statistics || {};
+  const quality = data.quality || {};
+  const release = data.release || {};
+  return `
+    <div class="mindmap-report-stats">
+      <div><strong>${escapeHtml(stats.total ?? '-')}</strong><span>总计</span></div>
+      <div><strong>${escapeHtml(stats.passed ?? '-')}</strong><span>通过</span></div>
+      <div><strong>${escapeHtml(stats.failed ?? '-')}</strong><span>失败</span></div>
+      <div><strong>${escapeHtml(stats.blocked ?? '-')}</strong><span>阻塞</span></div>
+      <div><strong>${escapeHtml(stats.not_executed ?? '-')}</strong><span>未执行</span></div>
+      <div><strong>${escapeHtml(stats.pass_rate ?? 0)}%</strong><span>通过率</span></div>
+    </div>
+    <div class="mindmap-report-decision">
+      <span>质量评估：${escapeHtml(quality.result || '-')}</span>
+      <span>发布建议：${escapeHtml(release.suggestion || '-')}</span>
+    </div>
+  `;
+}
+
+function mindmapReportPreviewHtml() {
+  if (!mindmapReportPreview) {
+    return '<div class="generation-record-empty">点击“预览报告”后查看精简测试范围、统计和正文。</div>';
+  }
+  return `
+    ${mindmapReportStatsHtml(mindmapReportPreview)}
+    <div class="mindmap-report-scope">
+      <h3>测试范围</h3>
+      <pre>${escapeHtml(mindmapReportPreview.scope_markdown || '')}</pre>
+    </div>
+    <div class="mindmap-report-markdown">
+      <h3>报告正文</h3>
+      <pre>${escapeHtml(mindmapReportPreview.markdown || '')}</pre>
+    </div>
+  `;
+}
+
+function mindmapReportCaseRow(item = {}) {
+  const checked = mindmapReportSelection.has(item.case_id) ? 'checked' : '';
+  const typeLabel = item.source_type === 'manual' ? '人工' : '自动化';
+  return `
+    <label class="mindmap-report-case">
+      <input type="checkbox" class="mindmap-report-check" value="${escapeHtml(item.case_id)}" ${checked} onchange="toggleMindmapReportCase(this)">
+      <span class="mindmap-report-case-main">
+        <strong>${escapeHtml(item.case_id || '')} · ${escapeHtml(item.title || '未命名用例')}</strong>
+        <em>${escapeHtml([item.priority, typeLabel, item.smoke ? '冒烟' : '', item.scenario].filter(Boolean).join(' · '))}</em>
+      </span>
+    </label>
+  `;
+}
+
+function mindmapReportCaseTreeHtml() {
+  if (!mindmapReportData) return '';
+  const groups = mindmapReportData.groups || [];
+  const chunks = [];
+  groups.forEach(group => {
+    const scenarioHtml = (group.scenarios || []).map(scenario => {
+      const cases = (scenario.cases || []).filter(mindmapReportCaseVisible);
+      if (!cases.length) return '';
+      return `
+        <div class="mindmap-report-scenario">
+          <div class="mindmap-report-scenario-head">
+            <strong>${escapeHtml(scenario.scenario || '未分组场景')}</strong>
+            <span>${escapeHtml(cases.length)} 条</span>
+          </div>
+          ${cases.map(mindmapReportCaseRow).join('')}
+        </div>
+      `;
+    }).join('');
+    if (!scenarioHtml) return;
+    chunks.push(`
+      <section class="mindmap-report-feature">
+        <div class="mindmap-report-feature-head">
+          <h3>${escapeHtml(group.feature || '未分组功能')}</h3>
+        </div>
+        ${scenarioHtml}
+      </section>
+    `);
+  });
+  return chunks.join('') || '<div class="generation-record-empty">当前筛选没有匹配用例。</div>';
+}
+
+function renderMindmapReportCaseTree() {
+  const target = document.getElementById('mindmap-report-case-tree');
+  if (target) target.innerHTML = mindmapReportCaseTreeHtml();
+  const count = document.getElementById('mindmap-report-selected-count');
+  if (count) count.textContent = `${mindmapReportSelection.size} 条已选择`;
+}
+
+function toggleMindmapReportCase(input) {
+  const id = input?.value || '';
+  if (!id) return;
+  if (input.checked) mindmapReportSelection.add(id);
+  else mindmapReportSelection.delete(id);
+  mindmapReportPreview = null;
+  renderMindmapReportCaseTree();
+  const preview = document.getElementById('mindmap-report-preview');
+  if (preview) preview.innerHTML = mindmapReportPreviewHtml();
+}
+
+function updateMindmapReportFilters() {
+  renderMindmapReportCaseTree();
+}
+
+function selectMindmapReportVisibleCases() {
+  flattenMindmapReportCases().filter(mindmapReportCaseVisible).forEach(item => mindmapReportSelection.add(item.case_id));
+  mindmapReportPreview = null;
+  renderMindmapReportCaseTree();
+}
+
+function selectMindmapReportSmokeCases() {
+  mindmapReportSelection = new Set(flattenMindmapReportCases().filter(item => item.smoke && item.source_type !== 'manual').map(item => item.case_id));
+  mindmapReportPreview = null;
+  renderMindmapReportCaseTree();
+}
+
+function includeMindmapReportManualCases() {
+  flattenMindmapReportCases().filter(item => item.source_type === 'manual').forEach(item => mindmapReportSelection.add(item.case_id));
+  mindmapReportPreview = null;
+  renderMindmapReportCaseTree();
+}
+
+function clearMindmapReportSelection() {
+  mindmapReportSelection = new Set();
+  mindmapReportPreview = null;
+  renderMindmapReportCaseTree();
+}
+
+function mindmapReportTemplateOptions() {
+  const templates = mindmapReportData?.templates || [];
+  return '<option value="">默认测试报告模板</option>' + templates
+    .filter(item => item.exists !== false)
+    .map(item => `<option value="${escapeHtml(item.template_id)}">${escapeHtml(item.name || item.filename || item.template_id)}</option>`)
+    .join('');
+}
+
+function renderMindmapReportBuilder(data) {
+  mindmapReportData = data || {};
+  if (!mindmapReportSelection || !mindmapReportSelection.size) {
+    mindmapReportSelection = new Set(flattenMindmapReportCases(mindmapReportData).filter(item => item.default_selected).map(item => item.case_id));
+  }
+  const area = document.getElementById('editor-area');
+  if (!area) return;
+  const title = mindmapReportData.title || '测试用例脑图';
+  const counts = mindmapReportData.counts || {};
+  area.className = 'editor-area';
+  area.innerHTML = `
+    <div class="generation-records mindmap-report-page">
+      <div class="generation-record-head">
+        <div class="workflow-kicker">TEST REPORT · 脑图用例</div>
+        <h2>生成测试报告</h2>
+        <p>${escapeHtml(title)} · ${escapeHtml(mindmapReportData.module || '未分组模块')} · 自动化 ${escapeHtml(counts.automation_case_count || 0)} 条，人工 ${escapeHtml(counts.manual_case_count || 0)} 条。</p>
+        <div class="generation-record-actions">
+          <button class="btn-sm" onclick="showMindmapCenter()">返回脑图中心</button>
+          <button class="btn-sm primary" onclick="previewMindmapTestReport()">预览报告</button>
+          <button class="btn-sm success" onclick="createMindmapTestReport()">生成报告</button>
+        </div>
+      </div>
+      <div id="mindmap-report-status" class="generate-status show">选择需求用例并填写报告信息后生成正式测试报告。</div>
+      <div class="mindmap-report-layout">
+        <section class="mindmap-report-panel">
+          <div class="section-head">
+            <div>
+              <h3>选择用例</h3>
+              <p id="mindmap-report-selected-count">${escapeHtml(mindmapReportSelection.size)} 条已选择</p>
+            </div>
+          </div>
+          <div class="mindmap-report-filters">
+            <input id="mindmap-report-search" type="search" placeholder="搜索用例、场景、编号" oninput="updateMindmapReportFilters()">
+            <select id="mindmap-report-priority" onchange="updateMindmapReportFilters()">
+              <option value="all">全部优先级</option>
+              <option value="P0">P0</option>
+              <option value="P1">P1</option>
+              <option value="P2">P2</option>
+              <option value="P3">P3</option>
+            </select>
+            <select id="mindmap-report-type" onchange="updateMindmapReportFilters()">
+              <option value="all">全部类型</option>
+              <option value="automation">自动化</option>
+              <option value="manual">人工</option>
+            </select>
+            <label class="mindmap-report-toggle"><input id="mindmap-report-smoke" type="checkbox" onchange="updateMindmapReportFilters()"> 只看冒烟</label>
+          </div>
+          <div class="mindmap-report-actions">
+            <button class="btn-sm" onclick="selectMindmapReportVisibleCases()">全选当前筛选</button>
+            <button class="btn-sm" onclick="selectMindmapReportSmokeCases()">仅选冒烟</button>
+            <button class="btn-sm" onclick="includeMindmapReportManualCases()">包含人工用例</button>
+            <button class="btn-sm danger" onclick="clearMindmapReportSelection()">清空选择</button>
+          </div>
+          <div id="mindmap-report-case-tree" class="mindmap-report-case-tree">${mindmapReportCaseTreeHtml()}</div>
+        </section>
+        <section class="mindmap-report-panel">
+          <div class="section-head">
+            <div>
+              <h3>报告信息</h3>
+              <p>测试范围会自动精简为功能点和核心场景摘要，完整用例放入附录。</p>
+            </div>
+          </div>
+          <div class="mindmap-report-form">
+            <label>报告标题<input id="mindmap-report-title" value="${escapeHtml(`${title}-测试报告`)}"></label>
+            <label>测试周期<input id="mindmap-report-start" type="date"><input id="mindmap-report-end" type="date"></label>
+            <label>测试人员<input id="mindmap-report-tester" placeholder="例如：王文闯"></label>
+            <label>涉及端侧<input id="mindmap-report-client" placeholder="例如：mini / Android / iOS / 中台"></label>
+            <label>测试版本<input id="mindmap-report-version" placeholder="例如：V1.2.2"></label>
+            <label>测试环境<input id="mindmap-report-env" placeholder="例如：测试环境 / 预发环境"></label>
+            <label>需求链接<input id="mindmap-report-requirement" placeholder="填写飞书链接"></label>
+            <label>测试用例链接<input id="mindmap-report-case-link" placeholder="http://qa-agiletc.gongfudou.com/caseManager/..."></label>
+            <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2" placeholder="验证需求核心流程是否符合预期，并确保核心业务流程不受影响。"></textarea></label>
+            <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
+            <label class="wide">报告模板
+              <span class="mindmap-report-template-row">
+                <select id="mindmap-report-template">${mindmapReportTemplateOptions()}</select>
+                <input id="mindmap-report-template-file" type="file" accept=".md,.html,.txt" style="display:none" onchange="uploadMindmapReportTemplate(this)">
+                <button class="btn-sm" type="button" onclick="document.getElementById('mindmap-report-template-file').click()">上传模板</button>
+              </span>
+            </label>
+          </div>
+          <div class="mindmap-report-actions">
+            <button class="btn-sm primary" onclick="previewMindmapTestReport()">预览报告</button>
+            <button class="btn-sm success" onclick="createMindmapTestReport()">生成报告</button>
+          </div>
+          <div id="mindmap-report-preview" class="mindmap-report-preview">${mindmapReportPreviewHtml()}</div>
+        </section>
+      </div>
+    </div>
+  `;
+  document.getElementById('toolbar-path').innerHTML = '<span>📊</span> 脑图测试报告';
+  document.getElementById('toolbar-help').textContent = '从脑图用例选择范围，生成精简测试范围和正式测试报告。';
+  document.getElementById('file-info').textContent = '脑图测试报告';
+  updateToolbarState('脑图测试报告');
+}
+
+async function openMindmapReportBuilder(caseSetId) {
+  if (!caseSetId) {
+    showToast('脑图记录缺少 case_set_id，不能生成报告', 'error');
+    return;
+  }
+  activeWorkspaceMode = 'mindmap-report';
+  setActiveWorkflow('reports');
+  resetYamlToolbarForManager();
+  const area = document.getElementById('editor-area');
+  if (area) {
+    area.className = 'editor-area';
+    area.innerHTML = '<div class="generation-records"><div class="generation-record-empty">正在读取脑图用例...</div></div>';
+  }
+  try {
+    const data = await apiRequest(`/test-reports/cases?case_set_id=${encodeURIComponent(caseSetId)}`);
+    mindmapReportSelection = new Set((data.cases || []).filter(item => item.default_selected).map(item => item.case_id));
+    mindmapReportPreview = null;
+    renderMindmapReportBuilder(data);
+  } catch(e) {
+    showToast(e.message || '读取脑图用例失败', 'error');
+    if (area) area.innerHTML = `<div class="generation-records"><div class="generate-status show error">${escapeHtml(e.message || '读取脑图用例失败')}</div></div>`;
+  }
+}
+
+async function previewMindmapTestReport() {
+  if (mindmapReportBusy) return;
+  if (!mindmapReportSelection.size) {
+    setMindmapReportStatus('请至少选择一条用例。', 'error');
+    return;
+  }
+  mindmapReportBusy = true;
+  setMindmapReportStatus('正在生成测试报告预览...', 'busy');
+  try {
+    const data = await apiRequest('/test-reports/preview', {
+      method: 'POST',
+      body: JSON.stringify(mindmapReportPayload())
+    });
+    mindmapReportPreview = data;
+    const preview = document.getElementById('mindmap-report-preview');
+    if (preview) preview.innerHTML = mindmapReportPreviewHtml();
+    setMindmapReportStatus('预览已生成，测试范围已按功能点和核心场景精简。', 'success');
+  } catch(e) {
+    setMindmapReportStatus(e.message || '生成预览失败', 'error');
+    showToast(e.message || '生成预览失败', 'error');
+  } finally {
+    mindmapReportBusy = false;
+  }
+}
+
+async function createMindmapTestReport() {
+  if (mindmapReportBusy) return;
+  if (!mindmapReportSelection.size) {
+    setMindmapReportStatus('请至少选择一条用例。', 'error');
+    return;
+  }
+  mindmapReportBusy = true;
+  setMindmapReportStatus('正在生成并保存测试报告...', 'busy');
+  try {
+    const data = await apiRequest('/test-reports', {
+      method: 'POST',
+      body: JSON.stringify(mindmapReportPayload())
+    });
+    setMindmapReportStatus(`测试报告已生成：${data.report_id || ''}`, 'success');
+    showToast('✓ 测试报告已生成', 'success');
+    const preview = document.getElementById('mindmap-report-preview');
+    if (preview) {
+      preview.innerHTML = `
+        ${mindmapReportStatsHtml(data)}
+        <div class="mindmap-report-result">
+          <strong>${escapeHtml(data.title || '测试报告')}</strong>
+          <span>${escapeHtml(data.report_id || '')}</span>
+          <div class="mindmap-report-actions">
+            <a class="btn-sm primary" href="${escapeHtml(data.download?.html || '')}" target="_blank">打开 HTML</a>
+            <a class="btn-sm" href="${escapeHtml(data.download?.markdown || '')}" target="_blank">下载 Markdown</a>
+            <button class="btn-sm" onclick="showMindmapCenter()">回到脑图中心</button>
+          </div>
+        </div>
+      `;
+    }
+  } catch(e) {
+    setMindmapReportStatus(e.message || '生成报告失败', 'error');
+    showToast(e.message || '生成报告失败', 'error');
+  } finally {
+    mindmapReportBusy = false;
+  }
+}
+
+async function uploadMindmapReportTemplate(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!/\.(md|html|txt)$/i.test(file.name)) {
+    setMindmapReportStatus('模板只支持 Markdown、HTML 或 TXT。', 'error');
+    input.value = '';
+    return;
+  }
+  try {
+    const content = await file.text();
+    const data = await apiRequest('/test-reports/templates', {
+      method: 'POST',
+      body: JSON.stringify({ name: file.name.replace(/\.(md|html|txt)$/i, ''), filename: file.name, content })
+    });
+    const template = data.template || {};
+    mindmapReportData.templates = [template, ...(mindmapReportData.templates || [])];
+    const select = document.getElementById('mindmap-report-template');
+    if (select) {
+      select.innerHTML = mindmapReportTemplateOptions();
+      select.value = template.template_id || '';
+    }
+    setMindmapReportStatus('模板已上传，可直接预览或生成报告。', 'success');
+  } catch(e) {
+    setMindmapReportStatus(e.message || '模板上传失败', 'error');
+    showToast(e.message || '模板上传失败', 'error');
+  } finally {
+    input.value = '';
+  }
 }
 
 async function showMindmapCenter() {

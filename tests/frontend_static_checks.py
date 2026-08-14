@@ -398,6 +398,10 @@ def main():
     require("function mindmapRecordTimeValue" in html and "mindmap_sort_ts" in html and "mindmap-compact-list" in html and "function mindmapTaskRow" in html, "Mindmap center must sort latest first and use compact rows instead of oversized cards")
     require("activeWorkspaceMode === 'mindmap'" in html and "await showMindmapCenter();" in html, "Mindmap background actions must refresh the mindmap center after cancel/retry")
     require("mindmapCenterRefreshTimer" in html and "scheduleMindmapCenterRefresh(taskRows)" in html and "pending', 'running" in html, "Mindmap center must auto-refresh while mindmap jobs are active")
+    require("生成报告" in html and "openMindmapReportBuilder" in html, "Mindmap center must expose test report generation")
+    require("/test-reports/cases" in html and "/test-reports/preview" in html and "/test-reports" in html, "Frontend must call mindmap test report APIs")
+    require("测试范围" in html and "测试人员" in html and "测试周期" in html and "涉及端侧" in html, "Report builder must expose required metadata fields")
+    require("mindmap-report-layout" in html and "mindmap-report-scope" in html, "Report builder styles must be present")
     print({"ok": True, "file": str(HTML), "checks": 72})
 
 
