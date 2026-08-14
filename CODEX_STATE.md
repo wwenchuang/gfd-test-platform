@@ -34,6 +34,29 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 定时任务：飞书通知标记任务类型
+
+用户反馈定时任务发送飞书通知时应标明这是定时任务，方便后续区分任务类型。
+
+本轮修复：
+
+- 飞书报告卡片正文新增 `任务类型` 行。
+- 当 execution snapshot 中的 task `type/source` 或 execution `execution_source` 为 `scheduled_job` 时，任务类型展示为 `定时任务`。
+- 其他执行保持可读类型：基线回归、调试执行、回归任务、已保存任务或手动执行。
+- 补充通知服务单元测试，覆盖定时任务飞书卡片必须包含 `任务类型：定时任务`。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_notification_service.py -q
+# 3 passed
+
+python3 -m py_compile task_server/api_testing/services/notification_service.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 定时任务：列表编辑、删除和基线分组信息补齐
 
 用户继续反馈定时任务页存在以下问题：新增基线分组未同步、多条基线应列出所有基线并按分组选择、列表需支持启用/飞书开关/删除/再次编辑、每天/每周缺少明确执行时间。

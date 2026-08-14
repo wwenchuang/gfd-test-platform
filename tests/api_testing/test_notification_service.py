@@ -41,6 +41,26 @@ def test_feishu_report_card_contains_report_link_and_readable_summary(monkeypatc
     assert "执行：" not in text
 
 
+def test_feishu_report_card_marks_scheduled_job_type():
+    card = NotificationService._card(
+        _execution(request_snapshot={
+            "task": {
+                "id": "job-1",
+                "name": "每日基线回归",
+                "type": "scheduled_job",
+                "source": "scheduled_job",
+            },
+        }),
+        [],
+        {"environment_name": "生产环境"},
+    )
+
+    text = json.dumps(card, ensure_ascii=False)
+    assert "每日基线回归" in text
+    assert "任务类型" in text
+    assert "定时任务" in text
+
+
 def test_report_url_uses_first_configured_public_base(monkeypatch):
     monkeypatch.delenv("API_TESTING_REPORT_BASE_URL", raising=False)
     monkeypatch.setenv("MIDSCENE_PUBLIC_BASE_URL", "http://task.example.test/")

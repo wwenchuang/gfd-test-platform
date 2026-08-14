@@ -178,10 +178,12 @@ class NotificationService:
         task_name = task.get("name") if isinstance(task, dict) else ""
         if not task_name:
             task_name = "基线回归"
+        task_type_label = NotificationService._task_type_label(execution, task)
         title = f"API 基线回归报告：{conclusion}"
         template = "green" if conclusion == "通过" else "red"
         lines = [
             f"**任务**：{task_name}",
+            f"**任务类型**：{task_type_label}",
             f"**环境**：{environment_name}",
             f"**用例**：共 {total} 条，通过 {passed}，失败 {failed}，异常 {broken}，跳过 {skipped}，取消 {cancelled}",
             f"**通过率**：{pass_rate}%",
@@ -246,6 +248,29 @@ class NotificationService:
             },
             "elements": elements,
         }
+
+    @staticmethod
+    def _task_type_label(execution, task):
+        task_type = ""
+        source = ""
+        if isinstance(task, dict):
+            task_type = str(task.get("type") or "").strip()
+            source = str(task.get("source") or "").strip()
+        execution_source = str(getattr(execution, "execution_source", "") or "").strip()
+        execution_type = str(getattr(execution, "execution_type", "") or "").strip()
+        if task_type == "scheduled_job" or source == "scheduled_job" or execution_source == "scheduled_job":
+            return "定时任务"
+        if task_type == "api_test_task" or source == "task":
+            return "已保存任务"
+        if execution_type == "debug":
+            return "调试执行"
+        if execution_type == "scheduled":
+            return "定时任务"
+        if execution_type == "baseline_regression":
+            return "基线回归"
+        if execution_type == "regression":
+            return "回归任务"
+        return "手动执行"
 
     @staticmethod
     def _message(execution, children, metadata):
