@@ -286,6 +286,42 @@ def test_create_report_persists_markdown_html_and_index(report_workspace):
     assert [item["report_id"] for item in indexed] == [result["report_id"]]
 
 
+def test_default_report_body_uses_test_points_without_case_details(report_workspace):
+    from task_server.services import test_report_service
+
+    result = test_report_service.preview_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001", "TC-002", "TC-003"],
+        "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+    })
+
+    markdown = result["markdown"]
+    assert "## 3. 主要测试点" in markdown
+    assert "1. " in result["test_points_markdown"]
+    assert "2. " in result["test_points_markdown"]
+    assert "选中用例明细" not in markdown
+    assert "失败用例明细" not in markdown
+    assert "| 用例编号 |" not in markdown
+    assert "TC-001" not in markdown
+    assert "经销商与管理员菜单权限隔离" not in markdown
+
+
+def test_create_report_persists_word_export(report_workspace):
+    from task_server.services import test_report_service
+
+    result = test_report_service.create_test_report({
+        "case_set_id": "case-a",
+        "selected_case_ids": ["TC-001", "TC-002"],
+        "meta": {"report_title": "共享打印V1.2.2-测试报告"},
+    })
+
+    assert Path(result["files"]["word"]).exists()
+    word = Path(result["files"]["word"]).read_text(encoding="utf-8")
+    assert "共享打印V1.2.2-测试报告" in word
+    assert "report-cover" in word
+    assert result["download"]["word"].endswith("&format=doc")
+
+
 def test_template_missing_sections_gets_default_fallback(report_workspace):
     from task_server.services import test_report_service
 
@@ -303,7 +339,8 @@ def test_template_missing_sections_gets_default_fallback(report_workspace):
 
     assert "# 共享打印V1.2.2-测试报告" in result["markdown"]
     assert "## 2. 测试概要" in result["markdown"]
-    assert "## 5. 发布建议" in result["markdown"]
+    assert "## 3. 主要测试点" in result["markdown"]
+    assert "## 6. 发布建议" in result["markdown"]
 
 
 def test_preview_enriches_execution_result_from_midscene_report_index(report_workspace):

@@ -2243,15 +2243,20 @@ def _get_test_reports(handler, qs):
 def _get_test_report_download(handler, qs):
     report_id = qs.get("report_id") or qs.get("reportId") or qs.get("id")
     output_format = str(qs.get("format") or "html").strip().lower()
-    if output_format not in {"html", "md", "markdown"}:
-        handler._json({"ok": False, "error": "format 只支持 html 或 md"}, 400)
+    if output_format not in {"html", "md", "markdown", "doc", "word"}:
+        handler._json({"ok": False, "error": "format 只支持 html、md 或 doc"}, 400)
         return
     report = read_test_report(report_id)
     if not report:
         handler._json({"ok": False, "error": "测试报告不存在"}, 404)
         return
     files = report.get("files") if isinstance(report.get("files"), dict) else {}
-    path = files.get("markdown") if output_format in {"md", "markdown"} else files.get("html")
+    if output_format in {"md", "markdown"}:
+        path = files.get("markdown")
+    elif output_format in {"doc", "word"}:
+        path = files.get("word") or files.get("html")
+    else:
+        path = files.get("html")
     if not path or not os.path.exists(path):
         handler._json({"ok": False, "error": "测试报告文件不存在，请重新生成"}, 404)
         return
@@ -2261,9 +2266,16 @@ def _get_test_report_download(handler, qs):
         handler._json({"ok": False, "error": f"读取测试报告文件失败：{exc}"}, 500)
         return
     title = str(report.get("title") or report_id or "测试报告").strip()
-    suffix = "测试报告.md" if output_format in {"md", "markdown"} else "测试报告.html"
+    if output_format in {"md", "markdown"}:
+        suffix = "测试报告.md"
+        content_type = "text/markdown; charset=utf-8"
+    elif output_format in {"doc", "word"}:
+        suffix = "测试报告.doc"
+        content_type = "application/msword; charset=utf-8"
+    else:
+        suffix = "测试报告.html"
+        content_type = "text/html; charset=utf-8"
     filename = clean_asset_filename(f"{title}_{suffix}", default=f"{report_id}_{suffix}")
-    content_type = "text/markdown; charset=utf-8" if output_format in {"md", "markdown"} else "text/html; charset=utf-8"
     send_attachment(handler, body, filename, content_type)
 
 

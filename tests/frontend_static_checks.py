@@ -407,9 +407,10 @@ def main():
     require("mindmapReportSelectedClientSides" in html and "mindmap-report-client-side" in html and "mini" in html and "Android" in html and "iOS" in html and "中台" in html, "Report builder must expose multi-select client side options")
     require('id="mindmap-report-env"' in html and "正式环境" in html and "预发布环境" in html and "测试环境" in html, "Report builder must use a fixed environment dropdown")
     require("DEFAULT_MINDMAP_REPORT_GOAL" in html and "验证需求核心流程是否符合预期，并确保核心业务流程不受影响。" in html and "<textarea id=\"mindmap-report-goal\"" in html, "Report builder must prefill an editable default test goal")
+    require("下载 Word" in html and "download?.word" in html and "format=doc" in html, "Report builder must expose Word export download")
     require("测试范围" in html and "测试人员" in html and "测试周期" in html and "涉及端侧" in html, "Report builder must expose required metadata fields")
     require("mindmap-report-layout" in html and "mindmap-report-scope" in html, "Report builder styles must be present")
-    print({"ok": True, "file": str(HTML), "checks": 79})
+    print({"ok": True, "file": str(HTML), "checks": 80})
 
 
 if __name__ == "__main__":

@@ -4040,6 +4040,7 @@ async function createMindmapTestReport() {
     showToast('✓ 测试报告已生成', 'success');
     const preview = document.getElementById('mindmap-report-preview');
     if (preview) {
+      const wordUrl = data.download?.word || (data.report_id ? `/api/test-reports/download?report_id=${encodeURIComponent(data.report_id)}&format=doc` : '');
       preview.innerHTML = `
         ${mindmapReportStatsHtml(data)}
         <div class="mindmap-report-result">
@@ -4047,6 +4048,7 @@ async function createMindmapTestReport() {
           <span>${escapeHtml(data.report_id || '')}</span>
           <div class="mindmap-report-actions">
             <a class="btn-sm primary" href="${escapeHtml(data.download?.html || '')}" target="_blank">打开 HTML</a>
+            <a class="btn-sm success" href="${escapeHtml(wordUrl)}" target="_blank">下载 Word</a>
             <a class="btn-sm" href="${escapeHtml(data.download?.markdown || '')}" target="_blank">下载 Markdown</a>
             <button class="btn-sm" onclick="showMindmapCenter()">回到脑图中心</button>
           </div>

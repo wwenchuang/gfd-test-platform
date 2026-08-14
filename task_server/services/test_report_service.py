@@ -42,6 +42,7 @@ TEMPLATE_PLACEHOLDERS = (
     "case_link",
     "test_goal",
     "test_scope",
+    "test_points",
     "mindmap_list",
     "source_count",
     "summary_table",
@@ -550,10 +551,8 @@ def _scope_markdown(cases: List[Dict[str, Any]], *, max_features: int = 8, max_s
                     if scenario_total >= max_features or source_rows >= max_scenarios_per_feature:
                         break
                     scenario_cases = scenario.get("cases") or []
-                    ids = _case_id_label(scenario_cases)
                     goal = _scenario_goal(scenario.get("scenario") or "", scenario_cases)
-                    suffix = f"（{ids}）" if ids else ""
-                    lines.append(f"   - {group.get('feature') or '未分组功能'} / {scenario.get('scenario') or '未分组场景'}：{goal}{suffix}")
+                    lines.append(f"   - {group.get('feature') or '未分组功能'} / {scenario.get('scenario') or '未分组场景'}：{goal}")
                     scenario_total += 1
                     source_rows += 1
             if source_index < len(source_ids) and scenario_total < max_features:
@@ -572,14 +571,36 @@ def _scope_markdown(cases: List[Dict[str, Any]], *, max_features: int = 8, max_s
             if scenario_total >= max_features:
                 break
             scenario_cases = scenario.get("cases") or []
-            ids = _case_id_label(scenario_cases)
             goal = _scenario_goal(scenario.get("scenario") or "", scenario_cases)
-            suffix = f"（{ids}）" if ids else ""
-            lines.append(f"   - {scenario.get('scenario') or '未分组场景'}：{goal}{suffix}")
+            lines.append(f"   - {scenario.get('scenario') or '未分组场景'}：{goal}")
             scenario_total += 1
         if feature_index < len(group_rows[:max_features]) and scenario_total < max_features:
             lines.append("")
     return "\n".join(lines).strip()
+
+
+def _test_points_markdown(cases: List[Dict[str, Any]], *, limit: int = 8) -> str:
+    points: List[str] = []
+    seen = set()
+    for group in _group_cases(cases):
+        feature = _text(group.get("feature"), "未分组功能")
+        for scenario in group.get("scenarios") or []:
+            scenario_name = _text(scenario.get("scenario"), "未分组场景")
+            scenario_cases = scenario.get("cases") or []
+            goal = _scenario_goal(scenario_name, scenario_cases)
+            text = f"{feature} / {scenario_name}：{goal}"
+            key = re.sub(r"\s+", "", text)
+            if key in seen:
+                continue
+            seen.add(key)
+            points.append(text)
+            if len(points) >= limit:
+                break
+        if len(points) >= limit:
+            break
+    if not points:
+        return "-"
+    return "\n".join(f"{index}. {point}" for index, point in enumerate(points, start=1))
 
 
 def _markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
@@ -693,10 +714,10 @@ def _default_markdown(data: Dict[str, Any]) -> str:
         f"# {meta['report_title']}",
         f"## 1. 基本信息\n\n{_basic_info(meta)}",
         f"## 2. 测试概要\n\n{_overview(meta, data['scope_markdown'])}",
-        f"## 3. 测试数据\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n总计： {data['statistics']['defect_total']} 个",
-        f"## 4. 质量评估\n\n测试结果： {data['quality']['result']}\n\n{data['quality']['text']}",
-        f"## 5. 发布建议\n\n{data['release']['suggestion']}：{data['release']['text']}",
-        f"## 6. 附录\n\n### 6.1 选中用例明细\n\n{data['case_table']}\n\n### 6.2 失败用例明细\n\n{data['failure_table']}\n\n### 6.3 人工验证项\n\n{data['manual_case_table']}",
+        f"## 3. 主要测试点\n\n{data['test_points_markdown']}",
+        f"## 4. 测试数据\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n总计： {data['statistics']['defect_total']} 个",
+        f"## 5. 质量评估\n\n测试结果： {data['quality']['result']}\n\n{data['quality']['text']}",
+        f"## 6. 发布建议\n\n{data['release']['suggestion']}：{data['release']['text']}",
     ]) + "\n"
 
 
@@ -718,6 +739,7 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
     values = {
         **data.get("meta", {}),
         "test_scope": data.get("scope_markdown") or "",
+        "test_points": data.get("test_points_markdown") or "",
         "mindmap_list": data.get("mindmap_list") or "",
         "source_count": data.get("source_count") or "",
         "summary_table": data.get("summary_table") or "",
@@ -734,9 +756,10 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
     fallback_sections = []
     required_markers = {
         "## 2. 测试概要": "## 2. 测试概要\n\n" + _overview(data["meta"], data["scope_markdown"]),
-        "## 3. 测试数据": "## 3. 测试数据\n\n" + data["summary_table"],
-        "## 4. 质量评估": "## 4. 质量评估\n\n" + values["quality_assessment"],
-        "## 5. 发布建议": "## 5. 发布建议\n\n" + values["release_suggestion"],
+        "## 3. 主要测试点": "## 3. 主要测试点\n\n" + data["test_points_markdown"],
+        "## 4. 测试数据": "## 4. 测试数据\n\n" + data["summary_table"],
+        "## 5. 质量评估": "## 5. 质量评估\n\n" + values["quality_assessment"],
+        "## 6. 发布建议": "## 6. 发布建议\n\n" + values["release_suggestion"],
     }
     for marker, content in required_markers.items():
         if marker not in rendered:
@@ -749,9 +772,33 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
 def _markdown_to_html(markdown: str, title: str) -> str:
     lines = []
     in_table = False
+    in_points = False
+    section_open = False
+
+    def close_table() -> None:
+        nonlocal in_table
+        if in_table:
+            lines.append("</table>")
+            in_table = False
+
+    def close_points() -> None:
+        nonlocal in_points
+        if in_points:
+            lines.append("</ol>")
+            in_points = False
+
+    def close_section() -> None:
+        nonlocal section_open
+        close_table()
+        close_points()
+        if section_open:
+            lines.append("</section>")
+            section_open = False
+
     for raw in markdown.splitlines():
         line = raw.rstrip()
         if line.startswith("| ") and line.endswith(" |"):
+            close_points()
             cells = [html.escape(cell.strip()) for cell in line.strip("|").split("|")]
             if set(cell.replace("-", "").strip() for cell in cells) == {""}:
                 continue
@@ -761,24 +808,35 @@ def _markdown_to_html(markdown: str, title: str) -> str:
                 in_table = True
             lines.append("<tr>" + "".join(f"<{tag}>{cell}</{tag}>" for cell in cells) + "</tr>")
             continue
-        if in_table:
-            lines.append("</table>")
-            in_table = False
+        close_table()
         escaped = html.escape(line)
         if line.startswith("# "):
-            lines.append(f"<h1>{html.escape(line[2:].strip())}</h1>")
+            close_section()
+            lines.append(f"<header class=\"report-cover\"><div><span>测试报告</span><h1>{html.escape(line[2:].strip())}</h1></div></header>")
         elif line.startswith("## "):
+            close_section()
+            lines.append("<section class=\"report-section\">")
+            section_open = True
             lines.append(f"<h2>{html.escape(line[3:].strip())}</h2>")
         elif line.startswith("### "):
+            close_points()
             lines.append(f"<h3>{html.escape(line[4:].strip())}</h3>")
         elif line.startswith("   - "):
+            close_points()
             lines.append(f"<p class=\"scope-item\">{html.escape(line.strip())}</p>")
+        elif re.match(r"^\d+\.\s+", line):
+            if not in_points:
+                lines.append("<ol class=\"test-points\">")
+                in_points = True
+            point = re.sub(r"^\d+\.\s+", "", line)
+            lines.append(f"<li>{html.escape(point)}</li>")
         elif line:
+            close_points()
             lines.append(f"<p>{escaped}</p>")
         else:
+            close_points()
             lines.append("")
-    if in_table:
-        lines.append("</table>")
+    close_section()
     body = "\n".join(lines)
     safe_title = html.escape(title)
     return f"""<!doctype html>
@@ -787,18 +845,32 @@ def _markdown_to_html(markdown: str, title: str) -> str:
   <meta charset="utf-8">
   <title>{safe_title}</title>
   <style>
-    body {{ max-width: 920px; margin: 40px auto; padding: 0 24px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #20242d; line-height: 1.72; }}
-    h1 {{ font-size: 34px; margin: 0 0 28px; }}
-    h2 {{ font-size: 22px; margin-top: 30px; border-bottom: 1px solid #e6e8ef; padding-bottom: 8px; }}
-    h3 {{ font-size: 17px; margin-top: 22px; }}
-    table {{ width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 14px; }}
-    th, td {{ border: 1px solid #d9dee8; padding: 8px 10px; text-align: left; vertical-align: top; }}
-    th {{ background: #f5f7fb; }}
-    .scope-item {{ margin-left: 18px; }}
+    @page {{ margin: 20mm 18mm; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: #f4f6f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; color: #1f2937; line-height: 1.68; }}
+    .report-document {{ max-width: 980px; margin: 34px auto; padding: 0 24px 34px; }}
+    .report-cover {{ border-radius: 18px; background: linear-gradient(135deg, #12233f, #0f766e); color: #fff; padding: 34px 38px; box-shadow: 0 18px 42px rgba(15, 35, 64, .18); }}
+    .report-cover span {{ display: inline-block; margin-bottom: 22px; padding: 4px 10px; border: 1px solid rgba(255,255,255,.36); border-radius: 999px; font-size: 12px; letter-spacing: .08em; }}
+    .report-cover h1 {{ margin: 0; font-size: 34px; line-height: 1.25; font-weight: 800; }}
+    .report-section {{ margin-top: 18px; border: 1px solid #dfe5ee; border-radius: 14px; background: #fff; padding: 22px 24px; box-shadow: 0 10px 28px rgba(31, 41, 55, .07); }}
+    h2 {{ margin: 0 0 16px; color: #0f172a; font-size: 22px; line-height: 1.35; padding-bottom: 10px; border-bottom: 2px solid #e7edf5; }}
+    h3 {{ margin: 18px 0 10px; color: #1f2937; font-size: 16px; }}
+    p {{ margin: 7px 0; }}
+    table {{ width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 14px; border-radius: 10px; overflow: hidden; }}
+    th, td {{ border: 1px solid #d9dee8; padding: 9px 11px; text-align: left; vertical-align: top; }}
+    th {{ background: #eef4fb; color: #172033; font-weight: 700; }}
+    tr:nth-child(even) td {{ background: #fafcff; }}
+    .scope-item {{ margin-left: 4px; padding: 7px 10px; border-left: 3px solid #14b8a6; background: #f0fdfa; border-radius: 6px; }}
+    .test-points {{ margin: 6px 0 0; padding-left: 0; counter-reset: point; list-style: none; }}
+    .test-points li {{ counter-increment: point; position: relative; margin: 10px 0; padding: 12px 14px 12px 48px; border: 1px solid #dbeafe; border-radius: 10px; background: #f8fbff; }}
+    .test-points li::before {{ content: counter(point); position: absolute; left: 14px; top: 12px; width: 24px; height: 24px; border-radius: 50%; background: #0f766e; color: #fff; text-align: center; line-height: 24px; font-weight: 700; }}
+    @media print {{ body {{ background: #fff; }} .report-document {{ max-width: none; margin: 0; padding: 0; }} .report-cover, .report-section {{ box-shadow: none; }} }}
   </style>
 </head>
 <body>
+<main class="report-document">
 {body}
+</main>
 </body>
 </html>
 """
@@ -828,6 +900,7 @@ def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
         "cases": cases,
         "groups": _group_cases(cases),
         "scope_markdown": scope,
+        "test_points_markdown": _test_points_markdown(cases),
         "mindmap_list": _mindmap_list_markdown(sources),
         "statistics": statistics,
         "quality": quality,
@@ -871,9 +944,11 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
     os.makedirs(report_dir, exist_ok=True)
     md_path = os.path.join(report_dir, "report.md")
     html_path = os.path.join(report_dir, "report.html")
+    word_path = os.path.join(report_dir, "report.doc")
     json_path = os.path.join(report_dir, "report.json")
     write_text_file(md_path, data["markdown"])
     write_text_file(html_path, data["html"])
+    write_text_file(word_path, data["html"])
     record = {
         "ok": True,
         "report_id": report_id,
@@ -887,10 +962,11 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
         "statistics": data["statistics"],
         "quality": data["quality"],
         "release": data["release"],
-        "files": {"markdown": md_path, "html": html_path, "json": json_path},
+        "files": {"markdown": md_path, "html": html_path, "word": word_path, "json": json_path},
         "download": {
             "markdown": f"/api/test-reports/download?report_id={report_id}&format=md",
             "html": f"/api/test-reports/download?report_id={report_id}&format=html",
+            "word": f"/api/test-reports/download?report_id={report_id}&format=doc",
         },
     }
     write_json_file(json_path, {**data, **record})
