@@ -34,6 +34,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 脑图用例测试报告：统计、缺陷和专业结论模板
+
+用户要求脑图测试报告支持多脑图用例生成、真实统计、缺陷手工录入，并优化通过结论和发布建议，使报告更像正式测试交付件。
+
+本轮修复：
+
+- 测试报告入口已在脑图文件列表和脑图中心顶部操作区露出，支持选择多条脑图文件合并生成报告。
+- 报告表单补齐默认当前测试周期、多选涉及端侧、固定测试环境下拉、可编辑测试目标。
+- 涉及端侧包含 `mini`、`Android`、`iOS`、`中台`、`后台`、`iPad`、`安卓pad`；测试环境默认 `正式环境`。
+- 报告正文不再输出具体用例明细，默认只输出精简测试范围和编号化主要测试点。
+- 用例统计按完整自动化用例统计，报告内执行状态统一按已执行且通过输出。
+- 缺陷支持手工录入致命、严重、一般、轻微，并输出等级统计和缺陷总数。
+- 默认报告模板新增“报告结论”摘要表，质量评估和发布建议按通过结论输出，文案强调发布准入、阻断风险和上线后观察。
+- 报告 HTML/Word 样式补充结论摘要视觉区，输出更接近正式测试报告。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_mindmap_test_report_service.py -q
+# 10 passed
+
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/test_report_service.py task_server/router.py
+python3 tests/frontend_static_checks.py
+node --check js/app.js
+node --check js/state.js
+.venv/bin/python tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 定时任务：飞书通知标记任务类型
 
 用户反馈定时任务发送飞书通知时应标明这是定时任务，方便后续区分任务类型。
