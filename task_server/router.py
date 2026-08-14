@@ -2223,8 +2223,9 @@ def _get_reports(handler, qs):
 @route_get("/api/test-reports/cases")
 def _get_test_report_cases(handler, qs):
     case_set_id = qs.get("case_set_id") or qs.get("caseSetId") or qs.get("id")
+    case_set_ids = qs.get("case_set_ids") or qs.get("caseSetIds")
     try:
-        handler._json(load_reportable_cases(case_set_id))
+        handler._json(load_reportable_cases(case_set_id, case_set_ids=case_set_ids.split(",") if case_set_ids else None))
     except TestReportError as exc:
         handler._json({"ok": False, "error": str(exc)}, 400)
     except Exception as exc:

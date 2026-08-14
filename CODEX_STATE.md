@@ -34,6 +34,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 脑图用例测试报告：支持多脑图合并生成
+
+用户反馈部署后确认入口，并进一步要求“应该可以选择多条脑图文件生成报告”。本轮在既有测试报告能力上补齐多脑图合并：
+
+- 脑图中心文件列表新增复选框、选择当前列表、清空选择、生成合并报告；单条记录上的“生成报告”保留原行为。
+- `/api/test-reports/cases` 支持 `case_set_ids` 逗号分隔多脑图，报告预览/生成 POST 支持 `case_set_ids: []`。
+- 服务层为每条用例新增 `selection_id = case_set_id::case_id`，多脑图里重复的 `TC-001` 不会串选或串执行结果。
+- 多脑图报告的测试范围按脑图来源分组，每个脑图最多展示 3 个核心范围项，正文总计最多 8 项，完整用例仍放附录。
+- 多脑图报告保存到 `CASE_DIR/merged-test-reports/<report_id>/`，索引记录 `case_set_ids/source_count/sources`，从任一来源脑图过滤报告时都能看到。
+- 模板占位符补充 `{{mindmap_list}}`、`{{source_count}}`，默认报告概要也展示脑图来源摘要。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_mindmap_test_report_service.py -q
+python3 -m py_compile task_server/services/test_report_service.py task_server/router.py
+.venv/bin/python tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+node --check js/app.js
+node --check js/state.js
+git diff --check
+```
+
+注意：
+
+- 当前工作区还存在与本功能无关的 `api-testing-ui/src/views/ScheduledJobsView.vue`、`api-testing-ui/src/views/ScheduledJobsView.spec.ts` 改动，本轮不回滚、不提交。
+
 ### 2026-08-14 API 测试：定时任务基础能力与执行来源收口
 
 本轮按用户“API 接口自动化未完成收口”要求，优先补齐此前仍缺的 M5 定时任务基础能力，并复核 M1/M2/M3/M4 已有闭环：

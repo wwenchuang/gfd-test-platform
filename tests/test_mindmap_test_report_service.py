@@ -4,13 +4,21 @@ from pathlib import Path
 import pytest
 
 
-def _write_summary(root: Path, case_set_id: str = "case-a") -> Path:
+def _write_summary(
+    root: Path,
+    case_set_id: str = "case-a",
+    *,
+    title: str = "共享打印V1.2.2",
+    module: str = "共享打印",
+    cases=None,
+    manual_cases=None,
+) -> Path:
     case_dir = root / "cases" / case_set_id
     case_dir.mkdir(parents=True, exist_ok=True)
     summary = {
         "case_set_id": case_set_id,
-        "title": "共享打印V1.2.2",
-        "module": "共享打印",
+        "title": title,
+        "module": module,
         "generated_at": "2026-02-04 11:20:00",
         "analysis": {
             "business_goals": ["验证运维、商户、经销商分润功能是否符合需求并确保核心业务流程不受影响。"],
@@ -21,7 +29,7 @@ def _write_summary(root: Path, case_set_id: str = "case-a") -> Path:
             {"feature": "管理员分成与权限", "scenario": "管理员分成设置页面", "expected": "基础配置可保存并展示"},
             {"feature": "商户分润", "scenario": "商户规则配置", "expected": "商户规则生效"},
         ],
-        "cases": [
+        "cases": cases if cases is not None else [
             {
                 "case_id": "TC-001",
                 "title": "经销商与管理员菜单权限隔离",
@@ -67,7 +75,7 @@ def _write_summary(root: Path, case_set_id: str = "case-a") -> Path:
                 "assertions": ["列表展示当前规则"],
             },
         ],
-        "manual_cases": [
+        "manual_cases": manual_cases if manual_cases is not None else [
             {
                 "case_id": "MT-001",
                 "title": "财务后台实际结算金额复核",
@@ -81,10 +89,18 @@ def _write_summary(root: Path, case_set_id: str = "case-a") -> Path:
         ],
         "generatedCaseGroups": {
             "executable_cases": [
-                {"case_id": "TC-001", "file": "share-permission.yaml", "target_task_name": "经销商与管理员菜单权限隔离"},
-                {"case_id": "TC-002", "file": "share-admin.yaml", "target_task_name": "管理员分成设置入口展示"},
-                {"case_id": "TC-003", "file": "share-admin.yaml", "target_task_name": "管理员分成比例保存"},
-                {"case_id": "TC-004", "file": "share-merchant.yaml", "target_task_name": "商户分润规则展示"},
+                {
+                    "case_id": row.get("case_id"),
+                    "file": row.get("yaml_file") or f"{case_set_id}-{row.get('case_id')}.yaml",
+                    "target_task_name": row.get("title"),
+                }
+                for row in (cases if cases is not None else [
+                    {"case_id": "TC-001", "title": "经销商与管理员菜单权限隔离", "yaml_file": "share-permission.yaml"},
+                    {"case_id": "TC-002", "title": "管理员分成设置入口展示", "yaml_file": "share-admin.yaml"},
+                    {"case_id": "TC-003", "title": "管理员分成比例保存", "yaml_file": "share-admin.yaml"},
+                    {"case_id": "TC-004", "title": "商户分润规则展示", "yaml_file": "share-merchant.yaml"},
+                ])
+                if row.get("case_id")
             ]
         },
         "report_checkpoints": ["不同角色入口和权限展示正确", "分成设置保存后反馈明确"],
@@ -125,6 +141,42 @@ def test_load_reportable_cases_defaults_to_p0_p1_and_smoke(report_workspace):
     assert result["title"] == "共享打印V1.2.2"
 
 
+def test_load_reportable_cases_accepts_multiple_case_sets(report_workspace):
+    from task_server.services import test_report_service
+
+    _write_summary(
+        report_workspace,
+        "case-b",
+        title="押丝珑琅AI生成",
+        module="3D共享",
+        cases=[
+            {
+                "case_id": "TC-001",
+                "title": "AI生成入口展示",
+                "priority": "P1",
+                "smoke": True,
+                "feature": "3D生成",
+                "scenario": "入口与权限",
+                "expected_result": "页面展示 AI 生成入口。",
+                "steps": ["进入 3D 共享页"],
+                "assertions": ["AI 生成入口可见"],
+            }
+        ],
+        manual_cases=[],
+    )
+
+    result = test_report_service.load_reportable_cases("", case_set_ids=["case-a", "case-b"])
+
+    assert result["case_set_ids"] == ["case-a", "case-b"]
+    assert result["source_count"] == 2
+    assert [source["title"] for source in result["sources"]] == ["共享打印V1.2.2", "押丝珑琅AI生成"]
+    assert result["counts"]["automation_case_count"] == 5
+    by_selection_id = {case["selection_id"]: case for case in result["cases"]}
+    assert by_selection_id["case-a::TC-001"]["case_id"] == "TC-001"
+    assert by_selection_id["case-b::TC-001"]["source_title"] == "押丝珑琅AI生成"
+    assert by_selection_id["case-b::TC-001"]["default_selected"] is True
+
+
 def test_preview_uses_concise_scope_and_unexecuted_quality(report_workspace):
     from task_server.services import test_report_service
 
@@ -147,6 +199,63 @@ def test_preview_uses_concise_scope_and_unexecuted_quality(report_workspace):
     assert "模块与权限" in result["scope_markdown"]
     assert result["scope_markdown"].count("\n") <= 10
     assert "仅完成测试设计" in result["release"]["suggestion"]
+
+
+def test_preview_merges_multiple_mindmaps_without_case_id_collision(report_workspace):
+    from task_server.services import test_report_service
+
+    _write_summary(
+        report_workspace,
+        "case-b",
+        title="押丝珑琅AI生成",
+        module="3D共享",
+        cases=[
+            {
+                "case_id": "TC-001",
+                "title": "AI生成入口展示",
+                "priority": "P1",
+                "smoke": True,
+                "feature": "3D生成",
+                "scenario": "入口与权限",
+                "expected_result": "页面展示 AI 生成入口。",
+                "steps": ["进入 3D 共享页"],
+                "assertions": ["AI 生成入口可见"],
+            },
+            {
+                "case_id": "TC-002",
+                "title": "AI生成任务提交",
+                "priority": "P2",
+                "smoke": False,
+                "feature": "3D生成",
+                "scenario": "任务提交",
+                "expected_result": "生成任务可正常提交。",
+                "steps": ["填写提示词", "点击生成"],
+                "assertions": ["任务进入生成中"],
+            },
+        ],
+        manual_cases=[],
+    )
+
+    result = test_report_service.preview_test_report({
+        "case_set_ids": ["case-a", "case-b"],
+        "selected_case_ids": ["case-a::TC-001", "case-b::TC-001"],
+        "meta": {
+            "report_title": "多需求合并测试报告",
+            "tester": "王文闯",
+        },
+    })
+
+    assert result["case_set_ids"] == ["case-a", "case-b"]
+    assert result["source_count"] == 2
+    assert result["statistics"]["total"] == 2
+    assert [case["selection_id"] for case in result["cases"]] == ["case-a::TC-001", "case-b::TC-001"]
+    assert result["cases"][0]["source_title"] == "共享打印V1.2.2"
+    assert result["cases"][1]["source_title"] == "押丝珑琅AI生成"
+    assert "共享打印V1.2.2" in result["scope_markdown"]
+    assert "押丝珑琅AI生成" in result["scope_markdown"]
+    assert "共享打印V1.2.2 / TC-001" in result["case_table"]
+    assert "押丝珑琅AI生成 / TC-001" in result["case_table"]
+    assert result["scope_markdown"].count("\n") <= 8
 
 
 def test_create_report_persists_markdown_html_and_index(report_workspace):

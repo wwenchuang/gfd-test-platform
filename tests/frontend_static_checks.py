@@ -399,10 +399,13 @@ def main():
     require("activeWorkspaceMode === 'mindmap'" in html and "await showMindmapCenter();" in html, "Mindmap background actions must refresh the mindmap center after cancel/retry")
     require("mindmapCenterRefreshTimer" in html and "scheduleMindmapCenterRefresh(taskRows)" in html and "pending', 'running" in html, "Mindmap center must auto-refresh while mindmap jobs are active")
     require("生成报告" in html and "openMindmapReportBuilder" in html, "Mindmap center must expose test report generation")
+    require("mindmapReportSelectedCaseSetIds" in html and "openSelectedMindmapReportBuilder" in html, "Mindmap center must support selecting multiple mindmap files for one report")
+    require("case_set_ids" in html and "selection_id" in html and "mindmapReportCaseSelectionId" in html, "Mindmap report builder must submit multi-mindmap case selections without case-id collisions")
+    require("选择当前列表" in html and "生成合并报告" in html and "mindmap-record-check" in html, "Mindmap file list must expose multi-select report actions")
     require("/test-reports/cases" in html and "/test-reports/preview" in html and "/test-reports" in html, "Frontend must call mindmap test report APIs")
     require("测试范围" in html and "测试人员" in html and "测试周期" in html and "涉及端侧" in html, "Report builder must expose required metadata fields")
     require("mindmap-report-layout" in html and "mindmap-report-scope" in html, "Report builder styles must be present")
-    print({"ok": True, "file": str(HTML), "checks": 72})
+    print({"ok": True, "file": str(HTML), "checks": 75})
 
 
 if __name__ == "__main__":

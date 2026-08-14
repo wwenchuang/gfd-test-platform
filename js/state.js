@@ -54,6 +54,7 @@ let mindmapCenterRefreshTimer = null;
 let mindmapCenterRecordCaseSetIds = new Set();
 let mindmapCenterTaskJobs = [];
 let mindmapCenterFileRows = [];
+let mindmapReportSelectedCaseSetIds = new Set();
 let mindmapReportData = null;
 let mindmapReportSelection = new Set();
 let mindmapReportPreview = null;

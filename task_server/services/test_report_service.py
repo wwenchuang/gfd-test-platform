@@ -42,6 +42,8 @@ TEMPLATE_PLACEHOLDERS = (
     "case_link",
     "test_goal",
     "test_scope",
+    "mindmap_list",
+    "source_count",
     "summary_table",
     "case_table",
     "failure_table",
@@ -72,6 +74,10 @@ def _report_dir(case_set_id: str, report_id: str) -> str:
     return os.path.join(_case_set_dir(case_set_id), "test-reports", clean_id(report_id, "report"))
 
 
+def _merged_report_dir(report_id: str) -> str:
+    return os.path.join(CASE_DIR, "merged-test-reports", clean_id(report_id, "report"))
+
+
 def _template_index_file() -> str:
     return os.path.join(_template_dir(), "index.json")
 
@@ -92,6 +98,29 @@ def _load_summary(case_set_id: str) -> Dict[str, Any]:
     if not isinstance(summary, dict):
         raise TestReportError("脑图记录不存在或已删除")
     return summary
+
+
+def _case_set_ids(value: Any) -> List[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        raw = re.split(r"[,，\s]+", str(value or ""))
+    rows: List[str] = []
+    seen = set()
+    for item in raw:
+        case_set_id = str(item or "").strip()
+        if not case_set_id or case_set_id in seen:
+            continue
+        rows.append(case_set_id)
+        seen.add(case_set_id)
+    return rows
+
+
+def _payload_case_set_ids(payload: Dict[str, Any]) -> List[str]:
+    ids = _case_set_ids(payload.get("case_set_ids") or payload.get("caseSetIds"))
+    if ids:
+        return ids
+    return _case_set_ids(payload.get("case_set_id") or payload.get("caseSetId") or payload.get("id"))
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -188,6 +217,60 @@ def _summary_cases(summary: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+def _source_title(summary: Dict[str, Any], case_set_id: str) -> str:
+    return _text(summary.get("title"), case_set_id)
+
+
+def _source_row(case_set_id: str, summary: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "case_set_id": case_set_id,
+        "title": _source_title(summary, case_set_id),
+        "module": _text(summary.get("module")),
+        "generated_at": _text(summary.get("generated_at")),
+        "case_count": len(cases),
+    }
+
+
+def _selection_id(case_set_id: str, case_id: str) -> str:
+    return f"{case_set_id}::{case_id}"
+
+
+def _decorate_source_cases(case_set_id: str, summary: Dict[str, Any], cases: List[Dict[str, Any]], *, multi: bool) -> List[Dict[str, Any]]:
+    title = _source_title(summary, case_set_id)
+    module = _text(summary.get("module"))
+    rows: List[Dict[str, Any]] = []
+    for case in cases:
+        row = dict(case)
+        case_id = _text(row.get("case_id"))
+        row["case_set_id"] = case_set_id
+        row["source_title"] = title
+        row["source_module"] = module
+        row["selection_id"] = _selection_id(case_set_id, case_id)
+        row["display_id"] = f"{title} / {case_id}" if multi else case_id
+        rows.append(row)
+    return rows
+
+
+def _load_sources(case_set_ids: List[str]) -> List[Dict[str, Any]]:
+    if not case_set_ids:
+        raise TestReportError("case_set_id 不能为空")
+    raw_sources: List[Dict[str, Any]] = []
+    for case_set_id in case_set_ids:
+        summary = _load_summary(case_set_id)
+        cases = _summary_cases(summary)
+        raw_sources.append({"case_set_id": case_set_id, "summary": summary, "cases": cases})
+    multi = len(raw_sources) > 1
+    sources: List[Dict[str, Any]] = []
+    for source in raw_sources:
+        decorated = _decorate_source_cases(source["case_set_id"], source["summary"], source["cases"], multi=multi)
+        sources.append({
+            **source,
+            "cases": decorated,
+            "meta": _source_row(source["case_set_id"], source["summary"], decorated),
+        })
+    return sources
+
+
 def _summary_yaml_refs(summary: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     refs: Dict[str, Dict[str, str]] = {}
     groups = summary.get("generatedCaseGroups") or summary.get("generated_case_groups") or {}
@@ -233,17 +316,23 @@ def _group_cases(cases: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return groups
 
 
-def load_reportable_cases(case_set_id: str) -> Dict[str, Any]:
-    summary = _load_summary(case_set_id)
-    cases = _summary_cases(summary)
+def load_reportable_cases(case_set_id: str = "", case_set_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    ids = _case_set_ids(case_set_ids) if case_set_ids is not None else _case_set_ids(case_set_id)
+    sources = _load_sources(ids)
+    cases = [case for source in sources for case in source.get("cases") or []]
     automation_count = len([case for case in cases if case.get("source_type") == "automation"])
     manual_count = len([case for case in cases if case.get("source_type") == "manual"])
+    primary = sources[0]
+    source_metas = [source["meta"] for source in sources]
     return {
         "ok": True,
-        "case_set_id": case_set_id,
-        "title": _text(summary.get("title"), case_set_id),
-        "module": _text(summary.get("module")),
-        "generated_at": _text(summary.get("generated_at")),
+        "case_set_id": primary["case_set_id"],
+        "case_set_ids": ids,
+        "source_count": len(sources),
+        "sources": source_metas,
+        "title": primary["meta"]["title"] if len(sources) == 1 else f"{primary['meta']['title']} 等 {len(sources)} 个脑图",
+        "module": primary["meta"]["module"] if len(sources) == 1 else "多脑图合并",
+        "generated_at": primary["meta"]["generated_at"],
         "counts": {
             "total_case_count": len(cases),
             "automation_case_count": automation_count,
@@ -253,16 +342,19 @@ def load_reportable_cases(case_set_id: str) -> Dict[str, Any]:
         "groups": _group_cases(cases),
         "cases": cases,
         "templates": list_test_report_templates(),
-        "reports": list_test_reports(case_set_id=case_set_id, limit=20),
+        "reports": list_test_reports(case_set_id=primary["case_set_id"], limit=20),
     }
 
 
-def _meta(summary: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, str]:
+def _meta(sources: List[Dict[str, Any]], payload: Dict[str, Any]) -> Dict[str, str]:
     raw = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-    title = _text(summary.get("title"), "测试报告")
+    source_titles = [source["meta"]["title"] for source in sources]
+    title = source_titles[0] if len(source_titles) == 1 else f"{source_titles[0]} 等 {len(source_titles)} 个脑图"
+    mindmap_summary = source_titles[0] if len(source_titles) == 1 else "、".join(source_titles[:3]) + (f" 等 {len(source_titles)} 个" if len(source_titles) > 3 else "")
     return {
         "report_title": _text(raw.get("report_title") or raw.get("title"), f"{title}-测试报告"),
         "title": title,
+        "mindmap_summary": mindmap_summary,
         "test_start": _text(raw.get("test_start") or raw.get("testStart")),
         "test_end": _text(raw.get("test_end") or raw.get("testEnd")),
         "tester": _text(raw.get("tester")),
@@ -276,12 +368,14 @@ def _meta(summary: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def _selected_cases(summary: Dict[str, Any], payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    cases = _summary_cases(summary)
+def _selected_cases(cases: List[Dict[str, Any]], payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     selected_ids = [str(item).strip() for item in (payload.get("selected_case_ids") or payload.get("selectedCaseIds") or []) if str(item).strip()]
     if selected_ids:
         selected_set = set(selected_ids)
-        selected = [case for case in cases if case.get("case_id") in selected_set]
+        selected = [
+            case for case in cases
+            if case.get("selection_id") in selected_set or case.get("case_id") in selected_set
+        ]
     else:
         selected = [case for case in cases if case.get("default_selected")]
     if not selected:
@@ -304,21 +398,20 @@ def _execution_map(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     raw = payload.get("execution_results") or payload.get("executionResults") or {}
     if isinstance(raw, list):
         return {
-            str(item.get("case_id") or item.get("caseId") or "").strip(): item
+            str(item.get("selection_id") or item.get("selectionId") or item.get("case_id") or item.get("caseId") or "").strip(): item
             for item in raw
-            if isinstance(item, dict) and str(item.get("case_id") or item.get("caseId") or "").strip()
+            if isinstance(item, dict) and str(item.get("selection_id") or item.get("selectionId") or item.get("case_id") or item.get("caseId") or "").strip()
         }
     if isinstance(raw, dict):
         return {str(key): value for key, value in raw.items() if isinstance(value, dict)}
     return {}
 
 
-def _indexed_execution_map(summary: Dict[str, Any], cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _indexed_execution_map(cases: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     report_index = read_json_file(os.path.join(LEARNING_DIR, "report-index.json"), default={})
     reports = report_index.get("reports") if isinstance(report_index, dict) else []
     if not isinstance(reports, list):
         return {}
-    module = _text(summary.get("module"))
     rows = sorted(
         [item for item in reports if isinstance(item, dict)],
         key=lambda item: str(item.get("createdAt") or item.get("created_at") or ""),
@@ -327,7 +420,9 @@ def _indexed_execution_map(summary: Dict[str, Any], cases: List[Dict[str, Any]])
     matched: Dict[str, Dict[str, Any]] = {}
     for case in cases:
         case_id = _text(case.get("case_id"))
+        selection_id = _text(case.get("selection_id") or case_id)
         yaml_file = _text(case.get("yaml_file"))
+        module = _text(case.get("source_module"))
         if not case_id or not yaml_file:
             continue
         for report in rows:
@@ -337,7 +432,7 @@ def _indexed_execution_map(summary: Dict[str, Any], cases: List[Dict[str, Any]])
                 continue
             if report_file != yaml_file:
                 continue
-            matched[case_id] = {
+            matched[selection_id] = {
                 "status": report.get("status"),
                 "report_url": report.get("reportUrl") or report.get("report_url") or report.get("sonic_report_url"),
                 "failure_reason": report.get("summary") or report.get("failure_reason") or report.get("error"),
@@ -351,7 +446,7 @@ def _indexed_execution_map(summary: Dict[str, Any], cases: List[Dict[str, Any]])
 
 def _case_with_status(case: Dict[str, Any], execution: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     result = dict(case)
-    evidence = execution.get(str(case.get("case_id") or "")) or {}
+    evidence = execution.get(str(case.get("selection_id") or "")) or execution.get(str(case.get("case_id") or "")) or {}
     result["status"] = _normalize_status(evidence.get("status") or evidence.get("state"))
     result["report_url"] = _text(evidence.get("report_url") or evidence.get("reportUrl") or evidence.get("sonic_report_url"))
     result["failure_reason"] = _text(evidence.get("failure_reason") or evidence.get("failureReason") or evidence.get("error"))
@@ -401,6 +496,9 @@ def _release(quality: Dict[str, Any]) -> Dict[str, str]:
 
 
 def _case_id_label(cases: List[Dict[str, Any]]) -> str:
+    if len({case.get("case_set_id") for case in cases if case.get("case_set_id")}) > 1:
+        ids = [str(case.get("display_id") or case.get("case_id") or "").strip() for case in cases if str(case.get("case_id") or "").strip()]
+        return "、".join(ids[:3]) + (f" 等 {len(ids)} 条" if len(ids) > 3 else "")
     ids = [str(case.get("case_id") or "").strip() for case in cases if str(case.get("case_id") or "").strip()]
     if not ids:
         return ""
@@ -430,6 +528,38 @@ def _scenario_goal(scenario: str, cases: List[Dict[str, Any]]) -> str:
 
 
 def _scope_markdown(cases: List[Dict[str, Any]], *, max_features: int = 8, max_scenarios_per_feature: int = 3) -> str:
+    source_ids = []
+    for case in cases:
+        case_set_id = case.get("case_set_id")
+        if case_set_id and case_set_id not in source_ids:
+            source_ids.append(case_set_id)
+    if len(source_ids) > 1:
+        lines: List[str] = []
+        scenario_total = 0
+        for source_index, case_set_id in enumerate(source_ids, start=1):
+            source_cases = [case for case in cases if case.get("case_set_id") == case_set_id]
+            if not source_cases or scenario_total >= max_features:
+                break
+            source_title = source_cases[0].get("source_title") or case_set_id
+            lines.append(f"{source_index}. {source_title}")
+            source_rows = 0
+            for group in _group_cases(source_cases):
+                if scenario_total >= max_features or source_rows >= max_scenarios_per_feature:
+                    break
+                for scenario in group.get("scenarios") or []:
+                    if scenario_total >= max_features or source_rows >= max_scenarios_per_feature:
+                        break
+                    scenario_cases = scenario.get("cases") or []
+                    ids = _case_id_label(scenario_cases)
+                    goal = _scenario_goal(scenario.get("scenario") or "", scenario_cases)
+                    suffix = f"（{ids}）" if ids else ""
+                    lines.append(f"   - {group.get('feature') or '未分组功能'} / {scenario.get('scenario') or '未分组场景'}：{goal}{suffix}")
+                    scenario_total += 1
+                    source_rows += 1
+            if source_index < len(source_ids) and scenario_total < max_features:
+                lines.append("")
+        return "\n".join(lines).strip()
+
     lines: List[str] = []
     group_rows = _group_cases(cases)
     scenario_total = 0
@@ -484,7 +614,7 @@ def _case_table(cases: List[Dict[str, Any]]) -> str:
         ["用例编号", "优先级", "类型", "场景", "用例名称", "状态"],
         [
             [
-                case.get("case_id"),
+                case.get("display_id") or case.get("case_id"),
                 case.get("priority"),
                 "人工" if case.get("source_type") == "manual" else "自动化",
                 case.get("scenario"),
@@ -504,7 +634,7 @@ def _failure_table(cases: List[Dict[str, Any]]) -> str:
         ["用例编号", "状态", "失败原因", "报告链接"],
         [
             [
-                case.get("case_id"),
+                case.get("display_id") or case.get("case_id"),
                 REPORT_STATUS_TEXT.get(case.get("status"), "失败"),
                 case.get("failure_reason") or "见执行报告",
                 case.get("report_url") or "-",
@@ -520,8 +650,18 @@ def _manual_case_table(cases: List[Dict[str, Any]]) -> str:
         return "未选择人工用例。"
     return _markdown_table(
         ["用例编号", "场景", "用例名称", "人工原因/风险"],
-        [[case.get("case_id"), case.get("scenario"), case.get("title"), case.get("risk") or "需要人工确认"] for case in manual],
+        [[case.get("display_id") or case.get("case_id"), case.get("scenario"), case.get("title"), case.get("risk") or "需要人工确认"] for case in manual],
     )
+
+
+def _mindmap_list_markdown(sources: List[Dict[str, Any]]) -> str:
+    rows = []
+    for source in sources:
+        meta = source.get("meta") or {}
+        title = meta.get("title") or source.get("case_set_id") or "-"
+        module = meta.get("module") or "-"
+        rows.append(f"- {title}（{module}，{meta.get('case_count', 0)} 条）")
+    return "\n".join(rows) or "-"
 
 
 def _basic_info(meta: Dict[str, str]) -> str:
@@ -539,6 +679,7 @@ def _overview(meta: Dict[str, str], scope: str) -> str:
     return "\n".join([
         f"需求链接： {meta.get('requirement_link') or '-'}",
         f"测试用例链接： {meta.get('case_link') or '-'}",
+        f"脑图文件： {meta.get('mindmap_summary') or '-'}",
         f"测试目标： {meta.get('test_goal') or '验证需求核心流程是否符合预期，并确保核心业务流程不受影响。'}",
         "测试范围：",
         "",
@@ -577,6 +718,8 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
     values = {
         **data.get("meta", {}),
         "test_scope": data.get("scope_markdown") or "",
+        "mindmap_list": data.get("mindmap_list") or "",
+        "source_count": data.get("source_count") or "",
         "summary_table": data.get("summary_table") or "",
         "case_table": data.get("case_table") or "",
         "failure_table": data.get("failure_table") or "",
@@ -662,23 +805,30 @@ def _markdown_to_html(markdown: str, title: str) -> str:
 
 
 def _build_report_data(payload: Dict[str, Any]) -> Dict[str, Any]:
-    summary = _load_summary(payload.get("case_set_id") or payload.get("caseSetId"))
-    selected = _selected_cases(summary, payload)
-    execution = {**_indexed_execution_map(summary, selected), **_execution_map(payload)}
+    case_set_ids = _payload_case_set_ids(payload)
+    sources = _load_sources(case_set_ids)
+    all_cases = [case for source in sources for case in source.get("cases") or []]
+    selected = _selected_cases(all_cases, payload)
+    execution = {**_indexed_execution_map(selected), **_execution_map(payload)}
     cases = [_case_with_status(case, execution) for case in selected]
     statistics = _statistics(cases)
     quality = _quality(statistics, cases)
     release = _release(quality)
-    meta = _meta(summary, payload)
+    meta = _meta(sources, payload)
     scope = _scope_markdown(cases)
+    source_metas = [source["meta"] for source in sources]
     data = {
-        "case_set_id": _text(summary.get("case_set_id") or payload.get("case_set_id")),
-        "title": _text(summary.get("title")),
-        "module": _text(summary.get("module")),
+        "case_set_id": case_set_ids[0],
+        "case_set_ids": case_set_ids,
+        "source_count": len(sources),
+        "sources": source_metas,
+        "title": meta["title"],
+        "module": source_metas[0]["module"] if len(source_metas) == 1 else "多脑图合并",
         "meta": meta,
         "cases": cases,
         "groups": _group_cases(cases),
         "scope_markdown": scope,
+        "mindmap_list": _mindmap_list_markdown(sources),
         "statistics": statistics,
         "quality": quality,
         "release": release,
@@ -717,7 +867,7 @@ def _save_index(data: Dict[str, Any]) -> None:
 def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
     data = _build_report_data(payload if isinstance(payload, dict) else {})
     report_id = unique_millis_id("tpr")
-    report_dir = _report_dir(data["case_set_id"], report_id)
+    report_dir = _report_dir(data["case_set_id"], report_id) if len(data.get("case_set_ids") or []) <= 1 else _merged_report_dir(report_id)
     os.makedirs(report_dir, exist_ok=True)
     md_path = os.path.join(report_dir, "report.md")
     html_path = os.path.join(report_dir, "report.html")
@@ -728,6 +878,9 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
         "ok": True,
         "report_id": report_id,
         "case_set_id": data["case_set_id"],
+        "case_set_ids": data.get("case_set_ids") or [data["case_set_id"]],
+        "source_count": data.get("source_count") or 1,
+        "sources": data.get("sources") or [],
         "title": data["meta"]["report_title"],
         "module": data.get("module") or "",
         "created_at": data["generated_at"],
@@ -752,7 +905,10 @@ def create_test_report(payload: Dict[str, Any]) -> Dict[str, Any]:
 def list_test_reports(case_set_id: str = "", limit: int = 100) -> List[Dict[str, Any]]:
     reports = list(_load_index().get("reports") or [])
     if case_set_id:
-        reports = [item for item in reports if item.get("case_set_id") == case_set_id]
+        reports = [
+            item for item in reports
+            if item.get("case_set_id") == case_set_id or case_set_id in (item.get("case_set_ids") or [])
+        ]
     reports.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
     return reports[: max(1, min(500, int(limit or 100)))]
 
