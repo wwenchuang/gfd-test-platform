@@ -757,13 +757,12 @@ def _default_markdown(data: Dict[str, Any]) -> str:
     meta = data["meta"]
     return "\n\n".join([
         f"# {meta['report_title']}",
-        f"## 1. 报告结论\n\n{data['conclusion_summary']}",
-        f"## 2. 基本信息\n\n{_basic_info(meta)}",
-        f"## 3. 测试概要\n\n{_overview(meta, data['scope_markdown'])}",
-        f"## 4. 主要测试点\n\n{data['test_points_markdown']}",
-        f"## 5. 测试数据\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n{data['defect_table']}",
-        f"## 6. 质量评估\n\n测试结果： {data['quality']['result']}\n\n{data['quality']['text']}",
-        f"## 7. 发布建议\n\n{data['release']['suggestion']}：{data['release']['text']}",
+        f"## 1. 基本信息\n\n{_basic_info(meta)}",
+        f"## 2. 测试概要\n\n{_overview(meta, data['scope_markdown'])}",
+        f"## 3. 主要测试点\n\n{data['test_points_markdown']}",
+        f"## 4. 测试数据\n\n用例统计：\n\n{data['summary_table']}\n\n缺陷统计：\n\n{data['defect_table']}",
+        f"## 5. 质量评估\n\n测试结果： ✅ {data['quality']['result']}\n\n{data['quality']['text']}",
+        f"## 6. 发布建议\n\n✅ {data['release']['suggestion']}：{data['release']['text']}",
     ]) + "\n"
 
 
@@ -794,8 +793,8 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
         "case_table": data.get("case_table") or "",
         "failure_table": data.get("failure_table") or "",
         "manual_case_table": data.get("manual_case_table") or "",
-        "quality_assessment": f"{data['quality']['result']}：{data['quality']['text']}",
-        "release_suggestion": f"{data['release']['suggestion']}：{data['release']['text']}",
+        "quality_assessment": f"✅ {data['quality']['result']}：{data['quality']['text']}",
+        "release_suggestion": f"✅ {data['release']['suggestion']}：{data['release']['text']}",
         "generated_at": data.get("generated_at") or "",
     }
     rendered = template
@@ -803,13 +802,12 @@ def _render_template(template: str, data: Dict[str, Any]) -> str:
         rendered = rendered.replace("{{" + key + "}}", str(values.get(key) or ""))
     fallback_sections = []
     required_markers = {
-        "## 1. 报告结论": "## 1. 报告结论\n\n" + data["conclusion_summary"],
-        "## 2. 基本信息": "## 2. 基本信息\n\n" + _basic_info(data["meta"]),
-        "## 3. 测试概要": "## 3. 测试概要\n\n" + _overview(data["meta"], data["scope_markdown"]),
-        "## 4. 主要测试点": "## 4. 主要测试点\n\n" + data["test_points_markdown"],
-        "## 5. 测试数据": "## 5. 测试数据\n\n用例统计：\n\n" + data["summary_table"] + "\n\n缺陷统计：\n\n" + data["defect_table"],
-        "## 6. 质量评估": "## 6. 质量评估\n\n" + values["quality_assessment"],
-        "## 7. 发布建议": "## 7. 发布建议\n\n" + values["release_suggestion"],
+        "## 1. 基本信息": "## 1. 基本信息\n\n" + _basic_info(data["meta"]),
+        "## 2. 测试概要": "## 2. 测试概要\n\n" + _overview(data["meta"], data["scope_markdown"]),
+        "## 3. 主要测试点": "## 3. 主要测试点\n\n" + data["test_points_markdown"],
+        "## 4. 测试数据": "## 4. 测试数据\n\n用例统计：\n\n" + data["summary_table"] + "\n\n缺陷统计：\n\n" + data["defect_table"],
+        "## 5. 质量评估": "## 5. 质量评估\n\n测试结果： " + values["quality_assessment"],
+        "## 6. 发布建议": "## 6. 发布建议\n\n" + values["release_suggestion"],
     }
     for marker, content in required_markers.items():
         if marker not in rendered:
@@ -866,8 +864,7 @@ def _markdown_to_html(markdown: str, title: str) -> str:
         elif line.startswith("## "):
             close_section()
             title_text = line[3:].strip()
-            section_class = "report-section report-summary" if "报告结论" in title_text else "report-section"
-            lines.append(f"<section class=\"{section_class}\">")
+            lines.append("<section class=\"report-section\">")
             section_open = True
             lines.append(f"<h2>{html.escape(title_text)}</h2>")
         elif line.startswith("### "):
@@ -905,9 +902,6 @@ def _markdown_to_html(markdown: str, title: str) -> str:
     .report-cover span {{ display: inline-block; margin-bottom: 22px; padding: 4px 10px; border: 1px solid rgba(255,255,255,.36); border-radius: 999px; font-size: 12px; letter-spacing: .08em; }}
     .report-cover h1 {{ margin: 0; font-size: 34px; line-height: 1.25; font-weight: 800; }}
     .report-section {{ margin-top: 18px; border: 1px solid #dfe5ee; border-radius: 14px; background: #fff; padding: 22px 24px; box-shadow: 0 10px 28px rgba(31, 41, 55, .07); }}
-    .report-summary {{ border-color: #b7d7f4; background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%); }}
-    .report-summary table {{ margin-bottom: 4px; }}
-    .report-summary th:first-child, .report-summary td:first-child {{ width: 128px; font-weight: 700; color: #0f3d5e; }}
     h2 {{ margin: 0 0 16px; color: #0f172a; font-size: 22px; line-height: 1.35; padding-bottom: 10px; border-bottom: 2px solid #e7edf5; }}
     h3 {{ margin: 18px 0 10px; color: #1f2937; font-size: 16px; }}
     p {{ margin: 7px 0; }}

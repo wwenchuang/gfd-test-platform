@@ -233,8 +233,8 @@ def test_preview_uses_manual_defect_severity_statistics(report_workspace):
     }
     assert "| 致命 | 严重 | 一般 | 轻微 | 总计 |" in result["defect_table"]
     assert "| 1 | 2 | 3 | 4 | 10 |" in result["defect_table"]
-    assert "测试结果： 通过" in result["markdown"]
-    assert "建议发布：本轮测试结论为通过" in result["markdown"]
+    assert "测试结果： ✅ 通过" in result["markdown"]
+    assert "✅ 建议发布：本轮测试结论为通过" in result["markdown"]
     assert "按既定发布流程推进上线" in result["markdown"]
 
 
@@ -316,15 +316,16 @@ def test_create_report_persists_markdown_html_and_index(report_workspace):
     assert Path(result["files"]["html"]).exists()
     markdown = Path(result["files"]["markdown"]).read_text(encoding="utf-8")
     html = Path(result["files"]["html"]).read_text(encoding="utf-8")
-    assert "## 1. 报告结论" in markdown
-    assert "## 2. 基本信息" in markdown
-    assert "## 3. 测试概要" in markdown
+    assert "## 1. 报告结论" not in markdown
+    assert "## 1. 基本信息" in markdown
+    assert "## 2. 测试概要" in markdown
     assert "测试范围" in markdown
-    assert "准入结论" in markdown
     assert "版本质量满足发布要求" in markdown
+    assert "测试结果： ✅ 通过" in markdown
+    assert "✅ 建议发布：" in markdown
     assert "| 4 | 4 | 0 | 0 | 0 | 100% | 0 |" in markdown
     assert "共享打印V1.2.2-测试报告" in html
-    assert "report-summary" in html
+    assert "report-summary" not in html
     assert test_report_service.read_test_report(result["report_id"])["report_id"] == result["report_id"]
     indexed = test_report_service.list_test_reports(case_set_id="case-a")
     assert [item["report_id"] for item in indexed] == [result["report_id"]]
@@ -340,7 +341,7 @@ def test_default_report_body_uses_test_points_without_case_details(report_worksp
     })
 
     markdown = result["markdown"]
-    assert "## 4. 主要测试点" in markdown
+    assert "## 3. 主要测试点" in markdown
     assert "1. " in result["test_points_markdown"]
     assert "2. " in result["test_points_markdown"]
     assert "选中用例明细" not in markdown
@@ -382,10 +383,11 @@ def test_template_missing_sections_gets_default_fallback(report_workspace):
     })
 
     assert "# 共享打印V1.2.2-测试报告" in result["markdown"]
-    assert "## 1. 报告结论" in result["markdown"]
-    assert "## 3. 测试概要" in result["markdown"]
-    assert "## 4. 主要测试点" in result["markdown"]
-    assert "## 7. 发布建议" in result["markdown"]
+    assert "## 1. 报告结论" not in result["markdown"]
+    assert "## 2. 测试概要" in result["markdown"]
+    assert "## 3. 主要测试点" in result["markdown"]
+    assert "## 6. 发布建议" in result["markdown"]
+    assert "✅ 建议发布：" in result["markdown"]
 
 
 def test_preview_enriches_execution_result_from_midscene_report_index(report_workspace):
