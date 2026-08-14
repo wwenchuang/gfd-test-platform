@@ -3636,6 +3636,34 @@ function mindmapReportCaseSelectionId(item = {}) {
   return item.selection_id || item.case_id || '';
 }
 
+const DEFAULT_MINDMAP_REPORT_GOAL = '验证需求核心流程是否符合预期，并确保核心业务流程不受影响。';
+const MINDMAP_REPORT_CLIENT_SIDES = ['mini', 'Android', 'iOS', '中台'];
+
+function mindmapReportToday() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function mindmapReportClientSideOptions(selected = ['mini']) {
+  const selectedSet = new Set(selected);
+  return MINDMAP_REPORT_CLIENT_SIDES.map(side => `
+    <label class="mindmap-report-choice">
+      <input type="checkbox" name="mindmap-report-client-side" value="${escapeHtml(side)}" ${selectedSet.has(side) ? 'checked' : ''}>
+      <span>${escapeHtml(side)}</span>
+    </label>
+  `).join('');
+}
+
+function mindmapReportSelectedClientSides() {
+  return Array.from(document.querySelectorAll('input[name="mindmap-report-client-side"]:checked'))
+    .map(input => input.value)
+    .filter(Boolean)
+    .join(' / ');
+}
+
 function mindmapReportCaseVisible(item = {}) {
   const keyword = (document.getElementById('mindmap-report-search')?.value || '').trim().toLowerCase();
   const priority = document.getElementById('mindmap-report-priority')?.value || 'all';
@@ -3669,7 +3697,7 @@ function mindmapReportMetaPayload() {
     test_start: document.getElementById('mindmap-report-start')?.value.trim() || '',
     test_end: document.getElementById('mindmap-report-end')?.value.trim() || '',
     tester: document.getElementById('mindmap-report-tester')?.value.trim() || '',
-    client_side: document.getElementById('mindmap-report-client')?.value.trim() || '',
+    client_side: mindmapReportSelectedClientSides(),
     version: document.getElementById('mindmap-report-version')?.value.trim() || '',
     environment: document.getElementById('mindmap-report-env')?.value.trim() || '',
     requirement_link: document.getElementById('mindmap-report-requirement')?.value.trim() || '',
@@ -3846,6 +3874,7 @@ function renderMindmapReportBuilder(data) {
     ? `${sourceCount} 个脑图 · ${sourceNames.slice(0, 3).join('、')}${sourceNames.length > 3 ? ' 等' : ''}`
     : `${title} · ${mindmapReportData.module || '未分组模块'}`;
   const defaultReportTitle = sourceCount > 1 ? '多需求合并测试报告' : `${title}-测试报告`;
+  const today = mindmapReportToday();
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="generation-records mindmap-report-page">
@@ -3901,14 +3930,20 @@ function renderMindmapReportBuilder(data) {
           </div>
           <div class="mindmap-report-form">
             <label>报告标题<input id="mindmap-report-title" value="${escapeHtml(defaultReportTitle)}"></label>
-            <label>测试周期<input id="mindmap-report-start" type="date"><input id="mindmap-report-end" type="date"></label>
+            <label>测试周期<input id="mindmap-report-start" type="date" value="${today}"><input id="mindmap-report-end" type="date" value="${today}"></label>
             <label>测试人员<input id="mindmap-report-tester" placeholder="例如：王文闯"></label>
-            <label>涉及端侧<input id="mindmap-report-client" placeholder="例如：mini / Android / iOS / 中台"></label>
+            <label>涉及端侧<span id="mindmap-report-client" class="mindmap-report-choice-group">${mindmapReportClientSideOptions()}</span></label>
             <label>测试版本<input id="mindmap-report-version" placeholder="例如：V1.2.2"></label>
-            <label>测试环境<input id="mindmap-report-env" placeholder="例如：测试环境 / 预发环境"></label>
+            <label>测试环境
+              <select id="mindmap-report-env">
+                <option value="正式环境">正式环境</option>
+                <option value="预发布环境">预发布环境</option>
+                <option value="测试环境" selected>测试环境</option>
+              </select>
+            </label>
             <label>需求链接<input id="mindmap-report-requirement" placeholder="填写飞书链接"></label>
             <label>测试用例链接<input id="mindmap-report-case-link" placeholder="http://qa-agiletc.gongfudou.com/caseManager/..."></label>
-            <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2" placeholder="验证需求核心流程是否符合预期，并确保核心业务流程不受影响。"></textarea></label>
+            <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
             <label class="wide">报告模板
               <span class="mindmap-report-template-row">

@@ -2905,6 +2905,30 @@
     grid-template-columns: minmax(80px, auto) minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
   }
+  .mindmap-report-choice-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+  .mindmap-report-choice {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 7px 10px;
+    border: 1px solid rgba(51,80,109,.82);
+    border-radius: 8px;
+    background: rgba(6,10,20,.82);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .mindmap-report-choice input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--success);
+  }
   .mindmap-report-template-row select {
     flex: 1 1 220px;
   }
@@ -3101,6 +3125,9 @@
     }
     .mindmap-report-form label:has(input[type="date"]) {
       grid-template-columns: 1fr;
+    }
+    .mindmap-report-choice-group {
+      gap: 6px;
     }
   }
   .review-page {

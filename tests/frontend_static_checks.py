@@ -403,9 +403,13 @@ def main():
     require("case_set_ids" in html and "selection_id" in html and "mindmapReportCaseSelectionId" in html, "Mindmap report builder must submit multi-mindmap case selections without case-id collisions")
     require("选择当前列表" in html and "生成合并报告" in html and "mindmap-record-check" in html, "Mindmap file list must expose multi-select report actions")
     require("/test-reports/cases" in html and "/test-reports/preview" in html and "/test-reports" in html, "Frontend must call mindmap test report APIs")
+    require("mindmapReportToday()" in html and 'id="mindmap-report-start" type="date" value="${today}"' in html and 'id="mindmap-report-end" type="date" value="${today}"' in html, "Report builder must default test period to today")
+    require("mindmapReportSelectedClientSides" in html and "mindmap-report-client-side" in html and "mini" in html and "Android" in html and "iOS" in html and "中台" in html, "Report builder must expose multi-select client side options")
+    require('id="mindmap-report-env"' in html and "正式环境" in html and "预发布环境" in html and "测试环境" in html, "Report builder must use a fixed environment dropdown")
+    require("DEFAULT_MINDMAP_REPORT_GOAL" in html and "验证需求核心流程是否符合预期，并确保核心业务流程不受影响。" in html and "<textarea id=\"mindmap-report-goal\"" in html, "Report builder must prefill an editable default test goal")
     require("测试范围" in html and "测试人员" in html and "测试周期" in html and "涉及端侧" in html, "Report builder must expose required metadata fields")
     require("mindmap-report-layout" in html and "mindmap-report-scope" in html, "Report builder styles must be present")
-    print({"ok": True, "file": str(HTML), "checks": 75})
+    print({"ok": True, "file": str(HTML), "checks": 79})
 
 
 if __name__ == "__main__":
