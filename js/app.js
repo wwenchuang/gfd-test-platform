@@ -3637,7 +3637,7 @@ function mindmapReportCaseSelectionId(item = {}) {
 }
 
 const DEFAULT_MINDMAP_REPORT_GOAL = '验证需求核心流程是否符合预期，并确保核心业务流程不受影响。';
-const MINDMAP_REPORT_CLIENT_SIDES = ['mini', 'Android', 'iOS', '中台'];
+const MINDMAP_REPORT_CLIENT_SIDES = ['mini', 'Android', 'iOS', '中台', '后台', 'iPad', '安卓pad'];
 
 function mindmapReportToday() {
   const now = new Date();
@@ -3936,9 +3936,9 @@ function renderMindmapReportBuilder(data) {
             <label>测试版本<input id="mindmap-report-version" placeholder="例如：V1.2.2"></label>
             <label>测试环境
               <select id="mindmap-report-env">
-                <option value="正式环境">正式环境</option>
+                <option value="正式环境" selected>正式环境</option>
                 <option value="预发布环境">预发布环境</option>
-                <option value="测试环境" selected>测试环境</option>
+                <option value="测试环境">测试环境</option>
               </select>
             </label>
             <label>需求链接<input id="mindmap-report-requirement" placeholder="填写飞书链接"></label>
