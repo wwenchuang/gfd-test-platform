@@ -34,6 +34,41 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 定时任务：基线选择口径、Cron 校验和开关标记
+
+用户继续反馈定时任务页中基线分组/多条基线没有和基线库列表同步，Cron 手写表达式缺少校验和含义说明，列表开关缺少可读标记。
+
+本轮修复：
+
+- 定时任务目标选择器的基线口径改为和后端执行一致：展示所有非归档基线，不再只按 `status === "active"` 过滤。
+- `baseline_group` 选择器会同步展示 `测试`、`基线`、`未分组` 等分组，并显示分组下基线数量、代表用例和接口路径。
+- `baselines` 多选模式按分组列出所有非归档基线；归档基线不会出现在可选目标中。
+- 列表行的启用/飞书开关补上 `启用`、`飞书` 文本标记，避免只看到两个无语义开关。
+- Cron 输入改为实时校验 5 字段表达式，支持 `*`、数字、范围、列表和步长；非法表达式会在输入框下方提示并阻止保存。
+- Cron 输入合法时显示可读含义，例如 `0 3 * * *` 展示为 `每天 03:00 执行`，`0 9 * * 1-5` 展示为 `工作日 09:00 执行`。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/views/ScheduledJobsView.spec.ts --reporter=basic
+# 1 file / 6 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-D_1iruD8.js and index-BlvbhcVY.css
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 32 files / 175 tests passed
+
+python3 tests/frontend_static_checks.py
+# 81 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 脑图用例测试报告：统计、缺陷和专业结论模板
 
 用户要求脑图测试报告支持多脑图用例生成、真实统计、缺陷手工录入，并优化通过结论和发布建议，使报告更像正式测试交付件。

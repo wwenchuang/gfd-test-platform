@@ -41,6 +41,11 @@ interface TargetOption {
   meta: string
 }
 
+interface CronValidation {
+  valid: boolean
+  message: string
+}
+
 const scheduleOptions: Array<{ value: ScheduledJob['schedule_type']; label: string }> = [
   { value: 'daily', label: '每天' },
   { value: 'weekly', label: '每周' },
@@ -83,10 +88,10 @@ const targetSearchPlaceholder = computed(() => ({
   baselines: '搜索基线名称、路径、分组',
   baseline_group: '搜索分组名称',
 }[form.targetType]))
-const activeBaselines = computed(() => baselines.items.filter(item => item.status === 'active'))
+const availableBaselines = computed(() => baselines.items.filter(item => item.status !== 'archived'))
 const targetOptions = computed<TargetOption[]>(() => {
   if (form.targetType === 'baseline_group') return baselineGroupOptions()
-  if (form.targetType === 'baselines') return activeBaselines.value.map(baselineOption)
+  if (form.targetType === 'baselines') return availableBaselines.value.map(baselineOption)
   if (form.targetType === 'cases') return Object.values(cases.versions).map(caseOption).sort(byTitle)
   return tasks.tasks.map(taskOption).sort(byTitle)
 })
@@ -112,6 +117,11 @@ const editorTitle = computed(() => editingJobId.value ? '编辑定时任务' : '
 const saveLabel = computed(() => {
   if (scheduledJobs.saving) return '保存中'
   return editingJobId.value ? '保存修改' : '保存定时任务'
+})
+const cronValidation = computed(() => describeCronExpression(form.cronExpression))
+const scheduleDescription = computed(() => {
+  if (form.scheduleType === 'cron') return cronValidation.value.valid ? cronValidation.value.message : '按 Cron 表达式执行'
+  return scheduleTimeDescriptions[form.scheduleType]
 })
 
 onMounted(async () => {
@@ -140,6 +150,10 @@ async function saveJob(): Promise<void> {
   const ids = targetIds()
   if (!ids.length) {
     scheduledJobs.error = `请先${targetPickerTitle.value}`
+    return
+  }
+  if (form.scheduleType === 'cron' && !cronValidation.value.valid) {
+    scheduledJobs.error = cronValidation.value.message
     return
   }
   const input = buildJobInput(ids)
@@ -307,7 +321,7 @@ function jobInputFromJob(job: ScheduledJob): ScheduledJobInput {
 
 function baselineGroupOptions(): TargetOption[] {
   const groups = new Map<string, ApiBaselineCase[]>()
-  for (const item of activeBaselines.value) {
+  for (const item of availableBaselines.value) {
     const name = baselineGroup(item)
     groups.set(name, [...(groups.get(name) || []), item])
   }
@@ -319,7 +333,7 @@ function baselineGroupOptions(): TargetOption[] {
       return {
         id: name,
         title: name,
-        subtitle: [`${items.length} 条可执行基线`, sampleText].filter(Boolean).join(' · '),
+        subtitle: [`${items.length} 条基线`, sampleText].filter(Boolean).join(' · '),
         meta: '基线分组',
       }
     })
@@ -356,6 +370,109 @@ function taskOption(item: ApiTestTask): TargetOption {
 function byTitle(left: TargetOption, right: TargetOption): number {
   return left.title.localeCompare(right.title, 'zh-CN')
 }
+
+function describeCronExpression(expression: string): CronValidation {
+  const value = expression.trim()
+  if (!value) {
+    return { valid: false, message: '请输入 5 位 Cron 表达式，例如 0 2 * * *' }
+  }
+  const parts = value.split(/\s+/)
+  if (parts.length !== 5) {
+    return { valid: false, message: 'Cron 表达式需要 5 个字段：分钟 小时 日期 月份 星期' }
+  }
+  const fields = [
+    { value: parts[0], label: '分钟', min: 0, max: 59 },
+    { value: parts[1], label: '小时', min: 0, max: 23 },
+    { value: parts[2], label: '日期', min: 1, max: 31 },
+    { value: parts[3], label: '月份', min: 1, max: 12 },
+    { value: parts[4], label: '星期', min: 0, max: 7 },
+  ]
+  for (const field of fields) {
+    const error = validateCronField(field.value, field.label, field.min, field.max)
+    if (error) return { valid: false, message: error }
+  }
+  return { valid: true, message: describeCronParts(parts) }
+}
+
+function validateCronField(field: string, label: string, min: number, max: number): string {
+  if (!field) return `${label}字段不能为空`
+  for (const part of field.split(',')) {
+    const error = validateCronPart(part, label, min, max)
+    if (error) return error
+  }
+  return ''
+}
+
+function validateCronPart(part: string, label: string, min: number, max: number): string {
+  const segments = part.split('/')
+  if (segments.length > 2 || !segments[0]) return `${label}字段格式不正确`
+  if (segments[1] !== undefined) {
+    if (!isNumber(segments[1])) return `${label}字段步长格式不正确`
+    const step = Number(segments[1])
+    if (step < 1 || step > max) return `${label}字段步长超出范围（1-${max}）`
+  }
+  return validateCronBase(segments[0], label, min, max)
+}
+
+function validateCronBase(base: string, label: string, min: number, max: number): string {
+  if (base === '*') return ''
+  const range = base.split('-')
+  if (range.length === 2) {
+    if (!isNumber(range[0]) || !isNumber(range[1])) return `${label}字段范围格式不正确`
+    const start = Number(range[0])
+    const end = Number(range[1])
+    if (start > end) return `${label}字段范围起点不能大于终点`
+    if (start < min || end > max) return `${label}字段超出范围（${min}-${max}）`
+    return ''
+  }
+  if (range.length > 2 || !isNumber(base)) return `${label}字段格式不正确`
+  const number = Number(base)
+  if (number < min || number > max) return `${label}字段超出范围（${min}-${max}）`
+  return ''
+}
+
+function isNumber(value: string): boolean {
+  return /^\d+$/.test(value)
+}
+
+function describeCronParts(parts: string[]): string {
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts
+  const singleMinute = singleNumber(minute)
+  const singleHour = singleNumber(hour)
+  if (singleMinute !== null && singleHour !== null) {
+    const time = `${String(singleHour).padStart(2, '0')}:${String(singleMinute).padStart(2, '0')}`
+    if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') return `每天 ${time} 执行`
+    if (dayOfMonth === '*' && month === '*' && isWeekdayCron(dayOfWeek)) return `工作日 ${time} 执行`
+    const weekDay = singleNumber(dayOfWeek)
+    if (dayOfMonth === '*' && month === '*' && weekDay !== null) return `每周${weekDayName(weekDay)} ${time} 执行`
+    const monthDay = singleNumber(dayOfMonth)
+    if (month === '*' && dayOfWeek === '*' && monthDay !== null) return `每月 ${monthDay} 日 ${time} 执行`
+    const monthNumber = singleNumber(month)
+    if (dayOfWeek === '*' && monthDay !== null && monthNumber !== null) return `每年 ${monthNumber} 月 ${monthDay} 日 ${time} 执行`
+  }
+  const minuteStep = everyStep(minute)
+  if (minuteStep && hour === '*' && dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
+    return `每 ${minuteStep} 分钟执行`
+  }
+  return `合法 Cron：分钟 ${minute}，小时 ${hour}，日期 ${dayOfMonth}，月份 ${month}，星期 ${dayOfWeek}`
+}
+
+function singleNumber(value: string): number | null {
+  return isNumber(value) ? Number(value) : null
+}
+
+function isWeekdayCron(value: string): boolean {
+  return value === '1-5' || value === '1,2,3,4,5'
+}
+
+function everyStep(value: string): number | null {
+  const match = value.match(/^\*\/(\d+)$/)
+  return match ? Number(match[1]) : null
+}
+
+function weekDayName(value: number): string {
+  return ['日', '一', '二', '三', '四', '五', '六', '日'][value] || String(value)
+}
 </script>
 
 <template>
@@ -383,8 +500,12 @@ function byTitle(left: TargetOption, right: TargetOption): number {
             <small>{{ job.target_ids.join('、') || '暂无目标' }}</small>
           </div>
           <div class="scheduled-row-actions">
-            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" title="启用" @click="toggleJobFlag(job, 'enabled')"><span /></button>
-            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :class="{ active: job.notify_feishu }" title="飞书通知" @click="toggleJobFlag(job, 'notify_feishu')"><span /></button>
+            <button :data-testid="`scheduled-list-enabled-${job.id}`" type="button" class="mini-switch" :class="{ active: job.enabled }" title="启用" @click="toggleJobFlag(job, 'enabled')">
+              <span class="mini-switch-text">启用</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
+            </button>
+            <button :data-testid="`scheduled-list-notify-${job.id}`" type="button" class="mini-switch" :class="{ active: job.notify_feishu }" title="飞书通知" @click="toggleJobFlag(job, 'notify_feishu')">
+              <span class="mini-switch-text">飞书</span><span class="mini-switch-track"><span class="mini-switch-dot" /></span>
+            </button>
             <button :data-testid="`scheduled-edit-${job.id}`" type="button" class="mini-icon" title="编辑" @click="editJob(job)"><Pencil :size="14" /></button>
             <button :data-testid="`scheduled-delete-${job.id}`" type="button" class="mini-icon danger" title="删除" @click="deleteJob(job)"><Trash2 :size="14" /></button>
             <button :data-testid="`scheduled-run-${job.id}`" type="button" class="secondary-command" :disabled="scheduledJobs.runningId === job.id" @click="runJob(job)">
@@ -469,10 +590,11 @@ function byTitle(left: TargetOption, right: TargetOption): number {
                 @click="setScheduleType(option.value)"
               >{{ option.label }}</button>
             </div>
-            <p class="schedule-time-note">{{ scheduleTimeDescriptions[form.scheduleType] }}</p>
+            <p class="schedule-time-note">{{ scheduleDescription }}</p>
           </fieldset>
           <section v-if="form.scheduleType === 'cron'" class="cron-preset-panel wide">
             <label>Cron 表达式<input v-model="form.cronExpression" data-testid="scheduled-cron" placeholder="0 2 * * *" /></label>
+            <p class="cron-feedback" :class="{ invalid: !cronValidation.valid }">{{ cronValidation.message }}</p>
             <div class="cron-preset-grid">
               <button
                 v-for="preset in cronPresets"

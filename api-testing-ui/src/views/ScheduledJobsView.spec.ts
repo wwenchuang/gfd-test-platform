@@ -235,7 +235,9 @@ describe('ScheduledJobsView', () => {
               ? [baselineFixture({ id: 'baseline-1', group_name: '基线', case_name: '登录成功用例' })]
               : [
                   baselineFixture({ id: 'baseline-1', group_name: '基线', case_name: '登录成功用例' }),
-                  baselineFixture({ id: 'baseline-2', group_name: '新增分组', case_name: '支付成功用例', path: '/pay' }),
+                  baselineFixture({ id: 'baseline-2', group_name: '测试', case_name: '支付成功用例', path: '/pay', status: 'ready' }),
+                  baselineFixture({ id: 'baseline-3', group_name: '', case_name: '未分组用例', path: '/profile', status: 'adopted', tags: [] }),
+                  baselineFixture({ id: 'baseline-4', group_name: '已删除', case_name: '归档用例', path: '/archived', status: 'archived' }),
                 ],
           },
         }
@@ -256,12 +258,54 @@ describe('ScheduledJobsView', () => {
     await wrapper.get('[data-testid="scheduled-refresh"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('新增分组')
+    expect(wrapper.text()).toContain('测试')
+    expect(wrapper.text()).toContain('未分组')
+    expect(wrapper.text()).not.toContain('已删除')
     await wrapper.get('[data-testid="scheduled-target-type"]').setValue('baselines')
     expect(wrapper.text()).toContain('基线')
-    expect(wrapper.text()).toContain('新增分组')
+    expect(wrapper.text()).toContain('测试')
+    expect(wrapper.text()).toContain('未分组')
     expect(wrapper.text()).toContain('登录成功用例')
     expect(wrapper.text()).toContain('支付成功用例')
+    expect(wrapper.text()).toContain('未分组用例')
+    expect(wrapper.text()).not.toContain('归档用例')
+  })
+
+  it('validates cron expressions and explains the edited schedule', async () => {
+    mockScheduledJobAssets()
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { scheduled_job: scheduledJobFixture({ id: 'job-4', schedule_type: 'cron', cron_expression: '0 3 * * *' }) },
+    })
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'scheduled-jobs', component: ScheduledJobsView }],
+    })
+
+    const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="scheduled-name"]').setValue('凌晨巡检')
+    await wrapper.findAll('[data-testid="scheduled-target-option"]').find(item => item.text().includes('发版冒烟'))!.trigger('click')
+    await wrapper.get('[data-testid="scheduled-schedule-cron"]').trigger('click')
+    await wrapper.get('[data-testid="scheduled-cron"]').setValue('0 3 * * *')
+
+    expect(wrapper.text()).toContain('每天 03:00 执行')
+
+    await wrapper.get('[data-testid="scheduled-cron"]').setValue('99 3 * * *')
+    expect(wrapper.text()).toContain('分钟字段超出范围')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+
+    expect(post).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-testid="scheduled-cron"]').setValue('0 3 * * *')
+    await wrapper.get('[data-testid="scheduled-save"]').trigger('click')
+    await flushPromises()
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/scheduled-jobs', expect.objectContaining({
+      schedule_type: 'cron',
+      cron_expression: '0 3 * * *',
+    }))
   })
 
   it('edits list rows, toggles switches, and deletes after confirmation', async () => {
@@ -304,6 +348,8 @@ describe('ScheduledJobsView', () => {
     const wrapper = mount(ScheduledJobsView, { global: { plugins: [router] } })
     await flushPromises()
 
+    expect(wrapper.get('[data-testid="scheduled-list-enabled-job-9"]').text()).toContain('启用')
+    expect(wrapper.get('[data-testid="scheduled-list-notify-job-9"]').text()).toContain('飞书')
     await wrapper.get('[data-testid="scheduled-list-enabled-job-9"]').trigger('click')
     await flushPromises()
     await wrapper.get('[data-testid="scheduled-list-notify-job-9"]').trigger('click')
