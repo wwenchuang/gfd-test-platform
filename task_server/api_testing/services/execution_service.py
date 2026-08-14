@@ -33,6 +33,8 @@ class ExecutionView:
     project_id: str
     task_id: Optional[str]
     task_name: Optional[str]
+    task_type: Optional[str]
+    execution_source: str
     state: str
     execution_type: str
     source_revision_id: str
@@ -110,7 +112,7 @@ def _parse_request(value):
     for field in ("project_id", "source_revision_id", "environment_revision_id"):
         if not isinstance(result[field], str) or not result[field]:
             raise ValueError(f"{field} is required")
-    if result["execution_type"] not in {"debug", "regression", "baseline_regression"}:
+    if result["execution_type"] not in {"debug", "regression", "baseline_regression", "scheduled"}:
         raise ValueError("execution type is not supported")
     identifiers = result["case_version_ids"]
     if (
@@ -630,16 +632,27 @@ class ExecutionService:
     def _task_snapshot(task):
         if task is None:
             return None
+        task_type = None
+        source = None
         if isinstance(task, dict):
             raw_id = task.get("id")
             raw_name = task.get("name")
+            task_type = task.get("type")
+            source = task.get("source")
         else:
             raw_id = getattr(task, "id", None)
             raw_name = getattr(task, "name", None)
+            task_type = getattr(task, "type", None)
+            source = getattr(task, "source", None)
         if not isinstance(raw_id, str) or not raw_id.strip():
             return None
         name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else "未命名任务"
-        return {"id": raw_id.strip(), "name": name[:200]}
+        snapshot = {"id": raw_id.strip(), "name": name[:200]}
+        if isinstance(task_type, str) and task_type.strip():
+            snapshot["type"] = task_type.strip()[:32]
+        if isinstance(source, str) and source.strip():
+            snapshot["source"] = source.strip()[:32]
+        return snapshot
 
     @staticmethod
     def _view(execution, children, display_metadata=None):
@@ -658,6 +671,16 @@ class ExecutionService:
             project_id=execution.project_id,
             task_id=task.get("id") if isinstance(task.get("id"), str) else None,
             task_name=task.get("name") if isinstance(task.get("name"), str) else None,
+            task_type=task.get("type") if isinstance(task.get("type"), str) else None,
+            execution_source=(
+                task.get("source")
+                if isinstance(task.get("source"), str)
+                else {
+                    "debug": "online_debug",
+                    "baseline_regression": "baseline_regression",
+                    "scheduled": "scheduled_job",
+                }.get(execution.execution_type, "manual_task")
+            ),
             state=execution.state,
             execution_type=execution.execution_type,
             source_revision_id=execution.source_revision_id,

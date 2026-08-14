@@ -271,8 +271,10 @@ export interface ExecutionView {
   project_id: string
   task_id?: string | null
   task_name?: string | null
+  task_type?: string | null
+  execution_source?: string
   state: string
-  execution_type: 'debug' | 'regression' | 'baseline_regression'
+  execution_type: 'debug' | 'regression' | 'baseline_regression' | 'scheduled'
   source_revision_id: string
   environment_revision_id: string
   environment_name: string
@@ -284,6 +286,27 @@ export interface ExecutionView {
   created_at: string
   started_at: string | null
   finished_at: string | null
+}
+
+export interface ScheduledJob {
+  id: string
+  project_id: string
+  source_revision_id: string | null
+  environment_revision_id: string | null
+  environment_id: string | null
+  name: string
+  target_type: 'cases' | 'task' | 'baselines' | 'baseline_group'
+  target_ids: string[]
+  schedule_type: 'daily' | 'weekly' | 'cron'
+  cron_expression: string
+  environment_strategy: 'fixed_revision' | 'latest_environment'
+  enabled: boolean
+  notify_feishu: boolean
+  retry_count: number
+  timeout_seconds: number
+  latest_execution_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface ExecutionCaseResult {

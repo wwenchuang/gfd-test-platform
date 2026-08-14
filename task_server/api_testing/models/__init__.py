@@ -30,6 +30,7 @@ from .execution import (
 from .notification import ApiNotificationChannel
 from .project import ApiProject, ApiProjectMember, ApiWorkspace
 from .provider import ApiProviderCredential
+from .scheduled_job import ApiScheduledJob, ApiScheduledJobRun, ApiScheduledJobTarget
 from .source import (
     ApiSource,
     ApiSourceDiff,

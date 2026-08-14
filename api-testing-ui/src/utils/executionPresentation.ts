@@ -24,6 +24,7 @@ const EXECUTION_TYPE_LABELS: Record<string, string> = {
   debug: '在线调试',
   regression: '自动回归',
   baseline_regression: '基线回归',
+  scheduled: '定时任务',
 }
 
 export function statusLabel(status: string): string {
@@ -34,6 +35,9 @@ export function executionTypeLabel(executionOrType: ExecutionView | string): str
   const value = typeof executionOrType === 'string'
     ? executionOrType
     : executionOrType.execution_type
+  if (typeof executionOrType !== 'string' && executionOrType.execution_source === 'scheduled_job') {
+    return executionOrType.task_name || '定时任务'
+  }
   return EXECUTION_TYPE_LABELS[value] || 'API 执行'
 }
 

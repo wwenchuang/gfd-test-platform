@@ -6,6 +6,7 @@ WEB_DIR="${WEB_DIR:-/www/html}"
 ENV_FILE="${ENV_FILE:-/opt/midscene.env}"
 SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/midscene-task.service}"
 WORKER_SERVICE_FILE="${WORKER_SERVICE_FILE:-/etc/systemd/system/midscene-api-worker.service}"
+SCHEDULER_SERVICE_FILE="${SCHEDULER_SERVICE_FILE:-/etc/systemd/system/midscene-api-scheduler.service}"
 SERVICE_OVERRIDE_DIR="${SERVICE_OVERRIDE_DIR:-/etc/systemd/system/midscene-task.service.d}"
 USER_NAME="${USER_NAME:-midscene}"
 GROUP_NAME="${GROUP_NAME:-midscene}"
@@ -33,8 +34,27 @@ render_api_worker_unit() {
   ' "${SCRIPT_DIR}/midscene-api-worker.service"
 }
 
+render_api_scheduler_unit() {
+  awk -v app_dir="${APP_DIR}" -v venv_dir="${VENV_DIR}" '
+    /^WorkingDirectory=/ {
+      print "WorkingDirectory=" app_dir
+      next
+    }
+    /^ExecStart=/ {
+      print "ExecStart=" venv_dir "/bin/python -m task_server.api_testing.scheduler"
+      next
+    }
+    { print }
+  ' "${SCRIPT_DIR}/midscene-api-scheduler.service"
+}
+
 if [ "${1:-}" = "--render-api-worker-unit" ]; then
   render_api_worker_unit
+  exit 0
+fi
+
+if [ "${1:-}" = "--render-api-scheduler-unit" ]; then
+  render_api_scheduler_unit
   exit 0
 fi
 
@@ -125,6 +145,7 @@ install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/README.md" "
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene.env.example" "${APP_DIR}/deploy/midscene.env.example"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene-task.service" "${APP_DIR}/deploy/midscene-task.service"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene-api-worker.service" "${APP_DIR}/deploy/midscene-api-worker.service"
+install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/midscene-api-scheduler.service" "${APP_DIR}/deploy/midscene-api-scheduler.service"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/api-testing-migrate.sh" "${APP_DIR}/deploy/api-testing-migrate.sh"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/api-testing-compose.yml" "${APP_DIR}/deploy/api-testing-compose.yml"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/nginx-midscene-task.conf" "${APP_DIR}/deploy/nginx-midscene-task.conf"
@@ -483,6 +504,10 @@ worker_service_tmp="$(mktemp)"
 render_api_worker_unit > "${worker_service_tmp}"
 install -m 0644 "${worker_service_tmp}" "${WORKER_SERVICE_FILE}"
 rm -f "${worker_service_tmp}"
+scheduler_service_tmp="$(mktemp)"
+render_api_scheduler_unit > "${scheduler_service_tmp}"
+install -m 0644 "${scheduler_service_tmp}" "${SCHEDULER_SERVICE_FILE}"
+rm -f "${scheduler_service_tmp}"
 install -d -m 0755 "${SERVICE_OVERRIDE_DIR}"
 printf '%s\n' \
   '[Service]' \
@@ -495,10 +520,13 @@ systemctl enable midscene-task.service
 if [ "${API_TESTING_ENABLED}" = "1" ]; then
   "${APP_DIR}/deploy/api-testing-migrate.sh"
   systemctl enable midscene-api-worker.service
+  systemctl enable midscene-api-scheduler.service
   systemctl restart midscene-task.service
   systemctl restart midscene-api-worker.service
+  systemctl restart midscene-api-scheduler.service
 else
   systemctl disable --now midscene-api-worker.service >/dev/null 2>&1 || true
+  systemctl disable --now midscene-api-scheduler.service >/dev/null 2>&1 || true
   systemctl restart midscene-task.service
 fi
 

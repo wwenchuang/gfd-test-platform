@@ -69,6 +69,9 @@ PHASE1_TABLES = {
 COMPLETION_TABLES = {
     "api_provider_credentials",
     "api_test_tasks",
+    "api_scheduled_jobs",
+    "api_scheduled_job_targets",
+    "api_scheduled_job_runs",
 }
 
 EXPECTED_INDEXES = {

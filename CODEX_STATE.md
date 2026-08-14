@@ -34,6 +34,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 测试：定时任务基础能力与执行来源收口
+
+本轮按用户“API 接口自动化未完成收口”要求，优先补齐此前仍缺的 M5 定时任务基础能力，并复核 M1/M2/M3/M4 已有闭环：
+
+- M1 任务闭环：现有工作台任务列表、任务命名、历史任务 runtime 环境执行、执行记录任务名展示继续保留；本轮新增 execution view 的 `task_type` / `execution_source`，定时任务执行记录能明确显示来源。
+- M2 基线资产：现有项目级基线列表、分组、移动、删除、保存为基线回归任务、按当前环境独立执行继续保留；定时任务目标支持 `baselines` / `baseline_group`，基线分组运行时动态读取当前 active 基线。
+- M3 Apifox / AI 生成：现有 EndpointTree 已支持全部/已选 Tab、分组折叠、分组选择、名称/path/group 搜索、已选列表移除；AI deterministic validation 中 `path_mismatch`、schema 空约束、unsupported operator、undefined variable 等仍由既有合同校验拦截。
+- M4 报告 / 飞书：现有执行记录/报告批量删除、项目报告驾驶舱、项目级飞书机器人配置和发送状态继续保留；定时任务保存 `notify_feishu` 开关，实际 Webhook 仍从项目级配置读取。
+- M5 定时任务：新增 `api_scheduled_jobs`、`api_scheduled_job_targets`、`api_scheduled_job_runs` 三张表；新增 `ScheduledJobService`，支持创建定时任务、选择目标类型（用例 / 已保存任务 / 多条基线 / 基线分组）、固定环境 revision 或按环境资产取最新 revision、手动执行一次。
+- 新增前端“定时任务”入口：可创建基线分组等目标的定时任务，配置周期、启用、飞书通知、重试和超时，并可手动执行一次后跳转执行记录。
+- 新增 `task_server/api_testing/scheduler.py` 与 `deploy/midscene-api-scheduler.service`；`deploy/install-server.sh` 会安装、enable/restart 或 disable scheduler systemd unit。
+- 自动到期扫描目前是服务级预留：scheduler 每 30 秒存活扫描 enabled jobs，但不自动投递 cron 到期任务，避免在没有 `next_run_at` / PostgreSQL lock / 幂等到期窗口前误触发生产回归；当前验收主路径为页面创建 + 手动执行一次 + 执行记录显示定时任务来源。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_scheduled_job_service.py -q
+# 1 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_migrations.py::test_offline_upgrade_contains_complete_phase1_schema tests/api_testing/test_migrations.py::test_upgrade_creates_complete_phase1_schema -q
+# 2 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/1' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing -q
+# 341 passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 32 files / 170 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-NHf0hOuo.js
+
+python3 -m py_compile task_server/api_testing/services/scheduled_job_service.py task_server/api_testing/scheduler.py task_server/api_testing/http.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-14 脑图用例测试报告：设计规格
 
 用户希望在脑图中心基于 `.mm` / 需求用例选择范围生成正式测试报告，支持自定义标题、测试时间、测试人员、涉及端侧，并支持上传模板。

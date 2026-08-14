@@ -47,6 +47,11 @@ from .services.provider_service import (
     ProviderService,
 )
 from .services.readiness_service import ReadinessService
+from .services.scheduled_job_service import (
+    ScheduledJobInputError,
+    ScheduledJobNotFoundError,
+    ScheduledJobService,
+)
 from .services.source_service import (
     SourceNotFoundError,
     SourcePreviewExpiredError,
@@ -217,6 +222,10 @@ def _route(method, segments, qs, payload, actor, settings):
             len(segments) == 3
             and segments[0] == "tasks"
             and segments[2] == "run"
+        ) or (
+            len(segments) == 3
+            and segments[0] == "scheduled-jobs"
+            and segments[2] == "run"
         )
         return _post(segments, payload, actor, settings), 202 if asynchronous else 200
     if method == "PUT":
@@ -286,6 +295,10 @@ def _get(segments, qs, actor, settings):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
         return {"tasks": _view(TestTaskService(factory).list(project_id, actor))}
+    if segments == ("scheduled-jobs",):
+        project_id = _uuid(qs.get("project_id", ""))
+        _scope_project(factory, project_id, actor)
+        return {"scheduled_jobs": _view(ScheduledJobService(factory).list(project_id, actor))}
     if segments == ("environments",):
         project_id = _uuid(qs.get("project_id", ""))
         _scope_project(factory, project_id, actor)
@@ -392,6 +405,29 @@ def _post(segments, payload, actor, settings):
     factory = _factory()
     if segments == ("tasks",):
         return {"task": _view(TestTaskService(factory).create_context(actor, payload, actor))}
+    if segments == ("scheduled-jobs",):
+        project_id = _uuid(payload.get("project_id"))
+        _scope_project(factory, project_id, actor)
+        return {
+            "scheduled_job": _view(
+                ScheduledJobService(factory, enqueue=_enqueue_execution).create(
+                    {**payload, "project_id": project_id},
+                    actor,
+                )
+            )
+        }
+    if len(segments) == 3 and segments[0] == "scheduled-jobs" and segments[2] == "run":
+        job_id = _uuid(segments[1])
+        execution = ScheduledJobService(
+            factory,
+            enqueue=_enqueue_execution,
+            event_stream=_event_stream(factory),
+        ).run_once(
+            job_id,
+            actor,
+            idempotency_key=_string(payload.get("idempotency_key"), "idempotency_key", 200),
+        )
+        return {"execution": _view(execution)}
     if len(segments) == 3 and segments[0] == "tasks" and segments[2] == "run":
         task_id = _uuid(segments[1])
         task_service = TestTaskService(factory)
@@ -1078,7 +1114,7 @@ def _send_json(handler, status, payload, request_id):
 def _domain_error(error):
     if isinstance(error, ApiHttpError):
         return error
-    if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError, TestTaskNotFoundError)):
+    if isinstance(error, (EndpointNotFoundError, CaseNotFoundError, EnvironmentNotFoundError, SourceNotFoundError, SourcePreviewNotFoundError, ExecutionNotFoundError, AiJobNotFoundError, TestTaskNotFoundError, ScheduledJobNotFoundError)):
         return _not_found()
     if isinstance(error, NotificationNotConfiguredError):
         return ApiHttpError(422, "notification_not_configured", "请先配置并启用飞书群机器人 Webhook")
@@ -1107,6 +1143,8 @@ def _domain_error(error):
         return ApiHttpError(502, "apifox_export_failed", str(error))
     if isinstance(error, ApifoxInputError):
         return ApiHttpError(422, "apifox_validation_failed", str(error))
+    if isinstance(error, ScheduledJobInputError):
+        return ApiHttpError(422, "scheduled_job_validation_failed", str(error))
     if isinstance(error, OpenApiValidationError):
         return ApiHttpError(
             422,

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Boxes, FileCode2, FlaskConical, History, Settings2, ShieldCheck } from 'lucide-vue-next'
+import { Boxes, CalendarClock, FileCode2, FlaskConical, History, Settings2, ShieldCheck } from 'lucide-vue-next'
 
 const navigation = [
   { to: '/', label: '工作台', icon: FlaskConical },
   { to: '/assets', label: '接口资产', icon: FileCode2 },
   { to: '/baselines', label: '基线用例', icon: ShieldCheck },
+  { to: '/scheduled-jobs', label: '定时任务', icon: CalendarClock },
   { to: '/runs', label: '执行记录', icon: History },
   { to: '/reports', label: '测试报告', icon: Boxes },
   { to: '/settings', label: '环境配置', icon: Settings2 },
