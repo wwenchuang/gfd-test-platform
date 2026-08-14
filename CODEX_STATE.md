@@ -34,6 +34,49 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-14 API 定时任务：表单交互优化
+
+用户反馈定时任务创建页中 Cron 表达式缺少可选案例、勾选控件样式粗糙、目标用例/基线仍需手动输入 ID。
+
+本轮修复：
+
+- 定时任务目标不再使用手动 ID 文本框；按目标类型加载系统资产并展示可搜索、可点选列表：
+  - `baseline_group` 选择 active 基线分组名。
+  - `baselines` 选择 active 基线 ID。
+  - `cases` 选择已保存 case version ID。
+  - `task` 选择已保存任务 ID。
+- 周期选择改为分段按钮；选择 Cron 时展示常用示例，一键填充表达式：
+  - 每天 02:00：`0 2 * * *`
+  - 工作日 09:00：`0 9 * * 1-5`
+  - 每周一 09:00：`0 9 * * 1`
+  - 每月 1 日 10:00：`0 10 1 * *`
+  - 每 30 分钟：`*/30 * * * *`
+- 启用 / 飞书通知改为统一的 switch 行，移除原生大 checkbox 视觉问题。
+- 增加响应式样式，窄屏下目标选择器、Cron 示例和任务行自动单列。
+- 补充前端回归测试覆盖：基线分组点选创建、Cron 示例填充、已保存用例点选创建。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/views/ScheduledJobsView.spec.ts --reporter=basic
+# 1 file / 3 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-DiPSel6L.js and index-CUvIDIl7.css
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 32 files / 172 tests passed
+
+python3 tests/frontend_static_checks.py
+# 75 checks passed
+
+python3 tests/backend_static_checks.py
+# 63 checks passed
+
+git diff --check
+# passed
+```
+
 ### 2026-08-14 脑图用例测试报告：支持多脑图合并生成
 
 用户反馈部署后确认入口，并进一步要求“应该可以选择多条脑图文件生成报告”。本轮在既有测试报告能力上补齐多脑图合并：
@@ -56,10 +99,6 @@ node --check js/app.js
 node --check js/state.js
 git diff --check
 ```
-
-注意：
-
-- 当前工作区还存在与本功能无关的 `api-testing-ui/src/views/ScheduledJobsView.vue`、`api-testing-ui/src/views/ScheduledJobsView.spec.ts` 改动，本轮不回滚、不提交。
 
 ### 2026-08-14 API 测试：定时任务基础能力与执行来源收口
 
