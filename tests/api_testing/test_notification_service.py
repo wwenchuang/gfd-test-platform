@@ -37,7 +37,7 @@ def test_feishu_report_card_contains_report_link_and_readable_summary(monkeypatc
     assert "收藏链路回归" in text
     assert "生产环境（新）-腾讯云" in text
     assert "查看报告" in text
-    assert "http://qa.example.test/api-test/#/reports?execution_id=execution-1" in text
+    assert "http://qa.example.test/api-test/#/reports?project_id=project-1&execution_id=execution-1" in text
     assert "执行：" not in text
 
 
@@ -66,6 +66,6 @@ def test_report_url_uses_first_configured_public_base(monkeypatch):
     monkeypatch.setenv("MIDSCENE_PUBLIC_BASE_URL", "http://task.example.test/")
 
     assert (
-        NotificationService._report_url("execution-2")
-        == "http://task.example.test/api-test/#/reports?execution_id=execution-2"
+        NotificationService._report_url("execution-2", "project-2")
+        == "http://task.example.test/api-test/#/reports?project_id=project-2&execution_id=execution-2"
     )

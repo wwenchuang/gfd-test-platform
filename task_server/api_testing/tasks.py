@@ -71,18 +71,16 @@ def execute_api_testing(self, execution_id):
     ).run(execution_id)
     TestTaskService(factory).refresh_for_execution(execution_id)
     if result:
-        _notify_baseline_regression(factory, event_stream, execution_id)
+        _notify_execution_if_enabled(factory, event_stream, execution_id)
     return result
 
 
-def _notify_baseline_regression(factory, event_stream, execution_id):
+def _notify_execution_if_enabled(factory, event_stream, execution_id):
     with factory() as session:
         execution = ExecutionRepository(session).get_execution(execution_id)
-        if (
-            execution is None
-            or execution.execution_type != "baseline_regression"
-            or execution.state != "DONE"
-        ):
+        if execution is None or execution.state != "DONE":
+            return
+        if not _should_send_execution_notification(execution):
             return
         actor_id = execution.owner_id
     try:
@@ -95,7 +93,7 @@ def _notify_baseline_regression(factory, event_stream, execution_id):
         )
     except Exception:
         logger.warning(
-            "Unable to send API baseline regression Feishu report",
+            "Unable to send API testing Feishu report",
             exc_info=True,
         )
         event_stream.append(
@@ -109,6 +107,24 @@ def _notify_baseline_regression(factory, event_stream, execution_id):
             "notification_sent",
             {"channel_type": result.channel_type, "message": result.message},
         )
+
+
+def _should_send_execution_notification(execution):
+    snapshot = getattr(execution, "request_snapshot", {}) or {}
+    task = snapshot.get("task", {}) if isinstance(snapshot, dict) else {}
+    if not isinstance(task, dict):
+        task = {}
+    task_type = str(task.get("type") or "").strip()
+    source = str(task.get("source") or "").strip()
+    execution_type = str(getattr(execution, "execution_type", "") or "").strip()
+    is_scheduled = (
+        task_type == "scheduled_job"
+        or source == "scheduled_job"
+        or execution_type == "scheduled"
+    )
+    if is_scheduled:
+        return task.get("notify_feishu") is True
+    return execution_type == "baseline_regression"
 
 
 @celery_app.task(name="api_testing.analyze_failure", bind=True, acks_late=True)

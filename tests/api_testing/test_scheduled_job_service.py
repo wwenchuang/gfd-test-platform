@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 from alembic import command
 import pytest
@@ -225,3 +226,37 @@ def test_scheduled_job_can_be_updated_and_deleted(scheduled_factory, scheduled_r
 
     assert deleted.id == job.id
     assert service.list(scheduled_records["project"].id, "owner-a") == ()
+
+
+def test_due_scheduled_job_dispatches_once_per_matching_minute(scheduled_factory, scheduled_records):
+    from task_server.api_testing.services.scheduled_job_service import ScheduledJobService
+
+    enqueued = []
+    service = ScheduledJobService(scheduled_factory, enqueue=enqueued.append)
+    job = service.create(
+        {
+            "project_id": scheduled_records["project"].id,
+            "name": "凌晨回归",
+            "schedule_type": "cron",
+            "cron_expression": "17 3 * * *",
+            "environment_strategy": "fixed_revision",
+            "environment_revision_id": scheduled_records["environment_revision"].id,
+            "target_type": "cases",
+            "target_ids": [scheduled_records["case_version"].id],
+            "enabled": True,
+            "notify_feishu": True,
+            "retry_count": 0,
+            "timeout_seconds": 900,
+        },
+        "owner-a",
+    )
+
+    first = service.dispatch_due(now=datetime(2026, 8, 17, 3, 17, 8))
+    second = service.dispatch_due(now=datetime(2026, 8, 17, 3, 17, 45))
+    missed = service.dispatch_due(now=datetime(2026, 8, 17, 3, 18, 0))
+
+    assert len(first) == 1
+    assert second == ()
+    assert missed == ()
+    assert enqueued == [first[0].id]
+    assert first[0].task_name == job.name

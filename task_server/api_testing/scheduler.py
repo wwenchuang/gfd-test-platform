@@ -1,15 +1,13 @@
-"""Lightweight scheduler service placeholder for API testing scheduled jobs."""
+"""Lightweight scheduler service for API testing scheduled jobs."""
 
 import logging
 import os
 import signal
 import time
 
-from sqlalchemy import select
-
 from .config import ApiTestingSettings
 from .db import _session_factory
-from .models.scheduled_job import ApiScheduledJob
+from .services.scheduled_job_service import ScheduledJobService
 
 
 logger = logging.getLogger(__name__)
@@ -36,16 +34,17 @@ def run_forever(interval_seconds=None):
 
 def _scan_once():
     factory = _session_factory()
-    with factory() as session:
-        enabled_count = session.scalar(
-            select(ApiScheduledJob)
-            .where(ApiScheduledJob.enabled.is_(True))
-            .limit(1)
-            .exists()
-            .select()
-        )
-    if enabled_count:
-        logger.debug("API testing scheduler found enabled jobs; due-time dispatch is reserved")
+    dispatched = ScheduledJobService(factory, enqueue=_enqueue_execution).dispatch_due()
+    if dispatched:
+        logger.info("API testing scheduler dispatched due jobs count=%s", len(dispatched))
+    else:
+        logger.debug("API testing scheduler found no due jobs")
+
+
+def _enqueue_execution(execution_id):
+    from .tasks import execute_api_testing
+
+    execute_api_testing.delay(execution_id)
 
 
 if __name__ == "__main__":

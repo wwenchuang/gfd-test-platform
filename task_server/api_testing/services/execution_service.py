@@ -639,11 +639,13 @@ class ExecutionService:
             raw_name = task.get("name")
             task_type = task.get("type")
             source = task.get("source")
+            notify_feishu = task.get("notify_feishu")
         else:
             raw_id = getattr(task, "id", None)
             raw_name = getattr(task, "name", None)
             task_type = getattr(task, "type", None)
             source = getattr(task, "source", None)
+            notify_feishu = getattr(task, "notify_feishu", None)
         if not isinstance(raw_id, str) or not raw_id.strip():
             return None
         name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else "未命名任务"
@@ -652,6 +654,8 @@ class ExecutionService:
             snapshot["type"] = task_type.strip()[:32]
         if isinstance(source, str) and source.strip():
             snapshot["source"] = source.strip()[:32]
+        if isinstance(notify_feishu, bool):
+            snapshot["notify_feishu"] = notify_feishu
         return snapshot
 
     @staticmethod

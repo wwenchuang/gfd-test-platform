@@ -1,12 +1,14 @@
 """Scheduled API regression job management and manual dispatch."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
 
 from ..models.case import ApiBaseline, ApiCaseVersion
 from ..models.environment import ApiEnvironment, ApiEnvironmentRevision
+from ..models.execution import ApiExecution
 from ..models.project import ApiProject
 from ..models.scheduled_job import ApiScheduledJob, ApiScheduledJobRun, ApiScheduledJobTarget
 from ..models.source import ApiSource, ApiSourceEndpoint, ApiSourceRevision
@@ -26,6 +28,10 @@ class ScheduledJobNotFoundError(LookupError):
 TARGET_TYPES = frozenset({"cases", "task", "baselines", "baseline_group"})
 SCHEDULE_TYPES = frozenset({"daily", "weekly", "cron"})
 ENVIRONMENT_STRATEGIES = frozenset({"fixed_revision", "latest_environment"})
+DEFAULT_CRON_BY_SCHEDULE_TYPE = {
+    "daily": "0 2 * * *",
+    "weekly": "0 9 * * 1",
+}
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,89 @@ def _ids(value, field):
     ):
         raise ScheduledJobInputError(f"{field} must be a non-empty string array")
     return tuple(dict.fromkeys(item.strip() for item in value))
+
+
+def _is_valid_cron(expression):
+    try:
+        _parse_cron(expression)
+    except ScheduledJobInputError:
+        return False
+    return True
+
+
+def _cron_matches(expression, when):
+    fields = _parse_cron(expression)
+    values = (
+        when.minute,
+        when.hour,
+        when.day,
+        when.month,
+        (when.weekday() + 1) % 7,
+    )
+    return all(value in allowed for value, allowed in zip(values, fields))
+
+
+def _parse_cron(expression):
+    if not isinstance(expression, str):
+        raise ScheduledJobInputError("cron_expression is invalid")
+    parts = expression.strip().split()
+    if len(parts) != 5:
+        raise ScheduledJobInputError("cron_expression must contain 5 fields")
+    ranges = (
+        (0, 59),
+        (0, 23),
+        (1, 31),
+        (1, 12),
+        (0, 7),
+    )
+    return tuple(_parse_cron_field(part, minimum, maximum) for part, (minimum, maximum) in zip(parts, ranges))
+
+
+def _parse_cron_field(field, minimum, maximum):
+    values = set()
+    for token in field.split(","):
+        token = token.strip()
+        if not token:
+            raise ScheduledJobInputError("cron_expression is invalid")
+        base, step = _split_cron_step(token)
+        start, end = _cron_bounds(base, minimum, maximum)
+        current = start
+        while current <= end:
+            values.add(0 if maximum == 7 and current == 7 else current)
+            current += step
+    if not values:
+        raise ScheduledJobInputError("cron_expression is invalid")
+    return frozenset(values)
+
+
+def _split_cron_step(token):
+    if "/" not in token:
+        return token, 1
+    base, step_text = token.split("/", 1)
+    if not step_text.isdigit():
+        raise ScheduledJobInputError("cron_expression step is invalid")
+    step = int(step_text)
+    if step <= 0:
+        raise ScheduledJobInputError("cron_expression step is invalid")
+    return base or "*", step
+
+
+def _cron_bounds(base, minimum, maximum):
+    if base == "*":
+        return minimum, maximum
+    if "-" in base:
+        start_text, end_text = base.split("-", 1)
+        if not start_text.isdigit() or not end_text.isdigit():
+            raise ScheduledJobInputError("cron_expression range is invalid")
+        start = int(start_text)
+        end = int(end_text)
+    else:
+        if not base.isdigit():
+            raise ScheduledJobInputError("cron_expression value is invalid")
+        start = end = int(base)
+    if start < minimum or end > maximum or start > end:
+        raise ScheduledJobInputError("cron_expression value is out of range")
+    return start, end
 
 
 class ScheduledJobService:
@@ -171,7 +260,35 @@ class ScheduledJobService:
             record = self._owned_job(session, job_id, actor_id)
             return self._view(session, record)
 
-    def run_once(self, job_id, actor_id, *, idempotency_key):
+    def dispatch_due(self, *, now=None, limit=100):
+        current = now or datetime.now().astimezone()
+        slot = current.replace(second=0, microsecond=0)
+        with self.session_factory() as session:
+            jobs = tuple(session.scalars(
+                select(ApiScheduledJob)
+                .where(ApiScheduledJob.enabled.is_(True))
+                .order_by(ApiScheduledJob.updated_at, ApiScheduledJob.id)
+                .limit(limit)
+            ))
+        dispatched = []
+        for job in jobs:
+            cron_expression = self._effective_cron_expression(job)
+            if not _cron_matches(cron_expression, current):
+                continue
+            idempotency_key = self._scheduled_idempotency_key(job.id, slot)
+            if self._execution_exists(job.project_id, idempotency_key):
+                continue
+            dispatched.append(
+                self.run_once(
+                    job.id,
+                    job.owner_id,
+                    idempotency_key=idempotency_key,
+                    trigger_type="schedule",
+                )
+            )
+        return tuple(dispatched)
+
+    def run_once(self, job_id, actor_id, *, idempotency_key, trigger_type="manual"):
         with self.session_factory.begin() as session:
             job = self._owned_job(session, job_id, actor_id, for_update=True)
             environment_revision_id = self._runtime_environment_revision_id(session, job)
@@ -179,7 +296,7 @@ class ScheduledJobService:
             run = ApiScheduledJobRun(
                 job_id=job.id,
                 execution_id=None,
-                trigger_type="manual",
+                trigger_type=trigger_type,
                 state="queued",
                 **audit_fields(actor_id),
             )
@@ -190,6 +307,7 @@ class ScheduledJobService:
                 "name": job.name,
                 "type": "scheduled_job",
                 "source": "scheduled_job",
+                "notify_feishu": bool(job.notify_feishu),
             }
 
         service = ExecutionService(
@@ -233,6 +351,17 @@ class ScheduledJobService:
             self.enqueue(execution.id)
         return execution
 
+    def _execution_exists(self, project_id, idempotency_key):
+        with self.session_factory() as session:
+            return session.scalar(
+                select(ApiExecution.id)
+                .where(
+                    ApiExecution.project_id == project_id,
+                    ApiExecution.idempotency_key == idempotency_key,
+                )
+                .limit(1)
+            ) is not None
+
     @staticmethod
     def _parse(payload):
         if not isinstance(payload, dict):
@@ -249,6 +378,9 @@ class ScheduledJobService:
         cron_expression = _text(payload.get("cron_expression", ""), "cron_expression", 120, allow_empty=True)
         if schedule_type == "cron" and not cron_expression:
             raise ScheduledJobInputError("cron_expression is required for cron jobs")
+        effective_cron = cron_expression or DEFAULT_CRON_BY_SCHEDULE_TYPE.get(schedule_type, "")
+        if not _is_valid_cron(effective_cron):
+            raise ScheduledJobInputError("cron_expression is invalid")
         return {
             "project_id": _text(payload.get("project_id"), "project_id", 36),
             "source_revision_id": _text(payload.get("source_revision_id", ""), "source_revision_id", 36, allow_empty=True) or None,
@@ -265,6 +397,14 @@ class ScheduledJobService:
             "retry_count": _int(payload.get("retry_count", 0), "retry_count", 0, 5),
             "timeout_seconds": _int(payload.get("timeout_seconds", 1800), "timeout_seconds", 30, 86_400),
         }
+
+    @staticmethod
+    def _effective_cron_expression(job):
+        return job.cron_expression or DEFAULT_CRON_BY_SCHEDULE_TYPE.get(job.schedule_type, "")
+
+    @staticmethod
+    def _scheduled_idempotency_key(job_id, slot):
+        return f"scheduled-job:{job_id}:{slot.strftime('%Y%m%d%H%M')}"
 
     @staticmethod
     def _validate_project(session, project_id, actor_id):

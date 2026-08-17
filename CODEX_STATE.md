@@ -34,6 +34,44 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-17 API 定时任务：自动调度、飞书通知和报告链接修复
+
+用户反馈定时任务没有生效、飞书通知未发送，并且手动飞书消息中的报告链接会打开到不对应的任务报告。
+
+本轮修复：
+
+- `midscene-api-scheduler` 不再只扫描启用任务；每轮会按 cron 到期时间派发执行，并通过 Celery 入队。
+- 定时任务支持同一分钟幂等投递，idempotency key 使用 `scheduled-job:{job_id}:{yyyyMMddHHmm}`，避免 30 秒扫描周期内重复创建执行。
+- 后端补齐 cron 解析和校验，调度侧支持 5 字段 cron 的 `*`、数字、范围、列表和步长；`daily` 默认 `0 2 * * *`，`weekly` 默认 `0 9 * * 1`。
+- 定时任务提交执行时会把 `notify_feishu` 写入 execution snapshot；worker 完成后仅在定时任务飞书开关开启时发送飞书通知。
+- 普通基线回归执行保持原有自动飞书通知行为。
+- 飞书报告卡片链接新增 `project_id` 查询参数，报告页优先按链接中的项目加载，再选中对应 `execution_id`，避免当前工作台项目不同导致打开错报告。
+
+已验证：
+
+```bash
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene_api_testing_dev@127.0.0.1:5432/midscene_api_testing' API_TESTING_REQUIRE_POSTGRES_TESTS=1 .venv/bin/python -m pytest tests/api_testing/test_scheduled_job_service.py -q
+# 3 passed
+
+.venv/bin/python -m pytest tests/api_testing/test_tasks.py tests/api_testing/test_notification_service.py -q
+# 10 passed
+
+.venv/bin/python -m pytest tests/api_testing/test_execution_service.py -q
+# 3 passed, 18 skipped
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 33 files / 183 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-DV2X_tWT.js and index-CaCHAfd9.css
+
+python3 -m py_compile task_server/api_testing/scheduler.py task_server/api_testing/services/scheduled_job_service.py task_server/api_testing/services/execution_service.py task_server/api_testing/tasks.py task_server/api_testing/services/notification_service.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-14 API 工作台：左侧独立任务列表和基本管理操作
 
 用户要求工作台任务不要继续藏在“已保存任务”下拉里，需要左侧独立任务列表，并支持编辑任务、环境/用例范围调整、删除和执行等基本操作。

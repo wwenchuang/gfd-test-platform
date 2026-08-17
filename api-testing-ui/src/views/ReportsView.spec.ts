@@ -177,4 +177,38 @@ describe('ReportsView', () => {
     expect(wrapper.get('.report-detail-hero').text()).toContain('生产环境 V9')
     expect(wrapper.text()).toContain('目标报告用例')
   })
+
+  it('loads the project requested by Feishu report link before selecting the report', async () => {
+    routeState.query = { project_id: 'project-2', execution_id: 'report-2' }
+    const executions = useExecutionsStore()
+    const context = useContextStore()
+    const notifications = useNotificationsStore()
+    context.projectId = 'project-1'
+    context.projects = [
+      { id: 'project-1', name: '3D家用' },
+      { id: 'project-2', name: '商城项目' },
+    ] as typeof context.projects
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(notifications, 'loadFeishu').mockResolvedValue()
+    const load = vi.spyOn(executions, 'load').mockImplementation(async projectId => {
+      executions.executions = projectId === 'project-2'
+        ? [{
+            ...report,
+            id: 'report-2',
+            project_id: 'project-2',
+            environment_name: '生产环境 V10',
+            case_results: [{ ...report.case_results[0], case_name: '链接目标报告' }],
+          }]
+        : [report]
+    })
+
+    const wrapper = mount(ReportsView)
+    await flushPromises()
+
+    expect(load).toHaveBeenCalledWith('project-2')
+    expect((wrapper.get('[data-testid="report-project-select"]').element as HTMLSelectElement).value).toBe('project-2')
+    expect(wrapper.get('.report-detail-hero').text()).toContain('生产环境 V10')
+    expect(wrapper.text()).toContain('链接目标报告')
+  })
 })

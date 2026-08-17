@@ -141,7 +141,7 @@ class NotificationService:
         )
 
     @staticmethod
-    def _report_url(execution_id):
+    def _report_url(execution_id, project_id=""):
         base_url = ""
         for key in (
             "API_TESTING_REPORT_BASE_URL",
@@ -155,9 +155,12 @@ class NotificationService:
                 break
         if not base_url:
             return ""
+        query = {"execution_id": execution_id}
+        if project_id:
+            query = {"project_id": project_id, **query}
         return (
             f"{base_url.rstrip('/')}/api-test/#/reports?"
-            f"{urlencode({'execution_id': execution_id})}"
+            f"{urlencode(query)}"
         )
 
     @staticmethod
@@ -222,7 +225,7 @@ class NotificationService:
                     },
                 ]
             )
-        report_url = NotificationService._report_url(execution.id)
+        report_url = NotificationService._report_url(execution.id, execution.project_id)
         if report_url:
             elements.extend(
                 [

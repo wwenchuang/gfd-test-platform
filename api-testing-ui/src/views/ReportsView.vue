@@ -93,7 +93,7 @@ type FeishuReportState = {
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
-  reportProjectId.value = context.projectId || context.projects[0]?.id || ''
+  reportProjectId.value = projectIdFromRoute() || context.projectId || context.projects[0]?.id || ''
   if (reportProjectId.value) await loadProjectReports(reportProjectId.value)
 })
 
@@ -107,6 +107,23 @@ watch([visibleReports, () => route.query.execution_id, () => route.query.executi
     selectedReportId.value = reports[0]?.id || ''
   }
 }, { immediate: true })
+
+watch([() => route.query.project_id, () => route.query.projectId], async () => {
+  const requestedProjectId = projectIdFromRoute()
+  if (!requestedProjectId || requestedProjectId === reportProjectId.value) return
+  reportProjectId.value = requestedProjectId
+  selected.value = null
+  selectedReportId.value = ''
+  selectedReportIds.value = new Set()
+  filter.value = 'all'
+  await loadProjectReports(requestedProjectId)
+})
+
+function projectIdFromRoute(): string {
+  const value = route.query.project_id ?? route.query.projectId
+  if (Array.isArray(value)) return String(value[0] || '')
+  return String(value || '')
+}
 
 function reportIdFromRoute(): string {
   const value = route.query.execution_id ?? route.query.executionId
