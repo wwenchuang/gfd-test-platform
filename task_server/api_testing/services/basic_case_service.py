@@ -143,7 +143,23 @@ class BasicCaseService:
             variable_name = variable_names.get(normalized)
             if variable_name:
                 headers[name] = "{{%s}}" % variable_name
+        cls._add_platform_runtime_headers(headers, configured_headers, variable_names)
         return headers
+
+    @staticmethod
+    def _add_platform_runtime_headers(headers, configured_headers, variable_names):
+        for header_name, variable_name in (
+            ("Biz", "biz"),
+            ("Authorization", "authorization"),
+            ("Authorization", "zxbtoken"),
+        ):
+            normalized_header = header_name.lower()
+            existing_headers = {str(name).lower() for name in headers}
+            if normalized_header in configured_headers or normalized_header in existing_headers:
+                continue
+            resolved_variable = variable_names.get(variable_name)
+            if resolved_variable:
+                headers[header_name] = "{{%s}}" % resolved_variable
 
     @classmethod
     def _request_body(cls, operation, environment_variables):

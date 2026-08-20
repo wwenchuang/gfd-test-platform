@@ -9,6 +9,10 @@ def _environment_revision():
     return SimpleNamespace(default_headers={"Authorization": "Bearer {{ZXBToken}}"})
 
 
+def _environment_revision_without_headers():
+    return SimpleNamespace(default_headers={})
+
+
 def _variables(*names):
     return tuple(SimpleNamespace(name=name, enabled=True) for name in names)
 
@@ -52,6 +56,35 @@ def test_basic_positive_payload_uses_environment_header_placeholders_and_success
     assert {"type": "status_code", "operator": "equals", "expected": 200, "timeout_ms": 0, "enabled": True} in payload["assertions"]
     assert {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0, "timeout_ms": 0, "enabled": True} in payload["assertions"]
     assert "ZXBToken" not in repr(payload)
+
+
+def test_basic_positive_payload_infers_platform_runtime_headers_from_environment_variables():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/print3d/api/v1/collection/add",
+        summary="添加修改收藏",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {"example": {"modelSn": "m001"}},
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision_without_headers(),
+        _variables("Biz", "ZXBToken"),
+    )
+
+    assert payload["request"]["headers"] == {
+        "Biz": "{{Biz}}",
+        "Authorization": "{{ZXBToken}}",
+    }
+    assert payload["request"]["body"] == {"modelSn": "m001"}
 
 
 def test_basic_positive_payload_prefers_json_body_example_and_success_flag():

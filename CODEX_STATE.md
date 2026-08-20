@@ -34,6 +34,27 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 API 工作台：线上生成收藏接口基础正向用例
+
+用户希望先在平台上直接生成一次，查看“基础正向用例”的实际效果。
+
+本轮处理：
+
+- 通过线上平台 API 登录后定位保存任务 `收藏三接口线上验证`，任务 ID 为 `f356947b-f46f-47d5-baf2-fcfd4080ae63`。
+- 线上后端尚未部署本地新增的 `/api/api-testing/v1/cases/basic-positive` 路由，因此改用现有 `/api/api-testing/v1/cases` 创建等价草稿。
+- 已为任务内 3 个收藏接口创建基础正向草稿：
+  - `添加修改收藏 - 基础正向流程`
+  - `取消收藏 - 基础正向流程`
+  - `我的收藏列表 - 基础正向流程`
+- 三条草稿都使用平台环境变量占位的 `Biz` 和 `Authorization` header，不固化真实业务 token。
+- 发现本地 `BasicCaseService` 对“接口合同未声明 header，但环境变量存在 Biz/ZXBToken”的场景会生成空 header；已补齐为自动生成 `Biz: {{Biz}}`、`Authorization: {{ZXBToken}}`。
+
+线上生成结果：
+
+- `POST /print3d/api/v1/collection/add`：case version `0cae25ce-30f4-4558-b8cb-407bfd1dd6cc`
+- `POST /print3d/api/v1/collection/cancel`：case version `692d59dd-8317-43d9-b95f-e4f3c8e48ac9`
+- `POST /print3d/api/v1/collection/page`：case version `4ac3eb78-8fc7-4820-bcab-d7a57fdbca30`
+
 ### 2026-08-20 API 工作台：根据已选接口生成基础正向用例
 
 用户希望平台能基于当前已同步/选择的接口，直接生成最基本的正向测试用例，并且 token 可以使用平台环境里的配置。
