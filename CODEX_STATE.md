@@ -34,6 +34,30 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 脑图测试报告：AgileTC 用例平台搜索选择
+
+用户希望测试报告表单里飞书需求和自建测试用例平台能打通，支持选择和手动输入，并自动带出版本号。本轮先对自建 AgileTC 用例平台做只读抓取验证和集成：
+
+- 抓取并确认 AgileTC 前端实际 API 前缀为 `/api`，用例集列表接口为 `/api/case/list`，默认 `productLineId=1`。
+- 新增 `task_server/services/case_platform_service.py`，通过 `CASE_PLATFORM_BASE_URL`、`CASE_PLATFORM_PRODUCT_LINE_ID`、`CASE_PLATFORM_TIMEOUT_SECONDS` 支持环境配置，默认连接 `http://qa-agiletc.gongfudou.com`。
+- 新增 `/api/test-reports/case-platform/search`，支持按用例集标题、关键词或完整飞书需求链接查询 AgileTC，用标准字段返回标题、版本、飞书需求链接、用例平台链接、创建人和更新时间。
+- 脑图测试报告表单新增“搜索用例平台”入口，默认用报告标题作为查询词，也支持手动输入版本关键词或飞书需求链接。
+- 选择搜索结果后会自动回填测试用例平台链接、飞书需求链接和测试版本，并写入本地历史记录。
+- 已验证飞书项目详情页未授权访问会跳转登录页；当前不做不稳定的网页会话硬抓。若后续要读取飞书需求详情/版本字段，需要配置飞书开放平台应用授权或可用接口 token。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_case_platform_integration_service.py tests/test_mindmap_test_report_service.py -q
+python3 -m py_compile task_server/services/agent_service.py task_server/services/yaml_service.py task_server/services/yaml_executable_scorer.py task_server/services/test_report_service.py task_server/services/case_platform_service.py task_server/router.py
+python3 tests/frontend_static_checks.py
+.venv/bin/python tests/backend_static_checks.py
+node --check js/app.js
+node --check js/state.js
+git diff --check
+# passed
+```
+
 ### 2026-08-20 脑图测试报告：人员/版本/飞书需求/用例平台历史联动
 
 用户反馈上一轮没有实现测试人员和版本记录，以及飞书需求、测试用例平台选择与手动输入联动。

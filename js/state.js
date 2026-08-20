@@ -58,6 +58,7 @@ let mindmapReportSelectedCaseSetIds = new Set();
 let mindmapReportData = null;
 let mindmapReportSelection = new Set();
 let mindmapReportPreview = null;
+let mindmapReportCasePlatformResults = [];
 let mindmapReportBusy = false;
 let latestJobs = [];
 let taskApps = [];

@@ -411,6 +411,7 @@ def main():
     require("MINDMAP_REPORT_HISTORY_KEY" in html and "mindmapReportRememberMeta" in html and "deleteMindmapReportMemory" in html and "applyMindmapReportMemory" in html, "Report builder must persist tester and version history with delete support")
     require("applyMindmapReportRequirementMemory" in html and "syncMindmapReportVersionFromRequirement" in html and "mindmap-report-requirement-select" in html and "飞书需求" in html, "Report builder must support Feishu requirement selection and auto-fill version")
     require("mindmap-report-case-link-select" in html and "测试用例平台" in html and "applyMindmapReportCaseLinkMemory" in html, "Report builder must support selectable/manual case platform links")
+    require("/test-reports/case-platform/search" in html and "searchMindmapReportCasePlatform" in html and "applyMindmapReportCasePlatformResult" in html and "mindmap-report-case-platform-results" in html, "Report builder must search and apply external case platform candidates")
     require("下载 Word" in html and "download?.word" in html and "format=doc" in html, "Report builder must expose Word export download")
     require("测试范围" in html and "测试人员" in html and "测试周期" in html and "涉及端侧" in html, "Report builder must expose required metadata fields")
     require("mindmap-report-layout" in html and "mindmap-report-scope" in html, "Report builder styles must be present")

@@ -2940,6 +2940,56 @@
     min-height: 36px;
     white-space: nowrap;
   }
+  .mindmap-report-integration-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    min-width: 0;
+  }
+  .mindmap-report-case-platform-results {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+  .mindmap-report-case-platform-empty {
+    border: 1px dashed rgba(51,80,109,.62);
+    border-radius: 8px;
+    padding: 9px 10px;
+    color: var(--muted);
+    background: rgba(6,10,20,.46);
+    font-size: 12px;
+  }
+  .mindmap-report-case-platform-result {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid rgba(51,80,109,.7);
+    border-radius: 8px;
+    background: rgba(9,16,30,.64);
+    padding: 9px;
+    min-width: 0;
+  }
+  .mindmap-report-case-platform-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+  .mindmap-report-case-platform-main strong {
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+  .mindmap-report-case-platform-main span,
+  .mindmap-report-case-platform-main em {
+    color: var(--text2);
+    font-size: 12px;
+    font-style: normal;
+    line-height: 1.45;
+    word-break: break-word;
+  }
   .mindmap-report-defect-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3157,6 +3207,10 @@
       gap: 6px;
     }
     .mindmap-report-memory-row {
+      grid-template-columns: 1fr;
+    }
+    .mindmap-report-integration-row,
+    .mindmap-report-case-platform-result {
       grid-template-columns: 1fr;
     }
     .mindmap-report-defect-grid {

@@ -189,6 +189,10 @@ from task_server.services.test_report_service import (
     read_test_report,
     save_test_report_template,
 )
+from task_server.services.case_platform_service import (
+    CasePlatformError,
+    search_case_platform_cases,
+)
 from task_server.services.yaml_baseline_cache import (
     get_yaml_baseline_cache,
     get_yaml_baseline_cache_status,
@@ -2282,6 +2286,25 @@ def _get_test_report_download(handler, qs):
 @route_get("/api/test-reports/templates")
 def _get_test_report_templates(handler, qs):
     handler._json({"ok": True, "templates": list_test_report_templates()})
+
+
+@route_get("/api/test-reports/case-platform/search")
+def _get_test_report_case_platform_search(handler, qs):
+    query = qs.get("q") or qs.get("query") or ""
+    requirement_link = qs.get("requirement_link") or qs.get("requirementLink") or ""
+    product_line_id = qs.get("product_line_id") or qs.get("productLineId") or None
+    limit = safe_int(qs.get("limit"), 10)
+    try:
+        handler._json(search_case_platform_cases(
+            query,
+            requirement_link=requirement_link,
+            product_line_id=product_line_id,
+            limit=limit,
+        ))
+    except CasePlatformError as exc:
+        handler._json({"ok": False, "error": str(exc), "items": []}, 502)
+    except Exception as exc:
+        handler._json({"ok": False, "error": f"查询测试用例平台失败：{exc}", "items": []}, 500)
 
 
 # ── Trace / DAG Debugger ─────────────────────────────────────────────

@@ -3778,6 +3778,114 @@ function applyMindmapReportCaseLinkMemory(value) {
   if (input) input.value = clean;
 }
 
+function mindmapReportDefaultCasePlatformQuery() {
+  const explicit = mindmapReportCleanText(document.getElementById('mindmap-report-case-platform-query')?.value);
+  if (explicit) return explicit;
+  const requirement = mindmapReportCleanText(document.getElementById('mindmap-report-requirement')?.value);
+  if (requirement && requirement.includes('project.feishu.cn/')) return requirement;
+  const title = mindmapReportCleanText(document.getElementById('mindmap-report-title')?.value || mindmapReportData?.title);
+  const cleanedTitle = title.replace(/[-－—–]?\s*测试报告$/i, '').trim();
+  return cleanedTitle || requirement || mindmapReportCleanText(document.getElementById('mindmap-report-version')?.value);
+}
+
+function mindmapReportCasePlatformMeta(item = {}) {
+  return [
+    item.version ? `版本 ${item.version}` : '',
+    item.creator ? `创建人 ${item.creator}` : '',
+    item.updated_at ? `更新 ${item.updated_at}` : '',
+    item.record_num ? `任务 ${item.record_num}` : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function mindmapReportCasePlatformResultHtml(item = {}, index = 0) {
+  const requirement = mindmapReportCleanText(item.requirement_link);
+  return `
+    <div class="mindmap-report-case-platform-result">
+      <div class="mindmap-report-case-platform-main">
+        <strong>${escapeHtml(item.title || item.label || '未命名用例集')}</strong>
+        <span>${escapeHtml(mindmapReportCasePlatformMeta(item) || item.case_link || '')}</span>
+        ${requirement ? `<em>${escapeHtml(requirement)}</em>` : '<em>未关联飞书需求</em>'}
+      </div>
+      <button class="btn-sm primary" type="button" onclick="applyMindmapReportCasePlatformResult(${index})">选择</button>
+    </div>
+  `;
+}
+
+function renderMindmapReportCasePlatformResults(message = '') {
+  const box = document.getElementById('mindmap-report-case-platform-results');
+  if (!box) return;
+  if (message) {
+    box.innerHTML = `<div class="mindmap-report-case-platform-empty">${escapeHtml(message)}</div>`;
+    return;
+  }
+  const rows = mindmapReportCasePlatformResults || [];
+  box.innerHTML = rows.length
+    ? rows.map(mindmapReportCasePlatformResultHtml).join('')
+    : '<div class="mindmap-report-case-platform-empty">暂无匹配用例集，可继续手动填写测试用例平台链接。</div>';
+}
+
+async function searchMindmapReportCasePlatform() {
+  const queryInput = document.getElementById('mindmap-report-case-platform-query');
+  const query = mindmapReportDefaultCasePlatformQuery();
+  const requirement = mindmapReportCleanText(document.getElementById('mindmap-report-requirement')?.value);
+  if (queryInput && !mindmapReportCleanText(queryInput.value) && query && !query.includes('project.feishu.cn/')) {
+    queryInput.value = query;
+  }
+  if (!query && !requirement) {
+    renderMindmapReportCasePlatformResults('请输入用例集标题、版本关键词或飞书需求链接后再查询。');
+    return;
+  }
+  renderMindmapReportCasePlatformResults('正在查询测试用例平台...');
+  try {
+    const params = new URLSearchParams({ limit: '10' });
+    if (query) params.set('q', query);
+    if (requirement) params.set('requirement_link', requirement);
+    const data = await apiRequest(`/test-reports/case-platform/search?${params.toString()}`);
+    mindmapReportCasePlatformResults = data.items || [];
+    renderMindmapReportCasePlatformResults();
+  } catch(e) {
+    mindmapReportCasePlatformResults = [];
+    renderMindmapReportCasePlatformResults(e.message || '查询测试用例平台失败，可继续手动填写。');
+  }
+}
+
+function applyMindmapReportCasePlatformResult(index) {
+  const item = (mindmapReportCasePlatformResults || [])[Number(index)];
+  if (!item) return;
+  const caseLinkInput = document.getElementById('mindmap-report-case-link');
+  const requirementInput = document.getElementById('mindmap-report-requirement');
+  const versionInput = document.getElementById('mindmap-report-version');
+  const queryInput = document.getElementById('mindmap-report-case-platform-query');
+  const caseLink = mindmapReportCleanText(item.case_link || item.url);
+  const requirementLink = mindmapReportCleanText(item.requirement_link);
+  const version = mindmapReportCleanText(item.version) || mindmapReportInferVersion(`${item.title || ''} ${requirementLink}`);
+  if (caseLinkInput && caseLink) caseLinkInput.value = caseLink;
+  if (requirementInput && requirementLink) requirementInput.value = requirementLink;
+  if (versionInput && version) versionInput.value = version;
+  if (queryInput) queryInput.value = mindmapReportCleanText(item.title || item.label || queryInput.value);
+  const history = mindmapReportHistory();
+  const currentMeta = mindmapReportMetaPayload();
+  if (requirementLink) {
+    history.requirements = mindmapReportUpsertRecord(history.requirements, {
+      url: requirementLink,
+      label: item.title || requirementLink,
+      version: currentMeta.version || version
+    });
+  }
+  if (caseLink) {
+    history.caseLinks = mindmapReportUpsertRecord(history.caseLinks, {
+      url: caseLink,
+      label: item.title || caseLink,
+      version: currentMeta.version || version
+    });
+  }
+  history.testers = mindmapReportUpsertText(history.testers, currentMeta.tester);
+  history.versions = mindmapReportUpsertText(history.versions, currentMeta.version || version);
+  saveMindmapReportHistory(history);
+  refreshMindmapReportMemoryControls();
+  showToast(`已选择测试用例平台：${item.title || item.id || ''}`, 'success');
+}
+
 function refreshMindmapReportMemoryControls() {
   const testerSelect = document.getElementById('mindmap-report-tester-select');
   if (testerSelect) testerSelect.innerHTML = mindmapReportHistoryTextOptions('tester');
@@ -4067,6 +4175,7 @@ function mindmapReportTemplateOptions() {
 
 function renderMindmapReportBuilder(data) {
   mindmapReportData = data || {};
+  mindmapReportCasePlatformResults = [];
   if (!mindmapReportSelection || !mindmapReportSelection.size) {
     mindmapReportSelection = new Set(flattenMindmapReportCases(mindmapReportData).filter(item => item.default_selected).map(mindmapReportCaseSelectionId));
   }
@@ -4109,6 +4218,7 @@ function renderMindmapReportBuilder(data) {
     "applyMindmapReportCaseLinkMemory(this.value)",
     "deleteMindmapReportMemory('caseLink')"
   );
+  const casePlatformQuery = defaultReportTitle.replace(/[-－—–]?\s*测试报告$/i, '').trim();
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="generation-records mindmap-report-page">
@@ -4176,7 +4286,16 @@ function renderMindmapReportBuilder(data) {
               </select>
             </label>
             <label>飞书需求${requirementField}</label>
-            <label>测试用例平台${caseLinkField}</label>
+            <label class="wide">测试用例平台
+              ${caseLinkField}
+              <span class="mindmap-report-integration-row">
+                <input id="mindmap-report-case-platform-query" placeholder="按用例集标题、版本或飞书需求链接搜索" value="${escapeHtml(casePlatformQuery)}">
+                <button class="btn-sm primary" type="button" onclick="searchMindmapReportCasePlatform()">搜索用例平台</button>
+              </span>
+              <div id="mindmap-report-case-platform-results" class="mindmap-report-case-platform-results">
+                <div class="mindmap-report-case-platform-empty">支持从 AgileTC 用例平台选择；也可以继续手动填写链接。</div>
+              </div>
+            </label>
             <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
             <label class="wide">缺陷统计
