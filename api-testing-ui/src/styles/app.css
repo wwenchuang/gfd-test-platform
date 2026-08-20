@@ -94,7 +94,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .selected-endpoint-group h3 { background: #f3f8fd; }
 .selected-group-head { align-items: center; gap: 8px; }
 .selected-group-head .selected-group-name { min-width: 0; overflow: hidden; color: #344055; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.selected-endpoint-row { grid-template-columns: minmax(0, 1fr) 34px; gap: 8px; min-height: 66px; padding: 8px 10px; }
+.endpoint-row.selected-endpoint-row { grid-template-columns: minmax(0, 1fr) 34px; gap: 8px; min-height: 66px; padding: 8px 10px; }
 .selected-remove-button { width: 34px; min-width: 34px; justify-self: end; color: var(--red); }
 .endpoint-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; padding: 4px 7px; border-top: 1px solid #edf0f4; }
 .endpoint-row > input { width: 15px; min-height: 15px; margin: 0; }

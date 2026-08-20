@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 
@@ -204,5 +207,11 @@ describe('EndpointTree', () => {
     expect(summary.text()).toContain('获取设备状态')
     expect(summary.text()).toContain('/pmc/api/v1/deviceCmd/deviceStatus')
     expect(row.get('[data-testid="remove-selected-endpoint-1"]').attributes('title')).toContain('移除 获取设备状态')
+  })
+
+  it('keeps selected endpoint rows wider than the remove button column in CSS', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/styles/app.css'), 'utf8')
+
+    expect(css).toContain('.endpoint-row.selected-endpoint-row { grid-template-columns: minmax(0, 1fr) 34px;')
   })
 })

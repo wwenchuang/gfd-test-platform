@@ -34,6 +34,36 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 API 工作台：已选接口名称和路径显示修复
+
+用户截图反馈工作台 `接口范围 -> 已选接口` 里只看到 `POST` 方法标记，看不到接口名称和路径，确认属于上轮任务列表/接口范围改造后的遗留显示问题。
+
+本轮修复：
+
+- 定位根因：`.selected-endpoint-row` 的两列布局先定义，但后面的通用 `.endpoint-row` 规则覆盖了 `grid-template-columns`，导致已选接口左侧内容列被压到 22px，只剩方法标记可见。
+- 将已选行布局选择器提升为 `.endpoint-row.selected-endpoint-row`，保留 `minmax(0, 1fr) 34px`，让接口名称/路径占主列，移除按钮固定在右侧。
+- 补充 EndpointTree 样式回归测试，防止已选接口行再次被通用行样式覆盖。
+- 重新构建 API testing 前端产物。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/EndpointTree.spec.ts --reporter=basic
+# 1 file / 12 tests passed
+
+npm --prefix api-testing-ui test -- --run --reporter=basic
+# 33 files / 184 tests passed
+
+npm --prefix api-testing-ui run build
+# vue-tsc + Vite production build passed; generated api-test/assets/index-DmO-5Zyx.js and index-D577SQ4J.css
+
+python3 tests/frontend_static_checks.py
+git diff --check
+# passed
+```
+
+注意：本轮工作区中另有非本次改动的 `js/app.js`、`tests/frontend_static_checks.py`，未纳入本次提交，不能回滚。
+
 ### 2026-08-17 API 定时任务：自动调度、飞书通知和报告链接修复
 
 用户反馈定时任务没有生效、飞书通知未发送，并且手动飞书消息中的报告链接会打开到不对应的任务报告。
