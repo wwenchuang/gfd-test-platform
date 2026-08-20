@@ -802,6 +802,81 @@ def test_sonic_result_id_derives_fixed_report_url_without_lookup():
         midscene.REPORT_DIR = old_report_dir
 
 
+def test_leadership_sonic_suite_card_prioritizes_platform_summary_without_sonic_or_devices():
+    suite = {
+        "app_package": "com.kfb.model",
+        "app": {"package": "com.kfb.model", "name": "智小白3D"},
+        "run_mode": "baseline",
+        "suite_report_url": "http://task/reports/current-suite-summary.html",
+        "results": [
+            {"status": "success", "module": "3D打印基线", "target_task_name": "模型生成记录"},
+            {"status": "success", "module": "3D打印基线", "target_task_name": "普通印章打印"},
+        ],
+        "sonic_completion": {
+            "finished": True,
+            "status": "success",
+            "passed": 2,
+            "failed": 0,
+            "warning": 0,
+            "total": 2,
+            "duration": "3分20秒",
+        },
+    }
+
+    card = sonic_service.build_sonic_suite_summary_card(suite)
+    text = json.dumps(card, ensure_ascii=False)
+    actions = card["card"]["elements"][-1]["actions"]
+
+    assert "智小白3D｜API 基线回归｜通过" in text
+    assert "通过率" in text
+    assert "100%" in text
+    assert "用例统计" in text
+    assert "总数 2" in text
+    assert "范围" in text
+    assert "3D打印基线" in text
+    assert "耗时" in text
+    assert "3分20秒" in text
+    assert "设备" not in text
+    assert "Sonic 报告" not in text
+    assert actions[0]["text"]["content"] == "查看平台汇总报告"
+    assert actions[0]["url"] == "http://task/reports/current-suite-summary.html"
+
+
+def test_leadership_sonic_suite_card_summarizes_failed_items_without_repeating_header():
+    suite = {
+        "app_package": "com.kfb.model",
+        "app": {"package": "com.kfb.model", "name": "智小白3D"},
+        "run_mode": "baseline",
+        "suite_report_url": "http://task/reports/current-failed-suite.html",
+        "results": [
+            {"status": "success", "module": "3D打印基线", "target_task_name": "模型生成记录"},
+            {
+                "status": "failed",
+                "module": "3D打印基线",
+                "target_task_name": "OBJ保龄球打印",
+                "error": "断言失败：未找到打印成功提示，请查看详细报告和截图定位原因",
+            },
+        ],
+        "sonic_completion": {
+            "finished": True,
+            "status": "failed",
+            "passed": 1,
+            "failed": 1,
+            "warning": 0,
+            "total": 2,
+        },
+    }
+
+    card = sonic_service.build_sonic_suite_summary_card(suite)
+    text = json.dumps(card, ensure_ascii=False)
+
+    assert "智小白3D｜API 基线回归｜未通过" in text
+    assert "失败摘要" in text
+    assert "OBJ保龄球打印" in text
+    assert "结论" in text
+    assert text.count("基线回归失败") == 0
+
+
 def test_sonic_result_meta_rejects_result_ended_before_first_task_callback():
     def ts(value: str) -> int:
         return int(time.mktime(time.strptime(value, "%Y-%m-%d %H:%M:%S")))
@@ -1728,6 +1803,9 @@ def test_suite_summary_feishu_registry_blocks_same_result_from_different_keys():
         sonic_service.cfg.SONIC_SUITE_TIMERS.pop("suite-fallback-1207", None)
 
     assert len(sent) == 1
+    actions = sent[0][1]["card"]["elements"][-1]["actions"]
+    assert actions[0]["text"]["content"] == "查看平台汇总报告"
+    assert actions[0]["url"] == "http://task/reports/suite.html"
     identity = "sonic_result:3:1207:webhookfp"
     assert state["feishu_sent"][identity]["sent_at"]
     assert state["feishu_sent"][identity]["send_in_progress"] is False

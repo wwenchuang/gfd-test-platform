@@ -34,6 +34,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 Sonic API 基线飞书卡片：领导视角信息和报告按钮优化
+
+用户反馈 `智小白3D｜基线回归通过/失败` 飞书卡片 UI 和展示信息偏粗糙，需要适合发给领导，并确认报告地址能打开当前执行报告。用户确认该场景没有 Sonic 和设备字段，因此无数据时不展示对应信息。
+
+本轮修复：
+
+- Sonic 套件飞书卡片标题改为 `应用｜API 基线回归｜结论`，失败对外展示为 `未通过`，避免重复输出 `基线回归失败`。
+- 正文按领导视角重排：结论、应用、通过率、用例统计、范围、耗时和失败摘要。
+- 没有设备时不展示 `设备` 行；没有 Sonic URL/lookup 信息时不展示 Sonic 文案或 Sonic 按钮。
+- 平台汇总报告按钮改名为 `查看平台汇总报告`，并保持为第一个 primary 按钮。
+- 发送链路测试锁定：`send_sonic_suite_summary_if_quiet` 会先生成 `suite_report_url`，卡片主按钮 URL 必须等于本次生成的当前套件汇总报告地址。
+- 失败摘要最多展示前 5 条，保留用例名和压缩后的原因，减少飞书卡片刷屏。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_sonic_integration.py::test_leadership_sonic_suite_card_prioritizes_platform_summary_without_sonic_or_devices tests/test_sonic_integration.py::test_leadership_sonic_suite_card_summarizes_failed_items_without_repeating_header tests/test_sonic_integration.py::test_suite_summary_feishu_registry_blocks_same_result_from_different_keys tests/test_sonic_integration.py::test_sonic_completed_suite_reports_missing_task_callbacks tests/test_sonic_integration.py::test_sonic_final_success_overrides_failed_task_callback_in_summary -q
+# 5 passed
+
+python3 -m py_compile task_server/services/sonic_service.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
+注意：`tests/test_sonic_integration.py -q` 整文件当前仍会因历史 `midscene-upload.py` 入口不再导出旧函数而大量失败，本轮未把这个既有测试结构问题纳入修复范围。
+
 ### 2026-08-20 脑图测试报告：AgileTC 描述优先回填测试版本
 
 用户确认测试人员不从 AgileTC 描述里解析，只需要描述中出现类似 `智小白3D V1.19.0` 时回填测试版本。

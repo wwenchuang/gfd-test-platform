@@ -3622,22 +3622,33 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     outcome = sonic_suite_notification_outcome(suite)
     color = outcome["color"]
     icon = outcome["icon"]
-    status_label = outcome["status_label"]
+    raw_status_label = outcome["status_label"]
+    status_label = "未通过" if outcome.get("status") == "failed" else raw_status_label
     failed_label = outcome["failed_label"]
     stats = sonic_suite_display_stats(suite)
     total = stats["total"]
     passed = stats["passed"]
     failed = stats["failed"]
     warning = stats["warning"]
+    pending = _safe_int(stats.get("pending"), 0)
+    pass_rate = round((passed / total) * 100) if total else 0
     duration = sonic_suite_duration_text(suite)
     devices = sorted({item.get("device_id") for item in results if item.get("device_id")})
     modules = sorted({item.get("module") for item in results if item.get("module")})
+    range_parts = [f"API {mode_label}", f"{total} 条用例"]
+    if modules:
+        range_parts.append("模块：" + "、".join(modules[:4]) + (" 等" if len(modules) > 4 else ""))
     elements = [
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**结论：** <font color='{color}'>{icon} {mode_label}{status_label}</font>"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**结论：** <font color='{color}'>{icon} API {mode_label}{status_label}</font>"}},
         {"tag": "div", "text": {"tag": "lark_md", "content": f"**应用：** {app_name}"}},
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**范围：** {mode_label} · {total} 条用例"}},
-        {"tag": "div", "text": {"tag": "lark_md", "content": f"**统计：** 通过 {passed} / {failed_label} {failed} / 告警 {warning}"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**通过率：{pass_rate}%**"}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": f"**用例统计：** 总数 {total}｜通过 {passed} / {failed_label} {failed} / 告警 {warning}" + (f" / 待回传 {pending}" if pending else "")}},
+        {"tag": "div", "text": {"tag": "lark_md", "content": "**范围：** " + sonic_notify_clean_text(" · ".join(range_parts))}},
     ]
+    if devices:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "**设备：** " + "、".join(devices[:3]) + (" 等" if len(devices) > 3 else "")}})
+    if duration:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**耗时：{duration}**"}})
     if outcome.get("non_script_issue"):
         elements.append({
             "tag": "div",
@@ -3685,15 +3696,6 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
                 ),
             },
         })
-    extra = []
-    if modules:
-        extra.append("模块：" + "、".join(modules[:4]) + (" 等" if len(modules) > 4 else ""))
-    if devices:
-        extra.append("设备：" + "、".join(devices[:3]) + (" 等" if len(devices) > 3 else ""))
-    if duration:
-        extra.append("耗时：" + duration)
-    if extra:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "**补充：** " + sonic_notify_clean_text(" · ".join(extra))}})
     sonic_report_url = ensure_sonic_suite_report_url(suite)
     lookup_message = sonic_suite_report_lookup_message(suite)
     if lookup_message:
@@ -3719,7 +3721,8 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
         if len(failed_items) > 5:
             remaining_label = "异常/未判定" if outcome.get("non_script_issue") else "失败"
             lines.append(f"- 还有 {len(failed_items) - 5} 条{remaining_label}，请在 Task 平台执行中心查看")
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**{outcome.get('detail_heading') or '失败明细'}：**\n" + "\n".join(lines)}})
+        detail_heading = "异常摘要" if outcome.get("non_script_issue") else "失败摘要"
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": f"**{detail_heading}：**\n" + "\n".join(lines)}})
     sonic_report_urls = [
         sonic_report_url,
         suite.get("sonic_report_url"),
@@ -3740,7 +3743,7 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
     if str(suite_report_url).startswith("http"):
         actions.append({
             "tag": "button",
-            "text": {"tag": "plain_text", "content": "查看汇总报告"},
+            "text": {"tag": "plain_text", "content": "查看平台汇总报告"},
             "url": suite_report_url,
             "type": "primary",
         })
@@ -3767,7 +3770,7 @@ def build_sonic_suite_summary_card(suite: dict) -> dict:
             "config": {"wide_screen_mode": True},
             "header": {
                 "template": color,
-                "title": {"tag": "plain_text", "content": f"{icon} {app_name}｜{mode_label}{status_label}"},
+                "title": {"tag": "plain_text", "content": f"{icon} {app_name}｜API {mode_label}｜{status_label}"},
             },
             "elements": elements,
         },
