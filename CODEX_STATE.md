@@ -34,6 +34,28 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 API 基线测试飞书通知：卡片链路和当前报告地址修复
+
+用户反馈当前 API 基线测试飞书通知仍不对。排查后确认：上一轮优化的是 Sonic 套件汇总卡片；API testing 模块手动/定时发送飞书时实际走 `task_server/api_testing/services/notification_service.py`，仍是旧卡片格式，因此没有按“无 Sonic、无设备”的 API 基线场景展示。
+
+本轮修复：
+
+- API testing 飞书卡片标题改为 `应用｜API 基线测试｜结论`，正文按结论、应用、任务、任务类型、环境、通过率、用例统计、范围和失败摘要展示。
+- 失败状态和失败类型对外中文化展示，例如 `FAILED/assertion` 展示为 `失败 · 断言失败`。
+- 卡片不展示 Sonic 或设备字段，避免 API 基线测试通知混入移动端执行语义。
+- `ExecutionRepository.display_metadata` 补齐 `project_name`，飞书卡片可展示当前项目/应用名。
+- 报告按钮改为 `查看当前执行报告`，继续使用 `project_id + execution_id` 生成 `/api-test/#/reports?...` 链接，确保打开当前执行报告。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_tasks.py tests/api_testing/test_notification_service.py -q
+python3 -m py_compile task_server/api_testing/services/notification_service.py task_server/api_testing/repositories/execution_repository.py task_server/api_testing/tasks.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-20 Sonic API 基线飞书卡片：领导视角信息和报告按钮优化
 
 用户反馈 `智小白3D｜基线回归通过/失败` 飞书卡片 UI 和展示信息偏粗糙，需要适合发给领导，并确认报告地址能打开当前执行报告。用户确认该场景没有 Sonic 和设备字段，因此无数据时不展示对应信息。

@@ -175,6 +175,9 @@ class NotificationService:
         issue_count = failed + broken + skipped + cancelled
         conclusion = "通过" if total and issue_count == 0 and passed == total else "未通过"
         pass_rate = round((passed / total) * 100) if total else 0
+        icon = "✅" if conclusion == "通过" else "❌"
+        color = "green" if conclusion == "通过" else "red"
+        project_name = str(metadata.get("project_name") or "").strip() or "未命名项目"
         environment_name = metadata.get("environment_name") or "未命名环境"
         snapshot = getattr(execution, "request_snapshot", {}) or {}
         task = snapshot.get("task", {}) if isinstance(snapshot, dict) else {}
@@ -182,19 +185,32 @@ class NotificationService:
         if not task_name:
             task_name = "基线回归"
         task_type_label = NotificationService._task_type_label(execution, task)
-        title = f"API 基线回归报告：{conclusion}"
+        title = f"{icon} {project_name}｜API 基线测试｜{conclusion}"
         template = "green" if conclusion == "通过" else "red"
-        lines = [
-            f"**任务**：{task_name}",
-            f"**任务类型**：{task_type_label}",
-            f"**环境**：{environment_name}",
-            f"**用例**：共 {total} 条，通过 {passed}，失败 {failed}，异常 {broken}，跳过 {skipped}，取消 {cancelled}",
-            f"**通过率**：{pass_rate}%",
+        range_parts = ["API 基线测试", f"{total} 条用例"]
+        elements = [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**结论：** <font color='{color}'>{icon} API 基线测试{conclusion}</font>",
+                },
+            },
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**应用：** {project_name}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**任务：** {task_name}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**任务类型：** {task_type_label}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**环境：** {environment_name}"}},
+            {"tag": "div", "text": {"tag": "lark_md", "content": f"**通过率：{pass_rate}%**"}},
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**用例统计：** 总数 {total}｜通过 {passed} / 失败 {failed} / 异常 {broken} / 跳过 {skipped} / 取消 {cancelled}",
+                },
+            },
+            {"tag": "div", "text": {"tag": "lark_md", "content": "**范围：** " + " · ".join(range_parts)}},
         ]
         issues = [item for item in children if item.status != "PASSED"][:5]
-        elements = [
-            {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}}
-        ]
         if issues:
             versions = metadata.get("versions") or {}
             cases = metadata.get("cases") or {}
@@ -211,7 +227,11 @@ class NotificationService:
                     or "未命名用例"
                 )
                 issue_lines.append(
-                    f"- {item.status} · {name} · {item.failure_category or '未分类'}"
+                    f"- {NotificationService._status_label(item.status)} · {name} · {NotificationService._failure_category_label(item.failure_category)}"
+                )
+            if failed + broken + skipped + cancelled > len(issues):
+                issue_lines.append(
+                    f"- 还有 {failed + broken + skipped + cancelled - len(issues)} 条异常结果，请打开当前执行报告查看"
                 )
             elements.extend(
                 [
@@ -220,7 +240,7 @@ class NotificationService:
                         "tag": "div",
                         "text": {
                             "tag": "lark_md",
-                            "content": "**问题摘要**\n" + "\n".join(issue_lines),
+                            "content": "**失败摘要**\n" + "\n".join(issue_lines),
                         },
                     },
                 ]
@@ -235,7 +255,7 @@ class NotificationService:
                         "actions": [
                             {
                                 "tag": "button",
-                                "text": {"tag": "plain_text", "content": "查看报告"},
+                                "text": {"tag": "plain_text", "content": "查看当前执行报告"},
                                 "type": "primary",
                                 "url": report_url,
                             }
@@ -251,6 +271,33 @@ class NotificationService:
             },
             "elements": elements,
         }
+
+    @staticmethod
+    def _status_label(status):
+        return {
+            "PASSED": "通过",
+            "FAILED": "失败",
+            "BROKEN": "异常",
+            "SKIPPED": "跳过",
+            "CANCELLED": "取消",
+            "QUEUED": "等待中",
+            "RUNNING": "执行中",
+        }.get(str(status or "").upper(), str(status or "").strip() or "未知")
+
+    @staticmethod
+    def _failure_category_label(category):
+        value = str(category or "").strip()
+        if not value:
+            return "未分类"
+        return {
+            "assertion": "断言失败",
+            "http_error": "HTTP 错误",
+            "timeout": "请求超时",
+            "network": "网络异常",
+            "script_error": "脚本异常",
+            "system": "系统异常",
+            "cancelled": "已取消",
+        }.get(value, value)
 
     @staticmethod
     def _task_type_label(execution, task):

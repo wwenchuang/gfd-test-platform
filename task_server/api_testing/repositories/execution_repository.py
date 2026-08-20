@@ -198,9 +198,11 @@ class ExecutionRepository:
         versions = self.get_case_versions(item.case_version_id for item in children)
         cases = self.get_cases(item.case_id for item in versions.values())
         endpoints = self.get_endpoints(item.endpoint_id for item in children)
+        project = self.get_project(execution.project_id)
         environment = self.get_environment_revision(execution.environment_revision_id)
         analyses = self.latest_failure_analyses(item.id for item in children)
         return {
+            "project_name": project.name if project is not None else "",
             "environment_name": environment.name if environment is not None else "",
             "cases": cases,
             "versions": versions,
