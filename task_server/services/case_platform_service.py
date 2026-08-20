@@ -61,6 +61,26 @@ def infer_case_platform_version(*values: Any) -> str:
     return raw if raw.upper().startswith("V") else f"V{raw}"
 
 
+def _description_version_text(description: Any) -> str:
+    text = "" if description is None else str(description)
+    if not infer_case_platform_version(text):
+        return ""
+    segments = [part.strip() for part in re.split(r"[\n\r；;]+", text) if part.strip()]
+    if not segments:
+        segments = [_clean_text(text)]
+    for segment in segments:
+        if not infer_case_platform_version(segment):
+            continue
+        cleaned = re.sub(r"^(?:测试)?版本号?\s*[:：= -]*", "", segment.strip(), flags=re.I)
+        cleaned = re.sub(r"^(?:version|ver)\s*[:：= -]*", "", cleaned.strip(), flags=re.I)
+        return _clean_text(cleaned)
+    return ""
+
+
+def _report_version_text(description: Any, title: Any, requirement_link: Any) -> str:
+    return _description_version_text(description) or infer_case_platform_version(title, requirement_link)
+
+
 def _json_get(base_url: str, path: str, params: Dict[str, Any], *, timeout: int) -> Dict[str, Any]:
     query = urllib.parse.urlencode({key: value for key, value in params.items() if value not in (None, "")}, doseq=True)
     url = f"{base_url}{path}"
@@ -102,7 +122,7 @@ def _normalize_case_item(row: Dict[str, Any], *, base_url: str, fallback_product
     title = _clean_text(row.get("title"), f"用例集 {case_id}" if case_id else "未命名用例集")
     description = _clean_text(row.get("description"))
     requirement_link = _clean_text(row.get("requirementId"))
-    version = infer_case_platform_version(description, title, requirement_link)
+    version = _report_version_text(description, title, requirement_link)
     label_parts = [title, version, f"#{case_id}" if case_id else ""]
     label = " · ".join(part for part in label_parts if part)
     link = _case_link(base_url, product_line_id, case_id)

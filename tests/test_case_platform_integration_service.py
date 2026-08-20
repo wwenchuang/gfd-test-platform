@@ -75,10 +75,10 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
     assert item["id"] == "3088"
     assert item["title"] == "3D共享打印V1.2.2"
     assert item["description"] == "智小白3D V1.19.0"
-    assert item["version"] == "V1.19.0"
+    assert item["version"] == "智小白3D V1.19.0"
     assert item["requirement_link"] == "https://project.feishu.cn/y99fwz/story/detail/6876737017"
     assert item["case_link"] == "http://qa-agiletc.gongfudou.com/caseManager/1/3088/undefined/0"
-    assert item["label"] == "3D共享打印V1.2.2 · V1.19.0 · #3088"
+    assert item["label"] == "3D共享打印V1.2.2 · 智小白3D V1.19.0 · #3088"
     assert any("title=3D" in url for url, _timeout in requests)
     assert any("/api/case/detail" in url for url, _timeout in requests)
 
