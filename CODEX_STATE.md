@@ -34,6 +34,28 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 脑图测试报告：AgileTC 描述优先回填测试版本
+
+用户确认测试人员不从 AgileTC 描述里解析，只需要描述中出现类似 `智小白3D V1.19.0` 时回填测试版本。
+
+本轮修复：
+
+- AgileTC 搜索结果不再只依赖 `/api/case/list` 的列表字段；会对候选用例集补读 `/api/case/detail?caseId=...` 获取完整 `description`。
+- 测试版本提取优先级调整为：用例集详情描述 > 用例集标题 > 关联需求链接。
+- 描述里存在 `V1.19.0`、`版本：V1.19.0`、`version 1.19.0` 等格式时，报告表单选择该用例集后会优先回填描述中的版本。
+- 详情接口单条失败时不会影响搜索结果，自动退回列表字段和标题兜底。
+- 不从描述里解析测试人员，测试人员仍只走用户手填/历史选择。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_case_platform_integration_service.py tests/test_mindmap_test_report_service.py -q
+python3 -m py_compile task_server/services/case_platform_service.py task_server/router.py
+.venv/bin/python tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-20 脑图测试报告：AgileTC 用例平台搜索选择
 
 用户希望测试报告表单里飞书需求和自建测试用例平台能打通，支持选择和手动输入，并自动带出版本号。本轮先对自建 AgileTC 用例平台做只读抓取验证和集成：

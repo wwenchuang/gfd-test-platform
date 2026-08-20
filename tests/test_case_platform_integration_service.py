@@ -23,7 +23,21 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
 
     def fake_urlopen(req, timeout):
         requests.append((req.full_url, timeout))
+        path = urlparse(req.full_url).path
         query = parse_qs(urlparse(req.full_url).query)
+        if path == "/api/case/detail":
+            assert query["caseId"] == ["3088"]
+            return _FakeResponse({
+                "code": 200,
+                "msg": "服务运行成功",
+                "data": {
+                    "id": 3088,
+                    "title": "3D共享打印V1.2.2",
+                    "description": "智小白3D V1.19.0",
+                    "productLineId": 1,
+                    "requirementId": "https://project.feishu.cn/y99fwz/story/detail/6876737017",
+                },
+            })
         assert query["productLineId"] == ["1"]
         assert query["caseType"] == ["0"]
         assert query["channel"] == ["1"]
@@ -60,11 +74,13 @@ def test_search_case_platform_cases_normalizes_agiletc_results(monkeypatch):
     item = result["items"][0]
     assert item["id"] == "3088"
     assert item["title"] == "3D共享打印V1.2.2"
-    assert item["version"] == "V1.2.2"
+    assert item["description"] == "智小白3D V1.19.0"
+    assert item["version"] == "V1.19.0"
     assert item["requirement_link"] == "https://project.feishu.cn/y99fwz/story/detail/6876737017"
     assert item["case_link"] == "http://qa-agiletc.gongfudou.com/caseManager/1/3088/undefined/0"
-    assert item["label"] == "3D共享打印V1.2.2 · V1.2.2 · #3088"
+    assert item["label"] == "3D共享打印V1.2.2 · V1.19.0 · #3088"
     assert any("title=3D" in url for url, _timeout in requests)
+    assert any("/api/case/detail" in url for url, _timeout in requests)
 
 
 def test_search_case_platform_cases_uses_full_requirement_link(monkeypatch):

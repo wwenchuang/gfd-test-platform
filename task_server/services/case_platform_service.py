@@ -102,7 +102,7 @@ def _normalize_case_item(row: Dict[str, Any], *, base_url: str, fallback_product
     title = _clean_text(row.get("title"), f"用例集 {case_id}" if case_id else "未命名用例集")
     description = _clean_text(row.get("description"))
     requirement_link = _clean_text(row.get("requirementId"))
-    version = infer_case_platform_version(title, description, requirement_link)
+    version = infer_case_platform_version(description, title, requirement_link)
     label_parts = [title, version, f"#{case_id}" if case_id else ""]
     label = " · ".join(part for part in label_parts if part)
     link = _case_link(base_url, product_line_id, case_id)
@@ -123,6 +123,27 @@ def _normalize_case_item(row: Dict[str, Any], *, base_url: str, fallback_product
         "updated_at": _clean_text(row.get("gmtModified") or row.get("gmtCreated")),
         "record_num": row.get("recordNum") if row.get("recordNum") is not None else 0,
     }
+
+
+def _case_detail(base_url: str, case_id: str, *, timeout: int) -> Dict[str, Any]:
+    if not case_id:
+        return {}
+    response = _json_get(base_url, "/api/case/detail", {"caseId": case_id}, timeout=timeout)
+    if int(response.get("code") or 0) != 200:
+        raise CasePlatformError(_clean_text(response.get("msg"), "读取用例集详情失败"))
+    data = response.get("data")
+    return data if isinstance(data, dict) else {}
+
+
+def _merge_case_detail(row: Dict[str, Any], detail: Dict[str, Any]) -> Dict[str, Any]:
+    if not detail:
+        return dict(row)
+    merged = dict(row)
+    for key in ("id", "title", "description", "productLineId", "requirementId", "modifier", "groupId"):
+        value = detail.get(key)
+        if value is not None and _clean_text(value):
+            merged[key] = value
+    return merged
 
 
 def _list_cases(
@@ -202,7 +223,16 @@ def search_case_platform_cases(
         for row in result.get("rows") or []:
             if not isinstance(row, dict):
                 continue
-            item = _normalize_case_item(row, base_url=resolved_base_url, fallback_product_line_id=resolved_product_line_id)
+            case_id = _clean_text(row.get("id"))
+            try:
+                detail = _case_detail(resolved_base_url, case_id, timeout=resolved_timeout)
+            except CasePlatformError:
+                detail = {}
+            item = _normalize_case_item(
+                _merge_case_detail(row, detail),
+                base_url=resolved_base_url,
+                fallback_product_line_id=resolved_product_line_id,
+            )
             item_id = item.get("id") or item.get("case_link")
             if not item_id or item_id in seen:
                 continue
