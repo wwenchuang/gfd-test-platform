@@ -383,7 +383,7 @@ def main():
     require("deleteGenerationMindmapRecord" in html and "/cases/mindmap-record" in html and "删除记录" in html, "Mindmap center must support deleting generation records")
     require("uploadApkInChunks" in execution_js and "/app-install/upload-chunk" in execution_js and "/app-install/upload-finish" in execution_js, "APK install uploads must use chunk upload endpoints")
     require("readAsDataURL(file)" not in execution_js and "contentBase64: dataUrl.split" not in execution_js, "APK install uploads must not send the whole APK as one Base64 JSON body")
-    require("js/utils.js?v=20260808-runtime-cleanup" in html and "js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260814-mindmap-report" in html and "js/state.js?v=20260814-mindmap-report" in html and "js/navigation.js?v=20260808-runtime-cleanup" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260814-mindmap-report" in html and "css/round5.css?v=20260808-runtime-cleanup" in html and "js/agent-status.js?v=20260808-runtime-cleanup" in html, "Frontend cache versions must include the active frontend modules")
+    require("js/utils.js?v=20260808-runtime-cleanup" in html and "js/execution.js?v=20260701-install-refresh" in html and "js/app.js?v=20260820-mindmap-report-history" in html and "js/state.js?v=20260820-mindmap-report-history" in html and "js/navigation.js?v=20260808-runtime-cleanup" in html and "js/agent-workbench.js?v=20260803-agent-final-report-counts" in html and "css/app.css?v=20260820-mindmap-report-history" in html and "css/round5.css?v=20260808-runtime-cleanup" in html and "js/agent-status.js?v=20260808-runtime-cleanup" in html, "Frontend cache versions must include the active frontend modules")
     require("function jobDeviceLabel" in html and "runnerDevices" in html and "runnerDeviceDisplayName(device)" in html, "Job rows must resolve device ids to public runner device names when available")
     require(
         "const job = activeJobs.find(isRunnerExecutionJob);" in html
@@ -408,10 +408,13 @@ def main():
     require('id="mindmap-report-env"' in html and '<option value="正式环境" selected>正式环境</option>' in html and "预发布环境" in html and '<option value="测试环境">测试环境</option>' in html, "Report builder must use fixed environment dropdown and default to production")
     require("DEFAULT_MINDMAP_REPORT_GOAL" in html and "验证需求核心流程是否符合预期，并确保核心业务流程不受影响。" in html and "<textarea id=\"mindmap-report-goal\"" in html, "Report builder must prefill an editable default test goal")
     require("mindmapReportDefectsPayload" in html and "mindmap-report-defect-fatal" in html and "mindmap-report-defect-serious" in html and "mindmap-report-defect-normal" in html and "mindmap-report-defect-minor" in html, "Report builder must support manual defect severity input")
+    require("MINDMAP_REPORT_HISTORY_KEY" in html and "mindmapReportRememberMeta" in html and "deleteMindmapReportMemory" in html and "applyMindmapReportMemory" in html, "Report builder must persist tester and version history with delete support")
+    require("applyMindmapReportRequirementMemory" in html and "syncMindmapReportVersionFromRequirement" in html and "mindmap-report-requirement-select" in html and "飞书需求" in html, "Report builder must support Feishu requirement selection and auto-fill version")
+    require("mindmap-report-case-link-select" in html and "测试用例平台" in html and "applyMindmapReportCaseLinkMemory" in html, "Report builder must support selectable/manual case platform links")
     require("下载 Word" in html and "download?.word" in html and "format=doc" in html, "Report builder must expose Word export download")
     require("测试范围" in html and "测试人员" in html and "测试周期" in html and "涉及端侧" in html, "Report builder must expose required metadata fields")
     require("mindmap-report-layout" in html and "mindmap-report-scope" in html, "Report builder styles must be present")
-    print({"ok": True, "file": str(HTML), "checks": 81})
+    print({"ok": True, "file": str(HTML), "checks": 84})
 
 
 if __name__ == "__main__":

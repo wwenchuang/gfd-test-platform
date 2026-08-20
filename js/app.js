@@ -3638,6 +3638,196 @@ function mindmapReportCaseSelectionId(item = {}) {
 
 const DEFAULT_MINDMAP_REPORT_GOAL = '验证需求核心流程是否符合预期，并确保核心业务流程不受影响。';
 const MINDMAP_REPORT_CLIENT_SIDES = ['mini', 'Android', 'iOS', '中台', '后台', 'iPad', '安卓pad'];
+const MINDMAP_REPORT_HISTORY_KEY = 'midscene_mindmap_report_meta_history_v1';
+const MINDMAP_REPORT_HISTORY_LIMIT = 24;
+
+function mindmapReportEmptyHistory() {
+  return { testers: [], versions: [], requirements: [], caseLinks: [] };
+}
+
+function mindmapReportHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MINDMAP_REPORT_HISTORY_KEY) || '{}');
+    return {
+      ...mindmapReportEmptyHistory(),
+      ...(parsed && typeof parsed === 'object' ? parsed : {})
+    };
+  } catch(e) {
+    return mindmapReportEmptyHistory();
+  }
+}
+
+function saveMindmapReportHistory(history) {
+  try {
+    localStorage.setItem(MINDMAP_REPORT_HISTORY_KEY, JSON.stringify({
+      ...mindmapReportEmptyHistory(),
+      ...(history || {})
+    }));
+  } catch(e) {
+    // Ignore storage failures; report generation should keep working.
+  }
+}
+
+function mindmapReportCleanText(value) {
+  return String(value || '').trim();
+}
+
+function mindmapReportHistoryTextOptions(type) {
+  const history = mindmapReportHistory();
+  const rows = type === 'tester' ? history.testers : history.versions;
+  return '<option value="">选择历史</option>' + (rows || [])
+    .map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+    .join('');
+}
+
+function mindmapReportRecordLabel(record = {}) {
+  const label = mindmapReportCleanText(record.label);
+  const url = mindmapReportCleanText(record.url);
+  return label || url || '-';
+}
+
+function mindmapReportRequirementOptions() {
+  const history = mindmapReportHistory();
+  return '<option value="">选择飞书需求</option>' + (history.requirements || [])
+    .map(record => {
+      const label = mindmapReportRecordLabel(record);
+      const version = mindmapReportCleanText(record.version);
+      return `<option value="${escapeHtml(record.url || '')}">${escapeHtml(version ? `${label} · ${version}` : label)}</option>`;
+    })
+    .join('');
+}
+
+function mindmapReportCaseLinkOptions() {
+  const history = mindmapReportHistory();
+  return '<option value="">选择测试用例平台链接</option>' + (history.caseLinks || [])
+    .map(record => `<option value="${escapeHtml(record.url || '')}">${escapeHtml(mindmapReportRecordLabel(record))}</option>`)
+    .join('');
+}
+
+function mindmapReportMemoryRow(inputHtml, selectId, selectHtml, applyCode, deleteCode) {
+  return `
+    <span class="mindmap-report-memory-row">
+      ${inputHtml}
+      <select id="${escapeHtml(selectId)}" onchange="${applyCode}">${selectHtml}</select>
+      <button class="btn-sm danger" type="button" onclick="${deleteCode}">删除记录</button>
+    </span>
+  `;
+}
+
+function mindmapReportUpsertText(list = [], value = '') {
+  const clean = mindmapReportCleanText(value);
+  if (!clean) return list || [];
+  return [clean, ...(list || []).filter(item => item !== clean)].slice(0, MINDMAP_REPORT_HISTORY_LIMIT);
+}
+
+function mindmapReportUpsertRecord(list = [], record = {}) {
+  const url = mindmapReportCleanText(record.url);
+  if (!url) return list || [];
+  const cleanRecord = {
+    url,
+    label: mindmapReportCleanText(record.label) || url,
+    version: mindmapReportCleanText(record.version),
+    updatedAt: new Date().toISOString()
+  };
+  return [cleanRecord, ...(list || []).filter(item => mindmapReportCleanText(item.url) !== url)].slice(0, MINDMAP_REPORT_HISTORY_LIMIT);
+}
+
+function mindmapReportInferVersion(text = '') {
+  const value = mindmapReportCleanText(text);
+  const match = value.match(/(?:版本号?|version|ver|v)[\s:=：-]*([A-Za-z]?\d+(?:[._-]\d+){1,3})/i)
+    || value.match(/\bV?\d+(?:[._-]\d+){1,3}\b/i);
+  if (!match) return '';
+  const raw = match[1] || match[0] || '';
+  return raw.toUpperCase().startsWith('V') ? raw : `V${raw}`;
+}
+
+function syncMindmapReportVersionFromRequirement() {
+  const requirementInput = document.getElementById('mindmap-report-requirement');
+  const versionInput = document.getElementById('mindmap-report-version');
+  if (!requirementInput || !versionInput) return;
+  const inferred = mindmapReportInferVersion(requirementInput.value);
+  if (inferred && !mindmapReportCleanText(versionInput.value)) {
+    versionInput.value = inferred;
+  }
+}
+
+function applyMindmapReportMemory(type, value) {
+  const clean = mindmapReportCleanText(value);
+  if (!clean) return;
+  const targetId = type === 'tester' ? 'mindmap-report-tester' : 'mindmap-report-version';
+  const input = document.getElementById(targetId);
+  if (input) input.value = clean;
+}
+
+function applyMindmapReportRequirementMemory(value) {
+  const clean = mindmapReportCleanText(value);
+  if (!clean) return;
+  const history = mindmapReportHistory();
+  const record = (history.requirements || []).find(item => mindmapReportCleanText(item.url) === clean) || {};
+  const input = document.getElementById('mindmap-report-requirement');
+  const versionInput = document.getElementById('mindmap-report-version');
+  if (input) input.value = clean;
+  const version = mindmapReportCleanText(record.version) || mindmapReportInferVersion(`${record.label || ''} ${clean}`);
+  if (versionInput && version) versionInput.value = version;
+}
+
+function applyMindmapReportCaseLinkMemory(value) {
+  const clean = mindmapReportCleanText(value);
+  if (!clean) return;
+  const input = document.getElementById('mindmap-report-case-link');
+  if (input) input.value = clean;
+}
+
+function refreshMindmapReportMemoryControls() {
+  const testerSelect = document.getElementById('mindmap-report-tester-select');
+  if (testerSelect) testerSelect.innerHTML = mindmapReportHistoryTextOptions('tester');
+  const versionSelect = document.getElementById('mindmap-report-version-select');
+  if (versionSelect) versionSelect.innerHTML = mindmapReportHistoryTextOptions('version');
+  const requirementSelect = document.getElementById('mindmap-report-requirement-select');
+  if (requirementSelect) requirementSelect.innerHTML = mindmapReportRequirementOptions();
+  const caseLinkSelect = document.getElementById('mindmap-report-case-link-select');
+  if (caseLinkSelect) caseLinkSelect.innerHTML = mindmapReportCaseLinkOptions();
+}
+
+function deleteMindmapReportMemory(type) {
+  const history = mindmapReportHistory();
+  if (type === 'tester') {
+    const value = mindmapReportCleanText(document.getElementById('mindmap-report-tester-select')?.value || document.getElementById('mindmap-report-tester')?.value);
+    history.testers = (history.testers || []).filter(item => item !== value);
+  } else if (type === 'version') {
+    const value = mindmapReportCleanText(document.getElementById('mindmap-report-version-select')?.value || document.getElementById('mindmap-report-version')?.value);
+    history.versions = (history.versions || []).filter(item => item !== value);
+  } else if (type === 'requirement') {
+    const value = mindmapReportCleanText(document.getElementById('mindmap-report-requirement-select')?.value || document.getElementById('mindmap-report-requirement')?.value);
+    history.requirements = (history.requirements || []).filter(item => mindmapReportCleanText(item.url) !== value);
+  } else if (type === 'caseLink') {
+    const value = mindmapReportCleanText(document.getElementById('mindmap-report-case-link-select')?.value || document.getElementById('mindmap-report-case-link')?.value);
+    history.caseLinks = (history.caseLinks || []).filter(item => mindmapReportCleanText(item.url) !== value);
+  }
+  saveMindmapReportHistory(history);
+  refreshMindmapReportMemoryControls();
+}
+
+function mindmapReportRememberMeta(meta = mindmapReportMetaPayload()) {
+  const history = mindmapReportHistory();
+  const tester = mindmapReportCleanText(meta.tester);
+  const version = mindmapReportCleanText(meta.version);
+  const requirementLink = mindmapReportCleanText(meta.requirement_link);
+  const caseLink = mindmapReportCleanText(meta.case_link);
+  history.testers = mindmapReportUpsertText(history.testers, tester);
+  history.versions = mindmapReportUpsertText(history.versions, version);
+  history.requirements = mindmapReportUpsertRecord(history.requirements, {
+    url: requirementLink,
+    label: requirementLink,
+    version: version || mindmapReportInferVersion(`${meta.report_title || ''} ${requirementLink}`)
+  });
+  history.caseLinks = mindmapReportUpsertRecord(history.caseLinks, {
+    url: caseLink,
+    label: caseLink
+  });
+  saveMindmapReportHistory(history);
+  refreshMindmapReportMemoryControls();
+}
 
 function mindmapReportToday() {
   const now = new Date();
@@ -3891,6 +4081,34 @@ function renderMindmapReportBuilder(data) {
     : `${title} · ${mindmapReportData.module || '未分组模块'}`;
   const defaultReportTitle = sourceCount > 1 ? '多需求合并测试报告' : `${title}-测试报告`;
   const today = mindmapReportToday();
+  const testerField = mindmapReportMemoryRow(
+    '<input id="mindmap-report-tester" placeholder="例如：王文闯" onblur="mindmapReportRememberMeta()">',
+    'mindmap-report-tester-select',
+    mindmapReportHistoryTextOptions('tester'),
+    "applyMindmapReportMemory('tester', this.value)",
+    "deleteMindmapReportMemory('tester')"
+  );
+  const versionField = mindmapReportMemoryRow(
+    '<input id="mindmap-report-version" placeholder="例如：V1.2.2" onblur="mindmapReportRememberMeta()">',
+    'mindmap-report-version-select',
+    mindmapReportHistoryTextOptions('version'),
+    "applyMindmapReportMemory('version', this.value)",
+    "deleteMindmapReportMemory('version')"
+  );
+  const requirementField = mindmapReportMemoryRow(
+    '<input id="mindmap-report-requirement" placeholder="填写或粘贴飞书需求链接" oninput="syncMindmapReportVersionFromRequirement()" onblur="syncMindmapReportVersionFromRequirement(); mindmapReportRememberMeta()">',
+    'mindmap-report-requirement-select',
+    mindmapReportRequirementOptions(),
+    "applyMindmapReportRequirementMemory(this.value)",
+    "deleteMindmapReportMemory('requirement')"
+  );
+  const caseLinkField = mindmapReportMemoryRow(
+    '<input id="mindmap-report-case-link" placeholder="http://qa-agiletc.gongfudou.com/caseManager/..." onblur="mindmapReportRememberMeta()">',
+    'mindmap-report-case-link-select',
+    mindmapReportCaseLinkOptions(),
+    "applyMindmapReportCaseLinkMemory(this.value)",
+    "deleteMindmapReportMemory('caseLink')"
+  );
   area.className = 'editor-area';
   area.innerHTML = `
     <div class="generation-records mindmap-report-page">
@@ -3947,9 +4165,9 @@ function renderMindmapReportBuilder(data) {
           <div class="mindmap-report-form">
             <label>报告标题<input id="mindmap-report-title" value="${escapeHtml(defaultReportTitle)}"></label>
             <label>测试周期<input id="mindmap-report-start" type="date" value="${today}"><input id="mindmap-report-end" type="date" value="${today}"></label>
-            <label>测试人员<input id="mindmap-report-tester" placeholder="例如：王文闯"></label>
+            <label>测试人员${testerField}</label>
             <label>涉及端侧<span id="mindmap-report-client" class="mindmap-report-choice-group">${mindmapReportClientSideOptions()}</span></label>
-            <label>测试版本<input id="mindmap-report-version" placeholder="例如：V1.2.2"></label>
+            <label>测试版本${versionField}</label>
             <label>测试环境
               <select id="mindmap-report-env">
                 <option value="正式环境" selected>正式环境</option>
@@ -3957,8 +4175,8 @@ function renderMindmapReportBuilder(data) {
                 <option value="测试环境">测试环境</option>
               </select>
             </label>
-            <label>需求链接<input id="mindmap-report-requirement" placeholder="填写飞书链接"></label>
-            <label>测试用例链接<input id="mindmap-report-case-link" placeholder="http://qa-agiletc.gongfudou.com/caseManager/..."></label>
+            <label>飞书需求${requirementField}</label>
+            <label>测试用例平台${caseLinkField}</label>
             <label class="wide">测试目标<textarea id="mindmap-report-goal" rows="2">${escapeHtml(DEFAULT_MINDMAP_REPORT_GOAL)}</textarea></label>
             <label class="wide">备注<textarea id="mindmap-report-remark" rows="2" placeholder="补充风险、数据准备或结论说明"></textarea></label>
             <label class="wide">缺陷统计
@@ -4031,9 +4249,11 @@ async function previewMindmapTestReport() {
   mindmapReportBusy = true;
   setMindmapReportStatus('正在生成测试报告预览...', 'busy');
   try {
+    const payload = mindmapReportPayload();
+    mindmapReportRememberMeta(payload.meta);
     const data = await apiRequest('/test-reports/preview', {
       method: 'POST',
-      body: JSON.stringify(mindmapReportPayload())
+      body: JSON.stringify(payload)
     });
     mindmapReportPreview = data;
     const preview = document.getElementById('mindmap-report-preview');
@@ -4056,9 +4276,11 @@ async function createMindmapTestReport() {
   mindmapReportBusy = true;
   setMindmapReportStatus('正在生成并保存测试报告...', 'busy');
   try {
+    const payload = mindmapReportPayload();
+    mindmapReportRememberMeta(payload.meta);
     const data = await apiRequest('/test-reports', {
       method: 'POST',
-      body: JSON.stringify(mindmapReportPayload())
+      body: JSON.stringify(payload)
     });
     setMindmapReportStatus(`测试报告已生成：${data.report_id || ''}`, 'success');
     showToast('✓ 测试报告已生成', 'success');

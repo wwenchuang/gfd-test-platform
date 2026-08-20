@@ -2929,6 +2929,17 @@
     height: 15px;
     accent-color: var(--success);
   }
+  .mindmap-report-memory-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(130px, .6fr) auto;
+    gap: 6px;
+    align-items: center;
+    min-width: 0;
+  }
+  .mindmap-report-memory-row .btn-sm {
+    min-height: 36px;
+    white-space: nowrap;
+  }
   .mindmap-report-defect-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3144,6 +3155,9 @@
     }
     .mindmap-report-choice-group {
       gap: 6px;
+    }
+    .mindmap-report-memory-row {
+      grid-template-columns: 1fr;
     }
     .mindmap-report-defect-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
