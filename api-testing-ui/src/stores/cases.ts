@@ -19,6 +19,7 @@ export const useCasesStore = defineStore('api-cases', {
     aiPolling: false,
     aiCanResume: false,
     lastAiJobId: '',
+    basicGenerating: false,
     saving: false,
     savedMessage: '',
     validationErrors: {} as Record<string, string>,
@@ -124,6 +125,23 @@ export const useCasesStore = defineStore('api-cases', {
         await this.pollAiJob(response.data.job.id)
       } catch (error) {
         this.aiError = error instanceof Error ? error.message : 'AI 生成失败'
+      }
+    },
+    async generateBasicPositive(endpointIds: string[], environmentRevisionId: string, taskId?: string): Promise<CaseVersion[]> {
+      this.basicGenerating = true
+      this.savedMessage = ''
+      try {
+        const response = await apiClient.post<{ case_versions: CaseVersion[] }>('/api/api-testing/v1/cases/basic-positive', {
+          endpoint_ids: endpointIds,
+          environment_revision_id: environmentRevisionId,
+          ...(taskId ? { task_id: taskId } : {}),
+        })
+        const versions = response.data.case_versions
+        for (const version of versions) this.registerVersion(version)
+        this.savedMessage = `已生成 ${versions.length} 个基础正向用例`
+        return versions
+      } finally {
+        this.basicGenerating = false
       }
     },
     async pollAiJob(jobId: string, options: { maxAttempts?: number; delayMs?: number } = {}): Promise<void> {

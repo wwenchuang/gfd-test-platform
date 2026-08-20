@@ -33,6 +33,7 @@ from .repositories.context_repository import ContextRepository
 from .repositories.source_repository import audit_fields
 from .services.ai_service import AiCaseService, AiJobInputError, AiJobNotFoundError
 from .services.apifox_service import ApifoxInputError, ApifoxService
+from .services.basic_case_service import BasicCaseService
 from .services.case_service import BaselineGateError, CaseNotFoundError, CaseService, EndpointNotFoundError
 from .services.environment_service import EnvironmentInputError, EnvironmentNotFoundError, EnvironmentService
 from .services.execution_service import ExecutionConflictError, ExecutionNotFoundError, ExecutionService
@@ -540,6 +541,28 @@ def _post(segments, payload, actor, settings):
     if segments == ("cases",):
         _scope_endpoint(factory, _uuid(payload.get("endpoint_id")), actor)
         return {"case_version": _view(CaseService(factory).create_draft(_uuid(payload.get("endpoint_id")), _required_object(payload, "case"), payload.get("origin", "manual"), actor))}
+    if segments == ("cases", "basic-positive"):
+        endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
+        environment_revision_id = _uuid(payload.get("environment_revision_id"))
+        for endpoint_id in endpoint_ids:
+            _scope_endpoint(factory, endpoint_id, actor)
+        _scope_environment_revision(factory, environment_revision_id, actor)
+        task_id = _optional_uuid(payload.get("task_id"))
+        if task_id:
+            task = _scope_task(factory, task_id, actor)
+            if not set(endpoint_ids).issubset(set(task.selected_endpoint_ids)):
+                raise TestTaskScopeError("basic case request does not match this task")
+            if task.environment_revision_id != environment_revision_id:
+                raise TestTaskScopeError("basic case environment does not match this task")
+        return {
+            "case_versions": _view(
+                BasicCaseService(factory).generate(
+                    endpoint_ids,
+                    environment_revision_id,
+                    actor,
+                )
+            )
+        }
     if len(segments) == 3 and segments[0] == "cases" and segments[2] == "versions":
         _scope_case(factory, _uuid(segments[1]), actor)
         return {"case_version": _view(CaseService(factory).create_version(_uuid(segments[1]), _required_object(payload, "case"), actor))}
@@ -914,6 +937,10 @@ def _scope_execution_case(factory, execution_case_id, actor):
     if execution_case is None:
         raise _not_found()
     return execution_case
+
+
+def _scope_task(factory, task_id, actor):
+    return TestTaskService(factory).get(task_id, actor)
 
 
 def _scope_environment_import(factory, payload, actor):

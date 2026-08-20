@@ -235,6 +235,88 @@ describe('WorkbenchView debug workflow', () => {
     expect(cases.aiError).toBe('')
   })
 
+  it('generates basic positive cases against the exact saved task scope', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+    vi.spyOn(context, 'saveContext').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const basicVersion = { ...savedCase('version-basic', 'case-basic', '我的收藏列表 - 基础正向流程', {}), endpoint_id: ENDPOINT.id }
+    const generateBasic = vi.spyOn(cases, 'generateBasicPositive').mockImplementation(async () => {
+      cases.registerVersion(basicVersion)
+      return [basicVersion]
+    })
+
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+    vi.spyOn(tasks, 'saveSelection').mockResolvedValue({
+      id: 'task-1',
+      name: '3D 家用接口测试',
+      project_id: 'project-1',
+      source_revision_id: 'source-1',
+      environment_revision_id: 'environment-1',
+      selected_endpoint_ids: [ENDPOINT.id],
+      state: 'draft',
+      runnable_baseline_count: 0,
+      latest_ai_job_id: null,
+      latest_execution_id: null,
+      summary: {},
+      created_at: '',
+      updated_at: '',
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['endpoints'],
+            emits: ['activate', 'selection-change'],
+            template: '<button data-testid="select-endpoint" @click="$emit(\'selection-change\', [endpoints[0].id]); $emit(\'activate\', endpoints[0])">选择接口</button>',
+          },
+          AiAssistant: {
+            emits: ['generate-basic'],
+            template: '<button data-testid="generate-basic" @click="$emit(\'generate-basic\')">基础生成</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="select-endpoint"]').trigger('click')
+    await wrapper.get('[data-testid="generate-basic"]').trigger('click')
+    await flushPromises()
+
+    expect(generateBasic).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', 'task-1')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe('version-basic')
+  })
+
   it('uses project, source revision, and environment from the asset page route', async () => {
     const context = useContextStore()
     Object.assign(context, {

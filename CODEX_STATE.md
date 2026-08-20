@@ -34,6 +34,35 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-20 API 工作台：根据已选接口生成基础正向用例
+
+用户希望平台能基于当前已同步/选择的接口，直接生成最基本的正向测试用例，并且 token 可以使用平台环境里的配置。
+
+本轮修复：
+
+- 新增 `BasicCaseService`，从已导入的接口合同、当前 active source revision 和选定环境版本生成可编辑的基础正向用例草稿，不调用 AI Gateway。
+- 新增 `POST /api/api-testing/v1/cases/basic-positive`，按 endpoint、environment 和可选 task 做权限/范围校验后批量生成用例版本。
+- 请求参数会优先使用 OpenAPI 示例、默认值、枚举值和 required schema；响应断言默认包含 2xx 状态码，并识别 `code == 0` 或 `success == true` 的基础业务成功断言。
+- 环境默认 headers 仍由执行器运行时注入；缺失的 required header 若有同名环境变量，则生成 `{{变量名}}` 占位符。
+- Body 示例或 schema 中的敏感字段会被替换为平台环境变量占位符，避免把文档里的 token/secret/password 等真实值写入用例。
+- 工作台 AI 助手面板新增 `生成基础正向用例` 独立按钮；点击后先保存当前任务范围，再生成草稿、刷新任务列表并激活第一个生成的接口。
+- 用例版本来源展示补齐 `平台` 标签，避免平台生成的基础用例在下拉中被显示成手工用例。
+- 前端重新构建 API testing 静态产物。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_basic_case_service.py -q
+.venv/bin/python -m pytest tests/api_testing -q
+npm --prefix api-testing-ui test -- --run --reporter=basic
+npm --prefix api-testing-ui run build
+python3 -m py_compile task_server/api_testing/services/basic_case_service.py task_server/api_testing/http.py task_server/api_testing/services/case_service.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-20 API 基线测试飞书通知：卡片链路和当前报告地址修复
 
 用户反馈当前 API 基线测试飞书通知仍不对。排查后确认：上一轮优化的是 Sonic 套件汇总卡片；API testing 模块手动/定时发送飞书时实际走 `task_server/api_testing/services/notification_service.py`，仍是旧卡片格式，因此没有按“无 Sonic、无设备”的 API 基线场景展示。

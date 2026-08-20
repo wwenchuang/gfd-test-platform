@@ -238,6 +238,25 @@ describe('cases store', () => {
     expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-1')
   })
 
+  it('generates basic positive drafts and registers returned versions', async () => {
+    const generated = { ...VERSION, id: 'version-basic', case_id: 'case-basic', origin: 'imported', name: '收藏列表 - 基础正向流程' }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_versions: [generated] } })
+    const store = useCasesStore()
+
+    const versions = await store.generateBasicPositive(['endpoint-1'], 'environment-1', 'task-1')
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/cases/basic-positive', {
+      endpoint_ids: ['endpoint-1'],
+      environment_revision_id: 'environment-1',
+      task_id: 'task-1',
+    })
+    expect(versions).toEqual([generated])
+    expect(store.versions['version-basic']).toEqual(generated)
+    expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-basic')
+    expect(store.savedMessage).toBe('已生成 1 个基础正向用例')
+    expect(store.basicGenerating).toBe(false)
+  })
+
   it('replaces the active version of the same case without inflating the case count', () => {
     const store = useCasesStore()
     store.registerVersion(VERSION)

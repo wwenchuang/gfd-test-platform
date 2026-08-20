@@ -42,4 +42,14 @@ describe('AiAssistant', () => {
 
     expect(wrapper.text()).toContain('AI 返回内容格式不正确，请重新生成')
   })
+
+  it('emits a separate event for deterministic basic positive case generation', async () => {
+    const wrapper = mount(AiAssistant, {
+      props: { selectedCount: 2, job: null },
+    })
+
+    await wrapper.get('[data-testid="generate-basic-positive"]').trigger('click')
+
+    expect(wrapper.emitted('generate-basic')).toEqual([[]])
+  })
 })

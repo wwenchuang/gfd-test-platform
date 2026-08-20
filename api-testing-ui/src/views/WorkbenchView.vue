@@ -257,6 +257,21 @@ async function generate(intent: string): Promise<void> {
     if (endpoint) activate(endpoint)
   }
 }
+async function generateBasicPositive(): Promise<void> {
+  if (!context.environmentRevisionId) { localError.value = '请先选择执行环境'; return }
+  const task = await saveCurrentTask()
+  if (!task) return
+  localError.value = ''
+  try {
+    const versions = await cases.generateBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
+    if (context.projectId) await tasks.restore(context.projectId)
+    const firstGenerated = versions[0]
+    const endpoint = assets.endpoints.find(item => item.id === firstGenerated?.endpoint_id)
+    if (endpoint) activate(endpoint)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '基础正向用例生成失败'
+  }
+}
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
   const endpointId = activeEndpoint.value.id
@@ -409,6 +424,12 @@ function defaultTaskName(): string {
   const projectName = context.projects.find(item => item.id === context.projectId)?.name || 'API'
   return `${projectName}接口测试`
 }
+
+function caseOriginLabel(origin: string): string {
+  if (origin === 'ai') return 'AI'
+  if (origin === 'imported') return '平台'
+  return '手工'
+}
 </script>
 
 <template>
@@ -458,12 +479,12 @@ function defaultTaskName(): string {
         <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
-          <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="selectCaseVersion(($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ version.origin === 'ai' ? 'AI' : '手工' }}</option></select></label><span>{{ activeVersions.length }} 个用例</span><button class="mini-icon danger" type="button" title="删除当前用例" :disabled="cases.saving || !activeVersionId" @click="deleteActiveCase"><Trash2 :size="15" /></button></div>
+          <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="selectCaseVersion(($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ caseOriginLabel(version.origin) }}</option></select></label><span>{{ activeVersions.length }} 个用例</span><button class="mini-icon danger" type="button" title="删除当前用例" :disabled="cases.saving || !activeVersionId" @click="deleteActiveCase"><Trash2 :size="15" /></button></div>
           <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
           <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>
         </main>
-        <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
+        <AiAssistant :selected-count="selectedIds.length" :job="cases.aiJob" :error="cases.aiError" :polling="cases.aiPolling" :can-resume="cases.aiCanResume" :basic-generating="cases.basicGenerating" @generate-basic="generateBasicPositive" @generate="generate" @retry="generate" @resume="cases.resumeAiJob()" />
       </div>
     </div>
     <DebugDrawer v-if="debugOpen" :open="debugOpen" :case-version-id="activeVersionId" :environment-revision-id="context.environmentRevisionId || ''" :environment-label="environmentLabel" :running="debugRunning" :can-resume="cases.debugCanResume" :result="cases.debugResult" :error="cases.debugError" :baseline-adopting="cases.baselineAdopting" :baseline-message="cases.baselineMessage" :baseline-error="cases.baselineError" @submit="submitDebug" @resume="cases.resumeDebug()" @adopt="adoptBaseline" @close="debugOpen = false" />
