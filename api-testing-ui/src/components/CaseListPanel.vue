@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ChevronDown, ChevronRight, FileCheck2, Play, Plus, Save, Search, Trash2, X } from 'lucide-vue-next'
 
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
@@ -32,6 +32,7 @@ const emit = defineEmits<{
   'save-preview': [preview: GeneratedCasePreview]
   'discard-preview': [previewId: string]
   'save-all-previews': []
+  'update-version-group': [version: CaseVersion, groupName: string]
 }>()
 
 type CaseListItem =
@@ -41,7 +42,6 @@ type CaseListItem =
 const DEFAULT_COLLAPSE_THRESHOLD = 4
 const query = ref('')
 const collapsedGroups = ref<Set<string>>(new Set())
-const groupElements = new Map<string, HTMLElement>()
 const initializedGroupSignature = ref('')
 const endpointById = computed(() => new Map(props.endpoints.map(endpoint => [endpoint.id, endpoint])))
 const selectedSet = computed(() => new Set(props.selectedEndpointIds))
@@ -79,6 +79,12 @@ const groupNames = computed(() => groupedItems.value.map(([group]) => group))
 const hasGroups = computed(() => groupNames.value.length > 0)
 const allGroupsCollapsed = computed(() => hasGroups.value && groupNames.value.every(group => collapsedGroups.value.has(group)))
 const hasCollapsedGroups = computed(() => groupNames.value.some(group => collapsedGroups.value.has(group)))
+const expandedGroupCount = computed(() => groupNames.value.filter(group => !isGroupCollapsed(group)).length)
+const visibleCaseCount = computed(() => groupedItems.value.reduce((total, [, items]) => total + items.length, 0))
+const groupOptions = computed(() => [...new Set(allGroupedItems.value.map(([group]) => group))])
+const groupStateText = computed(() => keyword.value
+  ? `搜索命中 ${visibleCaseCount.value} 个用例`
+  : `${expandedGroupCount.value}/${groupNames.value.length} 组展开`)
 
 watch(allGroupNames, names => {
   const signature = names.join('\u001f')
@@ -92,11 +98,17 @@ watch(allGroupNames, names => {
 function groupCaseItems(filterKeyword: string): Array<[string, CaseListItem[]]> {
   const grouped = new Map<string, CaseListItem[]>()
   for (const item of allItems.value) {
-    const group = endpointGroupName(item.endpoint)
+    const group = itemGroupName(item)
     if (filterKeyword && !matchesItem(item, group, filterKeyword)) continue
     grouped.set(group, [...(grouped.get(group) || []), item])
   }
   return [...grouped.entries()].sort(([left], [right]) => compareGroupNames(left, right))
+}
+
+function itemGroupName(item: CaseListItem): string {
+  return item.kind === 'version' && item.version.group_name?.trim()
+    ? item.version.group_name.trim()
+    : endpointGroupName(item.endpoint)
 }
 
 function matchesItem(item: CaseListItem, group: string, keyword: string): boolean {
@@ -148,17 +160,17 @@ function setAllGroups(collapsed: boolean): void {
   collapsedGroups.value = collapsed ? new Set(groupNames.value) : new Set()
 }
 
-function setGroupElement(group: string, element: unknown): void {
-  if (element instanceof HTMLElement) groupElements.set(group, element)
-  else groupElements.delete(group)
-}
-
-async function revealGroup(group: string): Promise<void> {
-  const next = new Set(collapsedGroups.value)
-  next.delete(group)
-  collapsedGroups.value = next
-  await nextTick()
-  groupElements.get(group)?.scrollIntoView?.({ block: 'nearest' })
+function changeCaseGroup(item: CaseListItem, value: string, event: Event): void {
+  if (item.kind !== 'version') return
+  const current = itemGroupName(item)
+  let next = value
+  if (value === '__new__') {
+    next = window.prompt('新分组名称', current)?.trim() || ''
+    const select = event.target as HTMLSelectElement | null
+    if (select) select.value = current
+  }
+  if (!next || next === current) return
+  emit('update-version-group', item.version, next)
 }
 </script>
 
@@ -174,22 +186,15 @@ async function revealGroup(group: string): Promise<void> {
         <span class="sr-only">搜索用例</span>
         <input v-model="query" data-testid="case-list-search" placeholder="搜索用例、接口或路径" />
       </label>
-      <div class="case-list-group-actions" aria-label="用例分组操作">
-        <button data-testid="case-list-expand-all" class="text-command" type="button" :disabled="!hasCollapsedGroups" @click="setAllGroups(false)">展开全部</button>
-        <button data-testid="case-list-collapse-all" class="text-command" type="button" :disabled="!hasGroups || allGroupsCollapsed" @click="setAllGroups(true)">收起全部</button>
-      </div>
-      <div v-if="groupedItems.length" class="case-group-index" aria-label="用例分组目录">
-        <button
-          v-for="[group, items] in groupedItems"
-          :key="group"
-          :data-testid="`case-list-group-jump-${group}`"
-          type="button"
-          :class="{ active: !isGroupCollapsed(group) }"
-          @click="revealGroup(group)"
-        >
-          <span :title="group">{{ group }}</span>
-          <b>{{ items.length }}</b>
-        </button>
+      <div v-if="groupedItems.length" data-testid="case-list-group-toolbar" class="case-list-group-toolbar" aria-label="用例分组视图">
+        <span data-testid="case-list-group-summary" class="case-list-group-summary">
+          <strong>分组浏览</strong>
+          <small>{{ groupStateText }}</small>
+        </span>
+        <span class="case-list-group-actions" aria-label="用例分组操作">
+          <button data-testid="case-list-expand-all" class="text-command" type="button" :disabled="!hasCollapsedGroups" @click="setAllGroups(false)">展开全部</button>
+          <button data-testid="case-list-collapse-all" class="text-command" type="button" :disabled="!hasGroups || allGroupsCollapsed" @click="setAllGroups(true)">收起全部</button>
+        </span>
       </div>
       <button
         v-if="generatedPreviews.length"
@@ -204,7 +209,7 @@ async function revealGroup(group: string): Promise<void> {
     </div>
     <div class="case-list-scroll">
       <template v-for="[group, items] in groupedItems" :key="group">
-        <section :ref="element => setGroupElement(group, element)" class="case-list-group" :class="{ collapsed: isGroupCollapsed(group) }">
+        <section class="case-list-group" :class="{ collapsed: isGroupCollapsed(group) }">
           <h3 :data-testid="`case-list-group-${group}`">
             <button
               :data-testid="`case-list-group-toggle-${group}`"
@@ -241,6 +246,18 @@ async function revealGroup(group: string): Promise<void> {
               </button>
               <em>{{ item.meta }}</em>
               <span class="case-list-actions">
+                <label v-if="item.kind === 'version'" class="case-group-select-line">
+                  <span class="sr-only">用例分组</span>
+                  <select
+                    :data-testid="`case-version-group-${item.id}`"
+                    :value="itemGroupName(item)"
+                    :disabled="saving || running"
+                    @change="changeCaseGroup(item, ($event.target as HTMLSelectElement).value, $event)"
+                  >
+                    <option v-for="option in groupOptions" :key="option" :value="option">{{ option }}</option>
+                    <option value="__new__">新建分组…</option>
+                  </select>
+                </label>
                 <button
                   v-if="item.kind === 'preview'"
                   :data-testid="`case-preview-save-${item.id}`"

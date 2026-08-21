@@ -770,6 +770,19 @@ def _put(segments, payload, actor):
                 )[0]
             )
         }
+    if len(segments) == 3 and segments[0] == "case-versions" and segments[2] == "group":
+        version_id = _uuid(segments[1])
+        factory = _factory()
+        _scope_case_version(factory, version_id, actor)
+        return {
+            "case_version": _view(
+                CaseService(factory).update_case_version_group(
+                    version_id,
+                    _string(payload.get("group_name"), "group_name", 120),
+                    actor,
+                )
+            )
+        }
     if len(segments) == 2 and segments[0] == "tasks":
         return {
             "task": _view(

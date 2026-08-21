@@ -96,7 +96,7 @@ class CaseRepository:
         )
         return int(current or 0) + 1
 
-    def create_version(self, case, payload, version_number, actor_id):
+    def create_version(self, case, payload, version_number, actor_id, group_name=""):
         request_template = {
             "name": payload["name"],
             "request": copy.deepcopy(payload["request"]),
@@ -108,6 +108,7 @@ class CaseRepository:
             status="draft",
             purpose=payload["purpose"],
             priority=payload["priority"],
+            group_name=group_name,
             request_template=request_template,
             validation_summary={},
             dependency_spec={"dependencies": copy.deepcopy(payload["dependencies"])},
@@ -179,6 +180,11 @@ class CaseRepository:
 
     def get_version(self, version_id):
         return self.session.get(ApiCaseVersion, version_id)
+
+    def get_version_for_update(self, version_id):
+        return self.session.scalar(
+            select(ApiCaseVersion).where(ApiCaseVersion.id == version_id).with_for_update()
+        )
 
     def get_versions(self, version_ids):
         identifiers = tuple(set(version_ids))

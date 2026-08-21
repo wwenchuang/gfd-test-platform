@@ -388,6 +388,33 @@ def test_active_case_versions_are_restored_for_owned_source_revision(
     assert denied.status == 404
 
 
+def test_case_version_group_update_is_owner_scoped(http_client, api_context, owned_records):
+    version_id = owned_records["version"].id
+
+    response = http_client.put(
+        f"/api/api-testing/v1/case-versions/{version_id}/group",
+        {"group_name": "收藏回归"},
+        _auth(),
+    )
+    denied = http_client.put(
+        f"/api/api-testing/v1/case-versions/{version_id}/group",
+        {"group_name": "越权分组"},
+        _auth("owner-b"),
+    )
+    restored = http_client.get(
+        f"/api/api-testing/v1/cases?source_revision_id={owned_records['revision'].id}",
+        _auth(),
+    )
+
+    assert response.status == 200
+    assert response.body["data"]["case_version"]["group_name"] == "收藏回归"
+    assert denied.status == 404
+    assert restored.status == 200
+    assert restored.body["data"]["case_versions"][0]["group_name"] == "收藏回归"
+    with api_context["factory"]() as session:
+        assert session.get(ApiCaseVersion, version_id).group_name == "收藏回归"
+
+
 def test_context_options_return_only_owned_active_display_metadata(
     http_client, api_context, owned_records
 ):

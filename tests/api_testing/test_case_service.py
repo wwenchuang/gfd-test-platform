@@ -1078,3 +1078,24 @@ def test_archived_case_is_removed_from_active_case_list(
         case = session.get(ApiCase, draft.case_id)
         assert case.status == "archived"
         assert case.active_version_id is None
+
+
+def test_case_version_group_can_be_updated_independently(
+    case_service, project_context, session_factory
+):
+    endpoint = project_context["endpoints"]["favoriteList"]
+    draft = case_service.create_draft(endpoint.id, valid_list_case(endpoint), "ai", "admin")
+
+    updated = case_service.update_case_version_group(draft.id, "发版回归", "admin")
+    active = case_service.list_active_versions_for_source_revision(
+        project_context["source_revision"].id, "admin"
+    )
+
+    assert updated.id == draft.id
+    assert updated.group_name == "发版回归"
+    next_version = case_service.create_version(draft.case_id, valid_list_case(endpoint), "admin")
+    assert next_version.group_name == "发版回归"
+    assert [item.group_name for item in active if item.id == draft.id] == ["发版回归"]
+    with session_factory() as session:
+        assert session.get(ApiCaseVersion, draft.id).group_name == "发版回归"
+        assert session.get(ApiCaseVersion, next_version.id).group_name == "发版回归"

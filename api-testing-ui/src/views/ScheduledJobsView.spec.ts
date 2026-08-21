@@ -400,6 +400,7 @@ function mockScheduledJobAssets(): void {
               status: 'active',
               origin: 'manual',
               version: 1,
+              group_name: '',
               name: '登录成功用例',
               purpose: '验证登录主链路',
               priority: 'P0',

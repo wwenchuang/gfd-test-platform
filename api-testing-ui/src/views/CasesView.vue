@@ -193,6 +193,15 @@ async function deleteCaseVersion(version: CaseVersion): Promise<void> {
   }
 }
 
+async function updateCaseGroup(version: CaseVersion, groupName: string): Promise<void> {
+  localError.value = ''
+  try {
+    await cases.updateVersionGroup(version.id, groupName)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '用例分组保存失败'
+  }
+}
+
 function toggleCaseScope(endpointId: string): void {
   selectedIds.value = selectedIds.value.includes(endpointId)
     ? selectedIds.value.filter(item => item !== endpointId)
@@ -358,6 +367,7 @@ function defaultTaskName(): string {
         @save-preview="saveGeneratedPreview"
         @discard-preview="discardGeneratedPreview"
         @save-all-previews="saveAllGeneratedPreviews"
+        @update-version-group="updateCaseGroup"
       />
       <main class="management-detail">
         <header class="management-detail-head">

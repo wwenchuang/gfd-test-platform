@@ -40,21 +40,27 @@
 
 本轮修复：
 
-- `CaseListPanel` 增加分组目录区，按 Apifox/平台目录展示每个分组和数量，点击目录项可展开并定位到对应分组。
-- 分组标题改为可折叠控制，带展开/收起图标和 `aria-expanded` 状态；工具区提供“展开全部 / 收起全部”。
+- 去掉顶部狭窄的分组目录盒，改为明确的“分组浏览”工具条，只展示当前展开状态和“展开全部 / 收起全部”。
+- 分组标题保留为主要操作入口，带展开/收起图标和 `aria-expanded` 状态。
 - 分组数量较多时默认只展开第一个分组，其他同步分组默认折叠，减少进入页面后的长列表噪音。
 - 搜索时自动忽略折叠状态，让命中的用例直接可见；清空搜索后恢复用户当前折叠状态。
 - 用例列表滚动时分组标题贴顶，长目录下仍能看清当前所在分组。
 - 用例行压缩成更适合管理的一行布局：名称、路径、版本/来源和执行/加入范围/删除动作保持同屏可见。
-- 新增组件测试覆盖独立折叠、搜索透出命中结果、分组目录跳转和多分组默认折叠。
+- 用例版本新增持久化 `group_name` 字段和 `PUT /api/api-testing/v1/case-versions/{id}/group` 接口，支持用户自定义用例分组。
+- 用例列表按用户自定义分组优先展示；每条已保存用例支持从现有分组选择或通过“新建分组…”录入新分组。
+- 已设置自定义分组的用例再次编辑保存新版本时会继承上一版分组，不会掉回 Apifox/接口目录分组。
+- 新增组件测试覆盖独立折叠、搜索透出命中结果、多分组默认折叠和用户自定义分组移动；新增后端服务/HTTP 合约测试覆盖分组持久化和 owner scope。
 - API testing 前端静态产物已重新构建。
 
 已验证：
 
 ```bash
-npm --prefix api-testing-ui test -- --run src/components/CaseListPanel.spec.ts src/views/CasesView.spec.ts --reporter=basic
+npm --prefix api-testing-ui test -- --run src/components/CaseListPanel.spec.ts src/views/CasesView.spec.ts src/stores/cases.spec.ts --reporter=basic
 npm --prefix api-testing-ui test -- --run --reporter=basic
 npm --prefix api-testing-ui run build
+python3 -m py_compile task_server/api_testing/models/case.py task_server/api_testing/contracts/case.py task_server/api_testing/repositories/case_repository.py task_server/api_testing/services/case_service.py task_server/api_testing/http.py task_server/api_testing/migrations/versions/0007_case_version_groups.py
+.venv/bin/python -m pytest tests/api_testing/test_case_service.py::test_case_version_group_can_be_updated_independently tests/api_testing/test_http_contract.py::test_case_version_group_update_is_owner_scoped -q
+# 2 skipped locally because TEST_DATABASE_URL is not configured
 python3 tests/frontend_static_checks.py
 python3 tests/backend_static_checks.py
 git diff --check

@@ -51,6 +51,7 @@ class ApiCaseVersion(PrimaryRecord, Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="draft")
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
     priority: Mapped[str] = mapped_column(String(16), nullable=False, server_default="P1")
+    group_name: Mapped[str] = mapped_column(String(120), nullable=False, server_default="")
     request_template: Mapped[dict] = mapped_column(JSONB, nullable=False)
     validation_summary: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     dependency_spec: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")

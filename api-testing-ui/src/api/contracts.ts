@@ -227,6 +227,7 @@ export interface CaseVersion extends CaseDraft {
   status: string
   origin: string
   version: number
+  group_name: string
   validation_summary: Record<string, unknown>
 }
 

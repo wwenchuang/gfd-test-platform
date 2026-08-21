@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import CaseListPanel from './CaseListPanel.vue'
@@ -33,6 +33,7 @@ const SAVED = {
   status: 'draft',
   origin: 'imported',
   version: 1,
+  group_name: '',
   validation_summary: {},
   name: '添加收藏 - 基础正向流程',
   purpose: '验证添加收藏',
@@ -183,7 +184,7 @@ describe('CaseListPanel', () => {
     expect(wrapper.find('[data-testid="case-version-version-device"]').exists()).toBe(true)
   })
 
-  it('uses a compact group directory and collapses extra groups by default when many groups exist', async () => {
+  it('uses a clear group toolbar and collapses extra groups by default when many groups exist', async () => {
     const wrapper = mount(CaseListPanel, {
       props: {
         endpoints: [...ENDPOINTS, DEVICE_ENDPOINT, ...EXTRA_ENDPOINTS],
@@ -194,14 +195,45 @@ describe('CaseListPanel', () => {
     const firstGroup = '本地测试 / 启迪设备 / 设备详情'
     const laterGroup = '共享业务 / 订单接口'
 
-    expect(wrapper.get('[data-testid="case-list-group-jump-家用业务 / app接口 / 我的收藏"]').text()).toContain('2')
+    expect(wrapper.get('[data-testid="case-list-group-toolbar"]').text()).toContain('分组浏览')
+    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('1/4 组展开')
+    expect(wrapper.find('.case-group-index').exists()).toBe(false)
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${firstGroup}"]`).attributes('aria-expanded')).toBe('true')
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).attributes('aria-expanded')).toBe('false')
     expect(wrapper.find('[data-testid="case-version-version-extra-0"]').exists()).toBe(false)
 
-    await wrapper.get(`[data-testid="case-list-group-jump-${laterGroup}"]`).trigger('click')
+    await wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).trigger('click')
 
     expect(wrapper.get(`[data-testid="case-list-group-toggle-${laterGroup}"]`).attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('[data-testid="case-list-group-summary"]').text()).toContain('2/4 组展开')
     expect(wrapper.get('[data-testid="case-version-version-extra-0"]').text()).toContain('创建订单')
+  })
+
+  it('groups saved cases by user-managed group and emits group changes', async () => {
+    const groupedCase = {
+      ...SAVED,
+      id: 'version-release',
+      case_id: 'case-release',
+      name: '添加收藏 - 发版主链',
+      group_name: '发版回归',
+    } as CaseVersion
+    const wrapper = mount(CaseListPanel, {
+      props: {
+        endpoints: [...ENDPOINTS, DEVICE_ENDPOINT],
+        versions: [groupedCase, DEVICE_CASE],
+        generatedPreviews: [],
+      },
+    })
+
+    expect(wrapper.get('[data-testid="case-list-group-发版回归"]').text()).toContain('1')
+    expect(wrapper.get('[data-testid="case-version-version-release"]').text()).toContain('添加收藏 - 发版主链')
+    expect(wrapper.get('[data-testid="case-version-group-version-release"]').element).toHaveProperty('value', '发版回归')
+
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('收藏链路')
+    await wrapper.get('[data-testid="case-version-group-version-release"]').setValue('__new__')
+
+    expect(prompt).toHaveBeenCalledWith('新分组名称', '发版回归')
+    expect(wrapper.emitted('update-version-group')?.[0]).toEqual([groupedCase, '收藏链路'])
+    prompt.mockRestore()
   })
 })

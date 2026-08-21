@@ -7,7 +7,7 @@ import { useCasesStore } from './cases'
 
 const VERSION = {
   id: 'version-1', case_id: 'case-1', project_id: 'project-1', endpoint_id: 'endpoint-1',
-  status: 'draft', origin: 'ai', version: 1, validation_summary: {},
+  status: 'draft', origin: 'ai', version: 1, group_name: '', validation_summary: {},
   created_at: '2026-08-09T00:00:00Z', updated_at: '2026-08-09T00:00:00Z',
   name: '收藏列表', purpose: '验证收藏列表', priority: 'P1',
   request: { method: 'GET', path: '/favorite/list', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },

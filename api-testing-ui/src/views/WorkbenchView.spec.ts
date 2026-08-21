@@ -524,7 +524,7 @@ describe('WorkbenchView debug workflow', () => {
 
 function savedCase(id: string, caseId: string, name: string, headers: Record<string, unknown>): CaseVersion {
   return {
-    id, case_id: caseId, endpoint_id: ENDPOINT.id, status: 'draft', origin: 'ai', version: 1,
+    id, case_id: caseId, endpoint_id: ENDPOINT.id, status: 'draft', origin: 'ai', version: 1, group_name: '',
     validation_summary: {}, name, purpose: name, priority: 'P1',
     request: { method: 'POST', path: '/collection/add', service: 'default', path_params: {}, query: {}, headers, cookies: {}, body: { modelSn: 'm001' } },
     data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] },

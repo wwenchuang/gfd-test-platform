@@ -62,8 +62,13 @@ class CaseService:
             if case is None or case.status == "archived":
                 raise CaseNotFoundError("API case was not found")
             version_number = repository.next_version_number(case.id)
+            previous_group_name = ""
+            if case.active_version_id:
+                previous = repository.get_version(case.active_version_id)
+                if previous is not None:
+                    previous_group_name = previous.group_name or ""
             version = self._persist_version(
-                repository, case, parsed, version_number, actor_id
+                repository, case, parsed, version_number, actor_id, previous_group_name
             )
             case.name = parsed["name"]
             case.active_version_id = version.id
@@ -98,6 +103,21 @@ class CaseService:
             if version is None:
                 raise CaseNotFoundError("API case version was not found")
             case = repository.get_case(version.case_id)
+            return self._version_view(repository, version, case)
+
+    def update_case_version_group(self, version_id, group_name, actor_id):
+        group_name = self._clean_group_name(group_name, "case group name is invalid")
+        with self.session_factory.begin() as session:
+            repository = CaseRepository(session)
+            version = repository.get_version_for_update(version_id)
+            if version is None or version.owner_id != actor_id:
+                raise CaseNotFoundError("API case version was not found")
+            case = repository.get_case(version.case_id)
+            if case is None or case.owner_id != actor_id or case.status == "archived":
+                raise CaseNotFoundError("API case version was not found")
+            version.group_name = group_name
+            version.updated_by = actor_id
+            repository.flush()
             return self._version_view(repository, version, case)
 
     def list_active_versions_for_source_revision(self, revision_id, actor_id):
@@ -230,7 +250,7 @@ class CaseService:
             return self._baseline_view(baseline)
 
     def update_baseline_group(self, baseline_ids, group_name, actor_id):
-        group_name = self._clean_group_name(group_name)
+        group_name = self._clean_group_name(group_name, "baseline group name is invalid")
         if not baseline_ids:
             raise ValueError("baseline_ids is required")
         with self.session_factory.begin() as session:
@@ -274,9 +294,9 @@ class CaseService:
         return source.project_id
 
     @staticmethod
-    def _persist_version(repository, case, payload, version_number, actor_id):
+    def _persist_version(repository, case, payload, version_number, actor_id, group_name=""):
         version = repository.create_version(
-            case, payload, version_number, actor_id
+            case, payload, version_number, actor_id, group_name
         )
         repository.add_data_rows(version.id, payload["data_rows"], actor_id)
         repository.add_assertions(version.id, payload["assertions"], actor_id)
@@ -350,6 +370,7 @@ class CaseService:
             version=version.version_number,
             purpose=version.purpose,
             priority=version.priority,
+            group_name=version.group_name or "",
             request=request,
             data_rows=rows,
             assertions=tuple(assertions),
@@ -406,10 +427,10 @@ class CaseService:
         return str(tags[0]).strip() if tags and str(tags[0]).strip() else DEFAULT_BASELINE_GROUP
 
     @staticmethod
-    def _clean_group_name(value):
+    def _clean_group_name(value, message):
         if not isinstance(value, str):
-            raise ValueError("baseline group name is invalid")
+            raise ValueError(message)
         group_name = value.strip()
         if not group_name or len(group_name) > 120:
-            raise ValueError("baseline group name is invalid")
+            raise ValueError(message)
         return group_name

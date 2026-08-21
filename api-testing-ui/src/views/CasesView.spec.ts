@@ -142,6 +142,7 @@ function savedCase(id: string, name: string): CaseVersion {
     status: 'draft',
     origin: 'imported',
     version: 1,
+    group_name: '',
     validation_summary: {},
     name,
     purpose: name,

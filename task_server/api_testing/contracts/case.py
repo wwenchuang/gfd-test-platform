@@ -465,6 +465,7 @@ class CaseVersionView:
     version: int
     purpose: str
     priority: str
+    group_name: str
     request: Mapping[str, Any]
     data_rows: Tuple[DataRowView, ...]
     assertions: Tuple[AssertionView, ...]

@@ -213,6 +213,22 @@ export const useCasesStore = defineStore('api-cases', {
       this.savedMessage = `已保存 ${versions.length} 个基础正向用例`
       return versions
     },
+    async updateVersionGroup(versionId: string, groupName: string): Promise<CaseVersion> {
+      this.saving = true
+      this.savedMessage = ''
+      try {
+        const response = await apiClient.put<{ case_version: CaseVersion }>(
+          `/api/api-testing/v1/case-versions/${versionId}/group`,
+          { group_name: groupName },
+        )
+        const version = response.data.case_version
+        this.registerVersion(version, false)
+        this.savedMessage = `已移动到分组“${version.group_name}”`
+        return version
+      } finally {
+        this.saving = false
+      }
+    },
     discardGeneratedPreview(previewId: string): void {
       const preview = this.generatedPreviews.find(item => item.id === previewId)
       this.generatedPreviews = this.generatedPreviews.filter(item => item.id !== previewId)
