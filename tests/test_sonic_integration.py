@@ -2699,6 +2699,8 @@ def test_server_package_includes_desktop_runners():
         assert filename in install_script
     assert "sonic-midscene-task-runner.groovy" in package_script
     assert "sonic-midscene-task-runner.groovy" in install_script
+    assert "${SRC_DIR}/api-test" in package_script
+    assert "${SRC_DIR}/api-test" in install_script
 
 
 def test_desktop_runners_queue_report_after_result_is_archived():

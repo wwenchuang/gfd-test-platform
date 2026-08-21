@@ -34,6 +34,27 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 工作台：部署包补齐 api-test 静态资源
+
+线上 `/opt/midscene-task-platform` 是安装后的发布目录，不是 git 仓库；不能在该目录执行 `git fetch` 更新代码。排查发现 `install-server.sh` 已支持复制 `api-test/`，但 `deploy/package-server.sh` 打包时漏掉了 `api-test/`，导致按部署包发布时 API 工作台 Vue 静态资源不会进入服务器/容器。
+
+本轮修复：
+
+- `deploy/package-server.sh` 打包时同步包含 `api-test/`。
+- `tests/test_sonic_integration.py::test_server_package_includes_desktop_runners` 增加断言，防止部署包再次漏掉 API 工作台资源。
+- 验证真实 tar 包包含 `midscene-task-platform/api-test/index.html`、`api-test/assets/*.js` 和 `api-test/assets/*.css`。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_sonic_integration.py::test_server_package_includes_desktop_runners -q
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+VERSION=api-test-package-check KEEP_PACKAGES=0 bash deploy/package-server.sh
+tar -tzf dist/midscene-task-platform-api-test-package-check.tar.gz | rg '^midscene-task-platform/api-test/(index.html|assets/index-.*\.(js|css))$'
+# passed
+```
+
 ### 2026-08-21 API 工作台：基础正向用例先预览再保存
 
 用户纠正：基础正向用例不应在点击生成后直接保存进平台；应先在 Codex/工作台页面展示可检查、可编辑的候选用例，确认后再保存到平台，并且生成/已保存用例需要单独列表方便编辑、删除、执行和调整任务范围。

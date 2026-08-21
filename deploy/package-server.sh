@@ -30,6 +30,9 @@ done
 if [ -d "${SRC_DIR}/assets" ]; then
   cp -R "${SRC_DIR}/assets" "${pkg_dir}/"
 fi
+if [ -d "${SRC_DIR}/api-test" ]; then
+  cp -R "${SRC_DIR}/api-test" "${pkg_dir}/"
+fi
 if [ -d "${SRC_DIR}/ai-gateway" ]; then
   mkdir -p "${pkg_dir}/ai-gateway"
   cp -R "${SRC_DIR}/ai-gateway/config" "${pkg_dir}/ai-gateway/"
