@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView } from '../api/contracts'
+import type { AiJob, ApiEndpoint, CaseDraft, CaseValidation, CaseVersion, DebugResult, EnvironmentRevisionSnapshot, ExecutionView, GeneratedCasePreview } from '../api/contracts'
 import { validateCaseDraftLocally } from '../utils/caseDraftValidation'
 import { createIdempotencyKey } from '../utils/idempotency'
 
@@ -14,6 +14,8 @@ export const useCasesStore = defineStore('api-cases', {
     versions: {} as Record<string, CaseVersion>,
     versionIdsByEndpoint: {} as Record<string, string[]>,
     activeVersionByEndpoint: {} as Record<string, string>,
+    generatedPreviews: [] as GeneratedCasePreview[],
+    activeGeneratedPreviewId: '',
     aiJob: null as AiJob | null,
     aiError: '',
     aiPolling: false,
@@ -46,6 +48,7 @@ export const useCasesStore = defineStore('api-cases', {
     setActiveVersion(endpointId: string, versionId: string): void {
       if (!this.versionIdsByEndpoint[endpointId]?.includes(versionId)) return
       this.activeVersionByEndpoint[endpointId] = versionId
+      this.activeGeneratedPreviewId = ''
       const version = this.versions[versionId]
       if (version) this.drafts[endpointId] = fromVersion(version)
       this.validationErrors = {}
@@ -74,6 +77,8 @@ export const useCasesStore = defineStore('api-cases', {
       this.versions = {}
       this.versionIdsByEndpoint = {}
       this.activeVersionByEndpoint = {}
+      this.generatedPreviews = []
+      this.activeGeneratedPreviewId = ''
       for (const version of response.data.case_versions) this.registerVersion(version, false)
     },
     async save(endpointId: string, environmentRevisionId?: string): Promise<CaseVersion> {
@@ -142,6 +147,80 @@ export const useCasesStore = defineStore('api-cases', {
         return versions
       } finally {
         this.basicGenerating = false
+      }
+    },
+    async previewBasicPositive(endpointIds: string[], environmentRevisionId: string, taskId?: string): Promise<GeneratedCasePreview[]> {
+      this.basicGenerating = true
+      this.savedMessage = ''
+      try {
+        const response = await apiClient.post<{ case_previews: GeneratedCasePreview[] }>('/api/api-testing/v1/cases/basic-positive/preview', {
+          endpoint_ids: endpointIds,
+          environment_revision_id: environmentRevisionId,
+          ...(taskId ? { task_id: taskId } : {}),
+        })
+        const previews = response.data.case_previews
+        const incomingIds = new Set(previews.map(item => item.id))
+        const incomingEndpointIds = new Set(previews.map(item => item.endpoint_id))
+        this.generatedPreviews = [
+          ...this.generatedPreviews.filter(item => !incomingIds.has(item.id) && !incomingEndpointIds.has(item.endpoint_id)),
+          ...previews.map(item => cloneJson(item)),
+        ]
+        this.savedMessage = `已生成 ${previews.length} 个基础正向候选，请确认后保存`
+        return previews
+      } finally {
+        this.basicGenerating = false
+      }
+    },
+    setDraftFromGeneratedPreview(previewId: string): void {
+      const preview = this.generatedPreviews.find(item => item.id === previewId)
+      if (!preview) return
+      this.drafts[preview.endpoint_id] = cloneJson(preview.case)
+      delete this.activeVersionByEndpoint[preview.endpoint_id]
+      this.activeGeneratedPreviewId = preview.id
+      this.validationErrors = {}
+      this.validationWarnings = {}
+      this.savedMessage = ''
+      this.clearDebug()
+      this.clearBaselineFeedback()
+    },
+    async saveGeneratedPreview(previewId: string, draft?: CaseDraft): Promise<CaseVersion> {
+      const preview = this.generatedPreviews.find(item => item.id === previewId)
+      if (!preview) throw new Error('请选择要保存的基础正向候选')
+      this.saving = true
+      this.savedMessage = ''
+      try {
+        const caseDraft = cloneJson(draft || preview.case)
+        const response = await apiClient.post<{ case_version: CaseVersion }>('/api/api-testing/v1/cases', {
+          endpoint_id: preview.endpoint_id,
+          case: caseDraft,
+          origin: preview.origin || 'imported',
+        })
+        const version = response.data.case_version
+        this.registerVersion(version)
+        this.discardGeneratedPreview(preview.id)
+        this.savedMessage = '基础正向用例已保存'
+        return version
+      } finally {
+        this.saving = false
+      }
+    },
+    async saveAllGeneratedPreviews(draftOverrides: Record<string, CaseDraft> = {}): Promise<CaseVersion[]> {
+      const previews = [...this.generatedPreviews]
+      const versions: CaseVersion[] = []
+      for (const preview of previews) {
+        versions.push(await this.saveGeneratedPreview(preview.id, draftOverrides[preview.id]))
+      }
+      this.savedMessage = `已保存 ${versions.length} 个基础正向用例`
+      return versions
+    },
+    discardGeneratedPreview(previewId: string): void {
+      const preview = this.generatedPreviews.find(item => item.id === previewId)
+      this.generatedPreviews = this.generatedPreviews.filter(item => item.id !== previewId)
+      if (this.activeGeneratedPreviewId === previewId) {
+        this.activeGeneratedPreviewId = ''
+        if (preview && !this.activeVersionByEndpoint[preview.endpoint_id]) {
+          delete this.drafts[preview.endpoint_id]
+        }
       }
     },
     async pollAiJob(jobId: string, options: { maxAttempts?: number; delayMs?: number } = {}): Promise<void> {

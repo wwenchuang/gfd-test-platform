@@ -34,6 +34,34 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 工作台：基础正向用例先预览再保存
+
+用户纠正：基础正向用例不应在点击生成后直接保存进平台；应先在 Codex/工作台页面展示可检查、可编辑的候选用例，确认后再保存到平台，并且生成/已保存用例需要单独列表方便编辑、删除、执行和调整任务范围。
+
+本轮修复：
+
+- 后端新增 `POST /api/api-testing/v1/cases/basic-positive/preview`，复用现有基础正向生成逻辑，但只返回 `case_previews`，不创建 `ApiCase` / `ApiCaseVersion`。
+- 保留旧 `POST /api/api-testing/v1/cases/basic-positive` 直接创建版本的兼容路径，避免影响已有调用方。
+- 前端 `cases` store 新增 `generatedPreviews`、`activeGeneratedPreviewId`，支持预览生成、编辑候选、保存单条候选、保存全部候选和丢弃候选。
+- 工作台基础正向按钮改为先生成候选并激活第一条候选；编辑器保存当前候选时按 `origin=imported` 保存到平台，不再误当作手工用例。
+- 新增 `CaseListPanel`，按 Apifox 目录/标签展示候选和已保存用例；候选支持编辑、保存、丢弃，已保存用例支持编辑、执行、删除、加入/移出当前任务范围。
+- 抽出 `endpointGroups.ts`，接口范围和用例列表共用同一套 Apifox 分组解析逻辑，避免目录展示不一致。
+- 工作台布局调整为：左侧任务列表；中间左栏上下展示接口范围和用例列表；中间主区域继续展示接口详情和用例编辑器；右侧保留 AI 助手。
+- API testing 前端静态产物已重新构建。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_basic_case_service.py -q
+npm --prefix api-testing-ui test -- --run --reporter=basic
+npm --prefix api-testing-ui run build
+python3 -m py_compile task_server/api_testing/services/basic_case_service.py task_server/api_testing/http.py task_server/api_testing/services/case_service.py
+python3 tests/backend_static_checks.py
+python3 tests/frontend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-20 API 工作台：线上生成收藏接口基础正向用例
 
 用户希望先在平台上直接生成一次，查看“基础正向用例”的实际效果。

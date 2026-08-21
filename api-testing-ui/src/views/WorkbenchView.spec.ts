@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ApiEndpoint, ApiTestTask, CaseVersion } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -148,7 +148,7 @@ describe('WorkbenchView debug workflow', () => {
       sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [],
     }
 
-    await wrapper.get('.case-version-picker select').setValue('version-normal')
+    await wrapper.get('[data-testid="case-version-edit-version-normal"]').trigger('click')
     await flushPromises()
 
     expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('添加收藏 - 正常流程')
@@ -235,7 +235,7 @@ describe('WorkbenchView debug workflow', () => {
     expect(cases.aiError).toBe('')
   })
 
-  it('generates basic positive cases against the exact saved task scope', async () => {
+  it('previews basic positive cases against the exact saved task scope before saving', async () => {
     const context = useContextStore()
     Object.assign(context, {
       projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
@@ -255,10 +255,10 @@ describe('WorkbenchView debug workflow', () => {
     const cases = useCasesStore()
     vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
     vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    const basicVersion = { ...savedCase('version-basic', 'case-basic', '我的收藏列表 - 基础正向流程', {}), endpoint_id: ENDPOINT.id }
-    const generateBasic = vi.spyOn(cases, 'generateBasicPositive').mockImplementation(async () => {
-      cases.registerVersion(basicVersion)
-      return [basicVersion]
+    const basicPreview = generatedPreview('basic-positive-endpoint-1', ENDPOINT.id, '我的收藏列表 - 基础正向流程')
+    const previewBasic = vi.spyOn(cases, 'previewBasicPositive').mockImplementation(async () => {
+      cases.generatedPreviews = [basicPreview]
+      return [basicPreview]
     })
 
     const tasks = useTasksStore()
@@ -313,8 +313,74 @@ describe('WorkbenchView debug workflow', () => {
     await wrapper.get('[data-testid="generate-basic"]').trigger('click')
     await flushPromises()
 
-    expect(generateBasic).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', 'task-1')
-    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBe('version-basic')
+    expect(previewBasic).toHaveBeenCalledWith([ENDPOINT.id], 'environment-1', 'task-1')
+    expect(cases.activeGeneratedPreviewId).toBe('basic-positive-endpoint-1')
+    expect(cases.activeVersionByEndpoint[ENDPOINT.id]).toBeUndefined()
+    expect(cases.drafts[ENDPOINT.id].name).toBe('我的收藏列表 - 基础正向流程')
+  })
+
+  it('saves the active generated preview from the editor instead of creating a manual case', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
+      projects: [{ id: 'project-1', name: '3D 家用' }],
+      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
+      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const assets = useAssetsStore()
+    assets.endpoints = [ENDPOINT]
+    assets.state = 'ready'
+    vi.spyOn(assets, 'load').mockResolvedValue()
+
+    const cases = useCasesStore()
+    const preview = generatedPreview('basic-positive-endpoint-1', ENDPOINT.id, '我的收藏列表 - 基础正向流程')
+    cases.generatedPreviews = [preview]
+    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const savePreview = vi.spyOn(cases, 'saveGeneratedPreview').mockResolvedValue(savedCase('version-basic', 'case-basic', '我的收藏列表 - 基础正向流程', {}))
+    const saveManual = vi.spyOn(cases, 'save')
+
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'list').mockResolvedValue([])
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
+    })
+    await router.push('/')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          EndpointDetail: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: {
+            props: ['endpoints'],
+            emits: ['activate'],
+            template: '<button data-testid="activate-endpoint" @click="$emit(\'activate\', endpoints[0])">选择接口</button>',
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="activate-endpoint"]').trigger('click')
+    cases.setDraftFromGeneratedPreview(preview.id)
+    await flushPromises()
+    await wrapper.get('[data-testid="case-name"]').setValue('我的收藏列表 - 编辑后')
+    await wrapper.get('[data-testid="save-case-draft"]').trigger('click')
+    await flushPromises()
+
+    expect(savePreview).toHaveBeenCalledWith('basic-positive-endpoint-1', expect.objectContaining({ name: '我的收藏列表 - 编辑后' }))
+    expect(saveManual).not.toHaveBeenCalled()
   })
 
   it('uses project, source revision, and environment from the asset page route', async () => {
@@ -566,5 +632,24 @@ function savedCase(id: string, caseId: string, name: string, headers: Record<str
     validation_summary: {}, name, purpose: name, priority: 'P1',
     request: { method: 'POST', path: '/collection/add', service: 'default', path_params: {}, query: {}, headers, cookies: {}, body: { modelSn: 'm001' } },
     data_rows: [], assertions: [], extractions: [], dependencies: [], processing: { pre: [], post: [] },
+  }
+}
+
+function generatedPreview(id: string, endpointId: string, name: string): GeneratedCasePreview {
+  return {
+    id,
+    endpoint_id: endpointId,
+    origin: 'imported',
+    case: {
+      name,
+      purpose: name,
+      priority: 'P1',
+      request: { method: 'POST', path: '/collection/page', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: { pageNum: 1 } },
+      data_rows: [],
+      assertions: [],
+      extractions: [],
+      dependencies: [],
+      processing: { pre: [], post: [] },
+    },
   }
 }

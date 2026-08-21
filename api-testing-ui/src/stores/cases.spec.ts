@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 import { apiClient } from '../api/client'
-import type { ApiEndpoint, CaseVersion } from '../api/contracts'
+import type { ApiEndpoint, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useCasesStore } from './cases'
 
 const VERSION = {
@@ -238,23 +238,65 @@ describe('cases store', () => {
     expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-1')
   })
 
-  it('generates basic positive drafts and registers returned versions', async () => {
-    const generated = { ...VERSION, id: 'version-basic', case_id: 'case-basic', origin: 'imported', name: '收藏列表 - 基础正向流程' }
-    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_versions: [generated] } })
+  it('previews basic positive drafts without registering persisted versions', async () => {
+    const preview = {
+      id: 'basic-positive-endpoint-1',
+      endpoint_id: 'endpoint-1',
+      origin: 'imported',
+      case: { ...VERSION, name: '收藏列表 - 基础正向流程' },
+    } as unknown as GeneratedCasePreview
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_previews: [preview] } })
     const store = useCasesStore()
 
-    const versions = await store.generateBasicPositive(['endpoint-1'], 'environment-1', 'task-1')
+    const previews = await store.previewBasicPositive(['endpoint-1'], 'environment-1', 'task-1')
 
-    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/cases/basic-positive', {
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/cases/basic-positive/preview', {
       endpoint_ids: ['endpoint-1'],
       environment_revision_id: 'environment-1',
       task_id: 'task-1',
     })
-    expect(versions).toEqual([generated])
-    expect(store.versions['version-basic']).toEqual(generated)
-    expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-basic')
-    expect(store.savedMessage).toBe('已生成 1 个基础正向用例')
+    expect(previews).toEqual([preview])
+    expect(store.generatedPreviews).toEqual([preview])
+    expect(store.versions).toEqual({})
+    expect(store.activeVersionByEndpoint['endpoint-1']).toBeUndefined()
+    expect(store.savedMessage).toBe('已生成 1 个基础正向候选，请确认后保存')
     expect(store.basicGenerating).toBe(false)
+  })
+
+  it('saves one generated preview as an imported case and removes it from previews', async () => {
+    const preview = {
+      id: 'basic-positive-endpoint-1',
+      endpoint_id: 'endpoint-1',
+      origin: 'imported',
+      case: {
+        name: '收藏列表 - 基础正向流程',
+        purpose: '验证收藏列表',
+        priority: 'P1',
+        request: { method: 'GET', path: '/favorite/list', service: 'default', path_params: {}, query: {}, headers: {}, cookies: {}, body: null },
+        data_rows: [],
+        assertions: [],
+        extractions: [],
+        dependencies: [],
+        processing: { pre: [], post: [] },
+      },
+    } as GeneratedCasePreview
+    const saved = { ...VERSION, id: 'version-basic', case_id: 'case-basic', origin: 'imported', name: preview.case.name }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({ data: { case_version: saved } })
+    const store = useCasesStore()
+    store.generatedPreviews = [preview]
+
+    const version = await store.saveGeneratedPreview(preview.id)
+
+    expect(post).toHaveBeenCalledWith('/api/api-testing/v1/cases', {
+      endpoint_id: 'endpoint-1',
+      case: preview.case,
+      origin: 'imported',
+    })
+    expect(version).toEqual(saved)
+    expect(store.generatedPreviews).toEqual([])
+    expect(store.versions['version-basic']).toEqual(saved)
+    expect(store.activeVersionByEndpoint['endpoint-1']).toBe('version-basic')
+    expect(store.savedMessage).toBe('基础正向用例已保存')
   })
 
   it('replaces the active version of the same case without inflating the case count', () => {

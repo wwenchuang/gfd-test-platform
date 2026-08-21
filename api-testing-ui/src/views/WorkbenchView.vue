@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Bug, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Bug, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
 import CaseEditor from '../components/CaseEditor.vue'
+import CaseListPanel from '../components/CaseListPanel.vue'
 import ContextBar from '../components/ContextBar.vue'
 import DebugDrawer from '../components/DebugDrawer.vue'
 import EndpointDetail from '../components/EndpointDetail.vue'
 import EndpointTree from '../components/EndpointTree.vue'
 import TaskListPanel from '../components/TaskListPanel.vue'
 import TaskStatusStrip from '../components/TaskStatusStrip.vue'
-import type { ApiEndpoint, ApiTestTask, CaseDraft } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseDraft, CaseVersion, GeneratedCasePreview } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -30,9 +31,7 @@ const localError = ref('')
 const taskNameDraft = ref('')
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
-const activeVersions = computed(() => activeEndpoint.value
-  ? (cases.versionIdsByEndpoint[activeEndpoint.value.id] || []).map(id => cases.versions[id]).filter(Boolean)
-  : [])
+const allCaseVersions = computed(() => Object.values(cases.versions))
 const debugRunning = computed(() => cases.debugPolling)
 const selectedEnvironment = computed(() => context.environmentRevisions.find(
   item => item.id === context.environmentRevisionId,
@@ -164,11 +163,29 @@ function activate(endpoint: ApiEndpoint): void {
   cases.draftFor(endpoint)
 }
 
-function selectCaseVersion(versionId: string): void {
-  if (!activeEndpoint.value || versionId === activeVersionId.value) return
-  cases.clearDebug()
+function editCaseVersion(version: CaseVersion): void {
+  const endpoint = assets.endpoints.find(item => item.id === version.endpoint_id)
+  if (!endpoint) {
+    localError.value = '该用例对应的接口不在当前接口版本中'
+    return
+  }
+  activeEndpoint.value = endpoint
+  if (version.id !== activeVersionId.value) {
+    cases.clearDebug()
+    debugOpen.value = false
+    cases.setActiveVersion(endpoint.id, version.id)
+  }
+}
+
+function editGeneratedPreview(preview: GeneratedCasePreview): void {
+  const endpoint = assets.endpoints.find(item => item.id === preview.endpoint_id)
+  if (!endpoint) {
+    localError.value = '该候选用例对应的接口不在当前接口版本中'
+    return
+  }
+  activeEndpoint.value = endpoint
+  cases.setDraftFromGeneratedPreview(preview.id)
   debugOpen.value = false
-  cases.setActiveVersion(activeEndpoint.value.id, versionId)
 }
 
 function startNewTask(): void {
@@ -192,17 +209,15 @@ async function saveScope(): Promise<void> {
   }
 }
 
-async function deleteActiveCase(): Promise<void> {
-  if (!activeEndpoint.value || !activeVersionId.value) return
-  const version = cases.versions[activeVersionId.value]
+async function deleteCaseVersion(version: CaseVersion): Promise<void> {
   if (!version) return
   const confirmed = window.confirm(`删除用例“${version.name}”？历史执行记录和已采纳基线证据会保留。`)
   if (!confirmed) return
   localError.value = ''
   try {
-    const endpointId = activeEndpoint.value.id
+    const endpointId = version.endpoint_id
     await cases.archiveCase(endpointId, version.id)
-    if (!cases.versionIdsByEndpoint[endpointId]?.length) cases.draftFor(activeEndpoint.value)
+    if (activeEndpoint.value?.id === endpointId && !cases.versionIdsByEndpoint[endpointId]?.length) cases.draftFor(activeEndpoint.value)
     if (context.projectId) await tasks.restore(context.projectId)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '用例删除失败'
@@ -237,6 +252,9 @@ async function saveDraft() {
   if (!activeEndpoint.value) return null
   localError.value = ''
   try {
+    if (cases.activeGeneratedPreviewId) {
+      return await cases.saveGeneratedPreview(cases.activeGeneratedPreviewId, activeDraft.value || undefined)
+    }
     return await cases.save(activeEndpoint.value.id, context.environmentRevisionId || undefined)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '草稿保存失败'
@@ -263,14 +281,83 @@ async function generateBasicPositive(): Promise<void> {
   if (!task) return
   localError.value = ''
   try {
-    const versions = await cases.generateBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
-    if (context.projectId) await tasks.restore(context.projectId)
-    const firstGenerated = versions[0]
-    const endpoint = assets.endpoints.find(item => item.id === firstGenerated?.endpoint_id)
-    if (endpoint) activate(endpoint)
+    const previews = await cases.previewBasicPositive([...task.selected_endpoint_ids], context.environmentRevisionId, task.id)
+    const firstPreview = previews[0]
+    const endpoint = assets.endpoints.find(item => item.id === firstPreview?.endpoint_id)
+    if (endpoint && firstPreview) {
+      activeEndpoint.value = endpoint
+      cases.setDraftFromGeneratedPreview(firstPreview.id)
+    }
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '基础正向用例生成失败'
   }
+}
+
+async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void> {
+  localError.value = ''
+  try {
+    const draft = cases.activeGeneratedPreviewId === preview.id ? activeDraft.value || preview.case : preview.case
+    const version = await cases.saveGeneratedPreview(preview.id, draft)
+    editCaseVersion(version)
+    if (context.projectId) await tasks.restore(context.projectId)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '候选用例保存失败'
+  }
+}
+
+async function saveAllGeneratedPreviews(): Promise<void> {
+  localError.value = ''
+  try {
+    const overrides = cases.activeGeneratedPreviewId && activeDraft.value
+      ? { [cases.activeGeneratedPreviewId]: activeDraft.value }
+      : {}
+    const versions = await cases.saveAllGeneratedPreviews(overrides)
+    const firstVersion = versions[0]
+    if (firstVersion) editCaseVersion(firstVersion)
+    if (context.projectId) await tasks.restore(context.projectId)
+  } catch (error) {
+    localError.value = error instanceof Error ? error.message : '候选用例批量保存失败'
+  }
+}
+
+function discardGeneratedPreview(previewId: string): void {
+  const wasActive = cases.activeGeneratedPreviewId === previewId
+  cases.discardGeneratedPreview(previewId)
+  if (wasActive && activeEndpoint.value && !cases.drafts[activeEndpoint.value.id]) {
+    activeEndpoint.value = null
+  }
+}
+
+async function runCaseVersion(version: CaseVersion): Promise<void> {
+  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
+    localError.value = '请先选择接口项目、接口版本和执行环境'
+    return
+  }
+  editCaseVersion(version)
+  if (!selectedIds.value.includes(version.endpoint_id)) selectedIds.value = [...selectedIds.value, version.endpoint_id]
+  const task = await saveCurrentTask()
+  if (!task) return
+  cases.debugExecution = null
+  debugOpen.value = true
+  localError.value = ''
+  try {
+    await cases.debug({
+      projectId: context.projectId,
+      sourceRevisionId: context.sourceRevisionId,
+      environmentRevisionId: context.environmentRevisionId,
+      caseVersionId: version.id,
+      taskId: task.id,
+    })
+    await tasks.restore(context.projectId)
+  } catch (error) {
+    cases.debugError = error instanceof Error ? error.message : '用例执行失败'
+  }
+}
+
+function toggleCaseScope(endpointId: string): void {
+  selectedIds.value = selectedIds.value.includes(endpointId)
+    ? selectedIds.value.filter(item => item !== endpointId)
+    : [...selectedIds.value, endpointId]
 }
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
@@ -425,11 +512,6 @@ function defaultTaskName(): string {
   return `${projectName}接口测试`
 }
 
-function caseOriginLabel(origin: string): string {
-  if (origin === 'ai') return 'AI'
-  if (origin === 'imported') return '平台'
-  return '手工'
-}
 </script>
 
 <template>
@@ -476,10 +558,29 @@ function caseOriginLabel(origin: string): string {
         @delete="deleteTask"
       />
       <div class="design-workspace">
-        <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
+        <div class="scope-sidebar">
+          <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
+          <CaseListPanel
+            :endpoints="assets.endpoints"
+            :versions="allCaseVersions"
+            :generated-previews="cases.generatedPreviews"
+            :active-version-id="activeVersionId"
+            :active-preview-id="cases.activeGeneratedPreviewId"
+            :selected-endpoint-ids="selectedIds"
+            :saving="cases.saving || cases.basicGenerating"
+            :running="debugRunning"
+            @edit-version="editCaseVersion"
+            @run-version="runCaseVersion"
+            @delete-version="deleteCaseVersion"
+            @toggle-scope="toggleCaseScope"
+            @edit-preview="editGeneratedPreview"
+            @save-preview="saveGeneratedPreview"
+            @discard-preview="discardGeneratedPreview"
+            @save-all-previews="saveAllGeneratedPreviews"
+          />
+        </div>
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
-          <div v-if="activeEndpoint && activeVersions.length" class="case-version-picker"><label>已保存用例<select :value="activeVersionId" @change="selectCaseVersion(($event.target as HTMLSelectElement).value)"><option v-for="version in activeVersions" :key="version.id" :value="version.id">{{ version.name }} · v{{ version.version }} · {{ caseOriginLabel(version.origin) }}</option></select></label><span>{{ activeVersions.length }} 个用例</span><button class="mini-icon danger" type="button" title="删除当前用例" :disabled="cases.saving || !activeVersionId" @click="deleteActiveCase"><Trash2 :size="15" /></button></div>
           <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
           <div v-else class="state-message center-empty">选择接口后，可手工编辑或让 AI 生成测试用例。</div>
           <button v-if="activeDraft" class="debug-command" type="button" :disabled="cases.saving || debugRunning" @click="submitDebug"><Bug :size="16" />{{ cases.saving ? '正在保存…' : debugRunning ? '调试中…' : '保存并调试' }}</button>

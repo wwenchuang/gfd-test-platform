@@ -541,6 +541,28 @@ def _post(segments, payload, actor, settings):
     if segments == ("cases",):
         _scope_endpoint(factory, _uuid(payload.get("endpoint_id")), actor)
         return {"case_version": _view(CaseService(factory).create_draft(_uuid(payload.get("endpoint_id")), _required_object(payload, "case"), payload.get("origin", "manual"), actor))}
+    if segments == ("cases", "basic-positive", "preview"):
+        endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
+        environment_revision_id = _uuid(payload.get("environment_revision_id"))
+        for endpoint_id in endpoint_ids:
+            _scope_endpoint(factory, endpoint_id, actor)
+        _scope_environment_revision(factory, environment_revision_id, actor)
+        task_id = _optional_uuid(payload.get("task_id"))
+        if task_id:
+            task = _scope_task(factory, task_id, actor)
+            if not set(endpoint_ids).issubset(set(task.selected_endpoint_ids)):
+                raise TestTaskScopeError("basic case request does not match this task")
+            if task.environment_revision_id != environment_revision_id:
+                raise TestTaskScopeError("basic case environment does not match this task")
+        return {
+            "case_previews": _view(
+                BasicCaseService(factory).preview(
+                    endpoint_ids,
+                    environment_revision_id,
+                    actor,
+                )
+            )
+        }
     if segments == ("cases", "basic-positive"):
         endpoint_ids = _uuid_array(payload.get("endpoint_ids"), "endpoint_ids")
         environment_revision_id = _uuid(payload.get("environment_revision_id"))

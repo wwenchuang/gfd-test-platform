@@ -17,7 +17,41 @@ class BasicCaseService:
     def __init__(self, session_factory):
         self.session_factory = session_factory
 
+    def preview(self, endpoint_ids, environment_revision_id, actor_id):
+        ordered_endpoints, environment_revision, variables = self._generation_context(
+            endpoint_ids,
+            environment_revision_id,
+        )
+        previews = []
+        for endpoint in ordered_endpoints:
+            payload = self.build_case_payload(endpoint, environment_revision, variables)
+            AiCaseService._assert_no_literal_secrets(payload)
+            previews.append(
+                {
+                    "id": f"basic-positive-{endpoint.id}",
+                    "endpoint_id": endpoint.id,
+                    "origin": "imported",
+                    "case": payload,
+                }
+            )
+        return tuple(previews)
+
     def generate(self, endpoint_ids, environment_revision_id, actor_id):
+        previews = self.preview(endpoint_ids, environment_revision_id, actor_id)
+        case_service = CaseService(self.session_factory)
+        generated = []
+        for preview in previews:
+            generated.append(
+                case_service.create_draft(
+                    preview["endpoint_id"],
+                    preview["case"],
+                    "imported",
+                    actor_id,
+                )
+            )
+        return tuple(generated)
+
+    def _generation_context(self, endpoint_ids, environment_revision_id):
         identifiers = AiCaseService._endpoint_ids(endpoint_ids)
         with self.session_factory() as session:
             repository = AiJobRepository(session)
@@ -45,14 +79,7 @@ class BasicCaseService:
             if environment is None or environment.project_id != source.project_id:
                 raise ValueError("environment and endpoints must belong to the same project")
             variables = repository.get_environment_variables(environment_revision.id)
-
-        case_service = CaseService(self.session_factory)
-        generated = []
-        for endpoint in ordered_endpoints:
-            payload = self.build_case_payload(endpoint, environment_revision, variables)
-            AiCaseService._assert_no_literal_secrets(payload)
-            generated.append(case_service.create_draft(endpoint.id, payload, "imported", actor_id))
-        return tuple(generated)
+        return ordered_endpoints, environment_revision, variables
 
     @classmethod
     def build_case_payload(cls, endpoint, environment_revision, environment_variables):

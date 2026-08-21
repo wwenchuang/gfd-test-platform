@@ -248,3 +248,54 @@ def test_http_route_scopes_basic_positive_generation(monkeypatch):
         ("service", "factory"),
         ("generate", [endpoint_id], environment_revision_id, "owner-a"),
     ]
+
+
+def test_http_route_scopes_basic_positive_preview_without_persisting(monkeypatch):
+    endpoint_id = str(uuid4())
+    environment_revision_id = str(uuid4())
+    task_id = str(uuid4())
+    preview = {
+        "id": f"basic-positive-{endpoint_id}",
+        "endpoint_id": endpoint_id,
+        "origin": "imported",
+        "case": {"name": "基础正向预览"},
+    }
+    calls = []
+
+    class FakeService:
+        def __init__(self, factory):
+            calls.append(("service", factory))
+
+        def preview(self, endpoint_ids, environment_revision_id_arg, actor_id):
+            calls.append(("preview", endpoint_ids, environment_revision_id_arg, actor_id))
+            return [preview]
+
+    monkeypatch.setattr(http, "_factory", lambda: "factory")
+    monkeypatch.setattr(http, "BasicCaseService", FakeService, raising=False)
+    monkeypatch.setattr(http, "_scope_endpoint", lambda factory, record_id, actor: calls.append(("scope-endpoint", factory, record_id, actor)))
+    monkeypatch.setattr(http, "_scope_environment_revision", lambda factory, record_id, actor: calls.append(("scope-environment", factory, record_id, actor)))
+
+    def scope_task(factory, record_id, actor):
+        calls.append(("scope-task", factory, record_id, actor))
+        return SimpleNamespace(
+            selected_endpoint_ids=[endpoint_id],
+            environment_revision_id=environment_revision_id,
+        )
+
+    monkeypatch.setattr(http, "_scope_task", scope_task)
+
+    result = http._post(
+        ("cases", "basic-positive", "preview"),
+        {"endpoint_ids": [endpoint_id], "environment_revision_id": environment_revision_id, "task_id": task_id},
+        "owner-a",
+        SimpleNamespace(),
+    )
+
+    assert result == {"case_previews": [preview]}
+    assert calls == [
+        ("scope-endpoint", "factory", endpoint_id, "owner-a"),
+        ("scope-environment", "factory", environment_revision_id, "owner-a"),
+        ("scope-task", "factory", task_id, "owner-a"),
+        ("service", "factory"),
+        ("preview", [endpoint_id], environment_revision_id, "owner-a"),
+    ]

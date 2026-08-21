@@ -230,6 +230,13 @@ export interface CaseVersion extends CaseDraft {
   validation_summary: Record<string, unknown>
 }
 
+export interface GeneratedCasePreview {
+  id: string
+  endpoint_id: string
+  origin: string
+  case: CaseDraft
+}
+
 export type AiJobState = 'queued' | 'running' | 'completed' | 'partial' | 'failed' | 'failed_gateway' | 'failed_validation'
 
 export interface AiJobBatch {
