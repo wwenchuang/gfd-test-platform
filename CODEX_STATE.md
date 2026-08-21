@@ -34,6 +34,37 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 服务端部署：main 更新脚本收敛
+
+用户希望每次 `main` 推送后，服务端有现成脚本完成更新，不再手工拼
+`git pull`、安装、重启和健康检查命令。
+
+本轮修复：
+
+- 新增 `deploy/update-main-server.sh`，默认面向 `/opt/midscene-task-platform-src` 源码目录。
+- 脚本会检查源码目录是 git 仓库、拒绝脏工作区、拉取 `origin/main`、执行 `deploy/install-server.sh`。
+- 脚本会重启存在的 `midscene-task`、`midscene-api-worker`、`midscene-api-scheduler`。
+- 脚本会检查 `http://127.0.0.1:8091/api/health`、`http://127.0.0.1:8088/api/health` 和 `/api-test/` 静态资源，并确认 API 测试 bundle 包含 `用例管理` 入口文案。
+- `deploy/install-server.sh` 会把该脚本安装到 `/opt/midscene-task-platform/deploy/update-main-server.sh`。
+
+推荐服务端命令：
+
+```bash
+cd /opt/midscene-task-platform-src
+bash deploy/update-main-server.sh
+```
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/test_sonic_integration.py::test_server_main_update_script_pulls_installs_restarts_and_checks_assets tests/test_sonic_integration.py::test_server_package_includes_desktop_runners -q
+bash -n deploy/update-main-server.sh deploy/install-server.sh deploy/package-server.sh deploy/release-server.sh
+VERSION=main-update-script-check KEEP_PACKAGES=0 bash deploy/package-server.sh
+tar -tvzf dist/midscene-task-platform-main-update-script-check.tar.gz | rg 'midscene-task-platform/deploy/update-main-server.sh|midscene-task-platform/deploy/install-server.sh'
+git diff --check
+# passed
+```
+
 ### 2026-08-21 API 工作台：新增用例管理独立入口
 
 用户反馈部署后仍看不到用例入口。排查确认线上 `/api-test/` 已包含 `用例列表` 静态代码，但入口隐藏在工作台中间栏，不是独立模块，容易被误认为未部署。

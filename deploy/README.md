@@ -307,6 +307,19 @@ curl -s http://127.0.0.1:8088/task-manager.html | wc -c
 
 ## Upgrade
 
+If the server keeps a git checkout at `/opt/midscene-task-platform-src`, use
+the single update script after each `main` push:
+
+```bash
+cd /opt/midscene-task-platform-src
+bash deploy/update-main-server.sh
+```
+
+The script fast-forwards `origin/main`, installs the runtime files, restarts
+`midscene-task`, `midscene-api-worker`, and `midscene-api-scheduler` when those
+services exist, then verifies both health endpoints and `/api-test/` static
+assets. This is the preferred path for routine server updates.
+
 After code, page, or skill changes:
 
 ```bash

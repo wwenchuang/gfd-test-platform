@@ -139,6 +139,7 @@ if [ -d "${SRC_DIR}/assets" ]; then
 fi
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/install-server.sh" "${APP_DIR}/deploy/install-server.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/package-server.sh" "${APP_DIR}/deploy/package-server.sh"
+install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/update-main-server.sh" "${APP_DIR}/deploy/update-main-server.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/sync-docker-web.sh" "${APP_DIR}/deploy/sync-docker-web.sh"
 install -m 0755 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/cleanup-server-packages.sh" "${APP_DIR}/deploy/cleanup-server-packages.sh"
 install -m 0644 -o "${USER_NAME}" -g "${GROUP_NAME}" "${SCRIPT_DIR}/README.md" "${APP_DIR}/deploy/README.md"

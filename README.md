@@ -64,6 +64,18 @@ KEEP_PACKAGES=3 bash deploy/package-server.sh
 
 ## 服务器部署
 
+如果服务器上保留 git 源码目录，推荐固定使用一键更新脚本。以后每次
+`main` 有新提交，只需要在服务器执行：
+
+```bash
+cd /opt/midscene-task-platform-src
+bash deploy/update-main-server.sh
+```
+
+该脚本会拉取 `origin/main`、执行 `deploy/install-server.sh`、重启
+`midscene-task` / `midscene-api-worker` / `midscene-api-scheduler`，并检查
+`8091`、`8088` 和 `/api-test/` 静态资源。
+
 上传部署包到服务器后：
 
 ```bash

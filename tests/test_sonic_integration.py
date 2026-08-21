@@ -2703,6 +2703,22 @@ def test_server_package_includes_desktop_runners():
     assert "${SRC_DIR}/api-test" in install_script
 
 
+def test_server_main_update_script_pulls_installs_restarts_and_checks_assets():
+    update_script = (ROOT / "deploy" / "update-main-server.sh").read_text(encoding="utf-8")
+    install_script = (ROOT / "deploy" / "install-server.sh").read_text(encoding="utf-8")
+
+    assert "git pull --ff-only" in update_script
+    assert 'BRANCH="${BRANCH:-main}"' in update_script
+    assert "deploy/install-server.sh" in update_script
+    assert "midscene-api-worker" in update_script
+    assert "midscene-api-scheduler" in update_script
+    assert "127.0.0.1:8091/api/health" in update_script
+    assert "127.0.0.1:8088/api/health" in update_script
+    assert "/api-test/" in update_script
+    assert "用例管理" in update_script
+    assert "update-main-server.sh" in install_script
+
+
 def test_desktop_runners_queue_report_after_result_is_archived():
     for filename in ("mac-midscene-runner.py", "windows-midscene-runner.py"):
         runner = (ROOT / filename).read_text(encoding="utf-8")
