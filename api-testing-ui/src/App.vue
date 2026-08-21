@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Boxes, CalendarClock, ClipboardList, FileCode2, FlaskConical, History, Settings2, ShieldCheck } from 'lucide-vue-next'
+import { Boxes, CalendarClock, ClipboardList, FileCode2, FlaskConical, History, ListChecks, Settings2, ShieldCheck } from 'lucide-vue-next'
 
 const navigation = [
   { to: '/', label: '工作台', icon: FlaskConical },
+  { to: '/tasks', label: '任务管理', icon: ListChecks, testId: 'nav-tasks' },
   { to: '/cases', label: '用例管理', icon: ClipboardList, testId: 'nav-cases' },
   { to: '/assets', label: '接口资产', icon: FileCode2 },
   { to: '/baselines', label: '基线用例', icon: ShieldCheck },

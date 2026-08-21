@@ -88,74 +88,6 @@ describe('WorkbenchView debug workflow', () => {
     expect(prepare.mock.invocationCallOrder[0]).toBeLessThan(debug.mock.invocationCallOrder[0])
   })
 
-  it('reloads the editor when another saved case is selected', async () => {
-    const context = useContextStore()
-    Object.assign(context, {
-      projectId: 'project-1', sourceRevisionId: 'source-1', environmentRevisionId: 'environment-1',
-      projects: [{ id: 'project-1', name: '3D 家用' }],
-      sourceRevisions: [{ id: 'source-1', project_id: 'project-1', name: '默认模块', revision: 1 }],
-      environmentRevisions: [{ id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 7 }],
-    })
-    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
-    vi.spyOn(context, 'loadOptions').mockResolvedValue()
-
-    const assets = useAssetsStore()
-    assets.endpoints = [ENDPOINT]
-    assets.state = 'ready'
-    vi.spyOn(assets, 'load').mockResolvedValue()
-
-    const missingBiz = savedCase('version-missing-biz', 'case-missing-biz', '添加收藏 - 缺失 Biz', {})
-    const normal = savedCase('version-normal', 'case-normal', '添加收藏 - 正常流程', { Biz: '{{Biz}}' })
-    const cases = useCasesStore()
-    cases.registerVersion(missingBiz)
-    cases.registerVersion(normal, false)
-    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
-    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-
-    const tasks = useTasksStore()
-    vi.spyOn(tasks, 'list').mockResolvedValue([])
-    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
-
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
-    })
-    await router.push('/')
-    await router.isReady()
-    const wrapper = mount(WorkbenchView, {
-      global: {
-        plugins: [router],
-        stubs: {
-          ContextBar: true,
-          TaskStatusStrip: true,
-          EndpointDetail: true,
-          AiAssistant: true,
-          DebugDrawer: true,
-          EndpointTree: {
-            props: ['endpoints'],
-            emits: ['activate'],
-            template: '<button data-testid="activate-endpoint" @click="$emit(\'activate\', endpoints[0])">选择接口</button>',
-          },
-        },
-      },
-    })
-    await flushPromises()
-
-    await wrapper.get('[data-testid="activate-endpoint"]').trigger('click')
-    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('添加收藏 - 缺失 Biz')
-    cases.debugResult = {
-      status: 'PASSED', executionCaseId: 'old-evidence', resolvedRequest: {},
-      sanitizedResponse: {}, assertions: [], failureCategory: '', logs: [],
-    }
-
-    await wrapper.get('[data-testid="case-version-edit-version-normal"]').trigger('click')
-    await flushPromises()
-
-    expect((wrapper.get('[data-testid="case-name"]').element as HTMLInputElement).value).toBe('添加收藏 - 正常流程')
-    expect((wrapper.get('[data-testid="headers-name"]').element as HTMLInputElement).value).toBe('Biz')
-    expect(cases.debugResult).toBeNull()
-  })
-
   it('generates cases against the exact saved task scope', async () => {
     const context = useContextStore()
     Object.assign(context, {
@@ -444,7 +376,7 @@ describe('WorkbenchView debug workflow', () => {
     expect(listTasks).toHaveBeenCalledWith('project-2')
   })
 
-  it('focuses the case list when opened through the case management route', async () => {
+  it('keeps full task and case management lists out of the workbench', async () => {
     const context = useContextStore()
     Object.assign(context, {
       projectId: null,
@@ -459,29 +391,23 @@ describe('WorkbenchView debug workflow', () => {
 
     const cases = useCasesStore()
     vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-    const scrollIntoView = vi.fn()
-    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-      configurable: true,
-      value: scrollIntoView,
-    })
+    const tasks = useTasksStore()
+    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
 
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
         { path: '/', name: 'workbench', component: WorkbenchView },
-        { path: '/cases', name: 'cases', component: WorkbenchView },
       ],
     })
-    await router.push('/cases')
+    await router.push('/')
     await router.isReady()
     const wrapper = mount(WorkbenchView, {
-      attachTo: document.body,
       global: {
         plugins: [router],
         stubs: {
           ContextBar: true,
           TaskStatusStrip: true,
-          TaskListPanel: true,
           EndpointDetail: true,
           CaseEditor: true,
           AiAssistant: true,
@@ -492,9 +418,9 @@ describe('WorkbenchView debug workflow', () => {
     })
     await flushPromises()
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' })
-    expect(document.activeElement).toBe(wrapper.get('[data-testid="case-list-search"]').element)
-    wrapper.unmount()
+    expect(wrapper.find('.task-list-panel').exists()).toBe(false)
+    expect(wrapper.find('.case-list-panel').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'EndpointTree' }).exists()).toBe(true)
   })
 
   it('keeps a historical task scope while running it with the selected runtime environment', async () => {
@@ -555,7 +481,7 @@ describe('WorkbenchView debug workflow', () => {
         { path: '/runs', name: 'runs', component: { template: '<div />' } },
       ],
     })
-    await router.push('/')
+    await router.push('/?taskId=task-old')
     await router.isReady()
     const wrapper = mount(WorkbenchView, {
       global: {
@@ -572,9 +498,6 @@ describe('WorkbenchView debug workflow', () => {
         },
       },
     })
-    await flushPromises()
-
-    await wrapper.get('[data-testid="task-list-item-task-old"]').trigger('click')
     await flushPromises()
 
     expect(context.sourceRevisionId).toBe('source-old')
@@ -597,86 +520,6 @@ describe('WorkbenchView debug workflow', () => {
     expect(router.currentRoute.value.query.executionId).toBe('execution-1')
   })
 
-  it('deletes a saved task from the dedicated left task list after confirmation', async () => {
-    const context = useContextStore()
-    Object.assign(context, {
-      projectId: 'project-1',
-      sourceRevisionId: 'source-1',
-      environmentRevisionId: 'environment-1',
-      projects: [{ id: 'project-1', name: '3D 家用' }],
-      sourceRevisions: [{ id: 'source-1', source_id: 'source-1', project_id: 'project-1', name: '默认模块', revision_number: 1, endpoint_count: 1 }],
-      environmentRevisions: [{ id: 'environment-1', environment_id: 'environment-1', project_id: 'project-1', name: '生产环境', revision: 1 }],
-    })
-    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
-    vi.spyOn(context, 'loadOptions').mockResolvedValue()
-
-    const assets = useAssetsStore()
-    vi.spyOn(assets, 'load').mockImplementation(async () => {
-      assets.endpoints = [ENDPOINT]
-      assets.state = 'ready'
-    })
-    const cases = useCasesStore()
-    vi.spyOn(cases, 'loadSavedCases').mockResolvedValue()
-    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
-
-    const task = {
-      id: 'task-delete',
-      project_id: 'project-1',
-      source_revision_id: 'source-1',
-      environment_revision_id: 'environment-1',
-      name: '待删除回归',
-      state: 'ready',
-      selected_endpoint_ids: [ENDPOINT.id],
-      runnable_baseline_count: 1,
-      latest_ai_job_id: null,
-      latest_execution_id: null,
-      summary: {},
-      created_at: '',
-      updated_at: '',
-    } as ApiTestTask
-    const tasks = useTasksStore()
-    vi.spyOn(tasks, 'list').mockImplementation(async () => {
-      tasks.tasks = [task]
-      return tasks.tasks
-    })
-    vi.spyOn(tasks, 'restore').mockResolvedValue(null)
-    const remove = vi.spyOn(tasks, 'remove').mockImplementation(async taskId => {
-      tasks.tasks = tasks.tasks.filter(item => item.id !== taskId)
-      if (tasks.task?.id === taskId) tasks.task = null
-      return task
-    })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [{ path: '/', name: 'workbench', component: WorkbenchView }],
-    })
-    await router.push('/')
-    await router.isReady()
-    const wrapper = mount(WorkbenchView, {
-      global: {
-        plugins: [router],
-        stubs: {
-          EndpointDetail: true,
-          CaseEditor: true,
-          AiAssistant: true,
-          DebugDrawer: true,
-          EndpointTree: {
-            props: ['selectedIds'],
-            template: '<div data-testid="endpoint-tree">{{ selectedIds.length }}</div>',
-          },
-        },
-      },
-    })
-    await flushPromises()
-
-    await wrapper.get('[data-testid="task-list-delete-task-delete"]').trigger('click')
-    await flushPromises()
-
-    expect(window.confirm).toHaveBeenCalledWith('删除任务“待删除回归”？任务关联的用例、基线和历史执行记录会保留。')
-    expect(remove).toHaveBeenCalledWith('task-delete')
-    expect(wrapper.text()).not.toContain('待删除回归')
-  })
 })
 
 function savedCase(id: string, caseId: string, name: string, headers: Record<string, unknown>): CaseVersion {

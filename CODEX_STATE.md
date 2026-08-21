@@ -34,6 +34,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 工作台：用例管理和任务管理拆成独立页面
+
+用户反馈 `/cases` 仍复用工作台并把用例列表塞在工作台下面，展示和管理都不顺手；任务列表也不应继续挂在工作台里。
+
+本轮修复：
+
+- 新增 API testing 独立 `任务管理` 页面 `/api-test/#/tasks`，左侧为任务列表，右侧为任务详情。
+- 任务管理页支持任务搜索、选择、详情查看、名称保存、执行、删除二次确认，以及跳回工作台编辑任务接口范围。
+- `用例管理` 页面 `/api-test/#/cases` 改为真正的独立页面，不再复用 `WorkbenchView`。
+- 用例管理页集中展示已保存用例和候选用例，支持编辑、删除二次确认、执行单条用例、保存候选、保存全部候选和加入/移出当前任务范围。
+- 工作台移除完整任务列表和完整用例列表，只保留当前任务状态条、接口范围树、接口详情、用例编辑器和 AI 助手，避免页面被管理列表撑长。
+- 工作台支持从任务管理页通过 `taskId` 深链恢复历史任务范围后继续编辑/执行。
+- 左侧导航新增 `任务管理`，`用例管理` 路由指向独立 `CasesView`。
+- API testing 前端静态产物已重新构建。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/App.spec.ts src/views/CasesView.spec.ts src/views/TasksView.spec.ts src/views/WorkbenchView.spec.ts --reporter=basic
+npm --prefix api-testing-ui test -- --run --reporter=basic
+npm --prefix api-testing-ui run build
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-21 服务端部署：main 更新脚本收敛
 
 用户希望每次 `main` 推送后，服务端有现成脚本完成更新，不再手工拼

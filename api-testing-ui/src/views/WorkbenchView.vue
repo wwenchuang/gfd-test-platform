@@ -1,18 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Bug, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
 import AiAssistant from '../components/AiAssistant.vue'
 import CaseEditor from '../components/CaseEditor.vue'
-import CaseListPanel from '../components/CaseListPanel.vue'
 import ContextBar from '../components/ContextBar.vue'
 import DebugDrawer from '../components/DebugDrawer.vue'
 import EndpointDetail from '../components/EndpointDetail.vue'
 import EndpointTree from '../components/EndpointTree.vue'
-import TaskListPanel from '../components/TaskListPanel.vue'
 import TaskStatusStrip from '../components/TaskStatusStrip.vue'
-import type { ApiEndpoint, ApiTestTask, CaseDraft, CaseVersion, GeneratedCasePreview } from '../api/contracts'
+import type { ApiEndpoint, ApiTestTask, CaseDraft } from '../api/contracts'
 import { useAssetsStore } from '../stores/assets'
 import { useCasesStore } from '../stores/cases'
 import { useContextStore } from '../stores/context'
@@ -29,10 +27,8 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 const taskNameDraft = ref('')
-const caseManagementAnchor = ref<HTMLElement | null>(null)
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
-const allCaseVersions = computed(() => Object.values(cases.versions))
 const debugRunning = computed(() => cases.debugPolling)
 const selectedEnvironment = computed(() => context.environmentRevisions.find(
   item => item.id === context.environmentRevisionId,
@@ -47,15 +43,14 @@ const taskMatchesSelection = computed(() => Boolean(
   && tasks.task.source_revision_id === context.sourceRevisionId
   && [...tasks.task.selected_endpoint_ids].sort().join('|') === [...selectedIds.value].sort().join('|'),
 ))
-const taskEnvironmentNames = computed(() => Object.fromEntries(
-  context.environmentRevisions.map(item => [item.id, `${item.name} · v${item.revision}`]),
-))
 
 onMounted(async () => {
   await Promise.all([context.loadSavedContext(), context.loadOptions()])
   const routeContext = restoreExecutionContextFromRoute()
   if (context.projectId) await tasks.list(context.projectId)
-  const restoredTask = context.projectId ? await tasks.restore(context.projectId) : null
+  const routeTaskId = routeValue(route.query.taskId)
+  let restoredTask = routeTaskId ? tasks.select(routeTaskId) : null
+  if (!restoredTask && context.projectId) restoredTask = await tasks.restore(context.projectId)
   if (restoredTask && !routeContext) {
     const runtimeEnvironmentId = restoredTask.project_id === context.projectId
       ? context.environmentRevisionId || restoredTask.environment_revision_id
@@ -75,29 +70,11 @@ onMounted(async () => {
   if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, restoredSelection)
   await restoreDeepLink()
   if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
-  await focusCaseManagementIfRequested()
 })
 
 watch(() => tasks.task?.name, name => {
   taskNameDraft.value = name || defaultTaskName()
 }, { immediate: true })
-
-watch(() => route.fullPath, () => {
-  void focusCaseManagementIfRequested()
-})
-
-function shouldFocusCaseManagement(): boolean {
-  return route.name === 'cases' || route.query.focus === 'cases'
-}
-
-async function focusCaseManagementIfRequested(): Promise<void> {
-  if (!shouldFocusCaseManagement()) return
-  await nextTick()
-  const anchor = caseManagementAnchor.value
-  if (!anchor) return
-  if (typeof anchor.scrollIntoView === 'function') anchor.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  anchor.querySelector<HTMLInputElement>('[data-testid="case-list-search"]')?.focus({ preventScroll: true })
-}
 
 function restoreExecutionContextFromRoute(): boolean {
   const projectId = routeValue(route.query.projectId)
@@ -182,31 +159,6 @@ function activate(endpoint: ApiEndpoint): void {
   cases.draftFor(endpoint)
 }
 
-function editCaseVersion(version: CaseVersion): void {
-  const endpoint = assets.endpoints.find(item => item.id === version.endpoint_id)
-  if (!endpoint) {
-    localError.value = '该用例对应的接口不在当前接口版本中'
-    return
-  }
-  activeEndpoint.value = endpoint
-  if (version.id !== activeVersionId.value) {
-    cases.clearDebug()
-    debugOpen.value = false
-    cases.setActiveVersion(endpoint.id, version.id)
-  }
-}
-
-function editGeneratedPreview(preview: GeneratedCasePreview): void {
-  const endpoint = assets.endpoints.find(item => item.id === preview.endpoint_id)
-  if (!endpoint) {
-    localError.value = '该候选用例对应的接口不在当前接口版本中'
-    return
-  }
-  activeEndpoint.value = endpoint
-  cases.setDraftFromGeneratedPreview(preview.id)
-  debugOpen.value = false
-}
-
 function startNewTask(): void {
   tasks.clear()
   cases.clearDebug()
@@ -225,21 +177,6 @@ async function saveScope(): Promise<void> {
     if (context.error) throw new Error(context.error)
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '测试范围保存失败'
-  }
-}
-
-async function deleteCaseVersion(version: CaseVersion): Promise<void> {
-  if (!version) return
-  const confirmed = window.confirm(`删除用例“${version.name}”？历史执行记录和已采纳基线证据会保留。`)
-  if (!confirmed) return
-  localError.value = ''
-  try {
-    const endpointId = version.endpoint_id
-    await cases.archiveCase(endpointId, version.id)
-    if (activeEndpoint.value?.id === endpointId && !cases.versionIdsByEndpoint[endpointId]?.length) cases.draftFor(activeEndpoint.value)
-    if (context.projectId) await tasks.restore(context.projectId)
-  } catch (error) {
-    localError.value = error instanceof Error ? error.message : '用例删除失败'
   }
 }
 
@@ -312,72 +249,6 @@ async function generateBasicPositive(): Promise<void> {
   }
 }
 
-async function saveGeneratedPreview(preview: GeneratedCasePreview): Promise<void> {
-  localError.value = ''
-  try {
-    const draft = cases.activeGeneratedPreviewId === preview.id ? activeDraft.value || preview.case : preview.case
-    const version = await cases.saveGeneratedPreview(preview.id, draft)
-    editCaseVersion(version)
-    if (context.projectId) await tasks.restore(context.projectId)
-  } catch (error) {
-    localError.value = error instanceof Error ? error.message : '候选用例保存失败'
-  }
-}
-
-async function saveAllGeneratedPreviews(): Promise<void> {
-  localError.value = ''
-  try {
-    const overrides = cases.activeGeneratedPreviewId && activeDraft.value
-      ? { [cases.activeGeneratedPreviewId]: activeDraft.value }
-      : {}
-    const versions = await cases.saveAllGeneratedPreviews(overrides)
-    const firstVersion = versions[0]
-    if (firstVersion) editCaseVersion(firstVersion)
-    if (context.projectId) await tasks.restore(context.projectId)
-  } catch (error) {
-    localError.value = error instanceof Error ? error.message : '候选用例批量保存失败'
-  }
-}
-
-function discardGeneratedPreview(previewId: string): void {
-  const wasActive = cases.activeGeneratedPreviewId === previewId
-  cases.discardGeneratedPreview(previewId)
-  if (wasActive && activeEndpoint.value && !cases.drafts[activeEndpoint.value.id]) {
-    activeEndpoint.value = null
-  }
-}
-
-async function runCaseVersion(version: CaseVersion): Promise<void> {
-  if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId) {
-    localError.value = '请先选择接口项目、接口版本和执行环境'
-    return
-  }
-  editCaseVersion(version)
-  if (!selectedIds.value.includes(version.endpoint_id)) selectedIds.value = [...selectedIds.value, version.endpoint_id]
-  const task = await saveCurrentTask()
-  if (!task) return
-  cases.debugExecution = null
-  debugOpen.value = true
-  localError.value = ''
-  try {
-    await cases.debug({
-      projectId: context.projectId,
-      sourceRevisionId: context.sourceRevisionId,
-      environmentRevisionId: context.environmentRevisionId,
-      caseVersionId: version.id,
-      taskId: task.id,
-    })
-    await tasks.restore(context.projectId)
-  } catch (error) {
-    cases.debugError = error instanceof Error ? error.message : '用例执行失败'
-  }
-}
-
-function toggleCaseScope(endpointId: string): void {
-  selectedIds.value = selectedIds.value.includes(endpointId)
-    ? selectedIds.value.filter(item => item !== endpointId)
-    : [...selectedIds.value, endpointId]
-}
 async function submitDebug(): Promise<void> {
   if (!context.projectId || !context.sourceRevisionId || !context.environmentRevisionId || !activeEndpoint.value) return
   const endpointId = activeEndpoint.value.id
@@ -452,28 +323,6 @@ async function runCurrentTask(): Promise<void> {
     await router.push({ name: 'runs', query: { executionId: execution.id } })
   } catch (error) {
     localError.value = error instanceof Error ? error.message : '测试任务执行失败'
-  }
-}
-
-async function runSavedTask(taskId: string): Promise<void> {
-  await selectTask(taskId)
-  await runCurrentTask()
-}
-
-async function deleteTask(task: ApiTestTask): Promise<void> {
-  const confirmed = window.confirm(`删除任务“${task.name}”？任务关联的用例、基线和历史执行记录会保留。`)
-  if (!confirmed) return
-  localError.value = ''
-  try {
-    await tasks.remove(task.id)
-    if (tasks.task?.id !== task.id && activeEndpoint.value) return
-    if (!tasks.task) {
-      selectedIds.value = []
-      activeEndpoint.value = null
-      taskNameDraft.value = defaultTaskName()
-    }
-  } catch (error) {
-    localError.value = error instanceof Error ? error.message : '任务删除失败'
   }
 }
 
@@ -563,43 +412,9 @@ function defaultTaskName(): string {
       @run="runCurrentTask"
     />
     <p v-if="context.error || tasks.error || localError" class="inline-error">{{ context.error || tasks.error || localError }}</p>
-    <div class="workbench-shell">
-      <TaskListPanel
-        :tasks="tasks.tasks"
-        :active-task-id="tasks.task?.id || ''"
-        :environment-names="taskEnvironmentNames"
-        :loading="tasks.loading"
-        :saving="tasks.saving"
-        :running="tasks.running"
-        @new="startNewTask"
-        @select="selectTask"
-        @run="runSavedTask"
-        @delete="deleteTask"
-      />
+    <div class="workbench-shell workbench-shell-focused">
       <div class="design-workspace">
-        <div class="scope-sidebar">
-          <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
-          <div id="case-management" ref="caseManagementAnchor" class="case-management-anchor">
-            <CaseListPanel
-              :endpoints="assets.endpoints"
-              :versions="allCaseVersions"
-              :generated-previews="cases.generatedPreviews"
-              :active-version-id="activeVersionId"
-              :active-preview-id="cases.activeGeneratedPreviewId"
-              :selected-endpoint-ids="selectedIds"
-              :saving="cases.saving || cases.basicGenerating"
-              :running="debugRunning"
-              @edit-version="editCaseVersion"
-              @run-version="runCaseVersion"
-              @delete-version="deleteCaseVersion"
-              @toggle-scope="toggleCaseScope"
-              @edit-preview="editGeneratedPreview"
-              @save-preview="saveGeneratedPreview"
-              @discard-preview="discardGeneratedPreview"
-              @save-all-previews="saveAllGeneratedPreviews"
-            />
-          </div>
-        </div>
+        <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />
           <CaseEditor v-if="activeDraft" :model-value="activeDraft" :saving="cases.saving" :saved-message="cases.savedMessage" :validation-errors="cases.validationErrors" :validation-warnings="cases.validationWarnings" @update:model-value="updateDraft" @save="saveDraft" />
