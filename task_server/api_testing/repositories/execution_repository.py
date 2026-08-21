@@ -95,7 +95,7 @@ class ExecutionRepository:
             .where(
                 ApiBaseline.project_id == project_id,
                 ApiBaseline.owner_id == owner_id,
-                ApiBaseline.status != "archived",
+                ApiBaseline.status == "active",
             )
             .order_by(ApiBaseline.created_at, ApiBaseline.id)
         )

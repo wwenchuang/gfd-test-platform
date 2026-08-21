@@ -349,7 +349,7 @@ class BasicCaseService:
             media_type,
             schema,
         ):
-            success_assertion = cls._code_zero_assertion()
+            success_assertion = cls._code_assertion(0)
         if success_assertion:
             assertions.append(success_assertion)
         data_assertion = cls._data_presence_assertion(schema, example, operation)
@@ -401,8 +401,9 @@ class BasicCaseService:
     def _success_assertion_from_value(value):
         if not isinstance(value, Mapping):
             return None
-        if value.get("code") == 0:
-            return BasicCaseService._code_zero_assertion()
+        code = value.get("code")
+        if code in (0, 200):
+            return BasicCaseService._code_assertion(code)
         if value.get("success") is True:
             return BasicCaseService._success_true_assertion()
         return None
@@ -418,8 +419,10 @@ class BasicCaseService:
         code = cls._resolve_schema(properties.get("code"), operation)
         if isinstance(code, Mapping):
             expected = cls._schema_explicit_value(code, missing=_MISSING)
-            if expected in (0, _MISSING):
-                return cls._code_zero_assertion()
+            if expected in (0, 200):
+                return cls._code_assertion(expected)
+            if expected is _MISSING:
+                return cls._code_assertion(0)
         success = cls._resolve_schema(properties.get("success"), operation)
         if isinstance(success, Mapping):
             expected = cls._schema_explicit_value(success)
@@ -428,12 +431,12 @@ class BasicCaseService:
         return None
 
     @staticmethod
-    def _code_zero_assertion():
+    def _code_assertion(expected):
         return {
             "type": "json_path",
             "path": "$.code",
             "operator": "equals",
-            "expected": 0,
+            "expected": expected,
             "timeout_ms": 0,
             "enabled": True,
         }

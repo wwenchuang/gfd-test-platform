@@ -59,6 +59,50 @@ def test_basic_positive_payload_uses_environment_header_placeholders_and_success
     assert "ZXBToken" not in repr(payload)
 
 
+def test_basic_positive_payload_uses_documented_business_success_code():
+    endpoint = SimpleNamespace(
+        method="GET",
+        path="/pmc/api/v1/iot/ota/upgrade-info",
+        summary="固件更新接口",
+        operation={
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "examples": {
+                                "success": {
+                                    "value": {
+                                        "code": 200,
+                                        "message": "返回成功",
+                                        "data": {"needUpdate": True},
+                                    }
+                                }
+                            },
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {"type": "integer"},
+                                    "message": {"type": "string"},
+                                    "data": {"type": "object"},
+                                },
+                            },
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 200, "timeout_ms": 0, "enabled": True} in payload["assertions"]
+    assert {"type": "json_path", "path": "$.data", "operator": "exists", "timeout_ms": 0, "enabled": True} in payload["assertions"]
+
+
 def test_basic_positive_payload_infers_platform_runtime_headers_from_environment_variables():
     endpoint = SimpleNamespace(
         method="POST",

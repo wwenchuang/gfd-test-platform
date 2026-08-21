@@ -34,6 +34,67 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 基线：非共享接口数据驱动补跑、采纳和回归验证
+
+用户补充约束：共享业务本轮先不考虑，不能继续使用用户临时提供的业务 token。后续执行均走平台当前环境配置，未在脚本、代码或日志中写入明文业务 token。
+
+本轮线上处理：
+
+- 当前 API testing 工作区保持在 `3D家用`：
+  - source revision：`ef46b8fd-2868-459d-8695-fc5daba853ed`
+  - environment revision：`a00e9030-8749-47f3-9764-bedf251b85a1`
+- 全量 1007 条接口中，按 Apifox tags 排除 `共享业务` 243 条；本轮只处理非共享 764 条。
+- 非共享全量执行结果：
+  - execution `6bdbdbc8-8f1c-4216-adf1-c01a96627784`：500 条，186 passed，311 failed，3 broken。
+  - execution `90f4591d-4e4c-46e6-80ca-7bd6695d4853`：264 条，23 passed，240 failed，1 broken。
+  - 合计：209 passed，555 failed/broken。
+  - 主要失败原因：`4009 访问路径不允许`、服务路由 `404/null`、设备/模型/任务/上传规则等真实业务前置数据不存在或无权限。
+- 对 209 条真实通过用例采纳基线：
+  - 跳过已有 active baseline：34 条。
+  - 新增 active baseline：175 条。
+- 基于已通过响应继续抽取真实业务数据（deviceSn、modelSn、componentSn、printSn、courseSn、taskCode、下载记录 SN、涂鸦模型 ID 等）补跑失败用例：
+  - 第一轮稳定 GET 候选：29 条执行，23 passed，6 failed；23 条采纳基线。
+  - 第二轮响应数据驱动候选：13 条执行，10 passed，3 failed；10 条采纳基线。
+  - 第三轮查询型 POST/GET 候选：8 条执行，3 passed，5 failed；其中 2 条新增采纳，另 1 条已存在 active baseline。
+  - 第四轮按用户确认继续使用已通过接口真实响应数据补跑：
+    - `/pmc/api/v1/iot/ota/fireware/version/released` 真实返回 `{code: 200, message: "返回成功"}`，新建 `code=200` 业务断言版本并执行通过，已采纳 active baseline。
+    - 小批量数据驱动候选 5 条：`message/read-all` 使用当前真实 `userSn` 执行通过并采纳；AI 涂鸦、图片建模、参数化下载、GLB 转换仍被业务侧明确拒绝，未采纳。
+    - 固件版本检查使用 5 个已通过响应中出现的 `deviceId` 探测，均返回设备授权失败，未采纳。
+    - 新增 2 条基线后，selected baseline regression `e0a84e51-23d8-4024-bf14-fccdd45c7dba`：2 条，2 passed。
+- 对非共享 active baseline 做回归验证：
+  - 大批量回归 `660df55d-f0f9-4d9c-86a1-52aaaef775f6`：245 条，240 passed，2 failed，3 broken。
+  - 失败/异常复跑 `34c61ed3-a9fa-42c0-b5c7-6f31ea41d630`：5 条，3 passed，2 failed。
+  - 归档稳定失败的 active baseline：
+    - `/print3d/api/v1/learningAdventure/task/submit`：任务未解锁。
+    - `/print3d/api/v1/qidi/print/video`：业务未知异常。
+  - 分组复跑非共享 active baseline：243 条分 5 组，242 passed，1 broken。
+  - 归档批量下多次超时且不适合定时基线的创建类接口：
+    - `/print3d/api/v1/createTextModel/textV2`
+  - 归档后线上 active baseline 总数一度为 250；继续数据驱动补跑后为 252，其中非共享 active baseline：244。这 244 条均已有本轮 debug 或 baseline regression 通过证据。
+- 共享业务仍保留历史 active baseline 8 条，但本轮未新增、未使用用户提供 token 执行。
+
+代码修复：
+
+- `ExecutionRepository.active_baseline_version_ids` 只返回 `status == "active"` 的基线，避免 `superseded` 历史基线被定时/回归任务再次执行。
+- `BasicCaseService` 从响应示例或明确 schema 值识别业务成功码 `code=200`，用于 `pmc` 这类返回 `{code: 200, message: "返回成功"}` 的接口；默认 App 响应壳仍使用 `code=0`，没有降级为只看 HTTP 200。
+
+本地验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_basic_case_service.py -q
+# 18 passed
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/15' .venv/bin/python -m pytest tests/api_testing/test_execution_service.py::test_submit_active_baselines_ignores_superseded_baselines tests/api_testing/test_execution_service.py::test_submit_active_baselines_creates_one_click_regression tests/api_testing/test_execution_service.py::test_submit_active_baselines_can_run_only_selected_baseline_ids tests/api_testing/test_execution_service.py::test_selected_baseline_regression_runs_fixed_baseline_against_current_environment -q
+# 4 passed
+
+python3 -m py_compile task_server/api_testing/services/basic_case_service.py task_server/api_testing/repositories/execution_repository.py
+
+python3 tests/backend_static_checks.py
+# {'ok': True, 'file': '/Users/adouceshi/Documents/projects/midscene-task-platform/midscene_upload_compat.py', 'checks': 63}
+
+git diff --check
+```
+
 ### 2026-08-21 API 基础正向用例：业务断言收紧、真实执行和基线采纳
 
 用户确认生成用例不能只靠 HTTP 200 判断通过，且线上环境允许执行包括删除在内的写操作。
