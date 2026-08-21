@@ -34,6 +34,33 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 用例管理：用例列表分组目录和折叠浏览
+
+用户反馈用例列表里分组和用例混在一起，连续滚动时不利于定位和管理；希望不只机械按分组折叠，而是把操作方式设计得更顺手。
+
+本轮修复：
+
+- `CaseListPanel` 增加分组目录区，按 Apifox/平台目录展示每个分组和数量，点击目录项可展开并定位到对应分组。
+- 分组标题改为可折叠控制，带展开/收起图标和 `aria-expanded` 状态；工具区提供“展开全部 / 收起全部”。
+- 分组数量较多时默认只展开第一个分组，其他同步分组默认折叠，减少进入页面后的长列表噪音。
+- 搜索时自动忽略折叠状态，让命中的用例直接可见；清空搜索后恢复用户当前折叠状态。
+- 用例列表滚动时分组标题贴顶，长目录下仍能看清当前所在分组。
+- 用例行压缩成更适合管理的一行布局：名称、路径、版本/来源和执行/加入范围/删除动作保持同屏可见。
+- 新增组件测试覆盖独立折叠、搜索透出命中结果、分组目录跳转和多分组默认折叠。
+- API testing 前端静态产物已重新构建。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/components/CaseListPanel.spec.ts src/views/CasesView.spec.ts --reporter=basic
+npm --prefix api-testing-ui test -- --run --reporter=basic
+npm --prefix api-testing-ui run build
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-21 API 工作台：用例管理和任务管理拆成独立页面
 
 用户反馈 `/cases` 仍复用工作台并把用例列表塞在工作台下面，展示和管理都不顺手；任务列表也不应继续挂在工作台里。

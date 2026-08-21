@@ -117,12 +117,22 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .case-management-anchor { display: grid; min-height: 0; }
 .case-list-tools { display: grid; gap: 8px; padding: 10px; border-bottom: 1px solid var(--line); }
 .case-list-search { min-height: 34px; }
+.case-list-group-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.case-list-group-actions .text-command { min-height: 28px; padding: 0 8px; font-size: 10px; }
+.case-group-index { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; max-height: 96px; overflow: auto; padding: 2px; border: 1px solid #edf0f4; border-radius: 5px; background: #f8fafc; }
+.case-group-index button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; min-height: 28px; padding: 0 7px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #53657b; text-align: left; cursor: pointer; }
+.case-group-index button:hover, .case-group-index button.active { border-color: #b9d4ef; background: #eef6ff; color: var(--blue); }
+.case-group-index span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 700; }
+.case-group-index b { color: var(--muted); font-size: 10px; }
 .case-list-scroll { display: grid; max-height: 100%; overflow: auto; }
 .case-list-group { display: grid; border-bottom: 1px solid #edf0f4; }
-.case-list-group h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 34px; margin: 0; padding: 0 11px; border-bottom: 1px solid #edf0f4; background: #f7f9fb; color: #344055; font-size: 11px; }
-.case-list-group h3 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.case-list-group h3 b { color: var(--muted); font-size: 10px; }
-.case-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 8px; min-height: 70px; padding: 8px 10px; border-bottom: 1px solid #edf0f4; border-left: 3px solid transparent; background: #fff; }
+.case-list-group h3 { position: sticky; top: 0; z-index: 1; margin: 0; border-bottom: 1px solid #edf0f4; background: #f7f9fb; color: #344055; font-size: 11px; }
+.case-list-group-toggle { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%; min-height: 36px; padding: 0 11px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.case-list-group-toggle:hover { background: #edf5fc; color: var(--blue); }
+.case-list-group-toggle span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+.case-list-group-toggle b { color: var(--muted); font-size: 10px; }
+.case-list-group.collapsed h3 { border-bottom: 0; }
+.case-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 8px; min-height: 56px; padding: 8px 10px; border-bottom: 1px solid #edf0f4; border-left: 3px solid transparent; background: #fff; }
 .case-list-row:last-child { border-bottom: 0; }
 .case-list-row:hover, .case-list-row.active { background: #f3f8fd; }
 .case-list-row.active { border-left-color: var(--blue); }
@@ -134,7 +144,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .case-list-copy strong { color: #263247; font-size: 12px; }
 .case-list-copy small { color: var(--muted); font: 10px "SFMono-Regular", Consolas, monospace; }
 .case-list-row em { justify-self: end; color: var(--muted); font-size: 10px; font-style: normal; font-weight: 700; white-space: nowrap; }
-.case-list-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 6px; }
+.case-list-actions { display: flex; justify-content: flex-end; gap: 5px; }
 .management-page { max-width: 1520px; margin: 0 auto; }
 .management-shell { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); align-items: start; gap: 12px; margin-top: 14px; }
 .management-shell .task-list-panel, .management-shell .case-list-panel { position: static; max-height: calc(100vh - 220px); overflow: hidden; }
