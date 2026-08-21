@@ -12,6 +12,7 @@ export const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
     { path: '/', name: 'workbench', component: WorkbenchView },
+    { path: '/cases', name: 'cases', component: WorkbenchView },
     { path: '/assets', name: 'assets', component: AssetsView },
     { path: '/baselines', name: 'baselines', component: BaselinesView },
     { path: '/scheduled-jobs', name: 'scheduled-jobs', component: ScheduledJobsView },

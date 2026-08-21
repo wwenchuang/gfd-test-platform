@@ -112,6 +112,7 @@ h1, h2, p { margin-top: 0; } h1 { margin-bottom: 0; font-size: 21px; font-weight
 .method-badge { display: inline-grid; place-items: center; min-width: 43px; height: 22px; padding: 0 5px; border-radius: 4px; background: #e7eef8; color: #385477; font-size: 9px; font-weight: 800; }
 .method-get { background: #e7f2ff; color: #1769aa; }.method-post { background: #e4f7ed; color: #087f58; }.method-put, .method-patch { background: #fff1df; color: #9b5b08; }.method-delete { background: #fdeaea; color: #ae3030; }
 .case-list-panel { min-height: 0; overflow: hidden; }
+.case-management-anchor { display: grid; min-height: 0; }
 .case-list-tools { display: grid; gap: 8px; padding: 10px; border-bottom: 1px solid var(--line); }
 .case-list-search { min-height: 34px; }
 .case-list-scroll { display: grid; max-height: 100%; overflow: auto; }

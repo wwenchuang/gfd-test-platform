@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { Bug, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -29,6 +29,7 @@ const activeEndpoint = ref<ApiEndpoint | null>(null)
 const debugOpen = ref(false)
 const localError = ref('')
 const taskNameDraft = ref('')
+const caseManagementAnchor = ref<HTMLElement | null>(null)
 const activeDraft = computed(() => activeEndpoint.value ? cases.draftFor(activeEndpoint.value) : null)
 const activeVersionId = computed(() => activeEndpoint.value ? cases.activeVersionByEndpoint[activeEndpoint.value.id] || '' : '')
 const allCaseVersions = computed(() => Object.values(cases.versions))
@@ -74,11 +75,29 @@ onMounted(async () => {
   if (context.sourceRevisionId) await loadSource(context.sourceRevisionId, restoredSelection)
   await restoreDeepLink()
   if (context.projectId) await cases.restoreLatestAiJob(context.projectId)
+  await focusCaseManagementIfRequested()
 })
 
 watch(() => tasks.task?.name, name => {
   taskNameDraft.value = name || defaultTaskName()
 }, { immediate: true })
+
+watch(() => route.fullPath, () => {
+  void focusCaseManagementIfRequested()
+})
+
+function shouldFocusCaseManagement(): boolean {
+  return route.name === 'cases' || route.query.focus === 'cases'
+}
+
+async function focusCaseManagementIfRequested(): Promise<void> {
+  if (!shouldFocusCaseManagement()) return
+  await nextTick()
+  const anchor = caseManagementAnchor.value
+  if (!anchor) return
+  if (typeof anchor.scrollIntoView === 'function') anchor.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  anchor.querySelector<HTMLInputElement>('[data-testid="case-list-search"]')?.focus({ preventScroll: true })
+}
 
 function restoreExecutionContextFromRoute(): boolean {
   const projectId = routeValue(route.query.projectId)
@@ -560,24 +579,26 @@ function defaultTaskName(): string {
       <div class="design-workspace">
         <div class="scope-sidebar">
           <EndpointTree :endpoints="assets.endpoints" :selected-ids="selectedIds" :state="context.sourceRevisionId ? assets.state : 'empty'" :error="assets.error" @selection-change="selectedIds = $event" @activate="activate" />
-          <CaseListPanel
-            :endpoints="assets.endpoints"
-            :versions="allCaseVersions"
-            :generated-previews="cases.generatedPreviews"
-            :active-version-id="activeVersionId"
-            :active-preview-id="cases.activeGeneratedPreviewId"
-            :selected-endpoint-ids="selectedIds"
-            :saving="cases.saving || cases.basicGenerating"
-            :running="debugRunning"
-            @edit-version="editCaseVersion"
-            @run-version="runCaseVersion"
-            @delete-version="deleteCaseVersion"
-            @toggle-scope="toggleCaseScope"
-            @edit-preview="editGeneratedPreview"
-            @save-preview="saveGeneratedPreview"
-            @discard-preview="discardGeneratedPreview"
-            @save-all-previews="saveAllGeneratedPreviews"
-          />
+          <div id="case-management" ref="caseManagementAnchor" class="case-management-anchor">
+            <CaseListPanel
+              :endpoints="assets.endpoints"
+              :versions="allCaseVersions"
+              :generated-previews="cases.generatedPreviews"
+              :active-version-id="activeVersionId"
+              :active-preview-id="cases.activeGeneratedPreviewId"
+              :selected-endpoint-ids="selectedIds"
+              :saving="cases.saving || cases.basicGenerating"
+              :running="debugRunning"
+              @edit-version="editCaseVersion"
+              @run-version="runCaseVersion"
+              @delete-version="deleteCaseVersion"
+              @toggle-scope="toggleCaseScope"
+              @edit-preview="editGeneratedPreview"
+              @save-preview="saveGeneratedPreview"
+              @discard-preview="discardGeneratedPreview"
+              @save-all-previews="saveAllGeneratedPreviews"
+            />
+          </div>
         </div>
         <main class="design-center">
           <EndpointDetail :endpoint="activeEndpoint" />

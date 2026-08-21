@@ -34,6 +34,31 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 工作台：新增用例管理独立入口
+
+用户反馈部署后仍看不到用例入口。排查确认线上 `/api-test/` 已包含 `用例列表` 静态代码，但入口隐藏在工作台中间栏，不是独立模块，容易被误认为未部署。
+
+本轮修复：
+
+- API testing 左侧导航新增 `用例管理`。
+- 新增 `/cases` 路由，生产地址为 `/api-test/#/cases`。
+- `/cases` 复用工作台真实用例列表，不复制第二套状态；进入后自动滚动并聚焦用例列表搜索框。
+- 新增 `App.spec.ts` 校验导航入口和路由注册。
+- `WorkbenchView.spec.ts` 增加 `/cases` 聚焦用例列表的回归测试。
+- API testing 前端静态产物已重新构建。
+
+已验证：
+
+```bash
+npm --prefix api-testing-ui test -- --run src/App.spec.ts src/views/WorkbenchView.spec.ts src/components/CaseListPanel.spec.ts --reporter=basic
+npm --prefix api-testing-ui test -- --run --reporter=basic
+npm --prefix api-testing-ui run build
+python3 tests/frontend_static_checks.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
 ### 2026-08-21 API 工作台：部署包补齐 api-test 静态资源
 
 线上 `/opt/midscene-task-platform` 是安装后的发布目录，不是 git 仓库；不能在该目录执行 `git fetch` 更新代码。排查发现 `install-server.sh` 已支持复制 `api-test/`，但 `deploy/package-server.sh` 打包时漏掉了 `api-test/`，导致按部署包发布时 API 工作台 Vue 静态资源不会进入服务器/容器。

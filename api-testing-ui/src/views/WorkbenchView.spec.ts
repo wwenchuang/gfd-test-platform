@@ -444,6 +444,59 @@ describe('WorkbenchView debug workflow', () => {
     expect(listTasks).toHaveBeenCalledWith('project-2')
   })
 
+  it('focuses the case list when opened through the case management route', async () => {
+    const context = useContextStore()
+    Object.assign(context, {
+      projectId: null,
+      sourceRevisionId: null,
+      environmentRevisionId: null,
+      projects: [],
+      sourceRevisions: [],
+      environmentRevisions: [],
+    })
+    vi.spyOn(context, 'loadSavedContext').mockResolvedValue()
+    vi.spyOn(context, 'loadOptions').mockResolvedValue()
+
+    const cases = useCasesStore()
+    vi.spyOn(cases, 'restoreLatestAiJob').mockResolvedValue()
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'workbench', component: WorkbenchView },
+        { path: '/cases', name: 'cases', component: WorkbenchView },
+      ],
+    })
+    await router.push('/cases')
+    await router.isReady()
+    const wrapper = mount(WorkbenchView, {
+      attachTo: document.body,
+      global: {
+        plugins: [router],
+        stubs: {
+          ContextBar: true,
+          TaskStatusStrip: true,
+          TaskListPanel: true,
+          EndpointDetail: true,
+          CaseEditor: true,
+          AiAssistant: true,
+          DebugDrawer: true,
+          EndpointTree: true,
+        },
+      },
+    })
+    await flushPromises()
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' })
+    expect(document.activeElement).toBe(wrapper.get('[data-testid="case-list-search"]').element)
+    wrapper.unmount()
+  })
+
   it('keeps a historical task scope while running it with the selected runtime environment', async () => {
     const context = useContextStore()
     Object.assign(context, {
