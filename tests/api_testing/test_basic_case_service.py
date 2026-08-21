@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from task_server.api_testing import http
+from task_server.api_testing.services.ai_service import AiCaseService
 from task_server.api_testing.services.basic_case_service import BasicCaseService
 
 
@@ -204,6 +205,248 @@ def test_basic_positive_payload_builds_required_json_body_from_schema_and_env_to
         "source": "app",
     }
     assert "device-token" not in repr(payload).lower()
+
+
+def test_basic_positive_payload_allows_credential_words_inside_api_paths():
+    endpoint = SimpleNamespace(
+        method="GET",
+        path="/pmc/api/v1/iot/qidiAuth/firmware-release-history",
+        summary="获取设备密钥",
+        operation={"responses": {"200": {"description": "OK"}}},
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    AiCaseService._assert_no_literal_secrets(payload)
+    assert payload["request"]["path"] == endpoint.path
+
+
+def test_basic_positive_payload_completes_example_with_required_schema_fields():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/print3d/api/v1/knobSetting/knobPrint",
+        summary="旋钮打印",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "example": {"deviceId": "48CA43BD05C6", "position": "K3"},
+                        "schema": {
+                            "type": "object",
+                            "required": ["deviceSn", "settings"],
+                            "properties": {
+                                "deviceSn": {"type": "string"},
+                                "settings": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["position"],
+                                        "properties": {"position": {"type": "string"}},
+                                    },
+                                },
+                                "position": {"type": "string"},
+                            },
+                        },
+                    }
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["request"]["body"] == {
+        "deviceId": "48CA43BD05C6",
+        "position": "K3",
+        "deviceSn": "sample",
+        "settings": [{"position": "sample"}],
+    }
+
+
+def test_basic_positive_payload_replaces_schema_incompatible_body_example():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/manage/v1/filamentTemperature/edit",
+        summary="编辑",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "example": "",
+                        "schema": {
+                            "type": "object",
+                            "required": ["id", "name"],
+                            "properties": {
+                                "id": {"type": "integer"},
+                                "name": {"type": "string"},
+                            },
+                        },
+                    }
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["request"]["body"] == {"id": 1, "name": "sample"}
+
+
+def test_basic_positive_payload_repairs_malformed_placeholder_like_strings():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/pmc/api/v1/open/flashReport",
+        summary="闪铸上报",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "example": {"body": "{\"value\":\"{{not a variable}\"}"},
+                        "schema": {
+                            "type": "object",
+                            "required": ["body"],
+                            "properties": {"body": {"type": "string"}},
+                        },
+                    }
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["request"]["body"] == {"body": "sample"}
+
+
+def test_basic_positive_payload_conforms_null_schema_values():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/print3d/api/v1/printJob/print",
+        summary="确认打印接口",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "example": {"printParam": {"ms": [{"slot": 1, "srgb": "#fff"}]}},
+                        "schema": {
+                            "type": "object",
+                            "required": ["printParam"],
+                            "properties": {
+                                "printParam": {
+                                    "type": "object",
+                                    "required": ["ms"],
+                                    "properties": {
+                                        "ms": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "slot": {"type": "null"},
+                                                    "srgb": {"type": "null"},
+                                                },
+                                            },
+                                        }
+                                    },
+                                }
+                            },
+                        },
+                    }
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["request"]["body"] == {"printParam": {"ms": [{"slot": None, "srgb": None}]}}
+
+
+def test_basic_positive_payload_fills_required_field_without_property_schema():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/print3d/api/v1/modelDownloads/add",
+        summary="添加下载任务",
+        operation={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "required": ["01JRWE1WMKPQWXEPG7TEGH94V1"],
+                            "properties": {},
+                        },
+                    }
+                },
+            },
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["request"]["body"] == {"01JRWE1WMKPQWXEPG7TEGH94V1": "sample"}
+
+
+def test_basic_positive_payload_conforms_parameter_example_to_schema():
+    endpoint = SimpleNamespace(
+        method="GET",
+        path="/print3d/manage/v1/guidance/page",
+        summary="新手必学详情",
+        operation={
+            "parameters": [
+                {
+                    "name": "categoryId",
+                    "in": "query",
+                    "required": True,
+                    "example": "all",
+                    "schema": {"type": "integer"},
+                }
+            ],
+            "responses": {"200": {"description": "OK"}},
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["request"]["query"] == {"categoryId": 1}
 
 
 def test_http_route_scopes_basic_positive_generation(monkeypatch):

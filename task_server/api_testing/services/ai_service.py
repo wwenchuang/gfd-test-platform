@@ -1359,8 +1359,15 @@ class AiCaseService:
             request.get("body") if isinstance(request, dict) else None,
             f"{path}.request.body",
         )
+        cls._assert_no_credential_shapes(
+            request.get("body") if isinstance(request, dict) else None,
+            f"{path}.request.body",
+        )
         for index, row in enumerate(value.get("data_rows", [])):
             cls._assert_sensitive_mapping(
+                row.get("values"), f"{path}.data_rows[{index}].values"
+            )
+            cls._assert_no_credential_shapes(
                 row.get("values"), f"{path}.data_rows[{index}].values"
             )
         processing = value.get("processing", {})
@@ -1375,7 +1382,11 @@ class AiCaseService:
                         action.get("value"),
                         f"{path}.processing.{phase}[{index}].value",
                     )
-        cls._assert_no_credential_shapes(value, path)
+                else:
+                    cls._assert_no_credential_shapes(
+                        action.get("value"),
+                        f"{path}.processing.{phase}[{index}].value",
+                    )
 
     @classmethod
     def _assert_no_credential_shapes(cls, value, path):

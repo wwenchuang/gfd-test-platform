@@ -1,6 +1,8 @@
 """Deterministic basic positive API case generation."""
 
 import copy
+import json
+import re
 from typing import Mapping
 
 from ..repositories.ai_job_repository import AiJobRepository
@@ -9,6 +11,7 @@ from .case_service import CaseService
 
 
 _MISSING = object()
+_PLACEHOLDER = re.compile(r"\{\{\s*[A-Za-z_][A-Za-z0-9_.-]*\s*\}\}")
 
 
 class BasicCaseService:
@@ -121,13 +124,52 @@ class BasicCaseService:
             name = parameter.get("name")
             if not target_field or not isinstance(name, str) or not name:
                 continue
-            value, has_value = AiCaseService._parameter_seed_value(
+            value, has_value = cls._parameter_seed_value(
                 parameter,
                 operation,
                 allow_synthetic=parameter.get("required") is True,
             )
             if has_value:
                 request[target_field][name] = value
+
+    @classmethod
+    def _parameter_seed_value(cls, parameter, operation, *, allow_synthetic):
+        schema = cls._resolve_schema(parameter.get("schema"), operation)
+        if "example" in parameter:
+            return cls._conform_parameter_value(parameter["example"], schema)
+        if "default" in parameter:
+            return cls._conform_parameter_value(parameter["default"], schema)
+        examples = parameter.get("examples")
+        if isinstance(examples, Mapping):
+            for item in examples.values():
+                if isinstance(item, Mapping) and "value" in item:
+                    return cls._conform_parameter_value(item["value"], schema)
+                if item is not None and not isinstance(item, Mapping):
+                    return cls._conform_parameter_value(item, schema)
+        if isinstance(schema, Mapping):
+            if "example" in schema:
+                return cls._conform_parameter_value(schema["example"], schema)
+            if "default" in schema:
+                return cls._conform_parameter_value(schema["default"], schema)
+            enum_values = schema.get("enum")
+            if isinstance(enum_values, list) and enum_values:
+                return cls._conform_parameter_value(enum_values[0], schema)
+            if allow_synthetic:
+                return cls._synthetic_value_for_schema(schema), True
+        if allow_synthetic:
+            return "sample", True
+        return None, False
+
+    @classmethod
+    def _conform_parameter_value(cls, value, schema):
+        if not isinstance(schema, Mapping):
+            return copy.deepcopy(value), True
+        schema_type = cls._schema_type(schema)
+        if cls._value_matches_schema(value, schema_type) and not cls._has_malformed_placeholder(value):
+            if cls._has_unsafe_literal_scalar(value):
+                return cls._synthetic_value_for_schema(schema), True
+            return copy.deepcopy(value), True
+        return cls._synthetic_value_for_schema(schema), True
 
     @staticmethod
     def _parameters(operation):
@@ -199,20 +241,33 @@ class BasicCaseService:
         media = cls._preferred_media(content)
         if not media:
             return None
+        schema = cls._resolve_schema(media.get("schema"), operation)
+        required = bool(request_body.get("required"))
         if "example" in media:
-            return cls._safe_body_value(media["example"], environment_variables)
+            return cls._body_value_from_example(
+                media["example"],
+                schema,
+                operation,
+                environment_variables,
+                required,
+            )
         examples = media.get("examples")
         if isinstance(examples, Mapping):
             for item in examples.values():
                 if isinstance(item, Mapping) and "value" in item:
-                    return cls._safe_body_value(item["value"], environment_variables)
-        schema = cls._resolve_schema(media.get("schema"), operation)
+                    return cls._body_value_from_example(
+                        item["value"],
+                        schema,
+                        operation,
+                        environment_variables,
+                        required,
+                    )
         value, has_value = cls._value_for_schema(
             schema,
             operation,
             environment_variables,
             field_name="body",
-            required=True,
+            required=required,
         )
         return value if has_value else None
 
@@ -225,6 +280,28 @@ class BasicCaseService:
             or (entries[0] if entries else None)
         )
         return preferred[1] if preferred and isinstance(preferred[1], Mapping) else None
+
+    @classmethod
+    def _body_value_from_example(
+        cls,
+        value,
+        schema,
+        operation,
+        environment_variables,
+        required,
+    ):
+        safe = cls._safe_body_value(value, environment_variables)
+        if isinstance(schema, Mapping):
+            conformed, has_value = cls._conform_value_to_schema(
+                safe,
+                schema,
+                operation,
+                environment_variables,
+                field_name="body",
+                required=required,
+            )
+            return conformed if has_value else None
+        return cls._repair_malformed_placeholders(safe)
 
     @classmethod
     def _assertions(cls, operation):
@@ -361,16 +438,24 @@ class BasicCaseService:
         *,
         field_name,
         required,
+        allow_explicit=True,
     ):
         schema = cls._resolve_schema(schema, operation)
         if not isinstance(schema, Mapping):
-            return None, False
+            return ("sample", True) if required else (None, False)
         if cls._is_sensitive_name(field_name):
             return cls._placeholder_for(field_name, environment_variables), True
         explicit = cls._schema_explicit_value(schema, missing=_MISSING)
-        if explicit is not _MISSING:
-            return copy.deepcopy(explicit), True
         schema_type = cls._schema_type(schema)
+        if allow_explicit and explicit is not _MISSING:
+            return cls._conform_value_to_schema(
+                cls._safe_body_value(explicit, environment_variables, field_name),
+                schema,
+                operation,
+                environment_variables,
+                field_name=field_name,
+                required=required,
+            )
         if schema_type == "object" or isinstance(schema.get("properties"), Mapping):
             properties = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
             required_names = set(schema.get("required") or [])
@@ -397,6 +482,9 @@ class BasicCaseService:
                 )
                 if has_value:
                     result[str(name)] = value
+            for name in sorted(required_names):
+                if name not in result and name not in properties:
+                    result[str(name)] = "sample"
             return result, bool(result) or required
         if schema_type == "array":
             items = schema.get("items")
@@ -410,7 +498,221 @@ class BasicCaseService:
                 )
                 return ([value] if has_value else []), True
             return [], required
-        return AiCaseService._synthetic_value_for_schema(schema), True
+        if schema_type == "null":
+            return None, True
+        return cls._synthetic_value_for_schema(schema), True
+
+    @classmethod
+    def _conform_value_to_schema(
+        cls,
+        value,
+        schema,
+        operation,
+        environment_variables,
+        *,
+        field_name,
+        required,
+    ):
+        schema = cls._resolve_schema(schema, operation)
+        if not isinstance(schema, Mapping):
+            return cls._repair_malformed_placeholders(value), value is not None or required
+        coerced = cls._coerce_json_string(value, schema)
+        schema_type = cls._schema_type(schema)
+        if schema_type is None:
+            if isinstance(schema.get("properties"), Mapping):
+                schema_type = "object"
+            elif isinstance(schema.get("items"), Mapping):
+                schema_type = "array"
+        if schema_type == "object":
+            return cls._conform_object_to_schema(
+                coerced,
+                schema,
+                operation,
+                environment_variables,
+                field_name=field_name,
+                required=required,
+            )
+        if schema_type == "array":
+            return cls._conform_array_to_schema(
+                coerced,
+                schema,
+                operation,
+                environment_variables,
+                field_name=field_name,
+                required=required,
+            )
+        if cls._value_matches_schema(coerced, schema_type) and not cls._has_malformed_placeholder(coerced):
+            if cls._has_unsafe_literal_scalar(coerced):
+                return cls._value_for_schema(
+                    schema,
+                    operation,
+                    environment_variables,
+                    field_name=field_name,
+                    required=True,
+                    allow_explicit=False,
+                )
+            return copy.deepcopy(coerced), coerced is not None or required
+        return cls._value_for_schema(
+            schema,
+            operation,
+            environment_variables,
+            field_name=field_name,
+            required=True,
+            allow_explicit=False,
+        )
+
+    @classmethod
+    def _conform_object_to_schema(
+        cls,
+        value,
+        schema,
+        operation,
+        environment_variables,
+        *,
+        field_name,
+        required,
+    ):
+        source = value if isinstance(value, Mapping) else {}
+        properties = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
+        required_names = set(schema.get("required") or [])
+        result = {}
+        for raw_name, item in source.items():
+            name = str(raw_name)
+            child_schema = properties.get(name)
+            if isinstance(child_schema, Mapping):
+                child, has_child = cls._conform_value_to_schema(
+                    item,
+                    child_schema,
+                    operation,
+                    environment_variables,
+                    field_name=name,
+                    required=name in required_names,
+                )
+                if has_child:
+                    result[name] = child
+            else:
+                result[name] = cls._repair_malformed_placeholders(item)
+        for name in sorted(required_names):
+            if name in result:
+                continue
+            child, has_child = cls._value_for_schema(
+                properties.get(name),
+                operation,
+                environment_variables,
+                field_name=str(name),
+                required=True,
+            )
+            if has_child:
+                result[str(name)] = child
+        return result, bool(result) or required
+
+    @classmethod
+    def _conform_array_to_schema(
+        cls,
+        value,
+        schema,
+        operation,
+        environment_variables,
+        *,
+        field_name,
+        required,
+    ):
+        items_schema = schema.get("items")
+        if isinstance(value, list):
+            result = []
+            for item in value:
+                child, has_child = cls._conform_value_to_schema(
+                    item,
+                    items_schema,
+                    operation,
+                    environment_variables,
+                    field_name=field_name,
+                    required=True,
+                )
+                if has_child:
+                    result.append(child)
+            return result, bool(result) or required
+        minimum = int(schema.get("minItems") or 0)
+        if minimum > 0:
+            child, has_child = cls._value_for_schema(
+                items_schema,
+                operation,
+                environment_variables,
+                field_name=field_name,
+                required=True,
+            )
+            return ([child] if has_child else []), True
+        return [], required
+
+    @staticmethod
+    def _coerce_json_string(value, schema):
+        if not isinstance(value, str) or not isinstance(schema, Mapping):
+            return value
+        schema_type = schema.get("type")
+        if schema_type not in {"object", "array"} and not (
+            schema_type is None
+            and (
+                isinstance(schema.get("properties"), Mapping)
+                or isinstance(schema.get("items"), Mapping)
+            )
+        ):
+            return value
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return value
+        return parsed
+
+    @classmethod
+    def _value_matches_schema(cls, value, schema_type):
+        if isinstance(value, str) and _PLACEHOLDER.fullmatch(value.strip()):
+            return True
+        if schema_type is None:
+            return True
+        return {
+            "null": value is None,
+            "boolean": isinstance(value, bool),
+            "integer": isinstance(value, int) and not isinstance(value, bool),
+            "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+            "string": isinstance(value, str),
+            "array": isinstance(value, list),
+            "object": isinstance(value, dict),
+        }.get(schema_type, True)
+
+    @classmethod
+    def _synthetic_value_for_schema(cls, schema):
+        schema_type = cls._schema_type(schema) if isinstance(schema, Mapping) else None
+        if schema_type == "null":
+            return None
+        return AiCaseService._synthetic_value_for_schema(schema or {})
+
+    @classmethod
+    def _repair_malformed_placeholders(cls, value):
+        if isinstance(value, Mapping):
+            return {
+                str(key): cls._repair_malformed_placeholders(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._repair_malformed_placeholders(item) for item in value]
+        if isinstance(value, str) and cls._has_malformed_placeholder(value):
+            return "sample"
+        if cls._has_unsafe_literal_scalar(value):
+            return "sample"
+        return copy.deepcopy(value)
+
+    @staticmethod
+    def _has_malformed_placeholder(value):
+        if not isinstance(value, str):
+            return False
+        scrubbed = _PLACEHOLDER.sub("", value)
+        return "{{" in scrubbed or "}}" in scrubbed
+
+    @staticmethod
+    def _has_unsafe_literal_scalar(value):
+        if not isinstance(value, str) or _PLACEHOLDER.fullmatch(value.strip()):
+            return False
+        return AiCaseService._redact_text(value) != value
 
     @staticmethod
     def _schema_type(schema):

@@ -34,6 +34,40 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 基础正向用例：Apifox 3D 全量生成并入库
+
+用户要求直接用 Apifox token 拉取 3D 全量接口，生成完整基础正向/基线候选用例，放入当前接口管理，后续用于基线和定时任务。
+
+本轮处理：
+
+- 通过线上平台登录态读取当前 API testing 工作区，确认项目为 `3D家用`。
+- 使用 Apifox 项目 `5904970` 导出全量 OpenAPI：1004 个 path、1007 个 operation。
+- 线上接口管理原 active revision 只有 999 个 endpoint；已通过平台 Apifox 同步预览并激活新接口版本：
+  - source revision v7：`ef46b8fd-2868-459d-8695-fc5daba853ed`
+  - endpoint 数：1007
+- 同步后环境候选缺少运行时默认头；已创建环境 revision v23：
+  - environment revision：`acc7c4da-8b0b-48b3-9c20-96ebd12af95a`
+  - 默认头：`Authorization: Bearer {{ZXBToken}}`、`Biz: {{Biz}}`
+  - 补充基础占位变量：`Biz`、`AppVersion`、`Platform`、`X-Language`、`userinfo`、`authCode`、`timestamp`、`accessToken`、`password`、`refreshToken`、`sessionId`、`token`
+- 工作区已切到 source revision v7 和 environment revision v23。
+- 已为 1007 个 endpoint 生成并保存 1007 条基础正向用例。
+- 已按 Apifox 目录写入用例分组，共 137 个分组；分组写入失败 0。
+- 已调用平台校验接口逐条校验 1007 条用例：错误 0；仅剩 204 条可接受的“可选参数未填写”警告。
+- 基线采纳仍需要真实 debug 执行通过证据；本轮没有批量执行生产接口，也没有直接采纳为 baseline。
+
+代码修复：
+
+- `BasicCaseService` 生成 request body 时不再盲信 Apifox 示例；会按 schema 补齐 required 字段、修正 object/array/null 类型、修复 malformed placeholder-like 字符串，并对参数示例做 schema 类型纠正。
+- `AiCaseService._assert_no_literal_secrets` 不再扫描 case 名称、目的和 URL path，避免长路径或 `auth/key/token` 路径片段被误判为明文密钥；仍检查 header/cookie/body/data_rows/processing 中的真实敏感值。
+
+已验证：
+
+```bash
+python3 -m py_compile task_server/api_testing/services/basic_case_service.py task_server/api_testing/services/ai_service.py
+.venv/bin/python -m pytest tests/api_testing/test_basic_case_service.py -q
+# 14 passed
+```
+
 ### 2026-08-21 API 用例管理：用例列表分组目录和折叠浏览
 
 用户反馈用例列表里分组和用例混在一起，连续滚动时不利于定位和管理；希望不只机械按分组折叠，而是把操作方式设计得更顺手。
