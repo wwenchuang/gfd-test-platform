@@ -131,6 +131,100 @@ def test_basic_positive_payload_prefers_json_body_example_and_success_flag():
     ]
 
 
+def test_basic_positive_payload_defaults_platform_code_assertion_for_response_envelope_schema():
+    endpoint = SimpleNamespace(
+        method="GET",
+        path="/print3d/api/v1/devices/info",
+        summary="查询设备详情",
+        operation={
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {"type": "integer"},
+                                    "msg": {"type": "string"},
+                                    "data": {"type": "object"},
+                                },
+                            }
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0, "timeout_ms": 0, "enabled": True} in payload["assertions"]
+    assert {"type": "json_path", "path": "$.data", "operator": "exists", "timeout_ms": 0, "enabled": True} in payload["assertions"]
+
+
+def test_basic_positive_payload_uses_platform_code_assertion_for_json_object_response_without_shape():
+    endpoint = SimpleNamespace(
+        method="POST",
+        path="/print3d/api/v1/feedback/add",
+        summary="提交反馈",
+        operation={
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "object", "properties": {}},
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["assertions"] == [
+        {"type": "status_code", "operator": "equals", "expected": 200, "timeout_ms": 0, "enabled": True},
+        {"type": "json_path", "path": "$.code", "operator": "equals", "expected": 0, "timeout_ms": 0, "enabled": True},
+    ]
+
+
+def test_basic_positive_payload_does_not_add_platform_code_assertion_for_array_response():
+    endpoint = SimpleNamespace(
+        method="GET",
+        path="/print3d/api/v1/model/scad2stlStream",
+        summary="openScad转stl 流式",
+        operation={
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "array", "items": {"type": "integer"}},
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    payload = BasicCaseService.build_case_payload(
+        endpoint,
+        _environment_revision(),
+        _variables("ZXBToken"),
+    )
+
+    assert payload["assertions"] == [
+        {"type": "status_code", "operator": "equals", "expected": 200, "timeout_ms": 0, "enabled": True},
+    ]
+
+
 def test_basic_positive_payload_replaces_sensitive_body_example_values():
     endpoint = SimpleNamespace(
         method="POST",

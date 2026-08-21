@@ -17,6 +17,7 @@ from .environment_service import EnvironmentService
 
 
 MAX_FAILURE_ANALYSIS_EVIDENCE_BYTES = 128 * 1024
+MAX_FAILURE_ANALYSIS_DISPATCH_CASES = 50
 
 
 class ExecutionConflictError(ValueError):
@@ -346,6 +347,7 @@ class ExecutionService:
         worker_error = None
         try:
             self.event_stream.append(execution_id, "execution_started", {})
+            allow_failure_analysis = self._should_dispatch_failure_analysis(children)
             for child in children:
                 if self._is_cancelled(execution_id):
                     break
@@ -370,7 +372,11 @@ class ExecutionService:
                     result = self._broken_result(exc)
                 attempt_id = self._persist_child_result(execution_id, child.id, result)
                 self._dispatch_failure_analysis(
-                    execution_id, child.id, attempt_id, result
+                    execution_id,
+                    child.id,
+                    attempt_id,
+                    result,
+                    allow=allow_failure_analysis,
                 )
                 self.event_stream.append(
                     execution_id,
@@ -434,8 +440,16 @@ class ExecutionService:
                 return repository.create_attempt(current, result, "worker").id
         return None
 
-    def _dispatch_failure_analysis(self, execution_id, child_id, attempt_id, result):
+    @staticmethod
+    def _should_dispatch_failure_analysis(children):
+        return len(children or ()) <= MAX_FAILURE_ANALYSIS_DISPATCH_CASES
+
+    def _dispatch_failure_analysis(
+        self, execution_id, child_id, attempt_id, result, *, allow=True
+    ):
         if (
+            not allow
+            or
             self.failure_analysis_dispatcher is None
             or attempt_id is None
             or result.status not in {"FAILED", "BROKEN"}

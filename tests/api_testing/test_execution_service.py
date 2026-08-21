@@ -25,6 +25,7 @@ from task_server.api_testing.models.execution import (
 from task_server.api_testing.models.project import ApiProject
 from task_server.api_testing.repositories.execution_repository import ExecutionRepository
 from task_server.api_testing.services.case_service import CaseService
+from task_server.api_testing.services import execution_service as execution_service_module
 from task_server.api_testing.services.execution_service import (
     ExecutionConflictError,
     ExecutionService,
@@ -95,6 +96,17 @@ def test_task_snapshot_normalizes_empty_task_name():
     assert snapshot == {"id": "task-2", "name": "未命名任务"}
     assert ExecutionService._task_snapshot(None) is None
     assert ExecutionService._task_snapshot({"name": "无 ID 任务"}) is None
+
+
+def test_failure_analysis_dispatch_is_limited_for_bulk_executions(monkeypatch):
+    monkeypatch.setattr(
+        execution_service_module,
+        "MAX_FAILURE_ANALYSIS_DISPATCH_CASES",
+        1,
+    )
+
+    assert ExecutionService._should_dispatch_failure_analysis((object(),)) is True
+    assert ExecutionService._should_dispatch_failure_analysis((object(), object())) is False
 
 
 @pytest.fixture(scope="module")
@@ -604,6 +616,58 @@ def test_failure_analysis_is_dispatched_after_terminal_result_with_bounded_evide
 
     result = analysis_service.get(execution.id).case_results[0]
     assert result["failure_analysis"]["model"] == "qwen3.7-plus"
+
+
+def test_bulk_execution_skips_per_case_failure_analysis_dispatch(
+    session_factory, redis_client, execution_context, monkeypatch
+):
+    monkeypatch.setattr(
+        execution_service_module,
+        "MAX_FAILURE_ANALYSIS_DISPATCH_CASES",
+        1,
+    )
+    first_case = execution_context["case"]
+    with session_factory.begin() as session:
+        original = session.get(ApiCaseVersion, first_case.id)
+        parent = session.get(ApiCase, original.case_id)
+        second = ApiCaseVersion(
+            case_id=parent.id,
+            endpoint_id=original.endpoint_id,
+            version_number=original.version_number + 1,
+            status="draft",
+            purpose=original.purpose,
+            priority=original.priority,
+            request_template=copy.deepcopy(original.request_template),
+            dependency_spec={"dependencies": []},
+            processing_spec={"pre": [], "post": []},
+            **_audit(),
+        )
+        session.add(second)
+        session.flush()
+        second_id = second.id
+    dispatched = []
+    service = ExecutionService(
+        session_factory,
+        executor=_FakeExecutor(
+            [
+                _Result("FAILED", "product_assertion"),
+                _Result("FAILED", "product_assertion"),
+            ]
+        ),
+        failure_analysis_dispatcher=lambda *args: dispatched.append(args),
+        event_stream=EventStream(session_factory, redis_client),
+    )
+    execution = service.submit(
+        _request(execution_context, case_version_ids=[first_case.id, second_id]),
+        "admin",
+        "bulk-skips-failure-analysis",
+    )
+
+    assert service.run(execution.id) is True
+    terminal = service.get(execution.id)
+
+    assert terminal.summary["failed"] == 2
+    assert dispatched == []
 
 
 def test_worker_exception_creates_broken_attempt_and_converges_all_children(

@@ -34,6 +34,67 @@
 
 ## 最近完成的关键修复
 
+### 2026-08-21 API 基础正向用例：业务断言收紧、真实执行和基线采纳
+
+用户确认生成用例不能只靠 HTTP 200 判断通过，且线上环境允许执行包括删除在内的写操作。
+
+本轮处理：
+
+- 增强 `BasicCaseService` 默认断言：
+  - JSON 响应示例或 schema 中出现平台统一响应壳时，默认增加 `$.code == 0` 业务断言。
+  - 响应契约包含 `data` 字段时，额外增加 `$.data exists`。
+  - array / binary / 非 JSON 响应不强行套 `$.code == 0`，避免把流式接口误判为 JSON 业务壳。
+- 线上 3D 当前 1007 条 active case version 已批量创建新版本：
+  - 1003 条补充了更强断言。
+  - 断言覆盖从 560 条业务断言提升到 1003 条业务断言，714 条同时校验 `data` 存在。
+  - 仍有 4 条流式/签名类接口只能状态码断言，未作为业务基线采纳。
+- 线上逐条结构校验：
+  - 1007 条错误 0。
+  - 204 条仍有可选参数未填写 warning，和前次静态生成阶段一致，不阻塞执行。
+- 已真实执行 GET 集合：
+  - execution `4d315f80-479e-4180-b62c-c28f7ad35721`：500 条，31 passed，469 failed。
+  - execution `88871325-bd35-4481-94ea-4d839f3196be`：18 条，0 passed，18 failed。
+  - 失败全部为 `product_assertion`，证明 HTTP 200 已被业务断言拦截；例如 `code=4009` 登录失效、`code=1001`/`404:null`。
+  - 30 条带业务断言且真实 PASSED 的用例已采纳为基线；其中 5 条带明显副作用语义（发送消息、创建建模任务、发送验证码、用户注册二维码）已按保守策略撤销。
+  - 当前保留 25 条低风险、带业务断言、真实执行通过的 active baseline。
+- 后续用户已明确线上可执行写/删操作，可继续执行 POST/DELETE；但当时 Celery 队列被上一轮大量失败分析任务堵住，新的 regression/probe execution 停在 QUEUED：
+  - queued regression `d64c436b-3ed9-4f9e-a5e1-38b45cb72b19` 已取消。
+  - queued probe `78b1563d-1060-4f05-a086-c75d10e776ab` 已取消。
+
+代码修复：
+
+- `ExecutionService` 新增批量失败分析保护：一次执行 case 数大于 `MAX_FAILURE_ANALYSIS_DISPATCH_CASES`（50）时，不再为每个失败逐条派发 AI failure-analysis 任务，避免执行队列被分析任务淹没。
+- 小批量/单条 debug 仍保留失败分析能力。
+
+已验证：
+
+```bash
+.venv/bin/python -m pytest tests/api_testing/test_basic_case_service.py -q
+# 17 passed
+
+.venv/bin/python -m pytest tests/api_testing/test_execution_service.py::test_failure_analysis_dispatch_is_limited_for_bulk_executions tests/api_testing/test_execution_service.py::test_failure_analysis_is_dispatched_after_terminal_result_with_bounded_evidence -q
+# 1 passed, 1 skipped；跳过项需 TEST_DATABASE_URL
+
+TEST_DATABASE_URL='postgresql+psycopg://midscene:midscene@127.0.0.1:5432/midscene_api_testing' TEST_REDIS_URL='redis://127.0.0.1:6379/15' .venv/bin/python -m pytest tests/api_testing/test_execution_service.py::test_bulk_execution_skips_per_case_failure_analysis_dispatch -q
+# 1 passed；本机 Docker PostgreSQL / Redis 集成验证通过
+
+python3 -m py_compile task_server/api_testing/services/basic_case_service.py task_server/api_testing/services/execution_service.py
+python3 tests/backend_static_checks.py
+git diff --check
+# passed
+```
+
+线上继续执行前需要先部署最新 main 并清掉旧 Celery 队列；否则 POST/DELETE 提交后仍可能停在 QUEUED。推荐服务端操作：
+
+```bash
+cd /opt/midscene-task-platform-src
+git pull --ff-only
+bash deploy/update-main-server.sh
+sudo systemctl stop midscene-api-worker midscene-api-scheduler
+/opt/midscene-task-platform/.venv/bin/celery -A task_server.api_testing.tasks:celery_app purge -Q api-testing -f
+sudo systemctl start midscene-api-worker midscene-api-scheduler
+```
+
 ### 2026-08-21 API 基础正向用例：Apifox 3D 全量生成并入库
 
 用户要求直接用 Apifox token 拉取 3D 全量接口，生成完整基础正向/基线候选用例，放入当前接口管理，后续用于基线和定时任务。

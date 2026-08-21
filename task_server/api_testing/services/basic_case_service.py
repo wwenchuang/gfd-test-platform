@@ -315,9 +315,7 @@ class BasicCaseService:
                 "enabled": True,
             }
         ]
-        success_assertion = cls._business_success_assertion(operation, status_code)
-        if success_assertion:
-            assertions.append(success_assertion)
+        assertions.extend(cls._business_success_assertions(operation, status_code))
         return assertions
 
     @staticmethod
@@ -335,19 +333,37 @@ class BasicCaseService:
         return min(codes) if codes else 200
 
     @classmethod
-    def _business_success_assertion(cls, operation, status_code):
-        response = cls._response_media(operation, status_code)
-        if not response:
-            return None
-        example = cls._response_example(response)
-        assertion = cls._success_assertion_from_value(example)
-        if assertion:
-            return assertion
+    def _business_success_assertions(cls, operation, status_code):
+        response_entry = cls._response_media_entry(operation, status_code)
+        if not response_entry:
+            return ()
+        media_type, response = response_entry
         schema = cls._resolve_schema(response.get("schema"), operation)
-        return cls._success_assertion_from_schema(schema, operation)
+        example = cls._response_example(response)
+        assertions = []
+        success_assertion = (
+            cls._success_assertion_from_value(example)
+            or cls._success_assertion_from_schema(schema, operation)
+        )
+        if success_assertion is None and cls._uses_platform_success_envelope(
+            media_type,
+            schema,
+        ):
+            success_assertion = cls._code_zero_assertion()
+        if success_assertion:
+            assertions.append(success_assertion)
+        data_assertion = cls._data_presence_assertion(schema, example, operation)
+        if data_assertion:
+            assertions.append(data_assertion)
+        return tuple(assertions)
 
     @classmethod
     def _response_media(cls, operation, status_code):
+        entry = cls._response_media_entry(operation, status_code)
+        return entry[1] if entry else None
+
+    @classmethod
+    def _response_media_entry(cls, operation, status_code):
         responses = operation.get("responses") if isinstance(operation, Mapping) else {}
         if not isinstance(responses, Mapping):
             return None
@@ -356,7 +372,17 @@ class BasicCaseService:
         content = response.get("content") if isinstance(response, Mapping) else None
         if not isinstance(content, Mapping):
             return None
-        return cls._preferred_media(content)
+        return cls._preferred_media_entry(content)
+
+    @staticmethod
+    def _preferred_media_entry(content):
+        entries = list(content.items())
+        preferred = (
+            next((item for item in entries if item[0] == "application/json"), None)
+            or next((item for item in entries if str(item[0]).endswith("+json")), None)
+            or (entries[0] if entries else None)
+        )
+        return preferred if preferred and isinstance(preferred[1], Mapping) else None
 
     @staticmethod
     def _response_example(media):
@@ -376,23 +402,9 @@ class BasicCaseService:
         if not isinstance(value, Mapping):
             return None
         if value.get("code") == 0:
-            return {
-                "type": "json_path",
-                "path": "$.code",
-                "operator": "equals",
-                "expected": 0,
-                "timeout_ms": 0,
-                "enabled": True,
-            }
+            return BasicCaseService._code_zero_assertion()
         if value.get("success") is True:
-            return {
-                "type": "json_path",
-                "path": "$.success",
-                "operator": "equals",
-                "expected": True,
-                "timeout_ms": 0,
-                "enabled": True,
-            }
+            return BasicCaseService._success_true_assertion()
         return None
 
     @classmethod
@@ -405,29 +417,67 @@ class BasicCaseService:
             return None
         code = cls._resolve_schema(properties.get("code"), operation)
         if isinstance(code, Mapping):
-            expected = cls._schema_explicit_value(code)
-            if expected == 0:
-                return {
-                    "type": "json_path",
-                    "path": "$.code",
-                    "operator": "equals",
-                    "expected": 0,
-                    "timeout_ms": 0,
-                    "enabled": True,
-                }
+            expected = cls._schema_explicit_value(code, missing=_MISSING)
+            if expected in (0, _MISSING):
+                return cls._code_zero_assertion()
         success = cls._resolve_schema(properties.get("success"), operation)
         if isinstance(success, Mapping):
             expected = cls._schema_explicit_value(success)
             if expected is True:
-                return {
-                    "type": "json_path",
-                    "path": "$.success",
-                    "operator": "equals",
-                    "expected": True,
-                    "timeout_ms": 0,
-                    "enabled": True,
-                }
+                return cls._success_true_assertion()
         return None
+
+    @staticmethod
+    def _code_zero_assertion():
+        return {
+            "type": "json_path",
+            "path": "$.code",
+            "operator": "equals",
+            "expected": 0,
+            "timeout_ms": 0,
+            "enabled": True,
+        }
+
+    @staticmethod
+    def _success_true_assertion():
+        return {
+            "type": "json_path",
+            "path": "$.success",
+            "operator": "equals",
+            "expected": True,
+            "timeout_ms": 0,
+            "enabled": True,
+        }
+
+    @classmethod
+    def _data_presence_assertion(cls, schema, example, operation):
+        if isinstance(example, Mapping) and "data" in example:
+            return cls._json_path_exists_assertion("$.data")
+        schema = cls._resolve_schema(schema, operation)
+        properties = schema.get("properties") if isinstance(schema, Mapping) else None
+        if isinstance(properties, Mapping) and "data" in properties:
+            return cls._json_path_exists_assertion("$.data")
+        return None
+
+    @staticmethod
+    def _json_path_exists_assertion(path):
+        return {
+            "type": "json_path",
+            "path": path,
+            "operator": "exists",
+            "timeout_ms": 0,
+            "enabled": True,
+        }
+
+    @classmethod
+    def _uses_platform_success_envelope(cls, media_type, schema):
+        if not isinstance(media_type, str) or "json" not in media_type.lower():
+            return False
+        schema_type = cls._schema_type(schema) if isinstance(schema, Mapping) else None
+        return schema_type in (None, "object") or (
+            isinstance(schema, Mapping)
+            and isinstance(schema.get("properties"), Mapping)
+        )
 
     @classmethod
     def _value_for_schema(
